@@ -1,8 +1,8 @@
-{config, homebrew, homebrew-core, homebrew-cask, homebrew-bundle, homebrew-deskflow, ... }: {
+{inputs, config, ... }: {
   # Stops the nix-darwin homebrew functionality from fighting with nix-homebrew about taps
   homebrew.taps = builtins.attrNames config.nix-homebrew.taps;
 
-  imports = [ homebrew.darwinModules.nix-homebrew ];
+  imports = [ inputs.homebrew.darwinModules.nix-homebrew ];
 
   nix-homebrew = {
     enable = true;
@@ -10,10 +10,10 @@
     mutableTaps = false;
 
     taps = {
-      "homebrew/homebrew-core" = homebrew-core;
-      "homebrew/homebrew-cask" = homebrew-cask;
-      "homebrew/homebrew-bundle" = homebrew-bundle;
-      "deskflow/homebrew-tap" = homebrew-deskflow;
+      "homebrew/homebrew-core" = inputs.homebrew-core;
+      "homebrew/homebrew-cask" = inputs.homebrew-cask;
+      "homebrew/homebrew-bundle" = inputs.homebrew-bundle;
+      "deskflow/homebrew-tap" = inputs.homebrew-deskflow;
     };
   };
 

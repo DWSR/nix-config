@@ -1,12 +1,12 @@
-{ pkgs, lib, home-manager, color-schemes, ... }: {
+{ inputs, pkgs, lib, home-manager, ... }: {
   home-manager.users."brandonmcnama".xdg.configFile."ghostty/themes/nord" = {
     enable = true;
-    source = color-schemes + "/ghostty/nord";
+    source = inputs.color-schemes + "/ghostty/nord";
   };
 
   home-manager.users."brandonmcnama".xdg.configFile."ghostty/themes/nord-wave" = {
     enable = true;
-    source = color-schemes + "/ghostty/nord-wave";
+    source = inputs.color-schemes + "/ghostty/nord-wave";
   };
 
   home-manager.users."brandonmcnama".programs.ghostty = {

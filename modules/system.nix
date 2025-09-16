@@ -1,14 +1,21 @@
 { pkgs, ... }: {
   system = {
+    primaryUser = "brandonmcnama";
     # activationScripts are executed every time you boot the system or run `nixos-rebuild` / `darwin-rebuild`.
-    activationScripts.postUserActivation.text = ''
+    activationScripts.postActivation.text = ''
       # activateSettings -u will reload the settings from the database and apply them to the current session,
       # so we do not need to logout and login again to make the changes take effect.
-      /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
+      sudo -u brandonmcnama /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
     '';
 
     defaults = {
-      menuExtraClock.Show24Hour = true; 
+      menuExtraClock = {
+        Show24Hour = true; 
+        ShowDate = 2;
+        ShowDayOfMonth = false;
+        ShowDayOfWeek = false;
+      };
+
       controlcenter = {
        BatteryShowPercentage = false;
        Bluetooth = true;
@@ -17,9 +24,17 @@
        NowPlaying = false;
        Sound = true;
       };
+
       dock = {
         autohide = true;
       };
+
+      finder = {
+        CreateDesktop = false;
+        QuitMenuItem = true;
+        ShowPathbar = true;
+      };
+
       NSGlobalDomain = {
         InitialKeyRepeat = 15;
         KeyRepeat = 2;
@@ -29,6 +44,18 @@
         NSAutomaticPeriodSubstitutionEnabled = false;
         NSAutomaticQuoteSubstitutionEnabled = false;
         NSAutomaticSpellingCorrectionEnabled = false;
+        "com.apple.keyboard.fnState" = true;
+      };
+
+      SoftwareUpdate = {
+        AutomaticallyInstallMacOSUpdates = true;
+      };
+
+      CustomUserPreferences = {
+        NSGlobalDomain = {
+          NSStatusItemSelectionPadding = 12;
+          NSStatusItemSpacing = 6;
+        };
       };
     };
   };
@@ -36,5 +63,4 @@
 
   # Add ability to used TouchID for sudo authentication
   security.pam.enableSudoTouchIdAuth = true;
-
 }
