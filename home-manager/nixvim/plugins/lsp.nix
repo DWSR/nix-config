@@ -25,10 +25,6 @@
     };
   };
 
-  # programs.nixvim.plugins.lspconfig = {
-  #   enable = true;
-  # };
-
   programs.nixvim.autoCmd = [
     # {
     #   group = "lsp_format_on_save";
@@ -39,7 +35,7 @@
     #       function()
     #         vim.lsp.buf.format({
     #           timeout_ms = 1000,
-    #           filter = 
+    #           filter =
     #         })
     #     end
     #     '';

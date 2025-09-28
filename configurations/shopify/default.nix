@@ -15,6 +15,7 @@ in {
   ];
 
   nix = {
+    enable = false;
     nixPath = ["/etc/nix/path"];
 
     settings = {
@@ -66,12 +67,12 @@ in {
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
         ref = "master";
-        rev = "b6786abb2fe9975f5ed4b16e88b1dfc3eb30d027";
+        rev = "3b185d67706b0319f703c114085d68c44fbfc3d4";
       };
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
         ref = "main";
-        rev = "58912aadaf58083d211083272e60080ef119e513";
+        rev = "2761ad607b3f6645c489d36d6cf688375e5143b0";
       };
 
       "withgraphite/homebrew-tap" = inputs.homebrew-withgraphite;
@@ -93,7 +94,7 @@ in {
     ];
 
     casks = [
-      "1password"
+      "1password@beta"
       "1password-cli"
       "contexts"
       "ghostty"
@@ -103,8 +104,6 @@ in {
       "raycast"
       "shortcat"
       "loopback"
-      # Blocked by security :eyeroll:
-      # "audio-hijack"
       "slack"
       "deskflow"
       "keymapp"

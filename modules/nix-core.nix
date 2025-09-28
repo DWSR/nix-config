@@ -16,12 +16,12 @@
   nixpkgs.hostPlatform = "aarch64-darwin";
 
   # do garbage collection weekly to keep disk usage low
-  nix.gc = {
-    automatic = lib.mkDefault true;
-    options = lib.mkDefault "--delete-older-than 7d";
-  };
+  # nix.gc = {
+  #   automatic = lib.mkDefault true;
+  #   options = lib.mkDefault "--delete-older-than 7d";
+  # };
 
   # Optimize the Nix store. This instead of nix.settings.auto-optimise-store because:
   # https://github.com/NixOS/nix/issues/7273
-  nix.optimise.automatic = true;
+  # nix.optimise.automatic = true;
 }

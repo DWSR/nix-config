@@ -18,6 +18,21 @@
           group = "Display toggles";
           mode = ["n" "v"];
         }
+        {
+          __unkeyed = "<leader>s";
+          group = "Search";
+          mode = ["n" "v"];
+        }
+        {
+          __unkeyed = "<leader>g";
+          group = "Goto";
+          mode = ["n" "v"];
+        }
+        {
+          __unkeyed = "<leader>l";
+          group = "LSP Actions";
+          mode = ["n" "v"];
+        }
       ];
     };
   };

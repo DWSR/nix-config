@@ -6,13 +6,16 @@
   lib,
   username,
   ...
-}: {
+}: let
+  gcloud = pkgs.google-cloud-sdk.withExtraComponents [
+    pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin
+  ];
+in {
 
   home = {
     stateVersion = "24.11";
 
-    # TODO: Remove this once 25.05 is released
-    enableNixpkgsReleaseCheck = false;
+    enableNixpkgsReleaseCheck = true;
     preferXdgDirectories = true;
 
     packages = with pkgs; [
@@ -21,7 +24,6 @@
       kubectl
       k9s
       direnv
-      # lunarvim
       shadowenv
       openssh
       dyff
@@ -33,15 +35,15 @@
       rclone
       rsync
       readline
+      stern
       tree
       viddy
       karabiner-elements
       alejandra
-      # nodejs-slim_22
       apple-sdk
       lazygit
       xz
-      google-cloud-sdk
+      gcloud
     ];
   };
 

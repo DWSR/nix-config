@@ -43,7 +43,7 @@
 
     defaults = {
       menuExtraClock = {
-        Show24Hour = true; 
+        Show24Hour = true;
         ShowDate = 2;
         ShowDayOfMonth = false;
         ShowDayOfWeek = false;

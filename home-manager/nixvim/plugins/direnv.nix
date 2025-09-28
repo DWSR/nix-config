@@ -3,8 +3,8 @@
   programs.nixvim = {
     extraPlugins = [
       (
-        pkgs.vimUtils.buildVimPlugin { 
-          name = "actionshrimp/direnv.nvim";
+        pkgs.vimUtils.buildVimPlugin {
+          name = "direnv-nvim";
 
           src = pkgs.fetchFromGitHub {
             owner = "actionshrimp";
@@ -15,8 +15,8 @@
         }
       )
       (
-        pkgs.vimUtils.buildVimPlugin { 
-          name = "Shopify/shadowenv.vim";
+        pkgs.vimUtils.buildVimPlugin {
+          name = "shadowenv-vim";
 
           src = pkgs.fetchFromGitHub {
             owner = "Shopify";
@@ -27,7 +27,7 @@
         }
       )
     ];
-  
+
     extraConfigLua = ''
       require("direnv-nvim").setup({
         async = true,

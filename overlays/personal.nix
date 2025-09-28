@@ -32,7 +32,7 @@ in
           push.autoRemoteSetup = true;
           commit.gpgSign = true;
           ghq.root = "~/repos";
-          branch.sort = "-comitterdate";
+          branch.sort = "-committerdate";
           init.defaultBranch = "main";
           rebase.updateRefs = true;
           pull.rebase = true;

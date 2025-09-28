@@ -2,7 +2,7 @@
 {
   programs.nixvim.plugins.lsp.servers = {
     systemd_ls = {
-      enable = true;
+      enable = false;
       autostart = false;
     };
   };
