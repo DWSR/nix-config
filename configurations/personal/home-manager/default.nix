@@ -31,6 +31,7 @@
       rclone
       rsync
       readline
+      nh
       vfkit
       tree
       viddy
@@ -72,4 +73,3 @@
     ./git.nix
   ];
 }
-

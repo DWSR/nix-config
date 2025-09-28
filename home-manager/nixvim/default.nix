@@ -10,7 +10,9 @@
     ./plugins/auto-save.nix
     ./plugins/avante.nix
     ./plugins/bufferline.nix
+    ./plugins/bufonly.nix
     ./plugins/cmp.nix
+    ./plugins/codecompanion.nix
     ./plugins/comment.nix
     ./plugins/copilot.nix
     ./plugins/devdocs.nix
@@ -162,21 +164,6 @@
       intellitab.enable = true;
       nix.enable = true;
     };
-
-    # TODO Port this from Lunarvim
-    # programs.nixvim.userCommands = {
-    #   "BufferKill" = {
-    #     bang = false;
-    #     bar = false;
-    #     desc = "Closes the current buffer";
-    #     nargs = 0;
-
-    #     command = { __raw = ''
-    #     function(...)
-    #       require("bufferline").buf_kill "bd"
-    #     end''; };
-    #   };
-    # };
 
     extraPlugins = [
       (

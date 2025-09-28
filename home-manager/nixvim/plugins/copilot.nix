@@ -31,9 +31,9 @@
     copilot-cmp.enable = false;
 
     copilot-lua = {
-      enable = false;
+      enable = true;
 
-      settings = {      
+      settings = {
         suggestion = {
           enabled = false;
 

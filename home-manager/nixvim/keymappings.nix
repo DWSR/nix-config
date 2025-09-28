@@ -18,7 +18,7 @@
       }
       {
         action = "<cmd>BufferKill<CR>";
-        key = "<leader>c";
+        key = "<leader>bc";
 
         options = {
           silent = true;

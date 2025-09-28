@@ -1,7 +1,7 @@
 { inputs, outputs, pkgs, ... }:
 {
   imports = [
-    inputs.nix-index-database.hmModules.nix-index
+    inputs.nix-index-database.homeModules.nix-index
 
     ./atuin.nix
     ./ghostty.nix
@@ -14,9 +14,21 @@
 
   nixpkgs.overlays = [
     outputs.overlays.unstable-packages
+    inputs.nixneovimplugins.overlays.default
   ];
 
   xdg.enable = true;
+  xdg.configFile."mcphub/servers.json" = {
+    enable = true;
+    text = builtins.toJSON ({
+      mcpServers = {
+        nixos = {
+          command = "nix";
+          args = ["run" "github:utensils/mcp-nixos" "--"];
+        };
+      };
+    });
+  };
 
   editorconfig = {
     enable = true;
@@ -95,7 +107,7 @@
   programs.home-manager.enable = true;
   programs.bat = {
     enable = true;
-    
+
     config = {
       "theme" = "Nord";
       "style" = "numbers,changes,header";
