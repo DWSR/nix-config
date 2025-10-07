@@ -24,7 +24,7 @@
 
     onActivation = {
       autoUpdate = true;
-      upgrade = false;
+      upgrade = true;
       # Nukes anything not explicitly defined here
       cleanup = "zap";
     };
