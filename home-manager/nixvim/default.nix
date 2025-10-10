@@ -31,6 +31,7 @@
     ./plugins/matchup.nix
     ./plugins/mcphub.nix
     ./plugins/neoscroll.nix
+    ./plugins/noice.nix
     ./plugins/notify.nix
     ./plugins/numbertoggle.nix
     ./plugins/nvim-tree.nix
