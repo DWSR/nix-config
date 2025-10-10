@@ -158,6 +158,7 @@
     ];
 
     plugins = {
+      nvim-autopairs.enable = true;
       nui.enable = true;
       web-devicons.enable = true;
       trim.enable = true;
