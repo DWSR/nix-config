@@ -7,6 +7,83 @@
 
     keymaps = [
       {
+        action = "<cmd>cnext<CR>";
+        key = "]q";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Next quickfix";
+        };
+      }
+      {
+        action = "<cmd>cprev<CR>";
+        key = "[q";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Previous quickfix";
+        };
+      }
+      {
+        action = "<cmd>call QuickFixToggle()<CR>";
+        key = "<C-q>";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle quickfix";
+        };
+      }
+      {
+        action = "<Esc>:m .+1<CR>==gi";
+        key = "<A-j>";
+        mode = ["i" "n"];
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line/block down 1";
+        };
+      }
+      {
+        action = "<Esc>:m .-2<CR>==gi";
+        key = "<A-k>";
+        mode = ["i" "n" "x"];
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line/block up 1";
+        };
+      }
+      {
+        action = "<Esc>:m >+1<CR>gv-gv";
+        key = "<A-j>";
+        mode = "x";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line/block down 1";
+        };
+      }
+      {
+        action = "<Esc>:m <-2<CR>gv-gv";
+        key = "<A-k>";
+        mode = "x";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line/block up 1";
+        };
+      }
+      {
         action = "<cmd>confirm q<CR>";
         key = "<leader>q";
 
