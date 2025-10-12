@@ -33,7 +33,10 @@
       font-size = "14.0";
       font-feature = "+liga, +dlig, +calt, +ss01, +ss02, +ss03, +ss04, +ss05, +ss06, +ss07, +ss08";
       window-decoration = "none";
+      macos-option-as-alt = true;
+      keybind = [
+        "clear"
+      ];
     };
   };
-
 }
