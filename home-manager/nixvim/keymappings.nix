@@ -40,29 +40,51 @@
         };
       }
       {
-        action = "<Esc>:m .+1<CR>==gi";
+        action = "<Esc><cmd>m .+1<CR>==gi";
         key = "<A-j>";
-        mode = ["i" "n"];
+        mode = ["i"];
 
         options = {
           silent = true;
           noremap = true;
-          desc = "Move current line/block down 1";
+          desc = "Move current line down 1";
         };
       }
       {
-        action = "<Esc>:m .-2<CR>==gi";
+        action = "<Esc><cmd>m .-2<CR>==gi";
         key = "<A-k>";
-        mode = ["i" "n" "x"];
+        mode = ["i"];
 
         options = {
           silent = true;
           noremap = true;
-          desc = "Move current line/block up 1";
+          desc = "Move current line up 1";
         };
       }
       {
-        action = "<Esc>:m >+1<CR>gv-gv";
+        action = "<cmd>m .+1<CR>==";
+        key = "<A-j>";
+        mode = ["n"];
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line down 1";
+        };
+      }
+      {
+        action = "<cmd>m .-2<CR>==";
+        key = "<A-k>";
+        mode = ["n"];
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Move current line up 1";
+        };
+      }
+      {
+        action = "<Esc><cmd>m '>+1<CR>gv-gv";
         key = "<A-j>";
         mode = "x";
 
@@ -73,7 +95,7 @@
         };
       }
       {
-        action = "<Esc>:m <-2<CR>gv-gv";
+        action = "<Esc><cmd>m '<-2<CR>gv-gv";
         key = "<A-k>";
         mode = "x";
 
