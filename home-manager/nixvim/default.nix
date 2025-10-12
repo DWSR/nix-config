@@ -30,11 +30,12 @@
     ./plugins/markdown-preview.nix
     ./plugins/matchup.nix
     ./plugins/mcphub.nix
+    ./plugins/neo-tree.nix
     ./plugins/neoscroll.nix
     ./plugins/noice.nix
     ./plugins/notify.nix
     ./plugins/numbertoggle.nix
-    ./plugins/nvim-tree.nix
+    # ./plugins/nvim-tree.nix
     ./plugins/smear-cursor.nix
     ./plugins/snacks.nix
     ./plugins/toggleterm.nix

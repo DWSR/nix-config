@@ -131,6 +131,12 @@
             highlight = "PanelHeading";
             padding = 1;
           }
+          {
+            filetype = "neo-tree";
+            text = "File Explorer";
+            highlight = "PanelHeading";
+            padding = 1;
+          }
         ];
 
         color_icons = true;
