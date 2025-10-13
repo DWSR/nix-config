@@ -2,6 +2,8 @@
 {
   programs.nixvim.plugins.neo-tree = {
     enable = true;
+
+    filesystem.filteredItems.visible = true;
   };
 
   programs.nixvim.keymaps = [
