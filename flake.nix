@@ -127,11 +127,7 @@
           ./configurations/shopify
         ];
       };
-      "Brandons-MacBook-Pro" = let
-        pkgs = import nixpkgs {
-          config.allowUnfree = true;
-        };
-      in inputs.darwin.lib.darwinSystem {
+      "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
         specialArgs = {inherit inputs outputs;};
 
         modules = [

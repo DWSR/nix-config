@@ -67,8 +67,23 @@
     };
   };
 
+  programs._1password-shell-plugins = {
+    enable = true;
+
+    plugins = with pkgs; [
+      flyctl
+      gh
+      hcloud
+    ];
+  };
+
+  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+    "1password-cli"
+    "1password"
+  ];
 
   imports = [
+    inputs.op-shell-plugins.hmModules.default
     ../../../home-manager/common
     ./git.nix
   ];

@@ -57,6 +57,12 @@ in {
     };
   };
 
+  programs._1password.enable = true;
+  programs._1password-gui = {
+    enable = true;
+    package = pkgs.unstable._1password-gui-beta;
+  };
+
   nix-homebrew = {
     user = username;
   };
@@ -70,8 +76,6 @@ in {
 
   homebrew = {
     casks = [
-      "1password"
-      "1password-cli"
       "contexts"
       "domzilla-caffeine"
       "ears"
