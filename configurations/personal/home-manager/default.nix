@@ -40,6 +40,7 @@
       nh
       vfkit
       tree
+      unstable.keymapp
       viddy
       shadowenv
       karabiner-elements
@@ -88,5 +89,6 @@
     "1password-cli"
     "1password"
     "raycast"
+    "keymapp"
   ];
 }
