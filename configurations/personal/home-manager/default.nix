@@ -41,6 +41,7 @@
       vfkit
       tree
       unstable.keymapp
+      unstable.slack
       viddy
       shadowenv
       karabiner-elements
@@ -90,5 +91,6 @@
     "1password"
     "raycast"
     "keymapp"
+    "slack"
   ];
 }

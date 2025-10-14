@@ -89,7 +89,6 @@ in {
       "obs"
       "loopback"
       "audio-hijack"
-      "slack"
       "deskflow"
       "obsidian"
     ];
