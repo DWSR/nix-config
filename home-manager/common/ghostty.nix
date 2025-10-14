@@ -15,13 +15,7 @@
 
   programs.ghostty = {
     enable = true;
-
-    # Install ghostty from brew because nixpkgs can't build it on Darwin
-    package = lib.mkForce null;
-
-    # Can't do this when installing ghostty from Brew
-    # installVimSyntax = true;
-    # installBatSyntax = true;
+    package = inputs.DimitarNestorov.legacyPackages.aarch64-darwin.ghostty;
 
     settings = {
       theme = "nord-wave";

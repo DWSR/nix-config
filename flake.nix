@@ -19,12 +19,7 @@
     op-shell-plugins.url = "github:1Password/shell-plugins";
     flake-utils.url = "github:numtide/flake-utils";
     nixneovimplugins.url = "github:NixNeovim/NixNeovimPlugins";
-
-    # TODO Use NUR to install Ghostty: https://github.com/NixOS/nixpkgs/issues/388984
-    # nur = {
-    #   url = "github.com:nix-community/NUR";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
+    DimitarNestorov.url = "github:DimitarNestorov/Nix-user-repository-packages";
 
     nix-index-database = {
       url = "github:nix-community/nix-index-database";

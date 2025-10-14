@@ -7,6 +7,13 @@
   username,
   ...
 }: {
+  imports = [
+    inputs.op-shell-plugins.hmModules.default
+
+    ../../../home-manager/common
+    ./git.nix
+  ];
+
   home = {
     stateVersion = "24.11";
 
@@ -81,11 +88,5 @@
     "1password-cli"
     "1password"
     "raycast"
-  ];
-
-  imports = [
-    inputs.op-shell-plugins.hmModules.default
-    ../../../home-manager/common
-    ./git.nix
   ];
 }

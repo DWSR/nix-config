@@ -81,7 +81,6 @@ in {
       "ears"
       "moom"
       "orbstack"
-      "ghostty"
       "ears"
       "oversight"
       "orion"
