@@ -97,7 +97,6 @@ in {
       "deskflow"
       "keymapp"
       "obsidian"
-      "podman-desktop"
     ];
   };
 }
