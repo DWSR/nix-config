@@ -3,7 +3,10 @@
   programs.nixvim.plugins.neo-tree = {
     enable = true;
 
-    filesystem.filteredItems.visible = true;
+    filesystem.filteredItems = {
+      visible = true;
+      neverShow = [".git" ".DS_Store" "thumbs.db"];
+    };
   };
 
   programs.nixvim.keymaps = [
