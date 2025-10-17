@@ -19,19 +19,6 @@ in
       };
     };
 
-    keymaps = [
-      {
-        action = "<cmd>Neotree toggle<CR>";
-        key = "<leader>e";
-
-        options = {
-          silent = true;
-          noremap = true;
-          desc = "Toggle File Explorer";
-        };
-      }
-    ];
-
     autoCmd = [
       {
         event = "BufLeave";
