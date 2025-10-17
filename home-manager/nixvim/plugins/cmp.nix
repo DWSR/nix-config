@@ -1,4 +1,7 @@
-{ ... }:
+{ config, ... }:
+let
+  helpers = config.lib.nixvim;
+in
 {
   programs.nixvim.plugins = {
     cmp = {
@@ -27,7 +30,7 @@
         formatting = {
           fields = [ "kind" "abbr" "menu" ];
           max_width = 0;
-          kind_icons =  { __raw = "kind_icons"; };
+          kind_icons =  helpers.mkRaw "kind_icons";
 
           duplicates = {
             buffer = 1;
@@ -40,19 +43,14 @@
         };
 
         window = {
-          completion = {
-            __raw = ''cmp_window.bordered()'';
-          };
-          documentation = {
-            __raw = ''cmp_window.bordered()'';
-          };
+          completion = helpers.mkRaw "cmp_window.bordered()";
+          documentation = helpers.mkRaw "cmp_window.bordered()";
         };
 
         sources = [
           {
             name = "nvim_lsp";
-            entry_filter = {
-              __raw = ''
+            entry_filter = helpers.mkRaw ''
               function(entry, ctx)
                 local kind = require("cmp.types.lsp").CompletionItemKind[entry:get_kind()]
                 if kind == "Snippet" and ctx.prev_context.filetype == "java" then
@@ -60,8 +58,7 @@
                 end
                 return true
               end
-              '';
-            };
+            '';
           }
           { name = "dap"; }
           { name = "async_path"; }
@@ -74,8 +71,8 @@
           { name = "emoji"; }
         ];
 
-        mapping = {
-          __raw = ''cmp_mapping.preset.insert({
+        mapping = helpers.mkRaw ''
+          cmp_mapping.preset.insert({
             ["<C-k>"] = cmp_mapping(cmp_mapping.select_prev_item(), {"i", "c"}),
             ["<C-j>"] = cmp_mapping(cmp_mapping.select_next_item(), {"i", "c"}),
             ["<Down>"] = cmp_mapping(
@@ -105,9 +102,9 @@
                 end
               end,
               {"i", "c"}
-            ), 
-          })'';
-        };
+            ),
+          })
+        '';
       };
     };
 

@@ -1,7 +1,4 @@
-{ pkgs, config, ... }:
-let
-  helpers = config.lib.nixvim;
-in
+{ pkgs, ... }:
 {
   programs.nixvim = {
     extraPlugins = [pkgs.vimPlugins.nvim-lsp-file-operations];

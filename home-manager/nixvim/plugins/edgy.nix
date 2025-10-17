@@ -43,22 +43,12 @@ in
         left = helpers.mkRaw ''
           {
             {
-              title = "Buffers",
-              ft = "neo-tree",
-              filter = function(buf)
-                return vim.b[buf].neo_tree_source == "buffers"
-              end,
-              pinned = true,
-              collapsed = true,
-              open = "Neotree position=top buffers",
-            },
-            {
               title = "Files",
               ft = "neo-tree",
               filter = function(buf)
                 return vim.b[buf].neo_tree_source == "filesystem"
               end,
-              size = { height = 0.5 },
+              size = { height = 0.6 },
             },
             {
               title = "Git",
@@ -67,8 +57,20 @@ in
                 return vim.b[buf].neo_tree_source == "git_status"
               end,
               pinned = true,
-              collapsed = true,
+              collapsed = false,
+              size = { height = 0.2 },
               open = "Neotree position=right git_status",
+            },
+            {
+              title = "Buffers",
+              ft = "neo-tree",
+              filter = function(buf)
+                return vim.b[buf].neo_tree_source == "buffers"
+              end,
+              pinned = true,
+              collapsed = false,
+              size = { height = 0.2 },
+              open = "Neotree position=top buffers",
             },
             "neo-tree",
           }

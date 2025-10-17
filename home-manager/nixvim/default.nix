@@ -1,4 +1,7 @@
-{ inputs, pkgs, lib, system, ... }:
+{ inputs, pkgs, lib, system, config, ... }:
+let
+  helpers = config.lib.nixvim;
+in
 {
   imports = [
     inputs.nixvim.homeModules.nixvim
@@ -95,9 +98,7 @@
       termguicolors = true;
       timeoutlen = 2000;
       title = true;
-      undodir = {
-        __raw = ''require("plenary.path").joinpath(vim.call("stdpath", "cache"), "undo")'';
-      };
+      undodir = helpers.mkRaw ''require("plenary.path").joinpath(vim.call("stdpath", "cache"), "undo")'';
       undofile = true;
       updatetime = 100;
       writebackup = false;
@@ -138,22 +139,20 @@
 
     autoCmd = [
       {
-        callback = {
-          __raw = ''
-            function()
-              local opts = {
-                focusable = false,
-                close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" },
-                border = 'rounded',
-                source = 'always',
-                prefix = ' ',
-                scope = 'cursor',
-              }
+        callback = helpers.mkRaw ''
+          function()
+            local opts = {
+              focusable = false,
+              close_events = { "BufLeave", "CursorMoved", "InsertEnter", "FocusLost" },
+              border = 'rounded',
+              source = 'always',
+              prefix = ' ',
+              scope = 'cursor',
+            }
 
-              vim.diagnostic.open_float(nil, opts)
-            end
-          '';
-        };
+            vim.diagnostic.open_float(nil, opts)
+          end
+        '';
 
         desc = "Show diagnostics on cursor hold";
         event = "CursorHold";

@@ -1,4 +1,7 @@
-{ ... }:
+{ config, ... }:
+let
+  helpers = config.lib.nixvim;
+in
 {
   programs.nixvim.plugins.bufferline = {
     enable = false;
@@ -25,13 +28,7 @@
 
         mode = "buffers";
         numbers = "none";
-        close_command = {
-          __raw = ''
-            function(bufnr)
-              buf_kill("bd", bufnr, false)
-            end
-          '';
-        };
+        close_command = helpers.mkRaw ''function(bufnr) buf_kill("bd", bufnr, false) end'';
 
         right_mouse_command = "vert sbuffer %d";
         left_mouse_command = "buffer %d";
@@ -48,15 +45,13 @@
         left_trunc_marker = "";
         right_trunc_marker = "";
 
-        name_formatter = {
-          __raw = ''
-            function(buf)
-              if buf.name:match "%.md" then
-                return vim.fn.fnamemodify(buf.name, ":t:r")
-              end
+        name_formatter = helpers.mkRaw ''
+          function(buf)
+            if buf.name:match "%.md" then
+              return vim.fn.fnamemodify(buf.name, ":t:r")
             end
-          '';
-        };
+          end
+        '';
 
         max_name_length = 18;
         max_prefix_length = 15;
@@ -65,46 +60,42 @@
         diagnostics = "nvim_lsp";
         diagnostics_update_in_insert = false;
 
-        diagnostics_indicator = {
-          __raw = ''
-            function(num, _, diagnostics, _)
-              local result = {}
-              local symbols = {
-                error = "",
-                warning = "",
-                info = "",
-              }
-              for name, count in pairs(diagnostics) do
-                if symbols[name] and count > 0 then
-                  table.insert(result, symbols[name] .. " " .. count)
-                end
+        diagnostics_indicator = helpers.mkRaw ''
+          function(num, _, diagnostics, _)
+            local result = {}
+            local symbols = {
+              error = "",
+              warning = "",
+              info = "",
+            }
+            for name, count in pairs(diagnostics) do
+              if symbols[name] and count > 0 then
+                table.insert(result, symbols[name] .. " " .. count)
               end
-              result = table.concat(result, " ")
-              return #result > 0 and result or ""
             end
-          '';
-        };
+            result = table.concat(result, " ")
+            return #result > 0 and result or ""
+          end
+        '';
 
-        custom_filter  = {
-          __raw = ''
-            function(buf, buf_nums)
-              local logs = vim.tbl_filter(function(b)
-                return vim.bo[b].filetype == "log"
-              end, buf_nums or {})
-              if vim.tbl_isempty(logs) then
-                return true
-              end
-              local tab_num = vim.fn.tabpagenr()
-              local last_tab = vim.fn.tabpagenr "$"
-              local is_log = vim.bo[b].filetype == "log"
-              if last_tab == 1 then
-                return true
-              end
-              -- only show log buffers in secondary tabs
-              return (tab_num == last_tab and is_log) or (tab_num ~= last_tab and not is_log)
+        custom_filter = helpers.mkRaw ''
+          function(buf, buf_nums)
+            local logs = vim.tbl_filter(function(b)
+              return vim.bo[b].filetype == "log"
+            end, buf_nums or {})
+            if vim.tbl_isempty(logs) then
+              return true
             end
-          '';
-        };
+            local tab_num = vim.fn.tabpagenr()
+            local last_tab = vim.fn.tabpagenr "$"
+            local is_log = vim.bo[b].filetype == "log"
+            if last_tab == 1 then
+              return true
+            end
+            -- only show log buffers in secondary tabs
+            return (tab_num == last_tab and is_log) or (tab_num ~= last_tab and not is_log)
+          end
+        '';
 
         offsets = [
           {

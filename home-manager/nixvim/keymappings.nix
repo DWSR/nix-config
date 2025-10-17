@@ -1,3 +1,7 @@
+{config, ...}:
+let
+  helpers = config.lib.nixvim;
+in
 {
   programs.nixvim = {
     globals = {
@@ -241,9 +245,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.grep() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.grep() end";
         key = "<leader>st";
 
         options = {
@@ -253,9 +255,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.smart() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.smart() end";
         key = "<leader>sf";
 
         options = {
@@ -265,9 +265,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_symbols() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.lsp_symbols() end";
         key = "<leader>ss";
 
         options = {
@@ -277,9 +275,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_workspace_symbols() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.lsp_workspace_symbols() end";
         key = "<leader>sS";
 
         options = {
@@ -289,9 +285,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_definitions() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.lsp_definitions() end";
         key = "<leader>gd";
 
         options = {
@@ -301,9 +295,7 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_declarations() end";
-        };
+        action = helpers.mkRaw "function() Snacks.picker.lsp_declarations() end";
         key = "<leader>gD";
 
         options = {
@@ -313,11 +305,9 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_references() end";
-        };
-
+        action = helpers.mkRaw "function() Snacks.picker.lsp_references() end";
         key = "<leader>gr";
+
         options = {
           silent = true;
           noremap = true;
@@ -325,11 +315,9 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_implementations() end";
-        };
-
+        action = helpers.mkRaw "function() Snacks.picker.lsp_implementations() end";
         key = "<leader>gI";
+
         options = {
           silent = true;
           noremap = true;
@@ -337,11 +325,9 @@
         };
       }
       {
-        action = {
-          __raw = "function() Snacks.picker.lsp_type_definitions() end";
-        };
-
+        action = helpers.mkRaw "function() Snacks.picker.lsp_type_definitions() end";
         key = "<leader>gy";
+
         options = {
           silent = true;
           noremap = true;

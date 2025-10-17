@@ -1,15 +1,16 @@
-{ ... }:
+{ config, ... }:
+let
+  helpers = config.lib.nixvim;
+in
 {
   programs.nixvim.userCommands = {
     "BufferKill" = {
       desc = "Close the current buffer";
-      command = {
-      __raw = ''
+      command = helpers.mkRaw ''
         function()
           buf_kill("bd")
         end
       '';
-      };
     };
   };
 }
