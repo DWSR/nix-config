@@ -17,6 +17,7 @@
     ./plugins/copilot.nix
     ./plugins/devdocs.nix
     ./plugins/direnv.nix
+    ./plugins/edgy.nix
     ./plugins/git-conflict.nix
     ./plugins/gitblame.nix
     ./plugins/illuminate.nix

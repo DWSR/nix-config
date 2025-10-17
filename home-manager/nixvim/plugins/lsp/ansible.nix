@@ -3,6 +3,7 @@
   programs.nixvim.plugins.lsp.servers = {
     ansiblels = {
       enable = true;
+      package = pkgs.ansible-language-server;
       autostart = false;
     };
 
@@ -15,7 +16,7 @@
 
   programs.nixvim.extraPlugins = [
     (
-      pkgs.vimUtils.buildVimPlugin { 
+      pkgs.vimUtils.buildVimPlugin {
         name = "mfussenegger/nvim-ansible";
 
         src = pkgs.fetchFromGitHub {

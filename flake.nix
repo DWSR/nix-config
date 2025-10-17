@@ -39,7 +39,7 @@
     };
 
     nixvim = {
-      url = "github:nix-community/nixvim/nixos-25.05";
+      url = "github:nix-community/nixvim/5275e258bf89e4947409ba36e362031ca491c67c";
     };
 
     darwin = {
