@@ -34,6 +34,6 @@ in
       }
     ];
 
-    autoGroups = {"git_refresh_neotree" = {};};
+    autoGroups = {"git_refresh_neotree" = {clear = true;};};
   };
 }

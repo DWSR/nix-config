@@ -88,6 +88,7 @@
       "--help" = "--help 2>&1 | bat --language=help --style=plain'";
       cat = "bat --paging=never --style=plain";
       e = "nvim .";
+      gd = "git diff";
     };
 
     sessionVariables = {
