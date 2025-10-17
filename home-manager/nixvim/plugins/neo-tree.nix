@@ -10,6 +10,8 @@
       };
 
       open_files_do_not_replace_types = ["terminal" "Trouble" "qf" "edgy"];
+      use_libuv_file_watcher = true;
+      follow_current_file.enabled = true;
     };
   };
 
