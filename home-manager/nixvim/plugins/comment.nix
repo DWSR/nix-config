@@ -2,8 +2,8 @@
 {
   programs.nixvim.plugins.ts-context-commentstring = {
     enable = true;
-    
-    extraOptions = {
+
+    settings = {
       enable_autocmd = false;
       config = {
         # Languages that have a single comment style

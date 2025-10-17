@@ -1,7 +1,7 @@
 { inputs, pkgs, lib, system, ... }:
 {
   imports = [
-    inputs.nixvim.homeManagerModules.nixvim
+    inputs.nixvim.homeModules.nixvim
 
     ./keymappings.nix
     ./commands.nix
