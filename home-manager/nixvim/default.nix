@@ -35,6 +35,7 @@
     ./plugins/noice.nix
     ./plugins/notify.nix
     ./plugins/numbertoggle.nix
+    ./plugins/nvim-lsp-file-operations.nix
     # ./plugins/nvim-tree.nix
     ./plugins/smear-cursor.nix
     ./plugins/snacks.nix
