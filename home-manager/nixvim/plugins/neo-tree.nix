@@ -8,12 +8,9 @@
         visible = true;
         never_show = [".git" ".DS_Store" "thumbs.db"];
       };
+
+      open_files_do_not_replace_types = ["terminal" "Trouble" "qf" "edgy"];
     };
-    #
-    # filesystem.filteredItems = {
-    #   visible = true;
-    #   neverShow = [".git" ".DS_Store" "thumbs.db"];
-    # };
   };
 
   programs.nixvim.keymaps = [
