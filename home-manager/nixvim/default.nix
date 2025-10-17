@@ -21,8 +21,7 @@
     ./plugins/git-conflict.nix
     ./plugins/gitblame.nix
     ./plugins/illuminate.nix
-    # TODO Enable this after updating nixvim
-    # ./plugins/img-clip.nix
+    ./plugins/img-clip.nix
     ./plugins/indent-blankline.nix
     ./plugins/lastplace.nix
     ./plugins/lazygit.nix
