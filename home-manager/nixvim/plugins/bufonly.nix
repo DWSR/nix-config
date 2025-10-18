@@ -1,4 +1,7 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
+let
+  helpers = config.lib.nixvim;
+in
 {
   programs.nixvim = {
     extraPlugins = [
@@ -7,7 +10,12 @@
 
     keymaps = [
       {
-        action = "<cmd>BufOnly<CR>";
+        action = helpers.mkRaw ''
+          function()
+            require("BufOnly").BufOnly()
+            vim.api.nvim_exec_autocmds("BufDelete", {})
+          end
+        '';
         key = "<leader>bC";
 
         options = {
