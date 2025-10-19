@@ -44,6 +44,7 @@ in
     ./plugins/snacks.nix
     ./plugins/toggleterm.nix
     ./plugins/treesitter.nix
+    ./plugins/trim.nix
     ./plugins/which-key.nix
     ./plugins/visual-whitespace.nix
   ];
