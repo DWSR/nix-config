@@ -44,6 +44,8 @@ in {
       lazygit
       xz
       gcloud
+      unstable.slack
+      raycast
     ];
   };
 
@@ -67,6 +69,13 @@ in {
     )
   ];
 
+  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
+    "1password-cli"
+    "1password"
+    "raycast"
+    "keymapp"
+    "slack"
+  ];
 
   imports = [
     ../../../home-manager/common

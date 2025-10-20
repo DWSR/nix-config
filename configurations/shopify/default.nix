@@ -54,10 +54,15 @@ in {
   home-manager = {
     extraSpecialArgs = { inherit inputs outputs username; };
 
-
     users = {
       "${username}" = import ./home-manager;
     };
+  };
+
+  programs._1password.enable = true;
+  programs._1password-gui = {
+    enable = true;
+    package = pkgs.unstable._1password-gui-beta;
   };
 
   nix-homebrew = {
@@ -94,19 +99,13 @@ in {
     ];
 
     casks = [
-      "1password@beta"
-      "1password-cli"
       "contexts"
-      "ghostty"
       "fellow"
       "ears"
       "rectangle"
-      "raycast"
       "shortcat"
       "loopback"
-      "slack"
       "deskflow"
-      "keymapp"
       "obsidian"
       "podman-desktop"
     ];
