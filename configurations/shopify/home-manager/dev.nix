@@ -11,6 +11,7 @@
         "team_id" = "1977";
         "team_name" = "Database Platform";
         "team_fetch_next_time" = "4611686018427387903";
+        "shopify_email" = "brandon.mcnama@shopify.com";
       };
 
       "fax" = {
