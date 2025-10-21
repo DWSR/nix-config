@@ -72,12 +72,12 @@ in {
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
         ref = "master";
-        rev = "3b185d67706b0319f703c114085d68c44fbfc3d4";
+        rev = "fa9554e4e713e918aa28c74c94c0531ffb4f1d99";
       };
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
         ref = "main";
-        rev = "2761ad607b3f6645c489d36d6cf688375e5143b0";
+        rev = "6a2a72c799c06a5f4d0431824cc0ddbc595208c2";
       };
 
       "withgraphite/homebrew-tap" = inputs.homebrew-withgraphite;
