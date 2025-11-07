@@ -5,7 +5,7 @@
   };
 
   programs.nixvim.plugins.avante = {
-    enable = false;
+    enable = true;
 
     settings = {
       system_prompt = {
