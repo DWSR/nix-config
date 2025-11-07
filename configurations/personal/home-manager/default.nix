@@ -52,6 +52,7 @@
       hcloud
       butane
       raycast
+      wireshark
     ];
   };
 
