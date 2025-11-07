@@ -45,6 +45,7 @@ in
     ./plugins/toggleterm.nix
     ./plugins/treesitter.nix
     ./plugins/trim.nix
+    ./plugins/twilight.nix
     ./plugins/which-key.nix
     ./plugins/visual-whitespace.nix
   ];
