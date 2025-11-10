@@ -48,7 +48,9 @@ in
               filter = function(buf)
                 return vim.b[buf].neo_tree_source == "filesystem"
               end,
+              pinned = true,
               size = { height = 0.6 },
+              open = "Neotree position=left filesystem",
             },
             {
               title = "Git",
@@ -77,5 +79,19 @@ in
         '';
       };
     };
+
+    keymaps = [
+      {
+        action = "<cmd>lua require(\"edgy\").toggle()<CR>";
+        key = "<leader>e";
+        mode = ["n" "v"];
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle sidebar";
+        };
+      }
+    ];
   };
 }
