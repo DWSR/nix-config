@@ -4,11 +4,15 @@
     gopls = {
       enable = true;
       autostart = false;
+
+      packageFallback = true;
     };
 
     golangci_lint_ls = {
       enable = true;
       autostart = false;
+
+      packageFallback = true;
     };
   };
 
