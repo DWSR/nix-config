@@ -16,12 +16,20 @@
     ./lsp/yaml.nix
   ];
 
-  programs.nixvim.plugins.lsp = {
-    enable = true;
-    inlayHints = true;
+  programs.nixvim.plugins = {
+    lsp = {
+      enable = true;
+      inlayHints = true;
 
-    keymaps = {
-      silent = true;
+      keymaps = {
+        silent = true;
+      };
+    };
+
+    lspkind = {
+      enable = true;
+
+      settings.preset = "default";
     };
   };
 
