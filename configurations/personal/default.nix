@@ -78,6 +78,7 @@ in {
     casks = [
       "contexts"
       "domzilla-caffeine"
+      "ungoogled-chromium"
       "ears"
       "moom"
       "orbstack"
