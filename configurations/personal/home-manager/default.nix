@@ -68,11 +68,17 @@
         user = "root";
         identitiesOnly = true;
         identityFile = "~/.ssh/unifi.pub";
+        setEnv.TERM = "xterm-256color";
 
         extraOptions = {
           "PasswordAuthentication" = "no";
           "HostKeyAlgorithms" = "+ssh-rsa";
         };
+      };
+      "192.168.1.69" = {
+        user = "root";
+        setEnv.TERM = "xterm-256color";
+        extraOptions.PasswordAuthentication = "yes";
       };
     };
   };
