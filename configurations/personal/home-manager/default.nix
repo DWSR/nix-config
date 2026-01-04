@@ -83,6 +83,8 @@
     };
   };
 
+  programs.atuin.settings.sync_address = "https://atuin.mcnama.family";
+
   programs._1password-shell-plugins = {
     enable = true;
 
