@@ -84,7 +84,7 @@ in {
       "orbstack"
       "oversight"
       "orion"
-      "pocket-casts"
+      # "pocket-casts"
       "deskflow"
       "homerow"
       "obs"

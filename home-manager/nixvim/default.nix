@@ -15,7 +15,6 @@ in
     ./plugins/bufferline.nix
     ./plugins/bufonly.nix
     ./plugins/cmp.nix
-    ./plugins/codecompanion.nix
     ./plugins/comment.nix
     ./plugins/copilot.nix
     ./plugins/devdocs.nix
