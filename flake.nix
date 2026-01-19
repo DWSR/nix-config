@@ -76,11 +76,6 @@
       flake = false;
     };
 
-    homebrew-withgraphite = {
-      url = "github:withgraphite/homebrew-tap";
-      flake = false;
-    };
-
     color-schemes = {
       url = "github:mbadolato/iTerm2-Color-Schemes";
       flake = false;
