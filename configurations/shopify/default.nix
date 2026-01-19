@@ -15,7 +15,12 @@ in {
   ];
 
   nix = {
-    enable = false;
+    enable = true;
+
+    envVars = {
+      AWS_SHARED_CREDENTIALS_FILE = "/etc/nix/aws/credentials";
+    };
+
     nixPath = ["/etc/nix/path"];
 
     settings = {
@@ -27,7 +32,7 @@ in {
     registry = (lib.mapAttrs (_: flake: {inherit flake;})) ((lib.filterAttrs (_: lib.isType "flake")) inputs);
 
     extraOptions = ''
-      !include nix.conf.d/dev.conf
+      !include nix.conf.d/shopify.conf
     '';
   };
 
@@ -41,13 +46,14 @@ in {
 
   # This will additionally add your inputs to the system's legacy channels
   # Making legacy nix commands consistent as well, awesome!
-  environment.etc =
-    lib.mapAttrs'
+  environment = {
+    etc = lib.mapAttrs'
     (name: value: {
       name = "nix/path/${name}";
       value.source = value.flake;
     })
     config.nix.registry;
+  };
 
   users.users."${username}".home = "/Users/${username}";
 
@@ -79,15 +85,13 @@ in {
         ref = "main";
         rev = "6a2a72c799c06a5f4d0431824cc0ddbc595208c2";
       };
-
-      "withgraphite/homebrew-tap" = inputs.homebrew-withgraphite;
     };
   };
 
   fonts = {
     packages = with pkgs; [
-      pkgs.nerd-fonts.monaspace
-      pkgs.monaspace
+      nerd-fonts.monaspace
+      monaspace
     ];
   };
 
@@ -95,7 +99,6 @@ in {
     brews = [
       "ejson"
       "pkg-config"
-      "withgraphite/tap/graphite"
     ];
 
     casks = [

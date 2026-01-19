@@ -1,10 +1,6 @@
 {
-  inputs,
-  outputs,
-  config,
   pkgs,
   lib,
-  username,
   ...
 }: let
   gcloud = pkgs.google-cloud-sdk.withExtraComponents [
@@ -81,5 +77,6 @@ in {
     ../../../home-manager/common
     ./dev.nix
     ./git.nix
+    ./wish.nix
   ];
 }

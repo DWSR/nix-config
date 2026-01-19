@@ -35,12 +35,13 @@
     };
   };
 
-  programs.zsh.initExtraBeforeCompInit = ''
-    # Shopify dev CLI setup
-    [[ -f /opt/dev/sh/chruby/chruby.sh ]] && { type chruby >/dev/null 2>&1 || chruby () { source /opt/dev/sh/chruby/chruby.sh; chruby "$@"; } }
-    [ -f /opt/dev/dev.sh ] && source /opt/dev/dev.sh
-
+  programs.zsh.initContent = lib.mkOrder 550 (lib.concatStringsSep "\n\n" [
     # dev specifically looks for this string when running tasks :eyeroll:
-    [[ -x /opt/homebrew/bin/brew ]] && eval $(/opt/homebrew/bin/brew shellenv)
-  '';
+    # This also has to come before tec setup or tec complains
+    ''[[ -x /opt/homebrew/bin/brew ]] && eval $(/opt/homebrew/bin/brew shellenv)''
+    ''[[ -f /opt/dev/sh/chruby/chruby.sh ]] && { type chruby >/dev/null 2>&1 || chruby () { source /opt/dev/sh/chruby/chruby.sh; chruby "$@"; } }''
+    # tec setup
+    # No longer need [ -f /opt/dev/dev.sh ] && source /opt/dev/dev.sh because tec setup does it.
+    ''[[ -x /Users/brandonmcnama/.local/state/tec/profiles/base/current/global/init ]] && eval "$(/Users/brandonmcnama/.local/state/tec/profiles/base/current/global/init zsh)"''
+  ]);
 }
