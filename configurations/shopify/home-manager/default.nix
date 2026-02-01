@@ -10,7 +10,6 @@ in {
 
   home = {
     stateVersion = "24.11";
-
     enableNixpkgsReleaseCheck = true;
     preferXdgDirectories = true;
 

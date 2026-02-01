@@ -98,6 +98,7 @@ in {
   homebrew = {
     brews = [
       "ejson"
+      "clouddo-cli"
       "pkg-config"
     ];
 
