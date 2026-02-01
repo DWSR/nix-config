@@ -5,7 +5,7 @@ in
 {
   programs.nixvim = {
     extraPlugins = [
-      pkgs.vimExtraPlugins.BufOnly-nvim
+      pkgs.vimExtraPlugins.BufOnly-nvim-numToStr
     ];
 
     keymaps = [
