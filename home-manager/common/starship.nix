@@ -1,4 +1,22 @@
-{ lib, ... }: {
+{ lib, ... }:
+let
+  defaultLangOpts = s: {
+    symbol = s;
+    format = "[ $symbol ($version) ]($style)";
+    style = "bg:nord1 fg:nord4";
+  };
+
+  defaultToolOpts = s: {
+    symbol = s;
+    format = "[ $symbol ($version) ]($style)";
+    style = "bg:nord3 fg:nord4";
+  };
+
+  firstBlockSep = "[](bg:nord1 fg:nord0)";
+  secondBlockSep = "[](bg:nord3 fg:nord1)";
+  endSep = "[](nord0 fg:nord1)";
+
+in {
   programs.starship = {
     enable = true;
 
@@ -9,18 +27,19 @@
         # Left element
         "[](fg:nord0)"
         "$directory"
-        "[](bg:nord1 fg:nord0)"
+        firstBlockSep
         "$git_branch"
         "$git_status"
         "$git_metrics"
-        "[](nord0 fg:nord1)"
+        endSep
         "$fill"
 
         # Center element
-        "[](fg:nord1)"
+        "[](fg:nord0)"
         "$time"
+        firstBlockSep
         "$c"
-        "$cmake"
+        "$crystal"
         "$dart"
         "$deno"
         "$dotnet"
@@ -29,9 +48,7 @@
         "$erlang"
         "$golang"
         "$python"
-        "$gradle"
         "$haskell"
-        "$helm"
         "$java"
         "$julia"
         "$kotlin"
@@ -47,21 +64,25 @@
         "$rust"
         "$scale"
         "$swift"
+        "$zig"
+        secondBlockSep
+        "$cmake"
+        "$gradle"
+        "$helm"
         "$terraform"
         "$vagrant"
-        "$zig"
         "$conda"
-        "$crystal"
-        "[](nord0 fg:nord3)"
+        endSep
         "$fill"
 
         # Right element
-        "[](nord0 fg:nord3)"
+        "[](fg:nord0)"
         "$nix_shell"
         "$direnv"
         "$cmd_duration"
+        firstBlockSep
         "$status"
-        "[](nord0 fg:nord3)"
+        endSep
         "$line_break"
         "$character"
       ];
@@ -87,14 +108,14 @@
 
       time = {
         disabled = false;
-        format = "[ $time]($style)";
-        style = "bg:nord0";
+        format = "[ $time ]($style)";
+        style = "bg:nord0 fg:nord13";
       };
 
       character = {
-        success_symbol = "[](bold green)";
-        error_symbol = "[](bold red)";
-        vimcmd_symbol = "[](bold yellow)";
+        success_symbol = "[](bold nord14)";
+        error_symbol = "[](bold nord11)";
+        vimcmd_symbol = "[](bold nord13)";
       };
 
       username = {
@@ -189,12 +210,12 @@
       status = {
         format = "[ $symbol ]($style)";
         style = "bold";
-        symbol = "[](bg:nord3 fg:nord11)";
-        success_symbol = "[](fg:nord14)";
-        not_executable_symbol = "[🛇](fg:nord11)";
-        not_found_symbol = "[󰍉](fg:nord11)";
-        sigint_symbol = "[](fg:nord13)";
-        signal_symbol = "[](fg:nord11)";
+        symbol = "[](bg:nord0 fg:nord11)";
+        success_symbol = "[](bg:nord0 fg:nord14)";
+        not_executable_symbol = "[🛇](bg:nord0 fg:nord11)";
+        not_found_symbol = "[󰍉](bg:nord0 fg:nord11)";
+        sigint_symbol = "[](bg:nord0 fg:nord13)";
+        signal_symbol = "[](bg:nord0 fg:nord11)";
         disabled = false;
       };
 
@@ -205,8 +226,8 @@
 
       cmd_duration = {
         min_time = 0;
-        format = "[$duration]($style)";
-        style = "fg:nord13";
+        format = "[ $duration]($style)";
+        style = "bg:nord1 fg:nord13";
       };
 
       direnv = {
@@ -224,184 +245,58 @@
       # git
       git_branch = {
         symbol = "";
-        style = "bg:nord2 fg:nord4";
+        style = "bg:nord1 fg:nord13";
         format = "[ $symbol $branch ]($style)";
       };
 
       git_status = {
-        style = "bg:nord2 fg:nord4";
-        format = "[$all_status$ahead_behind ]($style)";
+        style = "bg:nord1 fg:nord13";
+        format = "[$all_status$ahead_behind]($style)";
       };
 
       git_metrics = {
         disabled = false;
-        added_style = "bg:nord2 fg:nord14";
-        deleted_style = "bg:nord2 fg:nord11";
+        added_style = "bg:nord1 fg:nord14";
+        deleted_style = "bg:nord1 fg:nord11";
         format = "[+$added ]($added_style)[-$deleted ]($deleted_style)";
       };
 
       # languages
-      c = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      crystal = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      dart = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      deno = {
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      dotnet = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      erlang = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      elixir = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      elm = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      golang = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
+      c = defaultLangOpts "";
+      crystal = defaultLangOpts " ";
+      dart = defaultLangOpts "";
+      deno = defaultLangOpts "";
+      dotnet = defaultLangOpts "";
+      erlang = defaultLangOpts "";
+      elixir = defaultLangOpts "";
+      elm = defaultLangOpts "";
+      golang = defaultLangOpts "";
+      kotlin = defaultLangOpts "󱈙";
+      lua = defaultLangOpts "󰢱";
+      ocaml = defaultLangOpts "";
+      perl = defaultLangOpts "";
+      purescript = defaultLangOpts "";
+      red = defaultLangOpts " ";
+      ruby = defaultLangOpts "󰴭";
+      swift = defaultLangOpts "󰛥";
+      zig = defaultLangOpts "";
 
       python = {
-        symbol = " ";
+        symbol = "";
         python_binary = "python3";
         style = "bg:nord3 fg:nord4";
         format = "[ $symbol ($version) (($virtualenv)) ]($style)";
       };
 
-      kotlin = {
-        symbol = "󱈙 ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      lua = {
-        symbol = "󰢱 ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      ocaml = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      perl = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      purescript = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      red = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      ruby = {
-        symbol = "󰴭 ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      swift = {
-        symbol = "󰛥 ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      zig = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
       # tools
-      cmake = {
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      conda = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      gradle = {
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      helm = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      kubernetes = {
-        symbol = "󱃾 ";
-        format = "on [$symbol $context(($namespace))]($style) ";
-        style = "blue bold";
-        disabled = false;
-      };
-
-      nix_shell = {
-        symbol = " 󱄅";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      terraform = {
-        symbol = "󱁢 ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
-
-      vagrant = {
-        symbol = " ";
-        style = "bg:nord3 fg:nord4";
-        format = "[ $symbol ($version) ]($style)";
-      };
+      cmake = defaultToolOpts "";
+      conda = defaultToolOpts " ";
+      gradle = defaultToolOpts "";
+      helm = defaultToolOpts "";
+      kubernetes = defaultToolOpts "󱃾";
+      nix_shell = defaultToolOpts "󱄅";
+      terraform = defaultToolOpts "󱁢";
+      vagrant = defaultToolOpts "";
     };
   };
 }
