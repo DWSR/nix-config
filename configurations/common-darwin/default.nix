@@ -1,6 +1,10 @@
 { inputs, config, pkgs, ... }:
 {
-  imports = [ inputs.homebrew.darwinModules.nix-homebrew ];
+  imports = [
+    inputs.homebrew.darwinModules.nix-homebrew
+
+    ./slack.nix
+  ];
 
   nix-homebrew = {
     enable = true;
