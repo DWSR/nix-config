@@ -1,6 +1,6 @@
 {
   nixConfig = {
-    trusted-users = ["brandonmcnama"];
+    trusted-users = [ "brandonmcnama" ];
 
     extra-substituters = [
       # nix community's cache server
@@ -85,47 +85,56 @@
     mcphub.url = "github:ravitemer/mcp-hub";
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    home-manager,
-    ...
-  } @ inputs: let
-    inherit (self) outputs;
+  outputs =
+    {
+      self,
+      nixpkgs,
+      home-manager,
+      ...
+    }@inputs:
+    let
+      inherit (self) outputs;
 
-    systems = [
-      "aarch64-darwin"
-      "x86_64-darwin"
-    ];
+      systems = [
+        "aarch64-darwin"
+        "x86_64-darwin"
+      ];
 
-    # This is a function that generates an attribute by calling a function you
-    # pass to it, with each system as an argument
-    forAllSystems = nixpkgs.lib.genAttrs systems;
+      # This is a function that generates an attribute by calling a function you
+      # pass to it, with each system as an argument
+      forAllSystems = nixpkgs.lib.genAttrs systems;
 
-    # Formatter for your nix files, available through 'nix fmt'
-    # Other options beside 'alejandra' include 'nixpkgs-fmt'
-    formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
-  in {
-    overlays = import ./overlays { inherit inputs; };
+      # Formatter for your nix files, available through 'nix fmt'
+      # Other options beside 'alejandra' include 'nixpkgs-fmt'
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
+    in
+    {
+      overlays = import ./overlays { inherit inputs; };
 
-    darwinConfigurations = {
-      "ShopifyLaptop" = inputs.darwin.lib.darwinSystem {
-        specialArgs = {inherit inputs outputs;};
+      darwinConfigurations = {
+        "ShopifyLaptop" = inputs.darwin.lib.darwinSystem {
+          specialArgs = {
+            inherit inputs outputs;
+            username = "brandonmcnama";
+          };
 
-        modules = [
-          ./modules/nix-core.nix
-          ./configurations/shopify
-        ];
-      };
-      "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
-        specialArgs = {inherit inputs outputs;};
+          modules = [
+            ./modules/nix-core.nix
+            ./configurations/shopify
+          ];
+        };
+        "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
+          specialArgs = {
+            inherit inputs outputs;
+            username = "brandonmcnama";
+          };
 
-        modules = [
-          inputs.lix-module.nixosModules.default
-          ./modules/nix-core.nix
-          ./configurations/personal
-        ];
+          modules = [
+            inputs.lix-module.nixosModules.default
+            ./modules/nix-core.nix
+            ./configurations/personal
+          ];
+        };
       };
     };
-  };
 }

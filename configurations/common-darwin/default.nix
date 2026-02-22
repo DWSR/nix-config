@@ -1,13 +1,15 @@
-{ inputs, config, pkgs, ... }:
+{ inputs, config, username, ... }:
 {
   imports = [
     inputs.homebrew.darwinModules.nix-homebrew
 
+    ./1password.nix
     ./slack.nix
   ];
 
   nix-homebrew = {
     enable = true;
+    user = username;
     autoMigrate = true;
     mutableTaps = false;
 
@@ -21,10 +23,8 @@
 
   homebrew = {
     enable = true;
-
-    global = {
-      autoUpdate = false;
-    };
+    user = username;
+    global.autoUpdate = false;
 
     onActivation = {
       autoUpdate = true;
@@ -37,13 +37,13 @@
   };
 
   system = {
-    primaryUser = "brandonmcnama";
+    primaryUser = username;
 
     # activationScripts are executed every time you boot the system or run `nixos-rebuild` / `darwin-rebuild`.
     activationScripts.postActivation.text = ''
       # activateSettings -u will reload the settings from the database and apply them to the current session,
       # so we do not need to logout and login again to make the changes take effect.
-      sudo -u brandonmcnama /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
+      sudo -u ${username} /System/Library/PrivateFrameworks/SystemAdministration.framework/Resources/activateSettings -u
     '';
 
     defaults = {

@@ -4,10 +4,10 @@
   lib,
   config,
   pkgs,
+  username,
   ...
-}: let
-  username = "brandonmcnama";
-in {
+}:
+{
   imports = [
     inputs.home-manager.darwinModules.home-manager
 
@@ -21,15 +21,17 @@ in {
       AWS_SHARED_CREDENTIALS_FILE = "/etc/nix/aws/credentials";
     };
 
-    nixPath = ["/etc/nix/path"];
+    nixPath = [ "/etc/nix/path" ];
 
     settings = {
-      trusted-users = ["${username}"];
-      substituters = ["https://cache.nixos.org"];
+      trusted-users = [ "${username}" ];
+      substituters = [ "https://cache.nixos.org" ];
     };
 
     # To make nix3 commands consistent with your flake
-    registry = (lib.mapAttrs (_: flake: {inherit flake;})) ((lib.filterAttrs (_: lib.isType "flake")) inputs);
+    registry = (lib.mapAttrs (_: flake: { inherit flake; })) (
+      (lib.filterAttrs (_: lib.isType "flake")) inputs
+    );
 
     extraOptions = ''
       !include nix.conf.d/shopify.conf
@@ -47,12 +49,10 @@ in {
   # This will additionally add your inputs to the system's legacy channels
   # Making legacy nix commands consistent as well, awesome!
   environment = {
-    etc = lib.mapAttrs'
-    (name: value: {
+    etc = lib.mapAttrs' (name: value: {
       name = "nix/path/${name}";
       value.source = value.flake;
-    })
-    config.nix.registry;
+    }) config.nix.registry;
   };
 
   users.users."${username}".home = "/Users/${username}";
@@ -65,15 +65,7 @@ in {
     };
   };
 
-  programs._1password.enable = true;
-  programs._1password-gui = {
-    enable = true;
-    package = pkgs.unstable._1password-gui-beta;
-  };
-
   nix-homebrew = {
-    user = username;
-
     taps = {
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
