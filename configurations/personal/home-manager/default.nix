@@ -62,6 +62,8 @@
     enableDefaultConfig = false;
     includes = [ "~/.orbstack/ssh/config" ];
 
+    extraConfig = ''IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"'';
+
     matchBlocks = {
       "*" = {
         forwardAgent = false;
@@ -74,7 +76,6 @@
         serverAliveInterval = 0;
         serverAliveCountMax = 3;
         compression = true;
-        identityAgent = "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
       };
 
       "192.168.1.1" = {
