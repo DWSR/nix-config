@@ -41,6 +41,7 @@ in {
       gcloud
       unstable.slack
       raycast
+      uv
     ];
   };
 

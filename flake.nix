@@ -14,7 +14,7 @@
   };
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.05-darwin";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     op-shell-plugins.url = "github:1Password/shell-plugins";
     flake-utils.url = "github:numtide/flake-utils";
@@ -31,24 +31,17 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    lix-module = {
-      type = "git";
-      url = "https://git.lix.systems/lix-project/nixos-module";
-      ref = "release-2.93";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     nixvim = {
-      url = "github:nix-community/nixvim/5275e258bf89e4947409ba36e362031ca491c67c";
+      url = "github:nix-community/nixvim/nixos-25.11";
     };
 
     darwin = {
-      url = "github:LnL7/nix-darwin/nix-darwin-25.05";
+      url = "github:LnL7/nix-darwin/nix-darwin-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
     home-manager = {
-      url = "github:nix-community/home-manager/release-25.05";
+      url = "github:nix-community/home-manager/release-25.11";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -130,7 +123,6 @@
           };
 
           modules = [
-            inputs.lix-module.nixosModules.default
             ./modules/nix-core.nix
             ./configurations/personal
           ];

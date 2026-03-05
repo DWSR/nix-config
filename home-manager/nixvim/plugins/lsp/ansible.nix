@@ -2,7 +2,7 @@
 {
   programs.nixvim.plugins.lsp.servers = {
     ansiblels = {
-      enable = true;
+      enable = false;
       package = pkgs.ansible-language-server;
       autostart = false;
     };

@@ -15,6 +15,8 @@
   ];
 
   nix = {
+    package = pkgs.lixPackageSets.stable.lix;
+
     nixPath = [ "/etc/nix/path" ];
 
     # settings = {

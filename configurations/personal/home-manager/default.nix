@@ -6,7 +6,8 @@
   lib,
   username,
   ...
-}: {
+}:
+{
   imports = [
     inputs.op-shell-plugins.hmModules.default
 
@@ -58,12 +59,24 @@
 
   programs.ssh = {
     enable = true;
-    compression = true;
-    controlMaster = "auto";
-    includes = ["~/.orbstack/ssh/config"];
-    extraConfig = "IdentityAgent \"~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock\"";
+    enableDefaultConfig = false;
+    includes = [ "~/.orbstack/ssh/config" ];
 
     matchBlocks = {
+      "*" = {
+        forwardAgent = false;
+        addKeysToAgent = "no";
+        controlMaster = "auto";
+        controlPath = "~/.ssh/master-%r@%n:%p";
+        controlPersist = "no";
+        hashKnownHosts = false;
+        userKnownHostsFile = "~/.ssh/known_hosts";
+        serverAliveInterval = 0;
+        serverAliveCountMax = 3;
+        compression = true;
+        identityAgent = "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock";
+      };
+
       "192.168.1.1" = {
         user = "root";
         identitiesOnly = true;
@@ -75,6 +88,7 @@
           "HostKeyAlgorithms" = "+ssh-rsa";
         };
       };
+
       "192.168.1.69" = {
         user = "root";
         setEnv.TERM = "xterm-256color";
@@ -95,11 +109,13 @@
     ];
   };
 
-  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
-    "1password-cli"
-    "1password"
-    "raycast"
-    "keymapp"
-    "slack"
-  ];
+  nixpkgs.config.allowUnfreePredicate =
+    pkg:
+    builtins.elem (lib.getName pkg) [
+      "1password-cli"
+      "1password"
+      "raycast"
+      "keymapp"
+      "slack"
+    ];
 }

@@ -26,7 +26,7 @@
 
   # Add access to x86 packages when system is running Apple Silicon
   apple-silicon = final: prev: {
-    inputs.nixpkgs.lib.optionalAttrs = (prev.stdenv.system == "aarch64-darwin") {
+    inputs.nixpkgs.lib.optionalAttrs = (prev.stdenv.hostPlatform.system == "aarch64-darwin") {
       pkgs-x86 = import inputs.nixpkgs-unstable {
         system = "x86_64-darwin";
       };
