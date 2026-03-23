@@ -209,6 +209,22 @@
         "type": "github"
       }
     },
+    "git-issue-tracker": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1772568898,
+        "narHash": "sha256-EptVvscN4g+WE1xE0hYUz7+GrxNHJhblhBE0k8mo7O0=",
+        "owner": "nnunley",
+        "repo": "git-issue-tracker",
+        "rev": "bae8f5677e69ea1d5bd3ce9a520b9c603ce74674",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nnunley",
+        "repo": "git-issue-tracker",
+        "type": "github"
+      }
+    },
     "home-manager": {
       "inputs": {
         "nixpkgs": [
@@ -309,6 +325,22 @@
       "original": {
         "owner": "deskflow",
         "repo": "homebrew-tap",
+        "type": "github"
+      }
+    },
+    "homebrew-unf": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1774031771,
+        "narHash": "sha256-tMag33yiBhYkPheMVlAuEbysIdrdXrdWBXUWctjoSQ8=",
+        "owner": "cyrusradfar",
+        "repo": "homebrew-unf",
+        "rev": "6e49e475ba8f8fddeef5bd23e4f4572fb9d19f24",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cyrusradfar",
+        "repo": "homebrew-unf",
         "type": "github"
       }
     },
@@ -665,12 +697,14 @@
         "darwin": "darwin",
         "dotenv": "dotenv",
         "flake-utils": "flake-utils",
+        "git-issue-tracker": "git-issue-tracker",
         "home-manager": "home-manager",
         "homebrew": "homebrew",
         "homebrew-bundle": "homebrew-bundle",
         "homebrew-cask": "homebrew-cask",
         "homebrew-core": "homebrew-core",
         "homebrew-deskflow": "homebrew-deskflow",
+        "homebrew-unf": "homebrew-unf",
         "mcphub": "mcphub",
         "mcphub-nvim": "mcphub-nvim",
         "nix-index-database": "nix-index-database",

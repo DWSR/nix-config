@@ -11,7 +11,6 @@ in
 
     ./plugins/actions-preview.nix
     ./plugins/auto-save.nix
-    ./plugins/avante.nix
     ./plugins/bufferline.nix
     ./plugins/bufonly.nix
     ./plugins/cmp.nix

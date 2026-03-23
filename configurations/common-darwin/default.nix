@@ -18,6 +18,7 @@
       "homebrew/homebrew-cask" = inputs.homebrew-cask;
       "homebrew/homebrew-bundle" = inputs.homebrew-bundle;
       "deskflow/homebrew-tap" = inputs.homebrew-deskflow;
+      "cyrusradfar/homebrew-unf" = inputs.homebrew-unf;
     };
   };
 

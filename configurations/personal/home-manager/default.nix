@@ -12,6 +12,7 @@
     inputs.op-shell-plugins.hmModules.default
 
     ../../../home-manager/common
+    ./claude.nix
     ./git.nix
   ];
 
@@ -35,6 +36,8 @@
       curl
       entr
       flyctl
+      ghq
+      git-issue-tracker
       rclone
       rsync
       readline

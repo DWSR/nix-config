@@ -69,6 +69,11 @@
       flake = false;
     };
 
+    homebrew-unf = {
+      url = "github:cyrusradfar/homebrew-unf";
+      flake = false;
+    };
+
     color-schemes = {
       url = "github:mbadolato/iTerm2-Color-Schemes";
       flake = false;
@@ -76,13 +81,17 @@
 
     mcphub-nvim.url = "github:ravitemer/mcphub.nvim";
     mcphub.url = "github:ravitemer/mcp-hub";
+
+    git-issue-tracker = {
+      url = "github:nnunley/git-issue-tracker";
+      flake = false;
+    };
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      home-manager,
       ...
     }@inputs:
     let

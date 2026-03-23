@@ -1,4 +1,5 @@
-{inputs, ...}: {
+{ inputs, ... }:
+{
   # This one brings our custom packages from the 'pkgs' directory
   # additions = final: _prev: import ../pkgs {pkgs = final;};
 
@@ -30,6 +31,81 @@
       pkgs-x86 = import inputs.nixpkgs-unstable {
         system = "x86_64-darwin";
       };
+    };
+  };
+
+  custom-packages = final: prev: {
+    git-issue-tracker = final.stdenv.mkDerivation {
+      pname = "git-issue-tracker";
+      version = inputs.git-issue-tracker.shortRev or "unknown";
+      src = inputs.git-issue-tracker;
+      dontBuild = true;
+      installPhase = ''
+        mkdir -p $out/bin
+        cp -r bin/. $out/bin/
+        chmod +x $out/bin/*
+      '';
+    };
+
+    python312 = prev.python312.override {
+      packageOverrides = pyFinal: _pyPrev: {
+        kagiapi = pyFinal.buildPythonPackage rec {
+          pname = "kagiapi";
+          version = "0.2.1";
+          format = "wheel";
+
+          src = pyFinal.fetchPypi {
+            inherit pname version format;
+            # Target the generic pure-Python wheel.
+            dist = "py3";
+            python = "py3";
+            abi = "none";
+            platform = "any";
+            hash = "sha256-8/FGaQgEHRF3cLf5O+4SCX4RTdUYxN2jVBPfeFVGeZo=";
+          };
+          dependencies = with pyFinal; [ requests ];
+        };
+      };
+    };
+
+    slack-mcp-server = final.buildGoModule {
+      pname = "slack-mcp-server";
+      version = "1.2.3";
+      vendorHash = "sha256-mR+UFQRi98OTCyNISy3e7QTGKusd8XhNW4iz57QvpZE=";
+      # integration tests require real API keys
+      # checkFlags = [ "-skip=.*Integration.*" ];
+      doCheck = false;
+
+      src = final.fetchFromGitHub {
+        owner = "korotovsky";
+        repo = "slack-mcp-server";
+        tag = "v1.2.3";
+        hash = "sha256-AfmuQfV3RqFBw9b8B4aFM0EOuFQrUlUpTnMmQcyvCfU=";
+      };
+    };
+
+    kagimcp = final.python312Packages.buildPythonApplication {
+      pname = "kagimcp";
+      version = "0.1.4";
+      format = "wheel";
+
+      src = final.python312Packages.fetchPypi {
+        pname = "kagimcp";
+        version = "0.1.4";
+        format = "wheel";
+        # Target the generic pure-Python wheel.
+        dist = "py3";
+        python = "py3";
+        abi = "none";
+        platform = "any";
+        hash = "sha256-gJhxPOKy9i+wpjsvCvWwytSkDdKb1jD8z4DvjQHq8Hs=";
+      };
+
+      dependencies = with final.python312Packages; [
+        kagiapi
+        mcp
+        pydantic
+      ];
     };
   };
 }

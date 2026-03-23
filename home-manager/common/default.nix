@@ -1,34 +1,32 @@
-{ inputs, outputs, pkgs, ... }:
+{
+  inputs,
+  outputs,
+  lib,
+  pkgs,
+  ...
+}:
 {
   imports = [
     inputs.nix-index-database.homeModules.nix-index
 
     ./atuin.nix
-    ./ghostty.nix
-    ./zellij.nix
-    ./starship.nix
     ./gh-cli.nix
+    ./ghostty.nix
+    ./mcp.nix
+    ./starship.nix
+    ./zellij.nix
     ./zsh.nix
+
     ../nixvim
   ];
 
   nixpkgs.overlays = [
     outputs.overlays.unstable-packages
+    outputs.overlays.custom-packages
     inputs.nixneovimplugins.overlays.default
   ];
 
   xdg.enable = true;
-  xdg.configFile."mcphub/servers.json" = {
-    enable = true;
-    text = builtins.toJSON ({
-      mcpServers = {
-        nixos = {
-          command = "nix";
-          args = ["run" "github:utensils/mcp-nixos" "--"];
-        };
-      };
-    });
-  };
 
   editorconfig = {
     enable = true;
@@ -70,11 +68,10 @@
       enable = true;
 
       defaultFonts = {
-        monospace = ["MonaspiceNe Nerd Font Medium"];
+        monospace = [ "MonaspiceNe Nerd Font Medium" ];
       };
     };
   };
-
 
   home = {
     shell = {
@@ -100,7 +97,12 @@
 
   programs.eza = {
     enable = true;
-    extraOptions = ["--long" "--all" "--header" "--group-directories-first"];
+    extraOptions = [
+      "--long"
+      "--all"
+      "--header"
+      "--group-directories-first"
+    ];
     colors = "auto";
     git = true;
     icons = "auto";

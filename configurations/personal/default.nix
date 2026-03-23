@@ -86,6 +86,7 @@
       "audio-hijack"
       "deskflow"
       "obsidian"
+      "unfudged"
     ];
   };
 }
