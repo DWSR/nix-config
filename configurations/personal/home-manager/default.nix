@@ -12,7 +12,6 @@
     inputs.op-shell-plugins.hmModules.default
 
     ../../../home-manager/common
-    ./claude.nix
     ./git.nix
   ];
 

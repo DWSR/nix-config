@@ -1,9 +1,14 @@
 { pkgs, ... }:
+let
+  # TODO bump nixpkgs to get this back
+  # ansiblelsPackage = pkgs.unstable.ansible-language-server;
+in
 {
   programs.nixvim.plugins.lsp.servers = {
     ansiblels = {
       enable = false;
-      package = pkgs.ansible-language-server;
+      package = null;
+      packageFallback = true;
       autostart = false;
     };
 
@@ -28,4 +33,6 @@
       }
     )
   ];
+
+  # programs.nixvim.extraPackages = [ansiblelsPackage];
 }

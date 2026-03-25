@@ -1,4 +1,4 @@
-{config, ...}:
+{ config, ... }:
 let
   helpers = config.lib.nixvim;
 in
@@ -46,7 +46,7 @@ in
       {
         action = "<Esc><cmd>m .+1<CR>==gi";
         key = "<A-j>";
-        mode = ["i"];
+        mode = [ "i" ];
 
         options = {
           silent = true;
@@ -57,7 +57,7 @@ in
       {
         action = "<Esc><cmd>m .-2<CR>==gi";
         key = "<A-k>";
-        mode = ["i"];
+        mode = [ "i" ];
 
         options = {
           silent = true;
@@ -68,7 +68,7 @@ in
       {
         action = "<cmd>m .+1<CR>==";
         key = "<A-j>";
-        mode = ["n"];
+        mode = [ "n" ];
 
         options = {
           silent = true;
@@ -79,7 +79,7 @@ in
       {
         action = "<cmd>m .-2<CR>==";
         key = "<A-k>";
-        mode = ["n"];
+        mode = [ "n" ];
 
         options = {
           silent = true;
