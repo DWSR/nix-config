@@ -16,22 +16,39 @@
         {
           __unkeyed = "<leader>V";
           group = "Display toggles";
-          mode = ["n" "v"];
+          mode = [
+            "n"
+            "v"
+          ];
         }
         {
           __unkeyed = "<leader>s";
           group = "Search";
-          mode = ["n" "v"];
+          mode = [
+            "n"
+            "v"
+          ];
         }
         {
           __unkeyed = "<leader>g";
           group = "Goto";
-          mode = ["n" "v"];
+          mode = [
+            "n"
+            "v"
+          ];
+        }
+        {
+          __unkeyed = "<leader>w";
+          group = "Resize window";
+          mode = [ "n" ];
         }
         {
           __unkeyed = "<leader>l";
           group = "LSP Actions";
-          mode = ["n" "v"];
+          mode = [
+            "n"
+            "v"
+          ];
         }
       ];
     };

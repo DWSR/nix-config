@@ -201,6 +201,62 @@ in
           noremap = true;
         };
       }
+      # Window resizing
+      {
+        action = "<cmd>resize +5<CR>";
+        key = "<leader>w+";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Increase window height";
+        };
+      }
+      {
+        action = "<cmd>resize -5<CR>";
+        key = "<leader>w-";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Decrease window height";
+        };
+      }
+      {
+        action = "<cmd>vertical resize +5<CR>";
+        key = "<leader>w>";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Increase window width";
+        };
+      }
+      {
+        action = "<cmd>vertical resize -5<CR>";
+        key = "<leader>w<";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Decrease window width";
+        };
+      }
+      {
+        action = "<cmd>wincmd =<CR>";
+        key = "<leader>w=";
+        mode = "n";
+
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Equalize window sizes";
+        };
+      }
       # Easier indentation
       {
         action = "<gv";
