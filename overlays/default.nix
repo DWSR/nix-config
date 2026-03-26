@@ -35,6 +35,8 @@
   };
 
   custom-packages = final: prev: {
+    mcp-hub = inputs.mcphub.packages.${final.system}.default;
+
     git-issue-tracker = final.stdenv.mkDerivation {
       pname = "git-issue-tracker";
       version = inputs.git-issue-tracker.shortRev or "unknown";

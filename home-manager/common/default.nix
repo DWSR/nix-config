@@ -12,7 +12,6 @@
     ./atuin.nix
     ./gh-cli.nix
     ./ghostty.nix
-    ./mcp.nix
     ./starship.nix
     ./zellij.nix
     ./zsh.nix
