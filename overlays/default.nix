@@ -107,5 +107,26 @@
         pydantic
       ];
     };
+
+    fastmail-mcp = final.buildNpmPackage {
+      pname = "fastmail-mcp";
+      version = "1.8.2";
+
+      src = final.fetchFromGitHub {
+        owner = "MadLlama25";
+        repo = "fastmail-mcp";
+        tag = "v1.8.2";
+        hash = "sha256-/+fmVf2BUq+vBSOK+igfrp5fkU+RPGkYtYkBEFmZbMY=";
+      };
+
+      npmDepsHash = "sha256-/jfgV/H1i+XXM+KMrAtq5XK/a+5BZ1JoEvdxq/r6hkk=";
+
+      meta = with final.lib; {
+        description = "MCP server for Fastmail API integration";
+        homepage = "https://github.com/MadLlama25/fastmail-mcp";
+        license = licenses.mit;
+        mainProgram = "fastmail-mcp";
+      };
+    };
   };
 }

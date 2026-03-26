@@ -6,6 +6,7 @@ in
   home.packages = with pkgs; [
     kagimcp
     slack-mcp-server
+    fastmail-mcp
 
     github-mcp-server
     mcp-nixos
@@ -38,6 +39,15 @@ in
         kagi = {
           command = "${pkgs.kagimcp}/bin/kagimcp";
           env.KAGI_API_KEY = readOpSecretCmd "op://Private/Kagi/API Token";
+        };
+
+        fastmail = {
+          command = "${pkgs.fastmail-mcp}/bin/fastmail-mcp";
+          env = {
+            FASTMAIL_API_TOKEN = readOpSecretCmd "op://Private/Fastmail/API Tokens/mcp";
+            FASTMAIL_CALDAV_USERNAME = readOpSecretCmd "op://Private/Fastmail/username";
+            FASTMAIL_CALDAV_PASSWORD = readOpSecretCmd "op://Private/Fastmail/App Passwords/MCP";
+          };
         };
 
         slack-hangops = {

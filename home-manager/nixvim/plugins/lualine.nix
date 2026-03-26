@@ -1,7 +1,7 @@
 { config, ... }:
 let
   helpers = config.lib.nixvim;
-  mcphub = config.lib.nixvim.mkRaw ''{mcphub_lualine_status, color=mcphub_lualine_colour}'';
+  mcphub = helpers.mkRaw ''{mcphub_lualine_status, color=mcphub_lualine_colour}'';
 in
 {
   programs.nixvim.plugins.lualine = {
