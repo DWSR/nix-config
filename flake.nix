@@ -19,7 +19,6 @@
     op-shell-plugins.url = "github:1Password/shell-plugins";
     flake-utils.url = "github:numtide/flake-utils";
     nixneovimplugins.url = "github:NixNeovim/NixNeovimPlugins";
-    DimitarNestorov.url = "github:DimitarNestorov/Nix-user-repository-packages";
 
     nix-index-database = {
       url = "github:nix-community/nix-index-database";

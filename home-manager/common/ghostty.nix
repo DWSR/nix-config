@@ -15,7 +15,9 @@
 
   programs.ghostty = {
     enable = true;
-    package = pkgs.unstable.ghostty-bin;
+    package = if pkgs.stdenv.isDarwin then pkgs.ghostty-bin else pkgs.ghostty;
+    installBatSyntax = true;
+    installVimSyntax = true;
 
     settings = {
       theme = "nord-wave";
