@@ -121,7 +121,6 @@
           };
 
           modules = [
-            ./modules/nix-core.nix
             ./configurations/shopify
           ];
         };
@@ -132,7 +131,6 @@
           };
 
           modules = [
-            ./modules/nix-core.nix
             ./configurations/personal
           ];
         };

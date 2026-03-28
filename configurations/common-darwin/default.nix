@@ -1,4 +1,10 @@
-{ inputs, config, username, ... }:
+{
+  inputs,
+  config,
+  lib,
+  username,
+  ...
+}:
 {
   imports = [
     inputs.homebrew.darwinModules.nix-homebrew
@@ -6,6 +12,27 @@
     ./1password.nix
     ./slack.nix
   ];
+
+  nix = {
+    settings = {
+      experimental-features = [
+        "nix-command"
+        "flakes"
+      ];
+
+      auto-optimise-store = true;
+    };
+
+    gc = {
+      automatic = lib.mkDefault true;
+      options = lib.mkDefault "--delete-older-than 7d";
+    };
+  };
+
+  nixpkgs = {
+    config.allowUnfree = true;
+    hostPlatform = "aarch64-darwin";
+  };
 
   nix-homebrew = {
     enable = true;
@@ -38,6 +65,9 @@
   };
 
   system = {
+    # Used for backwards compatibility, please read the changelog before changing.
+    # $ darwin-rebuild changelog
+    stateVersion = 6;
     primaryUser = username;
 
     # activationScripts are executed every time you boot the system or run `nixos-rebuild` / `darwin-rebuild`.
@@ -56,12 +86,12 @@
       };
 
       controlcenter = {
-       BatteryShowPercentage = false;
-       Bluetooth = true;
-       Display = true;
-       FocusModes = true;
-       NowPlaying = false;
-       Sound = true;
+        BatteryShowPercentage = false;
+        Bluetooth = true;
+        Display = true;
+        FocusModes = true;
+        NowPlaying = false;
+        Sound = true;
       };
 
       dock = {
@@ -98,7 +128,6 @@
       };
     };
   };
-
 
   # Add ability to used TouchID for sudo authentication
   security.pam.services.sudo_local.touchIdAuth = true;
