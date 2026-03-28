@@ -1,21 +1,21 @@
-{ inputs, lib, ... }:
+{ inputs, pkgs, ... }:
 {
 
   xdg.configFile = {
     "ghostty/themes/nord" = {
       enable = true;
-      source = inputs.color-schemes + "/ghostty/nord";
+      source = inputs.color-schemes + "/ghostty/Nord";
     };
 
     "ghostty/themes/nord-wave" = {
       enable = true;
-      source = inputs.color-schemes + "/ghostty/nord-wave";
+      source = inputs.color-schemes + "/ghostty/Nord Wave";
     };
   };
 
   programs.ghostty = {
     enable = true;
-    package = inputs.DimitarNestorov.legacyPackages.aarch64-darwin.ghostty;
+    package = pkgs.unstable.ghostty-bin;
 
     settings = {
       theme = "nord-wave";
