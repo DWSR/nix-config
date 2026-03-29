@@ -15,7 +15,7 @@
   ];
 
   nix = {
-    package = pkgs.lixPackageSets.stable.lix;
+    package = pkgs.lixPackageSets.latest.lix;
 
     nixPath = [ "/etc/nix/path" ];
 
@@ -35,6 +35,7 @@
 
     overlays = [
       outputs.overlays.unstable-packages
+      outputs.overlays.custom-packages
     ];
   };
 
