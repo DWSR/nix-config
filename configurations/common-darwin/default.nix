@@ -14,13 +14,16 @@
   ];
 
   nix = {
+    optimise = {
+      automatic = true;
+      interval = { Weekday = 0; };
+    };
+
     settings = {
       experimental-features = [
         "nix-command"
         "flakes"
       ];
-
-      auto-optimise-store = true;
     };
 
     gc = {

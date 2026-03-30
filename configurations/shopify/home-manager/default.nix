@@ -2,15 +2,16 @@
   pkgs,
   lib,
   ...
-}: let
+}:
+let
   gcloud = pkgs.google-cloud-sdk.withExtraComponents [
     pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
-in {
+in
+{
 
   home = {
-    stateVersion = "24.11";
-    enableNixpkgsReleaseCheck = true;
+    stateVersion = "25.11";
     preferXdgDirectories = true;
 
     packages = with pkgs; [
@@ -63,6 +64,7 @@ in {
         serverAliveCountMax = 3;
         compression = true;
       };
+    };
   };
 
   programs.nixvim.extraPlugins = [
