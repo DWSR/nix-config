@@ -49,10 +49,14 @@
   # This will additionally add your inputs to the system's legacy channels
   # Making legacy nix commands consistent as well, awesome!
   environment = {
-    etc = lib.mapAttrs' (name: value: {
-      name = "nix/path/${name}";
-      value.source = value.flake;
-    }) config.nix.registry;
+    etc =
+      lib.mapAttrs' (name: value: {
+        name = "nix/path/${name}";
+        value.source = value.flake;
+      }) config.nix.registry
+      // {
+        nix-darwin.source = "/Users/brandonmcnama/src/github.com/DWSR/nix-config";
+      };
   };
 
   users.users."${username}".home = "/Users/${username}";
