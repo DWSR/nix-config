@@ -70,7 +70,7 @@
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
         ref = "master";
-        rev = "7fec9458c7240e6afbb4e76c2bc65d577e1f4645";
+        rev = "407b31407cf7ee57c83f12bc2cbf1040c81389a4";
       };
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
@@ -104,6 +104,7 @@
       "deskflow"
       "obsidian"
       "podman-desktop"
+      "unfudged"
     ];
   };
 }
