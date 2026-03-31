@@ -62,6 +62,7 @@
   users.users."${username}".home = "/Users/${username}";
 
   home-manager = {
+    minimal = true;
     extraSpecialArgs = { inherit inputs outputs username; };
 
     users = {

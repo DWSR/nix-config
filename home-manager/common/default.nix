@@ -17,6 +17,48 @@
     ./zsh.nix
 
     ../nixvim
+
+    # Minimal mode only loads shell modules by default.
+    # Explicitly import every program module we use, plus their transitive deps.
+    "${inputs.home-manager}/modules/programs/atuin.nix"
+    "${inputs.home-manager}/modules/programs/bat.nix"
+    "${inputs.home-manager}/modules/programs/command-not-found"
+    "${inputs.home-manager}/modules/programs/delta.nix"
+    "${inputs.home-manager}/modules/programs/diff-highlight.nix"
+    "${inputs.home-manager}/modules/programs/diff-so-fancy.nix"
+    "${inputs.home-manager}/modules/programs/difftastic.nix"
+    "${inputs.home-manager}/modules/programs/direnv.nix"
+    "${inputs.home-manager}/modules/programs/emacs.nix"
+    "${inputs.home-manager}/modules/programs/eza.nix"
+    "${inputs.home-manager}/modules/programs/fd.nix"
+    "${inputs.home-manager}/modules/programs/fish.nix"
+    "${inputs.home-manager}/modules/programs/fzf.nix"
+    "${inputs.home-manager}/modules/programs/gh-dash.nix"
+    "${inputs.home-manager}/modules/programs/gh.nix"
+    "${inputs.home-manager}/modules/programs/ghostty.nix"
+    "${inputs.home-manager}/modules/programs/git.nix"
+    "${inputs.home-manager}/modules/programs/gpg.nix"
+    "${inputs.home-manager}/modules/programs/home-manager.nix"
+    "${inputs.home-manager}/modules/programs/jq.nix"
+    "${inputs.home-manager}/modules/programs/jqp.nix"
+    "${inputs.home-manager}/modules/programs/jujutsu.nix"
+    "${inputs.home-manager}/modules/programs/k9s.nix"
+    "${inputs.home-manager}/modules/programs/man.nix"
+    "${inputs.home-manager}/modules/programs/nix-index.nix"
+    "${inputs.home-manager}/modules/programs/nix-your-shell.nix"
+    "${inputs.home-manager}/modules/programs/pandoc.nix"
+    "${inputs.home-manager}/modules/programs/patdiff.nix"
+    "${inputs.home-manager}/modules/programs/pay-respects.nix"
+    "${inputs.home-manager}/modules/programs/readline.nix"
+    "${inputs.home-manager}/modules/programs/riff.nix"
+    "${inputs.home-manager}/modules/programs/ripgrep.nix"
+    "${inputs.home-manager}/modules/programs/ssh.nix"
+    "${inputs.home-manager}/modules/programs/starship.nix"
+    "${inputs.home-manager}/modules/programs/tealdeer.nix"
+    "${inputs.home-manager}/modules/programs/vim.nix"
+    "${inputs.home-manager}/modules/programs/zellij.nix"
+
+    "${inputs.home-manager}/modules/services/tldr-update.nix"
   ];
 
   nixpkgs.overlays = [
