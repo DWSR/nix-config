@@ -61,6 +61,30 @@
       };
     };
 
+    zellij-worktree = final.stdenv.mkDerivation {
+      pname = "zellij-worktree";
+      version = "0.1.0";
+
+      src = final.fetchurl {
+        url = "https://github.com/sharph/zellij-worktree/releases/download/v0.1.0/zellij-worktree.wasm";
+        hash = "sha256-Ux4vUuZ9vnb1K3xJrX8sk2dYdNe3cRK6rVx+ZPrPH4I=";
+      };
+
+      dontUnpack = true;
+      dontBuild = true;
+
+      installPhase = ''
+        mkdir -p $out/share/zellij/plugins
+        cp $src $out/share/zellij/plugins/zellij-worktree.wasm
+      '';
+
+      meta = with final.lib; {
+        description = "Git worktree management plugin for Zellij";
+        homepage = "https://github.com/sharph/zellij-worktree";
+        license = licenses.mit;
+      };
+    };
+
     git-issue-tracker = final.stdenv.mkDerivation {
       pname = "git-issue-tracker";
       version = inputs.git-issue-tracker.shortRev or "unknown";

@@ -115,6 +115,10 @@
   };
 
   home = {
+    activation.createScratchDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      mkdir -p ~/scratch
+    '';
+
     shell = {
       enableShellIntegration = true;
       enableZshIntegration = true;

@@ -677,8 +677,7 @@
         "nixpkgs": "nixpkgs_4",
         "nixpkgs-unstable": "nixpkgs-unstable",
         "nixvim": "nixvim",
-        "op-shell-plugins": "op-shell-plugins",
-        "zellij-autolock": "zellij-autolock"
+        "op-shell-plugins": "op-shell-plugins"
       }
     },
     "systems": {
@@ -753,23 +752,6 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
-        "type": "github"
-      }
-    },
-    "zellij-autolock": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1736726400,
-        "narHash": "sha256-uU7wWSdOhRLQN6cG4NvA9yASlvRwB6gggX89B5K9dyQ=",
-        "owner": "fresh2dev",
-        "repo": "zellij-autolock",
-        "rev": "5346d7f45e5a54e1d906aba43ed1c063987aa135",
-        "type": "github"
-      },
-      "original": {
-        "owner": "fresh2dev",
-        "ref": "0.2.2",
-        "repo": "zellij-autolock",
         "type": "github"
       }
     }

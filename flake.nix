@@ -85,6 +85,7 @@
       url = "github:nnunley/git-issue-tracker";
       flake = false;
     };
+
   };
 
   outputs =
