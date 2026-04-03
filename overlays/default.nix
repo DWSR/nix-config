@@ -37,6 +37,30 @@
   custom-packages = final: prev: {
     mcp-hub = inputs.mcphub.packages.${final.system}.default;
 
+    zellij-autolock = final.stdenv.mkDerivation {
+      pname = "zellij-autolock";
+      version = "0.2.2";
+
+      src = final.fetchurl {
+        url = "https://github.com/fresh2dev/zellij-autolock/releases/download/0.2.2/zellij-autolock.wasm";
+        hash = "sha256-aclWB7/ZfgddZ2KkT9vHA6gqPEkJ27vkOVLwIEh7jqQ=";
+      };
+
+      dontUnpack = true;
+      dontBuild = true;
+
+      installPhase = ''
+        mkdir -p $out/share/zellij/plugins
+        cp $src $out/share/zellij/plugins/zellij-autolock.wasm
+      '';
+
+      meta = with final.lib; {
+        description = "Auto-lock Zellij when certain processes open";
+        homepage = "https://github.com/fresh2dev/zellij-autolock";
+        license = licenses.mit;
+      };
+    };
+
     git-issue-tracker = final.stdenv.mkDerivation {
       pname = "git-issue-tracker";
       version = inputs.git-issue-tracker.shortRev or "unknown";
