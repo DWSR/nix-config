@@ -50,7 +50,7 @@ in
               end,
               pinned = true,
               size = { height = 0.6 },
-              open = "Neotree position=left filesystem",
+              open = "Neotree position=left filesystem reveal=true",
             },
             {
               title = "Git",
