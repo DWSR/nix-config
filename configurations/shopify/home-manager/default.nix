@@ -146,18 +146,7 @@ in
     };
   };
 
-  programs.nixvim.extraPlugins = [
-    (pkgs.vimUtils.buildVimPlugin {
-      name = "Shopify/shadowenv.vim";
-
-      src = pkgs.fetchFromGitHub {
-        owner = "Shopify";
-        repo = "shadowenv.vim";
-        rev = "c306d272b2280b7163b160fc27630eb9c16a3f4a";
-        hash = "sha256-MEcZfUmjXsBXuyeMTUNS778Kq4g4+lJ/NkeXVawoQpA=";
-      };
-    })
-  ];
+  nixvim-extra.shadowenv.enable = true;
 
   nixpkgs.config.allowUnfreePredicate =
     pkg:

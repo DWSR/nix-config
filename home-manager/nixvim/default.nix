@@ -43,6 +43,7 @@ in
     ./plugins/snacks.nix
     ./plugins/toggleterm.nix
     ./plugins/treesitter.nix
+    ./plugins/shadowenv.nix
     ./plugins/zellij-nav.nix
     ./plugins/trim.nix
     ./plugins/twilight.nix
