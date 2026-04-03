@@ -97,6 +97,7 @@
       "ejson"
       "clouddo-cli"
       "pkg-config"
+      "uv" # required for various mcps :eyeroll:
     ];
 
     casks = [

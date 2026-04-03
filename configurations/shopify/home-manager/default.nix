@@ -59,7 +59,8 @@ in
         incident-dashboard-mcp = {
           type = "http";
           url = "https://incidents.shopify.io/api/mcp";
-          headers.Authorization = "Bearer " + readOpSecretCmd "op://Employee/Incident Dashboard API Token/password";
+          headers.Authorization =
+            "Bearer " + readOpSecretCmd "op://Employee/Incident Dashboard API Token/password";
         };
 
         observe-mcp = {
@@ -70,7 +71,8 @@ in
         infra-central-mcp = {
           type = "http";
           url = "https://infra-central.shopify.io/api/mcp";
-          headers.Authorization = "Bearer " + readOpSecretCmd "op://Employee/Infra Central API Token/password";
+          headers.Authorization =
+            "Bearer " + readOpSecretCmd "op://Employee/Infra Central API Token/password";
         };
 
         fellow-mcp = {
@@ -89,7 +91,7 @@ in
         };
 
         gcp-mcp-server = {
-          command = "uvx";
+          command = "/opt/homebrew/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
           args = [ "shopify-mcp-bridge" ];
           env = {
             MCP_TARGET_URL = "https://gcp.shopifycloud.com/mcp";
@@ -110,7 +112,14 @@ in
         explainify-mcp = {
           type = "streamable-http";
           url = "https://explainify.shopify.io/mcp";
-          headers.Authorization = "Bearer " + readOpSecretCmd "op://Employee/explainify mcp api token/password";
+          headers.Authorization =
+            "Bearer " + readOpSecretCmd "op://Employee/explainify mcp api token/password";
+        };
+
+        tool-gateway = {
+          type = "http";
+          url = "https://tool-gateway.shopify.io/mcp";
+          headers.Authorization = "Bearer $${TOOL_GATEWAY_TOKEN}";
         };
       };
     };
@@ -138,27 +147,27 @@ in
   };
 
   programs.nixvim.extraPlugins = [
-    (
-      pkgs.vimUtils.buildVimPlugin {
-        name = "Shopify/shadowenv.vim";
+    (pkgs.vimUtils.buildVimPlugin {
+      name = "Shopify/shadowenv.vim";
 
-        src = pkgs.fetchFromGitHub {
-          owner = "Shopify";
-          repo = "shadowenv.vim";
-          rev = "c306d272b2280b7163b160fc27630eb9c16a3f4a";
-          hash = "sha256-MEcZfUmjXsBXuyeMTUNS778Kq4g4+lJ/NkeXVawoQpA=";
-        };
-      }
-    )
+      src = pkgs.fetchFromGitHub {
+        owner = "Shopify";
+        repo = "shadowenv.vim";
+        rev = "c306d272b2280b7163b160fc27630eb9c16a3f4a";
+        hash = "sha256-MEcZfUmjXsBXuyeMTUNS778Kq4g4+lJ/NkeXVawoQpA=";
+      };
+    })
   ];
 
-  nixpkgs.config.allowUnfreePredicate = pkg: builtins.elem (lib.getName pkg) [
-    "1password-cli"
-    "1password"
-    "raycast"
-    "keymapp"
-    "slack"
-  ];
+  nixpkgs.config.allowUnfreePredicate =
+    pkg:
+    builtins.elem (lib.getName pkg) [
+      "1password-cli"
+      "1password"
+      "raycast"
+      "keymapp"
+      "slack"
+    ];
 
   imports = [
     ../../../home-manager/common
