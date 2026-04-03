@@ -1,7 +1,9 @@
-{ ... }:
+{ pkgs, ... }:
 {
   programs.nixvim.plugins.treesitter = {
     enable = true;
+
+    grammarPackages = pkgs.unstable.vimPlugins.nvim-treesitter.passthru.allGrammars;
 
     settings = {
       indent = {

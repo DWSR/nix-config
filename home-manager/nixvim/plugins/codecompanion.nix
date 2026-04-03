@@ -20,7 +20,7 @@
               add_mcp_prefix_to_tool_names = false; # Add mcp__ prefix (e.g `@mcp__github`, `@mcp__neovim__list_issues`)
               show_result_in_chat = true; # Show tool results directly in chat buffer
               # MCP Resources
-              make_vars = true; # Convert MCP resources to #variables for prompts
+              make_vars = false; # Disabled: mcphub expects codecompanion config.interactions.chat.variables which doesn't exist in this version
               # MCP Prompts
               make_slash_commands = true; # Add MCP prompts as /slash commands
             };
