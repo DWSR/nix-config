@@ -160,45 +160,49 @@ in
           desc = "Horizontal split";
         };
       }
-      # Easier window nav
+      # Navigate across vim splits, zellij panes, and zellij tabs
       {
-        action = "<C-w>h";
+        action = "<cmd>ZellijNavigateLeftTab<CR>";
         key = "<C-h>";
         mode = "n";
 
         options = {
           silent = true;
           noremap = true;
+          desc = "Navigate left (vim/zellij/tab)";
         };
       }
       {
-        action = "<C-w>j";
+        action = "<cmd>ZellijNavigateDown<CR>";
         key = "<C-j>";
         mode = "n";
 
         options = {
           silent = true;
           noremap = true;
+          desc = "Navigate down (vim/zellij)";
         };
       }
       {
-        action = "<C-w>k";
+        action = "<cmd>ZellijNavigateUp<CR>";
         key = "<C-k>";
         mode = "n";
 
         options = {
           silent = true;
           noremap = true;
+          desc = "Navigate up (vim/zellij)";
         };
       }
       {
-        action = "<C-w>l";
+        action = "<cmd>ZellijNavigateRightTab<CR>";
         key = "<C-l>";
         mode = "n";
 
         options = {
           silent = true;
           noremap = true;
+          desc = "Navigate right (vim/zellij/tab)";
         };
       }
       # Window resizing

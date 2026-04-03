@@ -31,7 +31,7 @@ in
     settings = {
       pane_frames = false;
       theme = "nord";
-      default_mode = "locked";
+      default_mode = "normal";
       copy_command = "pbcopy";
 
       plugins = {
@@ -45,7 +45,7 @@ in
         "autolock" = {
           _props.location = "file:~/.local/share/zellij/plugins/autolock.wasm";
 
-          is_enabled = false;
+          is_enabled = true;
           triggers = "nvim|vim|v|nv";
           watch_triggers = "fzf|zoxide|atuin";
           watch_interval = "1.0";
@@ -68,6 +68,15 @@ in
               floating = true;
             };
           };
+        };
+
+        normal = {
+          _children = [
+            { bind = { _args = ["Ctrl h"]; MoveFocusOrTab = { _args = ["Left"]; }; }; }
+            { bind = { _args = ["Ctrl j"]; MoveFocus = { _args = ["Down"]; }; }; }
+            { bind = { _args = ["Ctrl k"]; MoveFocus = { _args = ["Up"]; }; }; }
+            { bind = { _args = ["Ctrl l"]; MoveFocusOrTab = { _args = ["Right"]; }; }; }
+          ];
         };
       };
     };
