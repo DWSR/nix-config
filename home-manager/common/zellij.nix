@@ -35,6 +35,7 @@ in
       theme = "nord";
       default_mode = "normal";
       copy_command = "pbcopy";
+      show_startup_tips = false;
 
       plugins = {
         "autolock" = {
