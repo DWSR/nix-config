@@ -77,6 +77,54 @@
 
     # Built from source with zellij-tile bumped to 0.44 to fix ABI mismatch panic
     # TODO: Remove source build once upstream releases a version compatible with zellij 0.44
+    zellij-attention = let
+      fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
+      rustToolchain = fenixPkgs.combine [
+        fenixPkgs.stable.cargo
+        fenixPkgs.stable.rustc
+        fenixPkgs.targets.wasm32-wasip1.stable.rust-std
+      ];
+      rustPlatform = final.makeRustPlatform {
+        cargo = rustToolchain;
+        rustc = rustToolchain;
+      };
+    in rustPlatform.buildRustPackage {
+      pname = "zellij-attention";
+      version = "0.3.1-patched";
+
+      src = final.fetchFromGitHub {
+        owner = "KiryuuLight";
+        repo = "zellij-attention";
+        tag = "v0.3.1";
+        hash = "sha256-T36mzLbXCUqBeLa5hUX4/gMZ/c41szKAcLrsyXB6TIQ=";
+      };
+
+      cargoLock.lockFile = ./zellij-attention-Cargo.lock;
+      cargoPatches = [ ./zellij-attention-zellij-0.44.patch ];
+
+      postPatch = ''
+        cp ${./zellij-attention-Cargo.lock} Cargo.lock
+      '';
+
+      buildPhase = ''
+        cargo build --release --target wasm32-wasip1
+      '';
+
+      doCheck = false;
+
+      installPhase = ''
+        mkdir -p $out/share/zellij/plugins
+        cp target/wasm32-wasip1/release/zellij-attention.wasm $out/share/zellij/plugins/zellij-attention.wasm
+      '';
+
+      meta = with final.lib; {
+        description = "Zellij plugin that adds notification icons to tab names";
+        homepage = "https://github.com/KiryuuLight/zellij-attention";
+        license = licenses.mit;
+      };
+    };
+
+    # TODO: Remove source build once upstream releases a version compatible with zellij 0.44
     zellij-worktree = let
       fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
       rustToolchain = fenixPkgs.combine [

@@ -2,6 +2,7 @@
 let
   autolockWasm = "${pkgs.zellij-autolock}/share/zellij/plugins/zellij-autolock.wasm";
   worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
+  attentionWasm = "${pkgs.zellij-attention}/share/zellij/plugins/zellij-attention.wasm";
 in
 {
   xdg.dataFile = {
@@ -13,6 +14,11 @@ in
     "worktree" = {
       source = worktreeWasm;
       target = "zellij/plugins/zellij-worktree.wasm";
+    };
+
+    "attention" = {
+      source = attentionWasm;
+      target = "zellij/plugins/zellij-attention.wasm";
     };
   };
 
@@ -45,10 +51,15 @@ in
 
           base_path = "~/scratch";
         };
+
+        "attention" = {
+          _props.location = "file:~/.local/share/zellij/plugins/zellij-attention.wasm";
+        };
       };
 
       load_plugins = {
         "autolock" = {};
+        "attention" = {};
       };
 
       keybinds = {
