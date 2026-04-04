@@ -43,6 +43,7 @@
     enableGitIntegration = true;
 
     options = {
+      dark = true;
       features = "decorations";
       interactive.keep-plus-minus-markers = false;
       decorations = {
