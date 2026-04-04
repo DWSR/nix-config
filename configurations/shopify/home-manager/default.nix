@@ -110,16 +110,18 @@ in
         };
 
         explainify-mcp = {
-          type = "streamable-http";
-          url = "https://explainify.shopify.io/mcp";
-          headers.Authorization =
-            "Bearer " + readOpSecretCmd "op://Employee/explainify mcp api token/password";
+          command = "/opt/homebrew/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
+          args = [ "shopify-mcp-bridge" ];
+          env = {
+            MCP_TARGET_URL = "https://explainify.shopify.io/mcp";
+            MCP_API_TOKEN = readOpSecretCmd "op://Employee/explainify mcp api token/password";
+          };
         };
 
         tool-gateway = {
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
-          headers.Authorization = "Bearer $${TOOL_GATEWAY_TOKEN}";
+          headers.Authorization = "Bearer \${TOOL_GATEWAY_TOKEN}";
         };
       };
     };
