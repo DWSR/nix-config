@@ -100,10 +100,10 @@
       };
 
       cargoLock.lockFile = ./zellij-worktree-Cargo.lock;
+      cargoPatches = [ ./zellij-worktree-zellij-0.44.patch ];
 
       postPatch = ''
         cp ${./zellij-worktree-Cargo.lock} Cargo.lock
-        sed -i 's/zellij-tile = "0.43.1"/zellij-tile = "0.44"/' Cargo.toml
       '';
 
       buildPhase = ''

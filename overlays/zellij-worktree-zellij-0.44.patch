@@ -1,0 +1,32 @@
+diff -ruN --ex a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml	2026-04-03 22:59:02
++++ b/Cargo.toml	2026-04-03 22:58:47
+@@ -4,6 +4,6 @@
+ edition = "2024"
+ 
+ [dependencies]
+-zellij-tile = "0.43.1"
++zellij-tile = "0.44"
+ yansi = "1.0"
+ 
+diff -ruN --ex a/src/main.rs b/src/main.rs
+--- a/src/main.rs	2026-04-03 22:59:02
++++ b/src/main.rs	2026-04-03 22:58:47
+@@ -191,7 +191,7 @@
+                         Mode::List => {
+                             if let Some(worktree) = self.worktrees.get(self.selected_index) {
+                                 let tab_name = self.get_tab_name(&worktree.path);
+-                                new_tab(Some(&tab_name), Some(&worktree.path));
++                                run_command(&["zellij", "action", "new-tab", "--name", &tab_name, "--cwd", &worktree.path], BTreeMap::new());
+                                 close_focus();
+                             }
+                         }
+@@ -318,7 +318,7 @@
+                                 if let (Some(tab_name), Some(path)) =
+                                     (context.get("tab_name"), context.get("path"))
+                                 {
+-                                    new_tab(Some(&tab_name), Some(&path));
++                                    run_command(&["zellij", "action", "new-tab", "--name", &tab_name, "--cwd", &path], BTreeMap::new());
+                                     close_focus();
+                                 }
+                             }
