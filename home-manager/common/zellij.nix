@@ -1,7 +1,7 @@
 { pkgs, ... }:
 let
   autolockWasm = "${pkgs.zellij-autolock}/share/zellij/plugins/zellij-autolock.wasm";
-  worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
+  # worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
 in
 {
   xdg.dataFile = {
@@ -10,10 +10,11 @@ in
       target = "zellij/plugins/autolock.wasm";
     };
 
-    "worktree" = {
-      source = worktreeWasm;
-      target = "zellij/plugins/zellij-worktree.wasm";
-    };
+    # TODO: Re-enable once zellij-worktree is compatible with zellij 0.44
+    # "worktree" = {
+    #   source = worktreeWasm;
+    #   target = "zellij/plugins/zellij-worktree.wasm";
+    # };
   };
 
   programs.zellij = {
@@ -40,11 +41,12 @@ in
           watch_interval = "1.0";
         };
 
-        "worktree" = {
-          _props.location = "file:~/.local/share/zellij/plugins/zellij-worktree.wasm";
-
-          base_path = "~/scratch";
-        };
+        # TODO: Re-enable once zellij-worktree is compatible with zellij 0.44
+        # "worktree" = {
+        #   _props.location = "file:~/.local/share/zellij/plugins/zellij-worktree.wasm";
+        #
+        #   base_path = "~/scratch";
+        # };
       };
 
       load_plugins = {
@@ -52,18 +54,19 @@ in
       };
 
       keybinds = {
-        shared_except = {
-          _args = ["locked"];
-
-          bind = {
-            _args = ["Ctrl w"];
-
-            LaunchOrFocusPlugin = {
-              _args = ["worktree"];
-              floating = true;
-            };
-          };
-        };
+        # TODO: Re-enable once zellij-worktree is compatible with zellij 0.44
+        # shared_except = {
+        #   _args = ["locked"];
+        #
+        #   bind = {
+        #     _args = ["Ctrl w"];
+        #
+        #     LaunchOrFocusPlugin = {
+        #       _args = ["worktree"];
+        #       floating = true;
+        #     };
+        #   };
+        # };
 
         normal = {
           _children = [
