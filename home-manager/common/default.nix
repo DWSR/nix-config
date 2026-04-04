@@ -137,6 +137,7 @@
       DO_NOT_TRACK = "1";
       OBJC_DISABLE_INITIALIZE_FORK_SAFETY = "YES";
       KUBECTL_EXTERNAL_DIFF = "dyff between --omit-header --set-exit-code";
+      FZF_DEFAULT_OPTS = "--popup";
     };
   };
 
