@@ -20,7 +20,7 @@
   # be accessible through 'pkgs.unstable'
   unstable-packages = final: _prev: {
     unstable = import inputs.nixpkgs-unstable {
-      system = final.system;
+      system = final.stdenv.hostPlatform.system;
       config.allowUnfree = true;
     };
   };
@@ -35,7 +35,7 @@
   };
 
   custom-packages = final: prev: {
-    mcp-hub = inputs.mcphub.packages.${final.system}.default;
+    mcp-hub = inputs.mcphub.packages.${final.stdenv.hostPlatform.system}.default;
 
     # TODO: Remove once fzf 0.71.0 is released and available in nixpkgs
     fzf = prev.fzf.overrideAttrs (old: {
