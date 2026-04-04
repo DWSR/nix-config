@@ -51,6 +51,10 @@
       vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
     });
 
+    fzf-git-sh = prev.fzf-git-sh.overrideAttrs (old: {
+      patches = (old.patches or []) ++ [ ./fzf-git-sh-customizations.patch ];
+    });
+
     zellij-autolock = final.stdenv.mkDerivation {
       pname = "zellij-autolock";
       version = "0.2.2";

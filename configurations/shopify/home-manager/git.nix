@@ -27,7 +27,7 @@
 
       push.autoRemoteSetup = true;
       commit.gpgSign = true;
-      branch.sort = "-comitterdate";
+      branch.sort = "-committerdate";
       init.defaultBranch = "main";
       rebase.updateRefs = true;
       pull.rebase = true;

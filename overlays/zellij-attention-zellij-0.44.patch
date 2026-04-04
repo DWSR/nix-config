@@ -1,12 +1,68 @@
 diff -ruN a/Cargo.toml b/Cargo.toml
---- a/Cargo.toml	2026-04-03 23:04:30
-+++ b/Cargo.toml	2026-04-03 23:04:39
-@@ -12,7 +12,7 @@
+--- a/Cargo.toml	2026-04-03 23:27:16
++++ b/Cargo.toml	2026-04-03 23:27:34
+@@ -13,7 +13,7 @@
  path = "src/main.rs"
-
+ 
  [dependencies]
 -zellij-tile = "0.43.1"
 +zellij-tile = "0.44"
  serde = { version = "1", features = ["derive"] }
  serde_json = "1.0"
-
+ 
+diff -ruN a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs	2026-04-03 23:27:16
++++ b/src/lib.rs	2026-04-03 23:27:34
+@@ -66,6 +66,36 @@
+         false
+     }
+ 
++
++    /// Clears notifications for all panes in the active tab.
++    /// This handles the case where TabUpdate fires before PaneUpdate,
++    /// so the focused pane data may be stale.
++    pub(crate) fn clear_active_tab_notifications(&mut self) -> bool {
++        let active_tab = match self.tabs.iter().find(|t| t.active) {
++            Some(tab) => tab,
++            None => return false,
++        };
++
++        if !self.tab_name_has_icon(&active_tab.name) {
++            return false;
++        }
++
++        let position = active_tab.position;
++        let pane_ids: Vec<u32> = self.panes.panes
++            .get(&position)
++            .map(|panes| panes.iter().filter(|p| !p.is_plugin).map(|p| p.id).collect())
++            .unwrap_or_default();
++
++        let mut cleared = false;
++        for pane_id in pane_ids {
++            if self.notification_state.remove(&pane_id).is_some() {
++                self.notified_tab_names.remove(&pane_id);
++                cleared = true;
++            }
++        }
++        cleared
++    }
++
+     /// Removes notification entries for pane IDs that no longer exist.
+     /// Returns true if any stale entries were removed.
+     pub(crate) fn clean_stale_notifications(&mut self) -> bool {
+@@ -302,6 +332,7 @@
+             Event::TabUpdate(tab_info) => {
+                 self.tabs = tab_info;
+                 self.check_and_clear_focus();
++                self.clear_active_tab_notifications();
+                 self.clean_stale_notifications();
+                 self.update_tab_names();
+                 false
+@@ -309,6 +340,7 @@
+             Event::PaneUpdate(pane_manifest) => {
+                 self.panes = pane_manifest;
+                 self.check_and_clear_focus();
++                self.clear_active_tab_notifications();
+                 self.clean_stale_notifications();
+                 self.update_tab_names();
+                 false
