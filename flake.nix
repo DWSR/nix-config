@@ -20,6 +20,11 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixneovimplugins.url = "github:NixNeovim/NixNeovimPlugins";
 
+    fenix = {
+      url = "github:nix-community/fenix/0b88bfd10f819d000d35d296debe283db89b623b";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     nix-index-database = {
       url = "github:nix-community/nix-index-database";
       inputs.nixpkgs.follows = "nixpkgs";

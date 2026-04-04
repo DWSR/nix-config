@@ -75,21 +75,46 @@
       };
     };
 
-    zellij-worktree = final.stdenv.mkDerivation {
+    # Built from source with zellij-tile bumped to 0.44 to fix ABI mismatch panic
+    # TODO: Remove source build once upstream releases a version compatible with zellij 0.44
+    zellij-worktree = let
+      fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
+      rustToolchain = fenixPkgs.combine [
+        fenixPkgs.stable.cargo
+        fenixPkgs.stable.rustc
+        fenixPkgs.targets.wasm32-wasip1.stable.rust-std
+      ];
+      rustPlatform = final.makeRustPlatform {
+        cargo = rustToolchain;
+        rustc = rustToolchain;
+      };
+    in rustPlatform.buildRustPackage {
       pname = "zellij-worktree";
-      version = "0.1.0";
+      version = "0.1.0-patched";
 
-      src = final.fetchurl {
-        url = "https://github.com/sharph/zellij-worktree/releases/download/v0.1.0/zellij-worktree.wasm";
-        hash = "sha256-Ux4vUuZ9vnb1K3xJrX8sk2dYdNe3cRK6rVx+ZPrPH4I=";
+      src = final.fetchFromGitHub {
+        owner = "sharph";
+        repo = "zellij-worktree";
+        tag = "v0.1.0";
+        hash = "sha256-5efD2F2UMRfYM4st2+mfsmUwqELXtnxAlBqi1vmBNKk=";
       };
 
-      dontUnpack = true;
-      dontBuild = true;
+      cargoLock.lockFile = ./zellij-worktree-Cargo.lock;
+
+      postPatch = ''
+        cp ${./zellij-worktree-Cargo.lock} Cargo.lock
+        sed -i 's/zellij-tile = "0.43.1"/zellij-tile = "0.44"/' Cargo.toml
+      '';
+
+      buildPhase = ''
+        cargo build --release --target wasm32-wasip1
+      '';
+
+      doCheck = false;
 
       installPhase = ''
         mkdir -p $out/share/zellij/plugins
-        cp $src $out/share/zellij/plugins/zellij-worktree.wasm
+        cp target/wasm32-wasip1/release/zellij-worktree.wasm $out/share/zellij/plugins/zellij-worktree.wasm
       '';
 
       meta = with final.lib; {
