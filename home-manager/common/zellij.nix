@@ -18,6 +18,9 @@ in
 
   programs.zellij = {
     enable = true;
+    # TODO: Remove once zellij 0.44 is available in stable nixpkgs
+    # Unstable required for fzf --popup support (needs zellij >= 0.44)
+    package = pkgs.unstable.zellij;
     attachExistingSession = true;
     enableZshIntegration = true;
 

@@ -37,6 +37,20 @@
   custom-packages = final: prev: {
     mcp-hub = inputs.mcphub.packages.${final.system}.default;
 
+    # TODO: Remove once fzf 0.71.0 is released and available in nixpkgs
+    fzf = prev.fzf.overrideAttrs (old: {
+      version = "0.71.0-pre";
+
+      src = final.fetchFromGitHub {
+        owner = "junegunn";
+        repo = "fzf";
+        rev = "b7138e67a60638c02361c38f1053eadd09709660";
+        hash = "sha256-9uHtEdIP3LOQvyEVpr0CO4D83YcX5BmSmnCCRVUzh4E=";
+      };
+
+      vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
+    });
+
     zellij-autolock = final.stdenv.mkDerivation {
       pname = "zellij-autolock";
       version = "0.2.2";
