@@ -57,6 +57,7 @@
     "${inputs.home-manager}/modules/programs/tealdeer.nix"
     "${inputs.home-manager}/modules/programs/vim.nix"
     "${inputs.home-manager}/modules/programs/zellij.nix"
+    "${inputs.home-manager}/modules/programs/zoxide.nix"
 
     "${inputs.home-manager}/modules/services/tldr-update.nix"
   ];
@@ -187,4 +188,5 @@
   programs.readline.enable = true;
   programs.ripgrep.enable = true;
   programs.tealdeer.enable = true;
+  programs.zoxide.enable = true;
 }
