@@ -4,6 +4,7 @@ let
   worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
   attentionWasm = "${pkgs.zellij-attention}/share/zellij/plugins/zellij-attention.wasm";
   zjstatusWasm = "${pkgs.zjstatus}/share/zellij/plugins/zjstatus.wasm";
+  forgotWasm = "${pkgs.zellij-forgot}/share/zellij/plugins/zellij-forgot.wasm";
 in
 {
   xdg.dataFile = {
@@ -25,6 +26,11 @@ in
     "zjstatus" = {
       source = zjstatusWasm;
       target = "zellij/plugins/zjstatus.wasm";
+    };
+
+    "forgot" = {
+      source = forgotWasm;
+      target = "zellij/plugins/zellij-forgot.wasm";
     };
   };
 
@@ -65,6 +71,10 @@ in
 
         "zjstatus" = {
           _props.location = "file:~/.local/share/zellij/plugins/zjstatus.wasm";
+        };
+
+        "forgot" = {
+          _props.location = "file:~/.local/share/zellij/plugins/zellij-forgot.wasm";
         };
       };
 
