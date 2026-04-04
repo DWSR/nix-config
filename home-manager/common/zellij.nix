@@ -3,6 +3,7 @@ let
   autolockWasm = "${pkgs.zellij-autolock}/share/zellij/plugins/zellij-autolock.wasm";
   worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
   attentionWasm = "${pkgs.zellij-attention}/share/zellij/plugins/zellij-attention.wasm";
+  zjstatusWasm = "${pkgs.zjstatus}/share/zellij/plugins/zjstatus.wasm";
 in
 {
   xdg.dataFile = {
@@ -19,6 +20,11 @@ in
     "attention" = {
       source = attentionWasm;
       target = "zellij/plugins/zellij-attention.wasm";
+    };
+
+    "zjstatus" = {
+      source = zjstatusWasm;
+      target = "zellij/plugins/zjstatus.wasm";
     };
   };
 
@@ -55,6 +61,10 @@ in
 
         "attention" = {
           _props.location = "file:~/.local/share/zellij/plugins/zellij-attention.wasm";
+        };
+
+        "zjstatus" = {
+          _props.location = "file:~/.local/share/zellij/plugins/zjstatus.wasm";
         };
       };
 

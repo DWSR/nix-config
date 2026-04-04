@@ -80,7 +80,54 @@
     };
 
     # Built from source with zellij-tile bumped to 0.44 to fix ABI mismatch panic
-    # TODO: Remove source build once upstream releases a version compatible with zellij 0.44
+    # TODO: Remove source builds once upstream releases versions compatible with zellij 0.44
+    zjstatus = let
+      fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
+      rustToolchain = fenixPkgs.combine [
+        fenixPkgs.stable.cargo
+        fenixPkgs.stable.rustc
+        fenixPkgs.targets.wasm32-wasip1.stable.rust-std
+      ];
+      rustPlatform = final.makeRustPlatform {
+        cargo = rustToolchain;
+        rustc = rustToolchain;
+      };
+    in rustPlatform.buildRustPackage {
+      pname = "zjstatus";
+      version = "0.22.0-patched";
+
+      src = final.fetchFromGitHub {
+        owner = "dj95";
+        repo = "zjstatus";
+        tag = "v0.22.0";
+        hash = "sha256-aWp608krMtk5I+c3GXyuHkb6ugah40cBI0R52fNqMiI=";
+      };
+
+      cargoLock.lockFile = ./zjstatus-Cargo.lock;
+      cargoPatches = [ ./zjstatus-zellij-0.44.patch ];
+
+      postPatch = ''
+        cp ${./zjstatus-Cargo.lock} Cargo.lock
+      '';
+
+      buildPhase = ''
+        cargo build --release --target wasm32-wasip1
+      '';
+
+      doCheck = false;
+
+      installPhase = ''
+        mkdir -p $out/share/zellij/plugins
+        cp target/wasm32-wasip1/release/zjstatus.wasm $out/share/zellij/plugins/zjstatus.wasm
+      '';
+
+      meta = with final.lib; {
+        description = "Configurable and themeable status bar plugin for Zellij";
+        homepage = "https://github.com/dj95/zjstatus";
+        license = licenses.mit;
+      };
+    };
+
     zellij-attention = let
       fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
       rustToolchain = fenixPkgs.combine [
