@@ -119,6 +119,9 @@ in
         ];
         RunAtLoad = true;
         KeepAlive = true;
+        EnvironmentVariables.PATH = lib.makeBinPath [
+          pkgs.google-cloud-sdk
+        ] + ":/usr/bin:/bin";
         StandardOutPath = "/tmp/mcp-hub.log";
         StandardErrorPath = "/tmp/mcp-hub.error.log";
       };
