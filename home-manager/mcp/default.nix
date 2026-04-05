@@ -72,6 +72,10 @@ in
       pkgs.mcp-hub
       pkgs.github-mcp-server
       pkgs.mcp-nixos
+      (pkgs.writeScriptBin "restart-mcp-hub" ''
+        #!/bin/sh
+        exec launchctl kickstart -k "gui/$(id -u)/com.ravitemer.mcp-hub"
+      '')
     ] ++ lib.optional (config.home.mcp.keychainSecrets != {}) mcpSyncSecretsScript;
 
     xdg.configFile."mcphub/servers.json" = {
