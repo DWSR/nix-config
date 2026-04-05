@@ -9,15 +9,22 @@ let
   readKeychainSecret = service:
     "\${cmd: /usr/bin/security find-generic-password -s '${service}' -a mcp-hub -w}";
 
-  # Generate the activation script that populates the keychain from 1Password
-  keychainActivationScript = lib.concatStringsSep "\n" (
-    lib.mapAttrsToList (service: opUri: ''
-      echo "Storing keychain secret: ${service}"
-      __secret="$(${pkgs._1password-cli}/bin/op read --no-newline '${opUri}')"
-      /usr/bin/security add-generic-password -U -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db 2>/dev/null || \
-      /usr/bin/security add-generic-password -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db
-      unset __secret
-    '') config.home.mcp.keychainSecrets
+  # Script that copies secrets from 1Password to the macOS Keychain
+  mcpSyncSecretsScript = pkgs.writeScriptBin "mcp-sync-secrets" (
+    ''
+      #!/bin/sh
+      set -eu
+    '' + lib.concatStringsSep "\n" (
+      lib.mapAttrsToList (service: opUri: ''
+        echo "Storing keychain secret: ${service}"
+        __secret="$(${pkgs._1password-cli}/bin/op read --no-newline '${opUri}')"
+        /usr/bin/security add-generic-password -U -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db 2>/dev/null || \
+        /usr/bin/security add-generic-password -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db
+        unset __secret
+      '') config.home.mcp.keychainSecrets
+    ) + ''
+      echo "Done. All MCP secrets synced to keychain."
+    ''
   );
 in
 {
@@ -61,11 +68,11 @@ in
   };
 
   config = lib.mkIf config.home.mcp.enable {
-    home.packages = with pkgs; [
-      mcp-hub
-      github-mcp-server
-      mcp-nixos
-    ];
+    home.packages = [
+      pkgs.mcp-hub
+      pkgs.github-mcp-server
+      pkgs.mcp-nixos
+    ] ++ lib.optional (config.home.mcp.keychainSecrets != {}) mcpSyncSecretsScript;
 
     xdg.configFile."mcphub/servers.json" = {
       enable = true;
@@ -91,7 +98,9 @@ in
     };
 
     home.activation.mcpKeychainSecrets = lib.mkIf (config.home.mcp.keychainSecrets != {}) (
-      lib.hm.dag.entryAfter [ "writeBoundary" ] keychainActivationScript
+      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        ${mcpSyncSecretsScript}/bin/mcp-sync-secrets
+      ''
     );
 
     launchd.agents.mcp-hub = {

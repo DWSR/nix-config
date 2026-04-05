@@ -95,7 +95,7 @@ in
         };
 
         gt-mcp = {
-          command = "${pkgs.graphite-cli}/bin/gt";
+          command = "${pkgs.unstable.graphite-cli}/bin/gt";
           args = [ "mcp" ];
         };
 
