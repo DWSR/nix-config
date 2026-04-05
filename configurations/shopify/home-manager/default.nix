@@ -110,12 +110,9 @@ in
         };
 
         explainify-mcp = {
-          command = "${pkgs.uv}/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
-          args = [ "shopify-mcp-bridge" ];
-          env = {
-            MCP_TARGET_URL = "https://explainify.shopify.io/mcp";
-            MCP_API_TOKEN = readKeychainSecret "mcp-explainify-token";
-          };
+          type = "streamable-http";
+          url = "https://explainify.shopifycloud.com/mcp";
+          headers.Authorization = "Bearer " + readKeychainSecret "mcp-explainify-token";
         };
 
         tool-gateway = {
