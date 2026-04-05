@@ -55,6 +55,94 @@
       patches = (old.patches or []) ++ [ ./fzf-git-sh-customizations.patch ];
     });
 
+    gcloud-mcp = final.buildNpmPackage rec {
+      pname = "gcloud-mcp";
+      version = "0.5.3";
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/@google-cloud/gcloud-mcp/-/gcloud-mcp-${version}.tgz";
+        hash = "sha256-Q2ujZBp7PH+wS7RASl1y0uWJFk42NHSLnhBpl9206to=";
+      };
+      postPatch = ''
+        cp ${./gcloud-mcp/package.json} package.json
+        cp ${./gcloud-mcp/package-lock.json} package-lock.json
+      '';
+      npmDeps = final.importNpmLock { npmRoot = ./gcloud-mcp; };
+      npmConfigHook = final.importNpmLock.npmConfigHook;
+      dontNpmBuild = true;
+      meta = with final.lib; {
+        description = "MCP server for Google Cloud via gcloud CLI";
+        homepage = "https://github.com/googleapis/gcloud-mcp";
+        license = licenses.asl20;
+        mainProgram = "gcloud-mcp";
+      };
+    };
+
+    observability-mcp = final.buildNpmPackage rec {
+      pname = "observability-mcp";
+      version = "0.2.3";
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/@google-cloud/observability-mcp/-/observability-mcp-${version}.tgz";
+        hash = "sha256-osa+MSVVXZBHS/zA+1vBaybPOsuNzsNOn58zRSU2RzE=";
+      };
+      postPatch = ''
+        cp ${./observability-mcp/package.json} package.json
+        cp ${./observability-mcp/package-lock.json} package-lock.json
+      '';
+      npmDeps = final.importNpmLock { npmRoot = ./observability-mcp; };
+      npmConfigHook = final.importNpmLock.npmConfigHook;
+      dontNpmBuild = true;
+      meta = with final.lib; {
+        description = "MCP server for Google Cloud Observability";
+        homepage = "https://github.com/googleapis/gcloud-mcp";
+        license = licenses.asl20;
+        mainProgram = "observability-mcp";
+      };
+    };
+
+    storage-mcp = final.buildNpmPackage rec {
+      pname = "storage-mcp";
+      version = "0.3.3";
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/@google-cloud/storage-mcp/-/storage-mcp-${version}.tgz";
+        hash = "sha256-bXqx4EqmYta8Z1S34FSG/uhZ8OEkHcgR3wen+EDqoh4=";
+      };
+      postPatch = ''
+        cp ${./storage-mcp/package.json} package.json
+        cp ${./storage-mcp/package-lock.json} package-lock.json
+      '';
+      npmDeps = final.importNpmLock { npmRoot = ./storage-mcp; };
+      npmConfigHook = final.importNpmLock.npmConfigHook;
+      dontNpmBuild = true;
+      meta = with final.lib; {
+        description = "MCP server for Google Cloud Storage";
+        homepage = "https://github.com/googleapis/gcloud-mcp";
+        license = licenses.asl20;
+        mainProgram = "storage-mcp";
+      };
+    };
+
+    backupdr-mcp = final.buildNpmPackage rec {
+      pname = "backupdr-mcp";
+      version = "0.1.0";
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/@google-cloud/backupdr-mcp/-/backupdr-mcp-${version}.tgz";
+        hash = "sha256-cUZc5oWUlCgtcnY6uWnw316+2GG8MlO6vru3/29pr5A=";
+      };
+      postPatch = ''
+        cp ${./backupdr-mcp/package.json} package.json
+        cp ${./backupdr-mcp/package-lock.json} package-lock.json
+      '';
+      npmDeps = final.importNpmLock { npmRoot = ./backupdr-mcp; };
+      npmConfigHook = final.importNpmLock.npmConfigHook;
+      dontNpmBuild = true;
+      meta = with final.lib; {
+        description = "MCP server for Google Cloud Backup and DR";
+        homepage = "https://github.com/googleapis/gcloud-mcp";
+        license = licenses.asl20;
+        mainProgram = "backupdr-mcp";
+      };
+    };
+
     zellij-autolock = final.stdenv.mkDerivation {
       pname = "zellij-autolock";
       version = "0.2.2";

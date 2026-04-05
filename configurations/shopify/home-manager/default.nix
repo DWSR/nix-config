@@ -90,15 +90,6 @@ in
           args = [ "mcp" ];
         };
 
-        gcp-mcp-server = {
-          command = "/opt/homebrew/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
-          args = [ "shopify-mcp-bridge" ];
-          env = {
-            MCP_TARGET_URL = "https://gcp.shopifycloud.com/mcp";
-            GCP_IAP_CLIENT_ID = "13501465310-0288jvqmn87i69ra0ab95pj6ak7b1p6r.apps.googleusercontent.com";
-            GCP_IAP_CLIENT_SECRET_PATH = "projects/13501465310/secrets/gcp-mcp-server-production-oauth-client-secret";
-          };
-        };
 
         browsermcp = {
           command = "${pkgs.browsermcp}/bin/mcp-server-browsermcp";
@@ -122,6 +113,18 @@ in
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
           headers.Authorization = "Bearer \${TOOL_GATEWAY_TOKEN}";
+        };
+
+        gcloud-mcp = {
+          command = "${pkgs.gcloud-mcp}/bin/gcloud-mcp";
+        };
+
+        observability-mcp-gcp = {
+          command = "${pkgs.observability-mcp}/bin/observability-mcp";
+        };
+
+        storage-mcp = {
+          command = "${pkgs.storage-mcp}/bin/storage-mcp";
         };
       };
     };
