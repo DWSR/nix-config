@@ -5,8 +5,8 @@
   ...
 }:
 let
-  gcloud = pkgs.google-cloud-sdk.withExtraComponents [
-    pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin
+  gcloud = pkgs.unstable.google-cloud-sdk.withExtraComponents [
+    pkgs.unstable.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
   readKeychainSecret = config.home.mcp.readKeychainSecret;
 in
