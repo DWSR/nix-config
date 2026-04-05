@@ -132,6 +132,11 @@ in
         storage-mcp = {
           command = "${pkgs.storage-mcp}/bin/storage-mcp";
         };
+
+        obsidian = {
+          command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
+          args = [ "/Users/brandonmcnama/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank" ];
+        };
       };
     };
   };

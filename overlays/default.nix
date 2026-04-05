@@ -55,6 +55,44 @@
       patches = (old.patches or []) ++ [ ./fzf-git-sh-customizations.patch ];
     });
 
+    mcp-obsidian = final.buildNpmPackage {
+      pname = "mcp-obsidian";
+      version = "0.1.0";
+
+      src = final.fetchFromGitHub {
+        owner = "Piotr1215";
+        repo = "mcp-obsidian";
+        rev = "c99c0644b0229cd880c31ccd16a5fe1347e43078";
+        hash = "sha256-6zGlPO4w7iiLJluTvDVEnY7Z/R2pov9Xlu0Qp7xmy7Q=";
+      };
+
+      npmDeps = final.importNpmLock {
+        npmRoot = final.fetchFromGitHub {
+          owner = "Piotr1215";
+          repo = "mcp-obsidian";
+          rev = "c99c0644b0229cd880c31ccd16a5fe1347e43078";
+          hash = "sha256-6zGlPO4w7iiLJluTvDVEnY7Z/R2pov9Xlu0Qp7xmy7Q=";
+        };
+      };
+      npmConfigHook = final.importNpmLock.npmConfigHook;
+
+      dontNpmBuild = true;
+
+      postInstall = ''
+        makeWrapper ${final.nodejs}/bin/node $out/bin/mcp-obsidian \
+          --add-flags "$out/lib/node_modules/obsidian-mcp-filesystem/src/index.js"
+      '';
+
+      nativeBuildInputs = [ final.makeWrapper ];
+
+      meta = with final.lib; {
+        description = "MCP server for Obsidian vault filesystem operations";
+        homepage = "https://github.com/Piotr1215/mcp-obsidian";
+        license = licenses.mit;
+        mainProgram = "mcp-obsidian";
+      };
+    };
+
     gcloud-mcp = final.buildNpmPackage rec {
       pname = "gcloud-mcp";
       version = "0.5.3";
