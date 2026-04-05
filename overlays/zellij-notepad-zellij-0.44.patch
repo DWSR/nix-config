@@ -1,0 +1,22 @@
+--- a/Cargo.toml	2026-04-04 21:52:03
++++ Cargo.toml	2026-04-04 22:12:34
+@@ -7,7 +7,7 @@
+ repository = "https://github.com/0xble/zellij-notepad"
+ 
+ [dependencies]
+-zellij-tile = "0.43"
++zellij-tile = "0.44"
+ 
+ [profile.release]
+ lto = true
+--- a/src/main.rs	2026-04-04 21:52:03
++++ src/main.rs	2026-04-04 22:12:34
+@@ -77,7 +77,7 @@
+ impl Notepad {
+     fn toggle_notepad(&mut self) {
+         if let Some(id) = self.notepad_pane_id {
+-            focus_terminal_pane(id, true);
++            focus_terminal_pane(id, true, false);
+         } else {
+             self.spawn_notepad();
+         }

@@ -120,6 +120,10 @@
       mkdir -p ~/scratch
     '';
 
+    activation.createZellijNotesDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      mkdir -p ~/.config/zellij/notes
+    '';
+
     shell = {
       enableShellIntegration = true;
       enableZshIntegration = true;

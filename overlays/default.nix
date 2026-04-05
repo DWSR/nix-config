@@ -81,6 +81,53 @@
 
     # Built from source with zellij-tile bumped to 0.44 to fix ABI mismatch panic
     # TODO: Remove source builds once upstream releases versions compatible with zellij 0.44
+    zellij-notepad = let
+      fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
+      rustToolchain = fenixPkgs.combine [
+        fenixPkgs.stable.cargo
+        fenixPkgs.stable.rustc
+        fenixPkgs.targets.wasm32-wasip1.stable.rust-std
+      ];
+      rustPlatform = final.makeRustPlatform {
+        cargo = rustToolchain;
+        rustc = rustToolchain;
+      };
+    in rustPlatform.buildRustPackage {
+      pname = "zellij-notepad";
+      version = "0.2.1-patched";
+
+      src = final.fetchFromGitHub {
+        owner = "0xble";
+        repo = "zellij-notepad";
+        tag = "v0.2.1";
+        hash = "sha256-ZMISRi4NtNygT27m4DOhJg8xv7V1yRcbT4ZAuhHI194=";
+      };
+
+      cargoLock.lockFile = ./zellij-notepad-Cargo.lock;
+      cargoPatches = [ ./zellij-notepad-zellij-0.44.patch ];
+
+      postPatch = ''
+        cp ${./zellij-notepad-Cargo.lock} Cargo.lock
+      '';
+
+      buildPhase = ''
+        cargo build --release --target wasm32-wasip1
+      '';
+
+      doCheck = false;
+
+      installPhase = ''
+        mkdir -p $out/share/zellij/plugins
+        cp target/wasm32-wasip1/release/notepad.wasm $out/share/zellij/plugins/zellij-notepad.wasm
+      '';
+
+      meta = with final.lib; {
+        description = "Floating notepad plugin for Zellij";
+        homepage = "https://github.com/0xble/zellij-notepad";
+        license = licenses.mit;
+      };
+    };
+
     zellij-forgot = let
       fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
       rustToolchain = fenixPkgs.combine [

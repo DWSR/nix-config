@@ -5,8 +5,50 @@ let
   attentionWasm = "${pkgs.zellij-attention}/share/zellij/plugins/zellij-attention.wasm";
   zjstatusWasm = "${pkgs.zjstatus}/share/zellij/plugins/zjstatus.wasm";
   forgotWasm = "${pkgs.zellij-forgot}/share/zellij/plugins/zellij-forgot.wasm";
+  notepadWasm = "${pkgs.zellij-notepad}/share/zellij/plugins/zellij-notepad.wasm";
 in
 {
+  xdg.configFile."zellij/layouts/default.kdl" = let
+    # Powerline arrow characters (U+E0B0 , U+E0B2 )
+    arrow = builtins.fromJSON "\"\\ue0b0\"";
+    arrowLeft = builtins.fromJSON "\"\\ue0b2\"";
+  in {
+    text = ''
+      layout {
+        default_tab_template {
+          children
+          pane size=1 borderless=true {
+            plugin location="file:~/.local/share/zellij/plugins/zjstatus.wasm" {
+              format_left  "{mode}#[bg=#3B4252,fg=#4C566A]${arrow}{tabs}#[bg=default,fg=#3B4252]${arrow}"
+              format_right "#[bg=default,fg=#3B4252]${arrowLeft}#[bg=#3B4252,fg=#D8DEE9] {datetime} "
+              format_center ""
+              format_space ""
+              format_hide_on_overlength "true"
+              format_precedence "lrc"
+
+              mode_normal  "#[bg=#4C566A,fg=#A3BE8C,bold] NORMAL "
+              mode_locked  "#[bg=#4C566A,fg=#BF616A,bold] LOCKED "
+              mode_default_to_mode "normal"
+
+              tab_normal           "#[fg=#616E88,bg=#3B4252] {name}"
+              tab_active           "#[fg=#88C0D0,bg=#3B4252,bold] {name}"
+              tab_normal_fullscreen "#[fg=#616E88,bg=#3B4252] {name} []"
+              tab_active_fullscreen "#[fg=#88C0D0,bg=#3B4252,bold] {name} []"
+              tab_normal_sync      "#[fg=#616E88,bg=#3B4252] {name} <>"
+              tab_active_sync      "#[fg=#88C0D0,bg=#3B4252,bold] {name} <>"
+
+              datetime        "{format}"
+              datetime_format "%a %d %b %H:%M"
+              datetime_timezone "America/Toronto"
+
+              hide_frame_for_single_pane "true"
+            }
+          }
+        }
+      }
+    '';
+  };
+
   xdg.dataFile = {
     "autolock" = {
       source = autolockWasm;
@@ -31,6 +73,11 @@ in
     "forgot" = {
       source = forgotWasm;
       target = "zellij/plugins/zellij-forgot.wasm";
+    };
+
+    "notepad" = {
+      source = notepadWasm;
+      target = "zellij/plugins/zellij-notepad.wasm";
     };
   };
 
@@ -69,18 +116,19 @@ in
           _props.location = "file:~/.local/share/zellij/plugins/zellij-attention.wasm";
         };
 
-        "zjstatus" = {
-          _props.location = "file:~/.local/share/zellij/plugins/zjstatus.wasm";
-        };
-
         "forgot" = {
           _props.location = "file:~/.local/share/zellij/plugins/zellij-forgot.wasm";
+        };
+
+        "notepad" = {
+          _props.location = "file:~/.local/share/zellij/plugins/zellij-notepad.wasm";
         };
       };
 
       load_plugins = {
         "autolock" = {};
         "attention" = {};
+        "notepad" = {};
       };
 
       keybinds = {
@@ -89,6 +137,7 @@ in
 
           _children = [
             { bind = { _args = ["Ctrl w"]; LaunchOrFocusPlugin = { _args = ["worktree"]; floating = true; }; }; }
+            { bind = { _args = ["Alt i"]; MessagePlugin = { _args = ["notepad"]; name = "toggle"; }; }; }
             { bind = { _args = ["Ctrl y"]; LaunchOrFocusPlugin = {
               _args = ["forgot"];
               LOAD_ZELLIJ_BINDINGS = "false";
@@ -134,6 +183,7 @@ in
               detach-session = "ctrl + o + w";
               open-session-manager = "ctrl + o + w";
               quit-zellij = "ctrl + q";
+              notepad = "alt + i";
             }; }; }
           ];
         };
