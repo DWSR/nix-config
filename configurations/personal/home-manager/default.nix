@@ -8,7 +8,7 @@
   ...
 }:
 let
-  readOpSecretCmd = x: "\${cmd: op read --no-newline '${x}'}";
+  readKeychainSecret = config.home.mcp.readKeychainSecret;
 in
 {
   imports = [
@@ -67,20 +67,31 @@ in
     ];
 
     mcp = {
-      githubToken = "\${cmd: op read --no-newline 'op://Private/GitHub/Tokens/Full Control'}";
+      githubToken = readKeychainSecret "mcp-github-token";
+
+      keychainSecrets = {
+        "mcp-github-token" = "op://Private/GitHub/Tokens/Full Control";
+        "mcp-kagi-token" = "op://Private/Kagi/API Token";
+        "mcp-fastmail-token" = "op://Private/Fastmail/API Tokens/mcp";
+        "mcp-fastmail-username" = "op://Private/Fastmail/username";
+        "mcp-fastmail-caldav-password" = "op://Private/Fastmail/App Passwords/MCP";
+        "mcp-beeper-token" = "op://Private/Beeper/Desktop API Access Tokens/mcphub";
+        "mcp-hangops-xoxc" = "op://Private/HangOps/Tokens/xoxc";
+        "mcp-hangops-xoxd" = "op://Private/HangOps/Tokens/xoxd";
+      };
 
       extraServers = {
         kagi = {
           command = "${pkgs.kagimcp}/bin/kagimcp";
-          env.KAGI_API_KEY = readOpSecretCmd "op://Private/Kagi/API Token";
+          env.KAGI_API_KEY = readKeychainSecret "mcp-kagi-token";
         };
 
         fastmail = {
           command = "${pkgs.fastmail-mcp}/bin/fastmail-mcp";
           env = {
-            FASTMAIL_API_TOKEN = readOpSecretCmd "op://Private/Fastmail/API Tokens/mcp";
-            FASTMAIL_CALDAV_USERNAME = readOpSecretCmd "op://Private/Fastmail/username";
-            FASTMAIL_CALDAV_PASSWORD = readOpSecretCmd "op://Private/Fastmail/App Passwords/MCP";
+            FASTMAIL_API_TOKEN = readKeychainSecret "mcp-fastmail-token";
+            FASTMAIL_CALDAV_USERNAME = readKeychainSecret "mcp-fastmail-username";
+            FASTMAIL_CALDAV_PASSWORD = readKeychainSecret "mcp-fastmail-caldav-password";
           };
         };
 
@@ -88,15 +99,15 @@ in
           type = "http";
           url = "http://localhost:23373/v0/mcp";
           headers = {
-            Authorization = "Bearer " + readOpSecretCmd "op://Private/Beeper/Desktop API Access Tokens/mcphub";
+            Authorization = "Bearer " + readKeychainSecret "mcp-beeper-token";
           };
         };
 
         slack-hangops = {
           command = "${pkgs.slack-mcp-server}/bin/slack-mcp-server";
           env = {
-            SLACK_MCP_XOXC_TOKEN = readOpSecretCmd "op://Private/HangOps/Tokens/xoxc";
-            SLACK_MCP_XOXD_TOKEN = readOpSecretCmd "op://Private/HangOps/Tokens/xoxd";
+            SLACK_MCP_XOXC_TOKEN = readKeychainSecret "mcp-hangops-xoxc";
+            SLACK_MCP_XOXD_TOKEN = readKeychainSecret "mcp-hangops-xoxd";
             SLACK_MCP_ENABLED_TOOLS = lib.strings.concatStringsSep "," [
               "conversations_history"
               "conversations_replies"

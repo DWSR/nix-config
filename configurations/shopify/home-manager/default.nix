@@ -1,13 +1,14 @@
 {
   pkgs,
   lib,
+  config,
   ...
 }:
 let
   gcloud = pkgs.google-cloud-sdk.withExtraComponents [
     pkgs.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
-  readOpSecretCmd = x: "\${cmd: op read --no-newline '${x}'}";
+  readKeychainSecret = config.home.mcp.readKeychainSecret;
 in
 {
 
@@ -47,20 +48,28 @@ in
     ];
 
     mcp = {
-      githubToken = readOpSecretCmd "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
+      githubToken = readKeychainSecret "mcp-github-token";
+
+      keychainSecrets = {
+        "mcp-github-token" = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
+        "mcp-vault-token" = "op://Employee/Vault API Token/password";
+        "mcp-incident-dashboard-token" = "op://Employee/Incident Dashboard API Token/password";
+        "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
+        "mcp-explainify-token" = "op://Employee/explainify mcp api token/password";
+      };
 
       extraServers = {
         vault-mcp = {
           type = "http";
           url = "https://vault.shopify.io/mcp";
-          headers.Authorization = "Bearer " + readOpSecretCmd "op://Employee/Vault API Token/password";
+          headers.Authorization = "Bearer " + readKeychainSecret "mcp-vault-token";
         };
 
         incident-dashboard-mcp = {
           type = "http";
           url = "https://incidents.shopify.io/api/mcp";
           headers.Authorization =
-            "Bearer " + readOpSecretCmd "op://Employee/Incident Dashboard API Token/password";
+            "Bearer " + readKeychainSecret "mcp-incident-dashboard-token";
         };
 
         observe-mcp = {
@@ -72,7 +81,7 @@ in
           type = "http";
           url = "https://infra-central.shopify.io/api/mcp";
           headers.Authorization =
-            "Bearer " + readOpSecretCmd "op://Employee/Infra Central API Token/password";
+            "Bearer " + readKeychainSecret "mcp-infra-central-token";
         };
 
         fellow-mcp = {
@@ -81,12 +90,12 @@ in
         };
 
         gworkspace-mcp = {
-          command = "uvx";
+          command = "${pkgs.uv}/bin/uvx";
           args = [ "gworkspace-mcp" ];
         };
 
         gt-mcp = {
-          command = "gt";
+          command = "${pkgs.graphite-cli}/bin/gt";
           args = [ "mcp" ];
         };
 
@@ -101,18 +110,18 @@ in
         };
 
         explainify-mcp = {
-          command = "/opt/homebrew/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
+          command = "${pkgs.uv}/bin/uvx"; # Need to specifically use homebrew uvx because of reasons?
           args = [ "shopify-mcp-bridge" ];
           env = {
             MCP_TARGET_URL = "https://explainify.shopify.io/mcp";
-            MCP_API_TOKEN = readOpSecretCmd "op://Employee/explainify mcp api token/password";
+            MCP_API_TOKEN = readKeychainSecret "mcp-explainify-token";
           };
         };
 
         tool-gateway = {
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
-          headers.Authorization = "Bearer \${TOOL_GATEWAY_TOKEN}";
+          headers.Authorization = "Bearer \${cmd: cut -d= -f2- ~/.cache/tool-gateway-token}";
         };
 
         gcloud-mcp = {
@@ -158,6 +167,7 @@ in
     builtins.elem (lib.getName pkg) [
       "1password-cli"
       "1password"
+      "graphite-cli"
       "raycast"
       "keymapp"
       "slack"

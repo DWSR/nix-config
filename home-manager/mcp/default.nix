@@ -3,6 +3,22 @@ let
   githubToken = if config.home.mcp.githubToken == null
     then builtins.throw "home.mcp.githubToken must be set"
     else config.home.mcp.githubToken;
+
+  # Generate a ${cmd:} string that reads a secret from the macOS Keychain at runtime.
+  # Works in launchd environments where op CLI is not available.
+  readKeychainSecret = service:
+    "\${cmd: /usr/bin/security find-generic-password -s '${service}' -a mcp-hub -w}";
+
+  # Generate the activation script that populates the keychain from 1Password
+  keychainActivationScript = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (service: opUri: ''
+      echo "Storing keychain secret: ${service}"
+      __secret="$(${pkgs._1password-cli}/bin/op read --no-newline '${opUri}')"
+      /usr/bin/security add-generic-password -U -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db 2>/dev/null || \
+      /usr/bin/security add-generic-password -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db
+      unset __secret
+    '') config.home.mcp.keychainSecrets
+  );
 in
 {
   options.home.mcp = {
@@ -25,7 +41,23 @@ in
       };
     };
 
+    keychainSecrets = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {};
+      description = "Map of keychain service names to 1Password URIs. Secrets are read from op during activation and stored in the macOS Keychain for runtime access.";
+      example = {
+        "mcp-github-token" = "op://Private/GitHub/Tokens/Full Control";
+      };
+    };
+
     enable = lib.mkEnableOption "MCP hub configuration" // { default = true; };
+  };
+
+  options.home.mcp.readKeychainSecret = lib.mkOption {
+    type = lib.types.raw;
+    default = readKeychainSecret;
+    readOnly = true;
+    description = "Function that generates a mcphub cmd string to read a secret from the macOS Keychain";
   };
 
   config = lib.mkIf config.home.mcp.enable {
@@ -55,6 +87,27 @@ in
 
 
         } // config.home.mcp.extraServers;
+      };
+    };
+
+    home.activation.mcpKeychainSecrets = lib.mkIf (config.home.mcp.keychainSecrets != {}) (
+      lib.hm.dag.entryAfter [ "writeBoundary" ] keychainActivationScript
+    );
+
+    launchd.agents.mcp-hub = {
+      enable = true;
+      config = {
+        Label = "com.ravitemer.mcp-hub";
+        ProgramArguments = [
+          "${pkgs.mcp-hub}/bin/mcp-hub"
+          "--port" "37373"
+          "--config" "${config.xdg.configHome}/mcphub/servers.json"
+          "--watch"
+        ];
+        RunAtLoad = true;
+        KeepAlive = true;
+        StandardOutPath = "/tmp/mcp-hub.log";
+        StandardErrorPath = "/tmp/mcp-hub.error.log";
       };
     };
   };
