@@ -31,8 +31,5 @@
       highlighters = ["main" "brackets" "cursor"];
     };
 
-    initContent = ''
-      source ${pkgs.fzf-git-sh}/share/fzf-git-sh/fzf-git.sh
-    '';
   };
 }

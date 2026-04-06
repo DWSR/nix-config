@@ -51,10 +51,6 @@
       vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
     });
 
-    fzf-git-sh = prev.fzf-git-sh.overrideAttrs (old: {
-      patches = (old.patches or []) ++ [ ./fzf-git-sh-customizations.patch ];
-    });
-
     mcp-obsidian = final.buildNpmPackage {
       pname = "mcp-obsidian";
       version = "0.1.0";
