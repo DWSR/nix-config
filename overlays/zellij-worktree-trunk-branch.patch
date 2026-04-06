@@ -1,0 +1,82 @@
+--- a/src/main.rs	2026-04-05 00:00:00
++++ b/src/main.rs	2026-04-05 00:00:00
+@@ -25,6 +25,8 @@
+     waiting_for_command: bool,
+     repo_root: Option<String>,
+     base_path: Option<String>,
++    checkout_trunk: bool,
++    trunk_branch: Option<String>,
+     initialized: bool,
+     first_render: bool,
+ }
+@@ -40,6 +42,8 @@
+             waiting_for_command: false,
+             repo_root: None,
+             base_path: None,
++            checkout_trunk: false,
++            trunk_branch: None,
+             initialized: false,
+             first_render: true,
+         }
+@@ -167,6 +171,10 @@
+         if let Some(base_path) = configuration.get("base_path") {
+             self.base_path = Some(base_path.clone());
+         }
++
++        if let Some(val) = configuration.get("checkout_trunk") {
++            self.checkout_trunk = val == "true";
++        }
+     }
+
+     fn update(&mut self, event: Event) -> bool {
+@@ -207,7 +215,17 @@
+                                         .insert("command".to_string(), "worktree-add".to_string());
+                                     context.insert("tab_name".to_string(), tab_name);
+                                     context.insert("path".to_string(), path.clone());
+-                                    run_command(&["git", "worktree", "add", &path], context);
++                                    if let Some(ref trunk) = self.trunk_branch {
++                                        run_command(
++                                            &["git", "worktree", "add", "--force", &path, trunk],
++                                            context,
++                                        );
++                                    } else {
++                                        run_command(
++                                            &["git", "worktree", "add", &path],
++                                            context,
++                                        );
++                                    }
+                                 } else {
+                                     self.error_message = Some(
+                                         [
+@@ -295,6 +313,15 @@
+                                 let mut context = BTreeMap::new();
+                                 context.insert("command".to_string(), "worktree-list".to_string());
+                                 run_command(&["git", "worktree", "list", "--porcelain"], context);
++
++                                if self.checkout_trunk {
++                                    let mut ctx = BTreeMap::new();
++                                    ctx.insert("command".to_string(), "detect-trunk".to_string());
++                                    run_command(
++                                        &["git", "symbolic-ref", "refs/remotes/origin/HEAD"],
++                                        ctx,
++                                    );
++                                }
+                             } else {
+                                 self.waiting_for_command = false;
+                                 self.error_message =
+@@ -354,6 +381,15 @@
+                             }
+                         }
+                     }
++                    "detect-trunk" => {
++                        if exit_code == Some(0) {
++                            let output = String::from_utf8_lossy(&stdout);
++                            let trimmed = output.trim();
++                            if let Some(branch) = trimmed.strip_prefix("refs/remotes/origin/") {
++                                self.trunk_branch = Some(branch.to_string());
++                            }
++                        }
++                    }
+                     _ => {
+                         // Unknown command type
+                         self.waiting_for_command = false;

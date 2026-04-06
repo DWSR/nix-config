@@ -121,6 +121,7 @@ in
         KeepAlive = true;
         EnvironmentVariables.PATH = lib.makeBinPath [
           pkgs.unstable.google-cloud-sdk
+          pkgs.git-lfs
         ] + ":/usr/bin:/bin";
         StandardOutPath = "/tmp/mcp-hub.log";
         StandardErrorPath = "/tmp/mcp-hub.error.log";

@@ -109,7 +109,8 @@ in
         "worktree" = {
           _props.location = "file:~/.local/share/zellij/plugins/zellij-worktree.wasm";
 
-          base_path = "~/scratch";
+          base_path = "/Users/brandonmcnama/scratch";
+          checkout_trunk = "true";
         };
 
         "attention" = {

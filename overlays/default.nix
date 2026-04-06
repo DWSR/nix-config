@@ -415,7 +415,10 @@
       };
 
       cargoLock.lockFile = ./zellij-worktree-Cargo.lock;
-      cargoPatches = [ ./zellij-worktree-zellij-0.44.patch ];
+      cargoPatches = [
+        ./zellij-worktree-zellij-0.44.patch
+        ./zellij-worktree-trunk-branch.patch
+      ];
 
       postPatch = ''
         cp ${./zellij-worktree-Cargo.lock} Cargo.lock
