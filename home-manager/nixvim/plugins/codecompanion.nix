@@ -10,6 +10,30 @@
             provider = "snacks";
           };
         };
+        adapters = {
+          acp = {
+            claude_code.__raw = ''
+              function()
+                return require("codecompanion.adapters").extend("claude_code", {
+                  commands = {
+                    default = {
+                      "${pkgs.claude-agent-acp}/bin/claude-agent-acp",
+                    },
+                    yolo = {
+                      "${pkgs.claude-agent-acp}/bin/claude-agent-acp",
+                      "--yolo",
+                    },
+                  },
+                })
+              end
+            '';
+          };
+        };
+        interactions = {
+          chat = {
+            adapter = "claude_code";
+          };
+        };
         extensions = {
           mcphub = {
             callback = "mcphub.extensions.codecompanion";
@@ -33,9 +57,9 @@
       {
         mode = "n";
         key = "<leader>Cc";
-        action = "<cmd>CodeCompanionToggle<CR>";
+        action = "<cmd>CodeCompanionChat Toggle<CR>";
         options = {
-          desc = "Toggle CodeCompanion buffer";
+          desc = "Toggle CodeCompanion chat";
           noremap = true;
           silent = true;
         };
