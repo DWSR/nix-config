@@ -56,6 +56,7 @@ in
         "mcp-incident-dashboard-token" = "op://Employee/Incident Dashboard API Token/password";
         "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
         "mcp-explainify-token" = "op://Employee/explainify mcp api token/password";
+        "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
       };
 
       extraServers = {
@@ -105,8 +106,9 @@ in
         };
 
         buildkite = {
-          type = "http";
-          url = "https://mcp.buildkite.com/mcp";
+          command = "${pkgs.buildkite-mcp-server}/bin/buildkite-mcp-server";
+          args = [ "stdio" "--enabled-toolsets=all" ];
+          env.BUILDKITE_API_TOKEN = readKeychainSecret "mcp-buildkite-token";
         };
 
         explainify-mcp = {

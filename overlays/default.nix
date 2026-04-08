@@ -51,6 +51,28 @@
       vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
     });
 
+    buildkite-mcp-server = final.buildGoModule {
+      pname = "buildkite-mcp-server";
+      version = "1.0.0";
+
+      src = final.fetchFromGitHub {
+        owner = "buildkite";
+        repo = "buildkite-mcp-server";
+        tag = "v1.0.0";
+        hash = "sha256-1o/Co34WjtdzlOlDDMfhFo+6wLUj3UFDgcVKrzsXbEk=";
+      };
+
+      vendorHash = "sha256-CHe/sCQj4+BLG0mDoNsu8mPBUdKyMgA4BT4T1iQh5ts=";
+      subPackages = [ "cmd/buildkite-mcp-server" ];
+
+      meta = with final.lib; {
+        description = "MCP server for Buildkite pipelines, builds, jobs, and tests";
+        homepage = "https://github.com/buildkite/buildkite-mcp-server";
+        license = licenses.mit;
+        mainProgram = "buildkite-mcp-server";
+      };
+    };
+
     mcp-obsidian = final.buildNpmPackage {
       pname = "mcp-obsidian";
       version = "0.1.0";
