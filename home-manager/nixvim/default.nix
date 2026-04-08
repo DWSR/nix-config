@@ -74,6 +74,11 @@ in
       };
     };
 
+    highlightOverride = {
+      EdgyWinSeparator = { fg = "#000000"; };
+      EdgyWinBar = { fg = "#88C0D0"; bg = "#3B4252"; bold = true; };
+    };
+
     luaLoader.enable = true;
 
     opts = {

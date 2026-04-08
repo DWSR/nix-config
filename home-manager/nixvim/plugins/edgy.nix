@@ -35,6 +35,7 @@ in
         animate.enabled = false;
         close_when_all_hidden = false;
         wo.signcolumn = "yes";
+        wo.winhighlight = "WinSeparator:EdgyWinSeparator,WinBar:EdgyWinBar,WinBarNC:EdgyWinBar";
 
         keys = {
           e = helpers.mkRaw "toggle_auto_expand_width";
