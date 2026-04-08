@@ -119,6 +119,7 @@ in
       signcolumn = "yes";
       wrap = true;
       scrolloff = 8;
+      fillchars = "eob: ";
       sidescrolloff = 8;
       showcmd = false;
       ruler = false;
