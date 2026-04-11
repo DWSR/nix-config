@@ -86,7 +86,7 @@ in
         };
 
         fellow-mcp = {
-          type = "http";
+          type = "streamable-http";
           url = "https://fellow.app/mcp";
         };
 
@@ -138,6 +138,10 @@ in
         obsidian = {
           command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
           args = [ "/Users/brandonmcnama/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank" ];
+        };
+
+        chrome-devtools = {
+          command = "${pkgs.chrome-devtools-mcp}/bin/chrome-devtools-mcp";
         };
       };
     };

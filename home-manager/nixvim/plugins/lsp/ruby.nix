@@ -4,13 +4,13 @@
     rubocop = {
       enable = true;
       autostart = false;
-
+      package = null;
       packageFallback = true;
     };
     ruby_lsp = {
       enable = true;
       autostart = false;
-
+      package = null;
       packageFallback = true;
     };
 

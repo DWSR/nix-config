@@ -51,6 +51,34 @@
       vendorHash = "sha256-uFXHoseFOxGIGPiWxWfDl339vUv855VHYgSs9rnDyuI=";
     });
 
+    chrome-devtools-mcp = final.stdenv.mkDerivation {
+      pname = "chrome-devtools-mcp";
+      version = "0.21.0";
+
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-0.21.0.tgz";
+        hash = "sha256-KMHWSSctf6ihIT792yZeTqaYuHqmUanN2SJje5PI184=";
+      };
+
+      dontBuild = true;
+
+      nativeBuildInputs = [ final.makeWrapper ];
+
+      installPhase = ''
+        mkdir -p $out/lib/chrome-devtools-mcp
+        cp -r . $out/lib/chrome-devtools-mcp/
+        makeWrapper ${final.nodejs}/bin/node $out/bin/chrome-devtools-mcp \
+          --add-flags "$out/lib/chrome-devtools-mcp/build/src/bin/chrome-devtools-mcp.js"
+      '';
+
+      meta = with final.lib; {
+        description = "MCP server for Chrome DevTools";
+        homepage = "https://github.com/ChromeDevTools/chrome-devtools-mcp";
+        license = licenses.asl20;
+        mainProgram = "chrome-devtools-mcp";
+      };
+    };
+
     claude-agent-acp = final.buildNpmPackage rec {
       pname = "claude-agent-acp";
       version = "0.25.3";

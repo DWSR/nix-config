@@ -103,7 +103,7 @@ in
 
     home.activation.mcpKeychainSecrets = lib.mkIf (config.home.mcp.keychainSecrets != {}) (
       lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        ${mcpSyncSecretsScript}/bin/mcp-sync-secrets
+        echo "MCP secrets may need refreshing. Run 'mcp-sync-secrets' if MCP servers fail to authenticate."
       ''
     );
 

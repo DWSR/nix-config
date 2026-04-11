@@ -56,7 +56,7 @@
     keymaps = [
       {
         mode = "n";
-        key = "<leader>Cc";
+        key = "<leader>ac";
         action = "<cmd>CodeCompanionChat Toggle<CR>";
         options = {
           desc = "Toggle CodeCompanion chat";
@@ -66,7 +66,7 @@
       }
       {
         mode = "n";
-        key = "<leader>Ca";
+        key = "<leader>aa";
         action = "<cmd>CodeCompanionActions<CR>";
         options = {
           desc = "Open CodeCompanion actions palette";
