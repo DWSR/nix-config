@@ -2,6 +2,8 @@
   pkgs,
   lib,
   config,
+  inputs,
+  outputs,
   ...
 }:
 let
@@ -11,6 +13,10 @@ let
   readKeychainSecret = config.home.mcp.readKeychainSecret;
 in
 {
+
+  nixpkgs.overlays = [
+    outputs.overlays.shopify-packages
+  ];
 
   home = {
     stateVersion = "25.11";
@@ -69,8 +75,7 @@ in
         incident-dashboard-mcp = {
           type = "http";
           url = "https://incidents.shopify.io/api/mcp";
-          headers.Authorization =
-            "Bearer " + readKeychainSecret "mcp-incident-dashboard-token";
+          headers.Authorization = "Bearer " + readKeychainSecret "mcp-incident-dashboard-token";
         };
 
         observe-mcp = {
@@ -81,8 +86,7 @@ in
         infra-central-mcp = {
           type = "http";
           url = "https://infra-central.shopify.io/api/mcp";
-          headers.Authorization =
-            "Bearer " + readKeychainSecret "mcp-infra-central-token";
+          headers.Authorization = "Bearer " + readKeychainSecret "mcp-infra-central-token";
         };
 
         fellow-mcp = {
@@ -100,14 +104,16 @@ in
           args = [ "mcp" ];
         };
 
-
         browsermcp = {
           command = "${pkgs.browsermcp}/bin/mcp-server-browsermcp";
         };
 
         buildkite = {
           command = "${pkgs.buildkite-mcp-server}/bin/buildkite-mcp-server";
-          args = [ "stdio" "--enabled-toolsets=all" ];
+          args = [
+            "stdio"
+            "--enabled-toolsets=all"
+          ];
           env.BUILDKITE_API_TOKEN = readKeychainSecret "mcp-buildkite-token";
         };
 
@@ -137,7 +143,9 @@ in
 
         obsidian = {
           command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
-          args = [ "/Users/brandonmcnama/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank" ];
+          args = [
+            "/Users/brandonmcnama/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank"
+          ];
         };
 
         chrome-devtools = {
@@ -168,6 +176,7 @@ in
     };
   };
 
+
   nixvim-extra.shadowenv.enable = true;
 
   nixpkgs.config.allowUnfreePredicate =
@@ -185,8 +194,11 @@ in
     ../../../home-manager/common
     ../../../home-manager/mcp
 
+    "${inputs.home-manager}/modules/programs/opencode.nix"
+
     ./dev.nix
     ./git.nix
+    ./opencode.nix
     ./wish.nix
   ];
 }

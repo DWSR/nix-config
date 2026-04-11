@@ -101,7 +101,7 @@ in
           _props.location = "file:~/.local/share/zellij/plugins/autolock.wasm";
 
           is_enabled = true;
-          triggers = "nvim|vim|v|nv";
+          triggers = "nvim|vim|v|nv|opencode";
           watch_triggers = "fzf|zoxide|atuin";
           watch_interval = "1.0";
         };
