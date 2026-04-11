@@ -7,7 +7,7 @@ let
     postBuild = ''
       wrapProgram $out/bin/opencode \
         --run '
-          if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/health >/dev/null 2>&1; then
+          if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/health >/dev/null 2>&1; then
             echo "ERROR: MCP hub is not running. Obsidian memory tools are unavailable." >&2
             echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
             exit 1
