@@ -194,8 +194,6 @@ in
     ../../../home-manager/common
     ../../../home-manager/mcp
 
-    "${inputs.home-manager}/modules/programs/opencode.nix"
-
     ./dev.nix
     ./git.nix
     ./opencode.nix

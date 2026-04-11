@@ -4,14 +4,10 @@
     enable = true;
     text = builtins.toJSON {
       theme = "nord";
-      keybinds = {
-        leader = "space";
-      };
     };
   };
 
   programs.opencode = {
-    enable = true;
     package = pkgs.opencode-shopify;
     settings = {
       enabled_providers = [

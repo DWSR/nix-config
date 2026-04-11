@@ -46,6 +46,7 @@
     "${inputs.home-manager}/modules/programs/man.nix"
     "${inputs.home-manager}/modules/programs/nix-index.nix"
     "${inputs.home-manager}/modules/programs/nix-your-shell.nix"
+    "${inputs.home-manager}/modules/programs/opencode.nix"
     "${inputs.home-manager}/modules/programs/pandoc.nix"
     "${inputs.home-manager}/modules/programs/patdiff.nix"
     "${inputs.home-manager}/modules/programs/pay-respects.nix"
@@ -188,6 +189,7 @@
   programs.nix-index.enable = true;
   programs.nix-index-database.comma.enable = true;
   programs.nix-your-shell.enable = true;
+  programs.opencode.enable = true;
   programs.pandoc.enable = true;
   programs.pay-respects.enable = true;
   programs.readline.enable = true;
