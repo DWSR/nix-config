@@ -7,9 +7,9 @@
     };
   };
 
-  programs.opencode = {
-    package = pkgs.opencode-shopify;
-    settings = {
+  home.opencode.package = pkgs.opencode-shopify;
+
+  programs.opencode.settings = {
       enabled_providers = [
         "anthropic"
         "openai"
@@ -105,6 +105,5 @@
           };
         };
       };
-    };
   };
 }

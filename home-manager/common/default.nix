@@ -12,6 +12,7 @@
     ./atuin.nix
     ./gh-cli.nix
     ./ghostty.nix
+    ./opencode.nix
     ./starship.nix
     ./zellij.nix
     ./zsh.nix
@@ -189,7 +190,6 @@
   programs.nix-index.enable = true;
   programs.nix-index-database.comma.enable = true;
   programs.nix-your-shell.enable = true;
-  programs.opencode.enable = true;
   programs.pandoc.enable = true;
   programs.pay-respects.enable = true;
   programs.readline.enable = true;

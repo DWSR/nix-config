@@ -35,6 +35,11 @@ in
       description = "GitHub personal access token for MCP server";
     };
 
+    obsidianVaultPath = lib.mkOption {
+      type = lib.types.str;
+      description = "Absolute path to the Obsidian vault for agent memory and conversation logs";
+    };
+
     extraServers = lib.mkOption {
       type = lib.types.attrsOf lib.types.attrs;
       default = {};
@@ -72,6 +77,7 @@ in
       pkgs.mcp-hub
       pkgs.github-mcp-server
       pkgs.mcp-nixos
+      pkgs.mcp-obsidian
       (pkgs.writeScriptBin "restart-mcp-hub" ''
         #!/bin/sh
         exec launchctl kickstart -k "gui/$(id -u)/com.ravitemer.mcp-hub"
@@ -96,6 +102,10 @@ in
             env.GITHUB_PERSONAL_ACCESS_TOKEN = githubToken;
           };
 
+          obsidian = {
+            command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
+            args = [ config.home.mcp.obsidianVaultPath ];
+          };
 
         } // config.home.mcp.extraServers;
       };
