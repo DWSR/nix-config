@@ -16,18 +16,19 @@ let
 
   # Builder for zellij plugins that need to be compiled from source with
   # zellij-tile bumped to 0.44 for ABI compatibility
-  mkZellijPlugin = {
-    pname,
-    version,
-    owner,
-    repo,
-    tag ? "v${version}",
-    srcHash,
-    wasmBinary,
-    cargoLockFile,
-    cargoPatches,
-    description,
-  }:
+  mkZellijPlugin =
+    {
+      pname,
+      version,
+      owner,
+      repo,
+      tag ? "v${version}",
+      srcHash,
+      wasmBinary,
+      cargoLockFile,
+      cargoPatches,
+      description,
+    }:
     rustPlatform.buildRustPackage {
       pname = pname;
       version = "${version}-patched";

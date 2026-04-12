@@ -4,7 +4,13 @@ final: prev:
 let
   # Builder for Google Cloud MCP servers that all follow the same pattern:
   # npm registry tarball + local package-lock for importNpmLock
-  mkGcloudMcp = { pname, version, hash, description }:
+  mkGcloudMcp =
+    {
+      pname,
+      version,
+      hash,
+      description,
+    }:
     final.buildNpmPackage rec {
       inherit pname version;
       src = final.fetchurl {

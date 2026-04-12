@@ -50,7 +50,9 @@
         filetypes."*" = true;
 
         logger = {
-          print_log_level = { __raw = "vim.log.levels.OFF"; };
+          print_log_level = {
+            __raw = "vim.log.levels.OFF";
+          };
         };
       };
     };

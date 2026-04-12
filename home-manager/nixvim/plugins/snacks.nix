@@ -10,7 +10,7 @@
       {
         action = "<cmd>lua Snacks.picker.diagnostics_buffer()<CR>";
         key = "<leader>sd";
-        mode = ["n"];
+        mode = [ "n" ];
 
         options = {
           silent = true;
@@ -21,7 +21,7 @@
       {
         action = "<cmd>lua Snacks.picker.diagnostics()<CR>";
         key = "<leader>sD";
-        mode = ["n"];
+        mode = [ "n" ];
 
         options = {
           silent = true;

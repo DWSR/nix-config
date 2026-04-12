@@ -69,7 +69,6 @@
     preferXdgDirectories = true;
 
     packages = with pkgs; [
-      alejandra
       apple-sdk
       atuin
       cloc

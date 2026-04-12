@@ -44,7 +44,7 @@
           "gitcommit"
           "TelescopePrompt"
           "TelescopeResults"
-          "''"  
+          "''"
         ];
       };
     };

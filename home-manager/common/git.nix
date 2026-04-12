@@ -8,7 +8,7 @@
 
       aliases = {
         yolo = "!git add -A && git commit -m \"wip\" && git push";
-        ignore = ''!gi() { curl -sL https://www.toptal.com/developers/gitignore/api/$@ ;}; gi'';
+        ignore = "!gi() { curl -sL https://www.toptal.com/developers/gitignore/api/$@ ;}; gi";
         roast = "blame";
         wip = "commit -m wip --no-verify";
         lol = "log --graph --oneline --decorate";

@@ -8,7 +8,10 @@
 
     autosuggestion = {
       enable = true;
-      strategy = ["history" "completion"];
+      strategy = [
+        "history"
+        "completion"
+      ];
     };
 
     completionInit = "autoload -U compinit && compinit && autoload -Uz bashcompinit && bashcompinit";
@@ -28,7 +31,11 @@
 
     syntaxHighlighting = {
       enable = true;
-      highlighters = ["main" "brackets" "cursor"];
+      highlighters = [
+        "main"
+        "brackets"
+        "cursor"
+      ];
     };
 
   };

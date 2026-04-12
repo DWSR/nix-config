@@ -1,4 +1,9 @@
-{ pkgs, lib, config, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  ...
+}:
 let
   wrappedOpencode = pkgs.symlinkJoin {
     name = "opencode-wrapped";

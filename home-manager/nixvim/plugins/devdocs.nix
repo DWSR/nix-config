@@ -74,7 +74,10 @@
     {
       __unkeyed = "<leader>D";
       group = "DevDocs";
-      mode = ["n" "v"];
+      mode = [
+        "n"
+        "v"
+      ];
     }
   ];
 }

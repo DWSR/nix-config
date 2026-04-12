@@ -27,7 +27,9 @@
 
     optimise = {
       automatic = true;
-      interval = { Weekday = 0; };
+      interval = {
+        Weekday = 0;
+      };
     };
 
     settings = {

@@ -12,10 +12,8 @@ in
     };
   };
 
-  custom-packages = final: prev:
-    (mcpServers final prev)
-    // (zellijPlugins final prev)
-    // (misc final prev);
+  custom-packages =
+    final: prev: (mcpServers final prev) // (zellijPlugins final prev) // (misc final prev);
 
   shopify-packages = final: prev: {
     opencode-shopify = final.symlinkJoin {

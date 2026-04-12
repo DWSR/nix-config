@@ -8,7 +8,7 @@
     {
       action = "<cmd>Twilight<cr>";
       key = "<leader>Vt";
-      mode = ["n"];
+      mode = [ "n" ];
 
       options = {
         silent = true;

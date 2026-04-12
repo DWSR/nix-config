@@ -2,7 +2,7 @@
 {
   programs.nixvim.plugins.gitblame = {
     enable = true;
-    
+
     settings = {
       enabled = true;
 

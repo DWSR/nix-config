@@ -5,5 +5,5 @@
     autostart = false;
   };
 
-  programs.nixvim.extraPackages = [pkgs.shfmt];
+  programs.nixvim.extraPackages = [ pkgs.shfmt ];
 }

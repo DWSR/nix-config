@@ -31,7 +31,10 @@
     {
       action = "<cmd>ToggleTerm size=30 direction=horizontal<cr>";
       key = "<leader>t-";
-      mode = ["n" "i"];
+      mode = [
+        "n"
+        "i"
+      ];
 
       options = {
         silent = true;
@@ -42,7 +45,10 @@
     {
       action = "<cmd>ToggleTerm size=30 direction=vertical<cr>";
       key = "<leader>t|";
-      mode = ["n" "i"];
+      mode = [
+        "n"
+        "i"
+      ];
 
       options = {
         silent = true;

@@ -10,10 +10,19 @@ in
       settings = {
         filesystem.filtered_items = {
           visible = true;
-          never_show = [".git" ".DS_Store" "thumbs.db"];
+          never_show = [
+            ".git"
+            ".DS_Store"
+            "thumbs.db"
+          ];
         };
 
-        open_files_do_not_replace_types = ["terminal" "Trouble" "qf" "edgy"];
+        open_files_do_not_replace_types = [
+          "terminal"
+          "Trouble"
+          "qf"
+          "edgy"
+        ];
         use_libuv_file_watcher = true;
         follow_current_file = {
           enabled = true;
@@ -47,7 +56,7 @@ in
         event = "BufLeave";
         group = "git_refresh_neotree";
         desc = "Refresh Neotree git status";
-        pattern = ["*term*"];
+        pattern = [ "*term*" ];
         callback = helpers.mkRaw ''
           function()
             local events = require("neo-tree.events")
@@ -58,8 +67,12 @@ in
     ];
 
     autoGroups = {
-      "neotree_reveal" = {clear = true;};
-      "git_refresh_neotree" = {clear = true;};
+      "neotree_reveal" = {
+        clear = true;
+      };
+      "git_refresh_neotree" = {
+        clear = true;
+      };
     };
   };
 }

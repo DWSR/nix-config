@@ -14,7 +14,7 @@
 
       settings = {
         config = {
-          args = ["--debug"];
+          args = [ "--debug" ];
 
           initializationOptions = {
             command = [
@@ -31,5 +31,5 @@
     };
   };
 
-  programs.nixvim.extraPackages = [pkgs.unstable.golangci-lint];
+  programs.nixvim.extraPackages = [ pkgs.unstable.golangci-lint ];
 }

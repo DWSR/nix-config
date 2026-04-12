@@ -1,6 +1,6 @@
 { pkgs, ... }:
 let
-  tomlFormat = pkgs.formats.toml {};
+  tomlFormat = pkgs.formats.toml { };
   wishConfig = tomlFormat.generate "wish.zsh.toml" {
     features = {
       "alias.cd" = false;

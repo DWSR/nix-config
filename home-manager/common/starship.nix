@@ -16,7 +16,8 @@ let
   secondBlockSep = "[](bg:nord3 fg:nord1)";
   endSep = "[](nord0 fg:nord1)";
 
-in {
+in
+{
   programs.starship = {
     enable = true;
 

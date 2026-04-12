@@ -4,7 +4,7 @@
     enable = true;
 
     settings = {
-      
+
     };
   };
 
@@ -15,7 +15,10 @@
       };
 
       key = "<leader>Vw";
-      mode = ["n" "i"];
+      mode = [
+        "n"
+        "i"
+      ];
 
       options = {
         silent = true;

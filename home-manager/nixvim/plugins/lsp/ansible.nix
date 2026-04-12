@@ -20,18 +20,16 @@ in
   };
 
   programs.nixvim.extraPlugins = [
-    (
-      pkgs.vimUtils.buildVimPlugin {
-        name = "mfussenegger/nvim-ansible";
+    (pkgs.vimUtils.buildVimPlugin {
+      name = "mfussenegger/nvim-ansible";
 
-        src = pkgs.fetchFromGitHub {
-          owner = "mfussenegger";
-          repo = "nvim-ansible";
-          rev = "bba61168b7aef735e7f950fdfece5ef6c388eacf";
-          hash = "sha256-hhmhXV9qkZfjHnSBYZ05SX9QD4qBgW9Ob2k3VRfCDgs=";
-        };
-      }
-    )
+      src = pkgs.fetchFromGitHub {
+        owner = "mfussenegger";
+        repo = "nvim-ansible";
+        rev = "bba61168b7aef735e7f950fdfece5ef6c388eacf";
+        hash = "sha256-hhmhXV9qkZfjHnSBYZ05SX9QD4qBgW9Ob2k3VRfCDgs=";
+      };
+    })
   ];
 
   # programs.nixvim.extraPackages = [ansiblelsPackage];

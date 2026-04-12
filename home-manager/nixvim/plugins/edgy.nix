@@ -85,7 +85,10 @@ in
       {
         action = "<cmd>lua require(\"edgy\").toggle()<CR>";
         key = "<leader>e";
-        mode = ["n" "v"];
+        mode = [
+          "n"
+          "v"
+        ];
 
         options = {
           silent = true;

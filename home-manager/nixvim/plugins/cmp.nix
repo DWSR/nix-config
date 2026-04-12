@@ -28,9 +28,13 @@ in
         };
 
         formatting = {
-          fields = [ "kind" "abbr" "menu" ];
+          fields = [
+            "kind"
+            "abbr"
+            "menu"
+          ];
           max_width = 0;
-          kind_icons =  helpers.mkRaw "kind_icons";
+          kind_icons = helpers.mkRaw "kind_icons";
 
           duplicates = {
             buffer = 1;

@@ -5,9 +5,9 @@
     plugins.telescope = {
       enable = true;
 
-      enabledExtensions = [];
+      enabledExtensions = [ ];
 
-      keymaps = {};
+      keymaps = { };
 
       settings = {
         defaults = {

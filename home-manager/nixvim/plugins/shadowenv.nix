@@ -1,12 +1,18 @@
-{ config, lib, pkgs, ... }:
 {
-  options.nixvim-extra.shadowenv.enable =
-    lib.mkEnableOption "shadowenv.vim integration";
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+{
+  options.nixvim-extra.shadowenv.enable = lib.mkEnableOption "shadowenv.vim integration";
 
   config = lib.mkIf config.nixvim-extra.shadowenv.enable {
     programs.nixvim.extraPlugins = [ pkgs.shadowenv-vim ];
 
-    programs.nixvim.autoGroups."shadowenv_bufenter" = { clear = true; };
+    programs.nixvim.autoGroups."shadowenv_bufenter" = {
+      clear = true;
+    };
     programs.nixvim.autoCmd = [
       {
         event = "BufEnter";

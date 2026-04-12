@@ -39,14 +39,16 @@ in
     };
 
     autoGroups = {
-      lsp_format_on_save = { clear = true; };
+      lsp_format_on_save = {
+        clear = true;
+      };
     };
 
     autoCmd = [
       {
         group = "lsp_format_on_save";
         pattern = "*";
-        event = ["BufWritePre"];
+        event = [ "BufWritePre" ];
         callback = helpers.mkRaw ''
           function()
             vim.lsp.buf.format({
