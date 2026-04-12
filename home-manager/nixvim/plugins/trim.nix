@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   programs.nixvim.plugins.trim = {
     enable = true;
 

@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   programs.nixvim.plugins.actions-preview = {
     enable = true;
 

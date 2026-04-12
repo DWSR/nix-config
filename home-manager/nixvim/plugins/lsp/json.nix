@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   programs.nixvim.plugins.lsp.servers = {
     jqls = {
       enable = true;

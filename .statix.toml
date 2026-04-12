@@ -1,0 +1,6 @@
+# W20 (repeated_keys) is a false positive for NixOS/home-manager modules
+# where multiple `programs.nixvim.*` attributes are set at the top level
+# and the module system handles the merge.
+disabled = ["repeated_keys"]
+nix_version = "2.4"
+ignore = [".direnv"]

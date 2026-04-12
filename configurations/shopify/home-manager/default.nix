@@ -7,7 +7,7 @@ let
   gcloud = pkgs.unstable.google-cloud-sdk.withExtraComponents [
     pkgs.unstable.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
-  readKeychainSecret = config.home.mcp.readKeychainSecret;
+  inherit (config.home.mcp) readKeychainSecret;
 in
 {
   imports = [

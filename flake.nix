@@ -147,24 +147,19 @@
             package = pkgs.prek;
 
             hooks = {
-              # Priority 0: Formatting (runs first)
-              nixfmt-rfc-style = {
+              # Formatting
+              nixfmt-rfc-style.enable = true;
+
+              # Linters
+              statix = {
                 enable = true;
-                priority = 0;
+                settings.config = "./.statix.toml";
               };
 
-              # Priority 1: Linters (run after formatting, parallel with each other)
-              deadnix = {
-                enable = true;
-                priority = 1;
-              };
+              deadnix.enable = true;
+              flake-checker.enable = true;
 
-              flake-checker = {
-                enable = true;
-                priority = 1;
-              };
-
-              # Priority 2: Custom guards
+              # Custom guards
               no-tmp-paths = {
                 enable = true;
                 name = "No /tmp/ paths in nix files";
@@ -172,16 +167,14 @@
                 language = "system";
                 files = "\\.nix$";
                 pass_filenames = false;
-                priority = 2;
               };
 
               no-builtins-fetch = {
                 enable = true;
                 name = "No builtins.fetchGit/fetchTarball";
-                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"builtins\\.fetchGit\\|builtins\\.fetchTarball\\|builtins\\.fetchurl\" --include=\"*.nix\" && exit 1 || exit 0'";
+                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"builtins\\.fetchGit\\|builtins\\.fetchTarball\\|builtins\\.fetchurl\" --include=\"*.nix\" --exclude=flake.nix && exit 1 || exit 0'";
                 language = "system";
                 pass_filenames = false;
-                priority = 2;
               };
 
               no-hardcoded-users = {
@@ -190,7 +183,6 @@
                 entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"/Users/\" --include=\"*.nix\" --exclude=flake.nix | ${pkgs.gnugrep}/bin/grep -v \"\\$\\{\" && exit 1 || exit 0'";
                 language = "system";
                 pass_filenames = false;
-                priority = 2;
               };
             };
           };

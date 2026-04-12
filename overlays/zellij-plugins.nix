@@ -30,7 +30,7 @@ let
       description,
     }:
     rustPlatform.buildRustPackage {
-      pname = pname;
+      inherit pname;
       version = "${version}-patched";
 
       src = final.fetchFromGitHub {

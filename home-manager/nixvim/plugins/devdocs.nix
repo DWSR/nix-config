@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   programs.nixvim.dependencies = {
     curl.enable = true;
   };

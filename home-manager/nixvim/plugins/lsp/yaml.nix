@@ -1,5 +1,4 @@
-{ ... }:
-{
+_: {
   programs.nixvim.plugins.schemastore.enable = true;
 
   programs.nixvim.plugins.lsp.servers = {

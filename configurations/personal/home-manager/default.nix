@@ -6,7 +6,7 @@
   ...
 }:
 let
-  readKeychainSecret = config.home.mcp.readKeychainSecret;
+  inherit (config.home.mcp) readKeychainSecret;
 in
 {
   imports = [

@@ -1,8 +1,5 @@
+# TODO bump nixpkgs to get ansible-language-server back
 { pkgs, ... }:
-let
-  # TODO bump nixpkgs to get this back
-  # ansiblelsPackage = pkgs.unstable.ansible-language-server;
-in
 {
   programs.nixvim.plugins.lsp.servers = {
     ansiblels = {

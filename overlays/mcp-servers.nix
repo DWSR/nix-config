@@ -22,7 +22,7 @@ let
         cp ${./${pname}/package-lock.json} package-lock.json
       '';
       npmDeps = final.importNpmLock { npmRoot = ./${pname}; };
-      npmConfigHook = final.importNpmLock.npmConfigHook;
+      inherit (final.importNpmLock) npmConfigHook;
       dontNpmBuild = true;
       meta = with final.lib; {
         inherit description;
@@ -54,7 +54,7 @@ in
         hash = "sha256-6zGlPO4w7iiLJluTvDVEnY7Z/R2pov9Xlu0Qp7xmy7Q=";
       };
     };
-    npmConfigHook = final.importNpmLock.npmConfigHook;
+    inherit (final.importNpmLock) npmConfigHook;
     dontNpmBuild = true;
 
     postInstall = ''
@@ -114,7 +114,7 @@ in
     '';
 
     npmDeps = final.importNpmLock { npmRoot = ./claude-agent-acp; };
-    npmConfigHook = final.importNpmLock.npmConfigHook;
+    inherit (final.importNpmLock) npmConfigHook;
     dontNpmBuild = true;
 
     meta = with final.lib; {
@@ -162,7 +162,7 @@ in
     '';
 
     npmDeps = final.importNpmLock { npmRoot = ./browsermcp; };
-    npmConfigHook = final.importNpmLock.npmConfigHook;
+    inherit (final.importNpmLock) npmConfigHook;
     dontNpmBuild = true;
 
     meta = with final.lib; {
