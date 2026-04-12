@@ -34,7 +34,7 @@
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
         ref = "master";
-        rev = "407b31407cf7ee57c83f12bc2cbf1040c81389a4";
+        rev = "cb46ff1dae4daa284f29a5dc4948e3bb8dd71940";
       };
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
