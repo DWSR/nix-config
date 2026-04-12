@@ -3,6 +3,11 @@ _: {
     plugins.snacks = {
       enable = true;
       autoLoad = true;
+
+      settings = {
+        # Enable snacks notifier — used by noice as the notification backend
+        notifier.enabled = true;
+      };
     };
 
     keymaps = [

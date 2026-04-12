@@ -62,4 +62,25 @@ if ap_ok then
     "actions-preview should not have telescope config (telescope was removed)")
 end
 
+-- Snacks notifier should be enabled (used by noice as notification backend)
+local snacks_ok = pcall(require, "snacks")
+if snacks_ok then
+  T.check("settings:snacks:notifier-enabled",
+    Snacks.config.notifier and Snacks.config.notifier.enabled,
+    "Snacks notifier should be enabled for noice notification rendering")
+else
+  T.check("settings:snacks:loaded", false, "snacks module not loadable")
+end
+
+-- Noice should have LSP progress disabled (fidget handles it)
+local noice_ok, noice_config = pcall(require, "noice.config")
+if noice_ok then
+  local opts = noice_config.options or {}
+  local lsp = opts.lsp or {}
+  local progress = lsp.progress or {}
+  T.check("settings:noice:lsp-progress-disabled",
+    progress.enabled == false,
+    "noice LSP progress should be disabled (fidget handles it)")
+end
+
 T.report()
