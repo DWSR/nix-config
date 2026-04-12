@@ -182,6 +182,46 @@ in
         desc = "Show diagnostics on cursor hold";
         event = "CursorHold";
       }
+
+      # Highlight yanked text briefly
+      {
+        callback = helpers.mkRaw ''
+          function()
+            vim.highlight.on_yank({ higroup = "Visual", timeout = 200 })
+          end
+        '';
+        desc = "Highlight on yank";
+        event = "TextYankPost";
+      }
+
+      # Equalize window sizes when terminal is resized
+      {
+        command = "tabdo wincmd =";
+        desc = "Auto-resize windows on terminal resize";
+        event = "VimResized";
+      }
+
+      # Quick-close ephemeral buffers with q
+      {
+        callback = helpers.mkRaw ''
+          function()
+            vim.bo.buflisted = false
+            vim.keymap.set("n", "q", "<cmd>close<CR>", { buffer = true, silent = true })
+          end
+        '';
+        desc = "Close ephemeral buffers with q";
+        event = "FileType";
+        pattern = [
+          "qf"
+          "help"
+          "man"
+          "lspinfo"
+          "notify"
+          "checkhealth"
+          "startuptime"
+          "dap-float"
+        ];
+      }
     ];
 
     plugins = {
