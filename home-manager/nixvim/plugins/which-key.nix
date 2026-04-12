@@ -43,7 +43,7 @@ _: {
         }
         {
           __unkeyed = "<leader>g";
-          group = "Goto";
+          group = "Git";
           mode = [
             "n"
             "v"

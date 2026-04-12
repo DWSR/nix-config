@@ -322,10 +322,11 @@ in
           desc = "Workspace LSP symbols";
         };
       }
+      # LSP goto bindings — bare g* keys (standard convention, no leader prefix)
       {
         action = helpers.mkRaw "function() Snacks.picker.lsp_definitions() end";
-        key = "<leader>gd";
-
+        key = "gd";
+        mode = "n";
         options = {
           silent = true;
           noremap = true;
@@ -334,8 +335,8 @@ in
       }
       {
         action = helpers.mkRaw "function() Snacks.picker.lsp_declarations() end";
-        key = "<leader>gD";
-
+        key = "gD";
+        mode = "n";
         options = {
           silent = true;
           noremap = true;
@@ -344,8 +345,8 @@ in
       }
       {
         action = helpers.mkRaw "function() Snacks.picker.lsp_references() end";
-        key = "<leader>gr";
-
+        key = "gr";
+        mode = "n";
         options = {
           silent = true;
           noremap = true;
@@ -354,8 +355,8 @@ in
       }
       {
         action = helpers.mkRaw "function() Snacks.picker.lsp_implementations() end";
-        key = "<leader>gI";
-
+        key = "gI";
+        mode = "n";
         options = {
           silent = true;
           noremap = true;
@@ -364,12 +365,34 @@ in
       }
       {
         action = helpers.mkRaw "function() Snacks.picker.lsp_type_definitions() end";
-        key = "<leader>gy";
-
+        key = "gy";
+        mode = "n";
         options = {
           silent = true;
           noremap = true;
           desc = "Goto type definition";
+        };
+      }
+
+      # Comment toggle — uses neovim 0.10+ built-in gc/gcc operator
+      {
+        action = "gcc";
+        key = "<leader>/";
+        mode = "n";
+        options = {
+          remap = true;
+          silent = true;
+          desc = "Toggle line comment";
+        };
+      }
+      {
+        action = "gc";
+        key = "<leader>/";
+        mode = "v";
+        options = {
+          remap = true;
+          silent = true;
+          desc = "Toggle line comment";
         };
       }
       {
@@ -435,17 +458,6 @@ in
         };
       }
 
-      # LazyGit
-      {
-        action = "<cmd>LazyGit<CR>";
-        key = "<leader>gg";
-        mode = "n";
-        options = {
-          silent = true;
-          noremap = true;
-          desc = "LazyGit";
-        };
-      }
     ];
   };
 }

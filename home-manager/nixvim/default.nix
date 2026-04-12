@@ -20,7 +20,6 @@ in
     ./plugins/cmp.nix
     ./plugins/codecompanion.nix
     ./plugins/conform.nix
-    ./plugins/comment.nix
     ./plugins/devdocs.nix
     ./plugins/direnv.nix
     ./plugins/fidget.nix
