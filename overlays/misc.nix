@@ -2,7 +2,7 @@
 { inputs }:
 final: prev: {
   # TODO: Remove once fzf 0.71.0 is released and available in nixpkgs
-  fzf = prev.fzf.overrideAttrs (old: {
+  fzf = prev.fzf.overrideAttrs (_old: {
     version = "0.71.0-pre";
 
     src = final.fetchFromGitHub {

@@ -1,4 +1,4 @@
-{ lib, ... }:
+{ ... }:
 {
   programs.nixvim.plugins = {
     # cmp.settings.sources = lib.mkAfter [

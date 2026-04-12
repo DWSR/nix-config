@@ -15,7 +15,7 @@ in
   custom-packages =
     final: prev: (mcpServers final prev) // (zellijPlugins final prev) // (misc final prev);
 
-  shopify-packages = final: prev: {
+  shopify-packages = final: _prev: {
     opencode-shopify = final.symlinkJoin {
       name = "opencode-shopify";
       paths = [ final.unstable.opencode ];

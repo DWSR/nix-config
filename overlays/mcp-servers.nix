@@ -1,6 +1,6 @@
 # MCP server packages — all built as npm packages from the npm registry or GitHub
 { inputs }:
-final: prev:
+final: _prev:
 let
   # Builder for Google Cloud MCP servers that all follow the same pattern:
   # npm registry tarball + local package-lock for importNpmLock

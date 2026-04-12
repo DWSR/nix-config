@@ -153,7 +153,12 @@
                 priority = 0;
               };
 
-              # Priority 1: Linters
+              # Priority 1: Linters (run after formatting, parallel with each other)
+              deadnix = {
+                enable = true;
+                priority = 1;
+              };
+
               flake-checker = {
                 enable = true;
                 priority = 1;
