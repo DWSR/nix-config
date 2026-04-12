@@ -13,19 +13,14 @@
       packageFallback = true;
 
       settings = {
-        config = {
-          args = [ "--debug" ];
-
-          initializationOptions = {
-            command = [
-              "golangci-lint"
-              "run"
-              "--output.json.path=stdout"
-              "--show-stats=false"
-              "--issues-exit-code=1"
-              "--enable-all"
-            ];
-          };
+        initialization_options = {
+          command = [
+            "golangci-lint"
+            "run"
+            "--output.json.path=stdout"
+            "--show-stats=false"
+            "--issues-exit-code=1"
+          ];
         };
       };
     };
