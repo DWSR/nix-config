@@ -29,16 +29,8 @@
 
   nix-homebrew = {
     taps = {
-      "Shopify/homebrew-shopify" = builtins.fetchGit {
-        url = "https://github.com/Shopify/homebrew-shopify.git";
-        ref = "master";
-        rev = "407b31407cf7ee57c83f12bc2cbf1040c81389a4";
-      };
-      "Shopify/homebrew-private" = builtins.fetchGit {
-        url = "https://github.com/Shopify/homebrew-private.git";
-        ref = "main";
-        rev = "6a2a72c799c06a5f4d0431824cc0ddbc595208c2";
-      };
+      "Shopify/homebrew-shopify" = inputs.homebrew-shopify;
+      "Shopify/homebrew-private" = inputs.homebrew-private;
     };
   };
 

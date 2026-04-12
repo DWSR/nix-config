@@ -91,6 +91,16 @@
       flake = false;
     };
 
+    homebrew-shopify = {
+      url = "git+https://github.com/Shopify/homebrew-shopify.git?ref=master";
+      flake = false;
+    };
+
+    homebrew-private = {
+      url = "git+https://github.com/Shopify/homebrew-private.git?ref=main";
+      flake = false;
+    };
+
     git-hooks = {
       url = "github:cachix/git-hooks.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -156,6 +166,15 @@
                 entry = "${pkgs.gnugrep}/bin/grep -rn '/tmp/' --include='*.nix'";
                 language = "system";
                 files = "\\.nix$";
+                pass_filenames = false;
+                priority = 2;
+              };
+
+              no-builtins-fetch = {
+                enable = true;
+                name = "No builtins.fetchGit/fetchTarball";
+                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"builtins\\.fetchGit\\|builtins\\.fetchTarball\\|builtins\\.fetchurl\" --include=\"*.nix\" && exit 1 || exit 0'";
+                language = "system";
                 pass_filenames = false;
                 priority = 2;
               };
