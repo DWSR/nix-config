@@ -12,7 +12,6 @@ in
         cmp = require("cmp")
         cmp_mapping = require("cmp.config.mapping")
         cmp_window = require("cmp.config.window")
-        cmp_mapping = require("cmp.config.mapping")
         cmp_types = require("cmp.types.cmp")
 
         has_words_before = function()
@@ -64,15 +63,12 @@ in
               end
             '';
           }
+          { name = "luasnip"; }
           { name = "dap"; }
           { name = "async_path"; }
-          { name = "treesitter"; }
           { name = "buffer"; }
-          { name = "cmp_tabnine"; }
-          { name = "nvim_lua"; }
           { name = "conventionalcommits"; }
           { name = "calc"; }
-          { name = "emoji"; }
         ];
 
         mapping = helpers.mkRaw ''

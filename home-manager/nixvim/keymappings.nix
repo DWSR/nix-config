@@ -33,17 +33,6 @@ in
         };
       }
       {
-        action = "<cmd>call QuickFixToggle()<CR>";
-        key = "<C-q>";
-        mode = "n";
-
-        options = {
-          silent = true;
-          noremap = true;
-          desc = "Toggle quickfix";
-        };
-      }
-      {
         action = "<Esc><cmd>m .+1<CR>==gi";
         key = "<A-j>";
         mode = [ "i" ];
