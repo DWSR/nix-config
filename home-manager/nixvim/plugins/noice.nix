@@ -1,4 +1,17 @@
 _: {
+  programs.nixvim.keymaps = [
+    {
+      action = "<cmd>Noice history<CR>";
+      key = "<leader>sN";
+      mode = "n";
+      options = {
+        silent = true;
+        noremap = true;
+        desc = "Message log (all)";
+      };
+    }
+  ];
+
   programs.nixvim.plugins.noice = {
     enable = true;
 

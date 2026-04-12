@@ -82,6 +82,16 @@ _: {
           desc = "Registers";
         };
       }
+      {
+        action = "<cmd>lua Snacks.notifier.show_history()<CR>";
+        key = "<leader>sn";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Notification history";
+        };
+      }
     ];
   };
 }
