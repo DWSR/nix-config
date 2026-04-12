@@ -124,6 +124,19 @@
     {
       formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
 
+      apps = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          bump-shopify-taps = {
+            type = "app";
+            program = "${import ./scripts/bump-shopify-taps.nix { inherit pkgs; }}/bin/bump-shopify-taps";
+          };
+        }
+      );
+
       checks = forAllSystems (
         system:
         let
