@@ -3,10 +3,14 @@
   pkgs,
   ...
 }:
+let
+  inherit (pkgs.stdenv.hostPlatform) system;
+  mcphubBin = "${inputs.mcphub.packages.${system}.default}/bin/mcp-hub";
+in
 {
   programs.nixvim = {
     extraPlugins = [
-      inputs.mcphub-nvim.packages.${pkgs.stdenv.hostPlatform.system}.default
+      inputs.mcphub-nvim.packages.${system}.default
     ];
 
     extraConfigLuaPre = ''
@@ -53,7 +57,7 @@
       end
 
       require("mcphub").setup({
-        cmd = "${inputs.mcphub.packages."aarch64-darwin".default}/bin/mcp-hub"
+        cmd = "${mcphubBin}"
       })
     '';
   };
