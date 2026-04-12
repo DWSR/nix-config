@@ -22,7 +22,6 @@ in
     ./plugins/codecompanion.nix
     ./plugins/conform.nix
     ./plugins/comment.nix
-    ./plugins/copilot.nix
     ./plugins/devdocs.nix
     ./plugins/direnv.nix
     ./plugins/edgy.nix
@@ -42,7 +41,6 @@ in
     ./plugins/neo-tree.nix
     ./plugins/neoscroll.nix
     ./plugins/noice.nix
-    ./plugins/notify.nix
     ./plugins/numbertoggle.nix
     ./plugins/nvim-lsp-file-operations.nix
     ./plugins/smear-cursor.nix
@@ -51,7 +49,6 @@ in
     ./plugins/treesitter.nix
     ./plugins/shadowenv.nix
     ./plugins/zellij-nav.nix
-    ./plugins/trim.nix
     ./plugins/twilight.nix
     ./plugins/which-key.nix
     ./plugins/visual-whitespace.nix
