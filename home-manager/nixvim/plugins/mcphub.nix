@@ -1,9 +1,12 @@
-{ inputs, ... }:
+{
+  inputs,
+  pkgs,
+  ...
+}:
 {
   programs.nixvim = {
     extraPlugins = [
-      # TODO Parameterize this for the target system
-      inputs.mcphub-nvim.packages."aarch64-darwin".default
+      inputs.mcphub-nvim.packages.${pkgs.stdenv.hostPlatform.system}.default
     ];
 
     extraConfigLuaPre = ''

@@ -20,6 +20,7 @@ in
     ./plugins/bufonly.nix
     ./plugins/cmp.nix
     ./plugins/codecompanion.nix
+    ./plugins/conform.nix
     ./plugins/comment.nix
     ./plugins/copilot.nix
     ./plugins/devdocs.nix
@@ -33,6 +34,7 @@ in
     ./plugins/lastplace.nix
     ./plugins/lazygit.nix
     ./plugins/lsp.nix
+    ./plugins/luasnip.nix
     ./plugins/lualine.nix
     ./plugins/markdown-preview.nix
     ./plugins/matchup.nix

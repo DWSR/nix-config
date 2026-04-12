@@ -71,6 +71,10 @@
     packages = with pkgs; [
       apple-sdk
       atuin
+      # Universal formatters for conform.nvim (devshell tools take priority)
+      nixfmt-rfc-style
+      shfmt
+      stylua
       cloc
       cosign
       crane

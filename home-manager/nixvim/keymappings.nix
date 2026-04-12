@@ -405,7 +405,7 @@ in
         };
       }
       {
-        action = "<cmd>lua vim.lsp.buf.format()<CR>";
+        action = "<cmd>lua require('conform').format({ lsp_format = 'fallback' })<CR>";
         key = "<leader>lf";
 
         options = {
