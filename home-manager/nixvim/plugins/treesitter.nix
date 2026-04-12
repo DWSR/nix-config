@@ -3,7 +3,41 @@
   programs.nixvim.plugins.treesitter = {
     enable = true;
 
-    grammarPackages = pkgs.unstable.vimPlugins.nvim-treesitter.passthru.allGrammars;
+    # Explicit grammar list matching configured languages (not allGrammars which installs 200+)
+    grammarPackages = with pkgs.unstable.vimPlugins.nvim-treesitter.builtGrammars; [
+      bash
+      c
+      comment
+      css
+      diff
+      dockerfile
+      git_rebase
+      gitcommit
+      go
+      gomod
+      gosum
+      graphql
+      hcl
+      html
+      ini
+      javascript
+      json
+      json5
+      lua
+      make
+      markdown
+      markdown_inline
+      nix
+      python
+      regex
+      ruby
+      terraform
+      toml
+      typescript
+      vim
+      vimdoc
+      yaml
+    ];
 
     settings = {
       indent = {

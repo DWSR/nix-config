@@ -1,6 +1,5 @@
 {
   inputs,
-  pkgs,
   config,
   ...
 }:
@@ -118,7 +117,7 @@ in
       termguicolors = true;
       timeoutlen = 2000;
       title = true;
-      undodir = helpers.mkRaw ''require("plenary.path").joinpath(vim.call("stdpath", "cache"), "undo")'';
+      undodir = helpers.mkRaw ''vim.fn.stdpath("cache") .. "/undo"'';
       undofile = true;
       updatetime = 100;
       writebackup = false;
@@ -140,7 +139,7 @@ in
 
     performance = {
       byteCompileLua = {
-        enable = false;
+        enable = true;
         configs = true;
         initLua = true;
         nvimRuntime = true;
@@ -153,7 +152,7 @@ in
         virtual_text = false;
         signs = true;
         underline = true;
-        update_in_insert = true;
+        update_in_insert = false;
         severity_sort = false;
       };
     };
@@ -184,13 +183,7 @@ in
       nvim-autopairs.enable = true;
       nui.enable = true;
       web-devicons.enable = true;
-      intellitab.enable = true;
-      nix.enable = true;
     };
-
-    extraPlugins = [
-      (pkgs.neovimUtils.buildNeovimPlugin { pname = "plenary.nvim"; })
-    ];
 
     extraConfigLuaPre = ''
         -- Common kill function for bdelete and bwipeout
