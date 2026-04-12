@@ -116,12 +116,14 @@
       formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
     in
     {
+      inherit formatter;
+
       overlays = import ./overlays { inherit inputs; };
 
       darwinConfigurations = {
         "ShopifyLaptop" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
-            inherit inputs outputs;
+            inherit self inputs outputs;
             username = "brandonmcnama";
           };
 
@@ -131,7 +133,7 @@
         };
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
-            inherit inputs outputs;
+            inherit self inputs outputs;
             username = "brandonmcnama";
           };
 

@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, config, ... }:
 let
   autolockWasm = "${pkgs.zellij-autolock}/share/zellij/plugins/zellij-autolock.wasm";
   worktreeWasm = "${pkgs.zellij-worktree}/share/zellij/plugins/zellij-worktree.wasm";
@@ -109,7 +109,7 @@ in
         "worktree" = {
           _props.location = "file:~/.local/share/zellij/plugins/zellij-worktree.wasm";
 
-          base_path = "/Users/brandonmcnama/scratch";
+          base_path = "${config.home.homeDirectory}/scratch";
           checkout_trunk = "true";
         };
 

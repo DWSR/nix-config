@@ -1,9 +1,6 @@
 {
   pkgs,
-  lib,
   config,
-  inputs,
-  outputs,
   ...
 }:
 let
@@ -13,43 +10,23 @@ let
   readKeychainSecret = config.home.mcp.readKeychainSecret;
 in
 {
+  imports = [
+    ../../../home-manager/common
+    ../../../home-manager/mcp
 
-  nixpkgs.overlays = [
-    outputs.overlays.shopify-packages
+    ./dev.nix
+    ./git.nix
+    ./opencode.nix
+    ./wish.nix
   ];
 
   home = {
     stateVersion = "25.11";
-    preferXdgDirectories = true;
 
     packages = with pkgs; [
-      podman
-      atuin
-      kubectl
-      k9s
-      direnv
-      shadowenv
-      openssh
-      dyff
-      cloc
-      cosign
-      crane
-      curl
-      entr
-      rclone
-      rsync
-      readline
-      stern
-      tree
-      viddy
-      karabiner-elements
-      alejandra
-      apple-sdk
-      lazygit
-      xz
       gcloud
-      unstable.slack
-      raycast
+      podman
+      stern
       uv
     ];
 
@@ -149,48 +126,5 @@ in
     };
   };
 
-  programs.ssh = {
-    enable = true;
-    enableDefaultConfig = false;
-    extraConfig = "IdentityAgent \"~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock\"";
-
-    matchBlocks = {
-      "*" = {
-        forwardAgent = false;
-        addKeysToAgent = "no";
-        controlMaster = "auto";
-        controlPath = "~/.ssh/master-%r@%n:%p";
-        controlPersist = "no";
-        hashKnownHosts = false;
-        userKnownHostsFile = "~/.ssh/known_hosts";
-        serverAliveInterval = 0;
-        serverAliveCountMax = 3;
-        compression = true;
-      };
-    };
-  };
-
-
   nixvim-extra.shadowenv.enable = true;
-
-  nixpkgs.config.allowUnfreePredicate =
-    pkg:
-    builtins.elem (lib.getName pkg) [
-      "1password-cli"
-      "1password"
-      "graphite-cli"
-      "raycast"
-      "keymapp"
-      "slack"
-    ];
-
-  imports = [
-    ../../../home-manager/common
-    ../../../home-manager/mcp
-
-    ./dev.nix
-    ./git.nix
-    ./opencode.nix
-    ./wish.nix
-  ];
 }

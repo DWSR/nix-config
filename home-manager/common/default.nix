@@ -1,6 +1,5 @@
 {
   inputs,
-  outputs,
   lib,
   pkgs,
   ...
@@ -12,7 +11,9 @@
     ./atuin.nix
     ./gh-cli.nix
     ./ghostty.nix
+    ./git.nix
     ./opencode.nix
+    ./ssh.nix
     ./starship.nix
     ./zellij.nix
     ./zsh.nix
@@ -64,60 +65,38 @@
     "${inputs.home-manager}/modules/services/tldr-update.nix"
   ];
 
-  nixpkgs.overlays = [
-    outputs.overlays.unstable-packages
-    outputs.overlays.custom-packages
-    inputs.nixneovimplugins.overlays.default
-  ];
-
-  xdg.enable = true;
-
-  editorconfig = {
-    enable = true;
-
-    settings = {
-      "*" = {
-        end_of_line = "lf";
-        insert_final_newline = true;
-        indent_style = "space";
-        indent_size = 2;
-        charset = "utf-8";
-        trim_trailing_whitespace = true;
-        max_line_length = 119;
-      };
-
-      "*.go" = {
-        indent_style = "tab";
-      };
-
-      "*.py" = {
-        indent_style = "space";
-        indent_size = 4;
-        max_line_length = 79;
-      };
-
-      "Makefile" = {
-        indent_style = "tab";
-      };
-
-      "*.{yml,yaml}" = {
-        indent_style = "space";
-        indent_size = 2;
-      };
-    };
-  };
-
-  fonts = {
-    fontconfig = {
-      enable = true;
-
-      defaultFonts = {
-        monospace = [ "MonaspiceNe Nerd Font Medium" ];
-      };
-    };
-  };
-
   home = {
+    preferXdgDirectories = true;
+
+    packages = with pkgs; [
+      alejandra
+      apple-sdk
+      atuin
+      cloc
+      cosign
+      crane
+      curl
+      direnv
+      dyff
+      entr
+      karabiner-elements
+      kubectl
+      k9s
+      lazygit
+      openssh
+      rclone
+      readline
+      rsync
+      shadowenv
+      tree
+      unstable.keymapp
+      unstable.slack
+      viddy
+      xz
+
+      raycast
+    ];
+
     activation.createScratchDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       mkdir -p ~/scratch
     '';
@@ -134,7 +113,7 @@
     shellAliases = {
       ls = "eza";
       l = "eza";
-      "--help" = "--help 2>&1 | bat --language=help --style=plain'";
+      "--help" = "--help 2>&1 | bat --language=help --style=plain";
       cat = "bat --paging=never --style=plain";
       e = "nvim .";
       gd = "git diff";

@@ -1,16 +1,11 @@
 {
   inputs,
   outputs,
-  lib,
-  config,
-  pkgs,
   username,
   ...
 }:
 {
   imports = [
-    inputs.home-manager.darwinModules.home-manager
-
     ../common-darwin
   ];
 
@@ -21,54 +16,16 @@
       AWS_SHARED_CREDENTIALS_FILE = "/etc/nix/aws/credentials";
     };
 
-    nixPath = [ "/etc/nix/path" ];
-
-    settings = {
-      trusted-users = [ "${username}" ];
-      substituters = [ "https://cache.nixos.org" ];
-    };
-
-    # To make nix3 commands consistent with your flake
-    registry = (lib.mapAttrs (_: flake: { inherit flake; })) (
-      (lib.filterAttrs (_: lib.isType "flake")) inputs
-    );
-
     extraOptions = ''
       !include nix.conf.d/shopify.conf
     '';
   };
 
-  nixpkgs = {
-    hostPlatform = "aarch64-darwin";
+  nixpkgs.overlays = [
+    outputs.overlays.shopify-packages
+  ];
 
-    overlays = [
-      outputs.overlays.unstable-packages
-    ];
-  };
-
-  # This will additionally add your inputs to the system's legacy channels
-  # Making legacy nix commands consistent as well, awesome!
-  environment = {
-    etc =
-      lib.mapAttrs' (name: value: {
-        name = "nix/path/${name}";
-        value.source = value.flake;
-      }) config.nix.registry
-      // {
-        nix-darwin.source = "/Users/brandonmcnama/src/github.com/DWSR/nix-config";
-      };
-  };
-
-  users.users."${username}".home = "/Users/${username}";
-
-  home-manager = {
-    minimal = true;
-    extraSpecialArgs = { inherit inputs outputs username; };
-
-    users = {
-      "${username}" = import ./home-manager;
-    };
-  };
+  home-manager.users.${username} = import ./home-manager;
 
   nix-homebrew = {
     taps = {
@@ -85,13 +42,6 @@
     };
   };
 
-  fonts = {
-    packages = with pkgs; [
-      nerd-fonts.monaspace
-      monaspace
-    ];
-  };
-
   homebrew = {
     brews = [
       "ejson"
@@ -101,17 +51,11 @@
     ];
 
     casks = [
-      "contexts"
       "fellow"
-      "ears"
       "google-drive"
       "rectangle"
       "shortcat"
-      "loopback"
-      "deskflow"
-      "obsidian"
       "podman-desktop"
-      "unfudged"
     ];
   };
 }
