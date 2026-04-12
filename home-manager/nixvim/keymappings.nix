@@ -119,6 +119,16 @@ in
         };
       }
       {
+        action = "<cmd>noautocmd w<CR>";
+        key = "<leader>bW";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Save without formatting";
+        };
+      }
+      {
         action = "<cmd>nohlsearch<CR>";
         key = "<leader>h";
 
