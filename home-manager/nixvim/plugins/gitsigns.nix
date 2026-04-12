@@ -2,6 +2,8 @@ _: {
   programs.nixvim.plugins.gitsigns = {
     enable = true;
 
+    settings.current_line_blame_opts.delay = 0;
+
     # All keybindings are buffer-local via on_attach — they only activate
     # in git-tracked files. Hunk navigation falls back to built-in ]c/[c
     # in diff mode.
