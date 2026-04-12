@@ -25,11 +25,8 @@ T.check_no_keymap("n", " gy")
 -- Git bindings — <leader>g* (colocated with plugins)
 -- ============================================================
 T.check_keymap("n", " gg", { action = "LazyGit" })
-T.check_keymap("n", " gb")  -- gitsigns toggle blame
-T.check_keymap("n", " gp")  -- gitsigns preview hunk
-T.check_keymap("n", " gs")  -- gitsigns stage hunk
-T.check_keymap("n", " gr")  -- gitsigns reset hunk
-T.check_keymap("n", " gS")  -- gitsigns stage buffer
+-- Gitsigns bindings are buffer-local (set via on_attach), not global.
+-- They're tested in tier3 integration tests against a git-tracked buffer.
 
 -- ============================================================
 -- LSP action bindings
