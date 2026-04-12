@@ -445,6 +445,26 @@ in
           desc = "Show signature";
         };
       }
+      {
+        action = "<cmd>lua vim.lsp.codelens.run()<CR>";
+        key = "<leader>ll";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "CodeLens action";
+        };
+      }
+      {
+        action = "<cmd>lua vim.diagnostic.setloclist()<CR>";
+        key = "<leader>lq";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Diagnostics to quickfix";
+        };
+      }
 
       # Diagnostic navigation
       {
