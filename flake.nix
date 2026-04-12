@@ -91,6 +91,16 @@
       flake = false;
     };
 
+    git-hooks = {
+      url = "github:cachix/git-hooks.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    treefmt-nix = {
+      url = "github:numtide/treefmt-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
   };
 
   outputs =
@@ -107,16 +117,55 @@
         "x86_64-darwin"
       ];
 
-      # This is a function that generates an attribute by calling a function you
-      # pass to it, with each system as an argument
       forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # Formatter for your nix files, available through 'nix fmt'
-      # Other options beside 'alejandra' include 'nixpkgs-fmt'
-      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
+      treefmtEval = forAllSystems (
+        system:
+        inputs.treefmt-nix.lib.evalModule nixpkgs.legacyPackages.${system} {
+          projectRootFile = "flake.nix";
+          programs.nixfmt.enable = true;
+        }
+      );
     in
     {
-      inherit formatter;
+      formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
+
+      checks = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          formatting = treefmtEval.${system}.config.build.check self;
+
+          pre-commit-check = inputs.git-hooks.lib.${system}.run {
+            src = ./.;
+            package = pkgs.prek;
+
+            hooks = {
+              # Priority 0: Formatting (runs first)
+              nixfmt-rfc-style = {
+                enable = true;
+                priority = 0;
+              };
+            };
+          };
+        }
+      );
+
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+          inherit (self.checks.${system}.pre-commit-check) shellHook enabledPackages;
+        in
+        {
+          default = pkgs.mkShell {
+            inherit shellHook;
+            buildInputs = enabledPackages;
+          };
+        }
+      );
 
       overlays = import ./overlays { inherit inputs; };
 
