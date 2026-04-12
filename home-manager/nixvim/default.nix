@@ -93,6 +93,7 @@ in
     };
 
     luaLoader.enable = true;
+    plugins.lz-n.enable = true;
 
     opts = {
       backup = false;

@@ -4,6 +4,15 @@
     plugins.codecompanion = {
       enable = true;
       package = pkgs.unstable.vimPlugins.codecompanion-nvim;
+
+      lazyLoad.settings = {
+        cmd = [
+          "CodeCompanion"
+          "CodeCompanionChat"
+          "CodeCompanionActions"
+          "CodeCompanionCmd"
+        ];
+      };
       settings = {
         display = {
           action_palette = {

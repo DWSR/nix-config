@@ -44,8 +44,30 @@ in
       };
 
       # DAP UI — sidepanel with scopes, breakpoints, stacks, watches + bottom REPL/console
+      # Lazy-loaded: only initializes when DAP UI is toggled or a debug session starts
       dap-ui = {
         enable = true;
+
+        lazyLoad.settings = {
+          before.__raw = ''
+            function()
+              require('lz.n').trigger_load('nvim-dap')
+            end
+          '';
+          keys = [
+            {
+              __unkeyed-1 = "<leader>dU";
+              __unkeyed-2.__raw = ''
+                function()
+                  require("dapui").toggle()
+                end
+              '';
+              desc = "Toggle DAP UI";
+            }
+          ];
+          # Also loads when a DAP event fires (auto-open)
+          event = "User DapEvent";
+        };
 
         settings = {
           controls.enabled = true;
@@ -280,16 +302,7 @@ in
           desc = "Toggle REPL";
         };
       }
-      {
-        action = helpers.mkRaw "function() require('dapui').toggle() end";
-        key = "<leader>dU";
-        mode = "n";
-        options = {
-          silent = true;
-          noremap = true;
-          desc = "Toggle DAP UI";
-        };
-      }
+      # <leader>dU is handled by dap-ui's lazyLoad.settings.keys
 
       # Eval / inspect
       {
@@ -373,17 +386,18 @@ in
       }
     ];
 
-    # Auto-open/close DAP UI with debug sessions
+    # Auto-open/close DAP UI with debug sessions.
+    # DAP listeners lazy-require dapui so it's not loaded until a debug session starts.
     extraConfigLua = ''
-      local dap, dapui = require("dap"), require("dapui")
+      local dap = require("dap")
       dap.listeners.after.event_initialized["dapui_config"] = function()
-        dapui.open()
+        require("dapui").open()
       end
       dap.listeners.before.event_terminated["dapui_config"] = function()
-        dapui.close()
+        require("dapui").close()
       end
       dap.listeners.before.event_exited["dapui_config"] = function()
-        dapui.close()
+        require("dapui").close()
       end
     '';
   };
