@@ -67,25 +67,64 @@ end
 
 -- Test real LSP servers with fixture files
 -- These require the server binaries to be in PATH (added via nativeBuildInputs)
-local fixtures_dir = vim.fn.fnamemodify(test_dir .. "fixtures/", ":p")
+-- Fixtures are in the CWD (copied by the nix test derivation to a writable dir)
+local cwd = vim.fn.getcwd()
+
+--- Test a real LSP server by opening a file and manually starting the client
+---@param filename string Filename relative to CWD
+---@param server_name string LSP server name
+---@param cmd string|table Server command
+local function test_real_lsp(filename, server_name, cmd)
+  local filepath = cwd .. "/" .. filename
+  vim.cmd("edit " .. filepath)
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Manually start the LSP since autostart=false
+  vim.lsp.start({
+    name = server_name,
+    cmd = type(cmd) == "string" and { cmd } or cmd,
+    root_dir = cwd,
+  })
+
+  local ok = T.wait(ATTACH_TIMEOUT, function()
+    local clients = vim.lsp.get_clients({ bufnr = bufnr })
+    for _, client in ipairs(clients) do
+      if client.name == server_name then
+        return true
+      end
+    end
+    return false
+  end)
+
+  T.check("lsp-attach:" .. server_name, ok,
+    server_name .. " did not attach to " .. filename .. " within " .. ATTACH_TIMEOUT .. "ms")
+
+  -- Cleanup
+  local clients = vim.lsp.get_clients({ bufnr = bufnr })
+  for _, client in ipairs(clients) do
+    client:stop(true)
+  end
+  T.wait(2000, function() return #vim.lsp.get_clients({ bufnr = bufnr }) == 0 end)
+  vim.cmd("bdelete!")
+end
 
 -- nixd on test.nix
 if vim.fn.executable("nixd") == 1 then
-  test_lsp_attach(fixtures_dir .. "test.nix", "nixd")
+  test_real_lsp("test.nix", "nixd", "nixd")
 else
   T.check("lsp-attach:nixd", false, "nixd binary not found in PATH")
 end
 
 -- lua_ls on test.lua
 if vim.fn.executable("lua-language-server") == 1 then
-  test_lsp_attach(fixtures_dir .. "test.lua", "lua_ls")
+  test_real_lsp("test.lua", "lua_ls", "lua-language-server")
 else
   T.check("lsp-attach:lua_ls", false, "lua-language-server binary not found in PATH")
 end
 
 -- bashls on test.sh
 if vim.fn.executable("bash-language-server") == 1 then
-  test_lsp_attach(fixtures_dir .. "test.sh", "bashls")
+  test_real_lsp("test.sh", "bashls", { "bash-language-server", "start" })
 else
   T.check("lsp-attach:bashls", false, "bash-language-server binary not found in PATH")
 end
