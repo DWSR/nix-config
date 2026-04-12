@@ -13,6 +13,19 @@ _: {
 
       spec = [
         {
+          __unkeyed = "<leader>a";
+          group = "AI";
+          mode = [
+            "n"
+            "v"
+          ];
+        }
+        {
+          __unkeyed = "<leader>b";
+          group = "Buffer";
+          mode = [ "n" ];
+        }
+        {
           __unkeyed = "<leader>V";
           group = "Display toggles";
           mode = [

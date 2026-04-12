@@ -272,17 +272,6 @@ in
         };
       }
       {
-        action = "<cmd>lua vim.lsp.buf.hover()<cr>";
-        key = "K";
-        mode = "n";
-
-        options = {
-          silent = true;
-          noremap = true;
-          desc = "Show LSP hover";
-        };
-      }
-      {
         action = "<cmd>set relativenumber!<CR>";
         key = "<leader>Vn";
         mode = "n";
@@ -384,7 +373,7 @@ in
         };
       }
       {
-        action = "<cmd>lua vim.lsp.buf.code_action()<CR>";
+        action = "<cmd>lua require('actions-preview').code_actions()<CR>";
         key = "<leader>la";
 
         options = {
@@ -421,6 +410,40 @@ in
           silent = true;
           noremap = true;
           desc = "Show signature";
+        };
+      }
+
+      # Diagnostic navigation
+      {
+        action = "<cmd>lua vim.diagnostic.goto_next()<CR>";
+        key = "]d";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Next diagnostic";
+        };
+      }
+      {
+        action = "<cmd>lua vim.diagnostic.goto_prev()<CR>";
+        key = "[d";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Previous diagnostic";
+        };
+      }
+
+      # LazyGit
+      {
+        action = "<cmd>LazyGit<CR>";
+        key = "<leader>gg";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "LazyGit";
         };
       }
     ];
