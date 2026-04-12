@@ -23,9 +23,11 @@ in
     ./plugins/comment.nix
     ./plugins/devdocs.nix
     ./plugins/direnv.nix
+    ./plugins/fidget.nix
     ./plugins/edgy.nix
     ./plugins/git-conflict.nix
     ./plugins/gitblame.nix
+    ./plugins/gitsigns.nix
     ./plugins/illuminate.nix
     ./plugins/img-clip.nix
     ./plugins/indent-blankline.nix
@@ -37,6 +39,7 @@ in
     ./plugins/markdown-preview.nix
     ./plugins/matchup.nix
     ./plugins/mcphub.nix
+    ./plugins/render-markdown.nix
     ./plugins/neo-tree.nix
     ./plugins/neoscroll.nix
     ./plugins/noice.nix
@@ -44,8 +47,10 @@ in
     ./plugins/nvim-lsp-file-operations.nix
     ./plugins/smear-cursor.nix
     ./plugins/snacks.nix
+    ./plugins/todo-comments.nix
     ./plugins/toggleterm.nix
     ./plugins/treesitter.nix
+    ./plugins/treesitter-textobjects.nix
     ./plugins/shadowenv.nix
     ./plugins/zellij-nav.nix
     ./plugins/twilight.nix
