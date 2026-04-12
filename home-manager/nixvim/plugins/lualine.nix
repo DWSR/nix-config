@@ -1,4 +1,8 @@
-{ config, ... }:
+{
+  config,
+  pkgs,
+  ...
+}:
 let
   helpers = config.lib.nixvim;
   mcphub = helpers.mkRaw "{mcphub_lualine_status, color=mcphub_lualine_colour}";
@@ -6,6 +10,7 @@ in
 {
   programs.nixvim.plugins.lualine = {
     enable = true;
+    package = pkgs.unstable.vimPlugins.lualine-nvim;
 
     settings = {
       inactive_sections = {

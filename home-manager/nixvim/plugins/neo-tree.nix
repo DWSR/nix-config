@@ -1,10 +1,15 @@
-{ config, ... }:
+{
+  config,
+  pkgs,
+  ...
+}:
 let
   helpers = config.lib.nixvim;
 in
 {
   programs.nixvim = {
     plugins.neo-tree = {
+      package = pkgs.unstable.vimPlugins.neo-tree-nvim;
       enable = true;
 
       settings = {

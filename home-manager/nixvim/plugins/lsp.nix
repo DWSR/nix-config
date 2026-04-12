@@ -1,4 +1,5 @@
-_: {
+{ pkgs, ... }:
+{
   imports = [
     ./lsp/ansible.nix
     ./lsp/bash.nix
@@ -21,6 +22,7 @@ _: {
     plugins = {
       lsp = {
         enable = true;
+        package = pkgs.unstable.vimPlugins.nvim-lspconfig;
         inlayHints = true;
 
         keymaps = {

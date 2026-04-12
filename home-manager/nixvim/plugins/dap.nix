@@ -142,6 +142,7 @@ in
       # Python: auto-configures debugpy adapter
       dap-python = {
         enable = true;
+        package = pkgs.unstable.vimPlugins.nvim-dap-python;
         settings.console = "integratedTerminal";
       };
 
