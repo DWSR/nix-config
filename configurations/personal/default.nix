@@ -8,6 +8,8 @@
     ../common-darwin
   ];
 
+  nix-config.repoPath = "/Users/${username}/repos/github.com/DWSR/nix-config";
+
   nix.package = pkgs.lixPackageSets.latest.lix;
 
   home-manager.users.${username} = import ./home-manager;

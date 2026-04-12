@@ -211,7 +211,7 @@
       darwinConfigurations = {
         "ShopifyLaptop" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
-            inherit self inputs outputs;
+            inherit inputs outputs;
             username = "brandonmcnama";
           };
 
@@ -221,7 +221,7 @@
         };
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
-            inherit self inputs outputs;
+            inherit inputs outputs;
             username = "brandonmcnama";
           };
 

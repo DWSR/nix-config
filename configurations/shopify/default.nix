@@ -8,6 +8,8 @@
     ../common-darwin
   ];
 
+  nix-config.repoPath = "/Users/${username}/src/github.com/DWSR/nix-config";
+
   nix = {
     enable = true;
 
