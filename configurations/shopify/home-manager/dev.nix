@@ -48,7 +48,7 @@
       ''[[ -f /opt/dev/sh/chruby/chruby.sh ]] && { type chruby >/dev/null 2>&1 || chruby () { source /opt/dev/sh/chruby/chruby.sh; chruby "$@"; } }''
       # tec setup
       # No longer need [ -f /opt/dev/dev.sh ] && source /opt/dev/dev.sh because tec setup does it.
-      ''[[ -x /Users/brandonmcnama/.local/state/tec/profiles/base/current/global/init ]] && eval "$(/Users/brandonmcnama/.local/state/tec/profiles/base/current/global/init zsh)"''
+      ''[[ -x ${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init ]] && eval "$(${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init zsh)"''
     ]
   );
 }

@@ -38,7 +38,7 @@ in
     ];
 
     mcp = {
-      obsidianVaultPath = "/Users/brandonmcnama/Library/Mobile Documents/iCloud~md~obsidian/Documents/data-bank";
+      obsidianVaultPath = "${config.home.homeDirectory}/Library/Mobile Documents/iCloud~md~obsidian/Documents/data-bank";
       githubToken = readKeychainSecret "mcp-github-token";
 
       keychainSecrets = {

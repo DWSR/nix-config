@@ -159,6 +159,15 @@
                 pass_filenames = false;
                 priority = 2;
               };
+
+              no-hardcoded-users = {
+                enable = true;
+                name = "No hardcoded /Users/ in module code";
+                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"/Users/\" --include=\"*.nix\" --exclude=flake.nix | ${pkgs.gnugrep}/bin/grep -v \"\\$\\{\" && exit 1 || exit 0'";
+                language = "system";
+                pass_filenames = false;
+                priority = 2;
+              };
             };
           };
         }

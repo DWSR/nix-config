@@ -1,15 +1,14 @@
-{ ... }:
+{ config, ... }:
 {
   programs.git = {
-    includes = [ { path = "/Users/brandonmcnama/.config/dev/gitconfig"; } ];
+    includes = [ { path = "${config.home.homeDirectory}/.config/dev/gitconfig"; } ];
 
     settings = {
       user.email = "brandon.mcnama@shopify.com";
 
       maintenance = {
         enable = true;
-        # TODO Refer to home directory directly
-        repositories = [ "/Users/brandonmcnama/world/trees/root/src" ];
+        repositories = [ "${config.home.homeDirectory}/world/trees/root/src" ];
       };
     };
 

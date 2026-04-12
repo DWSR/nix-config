@@ -31,7 +31,7 @@ in
     ];
 
     mcp = {
-      obsidianVaultPath = "/Users/brandonmcnama/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank";
+      obsidianVaultPath = "${config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank";
       githubToken = readKeychainSecret "mcp-github-token";
 
       keychainSecrets = {
