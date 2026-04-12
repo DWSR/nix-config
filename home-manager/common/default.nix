@@ -178,4 +178,7 @@
   programs.ripgrep.enable = true;
   programs.tealdeer.enable = true;
   programs.zoxide.enable = true;
+
+  xdg.configFile."opencode/plugins/zellij-attention.ts".source =
+    ./opencode-plugins/zellij-attention.ts;
 }
