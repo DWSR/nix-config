@@ -13,7 +13,6 @@ in
     ./lsp/nix.nix
     ./lsp/python.nix
     ./lsp/ruby.nix
-    ./lsp/sql.nix
     # TODO Figure out why systemd_ls is not found.
     ./lsp/systemd.nix
     ./lsp/terraform.nix
