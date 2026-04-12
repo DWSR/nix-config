@@ -7,7 +7,9 @@
     grammarPackages = with pkgs.unstable.vimPlugins.nvim-treesitter.builtGrammars; [
       bash
       c
+      cmake
       comment
+      cpp
       css
       diff
       dockerfile
@@ -30,7 +32,9 @@
       nix
       python
       regex
+      rst
       ruby
+      rust
       terraform
       toml
       typescript

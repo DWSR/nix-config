@@ -26,6 +26,29 @@ _: {
           mode = [ "n" ];
         }
         {
+          __unkeyed = "<leader>d";
+          group = "Debug";
+          mode = [
+            "n"
+            "v"
+          ];
+        }
+        {
+          __unkeyed = "<leader>dg";
+          group = "Debug Go";
+          mode = [ "n" ];
+        }
+        {
+          __unkeyed = "<leader>dp";
+          group = "Debug Python";
+          mode = [ "n" ];
+        }
+        {
+          __unkeyed = "<leader>dr";
+          group = "Debug Rust";
+          mode = [ "n" ];
+        }
+        {
           __unkeyed = "<leader>V";
           group = "Display toggles";
           mode = [
