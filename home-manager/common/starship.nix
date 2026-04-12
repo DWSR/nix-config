@@ -63,7 +63,7 @@ in
         "$red"
         "$ruby"
         "$rust"
-        "$scale"
+        "$scala"
         "$swift"
         "$zig"
         secondBlockSep

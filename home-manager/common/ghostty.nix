@@ -35,7 +35,6 @@
         "super+a=select_all"
         "super+c=copy_to_clipboard"
         "super+v=paste_from_clipboard"
-        "super+a=select_all"
         "super+q=quit"
         "super+k=clear_screen"
         "super+enter=toggle_fullscreen"

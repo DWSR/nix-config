@@ -43,7 +43,7 @@ _: {
           "gitcommit"
           "TelescopePrompt"
           "TelescopeResults"
-          "''"
+          ""
         ];
       };
     };
