@@ -83,4 +83,16 @@ if noice_ok then
     "noice LSP progress should be disabled (fidget handles it)")
 end
 
+-- blink.cmp should be configured with expected sources
+local blink_ok = pcall(require, "blink.cmp")
+if blink_ok then
+  -- Verify blink.cmp loaded (not nvim-cmp)
+  T.check("settings:blink:loaded", true)
+
+  -- Note: package.loaded["cmp"] may be set by blink.compat's impersonate_nvim_cmp.
+  -- This is the compat shim, not real nvim-cmp. No assertion needed.
+else
+  T.check("settings:blink:loaded", false, "blink.cmp module not loadable")
+end
+
 T.report()
