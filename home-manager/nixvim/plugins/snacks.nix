@@ -6,6 +6,7 @@ _: {
 
       settings = {
         # Enable snacks notifier — used by noice as the notification backend
+        bigfile.enabled = true;
         notifier.enabled = true;
       };
     };
