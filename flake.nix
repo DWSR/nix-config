@@ -17,7 +17,6 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     op-shell-plugins.url = "github:1Password/shell-plugins";
-    flake-utils.url = "github:numtide/flake-utils";
     nixneovimplugins.url = "github:NixNeovim/NixNeovimPlugins";
 
     fenix = {
@@ -27,11 +26,6 @@
 
     nix-index-database = {
       url = "github:nix-community/nix-index-database";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
-    dotenv = {
-      url = "github:pcasaretto/dotenv";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -157,6 +151,12 @@
               nixfmt-rfc-style = {
                 enable = true;
                 priority = 0;
+              };
+
+              # Priority 1: Linters
+              flake-checker = {
+                enable = true;
+                priority = 1;
               };
 
               # Priority 2: Custom guards
