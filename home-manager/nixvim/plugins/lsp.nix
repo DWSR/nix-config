@@ -30,11 +30,6 @@
         };
       };
 
-      lspkind = {
-        enable = true;
-
-        settings.preset = "default";
-      };
     };
 
   };

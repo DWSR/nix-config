@@ -1,3 +1,4 @@
+# managed by git-hooks
 .pre-commit-config.yaml
 .direnv/
 result
