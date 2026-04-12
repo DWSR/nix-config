@@ -3,7 +3,7 @@ _: {
     enable = true;
 
     settings = {
-      lsp.autoAttach = true;
+      lsp.auto_attach = true;
       highlight = true;
       separator = " > ";
     };
