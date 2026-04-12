@@ -148,6 +148,17 @@
                 enable = true;
                 priority = 0;
               };
+
+              # Priority 2: Custom guards
+              no-tmp-paths = {
+                enable = true;
+                name = "No /tmp/ paths in nix files";
+                entry = "${pkgs.gnugrep}/bin/grep -rn '/tmp/' --include='*.nix'";
+                language = "system";
+                files = "\\.nix$";
+                pass_filenames = false;
+                priority = 2;
+              };
             };
           };
         }

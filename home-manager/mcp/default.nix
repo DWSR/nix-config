@@ -150,8 +150,8 @@ in
             pkgs.git-lfs
           ]
           + ":/usr/bin:/bin";
-        StandardOutPath = "/tmp/mcp-hub.log";
-        StandardErrorPath = "/tmp/mcp-hub.error.log";
+        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcp-hub.log";
+        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcp-hub-error.log";
       };
     };
   };
