@@ -39,6 +39,7 @@ in
     ./plugins/matchup.nix
     ./plugins/mcphub.nix
     ./plugins/render-markdown.nix
+    ./plugins/navic.nix
     ./plugins/neo-tree.nix
     ./plugins/neoscroll.nix
     ./plugins/noice.nix
