@@ -353,40 +353,6 @@
         "type": "github"
       }
     },
-    "homebrew-private": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1758215261,
-        "narHash": "sha256-vE1Siyb0nSSa1nSMuTEDHbWHkDk636075XLS16sEE/Q=",
-        "ref": "main",
-        "rev": "6a2a72c799c06a5f4d0431824cc0ddbc595208c2",
-        "revCount": 132,
-        "type": "git",
-        "url": "https://github.com/Shopify/homebrew-private.git"
-      },
-      "original": {
-        "ref": "main",
-        "type": "git",
-        "url": "https://github.com/Shopify/homebrew-private.git"
-      }
-    },
-    "homebrew-shopify": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1775821662,
-        "narHash": "sha256-ccTgJdcf3DTpQPUSRGY5QbPw5J0B1oJChnZszVhkLmA=",
-        "ref": "master",
-        "rev": "cb46ff1dae4daa284f29a5dc4948e3bb8dd71940",
-        "revCount": 2518,
-        "type": "git",
-        "url": "https://github.com/Shopify/homebrew-shopify.git"
-      },
-      "original": {
-        "ref": "master",
-        "type": "git",
-        "url": "https://github.com/Shopify/homebrew-shopify.git"
-      }
-    },
     "homebrew-unf": {
       "flake": false,
       "locked": {
@@ -746,8 +712,6 @@
         "homebrew-cask": "homebrew-cask",
         "homebrew-core": "homebrew-core",
         "homebrew-deskflow": "homebrew-deskflow",
-        "homebrew-private": "homebrew-private",
-        "homebrew-shopify": "homebrew-shopify",
         "homebrew-unf": "homebrew-unf",
         "mcphub": "mcphub",
         "mcphub-nvim": "mcphub-nvim",
