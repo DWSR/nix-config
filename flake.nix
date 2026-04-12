@@ -141,8 +141,63 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+
+          # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
+          nixvimTests =
+            if system == "aarch64-darwin" then
+              let
+                hmConfig = self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama;
+                nvimPackage = hmConfig.programs.nixvim.build.package;
+                testDir = ./home-manager/nixvim/tests;
+              in
+              {
+                # Tier 1: Smoke test — does nvim start without errors?
+                nixvim-smoke = hmConfig.programs.nixvim.build.test;
+
+                # Tier 2: Config assertions — plugins, keybindings, settings, LSP config
+                nixvim-config =
+                  pkgs.runCommand "nixvim-config"
+                    {
+                      nativeBuildInputs = [ nvimPackage ];
+                    }
+                    ''
+                      export HOME=$(mktemp -d)
+                      nvim --headless -c "luafile ${testDir}/run-tier2.lua" 2>&1
+                      touch $out
+                    '';
+
+                # Tier 3: Integration tests — LSP attachment, format-on-save, diagnostics
+                nixvim-integration =
+                  pkgs.runCommand "nixvim-integration"
+                    {
+                      nativeBuildInputs = [
+                        nvimPackage
+                        pkgs.git
+                        pkgs.nixd
+                        pkgs.lua-language-server
+                        pkgs.bash-language-server
+                        pkgs.nixfmt-rfc-style
+                        pkgs.shfmt
+                        pkgs.stylua
+                      ];
+                    }
+                    ''
+                      export HOME=$(mktemp -d)
+                      mkdir -p $HOME/test && cd $HOME/test
+                      git init -q
+                      git config user.email "test@test.com"
+                      git config user.name "test"
+                      cp -r ${testDir}/fixtures/* .
+                      git add . && git commit -q -m "init"
+                      nvim --headless -c "luafile ${testDir}/run-tier3.lua" 2>&1
+                      touch $out
+                    '';
+              }
+            else
+              { };
         in
-        {
+        nixvimTests
+        // {
           formatting = treefmtEval.${system}.config.build.check self;
 
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
