@@ -82,10 +82,6 @@ in
           args = [ "mcp" ];
         };
 
-        browsermcp = {
-          command = "${pkgs.browsermcp}/bin/mcp-server-browsermcp";
-        };
-
         buildkite = {
           command = "${pkgs.buildkite-mcp-server}/bin/buildkite-mcp-server";
           args = [

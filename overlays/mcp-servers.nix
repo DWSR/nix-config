@@ -147,32 +147,6 @@ in
     };
   };
 
-  browsermcp = final.buildNpmPackage rec {
-    pname = "browsermcp";
-    version = "0.1.3";
-
-    src = final.fetchurl {
-      url = "https://registry.npmjs.org/@browsermcp/mcp/-/mcp-${version}.tgz";
-      hash = "sha256-KtNMKRRcqAxfLn2OyQ4FiWl7GTOLK0WoPJGNSQekz5Y=";
-    };
-
-    postPatch = ''
-      cp ${./browsermcp/package.json} package.json
-      cp ${./browsermcp/package-lock.json} package-lock.json
-    '';
-
-    npmDeps = final.importNpmLock { npmRoot = ./browsermcp; };
-    inherit (final.importNpmLock) npmConfigHook;
-    dontNpmBuild = true;
-
-    meta = with final.lib; {
-      description = "MCP server for browser automation using Browser MCP";
-      homepage = "https://browsermcp.io";
-      license = licenses.asl20;
-      mainProgram = "mcp-server-browsermcp";
-    };
-  };
-
   slack-mcp-server = final.buildGoModule {
     pname = "slack-mcp-server";
     version = "1.2.3";
@@ -230,10 +204,4 @@ in
     description = "MCP server for Google Cloud Storage";
   };
 
-  backupdr-mcp = mkGcloudMcp {
-    pname = "backupdr-mcp";
-    version = "0.1.0";
-    hash = "sha256-cUZc5oWUlCgtcnY6uWnw316+2GG8MlO6vru3/29pr5A=";
-    description = "MCP server for Google Cloud Backup and DR";
-  };
 }
