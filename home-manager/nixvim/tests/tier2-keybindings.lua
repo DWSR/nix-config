@@ -5,30 +5,65 @@
 local test_dir = debug.getinfo(1, "S").source:match("@?(.*/)") or "./"
 local T = dofile(test_dir .. "lib.lua")
 
--- Finding #11: <leader>la should use actions-preview, not vim.lsp.buf.code_action
-T.check_keymap("n", " la", { action = "actions-preview" })
+-- ============================================================
+-- LSP goto bindings — bare g* keys (no leader prefix)
+-- ============================================================
+T.check_keymap("n", "gd")   -- goto definition
+T.check_keymap("n", "gD")   -- goto declaration
+T.check_keymap("n", "gr")   -- goto references
+T.check_keymap("n", "gI")   -- goto implementation
+T.check_keymap("n", "gy")   -- goto type definition
 
--- Finding #12: [d / ]d diagnostic navigation should exist
+-- Old <leader>g* goto bindings should NOT exist
+T.check_no_keymap("n", " gd")
+T.check_no_keymap("n", " gD")
+T.check_no_keymap("n", " gr")
+T.check_no_keymap("n", " gI")
+T.check_no_keymap("n", " gy")
+
+-- ============================================================
+-- Git bindings — <leader>g* (colocated with plugins)
+-- ============================================================
+T.check_keymap("n", " gg", { action = "LazyGit" })
+T.check_keymap("n", " gb")  -- gitsigns toggle blame
+T.check_keymap("n", " gp")  -- gitsigns preview hunk
+T.check_keymap("n", " gs")  -- gitsigns stage hunk
+T.check_keymap("n", " gr")  -- gitsigns reset hunk
+T.check_keymap("n", " gS")  -- gitsigns stage buffer
+
+-- ============================================================
+-- LSP action bindings
+-- ============================================================
+T.check_keymap("n", " la", { action = "actions-preview" })
+T.check_keymap("n", " lf", { action = "conform" })
+
+-- ============================================================
+-- Diagnostic navigation
+-- ============================================================
 T.check_keymap("n", "]d")
 T.check_keymap("n", "[d")
 
--- Finding #15: lazygit should have a keybinding
-T.check_keymap("n", " gg", { action = "LazyGit" })
+-- ============================================================
+-- Removed keybindings (should NOT exist)
+-- ============================================================
 
--- <leader>lf should use conform, not vim.lsp.buf.format (already fixed)
-T.check_keymap("n", " lf", { action = "conform" })
-
--- K hover should NOT have a custom global mapping (Finding #14: redundant in >= 0.10)
--- Note: Neovim 0.10+ sets K via LspAttach autocmd, not as a global keymap.
--- A global keymap would override the default in non-LSP buffers.
+-- K hover removed (Neovim 0.10+ built-in handles it via LspAttach)
 T.check_no_keymap("n", "K")
 
--- QuickFixToggle should be gone (already fixed)
+-- QuickFixToggle removed (function was never defined)
 T.check_no_keymap("n", "<C-q>")
 
--- Basic sanity: common keybindings still work
+-- ============================================================
+-- Comment toggle — built-in gc/gcc (Comment.nvim removed)
+-- ============================================================
+T.check_keymap("n", " /")   -- comment toggle (remaps to gcc)
+T.check_keymap("v", " /")   -- visual comment toggle (remaps to gc)
+
+-- ============================================================
+-- Basic sanity
+-- ============================================================
 T.check_keymap("n", " e")   -- explorer toggle (neo-tree)
-T.check_keymap("n", " /")   -- comment toggle
 T.check_keymap("n", " bc")  -- buffer close
+T.check_keymap("n", " q")   -- quit
 
 T.report()
