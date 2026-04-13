@@ -5,6 +5,7 @@ export const ZellijAttention: Plugin = async ({ $ }) => {
   if (!paneId) return {}
 
   let waitingTimer: ReturnType<typeof setTimeout> | null = null
+  let lastSentStatus: string | null = null
   const DEBOUNCE_MS = 200
 
   const pipe = async (action: string) => {
@@ -24,22 +25,30 @@ export const ZellijAttention: Plugin = async ({ $ }) => {
         const status = event.properties.status.type
         if (status === "busy") {
           // Agent resumed work — cancel any pending "waiting" signal
+          // and reset state so the next idle transition sends "completed"
           cancelWaiting()
+          lastSentStatus = null
         } else if (status === "idle") {
-          // Agent finished — cancel any pending "waiting" and signal completion
+          // Agent finished — send "completed" exactly once per busy→idle transition
           cancelWaiting()
-          await pipe("completed")
+          if (lastSentStatus !== "completed") {
+            await pipe("completed")
+            lastSentStatus = "completed"
+          }
         }
       }
 
       if (event.type === "permission.updated") {
         // Debounce: only signal "waiting" if the permission isn't auto-resolved
         // within DEBOUNCE_MS. Auto-allowed permissions resolve instantly and
-        // fire session.status -> busy, which cancels this timer.
+        // fire session.status -> busy, which cancels this timer and resets state.
         cancelWaiting()
         waitingTimer = setTimeout(async () => {
           waitingTimer = null
-          await pipe("waiting")
+          if (lastSentStatus !== "waiting") {
+            await pipe("waiting")
+            lastSentStatus = "waiting"
+          }
         }, DEBOUNCE_MS)
       }
     },
