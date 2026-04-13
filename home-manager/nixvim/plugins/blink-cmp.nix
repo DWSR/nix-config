@@ -25,10 +25,18 @@
             "path"
             "snippets"
             "buffer"
-            "conventionalcommits"
             "calc"
             "dap"
           ];
+
+          # conventionalcommits only in gitcommit buffers
+          per_filetype = {
+            gitcommit = [
+              "conventionalcommits"
+              "buffer"
+              "path"
+            ];
+          };
 
           providers = {
             conventionalcommits = {

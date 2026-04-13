@@ -26,6 +26,7 @@ in
     ./plugins/fidget.nix
     ./plugins/edgy.nix
     ./plugins/git-conflict.nix
+    ./plugins/gitcommit.nix
     ./plugins/gitsigns.nix
     ./plugins/illuminate.nix
     ./plugins/img-clip.nix
