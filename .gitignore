@@ -3,4 +3,3 @@
 .direnv/
 result
 .ruff_cache
-.statix.toml
