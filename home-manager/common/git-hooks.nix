@@ -54,14 +54,24 @@ let
       _dispatch ${stage} "$@"
     '';
 
-  # Generate a prek .d/ hook wrapper for a specific stage
+  # Generate a prek .d/ hook wrapper for a specific stage.
+  # Some stages require extra args from git (commit-msg gets the filename,
+  # pre-push gets remote name + url, etc.). Pass all args through.
   mkPrekHook =
     stage:
+    let
+      # Stages that need --commit-msg-filename "$1"
+      needsCommitMsg = builtins.elem stage [
+        "commit-msg"
+        "prepare-commit-msg"
+      ];
+      extraArgs = if needsCommitMsg then ''--commit-msg-filename "$1"'' else "";
+    in
     pkgs.writeShellScript "prek-${stage}" ''
       _repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
       if [ -f "''${_repo_root}/.pre-commit-config.yaml" ]; then
         if command -v prek >/dev/null 2>&1; then
-          exec prek run --hook-stage "${stage}" --config "''${_repo_root}/.pre-commit-config.yaml"
+          exec prek run --hook-stage "${stage}" --config "''${_repo_root}/.pre-commit-config.yaml" ${extraArgs}
         fi
       fi
     '';
