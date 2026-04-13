@@ -99,32 +99,6 @@ in
     };
   };
 
-  claude-agent-acp = final.buildNpmPackage rec {
-    pname = "claude-agent-acp";
-    version = "0.25.3";
-
-    src = final.fetchurl {
-      url = "https://registry.npmjs.org/@agentclientprotocol/claude-agent-acp/-/claude-agent-acp-${version}.tgz";
-      hash = "sha256-67LPraeZuPkp3fTXi5InAgR4jHGrseWtjE86gRWAVtk=";
-    };
-
-    postPatch = ''
-      cp ${./claude-agent-acp/package.json} package.json
-      cp ${./claude-agent-acp/package-lock.json} package-lock.json
-    '';
-
-    npmDeps = final.importNpmLock { npmRoot = ./claude-agent-acp; };
-    inherit (final.importNpmLock) npmConfigHook;
-    dontNpmBuild = true;
-
-    meta = with final.lib; {
-      description = "ACP adapter for Claude Code via the Claude Agent SDK";
-      homepage = "https://github.com/agentclientprotocol/claude-agent-acp";
-      license = licenses.asl20;
-      mainProgram = "claude-agent-acp";
-    };
-  };
-
   buildkite-mcp-server = final.buildGoModule {
     pname = "buildkite-mcp-server";
     version = "1.0.0";
