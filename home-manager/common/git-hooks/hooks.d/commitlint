@@ -1,0 +1,3 @@
+#!/bin/sh
+# Global commit-msg hook: validate conventional commit format
+command -v commitlint >/dev/null 2>&1 && exec commitlint --edit "$1"

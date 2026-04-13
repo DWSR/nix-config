@@ -251,12 +251,30 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          inherit (self.checks.${system}.pre-commit-check) shellHook enabledPackages;
+          preCommitCheck = self.checks.${system}.pre-commit-check;
+          # The generated .pre-commit-config.yaml nix store path
+          preCommitConfig = preCommitCheck.config.configFile;
         in
         {
           default = pkgs.mkShell {
-            inherit shellHook;
-            buildInputs = enabledPackages;
+            buildInputs = preCommitCheck.enabledPackages;
+
+            # Symlink .pre-commit-config.yaml for the global prek hook to find.
+            # We do NOT run prek install — hooks are installed globally via
+            # home-manager's git-hooks.nix module.
+            shellHook = ''
+              GIT_WC=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null)
+              if [ -n "$GIT_WC" ]; then
+                config="${preCommitConfig}"
+                if [ -e "$config" ]; then
+                  if ! readlink "''${GIT_WC}/.pre-commit-config.yaml" >/dev/null 2>&1 \
+                    || [ "$(readlink "''${GIT_WC}/.pre-commit-config.yaml")" != "$config" ]; then
+                    [ -L "''${GIT_WC}/.pre-commit-config.yaml" ] && unlink "''${GIT_WC}/.pre-commit-config.yaml"
+                    ln -s "$config" "''${GIT_WC}/.pre-commit-config.yaml"
+                  fi
+                fi
+              fi
+            '';
           };
         }
       );

@@ -12,6 +12,7 @@
     ./gh-cli.nix
     ./ghostty.nix
     ./git.nix
+    ./git-hooks.nix
     ./opencode.nix
     ./ssh.nix
     ./starship.nix

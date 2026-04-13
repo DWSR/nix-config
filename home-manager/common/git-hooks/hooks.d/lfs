@@ -1,0 +1,12 @@
+#!/bin/sh
+# Global hook: run git-lfs for the given stage.
+# The hook stage is passed via LFS_HOOK_STAGE environment variable.
+_lfs_stage="$LFS_HOOK_STAGE"
+
+if [ -z "$_lfs_stage" ]; then
+  echo "lfs hook: LFS_HOOK_STAGE not set" >&2
+  exit 1
+fi
+
+command -v git-lfs >/dev/null 2>&1 || exit 0
+exec git lfs "$_lfs_stage" "$@"
