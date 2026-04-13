@@ -23,6 +23,10 @@ in
 
   home.opencode.package = pkgs.opencode-shopify;
 
+  programs.opencode.commands = {
+    restack = ./commands/restack.md;
+  };
+
   programs.opencode.settings = {
     enabled_providers = [
       "anthropic"
