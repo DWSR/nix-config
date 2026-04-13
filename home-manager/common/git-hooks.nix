@@ -58,16 +58,20 @@ let
   mkPrekHook =
     stage:
     pkgs.writeShellScript "prek-${stage}" ''
-      export PREK_HOOK_STAGE="${stage}"
-      exec ${./git-hooks/hooks.d/prek} "$@"
+      _repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+      if [ -f "''${_repo_root}/.pre-commit-config.yaml" ]; then
+        if command -v prek >/dev/null 2>&1; then
+          exec prek run --hook-stage "${stage}" --config "''${_repo_root}/.pre-commit-config.yaml"
+        fi
+      fi
     '';
 
   # Generate an LFS .d/ hook wrapper for a specific stage
   mkLfsHook =
     stage:
     pkgs.writeShellScript "lfs-${stage}" ''
-      export LFS_HOOK_STAGE="${stage}"
-      exec ${./git-hooks/hooks.d/lfs} "$@"
+      command -v git-lfs >/dev/null 2>&1 || exit 0
+      exec git lfs "${stage}" "$@"
     '';
 
   # Build xdg.configFile entries for dispatcher scripts
