@@ -71,7 +71,15 @@ let
       _repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
       if [ -f "''${_repo_root}/.pre-commit-config.yaml" ]; then
         if command -v prek >/dev/null 2>&1; then
-          exec prek run --hook-stage "${stage}" --config "''${_repo_root}/.pre-commit-config.yaml" ${extraArgs}
+          _output="$(prek run --hook-stage "${stage}" --config "''${_repo_root}/.pre-commit-config.yaml" ${extraArgs} 2>&1)"
+          _rc=$?
+          # Ignore "no hooks found" — not all stages have configured hooks
+          if [ $_rc -ne 0 ]; then
+            case "$_output" in
+              *"No hooks found for stage"*) ;;
+              *) echo "$_output" >&2; exit $_rc ;;
+            esac
+          fi
         fi
       fi
     '';
