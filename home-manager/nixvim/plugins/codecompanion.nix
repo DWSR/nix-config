@@ -18,6 +18,15 @@
           action_palette = {
             provider = "snacks";
           };
+          chat = {
+            window = {
+              layout = "float";
+              width = 0.8;
+              height = 0.8;
+              border = "single";
+              relative = "editor";
+            };
+          };
         };
         interactions = {
           chat = {

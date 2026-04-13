@@ -8,6 +8,7 @@ _: {
         # Enable snacks notifier — used by noice as the notification backend
         bigfile.enabled = true;
         notifier.enabled = true;
+        picker.enabled = true;
       };
     };
 
