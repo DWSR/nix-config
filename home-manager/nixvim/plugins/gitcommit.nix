@@ -4,6 +4,24 @@ let
 in
 {
   programs.nixvim.autoCmd = [
+    # Hide edgy sidebar when editing commit messages
+    {
+      event = "VimEnter";
+      callback = helpers.mkRaw ''
+        function()
+          local bufname = vim.api.nvim_buf_get_name(0)
+          if bufname:match("COMMIT_EDITMSG")
+            or bufname:match("MERGE_MSG")
+            or bufname:match("TAG_EDITMSG")
+            or bufname:match("EDIT_DESCRIPTION")
+          then
+            pcall(function() require("edgy").close() end)
+          end
+        end
+      '';
+      desc = "Hide edgy sidebar when editing commit messages";
+    }
+
     # Ensure COMMIT_EDITMSG always gets gitcommit filetype
     {
       event = [
