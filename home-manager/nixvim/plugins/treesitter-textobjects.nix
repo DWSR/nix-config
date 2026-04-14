@@ -1,6 +1,8 @@
-_: {
+{ pkgs, ... }:
+{
   programs.nixvim.plugins.treesitter-textobjects = {
     enable = true;
+    package = pkgs.unstable.vimPlugins.nvim-treesitter-textobjects;
 
     settings = {
       select = {

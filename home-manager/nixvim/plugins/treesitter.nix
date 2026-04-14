@@ -2,6 +2,7 @@
 {
   programs.nixvim.plugins.treesitter = {
     enable = true;
+    package = pkgs.unstable.vimPlugins.nvim-treesitter;
 
     # Explicit grammar list matching configured languages (not allGrammars which installs 200+)
     grammarPackages = with pkgs.unstable.vimPlugins.nvim-treesitter.builtGrammars; [
