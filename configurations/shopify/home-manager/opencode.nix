@@ -25,6 +25,7 @@ in
 
   programs.opencode.commands = {
     restack = ./commands/restack.md;
+    upgrade-environment = ./commands/upgrade-environment.md;
   };
 
   programs.opencode.settings = {
