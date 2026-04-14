@@ -2,10 +2,13 @@
 {
   programs.nixvim.plugins.treesitter = {
     enable = true;
-    package = pkgs.unstable.vimPlugins.nvim-treesitter;
+    # NOTE: Plugin AND grammars must be from the same channel. The stable
+    # nvim-treesitter plugin uses require("nvim-treesitter.configs") which
+    # nixvim generates setup() calls for. The unstable version removed this
+    # module. Keep both on stable.
 
     # Explicit grammar list matching configured languages (not allGrammars which installs 200+)
-    grammarPackages = with pkgs.unstable.vimPlugins.nvim-treesitter.builtGrammars; [
+    grammarPackages = with pkgs.vimPlugins.nvim-treesitter.builtGrammars; [
       bash
       c
       cmake

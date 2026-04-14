@@ -1,8 +1,8 @@
-{ pkgs, ... }:
-{
+_: {
   programs.nixvim.plugins.treesitter-textobjects = {
     enable = true;
-    package = pkgs.unstable.vimPlugins.nvim-treesitter-textobjects;
+    # NOTE: Do NOT pin to unstable. The stable version is compatible with
+    # the stable nvim-treesitter.configs API that nixvim generates.
 
     settings = {
       select = {
