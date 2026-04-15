@@ -129,6 +129,36 @@ in
         };
       }
       {
+        action = "<cmd>lua Snacks.picker.buffers()<CR>";
+        key = "<leader>bb";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Buffer picker";
+        };
+      }
+      {
+        action = "<cmd>bprevious<CR>";
+        key = "<leader>bp";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Previous buffer";
+        };
+      }
+      {
+        action = "<cmd>bnext<CR>";
+        key = "<leader>bn";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Next buffer";
+        };
+      }
+      {
         action = "<cmd>nohlsearch<CR>";
         key = "<leader>h";
 
