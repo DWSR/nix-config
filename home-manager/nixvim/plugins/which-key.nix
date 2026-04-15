@@ -49,6 +49,11 @@ _: {
           mode = [ "n" ];
         }
         {
+          __unkeyed = "<leader>x";
+          group = "Trouble";
+          mode = [ "n" ];
+        }
+        {
           __unkeyed = "<leader>V";
           group = "Display toggles";
           mode = [

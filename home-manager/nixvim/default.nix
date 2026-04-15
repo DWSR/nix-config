@@ -51,6 +51,7 @@ in
     ./plugins/todo-comments.nix
     ./plugins/toggleterm.nix
     ./plugins/treesitter.nix
+    ./plugins/trouble.nix
     ./plugins/treesitter-textobjects.nix
     ./plugins/shadowenv.nix
     ./plugins/zellij-nav.nix
