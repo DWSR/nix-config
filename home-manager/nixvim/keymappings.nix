@@ -528,6 +528,40 @@ in
           desc = "Diagnostics to quickfix";
         };
       }
+      {
+        action = "<cmd>LspInfo<CR>";
+        key = "<leader>li";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "LSP info";
+        };
+      }
+      {
+        action = "<cmd>LspRestart<CR>";
+        key = "<leader>lR";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Restart LSP";
+        };
+      }
+      {
+        action = helpers.mkRaw ''
+          function()
+            vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled())
+          end
+        '';
+        key = "<leader>lh";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle inlay hints";
+        };
+      }
 
       # Diagnostic navigation
       {
