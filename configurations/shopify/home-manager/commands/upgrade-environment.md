@@ -139,6 +139,10 @@ Iterate through each cluster identified in Step 1 (plus the test cluster from St
 
 #### Step 3b: Promote auto flags
 
+**If the environment is `production`: SKIP this step.** Auto flags promotion in production requires a soak period and manual verification. Report to the user: "Skipping auto flags promotion for production. This must be done manually after a soak period." Proceed directly to Step 3c.
+
+**For testing and staging:**
+
 1. Click **"Execute Playbook"** under Admin on the cluster's Actions page.
 
 2. Fill in:
