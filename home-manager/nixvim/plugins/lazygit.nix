@@ -12,5 +12,25 @@ _: {
         desc = "LazyGit";
       };
     }
+    {
+      action = "<cmd>lua Snacks.picker.git_log_file()<CR>";
+      key = "<leader>gl";
+      mode = "n";
+      options = {
+        silent = true;
+        noremap = true;
+        desc = "Git file log";
+      };
+    }
+    {
+      action = "<cmd>lua Snacks.picker.git_log()<CR>";
+      key = "<leader>gc";
+      mode = "n";
+      options = {
+        silent = true;
+        noremap = true;
+        desc = "Git commits";
+      };
+    }
   ];
 }
