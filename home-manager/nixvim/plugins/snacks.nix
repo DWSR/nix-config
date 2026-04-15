@@ -93,6 +93,66 @@ _: {
           desc = "Notification history";
         };
       }
+      {
+        action = "<cmd>lua Snacks.picker.keymaps()<CR>";
+        key = "<leader>sk";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Keymaps";
+        };
+      }
+      {
+        action = "<cmd>lua Snacks.picker.commands()<CR>";
+        key = "<leader>sc";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Commands";
+        };
+      }
+      {
+        action = "<cmd>lua Snacks.picker.buffers()<CR>";
+        key = "<leader>sb";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Buffers";
+        };
+      }
+      {
+        action = "<cmd>lua Snacks.picker.grep_word()<CR>";
+        key = "<leader>sw";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Search word under cursor";
+        };
+      }
+      {
+        action = "<cmd>lua Snacks.picker.git_log()<CR>";
+        key = "<leader>sg";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Git log";
+        };
+      }
+      {
+        action = "<cmd>lua Snacks.picker.git_branches()<CR>";
+        key = "<leader>gB";
+        mode = [ "n" ];
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Git branches";
+        };
+      }
     ];
   };
 }
