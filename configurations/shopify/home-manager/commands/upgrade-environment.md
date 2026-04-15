@@ -112,7 +112,9 @@ Iterate through each cluster identified in Step 1 (plus the test cluster from St
    SELECT id, title, status FROM gordon_job_runs WHERE id = <workflow_id>
    ```
 
-6. If the workflow **succeeds**, proceed to Step 3b.
+6. If the workflow **succeeds**:
+   - **If the environment is `production`**: STOP here. Report to the user: "Binary upgrade complete for all production clusters. Auto flags promotion and YSQL catalog finalization are non-reversible and require soak time. Run these steps manually after the soak period using the Infra Central Execute Playbook UI." Proceed directly to Step 4 (merge the environment PR) without running Steps 3b or 3c.
+   - **For testing and staging**: proceed to Step 3b.
 
 **3a-ii: Handle failure — check if version not downloaded**
 
@@ -137,11 +139,7 @@ Iterate through each cluster identified in Step 1 (plus the test cluster from St
    - Present the analysis from `/analyze-ansible-run` to the user.
    - Stop and let the user decide how to proceed.
 
-#### Step 3b: Promote auto flags
-
-**If the environment is `production`: SKIP this step.** Auto flags promotion in production requires a soak period and manual verification. Report to the user: "Skipping auto flags promotion for production. This must be done manually after a soak period." Proceed directly to Step 3c.
-
-**For testing and staging:**
+#### Step 3b: Promote auto flags (testing and staging only)
 
 1. Click **"Execute Playbook"** under Admin on the cluster's Actions page.
 
@@ -160,7 +158,7 @@ Iterate through each cluster identified in Step 1 (plus the test cluster from St
    - If the user **confirms**: proceed to Step 3c.
    - If the user **declines**: stop.
 
-#### Step 3c: Finalize upgrade
+#### Step 3c: Finalize upgrade (testing and staging only)
 
 1. Click **"Execute Playbook"** under Admin on the cluster's Actions page.
 
@@ -200,7 +198,7 @@ Present a summary including:
 - **Next steps**:
   - If testing: "Upgrade staging next with `/upgrade-environment staging`"
   - If staging: "Upgrade production next with `/upgrade-environment production`"
-  - If production: "All environments upgraded. Merge the remaining PRs in the stack (set as default version, remove old version) to complete the upgrade."
+  - If production: "Binary upgrade complete. After the soak period, manually run promote auto flags and finalize upgrade via Infra Central Execute Playbook. Once complete, merge the remaining PRs in the stack (set as default version, remove old version)."
 
 ## Notes
 
