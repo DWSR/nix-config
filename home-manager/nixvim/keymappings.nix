@@ -290,6 +290,36 @@ in
           desc = "Equalize window sizes";
         };
       }
+      {
+        action = "<cmd>close<CR>";
+        key = "<leader>wc";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Close window";
+        };
+      }
+      {
+        action = "<cmd>only<CR>";
+        key = "<leader>wo";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Close other windows";
+        };
+      }
+      {
+        action = "<cmd>wincmd _<CR><cmd>wincmd |<CR>";
+        key = "<leader>wm";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Maximize window";
+        };
+      }
       # Easier indentation
       {
         action = "<gv";
