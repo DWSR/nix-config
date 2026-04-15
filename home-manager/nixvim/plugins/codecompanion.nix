@@ -70,6 +70,26 @@
           silent = true;
         };
       }
+      {
+        mode = "v";
+        key = "<leader>ae";
+        action = "<cmd>CodeCompanion /explain<CR>";
+        options = {
+          desc = "Explain selected code";
+          noremap = true;
+          silent = true;
+        };
+      }
+      {
+        mode = "v";
+        key = "<leader>af";
+        action = "<cmd>CodeCompanion /fix<CR>";
+        options = {
+          desc = "Fix selected code";
+          noremap = true;
+          silent = true;
+        };
+      }
     ];
   };
 }
