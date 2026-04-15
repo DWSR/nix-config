@@ -315,11 +315,44 @@ in
         action = "<cmd>set relativenumber!<CR>";
         key = "<leader>Vn";
         mode = "n";
-
         options = {
           silent = true;
           noremap = true;
           desc = "Toggle relative line numbers";
+        };
+      }
+      {
+        action = "<cmd>set wrap!<CR>";
+        key = "<leader>Vw";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle word wrap";
+        };
+      }
+      {
+        action = helpers.mkRaw ''
+          function()
+            vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled())
+          end
+        '';
+        key = "<leader>Vi";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle inlay hints";
+        };
+      }
+      {
+        action = "<cmd>set spell!<CR>";
+        key = "<leader>Vs";
+        mode = "n";
+        options = {
+          silent = true;
+          noremap = true;
+          desc = "Toggle spell check";
         };
       }
       {
