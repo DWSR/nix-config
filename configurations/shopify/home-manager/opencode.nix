@@ -24,6 +24,7 @@ in
   home.opencode.package = pkgs.opencode-shopify;
 
   programs.opencode.commands = {
+    make-stack-green = ./commands/make-stack-green.md;
     restack = ./commands/restack.md;
     upgrade-environment = ./commands/upgrade-environment.md;
   };
