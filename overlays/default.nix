@@ -18,7 +18,7 @@ in
   shopify-packages = final: _prev: {
     opencode-shopify = final.symlinkJoin {
       name = "opencode-shopify";
-      paths = [ final.unstable.opencode ];
+      paths = [ final.opencode-pinned ];
       nativeBuildInputs = [ final.makeWrapper ];
       postBuild = ''
         wrapProgram $out/bin/opencode \

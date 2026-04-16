@@ -24,7 +24,7 @@ in
 {
   options.home.opencode.package = lib.mkOption {
     type = lib.types.package;
-    default = pkgs.unstable.opencode;
+    default = pkgs.opencode-pinned;
     description = "Base opencode package. Wrapped with mcphub health check automatically.";
   };
 

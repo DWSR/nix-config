@@ -115,4 +115,27 @@ final: prev: {
       mainProgram = "ocmonitor";
     };
   };
+
+  opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
+    version = "0-unstable-2026-04-15";
+
+    src = final.fetchFromGitHub {
+      owner = "anomalyco";
+      repo = "opencode";
+      rev = "0e86466f990edd046867820b9fac97766d11db3f";
+      hash = "sha256-eSGTqCto90jVcGRB93Z17IJ/fON0V/LZYAh7em3/odc=";
+    };
+
+    vendorHash = "sha256-SNNeG1ockzI8gxgCSLAq1uQIbBRaTCqVKZOIrr5bAuY=";
+
+    node_modules = old.node_modules.overrideAttrs (_oldNm: {
+      src = final.fetchFromGitHub {
+        owner = "anomalyco";
+        repo = "opencode";
+        rev = "0e86466f990edd046867820b9fac97766d11db3f";
+        hash = "sha256-eSGTqCto90jVcGRB93Z17IJ/fON0V/LZYAh7em3/odc=";
+      };
+      outputHash = "sha256-SNNeG1ockzI8gxgCSLAq1uQIbBRaTCqVKZOIrr5bAuY=";
+    });
+  });
 }
