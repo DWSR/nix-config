@@ -19,7 +19,7 @@ _: {
       init.defaultBranch = "main";
       rebase.updateRefs = true;
       pull.rebase = true;
-      help.autocorrect = 1;
+      help.autocorrect = "prompt";
     };
 
     lfs.enable = true;
