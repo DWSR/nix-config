@@ -35,6 +35,41 @@ in
       enable = true;
       package = wrappedOpencode;
       rules = ./agents.md;
+
+      settings = {
+        # Re-enable thinking output for Claude Opus 4.7 which omits it by default.
+        # https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7#thinking-content-omitted-by-default
+        model = {
+          "claude-opus-4-7" = {
+            variants = {
+              low.thinking = {
+                type = "adaptive";
+                display = "summarized";
+              };
+              medium.thinking = {
+                type = "adaptive";
+                display = "summarized";
+              };
+              high.thinking = {
+                type = "adaptive";
+                display = "summarized";
+              };
+              xhigh.thinking = {
+                type = "adaptive";
+                display = "summarized";
+              };
+              max.thinking = {
+                type = "adaptive";
+                display = "summarized";
+              };
+            };
+            options.thinking = {
+              type = "adaptive";
+              display = "summarized";
+            };
+          };
+        };
+      };
     };
   };
 }
