@@ -39,6 +39,7 @@ in
       agents = {
         nix-pkg = ./agents/nix-pkg.md;
         nvim-tailor = ./agents/nvim-tailor.md;
+        security-auditor = ./agents/security-auditor.md;
       };
 
       settings = {
