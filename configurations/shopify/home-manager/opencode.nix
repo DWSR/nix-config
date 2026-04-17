@@ -35,6 +35,11 @@ in
   };
 
   programs.opencode.settings = {
+    model = "anthropic/claude-opus-4-7";
+    agent.build = {
+      model = "anthropic/claude-opus-4-7";
+      variant = "max";
+    };
     enabled_providers = [
       "anthropic"
       "openai"
