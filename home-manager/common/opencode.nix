@@ -38,6 +38,7 @@ in
 
       agents = {
         nix-pkg = ./agents/nix-pkg.md;
+        nvim-tailor = ./agents/nvim-tailor.md;
       };
 
       settings = {
