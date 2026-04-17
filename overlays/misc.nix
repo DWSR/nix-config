@@ -149,25 +149,25 @@ final: prev: {
   };
 
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "0-unstable-2026-04-15";
+    version = "1.4.9";
 
     src = final.fetchFromGitHub {
       owner = "anomalyco";
       repo = "opencode";
-      rev = "0e86466f990edd046867820b9fac97766d11db3f";
-      hash = "sha256-eSGTqCto90jVcGRB93Z17IJ/fON0V/LZYAh7em3/odc=";
+      tag = "v1.4.9";
+      hash = "sha256-fY4V3VUHjYdiSrixUQbGGJpaqQRS8lyGKQbHdR5SiTY=";
     };
 
-    vendorHash = "sha256-SNNeG1ockzI8gxgCSLAq1uQIbBRaTCqVKZOIrr5bAuY=";
+    vendorHash = "sha256-41r1ogrpjKte6Rv9mMDF8mNP0KSiawXENzpVFwG0JDI=";
 
     node_modules = old.node_modules.overrideAttrs (_oldNm: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";
         repo = "opencode";
-        rev = "0e86466f990edd046867820b9fac97766d11db3f";
-        hash = "sha256-eSGTqCto90jVcGRB93Z17IJ/fON0V/LZYAh7em3/odc=";
+        tag = "v1.4.9";
+        hash = "sha256-fY4V3VUHjYdiSrixUQbGGJpaqQRS8lyGKQbHdR5SiTY=";
       };
-      outputHash = "sha256-SNNeG1ockzI8gxgCSLAq1uQIbBRaTCqVKZOIrr5bAuY=";
+      outputHash = "sha256-41r1ogrpjKte6Rv9mMDF8mNP0KSiawXENzpVFwG0JDI=";
     });
   });
 }
