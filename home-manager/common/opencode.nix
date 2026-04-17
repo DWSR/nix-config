@@ -36,6 +36,10 @@ in
       package = wrappedOpencode;
       rules = ./agents.md;
 
+      agents = {
+        nix-pkg = ./agents/nix-pkg.md;
+      };
+
       settings = {
         # Re-enable thinking output for Claude Opus 4.7 which omits it by default.
         # https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7#thinking-content-omitted-by-default
