@@ -31,6 +31,7 @@ in
 
   programs.opencode.agents = {
     stack-captain = ./agents/stack-captain.md;
+    yb-sleuth = ./agents/yb-sleuth.md;
   };
 
   programs.opencode.settings = {
