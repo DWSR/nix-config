@@ -29,6 +29,10 @@ in
     upgrade-environment = ./commands/upgrade-environment.md;
   };
 
+  programs.opencode.agents = {
+    stack-captain = ./agents/stack-captain.md;
+  };
+
   programs.opencode.settings = {
     enabled_providers = [
       "anthropic"
