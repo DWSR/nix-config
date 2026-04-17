@@ -116,6 +116,38 @@ final: prev: {
     };
   };
 
+  tokscale = final.rustPlatform.buildRustPackage rec {
+    pname = "tokscale";
+    version = "2.0.24";
+
+    src = final.fetchFromGitHub {
+      owner = "junhoyeo";
+      repo = "tokscale";
+      tag = "v${version}";
+      hash = "sha256-bRBhJNVNhQZASJBH+KuQ8BUfbxwaXJM2uVzdp+yNheg=";
+    };
+
+    cargoHash = "sha256-94uascld4gqfUGvYWZKj/kikc52+1NB93+5E7oSkg38=";
+
+    # Only build the CLI binary from the Cargo workspace.
+    cargoBuildFlags = [
+      "-p"
+      "tokscale-cli"
+    ];
+
+    # Upstream tests exercise the user's real session data and network
+    # (leaderboard, pricing lookups). Skip in Nix builds.
+    doCheck = false;
+
+    meta = {
+      description = "CLI and TUI for tracking AI coding assistant token usage and costs";
+      homepage = "https://github.com/junhoyeo/tokscale";
+      license = final.lib.licenses.mit;
+      mainProgram = "tokscale";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
     version = "0-unstable-2026-04-15";
 

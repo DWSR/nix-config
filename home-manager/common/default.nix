@@ -92,6 +92,7 @@
       readline
       rsync
       shadowenv
+      tokscale
       tree
       unstable.keymapp
       unstable.slack
