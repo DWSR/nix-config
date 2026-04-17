@@ -82,40 +82,6 @@ final: prev: {
     ];
   };
 
-  ocmonitor = final.python312Packages.buildPythonApplication {
-    pname = "opencode-monitor";
-    version = "1.0.3";
-    pyproject = true;
-
-    src = final.fetchFromGitHub {
-      owner = "Shlomob";
-      repo = "ocmonitor-share";
-      tag = "v1.0.3";
-      hash = "sha256-mCwGAZm/ilOwQvm7+UD3e/XEbRYFhIO+LKDCyLVMFmk=";
-    };
-
-    build-system = with final.python312Packages; [
-      setuptools
-      wheel
-    ];
-
-    dependencies = with final.python312Packages; [
-      click
-      rich
-      pydantic
-      toml
-      pyyaml
-      prometheus-client
-    ];
-
-    meta = with final.lib; {
-      description = "Analytics and monitoring tool for OpenCode AI coding sessions";
-      homepage = "https://github.com/Shlomob/ocmonitor-share";
-      license = licenses.mit;
-      mainProgram = "ocmonitor";
-    };
-  };
-
   tokscale = final.rustPlatform.buildRustPackage rec {
     pname = "tokscale";
     version = "2.0.24";

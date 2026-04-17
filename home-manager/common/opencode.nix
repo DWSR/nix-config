@@ -29,8 +29,6 @@ in
   };
 
   config = {
-    home.packages = [ pkgs.ocmonitor ];
-
     programs.opencode = {
       enable = true;
       package = wrappedOpencode;

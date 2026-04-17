@@ -83,7 +83,6 @@ Three overlays are applied via `nixpkgs.overlays` in `configurations/common-darw
 - `git-issue-tracker` (pulled from flake input, installed from `bin/`).
 - `python312` override (injects `kagiapi` Python dep).
 - `kagimcp` (buildPythonApplication).
-- `ocmonitor` (buildPythonApplication from GitHub release).
 - `tokscale` (rustPlatform.buildRustPackage, the canonical case study below).
 - `opencode-pinned` (overrideAttrs on `final.unstable.opencode`, overrides `src` + `vendorHash` + `node_modules.outputHash`).
 
