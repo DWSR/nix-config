@@ -40,6 +40,7 @@ in
         nix-pkg = ./agents/nix-pkg.md;
         nvim-tailor = ./agents/nvim-tailor.md;
         security-auditor = ./agents/security-auditor.md;
+        vault-curator = ./agents/vault-curator.md;
       };
 
       settings = {
