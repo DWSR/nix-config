@@ -7,7 +7,11 @@ in
 {
   fixed-packages = final: _prev: {
     # https://github.com/NixOS/nixpkgs/issues/507531
-    direnv = _prev.direnv.overrideAttrs(_: { doCheck = false; });
+    direnv = _prev.direnv.overrideAttrs (_: {
+      doCheck = false;
+    });
+
+    inherit ((import inputs.nixpkgs-unstable { inherit (final.stdenv.hostPlatform) system; })) mas;
   };
 
   unstable-packages = final: _prev: {
