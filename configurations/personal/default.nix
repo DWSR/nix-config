@@ -19,8 +19,11 @@
       "1Password for Safari" = 1569813296;
       "Apple Configurator" = 1037126344;
       "Balance Lock" = 1019371109;
+      "Clocker" = 1056643111;
       "CrystalFetch" = 6454431289;
       "Discovery" = 1381004916;
+      "HazeOver" = 430798174;
+      "Hidden Bar" = 1452453066;
       "Kagi for Safari" = 1622835804;
       "Keynote" = 409183694;
       "Mini Motorways" = 1456188526;
