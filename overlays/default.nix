@@ -5,6 +5,11 @@ let
   misc = import ./misc.nix { inherit inputs; };
 in
 {
+  fixed-packages = final: _prev: {
+    # https://github.com/NixOS/nixpkgs/issues/507531
+    direnv = _prev.direnv.overrideAttrs(_: { doCheck = false; });
+  };
+
   unstable-packages = final: _prev: {
     unstable = import inputs.nixpkgs-unstable {
       inherit (final.stdenv.hostPlatform) system;

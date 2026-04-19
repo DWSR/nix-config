@@ -57,6 +57,7 @@
       config.allowUnfree = true;
       hostPlatform = "aarch64-darwin";
       overlays = [
+        outputs.overlays.fixed-packages
         outputs.overlays.unstable-packages
         outputs.overlays.custom-packages
         inputs.nixneovimplugins.overlays.default
