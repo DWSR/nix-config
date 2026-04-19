@@ -26,10 +26,7 @@ in
   ];
 
   home = {
-    stateVersion = "24.11";
-
-    # TODO: Remove this once 25.05 is released
-    enableNixpkgsReleaseCheck = false;
+    stateVersion = "25.11";
 
     packages = with pkgs; [
       butane
