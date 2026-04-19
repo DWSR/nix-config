@@ -10,11 +10,19 @@ let
 in
 {
   imports = [
-    inputs.op-shell-plugins.hmModules.default
+    # Local override of inputs.op-shell-plugins.hmModules.default to silence
+    # the `programs.zsh.initExtra is deprecated` home-manager warning until
+    # upstream migrates to `initContent`. See op-shell-plugins.nix for details.
+    ./op-shell-plugins.nix
 
     ../../../home-manager/common
     ../../../home-manager/mcp
     ./git.nix
+  ];
+
+  disabledModules = [
+    # Replaced by ./op-shell-plugins.nix above.
+    "${inputs.op-shell-plugins}/nix/home-manager.nix"
   ];
 
   home = {
