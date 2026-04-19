@@ -121,6 +121,12 @@
       };
 
       taps = builtins.attrNames config.nix-homebrew.taps;
+
+      masApps = {
+        "Clocker" = 1056643111;
+        "HazeOver" = 430798174;
+        "Hidden Bar" = 1452453066;
+      };
     };
 
     system = {
