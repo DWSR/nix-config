@@ -2,8 +2,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-25.11-darwin";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
-    op-shell-plugins.url = "github:1Password/shell-plugins";
-    nixneovimplugins.url = "github:NixNeovim/NixNeovimPlugins";
+    op-shell-plugins = {
+      url = "github:1Password/shell-plugins";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    nixneovimplugins = {
+      url = "github:NixNeovim/NixNeovimPlugins";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
 
     fenix = {
       url = "github:nix-community/fenix/0b88bfd10f819d000d35d296debe283db89b623b";
@@ -17,6 +23,7 @@
 
     nixvim = {
       url = "github:nix-community/nixvim/nixos-25.11";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     darwin = {
@@ -63,7 +70,10 @@
       flake = false;
     };
 
-    mcphub-nvim.url = "github:ravitemer/mcphub.nvim";
+    mcphub-nvim = {
+      url = "github:ravitemer/mcphub.nvim";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     mcphub.url = "github:ravitemer/mcp-hub";
 
     git-issue-tracker = {
