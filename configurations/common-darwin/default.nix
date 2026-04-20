@@ -40,12 +40,13 @@
 
       settings = {
         trusted-users = [ username ];
-        substituters = [
-          "https://cache.nixos.org"
+        # Append nix-community via extra-* so the nix-darwin defaults
+        # (cache.nixos.org + its public key) aren't re-declared and duplicated
+        # in the rendered /etc/nix/nix.conf.
+        extra-substituters = [
           "https://nix-community.cachix.org"
         ];
-        trusted-public-keys = [
-          "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+        extra-trusted-public-keys = [
           "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
         ];
         experimental-features = [
