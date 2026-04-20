@@ -7,14 +7,15 @@
     # nixvim generates setup() calls for. The unstable version removed this
     # module. Keep both on stable.
 
-    # Explicit grammar list matching configured languages (not allGrammars which installs 200+)
+    # Explicit grammar list matching configured languages (not allGrammars which installs 200+).
+    # Trimmed to languages actually edited in this environment (dropped rst/ini/css/html —
+    # not used for this user and each dropped grammar saves a C-compile step on fresh builds).
     grammarPackages = with pkgs.vimPlugins.nvim-treesitter.builtGrammars; [
       bash
       c
       cmake
       comment
       cpp
-      css
       diff
       dockerfile
       git_rebase
@@ -24,8 +25,6 @@
       gosum
       graphql
       hcl
-      html
-      ini
       javascript
       json
       json5
@@ -36,7 +35,6 @@
       nix
       python
       regex
-      rst
       ruby
       rust
       terraform
