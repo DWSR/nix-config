@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+_:
 let
   proxyHeader = {
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
@@ -21,7 +21,28 @@ in
     };
   };
 
-  home.opencode.package = pkgs.opencode-shopify;
+  # Shopify-specific runtime env for opencode — fetches API key + proxy base
+  # from `devx llm-gateway` on every invocation, and mints a per-invocation
+  # session id used by the provider headers for sticky routing.
+  # Appended to the common opencode wrapper (see home-manager/common/opencode.nix)
+  # rather than building a separate symlinkJoin overlay package.
+  home.opencode.wrapperCommands = [
+    ''
+      OPENCODE_API_KEY="$(devx llm-gateway print-token --key 2>/dev/null)" || {
+        echo "Error: Failed to get OPENCODE_API_KEY from devx llm-gateway print-token --key" >&2
+        exit 1
+      }
+      export OPENCODE_API_KEY
+
+      DEFAULT_PROXY_BASE="$(devx llm-gateway print-token --base 2>/dev/null)" || {
+        echo "Error: Failed to get DEFAULT_PROXY_BASE from devx llm-gateway print-token --base" >&2
+        exit 1
+      }
+      export DEFAULT_PROXY_BASE
+
+      export OPENCODE_SESSION_ID="$(uuidgen)"
+    ''
+  ];
 
   programs.opencode.commands = {
     make-stack-green = ./commands/make-stack-green.md;

@@ -1,8 +1,4 @@
-{
-  outputs,
-  username,
-  ...
-}:
+{ username, ... }:
 {
   imports = [
     ../common-darwin
@@ -21,10 +17,6 @@
       !include nix.conf.d/shopify.conf
     '';
   };
-
-  nixpkgs.overlays = [
-    outputs.overlays.shopify-packages
-  ];
 
   home-manager.users.${username} = import ./home-manager;
 

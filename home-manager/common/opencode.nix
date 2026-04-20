@@ -4,34 +4,48 @@
   config,
   ...
 }:
-let
-  wrappedOpencode = pkgs.symlinkJoin {
-    name = "opencode-wrapped";
-    paths = [ config.home.opencode.package ];
-    nativeBuildInputs = [ pkgs.makeWrapper ];
-    postBuild = ''
-      wrapProgram $out/bin/opencode \
-        --run '
-          if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/health >/dev/null 2>&1; then
-            echo "ERROR: MCP hub is not running. Obsidian memory tools are unavailable." >&2
-            echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
-            exit 1
-          fi
-        '
-    '';
-  };
-in
 {
-  options.home.opencode.package = lib.mkOption {
-    type = lib.types.package;
-    default = pkgs.opencode-pinned;
-    description = "Base opencode package. Wrapped with mcphub health check automatically.";
+  options.home.opencode = {
+    package = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.opencode-pinned;
+      description = "Base opencode package. Wrapped with the commands in `wrapperCommands` automatically.";
+    };
+    wrapperCommands = lib.mkOption {
+      type = lib.types.listOf lib.types.lines;
+      default = [ ];
+      description = ''
+        Shell snippets composed into the opencode wrapper's `--run` block,
+        in module-import order. Host-specific modules append environment
+        setup / preflight checks here instead of building their own
+        intermediate symlinkJoin wrappers.
+      '';
+    };
   };
 
   config = {
+    # MCP hub health check — fail fast if obsidian memory tools aren't available.
+    home.opencode.wrapperCommands = [
+      ''
+        if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/health >/dev/null 2>&1; then
+          echo "ERROR: MCP hub is not running. Obsidian memory tools are unavailable." >&2
+          echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+          exit 1
+        fi
+      ''
+    ];
+
     programs.opencode = {
       enable = true;
-      package = wrappedOpencode;
+      package = pkgs.symlinkJoin {
+        name = "opencode-wrapped";
+        paths = [ config.home.opencode.package ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram $out/bin/opencode \
+            --run '${lib.concatStringsSep "\n" config.home.opencode.wrapperCommands}'
+        '';
+      };
       rules = ./agents.md;
 
       agents = {
