@@ -24,14 +24,20 @@
   };
 
   config = {
-    # MCP hub health check — fail fast if obsidian memory tools aren't available.
     home.opencode.wrapperCommands = [
+      # MCP hub health check — fail fast if obsidian memory tools aren't available.
       ''
         if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/health >/dev/null 2>&1; then
           echo "ERROR: MCP hub is not running. Obsidian memory tools are unavailable." >&2
           echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
           exit 1
         fi
+      ''
+      # Enable the experimental `lsp` tool so the model can use the configured
+      # LSP servers for goToDefinition / findReferences / hover / symbols / etc.
+      # https://opencode.ai/docs/tools/#lsp-experimental
+      ''
+        export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
       ''
     ];
 
