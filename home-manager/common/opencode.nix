@@ -21,6 +21,17 @@
         intermediate symlinkJoin wrappers.
       '';
     };
+    lspPackages = lib.mkOption {
+      type = lib.types.listOf lib.types.package;
+      default = [ ];
+      description = ''
+        Packages whose `bin/` directories are suffixed onto the opencode
+        wrapper's PATH. Use this to pre-install LSP servers (and other
+        tools) so opencode's built-in LSP integration resolves them via
+        `which()` instead of auto-downloading them. Suffix (not prefix)
+        so project-local / user-provided binaries still win when present.
+      '';
+    };
   };
 
   config = {
@@ -39,6 +50,44 @@
       ''
         export OPENCODE_EXPERIMENTAL_LSP_TOOL=true
       ''
+      # Disable opencode's built-in auto-download / auto-install of LSP servers
+      # (npm, `go install`, `gem install`, GitHub releases). The servers it
+      # would otherwise fetch are provided via PATH from `lspPackages` below.
+      # Exception: opencode's `typescript` LSP ignores this flag and always
+      # hits its own npm cache — we override its `command` in `settings.lsp`.
+      # https://opencode.ai/docs/lsp/#built-in
+      ''
+        export OPENCODE_DISABLE_LSP_DOWNLOAD=true
+      ''
+    ];
+
+    # LSP servers made available to opencode via PATH. Map of opencode LSP id
+    # → nixpkgs package:
+    #   bash       → bash-language-server
+    #   clangd     → clang-tools (provides `clangd`)
+    #   eslint*    → vscode-langservers-extracted (provides `vscode-eslint-language-server`)
+    #   gopls      → gopls
+    #   nixd       → nixd
+    #   pyright    → pyright (provides `pyright-langserver`)
+    #   ruby-lsp   → rubocop  (opencode's `ruby-lsp` id actually spawns `rubocop --lsp`)
+    #   rust       → rust-analyzer
+    #   terraform  → terraform-ls
+    #   typescript*→ typescript-language-server
+    #   yaml-ls    → yaml-language-server
+    # * Starred entries require a matching `settings.lsp.<id>.command`
+    #   override below because opencode's built-in code path bypasses PATH.
+    home.opencode.lspPackages = with pkgs; [
+      bash-language-server
+      clang-tools
+      gopls
+      nixd
+      pyright
+      rubocop
+      rust-analyzer
+      terraform-ls
+      typescript-language-server
+      vscode-langservers-extracted
+      yaml-language-server
     ];
 
     programs.opencode = {
@@ -49,6 +98,7 @@
         nativeBuildInputs = [ pkgs.makeWrapper ];
         postBuild = ''
           wrapProgram $out/bin/opencode \
+            --suffix PATH : ${lib.makeBinPath config.home.opencode.lspPackages} \
             --run '${lib.concatStringsSep "\n" config.home.opencode.wrapperCommands}'
         '';
       };
@@ -73,6 +123,24 @@
           type = "adaptive";
           display = "summarized";
         };
+
+        # Override the built-in `command` for LSPs whose opencode default
+        # ignores PATH (and, for `typescript`, also ignores the
+        # OPENCODE_DISABLE_LSP_DOWNLOAD flag):
+        #   - `eslint`: opencode runs `node <cache>/vscode-eslint/eslintServer.js`
+        #     from a GitHub-downloaded source tree. Point it at the
+        #     standalone server shipped by `vscode-langservers-extracted`.
+        #   - `typescript`: opencode always calls `Npm.which("typescript-language-server")`,
+        #     which installs into its own npm cache regardless of the
+        #     disable-download flag. Point it at the nixpkgs binary instead.
+        lsp.eslint.command = [
+          "vscode-eslint-language-server"
+          "--stdio"
+        ];
+        lsp.typescript.command = [
+          "typescript-language-server"
+          "--stdio"
+        ];
       };
     };
   };
