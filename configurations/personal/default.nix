@@ -42,7 +42,7 @@
       "orbstack"
       "oversight"
       "orion"
-      # "pocket-casts"
+      "balenaetcher"
       "homerow"
       "obs"
       "audio-hijack"
