@@ -24,6 +24,16 @@
 
   config = {
 
+    # Disable nix-darwin's documentation module. It defaults to enabled, which
+    # forces eval-time instantiation of `system.build.manual` (and its
+    # `pkgs.runCommand "options.json" { options = unsafeDiscardStringContext (toJSON …) ... }`),
+    # producing a `Using 'builtins.derivation' to create a derivation named
+    # 'options.json' that references the store path '<nixpkgs-source>' without a
+    # proper context` warning on every `nix eval`/`darwin-rebuild`. We don't use
+    # `darwin-help`, the rendered HTML manual, or the bundled man/info pages
+    # (man pages from packages and `nix-index`'s `command-not-found` are sufficient).
+    documentation.enable = false;
+
     nix = {
       nixPath = [ "/etc/nix/path" ];
 

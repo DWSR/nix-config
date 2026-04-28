@@ -66,6 +66,15 @@
     "${inputs.home-manager}/modules/services/tldr-update.nix"
   ];
 
+  # Disable home-manager's man-pages package. It defaults to enabled, which
+  # pulls `docs.manPages` (and its transitive `options.json` builder) into
+  # `home.packages`, producing a `Using 'builtins.derivation' to create a
+  # derivation named 'options.json' that references the store path
+  # '<nixpkgs-source>' without a proper context` warning on every `nix eval`.
+  # We use `nix-index`/`command-not-found` for command lookups, not
+  # `man home-configuration.nix`.
+  manual.manpages.enable = false;
+
   home = {
     preferXdgDirectories = true;
 
