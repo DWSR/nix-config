@@ -56,8 +56,18 @@ in
         end
       end
 
-      require("mcphub").setup({
-        cmd = "${mcphubBin}"
+      -- Defer mcphub.nvim setup to after VimEnter (vim.schedule pushes it
+      -- to the next tick, off the startup critical path). The lualine
+      -- status function above already handles the "not yet loaded" case
+      -- by checking vim.g.loaded_mcphub. Saves ~50ms (mcphub + mcphub.hub
+      -- + mcphub.utils + mcphub.utils.config_manager + mcphub.native)
+      -- from nvim startup; the brief "-" status flicker after VimEnter is
+      -- imperceptible.
+      vim.api.nvim_create_autocmd("VimEnter", {
+        once = true,
+        callback = vim.schedule_wrap(function()
+          require("mcphub").setup({ cmd = "${mcphubBin}" })
+        end),
       })
     '';
   };
