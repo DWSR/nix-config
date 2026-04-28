@@ -9,6 +9,12 @@
         settings = {
           keymap.preset = "super-tab";
 
+          # Skip the runtime check that downloads/updates the Rust SIMD matcher
+          # binary. The Nix-built blink-cmp package already ships the prebuilt
+          # binary, so the `blink.cmp.fuzzy.download` + `download.git` requires
+          # at startup are pure overhead (~5ms).
+          fuzzy.prebuilt_binaries.download = false;
+
           completion = {
             documentation.auto_show = true;
             ghost_text.enabled = true;
