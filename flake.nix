@@ -74,7 +74,10 @@
       url = "github:ravitemer/mcphub.nvim";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    mcphub.url = "github:ravitemer/mcp-hub";
+    mcphub = {
+      url = "github:ravitemer/mcp-hub";
+      inputs.nixpkgs.follows = "nixpkgs-unstable";
+    };
 
     git-issue-tracker = {
       url = "github:nnunley/git-issue-tracker";
