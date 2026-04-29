@@ -63,6 +63,11 @@ in
   programs.nixvim = {
     enable = true;
     defaultEditor = true;
+    # Skip building nixvim's options-reference man-page. The `manDocsPackage`
+    # build path triggers a `pkgs.nixosOptionsDoc` invocation that walks every
+    # nixvim option and produces a multi-megabyte options.json — wasted work
+    # we never read (we use `man nvim` and `:help`, not `man nixvim`).
+    enableMan = false;
     withNodeJs = true;
     withPerl = true;
     withPython3 = true;
