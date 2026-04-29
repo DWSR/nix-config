@@ -31,6 +31,17 @@
         "nginx.install" = false;
       };
 
+      # Globally suppress the `core.hooksPath is set` prompt from
+      # Dev::Helpers::GitHookManager. We manage git hooks via home-manager's
+      # global dispatcher (see home-manager/common/git-hooks.nix), so we never
+      # want dev to offer to unset core.hooksPath. The literal `*` is the
+      # global-disable sentinel introduced upstream alongside glob-pattern
+      # support in `hooks.warning_disable` (fnmatch with FNM_PATHNAME).
+      # See memories/2026-04-28-git-hook-manager-warning-disable-globs.md.
+      "hooks" = {
+        "warning_disable" = "*";
+      };
+
       "suppress-info" = {
         "outdated_nix_installation_warning" = true;
         "clang-xclt-17.0.0/0.13.3-too-new" = true;
