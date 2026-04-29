@@ -143,5 +143,26 @@
         ];
       };
     };
+
+    # Pre-warm opencode at login: spawns one `opencode --version` against the
+    # unwrapped binary so the bundled Bun runtime + node_modules graph land
+    # in the macOS unified buffer cache before the user's first interactive
+    # `opencode` invocation. Saves ~1s of cold-start tax on first run per
+    # boot. Uses the unwrapped `home.opencode.package` to avoid the MCP-hub
+    # health-check (which would block at login if mcp-hub launchd hasn't
+    # come up yet).
+    launchd.agents.opencode-prewarm = {
+      enable = true;
+      config = {
+        Label = "io.opencode.prewarm";
+        ProgramArguments = [
+          "${config.home.opencode.package}/bin/opencode"
+          "--version"
+        ];
+        RunAtLoad = true;
+        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/opencode-prewarm.log";
+        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/opencode-prewarm-error.log";
+      };
+    };
   };
 }
