@@ -50,6 +50,11 @@
 
       settings = {
         trusted-users = [ username ];
+        # Parallel cache fetches. Default is 16 on Nix ≥ 2.18, but spelling
+        # it explicitly here documents intent. Saves wall-time on fresh
+        # `darwin-rebuild switch` when many derivations are pulled from
+        # cache.nixos.org / nix-community / shopify-nix-cache concurrently.
+        max-substitution-jobs = 32;
         # Append nix-community via extra-* so the nix-darwin defaults
         # (cache.nixos.org + its public key) aren't re-declared and duplicated
         # in the rendered /etc/nix/nix.conf.
