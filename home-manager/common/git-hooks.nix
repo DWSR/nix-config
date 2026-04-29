@@ -55,17 +55,31 @@ let
     '';
 
   # Generate a prek .d/ hook wrapper for a specific stage.
-  # Some stages require extra args from git (commit-msg gets the filename,
-  # pre-push gets remote name + url, etc.). Pass all args through.
+  # Some stages require extra args from git that prek expects via specific
+  # CLI flags. Mapping (verified against prek 0.2.17):
+  #   commit-msg / prepare-commit-msg → --commit-msg-filename "$1"
+  #   pre-rebase                       → --pre-rebase-upstream "$1"
+  #                                     [--pre-rebase-branch "$2"] (optional)
+  # Other stages don't require extra flags; prek accepts the remaining
+  # positional args via `[HOOK|PROJECT]...` (which we don't pass).
   mkPrekHook =
     stage:
     let
-      # Stages that need --commit-msg-filename "$1"
       needsCommitMsg = builtins.elem stage [
         "commit-msg"
         "prepare-commit-msg"
       ];
-      extraArgs = if needsCommitMsg then ''--commit-msg-filename "$1"'' else "";
+      needsPreRebase = stage == "pre-rebase";
+      extraArgs =
+        if needsCommitMsg then
+          ''--commit-msg-filename "$1"''
+        else if needsPreRebase then
+          # When rebasing the current branch, git passes $1 (upstream) only;
+          # $2 (branch) is unset/empty. ''${2:+...} expands to the branch
+          # arg only when $2 is non-empty.
+          ''--pre-rebase-upstream "$1" ''${2:+--pre-rebase-branch "$2"}''
+        else
+          "";
     in
     pkgs.writeShellScript "prek-${stage}" ''
       _repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
