@@ -12,6 +12,16 @@
           "CodeCompanionActions"
           "CodeCompanionCmd"
         ];
+        # Make sure mcphub.nvim is loaded BEFORE codecompanion's setup runs
+        # — codecompanion's mcphub extension calls
+        # `require("mcphub.extensions.codecompanion")`, which needs the plugin
+        # on rtp. Without this `before`, the first :CodeCompanion would hit
+        # "module 'mcphub.extensions.codecompanion' not found".
+        before.__raw = ''
+          function()
+            require('lz.n').trigger_load('mcphub.nvim')
+          end
+        '';
       };
       settings = {
         display = {

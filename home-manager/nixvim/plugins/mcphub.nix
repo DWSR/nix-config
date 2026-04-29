@@ -9,11 +9,35 @@ let
 in
 {
   programs.nixvim = {
+    # Mark mcphub.nvim as optional so its `plugin/mcphub.lua` doesn't auto-source
+    # at startup (which eagerly requires `mcphub.utils.highlights`,
+    # `mcphub.state`, and creates the `:MCPHub` user command). lz.n re-loads it
+    # on demand via the spec below in extraConfigLuaPre.
     extraPlugins = [
-      inputs.mcphub-nvim.packages.${system}.default
+      {
+        plugin = inputs.mcphub-nvim.packages.${system}.default;
+        optional = true;
+      }
     ];
 
     extraConfigLuaPre = ''
+      -- Lazy-load mcphub.nvim on first :MCPHub* command. codecompanion's
+      -- mcphub extension auto-triggers this load via its `before` hook
+      -- (see plugins/codecompanion.nix), so the integration works the
+      -- moment a CodeCompanion command fires, even before any explicit
+      -- :MCPHub from the user. The `after` hook runs setup() (with the
+      -- mcp-hub binary path baked in) once the plugin is on rtp.
+      require("lz.n").load({
+        {
+          "mcphub.nvim",
+          lazy = true,
+          cmd = { "MCPHub", "MCPHubAddServer", "MCPHubLogs", "MCPHubReload", "MCPHubRestart" },
+          after = function()
+            require("mcphub").setup({ cmd = "${mcphubBin}" })
+          end,
+        },
+      })
+
       --- Shows MCPHub lualine status. Compatible with lazy loading
       function mcphub_lualine_status()
         -- Check if MCPHub is loaded
@@ -56,19 +80,6 @@ in
         end
       end
 
-      -- Defer mcphub.nvim setup to after VimEnter (vim.schedule pushes it
-      -- to the next tick, off the startup critical path). The lualine
-      -- status function above already handles the "not yet loaded" case
-      -- by checking vim.g.loaded_mcphub. Saves ~50ms (mcphub + mcphub.hub
-      -- + mcphub.utils + mcphub.utils.config_manager + mcphub.native)
-      -- from nvim startup; the brief "-" status flicker after VimEnter is
-      -- imperceptible.
-      vim.api.nvim_create_autocmd("VimEnter", {
-        once = true,
-        callback = vim.schedule_wrap(function()
-          require("mcphub").setup({ cmd = "${mcphubBin}" })
-        end),
-      })
     '';
   };
 }
