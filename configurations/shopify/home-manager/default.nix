@@ -56,11 +56,6 @@ in
           headers.Authorization = "Bearer " + readKeychainSecret "mcp-incident-dashboard-token";
         };
 
-        observe-mcp = {
-          type = "http";
-          url = "https://proxy-shopify-ai.local.shop.dev/mcp/observe-mcp";
-        };
-
         infra-central-mcp = {
           type = "http";
           url = "https://infra-central.shopify.io/api/mcp";
