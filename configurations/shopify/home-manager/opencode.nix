@@ -1,4 +1,4 @@
-_:
+{ lib, ... }:
 let
   proxyHeader = {
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
@@ -20,6 +20,24 @@ in
       theme = "nord";
     };
   };
+
+  # Override the common AGENTS.md (home-manager/common/agents.md) with a
+  # concatenated version that adds Shopify-host-specific Graphite guidance.
+  # The common module declares programs.opencode.rules, so mkForce is
+  # required to replace rather than collide. The rendered file is
+  # common-agents + agents-graphite, separated by a blank line.
+  # See memories/2026-04-30-graphite-pitfalls.md for the consolidated
+  # pitfalls catalog this addendum mirrors.
+  #
+  # The home-manager opencode module's `rules` option is `lines`-typed
+  # (null | string), not a path or derivation. Pass the concatenated
+  # string directly rather than via pkgs.writeText.
+  programs.opencode.rules = lib.mkForce (
+    lib.concatStringsSep "\n\n" [
+      (builtins.readFile ../../../home-manager/common/agents.md)
+      (builtins.readFile ./agents-graphite.md)
+    ]
+  );
 
   # Shopify-specific runtime env for opencode — fetches API key + proxy base
   # from `devx llm-gateway` on every invocation, and mints a per-invocation
