@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 {
@@ -82,7 +83,15 @@
       ''[[ -f /opt/dev/sh/chruby/chruby.sh ]] && { type chruby >/dev/null 2>&1 || chruby () { source /opt/dev/sh/chruby/chruby.sh; chruby "$@"; } }''
       # tec setup
       # No longer need [ -f /opt/dev/dev.sh ] && source /opt/dev/dev.sh because tec setup does it.
-      ''[[ -x ${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init ]] && eval "$(${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init zsh)"''
+      #
+      # The trailing `tec tools shell-hook 2>/dev/null || true` line in tec
+      # init zsh's output costs ~146ms per shell start (queries Windex to
+      # check if the tools profile is stale, then prints a notification
+      # if so). We pin tec's profile declaratively in nix (see tec.nix),
+      # which means the only way to update is `darwin-rebuild switch` —
+      # the staleness notification is useless. Sed strips that one line
+      # before eval-ing the rest of tec init.
+      ''[[ -x ${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init ]] && eval "$(${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init zsh | ${pkgs.gnused}/bin/sed '/^tec tools shell-hook/d')"''
     ]
   );
 }
