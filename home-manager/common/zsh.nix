@@ -1,5 +1,71 @@
-{ lib, ... }:
 {
+  pkgs,
+  lib,
+  config,
+  ...
+}:
+let
+  # Build a derivation containing the captured stdout of `script` as a
+  # zsh script suitable for `source`-ing. Replaces a runtime
+  # `eval "$(<tool> init zsh)"` (subprocess fork on every shell start)
+  # with a `source <cached-file>` (read from page cache, no fork).
+  #
+  # The script body must redirect its tool-init invocation to $out
+  # itself (e.g. `<tool> init zsh > $out`). Multi-line setup before the
+  # redirect is supported (atuin needs HOME-tmpdir setup to read its
+  # config.toml from within Nix's sandbox).
+  #
+  # Output stability per tool was verified by xtrace measurement on
+  # 2026-04-30: each cached tool's init output is deterministic per
+  # tool-version + machine, with no per-invocation runtime state baked
+  # into the captured stdout. Re-verify if a tool gains a feature that
+  # depends on per-invocation state (e.g. session UUID generation).
+  mkInitCache =
+    name: script:
+    pkgs.runCommand "zsh-init-${name}" { } ''
+      set -euo pipefail
+      ${script}
+    '';
+
+  # Per-tool init-output captures. Each script must redirect tool init
+  # output to $out. Programs.<tool>.package is honored so user overrides
+  # (e.g. zellij = pkgs.unstable.zellij in zellij.nix) compose correctly.
+  cachedInits = {
+    zellij = mkInitCache "zellij" "${config.programs.zellij.package}/bin/zellij setup --generate-auto-start zsh > $out";
+    zoxide = mkInitCache "zoxide" "${config.programs.zoxide.package}/bin/zoxide init zsh > $out";
+    fzf = mkInitCache "fzf" "${config.programs.fzf.package}/bin/fzf --zsh > $out";
+    starship = mkInitCache "starship" "${config.programs.starship.package}/bin/starship init zsh > $out";
+    pay-respects = mkInitCache "pay-respects" "${config.programs.pay-respects.package}/bin/pay-respects zsh --alias > $out";
+    nix-your-shell = mkInitCache "nix-your-shell" "${config.programs.nix-your-shell.package}/bin/nix-your-shell zsh > $out";
+    direnv = mkInitCache "direnv" "${config.programs.direnv.package}/bin/direnv hook zsh > $out";
+    # atuin init zsh reads ~/.config/atuin/config.toml to decide which
+    # bindkey/keymap_mode lines to emit. Within Nix's sandbox HOME is
+    # /homeless-shelter (read-only), so atuin can't read or auto-create
+    # its config there. We seed a writable HOME with the same config.toml
+    # that the home-manager atuin module renders to xdg.configFile, so
+    # the cached output reflects the user's actual settings (vim-insert
+    # keymap, fuzzy search, etc.).
+    atuin = mkInitCache "atuin" ''
+      export HOME=$(mktemp -d)
+      mkdir -p "$HOME/.config/atuin"
+      cp "${config.xdg.configFile."atuin/config.toml".source}" "$HOME/.config/atuin/config.toml"
+      ${config.programs.atuin.package}/bin/atuin init zsh > $out
+    '';
+  };
+in
+{
+  # Disable upstream zsh integrations for tools whose init output we cache.
+  # Without these mkForce overrides, home-manager would inject a runtime
+  # `eval "$(<tool> init zsh)"` line in addition to our cached source.
+  programs.zellij.enableZshIntegration = lib.mkForce false;
+  programs.zoxide.enableZshIntegration = lib.mkForce false;
+  programs.fzf.enableZshIntegration = lib.mkForce false;
+  programs.starship.enableZshIntegration = lib.mkForce false;
+  programs.pay-respects.enableZshIntegration = lib.mkForce false;
+  programs.nix-your-shell.enableZshIntegration = lib.mkForce false;
+  programs.direnv.enableZshIntegration = lib.mkForce false;
+  programs.atuin.enableZshIntegration = lib.mkForce false;
+
   programs.zsh = {
     enable = true;
     enableCompletion = true;
@@ -23,6 +89,11 @@
     # other contribution to programs.zsh.initContent (compare with the
     # mkOrder 550 block in configurations/shopify/home-manager/dev.nix
     # and mkOrder 1000 in configurations/personal/home-manager/op-shell-plugins.nix).
+    #
+    # Order 600 hosts the cached tool-init sources — runs after dev.nix's
+    # order 550 (so brew/tec/chruby env are set up first) but before any
+    # default-order or order-1000 contributions that may want the
+    # integrations active.
     initContent = lib.mkMerge [
       (lib.mkOrder 1 ''
         if [[ -n "$ZSH_PROFILE" ]]; then
@@ -31,6 +102,27 @@
         if [[ -n "$ZSH_XTRACE" ]]; then
           PS4='+%D{%s.%6.}: '
           setopt xtrace
+        fi
+      '')
+      (lib.mkOrder 600 ''
+        # Cached tool init sources — replaces upstream HM enableZshIntegration
+        # eval-on-startup pattern. Each `source` line is byte-for-byte
+        # equivalent to the corresponding `eval "$(<tool> init zsh)"` but
+        # avoids a per-invocation subprocess fork. Cumulative measured
+        # savings vs. uncached: ~235ms warm.
+        source ${cachedInits.zellij}
+        source ${cachedInits.zoxide}
+        if [[ $options[zle] = on ]]; then
+          source ${cachedInits.fzf}
+        fi
+        if [[ $TERM != "dumb" ]]; then
+          source ${cachedInits.starship}
+        fi
+        source ${cachedInits.pay-respects}
+        source ${cachedInits.nix-your-shell}
+        source ${cachedInits.direnv}
+        if [[ $options[zle] = on ]]; then
+          source ${cachedInits.atuin}
         fi
       '')
       (lib.mkOrder 9999 ''
