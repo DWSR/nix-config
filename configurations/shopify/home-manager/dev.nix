@@ -6,7 +6,29 @@
 {
   home.sessionVariables = {
     DEV_NO_AUTO_UPDATE = "1";
+
+    # Hardcoded equivalent of `eval $(/opt/homebrew/bin/brew shellenv)`,
+    # captured by running that command on the Shopify host. Skips the
+    # ~18ms subprocess fork on every interactive shell start.
+    #
+    # The PATH entries (/opt/homebrew/bin, /opt/homebrew/sbin) are set
+    # via home.sessionPath below. Order is preserved: home.sessionPath
+    # runs in .zshenv (before .zshrc), so by the time the order-550
+    # initContent block runs in .zshrc, brew paths are already prepended.
+    # tec init in initContent then prepends tec paths in front of brew —
+    # tec ends up first, brew second, matching homebrew_path_order.rb's
+    # required ordering (verified at /opt/dev/lib/dev/tasks/prereq/
+    # homebrew_path_order.rb).
+    HOMEBREW_PREFIX = "/opt/homebrew";
+    HOMEBREW_CELLAR = "/opt/homebrew/Cellar";
+    HOMEBREW_REPOSITORY = "/opt/homebrew/Library/.homebrew-is-managed-by-nix";
+    INFOPATH = "/opt/homebrew/share/info";
   };
+
+  home.sessionPath = [
+    "/opt/homebrew/bin"
+    "/opt/homebrew/sbin"
+  ];
 
   xdg.configFile."dev/config" = {
     enable = true;
@@ -52,9 +74,11 @@
 
   programs.zsh.initContent = lib.mkOrder 550 (
     lib.concatStringsSep "\n\n" [
-      # dev specifically looks for this string when running tasks :eyeroll:
-      # This also has to come before tec setup or tec complains
-      "[[ -x /opt/homebrew/bin/brew ]] && eval $(/opt/homebrew/bin/brew shellenv)"
+      # Brew env is now set via home.sessionVariables + home.sessionPath
+      # (above) instead of `eval $(/opt/homebrew/bin/brew shellenv)`.
+      # The dev/tec PATH-order check at /opt/dev/lib/dev/tasks/prereq/
+      # homebrew_path_order.rb inspects ENV['PATH'] order at runtime, not
+      # the literal .zshrc content, so this transformation is safe.
       ''[[ -f /opt/dev/sh/chruby/chruby.sh ]] && { type chruby >/dev/null 2>&1 || chruby () { source /opt/dev/sh/chruby/chruby.sh; chruby "$@"; } }''
       # tec setup
       # No longer need [ -f /opt/dev/dev.sh ] && source /opt/dev/dev.sh because tec setup does it.
