@@ -56,11 +56,37 @@ in
   # BEFORE home-manager symlinks the pin file. This avoids a race where the
   # pin file points at a SHA that the active profile (the `current` symlink)
   # doesn't match.
+  #
+  # IMPORTANT: nix-darwin invokes home-manager activation via
+  # `sudo -u <user>` WITHOUT `-i`, which means $HOME is preserved from
+  # root's environment (`/var/root`) rather than reset to the user's home.
+  # Tec uses $HOME to locate its state directory (~/.local/state/tec).
+  # Without an explicit HOME export here, tec would look in
+  # `/var/root/.local/state/tec/...` and fail with errors like:
+  #   "failed to realize store path: ..."
+  #   "getting status of '/var/root/.local/state/tec/profiles/base/world-sha/<sha>': Permission denied"
+  #
+  # We also guard with a whoami check: if for some reason activation is NOT
+  # running as the target user (e.g. running as root with --no-home-manager
+  # or some other context), we skip the tec invocation entirely. Running
+  # tec as root would create root-owned files under the user's tec state
+  # directory, breaking subsequent user-context invocations.
   home.activation.tecActivateProfile = lib.hm.dag.entryBefore [ "writeBoundary" ] ''
+    export HOME="${config.home.homeDirectory}"
+
     pinFile="${pinFileAbsolutePath}"
     tecBin="${tecBin}"
 
-    if [[ ! -x "$tecBin" ]]; then
+    actualUser="$(/usr/bin/whoami)"
+    expectedUser="${config.home.username}"
+
+    if [[ "$actualUser" != "$expectedUser" ]]; then
+      echo "tec.nix: activation is running as $actualUser, expected $expectedUser." >&2
+      echo "tec.nix: skipping automatic 'tec tools fetch --activate'." >&2
+      echo "tec.nix: After this rebuild, the pin file points at ${profileSha}" >&2
+      echo "tec.nix: but the active profile may still be the old one. Run manually:" >&2
+      echo "tec.nix:   tec tools fetch --sha ${profileSha} --activate" >&2
+    elif [[ ! -x "$tecBin" ]]; then
       echo "tec.nix: $tecBin not found; skipping fetch+activate" >&2
     else
       # Remove existing pin (managed by us as a read-only symlink to a
@@ -75,7 +101,8 @@ in
       # tec is a no-op. If fetch fails (network, Windex down), continue —
       # home.file will still write the pin pointing at the requested SHA;
       # `tec tools show` may then report a mismatch which the user can
-      # resolve by re-running `darwin-rebuild switch` once the network is up.
+      # resolve by re-running `darwin-rebuild switch` once the network is up,
+      # or by running `tec tools fetch --sha ${profileSha} --activate` manually.
       $DRY_RUN_CMD "$tecBin" tools fetch --sha "${profileSha}" --activate \
         || echo "tec.nix: tec tools fetch --sha ${profileSha} --activate failed (non-fatal)" >&2
     fi
