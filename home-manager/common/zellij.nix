@@ -88,7 +88,17 @@ in
     # TODO: Remove once zellij 0.44 is available in stable nixpkgs
     # Unstable required for fzf --popup support (needs zellij >= 0.44)
     package = pkgs.unstable.zellij;
-    attachExistingSession = true;
+    # attachExistingSession would inject `export ZELLIJ_AUTO_ATTACH=true`
+    # into the shell init via home-manager's zellij module. We disable
+    # enableZshIntegration (see home-manager/common/zsh.nix's mkInitCache)
+    # to skip the ~93ms-per-shell `eval $(zellij setup --generate-auto-start zsh)`
+    # subprocess fork, so the home-manager-injected env var would never
+    # land. Setting attachExistingSession = true with enableZshIntegration
+    # disabled produces a misleading home-manager warning at eval time.
+    # We instead bake `export ZELLIJ_AUTO_ATTACH=true` directly into the
+    # cached zellij init file (see zsh.nix:cachedInits.zellij), preserving
+    # the attach-existing behavior without the warning.
+    attachExistingSession = false;
     enableZshIntegration = true;
 
     settings = {

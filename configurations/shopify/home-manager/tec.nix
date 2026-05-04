@@ -1,43 +1,61 @@
-{
-  config,
-  lib,
-  ...
-}:
+_:
 let
   # ===========================================================================
-  # Declarative tec tools profile
+  # Declarative tec tools profile pin
   # ===========================================================================
   #
-  # tec (the Tecnix profile manager) normally pulls tool-profile updates from
-  # Windex on its own — either via the user-janitor LaunchAgent (background
-  # auto-updates), via `tec tools update` (manual), or via `tec tools fetch`.
-  # We want exactly one source of truth for which profile is active: this nix
-  # config.
+  # tec (the Tecnix profile manager) ships a pin file at
+  # ~/.local/state/tec/profiles/base/pinned that tells tec to refuse to
+  # auto-activate any profile other than the pinned SHA. We make this file
+  # a read-only symlink to a Nix store file managed by home-manager, so
+  # `tec tools pin` and `tec tools unpin` both fail (cannot write to a
+  # read-only path). The only way to change the active profile is to bump
+  # `profileSha` here and re-run `darwin-rebuild switch` followed by a
+  # manual `tec tools fetch --sha <new-sha> --activate`.
   #
-  # Workflow to bump:
-  #   1. Run `tec tools update` interactively to discover the new SHA, OR
-  #      get it from anyone else who has updated. `tec tools show` displays
-  #      the current SHA.
-  #   2. Edit `profileSha` below to the new value.
-  #   3. `darwin-rebuild switch`. The activation script will:
-  #        a. Remove any existing pin file (so tec can switch profiles freely).
-  #        b. Run `tec tools fetch --sha <new-sha> --activate` — downloads the
-  #           profile from Windex and atomically switches `current`.
-  #        c. home-manager re-materializes the pin file as a read-only symlink
-  #           pointing at the new SHA.
+  # ## Bump workflow (2 steps)
   #
-  # Why pinning is enforced via a read-only symlink:
-  #   home-manager's `home.file` symlinks the pin path to a Nix store file.
-  #   The Nix store is read-only, so `tec tools unpin` (which deletes the file)
-  #   and `tec tools pin <other-sha>` (which overwrites the file) both fail.
-  #   The only way to change the active profile is to bump `profileSha` here
-  #   and re-run `darwin-rebuild switch`.
+  # 1. Discover the new SHA you want. `tec tools update` interactively
+  #    pulls @latest from Windex without changing your active profile
+  #    (because the pin still says the old SHA). `tec tools show` reveals
+  #    the new SHA.
   #
-  # Reference: see memories/2026-04-30-zsh-startup-profile.md for the
-  # investigation that led here. The companion change in
-  # configurations/shopify/home-manager/dev.nix sed-strips the
-  # `tec tools shell-hook` line from `tec init zsh` output (saving ~146ms
-  # per shell start) since we no longer need the staleness notification.
+  # 2. Edit `profileSha` below + run `darwin-rebuild switch`. This
+  #    materializes the new pin file. Then run, in your interactive shell:
+  #
+  #        tec tools fetch --sha <new-sha> --activate
+  #
+  #    The pin file (now at <new-sha>) and the user-issued activation
+  #    target match, so tec proceeds. After this, `tec tools show` reports
+  #    active == pin == <new-sha>.
+  #
+  # ## Why we don't run `tec tools fetch --activate` from a home-manager
+  # ## activation script
+  #
+  # We tried. nix-darwin invokes home-manager activation via:
+  #
+  #     launchctl asuser <uid> sudo -u <user> --set-home <activation-script>
+  #
+  # The activation script's checkHomeDirectory passes (HOME is set to the
+  # user's home), and `whoami` reports the target user. But tec
+  # nevertheless resolves `~/.local/state/tec` to `/var/root/.local/state/tec`
+  # when invoked from this context, failing with:
+  #
+  #     WARN tec::logger::emit: Failed to create logger for command_invocation:
+  #          Failed to create_dir_all for path: /var/root/.local/state/tec
+  #     × failed to run 'tools' command
+  #     ├─▶ failed to realize store path: /nix/store/.../world-profiles
+  #     ╰─▶ Realization failed: error: getting status of
+  #         '/var/root/.local/state/tec/profiles/base/world-sha/<sha>':
+  #         Permission denied
+  #
+  # The cause is opaque — likely a macOS `sudo --set-home` + Rust passwd
+  # lookup interaction, possibly involving REAL UID vs EFFECTIVE UID.
+  # `env -i HOME=... USER=... PATH=...` workarounds are uncertain. Rather
+  # than chase the contradiction further, we accept the 2-step workflow.
+  #
+  # See memories/2026-04-30-zsh-startup-profile.md for the broader
+  # zsh-startup investigation that introduced this file.
   #
   # ---------------------------------------------------------------------------
   profileSha = "f9da3fdde7ec0e20f6b7e5f0688f49c7ca5a02cb";
@@ -46,71 +64,12 @@ let
     sha = profileSha;
     pinned_at = 0; # tec doesn't read this field for any decision; placeholder.
   };
-
-  pinFileRelativePath = ".local/state/tec/profiles/base/pinned";
-  pinFileAbsolutePath = "${config.home.homeDirectory}/${pinFileRelativePath}";
-  tecBin = "${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/bin/tec";
 in
 {
-  # Pre-writeBoundary activation: ensure the pinned SHA is fetched + active
-  # BEFORE home-manager symlinks the pin file. This avoids a race where the
-  # pin file points at a SHA that the active profile (the `current` symlink)
-  # doesn't match.
-  #
-  # IMPORTANT: nix-darwin invokes home-manager activation via
-  # `sudo -u <user>` WITHOUT `-i`, which means $HOME is preserved from
-  # root's environment (`/var/root`) rather than reset to the user's home.
-  # Tec uses $HOME to locate its state directory (~/.local/state/tec).
-  # Without an explicit HOME export here, tec would look in
-  # `/var/root/.local/state/tec/...` and fail with errors like:
-  #   "failed to realize store path: ..."
-  #   "getting status of '/var/root/.local/state/tec/profiles/base/world-sha/<sha>': Permission denied"
-  #
-  # We also guard with a whoami check: if for some reason activation is NOT
-  # running as the target user (e.g. running as root with --no-home-manager
-  # or some other context), we skip the tec invocation entirely. Running
-  # tec as root would create root-owned files under the user's tec state
-  # directory, breaking subsequent user-context invocations.
-  home.activation.tecActivateProfile = lib.hm.dag.entryBefore [ "writeBoundary" ] ''
-    export HOME="${config.home.homeDirectory}"
-
-    pinFile="${pinFileAbsolutePath}"
-    tecBin="${tecBin}"
-
-    actualUser="$(/usr/bin/whoami)"
-    expectedUser="${config.home.username}"
-
-    if [[ "$actualUser" != "$expectedUser" ]]; then
-      echo "tec.nix: activation is running as $actualUser, expected $expectedUser." >&2
-      echo "tec.nix: skipping automatic 'tec tools fetch --activate'." >&2
-      echo "tec.nix: After this rebuild, the pin file points at ${profileSha}" >&2
-      echo "tec.nix: but the active profile may still be the old one. Run manually:" >&2
-      echo "tec.nix:   tec tools fetch --sha ${profileSha} --activate" >&2
-    elif [[ ! -x "$tecBin" ]]; then
-      echo "tec.nix: $tecBin not found; skipping fetch+activate" >&2
-    else
-      # Remove existing pin (managed by us as a read-only symlink to a
-      # stale store path, OR a real file from a prior `tec tools pin` call).
-      # tec tools fetch --activate will refuse to switch if pinned to a
-      # different SHA.
-      if [[ -L "$pinFile" || -f "$pinFile" ]]; then
-        $DRY_RUN_CMD rm -f "$pinFile"
-      fi
-
-      # Fetch + activate the pinned SHA. Idempotent: if already at this SHA,
-      # tec is a no-op. If fetch fails (network, Windex down), continue —
-      # home.file will still write the pin pointing at the requested SHA;
-      # `tec tools show` may then report a mismatch which the user can
-      # resolve by re-running `darwin-rebuild switch` once the network is up,
-      # or by running `tec tools fetch --sha ${profileSha} --activate` manually.
-      $DRY_RUN_CMD "$tecBin" tools fetch --sha "${profileSha}" --activate \
-        || echo "tec.nix: tec tools fetch --sha ${profileSha} --activate failed (non-fatal)" >&2
-    fi
-  '';
-
   # Declarative pin file. home.file symlinks the relative path under $HOME
   # to a read-only file in the Nix store containing the JSON pin record.
-  # `tec tools pin/unpin` cannot modify it. The only mutation path is
-  # bumping `profileSha` above + re-running `darwin-rebuild switch`.
-  home.file."${pinFileRelativePath}".text = pinFileText;
+  # `tec tools pin/unpin` (which write to or delete this path) both fail
+  # against a read-only symlink. Only `darwin-rebuild switch` after a
+  # `profileSha` bump can change the pin.
+  home.file.".local/state/tec/profiles/base/pinned".text = pinFileText;
 }

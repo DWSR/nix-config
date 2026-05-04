@@ -31,7 +31,17 @@ let
   # output to $out. Programs.<tool>.package is honored so user overrides
   # (e.g. zellij = pkgs.unstable.zellij in zellij.nix) compose correctly.
   cachedInits = {
-    zellij = mkInitCache "zellij" "${config.programs.zellij.package}/bin/zellij setup --generate-auto-start zsh > $out";
+    # zellij init reads $ZELLIJ_AUTO_ATTACH at runtime (the snippet has an
+    # `if [[ "$ZELLIJ_AUTO_ATTACH" == "true" ]]; then zellij attach -c; …`
+    # branch). The home-manager zellij module would set this env var via
+    # programs.zellij.attachExistingSession + enableZshIntegration, but we
+    # disabled enableZshIntegration to use the cached init. Prepending the
+    # export to the cached file restores the attach-existing behavior
+    # without resurrecting the live `eval $(zellij setup …)` subprocess.
+    zellij = mkInitCache "zellij" ''
+      echo 'export ZELLIJ_AUTO_ATTACH=true' > $out
+      ${config.programs.zellij.package}/bin/zellij setup --generate-auto-start zsh >> $out
+    '';
     zoxide = mkInitCache "zoxide" "${config.programs.zoxide.package}/bin/zoxide init zsh > $out";
     fzf = mkInitCache "fzf" "${config.programs.fzf.package}/bin/fzf --zsh > $out";
     starship = mkInitCache "starship" "${config.programs.starship.package}/bin/starship init zsh > $out";
