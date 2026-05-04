@@ -1,7 +1,7 @@
 ---
 description: Add, modify, or debug nixvim plugins, LSP servers, formatters, keybindings, or tests. Knows the blink.cmp/conform.nvim/trouble/mini.surround stack, the three-tier test suite, and the treesitter channel invariant. Invoke with @nvim-tailor or delegate when the user says "add <plugin>" / "add LSP for <lang>" / "debug my neovim config" / "fix this keybinding".
 mode: subagent
-model: anthropic/claude-sonnet-4-5
+model: anthropic/claude-sonnet-4-6
 temperature: 0.1
 permission:
   edit: allow

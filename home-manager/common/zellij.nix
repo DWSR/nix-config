@@ -85,8 +85,11 @@ in
 
   programs.zellij = {
     enable = true;
-    # TODO: Remove once zellij 0.44 is available in stable nixpkgs
-    # Unstable required for fzf --popup support (needs zellij >= 0.44)
+    # TODO: Remove once zellij 0.44 lands in stable nixpkgs.
+    # Stable nixpkgs 25.11-darwin currently has zellij 0.43.1 (verified
+    # 2026-04-30); unstable has 0.44.1. We need ≥0.44 for fzf --popup
+    # support. Re-check on each nixpkgs bump and drop this override when
+    # `pkgs.zellij.version` reports 0.44.x or newer.
     package = pkgs.unstable.zellij;
     # attachExistingSession would inject `export ZELLIJ_AUTO_ATTACH=true`
     # into the shell init via home-manager's zellij module. We disable
