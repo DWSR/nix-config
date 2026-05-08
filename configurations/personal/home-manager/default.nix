@@ -18,6 +18,7 @@ in
     ../../../home-manager/common
     ../../../home-manager/mcp
     ./git.nix
+    ./opencode.nix
   ];
 
   disabledModules = [

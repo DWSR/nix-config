@@ -32,6 +32,22 @@
         so project-local / user-provided binaries still win when present.
       '';
     };
+    enableCaveman = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = ''
+        Append the vendored caveman-lite output-style snippet
+        (./opencode/caveman-lite.md) to each subagent's system prompt.
+        Reduces filler/hedging in subagent output. Auto-clarity rules in
+        the snippet preserve full prose for security warnings,
+        destructive-action confirmations, and multi-step sequences where
+        fragment ambiguity risks misread. Off by default so Shopify hosts
+        do not inherit the style.
+
+        Adapted from JuliusBrussee/caveman (MIT). See
+        ./opencode/caveman-lite.md for the snippet and attribution.
+      '';
+    };
   };
 
   config = {
@@ -104,12 +120,27 @@
       };
       rules = ./agents.md;
 
-      agents = {
-        nix-pkg = ./agents/nix-pkg.md;
-        nvim-tailor = ./agents/nvim-tailor.md;
-        security-auditor = ./agents/security-auditor.md;
-        vault-curator = ./agents/vault-curator.md;
-      };
+      # Subagent prompts. When `home.opencode.enableCaveman = true` (set on
+      # personal hosts only), the vendored caveman-lite snippet is appended
+      # to each subagent's system prompt at Nix-eval time. The option type
+      # accepts either a path or a string of inlined content; the helper
+      # below returns one or the other based on the toggle.
+      agents =
+        let
+          cavemanSnippet = builtins.readFile ./opencode/caveman-lite.md;
+          withCaveman =
+            base:
+            if config.home.opencode.enableCaveman then
+              builtins.readFile base + "\n\n" + cavemanSnippet
+            else
+              base;
+        in
+        {
+          nix-pkg = withCaveman ./agents/nix-pkg.md;
+          nvim-tailor = withCaveman ./agents/nvim-tailor.md;
+          security-auditor = withCaveman ./agents/security-auditor.md;
+          vault-curator = withCaveman ./agents/vault-curator.md;
+        };
 
       settings = {
         # Re-enable thinking output for Claude Opus 4.7, which omits it by default.
