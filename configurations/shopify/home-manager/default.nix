@@ -19,6 +19,7 @@ in
     ./opencode.nix
     ./tec.nix
     ./wish.nix
+    ./zellij.nix
   ];
 
   home = {
