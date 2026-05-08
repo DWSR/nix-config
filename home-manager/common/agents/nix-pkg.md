@@ -189,6 +189,7 @@ Use this explicitly at the start of every packaging task. Don't skip it.
 5. Does an upstream nixpkgs package already exist but needs a minor tweak?
      → overrideAttrs (for simple version bumps with matching hash) or override (for features/deps)
      → See opencode-pinned in overlays/misc.nix for multi-layer override (src + vendorHash + node_modules.outputHash).
+     → CAVEAT for Rust packages: if upstream uses `rustPlatform.buildRustPackage (finalAttrs: ...)` (the modern callable form — check `pkgs/by-name/<a>/<pkg>/package.nix`), `overrideAttrs` CANNOT change `cargoHash` because `cargoDeps` is constructed before the override runs. Symptom: hash-mismatch error shows the parent's old cargoHash on the `specified:` line. Fix: rewrite as a fresh `rustPlatform.buildRustPackage` call mirroring upstream verbatim except for version + hashes. See `zellij` in `overlays/misc.nix`.
 6. Does the user want to layer env/args onto an existing binary?
      → symlinkJoin { name = "x-wrapped"; paths = [ base ]; nativeBuildInputs = [ makeWrapper ]; postBuild = ''wrapProgram $out/bin/X --run '...' ''; }
      → See opencode-shopify in overlays/default.nix (shopify-packages) and the wrapped-opencode in home-manager/common/opencode.nix for stacked wrappers.
@@ -232,10 +233,13 @@ Use this explicitly at the start of every packaging task. Don't skip it.
 | Build succeeds but binary exits with "MCP hub unavailable" | You wrapped a tool the HM module also wraps | Check `home-manager/common/opencode.nix` for existing stacked wrappers. If your new tool doesn't need the mcphub check, expose via a different attribute |
 | Rust build fails with "failed to run custom build command for openssl-sys" | Cargo.toml uses `openssl` without `vendored` or `native-tls-vendored` feature | Add `pkg-config` + `openssl` to `nativeBuildInputs` / `buildInputs`, or see if the crate exposes a vendored feature |
 | Rust build fails to find system libraries on darwin (`error: framework not found ...`) | Deps pull in objc2/core-foundation/Cocoa | Ensure `apple-sdk` is in `home.packages` at common level (already is); rustPlatform handles the link automatically in recent nixpkgs |
+| `prev.<pkg>.overrideAttrs` with new `cargoHash` is silently ignored; build still uses parent's old cargoHash, hash-mismatch error shows the parent's hash on the `specified:` line | Package uses the modern `rustPlatform.buildRustPackage (finalAttrs: { ... })` callable form. `cargoDeps` is constructed by `buildRustPackage` BEFORE `overrideAttrs` runs against the resulting derivation, so `cargoHash` overrides never reach the vendor fetcher | Rewrite as a fresh `rustPlatform.buildRustPackage` call mirroring upstream's `pkgs/by-name/<a>/<pkg>/package.nix` with new `version` + `src.hash` + `cargoHash`. See `zellij` in `overlays/misc.nix` for the canonical example. The `prev.fzf.overrideAttrs` pattern in the same file works only because fzf is Go (`vendorHash` is on the parent attrs, not a separate `cargoDeps`) |
+| Rust build fails with `<pkg>@<ver> requires rustc <X>` even though the override looks correct | Stable nixpkgs ships an older rustc than the package needs (currently 25.11-darwin = rustc 1.91.1; unstable = rustc 1.94.1) | Switch to `final.unstable.rustPlatform.buildRustPackage`. Toolchain-agnostic `nativeBuildInputs` / `buildInputs` (`pkg-config`, `curl`, `openssl`, `mandown`, etc.) can stay on the stable channel |
 
 ## Vault references (for deeper dives only — inlined content above is self-contained)
 
 - `memories/2026-04-16-tokscale-rust-binary-not-npm.md` — the canonical decision-tree anchor
+- `memories/2026-05-08-zellij-pin-rustplatform-buildrustpackage-pitfall.md` — the `cargoHash`-can't-be-overridden trap when the upstream package uses the `rustPlatform.buildRustPackage (finalAttrs: ...)` callable form. Worked example using zellij 0.44.1, including the cross-channel rustc-version gotcha
 - `memories/2026-04-11-overlays-default-nix-structure.md` — the three-overlay composition
 - `memories/2026-04-11-opencode-wrapper-stacking-pattern.md` — symlinkJoin + wrapProgram pattern
 - `memories/2026-04-11-builtins-fetchgit-vs-flake-inputs.md` — why private repos stay fetchGit
