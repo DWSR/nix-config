@@ -114,6 +114,102 @@ final: prev: {
     };
   };
 
+  # Pin zellij to a specific version. nixpkgs unstable drifts silently
+  # (e.g. 0.44.1 → 0.44.2 between channel bumps); pinning gives
+  # reproducibility and avoids surprise version changes during routine
+  # `nix flake update` runs. Bump deliberately when re-validating against
+  # the zellij-plugins overlay (overlays/zellij-plugins.nix builds plugins
+  # against the zellij-tile 0.44 ABI). To bump:
+  #   1. Update `version` below.
+  #   2. Set `hash` and `cargoHash` to `final.lib.fakeHash`.
+  #   3. `nix build .#darwinConfigurations.Brandons-MacBook-Pro.pkgs.zellij`
+  #      and paste the `got:` hash back. Repeat for cargoHash.
+  #
+  # Defined as a fresh `rustPlatform.buildRustPackage` (rather than
+  # `prev.zellij.overrideAttrs`) because zellij's nixpkgs definition uses
+  # the finalAttrs-callable form: `cargoDeps` is a separate derivation
+  # constructed from the parent's `cargoHash` BEFORE `overrideAttrs`
+  # applies, so overriding `cargoHash` via `overrideAttrs` is silently
+  # ignored and the build fetches the wrong vendor tarball. Mirrors
+  # upstream pkgs/by-name/ze/zellij/package.nix verbatim except for
+  # version, src.hash, and cargoHash.
+  #
+  # Uses `final.unstable.rustPlatform` because zellij 0.44.1 requires
+  # rustc ≥1.92 and stable nixpkgs ships rustc 1.91.1 (unstable has
+  # 1.94.1). Other build inputs are toolchain-agnostic and can come
+  # from the stable channel.
+  zellij = final.unstable.rustPlatform.buildRustPackage (finalAttrs: {
+    pname = "zellij";
+    version = "0.44.1";
+    __structuredAttrs = true;
+
+    src = final.fetchFromGitHub {
+      owner = "zellij-org";
+      repo = "zellij";
+      tag = "v${finalAttrs.version}";
+      hash = "sha256-KHpVUjuOmMtkt8qBaCozD3M44eEtDwFmdDfszKAz0bM=";
+    };
+
+    # Match upstream: link against nixpkgs libcurl instead of vendoring.
+    postPatch = ''
+      substituteInPlace Cargo.toml \
+        --replace-fail ', "vendored_curl"' ""
+    '';
+
+    cargoHash = "sha256-D3nZBXoGNf5z85iT7Xhj9Xwwwam/5m3X5hLPVoCzSPM=";
+
+    env.OPENSSL_NO_VENDOR = 1;
+
+    nativeBuildInputs = [
+      final.mandown
+      final.installShellFiles
+      final.pkg-config
+      (final.lib.getDev final.curl)
+    ];
+
+    buildInputs = [
+      final.curl
+      final.openssl
+    ];
+
+    nativeCheckInputs = [
+      final.writableTmpDirAsHomeHook
+    ];
+
+    nativeInstallCheckInputs = [
+      final.versionCheckHook
+    ];
+    doInstallCheck = true;
+
+    installCheckPhase = final.lib.optionalString (final.stdenv.hostPlatform.libc == "glibc") ''
+      runHook preInstallCheck
+
+      ldd "$out/bin/zellij" | grep libcurl.so
+
+      runHook postInstallCheck
+    '';
+
+    postInstall = ''
+      mandown docs/MANPAGE.md > zellij.1
+      installManPage zellij.1
+    ''
+    + final.lib.optionalString (final.stdenv.buildPlatform.canExecute final.stdenv.hostPlatform) ''
+      installShellCompletion --cmd $pname \
+        --bash <($out/bin/zellij setup --generate-completion bash) \
+        --fish <($out/bin/zellij setup --generate-completion fish) \
+        --zsh <($out/bin/zellij setup --generate-completion zsh)
+    '';
+
+    meta = {
+      description = "Terminal workspace with batteries included";
+      homepage = "https://zellij.dev/";
+      changelog = "https://github.com/zellij-org/zellij/blob/v${finalAttrs.version}/CHANGELOG.md";
+      license = with final.lib.licenses; [ mit ];
+      mainProgram = "zellij";
+      platforms = final.lib.platforms.unix;
+    };
+  });
+
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
     version = "1.14.20";
 

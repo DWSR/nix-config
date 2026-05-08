@@ -85,12 +85,17 @@ in
 
   programs.zellij = {
     enable = true;
-    # TODO: Remove once zellij 0.44 lands in stable nixpkgs.
-    # Stable nixpkgs 25.11-darwin currently has zellij 0.43.1 (verified
-    # 2026-04-30); unstable has 0.44.1. We need ≥0.44 for fzf --popup
-    # support. Re-check on each nixpkgs bump and drop this override when
-    # `pkgs.zellij.version` reports 0.44.x or newer.
-    package = pkgs.unstable.zellij;
+    # Pinned to 0.44.1 via overlays/misc.nix (built from
+    # final.unstable.rustPlatform because stable rustc 1.91.1 < the
+    # 1.92 zellij 0.44.1 requires). Pinning gives reproducibility — the
+    # previous `pkgs.unstable.zellij` reference picked up whatever
+    # unstable happened to ship at evaluation time and silently advanced
+    # 0.44.1 → 0.44.2 between channel bumps. To bump intentionally, edit
+    # overlays/misc.nix and re-run the hash discovery cycle there.
+    # The zellij-plugins overlay (overlays/zellij-plugins.nix) builds
+    # plugins against zellij-tile 0.44 — keep zellij on the 0.44.x line
+    # to preserve plugin ABI compatibility.
+    package = pkgs.zellij;
     # attachExistingSession would inject `export ZELLIJ_AUTO_ATTACH=true`
     # into the shell init via home-manager's zellij module. We disable
     # enableZshIntegration (see home-manager/common/zsh.nix's mkInitCache)
