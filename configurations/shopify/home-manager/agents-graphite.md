@@ -23,6 +23,37 @@ Before any gt command, decide:
 - **Personal repos** (e.g., DWSR/nix-config): plain git unless the user is
   already using gt locally.
 
+## Green path: gt-MCP-only stacks don't need `--force`
+
+If every commit, rebase, and push in a stack has been performed via the gt
+MCP (`hub_gt_mcp__run_gt_cmd` invoking `gt create`, `gt modify`, `gt submit`,
+`gt restack`, `gt sync`, `gt track`, etc.), then `gt submit --no-interactive`
+will succeed WITHOUT `--force`. gt's metadata stays in lock-step with the
+remote, no SHA divergence accumulates, and the bypass-autonomy rule below
+never triggers for `--force` because the flag is not needed in the first
+place.
+
+`--force` only becomes relevant when the stack has been manipulated OUTSIDE
+of the gt MCP — by:
+
+- Plain `git rebase`, `git commit --amend`, or `git reset` (Category B2).
+- A teammate pushing to a branch you also touched.
+- An upstream auto-rebase from Graphite's server-side automation after a
+  downstream PR merged (Category B7).
+- Manual `git push` to a stack branch.
+- Cross-worktree cache poisoning (Category B3).
+
+If you find yourself reaching for `gt submit --force` on a stack you've
+ONLY touched via the MCP, stop and re-read the error. The most likely
+explanations are an upstream auto-rebase (B7 — verify diff-equivalence
+first) or a stale local cache (B3 — try `gt sync`), not real divergence
+that demands force.
+
+Pre-emptive rule: track every direct git invocation you make against a
+stack mentally. The moment you reach for `git rebase`, `git commit
+--amend`, or any direct `git push`, the stack has left the green path —
+plan for `--force` to enter the picture from that point on.
+
 ## Bypass autonomy rule
 
 ALWAYS ask the user via the `question` tool before invoking any
@@ -32,6 +63,13 @@ recovery looks. Even when this guidance marks a bypass as "the documented
 recovery", confirm with the user in the current session before applying it.
 The cost of asking is low; the cost of an unauthorized force-push or
 hook-bypass is high. No carve-outs, including the prek pre-rebase case.
+
+This rule does NOT mean you should pre-emptively pass `--force` to every
+`gt submit`. On a gt-MCP-only stack `gt submit --no-interactive` works
+without any flag bypass (see "Green path" above) and no authorization
+question is needed. Only ask for `--force` authorization when you have
+classified the failure as B2 / B3 / B7 and confirmed force is the
+recovery the catalog prescribes.
 
 ## Category A — Hooks intercept gt's internal git invocations
 
@@ -495,11 +533,16 @@ re-splitting once green.
 ## Workflow rules summary
 
 1. Try `gt <command>` as documented.
-2. If it errors, classify (Category A / B / C above).
+2. If it errors, classify (Category A / B / C above). On a gt-MCP-only
+   stack `gt submit --no-interactive` should succeed without `--force`;
+   if it doesn't, the stack has left the green path (Category B2/B3/B7
+   most likely) and one of the documented recoveries applies.
 3. Apply the documented recovery from the catalog.
 4. If the recovery requires `--no-verify`, `--force`, `--force-with-lease`,
    or a Git environment override like `GIT_EDITOR=true`, ASK THE USER
-   FIRST via the `question` tool. No exceptions.
+   FIRST via the `question` tool. No exceptions. Conversely, do NOT
+   pre-emptively reach for these flags on a stack you've only touched
+   via the gt MCP — the green path doesn't need them.
 5. After every plain-git rebase or amend, validate with
    `git log --oneline origin/main..HEAD` looking for adjacent same-title
    or same-tree commits (phantom detection — see B5).

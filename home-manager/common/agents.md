@@ -241,3 +241,24 @@ Always include:
 - The note type (`memory`, `transcription`, or `summary`)
 - The project name
 - 2-5 topical tags describing the subject matter
+
+
+# Commit messages
+
+When writing a git or Graphite commit message:
+
+- **Be concise.** Keep subjects short and bodies tight. Don't restate
+  obvious context. If a change can be explained in one line, write one line.
+- **Use Conventional Commits style for titles and bodies.** Subjects begin
+  with a type (`feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`,
+  `perf`, etc.), an optional scope in parens, and an imperative-mood
+  summary in lowercase (e.g. `feat(zellij): pin to 0.44.1`). Bodies, when
+  needed, expand on the rationale in full sentences and wrap at ~72
+  columns.
+- **Focus on why, not what.** The diff already shows what changed; the
+  message should explain why — the motivating bug, the preceding decision,
+  the user-visible outcome, the constraint that forced the choice. Don't
+  paraphrase the diff in prose.
+
+Applies equally to plain `git commit` and to `gt create` / `gt modify` on
+Graphite stacks.
