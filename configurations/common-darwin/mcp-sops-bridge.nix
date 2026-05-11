@@ -13,11 +13,44 @@
 # This module OWNS the sops-nix import. Per design D3, per-host
 # `configurations/{shopify,personal}/default.nix` files import ONLY
 # this bridge module — they MUST NOT separately import
-# `inputs.sops-nix.darwinModules.default`. Doing so via this module
-# guarantees that sops-nix's options + its `installScript` activation
-# hook are merged before the bridge's `mkAfter` block runs, so the
-# activation-script invocation below is text-concatenated AFTER
-# sops-nix has populated `/run/secrets/<name>`.
+# `inputs.sops-nix.darwinModules.default`. Owning the import keeps
+# sops-nix's option declarations (`sops.*`) on the merged-config
+# graph before this module's `config = { sops = ...; }` block reads
+# them, which is the half of the ordering story handled by import
+# placement.
+#
+# Activation-script ordering, however, is NOT solved by import
+# placement on nix-darwin. nix-darwin renders activation as a fixed
+# script with a hardcoded list of named entries
+# (preActivation, ..., postActivation) — see
+# nix-darwin/modules/system/activation-scripts.nix:114–138 — and the
+# `system.activationScripts.<name>` submodule (modules/lib/write-text.nix)
+# exposes only `enable`/`text`/`target`/`source`, with NO `deps`
+# field, NO DAG, and NO ordering between custom names. Custom named
+# entries like `system.activationScripts.mcpSecretsBridge` are simply
+# never invoked. The only ordering primitive available is the merge
+# priority of `text` definitions inside one of the known names
+# (here, `postActivation.text` whose type is `lib.types.lines`).
+#
+# sops-nix's nix-darwin module appends its `installScript`
+# (which runs `sops-install-secrets` and populates `/run/secrets/*`)
+# via `system.activationScripts.postActivation.text = lib.mkAfter
+# installScript;` (priority 1500 — see sops-nix
+# modules/nix-darwin/default.nix:389–391). Both modules using
+# `mkAfter` at equal priority leaves relative order undefined; in
+# practice on this nix-darwin/module-system version the bridge's
+# fragment was concatenated FIRST, so `mcp-secrets-activate` ran
+# BEFORE `sops-install-secrets` and the defensive `[ -e
+# /run/secrets/<name> ]` guard exited 1 every switch (R1.1, R6.1
+# regression).
+#
+# Fix: use `lib.mkOrder 9999` for our fragment so it sorts strictly
+# AFTER sops-nix's `mkAfter` (1500) within the merged
+# `postActivation.text`. Verify with:
+#   nix eval --raw --extra-experimental-features dynamic-derivations \
+#     '.#darwinConfigurations.<host>.config.system.activationScripts.postActivation.text' \
+#     | grep -nE '(mcp-secrets-activate|sops-install-secrets)'
+# `sops-install-secrets` MUST appear above `mcp-secrets-activate`.
 #
 # The bridge is read-only against home-manager config: it reads
 # `config.home-manager.users.${username}.home.mcp.{keychainSecrets,
@@ -80,13 +113,21 @@ in
       ];
     };
 
-    # `mkAfter` ensures this fragment is concatenated after sops-nix's
-    # own `installScript` text (which is added at default priority
-    # within the same `system.activationScripts.postActivation.text`
-    # attribute). The activation script's defensive guard then
-    # asserts every expected `/run/secrets/<name>` exists before
-    # mutating any Keychain state.
-    system.activationScripts.postActivation.text = lib.mkAfter ''
+    # `lib.mkOrder 9999` (vs sops-nix's `lib.mkAfter` = `lib.mkOrder
+    # 1500`) places this fragment strictly later in the merged
+    # `postActivation.text`. See the long-form rationale in the
+    # module-level comment above; the short version is that two
+    # `mkAfter` blocks at the same priority don't have guaranteed
+    # ordering, and on this nix-darwin/module-system version that
+    # gap let `mcp-secrets-activate` run BEFORE
+    # `sops-install-secrets` had created `/run/secrets/<name>`,
+    # causing the activation guard to exit 1 every switch.
+    # The activation script's defensive guard still asserts every
+    # expected `/run/secrets/<name>` exists before mutating any
+    # Keychain state — it now correctly defends against future
+    # ordering regressions instead of being load-bearing for
+    # steady-state behaviour.
+    system.activationScripts.postActivation.text = lib.mkOrder 9999 ''
       ${mcp-secrets-activate}/bin/mcp-secrets-activate ${username} ${manifest}
     '';
   };

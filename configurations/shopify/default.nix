@@ -2,9 +2,25 @@
 {
   imports = [
     ../common-darwin
+    ../common-darwin/mcp-sops-bridge.nix
   ];
 
   nix-config.repoPath = "/Users/${username}/src/github.com/DWSR/nix-config";
+
+  sops = {
+    defaultSopsFile = ../../secrets/mcp.shopify.yaml;
+    # Skip build-time validation that every declared `sops.secrets.<name>`
+    # key exists in `defaultSopsFile`. Until Task 4.4 runs
+    # `mcp-sync-from-1password` to produce the real encrypted yaml, the
+    # file at this path is a one-line placeholder (committed so the path
+    # expression resolves and the flake's git-tree visibility check
+    # passes) that does not contain the declared keys. Activation
+    # (Task 4.5) is operator-gated and is the point at which decryption
+    # actually runs; validating sopsFile contents at build time only
+    # blocks `nix build` here without adding safety, since activation
+    # would catch the same problem.
+    validateSopsFiles = false; # TODO: remove once Task 4.4 produces the real encrypted yaml
+  };
 
   nix = {
     enable = true;
