@@ -11,6 +11,14 @@ let
   # eval time so a cc-sdd version bump that adds or removes a skill picks
   # up automatically without touching this file.
   skillNames = builtins.attrNames (builtins.readDir "${pkgs.cc-sdd-skills}/skills");
+
+  # Per-project bootstrap helper. Built here rather than at the flake
+  # level so it has direct access to the cc-sdd-skills derivation
+  # without going through specialArgs / outputs threading.
+  cc-sdd-init = import ../../scripts/cc-sdd-init.nix {
+    inherit pkgs;
+    cc-sdd-skills = cfg.skillsPackage;
+  };
 in
 {
   options.programs.cc-sdd = {
@@ -48,7 +56,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ cfg.package ];
+    home.packages = [
+      cfg.package
+      cc-sdd-init
+    ];
 
     # Symlink each kiro-* skill directory individually rather than the
     # parent skills/ tree so that other modules (or the user) can drop
