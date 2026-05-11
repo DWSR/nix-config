@@ -31,7 +31,7 @@
 
 - [ ] 2. Core: HM extension, helper scripts, system bridge module
 
-- [ ] 2.1 (P) Extend the home-manager mcp module with the gh auth token slot
+- [x] 2.1 (P) Extend the home-manager mcp module with the gh auth token slot
   - Add `home.mcp.ghAuthToken` option (`type = lib.types.nullOr lib.types.str; default = null`) to `home-manager/mcp/default.nix`
   - Document in option `description` that the value is a 1P URI (e.g., `op://Employee/...` on Shopify, `op://Private/...` on Personal) sourced via the same pipeline as `keychainSecrets`
   - Existing `keychainSecrets` option, `readKeychainSecret` helper signature, `githubToken` option, `extraServers` option, and the `mcpSyncSecretsScript` + `home.activation.mcpKeychainSecrets` reminder all REMAIN unchanged in this Phase 1 commit (R7.3 + R8.1)

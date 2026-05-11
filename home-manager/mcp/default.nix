@@ -44,6 +44,18 @@ in
       description = "GitHub personal access token for MCP server";
     };
 
+    ghAuthToken = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      description = ''
+        1Password URI for the gh CLI auth token (e.g.,
+        `op://Employee/...` on Shopify hosts, `op://Private/...` on
+        personal hosts). Sourced via the same per-host SOPS+1Password
+        pipeline as `home.mcp.keychainSecrets`; the bridge module reads
+        this URI to materialize the gh token at activation time.
+      '';
+    };
+
     obsidianVaultPath = lib.mkOption {
       type = lib.types.str;
       description = "Absolute path to the Obsidian vault for agent memory and conversation logs";
