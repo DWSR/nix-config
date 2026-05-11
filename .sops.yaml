@@ -1,27 +1,26 @@
 # sops recipient rules for the per-host MCP secrets store.
 #
-# The two `age1placeholder...` strings below are PLACEHOLDERS. They will be
-# replaced with the real per-host age public keys by Task 4.3 of the
-# `mcp-secrets-sops-nix` spec, after the operator has run the bootstrap
-# procedure on each host (which generates an age key derived from the host's
-# SSH host key into /var/lib/sops-nix/key.txt and prints the matching
-# public key for enrollment here).
-#
-# Bootstrap procedure: see `secrets/README.md` (created in Task 1.3).
+# Each per-host age keypair is generated independently with `age-keygen`,
+# the private key stashed in 1Password (vault-scoped to the host's owner),
+# and the public key recorded below as a recipient. The private key is
+# installed at `/var/lib/sops-nix/key.txt` on the target host (mode 0600,
+# owned by root). See `secrets/README.md` for the full bootstrap, rotation,
+# and recovery runbook.
 #
 # Convention: the YAML anchor `&host_<name>` corresponds to the age public
-# key of the host whose nixosConfiguration / darwinConfiguration shares the
-# same name. Each `creation_rule` lists exactly one recipient (the target
-# host) so that compromise of one host's age private key cannot decrypt the
-# other host's secrets — see requirements.md sections 2.1, 2.2, 2.4.
+# key of the host whose darwinConfiguration shares the same role short-name
+# (`shopify` → ShopifyLaptop, `personal` → Brandons-MacBook-Pro). Each
+# `creation_rule` lists exactly one recipient (the target host) so that
+# compromise of one host's age private key cannot decrypt the other host's
+# secrets — see requirements.md sections 2.1, 2.2, 2.4.
 #
 # `path_regex` uses Go regex semantics (regexp.MatchString), NOT shell glob.
 # Rules are evaluated top-to-bottom; first match wins. Backslash-escape `.`
 # in regex patterns to avoid matching arbitrary characters.
 
 keys:
-  - &host_shopify  age1placeholderShopifyLaptopReplaceInTask43
-  - &host_personal age1placeholderBrandonsMacBookProReplaceInTask43
+  - &host_shopify  age1wpwzerd6plex7nxz32cdcqju83jeazj7yrm3pehy3hqdcx8guskqefm043
+  - &host_personal age158am3rk8z2msgnx08e03f9x2dumgqqj3rfhkdj7fcffp5g99tfsstagvlp
 
 creation_rules:
   - path_regex: secrets/mcp\.shopify\.yaml$
