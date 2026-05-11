@@ -105,7 +105,7 @@
   - _Depends: 2.5_
   - _Boundary: configurations/shopify/default.nix_
 
-- [ ] 3.2 (P) Wire the sops bridge into Brandons-MacBook-Pro
+- [x] 3.2 (P) Wire the sops bridge into Brandons-MacBook-Pro
   - In `configurations/personal/default.nix`, add `imports = [ ../common-darwin/mcp-sops-bridge.nix ]` (alongside the existing `../common-darwin` import)
   - Set `sops.defaultSopsFile = ../../secrets/mcp.personal.yaml`
   - Observable completion: `nix build --no-link '.#darwinConfigurations.Brandons-MacBook-Pro.system'` succeeds
