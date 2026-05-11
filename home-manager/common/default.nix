@@ -9,6 +9,7 @@
     inputs.nix-index-database.homeModules.nix-index
 
     ./atuin.nix
+    ./cc-sdd.nix
     ./gh-cli.nix
     ./ghostty.nix
     ./git.nix
@@ -141,6 +142,8 @@
       _ZO_FZF_OPTS = "--popup";
     };
   };
+
+  programs.cc-sdd.enable = true;
 
   programs.eza = {
     enable = true;
