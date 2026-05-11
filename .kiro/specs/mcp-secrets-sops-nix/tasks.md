@@ -63,7 +63,7 @@
   - _Requirements: 8.1, 8.2_
   - _Boundary: scripts/mcp-verify-secrets.nix_
 
-- [ ] 2.4 (P) Build the activation bridge script
+- [x] 2.4 (P) Build the activation bridge script
   - Create `scripts/mcp-secrets-activate.nix` as `pkgs.writeShellApplication`
   - Arguments: `$1` = target username; `$2` = path to JSON manifest (rendered by Task 2.5 via `pkgs.writeText`)
   - Manifest schema: `{"keychainSecrets": ["mcp-github-token", ...], "ghAuthToken": true|false}`. Parse via `jq`
@@ -290,3 +290,15 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Requirements: 8.3_
   - _Depends: 6.1_
   - _Boundary: any user-visible doc surface_
+
+## Implementation Notes
+
+Cross-cutting insights surfaced during execution that may affect downstream tasks or future spec edits:
+
+- **Task 1.1**: `nix eval '.#inputs.sops-nix.lastModifiedDate'` (the literal command this task's observable-completion bullet specified) is invalid for any flake input — flake `outputs` does not expose `inputs` as an attribute path. Canonical equivalent: `nix flake metadata --json | jq '.locks.nodes."sops-nix".locked.lastModified'`. Tasks 1.1 / future spec edits documenting flake input verification should prefer the metadata-jq form.
+- **Tasks 1.1, 2.2, 2.3, 2.4**: `nix build --no-link --print-out-paths '.#…system.drvPath'` hits a Nix string-context limitation (`error: ... has a context which refers to a complete source and binary closure`). Use `nix eval --raw '.#…system.drvPath'` instead for build-validation that only needs the .drv path.
+- **Tasks 2.2, 2.3, 2.4**: `pkgs.git` is required as a `runtimeInput` for any helper that uses `git rev-parse --show-toplevel` for repo-root discovery. The design's Runtime Dependencies tables list the minimum but not git; this is an additive deviation each helper makes consistently.
+- **Task 2.4**: `awk` is invoked implicitly via system PATH inheritance on macOS but not in `runtimeInputs`. Non-blocking on the current macOS deploy targets, but a future hardening pass could swap to `cut -d' ' -f1` (already in `coreutils`). Flag if porting to a host with a stricter PATH.
+- **Task 2.4**: `# shellcheck disable=SC2024` is required for `sudo gh auth login --with-token < /run/secrets/gh-token`. The disable is correct: root opens the fd before sudo drops privileges, and the sudo'd `gh` process inherits it. SC2024's generic warning ("sudo doesn't affect redirects") doesn't apply because the redirect happens in the parent shell context, not after sudo.
+- **Task 2.2**: YAML emission uses single-quoted scalars with `''` doubling for embedded `'`. Works for all current MCP secrets (single-line bearer strings). If a future secret needs multi-line content, extend to YAML pipe-block-scalar form.
+- **Task 2.2**: `sops --filename-override` is required (sops ≥ 3.7) so the encrypted file's recipient set matches the destination path's `creation_rule` even though the temp file lives elsewhere. Currently safe with sops 3.11.0 in nixpkgs-25.11; revalidate if downgrading.
