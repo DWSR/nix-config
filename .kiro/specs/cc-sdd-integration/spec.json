@@ -1,0 +1,23 @@
+{
+  "feature_name": "cc-sdd-integration",
+  "created_at": "2026-05-10T21:42:34Z",
+  "updated_at": "2026-05-11T02:02:14Z",
+  "language": "en",
+  "phase": "implemented",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true,
+  "notes": "Retroactively materialised after the implementation landed (commits 65288f9..4eb22b6 on main). This spec is the dogfood pilot referenced in memories/2026-05-10-cc-sdd-integration-plan.md and is the canonical worked example for the .kiro/ workflow on this repo."
+}
