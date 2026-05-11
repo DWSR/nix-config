@@ -303,4 +303,46 @@ final: prev: {
         platforms = final.lib.platforms.unix;
       };
     };
+
+  # cc-sdd-skills: materialised tree of cc-sdd's OpenCode skills + Kiro
+  # settings, produced by running `cc-sdd --opencode-skills --yes` inside the
+  # Nix sandbox. Splits the output into:
+  #   $out/skills        — 17 kiro-* skill directories (consumed globally
+  #                        by xdg.configFile."opencode/skills/<name>")
+  #   $out/kiro-settings — templates/, steering/, steering-custom/ trees
+  #                        (consumed per-project by the cc-sdd-init helper
+  #                        which copies them into <cwd>/.kiro/settings/)
+  #   $out/agents-md     — the bundled AGENTS.md quickstart, concatenated
+  #                        into programs.opencode.rules in a later commit
+  #
+  # Cached by Nix; only rebuilds when cc-sdd's version or hash changes.
+  cc-sdd-skills =
+    final.runCommand "cc-sdd-skills-${final.cc-sdd.version}"
+      {
+        nativeBuildInputs = [ final.cc-sdd ];
+        passthru = {
+          inherit (final.cc-sdd) version;
+        };
+      }
+      ''
+        # cc-sdd writes to the cwd, so give it a writable workdir. HOME must
+        # also be writable because the wrapped node binary may try to create
+        # config files (e.g. npm cache) on first invocation.
+        export HOME=$(mktemp -d)
+        workdir=$(mktemp -d)
+        cd "$workdir"
+
+        # --opencode-skills: select the OpenCode skills agent layout.
+        # --lang en        : English templates.
+        # --yes            : non-interactive; treat all overwrite prompts as force.
+        # --overwrite force: belt-and-braces, mirrors the --yes behaviour
+        #                    explicitly so a Nix sandbox without a TTY cannot
+        #                    silently fall back to the documented `skip` mode.
+        cc-sdd --opencode-skills --lang en --yes --overwrite force
+
+        mkdir -p $out
+        cp -r .opencode/skills $out/skills
+        cp -r .kiro/settings   $out/kiro-settings
+        cp    AGENTS.md        $out/agents-md
+      '';
 }
