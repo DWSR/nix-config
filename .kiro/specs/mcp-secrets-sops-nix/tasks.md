@@ -39,7 +39,7 @@
   - _Requirements: 6.2, 7.3, 8.1_
   - _Boundary: home-manager/mcp/default.nix_
 
-- [ ] 2.2 (P) Build the on-demand 1Password sync helper
+- [x] 2.2 (P) Build the on-demand 1Password sync helper
   - Create `scripts/mcp-sync-from-1password.nix` as `pkgs.writeShellApplication`
   - Argument `$1` = host name (`shopify` | `personal`); reject other values with usage text and exit 1
   - Pre-flight: `op whoami` to confirm authenticated 1P session; exit 2 with diagnostic "1Password authentication required; run `op signin`" on failure (R4.2)
