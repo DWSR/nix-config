@@ -118,7 +118,21 @@
             --run '${lib.concatStringsSep "\n" config.home.opencode.wrapperCommands}'
         '';
       };
-      rules = ./agents.md;
+      # AGENTS.md is composed from three vendored chunks:
+      #   1. ./agents.md            — Obsidian memory system + commit conventions
+      #   2. ./agents-cc-sdd.md     — bridging preamble: when SDD applies, how
+      #                               cc-sdd-init bootstraps templates, how the
+      #                               two memory systems coexist
+      #   3. cc-sdd's quickstart    — slash-command catalogue and skill layout,
+      #                               sourced from pkgs.cc-sdd-skills so version
+      #                               bumps refresh the docs automatically
+      # Hosts that need to layer on more guidance (e.g. Shopify's Graphite
+      # addendum) override this with lib.mkForce, prepending the same chunks.
+      rules = lib.concatStringsSep "\n\n" [
+        (builtins.readFile ./agents.md)
+        (builtins.readFile ./agents-cc-sdd.md)
+        (builtins.readFile "${pkgs.cc-sdd-skills}/agents-md")
+      ];
 
       # Subagent prompts. When `home.opencode.enableCaveman = true` (set on
       # personal hosts only), the vendored caveman-lite snippet is appended
