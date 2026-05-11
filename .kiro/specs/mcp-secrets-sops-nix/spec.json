@@ -1,0 +1,22 @@
+{
+  "feature_name": "mcp-secrets-sops-nix",
+  "created_at": "2026-05-11T03:18:08Z",
+  "updated_at": "2026-05-11T20:14:22Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

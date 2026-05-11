@@ -1,0 +1,292 @@
+# Implementation Plan
+
+> **Phased landing per R8**: Phase 1 lands Tasks 1–3 (sops-nix infra + new tools, legacy `mcp-sync-secrets` preserved). After Phase 1 lands, the operator performs Tasks 4 (bootstrap) and 5 (validation gate). Only after `5.1 mcp-verify-secrets` exits 0 on both hosts does Phase 2 (Task 6) decommission the legacy bridge.
+>
+> **Operator-gated tasks** (Tasks 4 + 5) require interactive 1Password access, `sudo darwin-rebuild switch`, and a logged-in GUI session for Keychain unlock. These cannot be executed by an autonomous agent and are listed for completeness with explicit `_Boundary:_` annotations naming the operator action surface.
+
+- [ ] 1. Foundation: flake input, recipient config, operator runbook
+
+- [ ] 1.1 Add sops-nix as a pinned flake input
+  - Add `inputs.sops-nix` to `flake.nix` with `inputs.nixpkgs.follows = "nixpkgs"` (matches the repo's existing `home-manager` / `darwin` input pattern)
+  - Run `nix flake update sops-nix` and commit the resulting `flake.lock` change in the same commit as the input declaration
+  - Confirm `nix eval '.#inputs.sops-nix.lastModifiedDate'` returns a timestamp (observable completion)
+  - _Requirements: 1.1, 2.1_
+  - _Boundary: flake.nix_
+
+- [ ] 1.2 Create the recipient config with placeholder per-host age keys
+  - Author `.sops.yaml` at repo root with two `creation_rules` entries, one regex per host yaml (`secrets/mcp\.shopify\.yaml$`, `secrets/mcp\.personal\.yaml$`)
+  - Each rule's `key_groups.age` lists exactly one age recipient — ShopifyLaptop's age public key for the shopify yaml, Brandons-MacBook-Pro's age public key for the personal yaml
+  - Use `age1placeholder...` strings until the operator bootstrap completes (Task 4.3 replaces these); commit a comment block at the top documenting the placeholder convention and pointing readers at `secrets/README.md`
+  - Observable completion: `cat .sops.yaml` shows valid YAML with two creation rules; the file passes `python3 -c 'import yaml; yaml.safe_load(open(".sops.yaml"))'`
+  - _Requirements: 2.1, 2.2, 2.4_
+  - _Boundary: .sops.yaml_
+
+- [ ] 1.3 Author the operator runbook
+  - Create `secrets/README.md` covering five named subsections: **Bootstrap** (per-host: how to fetch the host's age key from 1P, install at `/var/lib/sops-nix/key.txt` with the right permissions, verify with `head -1`), **Adding a new host** (the chicken-and-egg constraint — existing host must add the new recipient and `sops updatekeys` before the new host can decrypt), **Rotating a secret** (edit in 1P → `nix run .#mcp-sync-from-1password -- <host>` → commit → `darwin-rebuild switch`), **Recovery from lost key** (re-enrol via existing host), and **Out of scope** (OpenCode `OPENCODE_API_KEY`, `~/.cache/tool-gateway-token`, with rationale)
+  - Document the GUI-session prerequisite (login keychain must be unlocked at activation time) and what diagnostic the operator sees if not
+  - Document the `gh auth login` short-circuit behaviour: rotation requires a GitHub network round-trip; unchanged-token switches do not
+  - Observable completion: `secrets/README.md` exists and contains five named `## ` headings (one per subsection above)
+  - _Requirements: 3.4, 9.1, 9.2, 9.3, 9.4, 9.5_
+  - _Boundary: secrets/README.md_
+
+- [ ] 2. Core: HM extension, helper scripts, system bridge module
+
+- [ ] 2.1 (P) Extend the home-manager mcp module with the gh auth token slot
+  - Add `home.mcp.ghAuthToken` option (`type = lib.types.nullOr lib.types.str; default = null`) to `home-manager/mcp/default.nix`
+  - Document in option `description` that the value is a 1P URI (e.g., `op://Employee/...` on Shopify, `op://Private/...` on Personal) sourced via the same pipeline as `keychainSecrets`
+  - Existing `keychainSecrets` option, `readKeychainSecret` helper signature, `githubToken` option, `extraServers` option, and the `mcpSyncSecretsScript` + `home.activation.mcpKeychainSecrets` reminder all REMAIN unchanged in this Phase 1 commit (R7.3 + R8.1)
+  - Observable completion: `nix eval '.#darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama.home.mcp.ghAuthToken'` returns `null` (default) before any per-host wiring
+  - _Requirements: 6.2, 7.3, 8.1_
+  - _Boundary: home-manager/mcp/default.nix_
+
+- [ ] 2.2 (P) Build the on-demand 1Password sync helper
+  - Create `scripts/mcp-sync-from-1password.nix` as `pkgs.writeShellApplication`
+  - Argument `$1` = host name (`shopify` | `personal`); reject other values with usage text and exit 1
+  - Pre-flight: `op whoami` to confirm authenticated 1P session; exit 2 with diagnostic "1Password authentication required; run `op signin`" on failure (R4.2)
+  - Gather: `nix eval --json '.#darwinConfigurations.<host>.config.home-manager.users.brandonmcnama.home.mcp.{keychainSecrets, ghAuthToken}'`; iterate URIs and `op read --no-newline '<uri>'` each; abort on first failure printing the failing URI and exit 3 (R4.3)
+  - Build plaintext yaml in `$(mktemp -d)` with one `<key>: <value>` line per declared secret; for `ghAuthToken`, add a `gh-token: <value>` entry only when declared
+  - `sops --encrypt --in-place "$tmpfile"` then atomic `mv` to `secrets/mcp.<host>.yaml` (R4.5: partial failure leaves prior store untouched)
+  - Declare `runtimeInputs = [ pkgs._1password-cli pkgs.sops pkgs.coreutils pkgs.nix pkgs.jq ]`
+  - Observable completion: invoking against a host with an authenticated `op` session writes a `secrets/mcp.<host>.yaml` containing valid sops-encrypted YAML that decrypts to a flat `<service-name>: <value>` map matching the declared `keychainSecrets` keys
+  - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 6.4_
+  - _Boundary: scripts/mcp-sync-from-1password.nix_
+
+- [ ] 2.3 (P) Build the verification helper
+  - Create `scripts/mcp-verify-secrets.nix` as `pkgs.writeShellApplication`
+  - Argument `$1` = host name
+  - Decrypt the host's yaml in memory: `sops -d --output-type json "secrets/mcp.<host>.yaml" | jq -r 'to_entries[] | select(.key != "sops") | "\(.key)\t\(.value)"'`
+  - For each `(key, expected)` pair: query `security find-generic-password -s "<key>" -a mcp-hub -w` and compare with `expected`; for `gh-token`, additionally call `gh auth status --hostname github.com` and verify it reports a logged-in user
+  - Per-key output: `printf '%s %s\n' MATCH|MISMATCH|MISSING <key>` to stdout
+  - Aggregate exit code: 0 if every key MATCH, non-0 with a final summary line otherwise
+  - Declare `runtimeInputs = [ pkgs.sops pkgs.jq pkgs.gh pkgs.coreutils ]`
+  - Observable completion: against a fully-populated host, invocation prints one MATCH line per declared secret + the gh-token (if declared) and exits 0
+  - _Requirements: 8.1, 8.2_
+  - _Boundary: scripts/mcp-verify-secrets.nix_
+
+- [ ] 2.4 (P) Build the activation bridge script
+  - Create `scripts/mcp-secrets-activate.nix` as `pkgs.writeShellApplication`
+  - Arguments: `$1` = target username; `$2` = path to JSON manifest (rendered by Task 2.5 via `pkgs.writeText`)
+  - Manifest schema: `{"keychainSecrets": ["mcp-github-token", ...], "ghAuthToken": true|false}`. Parse via `jq`
+  - Defensive guard: for every entry in `manifest.keychainSecrets` (and `gh-token` when `ghAuthToken=true`), assert `[ -e /run/secrets/<name> ]`; exit 1 naming the missing path on any failure (catches sops-nix ordering regressions)
+  - For each MCP secret: read value from `/run/secrets/<name>` as root, then `sudo -u "$USERNAME" -H /usr/bin/security add-generic-password -U -s "<svc>" -a mcp-hub -w "$value" "/Users/$USERNAME/Library/Keychains/login.keychain-db"`; emit `printf 'mcp-secrets: %s %s\n' add-or-update <svc>` to stderr (R5.3)
+  - For gh-token (when `ghAuthToken=true`): SHA-256 hash `/run/secrets/gh-token`; compare against `/var/lib/mcp-keychain-sync/gh-token-hash`; if hashes match AND `sudo -u "$USERNAME" -H /usr/bin/env PATH="${pkgs.gh}/bin:$PATH" gh auth status --hostname github.com >/dev/null 2>&1` exits 0, log "skip gh-login no work needed" and SKIP (R1.3, R1.4 offline-capable invariant). Otherwise run `sudo -u "$USERNAME" -H gh auth login --with-token --hostname github.com < /run/secrets/gh-token` and atomically update the hash file
+  - Stale Keychain cleanup: read sorted `/var/lib/mcp-keychain-sync/installed-services`; compute set difference `comm -23 was current` to find stale; for each stale, `sudo -u "$USERNAME" -H security delete-generic-password -s "<svc>" -a mcp-hub "/Users/$USERNAME/Library/Keychains/login.keychain-db" || true`; emit `printf 'mcp-secrets: remove %s\n' <svc>` (R5.1, R5.3)
+  - Stale gh cleanup: if `/var/lib/mcp-keychain-sync/gh-token-installed` flag exists but `manifest.ghAuthToken == false`, run `sudo -u "$USERNAME" -H gh auth logout --hostname github.com` and remove flag (R6.3)
+  - Update registry atomically: write current declared service names (sorted) to a temp file, `mv` into `/var/lib/mcp-keychain-sync/installed-services`; touch/remove the gh-token-installed flag accordingly
+  - Declare `runtimeInputs = [ pkgs.jq pkgs.coreutils pkgs.gh pkgs.diffutils ]` (the latter for `comm`); system binaries `/usr/bin/security` and `/usr/bin/sudo` are invoked by absolute path
+  - Observable completion: a synthetic dry-run with a 1-key manifest and a one-line file at `/run/secrets/test-key` populates the corresponding Keychain entry, writes `test-key` to the registry file, and emits a single `mcp-secrets: add-or-update test-key` log line
+  - _Requirements: 1.1, 1.2, 1.5, 5.1, 5.2, 5.3, 6.1, 6.3, 6.4, 7.1, 7.2_
+  - _Boundary: scripts/mcp-secrets-activate.nix_
+
+- [ ] 2.5 Build the nix-darwin system bridge module
+  - Create `configurations/common-darwin/mcp-sops-bridge.nix`
+  - **Bridge OWNS the sops-nix import**: `imports = [ inputs.sops-nix.darwinModules.default ]`. Per-host `default.nix` files MUST NOT separately import sops-nix (per design D3 ordering decision; the bridge's `mkAfter` block is concatenated after sops-nix's `installScript` only when sops-nix is imported via this module)
+  - Read `config.home-manager.users.${username}.home.mcp.{keychainSecrets, ghAuthToken}` to enumerate which sops secrets to declare (read-only against HM config; no redefinition)
+  - Set `sops.age.keyFile = "/var/lib/sops-nix/key.txt"` and `sops.age.sshKeyPaths = []` (disables the default SSH-host-key derivation path which is unavailable on hosts without sshd enabled)
+  - Generate `sops.secrets.<name> = { sopsFile = config.sops.defaultSopsFile; }` for every key in HM's `keychainSecrets`; conditionally add `sops.secrets."gh-token" = { sopsFile = config.sops.defaultSopsFile; }` when `ghAuthToken != null`
+  - Render the activation manifest: `manifest = pkgs.writeText "mcp-secrets-manifest.json" (builtins.toJSON { keychainSecrets = builtins.attrNames hmMcp.keychainSecrets; ghAuthToken = hmMcp.ghAuthToken != null; })`
+  - Import the activation script as a derivation: `mcp-secrets-activate = import ../../scripts/mcp-secrets-activate.nix { inherit pkgs; };` (mirrors the existing `cc-sdd-init` import pattern from Phase 5 of the cc-sdd-integration spec)
+  - Add the activation invocation: `system.activationScripts.postActivation.text = lib.mkAfter "${mcp-secrets-activate}/bin/mcp-secrets-activate ${username} ${manifest}"`
+  - Observable completion: `nix eval --raw '.#darwinConfigurations.ShopifyLaptop.config.system.activationScripts.postActivation.text' | grep mcp-secrets-activate` returns a non-empty match referencing the manifest path under `/nix/store/`
+  - _Requirements: 1.1, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 5.1, 5.2, 6.2, 7.3_
+  - _Depends: 1.1, 2.1, 2.4_
+  - _Boundary: configurations/common-darwin/mcp-sops-bridge.nix_
+
+- [ ] 3. Integration: per-host wiring + flake apps
+
+⚠️ **Hazard window**: Once Tasks 3.1–3.4 land, every subsequent `darwin-rebuild switch` on the affected host fails until Task 4 (bootstrap) completes. The defensive guard in `mcp-secrets-activate` produces a clear "missing /run/secrets/<name>" diagnostic, but the operator must perform Task 4 in the same session — DO NOT push 3.1–3.4 to a host without committing to the bootstrap immediately afterwards.
+
+- [ ] 3.1 (P) Wire the sops bridge into ShopifyLaptop
+  - In `configurations/shopify/default.nix`, add `imports = [ ../common-darwin/mcp-sops-bridge.nix ]` (alongside the existing `../common-darwin` import)
+  - Set `sops.defaultSopsFile = ../../secrets/mcp.shopify.yaml`
+  - Confirm there is no separate `inputs.sops-nix.darwinModules.default` import — the bridge owns it (see Hazard window above)
+  - Observable completion: `nix build --no-link '.#darwinConfigurations.ShopifyLaptop.system'` succeeds
+  - _Requirements: 1.1, 6.1_
+  - _Depends: 2.5_
+  - _Boundary: configurations/shopify/default.nix_
+
+- [ ] 3.2 (P) Wire the sops bridge into Brandons-MacBook-Pro
+  - In `configurations/personal/default.nix`, add `imports = [ ../common-darwin/mcp-sops-bridge.nix ]` (alongside the existing `../common-darwin` import)
+  - Set `sops.defaultSopsFile = ../../secrets/mcp.personal.yaml`
+  - Observable completion: `nix build --no-link '.#darwinConfigurations.Brandons-MacBook-Pro.system'` succeeds
+  - _Requirements: 1.1, 6.1_
+  - _Depends: 2.5_
+  - _Boundary: configurations/personal/default.nix_
+
+- [ ] 3.3 (P) Declare the gh CLI token URI on Shopify
+  - In `configurations/shopify/home-manager/default.nix`, set `home.mcp.ghAuthToken = "op://Employee/<gh-token-item>/<field>"`
+  - Operator picks the actual 1P URI (separate item vs reuse of `mcp-github-token` PAT — design defers to operator; document choice in commit message)
+  - Observable completion: `nix eval --raw '.#darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama.home.mcp.ghAuthToken'` returns the configured URI
+  - _Requirements: 6.1, 6.2_
+  - _Depends: 2.1_
+  - _Boundary: configurations/shopify/home-manager/default.nix_
+
+- [ ] 3.4 (P) Declare the gh CLI token URI on Personal
+  - In `configurations/personal/home-manager/default.nix`, set `home.mcp.ghAuthToken = "op://Private/<gh-token-item>/<field>"`
+  - Observable completion: `nix eval --raw '.#darwinConfigurations.Brandons-MacBook-Pro.config.home-manager.users.brandonmcnama.home.mcp.ghAuthToken'` returns the URI
+  - _Requirements: 6.1, 6.2_
+  - _Depends: 2.1_
+  - _Boundary: configurations/personal/home-manager/default.nix_
+
+- [ ] 3.5 Expose sync + verify as flake apps
+  - In `flake.nix`, add `apps.${system}.mcp-sync-from-1password` and `apps.${system}.mcp-verify-secrets` outputs that wrap the `pkgs.writeShellApplication` packages from `scripts/`, mirroring the existing `apps.${system}.bump-shopify-taps` shape
+  - Observable completion: `nix run '.#mcp-sync-from-1password' -- --help` and `nix run '.#mcp-verify-secrets' -- --help` both print usage text and exit 0
+  - _Requirements: 4.1, 8.1_
+  - _Depends: 1.1, 2.2, 2.3_
+  - _Boundary: flake.nix_
+
+- [ ] 4. Operator Bootstrap (manual, gated by Phase 1 land)
+
+These tasks require interactive 1Password access and `sudo`; an autonomous agent cannot execute them. Tasks 4.1–4.5 must complete on each host before that host's first post-Phase-3 `darwin-rebuild switch` succeeds.
+
+- [ ] 4.1 Generate per-host age keys and store in 1Password
+  - On each host (or in any local environment with `op` access): `age-keygen -o /tmp/<host>-age-key.txt` (use a path inside the OS user's home or `mktemp`; do NOT commit)
+  - Store the private key in 1P at: ShopifyLaptop → `op://Employee/sops-age-key-shopify`, Brandons-MacBook-Pro → `op://Private/sops-age-key-personal`
+  - Capture the public recipient (`age-keygen -y` against the private key file) — needed for Task 4.3
+  - Securely delete the local plaintext file (`rm /tmp/<host>-age-key.txt`)
+  - Observable completion: each 1P item exists, contains an `AGE-SECRET-KEY-...` value, and the public recipients are recorded for the next task
+  - _Requirements: 3.1, 3.2_
+  - _Boundary: 1Password vault (operator action)_
+
+- [ ] 4.2 Install the age key on each host at the canonical location
+  - On each host: `op read 'op://<vault>/sops-age-key-<host>' | sudo install -m 0600 -o root /dev/stdin /var/lib/sops-nix/key.txt`
+  - Verify: `sudo head -1 /var/lib/sops-nix/key.txt` returns `AGE-SECRET-KEY-...`
+  - Observable completion: `/var/lib/sops-nix/key.txt` exists with mode `0600` owned by root on both hosts
+  - _Requirements: 3.1, 3.2_
+  - _Depends: 4.1_
+  - _Boundary: each host filesystem (operator action)_
+
+- [ ] 4.3 Update `.sops.yaml` with the real per-host age recipients
+  - Replace the `age1placeholder...` strings in `.sops.yaml` with the real public recipients captured in Task 4.1
+  - Commit the updated `.sops.yaml`
+  - Observable completion: `grep -E 'age1[a-z0-9]{50,}' .sops.yaml` returns two matches (one per host) and zero placeholder strings remain
+  - _Requirements: 2.1, 2.2_
+  - _Depends: 4.2_
+  - _Boundary: .sops.yaml_
+
+- [ ] 4.4 Initial sync from 1Password to encrypted yaml on each host
+  - On each host (in the repo working tree): `nix run '.#mcp-sync-from-1password' -- shopify` (and `... -- personal` on the corresponding host)
+  - Confirm `secrets/mcp.<host>.yaml` is created and decrypts cleanly: `sops -d secrets/mcp.<host>.yaml | head -1` returns the first declared secret
+  - Commit both encrypted yamls
+  - Observable completion: `secrets/mcp.shopify.yaml` and `secrets/mcp.personal.yaml` are committed sops-encrypted files; `sops -d` against each succeeds on its respective host
+  - _Requirements: 4.1_
+  - _Depends: 3.1, 3.2, 3.5, 4.3_
+  - _Boundary: secrets/_
+
+- [ ] 4.5 Initial activation on each host
+  - On each host: `sudo darwin-rebuild switch --flake .`
+  - Verify activation populated the Keychain: `security find-generic-password -s mcp-github-token -a mcp-hub` returns a populated entry
+  - Verify activation populated gh auth: `gh auth status` shows logged in to github.com as the maintainer
+  - Observable completion: switch exits 0 on both hosts; for every key in `home.mcp.keychainSecrets`, `security find-generic-password -s '<key>' -a mcp-hub` returns a populated entry; `gh auth status` reports logged in
+  - _Requirements: 1.1, 1.2_
+  - _Depends: 4.4_
+  - _Boundary: each host (operator action)_
+
+- [ ] 5. Verification (manual integration tests, gated by Task 4.5)
+
+These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Each can be run in any order on either host once 4.5 completes; mark `(P)` accordingly.
+
+- [ ] 5.1 (P) Verify the parity gate
+  - Run `nix run '.#mcp-verify-secrets' -- shopify` and `... -- personal`; both must exit 0 (this is the R8.1 hard gate that authorizes Task 6 decommissioning)
+  - Observable completion: both invocations print one MATCH line per declared secret + a MATCH for gh-token (if declared) and exit 0
+  - _Requirements: 8.1_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.2 (P) Verify the offline-decryption invariant
+  - On one host: sign out of 1P CLI (`op signout` or kill `op` agent); confirm network reachability to github.com is unaffected
+  - Run `sudo darwin-rebuild switch --flake .`
+  - Verify activation succeeds AND every Keychain entry still matches the encrypted yaml's value (re-run `mcp-verify-secrets` to confirm)
+  - Observable completion: switch exits 0 with no `op` invocation in the activation log; `mcp-verify-secrets` exits 0
+  - _Requirements: 1.3, 1.4_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.3 (P) Verify per-host scoping fails closed
+  - Temporarily swap `/var/lib/sops-nix/key.txt` between hosts (back up original first); run `sudo darwin-rebuild switch --flake .` on the host with the wrong key
+  - Verify sops-nix exits with a "no key could decrypt the data" diagnostic; confirm activation does NOT proceed past sops-nix (Keychain unchanged from prior valid state)
+  - Restore the correct keys; run switch again to confirm recovery
+  - Observable completion: failed-key switch exits non-0 with named diagnostic; subsequent restored switch succeeds
+  - _Requirements: 2.1, 2.2, 2.3_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.4 (P) Verify stale Keychain cleanup + non-managed entry safety
+  - Pre-condition: add a sentinel `security add-generic-password -s sentinel-not-managed -a mcp-hub -w 'sentinel'`
+  - Edit `home.mcp.keychainSecrets` to remove one declared secret (e.g., `mcp-buildkite-token`); commit; switch
+  - Verify removed entry is gone: `security find-generic-password -s mcp-buildkite-token -a mcp-hub` returns "not found"
+  - Verify sentinel UNTOUCHED: `security find-generic-password -s sentinel-not-managed -a mcp-hub -w` still returns `sentinel` (R5.2)
+  - Restore declarations and resync; clean up sentinel
+  - Observable completion: removed entry's `security` lookup returns 44 (not-found); sentinel still queryable; activation log shows `mcp-secrets: remove mcp-buildkite-token`
+  - _Requirements: 5.1, 5.2, 5.3_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.5 (P) Verify gh auth flow (initial auth + rotation + short-circuit + removal)
+  - After bootstrap, confirm `gh auth status` shows the expected user (R6.1)
+  - Re-run `sudo darwin-rebuild switch --flake .` with NO rotation: confirm activation log includes `skip gh-login no work needed` (short-circuit fired; R1.3/R1.4 invariant)
+  - Rotate the gh token in 1P, run sync, switch; confirm activation log shows the short-circuit was BYPASSED (hash changed) and `gh auth status` continues to report logged in (R6.4)
+  - Set `home.mcp.ghAuthToken = null` in HM config; switch; confirm `gh auth status` reports no login (R6.3)
+  - Restore declaration and resync to leave the host functional
+  - Observable completion: activation logs across the four states show the expected branch (login / skip / login / logout) and `gh auth status` outputs match
+  - _Requirements: 6.1, 6.3, 6.4_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.6 (P) Verify backwards-compatibility surface
+  - Confirm a running mcphub MCP server (e.g., `vault-mcp` on Shopify) authenticates successfully after the cutover — its `${cmd: security find-generic-password ...}` placeholder is unchanged
+  - Confirm in the diff: `git diff main -- home-manager/mcp/default.nix` shows ONLY additive changes (the new `ghAuthToken` option). `keychainSecrets` shape and `readKeychainSecret` signature are byte-identical pre/post
+  - Confirm in the diff: `git diff main -- configurations/{shopify,personal}/home-manager/default.nix` shows ONLY the `ghAuthToken = "op://..."` addition; existing `keychainSecrets` attrset entries unchanged
+  - Observable completion: the `git diff` shows only additive changes per the above; mcphub vault-mcp call returns a successful response
+  - _Requirements: 7.1, 7.2, 7.3_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.7 (P) Verify sync error paths
+  - Sign out of 1P CLI; run `nix run '.#mcp-sync-from-1password' -- shopify`; assert exit 2 with "1Password authentication required" message; confirm `secrets/mcp.shopify.yaml` mtime is unchanged (R4.5)
+  - Add a non-existent 1P URI to `keychainSecrets` (commit not required for this test, just edit the working tree); run sync; assert exit 3 naming the failing URI; confirm `secrets/mcp.shopify.yaml` mtime is unchanged
+  - Revert the working-tree edit
+  - Observable completion: each failure path exits with the documented code AND the encrypted yaml file's mtime + content is unchanged from before the failed run
+  - _Requirements: 4.2, 4.3, 4.5_
+  - _Depends: 3.5_
+  - _Boundary: validation only_
+
+- [ ] 5.8 (P) Verify the bootstrap-incomplete diagnostic
+  - On one host: `sudo mv /var/lib/sops-nix/key.txt /var/lib/sops-nix/key.txt.bak`; run `sudo darwin-rebuild switch --flake .`
+  - Verify activation fails with a sops-nix diagnostic that names the missing key path; the activation script's defensive guard does NOT corrupt Keychain state (no Keychain modifications happen; verify by re-running `mcp-verify-secrets` after restoring)
+  - Restore the key: `sudo mv /var/lib/sops-nix/key.txt.bak /var/lib/sops-nix/key.txt`; switch again to confirm recovery
+  - Observable completion: failed switch exits non-0 with a diagnostic referencing `/var/lib/sops-nix/key.txt`; `mcp-verify-secrets` exits 0 after recovery (Keychain unchanged from pre-test state)
+  - _Requirements: 3.3_
+  - _Depends: 4.5_
+  - _Boundary: validation only_
+
+- [ ] 5.9 (P) Verify sync idempotence at value level
+  - On one host: capture `sops -d secrets/mcp.<host>.yaml > /tmp/before.yaml` (decrypted plaintext)
+  - Without changing any 1P value, run `nix run '.#mcp-sync-from-1password' -- <host>` again
+  - Capture `sops -d secrets/mcp.<host>.yaml > /tmp/after.yaml`; `diff /tmp/before.yaml /tmp/after.yaml` must report no differences (R4.4 requires no value-level diff when 1P unchanged; sops MAC drift in the encrypted file is acceptable per the requirement's "value-level" wording)
+  - Clean up `/tmp/before.yaml` and `/tmp/after.yaml`
+  - Observable completion: `diff` exits 0 between the two decrypted plaintext snapshots
+  - _Requirements: 4.4_
+  - _Depends: 3.5, 4.4_
+  - _Boundary: validation only_
+
+- [ ] 6. Decommissioning (Phase 2, gated by 5.1 verify exit 0 on both hosts)
+
+- [ ] 6.1 Remove the legacy mcp-sync-secrets script and reminder from the HM mcp module
+  - Delete the `mcpSyncSecretsScript` definition (the `pkgs.writeScriptBin "mcp-sync-secrets" ...` block) from `home-manager/mcp/default.nix`
+  - Delete the `home.activation.mcpKeychainSecrets` activation entry (the one that prints the reminder)
+  - Remove the `lib.optional (config.home.mcp.keychainSecrets != { }) mcpSyncSecretsScript` clause from `home.packages` (replace the whole `home.packages = [...] ++ lib.optional ...` expression with the static list)
+  - PRESERVE: `keychainSecrets` option, `readKeychainSecret` helper + its `home.mcp.readKeychainSecret` mkOption, `githubToken` option, `extraServers` option, `obsidianVaultPath` option, `enable` option, the `xdg.configFile."mcphub/servers.json"` block, and the `launchd.agents.mcp-hub` block (R7.3)
+  - Verify both host configs still build: `nix build --no-link '.#darwinConfigurations.{ShopifyLaptop,Brandons-MacBook-Pro}.system'`
+  - Observable completion: `git grep mcpSyncSecretsScript -- home-manager/mcp/default.nix` returns no matches; both host system closures still build
+  - _Requirements: 8.1, 8.2_
+  - _Depends: 5.1_
+  - _Boundary: home-manager/mcp/default.nix_
+
+- [ ] 6.2 Audit and remove lingering legacy references
+  - Run `git grep -E 'mcp-sync-secrets|mcpSyncSecretsScript|mcpKeychainSecrets'` across the entire repo (excluding `.kiro/specs/` which preserves spec history)
+  - Update any `AGENTS.md`, `home-manager/common/agents.md`, `agents-cc-sdd.md`, README, or steering files that mention the legacy script — replace with references to the new pipeline (`darwin-rebuild switch` + `mcp-sync-from-1password` for rotation)
+  - Observable completion: `git grep -E 'mcp-sync-secrets|mcpSyncSecretsScript' -- ':!.kiro/specs/'` returns no matches
+  - _Requirements: 8.3_
+  - _Depends: 6.1_
+  - _Boundary: any user-visible doc surface_
