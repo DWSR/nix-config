@@ -254,4 +254,53 @@ final: prev: {
       outputHash = "sha256-hvlfFTdZliUn5FORX7gsn8fs0C7c3AsA8WOrtZhJwac=";
     });
   });
+
+  # cc-sdd: Kiro-style spec-driven development scaffolder (gotalab/cc-sdd, MIT).
+  # Provides 17 `kiro-*` skills for OpenCode + project-local templates and
+  # steering. Distributed on npm with a pre-built `dist/` and zero runtime
+  # dependencies, so we install the published tarball directly via fetchurl
+  # rather than building from source — no buildNpmPackage / lockfile dance
+  # required. Bumps: update `version`, refresh `src.hash` (sha512 from npm
+  # registry's `dist.integrity` field), and re-eval; the templates+skills
+  # tree is rebuilt by the cc-sdd-skills derivation below.
+  cc-sdd =
+    let
+      version = "3.0.2";
+    in
+    final.stdenv.mkDerivation {
+      pname = "cc-sdd";
+      inherit version;
+
+      src = final.fetchurl {
+        url = "https://registry.npmjs.org/cc-sdd/-/cc-sdd-${version}.tgz";
+        # sha512 from `npm view cc-sdd@${version} dist.integrity`.
+        hash = "sha512-7r9hyUhY35aeKVoqhViad28/JTT5SdDH3pPhGccY8nFpmT25+EP6vywetUwVL8wUCi3deJQBg/YcFU2gNnhC6w==";
+      };
+
+      nativeBuildInputs = [ final.makeWrapper ];
+
+      # The npm tarball expands to `package/` containing dist/, templates/,
+      # package.json, README.md. Lay it out under $out/lib/cc-sdd and wrap
+      # bin/cc-sdd with the Nix nodejs so the CLI can be invoked outside any
+      # pre-existing Node.js environment.
+      installPhase = ''
+        runHook preInstall
+
+        mkdir -p $out/lib/cc-sdd $out/bin
+        cp -r dist templates package.json README.md $out/lib/cc-sdd/
+
+        makeWrapper ${final.nodejs}/bin/node $out/bin/cc-sdd \
+          --add-flags $out/lib/cc-sdd/dist/cli.js
+
+        runHook postInstall
+      '';
+
+      meta = {
+        description = "Kiro-style spec-driven development scaffolder for AI agents";
+        homepage = "https://github.com/gotalab/cc-sdd";
+        license = final.lib.licenses.mit;
+        mainProgram = "cc-sdd";
+        platforms = final.lib.platforms.unix;
+      };
+    };
 }
