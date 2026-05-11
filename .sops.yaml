@@ -1,0 +1,34 @@
+# sops recipient rules for the per-host MCP secrets store.
+#
+# The two `age1placeholder...` strings below are PLACEHOLDERS. They will be
+# replaced with the real per-host age public keys by Task 4.3 of the
+# `mcp-secrets-sops-nix` spec, after the operator has run the bootstrap
+# procedure on each host (which generates an age key derived from the host's
+# SSH host key into /var/lib/sops-nix/key.txt and prints the matching
+# public key for enrollment here).
+#
+# Bootstrap procedure: see `secrets/README.md` (created in Task 1.3).
+#
+# Convention: the YAML anchor `&host_<name>` corresponds to the age public
+# key of the host whose nixosConfiguration / darwinConfiguration shares the
+# same name. Each `creation_rule` lists exactly one recipient (the target
+# host) so that compromise of one host's age private key cannot decrypt the
+# other host's secrets — see requirements.md sections 2.1, 2.2, 2.4.
+#
+# `path_regex` uses Go regex semantics (regexp.MatchString), NOT shell glob.
+# Rules are evaluated top-to-bottom; first match wins. Backslash-escape `.`
+# in regex patterns to avoid matching arbitrary characters.
+
+keys:
+  - &host_shopify  age1placeholderShopifyLaptopReplaceInTask43
+  - &host_personal age1placeholderBrandonsMacBookProReplaceInTask43
+
+creation_rules:
+  - path_regex: secrets/mcp\.shopify\.yaml$
+    key_groups:
+      - age:
+          - *host_shopify
+  - path_regex: secrets/mcp\.personal\.yaml$
+    key_groups:
+      - age:
+          - *host_personal

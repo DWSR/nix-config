@@ -13,7 +13,7 @@
   - _Requirements: 1.1, 2.1_
   - _Boundary: flake.nix_
 
-- [ ] 1.2 Create the recipient config with placeholder per-host age keys
+- [x] 1.2 Create the recipient config with placeholder per-host age keys
   - Author `.sops.yaml` at repo root with two `creation_rules` entries, one regex per host yaml (`secrets/mcp\.shopify\.yaml$`, `secrets/mcp\.personal\.yaml$`)
   - Each rule's `key_groups.age` lists exactly one age recipient — ShopifyLaptop's age public key for the shopify yaml, Brandons-MacBook-Pro's age public key for the personal yaml
   - Use `age1placeholder...` strings until the operator bootstrap completes (Task 4.3 replaces these); commit a comment block at the top documenting the placeholder convention and pointing readers at `secrets/README.md`
