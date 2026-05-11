@@ -51,7 +51,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 6.4_
   - _Boundary: scripts/mcp-sync-from-1password.nix_
 
-- [ ] 2.3 (P) Build the verification helper
+- [x] 2.3 (P) Build the verification helper
   - Create `scripts/mcp-verify-secrets.nix` as `pkgs.writeShellApplication`
   - Argument `$1` = host name
   - Decrypt the host's yaml in memory: `sops -d --output-type json "secrets/mcp.<host>.yaml" | jq -r 'to_entries[] | select(.key != "sops") | "\(.key)\t\(.value)"'`
