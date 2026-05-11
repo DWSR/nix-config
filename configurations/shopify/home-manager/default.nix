@@ -45,6 +45,13 @@ in
         "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
       };
 
+      # gh CLI auth token. Reuses the same PAT as mcp-github-token because
+      # both consumers need the same GitHub repo / read scopes; the PAT is
+      # already provisioned for mcphub's github MCP server. If you ever
+      # need a separately-scoped gh CLI token, point this at a distinct
+      # 1P item.
+      ghAuthToken = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
+
       extraServers = {
         vault-mcp = {
           type = "http";
