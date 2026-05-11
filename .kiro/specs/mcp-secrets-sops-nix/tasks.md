@@ -78,7 +78,7 @@
   - _Requirements: 1.1, 1.2, 1.5, 5.1, 5.2, 5.3, 6.1, 6.3, 6.4, 7.1, 7.2_
   - _Boundary: scripts/mcp-secrets-activate.nix_
 
-- [ ] 2.5 Build the nix-darwin system bridge module
+- [x] 2.5 Build the nix-darwin system bridge module
   - Create `configurations/common-darwin/mcp-sops-bridge.nix`
   - **Bridge OWNS the sops-nix import**: `imports = [ inputs.sops-nix.darwinModules.default ]`. Per-host `default.nix` files MUST NOT separately import sops-nix (per design D3 ordering decision; the bridge's `mkAfter` block is concatenated after sops-nix's `installScript` only when sops-nix is imported via this module)
   - Read `config.home-manager.users.${username}.home.mcp.{keychainSecrets, ghAuthToken}` to enumerate which sops secrets to declare (read-only against HM config; no redefinition)
