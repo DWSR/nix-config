@@ -58,6 +58,13 @@ in
         "mcp-hangops-xoxd" = "op://Private/HangOps/Tokens/xoxd";
       };
 
+      # gh CLI auth token. Reuses the same PAT as mcp-github-token because
+      # both consumers need the same GitHub repo / read scopes; the PAT is
+      # already provisioned for mcphub's github MCP server. If you ever
+      # need a separately-scoped gh CLI token, point this at a distinct
+      # 1P item.
+      ghAuthToken = "op://Private/GitHub/Tokens/Full Control";
+
       extraServers = {
         kagi = {
           command = "${pkgs.kagimcp}/bin/kagimcp";

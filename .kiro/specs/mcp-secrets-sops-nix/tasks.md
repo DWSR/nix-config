@@ -113,7 +113,7 @@
   - _Depends: 2.5_
   - _Boundary: configurations/personal/default.nix_
 
-- [ ] 3.3 (P) Declare the gh CLI token URI on Shopify
+- [x] 3.3 (P) Declare the gh CLI token URI on Shopify
   - In `configurations/shopify/home-manager/default.nix`, set `home.mcp.ghAuthToken = "op://Employee/<gh-token-item>/<field>"`
   - Operator picks the actual 1P URI (separate item vs reuse of `mcp-github-token` PAT — design defers to operator; document choice in commit message)
   - Observable completion: `nix eval --raw '.#darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama.home.mcp.ghAuthToken'` returns the configured URI
@@ -121,7 +121,7 @@
   - _Depends: 2.1_
   - _Boundary: configurations/shopify/home-manager/default.nix_
 
-- [ ] 3.4 (P) Declare the gh CLI token URI on Personal
+- [x] 3.4 (P) Declare the gh CLI token URI on Personal
   - In `configurations/personal/home-manager/default.nix`, set `home.mcp.ghAuthToken = "op://Private/<gh-token-item>/<field>"`
   - Observable completion: `nix eval --raw '.#darwinConfigurations.Brandons-MacBook-Pro.config.home-manager.users.brandonmcnama.home.mcp.ghAuthToken'` returns the URI
   - _Requirements: 6.1, 6.2_
