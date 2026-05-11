@@ -21,7 +21,7 @@
   - _Requirements: 2.1, 2.2, 2.4_
   - _Boundary: .sops.yaml_
 
-- [ ] 1.3 Author the operator runbook
+- [x] 1.3 Author the operator runbook
   - Create `secrets/README.md` covering five named subsections: **Bootstrap** (per-host: how to fetch the host's age key from 1P, install at `/var/lib/sops-nix/key.txt` with the right permissions, verify with `head -1`), **Adding a new host** (the chicken-and-egg constraint — existing host must add the new recipient and `sops updatekeys` before the new host can decrypt), **Rotating a secret** (edit in 1P → `nix run .#mcp-sync-from-1password -- <host>` → commit → `darwin-rebuild switch`), **Recovery from lost key** (re-enrol via existing host), and **Out of scope** (OpenCode `OPENCODE_API_KEY`, `~/.cache/tool-gateway-token`, with rationale)
   - Document the GUI-session prerequisite (login keychain must be unlocked at activation time) and what diagnostic the operator sees if not
   - Document the `gh auth login` short-circuit behaviour: rotation requires a GitHub network round-trip; unchanged-token switches do not

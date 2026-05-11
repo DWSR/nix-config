@@ -1,0 +1,338 @@
+# MCP Secrets — Operator Runbook
+
+This directory holds the per-host encrypted MCP secret stores
+(`mcp.shopify.yaml`, `mcp.personal.yaml`) consumed by sops-nix at
+activation time. The store is encrypted with a per-host age private
+key that lives outside the repo, on each host, at
+`/var/lib/sops-nix/key.txt`. The corresponding age public keys are
+recorded as recipients in the repo-root `.sops.yaml`.
+
+This document is the operator-facing runbook for everything that
+involves touching either the encrypted store or the per-host age
+keys: first-time bootstrap, enrolling a new host, rotating a secret,
+recovering from a lost private key, and the deliberate scope
+boundary of this pipeline.
+
+## Conventions
+
+| Host                   | Role short-name | 1Password vault | 1P item                          | Encrypted file                |
+| ---------------------- | --------------- | --------------- | -------------------------------- | ----------------------------- |
+| ShopifyLaptop          | `shopify`       | Employee        | `op://Employee/sops-age-key-shopify` | `secrets/mcp.shopify.yaml`  |
+| Brandons-MacBook-Pro   | `personal`      | Private         | `op://Private/sops-age-key-personal` | `secrets/mcp.personal.yaml` |
+
+The short-name (`shopify` / `personal`) is the value passed to the
+helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
+appears in the `mcp.<host>.yaml` filename. It also matches the YAML
+anchor name in `.sops.yaml`.
+
+## Prerequisites — read this first
+
+Two environmental preconditions apply to every operation below:
+
+1. **GUI session must be active** when you run `darwin-rebuild
+   switch`. The activation script writes credentials into the user's
+   login keychain via `security add-generic-password`, which
+   requires the login keychain to be unlocked. macOS locks the
+   login keychain whenever there is no active GUI session — most
+   commonly when activating over a headless SSH connection. If you
+   run `sudo darwin-rebuild switch --flake .` over SSH from a host
+   that is not currently logged in at the console, the activation
+   will fail at the keychain-write step with an error similar to
+   `SecKeychainItemCreateFromContent: User interaction is not
+   allowed.` (errSecInteractionNotAllowed, -25308). Schedule the
+   switch from a Terminal window inside an active GUI session
+   instead.
+
+2. **`gh` rotation requires GitHub network reachability, but
+   unchanged-token switches do not.** Every `darwin-rebuild switch`
+   compares the SHA-256 of `/run/secrets/gh-token` against the
+   stored hash at `/var/lib/mcp-keychain-sync/gh-token-hash` and
+   runs `gh auth status --hostname github.com`. If the hash matches
+   AND `gh auth status` reports the existing token is valid, the
+   `gh auth login --with-token` step is short-circuited and no
+   GitHub API call is made. After a token rotation (where the hash
+   changes) the next switch DOES require GitHub reachability so
+   that `gh auth login --with-token` can validate the new token
+   against `api.github.com`. If you are about to switch immediately
+   after rotating `MCP_GITHUB_TOKEN`, make sure you are online and
+   not behind a network that blocks `api.github.com`.
+
+## Bootstrap
+
+First-time setup of a host. Repeat once per host. Requires
+`op` (1Password CLI) signed in, and `age-keygen` available from
+nixpkgs.
+
+1. **Generate an age keypair.** Run wherever convenient (the
+   recovering host itself, or any trusted machine with `op`
+   access):
+
+   ```sh
+   age-keygen -o /tmp/age-key-<host>.txt
+   age-keygen -y /tmp/age-key-<host>.txt   # prints the public key
+   ```
+
+   `<host>` is the role short-name (`shopify` or `personal`).
+
+2. **Stash the private key in 1Password.** Create or update the
+   per-host item using the canonical paths:
+
+   - ShopifyLaptop → `op://Employee/sops-age-key-shopify`
+   - Brandons-MacBook-Pro → `op://Private/sops-age-key-personal`
+
+   The full file contents (header comment lines AND the
+   `AGE-SECRET-KEY-...` line) go into the item. Convention: store
+   in a Secure Note or Password field named `notesPlain` so that
+   `op read` returns the raw key without additional flags.
+
+3. **Install the private key on the host.** From the target host,
+   with `op` signed in:
+
+   ```sh
+   op read 'op://<vault>/sops-age-key-<host>' \
+     | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt
+   ```
+
+   Replace `<vault>` with `Employee` or `Private`, and `<host>`
+   with `shopify` or `personal`, per the table at the top of this
+   file. The parent directory `/var/lib/sops-nix` is created by
+   sops-nix on first activation; if it does not yet exist, run
+   `sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix`
+   first.
+
+4. **Verify.** The first line of the file must be the age secret:
+
+   ```sh
+   sudo head -1 /var/lib/sops-nix/key.txt
+   # Expected: AGE-SECRET-KEY-1...
+   ```
+
+   And the key.txt should contain a single, complete private key
+   that round-trips through `age-keygen -y`:
+
+   ```sh
+   sudo age-keygen -y /var/lib/sops-nix/key.txt
+   # Should print the matching public key (age1...)
+   ```
+
+5. **Enroll the public key in `.sops.yaml`.** This is covered by
+   Task 4.3 of the spec, but operationally: replace the
+   `age1placeholder...` value at the matching anchor (`&host_shopify`
+   or `&host_personal`) in repo-root `.sops.yaml` with the public
+   key emitted by step 1. Then re-encrypt the existing per-host
+   yaml against the new recipient with `sops updatekeys
+   secrets/mcp.<host>.yaml`. Commit the changes to `.sops.yaml`
+   AND the re-encrypted secrets file together.
+
+6. **Activate.** `sudo darwin-rebuild switch --flake .` will now
+   succeed because sops-nix can decrypt `secrets/mcp.<host>.yaml`
+   using the private key at `/var/lib/sops-nix/key.txt`.
+
+## Adding a new host
+
+A brand-new host (one whose age public key has never appeared in
+`.sops.yaml`) cannot decrypt anything in `secrets/`. This is the
+chicken-and-egg constraint: the new host needs an existing host to
+enroll it before its own first `darwin-rebuild switch` will succeed.
+
+This is intentional — it is the property that prevents a
+compromised host from reading any other host's secrets.
+
+**Prerequisites:** at least one existing enrolled host that already
+has a working `/var/lib/sops-nix/key.txt`, and `op` access to the
+1Password vault for the new host.
+
+### On the new host
+
+1. Generate the age keypair locally (steps 1–2 of Bootstrap above).
+   The private key goes to 1Password; the public key gets handed
+   off to the existing host (paste over chat, encrypted email,
+   etc. — the public key is not sensitive).
+
+2. Do NOT yet attempt `darwin-rebuild switch`. It will fail.
+
+### On the existing (already-enrolled) host
+
+3. Pull the latest repo. Edit `.sops.yaml`:
+   - Add a new YAML anchor for the new host alongside the existing
+     ones, e.g., `&host_<newname> ageNEWPUBLICKEY...`.
+   - Add a new `creation_rule` whose `path_regex` matches the new
+     host's per-host file (e.g., `secrets/mcp\.<newname>\.yaml$`)
+     and whose recipient list contains exactly that anchor.
+
+4. If you have any existing per-host yaml that the new host will
+   ALSO need to decrypt (rare — the design uses one file per host
+   with one recipient), re-encrypt it to add the new recipient:
+
+   ```sh
+   sops updatekeys secrets/mcp.<newname>.yaml
+   ```
+
+   `sops updatekeys` reads `.sops.yaml`, recomputes the recipients
+   for the file, and re-wraps the data key against them in place.
+   It does not change the underlying secret values.
+
+5. Create the new host's encrypted file. Easiest path is via the
+   `mcp-sync-from-1password` helper (Task 7.x) once the
+   corresponding 1P items exist:
+
+   ```sh
+   nix run '.#mcp-sync-from-1password' -- <newname>
+   ```
+
+6. Commit both `.sops.yaml` and `secrets/mcp.<newname>.yaml`. Push.
+
+### Back on the new host
+
+7. Pull the repo, run Bootstrap step 3 (install the private key
+   from 1P), and finally `sudo darwin-rebuild switch --flake .`.
+   It now succeeds because the per-host yaml is encrypted to the
+   new host's recipient.
+
+## Rotating a secret
+
+Use this when a secret value (an MCP API token, a service
+credential, etc.) needs to change but the host enrollment does
+NOT change. This is the common-case maintenance flow.
+
+1. **Edit the secret in 1Password.** This is the source of truth.
+   Update the field on the relevant 1P item (e.g.,
+   `op://Employee/MCP/<service>/token`). All downstream copies are
+   regenerated from this.
+
+2. **Refresh the encrypted yaml from 1P.** From a workstation
+   checkout with `op` signed in:
+
+   ```sh
+   nix run '.#mcp-sync-from-1password' -- <host>
+   ```
+
+   This re-reads every secret value declared in the per-host
+   manifest from 1Password, re-encrypts to the host's age recipient
+   per `.sops.yaml`, and writes `secrets/mcp.<host>.yaml` in
+   place.
+
+3. **Inspect and commit.** `git diff secrets/mcp.<host>.yaml` will
+   show only the encrypted blob differences (sops keeps stable
+   YAML structure for unchanged keys; values change). Commit:
+
+   ```sh
+   git add secrets/mcp.<host>.yaml
+   git commit -m "secrets(<host>): rotate <service> token"
+   ```
+
+4. **Activate on the host.** Pull, then:
+
+   ```sh
+   sudo darwin-rebuild switch --flake .
+   ```
+
+   sops-nix decrypts the new value into `/run/secrets/...` and the
+   activation phase rewrites any consumer artifacts (the gh
+   keychain entry, OpenCode config, etc.) according to the
+   short-circuit rules described under Prerequisites.
+
+5. **Verify.** Confirm the rotated value is what consumers see:
+
+   ```sh
+   nix run '.#mcp-verify-secrets' -- <host>
+   ```
+
+   This helper re-reads the now-decrypted secrets and the consumer
+   surfaces (login keychain entry, gh auth status hash) and exits
+   0 only when they agree. A non-zero exit means something on the
+   activation path failed silently and warrants investigation
+   before declaring the rotation complete.
+
+## Recovery from lost key
+
+A host's `/var/lib/sops-nix/key.txt` can be lost in several ways:
+disk corruption, an accidental `rm`, a host wipe and reinstall, a
+new SSD. Without that file, sops-nix on that host cannot decrypt
+ANY of its secrets, and `darwin-rebuild switch` will fail at the
+sops activation phase.
+
+Two recovery paths, depending on whether the 1Password copy of the
+private key still exists.
+
+### Case 1 — 1Password copy still exists
+
+This is the normal recovery path. Re-install from 1P:
+
+```sh
+op read 'op://<vault>/sops-age-key-<host>' \
+  | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt
+sudo head -1 /var/lib/sops-nix/key.txt   # verify AGE-SECRET-KEY- prefix
+sudo darwin-rebuild switch --flake .
+```
+
+This is the entire recovery — no `.sops.yaml` change, no commit,
+no involvement from any other host. The on-disk public-key recipient
+in `.sops.yaml` is unchanged because the underlying age keypair is
+unchanged.
+
+### Case 2 — 1Password copy is ALSO lost
+
+The private key is permanently gone. The data encrypted to the old
+public key is permanently undecryptable from this host. Recovery
+requires re-enrollment: treat the host as a brand-new host and
+walk through "Adding a new host" above. Concretely:
+
+1. On the recovering host, generate a fresh age keypair (Bootstrap
+   step 1) and stash the new private key in 1P (Bootstrap step 2).
+
+2. On the existing (still-enrolled) host: replace the recovering
+   host's recipient in `.sops.yaml` with the NEW public key. Run
+   `sops updatekeys secrets/mcp.<host>.yaml` to re-encrypt the
+   per-host file against the new recipient. Commit and push.
+
+3. On the recovering host: install the new private key (Bootstrap
+   step 3), pull the repo, and `sudo darwin-rebuild switch
+   --flake .`.
+
+If both hosts have lost their keys at the same time, recovery
+requires re-creating every secret value from the upstream system
+(rotate everything in 1P, then sync), since the existing
+`secrets/mcp.<host>.yaml` files are no longer decryptable by
+anyone. This is a deliberate trade-off — see `requirements.md`
+section 9.5.
+
+## Out of scope
+
+The following secrets are deliberately NOT managed by this pipeline.
+Each one has a different lifecycle that would be poorly served by
+folding it into the per-host MCP-secrets boundary.
+
+- **OpenCode `OPENCODE_API_KEY`.** Minted per-invocation by `devx
+  llm-gateway`. The token has a short TTL and is intended to be
+  refreshed on demand by the upstream tool, not stored at rest.
+  Centralising it in the encrypted store would require frequent
+  re-syncs and would defeat the short-TTL rotation model.
+
+- **`~/.cache/tool-gateway-token`.** Populated by external Shopify
+  tooling outside this repo's control. Lifecycle is owned by
+  `devx`, refreshed automatically when expired. We do not have
+  authoritative provenance for the value, so we cannot meaningfully
+  re-encrypt or rotate it from here.
+
+- **1Password SSH commit signing.** Uses in-band auth via the 1P
+  agent (the agent socket is queried for each signing operation).
+  No stable secret to encrypt at rest; doesn't fit the
+  encrypted-store-at-rest model.
+
+- **Atuin sync key, AWS credentials file, SSH host/user keys.**
+  Distinct lifecycles, separate rotation cadences, different
+  consumer surfaces. Folding them into this pipeline would
+  violate the per-host MCP-secrets boundary the spec defines (see
+  `requirements.md` section 9.4).
+
+If a future need arises to manage one of these via sops-nix, it
+should get its own spec rather than expanding this pipeline.
+
+## See also
+
+- Repo-root `.sops.yaml` — the recipient policy file.
+- `.kiro/specs/mcp-secrets-sops-nix/requirements.md` sections 3.4,
+  9.1–9.5 — the underlying requirements this runbook satisfies.
+- `.kiro/specs/mcp-secrets-sops-nix/design.md` — architecture and
+  flow diagrams.
