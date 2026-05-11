@@ -131,12 +131,33 @@
       apps = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          # mcp-sync-from-1password depends on `_1password-cli`, which is
+          # unfree-licensed. The legacyPackages set ships with the
+          # default upstream config (no allowUnfree), so importing
+          # nixpkgs explicitly with `config.allowUnfree = true` is
+          # required for the script's derivation to evaluate. The
+          # darwinConfigurations already do this via
+          # `configurations/common-darwin/default.nix`'s `nixpkgs.config`
+          # block; flake-app context must opt in separately.
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfree = true;
+          };
         in
         {
           bump-shopify-taps = {
             type = "app";
             program = "${import ./scripts/bump-shopify-taps.nix { inherit pkgs; }}/bin/bump-shopify-taps";
+          };
+          mcp-sync-from-1password = {
+            type = "app";
+            program = "${
+              import ./scripts/mcp-sync-from-1password.nix { inherit pkgs; }
+            }/bin/mcp-sync-from-1password";
+          };
+          mcp-verify-secrets = {
+            type = "app";
+            program = "${import ./scripts/mcp-verify-secrets.nix { inherit pkgs; }}/bin/mcp-verify-secrets";
           };
         }
       );
