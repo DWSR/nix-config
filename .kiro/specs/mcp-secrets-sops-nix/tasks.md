@@ -6,7 +6,7 @@
 
 - [ ] 1. Foundation: flake input, recipient config, operator runbook
 
-- [ ] 1.1 Add sops-nix as a pinned flake input
+- [x] 1.1 Add sops-nix as a pinned flake input
   - Add `inputs.sops-nix` to `flake.nix` with `inputs.nixpkgs.follows = "nixpkgs"` (matches the repo's existing `home-manager` / `darwin` input pattern)
   - Run `nix flake update sops-nix` and commit the resulting `flake.lock` change in the same commit as the input declaration
   - Confirm `nix eval '.#inputs.sops-nix.lastModifiedDate'` returns a timestamp (observable completion)
