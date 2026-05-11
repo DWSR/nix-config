@@ -97,6 +97,18 @@ in
         sshKeyPaths = [ ];
       };
 
+      # Disable the GPG-via-SSH probe path. sops-nix has a SEPARATE
+      # `sops.gnupg.sshKeyPaths` config (default
+      # `["/etc/ssh/ssh_host_rsa_key"]`) used for the gpg-from-ssh-host-
+      # key derivation. We don't use GPG decryption at all (only age),
+      # but `sops-install-secrets` still probes the GPG path at every
+      # activation and emits a "Cannot read ssh key … no such file or
+      # directory" warning when the RSA host key is absent — which is
+      # the macOS default unless sshd is explicitly enabled with RSA.
+      # Setting this to `[]` silences the warning without affecting
+      # any decryption capability.
+      gnupg.sshKeyPaths = [ ];
+
       # Derive sops.secrets declarations from the HM-declared secret
       # set. Each name becomes a `/run/secrets/<name>` file decrypted
       # from the host's `sops.defaultSopsFile` (set per-host). The
