@@ -149,9 +149,9 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Boundary: 1Password vault (operator action)_
 
 - [x] 4.2 Install the age key on each host at the canonical location
-  - On each host: `op read 'op://<vault>/sops-age-key-<host>' | sudo install -m 0600 -o root /dev/stdin /var/lib/sops-nix/key.txt`
-  - Verify: `sudo head -1 /var/lib/sops-nix/key.txt` returns `AGE-SECRET-KEY-...`
-  - Observable completion: `/var/lib/sops-nix/key.txt` exists with mode `0600` owned by root on both hosts
+  - On each host: pre-create the parent dir (`sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix`), then `op read 'op://<vault>/sops-age-key-<host>/notesPlain' | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt` (the `/notesPlain` field path is required by op 2.x; the install warning about "/dev/stdin: file changed before being copied" is benign)
+  - Verify: `sudo head -3 /var/lib/sops-nix/key.txt` returns the 3-line file (header comments + AGE-SECRET-KEY-...); round-trip via `sudo nix shell nixpkgs#age -c age-keygen -y /var/lib/sops-nix/key.txt` should match the public key captured in Task 4.1
+  - Observable completion: `/var/lib/sops-nix/key.txt` exists with mode `0600` owned by root on both hosts; round-trip pubkey matches Task 4.1 capture
   - _Requirements: 3.1, 3.2_
   - _Depends: 4.1_
   - _Boundary: each host filesystem (operator action)_

@@ -60,59 +60,96 @@ Two environmental preconditions apply to every operation below:
 ## Bootstrap
 
 First-time setup of a host. Repeat once per host. Requires
-`op` (1Password CLI) signed in, and `age-keygen` available from
-nixpkgs.
+`op` (1Password CLI) signed in. `age` and `age-keygen` come from
+nixpkgs and are not assumed to be on `$PATH`; commands below invoke
+them via `nix shell nixpkgs#age -c …`.
 
 1. **Generate an age keypair.** Run wherever convenient (the
    recovering host itself, or any trusted machine with `op`
    access):
 
    ```sh
-   age-keygen -o /tmp/age-key-<host>.txt
-   age-keygen -y /tmp/age-key-<host>.txt   # prints the public key
+   nix shell nixpkgs#age -c age-keygen -o /tmp/age-key-<host>.txt
+   nix shell nixpkgs#age -c age-keygen -y /tmp/age-key-<host>.txt   # prints the public key
    ```
 
    `<host>` is the role short-name (`shopify` or `personal`).
+   Capture the public key (`age1…`) — Task 4.3 needs it to enroll
+   the host as a recipient in `.sops.yaml`.
 
-2. **Stash the private key in 1Password.** Create or update the
-   per-host item using the canonical paths:
+2. **Stash the private key in 1Password.** Create the per-host
+   Secure Note using the canonical titles (one per host):
 
-   - ShopifyLaptop → `op://Employee/sops-age-key-shopify`
-   - Brandons-MacBook-Pro → `op://Private/sops-age-key-personal`
+   - ShopifyLaptop → vault `Employee`, title `sops-age-key-shopify`
+   - Brandons-MacBook-Pro → vault `Private`, title `sops-age-key-personal`
 
    The full file contents (header comment lines AND the
-   `AGE-SECRET-KEY-...` line) go into the item. Convention: store
-   in a Secure Note or Password field named `notesPlain` so that
-   `op read` returns the raw key without additional flags.
+   `AGE-SECRET-KEY-…` line) go into the item's `notesPlain` field
+   (the canonical body field for Secure Notes). Example:
+
+   ```sh
+   KEY_CONTENT=$(cat /tmp/age-key-<host>.txt)
+   op item create \
+     --vault=<Employee|Private> \
+     --category="Secure Note" \
+     --title="sops-age-key-<host>" \
+     "notesPlain=$KEY_CONTENT"
+   unset KEY_CONTENT
+   ```
+
+   Verify the round-trip — the stored copy must derive the SAME
+   public key as the file we just wrote:
+
+   ```sh
+   op read 'op://<vault>/sops-age-key-<host>/notesPlain' \
+     > /tmp/verify-age-<host>.txt
+   nix shell nixpkgs#age -c age-keygen -y /tmp/verify-age-<host>.txt
+   rm /tmp/age-key-<host>.txt /tmp/verify-age-<host>.txt
+   ```
+
+   The `op read` URI MUST include the field path (`/notesPlain`).
+   `op` 2.x rejects bare `op://Vault/Item` URIs with `invalid secret
+   reference: too few '/'` — the field path is required even when
+   the item has only one obvious field.
 
 3. **Install the private key on the host.** From the target host,
    with `op` signed in:
 
    ```sh
-   op read 'op://<vault>/sops-age-key-<host>' \
+   # Pre-create the parent dir. sops-nix would create it on first
+   # activation, but on first bootstrap we install the key BEFORE
+   # the first `darwin-rebuild switch`, so the dir doesn't exist yet.
+   sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix
+
+   # Install the key. The /dev/stdin source emits a benign
+   # "install: /dev/stdin: file changed before being copied" warning
+   # because coreutils install fstats the source twice and the pipe
+   # reports different sizes. The file content is correct; verify in
+   # step 4.
+   op read 'op://<vault>/sops-age-key-<host>/notesPlain' \
      | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt
    ```
 
    Replace `<vault>` with `Employee` or `Private`, and `<host>`
    with `shopify` or `personal`, per the table at the top of this
-   file. The parent directory `/var/lib/sops-nix` is created by
-   sops-nix on first activation; if it does not yet exist, run
-   `sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix`
-   first.
+   file.
 
-4. **Verify.** The first line of the file must be the age secret:
+4. **Verify.** Three lines should appear in the installed file:
 
    ```sh
-   sudo head -1 /var/lib/sops-nix/key.txt
-   # Expected: AGE-SECRET-KEY-1...
+   sudo head -3 /var/lib/sops-nix/key.txt
+   # Expected (3 lines):
+   #   # created: 2026-...
+   #   # public key: age1...
+   #   AGE-SECRET-KEY-1...
    ```
 
-   And the key.txt should contain a single, complete private key
-   that round-trips through `age-keygen -y`:
+   Round-trip: derive the public key from the installed file and
+   confirm it matches the one captured in step 1:
 
    ```sh
-   sudo age-keygen -y /var/lib/sops-nix/key.txt
-   # Should print the matching public key (age1...)
+   sudo nix shell nixpkgs#age -c age-keygen -y /var/lib/sops-nix/key.txt
+   # Should print the same age1... as step 1.
    ```
 
 5. **Enroll the public key in `.sops.yaml`.** This is covered by
@@ -238,6 +275,13 @@ NOT change. This is the common-case maintenance flow.
    nix run '.#mcp-verify-secrets' -- <host>
    ```
 
+   The verifier prompts for your sudo password once: it needs root
+   to read `/var/lib/sops-nix/key.txt` for the in-process decrypt,
+   then drops back to user privileges to query your login keychain
+   and `gh auth status`. The keychain query MUST run as your user
+   (the entries are stored under your `mcp-hub` account), and an
+   active GUI session is required so the login keychain is unlocked.
+
    This helper re-reads the now-decrypted secrets and the consumer
    surfaces (login keychain entry, gh auth status hash) and exits
    0 only when they agree. A non-zero exit means something on the
@@ -257,12 +301,18 @@ private key still exists.
 
 ### Case 1 — 1Password copy still exists
 
-This is the normal recovery path. Re-install from 1P:
+This is the normal recovery path. Re-install from 1P (note the
+`/notesPlain` field path on the URI — `op` 2.x rejects bare
+`op://Vault/Item` URIs):
 
 ```sh
-op read 'op://<vault>/sops-age-key-<host>' \
+# Pre-create parent dir if /var/lib/sops-nix is also gone (e.g.,
+# after a host wipe).
+sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix
+
+op read 'op://<vault>/sops-age-key-<host>/notesPlain' \
   | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt
-sudo head -1 /var/lib/sops-nix/key.txt   # verify AGE-SECRET-KEY- prefix
+sudo head -3 /var/lib/sops-nix/key.txt   # verify 3-line file with AGE-SECRET-KEY- on line 3
 sudo darwin-rebuild switch --flake .
 ```
 
