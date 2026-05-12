@@ -4,7 +4,7 @@
 >
 > **Operator-gated tasks** (Tasks 4 + 5) require interactive 1Password access, `sudo darwin-rebuild switch`, and a logged-in GUI session for Keychain unlock. These cannot be executed by an autonomous agent and are listed for completeness with explicit `_Boundary:_` annotations naming the operator action surface.
 
-- [ ] 1. Foundation: flake input, recipient config, operator runbook
+- [x] 1. Foundation: flake input, recipient config, operator runbook
 
 - [x] 1.1 Add sops-nix as a pinned flake input
   - Add `inputs.sops-nix` to `flake.nix` with `inputs.nixpkgs.follows = "nixpkgs"` (matches the repo's existing `home-manager` / `darwin` input pattern)
@@ -29,7 +29,7 @@
   - _Requirements: 3.4, 9.1, 9.2, 9.3, 9.4, 9.5_
   - _Boundary: secrets/README.md_
 
-- [ ] 2. Core: HM extension, helper scripts, system bridge module
+- [x] 2. Core: HM extension, helper scripts, system bridge module
 
 - [x] 2.1 (P) Extend the home-manager mcp module with the gh auth token slot
   - Add `home.mcp.ghAuthToken` option (`type = lib.types.nullOr lib.types.str; default = null`) to `home-manager/mcp/default.nix`
@@ -92,7 +92,7 @@
   - _Depends: 1.1, 2.1, 2.4_
   - _Boundary: configurations/common-darwin/mcp-sops-bridge.nix_
 
-- [ ] 3. Integration: per-host wiring + flake apps
+- [x] 3. Integration: per-host wiring + flake apps
 
 ⚠️ **Hazard window**: Once Tasks 3.1–3.4 land, every subsequent `darwin-rebuild switch` on the affected host fails until Task 4 (bootstrap) completes. The defensive guard in `mcp-secrets-activate` produces a clear "missing /run/secrets/<name>" diagnostic, but the operator must perform Task 4 in the same session — DO NOT push 3.1–3.4 to a host without committing to the bootstrap immediately afterwards.
 
