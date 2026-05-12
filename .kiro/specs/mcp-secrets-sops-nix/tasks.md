@@ -272,7 +272,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
 
 - [ ] 6. Decommissioning (Phase 2, gated by 5.1 verify exit 0 on both hosts)
 
-- [ ] 6.1 Remove the legacy mcp-sync-secrets script and reminder from the HM mcp module
+- [x] 6.1 Remove the legacy mcp-sync-secrets script and reminder from the HM mcp module
   - Delete the `mcpSyncSecretsScript` definition (the `pkgs.writeScriptBin "mcp-sync-secrets" ...` block) from `home-manager/mcp/default.nix`
   - Delete the `home.activation.mcpKeychainSecrets` activation entry (the one that prints the reminder)
   - Remove the `lib.optional (config.home.mcp.keychainSecrets != { }) mcpSyncSecretsScript` clause from `home.packages` (replace the whole `home.packages = [...] ++ lib.optional ...` expression with the static list)

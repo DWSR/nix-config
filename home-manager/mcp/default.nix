@@ -13,28 +13,16 @@ let
 
   # Generate a ${cmd:} string that reads a secret from the macOS Keychain at runtime.
   # Works in launchd environments where op CLI is not available.
+  #
+  # The Keychain entries this string reads are populated at activation time
+  # by the sops-nix bridge (see configurations/common-darwin/mcp-sops-bridge.nix
+  # and scripts/mcp-secrets-activate.nix). The legacy on-demand
+  # `mcp-sync-secrets` script that previously did the same job from
+  # 1Password directly was removed in the mcp-secrets-sops-nix spec; the
+  # consumer-facing string shape stays unchanged for backwards compatibility
+  # with existing mcphub server definitions (R7.1, R7.2).
   readKeychainSecret =
     service: "\${cmd: /usr/bin/security find-generic-password -s '${service}' -a mcp-hub -w}";
-
-  # Script that copies secrets from 1Password to the macOS Keychain
-  mcpSyncSecretsScript = pkgs.writeScriptBin "mcp-sync-secrets" (
-    ''
-      #!/bin/sh
-      set -eu
-    ''
-    + lib.concatStringsSep "\n" (
-      lib.mapAttrsToList (service: opUri: ''
-        echo "Storing keychain secret: ${service}"
-        __secret="$(${pkgs._1password-cli}/bin/op read --no-newline '${opUri}')"
-        /usr/bin/security add-generic-password -U -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db 2>/dev/null || \
-        /usr/bin/security add-generic-password -s '${service}' -a mcp-hub -w "$__secret" login.keychain-db
-        unset __secret
-      '') config.home.mcp.keychainSecrets
-    )
-    + ''
-      echo "Done. All MCP secrets synced to keychain."
-    ''
-  );
 in
 {
   options.home.mcp = {
@@ -105,8 +93,7 @@ in
         #!/bin/sh
         exec launchctl kickstart -k "gui/$(id -u)/com.ravitemer.mcp-hub"
       '')
-    ]
-    ++ lib.optional (config.home.mcp.keychainSecrets != { }) mcpSyncSecretsScript;
+    ];
 
     xdg.configFile."mcphub/servers.json" = {
       enable = true;
@@ -135,12 +122,6 @@ in
         // config.home.mcp.extraServers;
       };
     };
-
-    home.activation.mcpKeychainSecrets = lib.mkIf (config.home.mcp.keychainSecrets != { }) (
-      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        echo "MCP secrets may need refreshing. Run 'mcp-sync-secrets' if MCP servers fail to authenticate."
-      ''
-    );
 
     launchd.agents.mcp-hub = {
       enable = true;
