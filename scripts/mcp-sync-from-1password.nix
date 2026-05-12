@@ -110,15 +110,21 @@ pkgs.writeShellApplication {
     tmpfile="$tmpdir/mcp.$HOST.yaml"
 
     # Read declared secret list from the host's darwinConfiguration.
+    # Stderr is routed to a sibling tempfile rather than captured into the
+    # JSON variable: `nix eval` emits non-fatal warnings (e.g. "Git tree
+    # has uncommitted changes") on stderr, and concatenating those into
+    # the JSON would break downstream jq parsing. The tempfile is read
+    # only on failure to surface the actual eval error to the operator.
     HM_PATH=".#darwinConfigurations.$DARWIN_HOST.config.home-manager.users.$USERNAME.home.mcp"
-    if ! KEYCHAIN_JSON="$(nix eval --json "$HM_PATH.keychainSecrets" 2>&1)"; then
+    eval_err="$tmpdir/eval-err"
+    if ! KEYCHAIN_JSON="$(nix eval --json "$HM_PATH.keychainSecrets" 2>"$eval_err")"; then
       echo "mcp-sync-from-1password: error: failed to evaluate $HM_PATH.keychainSecrets" >&2
-      printf '  %s\n' "$KEYCHAIN_JSON" >&2
+      [ -s "$eval_err" ] && sed 's/^/  /' "$eval_err" >&2
       exit 1
     fi
-    if ! GH_URI_JSON="$(nix eval --json "$HM_PATH.ghAuthToken" 2>&1)"; then
+    if ! GH_URI_JSON="$(nix eval --json "$HM_PATH.ghAuthToken" 2>"$eval_err")"; then
       echo "mcp-sync-from-1password: error: failed to evaluate $HM_PATH.ghAuthToken" >&2
-      printf '  %s\n' "$GH_URI_JSON" >&2
+      [ -s "$eval_err" ] && sed 's/^/  /' "$eval_err" >&2
       exit 1
     fi
 
