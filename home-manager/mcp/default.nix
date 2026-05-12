@@ -16,11 +16,9 @@ let
   #
   # The Keychain entries this string reads are populated at activation time
   # by the sops-nix bridge (see configurations/common-darwin/mcp-sops-bridge.nix
-  # and scripts/mcp-secrets-activate.nix). The legacy on-demand
-  # `mcp-sync-secrets` script that previously did the same job from
-  # 1Password directly was removed in the mcp-secrets-sops-nix spec; the
-  # consumer-facing string shape stays unchanged for backwards compatibility
-  # with existing mcphub server definitions (R7.1, R7.2).
+  # and scripts/mcp-secrets-activate.nix). The string shape is preserved
+  # verbatim from the prior implementation so existing mcphub server
+  # definitions don't need to change (R7.1, R7.2).
   readKeychainSecret =
     service: "\${cmd: /usr/bin/security find-generic-password -s '${service}' -a mcp-hub -w}";
 in

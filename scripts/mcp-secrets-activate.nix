@@ -40,10 +40,10 @@
 # sees per-entry activity in the `darwin-rebuild` activation log.
 #
 # Secret-value-on-argv caveat: `security add-generic-password -w "$value"`
-# briefly exposes the secret in `ps`. The legacy `mcp-sync-secrets`
-# script does the same; the design accepts this risk because (a) the
-# host is trusted, (b) the alternative `-w` (prompt for password) is
-# not scriptable, and (c) the window is sub-second.
+# briefly exposes the secret in `ps`. The design accepts this risk
+# because (a) the host is trusted, (b) the alternative `-w` form
+# (prompt for password) is not scriptable, and (c) the window is
+# sub-second.
 pkgs.writeShellApplication {
   name = "mcp-secrets-activate";
   runtimeInputs = with pkgs; [

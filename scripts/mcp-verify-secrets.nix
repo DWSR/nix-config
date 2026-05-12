@@ -2,12 +2,15 @@
 # mcp-verify-secrets: confirm a host's macOS Keychain entries match the
 # encrypted yaml store under `secrets/mcp.<host>.yaml`.
 #
-# This tool is the R8.1 verification gate that authorises the R8.2
-# decommissioning of the legacy `mcp-sync-secrets` activation bridge.
-# Exit 0 against a freshly-activated host means every declared MCP
-# secret in the encrypted yaml is value-identical to the corresponding
-# `mcp-hub`-account login Keychain entry, and (if declared) the `gh` CLI
-# is authenticated against github.com.
+# Parity check between the on-disk encrypted secrets store and the
+# consumer surfaces (login keychain, gh auth state). Exit 0 against a
+# freshly-activated host means every declared MCP secret in the
+# encrypted yaml is value-identical to the corresponding `mcp-hub`-
+# account login Keychain entry, and (if declared) the `gh` CLI is
+# authenticated against github.com. Originally introduced as the R8.1
+# verification gate authorising R8.2 decommissioning; now serves the
+# same role for ongoing rotation verification (see secrets/README.md
+# Rotation step 5).
 #
 # Decryption happens in memory: `sops -d --output-type json` streams the
 # decrypted yaml as JSON to stdout, jq splits it into TSV `(key, value)`

@@ -270,7 +270,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 3.5, 4.4_
   - _Boundary: validation only_
 
-- [ ] 6. Decommissioning (Phase 2, gated by 5.1 verify exit 0 on both hosts)
+- [x] 6. Decommissioning (Phase 2, gated by 5.1 verify exit 0 on both hosts)
 
 - [x] 6.1 Remove the legacy mcp-sync-secrets script and reminder from the HM mcp module
   - Delete the `mcpSyncSecretsScript` definition (the `pkgs.writeScriptBin "mcp-sync-secrets" ...` block) from `home-manager/mcp/default.nix`
@@ -283,7 +283,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 5.1_
   - _Boundary: home-manager/mcp/default.nix_
 
-- [ ] 6.2 Audit and remove lingering legacy references
+- [x] 6.2 Audit and remove lingering legacy references
   - Run `git grep -E 'mcp-sync-secrets|mcpSyncSecretsScript|mcpKeychainSecrets'` across the entire repo (excluding `.kiro/specs/` which preserves spec history)
   - Update any `AGENTS.md`, `home-manager/common/agents.md`, `agents-cc-sdd.md`, README, or steering files that mention the legacy script — replace with references to the new pipeline (`darwin-rebuild switch` + `mcp-sync-from-1password` for rotation)
   - Observable completion: `git grep -E 'mcp-sync-secrets|mcpSyncSecretsScript' -- ':!.kiro/specs/'` returns no matches
