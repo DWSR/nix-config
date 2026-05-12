@@ -135,11 +135,11 @@
   - _Depends: 1.1, 2.2, 2.3_
   - _Boundary: flake.nix_
 
-- [ ] 4. Operator Bootstrap (manual, gated by Phase 1 land)
+- [x] 4. Operator Bootstrap (manual, gated by Phase 1 land)
 
 These tasks require interactive 1Password access and `sudo`; an autonomous agent cannot execute them. Tasks 4.1–4.5 must complete on each host before that host's first post-Phase-3 `darwin-rebuild switch` succeeds.
 
-- [ ] 4.1 Generate per-host age keys and store in 1Password
+- [x] 4.1 Generate per-host age keys and store in 1Password
   - On each host (or in any local environment with `op` access): `age-keygen -o /tmp/<host>-age-key.txt` (use a path inside the OS user's home or `mktemp`; do NOT commit)
   - Store the private key in 1P at: ShopifyLaptop → `op://Employee/sops-age-key-shopify`, Brandons-MacBook-Pro → `op://Private/sops-age-key-personal`
   - Capture the public recipient (`age-keygen -y` against the private key file) — needed for Task 4.3
@@ -148,7 +148,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Requirements: 3.1, 3.2_
   - _Boundary: 1Password vault (operator action)_
 
-- [ ] 4.2 Install the age key on each host at the canonical location
+- [x] 4.2 Install the age key on each host at the canonical location
   - On each host: `op read 'op://<vault>/sops-age-key-<host>' | sudo install -m 0600 -o root /dev/stdin /var/lib/sops-nix/key.txt`
   - Verify: `sudo head -1 /var/lib/sops-nix/key.txt` returns `AGE-SECRET-KEY-...`
   - Observable completion: `/var/lib/sops-nix/key.txt` exists with mode `0600` owned by root on both hosts
@@ -156,7 +156,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Depends: 4.1_
   - _Boundary: each host filesystem (operator action)_
 
-- [ ] 4.3 Update `.sops.yaml` with the real per-host age recipients
+- [x] 4.3 Update `.sops.yaml` with the real per-host age recipients
   - Replace the `age1placeholder...` strings in `.sops.yaml` with the real public recipients captured in Task 4.1
   - Commit the updated `.sops.yaml`
   - Observable completion: `grep -E 'age1[a-z0-9]{50,}' .sops.yaml` returns two matches (one per host) and zero placeholder strings remain
@@ -164,7 +164,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Depends: 4.2_
   - _Boundary: .sops.yaml_
 
-- [ ] 4.4 Initial sync from 1Password to encrypted yaml on each host
+- [x] 4.4 Initial sync from 1Password to encrypted yaml on each host
   - On each host (in the repo working tree): `nix run '.#mcp-sync-from-1password' -- shopify` (and `... -- personal` on the corresponding host)
   - Confirm `secrets/mcp.<host>.yaml` is created and decrypts cleanly: `sops -d secrets/mcp.<host>.yaml | head -1` returns the first declared secret
   - Commit both encrypted yamls
@@ -173,7 +173,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Depends: 3.1, 3.2, 3.5, 4.3_
   - _Boundary: secrets/_
 
-- [ ] 4.5 Initial activation on each host
+- [x] 4.5 Initial activation on each host
   - On each host: `sudo darwin-rebuild switch --flake .`
   - Verify activation populated the Keychain: `security find-generic-password -s mcp-github-token -a mcp-hub` returns a populated entry
   - Verify activation populated gh auth: `gh auth status` shows logged in to github.com as the maintainer
@@ -305,3 +305,8 @@ Cross-cutting insights surfaced during execution that may affect downstream task
 - **Task 3.1 remediation**: Original Task 2.5 design (D3) claimed bridge owning the `inputs.sops-nix.darwinModules.default` import would guarantee sops-nix's `mkAfter installScript` runs before the bridge's own `mkAfter`. **This is empirically wrong on this nix-darwin/module-system version**: the imported module is evaluated AFTER the importer in module merge order, putting sops-nix's `mkAfter` later in the merge chain at the same priority. Fix: replaced bridge's `lib.mkAfter` with `lib.mkOrder 9999` to force strictly-later ordering. nix-darwin does NOT support `system.activationScripts.<name>.deps` for custom names (silently no-ops). Documented at `configurations/common-darwin/mcp-sops-bridge.nix:9-53` and in vault memory `2026-05-11-nix-darwin-activation-script-ordering.md`. Design.md D3 should be updated in a follow-up.
 - **Task 3.1 placeholder convention**: `secrets/mcp.shopify.yaml` exists as a one-line placeholder so `sops.defaultSopsFile = ../../secrets/mcp.shopify.yaml` resolves at module-eval. To suppress sops-nix's build-time validation against the empty placeholder (which would fail because no keys match the declared `sops.secrets.<name>`), per-host configs set `sops.validateSopsFiles = false` with a `# TODO: remove once Task 4.4 produces the real encrypted yaml` marker. Activation-time validation still runs (`sops-install-secrets` is invoked without `-check-mode`), so missing/unreadable keys at switch time will surface clearly.
 - **Task 3.5 allowUnfree**: `nixpkgs.legacyPackages.<system>` (the default `pkgs` for flake-app context) ships with the upstream config that disallows unfree licenses. `pkgs._1password-cli` is unfree, so importing the sync-tool's derivation through `legacyPackages` failed eval with `Package '1password-cli-2.32.0' has an unfree license`. The `darwinConfigurations` already enable `nixpkgs.config.allowUnfree = true` via `configurations/common-darwin/default.nix`, but flake-app context must opt in separately. Fixed by switching the apps block to `pkgs = import nixpkgs { inherit system; config.allowUnfree = true; }`. Existing `bump-shopify-taps` app continues to work under the same pkgs set.
+- **Task 4.1 op CLI 2.x URI quirk**: `op read 'op://Vault/Item'` (no field path) used to resolve to the `notesPlain` field of a Secure Note; op CLI 2.x rejects this with `invalid secret reference 'op://Vault/Item': too few '/'`. The corrected form is `op read 'op://Vault/Item/notesPlain'`. The runbook (`secrets/README.md`) bootstrap step 3, recovery section, and Task 4.2 task description all use the bare-form URI and need the `/notesPlain` suffix in a follow-up doc fix-up commit.
+- **Task 4.2 install warning**: `op read 'op://...' | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt` emits a benign `install: /dev/stdin: file changed before being copied` warning. coreutils `install` `fstat`s `/dev/stdin` twice and the reported size differs (0 before read vs actual after) because the source is a pipe. The file content IS correct; round-trip via `nix shell nixpkgs#age -c age-keygen -y /var/lib/sops-nix/key.txt` should still derive the matching public key. Worth documenting in `secrets/README.md` Bootstrap step 3.
+- **Task 4.2 parent dir pre-create**: `/var/lib/sops-nix` is NOT auto-created by sops-nix on first activation when the operator installs the key file BEFORE the first `darwin-rebuild switch` (the standard bootstrap sequence). Operator must `sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix` first. The runbook mentions this as conditional ("if it does not yet exist") but it's the always-case on first bootstrap.
+- **Task 4.5 sops-nix gnupg.sshKeyPaths**: sops-nix has TWO ssh-key probe paths, not one. `sops.age.sshKeyPaths` (default `["/etc/ssh/ssh_host_ed25519_key"]`) was already disabled in the bridge module. `sops.gnupg.sshKeyPaths` (default `["/etc/ssh/ssh_host_rsa_key"]`) was missed. Both must be `[]` to silence the `Cannot read ssh key '/etc/ssh/ssh_host_rsa_key'` warning on macOS hosts that don't run sshd. Fixed in `mcp-sops-bridge.nix` (commit `4cabdb8`). Worth flagging in design D3 if updating.
+- **Task 4.5 mcp-verify-secrets sudo dependency**: The verifier as originally shipped called `sops -d` directly without setting `SOPS_AGE_KEY_FILE`, relying on operator-set env or `~/.config/sops/age/keys.txt` fallback — neither exists by default after sops-nix bootstrap. The runbook documents `nix run '.#mcp-verify-secrets' -- <host>` as a one-shot but it never worked as written. Fixed in commit `a73fd41` to shell out to `sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt ${sopsBin} -d ...` for the one decrypt call. The absolute store path is required because sudo strips PATH by default. Operator UX cost: one sudo prompt per invocation. Worth documenting in `secrets/README.md` Rotation section step 5.
