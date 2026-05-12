@@ -24,6 +24,22 @@
 # `errSecInteractionNotAllowed` and entries that DO exist will surface
 # as MISSING. Run from a logged-in GUI shell (Terminal.app / iTerm.app)
 # to get truthful results.
+#
+# Privilege model: the per-host age key at `/var/lib/sops-nix/key.txt`
+# is mode 0600 root-owned (sops-nix install convention), but the user's
+# login keychain is per-user. The verifier therefore runs the ONE sops
+# decrypt call under `sudo` (with the absolute store path to sops to
+# survive sudo's PATH reset and an explicit `SOPS_AGE_KEY_FILE`), and
+# runs every other step (keychain queries, gh status) as the invoking
+# user. This means the operator may be prompted for their sudo password
+# once per invocation.
+let
+  # Bound at build time so the absolute store path survives sudo's
+  # default PATH reset. Re-resolving via `command -v sops` after sudo
+  # reset would fail because root's PATH doesn't include the user's
+  # nix profile bin dir.
+  sopsBin = "${pkgs.sops}/bin/sops";
+in
 pkgs.writeShellApplication {
   name = "mcp-verify-secrets";
   runtimeInputs = with pkgs; [
@@ -83,10 +99,19 @@ pkgs.writeShellApplication {
 
     # Decrypt host yaml in memory; pipe to jq to extract every (key, value)
     # pair as TSV. The 'sops' top-level key holds metadata and is excluded.
-    if ! declared_pairs="$(sops -d --output-type json "$SECRETS_FILE" 2>/dev/null \
+    #
+    # The decrypt is the ONE step that requires root (to read the age key
+    # at /var/lib/sops-nix/key.txt). We invoke sops via sudo with the
+    # absolute store path (sudo strips PATH by default, so
+    # `command -v sops` after sudo would fail to find the nix-profile
+    # binary) and an explicit SOPS_AGE_KEY_FILE. Operator may be
+    # prompted for sudo password once per invocation.
+    if ! declared_pairs="$(sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+        ${sopsBin} -d --output-type json "$SECRETS_FILE" 2>/dev/null \
         | jq -r 'to_entries[] | select(.key != "sops") | "\(.key)\t\(.value)"')"; then
       echo "mcp-verify-secrets: error: failed to decrypt $SECRETS_FILE" >&2
       echo "  is /var/lib/sops-nix/key.txt present and valid for this host?" >&2
+      echo "  (sudo may have been required and not granted)" >&2
       exit 2
     fi
 
