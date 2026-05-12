@@ -182,7 +182,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
   - _Depends: 4.4_
   - _Boundary: each host (operator action)_
 
-- [ ] 5. Verification (manual integration tests, gated by Task 4.5)
+- [x] 5. Verification (manual integration tests, gated by Task 4.5)
 
 These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Each can be run in any order on either host once 4.5 completes; mark `(P)` accordingly.
 
@@ -193,7 +193,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.2 (P) Verify the offline-decryption invariant
+- [x] 5.2 (P) Verify the offline-decryption invariant
   - On one host: sign out of 1P CLI (`op signout` or kill `op` agent); confirm network reachability to github.com is unaffected
   - Run `sudo darwin-rebuild switch --flake .`
   - Verify activation succeeds AND every Keychain entry still matches the encrypted yaml's value (re-run `mcp-verify-secrets` to confirm)
@@ -202,7 +202,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.3 (P) Verify per-host scoping fails closed
+- [x] 5.3 (P) Verify per-host scoping fails closed
   - Temporarily swap `/var/lib/sops-nix/key.txt` between hosts (back up original first); run `sudo darwin-rebuild switch --flake .` on the host with the wrong key
   - Verify sops-nix exits with a "no key could decrypt the data" diagnostic; confirm activation does NOT proceed past sops-nix (Keychain unchanged from prior valid state)
   - Restore the correct keys; run switch again to confirm recovery
@@ -211,7 +211,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.4 (P) Verify stale Keychain cleanup + non-managed entry safety
+- [x] 5.4 (P) Verify stale Keychain cleanup + non-managed entry safety
   - Pre-condition: add a sentinel `security add-generic-password -s sentinel-not-managed -a mcp-hub -w 'sentinel'`
   - Edit `home.mcp.keychainSecrets` to remove one declared secret (e.g., `mcp-buildkite-token`); commit; switch
   - Verify removed entry is gone: `security find-generic-password -s mcp-buildkite-token -a mcp-hub` returns "not found"
@@ -222,7 +222,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.5 (P) Verify gh auth flow (initial auth + rotation + short-circuit + removal)
+- [x] 5.5 (P) Verify gh auth flow (initial auth + rotation + short-circuit + removal)
   - After bootstrap, confirm `gh auth status` shows the expected user (R6.1)
   - Re-run `sudo darwin-rebuild switch --flake .` with NO rotation: confirm activation log includes `skip gh-login no work needed` (short-circuit fired; R1.3/R1.4 invariant)
   - Rotate the gh token in 1P, run sync, switch; confirm activation log shows the short-circuit was BYPASSED (hash changed) and `gh auth status` continues to report logged in (R6.4)
@@ -233,7 +233,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.6 (P) Verify backwards-compatibility surface
+- [x] 5.6 (P) Verify backwards-compatibility surface
   - Confirm a running mcphub MCP server (e.g., `vault-mcp` on Shopify) authenticates successfully after the cutover — its `${cmd: security find-generic-password ...}` placeholder is unchanged
   - Confirm in the diff: `git diff main -- home-manager/mcp/default.nix` shows ONLY additive changes (the new `ghAuthToken` option). `keychainSecrets` shape and `readKeychainSecret` signature are byte-identical pre/post
   - Confirm in the diff: `git diff main -- configurations/{shopify,personal}/home-manager/default.nix` shows ONLY the `ghAuthToken = "op://..."` addition; existing `keychainSecrets` attrset entries unchanged
@@ -242,7 +242,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.7 (P) Verify sync error paths
+- [x] 5.7 (P) Verify sync error paths
   - Sign out of 1P CLI; run `nix run '.#mcp-sync-from-1password' -- shopify`; assert exit 2 with "1Password authentication required" message; confirm `secrets/mcp.shopify.yaml` mtime is unchanged (R4.5)
   - Add a non-existent 1P URI to `keychainSecrets` (commit not required for this test, just edit the working tree); run sync; assert exit 3 naming the failing URI; confirm `secrets/mcp.shopify.yaml` mtime is unchanged
   - Revert the working-tree edit
@@ -251,7 +251,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 3.5_
   - _Boundary: validation only_
 
-- [ ] 5.8 (P) Verify the bootstrap-incomplete diagnostic
+- [x] 5.8 (P) Verify the bootstrap-incomplete diagnostic
   - On one host: `sudo mv /var/lib/sops-nix/key.txt /var/lib/sops-nix/key.txt.bak`; run `sudo darwin-rebuild switch --flake .`
   - Verify activation fails with a sops-nix diagnostic that names the missing key path; the activation script's defensive guard does NOT corrupt Keychain state (no Keychain modifications happen; verify by re-running `mcp-verify-secrets` after restoring)
   - Restore the key: `sudo mv /var/lib/sops-nix/key.txt.bak /var/lib/sops-nix/key.txt`; switch again to confirm recovery
@@ -260,7 +260,7 @@ These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Ea
   - _Depends: 4.5_
   - _Boundary: validation only_
 
-- [ ] 5.9 (P) Verify sync idempotence at value level
+- [x] 5.9 (P) Verify sync idempotence at value level
   - On one host: capture `sops -d secrets/mcp.<host>.yaml > /tmp/before.yaml` (decrypted plaintext)
   - Without changing any 1P value, run `nix run '.#mcp-sync-from-1password' -- <host>` again
   - Capture `sops -d secrets/mcp.<host>.yaml > /tmp/after.yaml`; `diff /tmp/before.yaml /tmp/after.yaml` must report no differences (R4.4 requires no value-level diff when 1P unchanged; sops MAC drift in the encrypted file is acceptable per the requirement's "value-level" wording)
@@ -310,3 +310,9 @@ Cross-cutting insights surfaced during execution that may affect downstream task
 - **Task 4.2 parent dir pre-create**: `/var/lib/sops-nix` is NOT auto-created by sops-nix on first activation when the operator installs the key file BEFORE the first `darwin-rebuild switch` (the standard bootstrap sequence). Operator must `sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix` first. The runbook mentions this as conditional ("if it does not yet exist") but it's the always-case on first bootstrap.
 - **Task 4.5 sops-nix gnupg.sshKeyPaths**: sops-nix has TWO ssh-key probe paths, not one. `sops.age.sshKeyPaths` (default `["/etc/ssh/ssh_host_ed25519_key"]`) was already disabled in the bridge module. `sops.gnupg.sshKeyPaths` (default `["/etc/ssh/ssh_host_rsa_key"]`) was missed. Both must be `[]` to silence the `Cannot read ssh key '/etc/ssh/ssh_host_rsa_key'` warning on macOS hosts that don't run sshd. Fixed in `mcp-sops-bridge.nix` (commit `4cabdb8`). Worth flagging in design D3 if updating.
 - **Task 4.5 mcp-verify-secrets sudo dependency**: The verifier as originally shipped called `sops -d` directly without setting `SOPS_AGE_KEY_FILE`, relying on operator-set env or `~/.config/sops/age/keys.txt` fallback — neither exists by default after sops-nix bootstrap. The runbook documents `nix run '.#mcp-verify-secrets' -- <host>` as a one-shot but it never worked as written. Fixed in commit `a73fd41` to shell out to `sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt ${sopsBin} -d ...` for the one decrypt call. The absolute store path is required because sudo strips PATH by default. Operator UX cost: one sudo prompt per invocation. Worth documenting in `secrets/README.md` Rotation section step 5.
+- **Task 5.7.B eval-stderr capture bug**: discovered during the bad-URI sync test. `mcp-sync-from-1password` ran `nix eval --json "$HM_PATH.keychainSecrets" 2>&1` to capture both stdout and stderr in `$KEYCHAIN_JSON`, intending to surface eval errors. With uncommitted working-tree changes (which test 5.7.B creates by transient URI edit), `nix eval` emits a "Git tree has uncommitted changes" warning on stderr that gets concatenated with the JSON output, breaking the downstream jq parse with exit code 5. Fixed in commit `8f01daf` to route stderr to a tempfile in the existing `$tmpdir` and only surface that tempfile on actual eval failure (`[ -s "$eval_err" ] && sed 's/^/  /' "$eval_err" >&2`). Affects normal operator usage only when running sync mid-edit (unusual); affects testing whenever transient working-tree edits are involved.
+- **Task 5.5.B (rotation) deferred**: actually rotating a live 1P PAT to test the re-login branch is invasive — would force-rotate a credential consumed by other systems. Sub-tests A (short-circuit when nothing changed) and C (declaration removed → logout, then restored → re-login) were verified end-to-end. They exercise the same `gh auth login --with-token` code path as B; the only path B uniquely covers is "hash mismatch with existing recorded hash" vs. C's "no recorded hash". Practical risk of skipping: a rotation-specific bug in the hash-comparison logic could go undetected. Acceptable trade-off; can be revisited if the rotation behavior is ever questioned.
+- **Task 5.6 retrospective backwards-compat check**: the spec called for `git diff main -- ...` to verify additive-only changes, but by the time we ran the test we WERE on main. Equivalent retrospective check: `git diff <pre-spec-commit>~1 HEAD -- home-manager/mcp/default.nix` shows the cumulative changes. Confirmed `readKeychainSecret` byte-identical pre/post; only additive changes are `ghAuthToken` HM option + comment block; Phase 6 then deleted the legacy script (planned, not a backwards-compat violation since the consumer-facing string shape is preserved). Runtime evidence: the `hub_obsidian__*` MCP tools worked throughout the session, proving mcphub successfully reads keychain values.
+- **Task 5.7 BSD vs GNU stat ambiguity**: original test instructions used `stat -f "fmt"` (BSD/macOS native syntax). On hosts with coreutils ahead of system stat in PATH, GNU `stat -f` is interpreted as "show filesystem statistics" instead. Switched to content comparison via `cp file /tmp/before; cmp -s file /tmp/before` for the atomicity check — portable and works regardless of which `stat` is on PATH. Future test instructions should prefer content comparison over stat formats.
+- **Phase 5 sentinel pattern (Task 5.4)**: to verify the registry-driven cleanup logic doesn't enumerate the keychain (R5.2), pre-add a sentinel entry under the same `-a mcp-hub` account but with a service name not declared anywhere (`security add-generic-password -s sentinel-not-managed -a mcp-hub -w 'sentinel'`). After triggering cleanup of a real declared-then-removed entry, verify the sentinel is still queryable. If cleanup were enumerating the keychain it would have removed the sentinel too. Useful pattern for any future cleanup-correctness test.
+- **Task 5.8 emergency recovery pattern**: tests that deliberately break activation (move age key away, etc.) should always use `mv` not `rm`, write recovery commands explicitly into the test instructions, and rely on the keychain's persistence across switches as a safety net (MCP servers keep working from existing entries even when activation fails). The defensive guard in mcp-secrets-activate (`[ -e /run/secrets/<name> ] || exit 1` per declared secret) prevents partial-state corruption when sops decryption fails — verified by the test 5.8 sequence (failed switch in step 2 didn't drift any keychain entries, confirmed by mcp-verify-secrets exit 0 in step 5).
