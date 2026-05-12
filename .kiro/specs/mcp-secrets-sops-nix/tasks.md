@@ -186,7 +186,7 @@ These tasks require interactive 1Password access and `sudo`; an autonomous agent
 
 These tests prove the end-to-end invariants and gate Phase 2 decommissioning. Each can be run in any order on either host once 4.5 completes; mark `(P)` accordingly.
 
-- [ ] 5.1 (P) Verify the parity gate
+- [x] 5.1 (P) Verify the parity gate
   - Run `nix run '.#mcp-verify-secrets' -- shopify` and `... -- personal`; both must exit 0 (this is the R8.1 hard gate that authorizes Task 6 decommissioning)
   - Observable completion: both invocations print one MATCH line per declared secret + a MATCH for gh-token (if declared) and exit 0
   - _Requirements: 8.1_
