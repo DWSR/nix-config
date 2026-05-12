@@ -472,14 +472,15 @@ sequenceDiagram
 | Requirements | 1.1, 1.3, 2.1–2.4, 5.1, 5.2, 6.2, 7.3 |
 
 **Responsibilities & Constraints**
-- **Owns the sops-nix import.** The bridge module's own `imports = [ inputs.sops-nix.darwinModules.default ]` brings sops-nix into the system layer. Per-host `default.nix` files import ONLY this bridge module — they do NOT separately import sops-nix. This guarantees module-evaluation order: sops-nix's options + activation hook are merged before the bridge's `mkAfter` block runs, so the bridge's activation script is text-concatenated AFTER sops-nix's `installScript` within the shared `system.activationScripts.postActivation.text`. (nix-darwin activation lacks a DAG primitive on Darwin; this import-ownership pattern is the documented way to control ordering deterministically.)
+- **Owns the sops-nix import.** The bridge module's own `imports = [ inputs.sops-nix.darwinModules.default ]` brings sops-nix into the system layer. Per-host `default.nix` files import ONLY this bridge module — they do NOT separately import sops-nix. This keeps the sops-nix option declarations on the merged-config graph before this module's `config = { sops = ...; }` block reads them, which is the option-merge half of the ordering story. (See the Update note below for the activation-text ordering half, which the original design got wrong.)
+- **Update (Task 3.1 remediation):** the original design claimed import-placement also guarantees the bridge's `mkAfter` block runs AFTER sops-nix's `mkAfter installScript` within the merged `postActivation.text`. **This is empirically wrong on this nix-darwin/module-system version**: two `mkAfter` fragments at the same priority (1500) have undefined relative order, and on this version the bridge's fragment landed FIRST, causing `mcp-secrets-activate` to run BEFORE `sops-install-secrets` had populated `/run/secrets/<name>`. The activation guard then exited 1 every switch (R6.1 regression). Fix: bridge uses `lib.mkOrder 9999` for its fragment so it sorts strictly after sops-nix's `mkAfter` (1500). nix-darwin does NOT support `system.activationScripts.<name>.deps` for custom names (silently no-ops). Documented at `configurations/common-darwin/mcp-sops-bridge.nix:9-53`.
 - Reads `config.home-manager.users.${username}.home.mcp.{keychainSecrets, ghAuthToken}` to enumerate which sops secrets to declare
 - Sets `sops.age.keyFile = "/var/lib/sops-nix/key.txt"` (absolute path; default is null on Darwin)
-- Sets `sops.age.sshKeyPaths = []` to disable the SSH-host-key derivation path (confirmed not present on at least ShopifyLaptop)
+- Sets BOTH `sops.age.sshKeyPaths = []` AND `sops.gnupg.sshKeyPaths = []` to silence the SSH-host-key derivation probes. **Update (Task 4.5 fix):** the original design only set `age.sshKeyPaths`, missing the parallel `gnupg.sshKeyPaths` (default `["/etc/ssh/ssh_host_rsa_key"]`). On macOS hosts that don't run sshd, the GPG path probe emits a `Cannot read ssh key '/etc/ssh/ssh_host_rsa_key'` warning at every activation even when no GPG decryption is in use. Both probes are guarded by `len(manifest.SSHKeyPaths) != 0` and `len(manifest.AgeSSHKeyPaths) != 0` respectively in `sops-install-secrets/main.go`.
 - Generates `sops.secrets.<name>` declarations for each `keychainSecrets` key + (if non-null) `gh-token`
 - Sets each secret's `sopsFile` from the host's `sops.defaultSopsFile` (set by per-host `default.nix`)
-- Adds activation script invocation via `system.activationScripts.postActivation.text = lib.mkAfter "..."`; script body is `${pkgs.mcp-secrets-activate}/bin/mcp-secrets-activate "$USERNAME" ${manifestPath}`
-- Defensive guard inside the activation script (`[ -e /run/secrets/<name> ] || exit 1`) catches any future ordering regression with a clear diagnostic instead of corrupting Keychain state
+- Adds activation script invocation via `system.activationScripts.postActivation.text = lib.mkOrder 9999 "..."`; script body is `${pkgs.mcp-secrets-activate}/bin/mcp-secrets-activate "$USERNAME" ${manifestPath}`. (Original design said `lib.mkAfter`; see Update note above for why this changed.)
+- Defensive guard inside the activation script (`[ -e /run/secrets/<name> ] || exit 1`) catches any future ordering regression with a clear diagnostic instead of corrupting Keychain state. With the `mkOrder 9999` fix the guard now defends against future regressions instead of being load-bearing for steady-state behavior.
 - Read-only against HM config — does NOT redefine `home.mcp.keychainSecrets` (would cause module-merge error)
 
 **Dependencies**
@@ -863,5 +864,11 @@ Detailed sops-nix Darwin-module internals, gh CLI hosts.yml schema notes, activa
 - `.kiro/specs/mcp-secrets-sops-nix/research.md` — gap analysis with requirement-to-asset map and synthesis
 - `.kiro/specs/mcp-secrets-sops-nix/research-q1-q10-findings.md` — citation-backed answers to the 10 design-phase technical questions
 - `.kiro/specs/mcp-secrets-sops-nix/brief.md` — discovery context, decisions register, boundary candidates
-- Vault memories: `2026-04-17-cc-sdd-framework.md` (unrelated but loaded prior session), `2026-05-10-cc-sdd-integration-plan.md` (planning-pattern reference)
+- `.kiro/specs/mcp-secrets-sops-nix/tasks.md` Implementation Notes section — cross-cutting insights surfaced during execution
+- Vault memories:
+  - `2026-04-17-cc-sdd-framework.md` (unrelated but loaded prior session)
+  - `2026-05-10-cc-sdd-integration-plan.md` (planning-pattern reference)
+  - `2026-05-11-nix-darwin-activation-script-ordering.md` — the `lib.mkOrder 9999` finding that drove the D3 update above
+  - `2026-05-11-sops-nix-darwin-bootstrap-gotchas.md` — the five non-obvious bootstrap gotchas surfaced during Phase 4 walkthrough (op CLI URI quirk, gnupg.sshKeyPaths probe, install /dev/stdin warning, parent dir pre-create, mcp-verify-secrets sudo dependency)
+  - `2026-05-11-mcp-secrets-sops-nix-complete.md` — completion summary across both sessions
 - Upstream: `Mic92/sops-nix/modules/nix-darwin/default.nix` (Darwin secretType source of truth)
