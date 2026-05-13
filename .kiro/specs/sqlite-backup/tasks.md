@@ -135,7 +135,7 @@
   - _Boundary: System Verify Module_
   - _Depends: 2.3_
 
-- [ ] 5.2 System activation wiring at mkOrder 10000
+- [x] 5.2 System activation wiring at mkOrder 10000
   - In `configurations/common-darwin/sqlite-backup-verify.nix`, hook into `system.activationScripts.postActivation.text` at `lib.mkOrder 10000` (strictly after `mcp-secrets-activate` at 9999).
   - Read `cfg = config.home-manager.users.${username}.home.sqliteBackup`; conditionally invoke verification only when `cfg.enable && (length cfg.databases > 0)` (R17.6 dormant exemption).
   - Invocation pattern: `launchctl asuser $(id -u ${username}) sudo -u ${username} --set-home ${verifyScript}/bin/sqlite-backup-verify-rclone-config ${cfg._manifestPath}` (mirrors HM's nix-darwin activation pattern).

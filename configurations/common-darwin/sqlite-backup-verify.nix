@@ -1,24 +1,43 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  username,
+  ...
+}:
 # sqlite-backup-verify: nix-darwin SYSTEM module that owns the
 # activation-time verification of the operator's encrypted rclone
 # configuration against the SQLite Backup module's Nix-declared
 # destinations (R17.1 – R17.5).
 #
-# Task 5.1 (THIS FILE, INITIAL FORM) declares only the verification
-# `pkgs.writeShellApplication` derivation. The activation wiring
-# (`system.activationScripts.postActivation.text` at `lib.mkOrder
-# 10000`, gated on `cfg.enable && length cfg.databases > 0` per the
-# R17.6 dormant exemption) is added by Task 5.2 in the same file.
+# Two halves of this module:
 #
-# The script runs as the operator (Task 5.2 invokes it via
-# `launchctl asuser $(id -u <user>) sudo -u <user> --set-home`) so
-# that `/usr/bin/security find-generic-password -a mcp-hub` reads
-# from the correct user-scoped Keychain. It is pure-read: no
-# Keychain mutation, no rclone config rewrite, no remote I/O beyond
-# `rclone config encryption check` (which only decrypts in memory)
-# and `rclone listremotes --long --json` (which enumerates the
-# operator's already-configured remote names + types from the
-# decrypted config — no network calls to the remotes themselves).
+# 1. `verifyScript` (`pkgs.writeShellApplication`, defined in the
+#    `let` block below) — Task 5.1: declares the verification
+#    program. Pure-read against the operator's environment: no
+#    Keychain mutation, no rclone config rewrite, no remote I/O
+#    beyond `rclone config encryption check` (in-memory decrypt) and
+#    `rclone listremotes --long --json` (config enumeration only —
+#    no calls to the remote endpoints themselves).
+#
+# 2. `system.activationScripts.postActivation.text` at
+#    `lib.mkOrder 10000` (THIS BLOCK, Task 5.2) — the eval-time
+#    conditional gate + invocation. Strictly later than
+#    `mcp-sops-bridge`'s `lib.mkOrder 9999`, guaranteeing the
+#    Keychain entries this script reads have already been populated
+#    by the bridge's `security add-generic-password` calls earlier
+#    in the same `postActivation` fragment.
+#
+# The script is invoked via `launchctl asuser $(id -u <user>) sudo
+# -u <user> --set-home` so it runs in the operator's launchd domain.
+# This mirrors home-manager's own nix-darwin activation pattern
+# (`nix-darwin/default.nix:27-37` in the home-manager flake) and is
+# necessary because `/usr/bin/security find-generic-password -a
+# mcp-hub` only reads from the user-scoped login Keychain — a bare
+# `sudo -u $username` from root's launchd domain would not have the
+# user's Keychain unlocked. `--set-home` ensures `$HOME` is rewritten
+# to the operator's home directory so `~/.config/rclone/rclone.conf`
+# resolves correctly.
 #
 # Distinguished failure modes (R17.5) — each emits a categorized
 # error to stderr and exits with a class-specific non-zero code so
@@ -36,6 +55,17 @@
 # On success the script exits 0 silently — activation hooks should
 # never spam stdout on the steady-state path.
 #
+# Dormant exemption (R17.6): the conditional
+# `hmCfg.enable && hmCfg.databases != [ ]` is evaluated at
+# module-eval time (Nix), NOT at activation runtime (bash). When
+# the gate is false, `lib.mkOrder 10000` receives the empty string
+# and the merged `postActivation.text` contains no verification
+# fragment at all — `darwin-rebuild switch` never invokes the
+# verification script and therefore never references
+# `~/.config/rclone/rclone.conf`. This is what makes the dormant
+# default (`enable = true; databases = [ ];`) survive on a host with
+# no rclone config installed.
+#
 # Manifest contract (consumed via `argv[1]`, written by the HM
 # module's `_manifestPath` renderer at
 # `home-manager/common/sqlite-backup.nix:342`): the script reads
@@ -47,6 +77,8 @@
 # time, so any change to declared destinations re-renders the
 # manifest and re-invokes verification on the next activation.
 let
+  hmCfg = config.home-manager.users.${username}.home.sqliteBackup;
+
   verifyScript = pkgs.writeShellApplication {
     name = "sqlite-backup-verify-rclone-config";
     runtimeInputs = [
@@ -164,11 +196,28 @@ let
   };
 in
 {
-  # Task 5.1 declares the script only. The binding is exposed as a
-  # passthru module argument so it is consumed (deadnix-clean)
-  # without yet wiring activation. Task 5.2 will replace this line
-  # with the real `system.activationScripts.postActivation.text`
-  # invocation at `lib.mkOrder 10000`, referencing `verifyScript`
-  # from the same `let` scope above.
-  _module.args.sqliteBackupVerifyScript = verifyScript;
+  # `lib.mkOrder 10000` places this fragment strictly after
+  # `mcp-sops-bridge`'s `lib.mkOrder 9999` in the merged
+  # `postActivation.text`. Ordering matters because this script
+  # reads from the macOS Keychain entries that the bridge populates
+  # via `security add-generic-password` — running before the bridge
+  # would surface a spurious R17.5 missing-passphrase failure on
+  # any switch where a referenced secret was newly added.
+  #
+  # The conditional gate is in NIX, not BASH — when
+  # `hmCfg.enable && hmCfg.databases != [ ]` is false the merged
+  # activation text contains no verification fragment at all (R17.6
+  # dormant exemption). This is also what lets the module survive
+  # on a host with `databases = [ ]` and an absent
+  # `~/.config/rclone/rclone.conf`: `darwin-rebuild switch`
+  # succeeds because the verification call is never emitted.
+  system.activationScripts.postActivation.text = lib.mkOrder 10000 (
+    if hmCfg.enable && hmCfg.databases != [ ] then
+      ''
+        echo "[sqlite-backup-verify] running R17 verification for ${toString (lib.length hmCfg.databases)} database(s)"
+        launchctl asuser $(id -u ${username}) sudo -u ${username} --set-home ${verifyScript}/bin/sqlite-backup-verify-rclone-config ${hmCfg._manifestPath}
+      ''
+    else
+      ""
+  );
 }
