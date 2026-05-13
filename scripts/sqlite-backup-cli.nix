@@ -41,6 +41,14 @@ pkgs.writeShellApplication {
     # implemented in tasks 3.5 / 3.6 / 3.7. Pinned to nixpkgs 25.11's
     # restic per design.md §"Architecture Pattern" (v0.18.1).
     restic
+    # `rclone` is consumed by `verify-credentials` (read-only access
+    # check via `rclone lsd <remote>:<remotePath>/<db>` and pre-flight
+    # `rclone config encryption check`) and by the tier-trigger flows
+    # implemented in task 3.5 (as the `rclone:` backend for `restic`).
+    # Pinned to nixpkgs 25.11's rclone per design.md §"Architecture
+    # Pattern" (v1.72.1) and the minimum-version assertion in
+    # `home-manager/common/sqlite-backup.nix`.
+    rclone
   ];
   text = ''
     # Manifest path baked at derivation time. The HM module renders the
@@ -490,8 +498,91 @@ pkgs.writeShellApplication {
         ;;
 
       verify-credentials)
+        # R13.20-13.24: read-only credential probe.
+        #
+        # Two-phase contract per design.md §"CLI Script → Service
+        # Interface" `verify-credentials` block:
+        #
+        # 1. Pre-flight `rclone config encryption check`. On non-zero
+        #    exit (decryption failure, plaintext config, missing
+        #    config, etc.), report a SINGLE global error to stderr
+        #    distinguishing config-level failure from per-destination
+        #    credential failure (R13.24) and exit non-zero WITHOUT
+        #    attempting any per-destination work. The matching
+        #    confirm step in tasks.md exercises exactly this path.
+        #
+        # 2. Per-database `rclone lsd <remote>:<remotePath>/<db>`.
+        #    Iterates every configured database (no arg) or just the
+        #    one named (with arg, validated by optional_db_check
+        #    above). The `lsd` operation is read-only — no repository
+        #    writes, no halt-flag mutation, no restic invocation, no
+        #    launchctl interaction (R13.22). The path is per-DB-
+        #    suffixed (`<remotePath>/<db>`) so the iteration is
+        #    naturally per-database even when multiple databases
+        #    share an underlying rclone destination remote.
+        #
+        # Aggregate exit code is non-zero iff any destination failed
+        # (R13.23). Per-destination outcome lines (`<target>: OK` or
+        # `<target>: FAIL: <cause>`) go to stdout so they remain
+        # ordered relative to one another; the global pre-flight
+        # error goes to stderr so scripted callers can distinguish
+        # global from per-destination failure by stream.
         optional_db_check "''${1:-}"
-        placeholder verify-credentials 3.3
+        scope_db="''${1:-}"
+
+        rclone_secret_service="$(get_secret_service rclone-config)"
+        if [ -z "$rclone_secret_service" ] || [ "$rclone_secret_service" = "null" ]; then
+          echo "sqlite-backup: manifest does not declare rcloneConfigPassphraseSecret" >&2
+          exit 1
+        fi
+
+        # `rclone` exec's RCLONE_PASSWORD_COMMAND through its own
+        # shell to obtain the config-decryption passphrase. Both
+        # KEYCHAIN_ACCOUNT (a script constant) and the secret
+        # service name (a Nix-rendered identifier from the HM module
+        # surface, by convention `[a-z0-9-]+`) are free of shell
+        # metacharacters, so the unquoted concatenation is intentional.
+        RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $rclone_secret_service -a $KEYCHAIN_ACCOUNT -w"
+        export RCLONE_PASSWORD_COMMAND
+
+        if ! preflight_out="$(rclone config encryption check 2>&1)"; then
+          echo "sqlite-backup: rclone config decryption failed: $preflight_out" >&2
+          exit 1
+        fi
+
+        any_failed=0
+        if [ -n "$scope_db" ]; then
+          db_list="$scope_db"
+        else
+          db_list="$(get_database_names)"
+        fi
+
+        # Per-DB iteration. The empty-`db_list` case (no databases
+        # configured AND no arg supplied) yields zero iterations and
+        # exits 0, matching the vacuous-truth interpretation of
+        # R13.23 ("if all verifications succeed").
+        while IFS= read -r db_name; do
+          [ -z "$db_name" ] && continue
+          remote="$(get_database_field "$db_name" remote)"
+          remote_path="$(get_database_field "$db_name" remotePath)"
+          if [ -z "$remote" ] || [ -z "$remote_path" ]; then
+            printf '%s: FAIL: missing remote/remotePath in manifest\n' "$db_name"
+            any_failed=1
+            continue
+          fi
+          target="$remote:$remote_path/$db_name"
+          if lsd_out="$(rclone lsd "$target" 2>&1)"; then
+            printf '%s: OK\n' "$target"
+          else
+            printf '%s: FAIL: %s\n' "$target" "$lsd_out"
+            any_failed=1
+          fi
+        done <<<"$db_list"
+
+        if [ "$any_failed" -ne 0 ]; then
+          exit 1
+        fi
+        exit 0
         ;;
 
       backup)

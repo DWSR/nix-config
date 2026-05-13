@@ -63,7 +63,7 @@
   - _Requirements: 13.17, 13.18_
   - _Boundary: CLI Script_
 
-- [ ] 3.3 verify-credentials subcommand
+- [x] 3.3 verify-credentials subcommand
   - Pre-flight: invoke `rclone config encryption check` with `RCLONE_PASSWORD_COMMAND` set to the Keychain-read for the rclone-config passphrase; on failure, print a global decryption-failure error distinguished from per-destination errors and exit non-zero without per-destination work.
   - Iterate over either all configured destinations (no arg) or just the one referenced by `<db>` (with arg); for each, invoke `rclone lsd <name>:<remotePath>/<db>` (a low-cost read-only access check) and capture per-destination outcome.
   - Report per-destination success/failure with failure cause to the operator's terminal; non-zero exit on any failure, zero on all-success.
