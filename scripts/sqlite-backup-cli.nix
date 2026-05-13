@@ -35,6 +35,12 @@ pkgs.writeShellApplication {
   runtimeInputs = with pkgs; [
     jq
     coreutils
+    # `restic` is consumed by `status` (per-tier last-snapshot lookup
+    # via `restic snapshots --tag <tier> --json`) and will additionally
+    # be the workhorse for the tier-trigger and restore subcommands
+    # implemented in tasks 3.5 / 3.6 / 3.7. Pinned to nixpkgs 25.11's
+    # restic per design.md §"Architecture Pattern" (v0.18.1).
+    restic
   ];
   text = ''
     # Manifest path baked at derivation time. The HM module renders the
@@ -59,6 +65,19 @@ pkgs.writeShellApplication {
     # supported way to invoke it from a writeShellApplication's PATH-
     # locked environment (mirrors `scripts/mcp-secrets-activate.nix`).
     readonly SECURITY_BIN=/usr/bin/security
+
+    # `launchctl` is a system binary at the documented `/bin/launchctl`
+    # path on every supported macOS release; calling by absolute path
+    # avoids any PATH-discovery surprise inside writeShellApplication's
+    # locked environment. Used by `status` (R13.AC18) to probe whether
+    # the per-DB Litestream agent is currently loaded.
+    readonly LAUNCHCTL_BIN=/bin/launchctl
+
+    # Halt-flag root per design.md §"State Management": one file per
+    # database, content `replication-only` or `whole-pipeline`. Cleared
+    # on every HM activation by the module's `home.activation.sqlite-
+    # backup-clear-halts` hook (R13.AC15).
+    readonly STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup"
 
     readonly LOG_DIR="$HOME/Library/Logs"
     readonly LOCK_DIR_BASE="''${TMPDIR:-/var/tmp}"
@@ -110,7 +129,7 @@ pkgs.writeShellApplication {
     # Returns the Keychain SERVICE name (the `-s` argument to
     # `security`) for one of the two secret kinds the pipeline
     # consumes. The matching account is always KEYCHAIN_ACCOUNT.
-    # shellcheck disable=SC2329  # consumed by tasks 3.3 and 3.5
+    # shellcheck disable=SC2329  # consumed by tasks 3.2, 3.3, 3.5
     get_secret_service() {
       local kind="$1"
       case "$kind" in
@@ -142,7 +161,7 @@ pkgs.writeShellApplication {
     # failures. Used both directly by `verify-credentials` and as the
     # implementation of `RESTIC_PASSWORD_COMMAND` /
     # `RCLONE_PASSWORD_COMMAND` in the tier-trigger flows.
-    # shellcheck disable=SC2329  # consumed by tasks 3.3 and 3.5
+    # shellcheck disable=SC2329  # consumed by tasks 3.2, 3.3, 3.5
     read_keychain_secret() {
       local service="$1"
       "$SECURITY_BIN" find-generic-password \
@@ -274,6 +293,117 @@ pkgs.writeShellApplication {
     }
 
     # ----------------------------------------------------------------
+    # Status helpers (R13.AC18)
+    # ----------------------------------------------------------------
+
+    # get_halt_content <db>
+    # Print the halt-flag file's contents (whitespace-stripped) when
+    # the file exists; print nothing otherwise. Whitespace stripping
+    # tolerates a trailing newline introduced by an operator who
+    # writes the flag with `echo replication-only > halt-<db>.flag`.
+    get_halt_content() {
+      local db="$1"
+      local flag="$STATE_DIR/halt-$db.flag"
+      if [ -f "$flag" ]; then
+        tr -d '[:space:]' <"$flag"
+      fi
+    }
+
+    # get_replication_state <db>
+    # Compute the operator-visible state per design.md §"CLI Script →
+    # Service Interface" `status` block. The halt flag, when present,
+    # is authoritative; only when no halt is set do we probe
+    # `launchctl list <label>` to distinguish a healthy `running`
+    # pipeline from a `not-running` one (which can occur briefly
+    # during launchd reload, after a `launchctl bootout` outside the
+    # CLI, or when the agent has crashed past `KeepAlive` retries).
+    get_replication_state() {
+      local db="$1"
+      local halt
+      halt="$(get_halt_content "$db")"
+      case "$halt" in
+        whole-pipeline)
+          printf 'halted-whole-pipeline\n'
+          return
+          ;;
+        replication-only)
+          printf 'halted-replication-only\n'
+          return
+          ;;
+      esac
+      local label="dev.dwsr.sqlite-backup.litestream.$db"
+      if "$LAUNCHCTL_BIN" list "$label" >/dev/null 2>&1; then
+        printf 'running\n'
+      else
+        printf 'not-running\n'
+      fi
+    }
+
+    # get_last_snapshot <db> <tag>
+    # Print the timestamp of the most recent restic snapshot in the
+    # per-DB local repo carrying the given tag (RFC3339 UTC, exactly
+    # as restic emits it), or `never` when:
+    #   * the local repo directory does not yet exist (first-run / not
+    #     bootstrapped),
+    #   * the manifest's archivePassphraseSecret is unset or its
+    #     Keychain entry is missing,
+    #   * `restic snapshots` returns non-zero for any reason, or
+    #   * the result array is empty.
+    # Per R13.AC18 + design.md §"Service Interface" the `status`
+    # subcommand exits 0 always; this helper therefore swallows every
+    # restic / Keychain error and falls back to `never`.
+    get_last_snapshot() {
+      local db="$1" tag="$2"
+      local repo_dir
+      repo_dir="$(get_database_field "$db" repoDir)"
+      if [ -z "$repo_dir" ] || [ ! -d "$repo_dir" ]; then
+        printf 'never\n'
+        return
+      fi
+      local service
+      service="$(get_secret_service archive 2>/dev/null || true)"
+      if [ -z "$service" ] || [ "$service" = "null" ]; then
+        printf 'never\n'
+        return
+      fi
+      local pw
+      if ! pw="$(read_keychain_secret "$service" 2>/dev/null)"; then
+        printf 'never\n'
+        return
+      fi
+      local out
+      if ! out="$(RESTIC_PASSWORD="$pw" restic -r "$repo_dir" snapshots \
+        --tag "$tag" --json 2>/dev/null)"; then
+        printf 'never\n'
+        return
+      fi
+      printf '%s\n' "$out" | jq -r '
+        if (type == "array") and (length > 0)
+        then (max_by(.time) | .time)
+        else "never"
+        end
+      '
+    }
+
+    # print_db_status <db>
+    # Emit the four-line block format for one database (the format
+    # mandated by task 3.2 implementation guidance — operator-friendly
+    # YAML-style key/value, distinct from a tabular layout, so that
+    # extra fields can be added in future tasks without breaking
+    # consumers that already grep `last-replication-snapshot:`).
+    print_db_status() {
+      local db="$1"
+      local state last_rep last_arc
+      state="$(get_replication_state "$db")"
+      last_rep="$(get_last_snapshot "$db" replication)"
+      last_arc="$(get_last_snapshot "$db" archive)"
+      printf '%s:\n' "$db"
+      printf '  replication-state: %s\n' "$state"
+      printf '  last-replication-snapshot: %s\n' "$last_rep"
+      printf '  last-archive-snapshot: %s\n' "$last_arc"
+    }
+
+    # ----------------------------------------------------------------
     # Help text
     # ----------------------------------------------------------------
 
@@ -343,8 +473,20 @@ pkgs.writeShellApplication {
         ;;
 
       status)
+        # R13.AC18: with no <db> arg, iterate over every configured
+        # database; with a <db> arg, scope to that one. The empty-
+        # manifest case naturally produces no output (the while loop
+        # body never executes) — no special-case needed.
         optional_db_check "''${1:-}"
-        placeholder status 3.2
+        if [ -n "''${1:-}" ]; then
+          print_db_status "$1"
+        else
+          while IFS= read -r db_name; do
+            [ -z "$db_name" ] && continue
+            print_db_status "$db_name"
+          done < <(get_database_names)
+        fi
+        exit 0
         ;;
 
       verify-credentials)

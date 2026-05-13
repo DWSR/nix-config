@@ -55,7 +55,7 @@
   - _Requirements: 13.1, 13.2, 13.10_
   - _Boundary: CLI Script_
 
-- [ ] 3.2 Read-only subcommands: list and status
+- [x] 3.2 Read-only subcommands: list and status
   - `sqlite-backup list` reads the manifest and prints each configured DB name on its own line; produces no output and exit 0 when `databases = [ ]`.
   - `sqlite-backup status [<db>]` for each configured DB (or just `<db>` when supplied) prints: name, replication-state derived from halt-flag content + `launchctl list <label>`, last-replication-snapshot timestamp from `restic snapshots --tag replication --json`, last-archive-snapshot timestamp from `restic snapshots --tag archive --json`.
   - Status `replication-state` value is one of: `running`, `halted-replication-only`, `halted-whole-pipeline`, derived from the halt-flag contents specified in `design.md`.
@@ -319,3 +319,8 @@ If the implementer can run multiple subagents concurrently:
 If running purely sequential (no parallel dispatch capability), follow
 document order — the (P) markers and dependencies still validate correctness
 even when not exploited.
+
+## Implementation Notes
+
+- **Task 3.2** introduced a 4th `replication-state` value `not-running` (when no halt flag is set but the launchd Litestream agent is not loaded — happens in pre-bootstrap and synthetic test environments). Tasks.md and R13.18 originally specified a closed 3-value enum. The implementer's choice is operationally sound (don't lie about pipeline health). Future spec amendment should reconcile: extend the enum to include `not-running` (preferred) or document that the 3-value enum applies only on a host with the agent live. The literal R13.18 confirm criterion (`status cavemem` reports `running` with one DB and no halt) is satisfied on a live host where the agent is loaded.
+- **Task 3.2** also surfaced minor spec-vs-implementation field-name drift (design.md uses `last-archival-snapshot-timestamp` / `last-replicate-shipment-timestamp`; tasks.md uses `last-replication-snapshot timestamp` / `last-archive-snapshot timestamp`; implementation matched tasks.md). Not implementation-blocking; reconcile in spec.
