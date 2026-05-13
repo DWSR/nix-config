@@ -271,6 +271,24 @@ in
       })
     );
 
+    # Halt-flag clearing activation hook (R13.AC15). On every HM
+    # activation (e.g. `darwin-rebuild switch`), remove any halt
+    # flags written by the operator CLI under
+    # `${config.xdg.stateHome}/sqlite-backup/halt-*.flag`. This makes
+    # halt state ephemeral with respect to rebuilds: the declarative
+    # `home.sqliteBackup.databases` configuration takes precedence
+    # and pipelines return to their declared running state.
+    #
+    # Uses HM's `run` and `verboseEcho` shell helpers (see
+    # home-manager modules/home-environment.nix:433-488), which honor
+    # `DRY_RUN` and `VERBOSE` automatically. The `2>/dev/null || true`
+    # tail keeps activation idempotent on first run when neither the
+    # parent directory nor any halt files exist.
+    home.activation.sqlite-backup-clear-halts = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      verboseEcho "Clearing sqlite-backup halt flags (R13.AC15)"
+      run rm -f -- "${config.xdg.stateHome}/sqlite-backup/halt-"*.flag 2>/dev/null || true
+    '';
+
     # Manifest renderer (R1.AC1, R5.AC5, R16.AC1). The rendered
     # manifest is the single cross-component data contract — the
     # system-tier verification module and the per-database CLI binary

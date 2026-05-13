@@ -29,7 +29,7 @@
   - Confirm: `cat $(nix eval --raw '.#…home.sqliteBackup._manifestPath')` prints a JSON document matching the schema in `design.md` §Data Models.
   - _Requirements: 1.1, 5.5, 16.1_
 
-- [ ] 2.4 Halt-flag clearing activation hook
+- [x] 2.4 Halt-flag clearing activation hook
   - Declare `home.activation.sqlite-backup-clear-halts` as a `lib.hm.dag.entryAfter ["writeBoundary"]` Bash fragment that removes any halt-flag files under `${config.xdg.stateHome}/sqlite-backup/halt-*.flag`.
   - Activation script must respect `DRY_RUN` (no-op when set) and use the HM `run`/`verboseEcho` helpers per the HM-activation convention.
   - Confirm: writing `${XDG_STATE_HOME}/sqlite-backup/halt-cavemem.flag` manually and then running `darwin-rebuild switch` removes the file.
