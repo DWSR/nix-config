@@ -1,9 +1,24 @@
 {
+  config,
   lib,
+  pkgs,
   ...
 }:
 let
   inherit (lib) mkOption types;
+
+  cfg = config.home.sqliteBackup;
+
+  # Single discoverable declaration site for the minimum versions of
+  # the underlying tools this pipeline relies on (R11.AC3). Future
+  # maintenance updates these constants in one place; the assertions
+  # below — and any subsequent runtime checks — read from the same
+  # binding.
+  toolMinima = {
+    litestream = "0.5.7";
+    restic = "0.18.0";
+    rclone = "1.72.0";
+  };
 
   # Options shape for a single rclone destination entry. The freeform
   # type permits arbitrary non-credential rclone backend attributes
@@ -204,5 +219,41 @@ in
         (R17 verification) and at runtime for off-host shipment.
       '';
     };
+  };
+
+  config = lib.mkIf cfg.enable {
+    # Eval-time guards. The platform assertion fires whenever the
+    # module is enabled (R10.AC2). The version and missing-destination
+    # assertions only matter when at least one database is configured —
+    # the dormant default (R1.AC2 / R1.AC3) must continue to evaluate
+    # cleanly with `databases = [ ]`.
+    assertions = [
+      (lib.hm.assertions.assertPlatform "home.sqliteBackup" pkgs lib.platforms.darwin)
+    ]
+    ++ lib.optionals (cfg.databases != [ ]) (
+      [
+        {
+          assertion = lib.versionAtLeast pkgs.litestream.version toolMinima.litestream;
+          message = ''
+            home.sqliteBackup requires pkgs.litestream version
+            ${toolMinima.litestream} or newer, but the available
+            version is ${pkgs.litestream.version}. Update the
+            Litestream overlay (overlays/litestream.nix) or the
+            `nixpkgs-unstable` flake input that backs it.
+          '';
+        }
+      ]
+      ++ lib.flip map cfg.databases (db: {
+        assertion = builtins.hasAttr db.remote cfg.rcloneDestinations;
+        message = ''
+          home.sqliteBackup.databases entry "${db.name}" references
+          rclone destination "${db.remote}", but no entry with that
+          name is declared in home.sqliteBackup.rcloneDestinations.
+          Either add a "${db.remote}" entry to rcloneDestinations,
+          or change database "${db.name}" to reference an existing
+          destination.
+        '';
+      })
+    );
   };
 }

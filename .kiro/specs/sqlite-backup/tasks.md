@@ -16,7 +16,7 @@
   - Confirm: with `enable = true; databases = [ ]; rcloneDestinations = { }`, the module evaluates cleanly and produces no `launchd.agents` entries.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 3.1, 5.1, 5.2, 5.3, 5.5, 14.3_
 
-- [ ] 2.2 Eval-time assertions
+- [x] 2.2 Eval-time assertions
   - Add an `assertions` block that fails evaluation when any `databases[*].remote` references a key not present in `rcloneDestinations`, naming both the missing destination and the database that referenced it.
   - Add a `lib.hm.assertions.assertPlatform pkgs lib.platforms.darwin` gate so non-darwin evaluation fails with a darwin-only message.
   - Add a version assertion that fails when `pkgs.litestream.version < "0.5.7"`, naming both the available and required versions; declare the minimum-version constants in a single `let` binding.
