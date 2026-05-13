@@ -104,7 +104,7 @@
   - _Requirements: 13.3, 13.4, 13.5, 13.19_
   - _Boundary: CLI Script_
 
-- [ ] 3.7 restore subcommand
+- [x] 3.7 restore subcommand
   - `sqlite-backup restore <db> [--target <path>] [--time <ts>] [--from-remote] [--force]` with documented defaults: `--target = ${PWD}/<db>-restored.db`, `--time = latest`, `--from-remote = false`, `--force = false`.
   - Pre-flight check: if `<target>` exists and is non-empty, refuse and print the corrective `--force` flag instructions.
   - Restore is two-stage: (a) `restic restore <snapshot-id-or-latest> --target <tmp-dir>` (selecting the snapshot at-or-before `<ts>` from either tag if `--time` was supplied), then (b) `litestream restore -o <target> [-timestamp <ts>] file://<tmp-dir>/<staging-subpath>` to materialize the SQLite file.

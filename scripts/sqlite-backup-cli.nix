@@ -49,6 +49,15 @@ pkgs.writeShellApplication {
     # Pattern" (v1.72.1) and the minimum-version assertion in
     # `home-manager/common/sqlite-backup.nix`.
     rclone
+    # `litestream` is consumed by the `restore` subcommand (task 3.7)
+    # for stage-2 of the two-stage restore: after `restic restore`
+    # extracts the LTX staging directory under a tmp prefix,
+    # `litestream restore -o <target> [-timestamp <ts>] file://<dir>`
+    # reconstructs the SQLite database file at the operator's chosen
+    # target path. Lifted from `pkgs.unstable.litestream` via the
+    # repo's litestream overlay; the minimum-version assertion lives
+    # in `home-manager/common/sqlite-backup.nix`.
+    litestream
   ];
   text = ''
     # Manifest path baked at derivation time. The HM module renders the
@@ -733,15 +742,6 @@ pkgs.writeShellApplication {
     USAGE
     }
 
-    # placeholder <subcommand-name> <implementing-task>
-    # Bodies for subcommands implemented in subsequent tasks. Tasks 3.2
-    # through 3.7 will replace each call with the real implementation.
-    placeholder() {
-      local subcmd="$1" implementing_task="$2"
-      echo "sqlite-backup: '$subcmd' subcommand not yet implemented (task $implementing_task implements it)" >&2
-      exit 1
-    }
-
     # ----------------------------------------------------------------
     # Manifest sanity (fail fast on missing or malformed JSON)
     # ----------------------------------------------------------------
@@ -906,8 +906,262 @@ pkgs.writeShellApplication {
         ;;
 
       restore)
+        # R13.6, R13.7, R13.8, R13.9 + R9.1-9.4: two-stage restore.
+        #
+        # Surface:
+        #   sqlite-backup restore <db> [--target <path>] [--time <ts>]
+        #                              [--from-remote] [--force]
+        # Defaults: --target = $PWD/<db>-restored.db, --time = latest,
+        # --from-remote = false, --force = false. Per design.md
+        # §"CLI Script → Service Interface" `restore` block.
+        #
+        # The function never overwrites the live SQLite database file
+        # — the default target deliberately lives under $PWD with a
+        # `-restored.db` suffix so an absent-minded operator who omits
+        # `--target` cannot stomp the source DB. R13.AC9 mandates the
+        # pre-flight refusal of any non-empty existing target without
+        # `--force`; the same check applies whether or not `--target`
+        # was supplied explicitly (defaulting in $PWD does not bypass
+        # the pre-flight).
+        #
+        # Two-stage restore (design.md §"Recovery from Off-Host
+        # Destination Only" + §"Service Interface" `restore` block):
+        #
+        #   Stage 1: `restic restore <id> --target <tmp>` extracts the
+        #            snapshot's contents under <tmp>, preserving the
+        #            original absolute paths (so the LTX staging dir
+        #            ends up at <tmp><original-staging-path>).
+        #   Stage 2: `litestream restore -o <target>
+        #            [-timestamp <ts>] file://<extracted-staging>`
+        #            reads the LTX segments and reconstructs the
+        #            SQLite database file at <target>.
+        #
+        # Snapshot selection:
+        #   * `--time latest` (or omitted): use restic's `latest`
+        #     selector (we still query --json once to learn the
+        #     extracted absolute path; see below).
+        #   * `--time <ts>`: pick the snapshot whose `time` is at-or-
+        #     before <ts>, regardless of tag (replication and archive
+        #     tags share the same staging directory contents, so the
+        #     PIT semantic is "the most recent snapshot of any tier
+        #     that does not exceed <ts>"). Per the implementation
+        #     guidance / R13.AC7 + R9.AC3.
+        #
+        # Original-staging-path resolution: a snapshot's `paths` array
+        # records the absolute path the backup was taken under. We
+        # query `restic snapshots --json` once and pull both the
+        # snapshot ID and `paths[0]` from the same record so the
+        # extracted-staging path used in stage 2 is always the path
+        # the snapshot was actually taken with — important for cross-
+        # host restore (R13.AC8 / R9.AC4 host-loss scenario), where
+        # the new host's manifest may compute a different stagingDir
+        # than the snapshot was originally captured with.
+        #
+        # `--from-remote` (R13.AC8 / R9.AC4 host-loss scenario): bypass
+        # the local repo entirely and address the remote restic repo
+        # at `rclone:<remote>:<remotePath>/<db>`. Both
+        # RESTIC_PASSWORD_COMMAND (archive passphrase) AND
+        # RCLONE_PASSWORD_COMMAND (rclone-config passphrase) MUST be
+        # set so restic can decrypt its repo AND rclone can decrypt
+        # its config to reach the destination.
         require_db "''${1:-}"
-        placeholder restore 3.7
+        restore_db="$1"
+        shift
+
+        restore_target=""
+        restore_timestamp=""
+        restore_from_remote=false
+        restore_force=false
+
+        while [ $# -gt 0 ]; do
+          case "$1" in
+            --target)
+              if [ $# -lt 2 ]; then
+                echo "sqlite-backup: restore: --target requires a value" >&2
+                exit 1
+              fi
+              restore_target="$2"
+              shift 2
+              ;;
+            --time)
+              if [ $# -lt 2 ]; then
+                echo "sqlite-backup: restore: --time requires a value" >&2
+                exit 1
+              fi
+              restore_timestamp="$2"
+              shift 2
+              ;;
+            --from-remote)
+              restore_from_remote=true
+              shift
+              ;;
+            --force)
+              restore_force=true
+              shift
+              ;;
+            *)
+              echo "sqlite-backup: restore: unknown flag: $1" >&2
+              exit 1
+              ;;
+          esac
+        done
+
+        # Apply documented defaults.
+        if [ -z "$restore_target" ]; then
+          restore_target="$PWD/$restore_db-restored.db"
+        fi
+        if [ -z "$restore_timestamp" ]; then
+          restore_timestamp=latest
+        fi
+
+        # R13.AC9: refuse to overwrite a non-empty existing target
+        # unless --force. `-e` AND `-s` so an empty file (e.g., a
+        # touched placeholder) is treated as overwriteable; matches
+        # the spec wording "as a non-empty file".
+        if [ -e "$restore_target" ] && [ -s "$restore_target" ]; then
+          if [ "$restore_force" != "true" ]; then
+            printf 'sqlite-backup: restore: target %s exists and is non-empty; pass --force to overwrite\n' \
+              "$restore_target" >&2
+            exit 1
+          fi
+        fi
+
+        log_start "$restore_db" restore
+
+        # Archive passphrase is always required (it encrypts both the
+        # local and the remote restic repo).
+        restore_archive_secret="$(get_secret_service archive)"
+        if [ -z "$restore_archive_secret" ] || [ "$restore_archive_secret" = "null" ]; then
+          echo "sqlite-backup: $restore_db: restore: missing archivePassphraseSecret in manifest" >&2
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+        # Same word-quoting note as tier_trigger: KEYCHAIN_ACCOUNT and
+        # the secret service name are Nix-rendered identifiers and
+        # contain no shell metacharacters, so the simple unquoted
+        # concatenation here is intentional.
+        RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $restore_archive_secret -a $KEYCHAIN_ACCOUNT -w"
+        export RESTIC_PASSWORD_COMMAND
+
+        # Repo selection.
+        if [ "$restore_from_remote" = "true" ]; then
+          restore_remote="$(get_database_field "$restore_db" remote)"
+          restore_remote_path="$(get_database_field "$restore_db" remotePath)"
+          if [ -z "$restore_remote" ] || [ -z "$restore_remote_path" ]; then
+            echo "sqlite-backup: $restore_db: restore: manifest missing remote/remotePath" >&2
+            log_end "$restore_db" restore 1
+            exit 1
+          fi
+          restore_repo="rclone:$restore_remote:$restore_remote_path/$restore_db"
+
+          # rclone needs its own config-decryption passphrase to
+          # reach any encrypted-config destination.
+          restore_rclone_secret="$(get_secret_service rclone-config)"
+          if [ -z "$restore_rclone_secret" ] || [ "$restore_rclone_secret" = "null" ]; then
+            echo "sqlite-backup: $restore_db: restore: missing rcloneConfigPassphraseSecret in manifest" >&2
+            log_end "$restore_db" restore 1
+            exit 1
+          fi
+          RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $restore_rclone_secret -a $KEYCHAIN_ACCOUNT -w"
+          export RCLONE_PASSWORD_COMMAND
+        else
+          restore_repo="$(get_database_field "$restore_db" repoDir)"
+          if [ -z "$restore_repo" ]; then
+            echo "sqlite-backup: $restore_db: restore: manifest missing repoDir" >&2
+            log_end "$restore_db" restore 1
+            exit 1
+          fi
+        fi
+
+        # Single snapshots --json query that yields BOTH the snapshot
+        # ID we will pass to `restic restore` AND the absolute staging
+        # path recorded in the snapshot (used to locate the extracted
+        # staging dir for stage 2). For `--time latest`, jq picks
+        # `sort_by(.time) | last`; for an explicit timestamp it picks
+        # the most recent snapshot at-or-before that timestamp,
+        # regardless of tag (replication and archive snapshots share
+        # the same staging contents, so PIT is "any snapshot whose
+        # time <= <ts>").
+        if ! restore_snapshots_json="$(restic -r "$restore_repo" snapshots --json 2>&1)"; then
+          printf 'sqlite-backup: %s: restore: failed to list snapshots in %s: %s\n' \
+            "$restore_db" "$restore_repo" "$restore_snapshots_json" >&2
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+        restore_snapshot_meta="$(printf '%s' "$restore_snapshots_json" | jq -c --arg ts "$restore_timestamp" '
+          if $ts == "latest" then
+            sort_by(.time) | last
+          else
+            [.[] | select(.time <= $ts)] | sort_by(.time) | last
+          end
+        ')"
+        if [ -z "$restore_snapshot_meta" ] || [ "$restore_snapshot_meta" = "null" ]; then
+          if [ "$restore_timestamp" = "latest" ]; then
+            printf 'sqlite-backup: %s: restore: no snapshots found in %s\n' \
+              "$restore_db" "$restore_repo" >&2
+          else
+            printf 'sqlite-backup: %s: restore: no snapshot found at-or-before %s in %s\n' \
+              "$restore_db" "$restore_timestamp" "$restore_repo" >&2
+          fi
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+        restore_snapshot_id="$(printf '%s' "$restore_snapshot_meta" | jq -r '.id // empty')"
+        restore_original_staging="$(printf '%s' "$restore_snapshot_meta" | jq -r '.paths[0] // empty')"
+        if [ -z "$restore_snapshot_id" ] || [ -z "$restore_original_staging" ]; then
+          echo "sqlite-backup: $restore_db: restore: could not parse snapshot metadata" >&2
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+
+        # Stage 1: restic restore to a tmpdir. The trap clears the
+        # tmpdir on every exit path including signals, so a
+        # mid-restore Ctrl-C does not leak gigabytes of extracted LTX
+        # state into $TMPDIR.
+        restore_tmp="$(mktemp -d -t sqlite-backup-restore.XXXXXX)"
+        # shellcheck disable=SC2064  # capture restore_tmp by value at trap-install time
+        trap "rm -rf -- '$restore_tmp'" EXIT INT TERM
+
+        if ! restic -r "$restore_repo" restore "$restore_snapshot_id" --target "$restore_tmp"; then
+          echo "sqlite-backup: $restore_db: restore: restic restore failed" >&2
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+
+        # restic preserves the original absolute path under --target,
+        # so the LTX staging directory recorded in the snapshot ends
+        # up at <tmp><original-staging-path>.
+        restore_extracted="$restore_tmp$restore_original_staging"
+        if [ ! -d "$restore_extracted" ]; then
+          printf 'sqlite-backup: %s: restore: extracted staging dir not found at %s\n' \
+            "$restore_db" "$restore_extracted" >&2
+          log_end "$restore_db" restore 1
+          exit 1
+        fi
+
+        # Stage 2: litestream restore from the extracted staging dir.
+        # `-timestamp` is only passed when the operator supplied an
+        # explicit point-in-time; for `latest`, omitting the flag has
+        # litestream replay the entire LTX chain to the head, which
+        # is the documented default and matches `--time latest`
+        # semantics.
+        if [ "$restore_timestamp" != "latest" ]; then
+          if ! litestream restore -o "$restore_target" -timestamp "$restore_timestamp" "file://$restore_extracted"; then
+            echo "sqlite-backup: $restore_db: restore: litestream restore failed" >&2
+            log_end "$restore_db" restore 1
+            exit 1
+          fi
+        else
+          if ! litestream restore -o "$restore_target" "file://$restore_extracted"; then
+            echo "sqlite-backup: $restore_db: restore: litestream restore failed" >&2
+            log_end "$restore_db" restore 1
+            exit 1
+          fi
+        fi
+
+        printf 'sqlite-backup: %s: restored to %s\n' "$restore_db" "$restore_target"
+        log_end "$restore_db" restore 0
+        exit 0
         ;;
 
       start)
