@@ -79,7 +79,7 @@
   - _Requirements: 13.11, 13.12, 13.13, 13.14, 13.16_
   - _Boundary: CLI Script_
 
-- [ ] 3.5 Tier-trigger subcommands: __replicate-trigger and __archive-trigger
+- [x] 3.5 Tier-trigger subcommands: __replicate-trigger and __archive-trigger
   - Implement both internal subcommands sharing a common helper that takes the tier name and retention args; the only differences are `--tag <tier>` and the retention policy.
   - Implement all 10 steps per `design.md` §CLI Script Batch contract:
     1. Halt-flag check: replication-only halt skips replicate-trigger; whole-pipeline halt skips both. Skip = exit 0 with logged reason.

@@ -122,7 +122,6 @@ pkgs.writeShellApplication {
     # by a dotted JSON path (e.g. "path", "remotePath",
     # "replicationTier.cadenceSeconds"). Empty string when missing so
     # callers can `[ -z "$value" ]` without tripping `set -u`.
-    # shellcheck disable=SC2329  # consumed by tasks 3.2-3.7
     get_database_field() {
       local name="$1" field_path="$2"
       jq -r --arg name "$name" --arg path "$field_path" '
@@ -133,11 +132,29 @@ pkgs.writeShellApplication {
       ' "$MANIFEST_PATH"
     }
 
+    # get_retention_args <db-name> <tier-field>
+    # tier-field is the manifest object key for the tier
+    # ("replicationTier" or "archiveTier"). Prints one retention
+    # argument per line so callers can read the variable-length list
+    # into a bash array via while-read; the manifest stores retention
+    # as a JSON array of strings (e.g. ["--keep-hourly","24"]) per
+    # design.md §"Components and Interfaces" manifest shape. Empty
+    # stdout (and exit 0) when the tier or its retention array is
+    # missing — callers treat empty as "no retention args supplied",
+    # which is a valid restic invocation (no snapshots are forgotten).
+    get_retention_args() {
+      local name="$1" tier_field="$2"
+      jq -r --arg name "$name" --arg tier "$tier_field" '
+        .databases[]
+        | select(.name == $name)
+        | .[$tier].retention[]?
+      ' "$MANIFEST_PATH"
+    }
+
     # get_secret_service <kind>
     # Returns the Keychain SERVICE name (the `-s` argument to
     # `security`) for one of the two secret kinds the pipeline
     # consumes. The matching account is always KEYCHAIN_ACCOUNT.
-    # shellcheck disable=SC2329  # consumed by tasks 3.2, 3.3, 3.5
     get_secret_service() {
       local kind="$1"
       case "$kind" in
@@ -190,7 +207,6 @@ pkgs.writeShellApplication {
     # The trap captures LOCK_DIR by NAME (single-quoted); release_lock
     # clears both the variable AND the trap so the cleanup runs at
     # most once even on signal interruption.
-    # shellcheck disable=SC2329  # consumed by task 3.5
     acquire_lock() {
       local db="$1"
       local target="$LOCK_DIR_BASE/sqlite-backup-$db.lock"
@@ -202,7 +218,6 @@ pkgs.writeShellApplication {
       return 0
     }
 
-    # shellcheck disable=SC2329  # consumed by task 3.5
     release_lock() {
       if [ -n "$LOCK_DIR" ]; then
         rm -rf -- "$LOCK_DIR"
@@ -432,6 +447,245 @@ pkgs.writeShellApplication {
     # thread a second baked path through the manifest).
     litestream_plist_path() {
       printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$(litestream_label "$1")"
+    }
+
+    # ----------------------------------------------------------------
+    # Tier-trigger flow (shared by __replicate-trigger / __archive-trigger)
+    # ----------------------------------------------------------------
+
+    # tier_trigger <tier> <db>
+    # tier is "replication" or "archive"; db is a manifest-validated
+    # database name. Implements the 10-step batch contract from
+    # design.md §"CLI Script → Batch / Job Contract" verbatim:
+    #
+    #   1. Halt-flag check (tier-aware skip semantics).
+    #   2. Per-DB mkdir mutex (early-exit 0 if held).
+    #   3. Export Keychain-backed RESTIC_PASSWORD_COMMAND,
+    #      RCLONE_PASSWORD_COMMAND, and RESTIC_FROM_PASSWORD_COMMAND
+    #      (the latter is what `restic copy` and
+    #      `restic init --copy-chunker-params --from-repo` consult
+    #      for the `--from-repo` end of cross-repo operations; both
+    #      ends share the archive passphrase per design.md
+    #      §"Implementation Notes").
+    #   4. Idempotent local repo init.
+    #   5. Idempotent remote repo init with `--copy-chunker-params`
+    #      so cross-repo deduplication is preserved (R16.AC1, R16.AC5).
+    #   6. `restic backup --tag <tier> --exclude='*.tmp' <stagingDir>`
+    #      — the `*.tmp` exclude is mandatory (R3.AC5): Litestream
+    #      uses atomic-rename `.tmp` intermediates during LTX rotation
+    #      and capturing them yields an unrestorable snapshot.
+    #   7. `restic copy` propagates new snapshots to the remote.
+    #   8. `restic forget --tag <tier> <retention> --prune` against
+    #      the LOCAL repo.
+    #   9. Same `forget --prune` against the REMOTE repo to mirror
+    #      retention deletions off-host (R16.AC5: the off-host repo
+    #      must remain a complete and consistent copy of the on-host
+    #      repo INCLUDING propagated retention deletes).
+    #   10. Release lock; on any step failure, log cause to stderr
+    #       (which launchd captures to the per-agent error log) and
+    #       return non-zero so the dispatcher exits non-zero.
+    #
+    # The function uses the `if ! cmd; then ... return 1; fi` pattern
+    # for every restic invocation so a custom error message is logged
+    # before exit. The EXIT trap installed by acquire_lock is the
+    # safety net that releases the mkdir lock on early-return paths;
+    # the explicit release_lock at the success-path tail clears both
+    # the lock and the trap so the script exits cleanly.
+    tier_trigger() {
+      local tier="$1" db="$2"
+      local tier_field
+      case "$tier" in
+        replication) tier_field=replicationTier ;;
+        archive) tier_field=archiveTier ;;
+        *)
+          echo "sqlite-backup: tier_trigger: invalid tier: $tier" >&2
+          return 1
+          ;;
+      esac
+      local subcmd="$tier-trigger"
+
+      log_start "$db" "$subcmd"
+
+      # Step 1: tier-specific halt-flag semantics.
+      #   * `whole-pipeline`     → skip both replication and archive.
+      #   * `replication-only`   → skip replication only; archive runs.
+      # Skipping is exit 0 with a logged reason so launchd does not
+      # spuriously page on "failed" runs that were intentionally
+      # halted by the operator.
+      local halt
+      halt="$(get_halt_content "$db")"
+      case "$tier:$halt" in
+        *:whole-pipeline)
+          printf 'sqlite-backup: %s: %s skipped (whole-pipeline halt)\n' \
+            "$db" "$subcmd"
+          log_end "$db" "$subcmd" 0
+          return 0
+          ;;
+        replication:replication-only)
+          printf 'sqlite-backup: %s: %s skipped (replication-only halt)\n' \
+            "$db" "$subcmd"
+          log_end "$db" "$subcmd" 0
+          return 0
+          ;;
+      esac
+
+      # Step 2: per-DB mkdir mutex. Held iff another wrapper for the
+      # same DB is mid-run; treat as a no-op skip (exit 0 with logged
+      # reason) per the tier-trigger contract.
+      if ! acquire_lock "$db"; then
+        printf 'sqlite-backup: %s: %s skipped (lock held by another run)\n' \
+          "$db" "$subcmd"
+        log_end "$db" "$subcmd" 0
+        return 0
+      fi
+
+      # Step 3: build and export the Keychain-backed password command
+      # strings. restic and rclone both fork+exec these strings via
+      # their own shell to obtain the relevant passphrase on demand,
+      # so the plaintext never lives in our process memory and never
+      # appears in argv. Both ends of every cross-repo restic
+      # operation use the same archive passphrase (Risks bullet #2 in
+      # design.md §"Implementation Notes"), so RESTIC_FROM_PASSWORD_COMMAND
+      # is always equal to RESTIC_PASSWORD_COMMAND.
+      local archive_secret rclone_secret
+      archive_secret="$(get_secret_service archive)"
+      rclone_secret="$(get_secret_service rclone-config)"
+      if [ -z "$archive_secret" ] || [ "$archive_secret" = "null" ]; then
+        echo "sqlite-backup: $db: $subcmd: missing archivePassphraseSecret in manifest" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+      if [ -z "$rclone_secret" ] || [ "$rclone_secret" = "null" ]; then
+        echo "sqlite-backup: $db: $subcmd: missing rcloneConfigPassphraseSecret in manifest" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+
+      # KEYCHAIN_ACCOUNT and the secret service names are
+      # Nix-rendered identifiers from the HM module surface (by
+      # convention `[a-z0-9-]+`), so no shell metacharacters require
+      # quoting in the command string. The exported value is parsed
+      # by restic's / rclone's own shell when each tool needs the
+      # passphrase, so the value MUST be a properly word-quoted
+      # shell command — the simple concatenation here is intentional.
+      RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $archive_secret -a $KEYCHAIN_ACCOUNT -w"
+      RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $rclone_secret -a $KEYCHAIN_ACCOUNT -w"
+      RESTIC_FROM_PASSWORD_COMMAND="$RESTIC_PASSWORD_COMMAND"
+      export RESTIC_PASSWORD_COMMAND RCLONE_PASSWORD_COMMAND RESTIC_FROM_PASSWORD_COMMAND
+
+      # Per-DB manifest lookups for repo paths and remote target.
+      # Validated up-front so an operator-misconfigured manifest
+      # surfaces as a single clear error rather than a series of
+      # confusing restic / rclone failures down-stream.
+      local repo_dir staging_dir remote remote_path
+      repo_dir="$(get_database_field "$db" repoDir)"
+      staging_dir="$(get_database_field "$db" stagingDir)"
+      remote="$(get_database_field "$db" remote)"
+      remote_path="$(get_database_field "$db" remotePath)"
+      if [ -z "$repo_dir" ] || [ -z "$staging_dir" ] || [ -z "$remote" ] || [ -z "$remote_path" ]; then
+        echo "sqlite-backup: $db: $subcmd: manifest missing repoDir/stagingDir/remote/remotePath" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+      local remote_repo="rclone:$remote:$remote_path/$db"
+
+      # Read the per-tier retention args (variable-length JSON array
+      # of strings) into a bash array. Empty array → no `--keep-*`
+      # flags are passed to `restic forget`, which restic interprets
+      # as "no snapshots match the retention policy, so do not delete
+      # anything"; safe vacuous behaviour.
+      local -a retention_args=()
+      local arg
+      while IFS= read -r arg; do
+        [ -z "$arg" ] && continue
+        retention_args+=("$arg")
+      done < <(get_retention_args "$db" "$tier_field")
+
+      # Step 4: idempotent local repo init. `mkdir -p` so first-run
+      # hosts where the manifest declares a repo path under a
+      # not-yet-created parent directory don't fail at the snapshots
+      # probe before init has a chance to run.
+      mkdir -p "$repo_dir"
+      if ! restic -r "$repo_dir" snapshots >/dev/null 2>&1; then
+        if ! restic -r "$repo_dir" init; then
+          echo "sqlite-backup: $db: $subcmd: local restic init failed" >&2
+          log_end "$db" "$subcmd" 1
+          return 1
+        fi
+      fi
+
+      # Step 5: idempotent remote repo init. `--copy-chunker-params`
+      # makes the new remote repo share the local repo's chunker
+      # polynomial so blob deduplication carries across the two repos
+      # (without it, `restic copy` would re-chunk every blob and
+      # bloat the remote). The `--from-repo` end is authenticated by
+      # RESTIC_FROM_PASSWORD_COMMAND exported above.
+      if ! restic -r "$remote_repo" snapshots >/dev/null 2>&1; then
+        if ! restic init --copy-chunker-params --from-repo "$repo_dir" --repo "$remote_repo"; then
+          echo "sqlite-backup: $db: $subcmd: remote restic init failed" >&2
+          log_end "$db" "$subcmd" 1
+          return 1
+        fi
+      fi
+
+      # Step 6: capture the snapshot. The `--exclude='*.tmp'` is
+      # required by R3.AC5 — Litestream uses atomic-rename `.tmp`
+      # intermediates during LTX rotation, so a backup that fires
+      # mid-rotation would otherwise capture in-flight files and
+      # produce an unrestorable snapshot.
+      local hostname_short
+      hostname_short="$(hostname -s)"
+      if ! restic -r "$repo_dir" backup \
+        --tag "$tier" \
+        --host "$hostname_short" \
+        --exclude='*.tmp' \
+        "$staging_dir"; then
+        echo "sqlite-backup: $db: $subcmd: restic backup failed" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+
+      # Step 7: propagate new snapshots local→remote. Idempotent —
+      # `restic copy` skips snapshots already present on the
+      # destination, so a re-run after a partial failure is safe.
+      if ! restic copy --from-repo "$repo_dir" --repo "$remote_repo"; then
+        echo "sqlite-backup: $db: $subcmd: restic copy local->remote failed" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+
+      # Step 8: apply the tier's retention to the LOCAL repo and
+      # prune unreferenced data immediately. The `--tag <tier>`
+      # filter ensures replication-tier prune does not touch
+      # archive-tier snapshots and vice versa, so the two tiers'
+      # independent retention policies coexist in one repo (R16.AC1).
+      if ! restic -r "$repo_dir" forget --tag "$tier" "''${retention_args[@]}" --prune; then
+        echo "sqlite-backup: $db: $subcmd: local restic forget+prune failed" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+
+      # Step 9: apply the same retention to the REMOTE repo. R16.AC5
+      # requires the off-host repo to be a complete and consistent
+      # copy of the on-host repo INCLUDING propagated retention
+      # deletes; without this step, recovery from off-host alone
+      # would yield extra snapshots the operator believed had been
+      # pruned. Adds one network round-trip per cycle (Risks bullet
+      # in design.md), accepted as the cost of mirror equivalence.
+      if ! restic -r "$remote_repo" forget --tag "$tier" "''${retention_args[@]}" --prune; then
+        echo "sqlite-backup: $db: $subcmd: remote restic forget+prune failed" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+
+      # Step 10: explicit lock release on the success path so the
+      # EXIT trap is cleared and the script exits cleanly. Failure
+      # paths above intentionally leave the trap armed so that an
+      # unexpected errexit between an `if !` block and its
+      # `return 1` still tears the lock down on script exit.
+      release_lock
+      log_end "$db" "$subcmd" 0
+      return 0
     }
 
     # ----------------------------------------------------------------
@@ -738,13 +992,31 @@ pkgs.writeShellApplication {
         ;;
 
       __replicate-trigger)
+        # Internal subcommand fired by the per-DB launchd
+        # `dev.dwsr.sqlite-backup.replicate.<db>` agent on its
+        # `StartInterval` cadence. Delegates to the shared
+        # tier_trigger helper with `tier=replication`; the helper
+        # implements the 10-step batch contract end-to-end and
+        # returns the exit code propagated to launchd.
         require_db "''${1:-}"
-        placeholder __replicate-trigger 3.5
+        tier_trigger replication "$1"
+        exit 0
         ;;
 
       __archive-trigger)
+        # Internal subcommand fired by the per-DB launchd
+        # `dev.dwsr.sqlite-backup.archive.<db>` agent on its
+        # `StartCalendarInterval` schedule. Same 10-step contract
+        # as __replicate-trigger but with `tier=archive`, the
+        # archive-tier retention args (read from the manifest by
+        # tier_trigger), and a coarser halt-skip rule (only
+        # `whole-pipeline` halts skip; `replication-only` halt
+        # leaves the archive tier running so an operator can stop
+        # off-host shipment of WAL state without also losing the
+        # daily archival snapshot).
         require_db "''${1:-}"
-        placeholder __archive-trigger 3.5
+        tier_trigger archive "$1"
+        exit 0
         ;;
 
       "")
