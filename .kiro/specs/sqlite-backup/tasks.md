@@ -113,7 +113,7 @@
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 13.6, 13.7, 13.8, 13.9_
   - _Boundary: CLI Script_
 
-- [ ] 4. HM module integration with CLI binary and secrets
+- [x] 4. HM module integration with CLI binary and secrets
   - Add two entries to `home.mcp.keychainSecrets`: one keyed on `archivePassphraseSecret` value and one on `rcloneConfigPassphraseSecret` value, each pointing at a `op://Private/...` URL the operator will populate.
   - Add the CLI binary derivation to `home.packages` via `(import ../../scripts/sqlite-backup-cli.nix { inherit pkgs lib; manifestPath = config.home.sqliteBackup._manifestPath; })`.
   - Confirm: after `darwin-rebuild switch` on a host with the dormant scaffold, `which sqlite-backup` resolves and `sqlite-backup --help` exits 0.

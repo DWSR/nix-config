@@ -253,182 +253,256 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    # Eval-time guards. The platform assertion fires whenever the
-    # module is enabled (R10.AC2). The version and missing-destination
-    # assertions only matter when at least one database is configured —
-    # the dormant default (R1.AC2 / R1.AC3) must continue to evaluate
-    # cleanly with `databases = [ ]`.
-    assertions = [
-      (lib.hm.assertions.assertPlatform "home.sqliteBackup" pkgs lib.platforms.darwin)
-    ]
-    ++ lib.optionals (cfg.databases != [ ]) (
-      [
-        {
-          assertion = lib.versionAtLeast pkgs.litestream.version toolMinima.litestream;
-          message = ''
-            home.sqliteBackup requires pkgs.litestream version
-            ${toolMinima.litestream} or newer, but the available
-            version is ${pkgs.litestream.version}. Update the
-            Litestream overlay (overlays/litestream.nix) or the
-            `nixpkgs-unstable` flake input that backs it.
-          '';
-        }
+  config = lib.mkIf cfg.enable (
+    let
+      # Single derivation reference for the operator-facing CLI. The same
+      # value is exposed three ways:
+      #
+      #   1. `home.packages = [ cliBinary ]` — puts `sqlite-backup` on
+      #      the operator's interactive shell PATH (R13.AC1, R13.AC2).
+      #   2. `home.sqliteBackup._cliBinary = cliBinary` — flips the
+      #      placeholder option from Task 2.5 so the per-DB replicate
+      #      and archive launchd wrappers are emitted with
+      #      `ProgramArguments` pointing at the same store path.
+      #
+      # Holding the binding once guarantees the launchd
+      # `ProgramArguments` paths and the user-installed binary on PATH
+      # resolve to the same store derivation — avoids any drift between
+      # what the operator runs by hand and what launchd kicks off
+      # (Task 2.5 review, suggestion 8).
+      #
+      # Manifest path is baked into the derivation at build time via
+      # `cfg._manifestPath`; the script then reads its own configuration
+      # without needing the path passed at runtime.
+      cliBinary = import ../../scripts/sqlite-backup-cli.nix {
+        inherit pkgs lib;
+        manifestPath = cfg._manifestPath;
+      };
+    in
+    {
+      # Eval-time guards. The platform assertion fires whenever the
+      # module is enabled (R10.AC2). The version and missing-destination
+      # assertions only matter when at least one database is configured —
+      # the dormant default (R1.AC2 / R1.AC3) must continue to evaluate
+      # cleanly with `databases = [ ]`.
+      assertions = [
+        (lib.hm.assertions.assertPlatform "home.sqliteBackup" pkgs lib.platforms.darwin)
       ]
-      ++ lib.flip map cfg.databases (db: {
-        assertion = builtins.hasAttr db.remote cfg.rcloneDestinations;
-        message = ''
-          home.sqliteBackup.databases entry "${db.name}" references
-          rclone destination "${db.remote}", but no entry with that
-          name is declared in home.sqliteBackup.rcloneDestinations.
-          Either add a "${db.remote}" entry to rcloneDestinations,
-          or change database "${db.name}" to reference an existing
-          destination.
-        '';
-      })
-    );
+      ++ lib.optionals (cfg.databases != [ ]) (
+        [
+          {
+            assertion = lib.versionAtLeast pkgs.litestream.version toolMinima.litestream;
+            message = ''
+              home.sqliteBackup requires pkgs.litestream version
+              ${toolMinima.litestream} or newer, but the available
+              version is ${pkgs.litestream.version}. Update the
+              Litestream overlay (overlays/litestream.nix) or the
+              `nixpkgs-unstable` flake input that backs it.
+            '';
+          }
+        ]
+        ++ lib.flip map cfg.databases (db: {
+          assertion = builtins.hasAttr db.remote cfg.rcloneDestinations;
+          message = ''
+            home.sqliteBackup.databases entry "${db.name}" references
+            rclone destination "${db.remote}", but no entry with that
+            name is declared in home.sqliteBackup.rcloneDestinations.
+            Either add a "${db.remote}" entry to rcloneDestinations,
+            or change database "${db.name}" to reference an existing
+            destination.
+          '';
+        })
+      );
 
-    # Halt-flag clearing activation hook (R13.AC15). On every HM
-    # activation (e.g. `darwin-rebuild switch`), remove any halt
-    # flags written by the operator CLI under
-    # `${config.xdg.stateHome}/sqlite-backup/halt-*.flag`. This makes
-    # halt state ephemeral with respect to rebuilds: the declarative
-    # `home.sqliteBackup.databases` configuration takes precedence
-    # and pipelines return to their declared running state.
-    #
-    # Uses HM's `run` and `verboseEcho` shell helpers (see
-    # home-manager modules/home-environment.nix:433-488), which honor
-    # `DRY_RUN` and `VERBOSE` automatically. The `2>/dev/null || true`
-    # tail keeps activation idempotent on first run when neither the
-    # parent directory nor any halt files exist.
-    home.activation.sqlite-backup-clear-halts = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      verboseEcho "Clearing sqlite-backup halt flags (R13.AC15)"
-      run rm -f -- "${config.xdg.stateHome}/sqlite-backup/halt-"*.flag 2>/dev/null || true
-    '';
+      # Halt-flag clearing activation hook (R13.AC15). On every HM
+      # activation (e.g. `darwin-rebuild switch`), remove any halt
+      # flags written by the operator CLI under
+      # `${config.xdg.stateHome}/sqlite-backup/halt-*.flag`. This makes
+      # halt state ephemeral with respect to rebuilds: the declarative
+      # `home.sqliteBackup.databases` configuration takes precedence
+      # and pipelines return to their declared running state.
+      #
+      # Uses HM's `run` and `verboseEcho` shell helpers (see
+      # home-manager modules/home-environment.nix:433-488), which honor
+      # `DRY_RUN` and `VERBOSE` automatically. The `2>/dev/null || true`
+      # tail keeps activation idempotent on first run when neither the
+      # parent directory nor any halt files exist.
+      home.activation.sqlite-backup-clear-halts = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        verboseEcho "Clearing sqlite-backup halt flags (R13.AC15)"
+        run rm -f -- "${config.xdg.stateHome}/sqlite-backup/halt-"*.flag 2>/dev/null || true
+      '';
 
-    # Manifest renderer (R1.AC1, R5.AC5, R16.AC1). The rendered
-    # manifest is the single cross-component data contract — the
-    # system-tier verification module and the per-database CLI binary
-    # both consume it (design.md §HM Module → State Management). The
-    # manifest exists whenever the module is enabled, including the
-    # dormant `databases = [ ]` case, so that downstream consumers
-    # have a stable file to point at.
-    home.sqliteBackup._manifestPath = pkgs.writeText "sqlite-backup-manifest.json" (
-      builtins.toJSON {
-        rcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
-        inherit (cfg) rcloneConfigPassphraseSecret archivePassphraseSecret;
-        # Per Mechanism A in design.md §Boundary Commitments: every
-        # secret consumed by this pipeline lives under the shared
-        # `mcp-hub` Keychain account, so it is a derived constant
-        # rather than a per-secret option.
-        keychainAccount = "mcp-hub";
-        inherit (cfg) rcloneDestinations;
-        databases = map (db: {
-          inherit (db)
-            name
-            path
-            remote
-            remotePath
-            replicationTier
-            archiveTier
-            ;
-          stagingDir = "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
-          repoDir = "${config.xdg.dataHome}/sqlite-backup/restic/${db.name}";
-        }) cfg.databases;
-      }
-    );
+      # Manifest renderer (R1.AC1, R5.AC5, R16.AC1). The rendered
+      # manifest is the single cross-component data contract — the
+      # system-tier verification module and the per-database CLI binary
+      # both consume it (design.md §HM Module → State Management). The
+      # manifest exists whenever the module is enabled, including the
+      # dormant `databases = [ ]` case, so that downstream consumers
+      # have a stable file to point at.
+      home.sqliteBackup._manifestPath = pkgs.writeText "sqlite-backup-manifest.json" (
+        builtins.toJSON {
+          rcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
+          inherit (cfg) rcloneConfigPassphraseSecret archivePassphraseSecret;
+          # Per Mechanism A in design.md §Boundary Commitments: every
+          # secret consumed by this pipeline lives under the shared
+          # `mcp-hub` Keychain account, so it is a derived constant
+          # rather than a per-secret option.
+          keychainAccount = "mcp-hub";
+          inherit (cfg) rcloneDestinations;
+          databases = map (db: {
+            inherit (db)
+              name
+              path
+              remote
+              remotePath
+              replicationTier
+              archiveTier
+              ;
+            stagingDir = "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
+            repoDir = "${config.xdg.dataHome}/sqlite-backup/restic/${db.name}";
+          }) cfg.databases;
+        }
+      );
 
-    # Per-database launchd agent declarations (R2.1, R2.4-2.6, R12.3,
-    # R14.2-3, R15.1, R15.5). For each entry in `cfg.databases` we
-    # emit up to three agents under the
-    # `dev.dwsr.sqlite-backup.{litestream,replicate,archive}.<db>`
-    # label scheme documented in design.md §"Architecture Pattern &
-    # Boundary Map":
-    #
-    #   * `litestream.<db>` — long-running Litestream daemon
-    #     (`KeepAlive = true`, auto-restarts on exit per R2.4) that
-    #     replicates the live SQLite WAL into the per-DB staging
-    #     directory.
-    #   * `replicate.<db>` — `StartInterval`-driven wrapper that
-    #     drives the replication-tier snapshot via the operator CLI
-    #     (`__replicate-trigger` subcommand, R14.2).
-    #   * `archive.<db>` — `StartCalendarInterval`-driven wrapper
-    #     that drives the archive-tier snapshot via the operator
-    #     CLI (`__archive-trigger` subcommand, R14.3).
-    #
-    # The replicate and archive wrappers depend on the per-database
-    # CLI binary, which is built by a later task and wired into
-    # `cfg._cliBinary` by the configuration glue layer. While
-    # `_cliBinary` is the default `null`, only the Litestream daemon
-    # agent is declared per database; the wrappers are emitted as
-    # soon as the CLI derivation is wired in. The dormant default
-    # (`databases = [ ]`, R1.AC2 / R1.AC3) emits no agents at all.
-    launchd.agents =
-      let
-        stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
+      # Per-database launchd agent declarations (R2.1, R2.4-2.6, R12.3,
+      # R14.2-3, R15.1, R15.5). For each entry in `cfg.databases` we
+      # emit up to three agents under the
+      # `dev.dwsr.sqlite-backup.{litestream,replicate,archive}.<db>`
+      # label scheme documented in design.md §"Architecture Pattern &
+      # Boundary Map":
+      #
+      #   * `litestream.<db>` — long-running Litestream daemon
+      #     (`KeepAlive = true`, auto-restarts on exit per R2.4) that
+      #     replicates the live SQLite WAL into the per-DB staging
+      #     directory.
+      #   * `replicate.<db>` — `StartInterval`-driven wrapper that
+      #     drives the replication-tier snapshot via the operator CLI
+      #     (`__replicate-trigger` subcommand, R14.2).
+      #   * `archive.<db>` — `StartCalendarInterval`-driven wrapper
+      #     that drives the archive-tier snapshot via the operator
+      #     CLI (`__archive-trigger` subcommand, R14.3).
+      #
+      # The replicate and archive wrappers depend on the per-database
+      # CLI binary, which is built by a later task and wired into
+      # `cfg._cliBinary` by the configuration glue layer. While
+      # `_cliBinary` is the default `null`, only the Litestream daemon
+      # agent is declared per database; the wrappers are emitted as
+      # soon as the CLI derivation is wired in. The dormant default
+      # (`databases = [ ]`, R1.AC2 / R1.AC3) emits no agents at all.
+      launchd.agents =
+        let
+          stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
 
-        logBaseFor = db: role: "${config.home.homeDirectory}/Library/Logs/sqlite-backup-${db.name}-${role}";
+          logBaseFor = db: role: "${config.home.homeDirectory}/Library/Logs/sqlite-backup-${db.name}-${role}";
 
-        # Build a single launchd agent name/value pair for use with
-        # `lib.listToAttrs`. The HM-side attribute key is local to
-        # this repo; the user-facing identity is the `Label` field
-        # set by the per-role builders below.
-        mkAgent = db: role: extra: {
-          name = "sqlite-backup-${role}-${db.name}";
-          value = {
-            enable = true;
-            config = {
-              Label = "dev.dwsr.sqlite-backup.${role}.${db.name}";
-              StandardOutPath = "${logBaseFor db role}.log";
-              StandardErrorPath = "${logBaseFor db role}.error.log";
-            }
-            // extra;
+          # Build a single launchd agent name/value pair for use with
+          # `lib.listToAttrs`. The HM-side attribute key is local to
+          # this repo; the user-facing identity is the `Label` field
+          # set by the per-role builders below.
+          mkAgent = db: role: extra: {
+            name = "sqlite-backup-${role}-${db.name}";
+            value = {
+              enable = true;
+              config = {
+                Label = "dev.dwsr.sqlite-backup.${role}.${db.name}";
+                StandardOutPath = "${logBaseFor db role}.log";
+                StandardErrorPath = "${logBaseFor db role}.error.log";
+              }
+              // extra;
+            };
           };
-        };
 
-        litestreamAgent =
-          db:
-          mkAgent db "litestream" {
-            KeepAlive = true;
-            RunAtLoad = true;
-            ProgramArguments = [
-              "${pkgs.litestream}/bin/litestream"
-              "replicate"
-              "${db.path}"
-              "file://${stagingDirFor db}"
+          litestreamAgent =
+            db:
+            mkAgent db "litestream" {
+              KeepAlive = true;
+              RunAtLoad = true;
+              ProgramArguments = [
+                "${pkgs.litestream}/bin/litestream"
+                "replicate"
+                "${db.path}"
+                "file://${stagingDirFor db}"
+              ];
+            };
+
+          replicateAgent =
+            db:
+            mkAgent db "replicate" {
+              StartInterval = db.replicationTier.cadenceSeconds;
+              ProgramArguments = [
+                "${cfg._cliBinary}/bin/sqlite-backup"
+                "__replicate-trigger"
+                db.name
+              ];
+            };
+
+          archiveAgent =
+            db:
+            mkAgent db "archive" {
+              StartCalendarInterval = db.archiveTier.schedule;
+              ProgramArguments = [
+                "${cfg._cliBinary}/bin/sqlite-backup"
+                "__archive-trigger"
+                db.name
+              ];
+            };
+
+          perDbAgents =
+            db:
+            [ (litestreamAgent db) ]
+            ++ lib.optionals (cfg._cliBinary != null) [
+              (replicateAgent db)
+              (archiveAgent db)
             ];
-          };
+        in
+        lib.listToAttrs (lib.concatMap perDbAgents cfg.databases);
 
-        replicateAgent =
-          db:
-          mkAgent db "replicate" {
-            StartInterval = db.replicationTier.cadenceSeconds;
-            ProgramArguments = [
-              "${cfg._cliBinary}/bin/sqlite-backup"
-              "__replicate-trigger"
-              db.name
-            ];
-          };
+      # CLI binary on the operator's PATH (R13.AC1, R13.AC2). The same
+      # derivation is wired into `home.sqliteBackup._cliBinary` below so
+      # that the per-DB launchd `ProgramArguments` resolve to the exact
+      # store path the operator invokes from a shell.
+      home.packages = [ cliBinary ];
 
-        archiveAgent =
-          db:
-          mkAgent db "archive" {
-            StartCalendarInterval = db.archiveTier.schedule;
-            ProgramArguments = [
-              "${cfg._cliBinary}/bin/sqlite-backup"
-              "__archive-trigger"
-              db.name
-            ];
-          };
+      # Flip the Task 2.5 placeholder so the per-DB replicate and archive
+      # launchd agents get emitted alongside the always-on Litestream
+      # daemon agent. Single source of truth — same derivation reference
+      # appears in `home.packages` (above) and here, so the launchd
+      # ProgramArguments and the PATH binary cannot diverge.
+      home.sqliteBackup._cliBinary = cliBinary;
 
-        perDbAgents =
-          db:
-          [ (litestreamAgent db) ]
-          ++ lib.optionals (cfg._cliBinary != null) [
-            (replicateAgent db)
-            (archiveAgent db)
-          ];
-      in
-      lib.listToAttrs (lib.concatMap perDbAgents cfg.databases);
-  };
+      # Two `home.mcp.keychainSecrets` entries that route the SQLite
+      # backup pipeline's two passphrases through the existing sops →
+      # 1Password → macOS Keychain bridge (R7.1, R7.2, R7.3 and design.md
+      # §"HM Module → Implementation Notes"):
+      #
+      #   * `archivePassphraseSecret` (default
+      #     `sqlite-backup-archive-passphrase`) — the symmetric
+      #     passphrase restic uses to encrypt every snapshot in both the
+      #     local and the off-host repository.
+      #   * `rcloneConfigPassphraseSecret` (default
+      #     `sqlite-backup-rclone-config-passphrase`) — the passphrase
+      #     rclone uses to decrypt the operator-managed
+      #     `~/.config/rclone/rclone.conf` at activation-time
+      #     verification (R17) and at every off-host shipment.
+      #
+      # The keys deliberately reference `cfg.archivePassphraseSecret` /
+      # `cfg.rcloneConfigPassphraseSecret` rather than hardcoded strings
+      # so per-host scaffolds that override the secret service name
+      # (e.g., to scope multiple hosts under distinct Keychain entries)
+      # stay in sync without a parallel edit here.
+      #
+      # The 1Password URIs below are the operator workflow defaults
+      # documented in design.md §"Recovery and Operations Workflow"
+      # phase 3. Per-host scaffolds can override either entry by adding
+      # a `home.mcp.keychainSecrets.<service-name> = "op://...";` line
+      # of their own — Nix attrset merging means the scaffold value
+      # wins. Operators on hosts that source secrets from a different
+      # 1Password vault (e.g., `op://Employee/...` on Shopify-managed
+      # hosts) should override here in their per-host scaffold.
+      home.mcp.keychainSecrets = {
+        ${cfg.archivePassphraseSecret} = "op://Private/sqlite-backup-archive/passphrase";
+        ${cfg.rcloneConfigPassphraseSecret} = "op://Private/sqlite-backup-rclone-config/passphrase";
+      };
+    }
+  );
 }
