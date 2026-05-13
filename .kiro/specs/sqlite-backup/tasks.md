@@ -71,7 +71,7 @@
   - _Requirements: 13.20, 13.21, 13.22, 13.23, 13.24_
   - _Boundary: CLI Script_
 
-- [ ] 3.4 Lifecycle subcommands: start and stop
+- [x] 3.4 Lifecycle subcommands: start and stop
   - `sqlite-backup stop <db> [--include-archive]` writes a halt flag at `${XDG_STATE_HOME}/sqlite-backup/halt-<db>.flag` with content `replication-only` (default) or `whole-pipeline` (with the flag), then runs `launchctl bootout gui/$(id -u) <litestream-agent-label>` to halt the per-DB Litestream daemon.
   - `sqlite-backup start <db>` removes the halt flag and runs `launchctl bootstrap gui/$(id -u) <litestream-plist-path>` to re-bootstrap the per-DB Litestream agent.
   - Both commands are idempotent: if `start` is invoked while no halt flag exists, report "already running" without error or change; if `stop` is invoked while a matching halt is already set, report "already halted (<state>)" without change.

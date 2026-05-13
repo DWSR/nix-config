@@ -412,6 +412,29 @@ pkgs.writeShellApplication {
     }
 
     # ----------------------------------------------------------------
+    # Litestream agent identity (consumed by start/stop and status)
+    # ----------------------------------------------------------------
+
+    # litestream_label <db>
+    # The launchd label of the per-DB Litestream daemon, mirroring the
+    # `Label` rendered by the HM module's `mkAgent db "litestream"` in
+    # `home-manager/common/sqlite-backup.nix`. Centralised so a future
+    # rename only has to be made in one place.
+    litestream_label() {
+      printf 'dev.dwsr.sqlite-backup.litestream.%s' "$1"
+    }
+
+    # litestream_plist_path <db>
+    # Absolute path to the per-DB Litestream agent's launchd plist as
+    # rendered by HM. nix-darwin / HM `launchd.agents.<name>` always
+    # writes to `''${HOME}/Library/LaunchAgents/<label>.plist`; relying
+    # on that convention here keeps the CLI self-contained (no need to
+    # thread a second baked path through the manifest).
+    litestream_plist_path() {
+      printf '%s/Library/LaunchAgents/%s.plist' "$HOME" "$(litestream_label "$1")"
+    }
+
+    # ----------------------------------------------------------------
     # Help text
     # ----------------------------------------------------------------
 
@@ -596,13 +619,122 @@ pkgs.writeShellApplication {
         ;;
 
       start)
+        # R13.12, R13.16: clear halt flag and re-bootstrap the per-DB
+        # Litestream agent. Idempotent — when no halt flag is present
+        # we report "already running" and skip the bootstrap (the agent
+        # was never unloaded by us, so re-bootstrapping it would error
+        # with "service already loaded" and add nothing).
         require_db "''${1:-}"
-        placeholder start 3.4
+        start_db="$1"
+
+        log_start "$start_db" start
+
+        start_flag="$STATE_DIR/halt-$start_db.flag"
+        if [ ! -f "$start_flag" ]; then
+          printf 'sqlite-backup: %s: already running\n' "$start_db"
+          log_end "$start_db" start 0
+          exit 0
+        fi
+
+        rm -f -- "$start_flag"
+        printf 'sqlite-backup: %s: halt cleared\n' "$start_db"
+
+        # Bootstrap the Litestream daemon. Failure here is non-fatal
+        # from the operator's perspective — the most common cause is
+        # "service already loaded" (e.g., on a host where the agent
+        # was never actually unloaded), and the halt flag — the
+        # authoritative state per the wrappers — is already cleared.
+        start_plist="$(litestream_plist_path "$start_db")"
+        start_uid="$(id -u)"
+        if [ ! -f "$start_plist" ]; then
+          printf 'sqlite-backup: %s: litestream plist not found at %s; skipping bootstrap\n' \
+            "$start_db" "$start_plist" >&2
+        elif "$LAUNCHCTL_BIN" bootstrap "gui/$start_uid" "$start_plist" >/dev/null 2>&1; then
+          printf 'sqlite-backup: %s: litestream agent bootstrapped\n' "$start_db"
+        else
+          printf 'sqlite-backup: %s: litestream agent already loaded\n' "$start_db"
+        fi
+
+        log_end "$start_db" start 0
+        exit 0
         ;;
 
       stop)
-        require_db "''${1:-}"
-        placeholder stop 3.4
+        # R13.11, R13.13, R13.14, R13.16: write halt flag and unload
+        # the per-DB Litestream agent. Default content is
+        # `replication-only`; `--include-archive` escalates to
+        # `whole-pipeline` (consulted by the archive-tier wrapper in
+        # task 3.5). Idempotent — same content rerun is a no-op;
+        # different content is reported as a transition.
+        #
+        # Argument parsing is operator-friendly: `--include-archive`
+        # may appear before or after the database name, anywhere in
+        # the remaining argv.
+        stop_include_archive=0
+        stop_db=""
+        for stop_arg in "$@"; do
+          case "$stop_arg" in
+            --include-archive)
+              stop_include_archive=1
+              ;;
+            --*)
+              echo "sqlite-backup: stop: unknown flag: $stop_arg" >&2
+              exit 1
+              ;;
+            *)
+              if [ -z "$stop_db" ]; then
+                stop_db="$stop_arg"
+              else
+                echo "sqlite-backup: stop: unexpected positional arg: $stop_arg" >&2
+                exit 1
+              fi
+              ;;
+          esac
+        done
+        require_db "$stop_db"
+
+        if [ "$stop_include_archive" = "1" ]; then
+          stop_desired=whole-pipeline
+        else
+          stop_desired=replication-only
+        fi
+
+        log_start "$stop_db" stop
+
+        stop_flag="$STATE_DIR/halt-$stop_db.flag"
+        stop_current="$(get_halt_content "$stop_db")"
+
+        if [ "$stop_current" = "$stop_desired" ]; then
+          # Idempotent same-state rerun: leave file untouched, still
+          # attempt the launchctl unload below — if the operator has
+          # somehow re-loaded the agent out-of-band the right thing is
+          # to bring it back in line with the declared halt state.
+          printf 'sqlite-backup: %s: already halted (%s)\n' "$stop_db" "$stop_desired"
+        else
+          mkdir -p "$STATE_DIR"
+          printf '%s' "$stop_desired" >"$stop_flag"
+          if [ -n "$stop_current" ]; then
+            printf 'sqlite-backup: %s: halt updated %s -> %s\n' \
+              "$stop_db" "$stop_current" "$stop_desired"
+          else
+            printf 'sqlite-backup: %s: halted (%s)\n' "$stop_db" "$stop_desired"
+          fi
+        fi
+
+        # Unload the Litestream daemon. `bootout` of an already-
+        # unloaded agent exits non-zero; treat that as the agent
+        # already being in the desired state (the halt flag is the
+        # authoritative record per design.md §"State Management").
+        stop_label="$(litestream_label "$stop_db")"
+        stop_uid="$(id -u)"
+        if "$LAUNCHCTL_BIN" bootout "gui/$stop_uid/$stop_label" >/dev/null 2>&1; then
+          printf 'sqlite-backup: %s: litestream agent unloaded\n' "$stop_db"
+        else
+          printf 'sqlite-backup: %s: litestream agent already unloaded\n' "$stop_db"
+        fi
+
+        log_end "$stop_db" stop 0
+        exit 0
         ;;
 
       __replicate-trigger)
