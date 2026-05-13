@@ -9,7 +9,7 @@
 
 - [ ] 2. HM module declarative surface
 
-- [ ] 2.1 Option surface and dormant-default evaluation
+- [x] 2.1 Option surface and dormant-default evaluation
   - Create `home-manager/common/sqlite-backup.nix` with `home.sqliteBackup.{enable, rcloneDestinations, databases, archivePassphraseSecret, rcloneConfigPassphraseSecret}` options and explicit Nix types.
   - Define `rcloneDestinations` as `attrsOf (submodule {…})` with at minimum a `type` field plus arbitrary non-credential rclone backend attributes.
   - Define `databases` as `listOf (submodule {…})` with `name`, `path`, `remote`, `remotePath`, `replicationTier.{cadenceSeconds,retention}`, `archiveTier.{schedule,retention}` and the documented defaults from `design.md`.
