@@ -3,6 +3,7 @@ let
   mcpServers = import ./mcp-servers.nix { inherit inputs; };
   zellijPlugins = import ./zellij-plugins.nix { inherit inputs; };
   misc = import ./misc.nix { inherit inputs; };
+  litestream = import ./litestream.nix;
 in
 {
   fixed-packages = final: _prev: {
@@ -22,5 +23,9 @@ in
   };
 
   custom-packages =
-    final: prev: (mcpServers final prev) // (zellijPlugins final prev) // (misc final prev);
+    final: prev:
+    (mcpServers final prev)
+    // (zellijPlugins final prev)
+    // (misc final prev)
+    // (litestream final prev);
 }
