@@ -23,7 +23,7 @@
   - Confirm: each assertion fires with the named cause when triggered by a deliberate invalid input (validated by Task 8.2).
   - _Requirements: 1.5, 10.1, 10.2, 11.1, 11.2, 11.3_
 
-- [ ] 2.3 Manifest renderer
+- [x] 2.3 Manifest renderer
   - Render the manifest JSON via `pkgs.writeText "sqlite-backup-manifest.json" (builtins.toJSON manifestData)` containing the destinations attrset, the databases list with computed `stagingDir` and `repoDir` paths under `${config.xdg.dataHome}/sqlite-backup/{litestream-staging,restic}/<db>`, and the secret service names.
   - Expose the resulting store path as a private read-only option `home.sqliteBackup._manifestPath` so the system-tier verification module and the CLI binary can both consume it.
   - Confirm: `cat $(nix eval --raw '.#…home.sqliteBackup._manifestPath')` prints a JSON document matching the schema in `design.md` §Data Models.

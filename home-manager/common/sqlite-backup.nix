@@ -219,6 +219,21 @@ in
         (R17 verification) and at runtime for off-host shipment.
       '';
     };
+
+    _manifestPath = mkOption {
+      type = types.path;
+      internal = true;
+      readOnly = true;
+      description = ''
+        Store path of the rendered sqlite-backup manifest JSON. This
+        is the single cross-component data contract: the system-tier
+        verification module reads it via
+        `config.home-manager.users.<user>.home.sqliteBackup._manifestPath`
+        and the per-database CLI binary embeds it at derivation time.
+        Operators cannot override this option; it is computed from
+        the public surface.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -254,6 +269,38 @@ in
           destination.
         '';
       })
+    );
+
+    # Manifest renderer (R1.AC1, R5.AC5, R16.AC1). The rendered
+    # manifest is the single cross-component data contract — the
+    # system-tier verification module and the per-database CLI binary
+    # both consume it (design.md §HM Module → State Management). The
+    # manifest exists whenever the module is enabled, including the
+    # dormant `databases = [ ]` case, so that downstream consumers
+    # have a stable file to point at.
+    home.sqliteBackup._manifestPath = pkgs.writeText "sqlite-backup-manifest.json" (
+      builtins.toJSON {
+        rcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
+        inherit (cfg) rcloneConfigPassphraseSecret archivePassphraseSecret;
+        # Per Mechanism A in design.md §Boundary Commitments: every
+        # secret consumed by this pipeline lives under the shared
+        # `mcp-hub` Keychain account, so it is a derived constant
+        # rather than a per-secret option.
+        keychainAccount = "mcp-hub";
+        inherit (cfg) rcloneDestinations;
+        databases = map (db: {
+          inherit (db)
+            name
+            path
+            remote
+            remotePath
+            replicationTier
+            archiveTier
+            ;
+          stagingDir = "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
+          repoDir = "${config.xdg.dataHome}/sqlite-backup/restic/${db.name}";
+        }) cfg.databases;
+      }
     );
   };
 }
