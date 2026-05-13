@@ -123,7 +123,7 @@
 
 - [ ] 5. System-tier verification of rclone config (R17)
 
-- [ ] 5.1 (P) Verification script
+- [x] 5.1 (P) Verification script
   - Create `pkgs.writeShellApplication` (defined inside `configurations/common-darwin/sqlite-backup-verify.nix`) named `sqlite-backup-verify-rclone-config` taking the manifest path as `$1` and `runtimeInputs = [ pkgs.rclone pkgs.jq ]`.
   - Implement R17 verification flow with distinguished failure modes (R17.5):
     - Resolve passphrase Keychain entries via `/usr/bin/security find-generic-password -s <name> -a mcp-hub -w`; on missing entry, fail with "missing passphrase in Keychain: ..." message naming the secret.
