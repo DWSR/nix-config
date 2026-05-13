@@ -453,12 +453,18 @@ pkgs.writeShellApplication {
     # Tier-trigger flow (shared by __replicate-trigger / __archive-trigger)
     # ----------------------------------------------------------------
 
-    # tier_trigger <tier> <db>
+    # tier_trigger <tier> <db> [<bypass_halt>]
     # tier is "replication" or "archive"; db is a manifest-validated
-    # database name. Implements the 10-step batch contract from
-    # design.md §"CLI Script → Batch / Job Contract" verbatim:
+    # database name. bypass_halt is an optional boolean (default
+    # "false"); when "true" the step 1 halt-flag early-exit is
+    # bypassed (R13.19: operator-invoked `backup` overrides halt
+    # without modifying it). Implements the 10-step batch contract
+    # from design.md §"CLI Script → Batch / Job Contract" verbatim:
     #
-    #   1. Halt-flag check (tier-aware skip semantics).
+    #   1. Halt-flag check (tier-aware skip semantics; bypassed for
+    #      operator-invoked one-shots when bypass_halt="true", in
+    #      which case the flag is read for a logged operator-visible
+    #      "proceeding despite halt" line but never modified).
     #   2. Per-DB mkdir mutex (early-exit 0 if held).
     #   3. Export Keychain-backed RESTIC_PASSWORD_COMMAND,
     #      RCLONE_PASSWORD_COMMAND, and RESTIC_FROM_PASSWORD_COMMAND
@@ -493,6 +499,7 @@ pkgs.writeShellApplication {
     # the lock and the trap so the script exits cleanly.
     tier_trigger() {
       local tier="$1" db="$2"
+      local bypass_halt="''${3:-false}"
       local tier_field
       case "$tier" in
         replication) tier_field=replicationTier ;;
@@ -512,22 +519,36 @@ pkgs.writeShellApplication {
       # Skipping is exit 0 with a logged reason so launchd does not
       # spuriously page on "failed" runs that were intentionally
       # halted by the operator.
+      #
+      # When bypass_halt="true" (operator-invoked `backup` subcommand,
+      # R13.19), the halt flag is read for an operator-visible log
+      # line but never causes early exit; the flag itself is never
+      # modified, written, or removed by this codepath, so a
+      # previously-set halt state is preserved across the on-demand
+      # run.
       local halt
       halt="$(get_halt_content "$db")"
-      case "$tier:$halt" in
-        *:whole-pipeline)
-          printf 'sqlite-backup: %s: %s skipped (whole-pipeline halt)\n' \
-            "$db" "$subcmd"
-          log_end "$db" "$subcmd" 0
-          return 0
-          ;;
-        replication:replication-only)
-          printf 'sqlite-backup: %s: %s skipped (replication-only halt)\n' \
-            "$db" "$subcmd"
-          log_end "$db" "$subcmd" 0
-          return 0
-          ;;
-      esac
+      if [ "$bypass_halt" = "true" ]; then
+        if [ -n "$halt" ]; then
+          printf 'sqlite-backup: %s: %s proceeding despite %s halt (operator override)\n' \
+            "$db" "$subcmd" "$halt"
+        fi
+      else
+        case "$tier:$halt" in
+          *:whole-pipeline)
+            printf 'sqlite-backup: %s: %s skipped (whole-pipeline halt)\n' \
+              "$db" "$subcmd"
+            log_end "$db" "$subcmd" 0
+            return 0
+            ;;
+          replication:replication-only)
+            printf 'sqlite-backup: %s: %s skipped (replication-only halt)\n' \
+              "$db" "$subcmd"
+            log_end "$db" "$subcmd" 0
+            return 0
+            ;;
+        esac
+      fi
 
       # Step 2: per-DB mkdir mutex. Held iff another wrapper for the
       # same DB is mid-run; treat as a no-op skip (exit 0 with logged
@@ -863,8 +884,25 @@ pkgs.writeShellApplication {
         ;;
 
       backup)
+        # R13.3, R13.4, R13.5, R13.19: on-demand operator backup.
+        # Invokes the same archive-tier flow as __archive-trigger (so
+        # the on-demand run shares the scheduled flow's snapshot
+        # capture, retention, off-host shipment, mkdir mutex, and
+        # error-propagation semantics — R13.3, R13.4, R13.5) but
+        # passes bypass_halt="true" to tier_trigger so step 1's
+        # halt-flag check is bypassed (R13.19: explicit operator
+        # override). The halt flag itself is never written,
+        # modified, or removed by this arm or by tier_trigger when
+        # bypass_halt="true"; halt state is preserved across the
+        # on-demand run. The trailing `exit 0` is reached only when
+        # tier_trigger returns 0 — under `set -e` (writeShellApplication
+        # default), a non-zero return from tier_trigger aborts the
+        # script and propagates that exit code, so any pipeline-step
+        # failure is faithfully reported to the operator's terminal
+        # with the cause printed to stderr by tier_trigger itself.
         require_db "''${1:-}"
-        placeholder backup 3.6
+        tier_trigger archive "$1" true
+        exit 0
         ;;
 
       restore)

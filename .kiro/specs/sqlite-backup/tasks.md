@@ -96,7 +96,7 @@
   - _Requirements: 2.2, 2.3, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 5.4, 6.1, 6.2, 6.3, 6.4, 8.1, 8.2, 8.3, 12.1, 12.2, 12.4, 14.1, 14.4, 14.5, 15.2, 15.3, 15.4, 16.1, 16.2, 16.3, 16.4, 16.5_
   - _Boundary: CLI Script_
 
-- [ ] 3.6 backup subcommand (on-demand)
+- [x] 3.6 backup subcommand (on-demand)
   - `sqlite-backup backup <db>` invokes the same internal helper as `__archive-trigger` but bypasses the halt-flag check at step 1 (R19 — explicit operator override).
   - The halt flag is consulted (for logging) but never written, modified, or removed by this subcommand; halt state is preserved across the on-demand run.
   - Exit status propagates from the internal trigger; non-zero on any pipeline step failure with cause printed to stderr.
