@@ -46,7 +46,7 @@
 
 - [ ] 3. Operator CLI binary
 
-- [ ] 3.1 CLI dispatcher and shared helpers
+- [x] 3.1 CLI dispatcher and shared helpers
   - Create `scripts/sqlite-backup-cli.nix` as a `pkgs.writeShellApplication` taking `pkgs`, `lib`, and `manifestPath` as args; emit a binary named `sqlite-backup`.
   - Implement case-on-`$1` dispatch for all public subcommands (`list`, `status`, `backup`, `restore`, `start`, `stop`, `verify-credentials`, `--help`) and internal subcommands (`__replicate-trigger`, `__archive-trigger`).
   - Implement shared helper functions: read manifest via baked path + `jq`, read Keychain secret via absolute-path `/usr/bin/security find-generic-password -s <svc> -a mcp-hub -w`, acquire/release per-database mkdir lockfile under `${TMPDIR:-/var/tmp}/sqlite-backup-<db>.lock`, log start/end with timestamps to `~/Library/Logs/sqlite-backup-<db>-cli.log`.
