@@ -35,7 +35,7 @@
   - Confirm: writing `${XDG_STATE_HOME}/sqlite-backup/halt-cavemem.flag` manually and then running `darwin-rebuild switch` removes the file.
   - _Requirements: 13.15_
 
-- [ ] 2.5 Per-database launchd agent declarations
+- [x] 2.5 Per-database launchd agent declarations
   - For each entry in `databases`, declare three `launchd.agents` entries:
     - `dev.dwsr.sqlite-backup.litestream.<db>` — `KeepAlive = true; RunAtLoad = true; ProgramArguments = [ "${pkgs.litestream}/bin/litestream" "replicate" "<db.path>" "file://<stagingDir>" ];`
     - `dev.dwsr.sqlite-backup.replicate.<db>` — `StartInterval = db.replicationTier.cadenceSeconds; ProgramArguments = [ "<sqlite-backup>/bin/sqlite-backup" "__replicate-trigger" "<db.name>" ];`

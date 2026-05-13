@@ -234,6 +234,23 @@ in
         the public surface.
       '';
     };
+
+    _cliBinary = mkOption {
+      type = types.nullOr types.package;
+      internal = true;
+      default = null;
+      description = ''
+        Per-database operator CLI derivation. Built and wired in by
+        the CLI-integration task that follows the per-DB launchd
+        agent declaration (see tasks.md). When `null`, the per-DB
+        replicate and archive launchd agents are not declared — only
+        the Litestream daemon agent is emitted per configured
+        database. When set to a derivation exposing
+        `bin/sqlite-backup`, all three agents per database are
+        declared. Operators do not set this option directly; the
+        configuration glue layer wires it from the CLI module.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -320,5 +337,98 @@ in
         }) cfg.databases;
       }
     );
+
+    # Per-database launchd agent declarations (R2.1, R2.4-2.6, R12.3,
+    # R14.2-3, R15.1, R15.5). For each entry in `cfg.databases` we
+    # emit up to three agents under the
+    # `dev.dwsr.sqlite-backup.{litestream,replicate,archive}.<db>`
+    # label scheme documented in design.md §"Architecture Pattern &
+    # Boundary Map":
+    #
+    #   * `litestream.<db>` — long-running Litestream daemon
+    #     (`KeepAlive = true`, auto-restarts on exit per R2.4) that
+    #     replicates the live SQLite WAL into the per-DB staging
+    #     directory.
+    #   * `replicate.<db>` — `StartInterval`-driven wrapper that
+    #     drives the replication-tier snapshot via the operator CLI
+    #     (`__replicate-trigger` subcommand, R14.2).
+    #   * `archive.<db>` — `StartCalendarInterval`-driven wrapper
+    #     that drives the archive-tier snapshot via the operator
+    #     CLI (`__archive-trigger` subcommand, R14.3).
+    #
+    # The replicate and archive wrappers depend on the per-database
+    # CLI binary, which is built by a later task and wired into
+    # `cfg._cliBinary` by the configuration glue layer. While
+    # `_cliBinary` is the default `null`, only the Litestream daemon
+    # agent is declared per database; the wrappers are emitted as
+    # soon as the CLI derivation is wired in. The dormant default
+    # (`databases = [ ]`, R1.AC2 / R1.AC3) emits no agents at all.
+    launchd.agents =
+      let
+        stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
+
+        logBaseFor = db: role: "${config.home.homeDirectory}/Library/Logs/sqlite-backup-${db.name}-${role}";
+
+        # Build a single launchd agent name/value pair for use with
+        # `lib.listToAttrs`. The HM-side attribute key is local to
+        # this repo; the user-facing identity is the `Label` field
+        # set by the per-role builders below.
+        mkAgent = db: role: extra: {
+          name = "sqlite-backup-${role}-${db.name}";
+          value = {
+            enable = true;
+            config = {
+              Label = "dev.dwsr.sqlite-backup.${role}.${db.name}";
+              StandardOutPath = "${logBaseFor db role}.log";
+              StandardErrorPath = "${logBaseFor db role}.error.log";
+            }
+            // extra;
+          };
+        };
+
+        litestreamAgent =
+          db:
+          mkAgent db "litestream" {
+            KeepAlive = true;
+            RunAtLoad = true;
+            ProgramArguments = [
+              "${pkgs.litestream}/bin/litestream"
+              "replicate"
+              "${db.path}"
+              "file://${stagingDirFor db}"
+            ];
+          };
+
+        replicateAgent =
+          db:
+          mkAgent db "replicate" {
+            StartInterval = db.replicationTier.cadenceSeconds;
+            ProgramArguments = [
+              "${cfg._cliBinary}/bin/sqlite-backup"
+              "__replicate-trigger"
+              db.name
+            ];
+          };
+
+        archiveAgent =
+          db:
+          mkAgent db "archive" {
+            StartCalendarInterval = db.archiveTier.schedule;
+            ProgramArguments = [
+              "${cfg._cliBinary}/bin/sqlite-backup"
+              "__archive-trigger"
+              db.name
+            ];
+          };
+
+        perDbAgents =
+          db:
+          [ (litestreamAgent db) ]
+          ++ lib.optionals (cfg._cliBinary != null) [
+            (replicateAgent db)
+            (archiveAgent db)
+          ];
+      in
+      lib.listToAttrs (lib.concatMap perDbAgents cfg.databases);
   };
 }
