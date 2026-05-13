@@ -155,7 +155,7 @@
   - _Boundary: Per-host Scaffolds_
   - _Depends: 2.1_
 
-- [ ] 6.2 (P) Shopify host scaffold
+- [x] 6.2 (P) Shopify host scaffold
   - Create `configurations/shopify/home-manager/sqlite-backup.nix` with the same dormant shape as Personal.
   - Append `./sqlite-backup.nix` to `configurations/shopify/home-manager/default.nix` imports list.
   - Confirm: `nix flake check` passes for `darwinConfigurations.ShopifyLaptop` with the new scaffold.
