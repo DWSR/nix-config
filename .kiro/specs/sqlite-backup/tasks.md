@@ -147,7 +147,7 @@
 
 - [ ] 6. Per-host wiring (dormant landing)
 
-- [ ] 6.1 (P) Personal host scaffold
+- [x] 6.1 (P) Personal host scaffold
   - Create `configurations/personal/home-manager/sqlite-backup.nix` setting `home.sqliteBackup = { enable = true; rcloneDestinations = { }; databases = [ ]; }`.
   - Append `./sqlite-backup.nix` to `configurations/personal/home-manager/default.nix` imports list.
   - Confirm: `nix flake check` passes for `darwinConfigurations.Brandons-MacBook-Pro` with the new scaffold.
@@ -324,3 +324,4 @@ even when not exploited.
 
 - **Task 3.2** introduced a 4th `replication-state` value `not-running` (when no halt flag is set but the launchd Litestream agent is not loaded — happens in pre-bootstrap and synthetic test environments). Tasks.md and R13.18 originally specified a closed 3-value enum. The implementer's choice is operationally sound (don't lie about pipeline health). Future spec amendment should reconcile: extend the enum to include `not-running` (preferred) or document that the 3-value enum applies only on a host with the agent live. The literal R13.18 confirm criterion (`status cavemem` reports `running` with one DB and no halt) is satisfied on a live host where the agent is loaded.
 - **Task 3.2** also surfaced minor spec-vs-implementation field-name drift (design.md uses `last-archival-snapshot-timestamp` / `last-replicate-shipment-timestamp`; tasks.md uses `last-replication-snapshot timestamp` / `last-archive-snapshot timestamp`; implementation matched tasks.md). Not implementation-blocking; reconcile in spec.
+- **Tasks 6.1 / 6.2 deferred their per-host import-list additions to Task 6.3** (Approach A from the review). The per-host scaffolds reference `home.sqliteBackup.enable`, an option only defined when the HM module is imported via `home-manager/common/default.nix` — which is also Task 6.3's job. Task 6.3 must therefore append `./sqlite-backup.nix` to BOTH `configurations/personal/home-manager/default.nix` AND `configurations/shopify/home-manager/default.nix` IN ADDITION TO its documented work on `home-manager/common/default.nix` and `configurations/common-darwin/default.nix`. Without this, R1.2/R1.3 (dormant declaration on each host) silently fails to land.
