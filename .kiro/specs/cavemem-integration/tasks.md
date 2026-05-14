@@ -254,7 +254,7 @@
   - _Requirements: 8.1, 8.6_
   - _Boundary: ImporterScript_
 
-- [ ] 7.2 Create the importer Node script and packaging
+- [x] 7.2 Create the importer Node script and packaging
   - Write the Node script (either inlined into the
     `writeShellApplication` text via a Nix file path or shipped as a
     separate `scripts/cavemem-import-vault.js` source).
@@ -421,3 +421,4 @@
 - 1.3: Single-bottleneck patch at resolveDataDir() in packages/config/src/loader.ts. Empty/whitespace env values fall back to ~/.cavemem. tsup chunks the bundle: env var ref lands in dist/chunk-*.js, NOT dist/index.js. Bundle reference verified at dist/chunk-TBTU5LYL.js. Re-cherry on cavemem version bump.
 - 5.2: opencode HM module renders 'programs.opencode.settings.mcp.<name>' (NOT 'mcpServers.<name>'), per nix-community/home-manager modules/programs/opencode.nix and the upstream opencode docs at opencode.ai/docs/mcp-servers/. Per-server shape is { type="local"; command=<array>; environment=<attrset>; enabled=<bool>; } — NOT { command; args; env }. The 'transformMcpServer' helper only fires for 'programs.mcp.servers' entries, NOT for direct settings.mcp.* contributions. Mirror the env on both mcphub and opencode entries to avoid split-brain dataDir resolution.
 - 7.1: cavemem-importer-deps uses flat node_modules layout (npm ci style) at $out/lib/node_modules/. Importer (task 7.2) sets NODE_PATH or requires from this absolute path. better-sqlite3 must be force-built-from-source via preBuild npm_config_build_from_source=true because the Nix sandbox blocks prebuild-install GitHub fetches; cctools required for darwin native compile. Pinned versions: better-sqlite3@12.10.0, js-yaml@4.1.1.
+- 7.2: cavemem v0.2.1 schema reality (verified at packages/storage/src/schema.ts SHA c141f74): sessions.id is TEXT (not INTEGER auto-inc); summaries has NO metadata column (dedup by (session_id, scope, content) tuple); summaries.session_id is TEXT NOT NULL FK to sessions(id) ON DELETE CASCADE — orphan summaries need a placeholder session row. DB filename is data.db (literal in packages/hooks/src/runner.ts SHA b5552e5), NOT cavemem.db as some specs/docs claim. requirements.md §8.6/§8.7 still reference cavemem.db; downstream tasks 8.1 + 9.x must use data.db. Memory note: memories/2026-05-14-cavemem-importer-schema-realities.md.

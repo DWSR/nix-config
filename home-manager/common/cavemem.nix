@@ -220,6 +220,22 @@ in
     let
       e = cfg.embedding;
 
+      # Task 7.2 (Req 8.1-8.8; design.md §ImporterScript): the
+      # one-shot Obsidian → cavemem migration tool. The wrapper in
+      # `scripts/cavemem-import-vault.nix` bakes
+      # `home.mcp.obsidianVaultPath` and `cfg.dataDir` into the
+      # derivation at HM evaluation time so the operator runs
+      # `cavemem-import-vault` with no flags. callPackage feeds the
+      # standard `pkgs.cavemem-importer-deps` (Task 7.1) plus the
+      # two per-host parameters; the per-host vault path is read
+      # from `home.mcp.obsidianVaultPath` (defined in
+      # `home-manager/mcp/default.nix`) and differs between the
+      # Shopify Google-Drive vault and the personal iCloud vault.
+      cavememImportVault = pkgs.callPackage ../../scripts/cavemem-import-vault.nix {
+        vaultPath = config.home.mcp.obsidianVaultPath;
+        inherit (cfg) dataDir;
+      };
+
       # Per-provider embedding subsection. cavemem's Zod schema
       # (`packages/config/src/schema.ts`) accepts `provider`, `model`,
       # `endpoint`, `apiKey`, and `idleShutdownMs` under `embedding`;
@@ -314,7 +330,13 @@ in
       };
     in
     {
-      home.packages = [ pkgs.cavemem ];
+      home.packages = [
+        pkgs.cavemem
+        # Task 7.2: per-host wrapper around the Node importer; vault
+        # path and dataDir are baked in at HM build time so the
+        # operator just runs `cavemem-import-vault` (no flags).
+        cavememImportVault
+      ];
 
       # `home.file` (not `xdg.dataFile`) because `cfg.dataDir` is a
       # fully-qualified path (default `${xdg.dataHome}/cavemem`) and
