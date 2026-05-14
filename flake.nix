@@ -282,7 +282,14 @@
         in
         {
           default = pkgs.mkShell {
-            buildInputs = preCommitCheck.enabledPackages;
+            buildInputs = preCommitCheck.enabledPackages ++ [
+              # Available in-shell so operators can decrypt / edit
+              # secrets/*.yaml without needing sops on PATH globally.
+              # Decryption still requires the per-host age key at
+              # /var/lib/sops-nix/key.txt (root-owned; use sudo) — see
+              # secrets/README.md for the operator runbook.
+              pkgs.sops
+            ];
 
             # Symlink .pre-commit-config.yaml for the global prek hook to find.
             # We do NOT run prek install — hooks are installed globally via
