@@ -27,12 +27,17 @@
       future synthesizer-agent's tool allow-list can target it without
       ambiguity.
 
-  This task only declares the option surface and a minimal `config`
-  block that contributes `pkgs.cavemem` to `home.packages` when enabled
-  (Req 2.3). Settings.json rendering, plugin file emission, mcphub
-  wiring, opencode wiring, and wrapper-command extension all land in
-  later tasks (4.1, 4.2, 5.1, 5.2, 5.3) which append to the same
-  `config = lib.mkIf cfg.enable { ... }` block.
+  Tasks 3.1 and 4.1 of the spec land here:
+
+  - 3.1 declares the option surface above and contributes
+    `pkgs.cavemem` to `home.packages` when enabled (Req 2.3).
+  - 4.1 renders `${dataDir}/settings.json` from the option values
+    (Req 2.4, 3.4, 3.5, 3.6, 3.7) via `home.file`.
+
+  Plugin file emission, mcphub wiring, opencode wiring, and
+  wrapper-command extension still land in later tasks (4.2, 5.1, 5.2,
+  5.3), which append to the same `config = lib.mkIf cfg.enable { ... }`
+  block.
 
   Spec: .kiro/specs/cavemem-integration/{requirements,design,tasks}.md
 */
@@ -128,8 +133,16 @@ in
           Optional remote endpoint URL for the `ollama` and `openai`
           providers (Req 3.3). Consumed by the settings.json renderer
           (Task 4.1); written to `embedding.endpoint` only when the
-          selected provider needs it (Req 3.5, Req 3.6). Ignored when
-          `embedding.provider` is `local` or `none`.
+          selected provider needs it AND the value is non-null
+          (Req 3.5, Req 3.6). When null, the key is OMITTED from the
+          rendered settings.json rather than emitted as `null` —
+          cavemem's Zod schema declares `endpoint` as
+          `z.string().optional()` under a `.strict()` parent and
+          rejects an explicit null at worker startup. Ignored when
+          `embedding.provider` is `local` or `none`. The renderer
+          also emits a `lib.warn` at evaluation time when
+          `provider == "ollama"` and this value is null, since
+          ollama mode cannot do useful work without an endpoint.
         '';
       };
 
@@ -140,10 +153,17 @@ in
           Optional API key for the `openai` provider (Req 3.3).
           Consumed by the settings.json renderer (Task 4.1); written
           to `embedding.apiKey` only when `embedding.provider` is
-          `openai` (Req 3.6). The settings.json renderer also emits a
-          `lib.warn` at evaluation time when `provider == "openai"`
-          and this value is null (Req 3.6 / design.md
-          §CavememModule → Implementation Notes).
+          `openai` AND the value is non-null (Req 3.6). When null,
+          the key is OMITTED from the rendered settings.json rather
+          than emitted as `null` — cavemem's Zod schema declares
+          `apiKey` as `z.string().optional()` under a `.strict()`
+          parent and rejects an explicit null at worker startup. The
+          settings.json renderer also emits a `lib.warn` at
+          evaluation time when `provider == "openai"` and this value
+          is null (Req 3.6 / design.md §CavememModule →
+          Implementation Notes); cavemem will start but the worker
+          will fail on the first embed request when it cannot
+          authenticate.
 
           NOTE: this option is a plain string today. Per Task 6.x it
           will be re-routed through the existing sops + 1Password +
@@ -190,14 +210,118 @@ in
     };
   };
 
-  # Minimal config block for Task 3.1: contribute the patched cavemem
-  # package to the operator's PATH (Req 2.3) when the module is
-  # enabled, and contribute nothing when disabled (Req 2.7). Tasks
-  # 4.1, 4.2, 5.1, 5.2, and 5.3 will append to this same block to
-  # render settings.json, ship the vendored opencode plugin, register
-  # the mcphub `cavemem` server, register opencode's
-  # `mcpServers.cavemem` entry, and append the wrapper health check.
-  config = lib.mkIf cfg.enable {
-    home.packages = [ pkgs.cavemem ];
-  };
+  # Config block for Task 3.1 (package on PATH, Req 2.3) and Task 4.1
+  # (settings.json render, Req 2.4 + 3.4-3.7). Task 4.2/5.1/5.2/5.3
+  # will append further attributes (plugin file, mcphub entry,
+  # opencode mcpServers entry, wrapper health check) to this same
+  # block. When `enable` is false the module contributes nothing
+  # (Req 2.7).
+  config = lib.mkIf cfg.enable (
+    let
+      e = cfg.embedding;
+
+      # Per-provider embedding subsection. cavemem's Zod schema
+      # (`packages/config/src/schema.ts`) accepts `provider`, `model`,
+      # `endpoint`, `apiKey`, and `idleShutdownMs` under `embedding`;
+      # the spec exposes the first four as module options (Req 3.1-3.3)
+      # and lets cavemem's runtime defaults take over for the rest.
+      #
+      # The conditional shape is the meat of Req 3.4-3.7:
+      #   local  -> provider + model
+      #   ollama -> provider + model [+ endpoint if non-null]
+      #   openai -> provider + model [+ endpoint if non-null] [+ apiKey if non-null]
+      #   none   -> provider only
+      #
+      # cavemem's Zod schema declares `endpoint` and `apiKey` as
+      # `z.string().optional()` under a `.strict()` parent. In Zod
+      # `.optional()` accepts `string | undefined`, NOT `null` —
+      # emitting `"endpoint": null` or `"apiKey": null` would cause
+      # the worker to fail at startup with a Zod validation error.
+      # We therefore use `lib.optionalAttrs` to OMIT the keys
+      # entirely when the corresponding option is null, rather than
+      # emitting them with a null value.
+      #
+      # Nix attrset selection (`.${e.provider}`) is lazy, so only the
+      # selected branch is forced. The `lib.warn` calls therefore
+      # fire only when the corresponding provider is selected AND
+      # the relevant credential/endpoint is null, never spuriously
+      # on disabled hosts or other providers (Req 3.5, 3.6,
+      # design.md §SettingsJson).
+      embedding =
+        let
+          base = { inherit (e) provider; };
+          withModel = base // {
+            inherit (e) model;
+          };
+        in
+        {
+          local = withModel;
+          ollama =
+            withModel
+            // (
+              if e.endpoint == null then
+                lib.warn ''
+                  home.cavemem.embedding.provider is "ollama" but
+                  home.cavemem.embedding.endpoint is unset. The
+                  rendered ${cfg.dataDir}/settings.json will OMIT
+                  the endpoint field; cavemem will start but the
+                  worker will fail on the first embed request when
+                  it has no Ollama HTTP endpoint to call. Set
+                  home.cavemem.embedding.endpoint to your local
+                  Ollama URL (typically http://127.0.0.1:11434).
+                '' { }
+              else
+                { inherit (e) endpoint; }
+            );
+          openai =
+            withModel
+            // (lib.optionalAttrs (e.endpoint != null) { inherit (e) endpoint; })
+            // (
+              if e.apiKey == null then
+                lib.warn ''
+                  home.cavemem.embedding.provider is "openai" but
+                  home.cavemem.embedding.apiKey is unset. The
+                  rendered ${cfg.dataDir}/settings.json will OMIT
+                  the apiKey field; cavemem will start but the
+                  worker will fail on the first embed request when
+                  it cannot authenticate against the OpenAI
+                  endpoint. Per Task 6.x of the cavemem-integration
+                  spec, source the key via the existing SOPS +
+                  1Password + macOS Keychain bridge before invoking
+                  cavemem.
+                '' { }
+              else
+                { inherit (e) apiKey; }
+            );
+          none = base;
+        }
+        .${e.provider};
+
+      # Top-level settings.json shape. Mirrors cavemem's
+      # `~/.cavemem/settings.json` schema for the keys the module
+      # exposes; cavemem's Zod schema fills in defaults for everything
+      # we omit (`workerPort`, `logLevel`, `privacy.*`, `search.*`,
+      # `compression.expandForModel`, `embedding.idleShutdownMs`),
+      # which keeps the rendered file forward-compatible across
+      # cavemem patch releases (design.md §SettingsJson State
+      # Management).
+      settings = {
+        inherit (cfg) dataDir;
+        inherit embedding;
+        compression = {
+          inherit (cfg.compression) intensity;
+        };
+      };
+    in
+    {
+      home.packages = [ pkgs.cavemem ];
+
+      # `home.file` (not `xdg.dataFile`) because `cfg.dataDir` is a
+      # fully-qualified path (default `${xdg.dataHome}/cavemem`) and
+      # `home.file` accepts absolute paths. `builtins.toJSON` is
+      # deterministic, so identical option values produce a
+      # byte-stable file across rebuilds (Req 2.4 idempotency).
+      home.file."${cfg.dataDir}/settings.json".text = builtins.toJSON settings;
+    }
+  );
 }

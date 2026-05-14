@@ -74,7 +74,7 @@
   - _Boundary: CavememModule_
 
 - [ ] 4. Core: settings.json rendering and embedding provider logic
-- [ ] 4.1 (P) Render `${dataDir}/settings.json` from the option values
+- [x] 4.1 (P) Render `${dataDir}/settings.json` from the option values
   - Use `home.file."${cfg.dataDir}/settings.json".text =
     builtins.toJSON ...` with conditional inclusion of
     `embedding.endpoint` and `embedding.apiKey` based on
@@ -381,3 +381,4 @@
 - 1.2: '@xenova/transformers' (~50MB ONNX optionalDep) is intentionally NOT installed at the package layer. cavemem lazy-imports it via 'await import(...).catch(...)' so '--version', 'mcp', 'config show' work without it. ATTENTION TASK 4.1: with default 'embedding.provider = local', the first 'cavemem start' (worker) will fail without @xenova. Either ship @xenova via the HM module, OR change the default provider, OR document the operator-must-install requirement.
 - 2.1: Upstream pluginSource() emits 'spawn(NODE, [CLI, ...])' with InstallContext-baked absolute paths. Vendoring without that context: use 'spawn("cavemem", ...)' relying on PATH (Req 2.3 puts pkgs.cavemem on home.packages → ~/.nix-profile/bin/). The buildNpmPackage wrapper handles node invocation. Document deviation in any future re-vendor.
 - 3.1: cavemem v0.2.1 'compression.intensity' enum is [lite/full/ultra] with default 'full' (NOT [low/medium/high/ultra] or default 'medium' as some prior notes claimed). Source of truth: packages/config/src/schema.ts. Re-pin on cavemem version bump.
+- 4.1: cavemem v0.2.1's settings schema uses 'z.string().optional()' for embedding.{apiKey,endpoint} under a '.strict()' parent. Zod '.optional()' means 'string | undefined' — does NOT accept null. Use 'lib.optionalAttrs' to OMIT optional keys when the HM option is null, never emit ':null'. Same pattern applies to any future cavemem optional setting.
