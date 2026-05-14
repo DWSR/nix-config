@@ -17,6 +17,7 @@ in
     ./dev.nix
     ./git.nix
     ./opencode.nix
+    ./sqlite-backup.nix
     ./tec.nix
     ./wish.nix
     ./zellij.nix

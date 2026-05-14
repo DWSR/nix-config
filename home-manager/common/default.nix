@@ -15,6 +15,7 @@
     ./git.nix
     ./git-hooks.nix
     ./opencode.nix
+    ./sqlite-backup.nix
     ./ssh.nix
     ./starship.nix
     ./zellij.nix

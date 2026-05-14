@@ -163,7 +163,7 @@
   - _Boundary: Per-host Scaffolds_
   - _Depends: 2.1_
 
-- [ ] 6.3 Common-darwin and HM common import additions
+- [x] 6.3 Common-darwin and HM common import additions
   - Append `./sqlite-backup.nix` to the explicit imports list in `home-manager/common/default.nix` (sibling to existing `./atuin.nix`, `./cc-sdd.nix`, etc.).
   - Append `./sqlite-backup-verify.nix` to the imports list in `configurations/common-darwin/default.nix` (sibling to existing `./mcp-sops-bridge.nix`).
   - Confirm: both `darwinConfigurations` evaluate cleanly under `nix flake check` with all wiring in place.

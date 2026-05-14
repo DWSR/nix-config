@@ -19,6 +19,7 @@ in
     ../../../home-manager/mcp
     ./git.nix
     ./opencode.nix
+    ./sqlite-backup.nix
   ];
 
   disabledModules = [
