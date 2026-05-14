@@ -276,12 +276,103 @@ not.
 
 ## Workflow
 
-<!-- Body filled by task 1.5: five H3-headed stages in order — `### Stage
-     1 — gather`, `### Stage 2 — group`, `### Stage 3 — score`, `### Stage
-     4 — draft`, `### Stage 5 — report` — with prose describing the
-     cavemem and Obsidian MCP calls each stage makes, plus an explicit
-     non-stage call-out that the agent never invokes
-     hub_obsidian__search-vault or hub_obsidian__search-by-tags. -->
+The agent runs in five sequential stages. Each stage names the cavemem
+and Obsidian MCP calls it owns; calls not listed for a stage MUST NOT be
+made in that stage. The structured report defined in the `## Report`
+section is emitted unconditionally as the final step.
+
+### Stage 1 — gather
+
+Resolve the caller-supplied time range using the conventions documented
+in the `## Invocation` section to produce a concrete `(start, end)` pair
+of Unix-millisecond timestamps. With that pair fixed, call
+`hub_cavemem__list_sessions(start, end)` to enumerate every cavemem
+session whose activity overlaps the window. For each session in the
+returned list, call `hub_cavemem__timeline(session_id)` to enumerate the
+chronological observation IDs that belong to it.
+
+Gather is a metadata-only stage. NO observation bodies are fetched here
+— `hub_cavemem__get_observations` is deferred to the draft stage so
+that bodies are only loaded for clusters that survive scoring. The
+output of this stage is a flat list of `(session_id, [observation_id,
+…])` pairs ready for grouping.
+
+### Stage 2 — group
+
+Cluster the gathered observation IDs by session and topic. The primary
+clustering signal is cavemem's observation `kind` field (`prompt`,
+`response`, `tool_call`, `tool_result`, etc.) combined with content
+keywords surfaced from the timeline metadata; observations that share a
+session, occur in close temporal proximity, and reference the same
+files, tools, or symbols belong to the same candidate cluster.
+
+When keyword overlap is ambiguous — for example, two adjacent tool-call
+sequences that touch different files but share a generic verb like
+"refactor" — call `hub_cavemem__search(query)` for disambiguation only.
+This is a targeted lookup to confirm that two observation runs are
+discussing the same underlying topic, not a primary clustering pass; do
+not search exhaustively across the gathered IDs.
+
+The output of this stage is a list of cluster descriptors. Each
+descriptor records the contributing session ID(s), the contributing
+observation IDs, and a one-line suggested cluster topic that scoring
+will judge against the rubric.
+
+### Stage 3 — score
+
+Apply the Selectivity rubric (see the `## Selectivity rubric` section
+above, authored in task 1.4) to every cluster descriptor. Promotion
+candidates — clusters whose topic matches one of the "Promote"
+exemplars or otherwise fires a "When to create a memory" criterion from
+the inlined `## Memory criteria` block — proceed to draft. Low-signal
+clusters — those that match the "Skip" exemplars or fail to fire any
+promotion criterion — are skipped silently and counted in the
+structured return's `clusters_skipped` field.
+
+Silent skip is the contract: NO per-skip prose is emitted in the report
+or anywhere else. The numeric `clusters_skipped` count is the only
+acknowledgement that a skipped cluster existed, which keeps the report
+compact and prevents the agent from reasoning aloud about every
+unpromising cluster.
+
+### Stage 4 — draft
+
+For each promotion candidate that survived Stage 3, call
+`hub_cavemem__get_observations(ids)` to fetch the full observation
+bodies for that cluster's IDs. With the bodies in hand, compose a
+memory note conforming to the `## Drafted memory note format` section
+below (forward-reference): frontmatter shape, body section order, and
+the date-floor invariant are all defined there.
+
+Write the drafted note via
+`hub_obsidian__write-note(memories/<YYYY-MM-DD>-<slug>.md, …)`, where
+`<YYYY-MM-DD>` is the date floor required by the format spec and
+`<slug>` is a 3–5 word kebab-case slug derived from the cluster topic.
+Optionally call `hub_obsidian__read-note` immediately after the write
+for a format spot-check (frontmatter parses, sections appear in the
+expected order); this read-back is for self-validation only and is not
+required for the report.
+
+NO call to `hub_obsidian__search-vault` or
+`hub_obsidian__search-by-tags` is made in this stage. The synthesizer
+does not check whether a similar memory already exists in the vault
+before writing — that is the next pipeline stage's responsibility (see
+the call-out below).
+
+### Stage 5 — report
+
+Emit the structured summary defined in the `## Report` section
+(forward-reference). The report enumerates the drafted note paths, the
+`clusters_skipped` count, the resolved `(start, end)` window, and the
+cavemem session IDs that contributed observations.
+
+The report is the agent's final output and is emitted unconditionally —
+including when zero clusters were promoted and zero notes were written
+(per Requirement 10's empty-window behavior). An empty-window report is
+the agent's positive acknowledgement that the window was processed and
+no signal was found, not a silent no-op.
+
+> **Deduplication boundary.** The agent does NOT call `hub_obsidian__search-vault` or `hub_obsidian__search-by-tags` to check whether a similar memory already exists. Deduplication is `vault-curator`'s responsibility in the next pipeline stage.
 
 ## Drafted memory note format
 

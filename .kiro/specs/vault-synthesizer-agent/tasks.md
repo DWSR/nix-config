@@ -110,7 +110,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.3_
 
-- [ ] 1.5 Author the Workflow section (five stages)
+- [x] 1.5 Author the Workflow section (five stages)
   - In `## Workflow`, define exactly five stages in order: gather,
     group, score, draft, report. Use H3 subsection headings for each
     (`### Stage 1 — gather`, etc.).
