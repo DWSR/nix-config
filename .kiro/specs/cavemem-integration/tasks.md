@@ -189,7 +189,7 @@
   - _Depends: 3.1_
 
 - [ ] 6. Core: AGENTS.md restructure and vault-curator update
-- [ ] 6.1 (P) Restructure `home-manager/common/agents.md`
+- [x] 6.1 (P) Restructure `home-manager/common/agents.md`
   - Delete the existing "Transcription" section and the "Session
     Summary" section in their entirety.
   - Insert a new "Ambient capture (cavemem)" section that explains

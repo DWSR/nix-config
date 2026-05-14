@@ -1,34 +1,61 @@
-# MANDATORY: Obsidian Memory System
+# MANDATORY: Memory System (Obsidian + Cavemem)
 
-All agent sessions MUST use the Obsidian vault for persistent memory, conversation
-transcription, and session summaries. This is non-negotiable.
+All agent sessions MUST use BOTH the Obsidian vault and cavemem for persistent
+memory. Obsidian holds curated, agent-authored memories; cavemem captures
+session transcripts and summaries automatically through opencode hooks. This is
+non-negotiable.
 
 ## Startup Check
 
-BEFORE responding to any user message, you MUST call `hub_obsidian__list-notes`
-with `directory` set to `"memories"` and `limit` set to `1`.
+BEFORE responding to any user message, you MUST verify that BOTH MCP servers
+are available:
 
-If this call FAILS or the `hub_obsidian__*` tools are not available:
-1. Tell the user: "Obsidian MCP tools are unavailable. I cannot create memories
-   or transcribe this conversation. Ensure mcphub is running with the obsidian
-   server registered, then retry."
+1. Call `hub_obsidian__list-notes` with `directory` set to `"memories"` and
+   `limit` set to `1`.
+2. Call `hub_cavemem__list_sessions` with a small limit (e.g. `1`) to confirm
+   the cavemem MCP server is reachable.
+
+If EITHER call FAILS or the corresponding MCP tools (`hub_obsidian__*` or
+`hub_cavemem__*`) are not available:
+1. Tell the user: "Obsidian or cavemem MCP tools are unavailable. I cannot
+   create curated memories or rely on ambient session capture. Ensure mcphub
+   is running with both the obsidian and cavemem servers registered, then
+   retry."
 2. DO NOT proceed with any work.
-3. DO NOT attempt workarounds such as writing to local files or skipping memory.
+3. DO NOT attempt workarounds such as writing to local files or skipping
+   either system.
 
-## Session Initialization
+## Ambient capture (cavemem)
 
-After the startup check passes, determine if this is a new or resumed session:
+Conversation transcription and session-level summarization are no longer
+agent-driven bookkeeping tasks. Cavemem captures every prompt, response, and
+tool call automatically through opencode hooks and persists them to its local
+SQLite database (the path is exposed by the home-manager module as
+`home.cavemem.dataDir`). Cavemem also tracks session lifecycle, so there is
+no need to manually create transcription notes, look up an existing session
+for the day, or ask the user whether to continue or start fresh — that is all
+handled by the hooks.
 
-1. Determine the project name from the current working directory (use the git
-   repo name or directory basename).
-2. Call `hub_obsidian__search-vault` with query `title:<project-name>` and
-   `path` set to `"conversations/transcriptions/"` to find transcription notes
-   from today.
-3. If a matching transcription note exists from today, read it to recover context.
-   Ask the user: "Found an existing session from [time]. Continue it or start fresh?"
-4. If continuing: append to the existing transcription and summary notes.
-5. If new: generate a session timestamp as `YYYY-MM-DDTHHMMSS` and create the
-   transcription and summary notes.
+Agents MUST NOT write transcription or summary notes into the Obsidian vault.
+The legacy directories `conversations/transcriptions/` and
+`conversations/summaries/` now hold archived/migrated history only and are
+not part of the live capture loop.
+
+For ad hoc retrieval of past observations, use the cavemem MCP tools (prefix
+`hub_cavemem__`):
+
+- `hub_cavemem__list_sessions` — list recent cavemem sessions
+- `hub_cavemem__timeline` — fetch the chronological observation stream for a
+  session
+- `hub_cavemem__get_observations` — load specific observations by ID
+- `hub_cavemem__search` — full-text / semantic search across all captured
+  observations
+
+The same query surface is available from the command line as `cavemem search`
+for human-driven lookups outside of an agent session.
+
+Curated memory creation remains an explicit, agent-driven act and is governed
+by the rules in the "Memories" section below.
 
 ## Memory Recall
 
@@ -74,81 +101,7 @@ Do NOT search memories for:
 - Tasks where you already have full context from the current conversation
 - Purely mechanical operations (code formatting, test execution)
 
-## Transcription
-
-Maintain a verbatim log of every exchange in the session.
-
-- **Path:** `conversations/transcriptions/{timestamp}-{project}.md`
-- **Tool:** `hub_obsidian__write-note` (write the full note content each time)
-- **When:** After EVERY assistant response, append the latest exchange to the note.
-- **Do this silently.** Do not narrate transcription activity to the user unless
-  they ask about it.
-
-### Transcription note format
-
-```markdown
----
-tags:
-  - transcription
-  - {project-name}
-  - {2-5 topic tags}
-date: YYYY-MM-DD
-project: {project-name}
-session: {timestamp}
----
-
-# Session: {project-name} ({date} {time})
-
-## Exchange 1
-**User:** {verbatim user message}
-
-**Assistant:** {verbatim assistant response, excluding transcription tool calls}
-
-## Exchange 2
-...
-```
-
-## Session Summary
-
-Maintain a compressed summary of the session, updated periodically.
-
-- **Path:** `conversations/summaries/{timestamp}-{project}.md`
-- **Tool:** `hub_obsidian__write-note`
-- **When:** Update after every 3-5 exchanges, when a significant milestone is
-  reached (decision made, task completed, problem solved), and always update at
-  session end if the user says goodbye or the conversation winds down.
-
-### Summary note format
-
-```markdown
----
-tags:
-  - summary
-  - {project-name}
-  - {2-5 topic tags}
-date: YYYY-MM-DD
-project: {project-name}
-session: {timestamp}
----
-
-# Session Summary: {project-name} ({date} {time})
-
-## What was accomplished
-- {bullet list of completed work}
-
-## Key decisions
-- {choices made and their rationale}
-
-## Discoveries
-- {non-obvious facts or patterns learned}
-
-## Open questions
-- {unresolved items}
-
-## Files touched
-- {list of files modified or created}
-```
-
+<!-- BEGIN: memory-criteria -->
 ## Memories
 
 Memories are standalone knowledge notes that persist facts, decisions, and
@@ -189,6 +142,15 @@ BEFORE creating a memory, ALWAYS check for existing related memories:
 
 ### Memory note format
 
+The frontmatter `sessions:` list accepts two value shapes: `{session-timestamp}`
+(e.g., `2026-05-13T143022`) for human-driven memory writes, and
+`cavemem-session-<id>` (e.g., `cavemem-session-1234`) for synthesizer-generated
+memory writes — `<id>` is cavemem's SQLite auto-increment session identifier
+and provides traceability back to the source observations. Use the
+`{session-timestamp}` shape when an agent or human authors the memory directly;
+use the `cavemem-session-<id>` shape when the downstream
+vault-synthesizer-agent generates the memory from cavemem observations.
+
 ```markdown
 ---
 tags:
@@ -198,7 +160,7 @@ tags:
 date: YYYY-MM-DD
 project: {project-name}
 sessions:
-  - {session-timestamp}
+  - {session-timestamp}     # or: cavemem-session-<id>
 ---
 
 # {Concise statement of the fact, decision, or pattern}
@@ -212,6 +174,7 @@ sessions:
 ## Related files
 - {file paths if applicable}
 ```
+<!-- END: memory-criteria -->
 
 ## Obsidian Tool Reference
 
