@@ -121,11 +121,84 @@ prose.
 
 ## Memory criteria (inlined verbatim from agents.md)
 
-<!-- Body filled by task 1.3: one-line preamble plus the
-     <!-- BEGIN: memory-criteria --> .. <!-- END: memory-criteria -->
-     block from `home-manager/common/agents.md`, copied byte-for-byte
-     with the anchor markers preserved so future maintainers can grep
-     for them and confirm provenance. -->
+Inlined verbatim from `home-manager/common/agents.md`. The agent applies
+this rubric to every observation cluster; clusters that fall into any
+"do NOT create" bucket are skipped silently per the workflow.
+
+<!-- BEGIN: memory-criteria -->
+## Memories
+
+Memories are standalone knowledge notes that persist facts, decisions, and
+patterns for retrieval in future sessions. They are the most valuable output
+of the memory system.
+
+- **Path:** `memories/{date}-{slug}.md` where slug is 3-5 words, kebab-case
+- **Tool:** `hub_obsidian__write-note`
+
+### When to create a memory
+
+Create a memory when ANY of these occur:
+- A decision was made (chose X over Y, with rationale)
+- A non-obvious fact was discovered (library X doesn't work with Y)
+- A reusable pattern was established (this codebase does X for Y)
+- A bug root cause was identified
+- A configuration or architecture was explained in depth
+
+Do NOT create memories for:
+- Routine file edits with no novel insight
+- Simple lookups that are easily re-searchable
+- Temporary information (build output, test results)
+- Information already captured in an existing memory
+
+### Deduplication
+
+BEFORE creating a memory, ALWAYS check for existing related memories:
+
+1. Call `hub_obsidian__search-by-tags` with the primary topic tags you intend
+   to use, filtered to `directory` `"memories"`.
+2. Call `hub_obsidian__search-vault` with key terms from the memory title,
+   with `path` set to `"memories/"`.
+3. If a substantially similar memory exists, UPDATE it by reading the existing
+   note with `hub_obsidian__read-note` and writing the updated content back to
+   the same path with `hub_obsidian__write-note`. Add the current session to its
+   context and refine the content.
+4. Only create a new note if no existing memory covers the same ground.
+
+### Memory note format
+
+The frontmatter `sessions:` list accepts two value shapes: `{session-timestamp}`
+(e.g., `2026-05-13T143022`) for human-driven memory writes, and
+`cavemem-session-<id>` (e.g., `cavemem-session-1234`) for synthesizer-generated
+memory writes — `<id>` is cavemem's SQLite auto-increment session identifier
+and provides traceability back to the source observations. Use the
+`{session-timestamp}` shape when an agent or human authors the memory directly;
+use the `cavemem-session-<id>` shape when the downstream
+vault-synthesizer-agent generates the memory from cavemem observations.
+
+```markdown
+---
+tags:
+  - memory
+  - {project-name}
+  - {3-5 specific topic tags}
+date: YYYY-MM-DD
+project: {project-name}
+sessions:
+  - {session-timestamp}     # or: cavemem-session-<id>
+---
+
+# {Concise statement of the fact, decision, or pattern}
+
+## Context
+{Where and why this was discovered}
+
+## Details
+{The actual knowledge being preserved}
+
+## Related files
+- {file paths if applicable}
+```
+<!-- END: memory-criteria -->
 
 ## Selectivity rubric
 

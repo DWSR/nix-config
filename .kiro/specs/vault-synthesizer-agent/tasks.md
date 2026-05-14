@@ -58,7 +58,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.1_
 
-- [ ] 1.3 Inline the AGENTS.md memory criteria block verbatim
+- [x] 1.3 Inline the AGENTS.md memory criteria block verbatim
   - Read the memory-criteria block from `home-manager/common/agents.md`,
     bounded by the `<!-- BEGIN: memory-criteria -->` and
     `<!-- END: memory-criteria -->` anchor markers (introduced by
