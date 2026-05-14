@@ -753,13 +753,104 @@ nor recorded as failed.
 
 ## Tool usage notes
 
-<!-- Body filled by task 1.9: documented MCP tool allow-list — Obsidian
-     write/read tools (hub_obsidian__write-note, hub_obsidian__read-note),
-     the four cavemem MCP tools (hub_cavemem__list_sessions,
-     hub_cavemem__timeline, hub_cavemem__get_observations,
-     hub_cavemem__search), reused vault-curator MCP-quirk notes, plus
-     bash inspection allow-list reminder and webfetch/edit/write deny
-     posture restated. -->
+This section is the agent's tool-surface contract. The MCP allow-list
+below is exhaustive; the bash allow-list mirrors the frontmatter
+permission block; the negative assertions restate the closed-world
+posture so a future maintainer reading only this section can audit
+every tool the agent may invoke.
+
+### MCP tools the agent invokes
+
+The agent's entire MCP surface is exactly these six tools, each used
+at the workflow stage named in the bullet:
+
+- `hub_cavemem__list_sessions` — gather: enumerate cavemem sessions
+  whose activity overlaps the resolved `(start, end)` window.
+- `hub_cavemem__timeline` — gather: enumerate the chronological
+  observation IDs that belong to each session returned by
+  `list_sessions`.
+- `hub_cavemem__get_observations` — draft: fetch the full observation
+  bodies for the IDs in a promotion-candidate cluster, so the agent
+  can compose the memory body from real source content.
+- `hub_cavemem__search` — group: targeted disambiguation when two
+  candidate clusters share generic keyword overlap (e.g., adjacent
+  tool-call sequences both touching the verb "refactor"). Not a
+  primary clustering pass.
+- `hub_obsidian__write-note` — draft: write each drafted memory note
+  into the vault at `memories/<YYYY-MM-DD>-<slug>.md`.
+- `hub_obsidian__read-note` — draft: optional read-back format
+  spot-check immediately after a write (frontmatter parses, body
+  sections appear in the expected order). Never used for
+  deduplication — dedup against the live vault is vault-curator's
+  responsibility downstream, per the Workflow's Stage 4 call-out.
+
+### Bash allow-list
+
+The agent's frontmatter permission block (task 1.1) allows exactly
+seven bash commands: `ls`, `find`, `rg`, `grep`, `wc`, `head`, and
+`tail`. These are inspection-only commands — they read filesystem
+metadata or content but do not mutate anything. `cat` is **NOT** in
+the allow-list; the agent uses `hub_obsidian__read-note` to read note
+contents from the vault, not `cat`. Any other bash command (including
+`cat`, `mv`, `cp`, `rm`, `git`, `npm`, `nix`, etc.) requires a
+per-invocation `ask` prompt under the frontmatter's `"*": ask`
+fallback and should not be reached for during a normal synthesis
+pass.
+
+### Known quirks of the Obsidian MCP server
+
+These quirks are inlined from `home-manager/common/agents/vault-curator.md`
+so a synthesizer-only reader has the same workarounds available
+without cross-referencing curator's prompt.
+
+- `hub_obsidian__search-vault` with `includeContext: true` sometimes
+  returns a schema-validation error. Work around by passing
+  `includeContext: false` or by using `hub_obsidian__search-by-tags`
+  instead. The synthesizer does not call either search tool during
+  normal operation per the Workflow's dedup-prohibition rule, but the
+  quirk is documented here for completeness in case a future
+  maintainer reuses this prompt as a base for a different agent.
+- `hub_obsidian__list-notes` returns a count header ("Showing N of M
+  notes") but the notes array itself may be empty in the structured
+  output. Fall back to `ls` via bash (allowed) against the vault path
+  when you need actual filenames:
+  - Shopify: `~/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank/`
+  - Personal: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/data-bank/`
+- `hub_obsidian__write-note` creates missing directories implicitly.
+  All paths must end with `.md`.
+- `hub_obsidian__read-note` takes a vault-relative path (e.g.,
+  `memories/2026-04-16-tokscale-rust-binary-not-npm.md`), not an
+  absolute path.
+
+### Tools the agent does NOT invoke
+
+The MCP allow-list above is closed-world. The agent does NOT invoke
+any of the following, and a synthesis pass that reaches for any of
+them is a bug:
+
+- `hub_github__*` — no hub_github__ calls. GitHub state is not part
+  of the cavemem-to-vault pipeline.
+- `hub_observe_*` — no hub_observe_ calls. Observability metrics and
+  logs are not source material for curated memories.
+- `hub_buildkite__*` — no hub_buildkite__ calls. CI state is not part
+  of the synthesis pass; CI failures the user worked through are
+  captured by cavemem observations themselves, not by querying
+  Buildkite.
+- Any web-fetch MCP tools (e.g., `hub_*` web fetchers, public URL
+  fetchers). The frontmatter `webfetch: deny` is the OS-level
+  guarantee; this bullet is the prompt-level restatement so a future
+  maintainer cannot accidentally relax the deny without also editing
+  this section.
+- `hub_obsidian__search-vault` and `hub_obsidian__search-by-tags` —
+  already prohibited by the Workflow's dedup-prohibition rule and the
+  Stage 4 call-out, but restated here so the tool-surface contract
+  is self-contained: the synthesizer never queries the live vault
+  for existing memories.
+- Any other MCP namespace not explicitly named in the allow-list
+  above (`hub_gcloud_mcp__*`, `hub_storage_mcp__*`, `hub_slack_*`,
+  `hub_vault_mcp__*`, etc.). If a synthesis task seems to require a
+  tool outside the allow-list, the agent refuses and surfaces the
+  gap in the structured Report rather than improvising.
 
 ## Success criteria
 

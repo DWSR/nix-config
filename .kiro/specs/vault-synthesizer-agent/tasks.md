@@ -252,7 +252,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.5_
 
-- [ ] 1.9 Author the Tool usage notes section
+- [x] 1.9 Author the Tool usage notes section
   - In `## Tool usage notes`, list the six MCP tools the agent uses,
     with one bullet per tool naming the tool and its role:
     `hub_cavemem__list_sessions` (gather: enumerate sessions in time
