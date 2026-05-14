@@ -215,7 +215,7 @@ in
     if hmCfg.enable && hmCfg.databases != [ ] then
       ''
         echo "[sqlite-backup-verify] running R17 verification for ${toString (lib.length hmCfg.databases)} database(s)"
-        launchctl asuser $(id -u ${username}) sudo -u ${username} --set-home ${verifyScript}/bin/sqlite-backup-verify-rclone-config ${hmCfg._manifestPath}
+        launchctl asuser "$(id -u ${username})" sudo -u ${username} --set-home ${verifyScript}/bin/sqlite-backup-verify-rclone-config ${hmCfg._manifestPath}
       ''
     else
       ""
