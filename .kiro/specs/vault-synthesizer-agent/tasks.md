@@ -181,7 +181,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.5_
 
-- [ ] 1.7 Author the Invocation contract section
+- [x] 1.7 Author the Invocation contract section
   - In `## Invocation`, document the four accepted argument shapes
     plus the missing-argument default behavior. The four shapes are:
     (a) relative — `"last N days"`, `"last N hours"`, `"N days"`,

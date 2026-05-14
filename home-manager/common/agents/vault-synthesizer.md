@@ -503,13 +503,103 @@ sections populated with realistic paths from this repo.
 
 ## Invocation
 
-<!-- Body filled by task 1.7: documentation of the four accepted
-     time-range argument shapes (relative, absolute date pair, ISO-8601
-     duration, ISO-8601 timestamp pair `YYYY-MM-DDTHH:MM:SSZ`), the
-     missing-argument default (last 24 hours), per-shape timezone rules,
-     unparseable-input refusal behavior, empty-window behavior, and a
-     summary table with one example per shape. The ISO-8601 timestamp
-     pair shape is what `memory-sync-cli` emits per its Decision 4. -->
+You take exactly one argument: a **time range** describing the cavemem
+window to scan. The remainder of this section enumerates the four
+accepted shapes, the missing-argument default, how resolved bounds are
+reported back, and how the agent behaves on unparseable input or an
+empty window.
+
+### Summary of accepted shapes
+
+| Shape | Example | Anchor / TZ |
+| --- | --- | --- |
+| Relative — `last N {days,hours}` or `N {days,hours}` | `last 7 days` | now() in host's local TZ |
+| Absolute date pair — `YYYY-MM-DD to YYYY-MM-DD` | `2026-05-01 to 2026-05-13` | local TZ; inclusive bounds |
+| ISO-8601 duration | `P7D` or `PT24H` | now() in host's local TZ |
+| ISO-8601 timestamp pair — `<start> to <end>` (each side `YYYY-MM-DDTHH:MM:SSZ`, trailing `Z` mandatory) | `2026-05-01T00:00:00Z to 2026-05-13T22:30:00Z` | UTC instants |
+
+### Shape (a): Relative
+
+A natural-language window relative to "now". Accepted forms include
+`last 7 days`, `last 24 hours`, `7 days`, and `24 hours` (the leading
+`last` is optional). The window is anchored to invocation time —
+`now()` in the host's local timezone — and extends backward by the
+named span. Inclusive of `now()` at the upper bound.
+
+### Shape (b): Absolute date pair
+
+Format: `YYYY-MM-DD to YYYY-MM-DD`. Both bounds are interpreted in the
+host's local timezone (no timezone is encoded in the input) and are
+inclusive: the start date resolves to `00:00:00` local on that day and
+the end date resolves to `23:59:59` local on that day. Example:
+`2026-05-01 to 2026-05-13` covers all cavemem activity from the
+beginning of May 1 through the end of May 13, host-local.
+
+### Shape (c): ISO-8601 duration
+
+A single ISO-8601 duration string (`P7D`, `PT24H`, `P1DT12H`, etc.)
+anchored to `now()` in the host's local timezone. The window extends
+backward from invocation time by the named duration. This shape is the
+machine-friendly cousin of shape (a) and is useful when callers want to
+pass a precise duration without natural-language parsing ambiguity.
+
+### Shape (d): ISO-8601 timestamp pair
+
+Format: `YYYY-MM-DDTHH:MM:SSZ to YYYY-MM-DDTHH:MM:SSZ`. Both sides are
+RFC 3339 UTC instants; the trailing `Z` is **mandatory**. Pairs without
+the trailing `Z` (e.g., naive `2026-05-01T00:00:00`) are rejected as
+unparseable per AC 10.4 / 10.5 — the agent will not infer a timezone
+for a bare ISO timestamp. Example:
+`2026-05-01T00:00:00Z to 2026-05-13T22:30:00Z`.
+
+This is the **exact shape `memory-sync-cli` emits** when it composes
+the synthesizer prompt from its marker file (see `memory-sync-cli`
+Decision 4 / Req 6.AC1): `start` is the marker timestamp from the
+prior successful run and `end` is the current invocation time, both
+serialized as ISO-8601 UTC. **Removing this shape would break the first
+end-to-end memory-sync run** because the orchestrator's prompt would be
+refused under AC 10.4. Do not relax this contract without coordinating
+with the `memory-sync-cli` spec.
+
+### Missing-argument default
+
+If the time range argument is omitted entirely, the agent defaults to
+the **last 24 hours** anchored to `now()` in the host's local
+timezone — equivalent to invoking `@vault-synthesizer last 24 hours`.
+
+### Resolved-bounds reporting
+
+Whatever shape is supplied (or defaulted), the agent resolves it to a
+concrete `(start, end)` pair and reports those bounds back in the
+structured summary's `time_range` field. See the `## Report` section
+below for the full structured-return contract.
+
+### Unparseable-input refusal
+
+If the supplied argument cannot be parsed against any of the four
+accepted shapes (including malformed timestamp pairs missing the `Z`
+suffix per AC 10.5), the agent:
+
+1. **Refuses the run** — does not call cavemem, does not group, does
+   not score, does not write any drafts.
+2. Prints an **actionable error message** that names all four accepted
+   shapes with one example each (so the operator can correct the
+   invocation without leaving the conversation).
+3. Produces **no drafts**.
+4. **Omits the structured return** — the refusal message replaces it.
+   `memory-sync-cli` and other downstream consumers must treat the
+   absence of a structured return as a refusal signal.
+
+### Empty-window behavior
+
+When the resolved time range parses successfully but cavemem reports
+**zero sessions** in the window, the agent still emits a structured
+return per the `## Report` section. The counters
+`observations_scanned`, `clusters_identified`, `clusters_promoted`,
+`clusters_skipped`, and `drafts_written` are all `0`; `draft_paths` is
+an empty list. The resolved `time_range` is still reported so the
+operator (or `memory-sync-cli`) can see the empty window was the
+window the agent actually used. No drafts are produced.
 
 ## Report
 
