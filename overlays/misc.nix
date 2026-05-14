@@ -211,30 +211,35 @@ final: prev: {
   });
 
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "1.14.20";
+    version = "1.14.50";
 
     src = final.fetchFromGitHub {
       owner = "anomalyco";
       repo = "opencode";
-      tag = "v1.14.20";
-      hash = "sha256-9nxxvCkeTW3MasXaOhWaQqxqJeq9Q1+5TGULITjhV2Q=";
+      tag = "v1.14.50";
+      hash = "sha256-SMWJb0Ykxklnh8DQ6UcSv1JIeuqK2qKyUgrwB8ioZCI=";
     };
 
-    vendorHash = "sha256-hvlfFTdZliUn5FORX7gsn8fs0C7c3AsA8WOrtZhJwac=";
+    vendorHash = "sha256-BWzzOkrURHFFG2Q+/k8U5ePGR/ai8fz6xUJkLmN3TKQ=";
 
     node_modules = old.node_modules.overrideAttrs (_oldNm: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";
         repo = "opencode";
-        tag = "v1.14.20";
-        hash = "sha256-9nxxvCkeTW3MasXaOhWaQqxqJeq9Q1+5TGULITjhV2Q=";
+        tag = "v1.14.50";
+        hash = "sha256-SMWJb0Ykxklnh8DQ6UcSv1JIeuqK2qKyUgrwB8ioZCI=";
       };
 
-      # v1.14.20's build-time generate.ts imports prettier (a root-workspace
+      # opencode's build-time generate.ts imports prettier (a root-workspace
       # devDependency). The upstream nixpkgs node_modules buildPhase uses
       # `--filter ./packages/{app,desktop,opencode}` which excludes the root
       # workspace's deps, so prettier is missing. Override the buildPhase to
       # install without filters so prettier lands in node_modules.
+      #
+      # First needed at the anomalyco fork's v1.14.20; still required at
+      # v1.14.50 (verified 2026-05-14). When bumping, retry without this
+      # override only if upstream has stopped pulling prettier into
+      # generate.ts; otherwise leave it in place.
       buildPhase = ''
         runHook preBuild
 
@@ -251,7 +256,7 @@ final: prev: {
         runHook postBuild
       '';
 
-      outputHash = "sha256-hvlfFTdZliUn5FORX7gsn8fs0C7c3AsA8WOrtZhJwac=";
+      outputHash = "sha256-BWzzOkrURHFFG2Q+/k8U5ePGR/ai8fz6xUJkLmN3TKQ=";
     });
   });
 
