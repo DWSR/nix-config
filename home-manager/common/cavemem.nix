@@ -362,19 +362,37 @@ in
       # `apps/cli/src/commands/mcp.ts` in cavemem v0.2.1, both of which
       # treat `mcp` as the canonical MCP-server subcommand).
       #
-      # No `env` attribute is set: cavemem v0.2.1 has no env var or CLI
-      # flag for overriding the settings.json / dataDir lookup. The
-      # `mcp` subcommand calls `loadSettings()` with no arguments, and
-      # `packages/config/src/loader.ts` hardcodes
-      # `DEFAULT_DIR = '.cavemem'` resolved against `homedir()`. Telling
-      # cavemem about a non-default `cfg.dataDir` is therefore not a
-      # mcphub-entry concern — it has to happen at the settings.json
-      # render path (task 4.1) or via an operator-side dataDir choice
-      # that aligns with cavemem's hardcoded `~/.cavemem/settings.json`
-      # lookup.
+      # The `env.CAVEMEM_DATA_DIR` entry below is honored by the
+      # `cavemem-data-dir-env.patch` overlay landed in task 1.3
+      # (commit 01373e7), which introduces a single-bottleneck
+      # `resolveDataDir()` helper in `packages/config/src/loader.ts`
+      # that reads `process.env.CAVEMEM_DATA_DIR` (when set and
+      # non-empty after trim) before falling back to the hardcoded
+      # `~/.cavemem` default. Without this env entry, cavemem v0.2.1
+      # would still read settings.json and write data.db at
+      # `~/.cavemem` regardless of `cfg.dataDir`, making the
+      # `home.cavemem.dataDir` option (Req 10.1, locked downstream
+      # contract) a no-op for the mcphub-launched server. Setting
+      # the env here closes that loop so the mcphub-spawned cavemem
+      # process reads the same settings.json that this module
+      # renders at `${"$"}{cfg.dataDir}/settings.json` (Task 4.1)
+      # and writes its SQLite database under the same directory the
+      # future sqlite-backup extension and the one-shot importer
+      # (Task 8.x) target.
+      #
+      # The `home.mcp.extraServers` option type (defined in
+      # `home-manager/mcp/default.nix` as `attrsOf attrs`) accepts
+      # arbitrary per-server attributes, and the renderer there
+      # serializes the whole attrset via `builtins.toJSON` into
+      # `~/.config/mcphub/servers.json`; the existing `github`
+      # server's `env.GITHUB_PERSONAL_ACCESS_TOKEN` entry confirms
+      # mcphub propagates `env` to the spawned process.
       home.mcp.extraServers.cavemem = {
         command = "${pkgs.cavemem}/bin/cavemem";
         args = [ "mcp" ];
+        env = {
+          CAVEMEM_DATA_DIR = cfg.dataDir;
+        };
       };
     }
   );
