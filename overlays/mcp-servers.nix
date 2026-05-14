@@ -35,6 +35,180 @@ in
 {
   mcp-hub = inputs.mcphub.packages.${final.stdenv.hostPlatform.system}.default;
 
+  # Cross-agent persistent memory for AI coding agents. Built from
+  # JuliusBrussee/cavemem v0.2.1 source (a pnpm monorepo) with three
+  # cherry-picked upstream patches applied to the TypeScript source
+  # before tsup bundles the CLI. The patches must be applied at the
+  # source layer (not against the published npm tarball's pre-built
+  # dist/) because tsup inlines all `@cavemem/*` workspace packages
+  # into `apps/cli/dist/index.js` via `noExternal`.
+  #
+  # Build layout:
+  #   - `pnpm_9.fetchDeps` populates the offline pnpm store from the
+  #     vendored `pnpm-lock.yaml`.
+  #   - `pnpm_9.configHook` runs `pnpm install --offline
+  #     --frozen-lockfile --ignore-scripts`, so native postinstalls
+  #     (better-sqlite3) do not run automatically — buildPhase invokes
+  #     better-sqlite3's install script explicitly with
+  #     `npm_config_build_from_source` and `npm_config_nodedir` set.
+  #   - `pnpm --filter cavemem build` runs tsup, producing
+  #     `apps/cli/dist/index.js` with all `@cavemem/*` workspace code
+  #     inlined via tsup's `noExternal` setting.
+  #   - installPhase runs cavemem's upstream `scripts/pack-release.mjs`
+  #     to produce a slim publish layout (dist/, hooks-scripts/,
+  #     LICENSE, README.md, slim package.json with only the six
+  #     third-party runtime deps), then copies the runtime deps from
+  #     the workspace pnpm store into the slim layout's node_modules.
+  #     `pnpm deploy` would do this in one step but in pnpm 9 it
+  #     re-resolves the workspace topology against the network, which
+  #     the Nix sandbox forbids.
+  #   - `makeWrapper` exposes `bin/cavemem` as a stable absolute path
+  #     so the daemon resolves the same Node + entry point on every
+  #     invocation (mirrors the `mcp-obsidian` block below).
+  cavemem = final.stdenv.mkDerivation (finalAttrs: {
+    pname = "cavemem";
+    version = "0.2.1";
+
+    src = final.fetchFromGitHub {
+      owner = "JuliusBrussee";
+      repo = "cavemem";
+      tag = "v${finalAttrs.version}";
+      hash = "sha256-0YkpwaBYyH/nJCV0Y2EvaFL1KEvVtgf/tN2h1azwdNg=";
+    };
+
+    # Bug-fix patches cherry-picked from upstream PRs against the
+    # v0.2.1 source tree. Order matters only insofar as later patches
+    # must apply cleanly on top of earlier ones; bug #14 + bug #25
+    # both touch unrelated files (installers/opencode.ts and
+    # config/schema.ts), bug #39 touches three files
+    # (core/memory-store.ts, hooks/handlers/session-start.ts,
+    # storage/storage.ts) — all disjoint, so any order works.
+    patches = [
+      ./cavemem-14-hook-payload-shape.patch
+      ./cavemem-39-session-start-cwd-filter.patch
+      ./cavemem-25-search-alpha-doc.patch
+    ];
+
+    pnpmDeps = final.pnpm_9.fetchDeps {
+      inherit (finalAttrs) pname version src;
+      fetcherVersion = 2;
+      hash = "sha256-VmWY7p3bRgj/B0kPltuozEieWD6VOAXL71QMP9Xhunc=";
+    };
+
+    nativeBuildInputs = [
+      final.nodejs
+      final.pnpm_9
+      final.pnpm_9.configHook
+      final.makeWrapper
+      final.python3
+    ]
+    ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
+      # better-sqlite3's bundled SQLite amalgamation needs the
+      # darwin libtool (cctools) to link the static archive; the
+      # default stdenv on darwin does not put it on PATH.
+      final.cctools
+    ];
+
+    buildPhase = ''
+      runHook preBuild
+
+      # The configHook ran pnpm install with --ignore-scripts, so
+      # better-sqlite3's prebuild/build postinstall did not run.
+      # Force a from-source build (the prebuild-install fallback
+      # would try to fetch a prebuilt binary from GitHub, which the
+      # Nix sandbox forbids), then run the install script in the
+      # workspace store so the native binding is in place when
+      # `pnpm deploy` copies the production tree. node-gyp would
+      # otherwise try to fetch Node headers from nodejs.org;
+      # `npm_config_nodedir` points at the local nixpkgs nodejs
+      # which already ships the headers.
+      export npm_config_build_from_source=true
+      export npm_config_nodedir=${final.nodejs}
+      pushd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 > /dev/null
+      npm run install --foreground-scripts
+      popd > /dev/null
+
+      # tsup-bundles apps/cli/src/index.ts → apps/cli/dist/index.js,
+      # inlining all @cavemem/* workspace packages.
+      pnpm --filter cavemem build
+
+      runHook postBuild
+    '';
+
+    installPhase = ''
+      runHook preInstall
+
+      # The published `cavemem` npm package is just the built
+      # `apps/cli/dist/`, the `hooks-scripts/` directory, README,
+      # LICENSE, and a slim package.json that declares ONLY the six
+      # third-party runtime deps (commander, kleur, better-sqlite3,
+      # hono, @hono/node-server, @modelcontextprotocol/sdk). All
+      # `@cavemem/*` workspace packages are inlined into
+      # `dist/index.js` by tsup at build time. So at runtime cavemem
+      # needs exactly those six deps' source trees on disk plus the
+      # already-built native binding for better-sqlite3 (which the
+      # buildPhase compiled in the workspace store).
+      #
+      # `pnpm deploy` would do this neatly but in pnpm 9 it requires
+      # network access (it re-resolves the workspace transitively),
+      # which the Nix sandbox forbids. Instead, we run the upstream
+      # `pack:release` build script (which already knows the slim
+      # layout) to produce `apps/cli/release/`, then hand-link the
+      # six runtime deps from the workspace store into the release
+      # tree's node_modules.
+      #
+      # `@xenova/transformers` is in optionalDependencies; it is not
+      # in the slim package.json's dependencies and therefore not
+      # linked here. The downstream cavemem.nix module is responsible
+      # for wiring an alternative embedding provider when the operator
+      # opts out of the default `local` one (Requirement 3).
+      ( cd apps/cli && node scripts/pack-release.mjs )
+
+      mkdir -p $out/lib/node_modules/cavemem
+      cp -R apps/cli/release/. $out/lib/node_modules/cavemem/
+
+      mkdir -p $out/lib/node_modules/cavemem/node_modules
+      for dep in commander kleur better-sqlite3 hono @hono/node-server \
+                 @modelcontextprotocol/sdk; do
+        # Resolve the actual workspace store path (each dep is under
+        # node_modules/.pnpm/<dep>@<ver>/node_modules/<dep>/) by following
+        # the existing symlink in apps/cli/node_modules.
+        src=$(readlink -f "apps/cli/node_modules/$dep")
+        if [ -z "$src" ] || [ ! -d "$src" ]; then
+          echo "ERROR: could not resolve runtime dep '$dep' in workspace store" >&2
+          exit 1
+        fi
+        mkdir -p "$out/lib/node_modules/cavemem/node_modules/$(dirname "$dep")"
+        cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
+      done
+
+      # Same trick for transitive deps that better-sqlite3 + the @hono
+      # packages pull in. The Node module resolution algorithm walks
+      # parent directories, so we copy these as siblings under
+      # node_modules/ rather than nesting them under each consumer.
+      for dep in bindings file-uri-to-path; do
+        src=$(readlink -f "node_modules/.pnpm/node_modules/$dep" 2>/dev/null \
+              || true)
+        if [ -n "$src" ] && [ -d "$src" ]; then
+          cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
+        fi
+      done
+
+      makeWrapper ${final.nodejs}/bin/node $out/bin/cavemem \
+        --add-flags "$out/lib/node_modules/cavemem/dist/index.js"
+
+      runHook postInstall
+    '';
+
+    meta = with final.lib; {
+      description = "Cross-agent persistent memory for AI coding agents (CLI + MCP server)";
+      homepage = "https://github.com/JuliusBrussee/cavemem";
+      license = licenses.mit;
+      mainProgram = "cavemem";
+      platforms = platforms.darwin ++ platforms.linux;
+    };
+  });
+
   mcp-obsidian = final.buildNpmPackage {
     pname = "mcp-obsidian";
     version = "0.1.0";

@@ -16,7 +16,7 @@
     applies cleanly with `patch -p1` against the v0.2.1 source tree.
   - _Requirements: 1.3, 1.4_
 
-- [ ] 1.2 Add the cavemem package to `overlays/mcp-servers.nix`
+- [x] 1.2 Add the cavemem package to `overlays/mcp-servers.nix`
   - Use `buildNpmPackage` against `JuliusBrussee/cavemem` at tag
     `v0.2.1` (or the equivalent rev), with `npmDeps` produced by
     `importNpmLock` against the cavemem source's package-lock.
@@ -375,3 +375,7 @@
   - _Requirements: 11.1, 11.2, 11.3_
   - _Boundary: TroubleshootingMemory_
   - _Depends: 1.1, 7.2, 8.1_
+
+## Implementation Notes
+- 1.2: cavemem v0.2.1 is a pnpm monorepo (no package-lock.json upstream); used 'pnpm_9.fetchDeps + pnpmConfigHook' instead of 'buildNpmPackage + importNpmLock'. Patches MUST apply at source layer because tsup inlines '@cavemem/*' workspace packages into 'apps/cli/dist/index.js' via 'noExternal'. Manual 8-deps install-phase list mirrors upstream's 'apps/cli/scripts/pack-release.mjs' RUNTIME_DEPS constant — re-sync on version bumps. 
+- 1.2: '@xenova/transformers' (~50MB ONNX optionalDep) is intentionally NOT installed at the package layer. cavemem lazy-imports it via 'await import(...).catch(...)' so '--version', 'mcp', 'config show' work without it. ATTENTION TASK 4.1: with default 'embedding.provider = local', the first 'cavemem start' (worker) will fail without @xenova. Either ship @xenova via the HM module, OR change the default provider, OR document the operator-must-install requirement.
