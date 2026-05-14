@@ -225,7 +225,7 @@
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 10.3_
   - _Boundary: AgentsMdRestructure_
 
-- [ ] 6.2 (P) Update `home-manager/common/agents/vault-curator.md`
+- [x] 6.2 (P) Update `home-manager/common/agents/vault-curator.md`
   - Remove or revise statements that imply the curator (or any
     agent) writes to `conversations/transcriptions/` or
     `conversations/summaries/`.
