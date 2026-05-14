@@ -98,7 +98,7 @@
   - _Boundary: SettingsJson_
   - _Depends: 3.1_
 
-- [ ] 4.2 (P) Wire the vendored opencode plugin file via xdg.configFile
+- [x] 4.2 (P) Wire the vendored opencode plugin file via xdg.configFile
   - Add `xdg.configFile."opencode/plugins/cavemem.js".source =
     ./opencode-plugins/cavemem.js;` (path resolution relative to the
     cavemem.nix module file).

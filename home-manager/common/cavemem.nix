@@ -322,6 +322,21 @@ in
       # deterministic, so identical option values produce a
       # byte-stable file across rebuilds (Req 2.4 idempotency).
       home.file."${cfg.dataDir}/settings.json".text = builtins.toJSON settings;
+
+      # Task 4.2 (Req 2.5, design.md §OpencodePlugin): ship the opencode
+      # plugin file from the vendored source under
+      # `home-manager/common/opencode-plugins/cavemem.js` instead of
+      # invoking `cavemem install` (Req 2.6 forbids imperative
+      # subcommand activation). `xdg.configFile."opencode/plugins/cavemem.js"`
+      # writes to `${config.xdg.configHome}/opencode/plugins/cavemem.js`
+      # — the path opencode reads plugins from. Using `.source` (not
+      # `.text`) keeps HM's symlink semantics: the rendered file in the
+      # Nix store is a single shared store path, not a re-emitted copy
+      # bloating the store on every rebuild. The relative path
+      # `./opencode-plugins/cavemem.js` resolves against this module
+      # file's directory (`home-manager/common/`), which is where the
+      # vendored plugin lives (committed in 4e868a7).
+      xdg.configFile."opencode/plugins/cavemem.js".source = ./opencode-plugins/cavemem.js;
     }
   );
 }
