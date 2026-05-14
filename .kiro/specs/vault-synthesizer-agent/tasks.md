@@ -400,3 +400,11 @@
   camelCase Nix function name. Reviewer caught it; remediated to
   `nix-derivations`. Apply this lens to every example block in tasks
   1.7-1.10 and 2.1: examples teach pattern, so they must be correct.
+- 2026-05-14 (task 1.10): Cross-section field-name consistency matters.
+  Task 1.10's smoke-test recipe initially cited fabricated field names
+  (`candidates_considered`, `candidates_promoted`, `failure_clusters`)
+  that don't exist in task 1.8's `## Report` contract — the operator
+  could not have run the recipe. Reviewer caught it; remediated to use
+  the actual contract field names. Lesson for task 2.1 / 3.1 / 3.2:
+  cite contract names verbatim; verify by re-reading the upstream
+  contract section before referencing field names.
