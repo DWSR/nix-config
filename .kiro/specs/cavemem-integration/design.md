@@ -8,7 +8,7 @@ upstream-deferred bug fixes patched in, wiring it into opencode entirely
 through home-manager (no `cavemem install`), restructuring AGENTS.md so
 agents stop spending context on transcription/summary bookkeeping that
 cavemem now handles automatically, and migrating the existing 111
-transcription + 91 summary `.md` notes into cavemem.db via a custom
+transcription + 91 summary `.md` notes into data.db via a custom
 SQLite-direct importer.
 
 **Users**: The two-host nix-darwin operator (Shopify + personal) is the only
@@ -25,11 +25,12 @@ the existing obsidian invariant.
 
 ### Goals
 
-- Cavemem v0.2.1 + 3 patches available on PATH on both hosts via the
-  overlay.
+- Cavemem v0.2.1 + 4 patches available on PATH on both hosts via the
+  overlay (3 cherry-picked from upstream PRs + 1 written from scratch
+  here to honor `CAVEMEM_DATA_DIR` — see "Patch tree" below).
 - Cavemem MCP wired into mcphub and opencode through home-manager only;
   zero imperative configuration.
-- Existing 111 + 91 transcription/summary notes migrated into cavemem.db
+- Existing 111 + 91 transcription/summary notes migrated into data.db
   idempotently.
 - AGENTS.md restructured so transcription/summary write rules are gone,
   memory creation rules remain intact and well-anchored.
@@ -40,9 +41,9 @@ the existing obsidian invariant.
 
 - Vault-synthesizer subagent (separate spec).
 - `memory-sync` orchestration command (separate spec).
-- Adding cavemem.db to the sqlite-backup target list (separate
+- Adding data.db to the sqlite-backup target list (separate
   existing-spec extension).
-- Cross-host cavemem.db sync.
+- Cross-host data.db sync.
 - Auto-scheduled cavemem maintenance (compaction, vacuum, reindex).
 - A roundtripping cavemem → `.md` exporter.
 - Patching cavemem bugs unrelated to this integration (#11, #18, #20,
@@ -74,8 +75,8 @@ the existing obsidian invariant.
 - The vault-synthesizer subagent definition (consumer of this spec's
   cavemem MCP and AGENTS.md memory block).
 - The `memory-sync` orchestration command.
-- Adding `cavemem.db` to the sqlite-backup manifest's database list.
-- Cross-host sync of cavemem.db.
+- Adding `data.db` to the sqlite-backup manifest's database list.
+- Cross-host sync of data.db.
 - Modifying or replacing existing transcription/summary `.md` files
   after migration (they remain on disk as historical archives).
 - Any change to the existing `home.mcp.obsidianVaultPath` option or
@@ -101,9 +102,14 @@ the existing obsidian invariant.
 
 ### Revalidation Triggers
 
-- Cavemem version bump (any change to upstream package version): the
-  three patches MUST be re-cherry-picked and the smoke tests MUST be
-  re-run; the vendored plugin source MAY also need a refresh.
+- Cavemem version bump (any change to upstream package version): all
+  four patches MUST be re-cherry-picked and the smoke tests MUST be
+  re-run; the vendored plugin source MAY also need a refresh. If
+  upstream merges a fix that one of the 3 cherry-picked patches
+  carries (#14/#25/#39), REMOVE that patch from the overlay rather
+  than leaving it as a no-op (`nix build` fails on already-applied
+  patches). The from-scratch `cavemem-data-dir-env.patch` should be
+  carried forward until upstream accepts an equivalent feature.
 - Cavemem schema migration (new column on `sessions`/`observations`/
   `summaries`): the importer's content-hash mechanism survives, but
   insert column lists must be revisited.
@@ -190,7 +196,7 @@ graph TB
     end
 
     subgraph RuntimeFiles
-        DB[cavemem.db]
+        DB[data.db]
         SETJ[~/.local/share/cavemem/settings.json]
         PLGJ[~/.config/opencode/plugins/cavemem.js]
         OCJ[~/.config/opencode/opencode.json]
@@ -236,10 +242,10 @@ graph TB
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| CLI / Daemon | cavemem v0.2.1 (vendored from JuliusBrussee/cavemem) | Ambient capture, MCP server, search backend | Three `.patch` files cherry-picked from upstream PRs |
+| CLI / Daemon | cavemem v0.2.1 (vendored from JuliusBrussee/cavemem) | Ambient capture, MCP server, search backend | Four `.patch` files: three cherry-picked from upstream PRs (#14/#25/#39) + one written from scratch (`cavemem-data-dir-env.patch`) honoring `CAVEMEM_DATA_DIR` so the HM module can point cavemem at `home.cavemem.dataDir` (Req 10.1) |
 | Embedding (default) | Xenova/all-MiniLM-L6-v2 via `@xenova/transformers` | Local vector embedding for hybrid search | Bundled with cavemem; ONNX runtime included |
-| Storage | SQLite (better-sqlite3 binding) | Sessions / observations / summaries / FTS5 / embeddings | Single file at `${home.cavemem.dataDir}/cavemem.db` |
-| Importer runtime | nodejs 24 (matches host default), better-sqlite3, js-yaml | Reads `.md` notes, INSERTs into cavemem.db | Vendored via `buildNpmPackage` sub-derivation |
+| Storage | SQLite (better-sqlite3 binding) | Sessions / observations / summaries / FTS5 / embeddings | Single file at `${home.cavemem.dataDir}/data.db` |
+| Importer runtime | nodejs 24 (matches host default), better-sqlite3, js-yaml | Reads `.md` notes, INSERTs into data.db | Vendored via `buildNpmPackage` sub-derivation |
 | Smoke-test runtime | bash + `pkgs.sqlite` + `pkgs.jq` | Asserts on patched-bug behavior at runtime | `writeShellApplication` |
 | HM module | nix (home-manager 25.11) | Declarative options + file generation | New module at `home-manager/common/cavemem.nix` |
 | Opencode wrapper | bash snippet appended via `home.opencode.wrapperCommands` | Pre-launch cavemem MCP probe | Reuses existing `wrapperCommands` list option |
@@ -251,10 +257,11 @@ graph TB
 
 ```
 overlays/
-├── mcp-servers.nix                          # Cavemem package added alongside mcp-obsidian
+├── mcp-servers.nix                          # Cavemem package + cavemem-importer-deps added alongside mcp-obsidian
 ├── cavemem-14-hook-payload-shape.patch      # Bug #14 fix (PR #31, commit f2e2f49)
-├── cavemem-39-session-start-cwd-filter.patch # Bug #39 fix (PR #21)
-└── cavemem-25-search-alpha-doc.patch        # Bug #25 fix (PR #31)
+├── cavemem-39-session-start-cwd-filter.patch # Bug #39 fix (PR #21, commit 4c19c168)
+├── cavemem-25-search-alpha-doc.patch        # Bug #25 fix (PR #31, commit f2e2f49)
+└── cavemem-data-dir-env.patch               # CAVEMEM_DATA_DIR env honoring (no upstream PR; written here — operationalizes Req 10.1)
 
 home-manager/common/
 ├── cavemem.nix                              # New HM module (option surface + file gen + wiring)
@@ -349,11 +356,11 @@ sequenceDiagram
     actor Op as Operator
     participant Imp as cavemem-import-vault
     participant Vault as Obsidian vault .md files
-    participant DB as cavemem.db
+    participant DB as data.db
 
     Op->>Imp: cavemem-import-vault (no args)
     Imp->>Imp: read home.mcp.obsidianVaultPath (baked at build)
-    Imp->>Imp: open cavemem.db (better-sqlite3)
+    Imp->>Imp: open data.db (better-sqlite3)
     Imp->>Vault: walk transcriptions/*.md and summaries/*.md
     loop per file
         Imp->>Imp: parse YAML frontmatter, extract date/project/session
@@ -389,7 +396,7 @@ failure aborts before exec; both must pass.
 |-------------|---------|------------|------------|-------|
 | 1.1 | cavemem package in overlay | CavememPackage | overlay attr `cavemem` | First-time activation |
 | 1.2 | binary on PATH, --version works | CavememPackage | `bin/cavemem` wrapper | First-time activation |
-| 1.3 | three patches applied | CavememPackage | `patches = [ ... ]` | n/a (build-time) |
+| 1.3 | four patches applied | CavememPackage | `patches = [ ... ]` (3 cherry-picks + 1 from-scratch CAVEMEM_DATA_DIR patch) | n/a (build-time) |
 | 1.4 | patch header naming PR/commit | CavememPackage | `.patch` file convention | n/a (build-time) |
 | 1.5 | obsoleted patches removed on bump | CavememPackage | overlay attr maintenance | Revalidation Triggers |
 | 2.1 | enable option | CavememModule | `home.cavemem.enable` | First-time activation |
@@ -429,8 +436,8 @@ failure aborts before exec; both must pass.
 | 8.3 | inserts sessions + observations per transcription | ImporterScript | better-sqlite3 INSERTs | Migration |
 | 8.4 | inserts summaries per summary file | ImporterScript | better-sqlite3 INSERT | Migration |
 | 8.5 | idempotent (content-hash dedup) | ImporterScript | `import_hash` in metadata | Migration |
-| 8.6 | uses better-sqlite3 against dataDir/cavemem.db | ImporterScript | better-sqlite3 binding | Migration |
-| 8.7 | actionable error if cavemem.db missing | ImporterScript | preflight + stderr | Migration |
+| 8.6 | uses better-sqlite3 against dataDir/data.db | ImporterScript | better-sqlite3 binding | Migration |
+| 8.7 | actionable error if data.db missing | ImporterScript | preflight + stderr | Migration |
 | 8.8 | prints summary counts at end | ImporterScript | stdout | Migration |
 | 9.1 | bug #14 smoke (non-empty input/output) | SmokeTestScript | bash + sqlite | Smoke test |
 | 9.2 | bug #39 smoke (no cross-cwd leak) | SmokeTestScript | bash + sqlite | Smoke test |
@@ -452,7 +459,7 @@ failure aborts before exec; both must pass.
 
 | Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------------|--------|--------------|------------------|-----------|
-| CavememPackage | Overlay | Build patched cavemem v0.2.1 binary | 1.1, 1.2, 1.3, 1.4, 1.5 | nodejs (P0), buildNpmPackage (P0), upstream cavemem source (P0), three .patch files (P0) | Service |
+| CavememPackage | Overlay | Build patched cavemem v0.2.1 binary | 1.1, 1.2, 1.3, 1.4, 1.5, 10.1 | nodejs (P0), pnpm_9.fetchDeps + pnpmConfigHook (P0; cavemem is a pnpm monorepo with no package-lock.json), upstream cavemem source (P0), four .patch files (P0; 3 cherry-picks + cavemem-data-dir-env.patch) | Service |
 | CavememModule | Home-manager | Option surface + activation orchestration | 2.1–2.7, 3.1–3.7, 4.1, 4.3, 4.5, 5.1, 5.4, 5.5, 10.1, 10.5 | CavememPackage (P0), McphubExtraServers (P0), OpencodeSettings (P0), OpencodeWrapperHealthCheck (P0), home.mcp.obsidianVaultPath (P1) | State |
 | SettingsJson | Home-manager | Rendered cavemem settings.json | 2.4, 3.4, 3.5, 3.6, 3.7 | CavememModule options (P0) | State |
 | OpencodePlugin | Home-manager | Vendored opencode plugin file | 2.5, 10.4 | xdg.configFile (P0) | State |
@@ -461,7 +468,7 @@ failure aborts before exec; both must pass.
 | OpencodeWrapperHealthCheck | Home-manager | Pre-launch cavemem MCP probe | 5.1, 5.2, 5.3, 5.4, 5.5 | home.opencode.wrapperCommands (P0), curl (P1) | Service |
 | AgentsMdRestructure | Documentation | Restructured agents.md | 6.1–6.7, 10.3 | (doc only) | n/a |
 | VaultCuratorUpdate | Documentation | Updated vault-curator.md | 7.1–7.4 | (doc only) | n/a |
-| ImporterScript | Operator script | One-shot vault → cavemem.db migration | 8.1–8.8 | nodejs + better-sqlite3 + js-yaml (P0), CavememModule.dataDir (P0), home.mcp.obsidianVaultPath (P0) | Batch |
+| ImporterScript | Operator script | One-shot vault → data.db migration | 8.1–8.8 | nodejs + better-sqlite3 + js-yaml (P0), CavememModule.dataDir (P0), home.mcp.obsidianVaultPath (P0) | Batch |
 | SmokeTestScript | Operator script | Patch verification at runtime + MCP tool surface lock | 9.1–9.6 | CavememPackage (P0), pkgs.sqlite (P0), pkgs.jq (P0), mcp-hub HTTP API or `cavemem mcp` stdio (P0) | Batch |
 | TroubleshootingMemory | Documentation | Operator-facing troubleshooting note | 11.1, 11.2, 11.3 | Obsidian vault | n/a |
 
@@ -502,7 +509,7 @@ this spec:
   smoke tests for the bug #25 verification)
 - `cavemem hook run <event>` — invoked by the opencode plugin
 
-Preconditions: `${dataDir}/cavemem.db` exists or cavemem will create it
+Preconditions: `${dataDir}/data.db` exists or cavemem will create it
 on first run.
 Postconditions: subcommand-dependent; MCP server runs until SIGTERM.
 Invariants: writes only inside `${dataDir}` and (transiently) the
@@ -807,7 +814,7 @@ exit code 1 → wrapper aborts before exec.
 - Lives at `memories/<date>-cavemem-integration-overview.md` in the
   vault.
 - Explains the cavemem-vs-Obsidian responsibility split; lists the
-  three patched bug IDs and the patch filenames; documents the most
+  four patched bug IDs (3 cherry-picked + 1 from-scratch CAVEMEM_DATA_DIR) and the patch filenames; documents the most
   likely failure modes; references the importer and smoke-test
   scripts; documents the dataDir path.
 - Tagged with `memory`, `nix-config`, `cavemem`, `memory-system`,
@@ -819,7 +826,7 @@ exit code 1 → wrapper aborts before exec.
 
 | Field | Detail |
 |-------|--------|
-| Intent | One-shot vault → cavemem.db migration via direct SQLite writes |
+| Intent | One-shot vault → data.db migration via direct SQLite writes |
 | Requirements | 8.1–8.8 |
 
 **Responsibilities & Constraints**
@@ -838,7 +845,7 @@ exit code 1 → wrapper aborts before exec.
 
 - Inbound: operator (P0)
 - Outbound: nodejs (P0), better-sqlite3 (P0), js-yaml (P0),
-  cavemem.db at `${dataDir}/cavemem.db` (P0)
+  data.db at `${dataDir}/data.db` (P0)
 
 **Contracts**: Batch [x]
 
@@ -849,7 +856,7 @@ exit code 1 → wrapper aborts before exec.
   and `<vault>/conversations/summaries/*.md`; each file's frontmatter
   is parsed by `js-yaml`; files whose frontmatter fails to parse are
   skipped with a warning logged to stderr.
-- Output / destination: rows in cavemem.db's sessions / observations /
+- Output / destination: rows in data.db's sessions / observations /
   summaries tables; counts printed to stdout.
 - Idempotency & recovery: hash-based dedup ensures re-runs do not
   duplicate. Recovery is "re-run" — partial failures simply leave the
@@ -859,7 +866,7 @@ exit code 1 → wrapper aborts before exec.
 
 | Field | Detail |
 |-------|--------|
-| Intent | Verify the three patched bugs are fixed at runtime + assert the four-tool MCP surface is intact |
+| Intent | Verify the three upstream-cherry-picked patched bugs (#14/#39/#25) are fixed at runtime + assert the four-tool MCP surface is intact. The fourth (`cavemem-data-dir-env.patch`) is implicitly exercised by the temp-`CAVEMEM_DATA_DIR` setup the smoke test uses for isolation; if it regresses, every check will misroute to `~/.cavemem/` and the harness's mktemp-EXIT trap will fail to clean up the real dataDir. |
 | Requirements | 9.1–9.6 |
 
 **Responsibilities & Constraints**
@@ -867,7 +874,7 @@ exit code 1 → wrapper aborts before exec.
 - Packaged via `pkgs.writeShellApplication { name = "cavemem-smoke-test"; ... }`.
 - Runs cavemem against a temporary `dataDir` (created via `mktemp -d`
   and removed on exit via trap).
-- Four independent verification steps (three patched-bug checks +
+- Four independent verification steps (three upstream-cherry-picked patched-bug checks +
   one MCP tool surface check); exits 0 only when all four pass; on
   failure, identifies the specific failed step on stderr.
 
@@ -992,7 +999,7 @@ counter for that table.
 - **Runtime opencode wrapper**: cavemem MCP probe failure prints to
   stderr and exits 1 before exec; the user sees the failure
   immediately.
-- **Runtime importer**: missing cavemem.db → exit 1 with an actionable
+- **Runtime importer**: missing data.db → exit 1 with an actionable
   message naming the path. Per-file parse errors → log to stderr,
   skip the file, continue. Per-row INSERT errors → propagate the
   error and abort (forces operator to investigate the schema
@@ -1009,7 +1016,7 @@ counter for that table.
 - **Runtime errors (wrapper)**: cavemem MCP not reachable → operator
   follows the printed `launchctl kickstart` hint; falls back to
   inspecting `~/Library/Logs/mcp-hub.log`.
-- **Runtime errors (importer)**: cavemem.db missing → operator runs
+- **Runtime errors (importer)**: data.db missing → operator runs
   `cavemem` once to bootstrap the schema. Frontmatter parse failure
   → operator inspects the warned-on file and either fixes the
   frontmatter or accepts the skip.
@@ -1027,7 +1034,7 @@ counter for that table.
 
 ### Unit / Build-Level Tests
 
-- The cavemem package builds successfully with all three patches
+- The cavemem package builds successfully with all four patches
   applied (build-time verification; failure aborts the rebuild).
 - `nix flake check` (or the host's equivalent rebuild dry-run)
   passes with `home.cavemem.enable = true` on each host.
@@ -1072,10 +1079,10 @@ counter for that table.
   description names that flow. This spec does not introduce new
   secrets handling — it leaves the decision to the operator.
 - The importer reads the Obsidian vault (sensitive content) and writes
-  to cavemem.db (also sensitive). Both paths are inside `$HOME`; no
+  to data.db (also sensitive). Both paths are inside `$HOME`; no
   network I/O.
 - The smoke tests use a temp `dataDir` so they do not pollute the
-  operator's real cavemem.db.
+  operator's real data.db.
 
 ## Performance & Scalability
 
@@ -1088,13 +1095,13 @@ counter for that table.
 ## Migration Strategy
 
 This integration is a one-way migration: existing transcription and
-summary `.md` files are imported into cavemem.db once (Requirement 8).
+summary `.md` files are imported into data.db once (Requirement 8).
 After import, the source `.md` files remain on disk as historical
 archives — no deletion is performed and none is recommended (the
 operator may archive or delete them manually if desired).
 
-There is no rollback story for the cavemem.db rows themselves; if the
-operator wants to start over, they can delete `cavemem.db` and re-run
+There is no rollback story for the data.db rows themselves; if the
+operator wants to start over, they can delete `data.db` and re-run
 the importer.
 
 ## Supporting References

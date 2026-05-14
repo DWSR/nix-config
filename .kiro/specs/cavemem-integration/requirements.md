@@ -34,9 +34,9 @@ inverted). All three have upstream PRs from which we cherry-pick.
   vault-curator.md update; opencode wrapper cavemem health-check; smoke
   tests that prove the three patched bugs are actually fixed at runtime.
 - **Out of scope**: The vault-synthesizer subagent (separate spec); the
-  `memory-sync` orchestration command (separate spec); adding cavemem.db
+  `memory-sync` orchestration command (separate spec); adding data.db
   to the sqlite-backup target list (separate existing-spec extension);
-  cross-host cavemem.db sync (upstream-deferred, not viable); auto-scheduled
+  cross-host data.db sync (upstream-deferred, not viable); auto-scheduled
   cavemem maintenance such as compaction or vacuum; patching cavemem bugs
   unrelated to this integration (#11, #18, #20, #28, #37); generalizing
   the importer to other memory tools or building a roundtripping
@@ -270,7 +270,7 @@ authored content.
 
 **Objective:** As a host operator, I want a one-shot Node-based
 importer that reads existing transcription and summary `.md` notes
-and writes equivalent rows directly into cavemem.db, so that the
+and writes equivalent rows directly into data.db, so that the
 historical session record is searchable through the new MCP tools
 without depending on cavemem's broken `cavemem import`.
 
@@ -295,12 +295,12 @@ without depending on cavemem's broken `cavemem import`.
    `sessions`, `observations`, or `summaries`. It shall achieve this
    by hashing the content of each candidate row and skipping inserts
    whose hash already exists.
-6. The importer shall open `cavemem.db` using the same `better-sqlite3`
+6. The importer shall open `data.db` using the same `better-sqlite3`
    binding cavemem itself uses, against the path
-   `${home.cavemem.dataDir}/cavemem.db`, and shall not attempt to
+   `${home.cavemem.dataDir}/data.db`, and shall not attempt to
    create or migrate the schema (it relies on cavemem having already
    created the file at first run).
-7. If `cavemem.db` does not exist at the expected path, the importer
+7. If `data.db` does not exist at the expected path, the importer
    shall exit non-zero with an actionable error message instructing the
    operator to run `cavemem` once first to bootstrap the schema.
 8. The importer shall print a one-line summary at the end reporting the
@@ -335,7 +335,7 @@ silently regress the integration's value proposition.
    verification when it exits non-zero.
 5. The smoke-test script shall be idempotent enough to run repeatedly
    without leaving permanent observation/session pollution in the
-   operator's real cavemem.db (it is acceptable to use a temporary
+   operator's real data.db (it is acceptable to use a temporary
    `dataDir` override).
 6. The smoke-test script shall additionally assert that the cavemem
    MCP server exposes the four tools enumerated in Requirement 10.AC6
