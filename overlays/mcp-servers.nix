@@ -145,12 +145,12 @@ in
 
       # The published `cavemem` npm package is just the built
       # `apps/cli/dist/`, the `hooks-scripts/` directory, README,
-      # LICENSE, and a slim package.json that declares ONLY the six
+      # LICENSE, and a slim package.json that declares the six
       # third-party runtime deps (commander, kleur, better-sqlite3,
       # hono, @hono/node-server, @modelcontextprotocol/sdk). All
       # `@cavemem/*` workspace packages are inlined into
       # `dist/index.js` by tsup at build time. So at runtime cavemem
-      # needs exactly those six deps' source trees on disk plus the
+      # needs those six deps' source trees on disk plus the
       # already-built native binding for better-sqlite3 (which the
       # buildPhase compiled in the workspace store).
       #
@@ -159,8 +159,26 @@ in
       # which the Nix sandbox forbids. Instead, we run the upstream
       # `pack:release` build script (which already knows the slim
       # layout) to produce `apps/cli/release/`, then hand-link the
-      # six runtime deps from the workspace store into the release
-      # tree's node_modules.
+      # runtime deps (and their transitive runtime closure) from the
+      # workspace store into the release tree's node_modules.
+      #
+      # The slim package.json declares only the six top-level deps,
+      # but at runtime `@modelcontextprotocol/sdk` `require()`s zod,
+      # zod-to-json-schema, ajv, ajv-formats, content-type, cors,
+      # cross-spawn, eventsource, eventsource-parser, express,
+      # express-rate-limit, jose, json-schema-typed, pkce-challenge,
+      # and raw-body. Subcommands like `cavemem --version` happen to
+      # work without those because they don't import the SDK, but
+      # `cavemem mcp` (and the smoke test's stdio probe of
+      # `tools/list`) crashes at startup with "Cannot find package
+      # 'zod'" if any of them are missing. To avoid maintaining a
+      # hand-curated mirror of the SDK's transitive closure (and
+      # express's, which is non-trivial), we walk each runtime dep's
+      # `package.json` and copy every `dependencies` entry transitively
+      # into the same flat `node_modules/` directory. Node's module
+      # resolution walks parent directories, so a flat layout under
+      # `$out/lib/node_modules/cavemem/node_modules/` resolves all of
+      # them correctly regardless of who imports whom.
       #
       # `@xenova/transformers` is in optionalDependencies; it is not
       # in the slim package.json's dependencies and therefore not
@@ -173,29 +191,101 @@ in
       cp -R apps/cli/release/. $out/lib/node_modules/cavemem/
 
       mkdir -p $out/lib/node_modules/cavemem/node_modules
-      for dep in commander kleur better-sqlite3 hono @hono/node-server \
-                 @modelcontextprotocol/sdk; do
-        # Resolve the actual workspace store path (each dep is under
-        # node_modules/.pnpm/<dep>@<ver>/node_modules/<dep>/) by following
-        # the existing symlink in apps/cli/node_modules.
-        src=$(readlink -f "apps/cli/node_modules/$dep")
-        if [ -z "$src" ] || [ ! -d "$src" ]; then
+
+      # Recursive runtime-dep copier. For each requested dep:
+      #   1. Resolve the on-disk path by trying app-level, then
+      #      workspace-root, then the pnpm content-addressed store
+      #      under `node_modules/.pnpm/<escaped>@*/node_modules/<dep>`
+      #      (pnpm encodes `/` as `+` in scoped store dir names).
+      #   2. cp -R the resolved path into the output's flat
+      #      node_modules.
+      #   3. Read the dep's own `package.json`, enqueue every
+      #      `dependencies` entry, and recurse. An associative array
+      #      memoises already-copied deps so the closure is computed
+      #      exactly once per dep.
+      declare -A copied_deps
+
+      resolve_dep() {
+        local dep=$1
+        local s candidate
+        for candidate in "apps/cli/node_modules/$dep" "node_modules/$dep"; do
+          if [ -e "$candidate" ]; then
+            s=$(readlink -f "$candidate" 2>/dev/null || true)
+            if [ -n "$s" ] && [ -d "$s" ]; then
+              echo "$s"
+              return 0
+            fi
+          fi
+        done
+        # Fall back to scanning the pnpm content-addressed store.
+        local escaped="''${dep//\//+}"
+        for candidate in node_modules/.pnpm/"$escaped"@*/node_modules/"$dep"; do
+          if [ -d "$candidate" ]; then
+            s=$(readlink -f "$candidate" 2>/dev/null || true)
+            if [ -n "$s" ] && [ -d "$s" ]; then
+              echo "$s"
+              return 0
+            fi
+          fi
+        done
+        return 1
+      }
+
+      copy_dep() {
+        local dep=$1
+        if [ -n "''${copied_deps[$dep]:-}" ]; then return 0; fi
+        copied_deps[$dep]=1
+
+        local src
+        src=$(resolve_dep "$dep" || true)
+        if [ -z "$src" ]; then
           echo "ERROR: could not resolve runtime dep '$dep' in workspace store" >&2
           exit 1
         fi
+
         mkdir -p "$out/lib/node_modules/cavemem/node_modules/$(dirname "$dep")"
         cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
+
+        # Enqueue this dep's own runtime dependencies. Use node to
+        # parse package.json so we don't depend on jq being on PATH.
+        local pkgjson="$src/package.json"
+        if [ -f "$pkgjson" ]; then
+          local tdep
+          while IFS= read -r tdep; do
+            [ -z "$tdep" ] && continue
+            copy_dep "$tdep"
+          done < <(node -e "const p=require('$pkgjson');console.log(Object.keys(p.dependencies||{}).join('\n'))" 2>/dev/null || true)
+        fi
+      }
+
+      # RUNTIME_DEPS: the slim package.json's six top-level deps plus
+      # the MCP SDK's runtime imports (which the SDK's own package.json
+      # declares). Their transitive closures (e.g. express's accepts,
+      # body-parser, finalhandler, ...) are pulled in automatically by
+      # copy_dep walking each package.json.
+      for dep in commander kleur better-sqlite3 hono @hono/node-server \
+                 @modelcontextprotocol/sdk \
+                 zod zod-to-json-schema ajv ajv-formats content-type \
+                 cors cross-spawn eventsource eventsource-parser \
+                 express express-rate-limit jose json-schema-typed \
+                 pkce-challenge raw-body; do
+        copy_dep "$dep"
       done
 
-      # Same trick for transitive deps that better-sqlite3 + the @hono
-      # packages pull in. The Node module resolution algorithm walks
-      # parent directories, so we copy these as siblings under
-      # node_modules/ rather than nesting them under each consumer.
+      # better-sqlite3 historically pulls in `bindings` and
+      # `file-uri-to-path` via internal require() calls that aren't
+      # always in its `dependencies` field (older versions, or when
+      # bundled via prebuild-install). Keep an explicit fallback for
+      # those so a future better-sqlite3 bump doesn't silently break
+      # the native binding loader.
       for dep in bindings file-uri-to-path; do
-        src=$(readlink -f "node_modules/.pnpm/node_modules/$dep" 2>/dev/null \
-              || true)
-        if [ -n "$src" ] && [ -d "$src" ]; then
-          cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
+        if [ -z "''${copied_deps[$dep]:-}" ]; then
+          src=$(readlink -f "node_modules/.pnpm/node_modules/$dep" 2>/dev/null \
+                || true)
+          if [ -n "$src" ] && [ -d "$src" ]; then
+            cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
+            copied_deps[$dep]=1
+          fi
         fi
       done
 

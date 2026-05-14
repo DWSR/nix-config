@@ -236,6 +236,20 @@ in
         inherit (cfg) dataDir;
       };
 
+      # Task 8.1 (Req 9.1-9.6, 10.6; design.md §SmokeTestScript): the
+      # runtime verifier for the four upstream patches carried by
+      # `pkgs.cavemem`. Lives in scripts/ rather than overlays/ because
+      # it consumes the already-overlaid `pkgs.cavemem` (so a freshly
+      # built cavemem can be exercised end-to-end), takes no per-host
+      # parameters (it stages a temp `CAVEMEM_DATA_DIR` itself, never
+      # touching `cfg.dataDir`), and has no other consumers — keeping
+      # it as a `callPackage`d shell application here is the simpler
+      # path versus adding a fifth overlay entry. Operators run
+      # `cavemem-smoke-test` after a `nix flake update` to confirm a
+      # cavemem version bump didn't silently regress any of the four
+      # bugs (Revalidation Trigger per design.md).
+      cavememSmokeTest = pkgs.callPackage ../../scripts/cavemem-smoke-test.nix { };
+
       # Per-provider embedding subsection. cavemem's Zod schema
       # (`packages/config/src/schema.ts`) accepts `provider`, `model`,
       # `endpoint`, `apiKey`, and `idleShutdownMs` under `embedding`;
@@ -336,6 +350,11 @@ in
         # path and dataDir are baked in at HM build time so the
         # operator just runs `cavemem-import-vault` (no flags).
         cavememImportVault
+        # Task 8.1: runtime verifier for the four upstream patches
+        # (bugs #14, #25, #39, and the data-dir env override). Always
+        # ships alongside cavemem so an operator can re-run it after
+        # any `pkgs.cavemem` change to confirm the patches survived.
+        cavememSmokeTest
       ];
 
       # `home.file` (not `xdg.dataFile`) because `cfg.dataDir` is a
