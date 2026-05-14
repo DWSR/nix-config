@@ -376,13 +376,130 @@ no signal was found, not a silent no-op.
 
 ## Drafted memory note format
 
-<!-- Body filled by task 1.6: path convention
-     (`memories/<YYYY-MM-DD>-<slug>.md`), frontmatter shape (`tags`,
-     `date`, `project`, `sessions` in that order; `sessions` uses
-     `cavemem-session-<id>` form), body section order (H1, ## Context,
-     ## Details, ## Related files), the date-floor invariant (date >=
-     earliest observation timestamp), and a 30-50 line worked example
-     in a fenced ```markdown``` block. -->
+Every drafted memory note conforms to the same shape so vault-curator's
+audit treats every note identically and never has to repair frontmatter
+or restructure bodies during the deduplication pass.
+
+### Path convention
+
+Every drafted memory note is written to
+`memories/<YYYY-MM-DD>-<slug>.md`, where:
+
+- `<YYYY-MM-DD>` is the date of the **earliest** cavemem observation in
+  the cluster the note was synthesized from (not the date the note was
+  drafted, and not the end of the time window).
+- `<slug>` is 3-5 words in kebab-case derived from the H1 statement
+  (lowercase, alphanumerics and hyphens only). Slugs match the existing
+  memory path convention so curator's per-day listings remain
+  chronologically meaningful.
+
+### Frontmatter shape
+
+Every drafted memory note's YAML frontmatter contains exactly four
+keys, in this order:
+
+1. `tags` — a YAML list. The list always includes `memory` (the note
+   type), the project tag (derived from the cavemem session's project
+   context — typically the cwd's leaf directory or repo name, e.g.
+   `nix-config`), and **1-5 additional topical tags** drawn from the
+   observation cluster's content. Total tag count must be **between 3
+   and 7 inclusive**, matching the AGENTS.md tag guidelines. Tags are
+   lowercase, single words or hyphenated.
+2. `date` — the date of the earliest cavemem observation in the
+   cluster, in `YYYY-MM-DD` form. Identical to the date in the path.
+3. `project` — the project tag (single string, same value as the
+   project tag in `tags`).
+4. `sessions` — a YAML list of cavemem session IDs the cluster came
+   from, each in `cavemem-session-<id>` form (where `<id>` is
+   cavemem's SQLite auto-increment session identifier). Always at
+   least one entry; multiple entries when the cluster spans sessions.
+   This is what lets vault-curator and humans trace any drafted memory
+   back to the source cavemem observations during the curation pass.
+
+### Body section order
+
+Every drafted memory note's body contains, in order:
+
+1. An H1 line with a concise one-sentence statement of the fact,
+   decision, or pattern the note captures.
+2. `## Context` — where and why the knowledge was discovered (the
+   triggering work, the surrounding session activity).
+3. `## Details` — the actual knowledge being preserved (the
+   non-obvious fact, the chosen option and rationale, the root cause,
+   the established pattern).
+4. `## Related files` — a list of relevant file paths surfaced from
+   the cavemem observations.
+
+**Body sections beyond these four shall not be added.** Do not insert
+`## Decision`, `## Alternatives considered`, `## Next steps`, or any
+other H2. The fixed shape is what lets curator audit every drafted
+note identically.
+
+### Date-floor invariant
+
+The frontmatter `date` value (and, by extension, the `<YYYY-MM-DD>`
+prefix in the path) **shall not precede the earliest cavemem
+observation timestamp in the cluster**. Before writing the note, the
+agent verifies that `date >= min(observation.timestamp)` across every
+observation in the cluster. This keeps drafted dates coherent with the
+source data the memory came from and prevents accidental backdating
+when the cluster spans a day boundary.
+
+### Worked example
+
+A complete drafted memory note for a cluster about choosing
+`buildNpmPackage` over `fetchNpmDeps` for the cavemem importer
+overlay:
+
+```markdown
+---
+tags:
+  - memory
+  - nix-config
+  - cavemem
+  - nix-overlay
+  - nix-derivations
+date: 2026-05-08
+project: nix-config
+sessions:
+  - cavemem-session-1234
+---
+
+# Use buildNpmPackage for the cavemem importer overlay; fetchNpmDeps requires a fixed-output prefetch step we do not want to maintain
+
+## Context
+While packaging the cavemem importer (a small Node.js CLI that
+backfills observations from legacy Obsidian transcription notes)
+into the existing overlay tree at `overlays/cavemem-importer-deps/`,
+we needed a Nix derivation that could consume the project's
+`package.json` + `package-lock.json` and produce a runnable binary
+without network access during the build. Two stdenv helpers were
+candidates: `buildNpmPackage` and the lower-level `fetchNpmDeps`.
+
+## Details
+Chose `buildNpmPackage` because it derives the npm-deps hash from
+`package-lock.json` automatically and runs `npm ci` in a sandboxed
+build, so the overlay's only out-of-band step is bumping
+`npmDepsHash` when `package-lock.json` changes. `fetchNpmDeps` would
+have required a separate fixed-output derivation we'd have to
+re-prefetch and pin every time a transitive dependency moved; that
+maintenance cost was not worth the marginal flexibility for a CLI
+this small. The overlay was wired into `overlays/mcp-servers.nix`
+alongside the existing MCP-server packages, and the resulting
+binary is consumed by `home-manager/common/cavemem.nix`.
+
+## Related files
+- overlays/cavemem-importer-deps/package.json
+- overlays/cavemem-importer-deps/package-lock.json
+- overlays/mcp-servers.nix
+- home-manager/common/cavemem.nix
+```
+
+The example shows all four frontmatter keys in order, exactly five
+tags (within the 3-7 range), one `cavemem-session-<id>` entry under
+`sessions`, an H1 stating the decision in one sentence, and the
+fixed `## Context` / `## Details` / `## Related files` body
+sections populated with realistic paths from this repo.
 
 ## Invocation
 

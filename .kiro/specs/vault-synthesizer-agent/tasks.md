@@ -149,7 +149,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.4_
 
-- [ ] 1.6 Author the Drafted memory note format section with a worked example
+- [x] 1.6 Author the Drafted memory note format section with a worked example
   - In `## Drafted memory note format`, restate the path convention:
     `memories/<YYYY-MM-DD>-<slug>.md` where `<YYYY-MM-DD>` is the date
     of the earliest observation in the cluster and `<slug>` is 3-5
