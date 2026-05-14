@@ -356,7 +356,7 @@
   - _Depends: 1.2_
 
 - [ ] 9. Integration: per-host enablement and end-to-end verification
-- [ ] 9.1 Enable cavemem on each host's HM profile
+- [x] 9.1 Enable cavemem on each host's HM profile
   - In each host's home-manager profile under `configurations/`,
     import `home-manager/common/cavemem.nix` and set
     `home.cavemem.enable = true`. Override `dataDir` only if a host

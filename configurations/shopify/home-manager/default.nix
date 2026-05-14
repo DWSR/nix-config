@@ -12,6 +12,7 @@ in
 {
   imports = [
     ../../../home-manager/common
+    ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
 
     ./dev.nix
@@ -25,6 +26,8 @@ in
 
   home = {
     stateVersion = "25.11";
+
+    cavemem.enable = true;
 
     packages = with pkgs; [
       gcloud

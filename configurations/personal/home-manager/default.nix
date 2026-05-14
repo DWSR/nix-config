@@ -16,6 +16,7 @@ in
     ./op-shell-plugins.nix
 
     ../../../home-manager/common
+    ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
     ./git.nix
     ./opencode.nix
@@ -29,6 +30,8 @@ in
 
   home = {
     stateVersion = "25.11";
+
+    cavemem.enable = true;
 
     packages = with pkgs; [
       butane
