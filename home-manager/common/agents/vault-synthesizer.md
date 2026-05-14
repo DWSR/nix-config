@@ -854,11 +854,97 @@ them is a bug:
 
 ## Success criteria
 
-<!-- Body filled by task 1.10: manual smoke-test recipe — invoke with a
-     known small time window, confirm the structured return matches the
-     contract, confirm at least one drafted note conforms to the
-     drafted-note format, confirm no calls were made to disallowed MCP
-     tools, confirm no calls were made to hub_obsidian__search-*. -->
+This section documents the manual smoke-test recipe that the implementer
+runs to certify the agent at ship time, and that any future operator
+re-runs after a cavemem version bump or a meaningful edit to this agent
+definition. The smoke test produces no automated output; the operator
+visually confirms each of the three pass conditions below by inspecting
+the agent's structured return and the drafts it wrote to the vault. There
+is no CI gate around this — it is an explicit human-in-the-loop check.
+
+### Smoke-test invocation
+
+From any opencode session on a host where `home.cavemem.enable = true`
+and the cavemem MCP server (`hub_cavemem__*`) is reachable, the operator
+runs:
+
+```
+@vault-synthesizer 24 hours
+```
+
+The relative shape `24 hours` is chosen deliberately: it produces a
+tractable amount of output (roughly today's session activity, never the
+whole vault), it exercises the relative-shape branch of the time-range
+parser (Stage 1 of the `## Workflow`), and it lines up with the natural
+"end of day" cadence at which an operator would manually flush
+candidates from cavemem into the vault. Other shapes (absolute date
+ranges, multi-day windows) are valid invocations but are not the
+prescribed smoke-test shape.
+
+### Pass conditions
+
+The smoke test passes only if all three of the following hold:
+
+1. **At least one memory draft is produced.** The structured return (see
+   the `## Report` section's contract) lists one or more entries in
+   `draft_paths`. An empty `draft_paths` is ambiguous: it can mean the
+   24-hour window genuinely had zero promotion candidates that survived
+   the Selectivity rubric (acceptable on a quiet day), or it can mean
+   the agent silently failed to write. The operator must distinguish
+   the two by inspecting the structured return's other fields —
+   `observations_scanned`, `clusters_identified`, `clusters_promoted`,
+   `clusters_skipped`, `drafts_written`, and `failed_clusters` —
+   before declaring this condition met or failed. The diagnostic split
+   is `clusters_identified == 0` (genuine quiet day, condition met
+   vacuously) vs. `clusters_identified > 0 && drafts_written == 0 &&
+   failed_clusters == []` (silent failure — condition fails).
+2. **The first draft conforms to the `## Drafted memory note format`
+   section.** Open the draft in Obsidian and visually confirm:
+   frontmatter contains exactly the four keys in the prescribed order
+   (`tags`, `date`, `project`, `sessions`); `tags` count is 3-7 and
+   includes both `memory` and the project tag; `sessions` lists one or
+   more `cavemem-session-<id>` entries (not the human
+   `{session-timestamp}` shape); the body is an H1 title followed by
+   `## Context`, `## Details`, and `## Related files` in that order
+   with no extra H2 sections. A draft that conforms to this format is
+   accepted by the downstream vault-curator audit unchanged.
+3. **Cross-project privacy holds.** No observation from a cavemem
+   session whose `cwd` differs from the synthesis time-range's project
+   context appears inside any draft. Inspect each draft's `## Context`
+   and `## Details` sections; every referenced file path must lie
+   within the project boundary established by the cwd of the cavemem
+   session(s) cited in the draft's `sessions:` frontmatter. This
+   cross-project check depends on the cavemem session-start cwd-filter
+   patch (`cavemem-39-session-start-cwd-filter.patch`) shipped by the
+   `cavemem-integration` spec; if that patch regresses, this condition
+   will fail even when the synthesizer itself is correct.
+
+### Recovery when a pass condition fails
+
+When any pass condition fails, do not immediately re-run the
+synthesizer. First, run the regression detector shipped by
+`cavemem-integration`:
+
+```
+cavemem-smoke-test
+```
+
+(invocable as a script of the same name on PATH on any host where
+`home.cavemem.enable = true`). The two outcomes are:
+
+- **`cavemem-smoke-test` fails.** The cavemem MCP itself is broken —
+  session capture, query, or the cwd-filter patch has regressed. Fix
+  the upstream MCP first; the synthesizer cannot meet pass condition 1
+  or 3 against a broken cavemem. Once `cavemem-smoke-test` is green,
+  re-run `@vault-synthesizer 24 hours` and re-evaluate.
+- **`cavemem-smoke-test` passes but the synthesizer smoke test still
+  fails.** The failure is in this agent, not the upstream MCP. Capture
+  the structured return's `failed_clusters` field (or, if Stage 1
+  refused the invocation, capture the parser-refusal output verbatim)
+  and open an issue against the `vault-synthesizer-agent` spec citing
+  the failing pass condition number. Do not paper over the failure by
+  editing drafts by hand and shipping them — the smoke test is the
+  release gate, and a hand-edited draft has not exercised the agent.
 
 ## Vault references
 

@@ -285,7 +285,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.5_
 
-- [ ] 1.10 Author the Success criteria section with the manual smoke-test recipe
+- [x] 1.10 Author the Success criteria section with the manual smoke-test recipe
   - In `## Success criteria`, document the manual smoke-test recipe
     the implementer (and any future operator validating the agent
     after a cavemem version bump) runs to confirm end-to-end
