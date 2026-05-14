@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Author the agent definition file
-- [ ] 1.1 Create the frontmatter and skeleton sections
+- [x] 1.1 Create the frontmatter and skeleton sections
   - Create `home-manager/common/agents/vault-synthesizer.md` with a YAML
     frontmatter block whose top-level keys are exactly: `description`,
     `mode`, `model`, `temperature`, `permission` (in that order, matching
