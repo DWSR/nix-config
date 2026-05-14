@@ -31,7 +31,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 3.4_
   - _Boundary: AgentDefinitionFile_
 
-- [ ] 1.2 Author the Mission and Operating-rules sections
+- [x] 1.2 Author the Mission and Operating-rules sections
   - Mission paragraph: one paragraph naming the synthesizer's job
     (promote high-signal cavemem observations into curated Obsidian
     memory notes), naming its place in the pipeline (synthesizer drafts;
