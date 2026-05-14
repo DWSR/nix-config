@@ -358,8 +358,8 @@ in
               replicationTier
               archiveTier
               ;
-            stagingDir = "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
-            repoDir = "${config.xdg.dataHome}/sqlite-backup/restic/${db.name}";
+            stagingDir = "${config.xdg.dataHome}/sqlite-backup/${db.name}/litestream-staging";
+            repoDir = "${config.xdg.dataHome}/sqlite-backup/${db.name}/restic";
           }) cfg.databases;
         }
       );
@@ -391,7 +391,7 @@ in
       # (`databases = [ ]`, R1.AC2 / R1.AC3) emits no agents at all.
       launchd.agents =
         let
-          stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/litestream-staging/${db.name}";
+          stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/${db.name}/litestream-staging";
 
           logBaseFor = db: role: "${config.home.homeDirectory}/Library/Logs/sqlite-backup-${db.name}-${role}";
 

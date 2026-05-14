@@ -61,9 +61,9 @@ Three-tier pipeline per database, glued together by a single module:
 ```
 [live SQLite WAL]
       ↓  continuous (~1s RPO), Litestream KeepAlive launchd agent
-${xdg.dataHome}/sqlite-backup/litestream/<db>/   ← LTX segments, plaintext, local
+${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/   ← LTX segments, plaintext, local
       ↓  daily (StartCalendarInterval), restic + chained rclone wrapper
-${xdg.dataHome}/sqlite-backup/restic/<db>/       ← encrypted, dedup, one repo per DB
+${xdg.dataHome}/sqlite-backup/<db>/restic/               ← encrypted, dedup, one repo per DB
       ↓  inline `rclone sync` after restic, same wrapper, flock-guarded
 <rclone remote>:<path>/restic/<db>/              ← any rclone backend, OR local: path
 ```

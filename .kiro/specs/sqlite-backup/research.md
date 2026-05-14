@@ -538,7 +538,7 @@ and classification.
 | # | Requirement | Existing assets | Gap | Status |
 |---|-------------|-----------------|-----|--------|
 | R1 | Declarative module, dormant default, named-set + reference-by-name + eval-time validation | HM module convention; `mkOption` / `mkEnableOption` idioms; `assertions = [...]` precedent in HM modules (`launchd/default.nix:116-125`); `lib.hm.assertions.assertPlatform` for darwin gate | New module file with `attrsOf (submodule {...})` for `rcloneDestinations` (no in-repo precedent — first user); `assertions` for missing-reference eval-time failure | **Missing** (new module, new pattern in this repo) |
-| R2 | Continuous replication, live-DB-accessible, sleep/wake, restart, on-host-only | `pkgs.unstable.litestream` v0.5.11; launchd `KeepAlive` pattern at `home-manager/mcp/default.nix:124-147` | Litestream config rendering (`xdg.configFile."litestream/litestream.yml"`), one always-on launchd agent multiplexing all DBs, segments dir under `${xdg.dataHome}/sqlite-backup/litestream/<db>/` | **Missing** (no precedent) |
+| R2 | Continuous replication, live-DB-accessible, sleep/wake, restart, on-host-only | `pkgs.unstable.litestream` v0.5.11; launchd `KeepAlive` pattern at `home-manager/mcp/default.nix:124-147` | Litestream config rendering (`xdg.configFile."litestream/litestream.yml"`), one always-on launchd agent multiplexing all DBs, segments dir under `${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/` | **Missing** (no precedent) |
 | R3 | Scheduled archival snapshots into single repo, per-DB schedule + retention | `pkgs.restic` 0.18.1; `--tag` and `--tag`-filtered `forget --keep-*` flags confirmed; `launchd.agents.<name>.config.StartCalendarInterval` for daily-03:00-style cadence | Per-DB scheduled launchd agent; restic backup with `--tag archive`; restic forget with `--tag archive --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune` | **Missing** |
 | R4 | Off-host shipment of archival snapshots (now references R14's continuous mechanism) | `pkgs.rclone` 1.72.1; rclone destinations reachable via `RCLONE_PASSWORD_COMMAND` | The shipment is no longer chained-after-archival; subsumed under R14's continuous mechanism — see R14 row | **Subsumed** by R14 |
 | R5 | Pluggable destinations as named set; reference by name only | `pkgs.rclone`'s backend universe; `attrsOf (submodule {...})` Nix idiom | New `rcloneDestinations` option of type `attrsOf (submodule { options.type = mkOption {...}; ... })`; HM-level patterns at `programs/sftpman.nix:95` and `xdg-desktop-entries.nix:214` are the closest reference | **Missing** (new module shape) |
@@ -578,11 +578,11 @@ module's internal pipeline does. Specifically:
 
 What's new vs the May-12 recommendation:
 
-- **Single restic repo per database** at `${xdg.dataHome}/sqlite-backup/restic/<db>/`
+- **Single restic repo per database** at `${xdg.dataHome}/sqlite-backup/<db>/restic/`
   (the May-12 design had separate `litestream/<db>/` and
   `restic/<db>/` directories — under R16 the litestream segments
   dir is now demoted to implementation-internal staging at
-  `${xdg.dataHome}/sqlite-backup/litestream-staging/<db>/`).
+  `${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`).
 - **Two launchd agents per DB**: replication-tier (KeepAlive
   Litestream daemon, plus a `StartInterval = 300` restic+rclone
   wrapper that snapshots staging into the repo with
@@ -793,7 +793,7 @@ adding where the architecture has changed.
 - **R-12 (NEW)**: Litestream segment-staging directory location —
   no longer part of the user-observable backup repository (R16),
   but Litestream still needs SOMEWHERE to write. Default proposal:
-  `${xdg.dataHome}/sqlite-backup/litestream-staging/<db>/`. Wiped
+  `${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`. Wiped
   on each archival cycle? Persist forever? (Restic snapshots from
   it, so persisting is implicit; but the staging dir itself
   doesn't need to be backed up.)

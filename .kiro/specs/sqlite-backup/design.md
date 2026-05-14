@@ -158,8 +158,8 @@ spec or consumer that integrates with this design:
   any external monitoring or status tooling that lists agents must
   update.
 - A change in the on-disk path conventions for the staging directory
-  (`${xdg.dataHome}/sqlite-backup/litestream-staging/<db>/`) or the
-  restic repo (`${xdg.dataHome}/sqlite-backup/restic/<db>/`) — any
+  (`${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`) or the
+  restic repo (`${xdg.dataHome}/sqlite-backup/<db>/restic/`) — any
   recovery procedure or runbook must update.
 - A change in the Keychain account name from `mcp-hub` to a
   `sqlite-backup`-specific account — the bridge module's account
@@ -539,13 +539,13 @@ sequenceDiagram
 | 14.2 | ~5 min off-host RPO under healthy network | Per-DB replicate launchd agent | `StartInterval = databases[*].replicationTier.cadenceSeconds` (default 300) |
 | 14.3 | Operator-configurable cadence per DB | HM module | `databases[*].replicationTier.cadenceSeconds` option |
 | 14.4 | Same encryption + secrets as archival | Replicate wrapper + archive wrapper | Both use the same restic repo and the same Keychain-supplied passphrase |
-| 14.5 | Replication + archival to same per-DB repo | Replicate wrapper + archive wrapper | Both write to `${xdg.dataHome}/sqlite-backup/restic/<db>/` |
+| 14.5 | Replication + archival to same per-DB repo | Replicate wrapper + archive wrapper | Both write to `${xdg.dataHome}/sqlite-backup/<db>/restic/` |
 | 15.1 | Replication continues offline | Per-DB Litestream daemon | Pure local file:// backend; no network dependency |
 | 15.2 | Archival continues offline | Archive wrapper | Local restic backup + forget; remote restic copy may fail (logged) but local repo state advances |
 | 15.3 | Off-host shipment queues, no loss | Replicate wrapper + archive wrapper | restic repo is the queue; pending state persists in local repo until next successful copy |
 | 15.4 | Auto-resume on reconnect, converge | Replicate wrapper + archive wrapper | Each invocation runs `restic copy` regardless of last-attempt outcome; restic's incremental copy semantics catch up |
 | 15.5 | Live writes never blocked by network | Per-DB Litestream daemon | No network in the live-write path |
-| 16.1 | Single repo holds both tiers | All wrappers | Same `${xdg.dataHome}/sqlite-backup/restic/<db>/` for replication + archive backups |
+| 16.1 | Single repo holds both tiers | All wrappers | Same `${xdg.dataHome}/sqlite-backup/<db>/restic/` for replication + archive backups |
 | 16.2 | Per-tier retention applied coherently | Replicate wrapper + archive wrapper | Two separate `restic forget --tag <tier> --keep-*` calls per tier |
 | 16.3 | Repo inspectable as one unit | Operator + restic | `restic snapshots --tag <any>` lists across both tiers; standard `restic` CLI |
 | 16.4 | No divergent on-host or off-host repos | All wrappers | Single local repo; single remote restic repo via `restic copy` |
@@ -720,8 +720,8 @@ home.sqliteBackup = {
         "path": "/Users/<user>/.cavemem/data.db",
         "remote": "gdrive",
         "remotePath": "sqlite-backup",
-        "stagingDir": "/Users/<user>/Library/Application Support/sqlite-backup/litestream-staging/cavemem",
-        "repoDir": "/Users/<user>/Library/Application Support/sqlite-backup/restic/cavemem",
+        "stagingDir": "/Users/<user>/Library/Application Support/sqlite-backup/cavemem/litestream-staging",
+        "repoDir": "/Users/<user>/Library/Application Support/sqlite-backup/cavemem/restic",
         "replicationTier": { "cadenceSeconds": 300, "retention": ["--keep-hourly","24"] },
         "archiveTier": { "schedule": { "Hour": 3, "Minute": 0 }, "retention": ["--keep-daily","7","--keep-weekly","4","--keep-monthly","6"] }
       }
@@ -1087,11 +1087,11 @@ database:
 
 - **Live SQLite database** (`database.path`): operator-owned, written
   by the application. SQLite WAL mode required.
-- **Litestream staging directory** (`${xdg.dataHome}/sqlite-backup/litestream-staging/<db>/`):
+- **Litestream staging directory** (`${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`):
   module-owned, holds LTX segments produced by the per-DB Litestream
   daemon. Treated as transient working data; no operator-facing
   guarantees about its contents beyond "Litestream restore reads it".
-- **Restic repository** (`${xdg.dataHome}/sqlite-backup/restic/<db>/`):
+- **Restic repository** (`${xdg.dataHome}/sqlite-backup/<db>/restic/`):
   module-owned, encrypted, holds both `replication`-tagged and
   `archive`-tagged snapshots. The single backup repository per
   database (R16). Inspectable end-to-end with stock `restic`
@@ -1293,7 +1293,7 @@ check.
   ACLs and the operator's 1Password as the canonical source.
 - **Live-DB exposure**: The live SQLite file never traverses the
   network in plaintext. Litestream writes only to local
-  `${xdg.dataHome}/sqlite-backup/litestream-staging/`; restic
+  `${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`; restic
   encrypts before the data leaves disk; rclone (via `restic copy`)
   only ever sees encrypted restic pack files.
 - **Halt-flag race**: An attacker with write access to

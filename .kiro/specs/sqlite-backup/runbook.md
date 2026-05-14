@@ -13,9 +13,9 @@ encrypted off-host destination via three composed tools:
 
 - **Litestream** — long-running daemon per database, captures
   committed WAL pages into a per-DB staging directory under
-  `${XDG_DATA_HOME}/sqlite-backup/litestream-staging/<db>/`.
+  `${XDG_DATA_HOME}/sqlite-backup/<db>/litestream-staging/`.
 - **restic** — local repository at
-  `${XDG_DATA_HOME}/sqlite-backup/restic/<db>/`; one repo per database
+  `${XDG_DATA_HOME}/sqlite-backup/<db>/restic/`; one repo per database
   to keep dedup boundaries clean.
 - **rclone** — config at `~/.config/rclone/rclone.conf` (encrypted),
   used by `restic`'s `rclone:<remote>:<path>` backend to ship the
@@ -395,7 +395,7 @@ the cadence).
 On the first invocation of `__replicate-trigger <db>`, the wrapper:
 
 1. Initializes the LOCAL restic repo at
-   `${XDG_DATA_HOME}/sqlite-backup/restic/<db>` if it does not
+   `${XDG_DATA_HOME}/sqlite-backup/<db>/restic` if it does not
    exist (`restic init`).
 2. Initializes the REMOTE restic repo at
    `rclone:<remote>:<remotePath>/<db>` if it does not exist, using
@@ -471,8 +471,8 @@ State locations referenced by these commands:
   Held by whichever wrapper (replicate / archive / on-demand backup)
   is currently inside the restic critical section.
 - Logs: `~/Library/Logs/sqlite-backup-<db>-{litestream,replicate,archive}.{log,error.log}`.
-- Local restic repo: `${XDG_DATA_HOME}/sqlite-backup/restic/<db>/`.
-- Litestream staging dir: `${XDG_DATA_HOME}/sqlite-backup/litestream-staging/<db>/`.
+- Local restic repo: `${XDG_DATA_HOME}/sqlite-backup/<db>/restic/`.
+- Litestream staging dir: `${XDG_DATA_HOME}/sqlite-backup/<db>/litestream-staging/`.
 - Encrypted rclone config: `~/.config/rclone/rclone.conf`.
 - Manifest JSON (consumed by CLI + verify hook): rendered into the
   Nix store at HM build time; path exposed via
@@ -506,7 +506,7 @@ CLI defaults that are silently applied when omitted (per the
   an absent-minded operator who omits `--target` cannot stomp the
   source DB.
 - `--time` defaults to `latest`.
-- The default repo is the local one under `${XDG_DATA_HOME}/sqlite-backup/restic/<db>`.
+- The default repo is the local one under `${XDG_DATA_HOME}/sqlite-backup/<db>/restic`.
   Pass `--from-remote` to address `rclone:<remote>:<remotePath>/<db>`
   instead.
 - The CLI refuses to overwrite a non-empty existing target without
@@ -516,7 +516,7 @@ CLI defaults that are silently applied when omitted (per the
 
 Use case: the live DB is gone (accidental `rm`, on-disk corruption,
 unrecoverable application bug) but the local restic repo at
-`${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/<db>/`
+`${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/<db>/restic/`
 is still intact. This is the common case (R9.AC3 "latest" branch).
 
 **One-liner:**
@@ -533,8 +533,8 @@ is temporarily unavailable):
 
 ```sh
 DB=<db>
-REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
-STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/litestream-staging/$DB"
+REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/$DB/restic"
+STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/$DB/litestream-staging"
 
 # 1. Make restic able to decrypt the repo. The CLI exports the same
 #    env var; setting it by hand is the equivalent.
@@ -600,8 +600,8 @@ both tiers, both the CLI and the manual flow fail with
 
 ```sh
 DB=<db>
-REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
-STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/litestream-staging/$DB"
+REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/$DB/restic"
+STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/$DB/litestream-staging"
 TS=2026-05-12T14:30:00Z
 
 export RESTIC_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-archive-passphrase -a mcp-hub -w'
@@ -730,7 +730,7 @@ normal `darwin-rebuild switch` to bring the pipeline back up, or
 first rebuild a fresh local restic repo from the off-host one with
 
 ```sh
-LOCAL_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
+LOCAL_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/$DB/restic"
 restic copy --from-repo "$REMOTE_REPO" --repo "$LOCAL_REPO"
 ```
 
@@ -799,4 +799,4 @@ exported (see D.1 step 1). For rows referencing the remote repo,
 | What's actually inside a specific snapshot (which files, sizes)? | `restic -r "$REPO" ls <snapshot-id>` |
 | Verify on-host repo integrity (no corrupt blobs)? | `restic -r "$REPO" check` |
 
-`$REPO` throughout is `${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/<db>`.
+`$REPO` throughout is `${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/<db>/restic`.
