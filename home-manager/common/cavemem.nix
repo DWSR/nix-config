@@ -394,6 +394,70 @@ in
           CAVEMEM_DATA_DIR = cfg.dataDir;
         };
       };
+
+      # Task 5.2 (Req 4.3, 4.5; design.md §OpencodeSettings): expose
+      # cavemem to opencode as a second MCP surface, alongside the
+      # mcphub registration above. Opencode reads MCP servers directly
+      # from its rendered `~/.config/opencode/opencode.json` and
+      # spawns them itself; mcphub is a separate hub that opencode
+      # ALSO talks to via its own MCP entry. So cavemem ends up
+      # reachable through two paths: (a) opencode → cavemem directly,
+      # and (b) opencode → mcphub → cavemem. Both spawn the same
+      # binary with the same args; both must therefore set the same
+      # CAVEMEM_DATA_DIR env (see split-brain note below).
+      #
+      # Per Req 4.5 the cavemem module MUST NOT write opencode.json
+      # directly. We contribute through `programs.opencode.settings`,
+      # the freeform attrset that the nix-community
+      # `programs.opencode` HM module serializes into opencode.json.
+      #
+      # Shape: opencode's config schema (per
+      # https://opencode.ai/docs/mcp-servers/#local and the HM
+      # module's transformer at modules/programs/opencode.nix:20-41)
+      # uses the top-level key `mcp` (NOT `mcpServers`), with each
+      # entry shaped as:
+      #   { type = "local";
+      #     command = [ <binary> <arg>... ];      # single array
+      #     environment = { ... };                # NOT `env`
+      #     enabled = true; }
+      # The task brief's `mcpServers.cavemem = { command; args; env; }`
+      # phrasing is the mcphub-extraServers shape (correct for
+      # `home.mcp.extraServers` above, NOT for opencode); the brief
+      # explicitly hedges with "or the equivalent shape opencode
+      # expects" for exactly this case. Verified against
+      # nix-community/home-manager rev cc09c0f
+      # (modules/programs/opencode.nix:209-212) and against the
+      # mcp-integration test fixture
+      # (tests/modules/programs/opencode/mcp-integration.json) which
+      # both render `mcp.<name>.{type,command-as-array,environment}`.
+      #
+      # The `environment.CAVEMEM_DATA_DIR` entry mirrors the mcphub
+      # entry's `env.CAVEMEM_DATA_DIR` for the same reason it was
+      # added there in the task 5.1 amendment: cavemem v0.2.1 (with
+      # the cavemem-data-dir-env.patch from task 1.3, commit 01373e7)
+      # honors `process.env.CAVEMEM_DATA_DIR` via a single-bottleneck
+      # `resolveDataDir()` helper before falling back to the
+      # hardcoded `~/.cavemem` default. Without this env entry on the
+      # opencode-spawned process, opencode-spawned cavemem would
+      # read settings.json and write data.db at `~/.cavemem` while
+      # mcphub-spawned cavemem reads/writes under `${cfg.dataDir}` —
+      # a split-brain dataDir resolution that would corrupt the
+      # observation timeline (two SQLite databases, two settings.json
+      # files, two embedding caches) and silently break Req 10.1's
+      # locked-downstream-contract guarantee that `home.cavemem.dataDir`
+      # is the canonical location for the future sqlite-backup
+      # extension and the one-shot vault importer (Task 8.x).
+      programs.opencode.settings.mcp.cavemem = {
+        type = "local";
+        command = [
+          "${pkgs.cavemem}/bin/cavemem"
+          "mcp"
+        ];
+        environment = {
+          CAVEMEM_DATA_DIR = cfg.dataDir;
+        };
+        enabled = true;
+      };
     }
   );
 }
