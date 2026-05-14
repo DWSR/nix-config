@@ -223,7 +223,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.5_
 
-- [ ] 1.8 Author the Report (structured-return) section
+- [x] 1.8 Author the Report (structured-return) section
   - In `## Report`, document the structured-return shape the agent
     emits at the end of every successful run (every shape except the
     unparseable-input refusal). Specify the seven required fields:

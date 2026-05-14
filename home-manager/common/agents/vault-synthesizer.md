@@ -603,13 +603,153 @@ window the agent actually used. No drafts are produced.
 
 ## Report
 
-<!-- Body filled by task 1.8: structured-return contract emitted at the
-     end of every successful run. Seven required fields — `time_range`,
-     `observations_scanned`, `clusters_identified`, `clusters_promoted`,
-     `clusters_skipped`, `drafts_written`, `draft_paths` — plus the
-     conservation invariant (clusters_promoted + clusters_skipped =
-     clusters_identified) and a fenced code-block example so
-     memory-sync-cli can extract each field. -->
+The Report is the agent's final output. It is emitted at the end of
+every successful run — every invocation shape from `## Invocation`
+except the unparseable-input refusal (which produces an actionable
+error message and no Report). The Report is consumed by the downstream
+`memory-sync-cli` orchestrator (which pipes drafted paths to
+vault-curator and renders an operator-facing summary) and is also
+surfaced directly to the operator when the agent is invoked manually
+as `@vault-synthesizer <time-range>`.
+
+### Required fields
+
+The structured return MUST contain the following seven fields:
+
+1. `time_range` — the resolved start and end timestamps, in ISO-8601
+   format. Timezone follows the input shape per `## Invocation`: host
+   local TZ for relative, absolute date pair, and ISO-8601 duration
+   shapes; UTC (trailing `Z`) for the ISO-8601 timestamp pair shape.
+   The returned `time_range` echoes the resolved bounds in the same
+   timezone as the input format, so the operator and orchestrator can
+   verify the agent interpreted the window the way they intended.
+2. `observations_scanned` — the total count of cavemem observations
+   the agent enumerated across every session whose start time falls
+   within the resolved `time_range`. Counts every observation read
+   during the gather stage, regardless of whether the observation
+   ended up in a promoted or skipped cluster.
+3. `clusters_identified` — the count of clusters the group stage
+   produced from the scanned observations.
+4. `clusters_promoted` — the count of clusters the score stage
+   promoted to draft candidates per the Selectivity rubric.
+5. `clusters_skipped` — the count of clusters the score stage skipped
+   silently (per the Selectivity rubric in `## Workflow`). Skipped
+   clusters are counted here but generate no per-cluster log noise
+   anywhere else; this field is the only place selectivity is
+   visible to the operator.
+6. `drafts_written` — the count of memory notes successfully written
+   to the vault during the draft stage. A successfully written draft
+   is one for which `hub_obsidian__write-note` returned without
+   error.
+7. `draft_paths` — the list of vault-relative
+   `memories/<YYYY-MM-DD>-<slug>.md` paths for every successfully
+   written draft, one entry per draft, in the order the agent wrote
+   them. The downstream orchestrator pipes each path verbatim to
+   vault-curator's audit pass, so paths MUST be vault-relative (no
+   leading slash, no absolute filesystem prefix).
+
+### Worked example
+
+The agent emits the Report as a JSON-style object literal in a fenced
+code block. JSON-style is chosen over Markdown bullets so the
+downstream `memory-sync-cli` orchestrator can parse the Report with a
+single JSON loader rather than a bespoke prose extractor. The example
+below shows all seven required fields plus the optional
+`failed_clusters` field (see "Per-cluster failure handling" below)
+populated with realistic values from a hypothetical 2-day window
+across two project contexts:
+
+```
+{
+  "time_range": {
+    "start": "2026-05-13T00:00:00-04:00",
+    "end":   "2026-05-14T22:30:00-04:00"
+  },
+  "observations_scanned": 247,
+  "clusters_identified": 12,
+  "clusters_promoted": 2,
+  "clusters_skipped": 10,
+  "drafts_written": 2,
+  "draft_paths": [
+    "memories/2026-05-13-cavemem-importer-build-failure.md",
+    "memories/2026-05-14-gt-stack-b7-recovery.md"
+  ],
+  "failed_clusters": []
+}
+```
+
+When the time window is empty (cavemem reports zero sessions), the
+agent emits the same shape with `observations_scanned: 0`,
+`clusters_identified: 0`, `clusters_promoted: 0`,
+`clusters_skipped: 0`, `drafts_written: 0`, `draft_paths: []`, and a
+resolved `time_range` so the orchestrator can confirm the empty
+window was the window the agent actually used.
+
+### Conservation invariant
+
+The agent enforces the invariant
+`clusters_promoted + clusters_skipped == clusters_identified` in its
+own counts. Every cluster the group stage produces is either promoted
+to a draft candidate by the score stage or skipped silently per the
+Selectivity rubric — there is no third bucket. If the agent ever
+computes a Report where the invariant does not hold, that is a bug in
+the score stage and the agent shall surface the discrepancy in the
+Report (with `clusters_identified`, `clusters_promoted`, and
+`clusters_skipped` reported as computed) rather than silently
+adjusting the counts to make the equation balance.
+
+### Per-cluster failure handling
+
+When an individual `hub_obsidian__write-note` call fails mid-draft
+(network blip, vault path conflict, transient MCP error, etc.), the
+agent does NOT abort the run. Instead, for each failed
+write-note attempt the agent:
+
+1. Records the failed cluster in a `failed_clusters` list inside the
+   structured return — one entry per failed cluster, each entry an
+   object with at minimum `cluster_id` (the same identifier used
+   internally by the group stage) and `reason` (a one-sentence
+   description of why the `hub_obsidian__write-note` call failed,
+   verbatim from the MCP error when one is available).
+2. Omits the failed draft's path from `draft_paths` (so the
+   orchestrator does not pipe a non-existent path to vault-curator).
+3. Continues with the remaining promoted clusters in the draft
+   stage, attempting each one independently.
+
+A run with one or more failed drafts still emits a complete Report
+and is still considered "successful" for the purposes of the "emitted
+at the end of every successful run" rule above; the operator and
+orchestrator inspect `failed_clusters` to see which drafts were lost
+and why. Example with one failed draft:
+
+```
+{
+  "time_range": {
+    "start": "2026-05-14T00:00:00-04:00",
+    "end":   "2026-05-14T23:59:59-04:00"
+  },
+  "observations_scanned": 89,
+  "clusters_identified": 6,
+  "clusters_promoted": 3,
+  "clusters_skipped": 3,
+  "drafts_written": 2,
+  "draft_paths": [
+    "memories/2026-05-14-treefmt-nix-formatter-order.md",
+    "memories/2026-05-14-darwin-rebuild-cache-poisoning.md"
+  ],
+  "failed_clusters": [
+    {
+      "cluster_id": "cluster-3",
+      "reason": "hub_obsidian__write-note returned schema-validation error: path 'memories/2026-05-14-zellij-pin.md' already exists and content differs"
+    }
+  ]
+}
+```
+
+Note that `drafts_written` (2) plus `len(failed_clusters)` (1) equals
+`clusters_promoted` (3) — a secondary invariant the orchestrator can
+check to detect a Report where a promoted cluster was neither written
+nor recorded as failed.
 
 ## Tool usage notes
 
