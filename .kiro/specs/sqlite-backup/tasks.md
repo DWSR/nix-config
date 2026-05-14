@@ -201,13 +201,13 @@
 
 - [ ] 8. Validation
 
-- [ ] 8.1 nix flake check on both architectures passes for dormant config
+- [x] 8.1 nix flake check on both architectures passes for dormant config
   - Run `nix flake check --all-systems` against the repo root after all integration tasks complete.
   - Verify both `aarch64-darwin` and `x86_64-darwin` evaluations pass for `darwinConfigurations.{Brandons-MacBook-Pro, ShopifyLaptop}`.
   - Confirm: zero new errors, zero new warnings beyond pre-existing baseline; pre-commit checks (statix, deadnix, nixfmt) all pass.
   - _Requirements: 1.3, 10.3_
 
-- [ ] 8.2* (P) Synthetic eval-time assertion tests
+- [x] 8.2* (P) Synthetic eval-time assertion tests
   - Build three temporary expressions that instantiate the module with deliberately invalid inputs:
     - (a) `databases = [ { remote = "missing"; ... } ]` with `rcloneDestinations = { }` — should fail R1.5 assertion naming "missing".
     - (b) Override `nixpkgs.system` to `x86_64-linux` — should fail R10.2 platform assertion.
@@ -216,7 +216,7 @@
   - Confirm: all three assertion paths fire as documented in their failure messages; no false-pass, no false-fail.
   - _Requirements: 1.5, 10.2, 11.2_
 
-- [ ] 8.3 (P) Pre-commit hooks pass on all new and modified files
+- [x] 8.3 (P) Pre-commit hooks pass on all new and modified files
   - Run `pre-commit run --all-files` (or equivalent via the symlinked `.pre-commit-config.yaml`).
   - Verify no `/tmp/` literals in any new `.nix` files, no literal `/Users/...` paths outside `${...}` interpolations, no `builtins.fetch*` outside `flake.nix`.
   - Confirm: pre-commit run exits 0 across all new and modified files.
