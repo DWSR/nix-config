@@ -1,0 +1,143 @@
+From 4c19c168cd71fa7e1f4d7d739a553a1c72da32c5 Mon Sep 17 00:00:00 2001
+From: Bruno Brito <brunocfbrito@github>
+Date: Wed, 29 Apr 2026 21:20:24 -0300
+Subject: [PATCH] cavemem: scope search and session-start to current cwd
+ (upstream bug #39)
+
+Cherry-picked verbatim from upstream JuliusBrussee/cavemem PR #21
+(BrunoCFBrito:fix/project-scoped-search), which is the unreviewed
+fix for the cross-project session-start context leak tracked as
+bug #39.
+
+Upstream bug:    #39 (session-start cross-project context leak)
+Source PR:       #21  https://github.com/JuliusBrussee/cavemem/pull/21
+Source commit:   4c19c168cd71fa7e1f4d7d739a553a1c72da32c5
+Source file(s):  packages/core/src/memory-store.ts
+                 packages/hooks/src/handlers/session-start.ts
+                 packages/storage/src/storage.ts
+
+The PR predates upstream tag v0.2.1 (it was opened 2026-04-30 against
+main at sha 72f27b3, before the v0.2.1 cut on 2026-05-06), but the
+v0.2.1 release only modified apps/mcp-server/ and apps/cli/ (PR #16,
+the MCP boot fix). None of the three files touched by this patch were
+changed between PR #21's base and v0.2.1, so the diff applies cleanly.
+
+Verified to apply cleanly with `patch -p1` and `git apply --check`
+against the v0.2.1 source tarball
+(https://api.github.com/repos/JuliusBrussee/cavemem/tarball/v0.2.1).
+
+Original upstream commit message follows below the `---` separator.
+
+Three changes to prevent cross-project memory pollution:
+
+1. storage.ts — searchFts now accepts an optional cwd param; when set,
+   the SQL joins sessions and filters by s.cwd = ? so BM25 results
+   stay scoped to the current project.
+
+2. memory-store.ts — MemoryStore tracks currentCwd on each
+   startSession() call and passes it through to searchFts.
+
+3. session-start.ts — prior-session context hints are now filtered
+   by matching cwd, so a session in project A never gets injected
+   with summaries from project B.
+
+Co-Authored-By: DeepSeek v4 Pro <noreply@openclaude.dev>
+---
+ packages/core/src/memory-store.ts            |  5 +++-
+ packages/hooks/src/handlers/session-start.ts |  4 ++--
+ packages/storage/src/storage.ts              | 25 ++++++++++++++------
+ 3 files changed, 24 insertions(+), 10 deletions(-)
+
+diff --git a/packages/core/src/memory-store.ts b/packages/core/src/memory-store.ts
+index 8c6be63..e33f1b8 100644
+--- a/packages/core/src/memory-store.ts
++++ b/packages/core/src/memory-store.ts
+@@ -16,10 +16,12 @@ export interface MemoryStoreOptions {
+ export class MemoryStore {
+   readonly storage: Storage;
+   readonly settings: Settings;
++  currentCwd: string | null;
+ 
+   constructor(opts: MemoryStoreOptions) {
+     this.storage = new Storage(opts.dbPath);
+     this.settings = opts.settings;
++    this.currentCwd = null;
+   }
+ 
+   close(): void {
+@@ -29,6 +31,7 @@ export class MemoryStore {
+   // --- sessions ---
+ 
+   startSession(p: { id: string; ide: string; cwd: string | null }): void {
++    this.currentCwd = p.cwd;
+     this.storage.createSession({
+       id: p.id,
+       ide: p.ide,
+@@ -116,7 +119,7 @@ export class MemoryStore {
+   async search(query: string, limit?: number, embedder?: Embedder): Promise<SearchResult[]> {
+     const cap = limit ?? this.settings.search.defaultLimit;
+     const alpha = this.settings.search.alpha;
+-    const keyword = this.storage.searchFts(query, cap * 2);
++    const keyword = this.storage.searchFts(query, cap * 2, this.currentCwd);
+     if (!embedder || this.settings.embedding.provider === 'none') {
+       return keyword.slice(0, cap);
+     }
+diff --git a/packages/hooks/src/handlers/session-start.ts b/packages/hooks/src/handlers/session-start.ts
+index d386a20..f688266 100644
+--- a/packages/hooks/src/handlers/session-start.ts
++++ b/packages/hooks/src/handlers/session-start.ts
+@@ -12,9 +12,9 @@ export async function sessionStart(store: MemoryStore, input: HookInput): Promis
+   // For resume/clear/compact the agent already has its own context; injecting
+   // a "Prior-session context" preface would be noisy and possibly stale.
+   if (input.source && input.source !== 'startup') return '';
+-  const recent = store.storage.listSessions(4);
++  const recent = store.storage.listSessions(30);
+   const hints = recent
+-    .filter((s) => s.id !== input.session_id)
++    .filter((s) => s.id !== input.session_id && s.cwd === input.cwd)
+     .slice(0, 3)
+     .map((s) => {
+       const summaries = store.storage.listSummaries(s.id).slice(0, 1);
+diff --git a/packages/storage/src/storage.ts b/packages/storage/src/storage.ts
+index 8857a05..476a58a 100644
+--- a/packages/storage/src/storage.ts
++++ b/packages/storage/src/storage.ts
+@@ -130,20 +130,31 @@ export class Storage {
+ 
+   // --- search (BM25 via FTS5) ---
+ 
+-  searchFts(query: string, limit = 10): SearchHit[] {
++  searchFts(query: string, limit = 10, cwd?: string | null): SearchHit[] {
+     if (!query.trim()) return [];
+-    const rows = this.db
+-      .prepare(
+-        `SELECT o.id, o.session_id, o.ts,
++    const hasCwd = !!cwd;
++    const sql = hasCwd
++      ? `SELECT o.id, o.session_id, o.ts,
++                snippet(observations_fts, 0, '[', ']', '…', 16) AS snippet,
++                bm25(observations_fts) AS score
++         FROM observations_fts
++         JOIN observations o ON o.id = observations_fts.rowid
++         JOIN sessions s ON s.id = o.session_id
++         WHERE observations_fts MATCH ? AND s.cwd = ?
++         ORDER BY score ASC
++         LIMIT ?`
++      : `SELECT o.id, o.session_id, o.ts,
+                 snippet(observations_fts, 0, '[', ']', '…', 16) AS snippet,
+                 bm25(observations_fts) AS score
+          FROM observations_fts
+          JOIN observations o ON o.id = observations_fts.rowid
+          WHERE observations_fts MATCH ?
+          ORDER BY score ASC
+-         LIMIT ?`,
+-      )
+-      .all(sanitizeMatch(query), limit) as Array<{
++         LIMIT ?`;
++    const params: unknown[] = hasCwd
++      ? [sanitizeMatch(query), cwd, limit]
++      : [sanitizeMatch(query), limit];
++    const rows = this.db.prepare(sql).all(...params) as Array<{
+       id: number;
+       session_id: string;
+       ts: number;

@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Foundation: vendored package and patch tree
-- [ ] 1.1 Create the three patch files in `overlays/`
+- [x] 1.1 Create the three patch files in `overlays/`
   - Cherry-pick the bug #14 fix from upstream PR #31 (commit f2e2f49,
     opencode hook payload-shape correction) into
     `overlays/cavemem-14-hook-payload-shape.patch`.
