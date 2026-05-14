@@ -169,7 +169,7 @@ graph TB
     subgraph Runtime[Runtime surfaces]
         OPENCODE[opencode session]
         VAULT[Obsidian vault memories/]
-        CAVEMEMDB[cavemem.db]
+        CAVEMEMDB[cavemem data.db]
     end
 
     subgraph Downstream[Downstream consumers]
