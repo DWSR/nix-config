@@ -504,7 +504,7 @@ in
       # append a cavemem-specific readiness probe to the opencode
       # wrapper's pre-launch checks. Mirrors the existing obsidian
       # probe in `home-manager/common/opencode.nix` (lines 54-62) in
-      # style — same `/usr/bin/curl -sf --max-time 2` shape, same
+      # style — same `/usr/bin/curl --max-time 2` invocation, same
       # `echo ... >&2; exit 1` failure path, same
       # `launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub`
       # recovery hint — but probes the cavemem-server-specific
@@ -513,14 +513,15 @@ in
       # (Req 5.1, 5.2). The error message names cavemem explicitly
       # (Req 5.3).
       #
-      # Endpoint: `http://localhost:37373/api/servers/cavemem` is the
-      # mcphub HTTP API path that returns the cavemem server's
-      # registration + connection state. Same path the cavemem-smoke-test
-      # (task 8.1, tasks.md line 330) and the future memory-sync-cli
-      # spec (memory-sync-cli/design.md line 196) probe for the same
-      # purpose. Returns 200 when cavemem is registered AND its MCP
-      # connection has come up; non-2xx (404, 503, connection refused)
-      # otherwise — exactly the readiness signal we want.
+      # Endpoint: `POST http://localhost:37373/api/servers/info` with
+      # body `{"server_name": "cavemem"}` returns the cavemem server's
+      # registration + connection state. mcp-hub does NOT expose a
+      # `GET /api/servers/<name>` route — that path returns 404 — so
+      # we use the documented `/info` POST endpoint and grep for
+      # `"status":"connected"` in the response. (The original prototype
+      # of this probe used the non-existent GET path; that 404'd in
+      # production and trivially aborted the wrapper. Hotfixed to the
+      # POST endpoint after task 9.2 surfaced the bug live.)
       #
       # `home.opencode.wrapperCommands` is `listOf lines`; HM list-merge
       # semantics concatenate this entry after the obsidian snippet
@@ -536,9 +537,20 @@ in
       # block is enable-gated, so disabled hosts contribute nothing
       # to `wrapperCommands` and the cavemem probe is absent from
       # the rendered wrapper (Req 5.4).
+      #
+      # Quoting note: this snippet is composed into the opencode wrapper
+      # via `wrapProgram ... --run STR`, where STR is the joined list of
+      # all wrapperCommands wrapped in shell single-quotes by makeWrapper.
+      # That means a single quote anywhere inside the snippet would close
+      # the outer single-quoted string and break wrapper composition.
+      # Use double quotes (with backslash-escaped inner double quotes
+      # where needed) throughout. The obsidian probe in
+      # `home-manager/common/opencode.nix` follows the same convention.
       home.opencode.wrapperCommands = [
         ''
-          if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/servers/cavemem >/dev/null 2>&1; then
+          cavemem_body="{\"server_name\":\"cavemem\"}"
+          cavemem_info=$(/usr/bin/curl -sf --max-time 2 -X POST -H "Content-Type: application/json" -d "$cavemem_body" http://localhost:37373/api/servers/info 2>/dev/null) || cavemem_info=""
+          if ! printf "%s" "$cavemem_info" | grep -q "\"status\":\"connected\""; then
             echo "ERROR: cavemem MCP server is not reachable via mcphub. Ambient memory capture is unavailable." >&2
             echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
             exit 1
