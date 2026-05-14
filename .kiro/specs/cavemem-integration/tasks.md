@@ -49,7 +49,7 @@
   - _Boundary: OpencodePlugin_
 
 - [ ] 3. Foundation: home-manager module skeleton and option surface
-- [ ] 3.1 Create `home-manager/common/cavemem.nix` with the option surface
+- [x] 3.1 Create `home-manager/common/cavemem.nix` with the option surface
   - Define `home.cavemem.enable` (bool, default false).
   - Define `home.cavemem.dataDir` (path, default
     `${config.xdg.dataHome}/cavemem`).
@@ -380,3 +380,4 @@
 - 1.2: cavemem v0.2.1 is a pnpm monorepo (no package-lock.json upstream); used 'pnpm_9.fetchDeps + pnpmConfigHook' instead of 'buildNpmPackage + importNpmLock'. Patches MUST apply at source layer because tsup inlines '@cavemem/*' workspace packages into 'apps/cli/dist/index.js' via 'noExternal'. Manual 8-deps install-phase list mirrors upstream's 'apps/cli/scripts/pack-release.mjs' RUNTIME_DEPS constant — re-sync on version bumps. 
 - 1.2: '@xenova/transformers' (~50MB ONNX optionalDep) is intentionally NOT installed at the package layer. cavemem lazy-imports it via 'await import(...).catch(...)' so '--version', 'mcp', 'config show' work without it. ATTENTION TASK 4.1: with default 'embedding.provider = local', the first 'cavemem start' (worker) will fail without @xenova. Either ship @xenova via the HM module, OR change the default provider, OR document the operator-must-install requirement.
 - 2.1: Upstream pluginSource() emits 'spawn(NODE, [CLI, ...])' with InstallContext-baked absolute paths. Vendoring without that context: use 'spawn("cavemem", ...)' relying on PATH (Req 2.3 puts pkgs.cavemem on home.packages → ~/.nix-profile/bin/). The buildNpmPackage wrapper handles node invocation. Document deviation in any future re-vendor.
+- 3.1: cavemem v0.2.1 'compression.intensity' enum is [lite/full/ultra] with default 'full' (NOT [low/medium/high/ultra] or default 'medium' as some prior notes claimed). Source of truth: packages/config/src/schema.ts. Re-pin on cavemem version bump.
