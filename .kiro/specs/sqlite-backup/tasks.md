@@ -172,7 +172,7 @@
 
 - [ ] 7. Operator runbook
 
-- [ ] 7.1 (P) Bootstrap procedure
+- [x] 7.1 (P) Bootstrap procedure
   - Create `.kiro/specs/sqlite-backup/runbook.md` with a numbered phase-by-phase one-time-per-host setup procedure:
     - Bootstrap rclone destinations interactively (`rclone config` per remote; OAuth dance).
     - Encrypt the rclone config (`rclone config encryption set`).
