@@ -386,7 +386,7 @@
   - _Depends: 7.2, 8.1, 9.1_
 
 - [ ] 10. Documentation: troubleshooting memory note
-- [ ] 10.1 Author the troubleshooting memory note in the Obsidian vault
+- [x] 10.1 Author the troubleshooting memory note in the Obsidian vault
   - Write a memory at `memories/<date>-cavemem-integration-overview.md`
     in the vault using the standard memory frontmatter (tags: memory,
     nix-config, cavemem, memory-system, opencode, troubleshooting).
