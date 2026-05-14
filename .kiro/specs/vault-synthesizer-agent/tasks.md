@@ -389,3 +389,14 @@
     attached to the integration PR description.
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 10.4, 10.7, 11.1, 11.2, 11.3, 11.4_
   - _Depends: 3.1_
+
+## Implementation Notes
+
+- 2026-05-14 (task 1.6): Worked examples in the agent file MUST exemplify
+  the rules they document — the LLM pattern-matches against the example
+  at runtime. The first round of 1.6 used `buildNpmPackage` (camelCase)
+  as a tag in the worked example, violating AGENTS.md tag guidelines
+  even though the cluster's H1/Details prose correctly used the
+  camelCase Nix function name. Reviewer caught it; remediated to
+  `nix-derivations`. Apply this lens to every example block in tasks
+  1.7-1.10 and 2.1: examples teach pattern, so they must be correct.
