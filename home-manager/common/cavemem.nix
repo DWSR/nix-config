@@ -337,6 +337,45 @@ in
       # file's directory (`home-manager/common/`), which is where the
       # vendored plugin lives (committed in 4e868a7).
       xdg.configFile."opencode/plugins/cavemem.js".source = ./opencode-plugins/cavemem.js;
+
+      # Task 5.1 (Req 4.1, 4.2, 4.4, 10.2; design.md §McphubExtraServers):
+      # register cavemem with mcphub via the `home.mcp.extraServers`
+      # extension surface (defined in `home-manager/mcp/default.nix`).
+      # The renderer there merges this attrset into
+      # `~/.config/mcphub/servers.json` alongside the built-in obsidian,
+      # github, and nixos entries.
+      #
+      # Server name is the literal string `cavemem` (Req 10.2 / Req 4.2)
+      # — a locked downstream contract so the future
+      # vault-synthesizer-agent's tool allow-list can target the four
+      # `hub_cavemem__{list_sessions,timeline,get_observations,search}`
+      # tools (Req 10.6) without ambiguity. Renaming this attribute key
+      # is a breaking contract change.
+      #
+      # Command is the wrapped binary built in task 1.2
+      # (`overlays/mcp-servers.nix` `cavemem` derivation). The wrapper
+      # is `makeWrapper ${nodejs}/bin/node ... --add-flags
+      # ${out}/lib/node_modules/cavemem/dist/index.js`, so
+      # `cavemem mcp` is equivalent to upstream's own opencode-installer
+      # invocation `node <cliPath> mcp` (verified against the patched
+      # `packages/installers/src/opencode.ts` and against
+      # `apps/cli/src/commands/mcp.ts` in cavemem v0.2.1, both of which
+      # treat `mcp` as the canonical MCP-server subcommand).
+      #
+      # No `env` attribute is set: cavemem v0.2.1 has no env var or CLI
+      # flag for overriding the settings.json / dataDir lookup. The
+      # `mcp` subcommand calls `loadSettings()` with no arguments, and
+      # `packages/config/src/loader.ts` hardcodes
+      # `DEFAULT_DIR = '.cavemem'` resolved against `homedir()`. Telling
+      # cavemem about a non-default `cfg.dataDir` is therefore not a
+      # mcphub-entry concern — it has to happen at the settings.json
+      # render path (task 4.1) or via an operator-side dataDir choice
+      # that aligns with cavemem's hardcoded `~/.cavemem/settings.json`
+      # lookup.
+      home.mcp.extraServers.cavemem = {
+        command = "${pkgs.cavemem}/bin/cavemem";
+        args = [ "mcp" ];
+      };
     }
   );
 }

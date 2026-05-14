@@ -110,7 +110,7 @@
   - _Depends: 2.1, 3.1_
 
 - [ ] 5. Core: mcphub and opencode wiring
-- [ ] 5.1 (P) Add the cavemem entry to mcphub via `home.mcp.extraServers`
+- [x] 5.1 (P) Add the cavemem entry to mcphub via `home.mcp.extraServers`
   - In the cavemem module's `config` block, set
     `home.mcp.extraServers.cavemem = { command =
     "${pkgs.cavemem}/bin/cavemem"; args = [ "mcp" ]; };`.
@@ -382,3 +382,4 @@
 - 2.1: Upstream pluginSource() emits 'spawn(NODE, [CLI, ...])' with InstallContext-baked absolute paths. Vendoring without that context: use 'spawn("cavemem", ...)' relying on PATH (Req 2.3 puts pkgs.cavemem on home.packages → ~/.nix-profile/bin/). The buildNpmPackage wrapper handles node invocation. Document deviation in any future re-vendor.
 - 3.1: cavemem v0.2.1 'compression.intensity' enum is [lite/full/ultra] with default 'full' (NOT [low/medium/high/ultra] or default 'medium' as some prior notes claimed). Source of truth: packages/config/src/schema.ts. Re-pin on cavemem version bump.
 - 4.1: cavemem v0.2.1's settings schema uses 'z.string().optional()' for embedding.{apiKey,endpoint} under a '.strict()' parent. Zod '.optional()' means 'string | undefined' — does NOT accept null. Use 'lib.optionalAttrs' to OMIT optional keys when the HM option is null, never emit ':null'. Same pattern applies to any future cavemem optional setting.
+- 5.1 (CROSS-TASK): cavemem v0.2.1 'mcp' subcommand accepts NO flags; loadSettings() hardcodes '~/.cavemem/settings.json'; no CAVEMEM_DATA_DIR env var. Therefore Req 10.1's promise that 'home.cavemem.dataDir' controls cavemem's runtime dataDir is BROKEN at the upstream layer. Task 4.1's settings.json file at ${cfg.dataDir}/settings.json is invisible to 'cavemem mcp'. Affects tasks 4.1 (already shipped), 7.x (importer needs the real cavemem.db path), 8.1 (smoke test), 9.x (E2E). Resolution options under user review: (a) default cfg.dataDir to ~/.cavemem; (b) emit settings.json at constant ~/.cavemem regardless of cfg.dataDir; (c) HM symlink ~/.cavemem -> ${cfg.dataDir}; (d) add a 4th patch to cavemem implementing CAVEMEM_DATA_DIR env var. See memories/2026-05-14-cavemem-mcp-no-datadir-override.md.
