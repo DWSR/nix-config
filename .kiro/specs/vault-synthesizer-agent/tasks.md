@@ -79,7 +79,7 @@
   - _Boundary: AgentDefinitionFile_
   - _Depends: 1.1_
 
-- [ ] 1.4 Author the Selectivity rubric with concrete examples
+- [x] 1.4 Author the Selectivity rubric with concrete examples
   - In `## Selectivity rubric`, state the conservative principle:
     "Err on the side of NOT promoting when signal is unclear. False
     positives pollute the vault; false negatives can be re-synthesized

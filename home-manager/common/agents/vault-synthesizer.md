@@ -202,11 +202,77 @@ sessions:
 
 ## Selectivity rubric
 
-<!-- Body filled by task 1.4: conservative principle ("err on the side
-     of NOT promoting"), a `### Promote — examples` subsection with at
-     least three concrete cluster sketches, and a `### Skip — examples`
-     subsection with at least three. Each example cites the AGENTS.md
-     criterion (or "do NOT create" rule) it invokes. -->
+Err on the side of NOT promoting when signal is unclear. False positives
+pollute the vault; false negatives can be re-synthesized from the same
+cavemem range later. Curator merge cost is real; recoverable misses are
+not.
+
+### Promote — examples
+
+- An observation cluster shows the user evaluating `gt submit
+  --no-interactive` against `gt submit --no-interactive --force` on a
+  4-PR globaldb-yugabyte stack, hitting Category B7 (remote auto-rebase
+  vs. local restack diff-equivalent SHAs), verifying with the
+  `diff <(git diff origin/main...local) <(git diff origin/main...remote)`
+  pattern, and then force-pushing. Draft title: `Graphite stack B7
+  recovery — verify diff-equivalence before --force`. Tags include
+  `graphite`, `gt`. Fires the **bug root cause** and **reusable
+  pattern** criteria from AGENTS.md "When to create a memory".
+- A cluster shows the user pinning `nixvim` past a breaking input change
+  by switching the flake input from `nixvim.url = "github:nix-community/nixvim"`
+  to a tag ref and rebuilding `darwin-rebuild switch --flake .#hostname`
+  to recover from a `pkgs.vimPlugins.<x>` rename. Draft title:
+  `nixvim flake input pin recovers from upstream plugin rename`. Tags
+  include `nix-config`, `nix-darwin`, `home-manager`, `nixvim`. Fires
+  the **non-obvious fact** and **bug root cause** criteria.
+- A cluster shows the user discovering that cavemem's
+  `hub_cavemem__timeline` returns observation IDs only (not bodies), so
+  a synthesis pass must chain `timeline` → `get_observations` to
+  inspect content. Draft title: `cavemem MCP timeline returns IDs only;
+  chain to get_observations for bodies`. Tags include `cavemem`,
+  `obsidian-mcp`. Fires the **non-obvious fact** criterion (a tool
+  contract that is not obvious from the tool name).
+- A cluster shows the user choosing the `cavemem-session-<id>`
+  frontmatter shape over `{session-timestamp}` for synthesizer-authored
+  memories, because the cavemem SQLite auto-increment ID provides
+  traceability back to the source observations via
+  `hub_cavemem__get_observations`. Draft title: `Synthesizer memories
+  use cavemem-session-<id> frontmatter for observation traceability`.
+  Tags include `nix-config`, `cavemem`, `obsidian-mcp`. Fires the
+  **decision** criterion (chose X over Y, with rationale).
+- A cluster shows the user resolving a YugabyteDB Ansible CI failure
+  where `chrony` collectors were missing `server_stats` because the
+  wrapper role's `meta/main.yml` pinned an old `chrony_role` version;
+  fix was to bump the meta-deps pin and re-run molecule locally before
+  pushing. Draft title: `Ansible wrapper-role meta-deps pin gates
+  chrony collectors`. Tags include `yugabytedb`, `graphite` (multi-PR
+  stack context). Fires the **bug root cause** criterion.
+
+### Skip — examples
+
+- A cluster of `hub_obsidian__read-note` calls followed by an unrelated
+  `Edit` on `home-manager/common/agents.md` that adjusts whitespace
+  only. Skip: matches AGENTS.md's "do NOT create: routine file edits
+  with no novel insight". The reads were bookkeeping; the edit was
+  whitespace. No fact, decision, or pattern emerged.
+- A cluster of `nix flake check` output and `darwin-rebuild build`
+  output showing a successful evaluation across all hosts, with no
+  decision documented and no failure debugged. Skip: matches "do NOT
+  create: temporary information (build output, test results)". A
+  successful build is the expected state; nothing to preserve.
+- A cluster that restates the gt B7 auto-rebase recovery already
+  covered by an existing memory (e.g.,
+  `memories/2026-04-30-graphite-pitfalls.md`). Skip because signal is
+  unclear, NOT because the agent deduplicated. Deduplication against
+  the live vault is vault-curator's job in the next pipeline stage
+  (per the INVARIANTS above); the synthesizer skips here because the
+  cluster's novelty is unclear — it may simply be the user re-applying
+  a known recipe, in which case there is no new fact to capture.
+- A cluster of `gh pr view <num> --json title,body,isDraft` lookups
+  across a stack, used to confirm PR state before asking the user
+  whether to `gh pr ready` them. Skip: matches "do NOT create: simple
+  lookups that are easily re-searchable". The lookup is a one-shot
+  state check, not a discovery.
 
 ## Workflow
 
