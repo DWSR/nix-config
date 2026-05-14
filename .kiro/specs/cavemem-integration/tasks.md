@@ -17,6 +17,41 @@
   - _Requirements: 1.3, 1.4_
 
 - [x] 1.2 Add the cavemem package to `overlays/mcp-servers.nix`
+
+- [x] 1.3 Add a 4th patch implementing `CAVEMEM_DATA_DIR` env var support
+  - Source: written from scratch (no upstream PR exists). Honors a
+    `CAVEMEM_DATA_DIR` env var in cavemem's `loadSettings()` /
+    `dataDir` / storage path resolution; falls back to the existing
+    `~/.cavemem` hardcoded default when the env var is absent or empty.
+  - The patch must update EVERY code path that currently hardcodes
+    `~/.cavemem` or `DEFAULT_DIR = '.cavemem'`, including (at minimum):
+    - `packages/config/src/loader.ts` — `settingsPath()` and any
+      `dataDir`-resolving helpers
+    - `packages/storage/src/storage.ts` (or wherever cavemem.db is
+      opened) — the database path must follow the same env var
+    - Any other hits found by grepping for `'.cavemem'` /
+      `'.cavemem/settings.json'` / `'.cavemem/data.db'` / `homedir()`
+      in the cavemem v0.2.1 source
+  - Place the patch at `overlays/cavemem-data-dir-env.patch`. Header
+    comment names the rationale ("written from scratch — no upstream PR;
+    enables Nix-managed dataDir override per Req 10.1"), the affected
+    files, and a re-application checklist for future cavemem version
+    bumps.
+  - Apply the patch in the cavemem package definition in
+    `overlays/mcp-servers.nix` alongside the existing three patches
+    (cavemem-14, cavemem-25, cavemem-39).
+  - Observable: after rebuilding `pkgs.cavemem`, running
+    `CAVEMEM_DATA_DIR=/tmp/cm-test result/bin/cavemem --version`
+    succeeds (sanity check), and any cavemem operation that reads or
+    writes settings.json or cavemem.db uses `/tmp/cm-test/...` instead
+    of `~/.cavemem/...`. Verify by inspecting the bundled
+    `dist/index.js` for a `process.env.CAVEMEM_DATA_DIR` reference, and
+    by running `cavemem --version` (or another fast smoke) under both
+    a set and unset env var, confirming the resolved dataDir paths via
+    a debug log line or the smoke-test script (task 8.1).
+  - _Requirements: 10.1 (operationalizes the dataDir contract that
+    upstream cavemem v0.2.1 does not honor without this patch)_
+  - _Boundary: CavememPackage_
   - Use `buildNpmPackage` against `JuliusBrussee/cavemem` at tag
     `v0.2.1` (or the equivalent rev), with `npmDeps` produced by
     `importNpmLock` against the cavemem source's package-lock.
@@ -383,3 +418,4 @@
 - 3.1: cavemem v0.2.1 'compression.intensity' enum is [lite/full/ultra] with default 'full' (NOT [low/medium/high/ultra] or default 'medium' as some prior notes claimed). Source of truth: packages/config/src/schema.ts. Re-pin on cavemem version bump.
 - 4.1: cavemem v0.2.1's settings schema uses 'z.string().optional()' for embedding.{apiKey,endpoint} under a '.strict()' parent. Zod '.optional()' means 'string | undefined' — does NOT accept null. Use 'lib.optionalAttrs' to OMIT optional keys when the HM option is null, never emit ':null'. Same pattern applies to any future cavemem optional setting.
 - 5.1 (CROSS-TASK): cavemem v0.2.1 'mcp' subcommand accepts NO flags; loadSettings() hardcodes '~/.cavemem/settings.json'; no CAVEMEM_DATA_DIR env var. Therefore Req 10.1's promise that 'home.cavemem.dataDir' controls cavemem's runtime dataDir is BROKEN at the upstream layer. Task 4.1's settings.json file at ${cfg.dataDir}/settings.json is invisible to 'cavemem mcp'. Affects tasks 4.1 (already shipped), 7.x (importer needs the real cavemem.db path), 8.1 (smoke test), 9.x (E2E). Resolution options under user review: (a) default cfg.dataDir to ~/.cavemem; (b) emit settings.json at constant ~/.cavemem regardless of cfg.dataDir; (c) HM symlink ~/.cavemem -> ${cfg.dataDir}; (d) add a 4th patch to cavemem implementing CAVEMEM_DATA_DIR env var. See memories/2026-05-14-cavemem-mcp-no-datadir-override.md.
+- 1.3: Single-bottleneck patch at resolveDataDir() in packages/config/src/loader.ts. Empty/whitespace env values fall back to ~/.cavemem. tsup chunks the bundle: env var ref lands in dist/chunk-*.js, NOT dist/index.js. Bundle reference verified at dist/chunk-TBTU5LYL.js. Re-cherry on cavemem version bump.
