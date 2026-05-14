@@ -188,7 +188,7 @@
   - _Boundary: runbook.md_
   - _Depends: 1_ (only needs the spec; no code dependency — true earliest start is right after Task 1 even though listed under Major 7 for phase clarity)
 
-- [ ] 7.2 Recovery procedures
+- [x] 7.2 Recovery procedures
   - Add a Recovery section to `.kiro/specs/sqlite-backup/runbook.md` covering each scenario:
     - **Recovery to latest committed transaction** (local repo intact): single-line `sqlite-backup restore <db> --target <path>` plus the underlying `restic restore` + `litestream restore` decomposition for operators who prefer manual control.
     - **Recovery to specific point-in-time**: `sqlite-backup restore <db> --target <path> --time <iso8601>` with explanation of how `--time` maps to restic snapshot selection + `litestream restore -timestamp`.

@@ -3,9 +3,8 @@
 Operator-facing procedures for the SQLite Backup pipeline declared in
 `home-manager/common/sqlite-backup.nix` and verified at
 `darwin-rebuild switch` time by
-`configurations/common-darwin/sqlite-backup-verify.nix`. Recovery
-procedures (point-in-time, host-loss, etc.) are owned by Task 7.2 and
-will be appended to this file.
+`configurations/common-darwin/sqlite-backup-verify.nix`. Includes
+recovery procedures for every loss scenario (Section D).
 
 ## Overview
 
@@ -47,8 +46,10 @@ When to use this runbook:
   database per host.
 - **Day-to-day operator commands** — Section C. The complete
   surface of the `sqlite-backup` CLI binary on `$PATH`.
-- **Recovering from a backup** — owned by Task 7.2 (not yet in this
-  file).
+- **Recovering from a backup** — Section D. One subsection per
+  scenario (latest, point-in-time, host-loss, off-host
+  unreachable), each with both a `sqlite-backup` one-liner and the
+  underlying `restic`/`litestream` decomposition.
 
 ## Section A — One-Time Per-Host Bootstrap
 
@@ -477,6 +478,325 @@ State locations referenced by these commands:
   Nix store at HM build time; path exposed via
   `home.sqliteBackup._manifestPath`.
 
-## Section D — Recovery
+## Section D — Recovery Procedures
 
-Owned by Task 7.2 — to be appended.
+Recovery is the operator's exit path from "the live SQLite database
+file is no longer the source of truth" — whether the cause is
+accidental deletion, on-disk corruption, host loss, or wanting to
+inspect a prior point-in-time. Each scenario below offers BOTH a
+single-line `sqlite-backup restore` invocation AND the underlying
+`restic` + `litestream` decomposition (R9.AC2), so an operator can
+pick the abstraction layer that matches their confidence: lean on
+the CLI for the common case, drop down to the primitives to verify
+each step or to recover when the CLI binary itself is unavailable
+(e.g., during a Nix rebuild).
+
+The restore is always two-stage: `restic restore` extracts the LTX
+staging directory under a tmp prefix, then `litestream restore -o
+<target> file://<extracted-staging>` reads those LTX segments and
+reconstructs the SQLite database file at `<target>`. The CLI handles
+both stages plus tmp-dir cleanup; the manual flows show the same two
+stages explicitly.
+
+CLI defaults that are silently applied when omitted (per the
+`sqlite-backup-cli.nix` `restore` arm — see Section C):
+
+- `--target` defaults to `${PWD}/<db>-restored.db`. The default
+  deliberately lives under `$PWD` with a `-restored.db` suffix so
+  an absent-minded operator who omits `--target` cannot stomp the
+  source DB.
+- `--time` defaults to `latest`.
+- The default repo is the local one under `${XDG_DATA_HOME}/sqlite-backup/restic/<db>`.
+  Pass `--from-remote` to address `rclone:<remote>:<remotePath>/<db>`
+  instead.
+- The CLI refuses to overwrite a non-empty existing target without
+  `--force` (R13.AC9).
+
+### D.1 Recovery to the latest committed transaction (local repo intact)
+
+Use case: the live DB is gone (accidental `rm`, on-disk corruption,
+unrecoverable application bug) but the local restic repo at
+`${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/<db>/`
+is still intact. This is the common case (R9.AC3 "latest" branch).
+
+**One-liner:**
+
+```sh
+sqlite-backup restore <db> --target /tmp/<db>-restored.db
+```
+
+Defaults: `--time latest`, local repo (no `--from-remote`).
+
+**Manual decomposition** (for operators who want explicit control
+over each stage, or who are running on a host where the CLI binary
+is temporarily unavailable):
+
+```sh
+DB=<db>
+REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
+STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/litestream-staging/$DB"
+
+# 1. Make restic able to decrypt the repo. The CLI exports the same
+#    env var; setting it by hand is the equivalent.
+export RESTIC_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-archive-passphrase -a mcp-hub -w'
+
+# 2. (Optional) inspect what's in the repo before restoring (R16.3 —
+#    both tiers visible in one listing).
+restic -r "$REPO" snapshots
+
+# 3. Extract the latest snapshot to a tmp directory. restic preserves
+#    the snapshot's original absolute paths, so the staging dir lands
+#    at $TMP$STAGING (with the leading slash preserved by restic).
+TMP="$(mktemp -d -t sqlite-backup-restore.XXXXXX)"
+restic -r "$REPO" restore latest --target "$TMP"
+
+# 4. Reconstruct the SQLite file from the extracted LTX segments.
+litestream restore -o "/tmp/$DB-restored.db" "file://$TMP$STAGING"
+
+# 5. Clean up the staging extraction.
+rm -rf -- "$TMP"
+```
+
+### D.2 Recovery to a specific point-in-time
+
+Use case: the operator wants to inspect or recover the database
+state as it was at some earlier timestamp within the retention
+window — e.g., "the state from yesterday at 14:30 UTC, before I ran
+that bad migration" (R9.AC3 "specific PIT" branch).
+
+**One-liner:**
+
+```sh
+sqlite-backup restore <db> --target /tmp/<db>-pit.db --time 2026-05-12T14:30:00Z
+```
+
+The `--time` argument is an ISO-8601 timestamp. The CLI selects the
+most recent restic snapshot whose `time` is at-or-before `<ts>`
+(across both the `replication` and `archive` tags — both share the
+same staging-directory contents, so the PIT semantic is "the most
+recent snapshot of either tier that does not exceed `<ts>`"), then
+passes `-timestamp <ts>` to `litestream restore`. PIT precision is
+bounded by the closest at-or-before snapshot's capture timestamp:
+inside that snapshot's window, `-timestamp` truncates the LTX
+replay at any instant up to capture time, but the recovered state
+cannot advance past the snapshot's own capture moment.
+
+If `<ts>` falls between snapshots, the recovered state is the
+chosen snapshot's capture moment, not `<ts>` exactly — restic
+captures the staging directory at each snapshot, so the LTX
+segments inside a snapshot terminate at that snapshot's capture
+time, and `litestream restore -timestamp <ts>` replays through
+`min(<ts>, T_capture)`. Replication-tier snapshots are taken at
+sub-5-minute cadence (the module default), so this rounding is
+small in practice when the replication tier is intact;
+archive-tier-only PIT (e.g., the on-host repo has been pruned to
+archive snapshots only, or recovery is from off-host where
+replication-tier retention is short) may round down by hours-to-
+days. If `<ts>` is older than the oldest retained snapshot across
+both tiers, both the CLI and the manual flow fail with
+"no snapshot at-or-before `<ts>`" — that state is unrecoverable.
+
+**Manual decomposition:**
+
+```sh
+DB=<db>
+REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
+STAGING="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/litestream-staging/$DB"
+TS=2026-05-12T14:30:00Z
+
+export RESTIC_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-archive-passphrase -a mcp-hub -w'
+
+# 1. Pick the snapshot at-or-before the target timestamp. This jq
+#    filter mirrors the CLI's selection logic in scripts/sqlite-backup-cli.nix
+#    (`restore` arm): tag-agnostic, most recent that does not exceed $TS.
+SNAPSHOT_ID="$(restic -r "$REPO" snapshots --json \
+  | jq -r --arg ts "$TS" '[.[] | select(.time <= $ts)] | sort_by(.time) | last | .id')"
+test -n "$SNAPSHOT_ID" && test "$SNAPSHOT_ID" != "null" \
+  || { echo "no snapshot at-or-before $TS in $REPO" >&2; exit 1; }
+
+# 2. Extract that snapshot.
+TMP="$(mktemp -d -t sqlite-backup-restore.XXXXXX)"
+restic -r "$REPO" restore "$SNAPSHOT_ID" --target "$TMP"
+
+# 3. Replay the LTX chain forward only as far as $TS. Without
+#    -timestamp, litestream would replay to the end of the chain
+#    (i.e., latest), which would defeat the point-in-time intent.
+litestream restore -o "/tmp/$DB-pit.db" -timestamp "$TS" "file://$TMP$STAGING"
+
+rm -rf -- "$TMP"
+```
+
+### D.3 Recovery from off-host destination only (host-loss scenario)
+
+Use case: the original host is gone — disk dead, laptop stolen,
+re-provisioned to a fresh OS install. The off-host restic repo at
+`rclone:<remote>:<remotePath>/<db>` is the only surviving copy of
+the data. This is R9.AC4 "off-host only" branch and the case
+diagrammed in design.md §"System Flows → Recovery from Off-Host
+Destination Only".
+
+The new host MUST end up with the SAME two passphrases the original
+host used: the restic archive passphrase (which decrypts every
+snapshot in the off-host repo) and the rclone-config passphrase
+(which decrypts the rclone config that names the destination).
+Both are recovered from 1Password — neither is regenerable from
+anything on disk, and there is no fallback if both 1Password copies
+have been lost as well.
+
+**One-liner** (after the new-host bootstrap below is complete):
+
+```sh
+sqlite-backup restore <db> --from-remote --target /tmp/<db>-restored.db
+```
+
+`--from-remote` tells the CLI to address `rclone:<remote>:<remotePath>/<db>`
+directly instead of the local repo. Both `RESTIC_PASSWORD_COMMAND`
+(archive passphrase) and `RCLONE_PASSWORD_COMMAND` (rclone-config
+passphrase) are needed; the CLI reads both from Keychain
+automatically once Keychain is populated by the bootstrap below.
+
+**Manual decomposition** (the new-host bootstrap is the same whether
+the operator uses the one-liner or the manual flow — only the
+restore stages at the end differ):
+
+```sh
+DB=<db>
+REMOTE=<your-rclone-remote>            # e.g. gdrive (matches Phase 5 declaration)
+REMOTE_PATH=<your-remote-path>         # e.g. sqlite-backup (the manifest default)
+
+# --- Phase 1: stash the same passphrases on the new host's Keychain ---
+# Both passphrases come from 1Password (originally stashed in
+# Section A.2). The Keychain SERVICE / ACCOUNT names below MUST
+# match what the CLI looks up — see scripts/sqlite-backup-cli.nix
+# read_keychain_secret().
+op read 'op://<vault>/sqlite-backup-archive/passphrase' \
+  | /usr/bin/security add-generic-password -U \
+      -s sqlite-backup-archive-passphrase -a mcp-hub -w
+
+op read 'op://<vault>/sqlite-backup-rclone-config/passphrase' \
+  | /usr/bin/security add-generic-password -U \
+      -s sqlite-backup-rclone-config-passphrase -a mcp-hub -w
+
+# After the new host's first `darwin-rebuild switch` lands a
+# configuration that declares this database, mcp-sops-bridge will
+# also populate these entries from sops yaml (see Section A Phase
+# 6). Doing it manually here lets the operator restore BEFORE the
+# new host's nix-darwin / home-manager is fully wired.
+
+# --- Phase 2: re-bootstrap rclone for the same destination ---
+# Run `rclone config` interactively, recreate a remote with name
+# == $REMOTE, walk through the same backend OAuth dance (or restore
+# ~/.config/rclone/rclone.conf from a separate backup if you have
+# one). Then re-encrypt the config with the SAME passphrase that
+# was used on the old host.
+rclone config encryption set
+# When prompted, paste the rclone-config passphrase from 1Password.
+
+# Verify both decryption AND reachability of the destination.
+RCLONE_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-rclone-config-passphrase -a mcp-hub -w' \
+  rclone config encryption check
+RCLONE_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-rclone-config-passphrase -a mcp-hub -w' \
+  rclone lsd "$REMOTE:$REMOTE_PATH/$DB"
+
+# --- Phase 3: restore directly from the remote restic repo ---
+export RESTIC_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-archive-passphrase -a mcp-hub -w'
+export RCLONE_PASSWORD_COMMAND='/usr/bin/security find-generic-password -s sqlite-backup-rclone-config-passphrase -a mcp-hub -w'
+REMOTE_REPO="rclone:$REMOTE:$REMOTE_PATH/$DB"
+
+# (Optional) sanity check — both tiers' snapshots show up here (R16.3).
+restic -r "$REMOTE_REPO" snapshots
+
+# Pull both the snapshot ID we want AND the original absolute
+# staging path it was captured under, in one query. The original
+# staging path was rooted at the OLD host's $XDG_DATA_HOME and may
+# differ from the new host's, so we read it back from the snapshot
+# rather than guessing.
+SNAPSHOT_META="$(restic -r "$REMOTE_REPO" snapshots --json \
+  | jq -c 'sort_by(.time) | last')"
+SNAPSHOT_ID="$(printf '%s' "$SNAPSHOT_META" | jq -r '.id')"
+ORIG_STAGING="$(printf '%s' "$SNAPSHOT_META" | jq -r '.paths[0]')"
+
+TMP="$(mktemp -d -t sqlite-backup-restore.XXXXXX)"
+restic -r "$REMOTE_REPO" restore "$SNAPSHOT_ID" --target "$TMP"
+
+litestream restore -o "/tmp/$DB-restored.db" "file://$TMP$ORIG_STAGING"
+
+rm -rf -- "$TMP"
+```
+
+Once the database file is restored the operator can either copy it
+into place at the new host's expected `<db>.path` and then run a
+normal `darwin-rebuild switch` to bring the pipeline back up, or
+first rebuild a fresh local restic repo from the off-host one with
+
+```sh
+LOCAL_REPO="${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/$DB"
+restic copy --from-repo "$REMOTE_REPO" --repo "$LOCAL_REPO"
+```
+
+and resume scheduled operation from there (subsequent replicate /
+archive cycles will then be incremental against the freshly mirrored
+local repo).
+
+### D.4 Recovery from on-host repo only (off-host destination unreachable)
+
+Use case: the off-host destination is unreachable — cloud provider
+outage, network partition, expired OAuth token, throttled API quota
+— but the local restic repo is intact. This is R9.AC4 "on-host
+only" branch.
+
+There is nothing scenario-specific to do: the default restore flow
+already uses the local repo and never touches the off-host
+destination. The CLI does not even invoke `rclone` in this code
+path, so an unreachable destination has no effect on recovery.
+
+**One-liner:**
+
+```sh
+sqlite-backup restore <db> --target /tmp/<db>-restored.db
+```
+
+This is byte-identical to the D.1 one-liner; the absence of
+`--from-remote` is what scopes the restore to the local repo.
+Recovery proceeds even when `rclone lsd <remote>:<path>` would fail.
+
+**Manual decomposition:** identical to D.1. Note that the manual
+flow never invokes `rclone` at all — that is the explicit
+confirmation that the off-host destination's reachability is
+irrelevant to this scenario.
+
+If the operator wants to USE this opportunity to also confirm the
+off-host destination is the cause (rather than something more
+serious), the `verify-credentials` subcommand from Section C is the
+read-only probe:
+
+```sh
+sqlite-backup verify-credentials <db>
+# Expected when off-host is the only thing wrong:
+#   <remote>:<remotePath>/<db>: FAIL: <rclone error message>
+```
+
+### D.5 Inspection patterns
+
+Discovering what is recoverable BEFORE running a restore — useful
+when the operator is unsure which timestamp to target, which tier
+holds the snapshot they need, or whether the local and off-host
+repos are in sync. R16.AC3 mandates a single-listing inspection
+across both tiers; restic's tag-filter surface is the mechanism.
+
+For all `restic` rows below, `RESTIC_PASSWORD_COMMAND` must be
+exported (see D.1 step 1). For rows referencing the remote repo,
+`RCLONE_PASSWORD_COMMAND` must also be exported (see D.3 Phase 3).
+
+| Question | Command |
+|---|---|
+| What snapshots exist in the local repo, both tiers in one listing? (R16.AC3) | `restic -r "$REPO" snapshots` |
+| Just the replication-tier (sub-5-minute granularity, short retention) snapshots? | `restic -r "$REPO" snapshots --tag replication` |
+| Just the archive-tier (daily/weekly/monthly retention) snapshots? | `restic -r "$REPO" snapshots --tag archive` |
+| Same listings against the off-host repo, to confirm it is in sync (R16.AC5)? | `restic -r "rclone:$REMOTE:$REMOTE_PATH/$DB" snapshots [--tag …]` |
+| Pipeline state for one DB at a glance — most-recent snapshot per tier and whether the Litestream daemon is running? | `sqlite-backup status <db>` |
+| Same, across every configured DB? | `sqlite-backup status` |
+| What's actually inside a specific snapshot (which files, sizes)? | `restic -r "$REPO" ls <snapshot-id>` |
+| Verify on-host repo integrity (no corrupt blobs)? | `restic -r "$REPO" check` |
+
+`$REPO` throughout is `${XDG_DATA_HOME:-$HOME/.local/share}/sqlite-backup/restic/<db>`.
