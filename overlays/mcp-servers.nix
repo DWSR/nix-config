@@ -214,6 +214,80 @@ in
     };
   });
 
+  # Vendored Node dependency tree for the `cavemem-import-vault`
+  # one-shot importer (task 7.1, requirements 8.1 and 8.6). The
+  # importer is a Node script that needs `require()`-able copies of
+  # `better-sqlite3` (to write directly to cavemem.db) and `js-yaml`
+  # (to parse the YAML frontmatter of existing transcription/summary
+  # `.md` notes). It deliberately does NOT reuse the cavemem
+  # package's bundled better-sqlite3 because cavemem packs its
+  # runtime deps into a private `node_modules` under
+  # `$out/lib/node_modules/cavemem/node_modules/` and they are not
+  # discoverable from outside that tree.
+  #
+  # Layout mirrors `mkGcloudMcp`: a hand-written `package.json`
+  # pinning the two top-level deps and a generated `package-lock.json`
+  # (produced once via `npm install --package-lock-only` and
+  # committed) live in a sibling subdir
+  # `overlays/cavemem-importer-deps/`. `buildNpmPackage` +
+  # `importNpmLock` run `npm ci` offline against the vendored lock,
+  # and the better-sqlite3 postinstall compiles its native binding
+  # from source (the bundled `prebuild-install` would otherwise try
+  # to fetch a prebuilt binary from GitHub, which the Nix sandbox
+  # forbids).
+  cavemem-importer-deps = final.buildNpmPackage {
+    pname = "cavemem-importer-deps";
+    version = "0.0.1";
+
+    src = ./cavemem-importer-deps;
+
+    npmDeps = final.importNpmLock { npmRoot = ./cavemem-importer-deps; };
+    inherit (final.importNpmLock) npmConfigHook;
+    dontNpmBuild = true;
+
+    nativeBuildInputs = [
+      final.nodejs
+      final.python3
+    ]
+    ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
+      # better-sqlite3's bundled SQLite amalgamation needs the darwin
+      # libtool (cctools) to link the static archive; the default
+      # stdenv on darwin does not put it on PATH. Mirrors the cavemem
+      # package above.
+      final.cctools
+    ];
+
+    preBuild = ''
+      # Force better-sqlite3 to compile from source instead of letting
+      # `prebuild-install` reach out to GitHub for a prebuilt binary;
+      # `npm_config_nodedir` points node-gyp at the local nodejs which
+      # already ships the headers it needs (otherwise node-gyp would
+      # try to fetch them from nodejs.org).
+      export npm_config_build_from_source=true
+      export npm_config_nodedir=${final.nodejs}
+    '';
+
+    # The default `buildNpmPackage` install phase assumes the package
+    # ships a `bin` field and copies the project under
+    # `$out/lib/node_modules/<pname>/`. We just want a flat
+    # `node_modules` tree the importer script can `require()` from,
+    # so we override the install phase and copy the resolved
+    # `node_modules/` contents straight into `$out/lib/node_modules/`.
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib/node_modules
+      cp -R node_modules/. $out/lib/node_modules/
+      runHook postInstall
+    '';
+
+    meta = with final.lib; {
+      description = "Vendored Node deps (better-sqlite3 + js-yaml) for the cavemem-import-vault one-shot importer";
+      homepage = "https://github.com/JuliusBrussee/cavemem";
+      license = licenses.mit;
+      platforms = platforms.darwin ++ platforms.linux;
+    };
+  };
+
   mcp-obsidian = final.buildNpmPackage {
     pname = "mcp-obsidian";
     version = "0.1.0";

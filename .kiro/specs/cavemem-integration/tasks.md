@@ -242,7 +242,7 @@
   - _Boundary: VaultCuratorUpdate_
 
 - [ ] 7. Core: custom vault importer
-- [ ] 7.1 Build the vendored Node dependency tree for the importer
+- [x] 7.1 Build the vendored Node dependency tree for the importer
   - Create a `buildNpmPackage` derivation (sibling of the cavemem
     package, e.g. in `overlays/mcp-servers.nix`) that produces a
     `node_modules` containing `better-sqlite3` and `js-yaml` pinned
@@ -420,3 +420,4 @@
 - 5.1 (CROSS-TASK): cavemem v0.2.1 'mcp' subcommand accepts NO flags; loadSettings() hardcodes '~/.cavemem/settings.json'; no CAVEMEM_DATA_DIR env var. Therefore Req 10.1's promise that 'home.cavemem.dataDir' controls cavemem's runtime dataDir is BROKEN at the upstream layer. Task 4.1's settings.json file at ${cfg.dataDir}/settings.json is invisible to 'cavemem mcp'. Affects tasks 4.1 (already shipped), 7.x (importer needs the real cavemem.db path), 8.1 (smoke test), 9.x (E2E). Resolution options under user review: (a) default cfg.dataDir to ~/.cavemem; (b) emit settings.json at constant ~/.cavemem regardless of cfg.dataDir; (c) HM symlink ~/.cavemem -> ${cfg.dataDir}; (d) add a 4th patch to cavemem implementing CAVEMEM_DATA_DIR env var. See memories/2026-05-14-cavemem-mcp-no-datadir-override.md.
 - 1.3: Single-bottleneck patch at resolveDataDir() in packages/config/src/loader.ts. Empty/whitespace env values fall back to ~/.cavemem. tsup chunks the bundle: env var ref lands in dist/chunk-*.js, NOT dist/index.js. Bundle reference verified at dist/chunk-TBTU5LYL.js. Re-cherry on cavemem version bump.
 - 5.2: opencode HM module renders 'programs.opencode.settings.mcp.<name>' (NOT 'mcpServers.<name>'), per nix-community/home-manager modules/programs/opencode.nix and the upstream opencode docs at opencode.ai/docs/mcp-servers/. Per-server shape is { type="local"; command=<array>; environment=<attrset>; enabled=<bool>; } — NOT { command; args; env }. The 'transformMcpServer' helper only fires for 'programs.mcp.servers' entries, NOT for direct settings.mcp.* contributions. Mirror the env on both mcphub and opencode entries to avoid split-brain dataDir resolution.
+- 7.1: cavemem-importer-deps uses flat node_modules layout (npm ci style) at $out/lib/node_modules/. Importer (task 7.2) sets NODE_PATH or requires from this absolute path. better-sqlite3 must be force-built-from-source via preBuild npm_config_build_from_source=true because the Nix sandbox blocks prebuild-install GitHub fetches; cctools required for darwin native compile. Pinned versions: better-sqlite3@12.10.0, js-yaml@4.1.1.
