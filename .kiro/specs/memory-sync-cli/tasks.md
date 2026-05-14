@@ -211,21 +211,22 @@
 
 - [ ] 3. Implement pre-flight MCP probes and flag parsing
 - [ ] 3.1 Implement the mcphub HTTP probe helper
-  - Add `probe_mcp_server(name, exit_code)` that runs
-    `curl -sf --max-time 2 "$MCPHUB_BASE/api/servers/${name}"
-    >/dev/null 2>&1` and on failure prints "memory-sync: ERROR:
-    ${name} MCP unreachable. Recovery: launchctl kickstart
-    gui/$(id -u)/com.ravitemer.mcp-hub" to stderr and exits with
-    the supplied `exit_code`.
-  - Verify the exact mcphub HTTP API path against the running
-    mcphub instance on at least one host (read the mcphub HTTP
-    response body for one healthy server first); if the path
-    differs from `/api/servers/<name>`, adjust the helper to
-    match. If mcphub exposes only the global `/api/health`
-    endpoint without per-server health, fall back to two
-    invocations of `/api/health` plus an inspection of the
-    response body's per-server status field via `jq` (the
-    helper signature stays the same).
+  - Add `probe_mcp_server(name, exit_code)` that issues a POST
+    to `"$MCPHUB_BASE/api/servers/info"` with a JSON body of
+    `{"server_name":"${name}"}` and `Content-Type: application/json`,
+    capturing the response with `curl -sf --max-time 2`. The
+    helper grep-asserts `"status":"connected"` is present in the
+    response body. On failure (non-2xx, timeout, connect refused,
+    OR `"status"` other than `"connected"`) the helper prints
+    `memory-sync: ERROR: ${name} MCP unreachable. Recovery:
+    launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub` to
+    stderr and exits with the supplied `exit_code`.
+  - The naive `GET /api/servers/<name>` shape returns 404 in
+    mcp-hub v4.2.1 (verified live during the
+    `cavemem-integration` task 9.2 pass; see
+    `memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md`
+    for the full route catalogue and why this POST endpoint is
+    the documented per-server status surface).
   - Observable: with mcphub running and cavemem registered,
     `probe_mcp_server cavemem 4` returns 0 and prints nothing;
     with mcphub stopped via `launchctl bootout

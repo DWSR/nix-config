@@ -73,12 +73,17 @@ no downstream consumers beyond a possible future
 - **Adjacent expectations**: Consumes the contracts locked by
   `cavemem-integration` Requirement 10 — (a) cavemem MCP
   registered under the literal mcphub server name `cavemem`, so
-  the pre-flight health check probes
-  `http://localhost:37373/api/servers/cavemem`; (b) the cavemem
-  HM module has run, so cavemem.db at
-  `${home.cavemem.dataDir}/cavemem.db` exists; (c) the opencode
-  wrapper's cavemem health check has not refused to launch
-  opencode (i.e. cavemem MCP is up). Consumes the contracts
+  the pre-flight health check probes the mcphub HTTP API's
+  per-server status endpoint (verified during the
+  `cavemem-integration` live-verification pass: `POST
+  /api/servers/info` body `{"server_name":"cavemem"}` asserting
+  `"status":"connected"` in the JSON response); (b) the cavemem
+  HM module has run, so the cavemem database at
+  `${home.cavemem.dataDir}/data.db` exists (filename is
+  literally `data.db`, verified at cavemem v0.2.1 source per the
+  `cavemem-integration` task 7.2 implementation note); (c) the
+  opencode wrapper's cavemem health check has not refused to
+  launch opencode (i.e. cavemem MCP is up). Consumes the contracts
   locked by `vault-synthesizer-agent` — (a) the agent loads as
   `vault-synthesizer` in opencode's agent registry; (b) the
   agent accepts a single positional time-range argument

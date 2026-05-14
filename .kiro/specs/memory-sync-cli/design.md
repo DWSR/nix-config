@@ -191,14 +191,18 @@ http://localhost:37373/api/health` against the local mcphub server.
 The opencode wrapper uses `/usr/bin/curl` because it runs before
 PATH is set; `memory-sync` runs inside `writeShellApplication`'s
 locked PATH and uses `pkgs.curl`. Per-server health (cavemem-server
-status, obsidian-server status) is reachable via mcphub's
-per-server endpoint shape — the design here probes
-`http://localhost:37373/api/servers/cavemem` and
-`http://localhost:37373/api/servers/obsidian`, exact endpoint
-verified at implementation time against the running mcphub instance
-(the implementer confirms the path and adjusts the script if the
-mcphub version on this host uses a different path; the probe is a
-single line in the script and trivial to refit).
+status, obsidian-server status) is reachable via the documented
+`POST /api/servers/info` endpoint with body `{"server_name": "<name>"}`,
+which returns the server's full status (including a
+`"status":"connected"` field on success) — the design here probes
+this endpoint per server. The naive shape `GET /api/servers/<name>`
+is NOT exposed by mcp-hub (returns 404; verified live during the
+`cavemem-integration` live-verification pass; see
+`memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md`
+for the full route catalogue). The `cavemem-integration` opencode
+wrapper hotfix (commit 682249b) settled on the same POST endpoint
+for its per-server liveness probe; this design follows the same
+pattern for symmetry.
 
 **Opencode non-interactive surface**: Verified by running
 `opencode run --help` against `~/.nix-profile/bin/opencode` (output
@@ -476,15 +480,20 @@ synthesizer's first run remains tractable in one invocation.
 worse UX; the user has to remember the magic incantation. The
 explicit `--since` override remains available for unusual cases.
 
-**Rejected — beginning of cavemem.db**: unbounded; user pain on
-first run after a fresh install.
+**Rejected — beginning of cavemem `data.db`**: unbounded; user
+pain on first run after a fresh install.
 
 #### Decision 6 — Pre-flight checks at HTTP-transport layer (not MCP-tool layer)
 
-**Decision**: Pre-flight probes are mcphub HTTP API GETs (e.g.
-`http://localhost:37373/api/servers/cavemem`,
-`http://localhost:37373/api/servers/obsidian`), not actual MCP
-tool calls (no `cavemem search`, no `hub_obsidian__list-notes`).
+**Decision**: Pre-flight probes are mcphub HTTP API POSTs to
+`http://localhost:37373/api/servers/info` with body
+`{"server_name": "cavemem"}` and `{"server_name": "obsidian"}`,
+asserting `"status":"connected"` in the JSON response. Pre-flight
+does NOT call actual MCP tools (no `cavemem search`, no
+`hub_obsidian__list-notes`). The `GET /api/servers/<name>` shape
+that initial drafts of this design proposed does not exist in
+mcp-hub (returns 404); the POST endpoint is the documented
+per-server status surface.
 
 **Rationale**: The brief's "health-check semantics" constraint
 (`Health-check semantics: Pre-flight checks distinguish "MCP
@@ -724,10 +733,10 @@ sequenceDiagram
     MS->>MS: parse flags (none)
     MS->>FS: mkdir -p memory-sync/{logs,}
     MS->>FS: mkdir lock/  (acquire)
-    MS->>HUB: GET /api/servers/cavemem
-    HUB-->>MS: 200 OK healthy
-    MS->>HUB: GET /api/servers/obsidian
-    HUB-->>MS: 200 OK healthy
+    MS->>HUB: POST /api/servers/info {server_name: cavemem}
+    HUB-->>MS: 200 OK {status: "connected", ...}
+    MS->>HUB: POST /api/servers/info {server_name: obsidian}
+    HUB-->>MS: 200 OK {status: "connected", ...}
     MS->>FS: cat last-run  (or "30 days ago" default)
     MS->>MS: now := date -u +%Y-...
     MS->>MS: open log file (umask 0077)
@@ -758,8 +767,8 @@ sequenceDiagram
 
     Op->>MS: memory-sync
     MS->>FS: mkdir -p; mkdir lock/  (acquire)
-    MS->>HUB: GET /api/servers/cavemem (timeout 2s)
-    HUB-->>MS: connect refused / timeout / non-2xx
+    MS->>HUB: POST /api/servers/info {server_name: cavemem} (timeout 2s)
+    HUB-->>MS: connect refused / timeout / non-2xx / status != "connected"
     MS-->>Op: stderr: "ERROR: cavemem MCP unreachable. launchctl kickstart gui/$UID/com.ravitemer.mcp-hub"
     MS->>FS: rmdir lock/  (trap)
     MS-->>Op: exit 4
@@ -855,9 +864,9 @@ sequenceDiagram
 | 4.4 | EXIT/INT/TERM trap releases lock | OrchestratorScript | `trap '...' EXIT INT TERM` | All flows |
 | 4.5 | Lock acquired BEFORE marker read AND BEFORE pre-flight | OrchestratorScript | flow ordering | All flows |
 | 4.6 | Lock acquisition does not race against parent mkdir | OrchestratorScript | `mkdir -p memory-sync/` then `mkdir memory-sync/lock` | All flows |
-| 5.1 | Pre-flight cavemem probe at mcphub HTTP | OrchestratorScript | `curl http://localhost:37373/api/servers/cavemem` | Successful run; cavemem-down flow |
+| 5.1 | Pre-flight cavemem probe at mcphub HTTP | OrchestratorScript | `curl -X POST /api/servers/info {server_name: cavemem}`; assert `"status":"connected"` | Successful run; cavemem-down flow |
 | 5.2 | Cavemem failure → exit 4 with hint | OrchestratorScript | error path | cavemem-down flow |
-| 5.3 | Pre-flight obsidian probe (after cavemem) | OrchestratorScript | `curl http://localhost:37373/api/servers/obsidian` | Successful run |
+| 5.3 | Pre-flight obsidian probe (after cavemem) | OrchestratorScript | `curl -X POST /api/servers/info {server_name: obsidian}`; assert `"status":"connected"` | Successful run |
 | 5.4 | Obsidian failure → exit 5 with hint | OrchestratorScript | error path | n/a |
 | 5.5 | Silent on success unless --verbose | OrchestratorScript | flag-gated stdout | All flows |
 | 5.6 | Probes are HTTP-transport-level only | OrchestratorScript | (negative assertion: no MCP-tool calls in pre-flight) | All flows |
@@ -1385,7 +1394,7 @@ Documented inside the troubleshooting memory note
   Synthesizer / curator output may include
   sensitive observation content; restricting log
   visibility to the user matches the privacy
-  posture of the source cavemem.db (also
+  posture of the source cavemem `data.db` (also
   user-owned).
 - The pre-flight probes are local-only HTTP
   calls to mcphub at `127.0.0.1:37373`; no
