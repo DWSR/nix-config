@@ -7,7 +7,16 @@ _: {
   # this file in follow-up PRs.
   home.sqliteBackup = {
     enable = true;
-    rcloneDestinations = { };
+    rcloneDestinations = {
+      gdrive = {
+        type = "drive";
+      };
+    };
     databases = [ ];
+  };
+
+  home.mcp.keychainSecrets = {
+    sqlite-backup-archive-passphrase = "op://Employee/sqlite-backup-archive/passphrase";
+    sqlite-backup-rclone-config-passphrase = "op://Employee/sqlite-backup-rclone-config/passphrase";
   };
 }
