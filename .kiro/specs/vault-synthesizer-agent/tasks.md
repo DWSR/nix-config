@@ -314,7 +314,7 @@
   - _Depends: 1.6_
 
 - [ ] 2. Wire the agent into opencode's agents attrset
-- [ ] 2.1 Add the vault-synthesizer entry in `home-manager/common/opencode.nix`
+- [x] 2.1 Add the vault-synthesizer entry in `home-manager/common/opencode.nix`
   - In the existing `agents = { ... }` block (currently lines 142-157
     of `home-manager/common/opencode.nix`), add a single new entry:
     `vault-synthesizer = withCaveman ./agents/vault-synthesizer.md;`.

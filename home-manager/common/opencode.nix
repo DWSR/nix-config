@@ -154,6 +154,7 @@
           nvim-tailor = withCaveman ./agents/nvim-tailor.md;
           security-auditor = withCaveman ./agents/security-auditor.md;
           vault-curator = withCaveman ./agents/vault-curator.md;
+          vault-synthesizer = withCaveman ./agents/vault-synthesizer.md;
         };
 
       settings = {
