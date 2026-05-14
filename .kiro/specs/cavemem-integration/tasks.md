@@ -170,7 +170,7 @@
   - _Boundary: OpencodeSettings, CavememModule_
   - _Depends: 1.2, 3.1_
 
-- [ ] 5.3 (P) Append the cavemem health check to `home.opencode.wrapperCommands`
+- [x] 5.3 (P) Append the cavemem health check to `home.opencode.wrapperCommands`
   - In the cavemem module's `config` block, add a shell snippet to
     `home.opencode.wrapperCommands` that probes the mcphub HTTP API
     for the cavemem server's readiness; exit non-zero on probe

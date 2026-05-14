@@ -458,6 +458,52 @@ in
         };
         enabled = true;
       };
+
+      # Task 5.3 (Req 5.1-5.5; design.md §OpencodeWrapperHealthCheck):
+      # append a cavemem-specific readiness probe to the opencode
+      # wrapper's pre-launch checks. Mirrors the existing obsidian
+      # probe in `home-manager/common/opencode.nix` (lines 54-62) in
+      # style — same `/usr/bin/curl -sf --max-time 2` shape, same
+      # `echo ... >&2; exit 1` failure path, same
+      # `launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub`
+      # recovery hint — but probes the cavemem-server-specific
+      # endpoint instead of the generic `/api/health` so that
+      # mcphub-up-but-cavemem-down still hard-fails the wrapper
+      # (Req 5.1, 5.2). The error message names cavemem explicitly
+      # (Req 5.3).
+      #
+      # Endpoint: `http://localhost:37373/api/servers/cavemem` is the
+      # mcphub HTTP API path that returns the cavemem server's
+      # registration + connection state. Same path the cavemem-smoke-test
+      # (task 8.1, tasks.md line 330) and the future memory-sync-cli
+      # spec (memory-sync-cli/design.md line 196) probe for the same
+      # purpose. Returns 200 when cavemem is registered AND its MCP
+      # connection has come up; non-2xx (404, 503, connection refused)
+      # otherwise — exactly the readiness signal we want.
+      #
+      # `home.opencode.wrapperCommands` is `listOf lines`; HM list-merge
+      # semantics concatenate this entry after the obsidian snippet
+      # contributed by `home-manager/common/opencode.nix`. Snippets run
+      # sequentially inside the wrapper's `--run` block (joined by
+      # `lib.concatStringsSep "\n"`), so either snippet's `exit 1`
+      # halts the wrapper before the underlying opencode binary is
+      # exec'd. Both checks therefore run in order and either failure
+      # is fatal (Req 5.5) without one snippet needing knowledge of
+      # the other.
+      #
+      # Gating: the entire `config = lib.mkIf cfg.enable { ... }`
+      # block is enable-gated, so disabled hosts contribute nothing
+      # to `wrapperCommands` and the cavemem probe is absent from
+      # the rendered wrapper (Req 5.4).
+      home.opencode.wrapperCommands = [
+        ''
+          if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/servers/cavemem >/dev/null 2>&1; then
+            echo "ERROR: cavemem MCP server is not reachable via mcphub. Ambient memory capture is unavailable." >&2
+            echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+            exit 1
+          fi
+        ''
+      ];
     }
   );
 }
