@@ -141,7 +141,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 2.1, 2.2_
 
-- [ ] 2.4 Implement the time-range computation helpers
+- [x] 2.4 Implement the time-range computation helpers
   - Add `now_utc()` that prints `date -u +%Y-%m-%dT%H:%M:%SZ` once
     per invocation. Capture the result into a `NOW` variable in
     the main flow so the value is stable across the run (no risk
