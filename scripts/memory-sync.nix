@@ -55,6 +55,53 @@ pkgs.writeShellApplication {
       mkdir -p "$STATE_DIR" "$LOG_DIR"
     }
 
+    # acquire_lock: mkdir-mutex on $LOCK_DIR (Req 4.AC1, AC2; design
+    # Decision 3 — mirrors scripts/sqlite-backup-cli.nix:219-228 but
+    # adapted for a single, fixed lock path rather than per-DB dynamic).
+    # Returns 0 on success and installs a trap that removes the lock on
+    # EXIT/INT/TERM (AC4). On EEXIST (lock already held), prints an
+    # actionable error to stderr (AC3) and exits with code 6 (AC3,
+    # 8.AC7).
+    #
+    # Caller contract: bootstrap_state_dir() MUST run first (AC6) so
+    # mkdir's only failure mode here is a lock that is genuinely held,
+    # not a missing parent. Caller must invoke this BEFORE marker reads
+    # and pre-flight checks (AC5) so an early-exit failure still
+    # releases the lock via the EXIT trap.
+    #
+    # The trap captures $LOCK_DIR by NAME (single-quoted in the trap
+    # body), defensively allowing future code to reassign $LOCK_DIR
+    # without breaking cleanup.
+    acquire_lock() {
+      if mkdir "$LOCK_DIR" 2>/dev/null; then
+        trap 'rm -rf -- "$LOCK_DIR"' EXIT INT TERM
+        return 0
+      fi
+      # mkdir failed — assume EEXIST (lock held by another invocation).
+      cat >&2 <<EOF
+    memory-sync: lock held at $LOCK_DIR
+
+    Another memory-sync invocation appears to be in progress. Wait for
+    it to finish, or — if you are sure no other memory-sync run is in
+    progress — remove the lock dir manually:
+
+      rm -rf '$LOCK_DIR'
+    EOF
+      exit 6
+    }
+
+    # release_lock: remove the lock dir and clear the EXIT/INT/TERM trap
+    # so cleanup runs at most once (the trap would otherwise fire again
+    # on script exit and rm a no-longer-existent dir — harmless with
+    # `rm -rf` but noisy if a future revision tightens the cleanup).
+    # Currently unused; future tasks (2.5+) may invoke it explicitly
+    # before a successful exit. The EXIT trap handles the common case.
+    # shellcheck disable=SC2329  # consumed by future tasks (2.5+)
+    release_lock() {
+      rm -rf -- "$LOCK_DIR"
+      trap - EXIT INT TERM
+    }
+
     usage() {
       cat <<'USAGE'
     memory-sync: orchestrate the cavemem → synthesizer → curator pipeline.
@@ -76,8 +123,9 @@ pkgs.writeShellApplication {
         ;;
       *)
         bootstrap_state_dir
-        # Real main flow lands in tasks 2.2+. For now, fall through to
-        # the bad-arg path so the skeleton's behavior is preserved.
+        acquire_lock
+        # Real main flow lands in tasks 2.3+. For now, fall through to
+        # the bad-arg path. release_lock fires via the EXIT trap.
         usage
         exit 64
         ;;

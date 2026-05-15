@@ -92,7 +92,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 1.1_
 
-- [ ] 2.2 Implement the mkdir-mutex lock with EXIT/INT/TERM trap
+- [x] 2.2 Implement the mkdir-mutex lock with EXIT/INT/TERM trap
   - Add `acquire_lock()` and `release_lock()` helpers mirroring
     `scripts/sqlite-backup-cli.nix:219-236` shape: `acquire_lock`
     runs `mkdir "$LOCK_DIR" 2>/dev/null` and on success installs
