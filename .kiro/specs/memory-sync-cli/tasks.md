@@ -69,7 +69,7 @@
   - _Depends: 1.2_
 
 - [ ] 2. Implement state, lock, and helper layer
-- [ ] 2.1 Define state-directory constants and `mkdir -p` bootstrap
+- [x] 2.1 Define state-directory constants and `mkdir -p` bootstrap
   - At the top of the script body (after `OPENCODE_BIN` and before
     the flag parser), declare:
     `STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/memory-sync"`,
