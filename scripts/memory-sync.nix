@@ -102,6 +102,77 @@ pkgs.writeShellApplication {
       trap - EXIT INT TERM
     }
 
+    # read_marker: print the marker file's timestamp to stdout, or
+    # nothing (return 0) if the file does not exist. Strips any
+    # whitespace (including the trailing newline that
+    # write_marker_atomic emits) so the caller gets a clean ISO 8601
+    # string that `date -u -d` can parse without further massaging.
+    # Per Req 3.AC3, the marker is a single ISO 8601 UTC timestamp
+    # (terminating newline acceptable). Per Decision 4 the format is
+    # `YYYY-MM-DDTHH:MM:SSZ`.
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # task 2.4 (time-range computation) and task 4.x (main flow).
+    # shellcheck disable=SC2329  # consumed by tasks 2.4, 4.x
+    read_marker() {
+      if [ -f "$MARKER_FILE" ]; then
+        tr -d '[:space:]' < "$MARKER_FILE"
+      fi
+    }
+
+    # write_marker_atomic <iso8601-utc-timestamp>
+    # Atomically replaces $MARKER_FILE with the supplied timestamp
+    # via tempfile + sync + rename(2) (Req 3.AC7, 3.AC9; Decision 4).
+    # The tempfile lives in the same directory as $MARKER_FILE so
+    # `mv` is a single rename(2) syscall (atomic on POSIX
+    # filesystems within a single fs).
+    #
+    # Order: write → sync → rename. On a crash between sync and
+    # rename, the old marker survives — the rename's atomicity
+    # guarantees no partial replacement is ever visible.
+    #
+    # On any failure (write or rename), prints an actionable error to
+    # stderr naming the path and a writability hint, calls
+    # release_lock to drop the lock before exit (defensive — the
+    # EXIT trap would also fire), and exits 3 (Req 8.AC4 — marker
+    # unwritable).
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # task 4.3 (marker-update success path).
+    # shellcheck disable=SC2329  # consumed by task 4.3
+    write_marker_atomic() {
+      local timestamp="$1"
+      local tmpfile="$MARKER_FILE.tmp"
+
+      if ! printf '%s\n' "$timestamp" > "$tmpfile" 2>/dev/null; then
+        printf 'memory-sync: failed to write marker tempfile: %s\n' "$tmpfile" >&2
+        printf '  (parent dir %s is %s)\n' \
+          "$(dirname "$tmpfile")" \
+          "$(test -w "$(dirname "$tmpfile")" && echo writable || echo "not writable")" >&2
+        release_lock
+        exit 3
+      fi
+
+      # sync the tempfile to make the bytes durable BEFORE the
+      # rename so a crash between rename and reboot doesn't leave a
+      # 0-byte marker (Req 3.AC9 — bytes durable on disk). coreutils
+      # ships `sync FILE`, which we have on PATH via runtimeInputs.
+      # If sync fails for any reason (e.g. the file was deleted out
+      # from under us), continue — the rename's atomicity is the
+      # primary guarantee; sync is belt-and-suspenders.
+      if ! sync "$tmpfile" 2>/dev/null; then
+        :
+      fi
+
+      if ! mv "$tmpfile" "$MARKER_FILE" 2>/dev/null; then
+        printf 'memory-sync: failed to rename marker tempfile to final path: %s -> %s\n' \
+          "$tmpfile" "$MARKER_FILE" >&2
+        rm -f "$tmpfile"
+        release_lock
+        exit 3
+      fi
+    }
+
     usage() {
       cat <<'USAGE'
     memory-sync: orchestrate the cavemem → synthesizer → curator pipeline.

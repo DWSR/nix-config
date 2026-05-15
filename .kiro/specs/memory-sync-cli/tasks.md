@@ -114,7 +114,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 2.1_
 
-- [ ] 2.3 Implement the marker read / write-atomic pair
+- [x] 2.3 Implement the marker read / write-atomic pair
   - Add `read_marker()` that prints the contents of `$MARKER_FILE`
     when it exists (one-line ISO 8601 UTC timestamp expected) and
     prints nothing (returns 0) when absent. Tolerates a trailing
