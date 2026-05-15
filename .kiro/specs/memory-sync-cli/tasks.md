@@ -255,7 +255,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 3.1, 2.2_
 
-- [ ] 3.3 Implement the flag parser and `--help` arm
+- [x] 3.3 Implement the flag parser and `--help` arm
   - Replace the placeholder `--help` arm from 1.1 with a real
     flag parser. Walk `$@` with a `while [ $# -gt 0 ]; do case
     "$1" in ...; esac; done` loop. Recognized flags: `--since

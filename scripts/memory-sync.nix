@@ -301,12 +301,12 @@ pkgs.writeShellApplication {
     # write, and create the file. The filename uses dashes instead of
     # colons (Req 9.AC1) for filesystem compatibility.
     #
-    # No-op when DRY_RUN=1 (Req 9.AC8).
+    # No-op when DRY_RUN=true (Req 9.AC8).
     #
     # Inputs (read from caller scope, populated by main flow):
     #   NOW      — invocation timestamp (UTC ISO 8601), set by now_utc()
     #   LOG_DIR  — set at script init (top of the script)
-    #   DRY_RUN  — 1 if --dry-run, else 0
+    #   DRY_RUN  — "true" if --dry-run was supplied, else empty
     #
     # Outputs (set in caller scope):
     #   LOG_FILE — absolute path to the open log file
@@ -315,11 +315,20 @@ pkgs.writeShellApplication {
     # file is created with mode 0600 (Req 9.AC10 — log files contain
     # potentially sensitive operator data; not world-readable).
     #
+    # The DRY_RUN sentinel is a literal `"true"` (matching the value the
+    # task-3.3 flag parser sets) and is unconditionally defaulted to ""
+    # by that parser BEFORE this helper is reachable, so a bare
+    # `"$DRY_RUN"` is safe under `set -u` without `:-` defaulting.
+    # Per the cross-task implementation note from task 3.3, this guard
+    # was migrated from `[ "''${DRY_RUN:-0}" = "1" ]` to
+    # `[ "$DRY_RUN" = "true" ]` so the integration semantics with the
+    # 3.3 parser hold (Req 9.AC8/9.AC9).
+    #
     # Currently unused by the script's own main flow; consumed by
     # tasks 4.x / 5.x.
     # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
     open_log() {
-      if [ "''${DRY_RUN:-0}" = "1" ]; then
+      if [ "$DRY_RUN" = "true" ]; then
         return 0
       fi
       # Replace colons with dashes in $NOW for filesystem compatibility:
@@ -335,13 +344,18 @@ pkgs.writeShellApplication {
     }
 
     # log_append <text>: append text to $LOG_FILE (newline added). No-op
-    # when DRY_RUN=1 OR LOG_FILE is unset (open_log was skipped).
+    # when DRY_RUN="true" OR LOG_FILE is unset (open_log was skipped).
+    #
+    # DRY_RUN is unconditionally defaulted to "" by the task-3.3 flag
+    # parser before this helper is reachable, so the bare `"$DRY_RUN"`
+    # is safe under `set -u`. LOG_FILE may legitimately be unset (when
+    # open_log was skipped), so the `:-` default is preserved on it.
     #
     # Currently unused by the script's own main flow; consumed by
     # tasks 4.x / 5.x.
     # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
     log_append() {
-      if [ "''${DRY_RUN:-0}" = "1" ] || [ -z "''${LOG_FILE:-}" ]; then
+      if [ "$DRY_RUN" = "true" ] || [ -z "''${LOG_FILE:-}" ]; then
         return 0
       fi
       printf '%s\n' "$1" >> "$LOG_FILE"
@@ -358,10 +372,16 @@ pkgs.writeShellApplication {
     #   RANGE_END        — resolved range end
     #   MARKER_BEFORE    — marker contents before the run, or "<absent>"
     #   SINCE            — --since value, or empty
-    #   DRY_RUN          — 1 if --dry-run, else 0
-    #   NO_CURATOR       — 1 if --no-curator, else 0
-    #   VERBOSE          — 1 if --verbose, else 0
+    #   DRY_RUN          — "true" if --dry-run was supplied, else empty
+    #   NO_CURATOR       — "true" if --no-curator was supplied, else empty
+    #   VERBOSE          — "true" if --verbose/-v was supplied, else empty
     #   OPENCODE_BIN     — baked at derivation time
+    #
+    # The `--dry-run=...` / `--no-curator=...` / `--verbose=...` fields
+    # in the rendered `flags:` line surface the literal flag-variable
+    # values ("true" or empty); the `:-<unset>` default keeps the empty
+    # case readable in the log without confusing it with a literal
+    # "false" or "0" the script never sets.
     #
     # Currently unused by the script's own main flow; consumed by
     # tasks 4.x / 5.x.
@@ -371,7 +391,7 @@ pkgs.writeShellApplication {
       log_append "  invocation:  $NOW"
       log_append "  range:       $RANGE_START → $RANGE_END"
       log_append "  marker:      ''${MARKER_BEFORE:-<absent>} (before)"
-      log_append "  flags:       --since=''${SINCE:-<unset>} --dry-run=''${DRY_RUN:-0} --no-curator=''${NO_CURATOR:-0} --verbose=''${VERBOSE:-0}"
+      log_append "  flags:       --since=''${SINCE:-<unset>} --dry-run=''${DRY_RUN:-<unset>} --no-curator=''${NO_CURATOR:-<unset>} --verbose=''${VERBOSE:-<unset>}"
       log_append "  opencode:    $OPENCODE_BIN"
       log_append ""
     }
@@ -401,7 +421,11 @@ pkgs.writeShellApplication {
     # the 11th-and-onward filenames, which xargs feeds to rm -f.
     # Safe when fewer than 11 files exist (tail produces no output).
     #
-    # No-op when DRY_RUN=1 (Req 9.AC8).
+    # No-op when DRY_RUN="true" (Req 9.AC8).
+    #
+    # DRY_RUN is unconditionally defaulted to "" by the task-3.3 flag
+    # parser before this helper is reachable, so the bare `"$DRY_RUN"`
+    # is safe under `set -u`.
     #
     # The pipeline runs from inside $LOG_DIR via a subshell so xargs
     # operates on bare filenames; the final `|| true` guards against a
@@ -411,7 +435,7 @@ pkgs.writeShellApplication {
     # task 4.3.
     # shellcheck disable=SC2329  # consumed by task 4.3
     prune_logs() {
-      if [ "''${DRY_RUN:-0}" = "1" ]; then
+      if [ "$DRY_RUN" = "true" ]; then
         return 0
       fi
       # ls is preferred here over find because the prescribed shape
@@ -425,20 +449,24 @@ pkgs.writeShellApplication {
     }
 
     # tee_to_log <command...>: run a command and tee stdout+stderr
-    # through $LOG_FILE (Req 9.AC4, 9.AC5). When VERBOSE=1, also tee
-    # to /dev/tty so the operator sees progress in real time
+    # through $LOG_FILE (Req 9.AC4, 9.AC5). When VERBOSE="true", also
+    # tee to /dev/tty so the operator sees progress in real time
     # (Req 9.AC9).
     #
-    # The caller is responsible for not invoking this under DRY_RUN=1
-    # (the dry-run code path should announce the would-be invocation
-    # via stdout instead and skip the real command entirely; see Req
-    # 7.AC11).
+    # The caller is responsible for not invoking this under
+    # DRY_RUN="true" (the dry-run code path should announce the
+    # would-be invocation via stdout instead and skip the real command
+    # entirely; see Req 7.AC11).
+    #
+    # VERBOSE is unconditionally defaulted to "" by the task-3.3 flag
+    # parser before this helper is reachable, so the bare `"$VERBOSE"`
+    # is safe under `set -u`.
     #
     # Currently unused by the script's own main flow; consumed by
     # task 4.x.
     # shellcheck disable=SC2329  # consumed by task 4.x
     tee_to_log() {
-      if [ "''${VERBOSE:-0}" = "1" ]; then
+      if [ "$VERBOSE" = "true" ]; then
         "$@" 2>&1 | tee -a "$LOG_FILE" | tee /dev/tty > /dev/null
       else
         "$@" 2>&1 | tee -a "$LOG_FILE" > /dev/null
@@ -497,57 +525,188 @@ pkgs.writeShellApplication {
       fi
     }
 
+    # usage: print the operator-facing help block to stdout (Req 2.1).
+    # Names every supported flag with a one-line semantic (Req 2.2),
+    # every documented exit code 0–6 + the 64 usage band (Req 2.3,
+    # 8.AC8), the marker / lock / log paths under
+    # $XDG_STATE_HOME/memory-sync/ (Req 2.4), the accepted --since
+    # shapes (Req 2.6), and the --dry-run no-mutation guarantee
+    # (Req 2.7).
+    #
+    # Heredoc is single-quoted (`<<'USAGE'`) so the literal `$`
+    # in `$XDG_STATE_HOME/memory-sync/` is preserved verbatim — the
+    # operator sees the env-var name they should expand themselves,
+    # not whatever HM happened to set it to in the shell rendering
+    # this help.
     usage() {
       cat <<'USAGE'
     memory-sync: orchestrate the cavemem → synthesizer → curator pipeline.
 
-    (Skeleton; orchestration logic lands in tasks 2.x-4.x.)
-
     Usage:
-      memory-sync [--help|-h]
+      memory-sync [--since <when>] [--dry-run] [--verbose|-v]
+                  [--no-curator] [--help|-h]
 
     Options:
-      --help, -h    Show this help and exit
+      --since <when>   Override the marker for one run. Accepted shapes:
+                         YYYY-MM-DD                  (midnight UTC)
+                         YYYY-MM-DDTHH:MM:SSZ        (exact ISO 8601 UTC)
+                         <relative duration>         (any string parseable
+                                                      by GNU date -d, e.g.
+                                                      '7 days ago',
+                                                      '30 days ago',
+                                                      '3 hours ago')
+                       --since does NOT update the marker on success
+                       (one-shot override).
+      --dry-run        Compute and announce the synthesizer / curator
+                       prompts but do not invoke opencode.
+                       --dry-run does not write to the marker file, to
+                       the Obsidian vault, or to the per-run log, and
+                       does not prune logs.
+      --verbose, -v    Tee per-run log content to stdout in real time
+                       and print pre-flight liveness confirmation to
+                       stderr. The on-disk log file is identical
+                       regardless.
+      --no-curator     Run only the synthesizer; skip the
+                       vault-curator dedup pass. The marker is still
+                       updated on success.
+      --help, -h       Print this help block to stdout and exit 0.
+
+    Exit codes:
+      Exit code 0    Success: synthesizer (and curator unless
+                     --no-curator) ran cleanly; marker updated unless
+                     --since or --dry-run was in effect; old logs
+                     pruned.
+      Exit code 1    Synthesizer failed: opencode run --agent
+                     vault-synthesizer exited non-zero. Marker
+                     untouched, curator not invoked.
+      Exit code 2    Curator failed: synthesizer succeeded but
+                     opencode run --agent vault-curator exited
+                     non-zero. Marker untouched.
+      Exit code 3    Marker unwritable: parent dir uncreatable, or
+                     tempfile write or rename(2) failed.
+      Exit code 4    Cavemem MCP unreachable: pre-flight probe failed
+                     (connect refused, timeout, non-2xx, or
+                     "status":"connected" assertion missed).
+                     Recovery hint: launchctl kickstart
+                     gui/$(id -u)/com.ravitemer.mcp-hub.
+      Exit code 5    Obsidian MCP unreachable: cavemem probe passed
+                     but obsidian probe failed. Same recovery hint.
+      Exit code 6    Lock held: another memory-sync invocation is in
+                     progress. Wait, or remove the lock dir manually
+                     if you are sure no other run is running.
+      Exit code 64   Usage error: unknown flag, --since requires a
+                     value, --since value unparseable, or computed
+                     range start is at or after end. Distinct from
+                     exit codes 0–6 so a future scheduler can
+                     distinguish operator typos from run failures.
+
+    State paths (all under $XDG_STATE_HOME/memory-sync/, defaulting
+    $XDG_STATE_HOME to $HOME/.local/state per XDG Base Directory):
+      $XDG_STATE_HOME/memory-sync/last-run         marker file (single
+                                                   ISO 8601 UTC line)
+      $XDG_STATE_HOME/memory-sync/lock             lock directory
+                                                   (mkdir-mutex)
+      $XDG_STATE_HOME/memory-sync/logs/            per-run logs,
+                                                   <ts>.log filenames,
+                                                   last-10 retention
     USAGE
     }
 
-    case "''${1:-}" in
-      --help|-h)
-        usage
-        exit 0
-        ;;
-      *)
-        bootstrap_state_dir
-        acquire_lock
-        # Pre-flight MCP-transport probes (Req 5.1, 5.3; Decision 6).
-        # Cavemem first because (a) Req 5.5 mandates exit 4 (not 5)
-        # when only cavemem is down, and (b) per the task body,
-        # cavemem is the more likely transient outage and a failure
-        # here `exit`s inside probe_mcp_server before the obsidian
-        # probe ever runs. probe_mcp_server is silent on success per
-        # Req 5.5.
-        probe_mcp_server cavemem 4
-        probe_mcp_server obsidian 5
-        # Verbose-mode liveness confirmation (Req 5.5 — only emit
-        # health-check output under --verbose). The flag parser that
-        # sets VERBOSE lands in task 3.3; until then, VERBOSE is
-        # unset and the ''${VERBOSE:-} default-empty expansion keeps
-        # this gate quiet under set -u. Once 3.3 ships, the bare
-        # "$VERBOSE" form named in this task's body becomes safe;
-        # the :- form is a forward-compatible superset (matches
-        # both unset and "true"). Output goes to stderr so it joins
-        # probe_mcp_server's own error stream and the upcoming
-        # tee_to_log pipeline (which merges 2>&1 into the per-run
-        # log) without contaminating stdout, which is reserved for
-        # the success summary in task 4.x.
-        if [ "''${VERBOSE:-}" = "true" ]; then
-          printf 'memory-sync: cavemem and obsidian MCP servers reachable\n' >&2
-        fi
-        # Real main flow lands in tasks 3.3+. For now, fall through
-        # to the bad-arg path. release_lock fires via the EXIT trap.
-        usage
-        exit 64
-        ;;
-    esac
+    # --- main flow ---------------------------------------------------
+    #
+    # Flag parser (Req 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 8.8). Walks
+    # $@ flag-by-flag in a while loop so flag order is irrelevant to
+    # the operator. `--since` is the only flag that consumes a second
+    # argv slot; everything else is a bare boolean toggle. Defaults
+    # are set BEFORE the loop so the logging helpers (open_log,
+    # log_append, prune_logs, tee_to_log) can use bare `"$VAR"` checks
+    # under `set -u` without `:-` defaulting — this is the integration
+    # contract recorded in tasks.md "Implementation Notes" 2026-05-14
+    # (task 2.5 → 3.3 cross-task action): the 2.5 helpers were
+    # originally written against `[ "''${DRY_RUN:-0}" = "1" ]` (which
+    # would silently evaluate FALSE in integration); this parser sets
+    # DRY_RUN=true / VERBOSE=true / NO_CURATOR=true, and the four
+    # helper guards have been migrated to `[ "$DRY_RUN" = "true" ]`
+    # / `[ "$VERBOSE" = "true" ]` to match. The empty-string default
+    # ensures the bare check is safe under `set -u`.
+    SINCE=""
+    DRY_RUN=""
+    VERBOSE=""
+    NO_CURATOR=""
+
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --since)
+          # Req 2.6: --since requires a value. Missing-value error is
+          # reported as a usage-band exit (Req 8.AC8) so a future
+          # scheduler does not alert on operator typos.
+          if [ $# -lt 2 ]; then
+            echo "memory-sync: error: --since requires a value (e.g. --since '7 days ago')." >&2
+            exit 64
+          fi
+          SINCE="$2"
+          shift 2
+          ;;
+        --dry-run)
+          DRY_RUN="true"
+          shift
+          ;;
+        --verbose|-v)
+          VERBOSE="true"
+          shift
+          ;;
+        --no-curator)
+          NO_CURATOR="true"
+          shift
+          ;;
+        --help|-h)
+          usage
+          exit 0
+          ;;
+        *)
+          # Unknown flag → exit 64 (Req 2.5, 8.AC8). Error message
+          # format is mandated verbatim by the task body so the future
+          # operator and scheduler can both string-match it.
+          echo "memory-sync: error: unknown flag '$1'. Run --help for usage." >&2
+          exit 64
+          ;;
+      esac
+    done
+
+    # Export the parsed flag variables so any subprocess that reads
+    # them (e.g. tee_to_log invoking commands that fan out) sees the
+    # same toggle the parser established. Cheap; these are short
+    # strings and the subagent invocations themselves do not consume
+    # them, but downstream tasks 4.x may grow callers that benefit.
+    export SINCE DRY_RUN VERBOSE NO_CURATOR
+
+    bootstrap_state_dir
+    acquire_lock
+    # Pre-flight MCP-transport probes (Req 5.1, 5.3; Decision 6).
+    # Cavemem first because (a) Req 5.5 mandates exit 4 (not 5)
+    # when only cavemem is down, and (b) cavemem is the more likely
+    # transient outage and a failure here `exit`s inside
+    # probe_mcp_server before the obsidian probe ever runs.
+    # probe_mcp_server is silent on success per Req 5.5.
+    probe_mcp_server cavemem 4
+    probe_mcp_server obsidian 5
+    # Verbose-mode liveness confirmation (Req 5.5 — only emit
+    # health-check output under --verbose). The bare `"$VERBOSE"`
+    # check is safe under `set -u` because the parser above
+    # unconditionally defaulted VERBOSE to "" before the loop.
+    # We keep the `:-` form here for diff-minimality with the prior
+    # task 3.2 wiring; it is a forward-compatible superset of the
+    # canonical bare form (matches both unset and "true").
+    # Output goes to stderr so it joins probe_mcp_server's own
+    # error stream and the upcoming tee_to_log pipeline without
+    # contaminating stdout, which is reserved for the success
+    # summary in task 4.x.
+    if [ "''${VERBOSE:-}" = "true" ]; then
+      printf 'memory-sync: cavemem and obsidian MCP servers reachable\n' >&2
+    fi
+    # Real main flow lands in tasks 4.x. For now, fall through to
+    # the bad-arg path. release_lock fires via the EXIT trap.
+    usage
+    exit 64
   '';
 }
