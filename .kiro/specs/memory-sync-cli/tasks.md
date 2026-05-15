@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Scaffold the script derivation and HM-module wrapper
-- [ ] 1.1 Create the empty script derivation skeleton
+- [x] 1.1 Create the empty script derivation skeleton
   - Create `scripts/memory-sync.nix` with the
     `{ pkgs, lib, opencodePackage }: pkgs.writeShellApplication { ... }`
     skeleton: `name = "memory-sync";`,
