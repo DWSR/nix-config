@@ -236,7 +236,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 2.1_
 
-- [ ] 3.2 Wire the cavemem and obsidian probes into the main flow
+- [x] 3.2 Wire the cavemem and obsidian probes into the main flow
   - In the main flow (after `acquire_lock`), call
     `probe_mcp_server cavemem 4` first, then
     `probe_mcp_server obsidian 5`. Cavemem-first ordering matches

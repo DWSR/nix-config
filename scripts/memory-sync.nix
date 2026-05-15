@@ -475,10 +475,8 @@ pkgs.writeShellApplication {
     #   - Caller decides whether to suppress success output via --verbose
     #     gating; this helper is silent on success per Req 5.5.
     #
-    # Currently unused by the script's own main flow; task 3.2 wires the
-    # helper into the post-lock pre-flight sequence (cavemem first with
-    # exit 4, then obsidian with exit 5).
-    # shellcheck disable=SC2329  # consumed by task 3.2
+    # Wired into the post-lock pre-flight sequence below (cavemem first
+    # with exit 4, then obsidian with exit 5) per Req 5.1, 5.3.
     probe_mcp_server() {
       local name="$1"
       local exit_code="$2"
@@ -521,8 +519,32 @@ pkgs.writeShellApplication {
       *)
         bootstrap_state_dir
         acquire_lock
-        # Real main flow lands in tasks 2.3+. For now, fall through to
-        # the bad-arg path. release_lock fires via the EXIT trap.
+        # Pre-flight MCP-transport probes (Req 5.1, 5.3; Decision 6).
+        # Cavemem first because (a) Req 5.5 mandates exit 4 (not 5)
+        # when only cavemem is down, and (b) per the task body,
+        # cavemem is the more likely transient outage and a failure
+        # here `exit`s inside probe_mcp_server before the obsidian
+        # probe ever runs. probe_mcp_server is silent on success per
+        # Req 5.5.
+        probe_mcp_server cavemem 4
+        probe_mcp_server obsidian 5
+        # Verbose-mode liveness confirmation (Req 5.5 — only emit
+        # health-check output under --verbose). The flag parser that
+        # sets VERBOSE lands in task 3.3; until then, VERBOSE is
+        # unset and the ''${VERBOSE:-} default-empty expansion keeps
+        # this gate quiet under set -u. Once 3.3 ships, the bare
+        # "$VERBOSE" form named in this task's body becomes safe;
+        # the :- form is a forward-compatible superset (matches
+        # both unset and "true"). Output goes to stderr so it joins
+        # probe_mcp_server's own error stream and the upcoming
+        # tee_to_log pipeline (which merges 2>&1 into the per-run
+        # log) without contaminating stdout, which is reserved for
+        # the success summary in task 4.x.
+        if [ "''${VERBOSE:-}" = "true" ]; then
+          printf 'memory-sync: cavemem and obsidian MCP servers reachable\n' >&2
+        fi
+        # Real main flow lands in tasks 3.3+. For now, fall through
+        # to the bad-arg path. release_lock fires via the EXIT trap.
         usage
         exit 64
         ;;
