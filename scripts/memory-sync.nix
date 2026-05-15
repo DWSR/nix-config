@@ -296,6 +296,155 @@ pkgs.writeShellApplication {
       fi
     }
 
+    # open_log: derive the log file path from $NOW (timestamp captured at
+    # start of run via now_utc()), apply 0077 umask BEFORE the first
+    # write, and create the file. The filename uses dashes instead of
+    # colons (Req 9.AC1) for filesystem compatibility.
+    #
+    # No-op when DRY_RUN=1 (Req 9.AC8).
+    #
+    # Inputs (read from caller scope, populated by main flow):
+    #   NOW      — invocation timestamp (UTC ISO 8601), set by now_utc()
+    #   LOG_DIR  — set at script init (top of the script)
+    #   DRY_RUN  — 1 if --dry-run, else 0
+    #
+    # Outputs (set in caller scope):
+    #   LOG_FILE — absolute path to the open log file
+    #
+    # The umask is applied BEFORE the first redirection so the resulting
+    # file is created with mode 0600 (Req 9.AC10 — log files contain
+    # potentially sensitive operator data; not world-readable).
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # tasks 4.x / 5.x.
+    # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
+    open_log() {
+      if [ "''${DRY_RUN:-0}" = "1" ]; then
+        return 0
+      fi
+      # Replace colons with dashes in $NOW for filesystem compatibility:
+      # 2026-05-14T10:30:00Z → 2026-05-14T10-30-00Z (Req 9.AC1).
+      local fname="''${NOW//:/-}"
+      LOG_FILE="$LOG_DIR/''${fname}.log"
+      # umask 0077 BEFORE the first redirection so the log file is
+      # created with mode 0600 (Req 9.AC10).
+      umask 0077
+      # Touch the file with the umask applied so subsequent appends
+      # inherit the right mode.
+      : > "$LOG_FILE"
+    }
+
+    # log_append <text>: append text to $LOG_FILE (newline added). No-op
+    # when DRY_RUN=1 OR LOG_FILE is unset (open_log was skipped).
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # tasks 4.x / 5.x.
+    # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
+    log_append() {
+      if [ "''${DRY_RUN:-0}" = "1" ] || [ -z "''${LOG_FILE:-}" ]; then
+        return 0
+      fi
+      printf '%s\n' "$1" >> "$LOG_FILE"
+    }
+
+    # log_header: write the run-start header block (Req 9.AC3) —
+    # invocation timestamp, resolved range, marker-before, flag values,
+    # opencode binary path.
+    #
+    # Inputs (read from caller scope, populated by main flow before this
+    # is called):
+    #   NOW              — invocation timestamp (UTC ISO 8601)
+    #   RANGE_START      — resolved range start
+    #   RANGE_END        — resolved range end
+    #   MARKER_BEFORE    — marker contents before the run, or "<absent>"
+    #   SINCE            — --since value, or empty
+    #   DRY_RUN          — 1 if --dry-run, else 0
+    #   NO_CURATOR       — 1 if --no-curator, else 0
+    #   VERBOSE          — 1 if --verbose, else 0
+    #   OPENCODE_BIN     — baked at derivation time
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # tasks 4.x / 5.x.
+    # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
+    log_header() {
+      log_append "memory-sync run header"
+      log_append "  invocation:  $NOW"
+      log_append "  range:       $RANGE_START → $RANGE_END"
+      log_append "  marker:      ''${MARKER_BEFORE:-<absent>} (before)"
+      log_append "  flags:       --since=''${SINCE:-<unset>} --dry-run=''${DRY_RUN:-0} --no-curator=''${NO_CURATOR:-0} --verbose=''${VERBOSE:-0}"
+      log_append "  opencode:    $OPENCODE_BIN"
+      log_append ""
+    }
+
+    # log_footer: write the run-end footer block (Req 9.AC6) —
+    # marker-after, exit code, synth summary one-liner.
+    #
+    # Inputs (read from caller scope):
+    #   EXIT_CODE        — final exit code about to be returned
+    #   MARKER_AFTER     — marker contents after run, or "<unchanged>"
+    #   SYNTH_SUMMARY    — one-line summary string from the parsed
+    #                      structured return; "(none)" when not available
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # tasks 4.x / 5.x.
+    # shellcheck disable=SC2329  # consumed by tasks 4.x, 5.x
+    log_footer() {
+      log_append ""
+      log_append "memory-sync run footer"
+      log_append "  marker:      ''${MARKER_AFTER:-<unchanged>} (after)"
+      log_append "  exit code:   ''${EXIT_CODE:-?}"
+      log_append "  summary:     ''${SYNTH_SUMMARY:-(none)}"
+    }
+
+    # prune_logs: keep only the 10 most recent log files in $LOG_DIR
+    # (Req 9.AC7). Sorted by mtime via `ls -1t`; tail -n +11 outputs
+    # the 11th-and-onward filenames, which xargs feeds to rm -f.
+    # Safe when fewer than 11 files exist (tail produces no output).
+    #
+    # No-op when DRY_RUN=1 (Req 9.AC8).
+    #
+    # The pipeline runs from inside $LOG_DIR via a subshell so xargs
+    # operates on bare filenames; the final `|| true` guards against a
+    # partial-pipeline failure (e.g. ls finds nothing on first run).
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # task 4.3.
+    # shellcheck disable=SC2329  # consumed by task 4.3
+    prune_logs() {
+      if [ "''${DRY_RUN:-0}" = "1" ]; then
+        return 0
+      fi
+      # ls is preferred here over find because the prescribed shape
+      # (timestamped filenames sorting chronologically; `ls -1t` for
+      # mtime-ordered output) is the cleanest expression of the
+      # last-10 retention rule. Filenames are script-controlled
+      # ISO-8601-shaped strings (no spaces, no newlines), so SC2012's
+      # non-alphanumeric concern does not apply.
+      # shellcheck disable=SC2012
+      ( cd "$LOG_DIR" && ls -1t 2>/dev/null | tail -n +11 | xargs -I{} rm -f -- "{}" ) || true
+    }
+
+    # tee_to_log <command...>: run a command and tee stdout+stderr
+    # through $LOG_FILE (Req 9.AC4, 9.AC5). When VERBOSE=1, also tee
+    # to /dev/tty so the operator sees progress in real time
+    # (Req 9.AC9).
+    #
+    # The caller is responsible for not invoking this under DRY_RUN=1
+    # (the dry-run code path should announce the would-be invocation
+    # via stdout instead and skip the real command entirely; see Req
+    # 7.AC11).
+    #
+    # Currently unused by the script's own main flow; consumed by
+    # task 4.x.
+    # shellcheck disable=SC2329  # consumed by task 4.x
+    tee_to_log() {
+      if [ "''${VERBOSE:-0}" = "1" ]; then
+        "$@" 2>&1 | tee -a "$LOG_FILE" | tee /dev/tty > /dev/null
+      else
+        "$@" 2>&1 | tee -a "$LOG_FILE" > /dev/null
+      fi
+    }
+
     usage() {
       cat <<'USAGE'
     memory-sync: orchestrate the cavemem → synthesizer → curator pipeline.

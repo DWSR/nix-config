@@ -175,7 +175,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 2.3_
 
-- [ ] 2.5 Implement the per-run logging surface
+- [x] 2.5 Implement the per-run logging surface
   - Add `open_log()` that captures `NOW` formatted with dashes
     instead of colons (`date -u -d "$NOW" +%Y-%m-%dT%H-%M-%SZ` or
     equivalent string substitution), sets `LOG_FILE=
@@ -525,3 +525,18 @@
   a future task explicitly needs per-host enabling/disabling (e.g.,
   selective opt-out), use `programs.memory-sync.enable = lib.mkForce false;`
   in the per-host file rather than restructuring the wiring.
+- 2026-05-14 (task 2.5 → 3.3 cross-task action): The 2.5 logging helpers
+  test `[ "${DRY_RUN:-0}" = "1" ]` (and same for VERBOSE/NO_CURATOR), but
+  task 3.3's flag parser is specified to set `DRY_RUN=true` / `VERBOSE=true`
+  / `NO_CURATOR=true`, and task 3.2 already uses `[ "$VERBOSE" = "true" ]`.
+  At integration the 2.5 guards will all evaluate FALSE, violating Req
+  9.AC8/9.AC9. **Action for the task-3.3 implementer:** when wiring up the
+  flag parser, ALSO flip the four `= "1"` checks in scripts/memory-sync.nix
+  (open_log, log_append, prune_logs, tee_to_log) to `= "true"` and update
+  the four docstring lines that say "1 if --dry-run, else 0" / "1 if
+  --verbose, else 0" / "1 if --no-curator, else 0" to "true if X, else
+  empty/false". Per task 3.3 the parser must default each flag variable
+  to `false`/`""` before the loop, so a bare `[ "$DRY_RUN" = "true" ]`
+  is correct without `:-` defaults. This is the same family as the
+  vault-synthesizer-agent task 1.10 fabricated-field-name lesson: cite
+  contract verbatim across sections.
