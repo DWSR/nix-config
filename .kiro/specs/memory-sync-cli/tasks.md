@@ -512,3 +512,16 @@
   - _Requirements: 12.1, 12.2, 12.3_
   - _Boundary: TroubleshootingMemoryNote_
   - _Depends: 6.2_
+
+## Implementation Notes
+
+- 2026-05-14 (task 1.3): Task body says "wire into configurations/personal/...
+  and configurations/shopify/..." but the actual repo structure uses
+  `home-manager/common/default.nix` as the shared aggregator (both hosts
+  inherit it via `../../../home-manager/common`). Wired memory-sync there
+  alongside the existing cc-sdd precedent (`./cc-sdd.nix` import +
+  `programs.cc-sdd.enable = true;`). Single-source wiring; both hosts get
+  it automatically. Per-host wiring would have duplicated two lines. If
+  a future task explicitly needs per-host enabling/disabling (e.g.,
+  selective opt-out), use `programs.memory-sync.enable = lib.mkForce false;`
+  in the per-host file rather than restructuring the wiring.
