@@ -21,7 +21,7 @@
   - _Requirements: 1.1, 1.3, 1.4_
   - _Boundary: OrchestratorScript_
 
-- [ ] 1.2 Create the home-manager module wrapper
+- [x] 1.2 Create the home-manager module wrapper
   - Create `home-manager/common/memory-sync.nix` mirroring
     `home-manager/common/cc-sdd.nix` shape: `{ pkgs, lib, config, ... }`
     top-level args; `cfg = config.programs.memory-sync;`;
