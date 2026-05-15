@@ -50,7 +50,7 @@
   - _Boundary: MemorySyncHmModule_
   - _Depends: 1.1_
 
-- [ ] 1.3 Wire the module into both host configurations
+- [x] 1.3 Wire the module into both host configurations
   - In `configurations/personal/...` (exact path determined by walking
     the existing import tree), add an `imports = [
     ../../home-manager/common/memory-sync.nix ];` entry alongside the
