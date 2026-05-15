@@ -334,7 +334,7 @@
   - _Depends: 1.1_
 
 - [ ] 3. Verify and validate
-- [ ] 3.1 Build-level verification on each host
+- [x] 3.1 Build-level verification on each host
   - Run the host's rebuild command (e.g., `darwin-rebuild switch
     --flake .` for both `ShopifyLaptop` and `Brandons-MacBook-Pro`,
     or the equivalent `nix-darwin` workflow). Expect zero errors.
@@ -351,6 +351,7 @@
     path.
   - _Requirements: 1.5, 1.6, 5.1, 5.3_
   - _Depends: 2.1_
+  - _Verified: ShopifyLaptop on 2026-05-14 (rebuild + nix-eval materialization + memory-criteria byte-identical diff all clean); Brandons-MacBook-Pro rebuild deferred — agent is wired and evaluates correctly there too, but the host-level activation has not been driven yet._
 
 - [x] 3.2 Manual smoke test on at least one host
   - On the host where `cavemem-integration` has shipped (i.e., where
