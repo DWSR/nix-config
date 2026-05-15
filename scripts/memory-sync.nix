@@ -445,6 +445,60 @@ pkgs.writeShellApplication {
       fi
     }
 
+    # probe_mcp_server <server-name> <exit-code-on-failure>
+    # Pre-flight HTTP-transport health probe against mcphub
+    # (Req 5.1, 5.2, 5.3, 5.4, 5.6; Decision 6 — pre-flight at the
+    # HTTP-transport layer, NOT at the MCP-tool layer). Issues a
+    # short-timeout (≤ 2s) POST to $MCPHUB_BASE/api/servers/info with
+    # body {"server_name":"<name>"} and grep-asserts that the response
+    # body contains "status":"connected". On any failure (curl non-2xx,
+    # connect refused, timeout, OR a response whose status field is not
+    # "connected"), prints an actionable two-line error to stderr naming
+    # the server explicitly and the launchctl-kickstart recovery hint
+    # (Req 5.2, 5.4, 8.5, 8.6), and exits with the supplied exit code.
+    #
+    # The endpoint shape is documented in
+    # `memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md`:
+    # mcp-hub v4.2.1 does NOT expose `GET /api/servers/<name>` — that
+    # path returns 404. The POST /api/servers/info shape was verified
+    # live during the cavemem-integration spec's task 9.2 pass and is
+    # the documented per-server status surface. The reference probe in
+    # `home-manager/common/cavemem.nix:549-559` mirrors this shape; we
+    # match its style (separate stderr lines, --max-time 2,
+    # `"status":"connected"` grep) so failure-mode parity holds.
+    #
+    # Caller contract:
+    #   - $MCPHUB_BASE must be set (top-of-script default is
+    #     "http://localhost:37373").
+    #   - Caller decides WHEN to invoke (after lock acquisition, before
+    #     subagent spawn — Req 5.1).
+    #   - Caller decides whether to suppress success output via --verbose
+    #     gating; this helper is silent on success per Req 5.5.
+    #
+    # Currently unused by the script's own main flow; task 3.2 wires the
+    # helper into the post-lock pre-flight sequence (cavemem first with
+    # exit 4, then obsidian with exit 5).
+    # shellcheck disable=SC2329  # consumed by task 3.2
+    probe_mcp_server() {
+      local name="$1"
+      local exit_code="$2"
+      local body
+      body="{\"server_name\":\"''${name}\"}"
+
+      local response
+      response=$(curl -sf --max-time 2 \
+        -X POST \
+        -H "Content-Type: application/json" \
+        -d "$body" \
+        "$MCPHUB_BASE/api/servers/info" 2>/dev/null) || response=""
+
+      if ! printf "%s" "$response" | grep -q "\"status\":\"connected\""; then
+        echo "memory-sync: ERROR: ''${name} MCP unreachable." >&2
+        echo "Recovery: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+        exit "$exit_code"
+      fi
+    }
+
     usage() {
       cat <<'USAGE'
     memory-sync: orchestrate the cavemem → synthesizer → curator pipeline.

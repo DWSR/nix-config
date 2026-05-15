@@ -210,7 +210,7 @@
   - _Depends: 2.1, 2.4_
 
 - [ ] 3. Implement pre-flight MCP probes and flag parsing
-- [ ] 3.1 Implement the mcphub HTTP probe helper
+- [x] 3.1 Implement the mcphub HTTP probe helper
   - Add `probe_mcp_server(name, exit_code)` that issues a POST
     to `"$MCPHUB_BASE/api/servers/info"` with a JSON body of
     `{"server_name":"${name}"}` and `Content-Type: application/json`,
