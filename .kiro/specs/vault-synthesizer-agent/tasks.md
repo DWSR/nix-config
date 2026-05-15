@@ -352,7 +352,7 @@
   - _Requirements: 1.5, 1.6, 5.1, 5.3_
   - _Depends: 2.1_
 
-- [ ] 3.2 Manual smoke test on at least one host
+- [x] 3.2 Manual smoke test on at least one host
   - On the host where `cavemem-integration` has shipped (i.e., where
     `home.cavemem.enable = true` and the cavemem MCP is reachable),
     open an opencode session and invoke `@vault-synthesizer 24
