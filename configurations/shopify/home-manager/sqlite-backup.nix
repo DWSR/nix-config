@@ -39,6 +39,39 @@
         # retention policy from the kiro-spec-requirements pass on
         # 2026-05-14. No tier overrides needed.
       }
+      {
+        name = "opencode";
+        # opencode's session DB lives at a fixed XDG-Data-Home-relative
+        # path and is Drizzle-managed. Verified on this host
+        # 2026-05-15: ~/.local/share/opencode/opencode-stable.db (414 MB
+        # at time of wiring; SQLite WAL mode, Litestream-safe). Each
+        # turn writes `tokens.{input,output,reasoning,cache.read,write}`
+        # plus pre-computed cost into `message.data`, which is the
+        # baseline data source for the opencode-cost-diagnosis spec
+        # (see .kiro/specs/opencode-cost-diagnosis/brief.md). Losing
+        # session history would erase that baseline, hence backing it
+        # up here.
+        #
+        # Sensitivity: this DB contains full conversation history
+        # (prompts, tool outputs, file contents read by the agent).
+        # Same sensitivity profile as cavemem above — both capture
+        # complete session content. Shipped encrypted via the existing
+        # archive passphrase (1Password: sqlite-backup-archive); trust
+        # model is identical to cavemem on this host.
+        #
+        # Personal-host wiring intentionally deferred, mirroring the
+        # cavemem precedent — operator-decision pending on the personal
+        # destination.
+        path = "${config.xdg.dataHome}/opencode/opencode-stable.db";
+        remote = "gdrive";
+        # Default tiers match the opencode workload profile: bursty
+        # writes during active sessions but otherwise quiet; default
+        # 300s replication cadence and 03:00 daily archive with
+        # 7d/4w/6m retention are appropriate. Re-evaluate if the DB
+        # grows substantially (it is already ~10x cavemem's size — at
+        # ~500MB+ consider tightening replication retention to keep
+        # off-host bandwidth bounded).
+      }
     ];
   };
 
