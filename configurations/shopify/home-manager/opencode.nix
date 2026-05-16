@@ -1,4 +1,9 @@
-{ pkgs, lib, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  ...
+}:
 let
   proxyHeader = {
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
@@ -12,6 +17,21 @@ let
       headers = proxyHeader;
     };
   };
+
+  # Mirror the withCaveman helper from home-manager/common/opencode.nix so
+  # this host's Shopify-only subagents (stack-captain, yb-sleuth) get the
+  # caveman-lite snippet appended whenever home.opencode.enableCaveman is
+  # true, in lock-step with the common nix-pkg / nvim-tailor /
+  # security-auditor / vault-curator / vault-synthesizer agents. Reads the
+  # same snippet file via a relative path so a vendored snippet update
+  # propagates to both call sites simultaneously.
+  cavemanSnippet = builtins.readFile ../../../home-manager/common/opencode/caveman-lite.md;
+  withCaveman =
+    base:
+    if config.home.opencode.enableCaveman then
+      builtins.readFile base + "\n\n" + cavemanSnippet
+    else
+      base;
 in
 {
   xdg.configFile."opencode/tui.json" = {
@@ -83,8 +103,8 @@ in
   };
 
   programs.opencode.agents = {
-    stack-captain = ./agents/stack-captain.md;
-    yb-sleuth = ./agents/yb-sleuth.md;
+    stack-captain = withCaveman ./agents/stack-captain.md;
+    yb-sleuth = withCaveman ./agents/yb-sleuth.md;
   };
 
   programs.opencode.settings = {
