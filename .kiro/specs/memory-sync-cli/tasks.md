@@ -428,7 +428,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 4.3, 2.5_
 
-- [ ] 5.2 Polish operator-facing stderr error messages
+- [x] 5.2 Polish operator-facing stderr error messages
   - Walk every `exit <N>` site and verify the preceding stderr
     print is actionable (names the failure class, the path or
     server, and the recovery hint where applicable).

@@ -1004,14 +1004,29 @@ pkgs.writeShellApplication {
         EXIT_CODE=1
         SYNTH_SUMMARY="(none)"
         MARKER_AFTER="<unchanged>"
+        # Req 7.AC4: surface the synthesizer's stderr to the operator's
+        # stderr verbatim. The synth's stdout+stderr were merged via
+        # 2>&1 above and captured to $LOG_FILE, so the log already
+        # holds the verbatim bytes (also satisfying the "append to
+        # per-run log" half of 7.AC4). Replay the tail of the log to
+        # the operator's stderr — bracketed with delimiter lines so a
+        # human reading the terminal can distinguish the captured
+        # output from the script's own summary trailer below — BEFORE
+        # log_footer writes the footer block, so the tailed lines are
+        # the synth's actual output rather than the script's footer.
+        if [ -f "$LOG_FILE" ]; then
+          printf -- '--- last 20 lines of %s (synthesizer output) ---\n' "$LOG_FILE" >&2
+          tail -n 20 "$LOG_FILE" >&2
+          printf -- '--- end of log tail ---\n' >&2
+        fi
         log_footer
         rm -f "$SYNTH_CAPTURE"
-        # The synth's stderr is already in $LOG_FILE via the 2>&1
-        # merge above; emit a concise operator-facing line so the
-        # exit code's meaning is immediately legible without
-        # opening the log (Req 7.AC4 — verbatim stderr reaches the
-        # log; the operator-facing summary line below is additive).
-        printf 'memory-sync: synthesizer exited %d. Marker untouched. Re-run memory-sync to retry the same window.\n' "$synth_exit" >&2
+        # Concise operator-facing trailer naming the failure class
+        # and the recovery action (Req 7.AC4, 8.AC2). The
+        # parenthetical "(marker untouched)" reassures the operator
+        # that re-running covers the same window — no state to
+        # reconcile by hand.
+        printf 'memory-sync: synthesizer exited %d. Re-run memory-sync to retry the same window (marker untouched).\n' "$synth_exit" >&2
         release_lock
         exit 1
       fi
@@ -1118,12 +1133,25 @@ pkgs.writeShellApplication {
           EXIT_CODE=2
           SYNTH_SUMMARY="''${SYNTH_SUMMARY:-(none)}"
           MARKER_AFTER="<unchanged>"
+          # Req 7.7: surface the curator's stderr to the operator's
+          # stderr verbatim. Same approach as the synth-failure
+          # branch above — the 2>&1 merge into $LOG_FILE holds the
+          # verbatim bytes; replay the tail to the operator's stderr
+          # BEFORE log_footer writes its block so the tailed lines
+          # are the curator's actual output, not the script's
+          # footer.
+          if [ -f "$LOG_FILE" ]; then
+            printf -- '--- last 20 lines of %s (curator output) ---\n' "$LOG_FILE" >&2
+            tail -n 20 "$LOG_FILE" >&2
+            printf -- '--- end of log tail ---\n' >&2
+          fi
           log_footer
-          # The curator's stderr is already in $LOG_FILE via the
-          # 2>&1 merge above; emit a concise operator-facing line
-          # so the exit code's meaning is immediately legible
-          # without opening the log (Req 7.7).
-          printf 'memory-sync: curator exited %d. Marker untouched. Re-run memory-sync to retry the same window.\n' "$curator_exit" >&2
+          # Concise operator-facing trailer naming the failure
+          # class and the recovery action (Req 7.7, 8.AC3). The
+          # parenthetical "(marker untouched)" reassures the
+          # operator that re-running covers the same window — no
+          # state to reconcile by hand.
+          printf 'memory-sync: curator exited %d. Re-run memory-sync to retry the same window (marker untouched).\n' "$curator_exit" >&2
           release_lock
           exit 2
         fi
