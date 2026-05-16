@@ -42,6 +42,17 @@ in
     ]
   );
 
+  # Apply the vendored caveman-lite output style to every common subagent
+  # (nix-pkg, nvim-tailor, security-auditor, vault-curator,
+  # vault-synthesizer). The withCaveman helper in
+  # home-manager/common/opencode.nix appends ./opencode/caveman-lite.md to
+  # each agent's system prompt at Nix-eval time. Drops filler / hedging /
+  # pleasantries while preserving code, paths, identifiers, and error
+  # strings byte-for-byte — net win on token usage during SDD-heavy
+  # workflows (kiro-impl dispatch chains in particular). Off-by-default
+  # was a deliberate Shopify-host carve-out; user has opted in.
+  home.opencode.enableCaveman = true;
+
   # Shopify-specific runtime env for opencode — fetches API key + proxy base
   # from `devx llm-gateway` on every invocation, and mints a per-invocation
   # session id used by the provider headers for sticky routing.
