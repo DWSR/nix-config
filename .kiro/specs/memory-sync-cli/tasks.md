@@ -450,7 +450,7 @@
   - _Depends: 4.3, 5.1_
 
 - [ ] 6. Validate end-to-end and ship the operator memory note
-- [ ] 6.1 Run the manual smoke-test sequence on one host
+- [x] 6.1 Run the manual smoke-test sequence on one host
   - On a host with cavemem + obsidian MCP both healthy and
     `programs.memory-sync.enable = true` activated, run the
     six-step manual smoke sequence from the design's "Manual
@@ -525,6 +525,20 @@
   a future task explicitly needs per-host enabling/disabling (e.g.,
   selective opt-out), use `programs.memory-sync.enable = lib.mkForce false;`
   in the per-host file rather than restructuring the wiring.
+- 2026-05-16 (task 6.1, ShopifyLaptop): all 6 smoke steps PASS against live
+  system. Step 1 (`--help`): exit 0, usage block present. Step 2
+  (`--dry-run`): exit 0, no log written, marker unchanged, dry-run
+  announcements emitted. Step 3 (`--no-curator --since "1 hour ago"`):
+  exit 0, marker unchanged (--since one-shot), curator skipped, real synth
+  ran with 0 drafts (selectivity at work for short window). Step 4
+  (no-args full run): exit 0, marker advanced 2026-05-16T00:49:00Z →
+  2026-05-16T01:06:38Z, curator ran, prune kept exactly 10 logs. Step 5
+  (lock-held via pre-created lock dir): exit 6, stderr names lock path +
+  manual-removal hint. Step 6 (mcphub bootout cavemem-down check): exit
+  4, stderr names cavemem + kickstart hint; recovered via `launchctl
+  bootstrap gui/$UID ~/Library/LaunchAgents/com.ravitemer.mcp-hub.plist`
+  (note: bootout removes the service from launchd registry, so kickstart
+  alone won't bring it back — must bootstrap the plist).
 - 2026-05-15 (task 5.1): design.md §"Per-run log file" (~lines 1224-1241)
   uses header `=== memory-sync run <ts> ===` framing and footer labels
   `marker-before:` / `marker-after:` / `exit-code:` / `synth-summary:`. The
