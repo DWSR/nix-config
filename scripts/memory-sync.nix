@@ -448,6 +448,78 @@ pkgs.writeShellApplication {
       ( cd "$LOG_DIR" && ls -1t 2>/dev/null | tail -n +11 | xargs -I{} rm -f -- "{}" ) || true
     }
 
+    # print_operator_summary: emit the operator-facing success summary
+    # to stdout (task 4.3 body). Five fields per the task body spec:
+    # range, draft count, curator status, marker status, log path.
+    # Output shape adapts to --dry-run, --since, and --no-curator. The
+    # caller MUST have already set MARKER_AFTER (the 4.3 marker-update
+    # branch above does this) before invoking this helper.
+    #
+    # Inputs (read from caller scope; all set by 4.x main flow):
+    #   DRY_RUN, SINCE, NO_CURATOR  — flag toggles (parser defaults to "")
+    #   NOW                         — invocation timestamp (UTC ISO 8601)
+    #   RANGE_START, RANGE_END      — resolved by compute_range
+    #   SYNTH_DRAFTS_WRITTEN        — count parsed by parse_synth_report;
+    #                                 unset when parse failed or under
+    #                                 --dry-run (parser not invoked)
+    #   MARKER_AFTER                — set by 4.3's marker branch
+    #   LOG_FILE                    — set by open_log on real path;
+    #                                 unset under --dry-run
+    #
+    # The header line distinguishes the real-success and dry-run shapes
+    # so an operator scanning stdout can tell at a glance whether any
+    # mutations were applied. Stdout (not stderr) per the task body:
+    # "print the operator-facing human-readable summary to stdout".
+    #
+    # Currently consumed only by 4.3's success branch.
+    # shellcheck disable=SC2329  # consumed by task 4.3
+    print_operator_summary() {
+      local marker_line curator_line drafts_line log_line header
+
+      if [ "$DRY_RUN" = "true" ]; then
+        marker_line="would advance to $NOW"
+      elif [ -n "$SINCE" ]; then
+        marker_line="unchanged (--since was supplied)"
+      else
+        marker_line="advanced to $NOW"
+      fi
+
+      if [ "$NO_CURATOR" = "true" ]; then
+        curator_line="skipped via --no-curator"
+      elif [ "$DRY_RUN" = "true" ]; then
+        curator_line="would have invoked"
+      else
+        curator_line="run"
+      fi
+
+      if [ "$DRY_RUN" = "true" ]; then
+        drafts_line="would have synthesized (no invocation)"
+      elif [ -n "''${SYNTH_DRAFTS_WRITTEN:-}" ]; then
+        drafts_line="''${SYNTH_DRAFTS_WRITTEN} written"
+      else
+        drafts_line="synth completed (parse failed; see log)"
+      fi
+
+      if [ "$DRY_RUN" = "true" ]; then
+        log_line="not written (--dry-run)"
+      else
+        log_line="''${LOG_FILE:-<unknown>}"
+      fi
+
+      if [ "$DRY_RUN" = "true" ]; then
+        header="DRY RUN: success (no mutations applied)"
+      else
+        header="memory-sync: success"
+      fi
+
+      printf '%s\n' "$header"
+      printf '  range:    %s → %s\n' "$RANGE_START" "$RANGE_END"
+      printf '  drafts:   %s\n' "$drafts_line"
+      printf '  curator:  %s\n' "$curator_line"
+      printf '  marker:   %s\n' "$marker_line"
+      printf '  log:      %s\n' "$log_line"
+    }
+
     # tee_to_log <command...>: run a command and tee stdout+stderr
     # through $LOG_FILE (Req 9.AC4, 9.AC5). When VERBOSE="true", also
     # tee to /dev/tty so the operator sees progress in real time
@@ -1060,11 +1132,66 @@ pkgs.writeShellApplication {
       fi
     fi
 
-    # Real success path lands in tasks 4.2 (curator) and 4.3 (marker
-    # update + log prune + exit 0). Until those land, fall through to
-    # the bad-arg placeholder so the build smoke remains stable.
-    # release_lock fires via the EXIT trap.
-    usage
-    exit 64
+    # --- Success path: marker update + log footer + prune (task 4.3) ----
+    #
+    # Reached when:
+    #   - synth succeeded (real run) or its dry-run announcement
+    #     completed, AND
+    #   - curator succeeded (real run), was skipped via --no-curator, or
+    #     its dry-run announcement completed.
+    # Both the dry-run branch (lines 850-878 above) and the real branch
+    # (lines 879-1061 above) converge here after their respective
+    # success paths complete; failure paths exit 1 / 2 earlier and
+    # never reach this code.
+    #
+    # Step 1: marker-update branch (Req 3.AC6, 3.AC7, 7.AC8, 10.AC5).
+    #   --dry-run         → print announcement, skip the write
+    #   --since supplied  → skip the write (one-shot override)
+    #   otherwise         → write_marker_atomic "$NOW"
+    # MARKER_AFTER is set in all three sub-branches for the log_footer
+    # (Req 9.AC6) and the operator summary.
+    #
+    # Step 2: log_footer with EXIT_CODE=0 and the parsed SYNTH_SUMMARY
+    # (Req 9.AC6). log_footer is a no-op under --dry-run because
+    # log_append short-circuits when DRY_RUN=true.
+    #
+    # Step 3: prune_logs (Req 9.AC7). The existing prune_logs helper
+    # itself gates on DRY_RUN=true per Req 9.AC8, so an unconditional
+    # call here is correct for both real-success and dry-run paths.
+    #
+    # Step 4: print_operator_summary — five-field human-readable summary
+    # to stdout (task 4.3 body).
+    #
+    # Step 5: release_lock + exit 0 (Req 8.AC1). The EXIT trap would
+    # also clean up the lock; the explicit release_lock matches the
+    # synth-fail / curator-fail patterns above.
+    if [ "$DRY_RUN" = "true" ]; then
+      # Req 7.AC11 / 3.AC7 — dry-run announces the would-write but
+      # SKIPS the marker mutation. The "DRY RUN:" prefix matches the
+      # synth and curator dry-run announcement shapes above for a
+      # uniform operator-facing trail on stdout.
+      printf 'DRY RUN: would update marker to %s\n' "$NOW"
+      MARKER_AFTER="<unchanged>"
+    elif [ -n "$SINCE" ]; then
+      # --since is a one-shot override; marker is left as-is so a
+      # subsequent no-flag run still picks up from the persisted
+      # marker (Req 3.AC6, 7.AC8, 10.AC5).
+      MARKER_AFTER="<unchanged>"
+    else
+      # Standard success path: advance the marker atomically (Req
+      # 3.AC7). write_marker_atomic exits 3 via release_lock on
+      # failure, so a return from this call means the marker file now
+      # contains exactly $NOW.
+      write_marker_atomic "$NOW"
+      MARKER_AFTER="$NOW"
+    fi
+
+    EXIT_CODE=0
+    log_footer
+    prune_logs
+    print_operator_summary
+
+    release_lock
+    exit 0
   '';
 }

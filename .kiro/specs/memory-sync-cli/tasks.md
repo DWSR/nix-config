@@ -373,7 +373,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 4.1_
 
-- [ ] 4.3 Implement the marker-update + log-prune success path
+- [x] 4.3 Implement the marker-update + log-prune success path
   - After the curator stage completes successfully (or was
     skipped via `--no-curator`), AND `--dry-run` is NOT in
     effect, AND `--since` was NOT supplied: call
@@ -525,6 +525,19 @@
   a future task explicitly needs per-host enabling/disabling (e.g.,
   selective opt-out), use `programs.memory-sync.enable = lib.mkForce false;`
   in the per-host file rather than restructuring the wiring.
+- 2026-05-15 (task 4.3): genuine spec-internal conflict — Req 9.7 says "After
+  a successful run AND after the marker update, memory-sync shall prune older
+  log files"; design.md §OrchestratorScript Service Interface Postconditions
+  says "On exit 0 with `--since` or `--dry-run`: marker untouched; logs
+  untouched (dry-run) or written but not pruned (--since)"; task 4.3 body
+  says only "call `prune_logs` (skipped on dry-run per Requirement 9.AC8)"
+  without mentioning `--since`. Task 4.3 followed the task-body literal
+  reading (always prune on success including `--since`); both reviewer and
+  implementer flagged for follow-up spec amendment. User-visible effect is
+  small: one extra `ls | tail | rm` per `--since` run; cannot lose data
+  because prune respects the 10-file floor. If a future maintainer wants
+  the design-doc behavior, add `[ -z "$SINCE" ]` guard inside `prune_logs`
+  or before the prune call site at the end of the main flow.
 - 2026-05-14 (task 2.5 → 3.3 cross-task action): The 2.5 logging helpers
   test `[ "${DRY_RUN:-0}" = "1" ]` (and same for VERBOSE/NO_CURATOR), but
   task 3.3's flag parser is specified to set `DRY_RUN=true` / `VERBOSE=true`
