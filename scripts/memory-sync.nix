@@ -473,6 +473,95 @@ pkgs.writeShellApplication {
       fi
     }
 
+    # parse_synth_report: read $SYNTH_CAPTURE, extract the synthesizer's
+    # final structured-return JSON object from the LAST fenced code block
+    # in any assistant-message text within the captured event stream, and
+    # populate shell variables in the caller scope:
+    #   SYNTH_TIME_RANGE_START, SYNTH_TIME_RANGE_END,
+    #   SYNTH_OBS_SCANNED, SYNTH_CLUSTERS_IDENT, SYNTH_CLUSTERS_PROM,
+    #   SYNTH_CLUSTERS_SKIP, SYNTH_DRAFTS_WRITTEN,
+    #   SYNTH_DRAFT_PATHS (newline-separated; empty if no drafts),
+    #   SYNTH_SUMMARY (one-line summary string for the log footer).
+    #
+    # Per `home-manager/common/agents/vault-synthesizer.md` `## Report`,
+    # the agent emits the structured return as a JSON object literal
+    # inside a fenced markdown code block in its final assistant message.
+    # opencode `--format json` emits one event per stdout line; the exact
+    # event-shape keys (`.type`, `.role`, `.text`, `.content`, …) are not
+    # pinned in this repo's docs, so the parser is intentionally tolerant:
+    # it walks every string value in every event via `jq -r '..|strings?
+    # // empty'`, scans for fenced code blocks via awk, and selects the
+    # LAST fenced block whose body parses as a JSON object containing the
+    # documented seven required fields.
+    #
+    # On parse failure (no event stream, no matching fenced block, or
+    # missing required fields), sets SYNTH_SUMMARY="(parse failed)" and
+    # leaves the count vars empty / unset. For task 4.1 a parse failure
+    # is non-fatal — only the synthesizer's exit code drives the
+    # success / fail branch; the parsed values feed task 4.2 (curator
+    # prompt) and task 5.1 (log-footer summary line).
+    #
+    # Inputs (read from caller scope):
+    #   SYNTH_CAPTURE — path to the per-run event-stream tempfile
+    #
+    # Currently consumed by the main flow's success branch (4.1);
+    # the parsed shell vars are read by tasks 4.2, 5.1.
+    # SC2329: helper called only from the main-flow branch below.
+    # SC2034: SYNTH_DRAFT_PATHS / SYNTH_TIME_RANGE_START /
+    # SYNTH_TIME_RANGE_END are produced here for downstream tasks
+    # (4.2 builds the curator prompt from SYNTH_DRAFT_PATHS; 5.1 may
+    # surface the resolved time range in the log footer) but are not
+    # yet consumed within this file.
+    # shellcheck disable=SC2329,SC2034
+    parse_synth_report() {
+      local report
+      # Step 1: walk every string value in every JSON event line and
+      # emit it as RAW text (newlines decoded, quotes stripped) on its
+      # own line. `jq -Rr 'fromjson? | ..|strings? // empty'` is the
+      # canonical shape:
+      #   -R     read each stdin line as a raw string (so a malformed,
+      #          non-JSON line cannot fail the whole filter)
+      #   -r     emit string outputs without surrounding quotes and
+      #          with internal `\n` decoded to real newlines (so awk
+      #          below can match `^```` lines literally — without -r
+      #          the strings stay JSON-encoded and `\n` remains the
+      #          two-byte sequence backslash-n, which never matches an
+      #          awk `^```` line anchor)
+      #   fromjson?  parse the line as JSON; on failure emit nothing
+      #   ..|strings? // empty  walk the entire JSON tree, emitting
+      #          every string value regardless of where in the event
+      #          shape it lives. Robust to opencode's internal event
+      #          shape (`.text` vs `.content` vs `.message.parts[…]`
+      #          etc.) — we don't need to know the exact key path.
+      # Step 2: awk extracts every fenced ```...``` block body from the
+      # accumulated raw text. The flag toggles on each ```` line;
+      # the body between toggles is accumulated into `blob` and
+      # printed on the closing fence.
+      # Step 3: pipe each candidate block through `jq -c` selecting the
+      # documented seven-field shape; keep only the LAST match (in
+      # case an earlier message accidentally contained a fenced
+      # JSON-shaped block; the synthesizer's Report is always last).
+      report=$(jq -Rr 'fromjson? | ..|strings? // empty' "$SYNTH_CAPTURE" 2>/dev/null \
+        | awk '/^```/{flag=!flag; if(!flag){print blob; blob=""}; next} flag{blob=blob $0 "\n"}' \
+        | jq -c 'select(.drafts_written != null and .draft_paths != null and .observations_scanned != null and .clusters_identified != null and .clusters_promoted != null and .clusters_skipped != null and .time_range != null)' 2>/dev/null \
+        | tail -1)
+
+      if [ -z "$report" ]; then
+        SYNTH_SUMMARY="(parse failed)"
+        return 0
+      fi
+
+      SYNTH_OBS_SCANNED=$(printf '%s' "$report" | jq -r '.observations_scanned')
+      SYNTH_CLUSTERS_IDENT=$(printf '%s' "$report" | jq -r '.clusters_identified')
+      SYNTH_CLUSTERS_PROM=$(printf '%s' "$report" | jq -r '.clusters_promoted')
+      SYNTH_CLUSTERS_SKIP=$(printf '%s' "$report" | jq -r '.clusters_skipped')
+      SYNTH_DRAFTS_WRITTEN=$(printf '%s' "$report" | jq -r '.drafts_written')
+      SYNTH_DRAFT_PATHS=$(printf '%s' "$report" | jq -r '.draft_paths[]?')
+      SYNTH_TIME_RANGE_START=$(printf '%s' "$report" | jq -r '.time_range.start')
+      SYNTH_TIME_RANGE_END=$(printf '%s' "$report" | jq -r '.time_range.end')
+      SYNTH_SUMMARY="scanned=$SYNTH_OBS_SCANNED clusters=$SYNTH_CLUSTERS_IDENT promoted=$SYNTH_CLUSTERS_PROM skipped=$SYNTH_CLUSTERS_SKIP drafts=$SYNTH_DRAFTS_WRITTEN"
+    }
+
     # probe_mcp_server <server-name> <exit-code-on-failure>
     # Pre-flight HTTP-transport health probe against mcphub
     # (Req 5.1, 5.2, 5.3, 5.4, 5.6; Decision 6 — pre-flight at the
@@ -704,8 +793,153 @@ pkgs.writeShellApplication {
     if [ "''${VERBOSE:-}" = "true" ]; then
       printf 'memory-sync: cavemem and obsidian MCP servers reachable\n' >&2
     fi
-    # Real main flow lands in tasks 4.x. For now, fall through to
-    # the bad-arg path. release_lock fires via the EXIT trap.
+
+    # --- Synthesizer invocation (task 4.1) -----------------------------
+    #
+    # Task 4.1 wires the synthesizer half of the pipeline:
+    #   1. Capture NOW once (Req 6.AC1) — stable across the run.
+    #   2. Resolve [RANGE_START, RANGE_END] via compute_range
+    #      (consumes SINCE / marker / 30-day default).
+    #   3. Open the per-run log; write the header.
+    #   4. Build the synthesizer prompt as the bare ISO 8601 timestamp
+    #      pair "<start> to <end>" (Decision 10 / vault-synthesizer-agent
+    #      Req 10.AC7) — no natural-language framing.
+    #   5. Build the opencode argv:
+    #        run --agent vault-synthesizer --format json
+    #        --dangerously-skip-permissions --dir "$HOME" "<prompt>"
+    #      (Req 7.1, 7.2, 7.9, 7.10).
+    #   6. --dry-run: announce and skip (Req 7.11) — fall through to
+    #      the existing usage/exit-64 placeholder so 4.2 / 4.3 can
+    #      slot in their own dry-run announcements.
+    #   7. Otherwise: invoke the command, tee'ing combined stdout+stderr
+    #      to $LOG_FILE (Req 9.AC4) and a per-run capture tempfile that
+    #      the parser consumes; tee additionally to /dev/tty under
+    #      --verbose (Req 9.AC9). pipefail so the synth's exit code
+    #      survives the tee chain.
+    #   8. Synth non-zero (Req 7.4, 8.AC2): write log_footer with exit
+    #      code 1 and "(none)" summary, release_lock, exit 1. Marker
+    #      untouched (Req 3.AC8 / Req 10.AC1). Curator NOT invoked
+    #      (Req 7.AC4).
+    #   9. Synth zero: parse the captured event stream via
+    #      parse_synth_report; the parsed values feed task 4.2 (curator
+    #      prompt) and task 5.1 (log-footer summary line). Fall through
+    #      to the placeholder so 4.2 / 4.3 own their own logic.
+    NOW=$(now_utc)
+    MARKER_BEFORE=$(read_marker)
+    [ -z "$MARKER_BEFORE" ] && MARKER_BEFORE="<absent>"
+    compute_range
+    open_log
+    log_header
+
+    # Decision 10 / vault-synthesizer-agent Req 10.AC7: bare ISO 8601
+    # timestamp pair, no natural-language framing.
+    SYNTH_PROMPT="$RANGE_START to $RANGE_END"
+
+    # All argv elements are script-controlled strings (no operator-
+    # supplied substitutions land here unsanitized). Bash array
+    # expansion under "''${SYNTH_ARGS[@]}" preserves quoting.
+    SYNTH_ARGS=(
+      run
+      --agent vault-synthesizer
+      --format json
+      --dangerously-skip-permissions
+      --dir "$HOME"
+      "$SYNTH_PROMPT"
+    )
+
+    if [ "$DRY_RUN" = "true" ]; then
+      # Req 7.AC11: announce the would-invoke command on stdout and
+      # SKIP the actual invocation. Use %q to quote each argv element
+      # so the operator can copy-paste the command verbatim if they
+      # want to run it by hand.
+      printf 'DRY RUN: would invoke: %s' "$OPENCODE_BIN"
+      for arg in "''${SYNTH_ARGS[@]}"; do
+        printf ' %q' "$arg"
+      done
+      printf '\n'
+      # 4.1 stops here under dry-run. Tasks 4.2 (curator dry-run line)
+      # and 4.3 (marker dry-run line + exit 0) extend the dry-run
+      # branch downstream. Falls through to the placeholder.
+    else
+      # Capture the event stream to a tempfile under $LOG_DIR for
+      # post-run parsing (jq scoring + awk fence extraction). The
+      # tempfile lives next to the per-run log so it is cleaned up
+      # next to the operator's audit trail. ".tmp.$$" suffix avoids
+      # collisions if two runs ever raced (the lock prevents that,
+      # but defensive).
+      SYNTH_CAPTURE="$LOG_DIR/.synth-stream.tmp.$$"
+
+      # pipefail so the synth's exit code propagates past the tee
+      # chain. Without it, the rightmost tee's exit code (always 0)
+      # would mask a synth failure.
+      #
+      # The whole pipe is wrapped in `if … ; then synth_exit=0; else
+      # synth_exit=''${PIPESTATUS[0]}; fi` because `set -e` (active at
+      # the top of the script) would otherwise abort the script the
+      # moment the pipe returned non-zero, before we can capture
+      # PIPESTATUS and route to the synth-failed branch with the
+      # documented exit code 1. Inside an `if` test, `set -e` is
+      # explicitly suspended — POSIX behaviour, leveraged here as a
+      # narrower-than-`set +e` guard.
+      set -o pipefail
+      if [ "$VERBOSE" = "true" ]; then
+        # --verbose: tee combined stdout+stderr to log AND to capture
+        # tempfile AND to /dev/tty so the operator sees the run live
+        # (Req 9.AC9).
+        if "$OPENCODE_BIN" "''${SYNTH_ARGS[@]}" 2>&1 \
+            | tee -a "$LOG_FILE" \
+            | tee "$SYNTH_CAPTURE" \
+            | tee /dev/tty > /dev/null
+        then
+          synth_exit=0
+        else
+          synth_exit=''${PIPESTATUS[0]}
+        fi
+      else
+        # Default: tee to log and capture only. The synth's stderr is
+        # already in $LOG_FILE via the 2>&1 merge (Req 9.AC4).
+        if "$OPENCODE_BIN" "''${SYNTH_ARGS[@]}" 2>&1 \
+            | tee -a "$LOG_FILE" \
+            | tee "$SYNTH_CAPTURE" > /dev/null
+        then
+          synth_exit=0
+        else
+          synth_exit=''${PIPESTATUS[0]}
+        fi
+      fi
+      set +o pipefail
+
+      if [ "$synth_exit" -ne 0 ]; then
+        # Req 7.AC4 / 8.AC2: synth failed. Marker untouched. Curator
+        # not invoked. Footer captures the failure for the audit log;
+        # release_lock + exit 1 here (the EXIT trap would also fire).
+        EXIT_CODE=1
+        SYNTH_SUMMARY="(none)"
+        MARKER_AFTER="<unchanged>"
+        log_footer
+        rm -f "$SYNTH_CAPTURE"
+        # The synth's stderr is already in $LOG_FILE via the 2>&1
+        # merge above; emit a concise operator-facing line so the
+        # exit code's meaning is immediately legible without
+        # opening the log (Req 7.AC4 — verbatim stderr reaches the
+        # log; the operator-facing summary line below is additive).
+        printf 'memory-sync: synthesizer exited %d. Marker untouched. Re-run memory-sync to retry the same window.\n' "$synth_exit" >&2
+        release_lock
+        exit 1
+      fi
+
+      # Synth succeeded. Parse the structured return so the parsed
+      # shell vars are available to task 4.2 (curator prompt) and
+      # task 5.1 (log-footer summary).
+      parse_synth_report
+
+      rm -f "$SYNTH_CAPTURE"
+    fi
+
+    # Real success path lands in tasks 4.2 (curator) and 4.3 (marker
+    # update + log prune + exit 0). Until those land, fall through to
+    # the bad-arg placeholder so the build smoke remains stable.
+    # release_lock fires via the EXIT trap.
     usage
     exit 64
   '';

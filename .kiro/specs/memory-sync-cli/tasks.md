@@ -284,7 +284,7 @@
   - _Depends: 1.1_
 
 - [ ] 4. Implement the synthesizer + curator orchestration
-- [ ] 4.1 Implement the synthesizer invocation and structured-return parser
+- [x] 4.1 Implement the synthesizer invocation and structured-return parser
   - In the main flow (after time-range computation and log open),
     construct the synthesizer prompt as the bare ISO 8601
     timestamp pair: `"$RANGE_START to $RANGE_END"` (no
