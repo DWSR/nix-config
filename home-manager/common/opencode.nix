@@ -48,9 +48,40 @@
         ./opencode/caveman-lite.md for the snippet and attribution.
       '';
     };
+    agentWithCaveman = lib.mkOption {
+      type = lib.types.unspecified;
+      readOnly = true;
+      internal = true;
+      description = ''
+        Function helper that takes a path to an agent .md file and
+        returns either the path unchanged (when `enableCaveman` is
+        false) or a concatenated string of the file body + the
+        caveman-lite snippet (when true). Mirrors the previous local
+        `withCaveman` let-binding so host configs can apply caveman to
+        their own subagents alongside the common ones, without
+        re-reading the snippet or duplicating the toggle check. Marked
+        internal because the function value is implementation detail —
+        callers see one of `lines | path` regardless of the
+        `enableCaveman` setting, which is what `programs.opencode.agents`
+        already accepts.
+      '';
+    };
   };
 
   config = {
+    # Define the agent-wrapping helper once (snippet is read once at
+    # Nix-eval time) and reuse it from both this module's `agents` attrset
+    # and any downstream host config that adds host-specific subagents.
+    home.opencode.agentWithCaveman =
+      let
+        cavemanSnippet = builtins.readFile ./opencode/caveman-lite.md;
+      in
+      base:
+      if config.home.opencode.enableCaveman then
+        builtins.readFile base + "\n\n" + cavemanSnippet
+      else
+        base;
+
     home.opencode.wrapperCommands = [
       # MCP hub health check — fail fast if obsidian memory tools aren't available.
       ''
@@ -134,28 +165,22 @@
         (builtins.readFile "${pkgs.cc-sdd-skills}/agents-md")
       ];
 
-      # Subagent prompts. When `home.opencode.enableCaveman = true` (set on
-      # personal hosts only), the vendored caveman-lite snippet is appended
-      # to each subagent's system prompt at Nix-eval time. The option type
-      # accepts either a path or a string of inlined content; the helper
-      # below returns one or the other based on the toggle.
-      agents =
-        let
-          cavemanSnippet = builtins.readFile ./opencode/caveman-lite.md;
-          withCaveman =
-            base:
-            if config.home.opencode.enableCaveman then
-              builtins.readFile base + "\n\n" + cavemanSnippet
-            else
-              base;
-        in
-        {
-          nix-pkg = withCaveman ./agents/nix-pkg.md;
-          nvim-tailor = withCaveman ./agents/nvim-tailor.md;
-          security-auditor = withCaveman ./agents/security-auditor.md;
-          vault-curator = withCaveman ./agents/vault-curator.md;
-          vault-synthesizer = withCaveman ./agents/vault-synthesizer.md;
-        };
+      # Subagent prompts. When `home.opencode.enableCaveman = true`, the
+      # vendored caveman-lite snippet is appended to each subagent's system
+      # prompt at Nix-eval time. The helper is exposed as
+      # `config.home.opencode.agentWithCaveman` so host configs can apply
+      # the same wrapping to their own subagents (see
+      # configurations/shopify/home-manager/opencode.nix for the live
+      # example). `programs.opencode.agents` accepts either a path or a
+      # string of inlined content; the helper returns one or the other
+      # based on the toggle.
+      agents = {
+        nix-pkg = config.home.opencode.agentWithCaveman ./agents/nix-pkg.md;
+        nvim-tailor = config.home.opencode.agentWithCaveman ./agents/nvim-tailor.md;
+        security-auditor = config.home.opencode.agentWithCaveman ./agents/security-auditor.md;
+        vault-curator = config.home.opencode.agentWithCaveman ./agents/vault-curator.md;
+        vault-synthesizer = config.home.opencode.agentWithCaveman ./agents/vault-synthesizer.md;
+      };
 
       settings = {
         # Re-enable thinking output for Claude Opus 4.7, which omits it by default.
