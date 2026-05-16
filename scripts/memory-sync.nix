@@ -413,7 +413,7 @@ pkgs.writeShellApplication {
       log_append "memory-sync run footer"
       log_append "  marker:      ''${MARKER_AFTER:-<unchanged>} (after)"
       log_append "  exit code:   ''${EXIT_CODE:-?}"
-      log_append "  summary:     ''${SYNTH_SUMMARY:-(none)}"
+      log_append "  synth-summary: ''${SYNTH_SUMMARY:-(none)}"
     }
 
     # prune_logs: keep only the 10 most recent log files in $LOG_DIR

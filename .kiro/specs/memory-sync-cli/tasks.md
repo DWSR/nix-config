@@ -404,7 +404,7 @@
   - _Depends: 4.2_
 
 - [ ] 5. Wire end-to-end logging and operator summary refinement
-- [ ] 5.1 Backfill the log header / footer with parsed-return values
+- [x] 5.1 Backfill the log header / footer with parsed-return values
   - Update the `log_header()` call site so it runs AFTER
     `compute_range` and AFTER the `OPENCODE_BIN` is captured
     (so the header can record the resolved range and the
@@ -525,6 +525,17 @@
   a future task explicitly needs per-host enabling/disabling (e.g.,
   selective opt-out), use `programs.memory-sync.enable = lib.mkForce false;`
   in the per-host file rather than restructuring the wiring.
+- 2026-05-15 (task 5.1): design.md §"Per-run log file" (~lines 1224-1241)
+  uses header `=== memory-sync run <ts> ===` framing and footer labels
+  `marker-before:` / `marker-after:` / `exit-code:` / `synth-summary:`. The
+  current implementation uses `memory-sync run header` / `memory-sync run
+  footer` plain-text framing and `marker: <val> (before)` / `marker: <val>
+  (after)` / `exit code:` (space, not dash) labels — pre-existing drift
+  from 2.5. Task 5.1 was explicitly scoped to the synth-summary label only;
+  the other divergences were left as FYI follow-up. If a future task wants
+  full design-doc alignment, the changes are confined to log_header and
+  log_footer in scripts/memory-sync.nix — purely a label edit, no shell
+  logic change.
 - 2026-05-15 (task 4.3): genuine spec-internal conflict — Req 9.7 says "After
   a successful run AND after the marker update, memory-sync shall prune older
   log files"; design.md §OrchestratorScript Service Interface Postconditions
