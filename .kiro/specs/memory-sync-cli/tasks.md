@@ -471,6 +471,9 @@
   - _Depends: 5.2, 1.3_
 
 - [ ] 6.2 Repeat the smoke-test sequence on the second host
+  _Deferred: requires running the 6-step manual smoke on Brandons-MacBook-Pro;
+  the kiro-impl run was driven from ShopifyLaptop and cannot reach the
+  personal host. Operator will run independently and update this checkbox._
   - Repeat 6.1 on the second nix-darwin host (the one not
     used in 6.1) to confirm host parity. The two hosts have
     different opencode wrappers (Shopify has Graphite addenda
@@ -484,7 +487,7 @@
   - _Boundary: OrchestratorScript (integration check)_
   - _Depends: 6.1_
 
-- [ ] 6.3 Author the Obsidian troubleshooting memory note
+- [x] 6.3 Author the Obsidian troubleshooting memory note
   - Via `hub_obsidian__write-note`, create
     `memories/<YYYY-MM-DD>-memory-sync-cli-overview.md`
     tagged `memory`, `nix-config`, `cavemem`,
