@@ -338,7 +338,7 @@
   - _Boundary: OrchestratorScript_
   - _Depends: 2.4, 2.5, 3.3_
 
-- [ ] 4.2 Implement the curator invocation
+- [x] 4.2 Implement the curator invocation
   - When the synthesizer succeeds AND `--no-curator` is NOT in
     effect, construct the curator prompt as a single string
     naming the freshly drafted memory paths (so the curator

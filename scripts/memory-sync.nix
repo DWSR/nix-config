@@ -857,8 +857,24 @@ pkgs.writeShellApplication {
         printf ' %q' "$arg"
       done
       printf '\n'
-      # 4.1 stops here under dry-run. Tasks 4.2 (curator dry-run line)
-      # and 4.3 (marker dry-run line + exit 0) extend the dry-run
+      # Curator dry-run announcement (Req 7.5, 7.6, 7.11 / task 4.2).
+      # When --no-curator is in effect, announce the skip (Req 7.6 +
+      # 7.11 — the announcement still happens under dry-run so the
+      # operator can see what would be elided). Otherwise, announce
+      # the would-invoke curator command. The curator prompt body
+      # cannot be enumerated under dry-run because the synth was not
+      # invoked, so we surface a placeholder string in place of the
+      # comma-separated draft paths.
+      if [ "$NO_CURATOR" = "true" ]; then
+        printf 'DRY RUN: curator skipped (--no-curator)\n'
+      else
+        printf 'DRY RUN: would invoke: %s' "$OPENCODE_BIN"
+        printf ' %q' run --agent vault-curator --format json \
+          --dangerously-skip-permissions --dir "$HOME" \
+          '<curator prompt depends on synth output>'
+        printf '\n'
+      fi
+      # Task 4.3 (marker dry-run line + exit 0) extends the dry-run
       # branch downstream. Falls through to the placeholder.
     else
       # Capture the event stream to a tempfile under $LOG_DIR for
@@ -934,6 +950,114 @@ pkgs.writeShellApplication {
       parse_synth_report
 
       rm -f "$SYNTH_CAPTURE"
+
+      # --- Curator invocation (task 4.2) ----------------------------
+      #
+      # Decision 7 / Req 7.5: the curator runs as an INDEPENDENT
+      # opencode session AFTER the synthesizer succeeds. The
+      # synthesizer's draft paths are surfaced in the curator's
+      # prompt so the curator can prioritize the newly written
+      # drafts (Req 7.5, 7.10) — no --continue/--session/--fork
+      # coupling. Curator failure does NOT roll back the synth's
+      # drafts (Decision 7) — those drafts are valid memory notes
+      # by construction (vault-synthesizer Req 9), and a re-run of
+      # memory-sync will re-process the same window because the
+      # marker is left untouched on curator failure (Req 7.7).
+      #
+      # --no-curator (Req 7.6 / task 4.2): skip the curator
+      # invocation entirely; log the skip and fall through to the
+      # marker-update path (4.3 owns the success exit 0).
+      if [ "$NO_CURATOR" = "true" ]; then
+        log_append "(curator skipped: --no-curator)"
+      else
+        # Build the curator prompt. SYNTH_DRAFT_PATHS is newline-
+        # separated (output of `jq -r '.draft_paths[]?'` in
+        # parse_synth_report). Convert to comma-separated for the
+        # prompt body via `tr | sed`. When the synth produced no
+        # drafts (empty SYNTH_DRAFT_PATHS — e.g., every cluster
+        # was skipped), the curator is STILL invoked but with a
+        # no-op confirmation prompt — keeps the log shape uniform
+        # across "had drafts" and "no drafts" runs (task 4.2 body).
+        if [ -n "''${SYNTH_DRAFT_PATHS:-}" ]; then
+          draft_paths_csv=$(printf '%s' "$SYNTH_DRAFT_PATHS" \
+            | tr '\n' ',' | sed 's/,$//')
+          CURATOR_PROMPT="Run a targeted dedup pass over these new memory drafts: $draft_paths_csv"
+        else
+          CURATOR_PROMPT="No new memory drafts were produced in this sync window. No targeted dedup needed; please confirm."
+        fi
+
+        # All argv elements are script-controlled strings (no
+        # operator-supplied substitutions land here unsanitized).
+        # Invocation shape mirrors SYNTH_ARGS (Decision 1 / Req
+        # 7.5 / 7.9 / 7.10): --agent vault-curator,
+        # --dangerously-skip-permissions, --dir "$HOME", no
+        # --continue (independent session).
+        CURATOR_ARGS=(
+          run
+          --agent vault-curator
+          --format json
+          --dangerously-skip-permissions
+          --dir "$HOME"
+          "$CURATOR_PROMPT"
+        )
+
+        # Same tee-to-log + pipefail discipline as the synth
+        # above (Req 9.AC4, 9.AC9). The curator's structured
+        # return is NOT parsed by this script (4.3 only consumes
+        # the marker), so no separate capture tempfile is needed
+        # — tee to log (and to /dev/tty under --verbose) is
+        # enough. The `if ... then curator_exit=0 else
+        # curator_exit=''${PIPESTATUS[0]} fi` wrapper suspends
+        # `set -e` so PIPESTATUS can be captured before the
+        # script aborts on a non-zero curator exit; same pattern
+        # as the synth block above.
+        set -o pipefail
+        if [ "$VERBOSE" = "true" ]; then
+          if "$OPENCODE_BIN" "''${CURATOR_ARGS[@]}" 2>&1 \
+              | tee -a "$LOG_FILE" \
+              | tee /dev/tty > /dev/null
+          then
+            curator_exit=0
+          else
+            curator_exit=''${PIPESTATUS[0]}
+          fi
+        else
+          if "$OPENCODE_BIN" "''${CURATOR_ARGS[@]}" 2>&1 \
+              | tee -a "$LOG_FILE" > /dev/null
+          then
+            curator_exit=0
+          else
+            curator_exit=''${PIPESTATUS[0]}
+          fi
+        fi
+        set +o pipefail
+
+        if [ "$curator_exit" -ne 0 ]; then
+          # Req 7.7 / 8.AC3: curator failed. Marker untouched
+          # (Decision 7 — the synth's drafts are valid; re-running
+          # memory-sync will re-process the same window and let
+          # the next curator pass clean up any duplicates).
+          # Footer captures the failure for the audit log;
+          # release_lock + exit 2 here (the EXIT trap would also
+          # fire). SYNTH_SUMMARY is preserved from
+          # parse_synth_report so the footer's summary line still
+          # reports the synth outcome even though the curator
+          # failed afterward.
+          EXIT_CODE=2
+          SYNTH_SUMMARY="''${SYNTH_SUMMARY:-(none)}"
+          MARKER_AFTER="<unchanged>"
+          log_footer
+          # The curator's stderr is already in $LOG_FILE via the
+          # 2>&1 merge above; emit a concise operator-facing line
+          # so the exit code's meaning is immediately legible
+          # without opening the log (Req 7.7).
+          printf 'memory-sync: curator exited %d. Marker untouched. Re-run memory-sync to retry the same window.\n' "$curator_exit" >&2
+          release_lock
+          exit 2
+        fi
+        # Curator succeeded — fall through to the marker-update
+        # step (4.3). 4.3 owns the success-path log_footer + exit 0.
+      fi
     fi
 
     # Real success path lands in tasks 4.2 (curator) and 4.3 (marker
