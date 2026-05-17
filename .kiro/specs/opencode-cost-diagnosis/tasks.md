@@ -435,7 +435,7 @@ parallel-capable.
   - _Boundary: tests/opencode-cost-diagnosis/unit/_
   - _Depends: 5.3_
 
-- [ ] 6.2 (P) Implement integration tests
+- [x] 6.2 (P) Implement integration tests
   - Implement all 5 integration tests enumerated in `design.md`
     Testing Strategy (lines 1099-1118) under
     `tests/opencode-cost-diagnosis/integration/*.test.js`:

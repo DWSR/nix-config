@@ -1,0 +1,7 @@
+{
+  "name": "opencode-cost-diagnosis-integration-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Integration-test entry point for the opencode-cost-diagnosis spec (task 6.2). Mirrors the parent tests/opencode-cost-diagnosis/package.json so that `opencode-cost-diagnosis-node --test tests/opencode-cost-diagnosis/integration/` resolves via CommonJS module-loader semantics (Node 22 treats --test PATH as a module specifier, not a directory glob)."
+}
