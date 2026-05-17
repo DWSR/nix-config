@@ -202,7 +202,7 @@ parallel-capable.
     fixture emits exactly one finding and does not infinite-loop
   - _Requirements: 2.3, 5.3_
 
-- [ ] 3.2 Implement Tokenizer Splitter
+- [x] 3.2 Implement Tokenizer Splitter
   - Initialize tiktoken's `cl100k_base` encoding once (lazy-init on
     first `classifyAndCount` call); cache the encoder for the
     process lifetime

@@ -511,6 +511,227 @@ class SubagentAggregator {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * TokenizerSplitter
+ *
+ * Walks the parts of one session and accumulates per-provenance
+ * token counts using tiktoken's `cl100k_base` encoding. Lazy-init
+ * + per-process cache the encoder (design.md:752-753); the rest of
+ * the pipeline (Attribution Engine, task 3.3) constructs a single
+ * Tokenizer per CLI invocation and shares it across every session.
+ *
+ * Classification rules (design.md:766-787; tasks.md:209-214):
+ *
+ *   - part.type == "text" AND messages.get(part.message_id).role
+ *     == "system"                                  → systemPrompt
+ *   - part.type == "text" AND role ∈ {user, assistant}
+ *                                                  → history
+ *   - part.type == "tool" AND part.data.state.output is a non-empty
+ *     string                                       → toolOutput
+ *   - part.type == "reasoning"                     → SKIP (counted
+ *     in tokens_reasoning, not in the input bucket)
+ *   - part.type ∈ {step-start, step-finish, compaction, agent,
+ *     patch, file}                                 → SKIP (metadata,
+ *     not in prompt body)
+ *   - everything else                              → unclassifiedCount
+ *
+ * Text content extraction matches the on-disk shape that
+ * SqliteReader.partsOfSession returns: `part.data` is a JSON string
+ * (better-sqlite3 returns the raw TEXT column). We parse it once per
+ * part and then read `data.text` for text/reasoning/metadata-style
+ * parts and `data.state.output` for tool parts.
+ *
+ * Unknown-type contribution: the design says "Tokens summed across
+ * parts whose part.type did not match any classification rule"
+ * (design.md:806-810), so we DO encode the part's content rather
+ * than counting "1 per unknown part". We try the text body first,
+ * then the tool-output body, then fall back to JSON-stringifying
+ * the parsed data so even a part with a completely novel shape
+ * accrues some signal — the Attribution Engine (3.3) only needs
+ * "did anything land here?" as the trigger for its
+ * schema_partial_data finding.
+ *
+ * Text-part fallback (role lookup miss): a text part whose
+ * `message_id` isn't in the `messages` Map, or whose message row
+ * has `role` neither "system" nor "user" nor "assistant", goes to
+ * unclassifiedCount — NOT silently into a default bucket. The
+ * design's 5.4 contract ("fail loud, not silent") means anything
+ * the classifier can't place must end up where 3.3 can surface it.
+ *
+ * What we deliberately do NOT do here:
+ *
+ *   - We don't free the tiktoken encoder. Per the task brief, the
+ *     "memory leak" of holding the encoder for the process lifetime
+ *     is acceptable for a one-shot CLI — correctness over tidy.
+ *   - We don't filter "cached-prefix" parts. The design mentions
+ *     this for completeness (lines 757-758) but the v1 opencode
+ *     part rows carry no cache marker; the cached/uncached split
+ *     comes from session.tokens_cache_read / .tokens_cache_write
+ *     totals, which the Attribution Engine reads directly. The
+ *     Tokenizer's output is consumed only as proportions over the
+ *     three classified buckets.
+ * ------------------------------------------------------------------ */
+
+// Skipped non-classified part types per design.md:777-780. Built
+// once as a Set so the per-part lookup is O(1). Module-scope so we
+// don't allocate a fresh Set on every classifyAndCount call.
+const TOKENIZER_SKIPPED_TYPES = Object.freeze(
+  new Set(['reasoning', 'step-start', 'step-finish', 'compaction', 'agent', 'patch', 'file']),
+);
+
+class TokenizerSplitter {
+  constructor() {
+    // Lazy-init sentinel. The constructor MUST NOT call
+    // get_encoding — task brief lazy-init contract, reader.test.js
+    // -style white-box assertion in tokenizer.test.js, AND the
+    // operational requirement that a `--help` / `--supported-opencode-version`
+    // run (task 5.x) doesn't pay tiktoken's startup cost.
+    this._encoding = null;
+  }
+
+  /**
+   * Returns the cached tiktoken encoder, initializing it on first
+   * call. Subsequent calls reuse the same instance for the lifetime
+   * of this TokenizerSplitter (and, in normal CLI use, the lifetime
+   * of the process).
+   */
+  _ensureEncoding() {
+    if (this._encoding === null) {
+      // Require lazily: keeps the constructor cheap and lets a unit
+      // test that exercises only the no-encoder paths (e.g. the
+      // "every metadata type is skipped" test) avoid pulling
+      // tiktoken in at all. The require() result is cached by Node
+      // so a second invocation of _ensureEncoding (different
+      // TokenizerSplitter instance) does not re-traverse the module
+      // graph.
+      const { get_encoding } = require('tiktoken');
+      this._encoding = get_encoding('cl100k_base');
+    }
+    return this._encoding;
+  }
+
+  /**
+   * Compute per-provenance token counts for the parts of a single
+   * session.
+   *
+   * @param {Iterable<object>} parts          part rows in any order;
+   *   we treat them independently so the StatementIterator from
+   *   SqliteReader.partsOfSession can be passed in directly (a for-of
+   *   walk is the only iteration shape we use).
+   * @param {ReadonlyMap<string, object>} messages
+   *   map keyed by message.id with a `role` field on each value
+   *   (SqliteReader.messagesOfSession already pre-parses it).
+   * @returns {{
+   *   systemPrompt: number,
+   *   history: number,
+   *   toolOutput: number,
+   *   unclassifiedCount: number,
+   * }} ProvenanceCounts. All four keys are always present; absent
+   *   contributions are 0.
+   */
+  classifyAndCount(parts, messages) {
+    const enc = this._ensureEncoding();
+
+    let systemPrompt = 0;
+    let history = 0;
+    let toolOutput = 0;
+    let unclassifiedCount = 0;
+
+    for (const part of parts) {
+      const type = part.type;
+
+      // Skipped types short-circuit before parsing data — saves a
+      // JSON.parse per skipped row, which matters for long sessions
+      // where step-start / step-finish parts dominate.
+      if (TOKENIZER_SKIPPED_TYPES.has(type)) {
+        continue;
+      }
+
+      // Parse data once per part. The DB-backed path sends in a
+      // string; synthetic tests may send in an already-parsed
+      // object — accept either so unit tests don't have to mimic
+      // better-sqlite3's TEXT-column shape exactly.
+      let data;
+      if (typeof part.data === 'string') {
+        try {
+          data = JSON.parse(part.data);
+        } catch {
+          // Malformed JSON: treat as unknown content. We can't
+          // extract a text body so the part falls through to the
+          // unclassified branch via the type test below; that's
+          // already the right behavior for `text` / `tool` types
+          // whose payloads aren't parseable.
+          data = null;
+        }
+      } else {
+        data = part.data;
+      }
+
+      if (type === 'text') {
+        const text = (data && typeof data.text === 'string') ? data.text : '';
+        if (text.length === 0) {
+          // Empty text body: no tokens to bucket. Skip rather than
+          // unclassify — a zero-length text part isn't a schema
+          // surprise, just an empty turn.
+          continue;
+        }
+        const message = messages.get(part.message_id);
+        const role = message && typeof message.role === 'string' ? message.role : null;
+        const tokens = enc.encode(text).length;
+        if (role === 'system') {
+          systemPrompt += tokens;
+        } else if (role === 'user' || role === 'assistant') {
+          history += tokens;
+        } else {
+          // Text part whose role we can't resolve (missing message
+          // row, malformed message.data, or a role value opencode
+          // adds later that isn't system/user/assistant). The 5.4
+          // fail-loud contract says: surface, don't silently bucket.
+          unclassifiedCount += tokens;
+        }
+      } else if (type === 'tool') {
+        const output = data && data.state && typeof data.state.output === 'string'
+          ? data.state.output
+          : '';
+        if (output.length > 0) {
+          toolOutput += enc.encode(output).length;
+        }
+        // Tool parts whose state.output is absent or empty (pending
+        // / running / errored-without-body) contribute 0. They are
+        // NOT unclassified — the design rule covers tool parts
+        // explicitly; the "no output" condition is just an empty
+        // contribution.
+      } else {
+        // Unknown part.type. Extract whatever content we can find
+        // so the Attribution Engine sees a non-zero count (its
+        // trigger for the schema_partial_data finding). Fallback
+        // order matches the most-likely content carriers in
+        // opencode's part.data shape.
+        let content = '';
+        if (data && typeof data.text === 'string') {
+          content = data.text;
+        } else if (data && data.state && typeof data.state.output === 'string') {
+          content = data.state.output;
+        } else if (data !== null && data !== undefined) {
+          // Last-resort fallback: serialize the whole parsed data
+          // blob so we count *something* proportional to the part's
+          // size. Better an over-count than a silent zero.
+          try {
+            content = JSON.stringify(data);
+          } catch {
+            content = '';
+          }
+        }
+        if (content.length > 0) {
+          unclassifiedCount += enc.encode(content).length;
+        }
+      }
+    }
+
+    return { systemPrompt, history, toolOutput, unclassifiedCount };
+  }
+}
+
 function setsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
@@ -560,6 +781,7 @@ module.exports = {
   SqliteReader,
   SchemaDriftError,
   SubagentAggregator,
+  TokenizerSplitter,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,
