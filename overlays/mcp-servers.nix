@@ -378,6 +378,82 @@ in
     };
   };
 
+  # Vendored Node dependency tree for the `opencode-cost-diagnosis`
+  # CLI (spec `opencode-cost-diagnosis`, design Technology Stack). The
+  # diagnostic is a Node script that needs `require()`-able copies of
+  # `better-sqlite3` (to read the opencode SQLite databases) and
+  # `tiktoken` (WASM tokenizer used for proportional splits of
+  # uncached input). It deliberately does NOT reuse the
+  # cavemem-importer-deps tree because the dependency sets differ
+  # (cavemem-importer uses js-yaml; this diagnostic uses tiktoken),
+  # and keeping them separate avoids unrelated lockfile churn on
+  # either side.
+  #
+  # Layout mirrors `cavemem-importer-deps`: a hand-written
+  # `package.json` pinning the two top-level deps and a generated
+  # `package-lock.json` (produced via `npm install --package-lock-only`
+  # and committed) live in a sibling subdir
+  # `overlays/opencode-cost-diagnosis-deps/`. `buildNpmPackage` +
+  # `importNpmLock` run `npm ci` offline against the vendored lock,
+  # and the better-sqlite3 postinstall compiles its native binding
+  # from source (the bundled `prebuild-install` would otherwise try
+  # to fetch a prebuilt binary from GitHub, which the Nix sandbox
+  # forbids). `tiktoken` ships a `.wasm` blob and needs no native
+  # compilation, but the same build invocation handles both via the
+  # single lockfile.
+  opencode-cost-diagnosis-deps = final.buildNpmPackage {
+    pname = "opencode-cost-diagnosis-deps";
+    version = "0.0.1";
+
+    src = ./opencode-cost-diagnosis-deps;
+
+    npmDeps = final.importNpmLock { npmRoot = ./opencode-cost-diagnosis-deps; };
+    inherit (final.importNpmLock) npmConfigHook;
+    dontNpmBuild = true;
+
+    nativeBuildInputs = [
+      final.nodejs
+      final.python3
+    ]
+    ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
+      # better-sqlite3's bundled SQLite amalgamation needs the darwin
+      # libtool (cctools) to link the static archive; the default
+      # stdenv on darwin does not put it on PATH. Mirrors the
+      # cavemem-importer-deps derivation above.
+      final.cctools
+    ];
+
+    preBuild = ''
+      # Force better-sqlite3 to compile from source instead of letting
+      # `prebuild-install` reach out to GitHub for a prebuilt binary;
+      # `npm_config_nodedir` points node-gyp at the local nodejs which
+      # already ships the headers it needs (otherwise node-gyp would
+      # try to fetch them from nodejs.org).
+      export npm_config_build_from_source=true
+      export npm_config_nodedir=${final.nodejs}
+    '';
+
+    # The default `buildNpmPackage` install phase assumes the package
+    # ships a `bin` field and copies the project under
+    # `$out/lib/node_modules/<pname>/`. We just want a flat
+    # `node_modules` tree the diagnostic script can `require()` from
+    # via `NODE_PATH`, so we override the install phase and copy the
+    # resolved `node_modules/` contents straight into
+    # `$out/lib/node_modules/`.
+    installPhase = ''
+      runHook preInstall
+      mkdir -p $out/lib/node_modules
+      cp -R node_modules/. $out/lib/node_modules/
+      runHook postInstall
+    '';
+
+    meta = with final.lib; {
+      description = "Vendored Node deps (better-sqlite3 + tiktoken) for the opencode-cost-diagnosis CLI";
+      license = licenses.mit;
+      platforms = platforms.darwin ++ platforms.linux;
+    };
+  };
+
   mcp-obsidian = final.buildNpmPackage {
     pname = "mcp-obsidian";
     version = "0.1.0";

@@ -38,7 +38,7 @@ parallel-capable.
     reports the two pinned packages with no warnings
   - _Requirements: 1.4_
 
-- [ ] 1.2 Add Nix derivation for the deps tree
+- [x] 1.2 Add Nix derivation for the deps tree
   - Append `opencode-cost-diagnosis-deps` derivation block to
     `overlays/mcp-servers.nix`, mirroring the `cavemem-importer-deps`
     block at lines 328-378 (`buildNpmPackage` +
