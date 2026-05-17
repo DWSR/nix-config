@@ -410,7 +410,7 @@ parallel-capable.
 
 - [ ] 6. Validation: tests and smoke-test derivation
 
-- [ ] 6.1 (P) Implement unit tests
+- [x] 6.1 (P) Implement unit tests
   - Implement all 9 unit tests enumerated in `design.md` Testing
     Strategy (lines 1064-1097) using Node's built-in `node:test`
     runner, one test file per logical area
