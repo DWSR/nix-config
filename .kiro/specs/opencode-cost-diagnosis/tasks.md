@@ -381,7 +381,7 @@ parallel-capable.
     cwd for 1 of 3 root sessions) returns exactly that 1 root session
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
 
-- [ ] 5.3 Implement CLI Entry and integrate all components
+- [x] 5.3 Implement CLI Entry and integrate all components
   - Top-level `main()` orchestrates: parse args → open Reader → build
     Selector → iterate root sessions → for each: get parts, get
     messages, build messages map, invoke Aggregator, invoke

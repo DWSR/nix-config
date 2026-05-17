@@ -2264,40 +2264,316 @@ class SessionSelector {
 }
 
 /* ------------------------------------------------------------------ *
- * CLI stub (preserved verbatim from task 1.3)
+ * CLI Entry (task 5.3)
  *
- * The real CLI surface — --last, --session, --cwd, --include-content,
- * --format, --output, --supported-opencode-version — is parsed by
- * ArgumentParser (above, task 5.1) and dispatched by the CLI Entry
- * (task 5.3). Until 5.3 lands, this stub keeps the contract from
- * 1.3: --help / -h prints usage and exits 0; anything else prints
- * usage to stderr and exits 1.
+ * Process-entry orchestrator. Wires every component above into a
+ * single end-to-end pipeline:
+ *
+ *   ArgumentParser → SqliteReader.open → SessionSelector →
+ *   SubagentAggregator → TokenizerSplitter → AttributionEngine →
+ *   ReportAssembler → ReportSerializer → FileWriter → operator
+ *   summary on stdout
+ *
+ * Wrapped in a single top-level try/catch that maps caught errors
+ * to exit codes per design.md:1025-1041 Error Categories table:
+ *
+ *   1 = bad CLI arg            (ArgumentError)
+ *   2 = missing source DB      (ENOENT-shaped open failure)
+ *   3 = schema drift           (SchemaDriftError)
+ *   4 = I/O error              (FileWriterError, non-ENOENT)
+ *   5 = programming/assertion  (anything else — INVARIANT throw,
+ *                               TypeError, etc.)
+ *
+ * Recoverable conditions (per design.md:1035-1040) do NOT exit
+ * non-zero: zero sessions in scope, caching not enabled, subagent
+ * cycle detected, unknown part.type — all surface as findings in
+ * the report and the run exits 0.
+ *
+ * Contract: main(argv) RETURNS a numeric exit code. It does NOT
+ * call process.exit itself. The `require.main === module` block at
+ * the bottom of this file is the only place that translates the
+ * return value into a process exit. This is what makes the CLI
+ * unit-testable: tests can call main(argv) and read the exit code
+ * without forking, while still observing the side effects (stdout
+ * summary, files on disk).
+ *
+ * Testability hooks:
+ *
+ *   - `OPENCODE_DB_PATH`  overrides default DB resolution. The
+ *     unit tests in tests/opencode-cost-diagnosis/unit/cli-entry.test.js
+ *     point this at the pinned fixture under
+ *     tests/opencode-cost-diagnosis/fixtures/opencode-stable.db.
+ *   - `XDG_STATE_HOME`    redirects FileWriter's default output
+ *     dir. Tests use a mkdtemp'd state dir so they never write
+ *     into the operator's real $HOME/.local/state.
+ *
+ * The smoke-test derivation (task 6.3) consumes the
+ * `--supported-opencode-version` short-circuit action; it must
+ * remain a pure introspection command that does NOT open the
+ * source DB (so the smoke test can verify the diagnostic is on
+ * PATH without requiring the DB to exist).
  * ------------------------------------------------------------------ */
 
-const usage = [
+const USAGE = [
   'opencode-cost-report — per-component cost-attribution report for opencode sessions',
   '',
   'USAGE:',
-  '  opencode-cost-report --help',
+  '  opencode-cost-report [options]',
   '',
-  'STATUS:',
-  '  Stub (Task 1.3 of the opencode-cost-diagnosis spec). The full CLI',
-  '  surface — --last, --session, --cwd, --include-content, --format,',
-  '  --output — is implemented by tasks 2.x-5.x of the same spec.',
+  'OPTIONS:',
+  '  --last <duration>             Restrict to sessions whose time_created falls within the',
+  '                                last <duration>. Single-unit form only: <N><unit> where',
+  '                                unit ∈ {h, d, w} (e.g. 1h, 24h, 7d, 30d, 2w). Multi-unit',
+  '                                forms like 7d6h are rejected. (R3.AC1)',
+  '  --session <id>                Restrict to a single root session by exact id. (R3.AC2)',
+  '  --cwd <pattern>               Restrict to sessions whose directory matches <pattern>.',
+  '                                v1: exact match. (R3.AC3)',
+  '  --include-content             Embed message bodies + tool output in the report. Default',
+  '                                is OFF (privacy-by-default per R4.AC1/AC2).',
+  '  --format <md|json|both>       Pick which report format to write. Default: both.',
+  '  --output <path>               Single-file mode: write exactly one report at <path>.',
+  '                                Format inferred from extension (.md or .json). Skips the',
+  '                                default XDG reports/ dir and the last-N prune.',
+  '  --supported-opencode-version  Print this build\'s supported opencode version range and',
+  '                                pinned migration set, then exit 0. (R5.AC1)',
+  '  --help, -h                    Print this usage block and exit 0.',
+  '',
+  'ENVIRONMENT:',
+  '  OPENCODE_DB_PATH              Override the default DB path resolution. When unset,',
+  '                                defaults to ${XDG_DATA_HOME:-$HOME/.local/share}/',
+  '                                opencode/opencode-stable.db.',
+  '  XDG_STATE_HOME                Controls where default-path reports are written. When',
+  '                                unset, defaults to $HOME/.local/state.',
+  '',
+  'EXIT CODES:',
+  '  0  Success (including empty-but-valid reports when no sessions are in scope).',
+  '  1  Bad CLI argument.',
+  '  2  Source opencode DB not found at the expected path.',
+  '  3  Schema drift — opencode\'s data_migration set does not match this build\'s pin.',
+  '  4  I/O error reading or writing report files.',
+  '  5  Programming error or assertion failure (file a bug).',
   '',
 ].join('\n');
 
-function main(argv) {
-  if (argv.includes('--help') || argv.includes('-h')) {
-    process.stdout.write(usage);
-    process.exit(0);
+function resolveOpencodeDbPath() {
+  // OPENCODE_DB_PATH wins so unit tests (and any operator who has
+  // moved the DB) can override without re-deriving XDG.
+  if (process.env.OPENCODE_DB_PATH) return process.env.OPENCODE_DB_PATH;
+  const xdgDataHome = process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return path.join(xdgDataHome, 'opencode', 'opencode-stable.db');
+}
+
+function printHelp() {
+  process.stdout.write(USAGE);
+}
+
+function printSupportedVersion() {
+  // Plain-text "key: value" block so an operator can read it
+  // without a JSON parser and so the 6.3 smoke test can grep
+  // either line. Multi-line so the migration set has room to
+  // grow without overflowing a terminal.
+  const lines = [
+    `Supported opencode version range: ${SUPPORTED_VERSION_RANGE}`,
+    `Pinned data_migration set: ${[...SUPPORTED_MIGRATION_SET].join(', ')}`,
+    '',
+  ];
+  process.stdout.write(lines.join('\n'));
+}
+
+function printOperatorSummary({ sessionCount, mdPath, jsonPath }) {
+  // Mirrors memory-sync's print_operator_summary shape: header
+  // line + key/value detail lines. Both file paths surface
+  // verbatim so the operator can `cat` or `open` directly from
+  // the terminal without re-deriving the XDG path. When a path
+  // is null (override mode wrote only one format) we surface
+  // "(not written)" so the operator knows the slot is intentional,
+  // not a bug.
+  const lines = [
+    'opencode-cost-report: report written',
+    `  sessions in scope: ${sessionCount}`,
+    `  markdown: ${mdPath !== null && mdPath !== undefined ? mdPath : '(not written)'}`,
+    `  json:     ${jsonPath !== null && jsonPath !== undefined ? jsonPath : '(not written)'}`,
+    '',
+  ];
+  process.stdout.write(lines.join('\n'));
+}
+
+function mapErrorToExitCode(err) {
+  // Order matters: ArgumentError and SchemaDriftError are the two
+  // typed errors we recognise unambiguously. FileWriterError is
+  // also typed but ENOENT shape on a *read* (Reader.open) takes
+  // precedence over the FileWriterError check (which only fires on
+  // write paths anyway). The default branch — exit 5 — is for
+  // programming errors (INVARIANT throws, TypeErrors, etc.) which
+  // are not the operator's fault and should be filed as bugs.
+  if (err instanceof ArgumentError) return 1;
+  if (err instanceof SchemaDriftError) return 3;
+  if (err instanceof FileWriterError) return 4;
+  // Missing-DB shape: SqliteReader.open wraps better-sqlite3's
+  // SqliteError ENOENT (or any open failure) into an Error
+  // carrying `.dbPath` and the original cause. We use the
+  // presence of `.dbPath` as the signal — it's an own-property
+  // set explicitly in open()'s catch — rather than checking err.code
+  // directly, because better-sqlite3 emits 'SQLITE_CANTOPEN' rather
+  // than 'ENOENT' for missing files even though the design's
+  // Error Categories table says "ENOENT on Reader.open".
+  if (err && typeof err === 'object' && typeof err.dbPath === 'string') {
+    return 2;
   }
-  process.stderr.write(usage);
-  process.exit(1);
+  return 5;
+}
+
+function writeStderrTrailer(err, exitCode) {
+  // One-line `[<code>] <action>: <message>` trailer. The action
+  // label is operator-facing and stable across runs so wrapping
+  // scripts can grep on it. The message is whatever the error
+  // surfaced — the inner classes have already shaped it to be
+  // actionable, so we don't trim or re-format here.
+  let action;
+  switch (exitCode) {
+    case 1:
+      action = 'bad argument';
+      break;
+    case 2:
+      action = 'missing opencode database';
+      break;
+    case 3:
+      action = 'schema drift';
+      break;
+    case 4:
+      action = 'I/O error';
+      break;
+    case 5:
+    default:
+      action = 'internal error';
+      break;
+  }
+  const msg = err && err.message ? err.message : String(err);
+  // First line: short, greppable trailer. Subsequent lines: full
+  // error message so the operator gets the recovery hint that the
+  // typed errors above already carry without us re-stitching it
+  // into a single very-long line.
+  process.stderr.write(`[${exitCode}] ${action}: ${msg.split('\n', 1)[0]}\n`);
+  if (msg.includes('\n')) {
+    // Surface the rest of the message verbatim so SchemaDriftError's
+    // multi-line recovery hint (and FileWriterError's path/operation
+    // detail when richer) reaches the operator.
+    const tail = msg.slice(msg.indexOf('\n') + 1);
+    if (tail.length > 0) {
+      process.stderr.write(`${tail}\n`);
+    }
+  }
+}
+
+function main(argv) {
+  let exitCode = 0;
+  let reader = null;
+  try {
+    const parsed = new ArgumentParser().parse(argv);
+
+    if (parsed.action === 'help') {
+      printHelp();
+      return 0;
+    }
+    if (parsed.action === 'supported-opencode-version') {
+      printSupportedVersion();
+      return 0;
+    }
+    // parsed.action === 'report'
+
+    // ── Open the source DB ──────────────────────────────────────
+    // resolveOpencodeDbPath consults OPENCODE_DB_PATH first, then
+    // falls back to ${XDG_DATA_HOME:-$HOME/.local/share}/opencode/
+    // opencode-stable.db per design.md path conventions.
+    const dbPath = resolveOpencodeDbPath();
+    reader = new SqliteReader();
+    reader.open(dbPath);
+
+    // ── Build the selector + iterate root sessions ──────────────
+    const filter = SessionSelector.fromParsedArgs(parsed);
+
+    // ── Wire the per-run components ─────────────────────────────
+    // Each component holds no cross-session state so a single
+    // instance per run is correct; the AttributionEngine
+    // consumes the reader + aggregator + tokenizer in its
+    // attributeSession() per-call path.
+    const aggregator = new SubagentAggregator(reader);
+    const tokenizer = new TokenizerSplitter();
+    const engine = new AttributionEngine(reader, aggregator, tokenizer);
+
+    const attributions = [];
+    for (const session of reader.rootSessionsMatching(filter)) {
+      attributions.push(engine.attributeSession(session));
+    }
+
+    // ── Assemble + serialize the report ─────────────────────────
+    // generatedAt is captured once and reused for both the
+    // assembler's disclaimer interpolation AND the FileWriter's
+    // filename stem so the operator sees one consistent timestamp.
+    // The JSON serializer ignores it (R6.AC3 byte-identical
+    // guarantee); the MD serializer surfaces it in the header.
+    const generatedAt = new Date();
+    const assembler = new ReportAssembler();
+    const contentLoader = parsed.includeContent
+      ? (sessionId) => ({
+          messages: [...reader.messagesOfSession(sessionId)],
+          parts: [...reader.partsOfSession(sessionId)],
+        })
+      : null;
+    const report = assembler.assemble(attributions, {
+      includeContent: parsed.includeContent,
+      contentLoader,
+      generatedAt,
+      supportedOpencodeVersionRange: SUPPORTED_VERSION_RANGE,
+    });
+    const serializer = new ReportSerializer();
+    const markdown = serializer.formatMarkdown(report, { generatedAt });
+    const json = serializer.formatJson(report);
+
+    // ── Write to disk ───────────────────────────────────────────
+    // outputOverride flips the writer into single-file mode and
+    // skips the last-N prune; default-path mode writes both
+    // formats under $XDG_STATE_HOME/opencode-cost-diagnosis/reports.
+    const writer = new FileWriter({
+      outputOverride: parsed.outputOverride,
+    });
+    const { mdPath, jsonPath } = writer.write({
+      markdown,
+      json,
+      generatedAt,
+    });
+
+    // ── Operator summary ────────────────────────────────────────
+    printOperatorSummary({
+      sessionCount: report.sessionCount,
+      mdPath,
+      jsonPath,
+    });
+
+    return 0;
+  } catch (err) {
+    exitCode = mapErrorToExitCode(err);
+    writeStderrTrailer(err, exitCode);
+    return exitCode;
+  } finally {
+    // close() is safe before open() and idempotent across multiple
+    // calls (see SqliteReader.close), so we don't need to track
+    // whether open() succeeded. The only way reader stays null is
+    // if we exited via the help / supported-opencode-version
+    // short-circuits, in which case there's nothing to close.
+    if (reader !== null) {
+      try {
+        reader.close();
+      } catch {
+        // Best-effort: a close() failure during error cleanup
+        // shouldn't mask the original error in the trailer above.
+      }
+    }
+  }
 }
 
 if (require.main === module) {
-  main(process.argv.slice(2));
+  process.exit(main(process.argv.slice(2)));
 }
 
 module.exports = {
