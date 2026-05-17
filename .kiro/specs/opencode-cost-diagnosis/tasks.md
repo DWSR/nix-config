@@ -326,7 +326,7 @@ parallel-capable.
     assembled report; with `--include-content`, they do
   - _Requirements: 2.4, 2.5, 2.7, 2.8, 4.1, 4.2, 4.3_
 
-- [ ] 4.3 Implement Markdown and JSON serializers
+- [x] 4.3 Implement Markdown and JSON serializers
   - JSON serializer: serialize the assembled `DiagnosticReport` via
     `JSON.stringify` with a custom replacer that emits keys
     alphabetically within each object; no wall-clock fields in JSON

@@ -1333,21 +1333,24 @@ class FileWriter {
  *      recompute spec).
  *   4. Builds the structured `TokenizerDisclaimer` once per report
  *      run (design.md:912-921).
- *   5. Applies privacy filtering (R4.AC1, R4.AC2). In v1 this is
- *      satisfied by-construction: the AttributionEngine's
- *      `SessionAttribution` shape (design.md:617-624) doesn't carry
- *      message bodies / tool-output content / prompt content, so
- *      there's nothing for the assembler to strip on the default
- *      path. The `--include-content` opt-in (R4.AC3) is acknowledged
- *      via a `content_inclusion_deferred` finding rather than
- *      actually pulling part bodies — real content inclusion needs
- *      Reader access and is deferred to a follow-on spec.
+ *   5. Applies privacy filtering (R4.AC1, R4.AC2, R4.AC3). On the
+ *      default path this is satisfied by-construction: the
+ *      AttributionEngine's `SessionAttribution` shape (design.md:
+ *      617-624) doesn't carry message bodies / tool-output content
+ *      / prompt content, so there's nothing for the assembler to
+ *      strip. When `includeContent: true` AND the caller supplies a
+ *      `contentLoader: (sessionId) => ({ messages, parts })`
+ *      callback (R4.AC3), the assembler invokes the loader once per
+ *      session and attaches the returned content as `session.content`
+ *      on a shallow copy of the SessionAttribution. The CLI Entry
+ *      (task 5.3) wires the loader using the SqliteReader's
+ *      messagesOfSession / partsOfSession methods. Calling with
+ *      `includeContent: true` but no `contentLoader` is a programming
+ *      error and throws (exit code 5 per design Error Categories).
  *   6. Emits global findings:
  *        - `caching_not_enabled` (R2.AC7) when at least one session
  *          is in scope and the sum of `tokens.cachedRead` across
  *          every in-scope session is 0;
- *        - `content_inclusion_deferred` when `includeContent` was
- *          requested;
  *        - every per-session finding flowed through, tagged with the
  *          source `sessionId` so the operator can trace it back from
  *          the global array.
@@ -1430,16 +1433,25 @@ class ReportAssembler {
    *   `findings`.
    * @param {{
    *   includeContent?: boolean,
+   *   contentLoader?: (sessionId: string) => { messages: any[], parts: any[] },
    *   generatedAt?: Date,
    *   supportedOpencodeVersionRange?: string,
    * }} [options]
+   *   When `includeContent: true`, the assembler invokes
+   *   `contentLoader(sessionId)` once per session and attaches the
+   *   returned `{ messages, parts }` as `session.content` on a
+   *   shallow copy of each session attribution. If `includeContent`
+   *   is true but `contentLoader` is absent or not a function, the
+   *   assembler throws (programming error per design Error
+   *   Categories; the CLI Entry should never reach this branch).
    *   `generatedAt` and `supportedOpencodeVersionRange` are accepted
    *   for forward-compat with the CLI Entry (task 5.3) — they are
    *   not consumed by the v1 assembler beyond being interpolated
    *   into the disclaimer's `humanReadable` string when supplied.
    *   The disclaimer is generated deterministically regardless;
    *   `generatedAt` does NOT appear in the JSON-serialised report
-   *   (R6.AC3 byte-identical guarantee).
+   *   (R6.AC3 byte-identical guarantee — the MD serializer
+   *   surfaces it in the header but JSON does not).
    * @returns {object} DiagnosticReport per design.md:870-879
    */
   assemble(sessionAttributions, options) {
@@ -1452,13 +1464,49 @@ class ReportAssembler {
 
     // ── Sessions array and sessionCount ─────────────────────────
     // Privacy default-exclude (R4.AC1, R4.AC2) is satisfied
-    // by-construction: SessionAttribution shape doesn't carry body
-    // strings (only ids, directories, timestamps, token counts,
-    // and findings). So we pass attrs through verbatim. If a future
-    // spec extends SessionAttribution with body strings the
-    // assembler MUST gain an explicit stripping step here; this
-    // comment is the canary for that change.
-    const sessions = attrs.slice();
+    // by-construction on the default path: SessionAttribution shape
+    // doesn't carry body strings (only ids, directories, timestamps,
+    // token counts, and findings). So we pass attrs through verbatim
+    // unless `--include-content` is set.
+    //
+    // R4.AC3 (task 4.3): when `includeContent: true` AND the caller
+    // supplies a `contentLoader: (sessionId) => ({ messages, parts })`
+    // callback, attach the loaded content as `session.content` on a
+    // SHALLOW COPY of each session attribution. The shallow copy is
+    // load-bearing: the assembler must not mutate the caller's
+    // SessionAttribution objects (those are owned by the
+    // AttributionEngine output and may be re-used elsewhere). The
+    // CLI Entry (task 5.3) is the only caller that supplies the
+    // loader; it wires the loader against the SqliteReader.
+    //
+    // When `includeContent: true` but no loader is supplied, this
+    // is a programming error — the CLI Entry forgot to wire the
+    // loader. Per design.md Error Categories this should be exit
+    // code 5 (programming/assertion); we throw a typed Error so
+    // the CLI Entry's top-level try/catch can map it. The error
+    // message names the missing argument so the operator/CLI
+    // author can diagnose without a stack-trace dive.
+    const includeContent = !!opts.includeContent;
+    const contentLoader = opts.contentLoader || null;
+    if (includeContent && typeof contentLoader !== 'function') {
+      throw new Error(
+        `ReportAssembler.assemble: --include-content was set but no ` +
+          `contentLoader callback was provided. The CLI Entry (task 5.3) ` +
+          `must pass options.contentLoader = (sessionId) => ({ messages, ` +
+          `parts }) when --include-content is requested; the loader is ` +
+          `wired against the SqliteReader's messagesOfSession / ` +
+          `partsOfSession methods. Without it, the assembler cannot ` +
+          `embed content into the DiagnosticReport.`,
+      );
+    }
+    const sessions = attrs.map((a) => {
+      if (!includeContent) return a;
+      // Shallow copy so the caller's SessionAttribution stays
+      // pristine. Content is the only field added; everything else
+      // is preserved verbatim.
+      const content = contentLoader(a.sessionId);
+      return { ...a, content };
+    });
 
     // ── globalTotals.tokens ─────────────────────────────────────
     const globalTokens = makeZeroBucketTotals();
@@ -1551,28 +1599,6 @@ class ReportAssembler {
       });
     }
 
-    // ── Global content_inclusion_deferred (v1 limitation) ──────
-    // R4.AC3 promises the operator that --include-content surfaces
-    // additional content fields. v1's AttributionEngine doesn't
-    // expose content to the assembler (would require Reader access
-    // from inside this class); we acknowledge the flag with a
-    // finding so the operator sees that the flag was received but
-    // its effect is deferred. Forward-compat: a follow-on spec
-    // that adds content inclusion will remove this finding and
-    // populate the body fields.
-    if (opts.includeContent) {
-      findings.push({
-        kind: 'content_inclusion_deferred',
-        detail:
-          `--include-content was set, but content inclusion is deferred ` +
-          `to a follow-on spec in v1. The v1 ReportAssembler reads only ` +
-          `the SessionAttribution shape from the Attribution Engine, ` +
-          `which does not carry message bodies / tool-output content / ` +
-          `prompt content. Behavior is identical to the default-flag ` +
-          `path for now.`,
-      });
-    }
-
     // ── TokenizerDisclaimer ─────────────────────────────────────
     // Built unconditionally — present on every report, including
     // the empty-DB case. R2.AC9 demands the disclaimer whenever
@@ -1620,6 +1646,271 @@ class ReportAssembler {
       findings,
     };
   }
+}
+
+/* ------------------------------------------------------------------ *
+ * ReportSerializer
+ *
+ * Renders a DiagnosticReport (the output of ReportAssembler.assemble)
+ * into the two human + machine surface formats: Markdown and JSON.
+ *
+ *   - formatJson(report) → string. Stable key order at every object
+ *     level (custom replacer sorts keys alphabetically). No
+ *     wall-clock fields anywhere in the output (R6.AC3 byte-identical
+ *     guarantee — two successive calls on the same report produce
+ *     the same string).
+ *   - formatMarkdown(report, { generatedAt }) → string. Headline
+ *     disclaimer block FIRST, then global totals, then per-project
+ *     breakdown, then per-session detail tables, then findings.
+ *     `generatedAt` is rendered inside the header (optional;
+ *     omitted entirely when not supplied so the default Markdown is
+ *     deterministic across runs the same way the JSON is).
+ *
+ * Stable-key-order implementation note: the replacer returns a new
+ * object whose `Object.keys()` order is alphabetical. JSON.stringify
+ * iterates the returned object's enumeration order (insertion
+ * order), so the output respects the sort. The replacer recurses
+ * into nested objects automatically because JSON.stringify calls
+ * the replacer for every key it visits in the returned object;
+ * arrays are left alone so element order is preserved (the
+ * disclaimer's `affectedBuckets` / `authoritativeBuckets` sequence
+ * is meaningful and must not be re-sorted).
+ *
+ * IEEE 754 cost note: the assembler's `globalTotals.cost.total`
+ * for the fixture comes out as `0.15000000000000002` from
+ * `0 + 0.05 + 0.05 + 0.05` — a fully deterministic IEEE 754 quirk.
+ * `JSON.stringify(0.15000000000000002)` emits exactly that string
+ * on every Node release we care about, so the byte-identical
+ * guarantee holds without canonicalization. Canonicalization
+ * would mechanically defeat the guarantee by introducing
+ * arbitrary precision choices (e.g. rounding to 2 dp); we
+ * deliberately do NOT canonicalize and let JSON.stringify's
+ * deterministic float-to-string path do the work.
+ * ------------------------------------------------------------------ */
+
+// Top-level Markdown headings. Centralised so the section-ordering
+// contract from the task brief (disclaimer → global → per-project →
+// per-session → findings) is one-line-auditable.
+const MD_SECTION_GLOBAL = '## Global Totals';
+const MD_SECTION_PROJECT = '## Per-Project Breakdown';
+const MD_SECTION_SESSION = '## Per-Session Detail';
+const MD_SECTION_FINDINGS = '## Findings';
+
+class ReportSerializer {
+  /**
+   * Serialize the given DiagnosticReport as JSON with stable key
+   * order at every object level. Returns a multi-line string with
+   * 2-space indent for readability; arrays preserve their input
+   * order (only object keys are sorted). No wall-clock fields are
+   * injected — the output is byte-identical across successive
+   * calls on the same report.
+   *
+   * @param {object} report DiagnosticReport from
+   *   ReportAssembler.assemble
+   * @returns {string} JSON text, terminated with a single trailing
+   *   newline so downstream `cat` / `diff` operations match operator
+   *   expectations.
+   */
+  formatJson(report) {
+    const body = JSON.stringify(
+      report,
+      (_key, val) => {
+        // Sort keys of plain objects; leave arrays and primitives
+        // untouched. Sorting array elements would corrupt the
+        // disclaimer's affectedBuckets sequence and the sessions
+        // / findings arrays' caller-defined ordering.
+        if (val !== null && typeof val === 'object' && !Array.isArray(val)) {
+          const sorted = {};
+          for (const k of Object.keys(val).sort()) {
+            sorted[k] = val[k];
+          }
+          return sorted;
+        }
+        return val;
+      },
+      2,
+    );
+    // Trailing newline — POSIX text-file convention; makes the
+    // output diff cleanly against itself and against
+    // operator-edited fixtures.
+    return `${body}\n`;
+  }
+
+  /**
+   * Render the given DiagnosticReport as Markdown. The output
+   * begins with the headline tokenizer disclaimer block (first
+   * line references "tiktoken"), then the optional
+   * report-generation timestamp (only when `options.generatedAt`
+   * is a Date), then global totals, then per-project breakdown,
+   * then per-session detail, then findings.
+   *
+   * @param {object} report DiagnosticReport from
+   *   ReportAssembler.assemble
+   * @param {{ generatedAt?: Date }} [options]
+   * @returns {string} Markdown text, terminated with a single
+   *   trailing newline.
+   */
+  formatMarkdown(report, options) {
+    const opts = options || {};
+    const lines = [];
+
+    // ── Headline disclaimer block ────────────────────────────────
+    // First line MUST reference "tiktoken" — operator-facing
+    // recognisability + a binding observable in the task brief.
+    // The bolded label is the first line; the rest of the
+    // disclaimer follows immediately.
+    const d = report.tokenizer_disclaimer || {};
+    lines.push(
+      `**TOKENIZER ACCURACY DISCLAIMER (${d.library || 'tiktoken'} / ${d.encoding || 'cl100k_base'})**`,
+    );
+    lines.push('');
+    if (typeof d.humanReadable === 'string' && d.humanReadable.length > 0) {
+      lines.push(d.humanReadable);
+      lines.push('');
+    }
+    // Surface the structured fields by name so the operator can
+    // identify affected buckets without dropping into the JSON.
+    if (Array.isArray(d.affectedBuckets)) {
+      lines.push(
+        `- Affected buckets (tokenizer-derived, relative-only): ${d.affectedBuckets.join(', ')}`,
+      );
+    }
+    if (Array.isArray(d.authoritativeBuckets)) {
+      lines.push(
+        `- Authoritative buckets (read directly from opencode): ${d.authoritativeBuckets.join(', ')}`,
+      );
+    }
+    if (typeof d.accuracyClass === 'string') {
+      lines.push(`- Accuracy class: ${d.accuracyClass}`);
+    }
+    if (typeof d.sumCorrectnessGuarantee === 'string') {
+      lines.push(`- Sum-correctness guarantee: ${d.sumCorrectnessGuarantee}`);
+    }
+    lines.push('');
+
+    // ── Optional generation timestamp (MD only — R6.AC3) ────────
+    if (opts.generatedAt instanceof Date) {
+      // Italic + "Report generated:" label. Deliberately NOT
+      // "Generated:" at start of line — the absence-mode test
+      // asserts no line begins with that literal so we keep the
+      // label format distinct.
+      lines.push(`_Report generated: ${opts.generatedAt.toISOString()}_`);
+      lines.push('');
+    }
+
+    lines.push('---');
+    lines.push('');
+
+    // ── Global totals ────────────────────────────────────────────
+    lines.push(MD_SECTION_GLOBAL);
+    lines.push('');
+    lines.push(`- Sessions: ${report.sessionCount}`);
+    const gtCost = (report.globalTotals && report.globalTotals.cost) || {};
+    if (typeof gtCost.total === 'number') {
+      // Raw float — see IEEE 754 note in the class header. No
+      // canonicalization; we trust JSON.stringify's
+      // float-to-string path, and toString matches it for the
+      // values we'll ever see here.
+      lines.push(`- Cost total: ${gtCost.total}`);
+    }
+    lines.push('');
+    lines.push(...renderBucketTable((report.globalTotals && report.globalTotals.tokens) || {}));
+    lines.push('');
+
+    // ── Per-project breakdown ────────────────────────────────────
+    lines.push(MD_SECTION_PROJECT);
+    lines.push('');
+    const projectDirs = Object.keys(report.byProject || {}).sort();
+    if (projectDirs.length === 0) {
+      lines.push('_No projects in scope._');
+      lines.push('');
+    } else {
+      for (const dir of projectDirs) {
+        const agg = report.byProject[dir];
+        lines.push(`### ${dir}`);
+        lines.push('');
+        lines.push(`- Sessions: ${agg.sessionCount}`);
+        if (agg.cost && typeof agg.cost.total === 'number') {
+          lines.push(`- Cost: ${agg.cost.total}`);
+        }
+        lines.push('');
+        lines.push(...renderBucketTable(agg.tokens || {}));
+        lines.push('');
+      }
+    }
+
+    // ── Per-session detail ───────────────────────────────────────
+    lines.push(MD_SECTION_SESSION);
+    lines.push('');
+    const sessions = Array.isArray(report.sessions) ? report.sessions : [];
+    if (sessions.length === 0) {
+      lines.push('_No sessions in scope._');
+      lines.push('');
+    } else {
+      for (const s of sessions) {
+        lines.push(`### ${s.sessionId}`);
+        lines.push('');
+        if (s.directory) lines.push(`- Directory: ${s.directory}`);
+        if (s.agent) lines.push(`- Agent: ${s.agent}`);
+        if (s.model) lines.push(`- Model: ${s.model}`);
+        if (typeof s.timeCreated === 'number') {
+          lines.push(`- Time created: ${s.timeCreated}`);
+        }
+        if (typeof s.timeUpdated === 'number') {
+          lines.push(`- Time updated: ${s.timeUpdated}`);
+        }
+        if (s.cost && typeof s.cost.total === 'number') {
+          lines.push(`- Cost: ${s.cost.total}`);
+        }
+        lines.push('');
+        lines.push(...renderBucketTable(s.tokens || {}));
+        lines.push('');
+        // When --include-content was set, the assembler attached
+        // a `content` field. Surface its bare shape (counts) so the
+        // operator knows content was included without dumping
+        // every message body inline — full inspection is via the
+        // JSON output.
+        if (s.content) {
+          const mc = Array.isArray(s.content.messages)
+            ? s.content.messages.length
+            : 0;
+          const pc = Array.isArray(s.content.parts) ? s.content.parts.length : 0;
+          lines.push(`- Content: ${mc} message(s), ${pc} part(s) (full bodies in JSON)`);
+          lines.push('');
+        }
+      }
+    }
+
+    // ── Findings ─────────────────────────────────────────────────
+    lines.push(MD_SECTION_FINDINGS);
+    lines.push('');
+    const findings = Array.isArray(report.findings) ? report.findings : [];
+    if (findings.length === 0) {
+      lines.push('_No findings._');
+      lines.push('');
+    } else {
+      for (const f of findings) {
+        const sesTag = f.sessionId ? ` (session ${f.sessionId})` : '';
+        lines.push(`- **${f.kind}**${sesTag}: ${f.detail}`);
+      }
+      lines.push('');
+    }
+
+    // Join with newlines, single trailing newline.
+    return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+  }
+}
+
+// Bucket order matches BUCKET_TOTAL_KEYS so the table reads
+// consistently with the rest of the diagnostic. Module-scope so
+// every per-project / per-session table renders identically.
+function renderBucketTable(tokens) {
+  const rows = ['| Bucket | Tokens |', '| --- | ---: |'];
+  for (const k of BUCKET_TOTAL_KEYS) {
+    const v = typeof tokens[k] === 'number' ? tokens[k] : 0;
+    rows.push(`| ${k} | ${v} |`);
+  }
+  return rows;
 }
 
 function setsEqual(a, b) {
@@ -1676,6 +1967,7 @@ module.exports = {
   FileWriter,
   FileWriterError,
   ReportAssembler,
+  ReportSerializer,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,

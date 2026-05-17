@@ -547,37 +547,141 @@ test('assemble(fixture, default): no message-body strings in the assembled repor
   }
 });
 
-test('assemble(fixture, --include-content): emits content_inclusion_deferred finding', () => {
-  // v1 limitation per task brief: --include-content does not yet
-  // fetch part bodies (would require Reader access from inside the
-  // assembler). The assembler instead emits a finding documenting
-  // the deferral so the operator knows the flag was acknowledged
-  // and why content is still absent.
+test('assemble(fixture, default): sessions[i].content is absent', () => {
+  // Default path (no --include-content): every session entry in
+  // the assembled report must NOT carry a `content` field. R4.AC1
+  // / R4.AC2 promise the operator that the default report contains
+  // no message bodies / tool-output content / prompt content.
   const attrs = attributeAllFixtureSessions();
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble(attrs, { includeContent: true });
-
-  const cid = report.findings.filter(
-    (f) => f.kind === 'content_inclusion_deferred',
-  );
-  assert.equal(
-    cid.length,
-    1,
-    `expected exactly one content_inclusion_deferred finding, got ${cid.length}`,
-  );
-  assert.equal(typeof cid[0].detail, 'string');
-  assert.ok(cid[0].detail.length > 0);
+  const report = new ReportAssembler().assemble(attrs);
+  for (const s of report.sessions) {
+    assert.equal(
+      s.content,
+      undefined,
+      `default-mode session "${s.sessionId}" must NOT carry a content field`,
+    );
+  }
 });
 
-test('assemble(fixture, default): does NOT emit content_inclusion_deferred', () => {
-  const attrs = attributeAllFixtureSessions();
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble(attrs); // default — no includeContent
+test('assemble: --include-content with contentLoader embeds content on every session', () => {
+  // R4.AC3: when --include-content is set, the assembler invokes
+  // the operator-supplied contentLoader once per session and
+  // attaches its return value as `session.content`. The CLI Entry
+  // (task 5.3) wires the loader using the Reader; this unit test
+  // uses a stub loader so the assembler contract can be exercised
+  // without an active SQLite handle.
+  const attrs = [
+    makeAttribution({ sessionId: 'ses_a', directory: '/p/a' }),
+    makeAttribution({ sessionId: 'ses_b', directory: '/p/b' }),
+  ];
+  const loadedFor = [];
+  const loader = (sessionId) => {
+    loadedFor.push(sessionId);
+    return {
+      messages: [{ id: `msg-${sessionId}`, data: { role: 'user' } }],
+      parts: [{ id: `prt-${sessionId}`, data: { text: `body for ${sessionId}` } }],
+    };
+  };
+  const report = new ReportAssembler().assemble(attrs, {
+    includeContent: true,
+    contentLoader: loader,
+  });
 
-  const cid = report.findings.filter(
-    (f) => f.kind === 'content_inclusion_deferred',
+  // Loader invoked exactly once per session.
+  assert.equal(loadedFor.length, 2);
+  assert.ok(loadedFor.includes('ses_a'));
+  assert.ok(loadedFor.includes('ses_b'));
+
+  // Each session entry carries its loaded content.
+  for (const s of report.sessions) {
+    assert.ok(s.content, `session "${s.sessionId}" must carry content`);
+    assert.ok(Array.isArray(s.content.messages));
+    assert.ok(Array.isArray(s.content.parts));
+    assert.equal(s.content.messages.length, 1);
+    assert.equal(s.content.parts.length, 1);
+    assert.equal(s.content.messages[0].id, `msg-${s.sessionId}`);
+    assert.equal(s.content.parts[0].id, `prt-${s.sessionId}`);
+  }
+});
+
+test('assemble: --include-content WITHOUT contentLoader throws an actionable error', () => {
+  // The CLI Entry (5.3) is the only legitimate caller; if it
+  // forgets to pass a contentLoader the failure must be loud (per
+  // design.md Error Categories — programming error, not a silent
+  // no-op). The error message must name the missing argument so
+  // the operator/CLI-author can diagnose without reading source.
+  const attrs = [makeAttribution({ sessionId: 'ses_a' })];
+  assert.throws(
+    () =>
+      new ReportAssembler().assemble(attrs, { includeContent: true }),
+    (err) =>
+      err instanceof Error &&
+      /contentLoader/i.test(err.message),
+    'must throw an Error whose message references "contentLoader"',
   );
-  assert.equal(cid.length, 0);
+});
+
+test('assemble: --include-content with contentLoader does NOT mutate input attributions', () => {
+  // The assembler must not write `content` back into the caller's
+  // SessionAttribution objects — that would leak content into any
+  // future re-use of the same array. The test passes the same
+  // attrs array to two assemble() calls (one with content, one
+  // without) and asserts the second call's sessions don't carry
+  // the first call's content.
+  const attrs = [makeAttribution({ sessionId: 'ses_a' })];
+  const loader = () => ({
+    messages: [{ id: 'm1', data: {} }],
+    parts: [{ id: 'p1', data: {} }],
+  });
+  const withContent = new ReportAssembler().assemble(attrs, {
+    includeContent: true,
+    contentLoader: loader,
+  });
+  assert.ok(withContent.sessions[0].content);
+  // Input attrs must be unmutated by the assembler.
+  assert.equal(
+    attrs[0].content,
+    undefined,
+    'assembler must not mutate input SessionAttribution objects',
+  );
+  // And a second default-path assemble() against the same input
+  // produces sessions with no content field.
+  const defaultPath = new ReportAssembler().assemble(attrs);
+  assert.equal(
+    defaultPath.sessions[0].content,
+    undefined,
+    'default-path assemble() against shared input must not see leaked content',
+  );
+});
+
+test('assemble: content_inclusion_deferred finding is NEVER emitted (removed in 4.3)', () => {
+  // The 4.2 implementation emitted a content_inclusion_deferred
+  // finding to acknowledge --include-content without actually
+  // honoring it. Task 4.3 makes the flag work via contentLoader,
+  // so the finding is no longer appropriate and must not appear
+  // in either branch.
+  const attrs = [makeAttribution({ sessionId: 'ses_a' })];
+  // Default path.
+  const defaultReport = new ReportAssembler().assemble(attrs);
+  assert.equal(
+    defaultReport.findings.filter(
+      (f) => f.kind === 'content_inclusion_deferred',
+    ).length,
+    0,
+    'content_inclusion_deferred must not appear on default path',
+  );
+  // --include-content path.
+  const includeReport = new ReportAssembler().assemble(attrs, {
+    includeContent: true,
+    contentLoader: () => ({ messages: [], parts: [] }),
+  });
+  assert.equal(
+    includeReport.findings.filter(
+      (f) => f.kind === 'content_inclusion_deferred',
+    ).length,
+    0,
+    'content_inclusion_deferred must not appear on --include-content path',
+  );
 });
 
 /* ── sessions array passes through SessionAttribution payload ──── */
