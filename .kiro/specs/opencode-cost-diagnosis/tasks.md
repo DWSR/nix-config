@@ -135,7 +135,7 @@ parallel-capable.
 
 - [ ] 2. Data layer: SQLite Reader with schema-drift detection
 
-- [ ] 2.1 Implement Reader open/close and schema-drift detection
+- [x] 2.1 Implement Reader open/close and schema-drift detection
   - Open opencode DB with `{ readonly: true, fileMustExist: true }`;
     expose `close()`
   - Declare `supportedVersionRange` constant and pinned
