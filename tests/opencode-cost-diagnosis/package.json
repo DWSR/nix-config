@@ -1,0 +1,7 @@
+{
+  "name": "opencode-cost-diagnosis-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Test suite entry point for the opencode-cost-diagnosis spec. Exists so Node's CommonJS module resolution can load this directory as a single test file when invoked via `opencode-cost-diagnosis-node --test tests/opencode-cost-diagnosis/` (Node 22's --test flag treats its arg as a module specifier, not a directory glob). The `main` field routes that load to run.js, which detects the directory-mode context and walks for *.test.js files. See README.md."
+}

@@ -108,7 +108,7 @@ parallel-capable.
     evaluation to fail with the named assertion
   - _Requirements: 1.1, 1.2, 1.3_
 
-- [ ] 1.6 Create test fixture database and test runner setup
+- [x] 1.6 Create test fixture database and test runner setup
   - Add `scripts/opencode-cost-diagnosis-test-fixture.js` that uses
     `better-sqlite3` to create a synthetic opencode-shaped SQLite DB
     at `tests/opencode-cost-diagnosis/fixtures/opencode-stable.db`
