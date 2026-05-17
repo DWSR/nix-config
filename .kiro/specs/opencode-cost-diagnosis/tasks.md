@@ -55,7 +55,7 @@ parallel-capable.
     shows both packages
   - _Requirements: 1.4_
 
-- [ ] 1.3 Create production wrapper and Node script stub
+- [x] 1.3 Create production wrapper and Node script stub
   - Create `scripts/opencode-cost-report.nix` as a `writeShellApplication`
     that sets `NODE_PATH=${opencode-cost-diagnosis-deps}/lib/node_modules`
     and `exec ${nodejs}/bin/node ${./opencode-cost-report.js} "$@"`
