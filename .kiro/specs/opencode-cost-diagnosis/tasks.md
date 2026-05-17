@@ -226,7 +226,7 @@ parallel-capable.
     buckets
   - _Requirements: 2.3, 2.9_
 
-- [ ] 3.3 Implement Attribution Engine
+- [x] 3.3 Implement Attribution Engine
   - For each root session, produce a `SessionAttribution` containing:
     authoritative `BucketTotals.cachedRead` =
     `session.tokens_cache_read`, `cachedWrite` =

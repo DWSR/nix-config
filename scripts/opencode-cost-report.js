@@ -732,6 +732,271 @@ class TokenizerSplitter {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * AttributionEngine
+ *
+ * Per-session 5-bucket attribution composer. Wires the SQLite Reader,
+ * Subagent Aggregator, and Tokenizer Splitter together and produces
+ * one SessionAttribution per root session: authoritative buckets
+ * straight from opencode + the recursive subagent rollup, uncached
+ * sub-buckets from the Flow 2 proportional split, cost.total from
+ * session.cost, and findings flowing through from the aggregator plus
+ * the Engine's own per-session findings.
+ *
+ * Per design.md:617-624 the published signature is
+ * `attributeSession(session, parts, subagentBucket)`. We adopt the
+ * simpler one-arg variant the task brief sanctions: the Engine
+ * already has the reader + aggregator + tokenizer in its constructor,
+ * so re-asking the caller to materialize parts / messages / the
+ * subagent rollup is just busywork. The reader's iteration methods
+ * are lazy (StatementIterator), so the Engine itself controls when
+ * to spend the I/O. See task 3.3 brief lines on signature deviation
+ * for the rationale.
+ *
+ * Flow 2 proportional math (design.md:574-586; tasks.md:240-245):
+ *
+ *   T_input = session.tokens_input
+ *   P_sys   = Tokenizer.classifyAndCount(parts, messages).systemPrompt
+ *   P_hist  = Tokenizer.classifyAndCount(parts, messages).history
+ *   P_tool  = Tokenizer.classifyAndCount(parts, messages).toolOutput
+ *   P_sum   = P_sys + P_hist + P_tool
+ *
+ *   bucket_sys  = round(T_input * P_sys  / P_sum)
+ *   bucket_hist = round(T_input * P_hist / P_sum)
+ *   bucket_tool = T_input - bucket_sys - bucket_hist   // last-bucket
+ *                                                      // absorbs
+ *                                                      // rounding
+ *
+ *   INVARIANT: bucket_sys + bucket_hist + bucket_tool == T_input
+ *
+ * When P_sum is 0 (all parts skipped or unclassified — degenerate
+ * case where the Tokenizer can't see any classifiable content) we
+ * can't divide and we don't try to: all three uncached sub-buckets
+ * collapse to 0 and an `unclassifiable_input` finding fires. This
+ * intentionally violates the INVARIANT in the sum-correctness sense
+ * (0+0+0 != T_input), but the finding makes the gap visible and the
+ * Reporter (4.2) is responsible for showing T_input as
+ * "unattributed" in that case. The INVARIANT exit-5 enforcement
+ * below treats this branch as a special case: the violation is
+ * expected when the finding fired, so we do NOT throw.
+ *
+ * Findings emitted per session (design.md:591-603; tasks.md:246-250):
+ *
+ *   - per_bucket_cost_deferred — ALWAYS emitted, every session.
+ *     Operator-facing reminder that the per-bucket cost.* fields are
+ *     null and that a follow-on spec is the trigger to populate them.
+ *   - unclassifiable_input — emitted when P_sum == 0.
+ *   - schema_partial_data — emitted when
+ *     provenance.unclassifiedCount > 0, naming the count. The task
+ *     brief notes the part.type-name list is acceptable as a
+ *     placeholder for v1 since the Tokenizer's ProvenanceCounts
+ *     intentionally doesn't expose type names; the count alone is
+ *     sufficient signal.
+ *   - findings forwarded from SubagentAggregator.rollup() (cycle
+ *     detection, parent_id fallback, etc.) flow through verbatim.
+ *
+ * NOT emitted by the Engine: `caching_not_enabled`. That's a
+ * report-level (global) finding emitted by 4.2 when the sum of
+ * tokens_cache_read across every in-scope session is 0.
+ *
+ * State: nothing cached across attributeSession() calls. Each call
+ * builds its own visited set / findings array / messages Map. The
+ * Tokenizer's encoder is cached for the lifetime of the
+ * TokenizerSplitter instance (its own contract), but that's
+ * orthogonal — the encoder is stateless w.r.t. attribution.
+ * ------------------------------------------------------------------ */
+
+class AttributionEngine {
+  constructor(reader, aggregator, tokenizer) {
+    this._reader = reader;
+    this._aggregator = aggregator;
+    this._tokenizer = tokenizer;
+  }
+
+  /**
+   * Compute the SessionAttribution for one root session.
+   *
+   * @param {object} session a session row from SqliteReader (any
+   *   shape that has the documented column names).
+   * @returns {{
+   *   sessionId: string,
+   *   directory: string,
+   *   agent: string|null,
+   *   model: string|null,
+   *   timeCreated: number,
+   *   timeUpdated: number,
+   *   tokens: {
+   *     cachedRead: number, cachedWrite: number,
+   *     uncachedSystemPrompt: number, history: number,
+   *     toolOutputs: number, output: number, reasoning: number,
+   *     subagentDispatch: number,
+   *   },
+   *   cost: {
+   *     total: number,
+   *     cachedRead: null, cachedWrite: null, uncachedInput: null,
+   *     output: null, reasoning: null, subagentDispatch: null,
+   *   },
+   *   findings: Array<{ kind: string, detail: string }>,
+   * }}
+   */
+  attributeSession(session) {
+    const findings = [];
+
+    // ── Subagent rollup ──────────────────────────────────────────
+    // Aggregator returns {totals, findings}; the totals' tokensTotal
+    // plugs straight into the subagentDispatch bucket and the
+    // findings (cycle / fallback) flow through verbatim.
+    const rollup = this._aggregator.rollup(session.id);
+    const subagentDispatch = rollup.totals.tokensTotal || 0;
+    for (const f of rollup.findings) {
+      findings.push(f);
+    }
+
+    // ── Tokenizer proportional split ─────────────────────────────
+    // Materialize parts + the role-keyed messages map. The reader's
+    // iteration methods return lazy iterables; we drain them into
+    // arrays / a Map because the Tokenizer needs a finite parts
+    // walk AND the part→message lookup requires random access. For
+    // typical session sizes (tens to low-hundreds of parts) this
+    // is negligible; large-session memory pressure is a known
+    // accepted cost documented in design.md performance notes.
+    const parts = [];
+    for (const p of this._reader.partsOfSession(session.id)) {
+      parts.push(p);
+    }
+    const messages = new Map();
+    for (const m of this._reader.messagesOfSession(session.id)) {
+      messages.set(m.id, m);
+    }
+    const provenance = this._tokenizer.classifyAndCount(parts, messages);
+    const P_sys = provenance.systemPrompt;
+    const P_hist = provenance.history;
+    const P_tool = provenance.toolOutput;
+    const P_sum = P_sys + P_hist + P_tool;
+    const T_input = session.tokens_input || 0;
+
+    let uncachedSystemPrompt;
+    let history;
+    let toolOutputs;
+    let unclassifiableFired = false;
+    if (P_sum === 0) {
+      // Degenerate path: nothing classifiable. The proportional
+      // split is undefined; collapse all three sub-buckets to 0 and
+      // emit unclassifiable_input. The Reporter shows T_input as
+      // unattributed; per design.md:602-603 this is a finding, not
+      // an error.
+      uncachedSystemPrompt = 0;
+      history = 0;
+      toolOutputs = 0;
+      findings.push({
+        kind: 'unclassifiable_input',
+        detail:
+          `session ${session.id}: no classifiable parts available ` +
+          `(systemPrompt+history+toolOutput == 0); ${T_input} ` +
+          `tokens_input left unattributed across the three ` +
+          `proportional sub-buckets`,
+      });
+      unclassifiableFired = true;
+    } else {
+      uncachedSystemPrompt = Math.round((T_input * P_sys) / P_sum);
+      history = Math.round((T_input * P_hist) / P_sum);
+      // Last bucket absorbs all rounding error so the integer sum
+      // is exact. This is what makes the INVARIANT below trivially
+      // true on the happy path.
+      toolOutputs = T_input - uncachedSystemPrompt - history;
+    }
+
+    // ── Schema_partial_data for unclassified part.type values ───
+    // Tokenizer's ProvenanceCounts intentionally exposes only the
+    // count (not the type names) to keep the surface narrow. We
+    // surface the count here so 3.3's observable contract is met;
+    // a follow-up could extend ProvenanceCounts with a type-name
+    // set if operator-facing diagnostics need more.
+    if (provenance.unclassifiedCount > 0) {
+      findings.push({
+        kind: 'schema_partial_data',
+        detail:
+          `session ${session.id}: tokenizer reported ` +
+          `${provenance.unclassifiedCount} tokens under unrecognized ` +
+          `part.type values (count only; type names not surfaced ` +
+          `in v1 Tokenizer ProvenanceCounts shape). These tokens ` +
+          `are NOT folded into any attribution bucket; surface as ` +
+          `a partial-data finding so the operator can update the ` +
+          `Tokenizer classification rules or pin opencode back to ` +
+          `the supported version range.`,
+      });
+    }
+
+    // ── INVARIANT enforcement ────────────────────────────────────
+    // Sum-correctness guarantee (design.md:587-588). When the
+    // proportional math ran, the last-bucket-absorbs-rounding
+    // trick makes the sum exact by construction; if this ever
+    // fails it's a math bug, not a data bug, and per the design's
+    // Error Categories (exit code 5) the right move is to throw.
+    // We skip the check when the unclassifiable_input branch fired
+    // because 0+0+0 != T_input is the expected degenerate state.
+    if (!unclassifiableFired) {
+      const sum = uncachedSystemPrompt + history + toolOutputs;
+      if (sum !== T_input) {
+        throw new Error(
+          `AttributionEngine INVARIANT violated for session ` +
+            `${session.id}: uncachedSystemPrompt(${uncachedSystemPrompt}) + ` +
+            `history(${history}) + toolOutputs(${toolOutputs}) = ${sum}, ` +
+            `expected T_input=${T_input}. This is a programming error in ` +
+            `the proportional split (Flow 2 math); exit code 5 per design ` +
+            `Error Categories.`,
+        );
+      }
+    }
+
+    // ── per_bucket_cost_deferred (always emitted) ───────────────
+    // Design.md:639-655 + tasks.md:246-247: every session carries
+    // this finding so the operator never wonders why cost.cachedRead
+    // / cost.history / etc. are null. The text references the
+    // follow-on spec hook so an operator with the report in front
+    // of them can pick up the trail without consulting design.md.
+    findings.push({
+      kind: 'per_bucket_cost_deferred',
+      detail:
+        `session ${session.id}: cost.total = ${session.cost || 0} is ` +
+        `populated from opencode's authoritative session.cost; ` +
+        `per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/` +
+        `output/reasoning/subagentDispatch) require recomputing from ` +
+        `token counts × model pricing and are deferred to a follow-on ` +
+        `spec. Set to null in v1; shape preserved for forward-compat.`,
+    });
+
+    return {
+      sessionId: session.id,
+      directory: session.directory,
+      agent: session.agent == null ? null : session.agent,
+      model: session.model == null ? null : session.model,
+      timeCreated: session.time_created,
+      timeUpdated: session.time_updated,
+      tokens: {
+        cachedRead: session.tokens_cache_read || 0,
+        cachedWrite: session.tokens_cache_write || 0,
+        uncachedSystemPrompt,
+        history,
+        toolOutputs,
+        output: session.tokens_output || 0,
+        reasoning: session.tokens_reasoning || 0,
+        subagentDispatch,
+      },
+      cost: {
+        total: session.cost || 0,
+        cachedRead: null,
+        cachedWrite: null,
+        uncachedInput: null,
+        output: null,
+        reasoning: null,
+        subagentDispatch: null,
+      },
+      findings,
+    };
+  }
+}
+
 function setsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
@@ -782,6 +1047,7 @@ module.exports = {
   SchemaDriftError,
   SubagentAggregator,
   TokenizerSplitter,
+  AttributionEngine,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,
