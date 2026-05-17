@@ -1,0 +1,11 @@
+{
+  "name": "opencode-cost-diagnosis-deps",
+  "version": "0.0.1",
+  "description": "Vendored Node dependency tree for the opencode-cost-diagnosis Nix derivation (Nix-managed; not published).",
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "12.10.0",
+    "tiktoken": "^1.0.22"
+  }
+}

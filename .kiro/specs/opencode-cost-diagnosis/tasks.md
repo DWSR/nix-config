@@ -26,7 +26,7 @@ parallel-capable.
 
 - [ ] 1. Foundation: install pipeline and test infrastructure
 
-- [ ] 1.1 Vendor npm deps tree for the diagnostic
+- [x] 1.1 Vendor npm deps tree for the diagnostic
   - Create `overlays/opencode-cost-diagnosis-deps/package.json` pinning
     `better-sqlite3@12.10.0` and `tiktoken@^1.0.20` (latest stable on the
     `1.x` line at implementation time)
