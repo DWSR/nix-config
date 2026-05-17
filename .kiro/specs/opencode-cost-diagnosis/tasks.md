@@ -182,7 +182,7 @@ parallel-capable.
 
 - [ ] 3. Logic layer: attribution, subagent rollup, tokenizer
 
-- [ ] 3.1 Implement Subagent Aggregator
+- [x] 3.1 Implement Subagent Aggregator
   - For a root session, walk `parent_id` chain via the Reader's
     `descendantSessionsOf` method
   - Sum `tokens_input`, `tokens_output`, `tokens_cache_read`,

@@ -376,6 +376,141 @@ class SqliteReader {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * SubagentAggregator
+ *
+ * Recursive parent_id rollup of descendant-session token + cost
+ * totals into a single SubagentBucketTotals record for the
+ * originating root session. Used by the Attribution Engine (task
+ * 3.3) to populate the `subagentDispatch` bucket on the root's
+ * SessionAttribution.
+ *
+ * Topology: walks descendants via the Reader's
+ * `descendantSessionsOf(rootId)`, which already implements the
+ * recursive CTE on `session.parent_id`. The CTE itself does not
+ * detect cycles — the SQL is `parent_id = d.id` joined unboundedly
+ * — so a malformed DB whose parent_id chain forms a loop will yield
+ * an infinite row stream. Cycle defence lives here: a `visited` Set
+ * keyed by session id is consulted before counting each row;
+ * duplicates trigger exactly one `schema_partial_data` finding per
+ * cycle and bail out of the subtree by skipping the rest of the
+ * iterator.
+ *
+ * The visited set is seeded with the root id so the root itself
+ * (which descendantSessionsOf never returns anyway) cannot become
+ * a phantom self-cycle, and so that if a descendant's parent_id
+ * incorrectly points back at the root we treat it as a cycle on
+ * first re-encounter.
+ *
+ * Per design.md lines 671-681 the interface signature is
+ * `rollup(rootSessionId): SubagentBucketTotals`. We return
+ * `{totals, findings}` instead so the Attribution Engine receives
+ * findings without a second method call or instance-state read;
+ * see aggregator.test.js header for the deviation rationale.
+ *
+ * `schemaSupportsParentLink` is true in v1 because the 2.1
+ * schema-drift check verified the pinned migration set, which
+ * implicitly guarantees the parent_id column. The accessor exists
+ * for the 5.3 fallback contract (future opencode change drops the
+ * column) but in v1 the drift check fails-loudly before this
+ * accessor is consulted.
+ *
+ * Per-descendant token sum follows requirements 2.3 (e) + task
+ * 3.1: tokens_input + tokens_output + tokens_cache_read +
+ * tokens_cache_write + tokens_reasoning. SubagentBucketTotals'
+ * design field is `tokensTotal: number` (single sum across all
+ * kinds), not per-bucket, because the Attribution Engine consumes
+ * it as one number to plug into the parent's subagentDispatch
+ * bucket.
+ * ------------------------------------------------------------------ */
+
+class SubagentAggregator {
+  constructor(reader) {
+    this._reader = reader;
+  }
+
+  get schemaSupportsParentLink() {
+    // v1 baseline: the schema-drift check in SqliteReader.open()
+    // already verifies the pinned migration set, which includes
+    // parent_id. A future opencode release that drops parent_id
+    // would fail open() with SchemaDriftError before any
+    // aggregator method is reachable, so v1 returns true
+    // unconditionally. The accessor exists for the 5.3 fallback
+    // contract that future implementations can flip.
+    return true;
+  }
+
+  /**
+   * Roll up all descendants of `rootSessionId` into a single
+   * SubagentBucketTotals + a findings array.
+   *
+   * @param {string} rootSessionId
+   * @returns {{
+   *   totals: { tokensTotal: number, cost: number, childCount: number },
+   *   findings: Array<{ kind: string, detail: string }>,
+   * }}
+   */
+  rollup(rootSessionId) {
+    // Fresh per-call state. Both `visited` and `findings` MUST be
+    // local — instance-state caching would bleed cycle findings
+    // and visited-ids from one rollup() into the next and break
+    // the per-root attribution contract. The aggregator.test.js
+    // "does not memoize across calls" test guards this.
+    const visited = new Set([rootSessionId]);
+    const findings = [];
+    let tokensTotal = 0;
+    let cost = 0;
+    let childCount = 0;
+    // One finding per detected cycle. The recursive CTE can revisit
+    // many rows once a cycle exists; we deduplicate so the operator
+    // sees one actionable finding per malformed link, not noise.
+    let cycleEmitted = false;
+
+    // Iterate the recursive descendants. The for…of loop's early
+    // termination forwards into the StatementIterator's return()
+    // hook (see messagesOfSession's wrapper for the same pattern),
+    // so a hard break on cycle detection releases the underlying
+    // sqlite3_stmt and prevents the recursive CTE from materialising
+    // unbounded rows.
+    for (const session of this._reader.descendantSessionsOf(rootSessionId)) {
+      if (visited.has(session.id)) {
+        if (!cycleEmitted) {
+          findings.push({
+            kind: 'schema_partial_data',
+            detail:
+              `subagent rollup: parent_id cycle detected at session ` +
+              `${session.id} in descendant chain from root ` +
+              `${rootSessionId}; bailing out of subtree, partial ` +
+              `subagent totals may be reported`,
+          });
+          cycleEmitted = true;
+        }
+        // Bail out of the entire descendant walk on first cycle.
+        // The alternative — `continue` past the duplicate row —
+        // still trusts the recursive CTE to terminate, but in a
+        // true loop the CTE will keep emitting the same duplicate
+        // rows forever and the visited check will fire every time
+        // without ever advancing. break is the only safe response.
+        break;
+      }
+      visited.add(session.id);
+      tokensTotal +=
+        (session.tokens_input || 0) +
+        (session.tokens_output || 0) +
+        (session.tokens_cache_read || 0) +
+        (session.tokens_cache_write || 0) +
+        (session.tokens_reasoning || 0);
+      cost += session.cost || 0;
+      childCount += 1;
+    }
+
+    return {
+      totals: { tokensTotal, cost, childCount },
+      findings,
+    };
+  }
+}
+
 function setsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
@@ -424,6 +559,7 @@ if (require.main === module) {
 module.exports = {
   SqliteReader,
   SchemaDriftError,
+  SubagentAggregator,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,
