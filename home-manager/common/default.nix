@@ -15,6 +15,7 @@
     ./git.nix
     ./git-hooks.nix
     ./memory-sync.nix
+    ./opencode-cost-diagnosis.nix
     ./opencode.nix
     ./sqlite-backup.nix
     ./ssh.nix
@@ -186,6 +187,7 @@
   programs.jqp.enable = true;
   programs.k9s.enable = true;
   programs.memory-sync.enable = true;
+  programs.opencode-cost-diagnosis.enable = true;
   programs.nix-index.enable = true;
   programs.nix-index-database.comma.enable = true;
   programs.nix-your-shell.enable = true;

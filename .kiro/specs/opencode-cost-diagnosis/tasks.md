@@ -82,7 +82,7 @@ parallel-capable.
     (bare `node -e ...`) fails with `MODULE_NOT_FOUND` for both deps
   - _Requirements: 1.4_
 
-- [ ] 1.5 Create HM module and wire into common configuration
+- [x] 1.5 Create HM module and wire into common configuration
   - Create `home-manager/common/opencode-cost-diagnosis.nix` exposing
     `programs.opencode-cost-diagnosis.{enable, package}`; `package` is
     `readOnly = true` and points at the wrapper from 1.3
