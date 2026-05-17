@@ -1924,12 +1924,259 @@ function setsEqual(a, b) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Argument Parser (task 5.1)
+ *
+ * Hand-rolled flag parser — no commander/yargs (project convention
+ * forbids; design.md Tech Stack table line 190 calls this out
+ * explicitly: "Small flag surface (`--last`, `--session`, `--cwd`,
+ * `--include-content`, `--format`, `--output`, `--help`); avoids
+ * `commander`/`yargs` bloat"). The parser is pure: it returns a
+ * structured action descriptor, throws `ArgumentError` on bad input,
+ * and never touches process.{stdout,stderr,exit}. The CLI Entry
+ * (task 5.3) is responsible for printing usage on error and mapping
+ * the throw to exit 1.
+ *
+ * Result shape:
+ *   {
+ *     action: 'report' | 'help' | 'supported-opencode-version',
+ *     selectors: { timeRangeStart?, timeRangeEnd?, sessionId?, cwdPattern? },
+ *     includeContent: boolean,
+ *     format: 'md' | 'json' | 'both',     // default 'both'
+ *     outputOverride: string | null,
+ *   }
+ *
+ * `--last <duration>` parsing mirrors `parse_since` from
+ * scripts/memory-sync.nix: single-unit only (`<N><unit>`, unit ∈
+ * {h, d, w}). Multi-unit forms like `7d6h` are rejected loudly
+ * rather than silently parsing the prefix — operators would
+ * otherwise believe a longer/shorter window was applied. N must
+ * be a positive integer; `0d`, `-1d`, `1.5d`, `30` (no unit), `d`
+ * (no count), and unsupported units (`1y`, `1m`) all throw.
+ *
+ * Requirements covered: R3.AC1 (--last), R3.AC2 (--session),
+ * R3.AC3 (--cwd), R3.AC5 (bad-arg actionable error), R4.AC3
+ * (--include-content), R5.AC1 (--supported-opencode-version
+ * surfaces the pinned range + migration set).
+ * ------------------------------------------------------------------ */
+
+class ArgumentError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ArgumentError';
+  }
+}
+
+// Single-unit `<N><unit>` regex. N is a positive integer (no
+// leading sign, no decimal, no leading zero beyond the canonical
+// `0` — which we reject below as zero-window). The whole-string
+// anchors are deliberate so `7d6h` does not partial-match `7d`.
+const TIME_RANGE_RE = /^(\d+)([hdw])$/;
+
+const TIME_RANGE_UNIT_MS = {
+  h: 60 * 60 * 1000,
+  d: 24 * 60 * 60 * 1000,
+  w: 7 * 24 * 60 * 60 * 1000,
+};
+
+const VALID_FORMATS = ['md', 'json', 'both'];
+
+function parseTimeRangeDuration(value) {
+  // Reject empty/undefined up front with a clear shape error
+  // (R3.AC5: name the offending value — empty string gets quoted
+  // so the operator sees the truthy fact that it was empty).
+  if (value == null || value === '') {
+    throw new ArgumentError(
+      "--last: missing or empty duration value. Expected '<N><unit>' where unit ∈ {h, d, w} (e.g. '1h', '7d', '2w').",
+    );
+  }
+  const m = TIME_RANGE_RE.exec(value);
+  if (!m) {
+    throw new ArgumentError(
+      `--last: cannot parse duration '${value}'. Expected single-unit '<N><unit>' where N is a positive integer and unit ∈ {h, d, w} (e.g. '1h', '24h', '7d', '30d', '2w'). Multi-unit forms like '7d6h' are not supported.`,
+    );
+  }
+  const n = Number.parseInt(m[1], 10);
+  // Zero-window is an operator error: either they meant some
+  // positive amount or they didn't mean to pass --last at all.
+  // Surfacing it loudly is friendlier than returning an empty
+  // report.
+  if (n <= 0) {
+    throw new ArgumentError(
+      `--last: duration '${value}' has non-positive count. Expected N ≥ 1.`,
+    );
+  }
+  return n * TIME_RANGE_UNIT_MS[m[2]];
+}
+
+// Flags that consume the next argv token as their value. Centralised
+// so the missing-value check below has a single source of truth.
+const VALUE_FLAGS = new Set(['--last', '--session', '--cwd', '--format', '--output']);
+
+// Flags that are bare booleans (no value). Includes the short-circuit
+// action flags (--help, -h, --supported-opencode-version) — those
+// don't fit the "value" axis but they're parsed positionally before
+// we ever consult VALUE_FLAGS for them.
+const BOOLEAN_FLAGS = new Set([
+  '--help',
+  '-h',
+  '--include-content',
+  '--supported-opencode-version',
+]);
+
+class ArgumentParser {
+  /**
+   * Parse argv into a structured action descriptor.
+   *
+   * @param {string[]} argv  Raw argv after node + script-name have been
+   *   sliced off (i.e. what the CLI Entry passes through from
+   *   process.argv.slice(2)).
+   * @param {{ now?: number }} [options]
+   *   `now` is the wall-clock epoch ms used for --last math. Defaults
+   *   to Date.now(). Injected primarily for deterministic unit tests;
+   *   the CLI Entry does not pass it.
+   * @returns {{
+   *   action: 'report' | 'help' | 'supported-opencode-version',
+   *   selectors: {
+   *     timeRangeStart?: number,
+   *     timeRangeEnd?: number,
+   *     sessionId?: string,
+   *     cwdPattern?: string,
+   *   },
+   *   includeContent: boolean,
+   *   format: 'md' | 'json' | 'both',
+   *   outputOverride: string | null,
+   * }}
+   * @throws {ArgumentError} on unknown flag, missing required value,
+   *   unparseable --last duration, or unsupported --format value.
+   *   Message always names the offending arg or value so the CLI
+   *   Entry can echo it verbatim into the stderr usage trailer
+   *   (R3.AC5).
+   */
+  parse(argv, options) {
+    const opts = options || {};
+    const now = typeof opts.now === 'number' ? opts.now : Date.now();
+
+    // Short-circuit on --help / -h. Operators reach for help most
+    // often when the rest of the line is wrong — burying the help
+    // action behind validation of the broken remainder would be
+    // hostile. Check before any other parsing.
+    for (const a of argv) {
+      if (a === '--help' || a === '-h') {
+        return {
+          action: 'help',
+          selectors: {},
+          includeContent: false,
+          format: 'both',
+          outputOverride: null,
+        };
+      }
+    }
+
+    // Same short-circuit logic for --supported-opencode-version: it
+    // is a pure introspection command, no other flags should be
+    // required to make it work.
+    for (const a of argv) {
+      if (a === '--supported-opencode-version') {
+        return {
+          action: 'supported-opencode-version',
+          selectors: {},
+          includeContent: false,
+          format: 'both',
+          outputOverride: null,
+        };
+      }
+    }
+
+    const result = {
+      action: 'report',
+      selectors: {},
+      includeContent: false,
+      format: 'both',
+      outputOverride: null,
+    };
+
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i];
+
+      // Consume value-taking flags first. The "missing value" check
+      // covers both `--flag` at end-of-argv AND `--flag --next` (we
+      // treat any value beginning with `--` as missing, since
+      // accepting `--last --cwd` would silently set `timeRangeStart`
+      // from the literal string `--cwd` and the operator would never
+      // notice).
+      if (VALUE_FLAGS.has(arg)) {
+        const value = argv[i + 1];
+        if (value === undefined || (typeof value === 'string' && value.startsWith('--'))) {
+          throw new ArgumentError(
+            `${arg}: missing required value. Expected ${arg} <value>; got ${value === undefined ? 'end of arguments' : `next flag '${value}'`}.`,
+          );
+        }
+        i++; // consume the value
+        switch (arg) {
+          case '--last':
+            result.selectors.timeRangeStart = now - parseTimeRangeDuration(value);
+            break;
+          case '--session':
+            result.selectors.sessionId = value;
+            break;
+          case '--cwd':
+            result.selectors.cwdPattern = value;
+            break;
+          case '--format':
+            if (!VALID_FORMATS.includes(value)) {
+              throw new ArgumentError(
+                `--format: unsupported value '${value}'. Expected one of: ${VALID_FORMATS.join(', ')}.`,
+              );
+            }
+            result.format = value;
+            break;
+          case '--output':
+            result.outputOverride = value;
+            break;
+          default:
+            // Unreachable: VALUE_FLAGS membership was checked above.
+            throw new ArgumentError(`internal: unhandled value flag '${arg}'`);
+        }
+        continue;
+      }
+
+      // Bare boolean flags. --help / -h / --supported-opencode-version
+      // already short-circuited above, so the only one that can land
+      // here is --include-content.
+      if (BOOLEAN_FLAGS.has(arg)) {
+        if (arg === '--include-content') {
+          result.includeContent = true;
+        }
+        // --help, -h, --supported-opencode-version: already handled
+        // by the short-circuits above; we'd only reach here if those
+        // were duplicated, in which case it's a no-op (caller's
+        // intent was already captured by the first occurrence).
+        continue;
+      }
+
+      // Anything else is either an unknown flag (`--bogus`, `-x`) or
+      // a stray positional (`stray-arg`). The CLI takes no
+      // positional arguments, so both shapes are R3.AC5 errors.
+      // Both branches name the offending token verbatim so the
+      // operator sees exactly what was rejected.
+      throw new ArgumentError(
+        `unknown argument '${arg}'. Run --help for the supported flag list.`,
+      );
+    }
+
+    return result;
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * CLI stub (preserved verbatim from task 1.3)
  *
- * The real CLI surface (--last, --session, --cwd, --include-content,
- * --format, --output) is implemented by tasks 5.x. This stub keeps
- * the contract from 1.3: --help / -h prints usage and exits 0;
- * anything else prints usage to stderr and exits 1.
+ * The real CLI surface — --last, --session, --cwd, --include-content,
+ * --format, --output, --supported-opencode-version — is parsed by
+ * ArgumentParser (above, task 5.1) and dispatched by the CLI Entry
+ * (task 5.3). Until 5.3 lands, this stub keeps the contract from
+ * 1.3: --help / -h prints usage and exits 0; anything else prints
+ * usage to stderr and exits 1.
  * ------------------------------------------------------------------ */
 
 const usage = [
@@ -1968,6 +2215,8 @@ module.exports = {
   FileWriterError,
   ReportAssembler,
   ReportSerializer,
+  ArgumentParser,
+  ArgumentError,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,

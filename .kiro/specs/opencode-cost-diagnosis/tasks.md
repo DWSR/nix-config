@@ -346,7 +346,7 @@ parallel-capable.
 
 - [ ] 5. CLI orchestration: parsing, selection, entry
 
-- [ ] 5.1 Implement Argument Parser
+- [x] 5.1 Implement Argument Parser
   - Hand-rolled flag parsing (no `commander`/`yargs` per design's
     Tech Stack table); supported flags: `--last <duration>`,
     `--session <id>`, `--cwd <path>`, `--include-content`,
