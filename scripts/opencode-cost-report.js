@@ -38,6 +38,10 @@
  */
 'use strict';
 
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
 const Database = require('better-sqlite3');
 
 /* ------------------------------------------------------------------ *
@@ -997,6 +1001,319 @@ class AttributionEngine {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * FileWriter
+ *
+ * Persists rendered Markdown + JSON report payloads to disk. Default
+ * destination is
+ * `${XDG_STATE_HOME ?? "$HOME/.local/state"}/opencode-cost-diagnosis/reports/<iso8601>.{md,json}`
+ * with file mode 0600 (R4.AC4) and XDG-scoped placement (R4.AC5).
+ * After each successful default-path write, the writer prunes the
+ * reports/ directory back to the last 10 files per extension, sorted
+ * by mtime descending. Mirrors `scripts/memory-sync.nix:437-449`'s
+ * last-N retention contract (the task brief cites lines 467-489;
+ * that range is the print_operator_summary helper that immediately
+ * follows prune_logs in the same file — the prune_logs function
+ * proper lives at 437-449. Behavioural parity holds either way).
+ *
+ * The `--output <path>` override (consumed by the CLI in task 5.1,
+ * accepted here as `outputOverride`) flips the writer into
+ * single-file mode: exactly one file is written at the operator's
+ * named path, the format is inferred from the path's extension
+ * (.md → markdown only, .json → JSON only, anything else throws),
+ * and pruning is skipped entirely. The default reports/ dir is not
+ * created.
+ *
+ * I/O error handling (R6.AC5): non-ENOENT errno on write surfaces
+ * as a thrown Error carrying `.path`, `.operation`, and the
+ * underlying `.code` so the CLI Entry (task 5.3) can map to exit
+ * code 4 and assemble the stderr trailer from named fields rather
+ * than parsing the message text. ENOENT-on-write is impossible by
+ * construction here — we mkdir the parent recursively right before
+ * opening — so it is not specially handled.
+ *
+ * Mode-0600 guarantee: process.umask(0o077) is set BEFORE any
+ * fs.writeFileSync call and the prior umask is restored in a
+ * finally block so a thrown write doesn't leak the diagnostic's
+ * umask into the rest of the CLI's lifetime. fs.writeFileSync
+ * defaults `mode` to 0o666, which the active umask masks down to
+ * 0o600 — same trick memory-sync.nix and other ops-grade scripts
+ * in this repo use.
+ *
+ * Implementation notes for the cycle-of-construction:
+ *
+ *   - The constructor accepts a `stateDir` override so unit tests
+ *     never pollute the operator's real $XDG_STATE_HOME. When
+ *     `stateDir` is absent, the writer consults `XDG_STATE_HOME`
+ *     and falls back to `${HOME}/.local/state` per the XDG basedir
+ *     spec — same default chain `scripts/memory-sync.nix` uses.
+ *   - `retentionCount` is exposed for the same reason: the
+ *     integration tests in 6.2 can pick a small cap to exercise
+ *     pruning without seeding 10+ files. Default is 10 (R4.AC5 +
+ *     memory-sync parity).
+ *   - File names use a filename-safe ISO 8601 form (`:` → `-`) so
+ *     macOS HFS+, FAT-derived filesystems, and Windows tooling
+ *     don't choke. The replacement is global (`replace(/:/g, '-')`)
+ *     because Date.toISOString() emits two colons per timestamp
+ *     (`HH:MM:SS`).
+ *
+ * Currently unused by main(); wired in by task 5.3.
+ * ------------------------------------------------------------------ */
+
+class FileWriterError extends Error {
+  constructor(message, { path: failedPath, operation, code, cause }) {
+    super(message);
+    this.name = 'FileWriterError';
+    this.path = failedPath;
+    this.operation = operation;
+    // Preserve the underlying errno so the CLI can distinguish
+    // EACCES from ENOSPC etc. in the stderr trailer (R6.AC5).
+    this.code = code;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+class FileWriter {
+  /**
+   * @param {{
+   *   stateDir?: string,           // overrides XDG_STATE_HOME for tests
+   *   outputOverride?: string,     // single-file mode; skip pruning
+   *   retentionCount?: number,     // default 10 per extension
+   * }} [options]
+   */
+  constructor(options) {
+    const opts = options || {};
+    this._stateDirOverride = opts.stateDir || null;
+    this._outputOverride = opts.outputOverride || null;
+    // Guard against absurd or invalid retention values. Negative
+    // or non-integer caps would either delete every report on the
+    // first run (cap=0) or throw mid-prune; reject up front so the
+    // error surfaces in the constructor, not in a later write.
+    if (opts.retentionCount !== undefined) {
+      if (
+        !Number.isInteger(opts.retentionCount) ||
+        opts.retentionCount < 1
+      ) {
+        throw new Error(
+          `FileWriter: retentionCount must be a positive integer; got ${opts.retentionCount}`,
+        );
+      }
+      this._retentionCount = opts.retentionCount;
+    } else {
+      this._retentionCount = 10;
+    }
+  }
+
+  /**
+   * Resolve the effective state dir. Order of precedence:
+   *   1. Constructor `stateDir` option (tests use this).
+   *   2. `XDG_STATE_HOME` env var.
+   *   3. `${HOME}/.local/state` (XDG basedir default).
+   */
+  _resolveStateDir() {
+    if (this._stateDirOverride) return this._stateDirOverride;
+    if (process.env.XDG_STATE_HOME) return process.env.XDG_STATE_HOME;
+    return path.join(os.homedir(), '.local', 'state');
+  }
+
+  /**
+   * Filename-safe ISO 8601 for the given Date. Date.toISOString()
+   * produces e.g. `2026-05-17T14:30:22.123Z`; we globally replace
+   * `:` with `-` so the result is safe on every filesystem we
+   * support.
+   */
+  _filenameStem(date) {
+    return date.toISOString().replace(/:/g, '-');
+  }
+
+  /**
+   * Write Markdown + JSON to disk. Returns the paths written.
+   * Either field of the return may be `null` when the override
+   * causes us to write only one of the two formats.
+   *
+   * @param {{ markdown: string, json: string, generatedAt: Date }} payload
+   * @returns {{ mdPath: string|null, jsonPath: string|null }}
+   */
+  write(payload) {
+    if (this._outputOverride) {
+      return this._writeOverride(payload);
+    }
+    return this._writeDefault(payload);
+  }
+
+  // ── Default path ─────────────────────────────────────────────
+  // XDG-scoped layout + last-N prune. Always writes BOTH formats.
+  _writeDefault(payload) {
+    const stateDir = this._resolveStateDir();
+    const reportsDir = path.join(stateDir, 'opencode-cost-diagnosis', 'reports');
+    // recursive: true is the simplest way to satisfy "create
+    // parent dirs"; mkdirSync swallows EEXIST when recursive is
+    // set, so re-runs against an existing reports/ dir are
+    // idempotent.
+    try {
+      fs.mkdirSync(reportsDir, { recursive: true });
+    } catch (e) {
+      throw new FileWriterError(
+        `FileWriter: failed to create reports directory at ${reportsDir}: ${e.message}`,
+        { path: reportsDir, operation: 'mkdir', code: e.code, cause: e },
+      );
+    }
+
+    const stem = this._filenameStem(payload.generatedAt);
+    const mdPath = path.join(reportsDir, `${stem}.md`);
+    const jsonPath = path.join(reportsDir, `${stem}.json`);
+
+    this._withUmask(0o077, () => {
+      this._safeWrite(mdPath, payload.markdown);
+      this._safeWrite(jsonPath, payload.json);
+    });
+
+    this._prune(reportsDir);
+
+    return { mdPath, jsonPath };
+  }
+
+  // ── Override path ────────────────────────────────────────────
+  // Single named file, format inferred from extension, no
+  // pruning. The override path's parent dir is created
+  // recursively so an operator can hand us a fresh `/tmp/foo.json`
+  // without pre-`mkdir -p`'ing the dir themselves.
+  _writeOverride(payload) {
+    const override = this._outputOverride;
+    const ext = path.extname(override).toLowerCase();
+    if (ext !== '.md' && ext !== '.json') {
+      throw new Error(
+        `FileWriter: unsupported --output extension "${ext || '<none>'}" ` +
+          `for path ${override}; supported extensions are .md and .json`,
+      );
+    }
+
+    const parent = path.dirname(override);
+    try {
+      fs.mkdirSync(parent, { recursive: true });
+    } catch (e) {
+      throw new FileWriterError(
+        `FileWriter: failed to create override parent directory at ${parent}: ${e.message}`,
+        { path: parent, operation: 'mkdir', code: e.code, cause: e },
+      );
+    }
+
+    let mdPath = null;
+    let jsonPath = null;
+    this._withUmask(0o077, () => {
+      if (ext === '.md') {
+        this._safeWrite(override, payload.markdown);
+        mdPath = override;
+      } else {
+        this._safeWrite(override, payload.json);
+        jsonPath = override;
+      }
+    });
+    // No prune under override per task brief / design lines 256-257.
+    return { mdPath, jsonPath };
+  }
+
+  // ── umask scope guard ────────────────────────────────────────
+  // process.umask is global to the process; we set it to 0o077
+  // before opening any report file (so writeFileSync's default
+  // 0o666 mode masks down to 0o600) and restore the prior value
+  // in a finally block so a thrown write doesn't leave the
+  // operator's umask altered for the rest of the CLI's lifetime.
+  _withUmask(mask, fn) {
+    const prior = process.umask(mask);
+    try {
+      fn();
+    } finally {
+      process.umask(prior);
+    }
+  }
+
+  // ── Safe write ───────────────────────────────────────────────
+  // Wraps fs.writeFileSync to convert any errno on write into a
+  // FileWriterError carrying .path + .operation so the CLI can
+  // map to exit code 4 (R6.AC5). ENOENT on write is impossible
+  // by construction (mkdir-recursive ran first) so it is not
+  // specially distinguished; the spec only requires non-ENOENT
+  // to propagate, which is the default behaviour here.
+  _safeWrite(p, content) {
+    try {
+      fs.writeFileSync(p, content);
+    } catch (e) {
+      throw new FileWriterError(
+        `FileWriter: failed to write ${p}: ${e.message}`,
+        { path: p, operation: 'write', code: e.code, cause: e },
+      );
+    }
+  }
+
+  // ── Pruner ───────────────────────────────────────────────────
+  // Per-extension last-N retention. Reads the directory, splits
+  // by extension, sorts by mtime descending, keeps the first
+  // `retentionCount`, unlinks the tail. Per-extension so 12 .md
+  // files don't trigger pruning of 5 .json files (or vice versa)
+  // and so a future third extension could be added without
+  // re-architecting.
+  _prune(reportsDir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(reportsDir, { withFileTypes: true });
+    } catch (e) {
+      throw new FileWriterError(
+        `FileWriter: failed to enumerate reports dir for prune at ${reportsDir}: ${e.message}`,
+        { path: reportsDir, operation: 'readdir', code: e.code, cause: e },
+      );
+    }
+
+    const byExt = { '.md': [], '.json': [] };
+    for (const ent of entries) {
+      // Only prune flat files (no recursion into subdirs) and
+      // only files with the two managed extensions. Anything
+      // else — operator notes, stray editor swap files, a
+      // hypothetical future telemetry artefact — survives.
+      if (!ent.isFile()) continue;
+      const ext = path.extname(ent.name).toLowerCase();
+      if (!(ext in byExt)) continue;
+      const full = path.join(reportsDir, ent.name);
+      let mtimeMs;
+      try {
+        mtimeMs = fs.statSync(full).mtimeMs;
+      } catch (e) {
+        // A file that vanished between readdir and stat (race)
+        // is treated as already-pruned; ENOENT is the only
+        // benign errno here and the spec explicitly allows
+        // ignoring it. Anything else is a real I/O fault.
+        if (e.code === 'ENOENT') continue;
+        throw new FileWriterError(
+          `FileWriter: failed to stat ${full} during prune: ${e.message}`,
+          { path: full, operation: 'stat', code: e.code, cause: e },
+        );
+      }
+      byExt[ext].push({ full, mtimeMs });
+    }
+
+    for (const ext of Object.keys(byExt)) {
+      const list = byExt[ext];
+      if (list.length <= this._retentionCount) continue;
+      list.sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
+      const toDelete = list.slice(this._retentionCount);
+      for (const { full } of toDelete) {
+        try {
+          fs.unlinkSync(full);
+        } catch (e) {
+          // ENOENT during unlink mirrors the stat race above —
+          // benign, skip. Everything else propagates as a typed
+          // I/O fault.
+          if (e.code === 'ENOENT') continue;
+          throw new FileWriterError(
+            `FileWriter: failed to unlink ${full} during prune: ${e.message}`,
+            { path: full, operation: 'unlink', code: e.code, cause: e },
+          );
+        }
+      }
+    }
+  }
+}
+
 function setsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
@@ -1048,6 +1365,8 @@ module.exports = {
   SubagentAggregator,
   TokenizerSplitter,
   AttributionEngine,
+  FileWriter,
+  FileWriterError,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,

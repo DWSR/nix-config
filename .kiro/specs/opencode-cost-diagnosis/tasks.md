@@ -264,7 +264,7 @@ parallel-capable.
 
 - [ ] 4. Output layer: file writer, aggregation, and formatters
 
-- [ ] 4.1 Implement File Writer
+- [x] 4.1 Implement File Writer
   - Default output path:
     `${XDG_STATE_HOME ?? `${os.homedir()}/.local/state`}/opencode-cost-diagnosis/reports/<iso8601>.{md,json}`
     where `<iso8601>` is the report-generation timestamp formatted
