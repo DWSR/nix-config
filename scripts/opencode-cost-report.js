@@ -1314,6 +1314,314 @@ class FileWriter {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * ReportAssembler
+ *
+ * Composes the post-AttributionEngine pipeline state into a single
+ * DiagnosticReport (design.md:870-879, post-Iteration 2.5). Given
+ * `SessionAttribution[]` from the 3.3 Attribution Engine, it:
+ *
+ *   1. Groups by `directory` to produce `byProject`
+ *      (`Record<string, ProjectAggregate>`).
+ *   2. Computes `globalTotals.tokens` as the per-bucket sum across
+ *      every session.
+ *   3. Computes `globalTotals.cost.total` as the per-session sum of
+ *      `cost.total` (per-bucket cost fields stay `null` per the
+ *      `per_bucket_cost_deferred` decision — both at the global
+ *      level and the per-project level, so the v1 JSON shape is
+ *      forward-compatible with the follow-on per-bucket cost
+ *      recompute spec).
+ *   4. Builds the structured `TokenizerDisclaimer` once per report
+ *      run (design.md:912-921).
+ *   5. Applies privacy filtering (R4.AC1, R4.AC2). In v1 this is
+ *      satisfied by-construction: the AttributionEngine's
+ *      `SessionAttribution` shape (design.md:617-624) doesn't carry
+ *      message bodies / tool-output content / prompt content, so
+ *      there's nothing for the assembler to strip on the default
+ *      path. The `--include-content` opt-in (R4.AC3) is acknowledged
+ *      via a `content_inclusion_deferred` finding rather than
+ *      actually pulling part bodies — real content inclusion needs
+ *      Reader access and is deferred to a follow-on spec.
+ *   6. Emits global findings:
+ *        - `caching_not_enabled` (R2.AC7) when at least one session
+ *          is in scope and the sum of `tokens.cachedRead` across
+ *          every in-scope session is 0;
+ *        - `content_inclusion_deferred` when `includeContent` was
+ *          requested;
+ *        - every per-session finding flowed through, tagged with the
+ *          source `sessionId` so the operator can trace it back from
+ *          the global array.
+ *
+ * Empty-DB shape (R2.AC8): `assemble([])` produces a valid report
+ * with `sessionCount: 0`, empty `sessions` / `byProject`, zero
+ * `globalTotals`, the disclaimer object present, and NO
+ * `caching_not_enabled` finding (vacuous emission would be noise —
+ * R2.AC7 presupposes at least one session).
+ *
+ * State: the assembler holds no mutable state; `assemble()` is pure
+ * w.r.t. its input (modulo the disclaimer's `humanReadable` string,
+ * which interpolates `supportedOpencodeVersionRange` when supplied).
+ *
+ * Out of scope (task 4.3): Markdown / JSON serialization. This
+ * class only assembles the structured object.
+ * ------------------------------------------------------------------ */
+
+const TOKENIZER_AFFECTED_BUCKETS = Object.freeze([
+  'uncachedSystemPrompt',
+  'history',
+  'toolOutputs',
+]);
+
+const TOKENIZER_AUTHORITATIVE_BUCKETS = Object.freeze([
+  'cachedRead',
+  'cachedWrite',
+  'output',
+  'reasoning',
+  'subagentDispatch',
+]);
+
+const BUCKET_TOTAL_KEYS = Object.freeze([
+  'cachedRead',
+  'cachedWrite',
+  'uncachedSystemPrompt',
+  'history',
+  'toolOutputs',
+  'output',
+  'reasoning',
+  'subagentDispatch',
+]);
+
+// Per-bucket cost fields that stay `null` in v1 per the
+// `per_bucket_cost_deferred` decision. Used both for the
+// globalTotals.cost shape and for every ProjectAggregate.cost so
+// the forward-compat invariant is enforced in one place.
+const PER_BUCKET_COST_KEYS = Object.freeze([
+  'cachedRead',
+  'cachedWrite',
+  'uncachedInput',
+  'output',
+  'reasoning',
+  'subagentDispatch',
+]);
+
+function makeZeroBucketTotals() {
+  const out = {};
+  for (const k of BUCKET_TOTAL_KEYS) out[k] = 0;
+  return out;
+}
+
+function makeZeroCostBuckets() {
+  // `total` is the only field that ever holds a non-null value in
+  // v1; every per-bucket field is `null` by Iteration 2.5 decision.
+  const out = { total: 0 };
+  for (const k of PER_BUCKET_COST_KEYS) out[k] = null;
+  return out;
+}
+
+class ReportAssembler {
+  /**
+   * Build a DiagnosticReport from the AttributionEngine's per-session
+   * output.
+   *
+   * @param {Array<object>} sessionAttributions
+   *   Each entry: a SessionAttribution per design.md:617-624.
+   *   Specifically required fields read here: `sessionId`,
+   *   `directory`, `tokens` (BucketTotals), `cost.total`,
+   *   `findings`.
+   * @param {{
+   *   includeContent?: boolean,
+   *   generatedAt?: Date,
+   *   supportedOpencodeVersionRange?: string,
+   * }} [options]
+   *   `generatedAt` and `supportedOpencodeVersionRange` are accepted
+   *   for forward-compat with the CLI Entry (task 5.3) — they are
+   *   not consumed by the v1 assembler beyond being interpolated
+   *   into the disclaimer's `humanReadable` string when supplied.
+   *   The disclaimer is generated deterministically regardless;
+   *   `generatedAt` does NOT appear in the JSON-serialised report
+   *   (R6.AC3 byte-identical guarantee).
+   * @returns {object} DiagnosticReport per design.md:870-879
+   */
+  assemble(sessionAttributions, options) {
+    const attrs = Array.isArray(sessionAttributions)
+      ? sessionAttributions
+      : [];
+    const opts = options || {};
+
+    const findings = [];
+
+    // ── Sessions array and sessionCount ─────────────────────────
+    // Privacy default-exclude (R4.AC1, R4.AC2) is satisfied
+    // by-construction: SessionAttribution shape doesn't carry body
+    // strings (only ids, directories, timestamps, token counts,
+    // and findings). So we pass attrs through verbatim. If a future
+    // spec extends SessionAttribution with body strings the
+    // assembler MUST gain an explicit stripping step here; this
+    // comment is the canary for that change.
+    const sessions = attrs.slice();
+
+    // ── globalTotals.tokens ─────────────────────────────────────
+    const globalTokens = makeZeroBucketTotals();
+    let cachedReadSum = 0;
+    for (const a of attrs) {
+      for (const k of BUCKET_TOTAL_KEYS) {
+        // Defensive zero-coalesce: a malformed SessionAttribution
+        // (e.g. one that came from a path that didn't write every
+        // bucket) shouldn't propagate NaN into the global sum.
+        // The AttributionEngine's v1 contract is to always emit
+        // all 8 fields, so this is belt-and-suspenders.
+        globalTokens[k] += a.tokens && a.tokens[k] ? a.tokens[k] : 0;
+      }
+      cachedReadSum += a.tokens && a.tokens.cachedRead ? a.tokens.cachedRead : 0;
+    }
+
+    // ── globalTotals.cost ───────────────────────────────────────
+    const globalCost = makeZeroCostBuckets();
+    for (const a of attrs) {
+      // Per-session cost.total is opencode's authoritative
+      // session.cost; sum directly. Per-bucket cost fields stay
+      // null (forward-compat with per_bucket_cost_deferred spec).
+      globalCost.total += (a.cost && typeof a.cost.total === 'number')
+        ? a.cost.total
+        : 0;
+    }
+
+    // ── byProject (group by directory) ──────────────────────────
+    // Use a plain object so the JSON serialisation in 4.3 lands a
+    // stable shape. Within each project: a fresh BucketTotals + a
+    // fresh CostBuckets so cross-project aggregates never share a
+    // reference (a follow-on spec that mutates the aggregate
+    // in-place wouldn't accidentally write through to a sibling).
+    const byProject = {};
+    for (const a of attrs) {
+      const dir = a.directory || '';
+      let agg = byProject[dir];
+      if (!agg) {
+        agg = {
+          directory: dir,
+          sessionCount: 0,
+          tokens: makeZeroBucketTotals(),
+          cost: makeZeroCostBuckets(),
+        };
+        byProject[dir] = agg;
+      }
+      agg.sessionCount += 1;
+      for (const k of BUCKET_TOTAL_KEYS) {
+        agg.tokens[k] += a.tokens && a.tokens[k] ? a.tokens[k] : 0;
+      }
+      agg.cost.total += (a.cost && typeof a.cost.total === 'number')
+        ? a.cost.total
+        : 0;
+    }
+
+    // ── Per-session findings → global findings ─────────────────
+    // Tag each forwarded finding with sessionId so the global
+    // findings array remains traceable even when a per-session
+    // finding's `detail` string doesn't already name the session.
+    // (The AttributionEngine emits detail strings that DO include
+    // the session id, but the assembler can't rely on that for
+    // findings emitted by some hypothetical future producer; an
+    // explicit field is cheaper than parsing.)
+    for (const a of attrs) {
+      const sesId = a.sessionId;
+      if (!Array.isArray(a.findings)) continue;
+      for (const f of a.findings) {
+        findings.push({
+          kind: f.kind,
+          detail: f.detail,
+          sessionId: sesId,
+        });
+      }
+    }
+
+    // ── Global caching_not_enabled (R2.AC7) ────────────────────
+    // Emit when at least one session is in scope AND every
+    // in-scope session has cachedRead == 0. The zero-session case
+    // (empty DB / no matches) suppresses the finding because the
+    // requirement presupposes at least one session was observed.
+    if (attrs.length > 0 && cachedReadSum === 0) {
+      findings.push({
+        kind: 'caching_not_enabled',
+        detail:
+          `Anthropic prompt-caching is not being exercised by opencode: ` +
+          `sum(tokens.cachedRead) across ${attrs.length} in-scope ` +
+          `session(s) is 0. Enable caching for non-trivial workloads to ` +
+          `reduce per-turn input-token costs. R2.AC7 surfaces this as a ` +
+          `notable finding, not an error — the report itself is valid.`,
+      });
+    }
+
+    // ── Global content_inclusion_deferred (v1 limitation) ──────
+    // R4.AC3 promises the operator that --include-content surfaces
+    // additional content fields. v1's AttributionEngine doesn't
+    // expose content to the assembler (would require Reader access
+    // from inside this class); we acknowledge the flag with a
+    // finding so the operator sees that the flag was received but
+    // its effect is deferred. Forward-compat: a follow-on spec
+    // that adds content inclusion will remove this finding and
+    // populate the body fields.
+    if (opts.includeContent) {
+      findings.push({
+        kind: 'content_inclusion_deferred',
+        detail:
+          `--include-content was set, but content inclusion is deferred ` +
+          `to a follow-on spec in v1. The v1 ReportAssembler reads only ` +
+          `the SessionAttribution shape from the Attribution Engine, ` +
+          `which does not carry message bodies / tool-output content / ` +
+          `prompt content. Behavior is identical to the default-flag ` +
+          `path for now.`,
+      });
+    }
+
+    // ── TokenizerDisclaimer ─────────────────────────────────────
+    // Built unconditionally — present on every report, including
+    // the empty-DB case. R2.AC9 demands the disclaimer whenever
+    // the report's attribution includes the three uncached
+    // sub-buckets; v1 always includes them structurally (even when
+    // zero), and a future spec change that introduces conditional
+    // sub-bucket reporting in the empty case would otherwise lose
+    // the disclaimer. Defaulting to always-present is the safer
+    // contract for downstream consumers.
+    const versionRange =
+      typeof opts.supportedOpencodeVersionRange === 'string'
+        ? opts.supportedOpencodeVersionRange
+        : null;
+    const tokenizer_disclaimer = {
+      library: 'tiktoken',
+      encoding: 'cl100k_base',
+      accuracyClass: 'relative-only',
+      affectedBuckets: TOKENIZER_AFFECTED_BUCKETS.slice(),
+      authoritativeBuckets: TOKENIZER_AUTHORITATIVE_BUCKETS.slice(),
+      sumCorrectnessGuarantee:
+        'Uncached sub-buckets sum exactly to opencode.session.tokens_input',
+      humanReadable:
+        `Bucket totals for ${TOKENIZER_AFFECTED_BUCKETS.join(', ')} are ` +
+        `tiktoken (cl100k_base) estimates derived from a proportional ` +
+        `split of opencode's authoritative session.tokens_input; they ` +
+        `are relative-only and suitable for ranking cost drivers, but ` +
+        `are NOT billing-grade absolute counts. The three buckets ` +
+        `nevertheless sum exactly to opencode's stored tokens_input ` +
+        `value (last bucket absorbs rounding). Authoritative buckets ` +
+        `(${TOKENIZER_AUTHORITATIVE_BUCKETS.join(', ')}) are read ` +
+        `directly from opencode and require no estimation` +
+        (versionRange
+          ? `. Supported opencode version range: ${versionRange}.`
+          : `.`),
+    };
+
+    return {
+      schemaVersion: 1,
+      reportType: 'opencode-cost-diagnosis',
+      tokenizer_disclaimer,
+      globalTotals: { tokens: globalTokens, cost: globalCost },
+      sessionCount: attrs.length,
+      byProject,
+      sessions,
+      findings,
+    };
+  }
+}
+
 function setsEqual(a, b) {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
@@ -1367,6 +1675,7 @@ module.exports = {
   AttributionEngine,
   FileWriter,
   FileWriterError,
+  ReportAssembler,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,

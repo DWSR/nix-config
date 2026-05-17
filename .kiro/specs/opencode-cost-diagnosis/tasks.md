@@ -290,7 +290,7 @@ parallel-capable.
     `reports/` is untouched
   - _Requirements: 4.4, 4.5, 6.5_
 
-- [ ] 4.2 Build aggregation and DiagnosticReport assembly
+- [x] 4.2 Build aggregation and DiagnosticReport assembly
   - Group `SessionAttribution[]` by `session.directory` to produce
     `ProjectAggregate[]`: per-project session count, summed
     `BucketTotals`, and summed `cost.total` (per-bucket cost fields
