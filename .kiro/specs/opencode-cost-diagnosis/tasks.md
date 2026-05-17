@@ -368,7 +368,7 @@ parallel-capable.
     prints the version range and migration set and exits 0
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 4.3, 5.1_
 
-- [ ] 5.2 Implement Session Selector
+- [x] 5.2 Implement Session Selector
   - Translate parsed selector args into parameterized SQL fragments
     consumed by the Reader's `rootSessionsMatching(filter)` method;
     combine multiple selectors with logical AND (R3.AC4)

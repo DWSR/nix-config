@@ -2169,6 +2169,101 @@ class ArgumentParser {
 }
 
 /* ------------------------------------------------------------------ *
+ * SessionSelector (task 5.2)
+ *
+ * Pure translator between the structured action descriptor that
+ * ArgumentParser.parse() returns (task 5.1) and the SessionFilter
+ * shape the SqliteReader.rootSessionsMatching(filter) method
+ * consumes (task 2.2). The reader is the layer that turns the
+ * filter into parameterised SQL — its WHERE-clause builder emits
+ * one `<column> <op> ?` fragment per non-null filter field, joins
+ * them with ` AND `, and passes the values through
+ * better-sqlite3's parameter binding (`.iterate(...params)`). All
+ * the R3.AC4 SQL-injection-safety + AND-combination work
+ * therefore lives in 2.2; this Selector only has to map the
+ * parser's nested `parsedArgs.selectors` object onto the reader's
+ * flat filter object.
+ *
+ * Design rationale (design.md:396): the Selector is the "Build
+ * SQL WHERE clauses from validated selectors" surface. We
+ * implement it as a SHAPE-MAPPING layer rather than a SQL-EMITTING
+ * layer because the reader already owns the WHERE-clause shape
+ * (and parameter binding, and column-name knowledge). Splitting
+ * the responsibility — Selector emits "filter shape", Reader emits
+ * SQL — keeps the parser ignorant of the DB schema (so a column
+ * rename in 2.2 doesn't cascade into 5.1) and keeps the reader
+ * ignorant of the CLI's argv vocabulary (so adding a new flag in
+ * 5.1 doesn't cascade into 2.2).
+ *
+ * Tightness invariant: the returned filter object MUST NOT carry
+ * own-keys for selectors that aren't present on parsedArgs. The
+ * reader's WHERE builder uses `f.X != null` to decide whether to
+ * emit a clause, which is safe against undefined values (`undefined
+ * != null` is false under loose-equality) — but emitting
+ * present-but-undefined would leak a "this selector was set"
+ * signal that callers might `'X' in filter`-test against. Tightness
+ * keeps the interface honest.
+ *
+ * Purity: this is a static method with no instance state and no
+ * mutation of the input parsedArgs. The CLI Entry (5.3) can call
+ * it repeatedly against the same parsed object without observing
+ * state leak.
+ * ------------------------------------------------------------------ */
+
+class SessionSelector {
+  /**
+   * Translate a parsed action descriptor into a SessionFilter
+   * object suitable for SqliteReader.rootSessionsMatching(filter).
+   *
+   * @param {{
+   *   selectors: {
+   *     timeRangeStart?: number,
+   *     timeRangeEnd?: number,
+   *     sessionId?: string,
+   *     cwdPattern?: string,
+   *   },
+   * }} parsedArgs The result of ArgumentParser.parse().
+   * @returns {{
+   *   timeRangeStart?: number,
+   *   timeRangeEnd?: number,
+   *   sessionId?: string,
+   *   cwdPattern?: string,
+   * }} Filter object; selectors absent from parsedArgs are absent
+   *   from the returned object (NOT present-with-undefined). All
+   *   values are forwarded verbatim — parameterisation +
+   *   AND-combination happen inside the reader.
+   */
+  static fromParsedArgs(parsedArgs) {
+    const filter = {};
+    const sel = (parsedArgs && parsedArgs.selectors) || {};
+    // Guard each field with hasOwnProperty so the tightness invariant
+    // holds even if a caller hand-constructs a parsedArgs whose
+    // selectors object explicitly sets a field to undefined. (The
+    // ArgumentParser itself never does this; it only sets fields
+    // when the flag was present. The hasOwnProperty check is the
+    // belt to that suspenders so a future parser quirk can't leak
+    // an undefined into the filter.)
+    if (Object.prototype.hasOwnProperty.call(sel, 'timeRangeStart') &&
+        sel.timeRangeStart !== undefined) {
+      filter.timeRangeStart = sel.timeRangeStart;
+    }
+    if (Object.prototype.hasOwnProperty.call(sel, 'timeRangeEnd') &&
+        sel.timeRangeEnd !== undefined) {
+      filter.timeRangeEnd = sel.timeRangeEnd;
+    }
+    if (Object.prototype.hasOwnProperty.call(sel, 'sessionId') &&
+        sel.sessionId !== undefined) {
+      filter.sessionId = sel.sessionId;
+    }
+    if (Object.prototype.hasOwnProperty.call(sel, 'cwdPattern') &&
+        sel.cwdPattern !== undefined) {
+      filter.cwdPattern = sel.cwdPattern;
+    }
+    return filter;
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * CLI stub (preserved verbatim from task 1.3)
  *
  * The real CLI surface — --last, --session, --cwd, --include-content,
@@ -2217,6 +2312,7 @@ module.exports = {
   ReportSerializer,
   ArgumentParser,
   ArgumentError,
+  SessionSelector,
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,
