@@ -158,7 +158,7 @@ parallel-capable.
     message
   - _Requirements: 5.1, 5.2, 6.1, 6.2, 6.4_
 
-- [ ] 2.2 Implement Reader iteration methods
+- [x] 2.2 Implement Reader iteration methods
   - `rootSessionsMatching(filter)` returns sessions where
     `parent_id IS NULL` AND filter's time-range / session-id /
     cwd-pattern clauses apply (parameterized SQL, never string-built)
