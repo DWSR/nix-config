@@ -66,7 +66,7 @@ parallel-capable.
     prints the placeholder usage and exits 0
   - _Requirements: 1.4, 1.5_
 
-- [ ] 1.4 Create generic test/dev Node wrapper
+- [x] 1.4 Create generic test/dev Node wrapper
   - Create `scripts/opencode-cost-diagnosis-node.nix` as a
     `writeShellApplication` named `opencode-cost-diagnosis-node` that
     sets `NODE_PATH=${opencode-cost-diagnosis-deps}/lib/node_modules`
