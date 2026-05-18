@@ -465,7 +465,7 @@ parallel-capable.
   - _Boundary: tests/opencode-cost-diagnosis/integration/_
   - _Depends: 5.3_
 
-- [ ] 6.3 (P) Create smoke-test derivation and wire into HM module
+- [x] 6.3 (P) Create smoke-test derivation and wire into HM module
   - Create `scripts/opencode-cost-diagnosis-smoke-test.nix` as a
     `writeShellApplication` (~50 LOC) named
     `opencode-cost-diagnosis-smoke-test` that runs four checks

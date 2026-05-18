@@ -1,7 +1,8 @@
 /*
   home-manager/common/opencode-cost-diagnosis.nix — install pipeline
-  for the opencode session cost-attribution diagnostic (Task 1.5 of
-  the `opencode-cost-diagnosis` spec; Requirements 1.1, 1.2, 1.3).
+  for the opencode session cost-attribution diagnostic (Tasks 1.5 +
+  6.3 of the `opencode-cost-diagnosis` spec; Requirements 1.1, 1.2,
+  1.3, 5.1, 5.2).
 
   This module is the milestone where `darwin-rebuild switch` lands
   working binaries on PATH on both nix-darwin hosts. Subsequent tasks
@@ -20,11 +21,11 @@
        vendored `better-sqlite3` and `tiktoken` deps without
        resolving store paths by hand.
 
-    3. Smoke-test derivation (Task 6.3 — to be appended to
-       `home.packages` when that task lands) will become a third
-       entry in the same list. The shape of this module is
-       deliberately the same as `home-manager/common/cavemem.nix`'s
-       `cavememSmokeTest` precedent for that reason.
+    3. Post-`nix flake update` smoke test (Task 6.3 —
+       `scripts/opencode-cost-diagnosis-smoke-test.nix`) installed on
+       PATH so the operator can revalidate the install pipeline +
+       schema-baseline pin after any opencode bump. Mirrors the
+       `cavememSmokeTest` precedent in `home-manager/common/cavemem.nix`.
 
   Peer dependency: this module asserts at HM-evaluation time that
   `programs.opencode.enable` is true on the same host. The opencode
@@ -63,6 +64,20 @@ let
   # runner (Tasks 6.1, 6.2) inherit the same NODE_PATH wiring without
   # the operator having to know the deps tree's store path.
   opencode-cost-diagnosis-node = pkgs.callPackage ../../scripts/opencode-cost-diagnosis-node.nix { };
+
+  # Post-`nix flake update` smoke-test (Task 6.3). Runs four
+  # fail-fast checks against the live opencode DB at
+  # `${XDG_DATA_HOME:-$HOME/.local/share}/opencode/opencode-stable.db`:
+  # (a) DB exists and is readable, (b) data_migration set matches
+  # the pinned baseline, (c) opencode-cost-report is on PATH, (d)
+  # `opencode-cost-report --supported-opencode-version` output
+  # contains the expected version range. Exits 0 silently on
+  # success; on any failure prints
+  # `[smoke-test-failure: <label>] <detail>` to stderr and exits
+  # non-zero. Same shape as the `cavememSmokeTest` precedent.
+  opencode-cost-diagnosis-smoke-test =
+    pkgs.callPackage ../../scripts/opencode-cost-diagnosis-smoke-test.nix
+      { };
 in
 {
   options.programs.opencode-cost-diagnosis = {
@@ -71,7 +86,11 @@ in
       `opencode-cost-report` CLI for inspecting opencode session
       token usage and cost, plus the generic
       `opencode-cost-diagnosis-node` dev/test wrapper used by the
-      fixture creator and the test suite.
+      fixture creator and the test suite, plus the
+      `opencode-cost-diagnosis-smoke-test` runtime verifier the
+      operator runs after `nix flake update` / `darwin-rebuild
+      switch` to confirm the install pipeline and schema-baseline
+      pin are still in sync with the live opencode DB.
 
       Requires programs.opencode.enable = true on the same host; the
       assertion below enforces this at HM evaluation time.
@@ -91,12 +110,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Both wrappers shipped on PATH. The smoke-test derivation from
-    # Task 6.3 will become a third entry in this list when that task
-    # lands.
+    # Three binaries on PATH: production CLI, generic Node dev
+    # wrapper, and the post-`nix flake update` smoke test. Order is
+    # cosmetic — each is independently usable.
     home.packages = [
       cfg.package
       opencode-cost-diagnosis-node
+      opencode-cost-diagnosis-smoke-test
     ];
 
     assertions = [

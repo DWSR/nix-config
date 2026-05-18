@@ -56,12 +56,25 @@ const Database = require('better-sqlite3');
 // drift warnings — schema drift is detected by the migration-set check
 // below, not by parsing opencode's version string. Tightened/bumped in
 // future tasks if a new migration lands.
+//
+// MUST stay in sync with EXPECTED_VERSION_RANGE in
+// scripts/opencode-cost-diagnosis-smoke-test.nix. The smoke test
+// greps for this literal string in `--supported-opencode-version`
+// output, so a one-sided update will fire its version_mismatch label.
 const SUPPORTED_VERSION_RANGE = '>=0.18.0 <0.30.0';
 
 // Pinned set of `data_migration.name` rows the reader expects to see.
 // design.md:539 records this as the v1 baseline, verified live on
 // 2026-05-16. Object.freeze prevents accidental mutation from any
 // downstream caller that imports the constant.
+//
+// MUST stay in sync with SUPPORTED_MIGRATIONS (bash array) in
+// scripts/opencode-cost-diagnosis-smoke-test.nix. The smoke test
+// runs `SELECT name FROM data_migration ORDER BY name` directly via
+// the sqlite3 CLI and compares against that array, so a one-sided
+// update — adding a migration name here but not in the bash array,
+// or vice versa — will surface as schema_drift on the next
+// `darwin-rebuild switch`.
 const SUPPORTED_MIGRATION_SET = Object.freeze(['session_usage_from_messages']);
 
 /* ------------------------------------------------------------------ *
