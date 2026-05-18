@@ -1464,11 +1464,17 @@ const BUCKET_TOTAL_KEYS = Object.freeze([
   'subagentDispatch',
 ]);
 
-// Per-bucket cost fields that stay `null` in v1 per the
-// `per_bucket_cost_deferred` decision. Used both for the
-// globalTotals.cost shape and for every ProjectAggregate.cost so
-// the forward-compat invariant is enforced in one place.
-const PER_BUCKET_COST_KEYS = Object.freeze([
+// v1's per-bucket cost keys — the original six fields, kept as a
+// private constant so the v1 `makeZeroCostBuckets` helper below
+// continues to produce the exact v1 cost shape (six null fields
+// plus `total`). Touching this array changes every v1 caller's
+// emitted JSON / Markdown, so the v1 byte-identical integration
+// golden depends on this list staying frozen at six entries until
+// task 5.x replaces the v1 cost-shape callers with the v2 path.
+//
+// New code should reference `PER_BUCKET_COST_KEYS` below, NOT this
+// private list.
+const V1_PER_BUCKET_COST_KEYS = Object.freeze([
   'cachedRead',
   'cachedWrite',
   'uncachedInput',
@@ -1476,6 +1482,95 @@ const PER_BUCKET_COST_KEYS = Object.freeze([
   'reasoning',
   'subagentDispatch',
 ]);
+
+// v2's extended per-bucket cost keys: the six v1 fields verbatim
+// followed by the three new v2 uncached sub-bucket fields
+// (design.md:599-611). The trailing three entries sit alongside
+// the v1 `uncachedInput` total — `uncachedInput` itself remains
+// in the shape and equals `uncachedSystemPrompt + history +
+// toolOutputs` within rounding when pricing is matched.
+//
+// This is the canonical exported per-bucket cost key list and is
+// what every v2 task downstream (3.1 / 4.x / 5.x) reads.
+const PER_BUCKET_COST_KEYS = Object.freeze([
+  ...V1_PER_BUCKET_COST_KEYS,
+  // v2 additions
+  'uncachedSystemPrompt',
+  'history',
+  'toolOutputs',
+]);
+
+// The six named cachedRead sub-buckets that decompose
+// `session.tokens_cache_read` (design.md:612-619). All five named
+// content-shape sub-buckets plus the `unclassifiedCached` residual
+// that absorbs proportional-split rounding. Used both by the
+// classifier (task 3.1) and the drift fallback shape below.
+const CACHED_READ_SUB_BUCKET_KEYS = Object.freeze([
+  'systemPromptCached',
+  'agentsMdCached',
+  'mcpToolSchemasCached',
+  'accumulatedHistoryCached',
+  'accumulatedToolOutputsCached',
+  'unclassifiedCached',
+]);
+
+// Cost-reconciliation tolerance: a per-session sum invariant fires
+// `cost_invariant_violation` when the bucket-sum diverges from
+// `session.cost` by MORE than `max(COST_INVARIANT_TOLERANCE_PCT,
+// COST_INVARIANT_TOLERANCE_FLOOR_USD)`. Tighter than the brief's
+// 0.5% because models.dev is the same catalog opencode uses
+// internally — see design.md:654.
+const COST_INVARIANT_TOLERANCE_PCT = 0.001; // 0.1%
+const COST_INVARIANT_TOLERANCE_FLOOR_USD = 0.01;
+
+// Subagent residual labels and below-threshold fold thresholds
+// (design.md:529, 564, requirements 5.4 / 6.5). Both labels are
+// quoted with parens to make them unmistakable in the rendered
+// reports — no real agent or tool name starts with `(`.
+const SUBAGENT_NULL_AGENT_LABEL = '(unattributed-no-agent-column)';
+const SUBAGENT_BELOW_THRESHOLD_LABEL = '(below-threshold-fold)';
+const SUBAGENT_BELOW_THRESHOLD_PCT = 0.01; // 1% of descendant count
+const SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR = 1; // never less than 1
+
+// Tool residual label. Lives in a separate namespace from the
+// subagent residual (per-tool maps, not per-agent maps), so the
+// shared `(below-threshold-fold)` wording is appropriate — the
+// surrounding context disambiguates.
+const TOOL_BELOW_THRESHOLD_LABEL = '(below-threshold-fold)';
+const TOOL_BELOW_THRESHOLD_PCT = 0.01; // 1% of total tool output tokens
+
+// Classifier marker sentinels for the cachedRead sub-buckets.
+//
+// Task 1.1 (Decision 6 gate, see research.md:835-1086) found that
+// all three "literal marker" sub-buckets — systemPrompt, AGENTS.md,
+// MCP schemas — are constructed per-turn at request time and never
+// persisted into the opencode `parts` table. They are marked
+// `marker-unreliable` and the constants are set to a recognized
+// sentinel value. TokenizerSplitter (task 3.1) treats any
+// occurrence of `MARKER_UNRELIABLE_SENTINEL` as a degraded marker
+// and unconditionally sets `markersDegraded: true` on its
+// TokenizerProvenance output, which triggers the proportional-from
+// uncached degraded path in AttributionEngine (design.md:583,
+// Decision 6 fallback).
+//
+// The other two sub-buckets — accumulatedHistory and
+// accumulatedToolOutputs — are `inferred-marker`: classified by
+// `message.role` / `part.type` shape rather than by a literal
+// substring. They use a distinct `MARKER_BY_STRUCTURE` sentinel so
+// the classifier can branch on shape rather than on a string
+// search. The sentinel is structurally distinguishable from the
+// unreliable sentinel even though both are `null`-shaped values:
+// the classifier code reads the constant by name, not by value, so
+// a future change in the underlying sentinel representation is
+// localised here.
+const MARKER_UNRELIABLE_SENTINEL = null;
+const MARKER_BY_STRUCTURE = Object.freeze({ kind: 'by-structure' });
+
+const SYSTEM_PROMPT_MARKER = MARKER_UNRELIABLE_SENTINEL;
+const AGENTS_MD_MARKER = MARKER_UNRELIABLE_SENTINEL;
+const MCP_TOOL_SCHEMAS_MARKER = MARKER_UNRELIABLE_SENTINEL;
+const ACCUMULATED_HISTORY_MARKER = MARKER_BY_STRUCTURE;
+const ACCUMULATED_TOOL_OUTPUTS_MARKER = MARKER_BY_STRUCTURE;
 
 function makeZeroBucketTotals() {
   const out = {};
@@ -1486,8 +1581,49 @@ function makeZeroBucketTotals() {
 function makeZeroCostBuckets() {
   // `total` is the only field that ever holds a non-null value in
   // v1; every per-bucket field is `null` by Iteration 2.5 decision.
+  //
+  // PRESERVED FOR v1 CALLERS. Iterates over the private
+  // `V1_PER_BUCKET_COST_KEYS` list so v1's emitted shape is
+  // unaffected by the v2 extension on `PER_BUCKET_COST_KEYS`.
+  // v2's drift fallback uses `makeNullCostShape()` below, which
+  // produces the extended shape with the same null discipline.
   const out = { total: 0 };
+  for (const k of V1_PER_BUCKET_COST_KEYS) out[k] = null;
+  return out;
+}
+
+/**
+ * v2 drift-fallback cost shape factory (design.md:581-583, 648).
+ *
+ * Returns a fresh CostBuckets object where every cost-bearing
+ * field is `null`:
+ *   - the six v1 per-bucket fields (cachedRead, cachedWrite,
+ *     uncachedInput, output, reasoning, subagentDispatch)
+ *   - the three v2 uncached sub-bucket fields
+ *     (uncachedSystemPrompt, history, toolOutputs)
+ *   - every key in cachedReadBreakdown
+ *   - the entire subagentDispatchByAgent map (null, not {})
+ *   - the entire toolOutputsByTool map (null, not {})
+ *
+ * `total` is the sole non-null field; it carries `session.cost`
+ * because that value's authoritative source is independent of
+ * pricing drift. The caller passes it as the optional argument.
+ *
+ * Used by AttributionEngine on `pricing_table_drift` (task 5.6)
+ * and by ReportAssembler tests that need a known-shape fixture.
+ *
+ * @param {number} [sessionCost=0] — value to assign to `.total`.
+ * @returns {object} the v2 all-null CostBuckets shape.
+ */
+function makeNullCostShape(sessionCost = 0) {
+  const out = { total: sessionCost };
   for (const k of PER_BUCKET_COST_KEYS) out[k] = null;
+  out.cachedReadBreakdown = {};
+  for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+    out.cachedReadBreakdown[k] = null;
+  }
+  out.subagentDispatchByAgent = null;
+  out.toolOutputsByTool = null;
   return out;
 }
 
@@ -2662,4 +2798,25 @@ module.exports = {
   SUPPORTED_VERSION_RANGE,
   SUPPORTED_MIGRATION_SET,
   main,
+  // v2 additions (task 1.5): constants + drift fallback helper.
+  // Exposed for unit-test reach; production wiring lands in
+  // tasks 2.x / 3.x / 4.x / 5.x.
+  PER_BUCKET_COST_KEYS,
+  CACHED_READ_SUB_BUCKET_KEYS,
+  COST_INVARIANT_TOLERANCE_PCT,
+  COST_INVARIANT_TOLERANCE_FLOOR_USD,
+  SUBAGENT_NULL_AGENT_LABEL,
+  SUBAGENT_BELOW_THRESHOLD_LABEL,
+  SUBAGENT_BELOW_THRESHOLD_PCT,
+  SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR,
+  TOOL_BELOW_THRESHOLD_LABEL,
+  TOOL_BELOW_THRESHOLD_PCT,
+  MARKER_UNRELIABLE_SENTINEL,
+  MARKER_BY_STRUCTURE,
+  SYSTEM_PROMPT_MARKER,
+  AGENTS_MD_MARKER,
+  MCP_TOOL_SCHEMAS_MARKER,
+  ACCUMULATED_HISTORY_MARKER,
+  ACCUMULATED_TOOL_OUTPUTS_MARKER,
+  makeNullCostShape,
 };
