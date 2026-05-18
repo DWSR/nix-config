@@ -1,7 +1,9 @@
 /*
   scripts/opencode-cost-diagnosis-smoke-test.nix — post-`nix flake
   update` verifier for the opencode-cost-diagnosis spec (Task 6.3;
-  Requirements 5.1, 5.2).
+  Requirements 5.1, 5.2). Extended by v2-diagnosis Task 1.4
+  (Requirements 3.1, 3.5) to validate the bundled pricing JSON and
+  confirm the live-history models stay covered.
 
   Why a `writeShellApplication` rather than inlining the checks into
   the HM module or shipping a Node-based test:
@@ -53,12 +55,14 @@
 {
   writeShellApplication,
   coreutils,
+  jq,
   sqlite,
 }:
 writeShellApplication {
   name = "opencode-cost-diagnosis-smoke-test";
   runtimeInputs = [
     coreutils
+    jq
     sqlite
   ];
   text = ''
@@ -82,6 +86,29 @@ writeShellApplication {
     # confirm the CLI on PATH is the one this smoke test was built
     # against.
     EXPECTED_VERSION_RANGE=">=0.18.0 <0.30.0"
+
+    # Path to the bundled pricing JSON, baked at smoke-test build time
+    # via Nix source interpolation. Same pattern the production CLI
+    # wrapper uses to wire OPENCODE_COST_PRICING_PATH in v2-diagnosis
+    # Task 1.3: the store path captured here resolves to the exact
+    # file shipped with this revision of the smoke test, so a flake
+    # update that rebuilds the smoke test also re-pins the pricing
+    # JSON it validates.
+    PRICING_JSON=${./opencode-cost-report-pricing.json}
+
+    # Models observed in the operator's live history that MUST stay
+    # covered by the bundled pricing JSON. MUST stay in sync with the
+    # JS CLI's PricingTable and the bundled JSON's coverage: if the
+    # live history grows a new modelID, add it here AND ensure
+    # `scripts/opencode-cost-report-pricing.json` has an entry for it.
+    # Form: "<providerID> <modelID>" per element so the loop in check
+    # (e) can `read` them into two variables without tracking separate
+    # arrays.
+    EXPECTED_MODELS=(
+      "anthropic claude-opus-4-7"
+      "anthropic claude-sonnet-4-5"
+      "openai gpt-5.5-pro"
+    )
 
     # DB path resolution. The override hook
     # (OPENCODE_COST_SMOKE_TEST_DB) is the verification handle from
@@ -184,6 +211,55 @@ writeShellApplication {
       fail "version_mismatch" \
         "opencode-cost-report --supported-opencode-version output missing expected range '$EXPECTED_VERSION_RANGE'. Got: $version_out"
     fi
+
+    # ---------------------------------------------------------------
+    # (e) Bundled pricing JSON parses and covers expected models
+    # ---------------------------------------------------------------
+    # This is the v2-diagnosis Task 1.4 cross-binding: a drift between
+    # the bundled `scripts/opencode-cost-report-pricing.json` and the
+    # live-history modelIDs the CLI must price surfaces as
+    # `pricing_drift` here (label parallels the JS CLI's
+    # `pricing_table_drift` finding code). The check is ordered last
+    # because it's the data the CLI consumes — checks (a)-(d) prove
+    # the CLI itself is wired up; (e) proves the data it depends on
+    # is intact.
+    if [[ ! -r "$PRICING_JSON" ]]; then
+      fail "pricing_drift" \
+        "pricing JSON missing or unreadable at $PRICING_JSON"
+    fi
+
+    # Capture jq's parse error on stderr+stdout so the failure message
+    # carries the actual jq diagnostic (line/column of the malformed
+    # token) rather than a generic "did not parse" string.
+    if ! jq_parse_out=$(jq -e . "$PRICING_JSON" 2>&1 >/dev/null); then
+      fail "pricing_drift" \
+        "pricing JSON does not parse as valid JSON at $PRICING_JSON: $jq_parse_out"
+    fi
+
+    # Top-level shape contract: `pinDate`, `pinSource`, `models` are
+    # the three keys the JS CLI's loader treats as required. Catching
+    # a missing top-level key here keeps the failure label specific
+    # ("the JSON is structurally wrong") rather than letting the
+    # per-model loop below report a misleading "missing model" for
+    # what is really a missing `models` root.
+    if ! jq -e 'has("pinDate") and has("pinSource") and has("models")' \
+      "$PRICING_JSON" >/dev/null 2>&1; then
+      fail "pricing_drift" \
+        "pricing JSON missing one of required top-level keys (pinDate, pinSource, models) at $PRICING_JSON"
+    fi
+
+    # Per-model coverage: each (providerID, modelID) in EXPECTED_MODELS
+    # must resolve to a non-null entry under `.models[provider][model]`.
+    # `// empty` collapses both a literal `null` and a missing key to
+    # an empty jq output, which `-e` then treats as failure (exit 1).
+    for entry in "''${EXPECTED_MODELS[@]}"; do
+      read -r provider model <<<"$entry"
+      if ! jq -e --arg p "$provider" --arg m "$model" \
+        '.models[$p][$m] // empty' "$PRICING_JSON" >/dev/null 2>&1; then
+        fail "pricing_drift" \
+          "pricing JSON missing required model: $provider/$model at $PRICING_JSON"
+      fi
+    done
 
     printf 'opencode-cost-diagnosis-smoke-test: OK\n' >&2
     exit 0
