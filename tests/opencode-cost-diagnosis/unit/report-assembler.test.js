@@ -74,6 +74,7 @@ const {
   ReportAssembler,
   setV2CostComputeEnabled,
   PER_BUCKET_COST_KEYS,
+  CACHED_READ_SUB_BUCKET_KEYS,
 } = require(
   path.join(__dirname, '../../../scripts/opencode-cost-report.js'),
 );
@@ -1119,4 +1120,659 @@ test('assemble: flag ON exposes all 9 PER_BUCKET_COST_KEYS on the aggregator sha
   } finally {
     setV2CostComputeEnabled(false);
   }
+});
+
+/* ── Task 6.2: cachedReadBreakdown / byAgent / byTool aggregation ── */
+//
+// Task 6.2 extends ReportAssembler's flag-ON aggregation loops to
+// merge the three NESTED structures on `attribution.cost`:
+//
+//   - `cachedReadBreakdown` — plain object with the 6 keys from
+//     `CACHED_READ_SUB_BUCKET_KEYS`. Deep-merged per sub-bucket key
+//     (sum of session contributions). Drift sessions emit `null`
+//     here; null contributions are skipped (consistent with 6.1).
+//
+//   - `subagentDispatchByAgent` — per-agent dollar dispatch keyed by
+//     agent type. AttributionEngine MAY emit this as a plain object
+//     (per design.md interface) or as a Map (the toolOutputsByTool
+//     precedent at line 2553). The assembler defensively handles
+//     both shapes via `instanceof Map` and converts to a plain
+//     object on the assembled report so the JSON serializer's
+//     alphabetical-key replacer can sort them (design.md
+//     ReportSerializer Implementation Notes, line 695).
+//
+//   - `toolOutputsByTool` — per-tool `{ cached, uncached }`
+//     partition. Same Map↔Object defensive handling as above; the
+//     partition is preserved during merge (per-tool cached and
+//     uncached are summed independently across sessions).
+//
+// Drift contract: per-session `null` on any of these three fields
+// skips the merge for that field (parallel to 6.1's per-key
+// `null` skip on the flat PER_BUCKET_COST_KEYS).
+//
+// Boundary observable from tasks.md: `byProject[A].cachedReadBreakdown
+// .systemPromptCached` equals the sum across A's sessions; same for
+// byAgent / byTool; and the assembled report's byAgent / byTool
+// fields are plain objects (NOT Map instances) after assembly.
+//
+// Requirements: R4.3 (cachedRead sub-buckets at per-session,
+// per-project, global aggregation), R5.3 (per-agent sub-buckets at
+// all three aggregation levels), R6.4 (per-tool sub-buckets at all
+// three aggregation levels).
+
+// Build a v2-extended cost shape with optional nested sub-bucket
+// contributions. Defaults to a populated cachedReadBreakdown (all
+// zeros across the 6 sub-buckets) plus empty plain-object maps,
+// mirroring the shape the AttributionEngine emits on a matched
+// session with no per-tool / per-agent activity. Pass
+// `cachedReadBreakdown: null` (or `subagentDispatchByAgent: null`,
+// or `toolOutputsByTool: null`) to simulate a drift session for the
+// corresponding field.
+function makeV2CostExtended(overrides) {
+  const o = overrides || {};
+  const base = makeV2Cost(o);
+  if (Object.prototype.hasOwnProperty.call(o, 'cachedReadBreakdown')) {
+    base.cachedReadBreakdown = o.cachedReadBreakdown;
+  } else {
+    const crb = {};
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) crb[k] = 0;
+    base.cachedReadBreakdown = crb;
+  }
+  base.subagentDispatchByAgent = Object.prototype.hasOwnProperty.call(
+    o,
+    'subagentDispatchByAgent',
+  )
+    ? o.subagentDispatchByAgent
+    : {};
+  base.toolOutputsByTool = Object.prototype.hasOwnProperty.call(
+    o,
+    'toolOutputsByTool',
+  )
+    ? o.toolOutputsByTool
+    : {};
+  return base;
+}
+
+test('assemble: flag ON aggregates cachedReadBreakdown deep-merge across sessions on globalTotals', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 1.0,
+          cachedRead: 0.30,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.10,
+            agentsMdCached: 0.05,
+            mcpToolSchemasCached: 0.04,
+            accumulatedHistoryCached: 0.08,
+            accumulatedToolOutputsCached: 0.02,
+            unclassifiedCached: 0.01,
+          },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 0.50,
+          cachedRead: 0.15,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.05,
+            agentsMdCached: 0.025,
+            mcpToolSchemasCached: 0.02,
+            accumulatedHistoryCached: 0.04,
+            accumulatedToolOutputsCached: 0.01,
+            unclassifiedCached: 0.005,
+          },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const crb = report.globalTotals.cost.cachedReadBreakdown;
+    assert.ok(crb && typeof crb === 'object', 'cachedReadBreakdown present');
+    // Every sub-bucket sum across both sessions.
+    const expected = {
+      systemPromptCached: 0.15,
+      agentsMdCached: 0.075,
+      mcpToolSchemasCached: 0.06,
+      accumulatedHistoryCached: 0.12,
+      accumulatedToolOutputsCached: 0.03,
+      unclassifiedCached: 0.015,
+    };
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.ok(
+        Math.abs(crb[k] - expected[k]) < 1e-9,
+        `globalTotals.cost.cachedReadBreakdown.${k} expected ~${expected[k]}, got ${crb[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON byProject[A].cachedReadBreakdown.systemPromptCached equals sum across A sessions (canonical observable)', () => {
+  // The canonical task 6.2 observable from tasks.md: per-project
+  // sub-bucket merging is isolated — /p/a's systemPromptCached is
+  // the sum across A's sessions only, NOT including B's.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a1',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.50,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.10,
+            agentsMdCached: 0,
+            mcpToolSchemasCached: 0,
+            accumulatedHistoryCached: 0,
+            accumulatedToolOutputsCached: 0,
+            unclassifiedCached: 0,
+          },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_a2',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.40,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.07,
+            agentsMdCached: 0,
+            mcpToolSchemasCached: 0,
+            accumulatedHistoryCached: 0,
+            accumulatedToolOutputsCached: 0,
+            unclassifiedCached: 0,
+          },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b1',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.30,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.99, // MUST NOT bleed into /p/a
+            agentsMdCached: 0,
+            mcpToolSchemasCached: 0,
+            accumulatedHistoryCached: 0,
+            accumulatedToolOutputsCached: 0,
+            unclassifiedCached: 0,
+          },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const aA = report.byProject['/p/a'];
+    const aB = report.byProject['/p/b'];
+    assert.ok(
+      Math.abs(aA.cost.cachedReadBreakdown.systemPromptCached - 0.17) < 1e-9,
+      `/p/a systemPromptCached expected 0.17 (A1+A2 only), got ${aA.cost.cachedReadBreakdown.systemPromptCached}`,
+    );
+    assert.ok(
+      Math.abs(aB.cost.cachedReadBreakdown.systemPromptCached - 0.99) < 1e-9,
+      `/p/b systemPromptCached expected 0.99, got ${aB.cost.cachedReadBreakdown.systemPromptCached}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON aggregates subagentDispatchByAgent merge across sessions on globalTotals', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.50,
+          subagentDispatch: 0.15,
+          subagentDispatchByAgent: { general: 0.10, explore: 0.05 },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.40,
+          subagentDispatch: 0.18,
+          subagentDispatchByAgent: { general: 0.08, build: 0.10 },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const sda = report.globalTotals.cost.subagentDispatchByAgent;
+    assert.ok(sda && typeof sda === 'object', 'subagentDispatchByAgent present');
+    assert.ok(
+      !(sda instanceof Map),
+      'subagentDispatchByAgent must be a plain object on the assembled report (not Map)',
+    );
+    assert.ok(
+      Math.abs(sda.general - 0.18) < 1e-9,
+      `subagentDispatchByAgent.general expected 0.18 (A+B), got ${sda.general}`,
+    );
+    assert.ok(
+      Math.abs(sda.explore - 0.05) < 1e-9,
+      `subagentDispatchByAgent.explore expected 0.05 (A only), got ${sda.explore}`,
+    );
+    assert.ok(
+      Math.abs(sda.build - 0.10) < 1e-9,
+      `subagentDispatchByAgent.build expected 0.10 (B only), got ${sda.build}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON aggregates toolOutputsByTool merge with {cached,uncached} partition preserved on globalTotals', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 1.0,
+          toolOutputs: 0.20,
+          toolOutputsByTool: {
+            read: { cached: 0.05, uncached: 0.10 },
+            bash: { cached: 0.02, uncached: 0.03 },
+          },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.5,
+          toolOutputs: 0.10,
+          toolOutputsByTool: {
+            read: { cached: 0.01, uncached: 0.04 },
+            edit: { cached: 0, uncached: 0.05 },
+          },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const tot = report.globalTotals.cost.toolOutputsByTool;
+    assert.ok(tot && typeof tot === 'object', 'toolOutputsByTool present');
+    assert.ok(
+      !(tot instanceof Map),
+      'toolOutputsByTool must be a plain object on the assembled report (not Map)',
+    );
+    // read appears in BOTH sessions → cached and uncached summed.
+    assert.ok(
+      Math.abs(tot.read.cached - 0.06) < 1e-9,
+      `tot.read.cached expected 0.06 (A+B), got ${tot.read.cached}`,
+    );
+    assert.ok(
+      Math.abs(tot.read.uncached - 0.14) < 1e-9,
+      `tot.read.uncached expected 0.14 (A+B), got ${tot.read.uncached}`,
+    );
+    // bash only in A.
+    assert.ok(
+      Math.abs(tot.bash.cached - 0.02) < 1e-9,
+      `tot.bash.cached expected 0.02 (A only), got ${tot.bash.cached}`,
+    );
+    assert.ok(
+      Math.abs(tot.bash.uncached - 0.03) < 1e-9,
+      `tot.bash.uncached expected 0.03 (A only), got ${tot.bash.uncached}`,
+    );
+    // edit only in B.
+    assert.ok(
+      Math.abs(tot.edit.cached - 0) < 1e-9,
+      `tot.edit.cached expected 0 (B only), got ${tot.edit.cached}`,
+    );
+    assert.ok(
+      Math.abs(tot.edit.uncached - 0.05) < 1e-9,
+      `tot.edit.uncached expected 0.05 (B only), got ${tot.edit.uncached}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON per-project byAgent and byTool merges are isolated by directory', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a1',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.5,
+          subagentDispatchByAgent: { general: 0.10 },
+          toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_a2',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.4,
+          subagentDispatchByAgent: { general: 0.07, explore: 0.03 },
+          toolOutputsByTool: { read: { cached: 0.005, uncached: 0.015 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b1',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.3,
+          subagentDispatchByAgent: { build: 0.99 }, // MUST NOT bleed
+          toolOutputsByTool: { bash: { cached: 0.99, uncached: 0.99 } },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const aA = report.byProject['/p/a'];
+    const aB = report.byProject['/p/b'];
+
+    // /p/a per-agent: A1+A2 only.
+    assert.ok(
+      Math.abs(aA.cost.subagentDispatchByAgent.general - 0.17) < 1e-9,
+      `/p/a general expected 0.17, got ${aA.cost.subagentDispatchByAgent.general}`,
+    );
+    assert.ok(
+      Math.abs(aA.cost.subagentDispatchByAgent.explore - 0.03) < 1e-9,
+      `/p/a explore expected 0.03, got ${aA.cost.subagentDispatchByAgent.explore}`,
+    );
+    assert.equal(
+      aA.cost.subagentDispatchByAgent.build,
+      undefined,
+      '/p/a must not carry the build agent (only in /p/b)',
+    );
+    // /p/a per-tool: A1+A2 only.
+    assert.ok(
+      Math.abs(aA.cost.toolOutputsByTool.read.cached - 0.015) < 1e-9,
+      `/p/a read.cached expected 0.015, got ${aA.cost.toolOutputsByTool.read.cached}`,
+    );
+    assert.ok(
+      Math.abs(aA.cost.toolOutputsByTool.read.uncached - 0.035) < 1e-9,
+      `/p/a read.uncached expected 0.035, got ${aA.cost.toolOutputsByTool.read.uncached}`,
+    );
+    assert.equal(
+      aA.cost.toolOutputsByTool.bash,
+      undefined,
+      '/p/a must not carry the bash tool (only in /p/b)',
+    );
+    // /p/b stays uncontaminated.
+    assert.ok(
+      Math.abs(aB.cost.subagentDispatchByAgent.build - 0.99) < 1e-9,
+      `/p/b build expected 0.99, got ${aB.cost.subagentDispatchByAgent.build}`,
+    );
+    assert.ok(
+      Math.abs(aB.cost.toolOutputsByTool.bash.cached - 0.99) < 1e-9,
+      `/p/b bash.cached expected 0.99, got ${aB.cost.toolOutputsByTool.bash.cached}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON defensively converts Map<string,*> contributions to plain objects via Object.fromEntries', () => {
+  // The current AttributionEngine emits `toolOutputsByTool` as a JS
+  // Map (line ~2553) and may emit `subagentDispatchByAgent` as a Map
+  // when task 5.8 lands. design.md ReportSerializer Implementation
+  // Notes (line 695) require the conversion to plain object happen
+  // here, not in the serializer. Verify the assembler handles a Map
+  // contribution identically to a plain-object contribution and
+  // produces a plain object on the assembled report.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.5,
+          subagentDispatchByAgent: new Map([
+            ['general', 0.10],
+            ['explore', 0.05],
+          ]),
+          toolOutputsByTool: new Map([
+            ['read', { cached: 0.02, uncached: 0.03 }],
+            ['bash', { cached: 0.01, uncached: 0.04 }],
+          ]),
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    const sda = report.globalTotals.cost.subagentDispatchByAgent;
+    const tot = report.globalTotals.cost.toolOutputsByTool;
+    assert.ok(
+      !(sda instanceof Map),
+      'subagentDispatchByAgent must be plain object even when contribution is a Map',
+    );
+    assert.ok(
+      !(tot instanceof Map),
+      'toolOutputsByTool must be plain object even when contribution is a Map',
+    );
+    assert.ok(Math.abs(sda.general - 0.10) < 1e-9);
+    assert.ok(Math.abs(sda.explore - 0.05) < 1e-9);
+    assert.ok(Math.abs(tot.read.cached - 0.02) < 1e-9);
+    assert.ok(Math.abs(tot.read.uncached - 0.03) < 1e-9);
+    assert.ok(Math.abs(tot.bash.cached - 0.01) < 1e-9);
+    assert.ok(Math.abs(tot.bash.uncached - 0.04) < 1e-9);
+    // Per-project must also be plain object.
+    const aA = report.byProject['/p/a'];
+    assert.ok(!(aA.cost.subagentDispatchByAgent instanceof Map));
+    assert.ok(!(aA.cost.toolOutputsByTool instanceof Map));
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON drift contributions (null nested fields) skip merge but contribute to total', () => {
+  // Parallel to 6.1's per-key drift-skip: a session whose
+  // cachedReadBreakdown / subagentDispatchByAgent / toolOutputsByTool
+  // is `null` (drift fallback shape) contributes nothing to the
+  // per-sub-key sums but its `cost.total` still flows through.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_matched',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.80,
+          cachedRead: 0.20,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.10,
+            agentsMdCached: 0.04,
+            mcpToolSchemasCached: 0.03,
+            accumulatedHistoryCached: 0.02,
+            accumulatedToolOutputsCached: 0.005,
+            unclassifiedCached: 0.005,
+          },
+          subagentDispatchByAgent: { general: 0.05 },
+          toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_drift',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.20,
+          cachedReadBreakdown: null,
+          subagentDispatchByAgent: null,
+          toolOutputsByTool: null,
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+
+    // total: BOTH sessions (drift still contributes total).
+    assert.ok(
+      Math.abs(report.globalTotals.cost.total - 1.0) < 1e-9,
+      `total expected 1.0, got ${report.globalTotals.cost.total}`,
+    );
+    // cachedReadBreakdown: matched-only.
+    const crb = report.globalTotals.cost.cachedReadBreakdown;
+    assert.ok(Math.abs(crb.systemPromptCached - 0.10) < 1e-9);
+    assert.ok(Math.abs(crb.agentsMdCached - 0.04) < 1e-9);
+    assert.ok(Math.abs(crb.mcpToolSchemasCached - 0.03) < 1e-9);
+    assert.ok(Math.abs(crb.accumulatedHistoryCached - 0.02) < 1e-9);
+    assert.ok(Math.abs(crb.accumulatedToolOutputsCached - 0.005) < 1e-9);
+    assert.ok(Math.abs(crb.unclassifiedCached - 0.005) < 1e-9);
+    // subagentDispatchByAgent: only the matched session's keys appear.
+    const sda = report.globalTotals.cost.subagentDispatchByAgent;
+    assert.ok(Math.abs(sda.general - 0.05) < 1e-9);
+    assert.equal(
+      Object.keys(sda).length,
+      1,
+      `expected exactly 1 agent key (drift contributed nothing), got ${Object.keys(sda).join(',')}`,
+    );
+    // toolOutputsByTool: only matched contributes.
+    const tot = report.globalTotals.cost.toolOutputsByTool;
+    assert.ok(Math.abs(tot.read.cached - 0.01) < 1e-9);
+    assert.ok(Math.abs(tot.read.uncached - 0.02) < 1e-9);
+    assert.equal(
+      Object.keys(tot).length,
+      1,
+      `expected exactly 1 tool key (drift contributed nothing), got ${Object.keys(tot).join(',')}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON drift-only suite yields zero/empty sub-bucket shape but non-zero total', () => {
+  // Mirror of 6.1's drift-only test, extended to the three nested
+  // structures. Every session drift → cachedReadBreakdown all 0,
+  // byAgent / byTool empty objects; total = sum of session.cost.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'd1',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.30,
+          cachedReadBreakdown: null,
+          subagentDispatchByAgent: null,
+          toolOutputsByTool: null,
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'd2',
+        directory: '/p/b',
+        cost: makeV2CostExtended({
+          total: 0.20,
+          cachedReadBreakdown: null,
+          subagentDispatchByAgent: null,
+          toolOutputsByTool: null,
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    assert.ok(Math.abs(report.globalTotals.cost.total - 0.50) < 1e-9);
+    const crb = report.globalTotals.cost.cachedReadBreakdown;
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.equal(crb[k], 0, `drift-only: cachedReadBreakdown.${k} expected 0`);
+    }
+    assert.deepEqual(report.globalTotals.cost.subagentDispatchByAgent, {});
+    assert.deepEqual(report.globalTotals.cost.toolOutputsByTool, {});
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON exposes cachedReadBreakdown / byAgent / byTool on globalTotals AND every byProject entry', () => {
+  // Forward-compat presence check: even with no per-session
+  // contributions on these fields, the flag-ON aggregator must
+  // initialise the keys so downstream consumers (ReportSerializer
+  // 7.x, integration goldens 8.1) see a stable shape.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2Cost({ total: 0.10 }), // no cachedReadBreakdown/by*
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    for (const target of [report.globalTotals.cost, report.byProject['/p/a'].cost]) {
+      assert.ok(
+        target.cachedReadBreakdown &&
+          typeof target.cachedReadBreakdown === 'object',
+        'cachedReadBreakdown must be present (zero-shape) when flag is ON',
+      );
+      for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+        assert.equal(
+          target.cachedReadBreakdown[k],
+          0,
+          `cachedReadBreakdown.${k} must default to 0`,
+        );
+      }
+      assert.ok(
+        target.subagentDispatchByAgent &&
+          typeof target.subagentDispatchByAgent === 'object' &&
+          !(target.subagentDispatchByAgent instanceof Map),
+        'subagentDispatchByAgent must be a plain object (empty default)',
+      );
+      assert.ok(
+        target.toolOutputsByTool &&
+          typeof target.toolOutputsByTool === 'object' &&
+          !(target.toolOutputsByTool instanceof Map),
+        'toolOutputsByTool must be a plain object (empty default)',
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag OFF preserves v1 shape — no cachedReadBreakdown / byAgent / byTool on aggregator', () => {
+  // v1 invariant. Even when the attribution carries the v2 nested
+  // structures, the flag-OFF aggregator must NOT add them to
+  // globalTotals.cost or to byProject entries — otherwise the
+  // byte-identical integration goldens (8.1) would shift.
+  const attrs = [
+    makeAttribution({
+      sessionId: 'ses_a',
+      directory: '/p/a',
+      cost: makeV2CostExtended({
+        total: 0.50,
+        cachedReadBreakdown: {
+          systemPromptCached: 0.10,
+          agentsMdCached: 0,
+          mcpToolSchemasCached: 0,
+          accumulatedHistoryCached: 0,
+          accumulatedToolOutputsCached: 0,
+          unclassifiedCached: 0,
+        },
+        subagentDispatchByAgent: { general: 0.05 },
+        toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+      }),
+    }),
+  ];
+  const report = new ReportAssembler().assemble(attrs);
+  assert.equal(
+    report.globalTotals.cost.cachedReadBreakdown,
+    undefined,
+    'flag OFF: globalTotals.cost.cachedReadBreakdown must not be present',
+  );
+  assert.equal(
+    report.globalTotals.cost.subagentDispatchByAgent,
+    undefined,
+    'flag OFF: globalTotals.cost.subagentDispatchByAgent must not be present',
+  );
+  assert.equal(
+    report.globalTotals.cost.toolOutputsByTool,
+    undefined,
+    'flag OFF: globalTotals.cost.toolOutputsByTool must not be present',
+  );
+  const aA = report.byProject['/p/a'];
+  assert.equal(aA.cost.cachedReadBreakdown, undefined);
+  assert.equal(aA.cost.subagentDispatchByAgent, undefined);
+  assert.equal(aA.cost.toolOutputsByTool, undefined);
 });

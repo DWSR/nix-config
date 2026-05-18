@@ -3234,6 +3234,114 @@ function makeZeroCostBucketsV2() {
 }
 
 /**
+ * v2 zero-initialised cachedReadBreakdown accumulator (task 6.2).
+ *
+ * Returns a plain object with every key from
+ * `CACHED_READ_SUB_BUCKET_KEYS` initialised to numeric `0`. Used by
+ * ReportAssembler to seed `globalTotals.cost.cachedReadBreakdown`
+ * and every per-project `byProject[dir].cost.cachedReadBreakdown`
+ * when `V2_COST_COMPUTE_ENABLED` is ON.
+ *
+ * Symmetric with `makeZeroCostBucketsV2` for the same reasons (an
+ * accumulator is always numeric because it's summing across
+ * sessions; per-session drift is handled by `null`-skip in the
+ * aggregation loops, not by polluting the accumulator with nulls).
+ *
+ * @returns {object} `{ systemPromptCached: 0, agentsMdCached: 0, ... }`
+ */
+function makeZeroCachedReadBreakdown() {
+  const out = {};
+  for (const k of CACHED_READ_SUB_BUCKET_KEYS) out[k] = 0;
+  return out;
+}
+
+/**
+ * Deep-merge a per-session `cachedReadBreakdown` contribution into
+ * an accumulator object (task 6.2). Sums each sub-bucket key. Skips
+ * `null` / non-object contributions (drift-session contract,
+ * consistent with task 6.1's per-key drift-skip). Per-key values
+ * that are not numbers are skipped individually so a partial
+ * shape contributes the keys it does have.
+ *
+ * @param {object} accum the running accumulator (mutated in place).
+ * @param {object|null|undefined} contribution the session's
+ *   `cost.cachedReadBreakdown` (may be `null` on drift).
+ */
+function mergeCachedReadBreakdownInto(accum, contribution) {
+  if (!contribution || typeof contribution !== 'object') return;
+  for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+    const v = contribution[k];
+    if (typeof v === 'number') accum[k] += v;
+  }
+}
+
+/**
+ * Merge a per-session `subagentDispatchByAgent` contribution into a
+ * plain-object accumulator (task 6.2). Sums per-agent dollar
+ * dispatch values. Skips `null` contributions (drift). Defensively
+ * handles `Map<string, number>` contributions per design.md
+ * ReportAssembler Implementation Notes (line 695) — Map → plain
+ * object conversion happens at the assembler boundary so the JSON
+ * serializer's alphabetical-key replacer can sort the result.
+ *
+ * @param {object} accum the running plain-object accumulator
+ *   (mutated in place).
+ * @param {object|Map|null|undefined} contribution the session's
+ *   `cost.subagentDispatchByAgent`.
+ */
+function mergeByAgentInto(accum, contribution) {
+  if (contribution == null) return;
+  // The Map and plain-object branches share a single accumulation
+  // body; the iteration source is the only difference.
+  const iter =
+    contribution instanceof Map
+      ? contribution.entries()
+      : Object.entries(contribution);
+  for (const [agent, v] of iter) {
+    if (typeof v === 'number') {
+      accum[agent] = (accum[agent] || 0) + v;
+    }
+  }
+}
+
+/**
+ * Merge a per-session `toolOutputsByTool` contribution into a
+ * plain-object accumulator (task 6.2). Sums each tool's `cached`
+ * and `uncached` partition independently (per R6.AC2 — the
+ * partition is preserved during merge). Skips `null` contributions
+ * (drift). Defensively handles `Map<string, {cached, uncached}>`
+ * contributions, matching the Map shape AttributionEngine emits at
+ * line ~2553 — Map → plain object conversion happens at the
+ * assembler boundary per design.md ReportAssembler Implementation
+ * Notes (line 695).
+ *
+ * Per-tool accumulator entries are NEVER frozen (unlike the
+ * per-session entries which TokenizerSplitter freezes at
+ * AttributionEngine line ~2601) so subsequent sessions can keep
+ * adding to the same key. The frozen per-session entries are read
+ * field-by-field and never mutated in place.
+ *
+ * @param {object} accum the running plain-object accumulator
+ *   (mutated in place).
+ * @param {object|Map|null|undefined} contribution the session's
+ *   `cost.toolOutputsByTool`.
+ */
+function mergeByToolInto(accum, contribution) {
+  if (contribution == null) return;
+  const iter =
+    contribution instanceof Map
+      ? contribution.entries()
+      : Object.entries(contribution);
+  for (const [tool, entry] of iter) {
+    if (!entry || typeof entry !== 'object') continue;
+    const cur = accum[tool] || { cached: 0, uncached: 0 };
+    if (typeof entry.cached === 'number') cur.cached += entry.cached;
+    if (typeof entry.uncached === 'number') cur.uncached += entry.uncached;
+    accum[tool] = cur;
+  }
+}
+
+/**
  * v2 drift-fallback cost shape factory (design.md:581-583, 648).
  *
  * Returns a fresh CostBuckets object where every cost-bearing
@@ -3393,6 +3501,24 @@ class ReportAssembler {
     const globalCost = V2_COST_COMPUTE_ENABLED
       ? makeZeroCostBucketsV2()
       : makeZeroCostBuckets();
+    // Task 6.2: initialise the three v2 nested sub-bucket
+    // accumulators on the V2 path. cachedReadBreakdown is a plain
+    // object with every CACHED_READ_SUB_BUCKET_KEYS entry seeded to
+    // 0 (deep-merge target). byAgent / byTool start empty: keys
+    // appear only as contributing sessions add them. ALL THREE
+    // structures are plain JS objects (never Maps) so the JSON
+    // serializer's existing alphabetical-key replacer at
+    // `scripts/opencode-cost-report.js:1785-1802` sorts them
+    // without any new replacer wiring — per design.md
+    // ReportAssembler Implementation Notes (line 695). The flag-OFF
+    // branch deliberately leaves these keys absent so the
+    // byte-identical integration goldens at 8.1 do not see a
+    // shape shift during the 5.x/6.x rollout window.
+    if (V2_COST_COMPUTE_ENABLED) {
+      globalCost.cachedReadBreakdown = makeZeroCachedReadBreakdown();
+      globalCost.subagentDispatchByAgent = {};
+      globalCost.toolOutputsByTool = {};
+    }
     for (const a of attrs) {
       // Per-session cost.total is opencode's authoritative
       // session.cost; sum directly regardless of flag state and
@@ -3416,6 +3542,30 @@ class ReportAssembler {
           // not under-counted either.
           if (typeof v === 'number') globalCost[k] += v;
         }
+        // Task 6.2: deep-merge the three v2 nested sub-bucket
+        // structures. Helpers handle the null-skip drift contract
+        // (parallel to the per-key drift-skip immediately above)
+        // AND the defensive Map → plain object conversion for
+        // byAgent / byTool. Contributions whose entire field is
+        // `null` (drift) skip the merge; contributions with
+        // partial shapes (some keys present, others absent)
+        // contribute the keys they have. Per design.md
+        // ReportSerializer Implementation Notes (line 695), the
+        // conversion happens HERE in ReportAssembler, NOT in
+        // ReportSerializer — so the serializer's replacer never
+        // sees a Map to special-case.
+        mergeCachedReadBreakdownInto(
+          globalCost.cachedReadBreakdown,
+          a.cost.cachedReadBreakdown,
+        );
+        mergeByAgentInto(
+          globalCost.subagentDispatchByAgent,
+          a.cost.subagentDispatchByAgent,
+        );
+        mergeByToolInto(
+          globalCost.toolOutputsByTool,
+          a.cost.toolOutputsByTool,
+        );
       }
     }
 
@@ -3443,6 +3593,19 @@ class ReportAssembler {
             ? makeZeroCostBucketsV2()
             : makeZeroCostBuckets(),
         };
+        // Task 6.2: each project gets its OWN cachedReadBreakdown /
+        // byAgent / byTool accumulators. Cross-project isolation is
+        // load-bearing for the canonical observable in tasks.md
+        // (per-project sub-bucket sums must not bleed across
+        // directories). Fresh objects per project — never share a
+        // reference between projects, or a follow-on consumer that
+        // mutates the aggregate in place would silently corrupt a
+        // sibling project's totals.
+        if (V2_COST_COMPUTE_ENABLED) {
+          agg.cost.cachedReadBreakdown = makeZeroCachedReadBreakdown();
+          agg.cost.subagentDispatchByAgent = {};
+          agg.cost.toolOutputsByTool = {};
+        }
         byProject[dir] = agg;
       }
       agg.sessionCount += 1;
@@ -3461,6 +3624,21 @@ class ReportAssembler {
           const v = a.cost[k];
           if (typeof v === 'number') agg.cost[k] += v;
         }
+        // Task 6.2: per-project nested sub-bucket merges. Same
+        // helpers as the global loop — drift-skip and Map → object
+        // conversion are centralised in the helpers.
+        mergeCachedReadBreakdownInto(
+          agg.cost.cachedReadBreakdown,
+          a.cost.cachedReadBreakdown,
+        );
+        mergeByAgentInto(
+          agg.cost.subagentDispatchByAgent,
+          a.cost.subagentDispatchByAgent,
+        );
+        mergeByToolInto(
+          agg.cost.toolOutputsByTool,
+          a.cost.toolOutputsByTool,
+        );
       }
     }
 
