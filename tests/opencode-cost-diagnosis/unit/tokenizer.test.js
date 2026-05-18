@@ -402,3 +402,125 @@ test('TokenizerSplitter: text part with role lookup miss (missing message) is un
       'go to unclassifiedCount so the Attribution Engine can flag it',
   );
 });
+
+/* ------------------------------------------------------------------ *
+ * byTool smoke tests — task 3.3 explicitly directs extending
+ * tokenizer.test.js with byTool partition correctness and the
+ * (unknown-tool) fold (tasks.md:96). The exhaustive coverage of
+ * dual-source extraction, frozen entries, empty-output omission,
+ * non-string-name handling, etc. lives in tokenizer-cached-read.test.js
+ * (added by task 3.2). The three tests below are lightweight smoke
+ * tests that anchor the contract in the v1-shape-asserting test file
+ * so a future refactor that drops byTool from the v1 return object
+ * fails HERE first, not only in the cached-read file.
+ *
+ * Approach C interpretation (from design.md TokenizerSplitter
+ * extended): each tool part contributes its full tiktoken count to
+ * BOTH `cached` and `uncached` on the byTool entry. AttributionEngine
+ * apportions cached vs uncached dollars across the two partitions
+ * independently, so the double-counting does NOT survive into
+ * dollars.
+ * ------------------------------------------------------------------ */
+
+test('TokenizerSplitter (byTool smoke): tool part with data.name populates per-tool entry on the v1 return object', () => {
+  // Smoke check that byTool is present on the return object from a
+  // tokenizer.test.js perspective. The exhaustive multi-part /
+  // sum-invariant test lives in tokenizer-cached-read.test.js; here
+  // we only verify the field exists, is a Map, and gets a key from
+  // a single `data.name`-bearing tool part.
+  const t = new TokenizerSplitter();
+  const messages = new Map([
+    ['m_ast', { id: 'm_ast', role: 'assistant' }],
+  ]);
+  const parts = [
+    {
+      message_id: 'm_ast',
+      type: 'tool',
+      data: JSON.stringify({
+        name: 'bash',
+        state: { status: 'completed', output: 'bash output body text here' },
+      }),
+    },
+  ];
+
+  const counts = t.classifyAndCount(parts, messages);
+  assert.ok(
+    counts.byTool instanceof Map,
+    'byTool must be a Map on the v1 return object (additive v2 field)',
+  );
+  assert.ok(
+    counts.byTool.has('bash'),
+    'tool part with data.name="bash" must populate byTool["bash"]',
+  );
+  const entry = counts.byTool.get('bash');
+  assert.equal(typeof entry.cached, 'number');
+  assert.equal(typeof entry.uncached, 'number');
+  assert.ok(entry.cached > 0 && entry.uncached > 0);
+});
+
+test('TokenizerSplitter (byTool smoke): tool part missing data.name AND data.tool folds into (unknown-tool)', () => {
+  // Smoke check that the (unknown-tool) residual fires from the v1
+  // test file too. Per task brief acceptance: "If missing/non-string,
+  // fold into (unknown-tool)". Exhaustive non-string / dual-probe
+  // variants live in tokenizer-cached-read.test.js.
+  const t = new TokenizerSplitter();
+  const messages = new Map([
+    ['m_ast', { id: 'm_ast', role: 'assistant' }],
+  ]);
+  const parts = [
+    {
+      message_id: 'm_ast',
+      type: 'tool',
+      // No `name`, no `tool` → orphan tool part.
+      data: JSON.stringify({
+        state: { status: 'completed', output: 'orphan tool body text here' },
+      }),
+    },
+  ];
+
+  const counts = t.classifyAndCount(parts, messages);
+  assert.equal(counts.byTool.size, 1);
+  assert.ok(
+    counts.byTool.has('(unknown-tool)'),
+    'tool part with NEITHER data.name NOR data.tool must fold into "(unknown-tool)"',
+  );
+});
+
+test('TokenizerSplitter (byTool smoke): cached equals uncached per tool part (Approach C partition invariant)', () => {
+  // The partition invariant from design.md: each tool part
+  // contributes its full tiktoken count to BOTH `cached` and
+  // `uncached`. This is the smoke-test anchor — the
+  // tokenizer-cached-read.test.js suite verifies the same property
+  // across multiple tools and the sum-invariant against v1
+  // toolOutput.
+  const t = new TokenizerSplitter();
+  const messages = new Map([
+    ['m_ast', { id: 'm_ast', role: 'assistant' }],
+  ]);
+  const parts = [
+    {
+      message_id: 'm_ast',
+      type: 'tool',
+      data: JSON.stringify({
+        name: 'read',
+        state: { status: 'completed', output: 'file contents body text here' },
+      }),
+    },
+  ];
+
+  const counts = t.classifyAndCount(parts, messages);
+  const entry = counts.byTool.get('read');
+  assert.ok(entry, 'byTool must have an entry for "read"');
+  assert.equal(
+    entry.cached,
+    entry.uncached,
+    'Approach C: per-tool entry cached count must equal uncached count',
+  );
+  // And both partitions reconcile with v1 toolOutput for this
+  // single-tool fixture.
+  assert.equal(
+    entry.uncached,
+    counts.toolOutput,
+    'single-tool fixture: byTool[read].uncached must equal v1 toolOutput',
+  );
+});

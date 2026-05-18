@@ -91,7 +91,7 @@
   - _Requirements: 6.1, 6.2_
   - _Boundary: TokenizerSplitter (byTool extension)_
 
-- [ ] 3.3 TokenizerSplitter unit tests (cachedRead + byTool)
+- [x] 3.3 TokenizerSplitter unit tests (cachedRead + byTool)
   - New `tests/opencode-cost-diagnosis/unit/tokenizer-cached-read.test.js`: classifier correctness across the 5 named sub-buckets, residual when markers fail, `markersDegraded` signal correctness
   - Extend `tests/opencode-cost-diagnosis/unit/tokenizer.test.js`: byTool partition correctness, `(unknown-tool)` fold, legacy uncached split (systemPrompt/history/toolOutput/unclassifiedCount) still works
   - Observable: both test files pass under the existing unit runner
