@@ -3205,6 +3205,35 @@ function makeZeroCostBuckets() {
 }
 
 /**
+ * v2 zero-initialised cost-bucket accumulator (task 6.1).
+ *
+ * Used by `ReportAssembler.assemble` when
+ * `V2_COST_COMPUTE_ENABLED` is ON to seed `globalTotals.cost` and
+ * every `byProject[dir].cost` running sum. Every cost field is
+ * numeric `0`, including the 9 per-bucket fields and `total`. This
+ * is distinct from `makeNullCostShape()` (which sets per-key fields
+ * to `null` to mark per-session drift): an aggregator's accumulator
+ * is always numeric because it's summing across sessions, and
+ * `null` would be ambiguous between "no contributors yet" and "this
+ * key was deliberately omitted from aggregation". Drift sessions
+ * are handled per-iteration in the aggregation loop (skip per-key
+ * accumulation when `a.cost[k] === null`) rather than by polluting
+ * the accumulator with nulls.
+ *
+ * Removal plan: when `V2_COST_COMPUTE_ENABLED` is removed (after
+ * task 8.1 refreshes the integration goldens), this helper becomes
+ * the only cost-bucket factory and `makeZeroCostBuckets()` /
+ * `V1_PER_BUCKET_COST_KEYS` can be deleted alongside the flag.
+ *
+ * @returns {object} `{ total: 0, ...all 9 PER_BUCKET_COST_KEYS: 0 }`
+ */
+function makeZeroCostBucketsV2() {
+  const out = { total: 0 };
+  for (const k of PER_BUCKET_COST_KEYS) out[k] = 0;
+  return out;
+}
+
+/**
  * v2 drift-fallback cost shape factory (design.md:581-583, 648).
  *
  * Returns a fresh CostBuckets object where every cost-bearing
@@ -3342,14 +3371,52 @@ class ReportAssembler {
     }
 
     // ── globalTotals.cost ───────────────────────────────────────
-    const globalCost = makeZeroCostBuckets();
+    // Two branches, gated on the task 5.2 feature flag:
+    //
+    //   - Flag OFF (default): v1 shape verbatim. Only `cost.total`
+    //     accumulates; every per-bucket field stays `null` so the
+    //     byte-identical integration goldens at 8.1 remain valid
+    //     during the 5.x / 6.x rollout window.
+    //   - Flag ON: task 6.1 extended aggregation. Initialise the
+    //     accumulator with numeric zeros across all 9
+    //     `PER_BUCKET_COST_KEYS` (via `makeZeroCostBucketsV2()`),
+    //     then iterate every key on every attribution. Per-key
+    //     contributions from drift sessions (`a.cost[k] === null`)
+    //     are SKIPPED — the v1 invariant that drift's authoritative
+    //     `cost.total` still flows through is preserved by the
+    //     unconditional `globalCost.total +=` below. R2.AC2
+    //     (aggregation parity with v1's token pattern) is satisfied
+    //     by reusing the same flat-loop structure as
+    //     `globalTokens` above; R7.AC3 (preserve v1's
+    //     sum-correctness) is satisfied by the flag-OFF branch
+    //     leaving v1's emission verbatim.
+    const globalCost = V2_COST_COMPUTE_ENABLED
+      ? makeZeroCostBucketsV2()
+      : makeZeroCostBuckets();
     for (const a of attrs) {
       // Per-session cost.total is opencode's authoritative
-      // session.cost; sum directly. Per-bucket cost fields stay
-      // null (forward-compat with per_bucket_cost_deferred spec).
+      // session.cost; sum directly regardless of flag state and
+      // regardless of pricing-drift status (drift sessions still
+      // carry `cost.total` per the AttributionEngine 5.6 contract).
       globalCost.total += (a.cost && typeof a.cost.total === 'number')
         ? a.cost.total
         : 0;
+      if (V2_COST_COMPUTE_ENABLED && a.cost) {
+        for (const k of PER_BUCKET_COST_KEYS) {
+          const v = a.cost[k];
+          // Drift fallback contract (design.md:581-583, 648; task
+          // 5.6): per-key `null` is the in-band signal that this
+          // session's pricing lookup failed and the per-key value
+          // is intentionally unknown. Skipping the field keeps the
+          // aggregate honest — a drift session must NOT silently
+          // contribute 0 to a matched-sessions sum because that
+          // would misreport the "matched coverage" the operator is
+          // reading. `total` already absorbed the authoritative
+          // session.cost above, so the project's overall spend is
+          // not under-counted either.
+          if (typeof v === 'number') globalCost[k] += v;
+        }
+      }
     }
 
     // ── byProject (group by directory) ──────────────────────────
@@ -3367,7 +3434,14 @@ class ReportAssembler {
           directory: dir,
           sessionCount: 0,
           tokens: makeZeroBucketTotals(),
-          cost: makeZeroCostBuckets(),
+          // Same flag gate as globalCost above. Each project's
+          // accumulator is independent so per-project drift
+          // contributions are isolated — a single drift session in
+          // one project does not pollute another project's
+          // matched-only per-key sums.
+          cost: V2_COST_COMPUTE_ENABLED
+            ? makeZeroCostBucketsV2()
+            : makeZeroCostBuckets(),
         };
         byProject[dir] = agg;
       }
@@ -3378,6 +3452,16 @@ class ReportAssembler {
       agg.cost.total += (a.cost && typeof a.cost.total === 'number')
         ? a.cost.total
         : 0;
+      if (V2_COST_COMPUTE_ENABLED && a.cost) {
+        // Mirror of the global-loop drift-skip discipline above.
+        // Keeping the two loops textually parallel makes a future
+        // change to the contribution rule (e.g. weighted sums) a
+        // single-site grep rather than a hunt across files.
+        for (const k of PER_BUCKET_COST_KEYS) {
+          const v = a.cost[k];
+          if (typeof v === 'number') agg.cost[k] += v;
+        }
+      }
     }
 
     // ── Per-session findings → global findings ─────────────────

@@ -72,6 +72,8 @@ const {
   TokenizerSplitter,
   AttributionEngine,
   ReportAssembler,
+  setV2CostComputeEnabled,
+  PER_BUCKET_COST_KEYS,
 } = require(
   path.join(__dirname, '../../../scripts/opencode-cost-report.js'),
 );
@@ -702,5 +704,419 @@ test('assemble: sessions array has one entry per input attribution (sessionCount
       inIds.has(s.sessionId),
       `output session ${s.sessionId} must map to an input attribution`,
     );
+  }
+});
+
+/* ── Task 6.1: extended cost-shape aggregation (V2_COST_COMPUTE_ENABLED) ── */
+//
+// The flag-OFF branch is the v1 invariant: only `cost.total`
+// accumulates; every per-bucket cost field stays `null`. The
+// integration goldens depend on this exact shape, so every existing
+// test above implicitly covers the flag-OFF branch by not flipping
+// the flag.
+//
+// The flag-ON branch (task 6.1) iterates over the 9-key
+// `PER_BUCKET_COST_KEYS` set and contributes to both
+// `globalTotals.cost.<k>` and every `byProject[dir].cost.<k>` from
+// matched-pricing sessions, while drift sessions (whose per-key cost
+// field is `null`) skip per-key accumulation but still contribute
+// their `cost.total`.
+//
+// All flag-ON tests own their own enable/disable in a try/finally so
+// a failure can never leak the flag into the rest of the suite (a
+// leak would silently break the byte-identical integration goldens).
+//
+// Requirements: R2.2 (per-project + global dollar aggregation using
+// v1's token-aggregation pattern), R7.3 (preserve v1 sum-correctness
+// invariants — exercised by the flag-OFF branch staying null).
+
+// Build a v2-extended `cost` shape on a fixture attribution. Per
+// `makeNullCostShape` semantics: every per-key field is `null` for
+// drift sessions; matched sessions populate every per-key field with
+// numeric dollar values. `total` is always a number (it's sourced
+// from `session.cost`, which is independent of per-bucket pricing).
+function makeV2Cost(overrides) {
+  const o = overrides || {};
+  const base = { total: typeof o.total === 'number' ? o.total : 0 };
+  for (const k of PER_BUCKET_COST_KEYS) {
+    base[k] = Object.prototype.hasOwnProperty.call(o, k) ? o[k] : 0;
+  }
+  return base;
+}
+
+function makeDriftCost(sessionCost) {
+  // Drift fallback: `total` carries session.cost (authoritative,
+  // independent of pricing), every per-key field is `null`. Matches
+  // `makeNullCostShape(sessionCost)` minus the nested containers
+  // (which task 6.1 does not aggregate).
+  const out = { total: sessionCost };
+  for (const k of PER_BUCKET_COST_KEYS) out[k] = null;
+  return out;
+}
+
+test('assemble: flag OFF leaves per-bucket cost fields null (v1 invariant)', () => {
+  // Belt-and-suspenders: explicitly confirm the v1 shape with the
+  // flag in its default state. Every other "all-null" assertion in
+  // this file implicitly relies on this, but pinning it as its own
+  // case makes a future regression diagnosable from this test name.
+  // We do NOT call setV2CostComputeEnabled here so the default OFF
+  // state is exercised.
+  const attrs = [
+    makeAttribution({
+      sessionId: 'ses_a',
+      directory: '/p/a',
+      tokens: { cachedRead: 5000 },
+      cost: makeV2Cost({ total: 0.5, cachedRead: 0.1 }),
+    }),
+    makeAttribution({
+      sessionId: 'ses_b',
+      directory: '/p/a',
+      tokens: { cachedRead: 5000 },
+      cost: makeV2Cost({ total: 0.25, cachedRead: 0.05 }),
+    }),
+  ];
+  const report = new ReportAssembler().assemble(attrs);
+
+  // globalTotals.cost: total accumulated, every per-key field null.
+  assert.ok(Math.abs(report.globalTotals.cost.total - 0.75) < 1e-9);
+  for (const k of PER_BUCKET_COST_FIELDS) {
+    assert.equal(
+      report.globalTotals.cost[k],
+      null,
+      `flag OFF: globalTotals.cost.${k} must remain null`,
+    );
+  }
+
+  // byProject[].cost: same invariant.
+  const agg = report.byProject['/p/a'];
+  assert.ok(Math.abs(agg.cost.total - 0.75) < 1e-9);
+  for (const k of PER_BUCKET_COST_FIELDS) {
+    assert.equal(
+      agg.cost[k],
+      null,
+      `flag OFF: byProject[/p/a].cost.${k} must remain null`,
+    );
+  }
+});
+
+test('assemble: flag ON aggregates per-bucket cost across matched sessions on globalTotals', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({
+          total: 1.0,
+          cachedRead: 0.10,
+          cachedWrite: 0.05,
+          uncachedInput: 0.30,
+          output: 0.40,
+          reasoning: 0.05,
+          subagentDispatch: 0.02,
+          uncachedSystemPrompt: 0.08,
+          history: 0.20,
+          toolOutputs: 0.02,
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({
+          total: 0.50,
+          cachedRead: 0.04,
+          cachedWrite: 0.01,
+          uncachedInput: 0.15,
+          output: 0.20,
+          reasoning: 0.02,
+          subagentDispatch: 0.01,
+          uncachedSystemPrompt: 0.04,
+          history: 0.10,
+          toolOutputs: 0.01,
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+
+    // total: sum of both
+    assert.ok(
+      Math.abs(report.globalTotals.cost.total - 1.5) < 1e-9,
+      `globalTotals.cost.total expected ~1.5, got ${report.globalTotals.cost.total}`,
+    );
+
+    // Every 9 per-key field is the matched sum across both sessions.
+    const expected = {
+      cachedRead: 0.14,
+      cachedWrite: 0.06,
+      uncachedInput: 0.45,
+      output: 0.60,
+      reasoning: 0.07,
+      subagentDispatch: 0.03,
+      uncachedSystemPrompt: 0.12,
+      history: 0.30,
+      toolOutputs: 0.03,
+    };
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.equal(
+        typeof report.globalTotals.cost[k],
+        'number',
+        `flag ON: globalTotals.cost.${k} must be a number, got ${report.globalTotals.cost[k]}`,
+      );
+      assert.ok(
+        Math.abs(report.globalTotals.cost[k] - expected[k]) < 1e-9,
+        `flag ON: globalTotals.cost.${k} expected ~${expected[k]}, got ${report.globalTotals.cost[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON drift session skips per-key accumulation but contributes to total', () => {
+  // The canonical task 6.1 observable: one matched + one drift →
+  //   globalCost.cachedRead == ONLY the matched session's value
+  //   globalCost.total      == BOTH sessions' totals summed
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_matched',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({
+          total: 0.80,
+          cachedRead: 0.10,
+          cachedWrite: 0.05,
+          uncachedInput: 0.20,
+          output: 0.35,
+          reasoning: 0.05,
+          subagentDispatch: 0.05,
+          uncachedSystemPrompt: 0.04,
+          history: 0.12,
+          toolOutputs: 0.04,
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_drift',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeDriftCost(0.20),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+
+    // total: sum of BOTH sessions (drift still contributes total).
+    assert.ok(
+      Math.abs(report.globalTotals.cost.total - 1.0) < 1e-9,
+      `expected total ~1.0, got ${report.globalTotals.cost.total}`,
+    );
+
+    // Every per-key field: ONLY the matched session's value
+    // (the drift session's null contribution is skipped).
+    const expected = {
+      cachedRead: 0.10,
+      cachedWrite: 0.05,
+      uncachedInput: 0.20,
+      output: 0.35,
+      reasoning: 0.05,
+      subagentDispatch: 0.05,
+      uncachedSystemPrompt: 0.04,
+      history: 0.12,
+      toolOutputs: 0.04,
+    };
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.ok(
+        Math.abs(report.globalTotals.cost[k] - expected[k]) < 1e-9,
+        `flag ON drift-skip: globalTotals.cost.${k} expected ${expected[k]} (matched-only), got ${report.globalTotals.cost[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON drift-only suite produces zero per-key sums but non-zero total', () => {
+  // Every session drift → per-key sums are 0 (nothing accumulated)
+  // but `total` is still the sum of session.cost values.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_drift_a',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeDriftCost(0.30),
+      }),
+      makeAttribution({
+        sessionId: 'ses_drift_b',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeDriftCost(0.20),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+
+    assert.ok(
+      Math.abs(report.globalTotals.cost.total - 0.50) < 1e-9,
+      `total expected 0.5, got ${report.globalTotals.cost.total}`,
+    );
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.equal(
+        report.globalTotals.cost[k],
+        0,
+        `drift-only: globalTotals.cost.${k} expected 0 (no contributions), got ${report.globalTotals.cost[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON aggregates per-bucket cost on byProject symmetrically', () => {
+  // Two sessions in /p/a (one matched, one drift) and one in /p/b
+  // (matched). Per-project:
+  //   /p/a.cost.cachedRead == matched-in-a only
+  //   /p/a.cost.total      == matched-in-a + drift-in-a
+  //   /p/b.cost.cachedRead == /p/b matched value
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a_matched',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({
+          total: 0.70,
+          cachedRead: 0.10,
+          cachedWrite: 0.05,
+          uncachedInput: 0.20,
+          output: 0.30,
+          reasoning: 0.03,
+          subagentDispatch: 0.02,
+          uncachedSystemPrompt: 0.05,
+          history: 0.10,
+          toolOutputs: 0.05,
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_a_drift',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeDriftCost(0.25),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b_matched',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({
+          total: 0.40,
+          cachedRead: 0.06,
+          cachedWrite: 0.02,
+          uncachedInput: 0.12,
+          output: 0.16,
+          reasoning: 0.02,
+          subagentDispatch: 0.02,
+          uncachedSystemPrompt: 0.03,
+          history: 0.06,
+          toolOutputs: 0.03,
+        }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+
+    const aggA = report.byProject['/p/a'];
+    const aggB = report.byProject['/p/b'];
+    assert.ok(aggA, 'byProject[/p/a] present');
+    assert.ok(aggB, 'byProject[/p/b] present');
+
+    // /p/a totals: matched + drift = 0.95.
+    assert.ok(
+      Math.abs(aggA.cost.total - 0.95) < 1e-9,
+      `/p/a cost.total expected 0.95, got ${aggA.cost.total}`,
+    );
+    // /p/a per-key: matched-only (drift's nulls skip).
+    const aExpected = {
+      cachedRead: 0.10,
+      cachedWrite: 0.05,
+      uncachedInput: 0.20,
+      output: 0.30,
+      reasoning: 0.03,
+      subagentDispatch: 0.02,
+      uncachedSystemPrompt: 0.05,
+      history: 0.10,
+      toolOutputs: 0.05,
+    };
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.ok(
+        Math.abs(aggA.cost[k] - aExpected[k]) < 1e-9,
+        `/p/a cost.${k} expected ${aExpected[k]} (matched-only), got ${aggA.cost[k]}`,
+      );
+    }
+
+    // /p/b totals: single matched session.
+    assert.ok(
+      Math.abs(aggB.cost.total - 0.40) < 1e-9,
+      `/p/b cost.total expected 0.40, got ${aggB.cost.total}`,
+    );
+    const bExpected = {
+      cachedRead: 0.06,
+      cachedWrite: 0.02,
+      uncachedInput: 0.12,
+      output: 0.16,
+      reasoning: 0.02,
+      subagentDispatch: 0.02,
+      uncachedSystemPrompt: 0.03,
+      history: 0.06,
+      toolOutputs: 0.03,
+    };
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.ok(
+        Math.abs(aggB.cost[k] - bExpected[k]) < 1e-9,
+        `/p/b cost.${k} expected ${bExpected[k]}, got ${aggB.cost[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON exposes all 9 PER_BUCKET_COST_KEYS on the aggregator shape', () => {
+  // Belt-and-suspenders for R7.AC1 (forward-compat shape): the
+  // flag-ON aggregator must expose all 9 v2 per-key fields on both
+  // globalTotals.cost and every byProject entry's cost. v1's 6
+  // fields plus the 3 uncached sub-buckets.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({ total: 0.10 }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(report.globalTotals.cost, k),
+        `flag ON: globalTotals.cost must expose key "${k}"`,
+      );
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(report.byProject['/p/a'].cost, k),
+        `flag ON: byProject[/p/a].cost must expose key "${k}"`,
+      );
+    }
+    // The three v2-only keys must be present (would not be on v1's
+    // 6-key shape).
+    for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(report.globalTotals.cost, k),
+        `flag ON: globalTotals.cost missing v2-only key "${k}"`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
   }
 });
