@@ -2397,3 +2397,587 @@ test('flag OFF / 5.6: drift fallback path is not exercised (v1 null-shape path)'
     );
   }
 });
+
+// ---------------------------------------------------------------------
+// Task 5.7 — cachedRead classification residual emit AND
+// degraded-classifier fallback path (Decision 6).
+//
+// Two distinct triggers, two distinct findings:
+//
+// 1. `cached_read_classification_residual` — fires when the 5.3
+//    count-based apportionment ran cleanly (markersDegraded ===
+//    false) but the residual `unclassifiedCached` swallowed more
+//    than 5% of the cachedRead total. Detail must name the session
+//    id and the residual ratio. R4.AC5 / design.md:584.
+//
+// 2. `cached_read_classifier_degraded` — fires when
+//    `provenance.markersDegraded === true`. AttributionEngine
+//    REPLACES the 5.3 count-based apportionment with the
+//    proportional-from-uncached split:
+//
+//      systemPromptCached            ∝ provenance.systemPrompt  (uncached side)
+//      accumulatedHistoryCached      ∝ provenance.history
+//      accumulatedToolOutputsCached  ∝ provenance.toolOutput
+//      agentsMdCached                = 0
+//      mcpToolSchemasCached          = 0
+//      unclassifiedCached            absorbs token rounding
+//
+//    Costs use the same effective rate (cost.cachedRead /
+//    session.tokens_cache_read) as 5.3, with the absorber
+//    computed by subtraction so the cost-sum invariant stays
+//    ULP-tight. The finding's detail must name the session id
+//    and the failed marker(s) from provenance.failedMarkers.
+//    Both findings must NOT fire on the same session: the
+//    degraded path replaces (not augments) the residual emit
+//    because the residual concept only applies to the count-based
+//    apportionment.
+// ---------------------------------------------------------------------
+
+// Variant of makeProvenance that lets a test inject the
+// `markersDegraded` flag and `failedMarkers` array. The 5.3 tests
+// hard-code markersDegraded=false / failedMarkers=[]; this helper
+// is the natural extension for the 5.7 degraded-path tests.
+function makeProvenanceDegraded(
+  cachedReadBreakdown,
+  failedMarkers,
+  uncached = null,
+) {
+  const base = makeProvenance(cachedReadBreakdown, uncached);
+  return {
+    ...base,
+    markersDegraded: true,
+    failedMarkers: Object.freeze(failedMarkers.slice()),
+  };
+}
+
+test('flag ON / 5.7: markersDegraded=true → agentsMdCached === 0 AND mcpToolSchemasCached === 0', () => {
+  // Observable from the task brief: synthetic markersDegraded
+  // fixture returns cost.cachedReadBreakdown.agentsMdCached === 0
+  // AND mcpToolSchemasCached === 0. The other three named
+  // sub-buckets carry the proportional-from-uncached split.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    // Counts on the classifier side are intentionally NON-zero on
+    // agentsMd/mcpToolSchemas to prove the degraded branch
+    // overrides them with 0 rather than reading from the breakdown
+    // counts. Under the count-based path these would receive a
+    // share; under the degraded path they MUST be 0.
+    const breakdown = {
+      systemPromptCached: 50,
+      agentsMdCached: 50,
+      mcpToolSchemasCached: 50,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 100,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(
+        makeProvenanceDegraded(breakdown, [
+          'systemPrompt',
+          'agentsMd',
+          'mcpToolSchemas',
+        ]),
+      ),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.cost.cachedReadBreakdown.agentsMdCached,
+      0,
+      'agentsMdCached must be 0 on the degraded fallback path (design.md Decision 6)',
+    );
+    assert.equal(
+      attr.cost.cachedReadBreakdown.mcpToolSchemasCached,
+      0,
+      'mcpToolSchemasCached must be 0 on the degraded fallback path (design.md Decision 6)',
+    );
+    // The other three named sub-buckets carry the proportional
+    // split — they MUST be > 0 because the uncached side has
+    // non-zero P_sys / P_hist / P_tool and T_cacheR > 0.
+    assert.ok(
+      attr.cost.cachedReadBreakdown.systemPromptCached > 0,
+      'systemPromptCached must receive its proportional share from the uncached side',
+    );
+    assert.ok(
+      attr.cost.cachedReadBreakdown.accumulatedHistoryCached > 0,
+      'accumulatedHistoryCached must receive its proportional share from the uncached side',
+    );
+    assert.ok(
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached > 0,
+      'accumulatedToolOutputsCached must receive its proportional share from the uncached side',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: markersDegraded=true emits exactly one cached_read_classifier_degraded finding naming the session and failed marker(s)', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({
+      id: 'ses_synth_v2_degraded_finding',
+    });
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const failedMarkers = ['systemPrompt', 'agentsMd', 'mcpToolSchemas'];
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceDegraded(breakdown, failedMarkers)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const degraded = attr.findings.filter(
+      (f) => f.kind === 'cached_read_classifier_degraded',
+    );
+    assert.equal(
+      degraded.length,
+      1,
+      'markersDegraded=true must emit exactly one cached_read_classifier_degraded finding',
+    );
+    assert.match(
+      degraded[0].detail,
+      new RegExp(ses.id),
+      'cached_read_classifier_degraded detail must name the session id',
+    );
+    for (const m of failedMarkers) {
+      assert.match(
+        degraded[0].detail,
+        new RegExp(m),
+        `cached_read_classifier_degraded detail must name failed marker '${m}'`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: markersDegraded=true proportional split mirrors the uncached side ratios', () => {
+  // The degraded path distributes T_cacheR across the 3 non-zero
+  // named sub-buckets using the same P_sys : P_hist : P_tool
+  // ratio the uncached side already computed. We assert against
+  // the closed-form formula by reading back the per-sub-bucket
+  // token counts (cost / effectiveRate) and checking they match
+  // round(T_cacheR × P_x / P_sum) for the first two and the
+  // absorber pattern for the rest.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    // breakdown values are intentionally non-zero in slots that
+    // MUST be zeroed by the degraded path — if the implementation
+    // mistakenly read these we'd see the wrong numbers.
+    const breakdown = {
+      systemPromptCached: 999,
+      agentsMdCached: 999,
+      mcpToolSchemasCached: 999,
+      accumulatedHistoryCached: 999,
+      accumulatedToolOutputsCached: 999,
+      unclassifiedCached: 999,
+    };
+    // Pick a non-divisible uncached ratio so the absorber sees a
+    // real residual to swallow.
+    const uncached = {
+      systemPrompt: 17,
+      history: 113,
+      toolOutput: 89,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(
+        makeProvenanceDegraded(
+          breakdown,
+          ['systemPrompt', 'agentsMd', 'mcpToolSchemas'],
+          uncached,
+        ),
+      ),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const T = ses.tokens_cache_read; // 500
+    const rate = attr.cost.cachedRead / T;
+    const P_sum = uncached.systemPrompt + uncached.history + uncached.toolOutput;
+
+    // First two non-absorber buckets follow the exact
+    // round-multiply formula. (`agentsMdCached` and
+    // `mcpToolSchemasCached` are explicitly 0 — see prior test.)
+    const expSysTokens = Math.round((T * uncached.systemPrompt) / P_sum);
+    const expHistTokens = Math.round((T * uncached.history) / P_sum);
+    // accumulatedToolOutputsCached is the third non-zero named
+    // bucket; under the round-multiply formula it would be
+    // round(T * toolOutput / P_sum). Whether it lands as a
+    // non-absorber or absorbs the rounding depends on the
+    // implementation's loop ordering; both are acceptable as long
+    // as the cost-sum invariant holds. We assert the formula for
+    // the first two and the sum invariant globally.
+    assert.ok(
+      Math.abs(
+        attr.cost.cachedReadBreakdown.systemPromptCached -
+          expSysTokens * rate,
+      ) < COST_EPSILON,
+      `degraded systemPromptCached must equal round(T × P_sys / P_sum) × rate; ` +
+        `expected ${expSysTokens * rate}, got ${attr.cost.cachedReadBreakdown.systemPromptCached}`,
+    );
+    assert.ok(
+      Math.abs(
+        attr.cost.cachedReadBreakdown.accumulatedHistoryCached -
+          expHistTokens * rate,
+      ) < COST_EPSILON,
+      `degraded accumulatedHistoryCached must equal round(T × P_hist / P_sum) × rate; ` +
+        `expected ${expHistTokens * rate}, got ${attr.cost.cachedReadBreakdown.accumulatedHistoryCached}`,
+    );
+
+    // Token sum invariant — reconstruct per-sub-bucket tokens from
+    // their dollars and assert the sum equals T_cacheR exactly.
+    const sysT =
+      attr.cost.cachedReadBreakdown.systemPromptCached / rate;
+    const histT =
+      attr.cost.cachedReadBreakdown.accumulatedHistoryCached / rate;
+    const toolT =
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached / rate;
+    const unclassT =
+      attr.cost.cachedReadBreakdown.unclassifiedCached / rate;
+    // agentsMd / mcpToolSchemas are 0 by the degraded contract.
+    const reconstructedSum = sysT + histT + toolT + unclassT;
+    assert.ok(
+      Math.abs(reconstructedSum - T) < 1e-6,
+      `reconstructed token sum (${reconstructedSum}) must equal ` +
+        `session.tokens_cache_read (${T}) exactly on the degraded path`,
+    );
+
+    // Cost-sum invariant — sum of the 6 sub-buckets equals
+    // cost.cachedRead within ULP (absorber computed by subtraction).
+    const subCostSum =
+      attr.cost.cachedReadBreakdown.systemPromptCached +
+      attr.cost.cachedReadBreakdown.agentsMdCached +
+      attr.cost.cachedReadBreakdown.mcpToolSchemasCached +
+      attr.cost.cachedReadBreakdown.accumulatedHistoryCached +
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached +
+      attr.cost.cachedReadBreakdown.unclassifiedCached;
+    assert.ok(
+      Math.abs(subCostSum - attr.cost.cachedRead) < COST_EPSILON,
+      `degraded cachedReadBreakdown.* sum (${subCostSum}) must equal ` +
+        `cost.cachedRead (${attr.cost.cachedRead}) within ULP via absorber-by-subtraction`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: markersDegraded=true does NOT emit cached_read_classification_residual (degraded path owns its own finding)', () => {
+  // The residual finding is bound to the COUNT-based apportionment.
+  // On the degraded path the residual concept does not apply — the
+  // degraded-classifier finding announces the state and the
+  // operator can read the named-marker list. Both findings firing
+  // would double-report the same condition.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(
+        makeProvenanceDegraded(breakdown, ['systemPrompt', 'agentsMd']),
+      ),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classification_residual',
+      ).length,
+      0,
+      'degraded path must NOT emit cached_read_classification_residual (replaces, not augments)',
+    );
+    // Degraded finding still fires.
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classifier_degraded',
+      ).length,
+      1,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: high-residual count-based path (60%+ unclassified) emits cached_read_classification_residual naming the session and ratio', () => {
+  // Observable from the task brief: synthetic high-residual
+  // fixture (60%+ unclassified) emits
+  // cached_read_classification_residual. The count-based path
+  // (markersDegraded=false) is unchanged; only the FINDING is
+  // new. Detail must name the session id and the residual ratio
+  // so an operator can grep against either.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_synth_v2_high_residual' });
+    const reader = makeMatchedSingleModelReader(ses);
+    // 60% residual: unclassifiedCached weight dominates the named
+    // sub-bucket weights so the proportional-token split lands the
+    // bulk of T_cacheR (500) on the residual.
+    // breakdown sum = 200, unclassifiedCached=120 → 60% of T.
+    const breakdown = {
+      systemPromptCached: 10,
+      agentsMdCached: 10,
+      mcpToolSchemasCached: 10,
+      accumulatedHistoryCached: 30,
+      accumulatedToolOutputsCached: 20,
+      unclassifiedCached: 120,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const residual = attr.findings.filter(
+      (f) => f.kind === 'cached_read_classification_residual',
+    );
+    assert.equal(
+      residual.length,
+      1,
+      'high-residual session must emit exactly one cached_read_classification_residual',
+    );
+    assert.match(
+      residual[0].detail,
+      new RegExp(ses.id),
+      'cached_read_classification_residual detail must name the session id',
+    );
+    // Ratio assertion: the detail must include a number that looks
+    // like the residual ratio. We compute the actual ratio from
+    // the per-sub-bucket token count via the same formula the
+    // impl uses (cost / rate), then assert the digits appear.
+    const T = ses.tokens_cache_read;
+    const rate = attr.cost.cachedRead / T;
+    const unclassTokens =
+      attr.cost.cachedReadBreakdown.unclassifiedCached / rate;
+    const ratio = unclassTokens / T;
+    assert.ok(
+      ratio > 0.05,
+      'precondition: synthetic fixture must produce >5% residual ratio',
+    );
+    // Match the leading two significant digits of the ratio so the
+    // assertion isn't brittle to the impl's chosen formatting
+    // (e.g. "0.60", "60%", "0.5950").
+    const ratioFirstTwo = ratio.toFixed(2).slice(0, 4); // "0.60"
+    assert.match(
+      residual[0].detail,
+      new RegExp(ratioFirstTwo.replace('.', '\\.')),
+      `cached_read_classification_residual detail must name the residual ratio (~${ratioFirstTwo})`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: low-residual count-based path (<5% unclassified) does NOT emit cached_read_classification_residual', () => {
+  // Threshold check on the 5% boundary. With breakdownSum=1000
+  // and unclassifiedCached=40 we get 40/1000 = 4% residual ratio
+  // — strictly below the 5% threshold, so no finding fires.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 100,
+      agentsMdCached: 200,
+      mcpToolSchemasCached: 300,
+      accumulatedHistoryCached: 250,
+      accumulatedToolOutputsCached: 110,
+      unclassifiedCached: 40,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classification_residual',
+      ).length,
+      0,
+      'low-residual (<5%) session must NOT emit cached_read_classification_residual',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: T_cacheR === 0 does NOT emit cached_read_classification_residual (divide-by-zero guard)', () => {
+  // Degenerate: when session.tokens_cache_read === 0 there is no
+  // cachedRead total to ratio against. The residual check must
+  // short-circuit rather than fire spuriously (0/0 NaN > 0.05 is
+  // false anyway, but the explicit guard documents intent).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({
+      id: 'ses_synth_v2_residual_zero_cacheR',
+      tokens_cache_read: 0,
+      cost: SYN_EXPECTED_COST - (SYN_CACHE_READ * SYN_CACHE_READ_PER_M) / M,
+    });
+    const baseReader = makeMatchedSingleModelReader(ses);
+    const reader = {
+      partsOfSession(id) {
+        return baseReader.partsOfSession(id);
+      },
+      messagesOfSession(id) {
+        const msgs = [...baseReader.messagesOfSession(id)];
+        for (const m of msgs) {
+          if (m.role !== 'assistant') continue;
+          const parsed = JSON.parse(m.data);
+          parsed.tokens.cache.read = 0;
+          m.data = JSON.stringify(parsed);
+        }
+        return msgs;
+      },
+      descendantSessionsOf(id) {
+        return baseReader.descendantSessionsOf(id);
+      },
+    };
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classification_residual',
+      ).length,
+      0,
+      'T_cacheR===0 must NOT emit cached_read_classification_residual',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.7: degraded path with P_sum===0 collapses 5 named sub-buckets to 0', () => {
+  // Degenerate intersection: degraded markers AND no uncached
+  // ratios to use. Without P_sys/P_hist/P_tool weights we can't
+  // run the proportional-from-uncached split; the 5 named
+  // sub-buckets all collapse to 0 and unclassifiedCached absorbs
+  // the entire T_cacheR (vacuous absorber on the cost side). The
+  // degraded finding still fires.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(
+        makeProvenanceDegraded(
+          breakdown,
+          ['systemPrompt', 'agentsMd', 'mcpToolSchemas'],
+          { systemPrompt: 0, history: 0, toolOutput: 0 },
+        ),
+      ),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    for (const k of [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+    ]) {
+      assert.equal(
+        attr.cost.cachedReadBreakdown[k],
+        0,
+        `degraded path with P_sum===0 must collapse '${k}' to 0`,
+      );
+    }
+    // Degraded finding still fires regardless of P_sum.
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classifier_degraded',
+      ).length,
+      1,
+      'degraded finding must fire even with P_sum===0',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag OFF / 5.7: degraded markers do NOT trigger cached_read_classifier_degraded finding', () => {
+  // R7.AC1 forward-compat: flag-OFF runs v1 cost shape. 5.7's
+  // finding emit sites only run when V2_COST_COMPUTE_ENABLED.
+  const ses = makeSyntheticSession({ id: 'ses_synth_v2_5_7_off' });
+  const reader = makeMatchedSingleModelReader(ses);
+  const breakdown = {
+    systemPromptCached: 0,
+    agentsMdCached: 0,
+    mcpToolSchemasCached: 0,
+    accumulatedHistoryCached: 0,
+    accumulatedToolOutputsCached: 0,
+    unclassifiedCached: 0,
+  };
+  const eng = new AttributionEngine(
+    reader,
+    new SubagentAggregator(reader),
+    makeStubTokenizer(
+      makeProvenanceDegraded(breakdown, ['systemPrompt', 'agentsMd']),
+    ),
+    makeMatchedSinglePricing(),
+  );
+  const attr = eng.attributeSession(ses);
+  assert.equal(
+    attr.findings.filter(
+      (f) => f.kind === 'cached_read_classifier_degraded',
+    ).length,
+    0,
+    'flag OFF must not emit cached_read_classifier_degraded',
+  );
+  assert.equal(
+    attr.findings.filter(
+      (f) => f.kind === 'cached_read_classification_residual',
+    ).length,
+    0,
+    'flag OFF must not emit cached_read_classification_residual',
+  );
+});

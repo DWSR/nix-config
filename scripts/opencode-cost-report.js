@@ -1690,6 +1690,18 @@ class AttributionEngine {
         // below handles size===0 cleanly as well as the degenerate
         // sumCached===0 / sumUncached===0 weight cases.
         byTool: provenance.byTool,
+        // Task 5.7: classifier-degraded signal. When true, the
+        // cachedRead apportionment block in _computeV2Cost
+        // REPLACES the count-based path with the
+        // proportional-from-uncached split (design.md Decision 6,
+        // lines 829-836). The attributeSession finding emit below
+        // reads provenance.markersDegraded / failedMarkers
+        // directly — passing them here keeps _computeV2Cost
+        // self-contained on the cost-shape side.
+        markersDegraded: provenance.markersDegraded === true,
+        failedMarkers: Array.isArray(provenance.failedMarkers)
+          ? provenance.failedMarkers
+          : [],
       });
     } else {
       cost = {
@@ -1813,6 +1825,100 @@ class AttributionEngine {
           `run retain populated cost.`,
       });
       cost = makeNullCostShape(session.cost || 0);
+    }
+
+    // ── 5.7 cachedRead degraded-classifier / residual emit ──────
+    // Two mutually-exclusive findings on the v2 cachedRead side:
+    //
+    //   - cached_read_classifier_degraded: fires when the
+    //     TokenizerProvenance carried `markersDegraded: true`
+    //     (Decision 6 trigger). _computeV2Cost already replaced
+    //     the count-based apportionment with the
+    //     proportional-from-uncached split; this emit announces
+    //     the state and names the failed marker(s) for the
+    //     operator's diagnostic.
+    //
+    //   - cached_read_classification_residual: fires when the
+    //     count-based path ran cleanly but the
+    //     `unclassifiedCached` residual swallowed more than 5%
+    //     of the cachedRead total (design.md:584 / R4.AC5).
+    //
+    // The two are mutually exclusive — the degraded path replaces
+    // (not augments) the residual emit, because on the degraded
+    // path the residual concept does not apply (the apportionment
+    // is derived from the uncached side, not from the classifier
+    // counts that would otherwise carry the residual signal).
+    //
+    // Gates:
+    //   - V2_COST_COMPUTE_ENABLED: 5.7 only runs on the v2 path.
+    //   - !cost._v2PricingDrift: drift has already nullified the
+    //     cost shape; the residual ratio is undefined and the
+    //     degraded-classifier signal is dominated by the more
+    //     severe drift state. The pricing_table_drift finding
+    //     emitted above is the canonical signal for that session.
+    if (V2_COST_COMPUTE_ENABLED && !cost._v2PricingDrift) {
+      if (provenance.markersDegraded === true) {
+        const failed = Array.isArray(provenance.failedMarkers)
+          ? provenance.failedMarkers
+          : [];
+        findings.push({
+          kind: 'cached_read_classifier_degraded',
+          detail:
+            `session ${session.id}: TokenizerSplitter content-shape ` +
+            `markers fired unreliably for ${failed.length} of 5 ` +
+            `cachedRead sub-bucket(s): [${failed.join(', ')}]. ` +
+            `AttributionEngine fell back to the proportional-from-` +
+            `uncached split (design.md Decision 6); ` +
+            `agentsMdCached and mcpToolSchemasCached are 0; the ` +
+            `other three named sub-buckets carry the ` +
+            `systemPrompt:history:toolOutput ratio from the ` +
+            `uncached side. R4.AC1 satisfied: all 5 named sub-` +
+            `buckets present on cost.cachedReadBreakdown.`,
+        });
+      } else {
+        // Count-based path — check the residual ratio against
+        // the 5% threshold. T_cacheR===0 short-circuits the
+        // ratio computation (division would yield NaN/Infinity;
+        // NaN > 0.05 is false but the explicit guard documents
+        // intent).
+        const T_cacheR = session.tokens_cache_read || 0;
+        if (
+          T_cacheR > 0 &&
+          cost.cachedReadBreakdown &&
+          typeof cost.cachedReadBreakdown.unclassifiedCached === 'number' &&
+          cost.cachedRead > 0
+        ) {
+          // The cost shape doesn't carry per-sub-bucket token
+          // counts directly; reconstruct the residual token
+          // count from its cost via the effective rate
+          // (cost.cachedRead / T_cacheR), then ratio against
+          // T_cacheR. This is the same formula task 5.3 uses
+          // implicitly when computing the absorber.
+          const effectiveRate = cost.cachedRead / T_cacheR;
+          const unclassTokens =
+            effectiveRate > 0
+              ? cost.cachedReadBreakdown.unclassifiedCached / effectiveRate
+              : 0;
+          const residualRatio = unclassTokens / T_cacheR;
+          if (residualRatio > 0.05) {
+            findings.push({
+              kind: 'cached_read_classification_residual',
+              detail:
+                `session ${session.id}: cachedRead classification ` +
+                `residual is ${residualRatio.toFixed(4)} (` +
+                `${(residualRatio * 100).toFixed(2)}% of ` +
+                `session.tokens_cache_read=${T_cacheR}); ` +
+                `exceeds the 5% threshold from design.md:584. ` +
+                `unclassifiedCached sub-bucket absorbs the ` +
+                `un-attributable portion; operator should review ` +
+                `whether the TokenizerSplitter classifier needs ` +
+                `updated markers for new opencode prompt-assembly ` +
+                `content. Informational only; report continues to ` +
+                `emit.`,
+            });
+          }
+        }
+      }
     }
 
     return {
@@ -2138,40 +2244,118 @@ class AttributionEngine {
           `cachedReadBreakdown apportionment.`,
       );
     }
-    const breakdownSum = CACHED_READ_SUB_BUCKET_KEYS.reduce(
-      (acc, k) => acc + (typeof crb[k] === 'number' ? crb[k] : 0),
-      0,
-    );
     const cachedReadBreakdownCost = {};
-    if (T_cacheR === 0 || breakdownSum === 0) {
-      // Degenerate: nothing to apportion. Every sub-bucket is 0.
-      for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
-        cachedReadBreakdownCost[k] = 0;
+    if (provenance.markersDegraded === true) {
+      // ── Degraded path (task 5.7, design.md Decision 6) ────────
+      // The classifier's content-shape markers fired unreliably
+      // (per task 1.1's gate result: systemPrompt / agentsMd /
+      // mcpToolSchemas are constructed per-turn at request time
+      // and never persist a recognizable marker into the parts
+      // table). The count-based apportionment from 5.3 above is
+      // structurally wrong for those three sub-buckets; replace
+      // with the proportional-from-uncached split:
+      //
+      //   systemPromptCached            ∝ provenance.P_sys
+      //   accumulatedHistoryCached      ∝ provenance.P_hist
+      //   accumulatedToolOutputsCached  ∝ provenance.P_tool
+      //   agentsMdCached                = 0   (design.md:584)
+      //   mcpToolSchemasCached          = 0   (design.md:584)
+      //   unclassifiedCached            absorbs token rounding
+      //
+      // Costs use the same effective rate the count-based path
+      // uses (cost.cachedRead / T_cacheR), and the absorber is
+      // computed by subtraction so the cost-sum invariant stays
+      // ULP-tight regardless of the per-bucket multiplications.
+      //
+      // R4.AC1 is satisfied: all five named sub-buckets remain
+      // present on the cost shape, with agentsMdCached /
+      // mcpToolSchemasCached explicitly zero rather than absent.
+      //
+      // Degenerate intersections:
+      //   - T_cacheR === 0      → every sub-bucket is 0 (vacuous).
+      //   - P_sum === 0         → the proportional ratios are
+      //                           undefined; collapse the five
+      //                           named sub-buckets to 0 (the
+      //                           absorber holds the full T_cacheR
+      //                           on the token side, the full
+      //                           cost.cachedRead on the cost
+      //                           side via subtraction).
+      const P_sum_local = provenance.P_sum || 0;
+      if (T_cacheR === 0 || P_sum_local === 0) {
+        for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+          cachedReadBreakdownCost[k] = 0;
+        }
+        if (T_cacheR > 0 && out.cachedRead !== 0) {
+          // P_sum===0 with real cachedRead: the absorber takes
+          // the entire cost via subtraction. Tokens-side analog
+          // is implicit (T_cacheR - 0 = T_cacheR on the absorber).
+          cachedReadBreakdownCost[lastKey] = out.cachedRead;
+        }
+      } else {
+        const effectiveRate = out.cachedRead / T_cacheR;
+        // Map each named sub-bucket to its uncached-side weight.
+        // agentsMdCached and mcpToolSchemasCached are NOT in this
+        // table — they are explicitly zero per design.md Decision 6.
+        const degradedWeights = {
+          systemPromptCached: provenance.P_sys || 0,
+          accumulatedHistoryCached: provenance.P_hist || 0,
+          accumulatedToolOutputsCached: provenance.P_tool || 0,
+        };
+        let costApportioned = 0;
+        // Iterate the canonical key order so the absorber lands on
+        // the same entry (`unclassifiedCached`) regardless of the
+        // weight-table iteration order.
+        for (let i = 0; i < CACHED_READ_SUB_BUCKET_KEYS.length - 1; i++) {
+          const k = CACHED_READ_SUB_BUCKET_KEYS[i];
+          let subCost;
+          if (k === 'agentsMdCached' || k === 'mcpToolSchemasCached') {
+            subCost = 0;
+          } else {
+            const w = degradedWeights[k] || 0;
+            const tokens = Math.round((T_cacheR * w) / P_sum_local);
+            subCost = tokens * effectiveRate;
+          }
+          costApportioned += subCost;
+          cachedReadBreakdownCost[k] = subCost;
+        }
+        cachedReadBreakdownCost[lastKey] = out.cachedRead - costApportioned;
       }
     } else {
-      const effectiveRate = out.cachedRead / T_cacheR;
-      let tokensApportioned = 0;
-      let costApportioned = 0;
-      // Apportion the first N-1 sub-buckets via the round-multiply
-      // formula. The absorber takes whatever's left.
-      for (let i = 0; i < CACHED_READ_SUB_BUCKET_KEYS.length - 1; i++) {
-        const k = CACHED_READ_SUB_BUCKET_KEYS[i];
-        const count = typeof crb[k] === 'number' ? crb[k] : 0;
-        const tokens = Math.round((T_cacheR * count) / breakdownSum);
-        tokensApportioned += tokens;
-        const subCost = tokens * effectiveRate;
-        costApportioned += subCost;
-        cachedReadBreakdownCost[k] = subCost;
+      // ── Count-based path (task 5.3, unchanged) ────────────────
+      const breakdownSum = CACHED_READ_SUB_BUCKET_KEYS.reduce(
+        (acc, k) => acc + (typeof crb[k] === 'number' ? crb[k] : 0),
+        0,
+      );
+      if (T_cacheR === 0 || breakdownSum === 0) {
+        // Degenerate: nothing to apportion. Every sub-bucket is 0.
+        for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+          cachedReadBreakdownCost[k] = 0;
+        }
+      } else {
+        const effectiveRate = out.cachedRead / T_cacheR;
+        let tokensApportioned = 0;
+        let costApportioned = 0;
+        // Apportion the first N-1 sub-buckets via the round-multiply
+        // formula. The absorber takes whatever's left.
+        for (let i = 0; i < CACHED_READ_SUB_BUCKET_KEYS.length - 1; i++) {
+          const k = CACHED_READ_SUB_BUCKET_KEYS[i];
+          const count = typeof crb[k] === 'number' ? crb[k] : 0;
+          const tokens = Math.round((T_cacheR * count) / breakdownSum);
+          tokensApportioned += tokens;
+          const subCost = tokens * effectiveRate;
+          costApportioned += subCost;
+          cachedReadBreakdownCost[k] = subCost;
+        }
+        // Absorber: tokens = T - sum(apportioned), cost = parent total
+        // - sum(apportioned cost). The cost-side subtraction (rather
+        // than a fresh tokens × rate multiplication) is what makes
+        // the cost-sum invariant tight to ULP regardless of how the
+        // per-bucket multiplications rounded.
+        void tokensApportioned; // token-side absorption is implicit
+        // (the token count is reconstructible as cost/rate in tests
+        // and downstream; the cost shape doesn't carry it directly).
+        cachedReadBreakdownCost[lastKey] = out.cachedRead - costApportioned;
       }
-      // Absorber: tokens = T - sum(apportioned), cost = parent total
-      // - sum(apportioned cost). The cost-side subtraction (rather
-      // than a fresh tokens × rate multiplication) is what makes
-      // the cost-sum invariant tight to ULP regardless of how the
-      // per-bucket multiplications rounded.
-      void tokensApportioned; // token-side absorption is implicit
-      // (the token count is reconstructible as cost/rate in tests
-      // and downstream; the cost shape doesn't carry it directly).
-      cachedReadBreakdownCost[lastKey] = out.cachedRead - costApportioned;
     }
     out.cachedReadBreakdown = cachedReadBreakdownCost;
 

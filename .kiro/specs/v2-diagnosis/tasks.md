@@ -176,7 +176,7 @@
   - _Requirements: 3.4, 7.5_
   - _Boundary: AttributionEngine drift path_
 
-- [ ] 5.7 Implement cachedRead classification residual and degraded-classifier finding emit sites
+- [x] 5.7 Implement cachedRead classification residual and degraded-classifier finding emit sites
   - After cachedRead apportionment (5.3): if `unclassifiedCached / session.tokens_cache_read > 0.05`, emit `cached_read_classification_residual` finding naming the session and the residual ratio
   - If `tokenizerProvenance.markersDegraded === true`, apply the proportional-from-uncached degraded path: distribute `session.tokens_cache_read` across the 5 named sub-buckets in the `systemPrompt : history : toolOutput` ratio from the uncached side (`agentsMdCached` and `mcpToolSchemasCached` set to 0; `unclassifiedCached` absorbs rounding) AND emit `cached_read_classifier_degraded` finding naming the failed marker(s)
   - Observable: a unit test with a synthetic markersDegraded fixture returns `cost.cachedReadBreakdown.agentsMdCached === 0` and `cost.cachedReadBreakdown.mcpToolSchemasCached === 0` AND emits the `cached_read_classifier_degraded` finding; a synthetic high-residual fixture (60%+ unclassified) emits `cached_read_classification_residual`
