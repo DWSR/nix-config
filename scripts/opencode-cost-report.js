@@ -905,13 +905,55 @@ const TOKENIZER_SKIPPED_TYPES = Object.freeze(
 );
 
 class TokenizerSplitter {
-  constructor() {
+  /**
+   * @param {Readonly<{
+   *   systemPrompt: unknown,
+   *   agentsMd: unknown,
+   *   mcpToolSchemas: unknown,
+   *   accumulatedHistory: unknown,
+   *   accumulatedToolOutputs: unknown,
+   * }>} [markers=DEFAULT_MARKERS] cachedRead classifier markers
+   *   keyed by sub-bucket name (minus the `Cached` suffix). Each
+   *   value is either `MARKER_UNRELIABLE_SENTINEL` (the classifier
+   *   cannot reliably classify parts into that sub-bucket — they
+   *   collapse into `unclassifiedCached` and `markersDegraded`
+   *   flips to `true`) or `MARKER_BY_STRUCTURE` (dispatch by
+   *   `message.role` / `part.type`). Production callers pass no
+   *   argument; the default is `DEFAULT_MARKERS` from task 1.5,
+   *   which encodes the bundled production constants. Unit tests
+   *   inject alternative maps to exercise the happy path and the
+   *   all-broken path independently of the production defaults.
+   */
+  constructor(markers = DEFAULT_MARKERS) {
     // Lazy-init sentinel. The constructor MUST NOT call
     // get_encoding — task brief lazy-init contract, reader.test.js
     // -style white-box assertion in tokenizer.test.js, AND the
     // operational requirement that a `--help` / `--supported-opencode-version`
     // run (task 5.x) doesn't pay tiktoken's startup cost.
     this._encoding = null;
+
+    // Hold the marker map for per-call dispatch. Computed once per
+    // instance: the set of marker names whose value is the
+    // unreliable sentinel becomes the `failedMarkers` array on
+    // every classifyAndCount return, and the boolean `markersDegraded`
+    // flag is derived from that. Doing this at construction (not
+    // per-call) avoids re-walking the same five-entry map on every
+    // session in a multi-session run.
+    this._markers = markers;
+    const failed = [];
+    for (const name of [
+      'systemPrompt',
+      'agentsMd',
+      'mcpToolSchemas',
+      'accumulatedHistory',
+      'accumulatedToolOutputs',
+    ]) {
+      if (markers[name] === MARKER_UNRELIABLE_SENTINEL) {
+        failed.push(name);
+      }
+    }
+    this._failedMarkers = Object.freeze(failed);
+    this._markersDegraded = failed.length > 0;
   }
 
   /**
@@ -951,23 +993,86 @@ class TokenizerSplitter {
    *   history: number,
    *   toolOutput: number,
    *   unclassifiedCount: number,
-   * }} ProvenanceCounts. All four keys are always present; absent
-   *   contributions are 0.
+   *   cachedReadBreakdown: {
+   *     systemPromptCached: number,
+   *     agentsMdCached: number,
+   *     mcpToolSchemasCached: number,
+   *     accumulatedHistoryCached: number,
+   *     accumulatedToolOutputsCached: number,
+   *     unclassifiedCached: number,
+   *   },
+   *   markersDegraded: boolean,
+   *   failedMarkers: ReadonlyArray<string>,
+   * }} TokenizerProvenance. The four v1 keys are always present
+   *   (consumed by AttributionEngine's existing Flow 2). The v2
+   *   additions — cachedReadBreakdown's six sub-buckets, the
+   *   markersDegraded boolean, and the failedMarkers array —
+   *   surface the cachedRead classifier state introduced in
+   *   task 3.1 (design.md TokenizerSplitter (extended) lines
+   *   454-514, Decision 6 lines 829-836). The v2 fields are
+   *   computed in the SAME single-pass walk as the v1 fields;
+   *   every part contributes to exactly one v1 bucket AND exactly
+   *   one v2 cachedRead sub-bucket. AttributionEngine (task 5.7)
+   *   consumes markersDegraded / failedMarkers to choose between
+   *   Strategy A and the proportional-from-uncached fallback;
+   *   ReportSerializer surfaces the cachedRead breakdown and the
+   *   degraded-state finding.
    */
   classifyAndCount(parts, messages) {
     const enc = this._ensureEncoding();
 
+    // v1 buckets — semantics unchanged from the pre-task-3.1
+    // contract. AttributionEngine's existing Flow 2 depends on
+    // these four keys remaining stable.
     let systemPrompt = 0;
     let history = 0;
     let toolOutput = 0;
     let unclassifiedCount = 0;
+
+    // v2 cachedRead sub-buckets — populated in parallel during the
+    // same per-part walk. Per-part the rule is:
+    //
+    //   role=system text  → if markers.systemPrompt is by-structure,
+    //                        systemPromptCached; if unreliable,
+    //                        unclassifiedCached. (agentsMd and
+    //                        mcpToolSchemas markers contribute to
+    //                        the static markersDegraded fact but do
+    //                        not gate per-part dispatch — there is
+    //                        no content-shape signal beyond `role`
+    //                        in the structural dispatch case.)
+    //   role=user|assistant text → if markers.accumulatedHistory is
+    //                        by-structure, accumulatedHistoryCached;
+    //                        if unreliable, unclassifiedCached.
+    //   type=tool         → if markers.accumulatedToolOutputs is
+    //                        by-structure, accumulatedToolOutputsCached;
+    //                        if unreliable, unclassifiedCached.
+    //   Anything else     → unclassifiedCached.
+    //
+    // The unreliable sentinel checks read `this._markers` rather
+    // than re-reading the module-level constants so that a
+    // unit-test-injected markers map controls the dispatch.
+    let systemPromptCached = 0;
+    let agentsMdCached = 0; // populated only by future content-shape grep; today always 0
+    let mcpToolSchemasCached = 0; // ditto
+    let accumulatedHistoryCached = 0;
+    let accumulatedToolOutputsCached = 0;
+    let unclassifiedCached = 0;
+
+    const systemPromptMarkerReliable =
+      this._markers.systemPrompt !== MARKER_UNRELIABLE_SENTINEL;
+    const accumulatedHistoryMarkerReliable =
+      this._markers.accumulatedHistory !== MARKER_UNRELIABLE_SENTINEL;
+    const accumulatedToolOutputsMarkerReliable =
+      this._markers.accumulatedToolOutputs !== MARKER_UNRELIABLE_SENTINEL;
 
     for (const part of parts) {
       const type = part.type;
 
       // Skipped types short-circuit before parsing data — saves a
       // JSON.parse per skipped row, which matters for long sessions
-      // where step-start / step-finish parts dominate.
+      // where step-start / step-finish parts dominate. Applies to
+      // BOTH the v1 and v2 splits (a metadata part contributes
+      // zero to every bucket, cached or uncached).
       if (TOKENIZER_SKIPPED_TYPES.has(type)) {
         continue;
       }
@@ -1005,21 +1110,42 @@ class TokenizerSplitter {
         const tokens = enc.encode(text).length;
         if (role === 'system') {
           systemPrompt += tokens;
+          // cachedRead dispatch: systemPrompt marker decides whether
+          // the part has a named home or falls into the residual.
+          if (systemPromptMarkerReliable) {
+            systemPromptCached += tokens;
+          } else {
+            unclassifiedCached += tokens;
+          }
         } else if (role === 'user' || role === 'assistant') {
           history += tokens;
+          if (accumulatedHistoryMarkerReliable) {
+            accumulatedHistoryCached += tokens;
+          } else {
+            unclassifiedCached += tokens;
+          }
         } else {
           // Text part whose role we can't resolve (missing message
           // row, malformed message.data, or a role value opencode
           // adds later that isn't system/user/assistant). The 5.4
           // fail-loud contract says: surface, don't silently bucket.
           unclassifiedCount += tokens;
+          // Same logic on the cached side: no resolvable role
+          // means no defensible named sub-bucket.
+          unclassifiedCached += tokens;
         }
       } else if (type === 'tool') {
         const output = data && data.state && typeof data.state.output === 'string'
           ? data.state.output
           : '';
         if (output.length > 0) {
-          toolOutput += enc.encode(output).length;
+          const tokens = enc.encode(output).length;
+          toolOutput += tokens;
+          if (accumulatedToolOutputsMarkerReliable) {
+            accumulatedToolOutputsCached += tokens;
+          } else {
+            unclassifiedCached += tokens;
+          }
         }
         // Tool parts whose state.output is absent or empty (pending
         // / running / errored-without-body) contribute 0. They are
@@ -1048,12 +1174,37 @@ class TokenizerSplitter {
           }
         }
         if (content.length > 0) {
-          unclassifiedCount += enc.encode(content).length;
+          const tokens = enc.encode(content).length;
+          unclassifiedCount += tokens;
+          // Unknown part.type has no named cachedRead sub-bucket;
+          // mirror the v1 unclassified behavior on the cached side.
+          unclassifiedCached += tokens;
         }
       }
     }
 
-    return { systemPrompt, history, toolOutput, unclassifiedCount };
+    return {
+      // v1 fields — UNCHANGED contract.
+      systemPrompt,
+      history,
+      toolOutput,
+      unclassifiedCount,
+      // v2 cachedRead breakdown.
+      cachedReadBreakdown: {
+        systemPromptCached,
+        agentsMdCached,
+        mcpToolSchemasCached,
+        accumulatedHistoryCached,
+        accumulatedToolOutputsCached,
+        unclassifiedCached,
+      },
+      // v2 degraded-marker signal. Computed STATICALLY at constructor
+      // time from the marker map; included on every return so
+      // downstream consumers (AttributionEngine 5.7, ReportSerializer)
+      // get the signal even when `parts` is empty.
+      markersDegraded: this._markersDegraded,
+      failedMarkers: this._failedMarkers,
+    };
   }
 }
 
@@ -1822,6 +1973,35 @@ const AGENTS_MD_MARKER = MARKER_UNRELIABLE_SENTINEL;
 const MCP_TOOL_SCHEMAS_MARKER = MARKER_UNRELIABLE_SENTINEL;
 const ACCUMULATED_HISTORY_MARKER = MARKER_BY_STRUCTURE;
 const ACCUMULATED_TOOL_OUTPUTS_MARKER = MARKER_BY_STRUCTURE;
+
+// Bundled production marker map consumed by TokenizerSplitter
+// (task 3.1). Keys are the cachedRead sub-bucket names minus the
+// `Cached` suffix; values are one of the two sentinel constants
+// above. Frozen so a caller that forgets to clone it before
+// mutating can't poison the production default.
+//
+// Per task 1.1's finding, the first three markers ship as
+// MARKER_UNRELIABLE_SENTINEL — opencode constructs the system
+// prompt, AGENTS.md slot, and MCP tool schemas at request time and
+// does not persist a recognizable marker into the `parts` table.
+// TokenizerSplitter MUST treat that absence as a degraded signal
+// and propagate `markersDegraded: true` to the AttributionEngine
+// so the proportional-from-uncached fallback fires (design.md
+// Decision 6, lines 829-836). The other two markers are
+// MARKER_BY_STRUCTURE — accumulatedHistory dispatches on
+// `message.role` and accumulatedToolOutputs on `part.type`, both
+// of which are present and stable on every persisted row.
+//
+// Unit tests inject alternative maps via the optional `markers`
+// constructor argument; production code always calls
+// `new TokenizerSplitter()` with no args.
+const DEFAULT_MARKERS = Object.freeze({
+  systemPrompt: SYSTEM_PROMPT_MARKER,
+  agentsMd: AGENTS_MD_MARKER,
+  mcpToolSchemas: MCP_TOOL_SCHEMAS_MARKER,
+  accumulatedHistory: ACCUMULATED_HISTORY_MARKER,
+  accumulatedToolOutputs: ACCUMULATED_TOOL_OUTPUTS_MARKER,
+});
 
 function makeZeroBucketTotals() {
   const out = {};

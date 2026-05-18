@@ -115,10 +115,18 @@ test('TokenizerSplitter: lazy-init populates the encoder on first call and reuse
 test('TokenizerSplitter: empty parts list returns all-zero ProvenanceCounts', () => {
   const t = new TokenizerSplitter();
   const counts = t.classifyAndCount([], new Map());
+  // Task 3.1 added additive v2 fields (cachedReadBreakdown,
+  // markersDegraded, failedMarkers) to the return object. The v1
+  // contract — all four named fields present and zero on empty
+  // input — is unchanged; we destructure them out to keep this
+  // deepEqual check focused on the v1 semantic rather than failing
+  // on the additive v2 keys. tokenizer-cached-read.test.js covers
+  // the v2 contract directly.
+  const { systemPrompt, history, toolOutput, unclassifiedCount } = counts;
   assert.deepEqual(
-    counts,
+    { systemPrompt, history, toolOutput, unclassifiedCount },
     { systemPrompt: 0, history: 0, toolOutput: 0, unclassifiedCount: 0 },
-    'zero parts must produce all-zero counts with all four keys present',
+    'zero parts must produce all-zero counts with all four v1 keys present',
   );
 });
 
@@ -213,10 +221,16 @@ test('TokenizerSplitter: metadata part types (step-*, compaction, agent, patch, 
   }));
 
   const counts = t.classifyAndCount(parts, messages);
+  // Same v1-subset pattern as the empty-parts test above: the v1
+  // contract that metadata part types contribute zero to every
+  // bucket is unchanged; we destructure to skip the additive v2
+  // fields. tokenizer-cached-read.test.js verifies the v2 metadata
+  // skipping contract on the cachedRead side.
+  const { systemPrompt, history, toolOutput, unclassifiedCount } = counts;
   assert.deepEqual(
-    counts,
+    { systemPrompt, history, toolOutput, unclassifiedCount },
     { systemPrompt: 0, history: 0, toolOutput: 0, unclassifiedCount: 0 },
-    'design.md:779-780 metadata part types must contribute zero to every bucket',
+    'design.md:779-780 metadata part types must contribute zero to every v1 bucket',
   );
 });
 
