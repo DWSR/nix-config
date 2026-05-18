@@ -3028,6 +3028,56 @@ const TOKENIZER_AFFECTED_BUCKETS = Object.freeze([
   'toolOutputs',
 ]);
 
+// v2 extension of the tokenizer-affected bucket list (task 6.3).
+// The v1 three uncached sub-buckets are tokenizer-derived (a
+// proportional split of authoritative `session.tokens_input`); the
+// v2 additions extend the same accuracy disclaimer to the new
+// sub-bucket dimensions that v2 introduces:
+//
+//   - The 6 cachedRead sub-buckets — every entry in
+//     CACHED_READ_SUB_BUCKET_KEYS is tokenizer-derived per R4.4
+//     ("the cached-read sub-buckets whose values are
+//     tokenizer-derived"). Names match the keys consumers see on
+//     `cost.cachedReadBreakdown.*` so renderers can join the
+//     disclaimer text to the data without a translation table.
+//   - `toolOutputsByTool` — design.md:670 names `byTool.*` as a
+//     v2 affected bucket; we use the canonical map key consumers
+//     see on `cost.toolOutputsByTool` for the same reason.
+//   - `subagentDispatchByAgent` — the task brief explicitly names
+//     "the byTool/byAgent dimensions". The per-agent allocation
+//     IS rooted in each child session's authoritative
+//     `session.cost`, but the bucket-to-agent partition itself is
+//     still an inference (it depends on the SubagentAggregator's
+//     per-child-session mapping, which can drift if opencode
+//     adopts per-message agent attribution before this spec's
+//     follow-on); naming it here preserves the disclaimer's
+//     conservative posture rather than implying authoritative
+//     status. See `subagent_agent_attribution_drift` finding.
+//
+// Flag-OFF emission continues to read TOKENIZER_AFFECTED_BUCKETS
+// (the v1 list) verbatim so the byte-identical integration goldens
+// remain valid through the 5.x/6.x rollout window. Flag-ON
+// emission picks this V2 list inside `assemble()`. The two lists
+// are deliberately separate constants — extending the frozen v1
+// list in place would silently shift the goldens.
+const TOKENIZER_AFFECTED_BUCKETS_V2 = Object.freeze([
+  // v1 entries (preserved verbatim, same order)
+  'uncachedSystemPrompt',
+  'history',
+  'toolOutputs',
+  // v2: cachedRead sub-buckets (R4.4 tokenizer-derived)
+  'systemPromptCached',
+  'agentsMdCached',
+  'mcpToolSchemasCached',
+  'accumulatedHistoryCached',
+  'accumulatedToolOutputsCached',
+  'unclassifiedCached',
+  // v2: per-tool / per-agent dimension labels (R5.4 / R6.5,
+  // design.md:670)
+  'toolOutputsByTool',
+  'subagentDispatchByAgent',
+]);
+
 const TOKENIZER_AUTHORITATIVE_BUCKETS = Object.freeze([
   'cachedRead',
   'cachedWrite',
@@ -3406,6 +3456,40 @@ function makeNullCostShape(sessionCost = 0) {
 
 class ReportAssembler {
   /**
+   * @param {PricingTable|null} pricingTable
+   *   Used by `assemble()` to surface pin metadata on every
+   *   v2 report (`report.pricing = { pinDate, pinSource,
+   *   pinVersion? }`). The CLI Entry constructs a single
+   *   PricingTable at startup (see main() ~line 4662) and
+   *   passes it here so the pin metadata flows through
+   *   `assemble()` without any I/O at assembly time.
+   *
+   *   Accepted for forward-compat: `null` or the no-arg call.
+   *   Every unit test in tests/opencode-cost-diagnosis/unit
+   *   constructs `new ReportAssembler()` without args, and that
+   *   path MUST continue to work — the assembler simply omits
+   *   the `pricing` block in that case (downstream renderers can
+   *   treat absence as "pin metadata unavailable" rather than
+   *   fabricating a misleading default).
+   *
+   *   Declared as a bare parameter (no `= null` default) so
+   *   `ReportAssembler.length === 1`; default values would make
+   *   `length === 0` per the Function.length spec. The null-arg
+   *   handling lives in the body below.
+   */
+  constructor(pricingTable) {
+    // Defensive null-coalesce: explicit `null`, `undefined`, or
+    // a non-object argument all collapse to `null`. The assembler
+    // never invokes any method on `_pricingTable` other than
+    // reading `pinMetadata`, so an over-tight type-check here
+    // would be over-engineering — a duck-typed access is fine.
+    this._pricingTable =
+      pricingTable && typeof pricingTable === 'object'
+        ? pricingTable
+        : null;
+  }
+
+  /**
    * Build a DiagnosticReport from the AttributionEngine's per-session
    * output.
    *
@@ -3720,16 +3804,26 @@ class ReportAssembler {
       typeof opts.supportedOpencodeVersionRange === 'string'
         ? opts.supportedOpencodeVersionRange
         : null;
+    // Pick the affectedBuckets list by feature-flag state. The two
+    // constants are deliberately separate (see
+    // TOKENIZER_AFFECTED_BUCKETS_V2 comment) so flag-OFF emits the
+    // exact v1 list and flag-ON emits the extended v2 list — no
+    // in-place mutation of the frozen v1 constant. `humanReadable`
+    // joins whichever list is active so the prose stays in sync with
+    // the structured field. (Task 6.3, R3.3 / R4.4 / R5.4 / R6.5.)
+    const affectedBuckets = V2_COST_COMPUTE_ENABLED
+      ? TOKENIZER_AFFECTED_BUCKETS_V2.slice()
+      : TOKENIZER_AFFECTED_BUCKETS.slice();
     const tokenizer_disclaimer = {
       library: 'tiktoken',
       encoding: 'cl100k_base',
       accuracyClass: 'relative-only',
-      affectedBuckets: TOKENIZER_AFFECTED_BUCKETS.slice(),
+      affectedBuckets,
       authoritativeBuckets: TOKENIZER_AUTHORITATIVE_BUCKETS.slice(),
       sumCorrectnessGuarantee:
         'Uncached sub-buckets sum exactly to opencode.session.tokens_input',
       humanReadable:
-        `Bucket totals for ${TOKENIZER_AFFECTED_BUCKETS.join(', ')} are ` +
+        `Bucket totals for ${affectedBuckets.join(', ')} are ` +
         `tiktoken (cl100k_base) estimates derived from a proportional ` +
         `split of opencode's authoritative session.tokens_input; they ` +
         `are relative-only and suitable for ranking cost drivers, but ` +
@@ -3743,7 +3837,49 @@ class ReportAssembler {
           : `.`),
     };
 
-    return {
+    // Task 6.3: threshold metadata. Surfaces the configured
+    // below-threshold fold thresholds (R5.4 subagent, R6.5 tool) on
+    // every v2 report so renderer (7.1) can render them next to the
+    // `(below-threshold-fold)` residual entries; without this block
+    // the operator could not interpret what threshold was applied.
+    // Flag-OFF deliberately omits this so the byte-identical v1
+    // goldens do not shift during the 5.x/6.x rollout window.
+    if (V2_COST_COMPUTE_ENABLED) {
+      tokenizer_disclaimer.thresholds = {
+        subagentBelowThresholdPct: SUBAGENT_BELOW_THRESHOLD_PCT,
+        subagentBelowThresholdChildFloor: SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR,
+        toolBelowThresholdPct: TOOL_BELOW_THRESHOLD_PCT,
+      };
+    }
+
+    // Task 6.3: top-level `pricing` block. Sourced from PricingTable
+    // pin metadata at assembly time (no I/O — the table was loaded
+    // once at CLI startup). Shallow-cloned so a downstream consumer
+    // can extend the object without hitting the frozen reference
+    // from PricingTable (which is `Object.freeze`d at line 656); the
+    // clone preserves `pinDate`, `pinSource`, and the optional
+    // `pinVersion` exactly (PricingTable only sets pinVersion when
+    // the source JSON has it, so the optional contract flows
+    // through unchanged).
+    //
+    // Three gates must align for the block to appear:
+    //   1. V2_COST_COMPUTE_ENABLED — the v2 emission path is active.
+    //   2. _pricingTable was supplied — production main() always
+    //      passes one; unit tests that pass `null` (or no-arg)
+    //      intentionally omit the block.
+    //   3. _pricingTable.pinMetadata is a real object — duck-typed
+    //      guard against a stub that lacks the accessor.
+    let pricing;
+    if (
+      V2_COST_COMPUTE_ENABLED &&
+      this._pricingTable &&
+      typeof this._pricingTable.pinMetadata === 'object' &&
+      this._pricingTable.pinMetadata !== null
+    ) {
+      pricing = { ...this._pricingTable.pinMetadata };
+    }
+
+    const report = {
       schemaVersion: 1,
       reportType: 'opencode-cost-diagnosis',
       tokenizer_disclaimer,
@@ -3753,6 +3889,16 @@ class ReportAssembler {
       sessions,
       findings,
     };
+    // Only attach `pricing` when the gates above produced a value.
+    // Conditional attachment (vs. `pricing: pricing || undefined`)
+    // keeps the v1 report-key set exactly equal to v1's when the
+    // flag is OFF — `'pricing' in report` is false and the
+    // alphabetical-sort replacer in ReportSerializer never visits
+    // the key. (R7.AC1 forward-compat: v2 may add new fields but
+    // must not rename, remove, or reshape existing v1 fields; the
+    // flag-OFF branch keeps the key set v1-equivalent.)
+    if (pricing) report.pricing = pricing;
+    return report;
   }
 }
 
@@ -4681,7 +4827,13 @@ function main(argv) {
     // The JSON serializer ignores it (R6.AC3 byte-identical
     // guarantee); the MD serializer surfaces it in the header.
     const generatedAt = new Date();
-    const assembler = new ReportAssembler();
+    // Task 6.3: ReportAssembler now accepts a PricingTable so the
+    // v2 emission path can surface pin metadata in every report
+    // (`report.pricing = { pinDate, pinSource, pinVersion? }`).
+    // pricingTable is already in scope from the per-run wiring
+    // above (line ~4662) and is the same instance that flows into
+    // AttributionEngine — a single source of truth for the pin.
+    const assembler = new ReportAssembler(pricingTable);
     const contentLoader = parsed.includeContent
       ? (sessionId) => ({
           messages: [...reader.messagesOfSession(sessionId)],
@@ -4787,4 +4939,10 @@ module.exports = {
   // to false in a `finally`. See the flag declaration for the
   // rationale and removal plan.
   setV2CostComputeEnabled,
+  // v2 additions (task 6.3): the extended tokenizer-affected
+  // bucket list used by the assembler when the v2 flag is ON.
+  // Exported so unit tests can spot-check membership without
+  // re-importing the underlying CACHED_READ_SUB_BUCKET_KEYS
+  // constant.
+  TOKENIZER_AFFECTED_BUCKETS_V2,
 };

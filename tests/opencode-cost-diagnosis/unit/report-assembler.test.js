@@ -72,6 +72,7 @@ const {
   TokenizerSplitter,
   AttributionEngine,
   ReportAssembler,
+  PricingTable,
   setV2CostComputeEnabled,
   PER_BUCKET_COST_KEYS,
   CACHED_READ_SUB_BUCKET_KEYS,
@@ -80,6 +81,10 @@ const {
 );
 
 const FIXTURE = path.join(__dirname, '../fixtures/opencode-stable.db');
+const SYNTHETIC_PRICING = path.join(
+  __dirname,
+  '../fixtures/synthetic-pricing.json',
+);
 
 // Per-root fixture constants. Single source of truth co-located
 // with the assertions so a fixture rebuild produces a single diff
@@ -1775,4 +1780,256 @@ test('assemble: flag OFF preserves v1 shape — no cachedReadBreakdown / byAgent
   assert.equal(aA.cost.cachedReadBreakdown, undefined);
   assert.equal(aA.cost.subagentDispatchByAgent, undefined);
   assert.equal(aA.cost.toolOutputsByTool, undefined);
+});
+
+/* ── Task 6.3: pricing pin block, threshold metadata, extended affectedBuckets ── */
+//
+// The flag-OFF branch must preserve the v1 disclaimer shape verbatim
+// (no `thresholds`, no top-level `pricing`, `affectedBuckets` is the
+// v1 3-element list). Any drift here would break the byte-identical
+// integration goldens that 8.1 refreshes.
+//
+// The flag-ON branch adds:
+//   - top-level `pricing: { pinDate, pinSource, pinVersion? }` sourced
+//     from PricingTable.pinMetadata
+//   - `tokenizer_disclaimer.thresholds: { subagentBelowThresholdPct,
+//     subagentBelowThresholdChildFloor, toolBelowThresholdPct }`
+//   - `tokenizer_disclaimer.affectedBuckets` is the V2 list (includes
+//     the 6 cachedRead sub-buckets plus `toolOutputsByTool` and
+//     `subagentDispatchByAgent` dimension labels)
+//
+// ReportAssembler.length === 1 (constructor now declares a single
+// `pricingTable` parameter — backward-compat is preserved by an
+// in-body null check, NOT a default value, because default values
+// do not count toward Function.length).
+//
+// Requirements: R3.3 (pin metadata visible), R4.4 (extended
+// disclaimer), R5.4 (subagent threshold disclosure), R6.5 (tool
+// threshold disclosure).
+
+test('ReportAssembler.length === 1 (constructor accepts pricingTable)', () => {
+  // Function.length is the count of formal parameters BEFORE the
+  // first default. The 6.3 constructor declares pricingTable as a
+  // bare param (no `= null` default) and handles the no-arg case in
+  // the body — so length is 1 and existing `new ReportAssembler()`
+  // call sites continue to work without modification.
+  assert.equal(
+    ReportAssembler.length,
+    1,
+    `ReportAssembler.length expected 1 (now accepts pricingTable), got ${ReportAssembler.length}`,
+  );
+});
+
+test('ReportAssembler: still constructable with no arguments (backward compat)', () => {
+  // The 6.3 constructor accepts a single pricingTable arg but must
+  // tolerate `new ReportAssembler()` calls — every existing v1 test
+  // (above) constructs with no args and the integration harness
+  // relied on this through tasks 4.x. A throw here would break
+  // every existing case.
+  const a = new ReportAssembler();
+  assert.equal(typeof a.assemble, 'function');
+});
+
+test('assemble: flag ON + pricingTable injects top-level pricing block', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2Cost({ total: 0.10 }),
+      }),
+    ];
+    const report = new ReportAssembler(pricingTable).assemble(attrs);
+
+    assert.equal(typeof report.pricing, 'object', 'report.pricing must be an object');
+    assert.notEqual(report.pricing, null);
+    // Synthetic pricing fixture pin metadata: hand-coded at
+    // tests/opencode-cost-diagnosis/fixtures/synthetic-pricing.json
+    // so the assertions are deterministic and decoupled from the
+    // production pin date.
+    assert.equal(report.pricing.pinDate, '2026-01-01');
+    assert.equal(report.pricing.pinSource, 'synthetic-test-fixture');
+    assert.equal(report.pricing.pinVersion, 'v1.0-test');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON + pricingTable — report.pricing is independent of pinMetadata mutation', () => {
+  // Defensive shallow-copy guard: PricingTable.pinMetadata is frozen
+  // (see lines 656 + 678 of opencode-cost-report.js). A consumer that
+  // tries to extend `report.pricing` (e.g. adding a `notes` field)
+  // would otherwise hit a TypeError if we passed the frozen reference
+  // through unchanged. The assembler shallow-clones so the report
+  // itself stays mutable.
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const report = new ReportAssembler(pricingTable).assemble([]);
+    assert.notStrictEqual(
+      report.pricing,
+      pricingTable.pinMetadata,
+      'report.pricing must be a shallow clone, not the same frozen reference',
+    );
+    // Mutability sanity: a consumer can add an annotation without
+    // throwing. (The fact that this doesn't throw is the assertion.)
+    report.pricing.note = 'consumer-annotation';
+    assert.equal(report.pricing.note, 'consumer-annotation');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON without pricingTable omits the pricing block', () => {
+  // The constructor accepts `null` (or no-arg) for back-compat with
+  // every existing unit test. When pricingTable is absent, the
+  // assembler MUST NOT fabricate a pricing block — there's no
+  // authoritative pinDate to report. Downstream renderers can use
+  // the absence as a "pin metadata unavailable" signal.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2Cost({ total: 0.10 }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    assert.equal(
+      report.pricing,
+      undefined,
+      'flag ON without pricingTable: report.pricing must be omitted',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON injects tokenizer_disclaimer.thresholds with R5.4 / R6.5 values', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const report = new ReportAssembler(pricingTable).assemble([]);
+    const t = report.tokenizer_disclaimer.thresholds;
+    assert.equal(typeof t, 'object', 'tokenizer_disclaimer.thresholds must be an object');
+    assert.notEqual(t, null);
+    // Canonical R5.4 disclosure: subagent below-threshold fold
+    // percentage (1% of descendant count) and the floor (never less
+    // than 1 child). Source: SUBAGENT_BELOW_THRESHOLD_PCT and
+    // SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR module constants.
+    assert.equal(t.subagentBelowThresholdPct, 0.01);
+    assert.equal(t.subagentBelowThresholdChildFloor, 1);
+    // Canonical R6.5 disclosure: tool below-threshold fold percentage.
+    assert.equal(t.toolBelowThresholdPct, 0.01);
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON extends tokenizer_disclaimer.affectedBuckets with cachedRead sub-buckets and per-tool/per-agent dimensions', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const report = new ReportAssembler(pricingTable).assemble([]);
+    const ab = report.tokenizer_disclaimer.affectedBuckets;
+
+    // Preserved v1 entries (forward-compat: no rename, no drop)
+    assert.ok(ab.includes('uncachedSystemPrompt'));
+    assert.ok(ab.includes('history'));
+    assert.ok(ab.includes('toolOutputs'));
+
+    // New v2 entries — task-observable spot check on systemPromptCached
+    assert.ok(
+      ab.includes('systemPromptCached'),
+      `affectedBuckets must include systemPromptCached, got: ${ab.join(', ')}`,
+    );
+
+    // Every cachedRead sub-bucket from CACHED_READ_SUB_BUCKET_KEYS
+    // should appear — the entire decomposition is tokenizer-derived
+    // per R4.4 ("the cached-read sub-buckets whose values are
+    // tokenizer-derived").
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.ok(
+        ab.includes(k),
+        `affectedBuckets must include cachedRead sub-bucket '${k}', got: ${ab.join(', ')}`,
+      );
+    }
+
+    // Per-tool and per-agent dimensions (task brief: "the byTool/byAgent dimensions").
+    assert.ok(
+      ab.includes('toolOutputsByTool'),
+      'affectedBuckets must include the byTool dimension label',
+    );
+    assert.ok(
+      ab.includes('subagentDispatchByAgent'),
+      'affectedBuckets must include the byAgent dimension label',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag OFF preserves v1 disclaimer shape verbatim — no thresholds, no top-level pricing, v1 affectedBuckets list', () => {
+  // v1 invariant: flag-OFF emission must NOT acquire any of the v2
+  // additions. The byte-identical integration goldens 8.1 will
+  // refresh against the flag-ON shape; flag-OFF must continue to
+  // emit the exact v1 disclaimer through the 5.x/6.x rollout window.
+  const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+  // Even when pricingTable IS supplied, flag-OFF must suppress the
+  // pricing block — the flag is the authoritative gate, not the
+  // presence of the table. (Operators flipping the flag back to
+  // OFF during a regression hunt must see the exact v1 emission.)
+  const report = new ReportAssembler(pricingTable).assemble([]);
+
+  // No top-level pricing
+  assert.equal(report.pricing, undefined, 'flag OFF: report.pricing must be absent');
+
+  // No thresholds inside the disclaimer
+  assert.equal(
+    report.tokenizer_disclaimer.thresholds,
+    undefined,
+    'flag OFF: tokenizer_disclaimer.thresholds must be absent',
+  );
+
+  // affectedBuckets is the exact v1 3-element list (preserved order)
+  assert.deepEqual(report.tokenizer_disclaimer.affectedBuckets, [
+    'uncachedSystemPrompt',
+    'history',
+    'toolOutputs',
+  ]);
+});
+
+test('assemble: flag ON pricing.pinVersion is omitted when source JSON lacks it', () => {
+  // Belt-and-suspenders for the optional pinVersion contract: the
+  // synthetic fixture DOES include pinVersion; this test rebuilds the
+  // pricing table from a stripped fixture and confirms `pricing` then
+  // omits pinVersion (PricingTable.pinMetadata only sets pinVersion
+  // when the source has it; the assembler propagates whatever
+  // pinMetadata returns).
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const stripped = JSON.parse(fs.readFileSync(SYNTHETIC_PRICING, 'utf8'));
+  delete stripped.pinVersion;
+  const tmpFile = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'rep-asm-test-')),
+    'pricing-no-version.json',
+  );
+  fs.writeFileSync(tmpFile, JSON.stringify(stripped));
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(tmpFile);
+    const report = new ReportAssembler(pricingTable).assemble([]);
+    assert.equal(report.pricing.pinDate, '2026-01-01');
+    assert.equal(report.pricing.pinSource, 'synthetic-test-fixture');
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(report.pricing, 'pinVersion'),
+      'pricing.pinVersion must be absent when source JSON omits it',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+    fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true });
+  }
 });

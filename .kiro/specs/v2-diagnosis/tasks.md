@@ -239,7 +239,7 @@
   - _Requirements: 4.3, 5.3, 6.4_
   - _Boundary: ReportAssembler sub-bucket aggregation_
 
-- [ ] 6.3 Extend ReportAssembler to emit the pricing pin block, threshold metadata, and wire PricingTable through main()
+- [x] 6.3 Extend ReportAssembler to emit the pricing pin block, threshold metadata, and wire PricingTable through main()
   - Inject `pricing: { pinDate, pinSource, pinVersion? }` into the disclaimer object built around `scripts/opencode-cost-report.js:1685-1706`
   - Inject `thresholds: { subagentBelowThresholdPct, subagentBelowThresholdChildFloor, toolBelowThresholdPct }` into the same disclaimer block so 7.1 can render them and R5.4 / R6.5 are satisfied
   - Source pin metadata via PricingTable (passed to ReportAssembler at construction); update the ReportAssembler constructor signature accordingly
