@@ -193,7 +193,7 @@
   - _Requirements: 5.4_
   - _Boundary: AttributionEngine drift-detection_
 
-- [ ] 5.9 Rewrite the per_bucket_cost_deferred detail string template
+- [x] 5.9 Rewrite the per_bucket_cost_deferred detail string template
   - Update the existing emit site at `scripts/opencode-cost-report.js:1032-1041` to use the canonical v2 wording from design.md Decision 1: `"session ${id}: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state."`
   - Do NOT remove the emit site (R7.AC4 forbids removal of v1 finding codes)
   - Keep the per-session emit (same trigger as v1)

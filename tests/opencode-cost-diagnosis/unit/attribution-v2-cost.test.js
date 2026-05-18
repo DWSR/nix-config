@@ -3282,3 +3282,135 @@ test('flag OFF / 5.8: drift finding is NOT emitted (gated by V2_COST_COMPUTE_ENA
     'flag OFF must not emit subagent_agent_attribution_drift',
   );
 });
+
+// ---------------------------------------------------------------------
+// Task 5.9: rewritten per_bucket_cost_deferred detail string.
+//
+// Scope (5.9 _Boundary_): the existing per_bucket_cost_deferred emit
+// site in AttributionEngine.  R7.AC4 forbids removing the finding
+// code; design.md Decision 1 prescribes preserving the kind code
+// verbatim and rewriting the detail string when v2 is active.  The
+// v2 wording is canonical (frozen at design time, design.md:800) so
+// the assertion below is on the exact canonical substring rather
+// than a paraphrase.
+//
+// Gating: like every other v2 observable change (tasks 5.2 – 5.8),
+// the rewrite is behind V2_COST_COMPUTE_ENABLED so the integration
+// goldens stay byte-identical until task 8.1 refreshes them.  When
+// the flag is OFF the v1 detail string must be emitted verbatim;
+// when it is ON the canonical v2 wording from Decision 1 must
+// appear and the kind code must still be `per_bucket_cost_deferred`.
+// ---------------------------------------------------------------------
+
+// Canonical v2 wording (design.md:800 Decision 1).  Kept as a
+// substring to keep the assertion focused on the wording the spec
+// freezes; the per-session `session ${id}: ` prefix is verified
+// separately so the assertion still catches a regression where the
+// prefix is dropped.
+const V2_PBCD_CANONICAL_SUBSTRING =
+  'per-bucket cost is now populated by v2 (was null in v1). ' +
+  'This finding kind is retained for R7.AC4 forward-compatibility ' +
+  'and now records the v1->v2 migration of the per-bucket cost ' +
+  'fields rather than a deferred state.';
+
+// The v1 wording must be preserved verbatim when the flag is OFF
+// because the integration goldens hash it; any drift here is what
+// task 8.1's golden refresh will pick up, so the test asserts the
+// most fragile fragment ("deferred to a follow-on spec") rather
+// than the whole paragraph.
+const V1_PBCD_DETAIL_FRAGMENT =
+  'are deferred to a follow-on spec. Set to null in v1; shape ' +
+  'preserved for forward-compat.';
+
+test('flag ON / 5.9: per_bucket_cost_deferred detail uses canonical v2 wording from design.md Decision 1', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const pbcd = attr.findings.filter(
+      (f) => f.kind === 'per_bucket_cost_deferred',
+    );
+    assert.equal(
+      pbcd.length,
+      1,
+      'R7.AC4: per_bucket_cost_deferred must still be emitted once per session under the v2 flag',
+    );
+    const f = pbcd[0];
+    // Kind code preserved verbatim (R7.AC4) — design.md Decision 1.
+    assert.equal(f.kind, 'per_bucket_cost_deferred');
+    // Per-session prefix preserved so operators can grep by session id.
+    assert.ok(
+      f.detail.startsWith(`session ${ses.id}: `),
+      `detail must begin with "session ${ses.id}: " prefix; got: ${JSON.stringify(f.detail)}`,
+    );
+    // Task acceptance criterion (tasks.md): the substring
+    // "per-bucket cost is now populated by v2" must appear.
+    assert.ok(
+      f.detail.includes('per-bucket cost is now populated by v2'),
+      `detail must include the acceptance-criterion substring "per-bucket cost is now populated by v2"; got: ${JSON.stringify(f.detail)}`,
+    );
+    // Canonical wording from design.md:800 — frozen at design time
+    // so the full sentence is part of the spec.  This catches any
+    // paraphrase regression.
+    assert.ok(
+      f.detail.includes(V2_PBCD_CANONICAL_SUBSTRING),
+      `detail must include the full canonical v2 wording from design.md Decision 1; got: ${JSON.stringify(f.detail)}`,
+    );
+    // The v1 wording must NOT leak when the flag is ON — the v2
+    // detail is the migration record, not the deferred-state note.
+    assert.ok(
+      !f.detail.includes('deferred to a follow-on spec'),
+      `flag ON: detail must not contain the v1 "deferred to a follow-on spec" wording; got: ${JSON.stringify(f.detail)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag OFF / 5.9: per_bucket_cost_deferred detail still uses the v1 wording so integration goldens stay valid', () => {
+  // R7.AC1 / R7.AC2: byte-identical golden output during the
+  // staged rollout window depends on the flag defaulting to OFF.
+  // The integration goldens at
+  // tests/opencode-cost-diagnosis/integration/golden/fixture-365d-all.{md,json}
+  // contain the v1 detail string verbatim; this test is the unit-
+  // level guard that mirrors that invariant so a regression is
+  // caught here before the slower integration suite runs.
+  const ses = makeSyntheticSession();
+  const reader = makeMatchedSingleModelReader(ses);
+  const eng = new AttributionEngine(
+    reader,
+    new SubagentAggregator(reader),
+    new TokenizerSplitter(),
+    makeMatchedSinglePricing(),
+  );
+  const attr = eng.attributeSession(ses);
+  const pbcd = attr.findings.filter(
+    (f) => f.kind === 'per_bucket_cost_deferred',
+  );
+  assert.equal(
+    pbcd.length,
+    1,
+    'flag OFF: per_bucket_cost_deferred must still be emitted once per session',
+  );
+  const f = pbcd[0];
+  assert.equal(f.kind, 'per_bucket_cost_deferred');
+  assert.ok(
+    f.detail.startsWith(`session ${ses.id}: `),
+    `flag OFF: detail must begin with "session ${ses.id}: " prefix; got: ${JSON.stringify(f.detail)}`,
+  );
+  assert.ok(
+    f.detail.includes(V1_PBCD_DETAIL_FRAGMENT),
+    `flag OFF: detail must contain v1 wording fragment "${V1_PBCD_DETAIL_FRAGMENT}"; got: ${JSON.stringify(f.detail)}`,
+  );
+  assert.ok(
+    !f.detail.includes('per-bucket cost is now populated by v2'),
+    `flag OFF: detail must not contain the v2 wording; got: ${JSON.stringify(f.detail)}`,
+  );
+});

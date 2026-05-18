@@ -1647,20 +1647,44 @@ class AttributionEngine {
     }
 
     // ── per_bucket_cost_deferred (always emitted) ───────────────
-    // Design.md:639-655 + tasks.md:246-247: every session carries
-    // this finding so the operator never wonders why cost.cachedRead
-    // / cost.history / etc. are null. The text references the
-    // follow-on spec hook so an operator with the report in front
-    // of them can pick up the trail without consulting design.md.
-    findings.push({
-      kind: 'per_bucket_cost_deferred',
-      detail:
+    // R7.AC4 + design.md Decision 1: the kind code is preserved
+    // verbatim in v2 so existing JSON readers continue to see the
+    // same key, but the human-readable detail string is rewritten
+    // when V2_COST_COMPUTE_ENABLED is on to reflect the new state
+    // (per-bucket cost is now populated rather than deferred).
+    //
+    // The flag gating mirrors every other v2 observable change
+    // (tasks 5.2 – 5.8): flag OFF preserves the v1 wording verbatim
+    // so integration goldens stay byte-identical until task 8.1
+    // refreshes them; flag ON emits the canonical v2 wording from
+    // design.md:800 (Decision 1, frozen at design time).
+    let perBucketCostDeferredDetail;
+    if (V2_COST_COMPUTE_ENABLED) {
+      // Canonical v2 wording — design.md Decision 1 (line 800).
+      // This text is part of the spec; do not paraphrase.
+      perBucketCostDeferredDetail =
+        `session ${session.id}: per-bucket cost is now populated ` +
+        `by v2 (was null in v1). This finding kind is retained for ` +
+        `R7.AC4 forward-compatibility and now records the v1->v2 ` +
+        `migration of the per-bucket cost fields rather than a ` +
+        `deferred state.`;
+    } else {
+      // Legacy v1 wording — frozen by the integration goldens at
+      // tests/opencode-cost-diagnosis/integration/golden/
+      // fixture-365d-all.{md,json}. Task 8.1 refreshes the goldens
+      // and a follow-on commit removes the flag; this branch goes
+      // away with it.
+      perBucketCostDeferredDetail =
         `session ${session.id}: cost.total = ${session.cost || 0} is ` +
         `populated from opencode's authoritative session.cost; ` +
         `per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/` +
         `output/reasoning/subagentDispatch) require recomputing from ` +
         `token counts × model pricing and are deferred to a follow-on ` +
-        `spec. Set to null in v1; shape preserved for forward-compat.`,
+        `spec. Set to null in v1; shape preserved for forward-compat.`;
+    }
+    findings.push({
+      kind: 'per_bucket_cost_deferred',
+      detail: perBucketCostDeferredDetail,
     });
 
     // ── Cost shape selection (v1 null shape vs v2 populated) ────
