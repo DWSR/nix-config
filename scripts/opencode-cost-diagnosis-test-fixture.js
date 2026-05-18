@@ -149,11 +149,19 @@ const SCHEMA_STATEMENTS = [
      time_created INTEGER NOT NULL,
      time_updated INTEGER NOT NULL
    )`,
+  // The live opencode schema (`sqlite3 ~/.local/share/opencode/
+  // opencode-stable.db ".schema part"`) carries `type` INSIDE the
+  // `data` JSON blob, not as a top-level column. The earlier v1
+  // fixture modeled `type` as a column, which made the diagnostic
+  // appear correct against the fixture but fail against live data —
+  // every live part was classified as "unknown" because the column
+  // didn't exist. Match the production schema so reader/tokenizer
+  // tests exercise the same JSON-derived `type` synthesis the live
+  // path uses.
   `CREATE TABLE part (
      id           TEXT PRIMARY KEY,
      message_id   TEXT NOT NULL,
      session_id   TEXT NOT NULL,
-     type         TEXT NOT NULL,
      data         TEXT NOT NULL,
      time_created INTEGER NOT NULL,
      time_updated INTEGER NOT NULL
@@ -268,12 +276,18 @@ function insertMessage(stmt, opts) {
 }
 
 function insertPart(stmt, opts) {
+  // Embed `type` inside the `data` JSON blob to match the live
+  // opencode schema (see SCHEMA_STATEMENTS comment above). The
+  // builder functions below still pass `type` as a sibling
+  // property for readability — we merge it into data at insert
+  // time so the on-disk shape matches what SqliteReader's
+  // synthesized-type path expects to parse.
+  const data = { type: opts.type, ...opts.data };
   stmt.run(
     opts.id,
     opts.messageId,
     opts.sessionId,
-    opts.type,
-    JSON.stringify(opts.data),
+    JSON.stringify(data),
     opts.timeCreated,
     opts.timeUpdated,
   );
@@ -491,8 +505,8 @@ function generate() {
     VALUES (?, ?, ?, ?, ?)
   `);
   const insertPartStmt = db.prepare(`
-    INSERT INTO part (id, message_id, session_id, type, data, time_created, time_updated)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO part (id, message_id, session_id, data, time_created, time_updated)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const insertMigrationStmt = db.prepare(`
     INSERT INTO data_migration (name, time_completed) VALUES (?, ?)

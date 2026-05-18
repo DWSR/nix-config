@@ -298,17 +298,74 @@ class SqliteReader {
    * ordering both for prompt-composition reasoning and for stable
    * test snapshots.
    *
+   * Schema reality (live opencode, confirmed via
+   * `sqlite3 ~/.local/share/opencode/opencode-stable.db
+   * ".schema part"`): the `part` table has NO top-level `type`
+   * column. The part kind lives INSIDE the `data` JSON blob as
+   * `{ "type": "text", ... }` etc. The design document
+   * (PartRow interface, design.md:482-491) and the v1 fixture
+   * earlier assumed `type` was a column; both were wrong against
+   * the production schema, and the consequence — every live part
+   * classified as "unknown type" — surfaced via the diagnostic's
+   * own fail-loud findings rather than corrupting attribution
+   * silently.
+   *
+   * We preserve the consumer-facing PartRow contract (downstream
+   * code reads `part.type` and `part.data` directly) by parsing
+   * `data` once per row inside the iterator and synthesising the
+   * `type` field on the returned object. Malformed JSON or a
+   * missing `type` field both resolve to `null`, mirroring
+   * messagesOfSession's role-synthesis behaviour, so the
+   * TokenizerSplitter's existing classification logic (which
+   * routes unrecognised types to `unclassifiedCount`) handles
+   * the edge cases without needing to be aware of the schema
+   * change.
+   *
    * @param {string} sessionId
-   * @returns {Iterable<object>} part rows
+   * @returns {Iterable<object>} part rows with `type` added
    */
   partsOfSession(sessionId) {
     this._ensureOpen('partsOfSession');
-    return this._db
+    const inner = this._db
       .prepare(
-        'SELECT * FROM part WHERE session_id = ? ' +
+        'SELECT id, message_id, session_id, time_created, time_updated, data ' +
+          'FROM part WHERE session_id = ? ' +
           'ORDER BY time_created ASC, id ASC',
       )
       .iterate(sessionId);
+    return {
+      [Symbol.iterator]() {
+        return {
+          next() {
+            const step = inner.next();
+            if (step.done) return { value: undefined, done: true };
+            const row = step.value;
+            let type = null;
+            try {
+              const parsed = JSON.parse(row.data);
+              if (parsed && typeof parsed.type === 'string') {
+                type = parsed.type;
+              }
+            } catch {
+              // Malformed JSON → type stays null. The full data
+              // blob is preserved on the row so the Tokenizer
+              // can still attempt its own JSON.parse and surface
+              // a schema_partial_data finding for the operator.
+            }
+            return { value: { ...row, type }, done: false };
+          },
+          // Forward early-termination (for…of break, throw, etc.) to
+          // the inner better-sqlite3 StatementIterator so it releases
+          // the underlying sqlite3_stmt. Without this, a partial
+          // iteration would leave the connection "busy executing a
+          // query" and any subsequent close() / re-query would throw.
+          return(value) {
+            if (typeof inner.return === 'function') inner.return();
+            return { value, done: true };
+          },
+        };
+      },
+    };
   }
 
   /**

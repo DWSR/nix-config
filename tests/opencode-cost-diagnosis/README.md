@@ -81,10 +81,11 @@ opencode-cost-diagnosis-node \
   scripts/opencode-cost-diagnosis-test-fixture.js
 
 sha256sum tests/opencode-cost-diagnosis/fixtures/opencode-stable.db
-# ⇒ b0dd8b65550dd3e2f6b17fee7b81a9de059319bc81700beee5f8d92be61ff99f
-#   (as of the topology recorded above; will change if the fixture
-#    script changes, but re-running the unchanged script must
-#    reproduce the same hash)
+# ⇒ 8a6ac8d34ad64b302d20858c7eac6a0101d7c5944fd6010358fee078664029fb
+#   (as of the topology recorded above with `type` embedded inside
+#    each part.data JSON blob to match the live opencode schema;
+#    will change if the fixture script changes, but re-running the
+#    unchanged script must reproduce the same hash)
 ```
 
 The wrapper is `scripts/opencode-cost-diagnosis-node.nix` from Task
