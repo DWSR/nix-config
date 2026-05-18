@@ -112,7 +112,7 @@
   - _Requirements: 5.1, 5.2, 5.4_
   - _Boundary: SubagentAggregator_
 
-- [ ] 4.2 SubagentAggregator unit test coverage
+- [x] 4.2 SubagentAggregator unit test coverage
   - Extend `tests/opencode-cost-diagnosis/unit/aggregator.test.js`: byAgent grouping with real agent types, NULL handling, below-threshold folding (incl. the child-floor), nullAgentDescendantIds list correctness, sum-correctness of byAgent totals vs rollup totals
   - Confirm cycle detection still emits the v1 `schema_partial_data` finding
   - Observable: the existing aggregator.test.js file gains the new cases and continues to pass

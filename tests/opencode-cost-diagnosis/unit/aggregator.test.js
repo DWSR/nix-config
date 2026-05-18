@@ -472,6 +472,156 @@ test('rollup byAgent/nullAgentDescendantIds present and empty on a no-descendant
   }
 });
 
+test('rollup honors the child-floor: tiny N keeps every present agent (task 4.2)', () => {
+  // Threshold formula on small N: max(0.01*10, 1) = 1. The fold
+  // predicate is strict `childCount < threshold`, so an agent with
+  // childCount=1 has 1 < 1 == false → does NOT fold. This isolates
+  // the floor-dominates branch from the pct-dominates branch
+  // exercised by the N=200 test above (where threshold=2 and a
+  // single-occurrence agent DOES fold). The implementation comment
+  // at scripts/opencode-cost-report.js:907-916 spells out this
+  // semantic; this test pins it.
+  //
+  // Setup: 8×'general' + 1×'explore' + 1×'plan' under ses_root_c.
+  // Every agent survives as its own bucket;
+  // SUBAGENT_BELOW_THRESHOLD_LABEL must be absent.
+  const { tmp, tmpDir } = mkFixtureCopy();
+  {
+    const m = new Database(tmp);
+    const insert = m.prepare(
+      'INSERT INTO session ' +
+        '(id, parent_id, directory, agent, model, cost, ' +
+        ' tokens_input, tokens_output, tokens_reasoning, ' +
+        ' tokens_cache_read, tokens_cache_write, ' +
+        ' time_created, time_updated) ' +
+        "VALUES (?, 'ses_root_c', '/x', ?, 'm', 0.02, " +
+        '        100, 50, 10, 0, 0, 1, 1)',
+    );
+    const tx = m.transaction(() => {
+      for (let i = 0; i < 8; i++) {
+        insert.run(`ses_root_c_floor_g_${i}`, 'general');
+      }
+      insert.run('ses_root_c_floor_e_0', 'explore');
+      insert.run('ses_root_c_floor_p_0', 'plan');
+    });
+    tx();
+    m.close();
+  }
+  const r = new SqliteReader();
+  try {
+    r.open(tmp);
+    const agg = new SubagentAggregator(r);
+    const { totals, byAgent } = agg.rollup('ses_root_c');
+    assert.equal(totals.childCount, 10);
+    assert.equal(byAgent.get('general').childCount, 8);
+    assert.equal(byAgent.get('explore').childCount, 1);
+    assert.equal(byAgent.get('plan').childCount, 1);
+    assert.equal(
+      byAgent.has(SUBAGENT_BELOW_THRESHOLD_LABEL),
+      false,
+      'with threshold=floor=1, every present agent has childCount >= 1 ' +
+        'and the strict `<` predicate never fires; no fold should occur',
+    );
+  } finally {
+    r.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('rollup partitions a multi-agent mix with sum-correctness on tokens + cost (task 4.2)', () => {
+  // N=303 with agents at (general=200, explore=100, build=2, audit=1).
+  // Threshold = max(0.01*303, 1) = 3.03 → general+explore stay as
+  // their own buckets (200, 100 >= 3.03); build (2) and audit (1)
+  // both fold into SUBAGENT_BELOW_THRESHOLD_LABEL (combined
+  // childCount=3). This widens the existing N=200 test, which has
+  // only one real agent above-threshold and one below, to a
+  // multi-agent partition AND covers the sum-correctness invariants
+  // from design.md:557 for tokens and cost (R5.2). The N=200 test
+  // above only asserts the childCount sum; this test pins the
+  // tokens and cost sums too, on a fold that actually exercises
+  // multiple agents collapsing into the residual.
+  const { tmp, tmpDir } = mkFixtureCopy();
+  {
+    const m = new Database(tmp);
+    const insert = m.prepare(
+      'INSERT INTO session ' +
+        '(id, parent_id, directory, agent, model, cost, ' +
+        ' tokens_input, tokens_output, tokens_reasoning, ' +
+        ' tokens_cache_read, tokens_cache_write, ' +
+        ' time_created, time_updated) ' +
+        "VALUES (?, 'ses_root_c', '/x', ?, 'm', 0.02, " +
+        '        100, 50, 10, 0, 0, 1, 1)',
+    );
+    const tx = m.transaction(() => {
+      for (let i = 0; i < 200; i++) {
+        insert.run(`ses_root_c_mix_g_${i}`, 'general');
+      }
+      for (let i = 0; i < 100; i++) {
+        insert.run(`ses_root_c_mix_e_${i}`, 'explore');
+      }
+      for (let i = 0; i < 2; i++) {
+        insert.run(`ses_root_c_mix_b_${i}`, 'build');
+      }
+      insert.run('ses_root_c_mix_a_0', 'audit');
+    });
+    tx();
+    m.close();
+  }
+  const r = new SqliteReader();
+  try {
+    r.open(tmp);
+    const agg = new SubagentAggregator(r);
+    const { totals, byAgent } = agg.rollup('ses_root_c');
+
+    assert.equal(totals.childCount, 303);
+    assert.equal(byAgent.get('general').childCount, 200);
+    assert.equal(byAgent.get('explore').childCount, 100);
+    assert.equal(
+      byAgent.has('build'),
+      false,
+      "'build' (childCount=2) is below threshold=3.03 and must fold",
+    );
+    assert.equal(
+      byAgent.has('audit'),
+      false,
+      "'audit' (childCount=1) is below threshold=3.03 and must fold",
+    );
+    assert.equal(
+      byAgent.get(SUBAGENT_BELOW_THRESHOLD_LABEL).childCount,
+      3,
+      'below-threshold residual aggregates childCount across all folded agents',
+    );
+
+    // Full sum invariants from design.md:557 — extend the existing
+    // sumChild-only check in the N=200 test to also cover tokensTotal
+    // and cost, satisfying R5.2 directly. Per-descendant token shape
+    // (100+50+10+0+0=160) is uniform, so tokens math is exact;
+    // cost is float-summed so it gets an epsilon check.
+    let sumChild = 0;
+    let sumTokens = 0;
+    let sumCost = 0;
+    for (const b of byAgent.values()) {
+      sumChild += b.childCount;
+      sumTokens += b.tokensTotal;
+      sumCost += b.cost;
+    }
+    assert.equal(sumChild, totals.childCount);
+    assert.equal(
+      sumTokens,
+      totals.tokensTotal,
+      'sum(byAgent[*].tokensTotal) must equal totals.tokensTotal across the fold (R5.2)',
+    );
+    assert.ok(
+      Math.abs(sumCost - totals.cost) < 1e-9,
+      `sum(byAgent[*].cost)=${sumCost} must equal totals.cost=${totals.cost} ` +
+        'across the fold (R5.2)',
+    );
+  } finally {
+    r.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('rollup does not memoize across calls: second call returns its own findings array', () => {
   // Regression guard for the implementation-notes hint that the
   // Aggregator must not stash findings/visited-set state on the
