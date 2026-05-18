@@ -58,6 +58,8 @@ const Database = require('better-sqlite3');
 const {
   SqliteReader,
   SubagentAggregator,
+  SUBAGENT_NULL_AGENT_LABEL,
+  SUBAGENT_BELOW_THRESHOLD_LABEL,
 } = require(
   path.join(__dirname, '../../../scripts/opencode-cost-report.js'),
 );
@@ -276,6 +278,197 @@ test('rollup detects a parent_id cycle, emits one finding, does not infinite-loo
   } finally {
     r.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('rollup returns byAgent map + nullAgentDescendantIds list grouped by session.agent (task 4.1)', () => {
+  // v2 task 4.1 observable: 5 descendants of a fresh root with
+  // agents (general, general, explore, NULL, NULL). With
+  // childCount=5 the below-threshold floor (max(0.01*5, 1) = 1)
+  // is met by every concrete agent, so NO agent folds into
+  // SUBAGENT_BELOW_THRESHOLD_LABEL. Expected byAgent groups:
+  //   general                             → childCount=2
+  //   explore                             → childCount=1
+  //   SUBAGENT_NULL_AGENT_LABEL           → childCount=2
+  //
+  // We attach the synthetic descendants to ses_root_c (which has
+  // no descendants in the pinned fixture) so the existing
+  // root_a / root_b sums above are untouched. The mutation lives
+  // in the tmp-copy only — design.md:530 architectural constraint
+  // is honoured because the descendant rows still flow through
+  // SqliteReader.descendantSessionsOf (session.* only, no
+  // message-row access).
+  const { tmp, tmpDir } = mkFixtureCopy();
+  {
+    const m = new Database(tmp);
+    // Uniform per-descendant cost/token shape so the sum-invariant
+    // assertions below are arithmetic-clean (no FP epsilon needed
+    // for tokensTotal; cost still gets an epsilon check).
+    const insert = m.prepare(
+      'INSERT INTO session ' +
+        '(id, parent_id, directory, agent, model, cost, ' +
+        ' tokens_input, tokens_output, tokens_reasoning, ' +
+        ' tokens_cache_read, tokens_cache_write, ' +
+        ' time_created, time_updated) ' +
+        "VALUES (?, 'ses_root_c', '/x', ?, 'm', 0.02, " +
+        '        100, 50, 10, 0, 0, 1, 1)',
+    );
+    insert.run('ses_root_c_g1', 'general');
+    insert.run('ses_root_c_g2', 'general');
+    insert.run('ses_root_c_e1', 'explore');
+    insert.run('ses_root_c_n1', null);
+    insert.run('ses_root_c_n2', null);
+    m.close();
+  }
+  const r = new SqliteReader();
+  try {
+    r.open(tmp);
+    const agg = new SubagentAggregator(r);
+    const result = agg.rollup('ses_root_c');
+    const { totals, byAgent, nullAgentDescendantIds, findings } = result;
+
+    // v1 fields preserved.
+    assert.equal(totals.childCount, 5);
+    assert.deepEqual(findings, []);
+
+    // byAgent shape.
+    assert.ok(byAgent instanceof Map, 'byAgent must be a Map');
+    assert.equal(
+      byAgent.get('general').childCount,
+      2,
+      "general agent bucket should hold the two 'general' descendants",
+    );
+    assert.equal(
+      byAgent.get('explore').childCount,
+      1,
+      "explore agent bucket should hold the one 'explore' descendant",
+    );
+    assert.equal(
+      byAgent.get(SUBAGENT_NULL_AGENT_LABEL).childCount,
+      2,
+      'NULL agent descendants must fold into the no-agent residual',
+    );
+    assert.equal(
+      byAgent.has(SUBAGENT_BELOW_THRESHOLD_LABEL),
+      false,
+      'with childCount=5 the floor=1 threshold is met by every agent; ' +
+        'no fold should occur',
+    );
+
+    // nullAgentDescendantIds shape (frozen, deterministic content).
+    assert.equal(nullAgentDescendantIds.length, 2);
+    assert.deepEqual(
+      [...nullAgentDescendantIds].sort(),
+      ['ses_root_c_n1', 'ses_root_c_n2'],
+    );
+    assert.equal(
+      Object.isFrozen(nullAgentDescendantIds),
+      true,
+      'nullAgentDescendantIds should be frozen for the ReadonlyArray contract',
+    );
+
+    // Sum invariants from design.md:557.
+    let sumChild = 0;
+    let sumTokens = 0;
+    let sumCost = 0;
+    for (const b of byAgent.values()) {
+      sumChild += b.childCount;
+      sumTokens += b.tokensTotal;
+      sumCost += b.cost;
+    }
+    assert.equal(sumChild, totals.childCount);
+    assert.equal(sumTokens, totals.tokensTotal);
+    assert.ok(
+      Math.abs(sumCost - totals.cost) < 1e-9,
+      `sum(byAgent[*].cost)=${sumCost} must match totals.cost=${totals.cost}`,
+    );
+
+    // null-agent count invariant from design.md:557.
+    assert.equal(
+      nullAgentDescendantIds.length,
+      byAgent.get(SUBAGENT_NULL_AGENT_LABEL).childCount,
+    );
+  } finally {
+    r.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('rollup folds low-volume agents into SUBAGENT_BELOW_THRESHOLD_LABEL (task 4.1)', () => {
+  // Threshold formula: max(SUBAGENT_BELOW_THRESHOLD_PCT * total,
+  // SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR) = max(0.01 * N, 1).
+  // With N=200 descendants the threshold is 2. An agent with
+  // childCount=1 falls below the floor and must fold.
+  //
+  // Setup: 199 'general' descendants + 1 'rare' descendant under
+  // ses_root_c. Expected byAgent:
+  //   general                             → childCount=199
+  //   SUBAGENT_BELOW_THRESHOLD_LABEL      → childCount=1
+  //   (no NULL agents; SUBAGENT_NULL_AGENT_LABEL absent)
+  const { tmp, tmpDir } = mkFixtureCopy();
+  {
+    const m = new Database(tmp);
+    const insert = m.prepare(
+      'INSERT INTO session ' +
+        '(id, parent_id, directory, agent, model, cost, ' +
+        ' tokens_input, tokens_output, tokens_reasoning, ' +
+        ' tokens_cache_read, tokens_cache_write, ' +
+        ' time_created, time_updated) ' +
+        "VALUES (?, 'ses_root_c', '/x', ?, 'm', 0.01, " +
+        '        10, 5, 1, 0, 0, 1, 1)',
+    );
+    const tx = m.transaction(() => {
+      for (let i = 0; i < 199; i++) {
+        insert.run(`ses_root_c_g_${i}`, 'general');
+      }
+      insert.run('ses_root_c_rare', 'rare');
+    });
+    tx();
+    m.close();
+  }
+  const r = new SqliteReader();
+  try {
+    r.open(tmp);
+    const agg = new SubagentAggregator(r);
+    const { totals, byAgent } = agg.rollup('ses_root_c');
+    assert.equal(totals.childCount, 200);
+    assert.equal(byAgent.get('general').childCount, 199);
+    assert.equal(
+      byAgent.has('rare'),
+      false,
+      "'rare' (childCount=1) must NOT survive as its own bucket; " +
+        'it folds into the below-threshold residual',
+    );
+    assert.equal(
+      byAgent.get(SUBAGENT_BELOW_THRESHOLD_LABEL).childCount,
+      1,
+      'the single rare-agent descendant folds into the below-threshold bucket',
+    );
+    // Sum invariant still holds across the fold.
+    let sumChild = 0;
+    for (const b of byAgent.values()) sumChild += b.childCount;
+    assert.equal(sumChild, totals.childCount);
+  } finally {
+    r.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('rollup byAgent/nullAgentDescendantIds present and empty on a no-descendant root (task 4.1)', () => {
+  // Empty descendant set must still yield a byAgent Map (empty)
+  // and an empty frozen nullAgentDescendantIds list — keeps the
+  // downstream AttributionEngine consumer free of null checks.
+  const r = new SqliteReader();
+  r.open(FIXTURE);
+  try {
+    const agg = new SubagentAggregator(r);
+    const { byAgent, nullAgentDescendantIds } = agg.rollup('ses_root_c');
+    assert.ok(byAgent instanceof Map);
+    assert.equal(byAgent.size, 0);
+    assert.equal(nullAgentDescendantIds.length, 0);
+    assert.equal(Object.isFrozen(nullAgentDescendantIds), true);
+  } finally {
+    r.close();
   }
 });
 

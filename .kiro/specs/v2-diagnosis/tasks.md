@@ -101,7 +101,7 @@
 
 ## 4. SubagentAggregator: per-agent rollup and null-agent descendant exposure
 
-- [ ] 4.1 Extend SubagentAggregator.rollup with byAgent map and nullAgentDescendantIds list
+- [x] 4.1 Extend SubagentAggregator.rollup with byAgent map and nullAgentDescendantIds list
   - Group descendants by `session.agent`: real agent types map to themselves; `NULL` maps to `SUBAGENT_NULL_AGENT_LABEL`; agent types whose `childCount` falls below `SUBAGENT_BELOW_THRESHOLD_PCT × totalDescendantCount` (with a floor of `SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR`) map to `SUBAGENT_BELOW_THRESHOLD_LABEL`
   - Sum tokens/cost/childCount per agent key into the `byAgent` map
   - Collect every descendant session ID where `session.agent IS NULL` into `nullAgentDescendantIds`

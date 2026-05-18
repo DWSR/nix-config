@@ -769,10 +769,53 @@ class SubagentAggregator {
    * Roll up all descendants of `rootSessionId` into a single
    * SubagentBucketTotals + a findings array.
    *
+   * v2 (task 4.1) extends the return shape with `byAgent` and
+   * `nullAgentDescendantIds` per design.md:515-565. The v1 keys
+   * (`totals`, `findings`) are preserved verbatim so the existing
+   * AttributionEngine forward-of-findings path at
+   * `scripts/opencode-cost-report.js:925-927` continues to work
+   * unchanged. The new fields are additive.
+   *
+   * Per-agent grouping rules (design.md:528-529, requirements
+   * 5.1 / 5.2 / 5.4):
+   *
+   *   1. Walk descendants ONCE (preserving the v1 cycle bailout).
+   *      During the walk, accumulate per-raw-agent buckets in a
+   *      temporary Map keyed by the raw `session.agent` value
+   *      (string for known agents, JS `null` for NULL rows). Also
+   *      collect the IDs of NULL-agent rows into
+   *      `nullAgentDescendantIds` for AttributionEngine's
+   *      per-message drift check (task 5.8).
+   *   2. After the walk, compute
+   *      `threshold = max(SUBAGENT_BELOW_THRESHOLD_PCT *
+   *      totalDescendantCount, SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR)`.
+   *      Build the final `byAgent` Map by re-keying each raw
+   *      bucket:
+   *        - NULL agent → SUBAGENT_NULL_AGENT_LABEL
+   *        - known agent with childCount < threshold →
+   *          SUBAGENT_BELOW_THRESHOLD_LABEL
+   *        - known agent with childCount >= threshold → keep
+   *          its agent type as the key.
+   *      Multiple raw buckets folding into the same final key
+   *      are summed.
+   *
+   * Architectural strictness (design.md:530, 558): only session.*
+   * rows via `SqliteReader.descendantSessionsOf`. No message-row
+   * access. The drift finding is owned by AttributionEngine.
+   *
+   * Sum invariants (design.md:557):
+   *   sum(byAgent[*].tokensTotal) === totals.tokensTotal
+   *   sum(byAgent[*].cost)        === totals.cost
+   *   sum(byAgent[*].childCount)  === totals.childCount
+   *   nullAgentDescendantIds.length ===
+   *     byAgent.get(SUBAGENT_NULL_AGENT_LABEL)?.childCount ?? 0
+   *
    * @param {string} rootSessionId
    * @returns {{
    *   totals: { tokensTotal: number, cost: number, childCount: number },
    *   findings: Array<{ kind: string, detail: string }>,
+   *   byAgent: Map<string, { tokensTotal: number, cost: number, childCount: number }>,
+   *   nullAgentDescendantIds: ReadonlyArray<string>,
    * }}
    */
   rollup(rootSessionId) {
@@ -780,7 +823,9 @@ class SubagentAggregator {
     // local — instance-state caching would bleed cycle findings
     // and visited-ids from one rollup() into the next and break
     // the per-root attribution contract. The aggregator.test.js
-    // "does not memoize across calls" test guards this.
+    // "does not memoize across calls" test guards this. The same
+    // requirement applies to the v2 additions (`rawByAgent`,
+    // `nullAgentDescendantIds`).
     const visited = new Set([rootSessionId]);
     const findings = [];
     let tokensTotal = 0;
@@ -790,6 +835,14 @@ class SubagentAggregator {
     // many rows once a cycle exists; we deduplicate so the operator
     // sees one actionable finding per malformed link, not noise.
     let cycleEmitted = false;
+
+    // Per-raw-agent collection, populated during the single
+    // descendant walk. Keys are the raw `session.agent` value
+    // (string OR JS `null`). The threshold + null fold runs after
+    // the walk so we only iterate descendants once (the recursive
+    // CTE behind `descendantSessionsOf` should not be re-driven).
+    const rawByAgent = new Map();
+    const nullAgentDescendantIds = [];
 
     // Iterate the recursive descendants. The for…of loop's early
     // termination forwards into the StatementIterator's return()
@@ -819,19 +872,89 @@ class SubagentAggregator {
         break;
       }
       visited.add(session.id);
-      tokensTotal +=
+      const descTokens =
         (session.tokens_input || 0) +
         (session.tokens_output || 0) +
         (session.tokens_cache_read || 0) +
         (session.tokens_cache_write || 0) +
         (session.tokens_reasoning || 0);
-      cost += session.cost || 0;
+      const descCost = session.cost || 0;
+      tokensTotal += descTokens;
+      cost += descCost;
       childCount += 1;
+
+      // Per-agent accumulation. `session.agent` is TEXT NULL in
+      // the live schema (scripts/opencode-cost-report.js:303 +
+      // sqlite3 `.schema session`); `== null` catches both
+      // undefined (defensive) and SQL NULL (which better-sqlite3
+      // surfaces as JS null). The null-agent IDs branch into
+      // `nullAgentDescendantIds` for AttributionEngine's task 5.8
+      // drift check.
+      const agentKey = session.agent == null ? null : session.agent;
+      let bucket = rawByAgent.get(agentKey);
+      if (!bucket) {
+        bucket = { tokensTotal: 0, cost: 0, childCount: 0 };
+        rawByAgent.set(agentKey, bucket);
+      }
+      bucket.tokensTotal += descTokens;
+      bucket.cost += descCost;
+      bucket.childCount += 1;
+      if (agentKey === null) {
+        nullAgentDescendantIds.push(session.id);
+      }
     }
+
+    // Threshold + null-fold pass (design.md:529).
+    //
+    // Floor semantics: max(pct * N, floor) means an agent with
+    // childCount < floor folds regardless of N. With the v1.5
+    // defaults (PCT=0.01, FLOOR=1) this is identical to "fold
+    // when childCount < max(0.01 * N, 1)" — which on tiny N
+    // collapses to "fold when childCount < 1" (i.e. never; every
+    // present agent has childCount >= 1). The floor matters on
+    // larger N (e.g. N=200 → threshold=2 → single-occurrence
+    // agents fold).
+    const threshold = Math.max(
+      SUBAGENT_BELOW_THRESHOLD_PCT * childCount,
+      SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR,
+    );
+    const byAgent = new Map();
+    const addToBucket = (key, src) => {
+      let dst = byAgent.get(key);
+      if (!dst) {
+        dst = { tokensTotal: 0, cost: 0, childCount: 0 };
+        byAgent.set(key, dst);
+      }
+      dst.tokensTotal += src.tokensTotal;
+      dst.cost += src.cost;
+      dst.childCount += src.childCount;
+    };
+    for (const [agentKey, bucket] of rawByAgent) {
+      if (agentKey === null) {
+        addToBucket(SUBAGENT_NULL_AGENT_LABEL, bucket);
+      } else if (bucket.childCount < threshold) {
+        addToBucket(SUBAGENT_BELOW_THRESHOLD_LABEL, bucket);
+      } else {
+        addToBucket(agentKey, bucket);
+      }
+    }
+    // Freeze entries to honour the ReadonlyMap contract from
+    // design.md:546. Map.prototype lacks a structural freeze
+    // primitive (Object.freeze on a Map is a no-op against .set
+    // / .delete), so entry-level freeze is the strongest portable
+    // guarantee — accidental mutation through `result.byAgent.get(k)`
+    // throws in strict mode. nullAgentDescendantIds gets the
+    // proper frozen-array treatment.
+    for (const bucket of byAgent.values()) {
+      Object.freeze(bucket);
+    }
+    Object.freeze(nullAgentDescendantIds);
 
     return {
       totals: { tokensTotal, cost, childCount },
       findings,
+      byAgent,
+      nullAgentDescendantIds,
     };
   }
 }
