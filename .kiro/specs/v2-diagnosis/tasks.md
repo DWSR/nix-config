@@ -62,7 +62,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
   - _Boundary: PricingTable_
 
-- [ ] 2.2 PricingTable unit tests
+- [x] 2.2 PricingTable unit tests
   - Cover happy-path lookup, null on unknown, pin metadata accessor returns expected pinDate/pinSource, constructor throws on missing/malformed file, variant-blind behavior
   - Cover the reasoning-substitution rule: a synthetic fixture model omitting `cost.reasoning` is looked up successfully and returns `Rates.reasoningPerM === 0`
   - Use a synthetic fixture pricing JSON under `tests/opencode-cost-diagnosis/fixtures/` so tests are independent of the production pin

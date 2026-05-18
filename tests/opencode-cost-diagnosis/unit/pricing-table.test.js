@@ -44,6 +44,17 @@ const BUNDLED_PRICING_PATH = path.resolve(
   '../../../scripts/opencode-cost-report-pricing.json',
 );
 
+// Task 2.2: synthetic pricing fixture lives under tests/.../fixtures/
+// so the design-mandated semantics (variant-blind, reasoning-substitution,
+// pin metadata accessor) can be asserted independent of the production pin.
+// Note: the fixture's `pinDate` is intentionally NOT the bundled JSON's
+// 2026-05-18 — the difference proves the constructor reads from the path
+// we passed it and not from any compiled-in default.
+const SYNTHETIC_PRICING_PATH = path.resolve(
+  __dirname,
+  '../fixtures/synthetic-pricing.json',
+);
+
 // ---------------------------------------------------------------------
 // Construction + pin metadata
 // ---------------------------------------------------------------------
@@ -300,4 +311,137 @@ test('constructor throws when a top-level key is missing (models)', () => {
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------
+// Task 2.2: synthetic-fixture coverage
+//
+// The tests above all run against the bundled JSON. That couples the
+// design-mandated semantics (variant-blind, reasoning-substitution,
+// pin metadata, happy-path lookup, null-on-miss) to whatever the
+// production pin happens to look like on any given day. Task 2.2 lands
+// a small synthetic fixture under tests/.../fixtures/ so the same
+// semantics can be asserted independently of the production pin —
+// including a model that intentionally carries a `variant` field the
+// constructor must silently ignore (the bundled JSON has no variant
+// fields, so the variant-blind property was previously implicit-not-
+// asserted).
+//
+// Each test below instantiates its own PricingTable; no shared mutable
+// state between tests.
+// ---------------------------------------------------------------------
+
+test('synthetic fixture: happy-path lookup returns all five rate fields with the fixture values', () => {
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  const rates = pt.lookup('testprovider', 'full-model');
+
+  assert.ok(rates !== null && typeof rates === 'object', 'expected a Rates object');
+  assert.deepEqual(
+    new Set(Object.keys(rates)),
+    new Set([
+      'inputPerM',
+      'outputPerM',
+      'reasoningPerM',
+      'cacheReadPerM',
+      'cacheWritePerM',
+    ]),
+    'Rates must always carry exactly the five documented fields',
+  );
+
+  // Values are pinned to the fixture; see synthetic-pricing.json.
+  assert.equal(rates.inputPerM, 2);
+  assert.equal(rates.outputPerM, 10);
+  assert.equal(rates.reasoningPerM, 8);
+  assert.equal(rates.cacheReadPerM, 0.1);
+  assert.equal(rates.cacheWritePerM, 1.5);
+});
+
+test('synthetic fixture: minimal-model omits cost.{reasoning,cache_read,cache_write} -> all three substitute to 0', () => {
+  // Independent re-assertion of the substitution rule. The bundled
+  // JSON's Claude entry exercises reasoning substitution; this test
+  // proves the rule holds for an arbitrary upstream entry shape, not
+  // just whatever the production pin happens to ship.
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  const rates = pt.lookup('testprovider', 'minimal-model');
+
+  assert.ok(rates !== null, 'minimal-model must be a known key');
+  assert.equal(rates.inputPerM, 1);
+  assert.equal(rates.outputPerM, 4);
+  assert.equal(
+    rates.reasoningPerM,
+    0,
+    'missing cost.reasoning must substitute to 0 (requirements 3.2)',
+  );
+  assert.equal(
+    rates.cacheReadPerM,
+    0,
+    'missing cost.cache_read must substitute to 0',
+  );
+  assert.equal(
+    rates.cacheWritePerM,
+    0,
+    'missing cost.cache_write must substitute to 0',
+  );
+});
+
+test('synthetic fixture: variant-blind — model entry with a `variant` field is loaded normally and Rates carries no variant key', () => {
+  // Design.md Decision 2: PricingTable consumes only the base cost.*
+  // rates; any `variant` dimension on the upstream model entry is
+  // silently ignored. The bundled JSON has no variant fields, so this
+  // test pins the variant-blind property against a fixture that DOES
+  // carry one.
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  const rates = pt.lookup('testprovider', 'variant-tagged');
+
+  assert.ok(rates !== null, 'variant-tagged must load successfully (variant is ignored, not rejected)');
+
+  // The Rates shape carries exactly the five documented fields — no
+  // `variant`, no extra keys leaked from the upstream JSON.
+  assert.deepEqual(
+    new Set(Object.keys(rates)),
+    new Set([
+      'inputPerM',
+      'outputPerM',
+      'reasoningPerM',
+      'cacheReadPerM',
+      'cacheWritePerM',
+    ]),
+    'variant-blind: Rates must not carry a `variant` key or any other extra fields',
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(rates, 'variant'),
+    false,
+    'Rates.variant must not exist',
+  );
+
+  // The base cost.* rates are still loaded normally from the entry.
+  assert.equal(rates.inputPerM, 3);
+  assert.equal(rates.outputPerM, 12);
+  assert.equal(rates.reasoningPerM, 9);
+  assert.equal(rates.cacheReadPerM, 0.2);
+  assert.equal(rates.cacheWritePerM, 2.5);
+});
+
+test('synthetic fixture: pinMetadata accessor returns the fixture pinDate, pinSource, and pinVersion', () => {
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  assert.equal(pt.pinMetadata.pinDate, '2026-01-01');
+  assert.equal(pt.pinMetadata.pinSource, 'synthetic-test-fixture');
+  assert.equal(pt.pinMetadata.pinVersion, 'v1.0-test');
+  assert.equal(Object.isFrozen(pt.pinMetadata), true);
+});
+
+test('synthetic fixture: knownModels lists every (providerID, modelID) pair in the fixture', () => {
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  const keys = pt.knownModels.map((m) => `${m.providerID}::${m.modelID}`).sort();
+  assert.deepEqual(keys, [
+    'testprovider::full-model',
+    'testprovider::minimal-model',
+    'testprovider::variant-tagged',
+  ]);
+});
+
+test('synthetic fixture: lookup of an unknown (providerID, modelID) returns null (no fuzzy match)', () => {
+  const pt = new PricingTable(SYNTHETIC_PRICING_PATH);
+  assert.equal(pt.lookup('testprovider', 'no-such-model'), null);
+  assert.equal(pt.lookup('no-such-provider', 'full-model'), null);
 });
