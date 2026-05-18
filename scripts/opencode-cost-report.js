@@ -1921,6 +1921,115 @@ class AttributionEngine {
       }
     }
 
+    // ── 5.8 subagent_agent_attribution_drift emit ───────────────
+    // For every descendant whose `session.agent IS NULL`,
+    // AttributionEngine inspects the descendant's MESSAGE rows
+    // looking for any message whose parsed `data.agent` is a
+    // non-null string. If at least one drift message is found, emit
+    // ONE `subagent_agent_attribution_drift` finding per descendant,
+    // naming the descendant id and the MODAL (most-frequent)
+    // observed `data.agent` value across that descendant's
+    // messages. (design.md:587, tasks.md:187-194, R5.4.)
+    //
+    // Architectural placement: SubagentAggregator stays pure
+    // session-row work; the cross-layer message inspection lives
+    // here because AttributionEngine already reads message rows
+    // for pricing lookup, and we widen those reads only by the
+    // bounded number of null-agent descendants — typically 0 in
+    // healthy sessions (an opencode session without missing
+    // subagent attribution metadata produces an empty
+    // nullAgentDescendantIds).
+    //
+    // Tie-break: ties on the modal value are broken by first
+    // encountering insertion order. messagesOfSession orders by
+    // `time_created ASC` and Map iteration preserves insertion
+    // order, so the same input deterministically picks the
+    // earliest-seen agent value among the tied counts.
+    //
+    // Gating:
+    //   - V2_COST_COMPUTE_ENABLED: alongside every other v2 finding
+    //     emit, the 5.8 finding is gated under the cost-compute
+    //     flag so flag-OFF runs preserve v1's findings array
+    //     contents byte-for-byte (R7.AC1, R7.AC4). The
+    //     integration goldens stay stable until the cutover at
+    //     task 8.1 refreshes them.
+    //   - NOT gated on `_v2PricingDrift`: subagent attribution
+    //     drift is independent of pricing-table outcomes (it's
+    //     about who/what dispatched work, not what it cost), so
+    //     the finding fires regardless of whether the cost shape
+    //     was nullified upstream.
+    //   - rollup.nullAgentDescendantIds may be undefined when
+    //     callers wire a pre-5.2 mock aggregator that lacks the
+    //     v2 rollup field; defensive Array.isArray check keeps
+    //     the path harmless for those tests.
+    if (
+      V2_COST_COMPUTE_ENABLED &&
+      Array.isArray(rollup.nullAgentDescendantIds)
+    ) {
+      for (const descendantId of rollup.nullAgentDescendantIds) {
+        // Per-descendant agent histogram. Map insertion order
+        // tracks first-seen position for the tie-break.
+        const agentCounts = new Map();
+        for (const dmsg of this._reader.messagesOfSession(descendantId)) {
+          // Defensive JSON parsing — malformed data rows are
+          // surfaced by other findings (schema_partial_data) and
+          // simply skipped here so the drift check stays a
+          // best-effort scan.
+          let parsed = null;
+          if (typeof dmsg.data === 'string') {
+            try {
+              parsed = JSON.parse(dmsg.data);
+            } catch {
+              parsed = null;
+            }
+          } else if (dmsg.data && typeof dmsg.data === 'object') {
+            parsed = dmsg.data;
+          }
+          if (parsed == null) continue;
+          const agentVal = parsed.agent;
+          if (typeof agentVal !== 'string' || agentVal.length === 0) {
+            // null / undefined / empty string / non-string —
+            // not a drift signal; skip without contributing to
+            // the histogram.
+            continue;
+          }
+          agentCounts.set(agentVal, (agentCounts.get(agentVal) || 0) + 1);
+        }
+        if (agentCounts.size === 0) {
+          // No message-level agent attribution observed for this
+          // descendant — no drift to report; the null-agent
+          // session.agent is the only known signal and
+          // SubagentAggregator's `(unattributed-no-agent-column)`
+          // residual bucket already accounts for the tokens.
+          continue;
+        }
+        // Pick the modal (most-frequent) value. Map iteration
+        // order preserves insertion order, so first-encountered
+        // wins ties — deterministic given messagesOfSession's
+        // `time_created ASC` ordering.
+        let modalVal = null;
+        let modalCount = -1;
+        for (const [val, count] of agentCounts) {
+          if (count > modalCount) {
+            modalVal = val;
+            modalCount = count;
+          }
+        }
+        findings.push({
+          kind: 'subagent_agent_attribution_drift',
+          detail:
+            `subagent rollup: descendant session ${descendantId} has ` +
+            `session.agent IS NULL but at least one message carries a ` +
+            `non-null message.data.agent. Modal observed value: ` +
+            `"${modalVal}" (occurred ${modalCount}× across ` +
+            `${agentCounts.size} distinct agent value(s)). ` +
+            `Recoverable attribution gap — operator can fold this ` +
+            `descendant's tokens under "${modalVal}" with the ` +
+            `per-message data.agent as authoritative signal.`,
+        });
+      }
+    }
+
     return {
       sessionId: session.id,
       directory: session.directory,

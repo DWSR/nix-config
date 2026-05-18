@@ -2981,3 +2981,304 @@ test('flag OFF / 5.7: degraded markers do NOT trigger cached_read_classifier_deg
     'flag OFF must not emit cached_read_classification_residual',
   );
 });
+
+// ---------------------------------------------------------------------
+// Task 5.8 — subagent_agent_attribution_drift finding emit.
+//
+// Trigger (design.md:587, tasks.md:187-194, requirements R5.4):
+// `SubagentAggregator.rollup()` returns `nullAgentDescendantIds` —
+// the subset of descendant sessions whose `session.agent IS NULL`.
+// `AttributionEngine` consumes that list, calls
+// `SqliteReader.messagesOfSession(descendantId)` for each entry, and
+// inspects every message's parsed `data.agent` field. If any
+// message in a null-agent descendant carries a non-null
+// `message.data.agent`, emit a single `subagent_agent_attribution_drift`
+// finding naming the descendant session id and the modal observed
+// `data.agent` value (most-frequent across that descendant's
+// messages). Each null-agent descendant with drift emits its own
+// finding independently; null-agent descendants whose messages all
+// carry a null/missing `data.agent` emit no finding.
+//
+// Architectural placement: SubagentAggregator stays pure session-row
+// work; the message-level inspection lives in AttributionEngine
+// where the messagesOfSession reads for pricing lookup already
+// happen. The 5.8 emit only widens the read by the bounded number
+// of null-agent descendants (typically 0 in healthy sessions).
+//
+// Gating: the finding emit is gated under V2_COST_COMPUTE_ENABLED
+// for consistency with every other v2-introduced finding code
+// (`cost_invariant_violation`, `pricing_table_drift`,
+// `cached_read_classification_residual`,
+// `cached_read_classifier_degraded`). Flag-OFF preserves the v1
+// findings array contents byte-for-byte so the integration goldens
+// stay stable until the cutover at task 8.1.
+// ---------------------------------------------------------------------
+
+// Helper: build a reader that handles the parent session's parts +
+// messages (for the AttributionEngine's pricing + tokenizer walk)
+// AND routes `messagesOfSession(descendantId)` calls into a
+// per-descendant message-list map. `descendantMessages` is a
+// `Map<descendantId, Array<rawAgent|null>>` — each entry becomes
+// one synthetic message row whose `data` JSON carries `agent: <val>`
+// (or omits `agent` entirely when the entry is `null`).
+function makeNullAgentDriftReader(parentSession, descendantMessages) {
+  const parentReader = makeMatchedSingleModelReader(parentSession);
+  return {
+    partsOfSession(sessionId) {
+      return parentReader.partsOfSession(sessionId);
+    },
+    messagesOfSession(sessionId) {
+      if (sessionId === parentSession.id) {
+        return parentReader.messagesOfSession(sessionId);
+      }
+      const agentList = descendantMessages.get(sessionId);
+      if (agentList === undefined) {
+        throw new Error(
+          `makeNullAgentDriftReader: unexpected messagesOfSession call ` +
+            `for sessionId="${sessionId}" — not in descendantMessages map`,
+        );
+      }
+      return agentList.map((agentVal, idx) => {
+        const dataObj = { role: 'assistant' };
+        if (agentVal !== null) {
+          dataObj.agent = agentVal;
+        }
+        return {
+          id: `msg_${sessionId}_${idx}`,
+          session_id: sessionId,
+          data: JSON.stringify(dataObj),
+          role: 'assistant',
+          time_created: idx,
+          time_updated: idx,
+        };
+      });
+    },
+    descendantSessionsOf() {
+      // Not used — the test wires a mock aggregator below that
+      // returns a synthetic rollup directly rather than driving the
+      // descendantSessionsOf iteration. Calling this would mean the
+      // 5.8 code path delegated to the real aggregator path, which
+      // is a misconfiguration.
+      throw new Error(
+        'makeNullAgentDriftReader: descendantSessionsOf should not be ' +
+          'called when a mock aggregator is in use',
+      );
+    },
+  };
+}
+
+// Helper: build a mock aggregator that returns a controlled rollup
+// shape with the given `nullAgentDescendantIds`. The byAgent /
+// totals fields are minimal — only the drift emit consumes
+// `nullAgentDescendantIds`, so we keep the rest at zero to make
+// the test failures point unambiguously at the 5.8 boundary.
+function makeMockAggregatorWithNullDescendants(
+  expectedRootId,
+  nullAgentDescendantIds,
+) {
+  return {
+    schemaSupportsParentLink: true,
+    rollup(rootId) {
+      assert.equal(
+        rootId,
+        expectedRootId,
+        'mock aggregator: rollup called with unexpected root session id',
+      );
+      return {
+        totals: { tokensTotal: 0, cost: 0, childCount: 0 },
+        findings: [],
+        byAgent: new Map(),
+        nullAgentDescendantIds: Object.freeze(nullAgentDescendantIds.slice()),
+      };
+    },
+  };
+}
+
+test('flag ON / 5.8: parent + 2 null-agent descendants (first carries data.agent="general", second carries no data.agent) emits exactly one subagent_agent_attribution_drift finding pointing at the first descendant and naming "general"', () => {
+  // The canonical observable from tasks.md:191.
+  setV2CostComputeEnabled(true);
+  try {
+    const parent = makeSyntheticSession({ id: 'ses_parent_5_8_obs' });
+    const descA = 'ses_null_a_with_general';
+    const descB = 'ses_null_b_no_agent';
+    const descendantMessages = new Map([
+      // descA: 2 messages, both tagged 'general'. Drift: emit.
+      [descA, ['general', 'general']],
+      // descB: 2 messages, NEITHER tagged. No drift: no emit.
+      [descB, [null, null]],
+    ]);
+    const reader = makeNullAgentDriftReader(parent, descendantMessages);
+    const eng = new AttributionEngine(
+      reader,
+      makeMockAggregatorWithNullDescendants(parent.id, [descA, descB]),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(parent);
+
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'subagent_agent_attribution_drift',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      `expected exactly 1 subagent_agent_attribution_drift finding; ` +
+        `got ${drift.length}: ${JSON.stringify(drift)}`,
+    );
+    assert.ok(
+      drift[0].detail.includes(descA),
+      `finding.detail must name the descendant session id "${descA}"; ` +
+        `got: ${drift[0].detail}`,
+    );
+    assert.ok(
+      drift[0].detail.includes('general'),
+      `finding.detail must name the modal data.agent value "general"; ` +
+        `got: ${drift[0].detail}`,
+    );
+    assert.ok(
+      !drift[0].detail.includes(descB),
+      `the no-drift descendant "${descB}" must NOT appear in any ` +
+        `subagent_agent_attribution_drift finding; got: ${drift[0].detail}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.8: descendant with mixed data.agent values reports the modal (most-frequent) value', () => {
+  // Modal: 3× "general" beats 2× "build" beats 1× "review".
+  // Finding must name "general" specifically.
+  setV2CostComputeEnabled(true);
+  try {
+    const parent = makeSyntheticSession({ id: 'ses_parent_5_8_modal' });
+    const desc = 'ses_null_mixed_agents';
+    const descendantMessages = new Map([
+      [desc, ['build', 'general', 'review', 'general', 'build', 'general']],
+    ]);
+    const reader = makeNullAgentDriftReader(parent, descendantMessages);
+    const eng = new AttributionEngine(
+      reader,
+      makeMockAggregatorWithNullDescendants(parent.id, [desc]),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(parent);
+
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'subagent_agent_attribution_drift',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      `expected exactly 1 drift finding for the lone null-agent ` +
+        `descendant; got ${drift.length}`,
+    );
+    assert.ok(
+      drift[0].detail.includes(desc),
+      `finding.detail must name the descendant session id "${desc}"`,
+    );
+    assert.ok(
+      drift[0].detail.includes('general'),
+      `finding.detail must name the modal value "general" (3 occurrences ` +
+        `beats build (2) and review (1)); got: ${drift[0].detail}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.8: each null-agent descendant with drift emits an independent finding', () => {
+  // Two null-agent descendants, both carry message-level data.agent
+  // (different values). Two findings emit — one per descendant.
+  setV2CostComputeEnabled(true);
+  try {
+    const parent = makeSyntheticSession({ id: 'ses_parent_5_8_indep' });
+    const descA = 'ses_null_a_general';
+    const descB = 'ses_null_b_build';
+    const descendantMessages = new Map([
+      [descA, ['general', 'general']],
+      [descB, ['build']],
+    ]);
+    const reader = makeNullAgentDriftReader(parent, descendantMessages);
+    const eng = new AttributionEngine(
+      reader,
+      makeMockAggregatorWithNullDescendants(parent.id, [descA, descB]),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(parent);
+
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'subagent_agent_attribution_drift',
+    );
+    assert.equal(
+      drift.length,
+      2,
+      `expected exactly 2 drift findings (one per drifting descendant); ` +
+        `got ${drift.length}: ${JSON.stringify(drift)}`,
+    );
+    const detailJoined = drift.map((f) => f.detail).join('\n');
+    assert.ok(
+      detailJoined.includes(descA) && detailJoined.includes('general'),
+      `findings must collectively name descA (${descA}) + "general"`,
+    );
+    assert.ok(
+      detailJoined.includes(descB) && detailJoined.includes('build'),
+      `findings must collectively name descB (${descB}) + "build"`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.8: empty nullAgentDescendantIds emits no drift findings', () => {
+  // Sanity check: no null-agent descendants → no drift inspections,
+  // no emits. The happy-path subagent-rollup output most sessions
+  // produce.
+  setV2CostComputeEnabled(true);
+  try {
+    const parent = makeSyntheticSession({ id: 'ses_parent_5_8_empty' });
+    const reader = makeNullAgentDriftReader(parent, new Map());
+    const eng = new AttributionEngine(
+      reader,
+      makeMockAggregatorWithNullDescendants(parent.id, []),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(parent);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'subagent_agent_attribution_drift',
+      ).length,
+      0,
+      'no null-agent descendants → no drift findings',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag OFF / 5.8: drift finding is NOT emitted (gated by V2_COST_COMPUTE_ENABLED for goldens stability)', () => {
+  // R7.AC1 / R7.AC4: flag-OFF preserves v1's findings array
+  // contents. 5.8's emit is gated under V2_COST_COMPUTE_ENABLED
+  // alongside every other v2 finding so the integration goldens
+  // stay byte-stable until task 8.1 refreshes them.
+  const parent = makeSyntheticSession({ id: 'ses_parent_5_8_off' });
+  const desc = 'ses_null_drift_off';
+  const descendantMessages = new Map([[desc, ['general', 'general']]]);
+  const reader = makeNullAgentDriftReader(parent, descendantMessages);
+  const eng = new AttributionEngine(
+    reader,
+    makeMockAggregatorWithNullDescendants(parent.id, [desc]),
+    new TokenizerSplitter(),
+    makeMatchedSinglePricing(),
+  );
+  const attr = eng.attributeSession(parent);
+  assert.equal(
+    attr.findings.filter(
+      (f) => f.kind === 'subagent_agent_attribution_drift',
+    ).length,
+    0,
+    'flag OFF must not emit subagent_agent_attribution_drift',
+  );
+});

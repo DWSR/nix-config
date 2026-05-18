@@ -184,7 +184,7 @@
   - _Requirements: 4.1, 4.5_
   - _Boundary: AttributionEngine cachedRead degradation_
 
-- [ ] 5.8 Emit subagent_agent_attribution_drift finding from AttributionEngine
+- [x] 5.8 Emit subagent_agent_attribution_drift finding from AttributionEngine
   - After `SubagentAggregator.rollup()` returns, for each descendant ID in `nullAgentDescendantIds`, call `SqliteReader.messagesOfSession(descendantId)` and inspect each message's parsed `data.agent` field
   - If any message in a null-agent descendant carries a non-null `message.data.agent`, emit `subagent_agent_attribution_drift` finding naming the descendant session ID and the modal observed `message.data.agent` value
   - Architectural strictness: this is the cross-layer message inspection; SubagentAggregator stays pure session-row work
