@@ -451,6 +451,257 @@ class SqliteReader {
 }
 
 /* ------------------------------------------------------------------ *
+ * PricingTable
+ *
+ * Domain-layer service that loads the bundled
+ * `opencode-cost-report-pricing.json` once at construction, exposes
+ * `(providerID, modelID) -> Rates` lookups, and surfaces operator-
+ * visible pin metadata. See design.md § PricingTable (lines 389-453)
+ * and requirements 3.1, 3.2, 3.3, 3.4.
+ *
+ * Variant-blind (Decision 2 in design.md Open Decisions): consumes
+ * only the base `cost.*` rates; the `variant` dimension is ignored.
+ *
+ * Rate-substitution rule: every Rates object returned by `lookup`
+ * carries exactly five number-valued fields — `inputPerM`,
+ * `outputPerM`, `reasoningPerM`, `cacheReadPerM`, `cacheWritePerM`.
+ * If the upstream JSON omits any of `cost.reasoning`,
+ * `cost.cache_read`, or `cost.cache_write` for a given model (e.g.
+ * Anthropic Claude omits reasoning; the gpt-5.5-pro pin omits both
+ * cache rates), the corresponding Rates field substitutes to `0`.
+ * `lookup` never throws for missing rates, and the Rates shape is
+ * always complete. `cost.input` and `cost.output` are required —
+ * a per-model entry that lacks both is treated as malformed and
+ * surfaces at construction time (see Validation below).
+ *
+ * Drift posture: unknown `(providerID, modelID)` keys return `null`.
+ * Loud-failure for unrecognized models happens one layer up — the
+ * AttributionEngine (task 5.6) emits the pricing-drift finding and
+ * falls back to v1's null-cost shape. This class is a pure lookup;
+ * it does not log or throw on misses.
+ *
+ * Validation: the constructor validates the top-level shape
+ * (`pinDate`, `pinSource`, `models`) and throws a clear, actionable
+ * error on missing file, JSON parse failure, or missing top-level
+ * key. Per-model entries are validated eagerly (and cached) so any
+ * cost-shape problem surfaces at construction rather than at the
+ * first lookup against the offending key.
+ *
+ * Integration note (task 5.1 boundary, NOT this task): the Nix
+ * wrapper sets `OPENCODE_COST_PRICING_PATH` to the store path of
+ * the JSON; `main()` reads the env var and passes the path into
+ * this constructor; `AttributionEngine` gains a third constructor
+ * parameter `pricingTable`. None of that wiring lives in 2.1.
+ * ------------------------------------------------------------------ */
+
+class PricingTable {
+  constructor(pricingJsonPath) {
+    if (typeof pricingJsonPath !== 'string' || pricingJsonPath.length === 0) {
+      throw new Error(
+        'PricingTable: pricingJsonPath must be a non-empty string ' +
+          '(got ' + JSON.stringify(pricingJsonPath) + ').',
+      );
+    }
+
+    let raw;
+    try {
+      raw = fs.readFileSync(pricingJsonPath, 'utf8');
+    } catch (err) {
+      throw new Error(
+        'PricingTable: failed to read pricing JSON at ' +
+          pricingJsonPath + ': ' + err.message,
+      );
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error(
+        'PricingTable: failed to parse pricing JSON at ' +
+          pricingJsonPath + ': ' + err.message,
+      );
+    }
+
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error(
+        'PricingTable: pricing JSON at ' + pricingJsonPath +
+          ' must be a JSON object at the top level.',
+      );
+    }
+
+    // Validate top-level keys named by design.md:438 and the task brief.
+    for (const required of ['pinDate', 'pinSource', 'models']) {
+      if (!Object.prototype.hasOwnProperty.call(parsed, required)) {
+        throw new Error(
+          'PricingTable: pricing JSON at ' + pricingJsonPath +
+            ' is missing the required top-level key "' + required + '".',
+        );
+      }
+    }
+
+    if (typeof parsed.pinDate !== 'string') {
+      throw new Error(
+        'PricingTable: pricing JSON at ' + pricingJsonPath +
+          ' has non-string pinDate (expected ISO 8601 date string).',
+      );
+    }
+    if (typeof parsed.pinSource !== 'string') {
+      throw new Error(
+        'PricingTable: pricing JSON at ' + pricingJsonPath +
+          ' has non-string pinSource.',
+      );
+    }
+    if (
+      parsed.models === null ||
+      typeof parsed.models !== 'object' ||
+      Array.isArray(parsed.models)
+    ) {
+      throw new Error(
+        'PricingTable: pricing JSON at ' + pricingJsonPath +
+          ' "models" must be an object keyed by providerID.',
+      );
+    }
+
+    // Eagerly build the (providerID, modelID) -> Rates lookup table.
+    // Cache by Map keyed on `${providerID}::${modelID}` so `lookup`
+    // is a single hash probe and so repeated calls return the same
+    // frozen Rates object reference (design.md:439 postcondition).
+    this._rates = new Map();
+    const knownModels = [];
+
+    for (const providerID of Object.keys(parsed.models)) {
+      const providerEntry = parsed.models[providerID];
+      if (
+        providerEntry === null ||
+        typeof providerEntry !== 'object' ||
+        Array.isArray(providerEntry)
+      ) {
+        throw new Error(
+          'PricingTable: pricing JSON at ' + pricingJsonPath +
+            ' has non-object provider entry for "' + providerID + '".',
+        );
+      }
+
+      for (const modelID of Object.keys(providerEntry)) {
+        const modelEntry = providerEntry[modelID];
+        if (
+          modelEntry === null ||
+          typeof modelEntry !== 'object' ||
+          Array.isArray(modelEntry) ||
+          modelEntry.cost === null ||
+          typeof modelEntry.cost !== 'object' ||
+          Array.isArray(modelEntry.cost)
+        ) {
+          throw new Error(
+            'PricingTable: pricing JSON at ' + pricingJsonPath +
+              ' model ' + providerID + '/' + modelID +
+              ' is missing a "cost" object.',
+          );
+        }
+
+        const cost = modelEntry.cost;
+
+        // cost.input and cost.output are required per requirement 3.2;
+        // every model the bundled JSON ships and every plausible
+        // models.dev entry carries them. Treat absence as malformed.
+        if (typeof cost.input !== 'number') {
+          throw new Error(
+            'PricingTable: pricing JSON at ' + pricingJsonPath +
+              ' model ' + providerID + '/' + modelID +
+              ' is missing required numeric cost.input.',
+          );
+        }
+        if (typeof cost.output !== 'number') {
+          throw new Error(
+            'PricingTable: pricing JSON at ' + pricingJsonPath +
+              ' model ' + providerID + '/' + modelID +
+              ' is missing required numeric cost.output.',
+          );
+        }
+
+        // cost.reasoning / cost.cache_read / cost.cache_write are
+        // optional in the upstream schema; missing values substitute
+        // to 0 (design.md:730, task 1.2 forward-flag). A value that
+        // is present but non-numeric is a schema violation, not a
+        // substitution case — fail loudly.
+        const reasoningPerM = readOptionalRate(
+          cost, 'reasoning', pricingJsonPath, providerID, modelID,
+        );
+        const cacheReadPerM = readOptionalRate(
+          cost, 'cache_read', pricingJsonPath, providerID, modelID,
+        );
+        const cacheWritePerM = readOptionalRate(
+          cost, 'cache_write', pricingJsonPath, providerID, modelID,
+        );
+
+        const rates = Object.freeze({
+          inputPerM: cost.input,
+          outputPerM: cost.output,
+          reasoningPerM,
+          cacheReadPerM,
+          cacheWritePerM,
+        });
+
+        this._rates.set(providerID + '::' + modelID, rates);
+        knownModels.push(Object.freeze({ providerID, modelID }));
+      }
+    }
+
+    // Immutable accessors per design.md:440 invariant.
+    const pinMetadata = { pinDate: parsed.pinDate, pinSource: parsed.pinSource };
+    if (typeof parsed.pinVersion === 'string') {
+      pinMetadata.pinVersion = parsed.pinVersion;
+    }
+    this._pinMetadata = Object.freeze(pinMetadata);
+    this._knownModels = Object.freeze(knownModels);
+  }
+
+  /**
+   * Look up rates by (providerID, modelID). Returns the cached
+   * `Rates` object on hit (same reference across calls), `null` on
+   * miss. Never throws.
+   */
+  lookup(providerID, modelID) {
+    if (typeof providerID !== 'string' || typeof modelID !== 'string') {
+      return null;
+    }
+    const hit = this._rates.get(providerID + '::' + modelID);
+    return hit === undefined ? null : hit;
+  }
+
+  get pinMetadata() {
+    return this._pinMetadata;
+  }
+
+  get knownModels() {
+    return this._knownModels;
+  }
+}
+
+/**
+ * Read an optional per-million rate from a `cost` object. Missing
+ * keys substitute to 0 (design.md:730 — `reasoning?` plus the same
+ * rule applied to the cache rates per the task 1.2 forward-flag).
+ * Present-but-non-numeric values are a schema violation and throw.
+ */
+function readOptionalRate(cost, key, pricingJsonPath, providerID, modelID) {
+  if (!Object.prototype.hasOwnProperty.call(cost, key)) {
+    return 0;
+  }
+  const value = cost[key];
+  if (typeof value !== 'number') {
+    throw new Error(
+      'PricingTable: pricing JSON at ' + pricingJsonPath +
+        ' model ' + providerID + '/' + modelID +
+        ' has non-numeric cost.' + key + ' (got ' +
+        JSON.stringify(value) + ').',
+    );
+  }
+  return value;
+}
+
+/* ------------------------------------------------------------------ *
  * SubagentAggregator
  *
  * Recursive parent_id rollup of descendant-session token + cost
@@ -2785,6 +3036,7 @@ if (require.main === module) {
 module.exports = {
   SqliteReader,
   SchemaDriftError,
+  PricingTable,
   SubagentAggregator,
   TokenizerSplitter,
   AttributionEngine,
