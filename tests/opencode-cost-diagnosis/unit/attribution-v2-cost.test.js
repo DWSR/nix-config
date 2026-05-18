@@ -55,6 +55,8 @@ const {
   makeNullCostShape,
   PER_BUCKET_COST_KEYS,
   CACHED_READ_SUB_BUCKET_KEYS,
+  COST_INVARIANT_TOLERANCE_PCT,
+  COST_INVARIANT_TOLERANCE_FLOOR_USD,
 } = mod;
 
 // ---------------------------------------------------------------------
@@ -3413,4 +3415,1000 @@ test('flag OFF / 5.9: per_bucket_cost_deferred detail still uses the v1 wording 
     !f.detail.includes('per-bucket cost is now populated by v2'),
     `flag OFF: detail must not contain the v2 wording; got: ${JSON.stringify(f.detail)}`,
   );
+});
+
+// ---------------------------------------------------------------------
+// Task 5.10 — AttributionEngine integration / cross-cutting coverage.
+//
+// The per-task suites above (5.2 — 5.9) each cover their slice of the
+// v2 cost path in isolation. 5.10's job is to verify that the slices
+// COMPOSE correctly when more than one v2 behavior fires for the same
+// session, and to lock down the publicly-exported constants whose
+// shape downstream consumers (ReportAssembler tasks 6.x, ReportSerializer
+// tasks 7.x, and external test fixtures) depend on. Every test in this
+// block is net-new coverage relative to 5.2 — 5.9; nothing here is a
+// rename or refactor of an existing case.
+//
+// Test inventory:
+//   1. PER_BUCKET_COST_KEYS export contract (9 keys, frozen, ordered).
+//   2. CACHED_READ_SUB_BUCKET_KEYS export contract (6 keys, frozen,
+//      ordered, last key is the absorber).
+//   3. makeNullCostShape direct invocation with explicit sessionCost
+//      argument (full shape audit independent of AttributionEngine).
+//   4. makeNullCostShape default argument (sessionCost === 0 when no
+//      argument is supplied).
+//   5. Multi-model accumulation: a single session with two assistant
+//      messages on DIFFERENT (provider, model) pairs — cost is the
+//      weighted sum across both per-message lookups, not the
+//      single-model shortcut. Exercises the per-message walk for real.
+//   6. One-of-many drift: a multi-message session where only ONE
+//      assistant message has an unmatched (provider, model) MUST flip
+//      the ENTIRE session into the drift fallback (design.md:581).
+//   7. Drift session still emits per_bucket_cost_deferred (R7.AC4
+//      preservation across the drift code path; existing 5.6 tests
+//      verify the drift cost shape but not that the v1 finding kind is
+//      preserved alongside it).
+//   8. Drift session per_bucket_cost_deferred carries the canonical v2
+//      wording (the detail-string rewrite from Decision 1 is gated on
+//      the flag only, NOT on drift state — verifying the wording fires
+//      even when the cost shape is nullified).
+//   9. pricing_table_drift detail names BOTH providerID AND modelID as
+//      independent substrings (existing 5.6 test asserts the combined
+//      regex `/provider\/model/`; this one asserts each half
+//      independently so a regression that flips the slash direction or
+//      drops one half is caught).
+//  10. All-clear happy path: a matched single-model session emits
+//      EXACTLY ONE finding — per_bucket_cost_deferred — and NONE of
+//      the five v2 negative finding kinds. Locks down the "no false
+//      positives" invariant at the unit-suite layer before the
+//      integration goldens (task 8.1) cement it.
+//  11. Reconciliation percentage-based tolerance path: a large session
+//      where 0.1% × session.cost dominates the $0.01 floor. Exercises
+//      the percentage branch of the `max(pct, floor)` tolerance
+//      formula that the existing 5.5 floor tests skip entirely.
+//  12. Cross-cutting: markersDegraded + cost_invariant_violation both
+//      fire on the same session. Verifies the two findings are
+//      independent — the degraded path does not suppress reconciliation
+//      and reconciliation does not suppress the degraded emit.
+// ---------------------------------------------------------------------
+
+test('5.10: PER_BUCKET_COST_KEYS export contract — frozen 9-element array in canonical order', () => {
+  // Downstream tasks (6.1 aggregation, 7.x serialization) iterate over
+  // this constant to drive the cost-shape rendering loops. The exact
+  // contents + order are part of the v2 cost-shape contract — a
+  // regression that drops or reorders keys would silently break the
+  // global/per-project cost aggregation.
+  assert.ok(
+    Array.isArray(PER_BUCKET_COST_KEYS),
+    'PER_BUCKET_COST_KEYS must be an Array',
+  );
+  assert.equal(
+    PER_BUCKET_COST_KEYS.length,
+    9,
+    'PER_BUCKET_COST_KEYS must contain exactly 9 entries (6 v1 + 3 v2)',
+  );
+  assert.deepEqual(
+    [...PER_BUCKET_COST_KEYS],
+    [
+      'cachedRead',
+      'cachedWrite',
+      'uncachedInput',
+      'output',
+      'reasoning',
+      'subagentDispatch',
+      'uncachedSystemPrompt',
+      'history',
+      'toolOutputs',
+    ],
+    'PER_BUCKET_COST_KEYS must list the six v1 fields first, then the three v2 uncached sub-bucket fields, in the order frozen by design.md CostBuckets',
+  );
+  assert.ok(
+    Object.isFrozen(PER_BUCKET_COST_KEYS),
+    'PER_BUCKET_COST_KEYS must be frozen so downstream consumers cannot mutate it',
+  );
+});
+
+test('5.10: CACHED_READ_SUB_BUCKET_KEYS export contract — frozen 6-element array, unclassifiedCached last (absorber)', () => {
+  // The last element is the absorber per design.md:584 / task 5.3.
+  // AttributionEngine relies on the trailing key being
+  // unclassifiedCached so the last-bucket-absorbs-rounding pattern
+  // produces exact token-side sums. A reorder here would silently
+  // break the token sum invariant.
+  assert.ok(
+    Array.isArray(CACHED_READ_SUB_BUCKET_KEYS),
+    'CACHED_READ_SUB_BUCKET_KEYS must be an Array',
+  );
+  assert.equal(
+    CACHED_READ_SUB_BUCKET_KEYS.length,
+    6,
+    'CACHED_READ_SUB_BUCKET_KEYS must contain exactly 6 entries (5 named sub-buckets + unclassifiedCached residual)',
+  );
+  assert.deepEqual(
+    [...CACHED_READ_SUB_BUCKET_KEYS],
+    [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+      'unclassifiedCached',
+    ],
+    'CACHED_READ_SUB_BUCKET_KEYS must list the 5 named sub-buckets in design.md order with unclassifiedCached LAST (absorber position)',
+  );
+  assert.equal(
+    CACHED_READ_SUB_BUCKET_KEYS[CACHED_READ_SUB_BUCKET_KEYS.length - 1],
+    'unclassifiedCached',
+    'CACHED_READ_SUB_BUCKET_KEYS last entry MUST be unclassifiedCached so the absorber pattern (task 5.3) is mechanically guaranteed',
+  );
+  assert.ok(
+    Object.isFrozen(CACHED_READ_SUB_BUCKET_KEYS),
+    'CACHED_READ_SUB_BUCKET_KEYS must be frozen so downstream consumers cannot mutate it',
+  );
+});
+
+test('5.10: makeNullCostShape(sessionCost) — full all-null shape with total === sessionCost', () => {
+  // R7.AC5: when a v1 cost field flips from null (v1) to a number
+  // (v2 matched), the JSON field name, type-after-transition, and
+  // alphabetical position stay stable. The drift fallback must emit
+  // the v2 EXTENDED shape with every cost-bearing field null and only
+  // `total` carrying the authoritative session.cost (design.md:582).
+  // This test pins the helper's shape directly, independent of
+  // AttributionEngine, so any future refactor cannot silently regress
+  // the contract the engine relies on at task 5.6.
+  const shape = makeNullCostShape(42.5);
+  assert.equal(shape.total, 42.5, 'total must equal the sessionCost argument');
+  for (const k of PER_BUCKET_COST_KEYS) {
+    assert.equal(
+      shape[k],
+      null,
+      `makeNullCostShape: cost.${k} must be null on the drift fallback`,
+    );
+  }
+  assert.equal(
+    typeof shape.cachedReadBreakdown,
+    'object',
+    'makeNullCostShape: cachedReadBreakdown must be a present {key:null} object (NOT null) so callers can read sub-keys without a null guard',
+  );
+  assert.notEqual(
+    shape.cachedReadBreakdown,
+    null,
+    'makeNullCostShape: cachedReadBreakdown must not itself be null',
+  );
+  for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+    assert.equal(
+      shape.cachedReadBreakdown[k],
+      null,
+      `makeNullCostShape: cachedReadBreakdown.${k} must be null on the drift fallback`,
+    );
+  }
+  assert.equal(
+    shape.subagentDispatchByAgent,
+    null,
+    'makeNullCostShape: subagentDispatchByAgent collapses to null (NOT {}) on drift',
+  );
+  assert.equal(
+    shape.toolOutputsByTool,
+    null,
+    'makeNullCostShape: toolOutputsByTool collapses to null (NOT {}) on drift',
+  );
+});
+
+test('5.10: makeNullCostShape() — default argument produces total === 0', () => {
+  // Defensive: if a future caller forgets to pass session.cost (e.g.
+  // a ReportAssembler test that builds a null-shape fixture without a
+  // session row), the helper must still produce a numerically-valid
+  // total rather than NaN/undefined so the JSON serializer never sees
+  // a non-number where a number is expected.
+  const shape = makeNullCostShape();
+  assert.equal(
+    shape.total,
+    0,
+    'makeNullCostShape() with no arg must default total to 0 (not undefined / NaN)',
+  );
+  // Sanity: the null-discipline is unaffected by the default-arg path.
+  assert.equal(shape.cachedRead, null);
+  assert.equal(shape.subagentDispatchByAgent, null);
+  assert.equal(shape.toolOutputsByTool, null);
+});
+
+// ---------------------------------------------------------------------
+// Helpers for the multi-message / cross-cutting tests below.
+// ---------------------------------------------------------------------
+
+// Build a reader where the session carries TWO assistant messages
+// with caller-supplied (providerID, modelID, tokens) per message.
+// The session-level totals on the synthetic session row are the sum
+// of the per-message tokens; cost is the sum of the per-message
+// (tokens × rate) contributions for whichever rates the caller
+// passes in. Parts are the same shape `makeMatchedSingleModelReader`
+// uses so the Tokenizer's classification side runs normally.
+function makeMultiModelReader(session, msgSpecs) {
+  // msgSpecs: [{ providerID, modelID, tokens: {input, output,
+  //   reasoning, cache:{read,write}}, cost, msgId }]
+  return {
+    partsOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return [
+        {
+          id: 'prt_sys',
+          message_id: 'msg_sys',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'you are a coding agent' }),
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'prt_user',
+          message_id: 'msg_user',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'help me with this task' }),
+          time_created: 1,
+          time_updated: 1,
+        },
+        {
+          id: 'prt_asst',
+          message_id: msgSpecs[0].msgId,
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'sure here is the plan' }),
+          time_created: 2,
+          time_updated: 2,
+        },
+        {
+          id: 'prt_tool',
+          message_id: msgSpecs[0].msgId,
+          session_id: session.id,
+          type: 'tool',
+          data: JSON.stringify({
+            tool: 'bash',
+            state: { output: 'ls -la\ntotal 0\n' },
+          }),
+          time_created: 3,
+          time_updated: 3,
+        },
+      ];
+    },
+    messagesOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      const head = [
+        {
+          id: 'msg_sys',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'system' }),
+          role: 'system',
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'msg_user',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'user' }),
+          role: 'user',
+          time_created: 1,
+          time_updated: 1,
+        },
+      ];
+      const assistants = msgSpecs.map((spec, idx) => ({
+        id: spec.msgId,
+        session_id: session.id,
+        data: JSON.stringify({
+          role: 'assistant',
+          providerID: spec.providerID,
+          modelID: spec.modelID,
+          variant: 'default',
+          tokens: spec.tokens,
+          cost: spec.cost,
+        }),
+        role: 'assistant',
+        time_created: 2 + idx,
+        time_updated: 2 + idx,
+      }));
+      return head.concat(assistants);
+    },
+    descendantSessionsOf() {
+      return [];
+    },
+  };
+}
+
+test('5.10: multi-model accumulation — two assistant messages on DIFFERENT (provider, model) pairs, per-bucket cost is the weighted sum across messages', () => {
+  // Per-message walk authoritative: cost = Σ over messages of
+  //   tokens_per_msg × per-message-rate / 1e6.
+  // Existing 5.2 tests use a single assistant message, so the rate
+  // shortcut "session_tokens × single_rate / 1e6" gives the same
+  // answer as the per-message walk. This test makes the two
+  // computations DISAGREE by giving each message a different model
+  // with a different rate — if the engine ever regressed to a
+  // single-rate shortcut, the cost would be wrong by a known delta.
+  setV2CostComputeEnabled(true);
+  try {
+    // Message A: anthropic claude-opus-4-7 — 600 input, 100 output,
+    // 30 reasoning, 300 cache_read, 50 cache_write.
+    // Message B: openai gpt-5.5-pro — 400 input, 100 output, 20
+    // reasoning, 200 cache_read, 50 cache_write.
+    // Session totals = sum of A + B per field.
+    const A = {
+      providerID: 'anthropic',
+      modelID: 'claude-opus-4-7',
+      msgId: 'msg_asst_a',
+      tokens: {
+        input: 600,
+        output: 100,
+        reasoning: 30,
+        cache: { read: 300, write: 50 },
+      },
+      cost: 0, // not consumed; per-bucket cost is engine-computed
+    };
+    const B = {
+      providerID: 'openai',
+      modelID: 'gpt-5.5-pro',
+      msgId: 'msg_asst_b',
+      tokens: {
+        input: 400,
+        output: 100,
+        reasoning: 20,
+        cache: { read: 200, write: 50 },
+      },
+      cost: 0,
+    };
+    const M_LOCAL = 1_000_000;
+    const rateA = {
+      inputPerM: 3.0,
+      outputPerM: 15.0,
+      reasoningPerM: 8.0,
+      cacheReadPerM: 0.3,
+      cacheWritePerM: 3.75,
+    };
+    const rateB = {
+      inputPerM: 1.25,
+      outputPerM: 10.0,
+      reasoningPerM: 4.0,
+      cacheReadPerM: 0.125,
+      cacheWritePerM: 1.25,
+    };
+    const pricing = makeFakePricing(
+      new Map([
+        ['anthropic::claude-opus-4-7', Object.freeze(rateA)],
+        ['openai::gpt-5.5-pro', Object.freeze(rateB)],
+      ]),
+    );
+    const expCachedRead =
+      (A.tokens.cache.read * rateA.cacheReadPerM +
+        B.tokens.cache.read * rateB.cacheReadPerM) /
+      M_LOCAL;
+    const expCachedWrite =
+      (A.tokens.cache.write * rateA.cacheWritePerM +
+        B.tokens.cache.write * rateB.cacheWritePerM) /
+      M_LOCAL;
+    const expUncachedInput =
+      (A.tokens.input * rateA.inputPerM +
+        B.tokens.input * rateB.inputPerM) /
+      M_LOCAL;
+    const expOutput =
+      (A.tokens.output * rateA.outputPerM +
+        B.tokens.output * rateB.outputPerM) /
+      M_LOCAL;
+    const expReasoning =
+      (A.tokens.reasoning * rateA.reasoningPerM +
+        B.tokens.reasoning * rateB.reasoningPerM) /
+      M_LOCAL;
+    const expectedTotal =
+      expCachedRead +
+      expCachedWrite +
+      expUncachedInput +
+      expOutput +
+      expReasoning;
+    const ses = makeSyntheticSession({
+      id: 'ses_synth_v2_multi_model',
+      // Session totals are the per-field sums of A + B (opencode's
+      // own session.tokens_* are the canonical per-session
+      // accumulators).
+      tokens_input: A.tokens.input + B.tokens.input,
+      tokens_output: A.tokens.output + B.tokens.output,
+      tokens_reasoning: A.tokens.reasoning + B.tokens.reasoning,
+      tokens_cache_read: A.tokens.cache.read + B.tokens.cache.read,
+      tokens_cache_write: A.tokens.cache.write + B.tokens.cache.write,
+      cost: expectedTotal,
+    });
+    const eng = new AttributionEngine(
+      makeMultiModelReader(ses, [A, B]),
+      new SubagentAggregator(makeMultiModelReader(ses, [A, B])),
+      new TokenizerSplitter(),
+      pricing,
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Critical: per-message rate variance is preserved. If a
+    // regression collapses to "session_tokens × first_message_rate"
+    // the cachedRead value below would be (500 × 0.3) / 1e6 = $0.00015
+    // instead of the correct $0.0001150 (mixed-rate weighted sum).
+    assert.ok(
+      Math.abs(attr.cost.cachedRead - expCachedRead) < COST_EPSILON,
+      `multi-model cost.cachedRead expected ${expCachedRead}, got ${attr.cost.cachedRead}`,
+    );
+    assert.ok(
+      Math.abs(attr.cost.cachedWrite - expCachedWrite) < COST_EPSILON,
+      `multi-model cost.cachedWrite expected ${expCachedWrite}, got ${attr.cost.cachedWrite}`,
+    );
+    assert.ok(
+      Math.abs(attr.cost.uncachedInput - expUncachedInput) < COST_EPSILON,
+      `multi-model cost.uncachedInput expected ${expUncachedInput}, got ${attr.cost.uncachedInput}`,
+    );
+    assert.ok(
+      Math.abs(attr.cost.output - expOutput) < COST_EPSILON,
+      `multi-model cost.output expected ${expOutput}, got ${attr.cost.output}`,
+    );
+    assert.ok(
+      Math.abs(attr.cost.reasoning - expReasoning) < COST_EPSILON,
+      `multi-model cost.reasoning expected ${expReasoning}, got ${attr.cost.reasoning}`,
+    );
+    // Sum-invariant still holds on multi-model: the three uncached
+    // sub-buckets partition cost.uncachedInput exactly.
+    const subSum =
+      attr.cost.uncachedSystemPrompt +
+      attr.cost.history +
+      attr.cost.toolOutputs;
+    assert.ok(
+      Math.abs(subSum - attr.cost.uncachedInput) < COST_EPSILON,
+      `multi-model uncached-trio sum ${subSum} must equal cost.uncachedInput ${attr.cost.uncachedInput}`,
+    );
+    // cost.total comes from session.cost (R2.AC6 invariant) regardless
+    // of the per-message walk's outcome.
+    assert.equal(attr.cost.total, ses.cost);
+    // No drift on either message → no drift finding.
+    assert.equal(
+      attr.findings.filter((f) => f.kind === 'pricing_table_drift').length,
+      0,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: one-of-many drift — a multi-message session where ONLY ONE assistant message has an unmatched (provider, model) flips the ENTIRE session into the drift fallback', () => {
+  // design.md:581: "if PricingTable.lookup returns null for ANY
+  // message in a session, mark the entire session as pricing-drift".
+  // Existing 5.6 tests have one assistant message that itself drifts;
+  // none verifies that the OTHER messages' matched contributions are
+  // discarded when even one message drifts. A regression that
+  // partially-populated cost (matched contributions kept, drift
+  // contributions skipped) would silently break R3.4 and R7.5.
+  setV2CostComputeEnabled(true);
+  try {
+    const matched = {
+      providerID: 'anthropic',
+      modelID: 'claude-opus-4-7',
+      msgId: 'msg_asst_matched',
+      tokens: {
+        input: 500,
+        output: 100,
+        reasoning: 25,
+        cache: { read: 200, write: 50 },
+      },
+      cost: 0,
+    };
+    const driftMsg = {
+      providerID: 'unknownprovider',
+      modelID: 'unknownmodel-xyz',
+      msgId: 'msg_asst_drift',
+      tokens: {
+        input: 500,
+        output: 100,
+        reasoning: 25,
+        cache: { read: 300, write: 50 },
+      },
+      cost: 0,
+    };
+    const ses = makeSyntheticSession({
+      id: 'ses_multi_msg_one_drift',
+      tokens_input: matched.tokens.input + driftMsg.tokens.input,
+      tokens_output: matched.tokens.output + driftMsg.tokens.output,
+      tokens_reasoning:
+        matched.tokens.reasoning + driftMsg.tokens.reasoning,
+      tokens_cache_read:
+        matched.tokens.cache.read + driftMsg.tokens.cache.read,
+      tokens_cache_write:
+        matched.tokens.cache.write + driftMsg.tokens.cache.write,
+      // Session.cost is whatever opencode itself recorded; the drift
+      // path nullifies all per-bucket cost regardless so the
+      // session.cost value here only affects cost.total.
+      cost: 1.234,
+    });
+    const eng = new AttributionEngine(
+      makeMultiModelReader(ses, [matched, driftMsg]),
+      new SubagentAggregator(makeMultiModelReader(ses, [matched, driftMsg])),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(), // only knows about claude-opus-4-7
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Entire session is drift: every per-bucket cost field null,
+    // even the ones the MATCHED message would have populated.
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.equal(
+        attr.cost[k],
+        null,
+        `one-of-many drift: cost.${k} must be null (matched contributions discarded)`,
+      );
+    }
+    assert.equal(attr.cost.subagentDispatchByAgent, null);
+    assert.equal(attr.cost.toolOutputsByTool, null);
+    // cost.total preserved from session.cost regardless of drift.
+    assert.equal(attr.cost.total, ses.cost);
+    // Exactly one pricing_table_drift finding, naming the UNMATCHED
+    // key (not the matched one).
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      'one-of-many drift: exactly one pricing_table_drift finding must fire even when other messages matched',
+    );
+    assert.match(
+      drift[0].detail,
+      /unknownprovider\/unknownmodel-xyz/,
+      'pricing_table_drift detail must name the UNMATCHED (provider, model) pair, not the matched one',
+    );
+    assert.ok(
+      !drift[0].detail.includes('claude-opus-4-7'),
+      'pricing_table_drift detail must NOT name the matched model (claude-opus-4-7)',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: drift session still emits per_bucket_cost_deferred (R7.AC4 preserved across the drift code path)', () => {
+  // R7.AC4: every v1 finding must continue to fire in v2. The 5.6
+  // tests verify drift NULLS the cost shape; this test verifies the
+  // drift code path does NOT inadvertently suppress the v1
+  // per_bucket_cost_deferred finding that fires unconditionally per
+  // session (per the always-emitted contract from design.md:776 and
+  // the existing emit at scripts/opencode-cost-report.js:1684).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({
+      id: 'ses_drift_pbcd_preserved',
+    });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Both findings must be present on a drift session.
+    const pbcd = attr.findings.filter(
+      (f) => f.kind === 'per_bucket_cost_deferred',
+    );
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.equal(
+      pbcd.length,
+      1,
+      'R7.AC4: per_bucket_cost_deferred must STILL fire on drift sessions (regression sentinel for the always-emit contract)',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      'pricing_table_drift must fire on drift sessions (sanity for the test fixture)',
+    );
+    // Per-session prefix preserved on the drift path as well.
+    assert.ok(
+      pbcd[0].detail.startsWith(`session ${ses.id}: `),
+      `drift session: per_bucket_cost_deferred detail must still begin with "session ${ses.id}: " prefix`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: drift session per_bucket_cost_deferred carries v2 canonical wording (Decision 1 rewrite is gated on the flag, NOT on drift state)', () => {
+  // The Decision 1 detail rewrite (canonical v2 wording) MUST fire
+  // when V2_COST_COMPUTE_ENABLED is on, regardless of whether the
+  // session was matched or drifted. A regression that gates the
+  // rewrite on `!cost._v2PricingDrift` would silently re-emit the
+  // v1 "deferred" wording on drift sessions, which a v1-aware
+  // reader would interpret as "v2 hasn't shipped yet" — exactly the
+  // operator-confusion mode Decision 1 was designed to prevent.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_pbcd_v2wording' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const pbcd = attr.findings.find(
+      (f) => f.kind === 'per_bucket_cost_deferred',
+    );
+    assert.ok(pbcd, 'per_bucket_cost_deferred must be present on drift');
+    // Canonical v2 wording substring (same as the 5.9 test) must fire
+    // even though the cost shape is the makeNullCostShape fallback.
+    assert.ok(
+      pbcd.detail.includes('per-bucket cost is now populated by v2'),
+      `drift session: per_bucket_cost_deferred must STILL carry the v2 wording (Decision 1 rewrite is flag-gated, not drift-gated); got: ${JSON.stringify(pbcd.detail)}`,
+    );
+    assert.ok(
+      !pbcd.detail.includes('deferred to a follow-on spec'),
+      `drift session: v1 wording must NOT leak when flag is ON; got: ${JSON.stringify(pbcd.detail)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: pricing_table_drift detail names providerID and modelID as INDEPENDENT substrings (regression sentinel for slash-direction and half-dropping bugs)', () => {
+  // Existing 5.6 test asserts `/fakeprovider\/fakemodel-xyz/` (the
+  // combined regex). A regression that, e.g., emitted
+  // `"modelID=fakemodel-xyz providerID=fakeprovider"` (swapped order,
+  // no slash) would FAIL that regex but ALSO might pass a loose
+  // substring check. This test pins the two halves independently so
+  // a refactor that changes the separator or order still surfaces
+  // the regression with a precise message.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_detail_halves' });
+    const PROVIDER = 'novelprovider';
+    const MODEL = 'novelmodel-abc-123';
+    const reader = makeUnknownModelReader(ses, PROVIDER, MODEL);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const drift = attr.findings.find(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.ok(drift, 'pricing_table_drift must fire');
+    assert.ok(
+      drift.detail.includes(PROVIDER),
+      `drift detail must independently include providerID "${PROVIDER}"; got: ${JSON.stringify(drift.detail)}`,
+    );
+    assert.ok(
+      drift.detail.includes(MODEL),
+      `drift detail must independently include modelID "${MODEL}"; got: ${JSON.stringify(drift.detail)}`,
+    );
+    assert.ok(
+      drift.detail.includes(`${PROVIDER}/${MODEL}`),
+      `drift detail must include the canonical "providerID/modelID" composite; got: ${JSON.stringify(drift.detail)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: all-clear happy path — matched single-model session with NON-degraded tokenizer emits EXACTLY ONE finding (per_bucket_cost_deferred) and none of the five v2 negative kinds', () => {
+  // The unit-suite-layer guard for the "no false positives" invariant:
+  // a healthy matched session paired with a NON-degraded tokenizer
+  // must not emit any v2 negative finding (cost_invariant_violation,
+  // pricing_table_drift, cached_read_classification_residual,
+  // cached_read_classifier_degraded, subagent_agent_attribution_drift).
+  //
+  // NOTE on tokenizer choice: the production TokenizerSplitter ships
+  // with markersDegraded=true by default (tasks.md Implementation
+  // Note for 1.5 / 3.1 — three of the five markers are unreliable
+  // sentinels). On the production tokenizer EVERY matched session
+  // therefore legitimately emits cached_read_classifier_degraded.
+  // That production behavior is exercised by 5.7's existing tests.
+  // The 5.10 "all-clear" case isolates the engine-side emission
+  // path, so it uses a stub tokenizer with markersDegraded=false
+  // to verify the engine does not invent a finding when the
+  // tokenizer signals everything is clean — the genuine
+  // false-positive regression sentinel.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_happy_no_negatives' });
+    const reader = makeMatchedSingleModelReader(ses);
+    // Healthy provenance: residual is well below the 5% threshold so
+    // cached_read_classification_residual must not fire either.
+    const cleanProv = makeProvenance({
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 300,
+      accumulatedToolOutputsCached: 195,
+      // unclassifiedCached = 5 → 5 / 500 = 1% < 5% threshold.
+      unclassifiedCached: 5,
+    });
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(cleanProv),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Matched fixture: P_sum > 0 (no unclassifiable_input),
+    // unclassifiedCount === 0 (no schema_partial_data), per-bucket
+    // sum reconciles within tolerance (no cost_invariant_violation).
+    // Subagent rollup has no descendants (no subagent_agent_
+    // attribution_drift). The only finding that MUST always fire is
+    // per_bucket_cost_deferred.
+    const kinds = attr.findings.map((f) => f.kind).sort();
+    assert.deepEqual(
+      kinds,
+      ['per_bucket_cost_deferred'],
+      `happy path findings must be EXACTLY ['per_bucket_cost_deferred']; got: ${JSON.stringify(kinds)}`,
+    );
+    // Explicitly assert each v2 negative finding kind is absent —
+    // gives a precise failure message if a regression introduces one.
+    for (const kind of [
+      'cost_invariant_violation',
+      'pricing_table_drift',
+      'cached_read_classification_residual',
+      'cached_read_classifier_degraded',
+      'subagent_agent_attribution_drift',
+    ]) {
+      assert.equal(
+        attr.findings.filter((f) => f.kind === kind).length,
+        0,
+        `happy path: ${kind} must NOT fire on a matched single-model session with a non-degraded tokenizer`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: reconciliation percentage-based tolerance — large session uses 0.1% × session.cost (NOT $0.01 floor) as the threshold', () => {
+  // Existing 5.5 tests cover the floor case (tiny session, $0.01
+  // dominates). This test exercises the percentage branch: a session
+  // expensive enough that 0.1% × session.cost ≫ $0.01.
+  //
+  // session.cost ≈ $100, so tolerance = max(0.1, 0.01) = $0.10.
+  //   delta = $0.05  → BELOW tolerance → no finding
+  //   delta = $0.15  → ABOVE tolerance → exactly one finding
+  //
+  // If a regression hard-coded the floor (e.g. `tolerance = $0.01`
+  // instead of `max(pct, floor)`), the $0.05 case below would
+  // incorrectly fire a cost_invariant_violation — exactly the
+  // "every large session shows a false alarm" failure mode the
+  // percentage term exists to prevent.
+  setV2CostComputeEnabled(true);
+  try {
+    // Construct a synthetic session whose per-bucket sum derives
+    // from much larger token counts so the per-bucket sum lands
+    // around $100. Then perturb session.cost to test the boundary.
+    const LARGE_INPUT = 5_000_000;
+    const LARGE_OUTPUT = 1_000_000;
+    const LARGE_REASONING = 200_000;
+    const LARGE_CACHE_READ = 50_000_000;
+    const LARGE_CACHE_WRITE = 200_000;
+    // Reuse the SYN_* rates so we can derive the expected per-bucket
+    // sum analytically.
+    const M_LOCAL = 1_000_000;
+    const largePerBucketSum =
+      (LARGE_INPUT * SYN_INPUT_PER_M +
+        LARGE_OUTPUT * SYN_OUTPUT_PER_M +
+        LARGE_REASONING * SYN_REASONING_PER_M +
+        LARGE_CACHE_READ * SYN_CACHE_READ_PER_M +
+        LARGE_CACHE_WRITE * SYN_CACHE_WRITE_PER_M) /
+      M_LOCAL;
+    // Sanity guard: only run the percentage-branch assertions when
+    // the percentage term actually dominates the floor. If a future
+    // tuning of the SYN rates ever changes this, the test must
+    // fail loudly rather than silently regress to the floor branch.
+    assert.ok(
+      COST_INVARIANT_TOLERANCE_PCT * largePerBucketSum >
+        COST_INVARIANT_TOLERANCE_FLOOR_USD,
+      `5.10 percentage-branch test requires session.cost large enough that ${COST_INVARIANT_TOLERANCE_PCT} × session.cost > $${COST_INVARIANT_TOLERANCE_FLOOR_USD}; got per-bucket sum ≈ $${largePerBucketSum}`,
+    );
+    const pctTolerance = COST_INVARIANT_TOLERANCE_PCT * largePerBucketSum;
+
+    // Reader factory: every assertion below needs a fresh reader
+    // because the matched single-model fixture asserts equality on
+    // the session id inside its closure.
+    function buildLargeReader(localSession) {
+      // Reuse makeMatchedSingleModelReader structure but with the
+      // larger per-message tokens that match the session totals.
+      const baseReader = makeMatchedSingleModelReader(localSession);
+      return {
+        partsOfSession(sessionId) {
+          return baseReader.partsOfSession(sessionId);
+        },
+        messagesOfSession(sessionId) {
+          assert.equal(sessionId, localSession.id);
+          // Override the single assistant message's tokens to match
+          // the large session-level totals so the per-message
+          // pricing lookup produces the expected per-bucket sum.
+          return [
+            {
+              id: 'msg_sys',
+              session_id: localSession.id,
+              data: JSON.stringify({ role: 'system' }),
+              role: 'system',
+              time_created: 0,
+              time_updated: 0,
+            },
+            {
+              id: 'msg_user',
+              session_id: localSession.id,
+              data: JSON.stringify({ role: 'user' }),
+              role: 'user',
+              time_created: 1,
+              time_updated: 1,
+            },
+            {
+              id: 'msg_asst',
+              session_id: localSession.id,
+              data: JSON.stringify({
+                role: 'assistant',
+                providerID: 'anthropic',
+                modelID: 'claude-opus-4-7',
+                variant: 'default',
+                tokens: {
+                  input: LARGE_INPUT,
+                  output: LARGE_OUTPUT,
+                  reasoning: LARGE_REASONING,
+                  cache: {
+                    read: LARGE_CACHE_READ,
+                    write: LARGE_CACHE_WRITE,
+                  },
+                },
+                cost: localSession.cost,
+              }),
+              role: 'assistant',
+              time_created: 2,
+              time_updated: 2,
+            },
+          ];
+        },
+        descendantSessionsOf() {
+          return [];
+        },
+      };
+    }
+
+    // Case BELOW: delta = pctTolerance × 0.5 (well below the
+    // percentage threshold; also well above the $0.01 floor so we
+    // know the percentage path is dispositive).
+    const deltaBelow = pctTolerance * 0.5;
+    assert.ok(
+      deltaBelow > COST_INVARIANT_TOLERANCE_FLOOR_USD,
+      `case BELOW: delta ${deltaBelow} must exceed the floor ${COST_INVARIANT_TOLERANCE_FLOOR_USD} to ensure the percentage path is the dispositive branch`,
+    );
+    const sesBelow = makeSyntheticSession({
+      id: 'ses_recon_pct_below',
+      tokens_input: LARGE_INPUT,
+      tokens_output: LARGE_OUTPUT,
+      tokens_reasoning: LARGE_REASONING,
+      tokens_cache_read: LARGE_CACHE_READ,
+      tokens_cache_write: LARGE_CACHE_WRITE,
+      cost: largePerBucketSum + deltaBelow,
+    });
+    const attrBelow = new AttributionEngine(
+      buildLargeReader(sesBelow),
+      new SubagentAggregator(buildLargeReader(sesBelow)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    ).attributeSession(sesBelow);
+    assert.equal(
+      attrBelow.findings.filter(
+        (f) => f.kind === 'cost_invariant_violation',
+      ).length,
+      0,
+      `percentage-branch BELOW: delta ${deltaBelow} < tolerance ${pctTolerance} must NOT fire cost_invariant_violation`,
+    );
+
+    // Case ABOVE: delta = pctTolerance × 1.5 (clearly above).
+    const deltaAbove = pctTolerance * 1.5;
+    const sesAbove = makeSyntheticSession({
+      id: 'ses_recon_pct_above',
+      tokens_input: LARGE_INPUT,
+      tokens_output: LARGE_OUTPUT,
+      tokens_reasoning: LARGE_REASONING,
+      tokens_cache_read: LARGE_CACHE_READ,
+      tokens_cache_write: LARGE_CACHE_WRITE,
+      cost: largePerBucketSum + deltaAbove,
+    });
+    const attrAbove = new AttributionEngine(
+      buildLargeReader(sesAbove),
+      new SubagentAggregator(buildLargeReader(sesAbove)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    ).attributeSession(sesAbove);
+    assert.equal(
+      attrAbove.findings.filter(
+        (f) => f.kind === 'cost_invariant_violation',
+      ).length,
+      1,
+      `percentage-branch ABOVE: delta ${deltaAbove} > tolerance ${pctTolerance} must fire exactly one cost_invariant_violation`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('5.10: cross-cutting — markersDegraded AND cost_invariant_violation both fire on the same session (findings are independent)', () => {
+  // Two distinct v2 negative findings can legitimately co-exist on a
+  // single session: the cachedRead classifier degrades (Decision 6
+  // proportional-from-uncached path) AND the per-bucket sum
+  // reconciles out-of-tolerance against session.cost. The existing
+  // 5.5 / 5.7 tests verify each in isolation; this test pins down
+  // the COMPOSITION — neither finding suppresses the other.
+  //
+  // The matched single-model fixture's natural per-bucket sum is
+  // SYN_EXPECTED_COST. Inflate session.cost by +$0.02 to push the
+  // reconciliation outside the $0.01 floor; pass a markersDegraded
+  // provenance via a stub tokenizer to trigger the degraded emit.
+  // Both must fire on the same SessionAttribution.
+  setV2CostComputeEnabled(true);
+  try {
+    const inflated = SYN_EXPECTED_COST + 0.02;
+    const ses = makeSyntheticSession({
+      id: 'ses_crosscut_degraded_and_recon',
+      cost: inflated,
+    });
+    const reader = makeMatchedSingleModelReader(ses);
+    // Degraded provenance: markers unreliable for systemPrompt,
+    // agentsMd, mcpToolSchemas (the three Decision 6 sentinels).
+    // The breakdown counts here are ignored because the degraded
+    // path uses the proportional-from-uncached split instead.
+    const degradedProv = makeProvenanceDegraded(
+      {
+        systemPromptCached: 0,
+        agentsMdCached: 0,
+        mcpToolSchemasCached: 0,
+        accumulatedHistoryCached: 0,
+        accumulatedToolOutputsCached: 0,
+        unclassifiedCached: 0,
+      },
+      ['systemPrompt', 'agentsMd', 'mcpToolSchemas'],
+    );
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(degradedProv),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // BOTH findings must be present — independent emits.
+    const degraded = attr.findings.filter(
+      (f) => f.kind === 'cached_read_classifier_degraded',
+    );
+    const civ = attr.findings.filter(
+      (f) => f.kind === 'cost_invariant_violation',
+    );
+    assert.equal(
+      degraded.length,
+      1,
+      'cross-cutting: cached_read_classifier_degraded must fire (markers were degraded)',
+    );
+    assert.equal(
+      civ.length,
+      1,
+      'cross-cutting: cost_invariant_violation must fire (per-bucket sum outside tolerance) — degraded path must NOT suppress reconciliation',
+    );
+    // Each finding's detail names the session id (cross-finding
+    // routing sanity for ReportAssembler's sessionId-tagged forward).
+    assert.match(degraded[0].detail, new RegExp(ses.id));
+    assert.match(civ[0].detail, new RegExp(ses.id));
+    // Defensive: cachedRead degraded path also implies the residual
+    // finding is NOT fired (degraded REPLACES, not augments —
+    // mirrors the 5.7 existing-test contract). Re-asserting here so
+    // the cross-cutting composition can't accidentally regress that
+    // invariant.
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classification_residual',
+      ).length,
+      0,
+      'cross-cutting: degraded path MUST still suppress the residual finding even when cost_invariant_violation fires',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
 });
