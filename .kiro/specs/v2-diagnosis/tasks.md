@@ -167,7 +167,7 @@
   - _Requirements: 2.3, 2.4_
   - _Boundary: AttributionEngine reconciliation_
 
-- [ ] 5.6 Implement pricing-drift fallback via makeNullCostShape and emit pricing_table_drift finding
+- [x] 5.6 Implement pricing-drift fallback via makeNullCostShape and emit pricing_table_drift finding
   - On the drift branch (any message in the session had unmatched `(providerID, modelID)` per 5.2's mark): assign `attribution.cost = makeNullCostShape()` with `cost.total` preserved from `session.cost`; emit one `pricing_table_drift` finding naming the session ID and the unrecognized key
   - Continue populating token-side fields (no change to TokenBuckets on drift)
   - Other sessions in the same run retain populated cost

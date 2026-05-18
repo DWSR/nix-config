@@ -1762,6 +1762,59 @@ class AttributionEngine {
       }
     }
 
+    // ── Pricing-drift fallback (task 5.6, R3.4 + R7.5) ──────────
+    // _computeV2Cost stamps a non-enumerable `_v2PricingDrift` flag
+    // (and `_v2DriftKey`) on the cost object the moment any
+    // assistant message in this session had an unmatched
+    // (providerID, modelID) — either malformed/missing per-message
+    // shape (design.md:770) or pricingTable.lookup returning null.
+    // When that flag is set, the partial cost shape we computed
+    // above is meaningless for downstream aggregation; design.md
+    // line 581 mandates we replace it wholesale with the all-null
+    // v2 fallback (`makeNullCostShape(session.cost)`) so the
+    // ReportAssembler can blindly skip per-key accumulation when
+    // `cost.X === null` (task 6.1) while still rolling
+    // `cost.total` into the global total.
+    //
+    // Exactly ONE `pricing_table_drift` finding is emitted per
+    // drift session, naming the session id and the first
+    // unrecognized key encountered (the first-encounter capture
+    // happens upstream in _computeV2Cost on line 1951-1953 /
+    // 1967-1969). The detail string deliberately echoes the
+    // "unrecognized providerID/modelID" wording from R3.4 + the
+    // findings catalog entry at design.md:781 so an operator
+    // reading the report can grep against either.
+    //
+    // Token-side BucketTotals fields are NOT touched here — the
+    // task brief is explicit: "Continue populating token-side
+    // fields (no change to TokenBuckets on drift)." That holds
+    // by construction because the token-side computation
+    // (uncachedSystemPrompt / history / toolOutputs above) runs
+    // off the tokenizer's parts walk + session.tokens_input, not
+    // off any pricing lookup.
+    //
+    // The fallback is gated on V2_COST_COMPUTE_ENABLED because
+    // the v1 path emits the historical 6-key null cost shape with
+    // no `_v2PricingDrift` marker at all, so the gate is
+    // defensive rather than strictly required. Still, keeping the
+    // gate consistent with 5.5's reconciliation gate above makes
+    // the flag-removal cutover (after task 8.1) a single
+    // simultaneous deletion.
+    if (V2_COST_COMPUTE_ENABLED && cost._v2PricingDrift) {
+      const driftKey = cost._v2DriftKey;
+      findings.push({
+        kind: 'pricing_table_drift',
+        detail:
+          `session ${session.id}: pricing table has no entry for ` +
+          `unrecognized providerID/modelID "${driftKey}". ` +
+          `All v2 per-bucket cost fields nullified for this ` +
+          `session via makeNullCostShape(); cost.total ` +
+          `preserved from session.cost. Other sessions in this ` +
+          `run retain populated cost.`,
+      });
+      cost = makeNullCostShape(session.cost || 0);
+    }
+
     return {
       sessionId: session.id,
       directory: session.directory,

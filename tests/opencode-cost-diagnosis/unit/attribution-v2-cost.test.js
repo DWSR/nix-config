@@ -52,6 +52,9 @@ const {
   TokenizerSplitter,
   AttributionEngine,
   setV2CostComputeEnabled,
+  makeNullCostShape,
+  PER_BUCKET_COST_KEYS,
+  CACHED_READ_SUB_BUCKET_KEYS,
 } = mod;
 
 // ---------------------------------------------------------------------
@@ -1883,6 +1886,514 @@ test('flag toggles cleanly OFF after every test (no leakage)', () => {
       Object.prototype.hasOwnProperty.call(attr.cost, k),
       false,
       `flag must be OFF at suite boundary; cost.${k} must not appear`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 5.6 — Pricing-drift fallback via makeNullCostShape and
+// pricing_table_drift finding emission.
+//
+// Trigger: any message in the session had unmatched (providerID,
+// modelID). _computeV2Cost marks the cost object with a
+// non-enumerable `_v2PricingDrift` and `_v2DriftKey`; attributeSession
+// must then:
+//   - replace cost with makeNullCostShape(session.cost) (so every v2
+//     cost field is null except cost.total which preserves
+//     session.cost), and
+//   - emit exactly one `pricing_table_drift` finding naming the
+//     session id and the unrecognized key.
+//
+// Token-side fields stay populated (no change to TokenBuckets on
+// drift). Other sessions in the same engine run retain their
+// populated cost shape.
+// ---------------------------------------------------------------------
+
+// Variant of the single-model reader where the assistant message
+// data carries `providerID` but is missing `modelID`. This triggers
+// the "per-message data-shape failure" drift branch in
+// _computeV2Cost (typeof modelID !== 'string').
+function makeMissingModelIdReader(session) {
+  return {
+    partsOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return [
+        {
+          id: 'prt_sys',
+          message_id: 'msg_sys',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'you are a coding agent' }),
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'prt_user',
+          message_id: 'msg_user',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'help me with this task' }),
+          time_created: 1,
+          time_updated: 1,
+        },
+        {
+          id: 'prt_asst',
+          message_id: 'msg_asst',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'sure here is the plan' }),
+          time_created: 2,
+          time_updated: 2,
+        },
+        {
+          id: 'prt_tool',
+          message_id: 'msg_asst',
+          session_id: session.id,
+          type: 'tool',
+          data: JSON.stringify({
+            tool: 'bash',
+            state: { output: 'ls -la\ntotal 0\n' },
+          }),
+          time_created: 3,
+          time_updated: 3,
+        },
+      ];
+    },
+    messagesOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return [
+        {
+          id: 'msg_sys',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'system' }),
+          role: 'system',
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'msg_user',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'user' }),
+          role: 'user',
+          time_created: 1,
+          time_updated: 1,
+        },
+        {
+          id: 'msg_asst',
+          session_id: session.id,
+          data: JSON.stringify({
+            role: 'assistant',
+            providerID: 'anthropic',
+            // modelID intentionally omitted — drift trigger.
+            variant: 'default',
+            tokens: {
+              input: SYN_INPUT,
+              output: SYN_OUTPUT,
+              reasoning: SYN_REASONING,
+              cache: { read: SYN_CACHE_READ, write: SYN_CACHE_WRITE },
+            },
+            cost: SYN_EXPECTED_COST,
+          }),
+          role: 'assistant',
+          time_created: 2,
+          time_updated: 2,
+        },
+      ];
+    },
+    descendantSessionsOf() {
+      return [];
+    },
+  };
+}
+
+// Variant where modelID is present but the pricing table has no
+// entry for that key. Exercises the second drift branch (lookup
+// returns null) and lets us assert the exact unrecognized key
+// captured in the finding.
+function makeUnknownModelReader(session, providerID, modelID) {
+  return {
+    partsOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return [
+        {
+          id: 'prt_sys',
+          message_id: 'msg_sys',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'you are a coding agent' }),
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'prt_user',
+          message_id: 'msg_user',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'help me with this task' }),
+          time_created: 1,
+          time_updated: 1,
+        },
+        {
+          id: 'prt_asst',
+          message_id: 'msg_asst',
+          session_id: session.id,
+          type: 'text',
+          data: JSON.stringify({ text: 'sure here is the plan' }),
+          time_created: 2,
+          time_updated: 2,
+        },
+      ];
+    },
+    messagesOfSession(sessionId) {
+      assert.equal(sessionId, session.id);
+      return [
+        {
+          id: 'msg_sys',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'system' }),
+          role: 'system',
+          time_created: 0,
+          time_updated: 0,
+        },
+        {
+          id: 'msg_user',
+          session_id: session.id,
+          data: JSON.stringify({ role: 'user' }),
+          role: 'user',
+          time_created: 1,
+          time_updated: 1,
+        },
+        {
+          id: 'msg_asst',
+          session_id: session.id,
+          data: JSON.stringify({
+            role: 'assistant',
+            providerID,
+            modelID,
+            variant: 'default',
+            tokens: {
+              input: SYN_INPUT,
+              output: SYN_OUTPUT,
+              reasoning: SYN_REASONING,
+              cache: { read: SYN_CACHE_READ, write: SYN_CACHE_WRITE },
+            },
+            cost: SYN_EXPECTED_COST,
+          }),
+          role: 'assistant',
+          time_created: 2,
+          time_updated: 2,
+        },
+      ];
+    },
+    descendantSessionsOf() {
+      return [];
+    },
+  };
+}
+
+test('flag ON / 5.6: drift session — cost.cachedRead === null AND every other v2 cost field null EXCEPT cost.total', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_missing_modelid' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Observable verbatim from the task brief: cost.cachedRead is
+    // null and every other v2 cost field is null EXCEPT cost.total.
+    assert.equal(
+      attr.cost.cachedRead,
+      null,
+      'drift cost.cachedRead must be null (makeNullCostShape fallback)',
+    );
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.equal(
+        attr.cost[k],
+        null,
+        `drift cost.${k} must be null on the v2 fallback shape`,
+      );
+    }
+    // cachedReadBreakdown is present-but-all-null on the drift shape.
+    assert.equal(
+      typeof attr.cost.cachedReadBreakdown,
+      'object',
+      'drift cost.cachedReadBreakdown must remain a {key:null,...} object',
+    );
+    assert.notEqual(attr.cost.cachedReadBreakdown, null);
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.equal(
+        attr.cost.cachedReadBreakdown[k],
+        null,
+        `drift cost.cachedReadBreakdown.${k} must be null`,
+      );
+    }
+    // The two per-dimension maps collapse to null entirely (not {}).
+    assert.equal(
+      attr.cost.subagentDispatchByAgent,
+      null,
+      'drift cost.subagentDispatchByAgent must be null (entire map)',
+    );
+    assert.equal(
+      attr.cost.toolOutputsByTool,
+      null,
+      'drift cost.toolOutputsByTool must be null (entire map)',
+    );
+    // cost.total is the sole survivor and carries session.cost.
+    assert.equal(
+      attr.cost.total,
+      ses.cost,
+      'drift cost.total must equal session.cost',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.6: drift session emits exactly one pricing_table_drift finding tagged to the session id and the unrecognized key', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_unknown_model' });
+    // Use a (provider, model) the makeMatchedSinglePricing fake
+    // does not know about so the lookup returns null and we can
+    // assert the exact key string captured by the finding.
+    const reader = makeUnknownModelReader(
+      ses,
+      'fakeprovider',
+      'fakemodel-xyz',
+    );
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      'drift session must emit exactly one pricing_table_drift finding',
+    );
+    assert.match(
+      drift[0].detail,
+      new RegExp(ses.id),
+      'pricing_table_drift detail must name the session id',
+    );
+    assert.match(
+      drift[0].detail,
+      /fakeprovider\/fakemodel-xyz/,
+      'pricing_table_drift detail must name the unrecognized providerID/modelID key',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.6: drift session token-side BucketTotals fields remain populated (drift only nulls cost)', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_tokens_preserved' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Tokens.* must reflect the raw session counters regardless of
+    // pricing drift — the BucketTotals contract is independent of
+    // the cost shape.
+    assert.equal(attr.tokens.cachedRead, SYN_CACHE_READ);
+    assert.equal(attr.tokens.cachedWrite, SYN_CACHE_WRITE);
+    assert.equal(attr.tokens.output, SYN_OUTPUT);
+    assert.equal(attr.tokens.reasoning, SYN_REASONING);
+    // The three uncached sub-buckets must partition tokens_input
+    // exactly per the 5.2 invariant; we assert the sum here rather
+    // than each branch because the proportional split depends on
+    // the tokenizer's classification of the fixture parts.
+    const sumUncached =
+      attr.tokens.uncachedSystemPrompt +
+      attr.tokens.history +
+      attr.tokens.toolOutputs;
+    assert.equal(
+      sumUncached,
+      SYN_INPUT,
+      'tokens.uncachedSystemPrompt + history + toolOutputs must equal session.tokens_input on drift',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.6: drift session must NOT emit cost_invariant_violation (drift owns the cost-shape fault)', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_no_civ' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const civ = attr.findings.filter(
+      (f) => f.kind === 'cost_invariant_violation',
+    );
+    assert.equal(
+      civ.length,
+      0,
+      'drift suppresses cost_invariant_violation (5.5 reconciliation gated on _v2PricingDrift)',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.6: drift cost shape matches makeNullCostShape(session.cost) key-for-key', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_shape_parity' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const expected = makeNullCostShape(ses.cost);
+    // Compare the enumerable own-key shape so any drift marker
+    // (_v2PricingDrift / _v2DriftKey) that may still ride along
+    // non-enumerably does not interfere.
+    assert.deepEqual(
+      Object.keys(attr.cost).sort(),
+      Object.keys(expected).sort(),
+      'drift cost must carry exactly the makeNullCostShape key set',
+    );
+    for (const k of Object.keys(expected)) {
+      assert.deepEqual(
+        attr.cost[k],
+        expected[k],
+        `drift cost.${k} must match makeNullCostShape parity`,
+      );
+    }
+    // Internal markers, if still attached, must remain
+    // non-enumerable so they cannot leak into JSON.stringify.
+    const enumerableKeys = Object.keys(attr.cost);
+    assert.equal(
+      enumerableKeys.includes('_v2PricingDrift'),
+      false,
+      '_v2PricingDrift must not be enumerable on the drift cost shape',
+    );
+    assert.equal(
+      enumerableKeys.includes('_v2DriftKey'),
+      false,
+      '_v2DriftKey must not be enumerable on the drift cost shape',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.6: across two sessions in one engine run, matched stays populated AND drift gets the null shape', () => {
+  // The task brief's central observable: "two sessions (one
+  // matched, one with a synthetic missing modelID) returns the
+  // matched session with populated cost.* fields and the drift
+  // session with cost.cachedRead === null".
+  //
+  // We exercise this by running the engine against each session
+  // separately (attributeSession is per-session; the "run" is
+  // simulated at the test layer the way ReportAssembler will
+  // consume per-session attributions).
+  setV2CostComputeEnabled(true);
+  try {
+    const matchedSes = makeSyntheticSession({ id: 'ses_matched_in_run' });
+    const matchedEng = new AttributionEngine(
+      makeMatchedSingleModelReader(matchedSes),
+      new SubagentAggregator(makeMatchedSingleModelReader(matchedSes)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const matchedAttr = matchedEng.attributeSession(matchedSes);
+
+    const driftSes = makeSyntheticSession({ id: 'ses_drift_in_run' });
+    const driftEng = new AttributionEngine(
+      makeMissingModelIdReader(driftSes),
+      new SubagentAggregator(makeMissingModelIdReader(driftSes)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const driftAttr = driftEng.attributeSession(driftSes);
+
+    // Matched: cost.* fields populated; no drift finding.
+    assert.equal(typeof matchedAttr.cost.cachedRead, 'number');
+    assert.equal(typeof matchedAttr.cost.output, 'number');
+    assert.equal(typeof matchedAttr.cost.uncachedInput, 'number');
+    assert.equal(typeof matchedAttr.cost.uncachedSystemPrompt, 'number');
+    assert.ok(
+      Math.abs(matchedAttr.cost.total - matchedSes.cost) < COST_EPSILON,
+      'matched cost.total must equal session.cost',
+    );
+    assert.equal(
+      matchedAttr.findings.filter(
+        (f) => f.kind === 'pricing_table_drift',
+      ).length,
+      0,
+      'matched session must NOT emit pricing_table_drift',
+    );
+
+    // Drift: cost.cachedRead === null; exactly one drift finding
+    // tagged to the drift session's id.
+    assert.equal(driftAttr.cost.cachedRead, null);
+    assert.equal(driftAttr.cost.output, null);
+    assert.equal(driftAttr.cost.uncachedSystemPrompt, null);
+    assert.equal(driftAttr.cost.total, driftSes.cost);
+    const drift = driftAttr.findings.filter(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.equal(drift.length, 1);
+    assert.match(drift[0].detail, new RegExp(driftSes.id));
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag OFF / 5.6: drift fallback path is not exercised (v1 null-shape path)', () => {
+  // R7.AC1 forward-compat: flag-OFF runs the v1 cost shape. The
+  // 5.6 drift fallback only runs when the flag is ON.
+  const ses = makeSyntheticSession({ id: 'ses_drift_flag_off' });
+  const reader = makeMissingModelIdReader(ses);
+  const eng = new AttributionEngine(
+    reader,
+    new SubagentAggregator(reader),
+    new TokenizerSplitter(),
+    makeMatchedSinglePricing(),
+  );
+  const attr = eng.attributeSession(ses);
+  // No pricing_table_drift finding on flag OFF.
+  assert.equal(
+    attr.findings.filter((f) => f.kind === 'pricing_table_drift').length,
+    0,
+    'flag OFF must not emit pricing_table_drift',
+  );
+  // v1 cost shape: total + six v1 nulls, no v2 keys.
+  for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(attr.cost, k),
+      false,
+      `flag OFF must not surface v2 sub-bucket cost.${k}`,
     );
   }
 });
