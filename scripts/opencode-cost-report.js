@@ -1678,6 +1678,12 @@ class AttributionEngine {
         P_hist,
         P_tool,
         P_sum,
+        // Task 5.3: count-based apportionment input for the
+        // cachedRead sub-bucket cost decomposition. The classifier
+        // (TokenizerSplitter, task 3.1) always returns the 6 keys
+        // even when markersDegraded; the apportionment below
+        // handles all-zero-counts cleanly.
+        cachedReadBreakdown: provenance.cachedReadBreakdown,
       });
     } else {
       cost = {
@@ -1753,29 +1759,37 @@ class AttributionEngine {
    * non-enumerable so it cannot leak into JSON serialization at
    * the report layer; 5.6 strips it before returning anyway.
    *
-   * The 5.3 / 5.4 / 5.6 containers (`cachedReadBreakdown`,
-   * `subagentDispatchByAgent`, `toolOutputsByTool`) are stubbed
-   * as `null` here — their populated values land in the named
-   * tasks. Including the keys at this boundary keeps the v2
-   * cost-shape contract stable so downstream consumers
-   * (ReportAssembler 6.x, ReportSerializer 7.x) can write against
-   * the final shape without conditioning on which apportionment
-   * task has shipped.
-   *
-   * @param {object} session session row from SqliteReader.
-   * @param {Map<string, object>} messages role-keyed messages map
-   *   already materialized by the caller (avoids a second
-   *   iteration of the lazy reader iterable).
-   * @param {object} rollup return value of
-   *   `SubagentAggregator.rollup(session.id)` — used for the
-   *   `byAgent` per-agent cost dollars and nothing else here.
-   * @param {{P_sys: number, P_hist: number, P_tool: number,
-   *          P_sum: number}} provenance the same proportional-
-   *   split components the caller used for the token-side
-   *   uncached sub-buckets; we reuse the ratios so the cost-side
-   *   sub-bucket split matches the token-side split exactly.
-   * @returns {object} CostBuckets-shaped object.
-   */
+    * The 5.4 / 5.6 containers (`subagentDispatchByAgent`,
+    * `toolOutputsByTool`) are still stubbed as `null` here —
+    * their populated values land in the named tasks. Including
+    * the keys at this boundary keeps the v2 cost-shape contract
+    * stable so downstream consumers (ReportAssembler 6.x,
+    * ReportSerializer 7.x) can write against the final shape
+    * without conditioning on which apportionment task has shipped.
+    * (`cachedReadBreakdown` is populated below by task 5.3's
+    * count-based apportionment; task 5.7 will add a
+    * `markersDegraded` branch that selects an alternate
+    * proportional-from-uncached apportionment formula.)
+    *
+    * @param {object} session session row from SqliteReader.
+    * @param {Map<string, object>} messages role-keyed messages map
+    *   already materialized by the caller (avoids a second
+    *   iteration of the lazy reader iterable).
+    * @param {object} rollup return value of
+    *   `SubagentAggregator.rollup(session.id)` — used for the
+    *   `byAgent` per-agent cost dollars and nothing else here.
+    * @param {{P_sys: number, P_hist: number, P_tool: number,
+    *          P_sum: number,
+    *          cachedReadBreakdown: object}} provenance the
+    *   proportional-split components the caller used for the
+    *   token-side uncached sub-buckets (so the cost-side sub-bucket
+    *   split matches the token-side split exactly), plus the
+    *   classifier-derived `cachedReadBreakdown` counts (one entry
+    *   per CACHED_READ_SUB_BUCKET_KEYS key) used by task 5.3 to
+    *   apportion `session.tokens_cache_read` across the six
+    *   cachedRead sub-buckets.
+    * @returns {object} CostBuckets-shaped object.
+    */
   _computeV2Cost(session, messages, rollup, provenance) {
     const out = {
       total: session.cost || 0,
@@ -1788,9 +1802,15 @@ class AttributionEngine {
       uncachedSystemPrompt: 0,
       history: 0,
       toolOutputs: 0,
-      // 5.3 / 5.4 / 5.6 boundaries — stubbed null until those
-      // tasks populate. ReportAssembler/Serializer treat null as
-      // "not yet decomposed".
+      // 5.4 / 5.6 boundaries — stubbed null until those tasks
+      // populate. ReportAssembler/Serializer treat null as "not
+      // yet decomposed". `cachedReadBreakdown` is set here as a
+      // defensive default; the apportionment block at the bottom
+      // of this method unconditionally replaces it with a 6-key
+      // object (matching the pattern 5.2 uses for the uncached
+      // sub-buckets — both paths produce partial values on drift,
+      // and task 5.6's makeNullCostShape() override nullifies the
+      // entire shape when pricing-drift is detected).
       cachedReadBreakdown: null,
       subagentDispatchByAgent: null,
       toolOutputsByTool: null,
@@ -1938,6 +1958,96 @@ class AttributionEngine {
       out.history = 0;
       out.toolOutputs = 0;
     }
+
+    // ── cachedRead sub-bucket apportionment (Flow 2 mirror) ──────
+    // Task 5.3 / R4.AC1, R4.AC2 / design.md:584.
+    //
+    // Apportion `session.tokens_cache_read` across the 6
+    // CACHED_READ_SUB_BUCKET_KEYS using
+    // `provenance.cachedReadBreakdown` counts as weights, with the
+    // last sub-bucket (`unclassifiedCached`) absorbing rounding so
+    // BOTH invariants hold exactly:
+    //
+    //   sum(tokens per sub-bucket) === session.tokens_cache_read   (exact)
+    //   sum(cost.cachedReadBreakdown.*) === cost.cachedRead       (ULP)
+    //
+    // Each non-absorber sub-bucket's cost is computed as
+    // `subBucketTokens × effectiveRate`, where the effective per-
+    // token rate is `out.cachedRead / T_cacheR` — a weighted
+    // average across messages when model identity varies, identical
+    // to `rates.cacheReadPerM / 1e6` on the single-model happy
+    // path. Deriving the rate this way (rather than re-walking
+    // messages) makes the cost-sum invariant trivially exact:
+    // `sum(tokens × rate) = rate × sum(tokens) = rate × T_cacheR =
+    // out.cachedRead` (within ULP). For tightest possible
+    // adherence, `unclassifiedCached`'s cost is explicitly
+    // computed by subtraction so any FP rounding the per-bucket
+    // multiplications introduced lands in the residual rather than
+    // propagating to the parent total.
+    //
+    // Two degenerate cases collapse every sub-bucket to 0:
+    //   - T_cacheR === 0           → nothing to apportion
+    //   - breakdownSum === 0       → ratio undefined; nothing to
+    //                                weight against. (Task 5.7's
+    //                                markersDegraded path will
+    //                                re-distribute via the uncached
+    //                                ratios when this state is
+    //                                observed in production; 5.3
+    //                                stays out of its way.)
+    //
+    // Defensive sanity-check: the absorber MUST be the last entry
+    // of CACHED_READ_SUB_BUCKET_KEYS (currently `unclassifiedCached`).
+    // The constant is `Object.freeze`'d above but a future edit
+    // could reorder it; the check fires at the apportionment site
+    // rather than letting the absorber silently shift.
+    const T_cacheR = session.tokens_cache_read || 0;
+    const crb = provenance.cachedReadBreakdown || {};
+    const lastKey =
+      CACHED_READ_SUB_BUCKET_KEYS[CACHED_READ_SUB_BUCKET_KEYS.length - 1];
+    if (lastKey !== 'unclassifiedCached') {
+      throw new Error(
+        `AttributionEngine INVARIANT: expected CACHED_READ_SUB_BUCKET_KEYS ` +
+          `to end with 'unclassifiedCached' (the absorber per design.md:584); ` +
+          `got '${lastKey}'. Reordering this constant breaks the ` +
+          `cachedReadBreakdown apportionment.`,
+      );
+    }
+    const breakdownSum = CACHED_READ_SUB_BUCKET_KEYS.reduce(
+      (acc, k) => acc + (typeof crb[k] === 'number' ? crb[k] : 0),
+      0,
+    );
+    const cachedReadBreakdownCost = {};
+    if (T_cacheR === 0 || breakdownSum === 0) {
+      // Degenerate: nothing to apportion. Every sub-bucket is 0.
+      for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+        cachedReadBreakdownCost[k] = 0;
+      }
+    } else {
+      const effectiveRate = out.cachedRead / T_cacheR;
+      let tokensApportioned = 0;
+      let costApportioned = 0;
+      // Apportion the first N-1 sub-buckets via the round-multiply
+      // formula. The absorber takes whatever's left.
+      for (let i = 0; i < CACHED_READ_SUB_BUCKET_KEYS.length - 1; i++) {
+        const k = CACHED_READ_SUB_BUCKET_KEYS[i];
+        const count = typeof crb[k] === 'number' ? crb[k] : 0;
+        const tokens = Math.round((T_cacheR * count) / breakdownSum);
+        tokensApportioned += tokens;
+        const subCost = tokens * effectiveRate;
+        costApportioned += subCost;
+        cachedReadBreakdownCost[k] = subCost;
+      }
+      // Absorber: tokens = T - sum(apportioned), cost = parent total
+      // - sum(apportioned cost). The cost-side subtraction (rather
+      // than a fresh tokens × rate multiplication) is what makes
+      // the cost-sum invariant tight to ULP regardless of how the
+      // per-bucket multiplications rounded.
+      void tokensApportioned; // token-side absorption is implicit
+      // (the token count is reconstructible as cost/rate in tests
+      // and downstream; the cost shape doesn't carry it directly).
+      cachedReadBreakdownCost[lastKey] = out.cachedRead - costApportioned;
+    }
+    out.cachedReadBreakdown = cachedReadBreakdownCost;
 
     if (pricingDrift) {
       // Non-enumerable internal marker for task 5.6 to read. The

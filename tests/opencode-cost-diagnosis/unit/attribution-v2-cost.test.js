@@ -390,12 +390,10 @@ test('flag ON: cost shape contains exactly the 9 flat cost fields + total', () =
         `cost.${k} must be non-negative, got ${attr.cost[k]}`,
       );
     }
-    // 5.3 / 5.4 / 5.6 containers — still null at the 5.2 boundary.
-    assert.equal(
-      attr.cost.cachedReadBreakdown,
-      null,
-      'cost.cachedReadBreakdown is task 5.3 boundary — must stay null in 5.2',
-    );
+    // 5.4 / 5.6 containers — still null at this boundary.
+    // (Task 5.3 populated `cachedReadBreakdown`; the assertion that
+    // it stays null moved out and its replacement lives in the
+    // task 5.3 block lower in this file.)
     assert.equal(
       attr.cost.subagentDispatchByAgent,
       null,
@@ -680,6 +678,476 @@ test('flag ON: P_sum==0 collapses all three uncached sub-bucket costs to 0', () 
       (f) => f.kind === 'unclassifiable_input',
     );
     assert.equal(uci.length, 1);
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 5.3 — cachedRead sub-bucket apportionment.
+//
+// Scope (5.3 _Boundary_): AttributionEngine apportions
+// `session.tokens_cache_read` across the 6 cachedRead sub-buckets
+// using `TokenizerProvenance.cachedReadBreakdown` counts. Last
+// sub-bucket (`unclassifiedCached`) absorbs rounding so both
+// invariants hold exactly:
+//
+//   sum(tokens per sub-bucket) === session.tokens_cache_read     (exact)
+//   sum(cost.cachedReadBreakdown.*) === cost.cachedRead          (within ULP)
+//
+// Each non-absorber sub-bucket's cost is `subBucketTokens × rate`
+// where `rate = cost.cachedRead / session.tokens_cache_read` is the
+// effective per-token rate (a weighted average across messages when
+// model identity varies, identical to `cacheReadPerM / 1e6` on the
+// single-model happy path). The absorber's cost is computed by
+// subtraction so the cost sum is exact regardless of float rounding
+// on the multiplication side.
+//
+// The tests inject the TokenizerProvenance via a stub Tokenizer so
+// the per-sub-bucket count distribution is controlled directly —
+// the real TokenizerSplitter in production today returns
+// `markersDegraded: true` with three of the six counts at zero
+// (Decision 6 / task 5.7 territory). Decoupling the apportionment
+// test from the classifier lets 5.3 own its boundary cleanly without
+// also pinning it to the classifier's current behavior.
+// ---------------------------------------------------------------------
+
+// Stub tokenizer factory: returns whatever provenance the test asks
+// for. Mirrors the surface `AttributionEngine._attributeSession`
+// touches: a single `classifyAndCount(parts, messages)` call.
+function makeStubTokenizer(provenance) {
+  return {
+    classifyAndCount(_parts, _messages) {
+      return provenance;
+    },
+  };
+}
+
+// Build a provenance whose uncached side classifies cleanly (so
+// 5.2's flow 2 split runs and the existing v1 invariants hold) and
+// whose cachedRead side carries the requested 6-key breakdown with
+// markersDegraded explicitly false. The unclassifiedCount stays at
+// 0 so we don't trigger schema_partial_data noise.
+function makeProvenance(cachedReadBreakdown, uncached = null) {
+  const u = uncached || {
+    systemPrompt: 100,
+    history: 200,
+    toolOutput: 50,
+  };
+  return {
+    systemPrompt: u.systemPrompt,
+    history: u.history,
+    toolOutput: u.toolOutput,
+    unclassifiedCount: 0,
+    cachedReadBreakdown,
+    markersDegraded: false,
+    failedMarkers: Object.freeze([]),
+    byTool: new Map(),
+  };
+}
+
+test('flag ON / 5.3: cost.cachedReadBreakdown is a populated 6-key object on the matched path', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 150,
+      accumulatedToolOutputsCached: 100,
+      unclassifiedCached: 50,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    // R4.AC1: at minimum five named sub-buckets + the residual.
+    // The container must be a populated object (not null) on the
+    // matched path. CACHED_READ_SUB_BUCKET_KEYS pins the exact set.
+    assert.notEqual(
+      attr.cost.cachedReadBreakdown,
+      null,
+      'cost.cachedReadBreakdown must be populated after task 5.3',
+    );
+    assert.equal(typeof attr.cost.cachedReadBreakdown, 'object');
+    const keys = Object.keys(attr.cost.cachedReadBreakdown).sort();
+    assert.deepEqual(
+      keys,
+      [
+        'accumulatedHistoryCached',
+        'accumulatedToolOutputsCached',
+        'agentsMdCached',
+        'mcpToolSchemasCached',
+        'systemPromptCached',
+        'unclassifiedCached',
+      ],
+      'cachedReadBreakdown must carry exactly the 6 CACHED_READ_SUB_BUCKET_KEYS',
+    );
+    for (const k of keys) {
+      assert.equal(
+        typeof attr.cost.cachedReadBreakdown[k],
+        'number',
+        `cachedReadBreakdown.${k} must be a number on the matched path`,
+      );
+      assert.ok(
+        Number.isFinite(attr.cost.cachedReadBreakdown[k]),
+        `cachedReadBreakdown.${k} must be finite`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.3: cost sum invariant — sum(cachedReadBreakdown.*) === cost.cachedRead within $0.01', () => {
+  // R4.AC2: sum-correctness with last-sub-bucket-absorbs-rounding.
+  // Observable from task 5.3 brief:
+  //   sum(cost.cachedReadBreakdown.*) === cost.cachedRead within $0.01
+  // In practice we achieve this within float ULP (much tighter
+  // than $0.01) by computing unclassifiedCached's cost via
+  // subtraction from the parent total rather than via the
+  // multiply-then-round path the other five sub-buckets take.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    // Pick counts whose sum (337) does NOT divide T_cacheR=500 so
+    // rounding actually has to be absorbed somewhere. A clean
+    // divisible split would not exercise the absorber.
+    const breakdown = {
+      systemPromptCached: 17,
+      agentsMdCached: 23,
+      mcpToolSchemasCached: 31,
+      accumulatedHistoryCached: 113,
+      accumulatedToolOutputsCached: 89,
+      unclassifiedCached: 64,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const subSum =
+      attr.cost.cachedReadBreakdown.systemPromptCached +
+      attr.cost.cachedReadBreakdown.agentsMdCached +
+      attr.cost.cachedReadBreakdown.mcpToolSchemasCached +
+      attr.cost.cachedReadBreakdown.accumulatedHistoryCached +
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached +
+      attr.cost.cachedReadBreakdown.unclassifiedCached;
+    assert.ok(
+      Math.abs(subSum - attr.cost.cachedRead) < 0.01,
+      `cachedReadBreakdown.* sum (${subSum}) must equal cost.cachedRead ` +
+        `(${attr.cost.cachedRead}) within $0.01; observed delta = ` +
+        `${Math.abs(subSum - attr.cost.cachedRead)}`,
+    );
+    // Bonus tightness — ULP-scale, not cent-scale.
+    assert.ok(
+      Math.abs(subSum - attr.cost.cachedRead) < COST_EPSILON,
+      `cachedReadBreakdown.* sum must equal cost.cachedRead within ` +
+        `the ULP-scale tolerance the absorber pattern guarantees`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.3: token sum invariant — sum(per-sub-bucket tokens) === session.tokens_cache_read exactly', () => {
+  // R4.AC2: "sum of cached-read sub-bucket token counts equals the
+  // cached-read bucket total exactly". The token-side breakdown is
+  // not exposed on SessionAttribution (the cost shape carries only
+  // dollars), so we reconstruct it indirectly: every non-absorber
+  // sub-bucket's cost is exactly `subBucketTokens × rate`, so
+  // `cost.cachedReadBreakdown[k] / rate` returns the exact integer
+  // token count for that sub-bucket. The absorber's tokens are
+  // T_cacheR minus the apportioned sum.
+  //
+  // This indirect check is sufficient because the invariant is
+  // about the existence and correctness of the underlying token
+  // apportionment, not its API exposure.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    // Same non-divisible counts as the cost-sum test so rounding
+    // actually has to be absorbed.
+    const counts = {
+      systemPromptCached: 17,
+      agentsMdCached: 23,
+      mcpToolSchemasCached: 31,
+      accumulatedHistoryCached: 113,
+      accumulatedToolOutputsCached: 89,
+      unclassifiedCached: 64,
+    };
+    const breakdownSum =
+      counts.systemPromptCached +
+      counts.agentsMdCached +
+      counts.mcpToolSchemasCached +
+      counts.accumulatedHistoryCached +
+      counts.accumulatedToolOutputsCached +
+      counts.unclassifiedCached;
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(counts)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const T = ses.tokens_cache_read;
+    const rate = attr.cost.cachedRead / T; // effective per-token rate
+
+    // Re-derive the expected per-sub-bucket token counts using the
+    // same apportionment formula the implementation MUST use.
+    // (Mirrored from spec design.md:584 / task 5.3 brief.)
+    const KEYS = [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+    ];
+    let expectedApportioned = 0;
+    const expectedTokens = {};
+    for (const k of KEYS) {
+      expectedTokens[k] = Math.round((T * counts[k]) / breakdownSum);
+      expectedApportioned += expectedTokens[k];
+    }
+    expectedTokens.unclassifiedCached = T - expectedApportioned;
+
+    // Sum invariant on the expected side (proves the formula is sum-exact).
+    const expSum =
+      expectedTokens.systemPromptCached +
+      expectedTokens.agentsMdCached +
+      expectedTokens.mcpToolSchemasCached +
+      expectedTokens.accumulatedHistoryCached +
+      expectedTokens.accumulatedToolOutputsCached +
+      expectedTokens.unclassifiedCached;
+    assert.equal(
+      expSum,
+      T,
+      `expected per-sub-bucket token sum (${expSum}) must equal ` +
+        `session.tokens_cache_read (${T}) exactly by construction`,
+    );
+
+    // Implementation correctness: for each non-absorber sub-bucket,
+    // the cost equals `expectedTokens × rate` exactly. (The
+    // absorber takes the FP residual so it's checked indirectly
+    // via the cost-sum invariant in the previous test.)
+    for (const k of KEYS) {
+      const expCost = expectedTokens[k] * rate;
+      assert.ok(
+        Math.abs(attr.cost.cachedReadBreakdown[k] - expCost) < COST_EPSILON,
+        `cachedReadBreakdown.${k} must equal expected ${expectedTokens[k]} ` +
+          `tokens × ${rate}/tok = ${expCost}; got ${attr.cost.cachedReadBreakdown[k]}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.3: T_cacheR === 0 collapses every sub-bucket cost to 0', () => {
+  // Degenerate case: session never read from cache. Apportionment
+  // is undefined (divide-by-zero); all six sub-buckets must be 0
+  // and the cost-sum invariant holds vacuously (0+0+0+0+0+0 === 0).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({
+      id: 'ses_synth_v2_cacheR_zero',
+      tokens_cache_read: 0,
+      cost: SYN_EXPECTED_COST - (SYN_CACHE_READ * SYN_CACHE_READ_PER_M) / M,
+    });
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    // Override the assistant message so its cache.read matches the
+    // session's zeroed-out cached-read total — otherwise the
+    // per-message walk would still accumulate a non-zero
+    // cost.cachedRead while session.tokens_cache_read says 0.
+    const baseReader = makeMatchedSingleModelReader(ses);
+    const reader = {
+      partsOfSession(id) {
+        return baseReader.partsOfSession(id);
+      },
+      messagesOfSession(id) {
+        const msgs = [...baseReader.messagesOfSession(id)];
+        for (const m of msgs) {
+          if (m.role !== 'assistant') continue;
+          const parsed = JSON.parse(m.data);
+          parsed.tokens.cache.read = 0;
+          m.data = JSON.stringify(parsed);
+        }
+        return msgs;
+      },
+      descendantSessionsOf(id) {
+        return baseReader.descendantSessionsOf(id);
+      },
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(attr.cost.cachedRead, 0, 'parent total is 0 when no cached reads');
+    for (const k of [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+      'unclassifiedCached',
+    ]) {
+      assert.equal(
+        attr.cost.cachedReadBreakdown[k],
+        0,
+        `cachedReadBreakdown.${k} must be 0 when session.tokens_cache_read===0`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.3: T_cacheR > 0 but all breakdown counts === 0 collapses sub-buckets to 0', () => {
+  // Another degenerate case: session DID read from cache but the
+  // classifier returned zero counts across every sub-bucket. The
+  // apportionment ratio is undefined; design.md:584 specifies the
+  // same collapse behaviour — every named sub-bucket goes to 0,
+  // and unclassifiedCached also stays at 0 because there's no
+  // residual to attribute. The cost-sum invariant holds vacuously
+  // (0+0+0+0+0+0 === 0), but cost.cachedRead may itself be > 0 —
+  // i.e., the parent total is real, just unattributable. (Task 5.7
+  // owns the markersDegraded fallback that re-distributes via the
+  // uncached ratios when this state is observed; 5.3 just stays
+  // out of its way.)
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    // Parent total is real (the per-message walk accumulated it).
+    assert.ok(
+      attr.cost.cachedRead > 0,
+      'cost.cachedRead must reflect the real parent total even with all-zero breakdown',
+    );
+    for (const k of [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+      'unclassifiedCached',
+    ]) {
+      assert.equal(
+        attr.cost.cachedReadBreakdown[k],
+        0,
+        `cachedReadBreakdown.${k} must be 0 when every breakdown count is 0`,
+      );
+    }
+    // Cost-sum invariant is vacuous here — 0+0+0+0+0+0 === 0 ≠
+    // cost.cachedRead. Task 5.7's degraded path fixes this in
+    // production by re-distributing via the uncached ratios; 5.3
+    // intentionally does NOT re-attribute on its own because the
+    // markersDegraded signal isn't yet a branch in this engine.
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.3: unclassifiedCached absorbs token integer rounding (last-bucket pattern)', () => {
+  // Direct exercise of the absorber: pick a small breakdown where
+  // the round-multiply for the first five buckets is guaranteed to
+  // produce a residual that lands on unclassifiedCached. With
+  // T_cacheR=500 and breakdownSum=7, the per-bucket tokens are
+  // round(500*1/7)=71 for each of the first five (355 total) and
+  // unclassifiedCached absorbs 500-355=145 instead of round(500*2/7)=143.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 1,
+      agentsMdCached: 1,
+      mcpToolSchemasCached: 1,
+      accumulatedHistoryCached: 1,
+      accumulatedToolOutputsCached: 1,
+      unclassifiedCached: 2,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenance(breakdown)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const T = ses.tokens_cache_read; // 500
+    const rate = attr.cost.cachedRead / T;
+    // Five sub-buckets at round(500/7) === 71 tokens each.
+    const expFiveTokens = Math.round(T / 7);
+    const expFiveCost = expFiveTokens * rate;
+    for (const k of [
+      'systemPromptCached',
+      'agentsMdCached',
+      'mcpToolSchemasCached',
+      'accumulatedHistoryCached',
+      'accumulatedToolOutputsCached',
+    ]) {
+      assert.ok(
+        Math.abs(attr.cost.cachedReadBreakdown[k] - expFiveCost) < COST_EPSILON,
+        `cachedReadBreakdown.${k} must equal ${expFiveTokens} tokens × rate ` +
+          `(${expFiveCost}); got ${attr.cost.cachedReadBreakdown[k]}`,
+      );
+    }
+    // Absorber: cost.cachedRead minus the five-bucket sum.
+    const absorbed =
+      attr.cost.cachedRead -
+      attr.cost.cachedReadBreakdown.systemPromptCached -
+      attr.cost.cachedReadBreakdown.agentsMdCached -
+      attr.cost.cachedReadBreakdown.mcpToolSchemasCached -
+      attr.cost.cachedReadBreakdown.accumulatedHistoryCached -
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached;
+    assert.ok(
+      Math.abs(attr.cost.cachedReadBreakdown.unclassifiedCached - absorbed) <
+        COST_EPSILON,
+      `unclassifiedCached must absorb the residual (${absorbed}); ` +
+        `got ${attr.cost.cachedReadBreakdown.unclassifiedCached}`,
+    );
+    // Token-side: absorber gets T - 5×71 === 145 tokens (NOT 143).
+    const absorberTokens =
+      attr.cost.cachedReadBreakdown.unclassifiedCached / rate;
+    assert.ok(
+      Math.abs(absorberTokens - (T - 5 * expFiveTokens)) < 1e-6,
+      `unclassifiedCached must carry ${T - 5 * expFiveTokens} tokens ` +
+        `(T - 5×${expFiveTokens}); reconstructed ${absorberTokens}`,
+    );
   } finally {
     setV2CostComputeEnabled(false);
   }

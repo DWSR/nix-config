@@ -140,7 +140,7 @@
   - _Requirements: 2.1, 2.2, 2.5, 3.2, 5.3, 7.5_
   - _Boundary: AttributionEngine per-message cost compute_
 
-- [ ] 5.3 Implement cachedRead sub-bucket apportionment
+- [x] 5.3 Implement cachedRead sub-bucket apportionment
   - Apportion `session.tokens_cache_read` across the 6 cachedRead sub-buckets via `TokenizerProvenance.cachedReadBreakdown` counts using v1 Flow 2 (last-sub-bucket-absorbs-rounding pattern; `unclassifiedCached` is the absorber)
   - Each sub-bucket's cost is `subBucketTokens × cache_read_rate_per_token` (cost derives via the parent rate)
   - Sum-correctness invariants: token sum equals `session.tokens_cache_read` exactly; cost sum equals `cost.cachedRead` within rounding
