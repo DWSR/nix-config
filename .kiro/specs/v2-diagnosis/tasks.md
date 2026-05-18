@@ -17,7 +17,7 @@
   - _Requirements: 3.1, 3.2_
   - _Boundary: scripts/opencode-cost-report-pricing.json_
 
-- [ ] 1.3 Wire the pricing JSON into the Nix wrapper via OPENCODE_COST_PRICING_PATH
+- [x] 1.3 Wire the pricing JSON into the Nix wrapper via OPENCODE_COST_PRICING_PATH
   - Extend `scripts/opencode-cost-report.nix` to add the pricing JSON as a build input via `${./opencode-cost-report-pricing.json}` path interpolation
   - Set `OPENCODE_COST_PRICING_PATH` to the store path in the wrapper text before the `exec ${nodejs}/bin/node ...` line
   - Observable: `cat $(which opencode-cost-report)` shows `export OPENCODE_COST_PRICING_PATH=/nix/store/...-opencode-cost-report-pricing.json`; the file at that path is readable
@@ -333,3 +333,4 @@
 
 - 1.1 → Decision 6 gate result: degraded fallback ships, not Strategy A. Only 2 of 5 cachedRead sub-buckets (`accumulatedHistoryCached`, `accumulatedToolOutputsCached`) have inferred markers; the other 3 (system prompt, AGENTS.md, MCP schemas) are constructed per-turn at request time and never persisted in the opencode `parts` table — Strategy A is structurally unreachable for them. Subsequent classifier work (3.1) should wire the `markersDegraded=true` proportional-from-uncached path described in design.md Decision 6 and emit `cached_read_classifier_degraded`. The classifier marker constants from task 1.5 should use a recognized sentinel value for the 3 unreliable sub-buckets so `markersDegraded` fires automatically.
 - 1.2 → models.dev upstream catalog omits `cost.cache_read` and `cost.cache_write` for OpenAI `gpt-5.5-pro` (similar to how it omits `cost.reasoning` for Claude models). The vendored snapshot preserves the upstream "don't fabricate" shape (omit instead of writing 0). Task 2.1 `PricingTable.lookup` MUST substitute `0` for missing `cache_read` and `cache_write` exactly as design § PricingTable mandates for missing `reasoning` so the returned `Rates` shape stays complete with all five fields.
+- 1.3 → The Nix wrapper now exports `OPENCODE_COST_PRICING_PATH=${./opencode-cost-report-pricing.json}` (Nix path interpolation, captured at build time). The on-PATH `opencode-cost-report` binary will NOT reflect this change until `darwin-rebuild switch` runs. Subsequent tasks that need to verify the env var on PATH (e.g., the smoke test in 1.4) should validate against the source file's text — the rebuild-and-cutover is a manual operator step at the end of the implementation cycle (see Migration Strategy in design.md).

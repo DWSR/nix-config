@@ -1,7 +1,9 @@
 /*
   scripts/opencode-cost-report.nix — wrapper for the opencode session
   cost-attribution diagnostic CLI (Task 1.3 of the
-  opencode-cost-diagnosis spec; Requirement 1).
+  opencode-cost-diagnosis spec; Requirement 1; extended in Task 1.3 of
+  the v2-diagnosis spec to wire the bundled pricing JSON via
+  OPENCODE_COST_PRICING_PATH per Requirements 3.1 and 3.5).
 
   Shape mirrors `scripts/cavemem-import-vault.nix`: a
   `writeShellApplication` that pins the Node runtime via
@@ -42,6 +44,14 @@ writeShellApplication {
     # derivation produces a flat $out/lib/node_modules/ layout
     # specifically for this kind of NODE_PATH-based consumption.
     export NODE_PATH=${opencode-cost-diagnosis-deps}/lib/node_modules
+
+    # Pass the build-time store path of the bundled pricing JSON to
+    # the runtime via env var. `PricingTable` (v2-diagnosis Task 2.1)
+    # reads $OPENCODE_COST_PRICING_PATH and loads rates from it; the
+    # path is captured at build time via Nix path interpolation so
+    # the runtime sees an immutable /nix/store/... path (Requirements
+    # 3.1, 3.5).
+    export OPENCODE_COST_PRICING_PATH=${./opencode-cost-report-pricing.json}
 
     exec ${nodejs}/bin/node ${./opencode-cost-report.js} "$@"
   '';
