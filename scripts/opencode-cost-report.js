@@ -1003,20 +1003,45 @@ class TokenizerSplitter {
    *   },
    *   markersDegraded: boolean,
    *   failedMarkers: ReadonlyArray<string>,
+   *   byTool: ReadonlyMap<string, { cached: number, uncached: number }>,
    * }} TokenizerProvenance. The four v1 keys are always present
    *   (consumed by AttributionEngine's existing Flow 2). The v2
    *   additions — cachedReadBreakdown's six sub-buckets, the
-   *   markersDegraded boolean, and the failedMarkers array —
-   *   surface the cachedRead classifier state introduced in
-   *   task 3.1 (design.md TokenizerSplitter (extended) lines
-   *   454-514, Decision 6 lines 829-836). The v2 fields are
-   *   computed in the SAME single-pass walk as the v1 fields;
-   *   every part contributes to exactly one v1 bucket AND exactly
-   *   one v2 cachedRead sub-bucket. AttributionEngine (task 5.7)
-   *   consumes markersDegraded / failedMarkers to choose between
-   *   Strategy A and the proportional-from-uncached fallback;
-   *   ReportSerializer surfaces the cachedRead breakdown and the
+   *   markersDegraded boolean, the failedMarkers array, and the
+   *   byTool per-tool decomposition — surface the cachedRead
+   *   classifier state introduced in task 3.1 and the per-tool
+   *   dimension introduced in task 3.2 (design.md TokenizerSplitter
+   *   (extended) lines 454-514, Decision 6 lines 829-836). The v2
+   *   fields are computed in the SAME single-pass walk as the v1
+   *   fields; every part contributes to exactly one v1 bucket AND
+   *   exactly one v2 cachedRead sub-bucket. AttributionEngine
+   *   (task 5.7) consumes markersDegraded / failedMarkers to choose
+   *   between Strategy A and the proportional-from-uncached
+   *   fallback; AttributionEngine (task 5.4) consumes byTool to
+   *   compute per-tool dollar contributions; ReportSerializer
+   *   surfaces the cachedRead breakdown, byTool, and the
    *   degraded-state finding.
+   *
+   * Cached/uncached partition for byTool (Approach C from task 3.2
+   * brief): each tool part contributes its full tiktoken count to
+   * BOTH `cached` and `uncached`. The apparent double-counting does
+   * NOT survive into dollars because AttributionEngine apportions
+   * session-level cachedRead dollars and uncached input dollars
+   * across the per-tool weights INDEPENDENTLY — each side is
+   * normalized within its own dollar total. Tool parts that
+   * contribute 0 tokens to v1 toolOutput (state.output absent or
+   * empty) do NOT create a byTool key. The literal name
+   * "(unknown-tool)" is used as the residual for tool parts whose
+   * tool-name field is missing or non-string under BOTH probes.
+   *
+   * Tool-name extraction tries `data.name` first (per design.md
+   * TokenizerSplitter Service Interface lines 504-510) AND falls
+   * back to `data.tool` when `data.name` is missing/non-string —
+   * because the real opencode tool-part payload uses `tool` rather
+   * than `name`, while the design spec and any future migration to
+   * `name` both remain honored. See `## Implementation Notes` for
+   * task 3.2 in `.kiro/specs/v2-diagnosis/tasks.md` for the
+   * rationale.
    */
   classifyAndCount(parts, messages) {
     const enc = this._ensureEncoding();
@@ -1057,6 +1082,19 @@ class TokenizerSplitter {
     let accumulatedHistoryCached = 0;
     let accumulatedToolOutputsCached = 0;
     let unclassifiedCached = 0;
+
+    // v2 byTool — per-tool decomposition of tool-output tokens
+    // (task 3.2 / Requirement 6.1, 6.2). Keyed by literal tool name
+    // extracted defensively from `part.data.name` first (per
+    // design.md Service Interface), then `part.data.tool` as a
+    // fallback for the real opencode payload shape; non-string /
+    // missing under BOTH probes fold into the residual key
+    // `(unknown-tool)`. Each entry holds a `{ cached, uncached }`
+    // pair both populated from the same tiktoken count (Approach C
+    // from the 3.2 task brief); AttributionEngine apportions
+    // session dollars across the partitions independently so the
+    // equal-value bookkeeping doesn't over-count downstream.
+    const byTool = new Map();
 
     const systemPromptMarkerReliable =
       this._markers.systemPrompt !== MARKER_UNRELIABLE_SENTINEL;
@@ -1146,12 +1184,49 @@ class TokenizerSplitter {
           } else {
             unclassifiedCached += tokens;
           }
+          // byTool dispatch: extract the tool name defensively from
+          // either of the two known fields. Primary probe is
+          // `data.name` (per design.md TokenizerSplitter Service
+          // Interface lines 504-510 / task 3.2 acceptance criterion 2).
+          // Fallback probe is `data.tool` — the field the real
+          // opencode tool-part payload actually uses today. Either
+          // string value produces a real key; missing or non-string
+          // (number, null, object, undefined) under BOTH probes
+          // fold into the literal residual "(unknown-tool)". See
+          // `## Implementation Notes` for task 3.2 in
+          // `.kiro/specs/v2-diagnosis/tasks.md` for the rationale.
+          // We populate byTool ONLY for tool parts that contributed
+          // >0 tokens to v1 toolOutput — pending / running /
+          // empty-output tool parts must NOT pollute byTool with
+          // zero-count entries (task brief REFACTOR guidance:
+          // omit cleanly).
+          let name;
+          if (data && typeof data.name === 'string') {
+            name = data.name;
+          } else if (data && typeof data.tool === 'string') {
+            name = data.tool;
+          } else {
+            name = '(unknown-tool)';
+          }
+          const existing = byTool.get(name);
+          if (existing === undefined) {
+            byTool.set(name, { cached: tokens, uncached: tokens });
+          } else {
+            // Aggregate across multiple parts under the same tool
+            // name. Replace rather than mutate so we can freeze
+            // each final entry uniformly at the end of the walk.
+            byTool.set(name, {
+              cached: existing.cached + tokens,
+              uncached: existing.uncached + tokens,
+            });
+          }
         }
         // Tool parts whose state.output is absent or empty (pending
         // / running / errored-without-body) contribute 0. They are
         // NOT unclassified — the design rule covers tool parts
         // explicitly; the "no output" condition is just an empty
-        // contribution.
+        // contribution. Same rationale extends to byTool: a
+        // zero-token tool part has no per-tool weight to record.
       } else {
         // Unknown part.type. Extract whatever content we can find
         // so the Attribution Engine sees a non-zero count (its
@@ -1183,6 +1258,17 @@ class TokenizerSplitter {
       }
     }
 
+    // Freeze each byTool entry so downstream consumers
+    // (AttributionEngine 5.4, ReportAssembler 6.2) cannot mutate
+    // per-tool counts by reference. Map itself can't be made
+    // truly read-only via Object.freeze (Map.prototype.set is not
+    // a frozen own property), but freezing the entries blocks the
+    // primary mutation risk: a consumer that does
+    // `byTool.get(name).cached++` for a per-tool accumulator.
+    for (const [name, entry] of byTool) {
+      byTool.set(name, Object.freeze(entry));
+    }
+
     return {
       // v1 fields — UNCHANGED contract.
       systemPrompt,
@@ -1204,6 +1290,10 @@ class TokenizerSplitter {
       // get the signal even when `parts` is empty.
       markersDegraded: this._markersDegraded,
       failedMarkers: this._failedMarkers,
+      // v2 per-tool decomposition (task 3.2 / Requirement 6.1, 6.2).
+      // Always a Map (possibly empty); see classifyAndCount JSDoc
+      // for the cached/uncached partition semantics.
+      byTool,
     };
   }
 }
