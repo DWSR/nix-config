@@ -1663,6 +1663,34 @@ class AttributionEngine {
         `spec. Set to null in v1; shape preserved for forward-compat.`,
     });
 
+    // ── Cost shape selection (v1 null shape vs v2 populated) ────
+    // Default flag OFF: emit the historical v1 cost shape (six
+    // null per-bucket fields + total). Flag ON: walk messages
+    // chronologically, look up rates, accumulate per-bucket
+    // dollar contributions across the nine v2 flat fields, and
+    // apportion the uncached-input cost across the three
+    // sub-buckets using the same P_sys:P_hist:P_tool ratio v1
+    // already computed for the token side above.
+    let cost;
+    if (V2_COST_COMPUTE_ENABLED) {
+      cost = this._computeV2Cost(session, messages, rollup, {
+        P_sys,
+        P_hist,
+        P_tool,
+        P_sum,
+      });
+    } else {
+      cost = {
+        total: session.cost || 0,
+        cachedRead: null,
+        cachedWrite: null,
+        uncachedInput: null,
+        output: null,
+        reasoning: null,
+        subagentDispatch: null,
+      };
+    }
+
     return {
       sessionId: session.id,
       directory: session.directory,
@@ -1680,17 +1708,256 @@ class AttributionEngine {
         reasoning: session.tokens_reasoning || 0,
         subagentDispatch,
       },
-      cost: {
-        total: session.cost || 0,
-        cachedRead: null,
-        cachedWrite: null,
-        uncachedInput: null,
-        output: null,
-        reasoning: null,
-        subagentDispatch: null,
-      },
+      cost,
       findings,
     };
+  }
+
+  /**
+   * Task 5.2 — per-message v2 cost compute.
+   *
+   * Walks the session's messages in chronological order (the
+   * Reader's `messagesOfSession` already orders by `time_created
+   * ASC`), filters to assistant messages, parses `message.data`
+   * JSON, extracts `(providerID, modelID)` and per-message token
+   * counts, and accumulates per-bucket dollar contributions for
+   * the nine v2 flat cost fields:
+   *
+   *   cachedRead, cachedWrite, uncachedInput, output, reasoning
+   *   subagentDispatch, uncachedSystemPrompt, history, toolOutputs
+   *
+   * The uncached sub-bucket trio is apportioned from the
+   * accumulated `uncachedInput` total using the same Flow 2
+   * (P_sys : P_hist : P_tool) ratio the token side already uses,
+   * with `toolOutputs` absorbing rounding (so the sum invariant
+   * `uncachedSystemPrompt + history + toolOutputs === uncachedInput`
+   * holds exactly on the matched path). `subagentDispatch` is the
+   * sum of `rollup.byAgent[*].cost` — which already incorporates
+   * the descendants' authoritative `session.cost` (task 4.1) — so
+   * AttributionEngine never recomputes per-agent costs from
+   * per-descendant rates.
+   *
+   * Rate convention: every `PricingTable.Rates` field is dollars
+   * per million tokens, so per-message cost is
+   * `tokens × ratePerM / 1e6`.
+   *
+   * Drift handling (the actual cost-shape replacement lives in
+   * task 5.6's boundary): if any assistant message is missing
+   * `providerID`/`modelID`, or if `pricingTable.lookup` returns
+   * `null` for any matched call, we mark the session via
+   * `cost._v2PricingDrift = true` and stop accumulating further
+   * contributions for the unmatched message but still return the
+   * partial cost shape. Task 5.6 reads the flag, replaces the
+   * cost shape with `makeNullCostShape(session.cost)`, and emits
+   * the `pricing_table_drift` finding. The marker field is
+   * non-enumerable so it cannot leak into JSON serialization at
+   * the report layer; 5.6 strips it before returning anyway.
+   *
+   * The 5.3 / 5.4 / 5.6 containers (`cachedReadBreakdown`,
+   * `subagentDispatchByAgent`, `toolOutputsByTool`) are stubbed
+   * as `null` here — their populated values land in the named
+   * tasks. Including the keys at this boundary keeps the v2
+   * cost-shape contract stable so downstream consumers
+   * (ReportAssembler 6.x, ReportSerializer 7.x) can write against
+   * the final shape without conditioning on which apportionment
+   * task has shipped.
+   *
+   * @param {object} session session row from SqliteReader.
+   * @param {Map<string, object>} messages role-keyed messages map
+   *   already materialized by the caller (avoids a second
+   *   iteration of the lazy reader iterable).
+   * @param {object} rollup return value of
+   *   `SubagentAggregator.rollup(session.id)` — used for the
+   *   `byAgent` per-agent cost dollars and nothing else here.
+   * @param {{P_sys: number, P_hist: number, P_tool: number,
+   *          P_sum: number}} provenance the same proportional-
+   *   split components the caller used for the token-side
+   *   uncached sub-buckets; we reuse the ratios so the cost-side
+   *   sub-bucket split matches the token-side split exactly.
+   * @returns {object} CostBuckets-shaped object.
+   */
+  _computeV2Cost(session, messages, rollup, provenance) {
+    const out = {
+      total: session.cost || 0,
+      cachedRead: 0,
+      cachedWrite: 0,
+      uncachedInput: 0,
+      output: 0,
+      reasoning: 0,
+      subagentDispatch: 0,
+      uncachedSystemPrompt: 0,
+      history: 0,
+      toolOutputs: 0,
+      // 5.3 / 5.4 / 5.6 boundaries — stubbed null until those
+      // tasks populate. ReportAssembler/Serializer treat null as
+      // "not yet decomposed".
+      cachedReadBreakdown: null,
+      subagentDispatchByAgent: null,
+      toolOutputsByTool: null,
+    };
+
+    let pricingDrift = false;
+    let driftKey = null;
+
+    // Walk messages in chronological order. Map iteration order
+    // preserves insertion order, and the caller built the Map by
+    // iterating `messagesOfSession` which is already
+    // `ORDER BY time_created ASC`. We re-sort defensively in case
+    // a future caller injects a Map built from a different source.
+    const chronological = [...messages.values()].sort(
+      (a, b) => (a.time_created || 0) - (b.time_created || 0),
+    );
+
+    for (const msg of chronological) {
+      // Only assistant messages carry pricing-relevant token
+      // counts; user/system/tool messages either have no tokens
+      // attributed in opencode's per-message accounting or
+      // intentionally roll into the next assistant turn's totals.
+      // The Reader's wrapper already pre-parses `role`; fall back
+      // to inspecting raw data for defensiveness.
+      let role = msg.role;
+      if (role == null && typeof msg.data === 'string') {
+        try {
+          const reparsed = JSON.parse(msg.data);
+          if (reparsed && typeof reparsed.role === 'string') {
+            role = reparsed.role;
+          }
+        } catch {
+          // Malformed JSON → skip the message (not a drift trigger
+          // because malformed message rows surface as
+          // `schema_partial_data` from the parts walk elsewhere).
+          continue;
+        }
+      }
+      if (role !== 'assistant') continue;
+
+      let parsed = null;
+      if (typeof msg.data === 'string') {
+        try {
+          parsed = JSON.parse(msg.data);
+        } catch {
+          // Malformed assistant message data → fall through to
+          // the missing-providerID branch, which marks drift.
+          parsed = null;
+        }
+      } else if (msg.data && typeof msg.data === 'object') {
+        // Defensive: some test harnesses may pass pre-parsed data.
+        parsed = msg.data;
+      }
+
+      const providerID = parsed == null ? null : parsed.providerID;
+      const modelID = parsed == null ? null : parsed.modelID;
+      if (typeof providerID !== 'string' || typeof modelID !== 'string') {
+        // design.md:770 — per-message data-shape failures are
+        // treated as pricing drift (not a throw). Mark and move on
+        // to the next message; we still want to drain the rest of
+        // the iterator so the partial cost shape reflects what we
+        // *could* compute (5.6 overwrites this with the null
+        // shape regardless).
+        pricingDrift = true;
+        if (driftKey === null) {
+          driftKey = providerID + '/' + modelID;
+        }
+        continue;
+      }
+
+      const rates =
+        this._pricingTable == null
+          ? null
+          : this._pricingTable.lookup(providerID, modelID);
+      if (rates == null) {
+        // pricingTable.lookup returned null OR no pricing table
+        // was wired at all — both are drift from this engine's
+        // perspective; 5.6 emits a single `pricing_table_drift`
+        // finding per session naming the first unmatched key.
+        pricingDrift = true;
+        if (driftKey === null) {
+          driftKey = providerID + '/' + modelID;
+        }
+        continue;
+      }
+
+      // Per-message token counts. Missing fields substitute to 0
+      // so a partial message.data shape contributes the parts it
+      // does have without forcing drift; opencode's own
+      // accounting also treats missing fields as zero.
+      const tokens = (parsed && parsed.tokens) || {};
+      const cache = tokens.cache || {};
+      const tIn = typeof tokens.input === 'number' ? tokens.input : 0;
+      const tOut = typeof tokens.output === 'number' ? tokens.output : 0;
+      const tReason =
+        typeof tokens.reasoning === 'number' ? tokens.reasoning : 0;
+      const tCacheR = typeof cache.read === 'number' ? cache.read : 0;
+      const tCacheW = typeof cache.write === 'number' ? cache.write : 0;
+
+      // Rate convention: ratePerM is USD per million tokens.
+      out.cachedRead += (tCacheR * rates.cacheReadPerM) / 1_000_000;
+      out.cachedWrite += (tCacheW * rates.cacheWritePerM) / 1_000_000;
+      out.uncachedInput += (tIn * rates.inputPerM) / 1_000_000;
+      out.output += (tOut * rates.outputPerM) / 1_000_000;
+      out.reasoning += (tReason * rates.reasoningPerM) / 1_000_000;
+    }
+
+    // ── Per-agent subagent dispatch cost ─────────────────────────
+    // design.md:586 — byAgent[*].cost already incorporates the
+    // descendants' authoritative `session.cost`; no per-rate
+    // recomputation here. The sum equals `rollup.totals.cost`
+    // (SubagentAggregator's sum invariant), which we could read
+    // directly — but iterating byAgent matches the boundary
+    // documented in the task brief and surfaces an empty `byAgent`
+    // case (no descendants) cleanly as 0.
+    if (rollup && rollup.byAgent && typeof rollup.byAgent.values === 'function') {
+      for (const bucket of rollup.byAgent.values()) {
+        out.subagentDispatch += bucket.cost || 0;
+      }
+    }
+
+    // ── Uncached sub-bucket apportionment (Flow 2 mirror) ────────
+    // Same proportional split the token side uses, applied to the
+    // accumulated `uncachedInput` dollars. Last bucket absorbs
+    // rounding so `uncachedSystemPrompt + history + toolOutputs`
+    // is exactly equal to `uncachedInput` (no floating-point drift
+    // even at sub-cent scales). When P_sum == 0 (unclassifiable
+    // input degenerate branch) we collapse all three to 0, which
+    // is the same behaviour the token side already takes; the
+    // unclassifiable_input finding is emitted by the caller.
+    if (provenance.P_sum > 0) {
+      const usp =
+        (out.uncachedInput * provenance.P_sys) / provenance.P_sum;
+      const hist =
+        (out.uncachedInput * provenance.P_hist) / provenance.P_sum;
+      // toolOutputs absorbs the FP residual so the sum invariant
+      // holds exactly. We compute it by subtraction rather than
+      // by multiplication-then-rounding so any sub-ulp difference
+      // ends up in toolOutputs and never propagates upward.
+      out.uncachedSystemPrompt = usp;
+      out.history = hist;
+      out.toolOutputs = out.uncachedInput - usp - hist;
+    } else {
+      out.uncachedSystemPrompt = 0;
+      out.history = 0;
+      out.toolOutputs = 0;
+    }
+
+    if (pricingDrift) {
+      // Non-enumerable internal marker for task 5.6 to read. The
+      // non-enumerable flag prevents accidental JSON.stringify
+      // exposure if 5.6 were to forget to strip it.
+      Object.defineProperty(out, '_v2PricingDrift', {
+        value: true,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+      Object.defineProperty(out, '_v2DriftKey', {
+        value: driftKey,
+        enumerable: false,
+        writable: true,
+        configurable: true,
+      });
+    }
+
+    return out;
   }
 }
 
@@ -2122,6 +2389,34 @@ const PER_BUCKET_COST_KEYS = Object.freeze([
   'history',
   'toolOutputs',
 ]);
+
+// ── v2 cost-compute feature flag (task 5.2) ──────────────────────
+//
+// Default OFF. The v2 per-message cost-compute path replaces the
+// v1 all-null cost shape with populated dollar values, which is a
+// JSON-shape change that would break the byte-identical integration
+// goldens until task 8.1 refreshes them. The flag preserves the
+// v1 emission path by default so the goldens stay valid through
+// the 5.x rollout window. Unit tests for the v2 path opt in via
+// `setV2CostComputeEnabled(true)` and MUST reset to false in a
+// `try/finally` so the flag never leaks into the v1-shape suite.
+//
+// A module-level mutable `let` (with a setter) is intentional: the
+// alternative — a per-engine constructor argument — would force
+// every caller (production main(), every existing v1 unit test,
+// every integration harness) to plumb the flag through, defeating
+// the "transparent OFF" property. The setter is a deliberate
+// narrow surface to make stateful tests grep-able.
+//
+// Removal plan: this flag is removed once task 8.1 refreshes the
+// integration goldens; the v2 cost path then becomes
+// unconditional. A successor task may delete the flag and the v1
+// `makeZeroCostBuckets()` helper together.
+let V2_COST_COMPUTE_ENABLED = false;
+
+function setV2CostComputeEnabled(value) {
+  V2_COST_COMPUTE_ENABLED = Boolean(value);
+}
 
 // The six named cachedRead sub-buckets that decompose
 // `session.tokens_cache_read` (design.md:612-619). All five named
@@ -3532,4 +3827,9 @@ module.exports = {
   ACCUMULATED_HISTORY_MARKER,
   ACCUMULATED_TOOL_OUTPUTS_MARKER,
   makeNullCostShape,
+  // v2 cost-compute feature flag (task 5.2). Default OFF; flip ON
+  // in unit tests via `setV2CostComputeEnabled(true)` and reset
+  // to false in a `finally`. See the flag declaration for the
+  // rationale and removal plan.
+  setV2CostComputeEnabled,
 };
