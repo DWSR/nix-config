@@ -1703,6 +1703,65 @@ class AttributionEngine {
       };
     }
 
+    // ── Reconciliation (task 5.5, requirements 2.3 + 2.4) ──────
+    // Sum the 6 top-level per-bucket cost fields and compare to
+    // session.cost. The 3 uncached sub-buckets
+    // (uncachedSystemPrompt / history / toolOutputs) are NOT
+    // summed because the 5.2 invariant guarantees they partition
+    // uncachedInput exactly — including them would double-count.
+    //
+    // Tolerance per design.md:580 and tasks.md:Requirements 2.3:
+    //   max(COST_INVARIANT_TOLERANCE_PCT × session.cost,
+    //       COST_INVARIANT_TOLERANCE_FLOOR_USD)
+    // = max(0.001 × session.cost, $0.01). The floor dominates for
+    // tiny sessions (< $10); the percentage dominates for large
+    // ones. Outside tolerance → emit cost_invariant_violation
+    // naming session id, expected (session.cost), actual
+    // (per-bucket sum). Within tolerance → no finding.
+    //
+    // R2.AC4: the finding NEVER blocks emission. Reconciliation is
+    // a pure read of the just-computed cost shape; no throw, no
+    // early return, no mutation of `cost` itself.
+    //
+    // Gated on V2_COST_COMPUTE_ENABLED: the v1 path emits null
+    // per-bucket fields and there is nothing to reconcile.
+    //
+    // Gated on the non-enumerable `_v2PricingDrift` marker that
+    // _computeV2Cost sets when a per-message lookup fails. A
+    // partial sum would necessarily fail tolerance and task 5.6
+    // owns the pricing_table_drift finding + cost-shape
+    // nullification for that path — a cost_invariant_violation
+    // here on drift would be redundant noise. The marker check is
+    // forward-compatible with 5.6's null-shape replacement (which
+    // would otherwise reduce to 0 and trigger false positives).
+    if (V2_COST_COMPUTE_ENABLED && !cost._v2PricingDrift) {
+      const actualSum =
+        (cost.cachedRead || 0) +
+        (cost.cachedWrite || 0) +
+        (cost.uncachedInput || 0) +
+        (cost.output || 0) +
+        (cost.reasoning || 0) +
+        (cost.subagentDispatch || 0);
+      const expected = session.cost || 0;
+      const delta = Math.abs(actualSum - expected);
+      const tolerance = Math.max(
+        COST_INVARIANT_TOLERANCE_PCT * expected,
+        COST_INVARIANT_TOLERANCE_FLOOR_USD,
+      );
+      if (delta > tolerance) {
+        findings.push({
+          kind: 'cost_invariant_violation',
+          detail:
+            `session ${session.id}: per-bucket sum diverged from ` +
+            `session.cost beyond tolerance. expected=${expected} ` +
+            `actual=${actualSum} |delta|=${delta} tolerance=${tolerance} ` +
+            `(= max(${COST_INVARIANT_TOLERANCE_PCT} × ${expected}, ` +
+            `${COST_INVARIANT_TOLERANCE_FLOOR_USD})). Informational ` +
+            `only; report continues to emit.`,
+        });
+      }
+    }
+
     return {
       sessionId: session.id,
       directory: session.directory,

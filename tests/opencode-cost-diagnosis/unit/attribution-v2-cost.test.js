@@ -1698,6 +1698,172 @@ test('flag ON / 5.4: single-tool session → the lone entry receives the full pa
   }
 });
 
+// ---------------------------------------------------------------------
+// Task 5.5 — Reconciliation and cost_invariant_violation finding.
+//
+// After per-bucket cost accumulation the engine reconciles
+//   actualSum = cost.cachedRead + cost.cachedWrite + cost.uncachedInput +
+//               cost.output + cost.reasoning + cost.subagentDispatch
+// against `session.cost` with tolerance
+//   max(COST_INVARIANT_TOLERANCE_PCT × session.cost,
+//       COST_INVARIANT_TOLERANCE_FLOOR_USD)
+// = max(0.001 × session.cost, 0.01). The 3 uncached sub-buckets
+// are NOT summed (they partition uncachedInput per the 5.2
+// invariant). Outside tolerance → exactly one
+// cost_invariant_violation finding naming session id, expected,
+// actual. Within tolerance → no finding. Either way the report
+// continues to emit (R2.AC4).
+// ---------------------------------------------------------------------
+
+test('flag ON / 5.5: out-of-tolerance session emits exactly one cost_invariant_violation finding', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    // The matched single-model fixture produces per-bucket sum
+    // === SYN_EXPECTED_COST exactly. Inflate session.cost by
+    // +$0.02 — well above the $0.01 tolerance floor — so the
+    // engine MUST emit a cost_invariant_violation.
+    const inflated = SYN_EXPECTED_COST + 0.02;
+    const ses = makeSyntheticSession({ cost: inflated });
+    const reader = makeMatchedSingleModelReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const civ = attr.findings.filter(
+      (f) => f.kind === 'cost_invariant_violation',
+    );
+    assert.equal(
+      civ.length,
+      1,
+      'out-of-tolerance session must emit exactly one cost_invariant_violation',
+    );
+    // Detail must name session id, expected (session.cost), and
+    // actual (per-bucket sum) per design.md:580.
+    assert.match(civ[0].detail, new RegExp(ses.id));
+    assert.match(
+      civ[0].detail,
+      new RegExp(String(inflated)),
+      'detail must include the expected (session.cost) value',
+    );
+    assert.match(
+      civ[0].detail,
+      new RegExp(String(SYN_EXPECTED_COST)),
+      'detail must include the actual (per-bucket sum) value',
+    );
+
+    // R2.AC4: report continues to emit. The SessionAttribution
+    // must still be a fully-shaped object even when the finding
+    // fires — i.e., reconciliation never throws or aborts.
+    assert.equal(attr.sessionId, ses.id);
+    assert.equal(typeof attr.cost, 'object');
+    assert.equal(attr.cost.total, inflated);
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.5: within-tolerance session emits NO cost_invariant_violation finding', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    // Default synthetic session has cost === per-bucket sum to
+    // 1e-9. Well within tolerance.
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    const civ = attr.findings.filter(
+      (f) => f.kind === 'cost_invariant_violation',
+    );
+    assert.equal(
+      civ.length,
+      0,
+      'within-tolerance session must NOT emit cost_invariant_violation',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.5: violation just above the $0.01 floor fires; just below does not', () => {
+  // Boundary check for the COST_INVARIANT_TOLERANCE_FLOOR_USD term.
+  // session.cost is so small that 0.001 × session.cost ≪ $0.01,
+  // so the floor dominates and tolerance = $0.01 flat.
+  setV2CostComputeEnabled(true);
+  try {
+    // BELOW the floor: delta = +$0.009 < $0.01 → no finding.
+    const sesBelow = makeSyntheticSession({
+      cost: SYN_EXPECTED_COST + 0.009,
+    });
+    const eng1 = new AttributionEngine(
+      makeMatchedSingleModelReader(sesBelow),
+      new SubagentAggregator(makeMatchedSingleModelReader(sesBelow)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attrBelow = eng1.attributeSession(sesBelow);
+    assert.equal(
+      attrBelow.findings.filter(
+        (f) => f.kind === 'cost_invariant_violation',
+      ).length,
+      0,
+      'delta of $0.009 must NOT trigger (below $0.01 floor)',
+    );
+
+    // ABOVE the floor: delta = +$0.011 > $0.01 → finding.
+    const sesAbove = makeSyntheticSession({
+      cost: SYN_EXPECTED_COST + 0.011,
+    });
+    const eng2 = new AttributionEngine(
+      makeMatchedSingleModelReader(sesAbove),
+      new SubagentAggregator(makeMatchedSingleModelReader(sesAbove)),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attrAbove = eng2.attributeSession(sesAbove);
+    assert.equal(
+      attrAbove.findings.filter(
+        (f) => f.kind === 'cost_invariant_violation',
+      ).length,
+      1,
+      'delta of $0.011 must trigger (above $0.01 floor)',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag OFF: reconciliation never runs (v1 null-shape path)', () => {
+  // R7.AC1 forward-compat: the v1 cost shape has all per-bucket
+  // fields null. Reconciliation MUST NOT fire on flag OFF — even
+  // if session.cost would be "out of tolerance" against a
+  // computed-but-not-present per-bucket sum.
+  const ses = makeSyntheticSession({ cost: SYN_EXPECTED_COST + 100.0 });
+  const reader = makeMatchedSingleModelReader(ses);
+  const eng = new AttributionEngine(
+    reader,
+    new SubagentAggregator(reader),
+    new TokenizerSplitter(),
+    makeMatchedSinglePricing(),
+  );
+  const attr = eng.attributeSession(ses);
+  assert.equal(
+    attr.findings.filter((f) => f.kind === 'cost_invariant_violation')
+      .length,
+    0,
+    'flag OFF must not emit cost_invariant_violation',
+  );
+});
+
 test('flag toggles cleanly OFF after every test (no leakage)', () => {
   // Defensive: every test above resets the flag in `finally`. This
   // bottom-of-file test confirms that the flag is in fact OFF at

@@ -158,7 +158,7 @@
   - _Requirements: 6.2, 6.3_
   - _Boundary: AttributionEngine per-tool apportionment_
 
-- [ ] 5.5 Implement reconciliation and cost_invariant_violation finding
+- [x] 5.5 Implement reconciliation and cost_invariant_violation finding
   - After all per-bucket cost accumulation (5.2 + 5.3 + 5.4 contributions), compute the total per-bucket sum and compare against `session.cost`
   - If `|delta| > max(COST_INVARIANT_TOLERANCE_PCT × session.cost, COST_INVARIANT_TOLERANCE_FLOOR_USD)`, emit a `cost_invariant_violation` finding with session ID + expected (`session.cost`) + actual (sum)
   - Never block report emission on this finding
