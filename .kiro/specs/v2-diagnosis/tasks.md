@@ -209,6 +209,15 @@
   - _Requirements: 2.1, 2.3, 2.4, 3.4, 4.1, 4.2, 4.5, 5.4, 6.2, 6.3, 7.4, 7.5_
   - _Boundary: attribution.test.js_
 
+- [x] 5.11 Wire AttributionEngine.cost.subagentDispatchByAgent from SubagentAggregator.byAgent (5.2 corrective)
+  - Task 5.2's brief required pulling per-agent dollar values from `SubagentAggregator.byAgent` (which already incorporates descendants' authoritative session.cost). The 5.2 implementer set up the parameter (`rollup` arg into `_computeV2Cost`) but stubbed `cost.subagentDispatchByAgent = null` at `scripts/opencode-cost-report.js:2180` and deferred the actual mapping to "5.8" — but task 5.8's scope was the `subagent_agent_attribution_drift` finding only, not the data wiring. Surfaced by the 6.2 reviewer as an upstream gap that would otherwise ship as an empty map in 8.1's golden refresh and silently defeat R5.1/R5.2/R5.3.
+  - Replace the stub with a real mapping: convert `rollup.byAgent` (a `Map<string, { tokensTotal, cost, childCount }>`) into a plain object keyed by agent name, with each value being the per-agent `cost` (number, USD). Match the assembler-side shape consumed by `mergeByAgentInto` in 6.2.
+  - On the drift branch (`pricingDrift === true`), `subagentDispatchByAgent` MUST still flip to `null` (via `makeNullCostShape`). This task only changes the non-drift branch.
+  - Observable: a unit test in `attribution-v2-cost.test.js` with a synthetic root + 2 descendants tagged `general` (each with `session.cost = 0.005`) asserts `attribution.cost.subagentDispatchByAgent.general === 0.01` (sum). A drift fixture continues to return `subagentDispatchByAgent === null` (via the makeNullCostShape path).
+  - _Depends: 4.1, 5.2_
+  - _Requirements: 5.1, 5.2, 5.3_
+  - _Boundary: AttributionEngine._computeV2Cost subagentDispatchByAgent wiring + attribution-v2-cost.test.js_
+
 ## 6. ReportAssembler: aggregate new sub-buckets across project and global
 
 - [x] 6.1 Extend ReportAssembler aggregation loops for the extended cost shape

@@ -2165,17 +2165,23 @@ class AttributionEngine {
       uncachedSystemPrompt: 0,
       history: 0,
       toolOutputs: 0,
-      // 5.8 boundary — `subagentDispatchByAgent` stays stubbed
-      // null until task 5.8 lands. ReportAssembler/Serializer
-      // treat null as "not yet decomposed". `cachedReadBreakdown`
-      // and `toolOutputsByTool` are set here as defensive
-      // defaults; the apportionment blocks at the bottom of this
-      // method unconditionally replace them with their populated
-      // shapes (6-key object and per-tool Map respectively),
-      // matching the pattern 5.2 uses for the uncached sub-buckets.
+      // Defensive defaults for the three v2 container fields.
+      // `cachedReadBreakdown` (5.3), `subagentDispatchByAgent`
+      // (5.11), and `toolOutputsByTool` (5.4) are all replaced by
+      // the apportionment / mapping blocks at the bottom of this
+      // method when the corresponding source data is present. The
+      // `null` defaults survive only when:
+      //   - the caller did not pass a `rollup` or it is missing
+      //     `byAgent` (legacy / pre-v2 caller — defensive only;
+      //     the v2 main path always passes a populated rollup), or
+      //   - `provenance.cachedReadBreakdown` is missing (5.3's
+      //     defensive guard), or
+      //   - `provenance.byTool` is not a Map (5.4's defensive guard).
       // All three paths produce partial values on drift; task 5.6's
       // makeNullCostShape() override nullifies the entire shape
-      // when pricing-drift is detected.
+      // (each container field set back to null, distinct from `{}`)
+      // when pricing-drift is detected — `{}` means "decomposed but
+      // empty" whereas `null` means "not computable due to drift".
       cachedReadBreakdown: null,
       subagentDispatchByAgent: null,
       toolOutputsByTool: null,
@@ -2283,18 +2289,40 @@ class AttributionEngine {
       out.reasoning += (tReason * rates.reasoningPerM) / 1_000_000;
     }
 
-    // ── Per-agent subagent dispatch cost ─────────────────────────
+    // ── Per-agent subagent dispatch cost (flat + decomposed) ────
     // design.md:586 — byAgent[*].cost already incorporates the
     // descendants' authoritative `session.cost`; no per-rate
     // recomputation here. The sum equals `rollup.totals.cost`
     // (SubagentAggregator's sum invariant), which we could read
     // directly — but iterating byAgent matches the boundary
-    // documented in the task brief and surfaces an empty `byAgent`
-    // case (no descendants) cleanly as 0.
-    if (rollup && rollup.byAgent && typeof rollup.byAgent.values === 'function') {
-      for (const bucket of rollup.byAgent.values()) {
-        out.subagentDispatch += bucket.cost || 0;
+    // documented in the 5.2 task brief and surfaces an empty
+    // `byAgent` case (no descendants) cleanly as 0 / `{}`.
+    //
+    // Task 5.11 (corrective for 5.2's deferred 5.8-boundary stub):
+    // the same iteration also populates `subagentDispatchByAgent`
+    // as a `Readonly<Record<string, number>>` per design.md:620,
+    // matching the consumer shape `mergeByAgentInto` expects at
+    // ReportAssembler line ~3292 (per-agent dollar values, NOT the
+    // full {tokensTotal, cost, childCount} record). Empty Map →
+    // `{}` (decomposed-but-empty) — distinct from `null` which the
+    // drift fallback (`makeNullCostShape`) uses to signal
+    // "not computable due to pricing drift". When `rollup.byAgent`
+    // is missing entirely (legacy callers), the `null` default
+    // assigned in the `out` initializer survives — defensive only;
+    // the v2 main path always passes a populated rollup.
+    if (rollup && rollup.byAgent && typeof rollup.byAgent.entries === 'function') {
+      const dispatchByAgent = {};
+      for (const [agent, bucket] of rollup.byAgent.entries()) {
+        const c = bucket && typeof bucket.cost === 'number' ? bucket.cost : 0;
+        out.subagentDispatch += c;
+        dispatchByAgent[agent] = c;
       }
+      // Freeze to honor the `Readonly<Record<string, number>>`
+      // contract at design.md:620. Per-key numeric values are
+      // immutable already; freezing the outer object catches
+      // accidental mutations from downstream callers in strict
+      // mode (this module uses 'use strict').
+      out.subagentDispatchByAgent = Object.freeze(dispatchByAgent);
     }
 
     // ── Uncached sub-bucket apportionment (Flow 2 mirror) ────────

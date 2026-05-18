@@ -395,14 +395,27 @@ test('flag ON: cost shape contains exactly the 9 flat cost fields + total', () =
         `cost.${k} must be non-negative, got ${attr.cost[k]}`,
       );
     }
-    // 5.6 / 5.8 container — still null at this boundary.
-    // (Task 5.3 populated `cachedReadBreakdown`; task 5.4 populated
-    // `toolOutputsByTool`. Their boundary-relaxation assertions live
-    // in their respective blocks lower in this file.)
+    // Task 5.11 wired `subagentDispatchByAgent` from
+    // `SubagentAggregator.rollup.byAgent`. On the non-drift, no-
+    // descendant happy path the field is an empty plain object
+    // (decomposed-but-empty), distinct from `null` which is reserved
+    // for the drift fallback (makeNullCostShape) and the legacy
+    // missing-rollup defensive path. The dedicated 5.11 tests at the
+    // bottom of this file cover the populated and drift cases.
     assert.equal(
+      typeof attr.cost.subagentDispatchByAgent,
+      'object',
+      'cost.subagentDispatchByAgent must be an object on the non-drift path (task 5.11)',
+    );
+    assert.notEqual(
       attr.cost.subagentDispatchByAgent,
       null,
-      'cost.subagentDispatchByAgent is task 5.8 boundary — must stay null until subagent per-agent dispatch lands',
+      'cost.subagentDispatchByAgent must NOT be null on the non-drift path (5.11 wiring; the drift branch nulls via makeNullCostShape)',
+    );
+    assert.deepEqual(
+      attr.cost.subagentDispatchByAgent,
+      {},
+      'cost.subagentDispatchByAgent must be {} when rollup.byAgent is empty (no descendants), not null',
     );
   } finally {
     setV2CostComputeEnabled(false);
@@ -4407,6 +4420,278 @@ test('5.10: cross-cutting — markersDegraded AND cost_invariant_violation both 
       ).length,
       0,
       'cross-cutting: degraded path MUST still suppress the residual finding even when cost_invariant_violation fires',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 5.11 — wire AttributionEngine.cost.subagentDispatchByAgent from
+// SubagentAggregator.byAgent (5.2 corrective).
+//
+// Scope: the `subagentDispatchByAgent` field on the v2 cost shape was
+// originally a stub (`null`) when task 5.2 shipped, deferred to the
+// "5.8 boundary" comment. Task 5.8 actually scoped only the
+// subagent_agent_attribution_drift finding, not the byAgent cost
+// wiring, so the stub leaked through to ReportAssembler 6.2's
+// `mergeByAgentInto` consumer (which then always saw `null` and
+// silently dropped the contribution). Task 5.11 replaces the stub
+// with the real Map → plain-object mapping.
+//
+// Contract (design.md:620 +695):
+//   - Type: `Readonly<Record<string, number>>` (per-agent dollars).
+//   - Source: `SubagentAggregator.rollup(rootId).byAgent` —
+//     a `Map<string, {tokensTotal, cost, childCount}>` per the
+//     aggregator's contract; this task extracts the `cost` field
+//     only (no recomputation per design.md:586).
+//   - Empty Map → `{}` (decomposed but no descendants), NOT `null`.
+//   - Drift session → `null` (entire map; replaced by
+//     `makeNullCostShape()` at the drift-fallback site).
+//   - Sum invariant: `sum(values(subagentDispatchByAgent)) ===
+//     cost.subagentDispatch`. This holds because both sides iterate
+//     the same `byAgent.cost` source.
+// ---------------------------------------------------------------------
+
+test('flag ON / 5.11: subagentDispatchByAgent populated from rollup.byAgent — two "general" descendants @ 0.005 each → {general: 0.01}', () => {
+  // The brief's primary observable: a synthetic root session plus
+  // 2 descendants tagged `session.agent = 'general'` each carrying
+  // `session.cost = 0.005`. SubagentAggregator.rollup folds them
+  // into a single byAgent entry `general` with cost=0.01. After
+  // _computeV2Cost, `cost.subagentDispatchByAgent` must equal
+  // `{ general: 0.01 }` (not null, not Map, not the full
+  // {tokensTotal, cost, childCount} triple — just the dollar
+  // cost per agent, matching mergeByAgentInto's consumer shape).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    // Mock aggregator: stand in for a real SubagentAggregator that
+    // has walked two descendants tagged agent='general' each with
+    // session.cost = 0.005. Floating-point representable values
+    // chosen so the sum is exact (0.005 + 0.005 = 0.01).
+    const mockAggregator = {
+      schemaSupportsParentLink: true,
+      rollup(rootId) {
+        assert.equal(rootId, ses.id);
+        const byAgent = new Map([
+          // Aggregated bucket: 2 descendants × 0.005 = 0.01. The
+          // tokensTotal value is irrelevant to 5.11 (this task
+          // touches the cost field only); set to a non-zero value
+          // so a future regression that accidentally pulls
+          // tokensTotal instead of cost surfaces clearly.
+          [
+            'general',
+            { tokensTotal: 999_999, cost: 0.01, childCount: 2 },
+          ],
+        ]);
+        return {
+          totals: { tokensTotal: 999_999, cost: 0.01, childCount: 2 },
+          findings: [],
+          byAgent,
+          nullAgentDescendantIds: Object.freeze([]),
+        };
+      },
+    };
+    const eng = new AttributionEngine(
+      reader,
+      mockAggregator,
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Primary observable from the task brief.
+    assert.deepEqual(
+      attr.cost.subagentDispatchByAgent,
+      { general: 0.01 },
+      'cost.subagentDispatchByAgent must equal {general: 0.01} for the 2×0.005 descendant fixture',
+    );
+
+    // Sum invariant: the per-agent map dollars must sum to the
+    // flat `cost.subagentDispatch` scalar. Both fields read from
+    // the same `rollup.byAgent[*].cost` source so the equality is
+    // exact, not within tolerance.
+    const sumByAgent = Object.values(
+      attr.cost.subagentDispatchByAgent,
+    ).reduce((acc, v) => acc + v, 0);
+    assert.equal(
+      sumByAgent,
+      attr.cost.subagentDispatch,
+      `sum(subagentDispatchByAgent values)=${sumByAgent} must equal ` +
+        `cost.subagentDispatch=${attr.cost.subagentDispatch}`,
+    );
+
+    // Shape sanity: values are numbers (not the full
+    // {tokensTotal, cost, childCount} record). Guards against the
+    // most likely regression (passing `bucket` instead of
+    // `bucket.cost` in the Object.fromEntries mapper).
+    for (const [agent, v] of Object.entries(
+      attr.cost.subagentDispatchByAgent,
+    )) {
+      assert.equal(
+        typeof v,
+        'number',
+        `subagentDispatchByAgent.${agent} must be a number, got ${typeof v}`,
+      );
+      assert.ok(
+        Number.isFinite(v),
+        `subagentDispatchByAgent.${agent} must be finite, got ${v}`,
+      );
+    }
+
+    // Readonly contract (design.md:620 `Readonly<Record<...>>`).
+    // The frozen-ness is observable via Object.isFrozen so a
+    // future caller that tries to mutate the returned shape gets
+    // a TypeError in strict mode (this file is 'use strict').
+    assert.ok(
+      Object.isFrozen(attr.cost.subagentDispatchByAgent),
+      'subagentDispatchByAgent must be frozen (Readonly<Record<...>> contract)',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.11: drift session — subagentDispatchByAgent === null (makeNullCostShape preserved)', () => {
+  // The drift contract is the second half of 5.11's coverage:
+  // when `cost._v2PricingDrift === true`, the downstream 5.6
+  // fallback replaces the entire cost shape with
+  // `makeNullCostShape(session.cost)`, which sets
+  // `subagentDispatchByAgent = null` (NOT `{}`). 5.11 must NOT
+  // alter that branch — the non-drift mapping only runs inside
+  // _computeV2Cost; the drift fallback overrides the result.
+  //
+  // The drift trigger here is an unknown modelID (lookup → null),
+  // matching the makeUnknownModelReader helper used by the 5.6
+  // tests. Even though our mock aggregator returns a populated
+  // byAgent map, the drift fallback nullifies it.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession({
+      id: 'ses_5_11_drift_subagent_byagent',
+    });
+    const reader = makeUnknownModelReader(
+      ses,
+      'unknownprovider',
+      'unknownmodel-5-11',
+    );
+    // Mock aggregator with a populated byAgent: this would emit
+    // `{general: 0.01}` on the non-drift path. The drift fallback
+    // must override it to `null`.
+    const mockAggregator = {
+      schemaSupportsParentLink: true,
+      rollup(rootId) {
+        assert.equal(rootId, ses.id);
+        return {
+          totals: { tokensTotal: 0, cost: 0.01, childCount: 2 },
+          findings: [],
+          byAgent: new Map([
+            ['general', { tokensTotal: 0, cost: 0.01, childCount: 2 }],
+          ]),
+          nullAgentDescendantIds: Object.freeze([]),
+        };
+      },
+    };
+    const eng = new AttributionEngine(
+      reader,
+      mockAggregator,
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(), // does NOT know unknownprovider/unknownmodel-5-11
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Primary observable: drift collapses the map to null.
+    assert.equal(
+      attr.cost.subagentDispatchByAgent,
+      null,
+      'drift: cost.subagentDispatchByAgent must be null (makeNullCostShape contract preserved across 5.11)',
+    );
+
+    // Drift contract sanity: cost.total preserved, other v2 fields
+    // null. Re-asserts the 5.6 invariants from the perspective of
+    // 5.11's wiring to confirm 5.11 did not accidentally alter
+    // makeNullCostShape's output shape.
+    assert.equal(
+      attr.cost.total,
+      ses.cost,
+      'drift: cost.total must remain session.cost regardless of 5.11 wiring',
+    );
+    assert.equal(
+      attr.cost.subagentDispatch,
+      null,
+      'drift: flat cost.subagentDispatch must be null (5.6 contract; not altered by 5.11)',
+    );
+
+    // Exactly one pricing_table_drift finding (5.6 contract).
+    const drift = attr.findings.filter(
+      (f) => f.kind === 'pricing_table_drift',
+    );
+    assert.equal(
+      drift.length,
+      1,
+      'drift: exactly one pricing_table_drift finding must fire (5.6 contract; 5.11 must not suppress)',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.11: subagentDispatchByAgent is a plain object (matches mergeByAgentInto consumer shape from task 6.2)', () => {
+  // mergeByAgentInto (scripts/opencode-cost-report.js:3292) accepts
+  // either a Map OR a plain object. AttributionEngine commits to
+  // the plain-object shape so the JSON serializer's
+  // alphabetical-key replacer can sort the result without an
+  // assembler-side Object.fromEntries conversion (design.md:695
+  // explicitly notes this conversion happens at the assembler
+  // boundary — but 5.11 elects to do the conversion at the
+  // emission boundary instead, which is equivalent and avoids
+  // one Map → object hop in the assembler hot loop).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const mockAggregator = {
+      schemaSupportsParentLink: true,
+      rollup(rootId) {
+        assert.equal(rootId, ses.id);
+        return {
+          totals: { tokensTotal: 100, cost: 0.0123 + 0.0456, childCount: 5 },
+          findings: [],
+          byAgent: new Map([
+            ['general', { tokensTotal: 60, cost: 0.0123, childCount: 2 }],
+            ['build', { tokensTotal: 40, cost: 0.0456, childCount: 3 }],
+          ]),
+          nullAgentDescendantIds: Object.freeze([]),
+        };
+      },
+    };
+    const eng = new AttributionEngine(
+      reader,
+      mockAggregator,
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+
+    // Plain object, not a Map (Map would still work for the
+    // consumer, but the design contract is Record<string, number>
+    // for JSON-serialization parity).
+    assert.ok(
+      attr.cost.subagentDispatchByAgent != null &&
+        typeof attr.cost.subagentDispatchByAgent === 'object',
+      'subagentDispatchByAgent must be a non-null object',
+    );
+    assert.ok(
+      !(attr.cost.subagentDispatchByAgent instanceof Map),
+      'subagentDispatchByAgent must be a plain object, not a Map (design.md:620 Record<string, number>)',
+    );
+
+    // Order- and key-preservation under Map → object conversion.
+    assert.deepEqual(
+      attr.cost.subagentDispatchByAgent,
+      { general: 0.0123, build: 0.0456 },
+      'subagentDispatchByAgent must preserve each agent key with the per-agent cost dollars',
     );
   } finally {
     setV2CostComputeEnabled(false);
