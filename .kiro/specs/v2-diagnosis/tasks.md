@@ -259,7 +259,7 @@
 
 ## 7. ReportSerializer: Markdown + JSON rendering for new sections
 
-- [ ] 7.1 Extend ReportSerializer Markdown output for new sub-buckets, pricing pin, threshold rendering, and migration disclaimer
+- [x] 7.1 Extend ReportSerializer Markdown output for new sub-buckets, pricing pin, threshold rendering, and migration disclaimer
   - Insert the new pricing-pin disclaimer block immediately after the existing tokenizer disclaimer block (`scripts/opencode-cost-report.js:1834-1859` area) with wording: `**PRICING PIN**: rates from ${pinSource} pinned ${pinDate}. Per-bucket dollar values reflect list-price rates only; contract rates, discounts, prepaid credits, and Max-plan variants are not modeled.`
   - Render the per-agent and per-tool below-threshold fold percentages from `tokenizer_disclaimer.thresholds` inside the disclaimer area (e.g., `per-agent fold threshold: 1% of total descendants (floor 1 child); per-tool fold threshold: 1% of bucket`) so the operator can interpret the `(below-threshold-fold)` residuals
   - Add the v1→v2 migration disclaimer (gated by a module-level constant the operator can remove later in a follow-up commit)

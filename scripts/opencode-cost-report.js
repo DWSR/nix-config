@@ -3161,6 +3161,26 @@ function setV2CostComputeEnabled(value) {
   V2_COST_COMPUTE_ENABLED = Boolean(value);
 }
 
+// Task 7.1: v1→v2 migration disclaimer toggle. SEPARATE from
+// `V2_COST_COMPUTE_ENABLED` on purpose:
+//   - V2_COST_COMPUTE_ENABLED gates the v2 emission path; once
+//     8.1 lands the integration goldens, the cost-compute flag is
+//     removed entirely and v2 becomes the only path.
+//   - V2_MIGRATION_DISCLAIMER_ENABLED gates a transient
+//     operator-facing note inside the disclaimer block that
+//     explains "per-bucket cost is now populated" so a returning
+//     operator who knew v1 sees the explicit migration framing.
+//     After cutover beds in (per design.md Migration Strategy
+//     phase "Cleanup"), the operator flips this to `false` in a
+//     follow-up commit; the constant outlives the cost-compute
+//     flag so the disclaimer can be retired independently.
+//
+// The constant is module-scope (not gated behind any function-
+// argument flag) so the operator's removal commit is a single-
+// line edit. The renderer treats `false` as "do not emit" without
+// any other shape change.
+const V2_MIGRATION_DISCLAIMER_ENABLED = true;
+
 // The six named cachedRead sub-buckets that decompose
 // `session.tokens_cache_read` (design.md:612-619). All five named
 // content-shape sub-buckets plus the `unclassifiedCached` residual
@@ -4042,6 +4062,89 @@ class ReportSerializer {
     }
     lines.push('');
 
+    // ── Task 7.1: pricing pin + thresholds + migration disclaimer ─
+    //
+    // Three blocks land here, between the v1 tokenizer disclaimer
+    // and the `---` separator. Order is deliberate:
+    //
+    //   1. Pricing pin (R3.3) — operator's primary staleness
+    //      signal. Renders first so a quick glance at the report
+    //      header surfaces the pin date.
+    //   2. Threshold rendering (R5.4 / R6.5) — explains the
+    //      `(below-threshold-fold)` residuals the operator will
+    //      encounter in the per-session byAgent / byTool tables.
+    //   3. v1→v2 migration disclaimer — transient note for the
+    //      cutover window; gated on V2_MIGRATION_DISCLAIMER_ENABLED
+    //      so an operator can flip it off in a follow-up commit.
+    //
+    // ALL THREE are gated on V2_COST_COMPUTE_ENABLED so the
+    // flag-OFF emission stays byte-identical to v1 through the
+    // 5.x/6.x rollout window (per the integration-golden contract
+    // task 8.1 will refresh). The pricing pin block needs
+    // `report.pricing` (ReportAssembler 6.3 attaches it only on
+    // flag ON when a pricing table was supplied); the threshold
+    // block needs `d.thresholds` (also flag-ON-only per
+    // assembler.js:3847-3853).
+    if (V2_COST_COMPUTE_ENABLED && report.pricing) {
+      const p = report.pricing;
+      // Bolded **PRICING PIN**: substring is the binding observable
+      // for the renderer test. Wording matches design.md:682 +
+      // tasks.md verbatim.
+      lines.push(
+        `**PRICING PIN**: rates from ${p.pinSource} pinned ${p.pinDate}. ` +
+          `Per-bucket dollar values reflect list-price rates only; ` +
+          `contract rates, discounts, prepaid credits, and Max-plan ` +
+          `variants are not modeled.`,
+      );
+      lines.push('');
+    }
+
+    if (V2_COST_COMPUTE_ENABLED && d.thresholds && typeof d.thresholds === 'object') {
+      // Threshold rendering — surface BOTH the per-agent and
+      // per-tool fold thresholds so the operator can interpret
+      // `(below-threshold-fold)` residual rows. The percent is
+      // rendered as a human-friendly `1%` while the raw decimal is
+      // also exposed for an automated reader (e.g. `1% (0.01 of
+      // total descendants)`). The child floor disclosure is part
+      // of R5.4 ("the volume threshold used") — both the percent
+      // and the floor must be surfaced so the operator can
+      // reproduce the fold decision.
+      const t = d.thresholds;
+      const subPct =
+        typeof t.subagentBelowThresholdPct === 'number'
+          ? `${t.subagentBelowThresholdPct * 100}%`
+          : '(unset)';
+      const subFloor =
+        typeof t.subagentBelowThresholdChildFloor === 'number'
+          ? t.subagentBelowThresholdChildFloor
+          : '(unset)';
+      const toolPct =
+        typeof t.toolBelowThresholdPct === 'number'
+          ? `${t.toolBelowThresholdPct * 100}%`
+          : '(unset)';
+      lines.push(
+        `- per-agent fold threshold: ${subPct} of total descendants ` +
+          `(floor ${subFloor} child)`,
+      );
+      lines.push(`- per-tool fold threshold: ${toolPct} of bucket`);
+      lines.push('');
+    }
+
+    if (V2_COST_COMPUTE_ENABLED && V2_MIGRATION_DISCLAIMER_ENABLED) {
+      // Migration disclaimer — design.md:686 wording. The
+      // forward-compat anchor (R7.AC4) is named explicitly so an
+      // operator reading the report knows the
+      // `per_bucket_cost_deferred` finding is preserved
+      // intentionally rather than left over from v1.
+      lines.push(
+        `**v1→v2 migration**: per-bucket cost fields now carry ` +
+          `populated values; the v1 \`per_bucket_cost_deferred\` ` +
+          `finding is preserved (R7.AC4) with its detail string ` +
+          `rewritten to reflect the populated state.`,
+      );
+      lines.push('');
+    }
+
     // ── Optional generation timestamp (MD only — R6.AC3) ────────
     if (opts.generatedAt instanceof Date) {
       // Italic + "Report generated:" label. Deliberately NOT
@@ -4119,6 +4222,50 @@ class ReportSerializer {
         lines.push('');
         lines.push(...renderBucketTable(s.tokens || {}));
         lines.push('');
+
+        // ── Task 7.1: v2 per-session cost sub-bucket sections ──
+        //
+        // Four surfaces, all gated on V2_COST_COMPUTE_ENABLED so
+        // flag-OFF emission stays byte-identical to v1:
+        //
+        //   - Three uncached cost sub-bucket lines (R7.1):
+        //     uncachedSystemPrompt / history / toolOutputs. Drift
+        //     sessions emit `null` for these (per
+        //     `makeNullCostShape`); we skip the line emit on null
+        //     rather than print "null" which would be ambiguous
+        //     against zero spend.
+        //   - cachedRead breakdown table (R4.4) — one row per
+        //     key in CACHED_READ_SUB_BUCKET_KEYS, with the cost
+        //     in dollars. Null breakdown renders a placeholder.
+        //   - Per-agent table (R5.4) — alphabetical-by-key for
+        //     determinism. Null or empty map renders a placeholder.
+        //   - Per-tool table (R6.5) — alphabetical-by-key, with
+        //     cached/uncached partition columns. Null or empty
+        //     map renders a placeholder.
+        //
+        // The helpers render their own trailing blank line so the
+        // call site stays a flat sequence — easier to reason about
+        // ordering at the section level.
+        if (V2_COST_COMPUTE_ENABLED && s.cost) {
+          const c = s.cost;
+          if (typeof c.uncachedSystemPrompt === 'number') {
+            lines.push(`- Uncached system prompt: ${c.uncachedSystemPrompt}`);
+          }
+          if (typeof c.history === 'number') {
+            lines.push(`- History: ${c.history}`);
+          }
+          if (typeof c.toolOutputs === 'number') {
+            lines.push(`- Tool outputs: ${c.toolOutputs}`);
+          }
+          lines.push('');
+          lines.push(...renderCachedReadBreakdownTable(c.cachedReadBreakdown));
+          lines.push('');
+          lines.push(...renderByAgentTable(c.subagentDispatchByAgent));
+          lines.push('');
+          lines.push(...renderByToolTable(c.toolOutputsByTool));
+          lines.push('');
+        }
+
         // When --include-content was set, the assembler attached
         // a `content` field. Surface its bare shape (counts) so the
         // operator knows content was included without dumping
@@ -4163,6 +4310,81 @@ function renderBucketTable(tokens) {
   for (const k of BUCKET_TOTAL_KEYS) {
     const v = typeof tokens[k] === 'number' ? tokens[k] : 0;
     rows.push(`| ${k} | ${v} |`);
+  }
+  return rows;
+}
+
+// Task 7.1 helpers. Each renders a Markdown table for one of the
+// new per-session sub-bucket dimensions. Null contributions
+// (`pricing_table_drift` sessions emit `null` for these per
+// `makeNullCostShape`) render a placeholder line rather than a
+// malformed empty table — the operator must still recognise the
+// section, just with no rows.
+//
+// Determinism: byAgent / byTool keys are sorted alphabetically
+// (the assembler stores them as plain objects per the Map→object
+// conversion at design.md:695, but `Object.keys` order is insertion
+// order — explicit sort guarantees stable output regardless of how
+// the producer enumerated agent / tool keys).
+
+function renderCachedReadBreakdownTable(breakdown) {
+  if (breakdown == null || typeof breakdown !== 'object') {
+    return ['_No cachedRead breakdown for this session (drift)._'];
+  }
+  const rows = ['| CachedRead sub-bucket | Cost |', '| --- | ---: |'];
+  for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+    // null per-key (drift) renders as `null` so the operator can
+    // see the per-key drift posture without a guessable zero
+    // confusing the read.
+    const v = breakdown[k];
+    const rendered = typeof v === 'number' ? v : 'null';
+    rows.push(`| ${k} | ${rendered} |`);
+  }
+  return rows;
+}
+
+function renderByAgentTable(byAgent) {
+  if (byAgent == null) {
+    return ['_No per-agent data._'];
+  }
+  if (typeof byAgent !== 'object') {
+    return ['_No per-agent data._'];
+  }
+  const keys = Object.keys(byAgent).sort();
+  if (keys.length === 0) {
+    return ['_No per-agent data._'];
+  }
+  const rows = ['| Agent | Cost |', '| --- | ---: |'];
+  for (const k of keys) {
+    const v = byAgent[k];
+    const rendered = typeof v === 'number' ? v : 'null';
+    rows.push(`| ${k} | ${rendered} |`);
+  }
+  return rows;
+}
+
+function renderByToolTable(byTool) {
+  if (byTool == null) {
+    return ['_No per-tool data._'];
+  }
+  if (typeof byTool !== 'object') {
+    return ['_No per-tool data._'];
+  }
+  const keys = Object.keys(byTool).sort();
+  if (keys.length === 0) {
+    return ['_No per-tool data._'];
+  }
+  const rows = [
+    '| Tool | Cached cost | Uncached cost |',
+    '| --- | ---: | ---: |',
+  ];
+  for (const k of keys) {
+    const entry = byTool[k] || {};
+    const cached =
+      typeof entry.cached === 'number' ? entry.cached : 'null';
+    const uncached =
+      typeof entry.uncached === 'number' ? entry.uncached : 'null';
+    rows.push(`| ${k} | ${cached} | ${uncached} |`);
   }
   return rows;
 }

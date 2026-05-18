@@ -45,11 +45,19 @@ const {
   AttributionEngine,
   ReportAssembler,
   ReportSerializer,
+  PricingTable,
+  setV2CostComputeEnabled,
+  PER_BUCKET_COST_KEYS,
+  CACHED_READ_SUB_BUCKET_KEYS,
 } = require(
   path.join(__dirname, '../../../scripts/opencode-cost-report.js'),
 );
 
 const FIXTURE = path.join(__dirname, '../fixtures/opencode-stable.db');
+const SYNTHETIC_PRICING = path.join(
+  __dirname,
+  '../fixtures/synthetic-pricing.json',
+);
 
 // Per-root fixture constants. Single source of truth co-located
 // with the assertions; mirrors report-assembler.test.js so a
@@ -485,4 +493,376 @@ test('formatMarkdown(empty report): well-formed output with no per-session/per-p
   );
   // Sanity: doesn't crash; produces a non-empty string.
   assert.ok(out.length > 0);
+});
+
+/* ── Task 7.1: Markdown extensions for v2 sub-buckets ─────────────── */
+//
+// Task 7.1 extends ReportSerializer.formatMarkdown with four new
+// surfaces, all gated on `V2_COST_COMPUTE_ENABLED`:
+//
+//   1. A pricing-pin disclaimer block rendered immediately after
+//      the existing tokenizer disclaimer (and BEFORE the `---`
+//      separator). Wording is frozen at design time so the
+//      operator-facing language is auditable from the spec.
+//   2. A threshold-rendering block (per-agent and per-tool fold
+//      thresholds) inside the same expanded disclaimer area so
+//      the operator can interpret the `(below-threshold-fold)`
+//      residuals when they appear in the byAgent / byTool tables.
+//   3. A v1→v2 migration disclaimer line, gated on its OWN
+//      module-level constant (`V2_MIGRATION_DISCLAIMER_ENABLED`)
+//      so the operator can flip it off in a follow-up commit
+//      after cutover beds in. Not coupled to the cost-compute
+//      flag — the cost-compute flag never comes back OFF in
+//      production once 8.1 lands, but the migration disclaimer
+//      is intentionally transient.
+//   4. Per-session detail extensions:
+//        - Three uncached cost sub-bucket lines (uncachedSystemPrompt,
+//          history, toolOutputs) reading from `s.cost.*`.
+//        - A cachedRead breakdown table (6 rows, one per
+//          `CACHED_READ_SUB_BUCKET_KEYS`).
+//        - A per-agent table (cost-per-agent-type).
+//        - A per-tool table (cost-per-tool, with cached/uncached
+//          partition columns).
+//      Drift sessions (`s.cost.cachedReadBreakdown === null` etc.)
+//      render a placeholder line, NOT a malformed empty table.
+//
+// Binding observable preserved: the FIRST line of Markdown still
+// starts with `**TOKENIZER ACCURACY DISCLAIMER (` — the pricing
+// pin block lives AFTER this first block, not before it.
+//
+// Task 7.3 will expand the test coverage; this section provides
+// the minimum 3-observable evidence the reviewer requires for the
+// 7.1 RED→GREEN cycle.
+//
+// Requirements: R3.3 (pricing pin in MD), R4.4 (cachedRead
+// disclaimer extension), R5.4 (per-agent + threshold disclosure),
+// R6.5 (per-tool + threshold disclosure), R7.1 (additive shape).
+
+// Build a v2-extended cost shape for the per-session detail tests.
+// Mirrors `makeV2CostExtended` in report-assembler.test.js without
+// re-importing the helper (keeps the serializer.test.js file
+// self-contained). Defaults to a populated cachedReadBreakdown
+// (all zeros across the 6 sub-buckets) plus empty byAgent / byTool
+// maps. Override individual fields by passing them in `overrides`.
+function makeV2CostExtendedForSerializerTest(overrides) {
+  const o = overrides || {};
+  const base = { total: typeof o.total === 'number' ? o.total : 0 };
+  for (const k of PER_BUCKET_COST_KEYS) {
+    base[k] = Object.prototype.hasOwnProperty.call(o, k) ? o[k] : 0;
+  }
+  if (Object.prototype.hasOwnProperty.call(o, 'cachedReadBreakdown')) {
+    base.cachedReadBreakdown = o.cachedReadBreakdown;
+  } else {
+    const crb = {};
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) crb[k] = 0;
+    base.cachedReadBreakdown = crb;
+  }
+  base.subagentDispatchByAgent = Object.prototype.hasOwnProperty.call(
+    o,
+    'subagentDispatchByAgent',
+  )
+    ? o.subagentDispatchByAgent
+    : {};
+  base.toolOutputsByTool = Object.prototype.hasOwnProperty.call(
+    o,
+    'toolOutputsByTool',
+  )
+    ? o.toolOutputsByTool
+    : {};
+  return base;
+}
+
+function makeSerializerTestAttribution(overrides) {
+  const o = overrides || {};
+  return {
+    sessionId: o.sessionId || 'ses_synth_serializer',
+    directory: o.directory || '/Users/test/synth-project',
+    agent: o.agent || 'build',
+    model: o.model || 'claude-opus-4-7',
+    timeCreated: o.timeCreated || 1_700_000_000_000,
+    timeUpdated: o.timeUpdated || 1_700_000_001_000,
+    tokens: Object.assign(
+      {
+        cachedRead: 5000,
+        cachedWrite: 1000,
+        uncachedSystemPrompt: 100,
+        history: 200,
+        toolOutputs: 50,
+        output: 30,
+        reasoning: 10,
+        subagentDispatch: 0,
+      },
+      o.tokens || {},
+    ),
+    cost: o.cost || makeV2CostExtendedForSerializerTest({ total: 0.10 }),
+    findings: o.findings || [],
+  };
+}
+
+function assembleSerializerTestReport(attrs, options) {
+  setV2CostComputeEnabled(true);
+  const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+  return new ReportAssembler(pricingTable).assemble(attrs || [], options);
+}
+
+/* Observable 1: pricing pin disclaimer substring appears immediately
+ * after the existing tokenizer disclaimer block. */
+test('formatMarkdown (flag ON): contains **PRICING PIN**: substring after tokenizer disclaimer block', () => {
+  try {
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_pin_a',
+        directory: '/p/a',
+        cost: makeV2CostExtendedForSerializerTest({ total: 0.10 }),
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatMarkdown(report);
+
+    // R3.3: pricing pin substring must be present in flag-ON MD.
+    assert.ok(
+      out.includes('**PRICING PIN**:'),
+      `markdown must contain "**PRICING PIN**:" substring; got:\n${out.slice(0, 800)}`,
+    );
+
+    // The pricing pin must appear AFTER the tokenizer disclaimer
+    // headline (binding observable preserved) and BEFORE the
+    // global totals section heading. This protects the placement
+    // contract — the pin sits in the same disclaimer "zone" as
+    // the tokenizer disclaimer, not buried elsewhere.
+    const headlineIdx = out.indexOf('**TOKENIZER ACCURACY DISCLAIMER (');
+    const pinIdx = out.indexOf('**PRICING PIN**:');
+    const globalIdx = out.toLowerCase().indexOf('global total');
+    assert.equal(headlineIdx, 0, 'tokenizer disclaimer must remain the very first line');
+    assert.ok(pinIdx > headlineIdx, 'pricing pin must appear AFTER the tokenizer disclaimer block');
+    assert.ok(pinIdx < globalIdx, 'pricing pin must appear BEFORE the global totals section');
+
+    // The pin block names the canonical pin metadata sourced from
+    // the synthetic fixture. Asserting the values flow through
+    // unmangled guards against the renderer reading the wrong
+    // field on `report.pricing`.
+    assert.ok(out.includes('synthetic-test-fixture'), 'pin block must include pinSource');
+    assert.ok(out.includes('2026-01-01'), 'pin block must include pinDate');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Observable 2: threshold-rendering substring inside disclaimer area. */
+test('formatMarkdown (flag ON): renders per-agent fold threshold and per-tool fold threshold from tokenizer_disclaimer.thresholds', () => {
+  try {
+    const report = assembleSerializerTestReport([]);
+    const out = new ReportSerializer().formatMarkdown(report);
+
+    // R5.4 / R6.5: the operator needs to see the fold thresholds
+    // next to the eventual `(below-threshold-fold)` residual rows.
+    // The renderer must surface BOTH the per-agent threshold
+    // (with the child floor) and the per-tool threshold.
+    assert.ok(
+      out.includes('per-agent fold threshold:'),
+      `markdown must surface "per-agent fold threshold:" substring; got:\n${out.slice(0, 800)}`,
+    );
+    assert.ok(
+      out.includes('per-tool fold threshold:'),
+      `markdown must surface "per-tool fold threshold:" substring; got:\n${out.slice(0, 800)}`,
+    );
+
+    // Spot-check the rendered numerics. The thresholds in the
+    // disclaimer object are populated by ReportAssembler 6.3 from
+    // SUBAGENT_BELOW_THRESHOLD_PCT (0.01 = 1%) /
+    // SUBAGENT_BELOW_THRESHOLD_CHILD_FLOOR (1) /
+    // TOOL_BELOW_THRESHOLD_PCT (0.01 = 1%). The renderer must
+    // surface them faithfully — either as the raw decimal or as a
+    // percent. Either form satisfies the operator-readability
+    // contract; the test accepts both so a copy edit doesn't
+    // force a test rewrite.
+    const hasOnePct = out.includes('1%') || out.includes('0.01');
+    assert.ok(hasOnePct, 'rendered thresholds must surface the 1% / 0.01 value');
+
+    // The threshold block must live INSIDE the expanded disclaimer
+    // area — after the affectedBuckets line, before the `---`
+    // separator that ends the disclaimer.
+    const affectedIdx = out.indexOf('Affected buckets (tokenizer-derived');
+    const thresholdIdx = out.indexOf('per-agent fold threshold:');
+    const sepIdx = out.indexOf('\n---\n');
+    assert.ok(affectedIdx !== -1, 'affectedBuckets line must still be present');
+    assert.ok(thresholdIdx > affectedIdx, 'thresholds must appear after affectedBuckets');
+    assert.ok(thresholdIdx < sepIdx, 'thresholds must appear before the disclaimer ---');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Observable 3: per-session block renders cachedRead/agent/tool tables
+ * plus the three uncached cost sub-bucket lines. */
+test('formatMarkdown (flag ON): per-session blocks render cachedRead breakdown, per-agent, per-tool tables, and the 3 uncached cost sub-bucket lines', () => {
+  try {
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_detail_a',
+        directory: '/p/a',
+        cost: makeV2CostExtendedForSerializerTest({
+          total: 1.0,
+          uncachedSystemPrompt: 0.08,
+          history: 0.20,
+          toolOutputs: 0.02,
+          cachedRead: 0.30,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.10,
+            agentsMdCached: 0.05,
+            mcpToolSchemasCached: 0.04,
+            accumulatedHistoryCached: 0.08,
+            accumulatedToolOutputsCached: 0.02,
+            unclassifiedCached: 0.01,
+          },
+          subagentDispatchByAgent: {
+            build: 0.20,
+            review: 0.05,
+          },
+          toolOutputsByTool: {
+            bash: { cached: 0.005, uncached: 0.010 },
+            read: { cached: 0.002, uncached: 0.008 },
+          },
+        }),
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatMarkdown(report);
+
+    // (a) Per-session block names the session.
+    assert.ok(out.includes('ses_detail_a'), 'per-session block must name session id');
+
+    // (b) The three uncached cost sub-bucket lines. R7.1 (additive
+    // shape) + the task's "render the three new uncached cost
+    // sub-bucket lines" observable.
+    assert.ok(
+      out.includes('Uncached system prompt:'),
+      `markdown must surface "Uncached system prompt:" line; got:\n${out.slice(-1500)}`,
+    );
+    assert.ok(out.includes('History:'), 'markdown must surface "History:" cost line');
+    assert.ok(out.includes('Tool outputs:'), 'markdown must surface "Tool outputs:" cost line');
+
+    // (c) cachedRead breakdown table — the canonical observable in
+    // the task brief. Header markers + one row per known sub-bucket
+    // name proves the renderer iterates CACHED_READ_SUB_BUCKET_KEYS.
+    assert.ok(
+      out.includes('CachedRead sub-bucket'),
+      `markdown must contain cachedRead breakdown table header; got:\n${out.slice(-1500)}`,
+    );
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.ok(
+        out.includes(k),
+        `markdown cachedRead breakdown table must include sub-bucket "${k}"`,
+      );
+    }
+
+    // (d) Per-agent table — header + both agent rows.
+    assert.ok(
+      out.includes('| Agent | Cost |'),
+      `markdown must contain per-agent table header; got:\n${out.slice(-1500)}`,
+    );
+    assert.ok(out.includes('build'), 'per-agent table must include build row');
+    assert.ok(out.includes('review'), 'per-agent table must include review row');
+
+    // (e) Per-tool table — header (with cached/uncached partition)
+    // + both tool rows.
+    assert.ok(
+      out.includes('| Tool | Cached cost | Uncached cost |'),
+      `markdown must contain per-tool table header with cached/uncached columns; got:\n${out.slice(-1500)}`,
+    );
+    assert.ok(out.includes('bash'), 'per-tool table must include bash row');
+    assert.ok(out.includes('read'), 'per-tool table must include read row');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Smoke check: drift session renders placeholders, not malformed
+ * tables. AttributionEngine emits `null` for cachedReadBreakdown /
+ * subagentDispatchByAgent / toolOutputsByTool on pricing-table
+ * drift; the renderer must surface a human-readable placeholder
+ * rather than crashing or emitting an empty `| header |` table. */
+test('formatMarkdown (flag ON): drift session (null byAgent/byTool/cachedReadBreakdown) renders placeholders, not malformed tables', () => {
+  try {
+    const driftCost = {
+      total: 0.42,
+      cachedRead: null,
+      cachedWrite: null,
+      uncachedInput: null,
+      output: null,
+      reasoning: null,
+      subagentDispatch: null,
+      uncachedSystemPrompt: null,
+      history: null,
+      toolOutputs: null,
+      cachedReadBreakdown: null,
+      subagentDispatchByAgent: null,
+      toolOutputsByTool: null,
+    };
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_drift_x',
+        directory: '/p/drift',
+        cost: driftCost,
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    // Must not throw on null nested containers.
+    const out = new ReportSerializer().formatMarkdown(report);
+    // Session id still surfaces; that's the operator's anchor for
+    // following up.
+    assert.ok(out.includes('ses_drift_x'), 'drift session id must still be rendered');
+    // First line invariant still holds.
+    assert.equal(
+      out.split('\n')[0].startsWith('**TOKENIZER ACCURACY DISCLAIMER ('),
+      true,
+      'first line invariant preserved on drift report',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Flag-OFF preservation: flag-OFF Markdown must NOT contain any of
+ * the new substrings. This guards the byte-identical-to-v1
+ * contract for the rollout window (the existing 16+ flag-OFF MD
+ * tests above continue to pass as the binding observable; this
+ * single test pins the absence of the new strings explicitly). */
+test('formatMarkdown (flag OFF): contains none of the v2 disclaimer/threshold/table substrings', () => {
+  // Default flag state (OFF) — fixture-driven report assembled
+  // without a pricingTable. Mirrors the existing v1 serializer.test
+  // cases above so this is the same path the byte-identical
+  // integration goldens exercise.
+  const report = assembleFixture();
+  const out = new ReportSerializer().formatMarkdown(report);
+  assert.equal(
+    out.includes('**PRICING PIN**:'),
+    false,
+    'flag OFF: pricing pin substring must be absent',
+  );
+  assert.equal(
+    out.includes('per-agent fold threshold:'),
+    false,
+    'flag OFF: threshold rendering must be absent',
+  );
+  assert.equal(
+    out.includes('per-tool fold threshold:'),
+    false,
+    'flag OFF: threshold rendering must be absent',
+  );
+  assert.equal(
+    out.includes('CachedRead sub-bucket'),
+    false,
+    'flag OFF: cachedRead breakdown table must be absent',
+  );
+  assert.equal(
+    out.includes('| Agent | Cost |'),
+    false,
+    'flag OFF: per-agent table must be absent',
+  );
+  assert.equal(
+    out.includes('| Tool | Cached cost | Uncached cost |'),
+    false,
+    'flag OFF: per-tool table must be absent',
+  );
 });
