@@ -2033,3 +2033,631 @@ test('assemble: flag ON pricing.pinVersion is omitted when source JSON lacks it'
     fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true });
   }
 });
+
+/* ── Task 6.4: cross-cutting composition + adversarial coverage ── */
+//
+// The flag-ON tests above each exercise one v2 surface in isolation
+// (per-bucket cost; cachedReadBreakdown; byAgent; byTool; pricing;
+// thresholds; extended affectedBuckets). Task 6.4's review criteria
+// call for cross-cutting cases that catch shape-contradictions between
+// those surfaces — e.g. an assembler change that wires up pricing but
+// forgets to initialise cachedReadBreakdown on byProject entries would
+// pass every isolated test but fail an end-to-end shape check.
+//
+// These tests deliberately combine the v2 surfaces, scale beyond the
+// 2-project pairwise tests, exercise all five spec-named findings in
+// one assembler run, and pin the empty-attrs flag-ON behaviour.
+//
+// Requirements covered: R2.2 (global + per-project dollar aggregation),
+// R4.3 (cachedRead sub-buckets at all aggregation levels), R4.4
+// (extended disclaimer affectedBuckets), R5.3 (per-agent sub-buckets at
+// all aggregation levels), R5.4 (subagent threshold disclosure), R6.4
+// (per-tool sub-buckets at all aggregation levels), R6.5 (tool
+// threshold disclosure).
+
+test('assemble: flag ON end-to-end composition — every v2 surface present and self-consistent in one report', () => {
+  // Adversarial composition (task 6.4 review criterion A): exercise
+  // every new v2 surface AT THE SAME TIME on a single assembler call
+  // and prove the parts don't contradict each other. A regression
+  // that, say, wires up `pricing` but forgets to default
+  // `cachedReadBreakdown` on `byProject` entries would pass each
+  // isolated 6.1/6.2/6.3 test but fail here.
+  //
+  // Composition coverage:
+  //   - 2 projects × 2 sessions each (4 attributions)
+  //   - matched per-bucket cost on every session (R2.2 globalTotals
+  //     AND byProject sums consistent)
+  //   - non-zero cachedReadBreakdown on every session (R4.3)
+  //   - non-zero subagentDispatchByAgent on every session (R5.3)
+  //   - non-zero toolOutputsByTool on every session (R6.4)
+  //   - pricing table supplied → top-level pricing block (R3.3)
+  //   - flag ON → thresholds (R5.4 / R6.5) + extended affectedBuckets
+  //     (R4.4)
+  //   - tokenizer_disclaimer present (R2.AC9 forward-compat)
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a1',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 1.00,
+          cachedRead: 0.20,
+          cachedWrite: 0.05,
+          uncachedInput: 0.30,
+          output: 0.30,
+          reasoning: 0.05,
+          subagentDispatch: 0.10,
+          uncachedSystemPrompt: 0.08,
+          history: 0.20,
+          toolOutputs: 0.02,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.05,
+            agentsMdCached: 0.04,
+            mcpToolSchemasCached: 0.03,
+            accumulatedHistoryCached: 0.05,
+            accumulatedToolOutputsCached: 0.02,
+            unclassifiedCached: 0.01,
+          },
+          subagentDispatchByAgent: { general: 0.06, explore: 0.04 },
+          toolOutputsByTool: { read: { cached: 0.01, uncached: 0.01 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_a2',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 0.50,
+          cachedRead: 0.10,
+          cachedWrite: 0.02,
+          uncachedInput: 0.15,
+          output: 0.15,
+          reasoning: 0.02,
+          subagentDispatch: 0.06,
+          uncachedSystemPrompt: 0.04,
+          history: 0.10,
+          toolOutputs: 0.01,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.03,
+            agentsMdCached: 0.02,
+            mcpToolSchemasCached: 0.02,
+            accumulatedHistoryCached: 0.02,
+            accumulatedToolOutputsCached: 0.005,
+            unclassifiedCached: 0.005,
+          },
+          subagentDispatchByAgent: { general: 0.04, build: 0.02 },
+          toolOutputsByTool: { bash: { cached: 0, uncached: 0.01 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b1',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 0.40,
+          cachedRead: 0.08,
+          cachedWrite: 0.02,
+          uncachedInput: 0.12,
+          output: 0.12,
+          reasoning: 0.02,
+          subagentDispatch: 0.04,
+          uncachedSystemPrompt: 0.03,
+          history: 0.08,
+          toolOutputs: 0.01,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.02,
+            agentsMdCached: 0.02,
+            mcpToolSchemasCached: 0.01,
+            accumulatedHistoryCached: 0.02,
+            accumulatedToolOutputsCached: 0.005,
+            unclassifiedCached: 0.005,
+          },
+          subagentDispatchByAgent: { explore: 0.04 },
+          toolOutputsByTool: { edit: { cached: 0, uncached: 0.01 } },
+        }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b2',
+        directory: '/p/b',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2CostExtended({
+          total: 0.30,
+          cachedRead: 0.06,
+          cachedWrite: 0.01,
+          uncachedInput: 0.09,
+          output: 0.10,
+          reasoning: 0.02,
+          subagentDispatch: 0.02,
+          uncachedSystemPrompt: 0.02,
+          history: 0.06,
+          toolOutputs: 0.01,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.02,
+            agentsMdCached: 0.01,
+            mcpToolSchemasCached: 0.01,
+            accumulatedHistoryCached: 0.01,
+            accumulatedToolOutputsCached: 0.005,
+            unclassifiedCached: 0.005,
+          },
+          subagentDispatchByAgent: { build: 0.02 },
+          toolOutputsByTool: { bash: { cached: 0, uncached: 0.01 } },
+        }),
+      }),
+    ];
+    const report = new ReportAssembler(pricingTable).assemble(attrs);
+
+    // ── Top-level shape ─────────────────────────────────────────
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.reportType, 'opencode-cost-diagnosis');
+    assert.equal(report.sessionCount, 4);
+    assert.equal(typeof report.tokenizer_disclaimer, 'object');
+
+    // ── Pricing block (R3.3) ────────────────────────────────────
+    assert.equal(report.pricing.pinDate, '2026-01-01');
+    assert.equal(report.pricing.pinSource, 'synthetic-test-fixture');
+
+    // ── Disclaimer thresholds (R5.4 / R6.5) ─────────────────────
+    const t = report.tokenizer_disclaimer.thresholds;
+    assert.equal(t.subagentBelowThresholdPct, 0.01);
+    assert.equal(t.subagentBelowThresholdChildFloor, 1);
+    assert.equal(t.toolBelowThresholdPct, 0.01);
+
+    // ── Disclaimer extended affectedBuckets (R4.4) ──────────────
+    const ab = report.tokenizer_disclaimer.affectedBuckets;
+    assert.ok(ab.includes('systemPromptCached'));
+    assert.ok(ab.includes('toolOutputsByTool'));
+    assert.ok(ab.includes('subagentDispatchByAgent'));
+
+    // ── Global per-bucket cost (R2.2) — every key summed ────────
+    const g = report.globalTotals.cost;
+    assert.ok(Math.abs(g.total - 2.20) < 1e-9, `globalTotals.cost.total expected 2.20, got ${g.total}`);
+    const expectedGlobalPerBucket = {
+      cachedRead: 0.44,
+      cachedWrite: 0.10,
+      uncachedInput: 0.66,
+      output: 0.67,
+      reasoning: 0.11,
+      subagentDispatch: 0.22,
+      uncachedSystemPrompt: 0.17,
+      history: 0.44,
+      toolOutputs: 0.05,
+    };
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.ok(
+        Math.abs(g[k] - expectedGlobalPerBucket[k]) < 1e-9,
+        `globalTotals.cost.${k} expected ${expectedGlobalPerBucket[k]}, got ${g[k]}`,
+      );
+    }
+
+    // ── Global cachedReadBreakdown (R4.3) ───────────────────────
+    assert.ok(Math.abs(g.cachedReadBreakdown.systemPromptCached - 0.12) < 1e-9);
+    assert.ok(Math.abs(g.cachedReadBreakdown.agentsMdCached - 0.09) < 1e-9);
+    assert.ok(Math.abs(g.cachedReadBreakdown.unclassifiedCached - 0.025) < 1e-9);
+
+    // ── Global subagentDispatchByAgent (R5.3) ───────────────────
+    assert.ok(!(g.subagentDispatchByAgent instanceof Map));
+    assert.ok(Math.abs(g.subagentDispatchByAgent.general - 0.10) < 1e-9);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.explore - 0.08) < 1e-9);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.build - 0.04) < 1e-9);
+
+    // ── Global toolOutputsByTool (R6.4) ─────────────────────────
+    assert.ok(!(g.toolOutputsByTool instanceof Map));
+    assert.ok(Math.abs(g.toolOutputsByTool.read.cached - 0.01) < 1e-9);
+    assert.ok(Math.abs(g.toolOutputsByTool.bash.uncached - 0.02) < 1e-9);
+    assert.ok(Math.abs(g.toolOutputsByTool.edit.uncached - 0.01) < 1e-9);
+
+    // ── Per-project shape parity — every v2 surface exists ──────
+    for (const dir of ['/p/a', '/p/b']) {
+      const agg = report.byProject[dir];
+      assert.equal(agg.sessionCount, 2, `${dir}.sessionCount expected 2`);
+      assert.equal(typeof agg.cost.total, 'number');
+      for (const k of PER_BUCKET_COST_KEYS) {
+        assert.equal(
+          typeof agg.cost[k],
+          'number',
+          `${dir}.cost.${k} must be a number under flag ON`,
+        );
+      }
+      assert.ok(agg.cost.cachedReadBreakdown && typeof agg.cost.cachedReadBreakdown === 'object');
+      assert.ok(!(agg.cost.subagentDispatchByAgent instanceof Map));
+      assert.ok(!(agg.cost.toolOutputsByTool instanceof Map));
+    }
+
+    // ── Per-project + global sum-correctness invariant ──────────
+    // The global cachedReadBreakdown.systemPromptCached must equal
+    // the sum across every byProject entry's same field. This is
+    // the strongest cross-cutting consistency assertion: a bug
+    // that aggregated to global but skipped byProject (or vice
+    // versa) would fail here.
+    const globalSPC = g.cachedReadBreakdown.systemPromptCached;
+    const projSumSPC =
+      report.byProject['/p/a'].cost.cachedReadBreakdown.systemPromptCached +
+      report.byProject['/p/b'].cost.cachedReadBreakdown.systemPromptCached;
+    assert.ok(
+      Math.abs(globalSPC - projSumSPC) < 1e-9,
+      `cross-cutting: globalTotals.cachedReadBreakdown.systemPromptCached (${globalSPC}) must equal sum across byProject (${projSumSPC})`,
+    );
+    // Same invariant for per-bucket cost total.
+    const projSumCachedRead =
+      report.byProject['/p/a'].cost.cachedRead +
+      report.byProject['/p/b'].cost.cachedRead;
+    assert.ok(
+      Math.abs(g.cachedRead - projSumCachedRead) < 1e-9,
+      `cross-cutting: globalTotals.cost.cachedRead (${g.cachedRead}) must equal sum across byProject (${projSumCachedRead})`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON aggregates per-bucket and nested sub-buckets correctly across 3+ projects', () => {
+  // Task 6.4 review criterion B: prove per-project grouping scales
+  // beyond pairwise. Three distinct cwds, each with two sessions
+  // contributing to the v2 surfaces. A regression that worked on the
+  // 2-project test cases but lost the third project (e.g. a Map
+  // iteration that only converted the first two entries) would fail
+  // here even though the byProject key count looks right.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [];
+    // Each project A/B/C gets two sessions with the same per-session
+    // cost so the per-project sums are independent of session order.
+    for (const [dir, sda] of [
+      ['/p/a', { general: 0.10 }],
+      ['/p/b', { explore: 0.10 }],
+      ['/p/c', { build: 0.10 }],
+    ]) {
+      for (const sfx of ['1', '2']) {
+        attrs.push(
+          makeAttribution({
+            sessionId: `ses${dir.replace('/p/', '')}${sfx}`,
+            directory: dir,
+            tokens: { cachedRead: 5000 },
+            cost: makeV2CostExtended({
+              total: 0.25,
+              cachedRead: 0.05,
+              cachedReadBreakdown: {
+                systemPromptCached: 0.02,
+                agentsMdCached: 0.01,
+                mcpToolSchemasCached: 0.005,
+                accumulatedHistoryCached: 0.01,
+                accumulatedToolOutputsCached: 0.0025,
+                unclassifiedCached: 0.0025,
+              },
+              subagentDispatchByAgent: sda,
+              toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+            }),
+          }),
+        );
+      }
+    }
+    const report = new ReportAssembler().assemble(attrs);
+
+    // sessionCount and byProject cardinality
+    assert.equal(report.sessionCount, 6);
+    assert.equal(Object.keys(report.byProject).length, 3);
+    assert.ok(report.byProject['/p/a']);
+    assert.ok(report.byProject['/p/b']);
+    assert.ok(report.byProject['/p/c']);
+
+    // Per-project sessionCount = 2 each
+    for (const dir of ['/p/a', '/p/b', '/p/c']) {
+      assert.equal(report.byProject[dir].sessionCount, 2, `${dir}.sessionCount`);
+    }
+
+    // Per-project per-bucket sum (2 × 0.05 = 0.10 each for cachedRead)
+    for (const dir of ['/p/a', '/p/b', '/p/c']) {
+      assert.ok(
+        Math.abs(report.byProject[dir].cost.cachedRead - 0.10) < 1e-9,
+        `${dir}.cost.cachedRead expected 0.10, got ${report.byProject[dir].cost.cachedRead}`,
+      );
+      // Per-project cachedReadBreakdown.systemPromptCached = 2 × 0.02
+      assert.ok(
+        Math.abs(report.byProject[dir].cost.cachedReadBreakdown.systemPromptCached - 0.04) < 1e-9,
+      );
+    }
+
+    // Per-project byAgent isolation: each project sees only its own agent
+    assert.equal(Object.keys(report.byProject['/p/a'].cost.subagentDispatchByAgent).length, 1);
+    assert.ok(Math.abs(report.byProject['/p/a'].cost.subagentDispatchByAgent.general - 0.20) < 1e-9);
+    assert.equal(report.byProject['/p/a'].cost.subagentDispatchByAgent.explore, undefined);
+    assert.equal(report.byProject['/p/a'].cost.subagentDispatchByAgent.build, undefined);
+    assert.equal(Object.keys(report.byProject['/p/b'].cost.subagentDispatchByAgent).length, 1);
+    assert.ok(Math.abs(report.byProject['/p/b'].cost.subagentDispatchByAgent.explore - 0.20) < 1e-9);
+    assert.equal(Object.keys(report.byProject['/p/c'].cost.subagentDispatchByAgent).length, 1);
+    assert.ok(Math.abs(report.byProject['/p/c'].cost.subagentDispatchByAgent.build - 0.20) < 1e-9);
+
+    // Global aggregates: total = 6 × 0.25, cachedRead = 6 × 0.05,
+    // cachedReadBreakdown.systemPromptCached = 6 × 0.02, byAgent
+    // contains all 3 distinct agents each at 2 × 0.10.
+    const g = report.globalTotals.cost;
+    assert.ok(Math.abs(g.total - 1.50) < 1e-9);
+    assert.ok(Math.abs(g.cachedRead - 0.30) < 1e-9);
+    assert.ok(Math.abs(g.cachedReadBreakdown.systemPromptCached - 0.12) < 1e-9);
+    assert.equal(Object.keys(g.subagentDispatchByAgent).length, 3);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.general - 0.20) < 1e-9);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.explore - 0.20) < 1e-9);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.build - 0.20) < 1e-9);
+
+    // Cross-cutting invariant: global cachedRead = sum of every project's cachedRead.
+    const sumProj = Object.values(report.byProject).reduce((s, p) => s + p.cost.cachedRead, 0);
+    assert.ok(Math.abs(g.cachedRead - sumProj) < 1e-9);
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: aggregates all 5 spec-named findings into global findings array with sessionId tagging preserved', () => {
+  // Task 6.4 review criterion C: the assembler's per-session-findings
+  // forwarding loop (lines ~3765-3775) must propagate every finding
+  // kind verbatim AND attach the originating sessionId. The existing
+  // test `assemble: per-session finding carries session ID context`
+  // only exercises one finding on one session; this case exercises
+  // all five v2-relevant finding kinds simultaneously to catch a
+  // regression where the loop accidentally filters by kind or only
+  // forwards the first finding per session.
+  //
+  // Finding kinds chosen to mirror the v2 spec catalog:
+  //   - drift                                (R3.x pricing drift)
+  //   - cost_invariant_violation             (R2.x sum-correctness)
+  //   - cached_read_classification_residual  (R4.x cachedRead residual)
+  //   - subagent_agent_attribution_drift     (R5.x subagent drift)
+  //   - per_bucket_cost_deferred             (v1→v2 forward-compat marker)
+  const allFiveKinds = [
+    'drift',
+    'cost_invariant_violation',
+    'cached_read_classification_residual',
+    'subagent_agent_attribution_drift',
+    'per_bucket_cost_deferred',
+  ];
+  const attrs = [
+    makeAttribution({
+      sessionId: 'ses_multi_findings',
+      directory: '/p/a',
+      findings: allFiveKinds.map((k) => ({
+        kind: k,
+        detail: `synthetic ${k} detail`,
+      })),
+    }),
+    makeAttribution({
+      sessionId: 'ses_clean',
+      directory: '/p/b',
+      findings: [], // no findings — must not appear in the per-session forwarding
+    }),
+  ];
+  const report = new ReportAssembler().assemble(attrs);
+
+  // Every forwarded finding must carry sessionId === 'ses_multi_findings'.
+  const forwarded = report.findings.filter((f) =>
+    allFiveKinds.includes(f.kind),
+  );
+  assert.equal(
+    forwarded.length,
+    5,
+    `expected all 5 finding kinds to be forwarded, got ${forwarded.length}: ${forwarded.map((f) => f.kind).join(',')}`,
+  );
+  for (const k of allFiveKinds) {
+    const found = forwarded.find((f) => f.kind === k);
+    assert.ok(found, `finding kind '${k}' missing from forwarded findings`);
+    assert.equal(
+      found.sessionId,
+      'ses_multi_findings',
+      `finding '${k}' must be tagged with originating sessionId`,
+    );
+    assert.equal(
+      found.detail,
+      `synthetic ${k} detail`,
+      `finding '${k}' detail must be preserved verbatim`,
+    );
+  }
+  // ses_clean must NOT contribute any per-session findings (empty
+  // array on the input). The only entries with sessionId === 'ses_clean'
+  // would be assembler-emitted globals tagged with sesId — and the
+  // global caching_not_enabled finding is NOT per-session-tagged.
+  const cleanTagged = report.findings.filter((f) => f.sessionId === 'ses_clean');
+  assert.equal(
+    cleanTagged.length,
+    0,
+    `ses_clean must not contribute per-session findings, got ${cleanTagged.length}`,
+  );
+});
+
+test('assemble([]): flag ON + pricingTable produces valid empty report with pricing + disclaimer + thresholds, no crash', () => {
+  // Task 6.4 review criterion D: the zero-attribution path
+  // (empty `attrs` array) must produce a valid v2 report — no
+  // crashes, empty byProject/sessions, sessionCount=0 — AND must
+  // still inject the pricing block + thresholds + extended
+  // affectedBuckets when the flag is ON and a pricingTable is
+  // supplied. The empty-attrs case is the canonical "empty DB / no
+  // matching sessions" path and is the smallest possible regression
+  // surface for a missing `if (attrs.length > 0)` guard around any
+  // of the v2 emission paths.
+  setV2CostComputeEnabled(true);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    const report = new ReportAssembler(pricingTable).assemble([]);
+
+    // Empty-shape invariants (R2.AC8)
+    assert.equal(report.sessionCount, 0);
+    assert.deepEqual(report.byProject, {});
+    assert.deepEqual(report.sessions, []);
+    assert.ok(Array.isArray(report.findings));
+
+    // caching_not_enabled MUST NOT fire on the empty path
+    // (R2.AC7 — requirement presupposes ≥1 in-scope session).
+    const cne = report.findings.filter((f) => f.kind === 'caching_not_enabled');
+    assert.equal(cne.length, 0, 'caching_not_enabled must not fire on empty attrs');
+
+    // globalTotals.tokens should be an object with zeroed counts;
+    // globalTotals.cost.total === 0.
+    assert.equal(typeof report.globalTotals.tokens, 'object');
+    assert.equal(typeof report.globalTotals.cost, 'object');
+    assert.equal(report.globalTotals.cost.total, 0);
+
+    // Per-bucket cost keys present under flag ON (default initialised
+    // to numeric zero, not null).
+    for (const k of PER_BUCKET_COST_KEYS) {
+      assert.equal(
+        typeof report.globalTotals.cost[k],
+        'number',
+        `flag ON + empty: globalTotals.cost.${k} must be a number (defaulted to 0)`,
+      );
+      assert.equal(report.globalTotals.cost[k], 0);
+    }
+    // Nested sub-bucket structures present and empty/zeroed.
+    const crb = report.globalTotals.cost.cachedReadBreakdown;
+    assert.ok(crb && typeof crb === 'object');
+    for (const k of CACHED_READ_SUB_BUCKET_KEYS) {
+      assert.equal(crb[k], 0, `empty: cachedReadBreakdown.${k} expected 0`);
+    }
+    assert.deepEqual(report.globalTotals.cost.subagentDispatchByAgent, {});
+    assert.deepEqual(report.globalTotals.cost.toolOutputsByTool, {});
+
+    // Pricing block STILL injected when flag is ON and pricingTable
+    // is supplied — the empty-attrs case must not suppress it.
+    assert.equal(typeof report.pricing, 'object');
+    assert.equal(report.pricing.pinDate, '2026-01-01');
+    assert.equal(report.pricing.pinSource, 'synthetic-test-fixture');
+
+    // Disclaimer thresholds + extended affectedBuckets must still be
+    // present on the empty-attrs path.
+    const t = report.tokenizer_disclaimer.thresholds;
+    assert.equal(t.subagentBelowThresholdPct, 0.01);
+    assert.equal(t.toolBelowThresholdPct, 0.01);
+    const ab = report.tokenizer_disclaimer.affectedBuckets;
+    assert.ok(ab.includes('systemPromptCached'));
+    assert.ok(ab.includes('toolOutputsByTool'));
+    assert.ok(ab.includes('subagentDispatchByAgent'));
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('assemble: flag ON mixes matched + drift sessions ACROSS multiple projects with correct per-project AND global aggregates', () => {
+  // Task 6.4 review criterion E: the existing drift-skip tests cover
+  // (matched on /p/a) + (drift on /p/b), so drift never coexists with
+  // matched WITHIN a project. This case puts both a matched and a
+  // drift session in every project, scales to 3 projects, and asserts
+  // both byProject-level AND global aggregates simultaneously. A
+  // regression that handled drift correctly at the global level but
+  // double-counted (or skipped) at the per-project level would fail
+  // here but pass every existing 6.x test.
+  setV2CostComputeEnabled(true);
+  try {
+    const attrs = [];
+    for (const dir of ['/p/a', '/p/b', '/p/c']) {
+      // One matched session per project — full v2 cost.
+      attrs.push(
+        makeAttribution({
+          sessionId: `${dir}-matched`,
+          directory: dir,
+          tokens: { cachedRead: 5000 },
+          cost: makeV2CostExtended({
+            total: 0.50,
+            cachedRead: 0.10,
+            cachedWrite: 0.02,
+            uncachedInput: 0.15,
+            output: 0.15,
+            reasoning: 0.02,
+            subagentDispatch: 0.06,
+            uncachedSystemPrompt: 0.04,
+            history: 0.10,
+            toolOutputs: 0.01,
+            cachedReadBreakdown: {
+              systemPromptCached: 0.03,
+              agentsMdCached: 0.02,
+              mcpToolSchemasCached: 0.02,
+              accumulatedHistoryCached: 0.02,
+              accumulatedToolOutputsCached: 0.005,
+              unclassifiedCached: 0.005,
+            },
+            subagentDispatchByAgent: { general: 0.06 },
+            toolOutputsByTool: { read: { cached: 0.005, uncached: 0.005 } },
+          }),
+        }),
+      );
+      // One drift session per project — total only; per-key null;
+      // nested sub-bucket structures null. Must contribute its total
+      // to BOTH the project's cost.total and the global cost.total
+      // but NOTHING to per-key or nested sums.
+      attrs.push(
+        makeAttribution({
+          sessionId: `${dir}-drift`,
+          directory: dir,
+          tokens: { cachedRead: 0 },
+          cost: Object.assign(makeDriftCost(0.20), {
+            cachedReadBreakdown: null,
+            subagentDispatchByAgent: null,
+            toolOutputsByTool: null,
+          }),
+        }),
+      );
+    }
+    const report = new ReportAssembler().assemble(attrs);
+
+    // sessionCount === 6, 3 projects each with 2 sessions
+    assert.equal(report.sessionCount, 6);
+    assert.equal(Object.keys(report.byProject).length, 3);
+
+    // Per-project assertions for every project
+    for (const dir of ['/p/a', '/p/b', '/p/c']) {
+      const agg = report.byProject[dir];
+      assert.equal(agg.sessionCount, 2, `${dir}.sessionCount expected 2 (matched + drift)`);
+      // total = matched (0.50) + drift (0.20) = 0.70
+      assert.ok(
+        Math.abs(agg.cost.total - 0.70) < 1e-9,
+        `${dir}.cost.total expected 0.70 (matched+drift), got ${agg.cost.total}`,
+      );
+      // Per-key = matched ONLY (drift contributed null → skipped)
+      assert.ok(
+        Math.abs(agg.cost.cachedRead - 0.10) < 1e-9,
+        `${dir}.cost.cachedRead expected 0.10 (matched only), got ${agg.cost.cachedRead}`,
+      );
+      assert.ok(
+        Math.abs(agg.cost.uncachedInput - 0.15) < 1e-9,
+        `${dir}.cost.uncachedInput expected 0.15 (matched only), got ${agg.cost.uncachedInput}`,
+      );
+      // Nested: cachedReadBreakdown.systemPromptCached = matched only (0.03)
+      assert.ok(
+        Math.abs(agg.cost.cachedReadBreakdown.systemPromptCached - 0.03) < 1e-9,
+        `${dir}.cachedReadBreakdown.systemPromptCached expected 0.03 (matched only)`,
+      );
+      // byAgent / byTool — drift contributed null → only matched keys
+      assert.equal(Object.keys(agg.cost.subagentDispatchByAgent).length, 1);
+      assert.ok(Math.abs(agg.cost.subagentDispatchByAgent.general - 0.06) < 1e-9);
+      assert.equal(Object.keys(agg.cost.toolOutputsByTool).length, 1);
+      assert.ok(Math.abs(agg.cost.toolOutputsByTool.read.cached - 0.005) < 1e-9);
+    }
+
+    // Global aggregates: total = 6 × (0.50 + 0.20) / 2 — wait, that's
+    // 3 × (0.50 + 0.20) = 2.10. Per-key = 3 × 0.10 = 0.30. Nested
+    // cachedReadBreakdown.systemPromptCached = 3 × 0.03 = 0.09.
+    // byAgent.general = 3 × 0.06 = 0.18. byTool.read.cached = 3 × 0.005 = 0.015.
+    const g = report.globalTotals.cost;
+    assert.ok(Math.abs(g.total - 2.10) < 1e-9, `global.cost.total expected 2.10, got ${g.total}`);
+    assert.ok(Math.abs(g.cachedRead - 0.30) < 1e-9);
+    assert.ok(Math.abs(g.uncachedInput - 0.45) < 1e-9);
+    assert.ok(Math.abs(g.cachedReadBreakdown.systemPromptCached - 0.09) < 1e-9);
+    assert.equal(Object.keys(g.subagentDispatchByAgent).length, 1);
+    assert.ok(Math.abs(g.subagentDispatchByAgent.general - 0.18) < 1e-9);
+    assert.equal(Object.keys(g.toolOutputsByTool).length, 1);
+    assert.ok(Math.abs(g.toolOutputsByTool.read.cached - 0.015) < 1e-9);
+
+    // Cross-cutting sum invariant: global per-key total === sum
+    // across byProject entries for every per-key field, drift-skipped
+    // contributions don't break the equality because they're skipped
+    // identically at both levels.
+    for (const k of PER_BUCKET_COST_KEYS) {
+      const sumProj = Object.values(report.byProject).reduce((s, p) => s + (p.cost[k] || 0), 0);
+      assert.ok(
+        Math.abs(g[k] - sumProj) < 1e-9,
+        `cross-cutting sum invariant: global.${k} (${g[k]}) must equal Σ byProject (${sumProj})`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});

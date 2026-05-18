@@ -250,7 +250,7 @@
   - _Requirements: 3.3, 4.4, 5.4, 6.5_
   - _Boundary: ReportAssembler disclaimer + main() wiring_
 
-- [ ] 6.4 ReportAssembler unit tests
+- [x] 6.4 ReportAssembler unit tests
   - Extend `tests/opencode-cost-diagnosis/unit/report-assembler.test.js`: cover global vs per-project aggregation across all new sub-buckets; drift-session null-skipping behavior; pricing pin block presence; threshold metadata block presence; tokenizer disclaimer extension; assert Map→Object conversion happened at assembly time (test the assembled object, not the serializer)
   - Observable: report-assembler.test.js gains at least 5 new cases and all pass
   - _Depends: 6.1, 6.2, 6.3_
