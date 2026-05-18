@@ -10,7 +10,7 @@
   - _Requirements: 4.1, 4.5_
   - _Boundary: research-only, no code_
 
-- [ ] 1.2 (P) Vendor the bundled pricing JSON from models.dev
+- [x] 1.2 (P) Vendor the bundled pricing JSON from models.dev
   - Fetch a snapshot of `https://models.dev/api.json`; filter to the providers/models observed in the operator's live history (anthropic claude-opus-4-7, claude-sonnet-4-5; openai gpt-5.5-pro)
   - Persist as `scripts/opencode-cost-report-pricing.json` with top-level `pinDate` (ISO 8601), `pinSource: "https://models.dev/api.json"`, optional `pinVersion`, and a `models` map keyed `[providerID][modelID]` with `cost.{input, output, reasoning, cache_read, cache_write}` in USD per million tokens
   - Observable: `cat scripts/opencode-cost-report-pricing.json | jq '.models.anthropic."claude-opus-4-7".cost.input'` returns a numeric rate
@@ -332,3 +332,4 @@
 ## Implementation Notes
 
 - 1.1 → Decision 6 gate result: degraded fallback ships, not Strategy A. Only 2 of 5 cachedRead sub-buckets (`accumulatedHistoryCached`, `accumulatedToolOutputsCached`) have inferred markers; the other 3 (system prompt, AGENTS.md, MCP schemas) are constructed per-turn at request time and never persisted in the opencode `parts` table — Strategy A is structurally unreachable for them. Subsequent classifier work (3.1) should wire the `markersDegraded=true` proportional-from-uncached path described in design.md Decision 6 and emit `cached_read_classifier_degraded`. The classifier marker constants from task 1.5 should use a recognized sentinel value for the 3 unreliable sub-buckets so `markersDegraded` fires automatically.
+- 1.2 → models.dev upstream catalog omits `cost.cache_read` and `cost.cache_write` for OpenAI `gpt-5.5-pro` (similar to how it omits `cost.reasoning` for Claude models). The vendored snapshot preserves the upstream "don't fabricate" shape (omit instead of writing 0). Task 2.1 `PricingTable.lookup` MUST substitute `0` for missing `cache_read` and `cache_write` exactly as design § PricingTable mandates for missing `reasoning` so the returned `Rates` shape stays complete with all five fields.
