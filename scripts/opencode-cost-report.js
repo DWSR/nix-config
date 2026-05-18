@@ -1496,10 +1496,18 @@ class TokenizerSplitter {
  * ------------------------------------------------------------------ */
 
 class AttributionEngine {
-  constructor(reader, aggregator, tokenizer) {
+  constructor(reader, aggregator, tokenizer, pricingTable) {
     this._reader = reader;
     this._aggregator = aggregator;
     this._tokenizer = tokenizer;
+    // Task 5.1: pricingTable is wired through the constructor +
+    // main() per design.md §PricingTable Implementation Notes and
+    // §AttributionEngine (extended). 5.1 only stores the reference;
+    // the per-message cost-compute path that *consumes* this table
+    // is task 5.2's boundary. Accept null/undefined so existing
+    // 3-param call sites (older tests / standalone unit harnesses)
+    // keep working without per-test pricing fixtures.
+    this._pricingTable = pricingTable == null ? null : pricingTable;
   }
 
   /**
@@ -3213,6 +3221,45 @@ function resolveOpencodeDbPath() {
   return path.join(xdgDataHome, 'opencode', 'opencode-stable.db');
 }
 
+/**
+ * Resolve the path to the bundled pricing JSON (task 5.1).
+ *
+ * Order:
+ *   1. $OPENCODE_COST_PRICING_PATH — production: the Nix wrapper
+ *      (scripts/opencode-cost-report.nix, task 1.3) sets this to
+ *      the store path of opencode-cost-report-pricing.json so the
+ *      pricing data is immutable and version-pinned alongside the
+ *      script. Satisfies R3.1 ("bundled at install time").
+ *   2. <script-dir>/opencode-cost-report-pricing.json — dev/test:
+ *      the checked-in sibling file. Lets direct invocations
+ *      (`node scripts/opencode-cost-report.js …`, integration
+ *      tests that load main() in-process without exporting the
+ *      env var) work without the Nix wrapper.
+ *   3. If neither exists, throw an Error naming both probes so
+ *      operators know which knob to set.
+ */
+function resolvePricingPath() {
+  const envPath = process.env.OPENCODE_COST_PRICING_PATH;
+  if (envPath && envPath.length > 0) {
+    if (fs.existsSync(envPath)) return envPath;
+    throw new Error(
+      'opencode-cost-report: $OPENCODE_COST_PRICING_PATH is set to "' +
+        envPath + '" but no file exists at that path. ' +
+        'Either unset the env var to fall back to the bundled ' +
+        'pricing JSON, or point it at a readable pricing file.',
+    );
+  }
+  const fallback = path.resolve(__dirname, 'opencode-cost-report-pricing.json');
+  if (fs.existsSync(fallback)) return fallback;
+  throw new Error(
+    'opencode-cost-report: pricing JSON not found. Tried ' +
+      '$OPENCODE_COST_PRICING_PATH (unset) and the fallback "' +
+      fallback + '" (missing). The Nix wrapper normally sets the ' +
+      'env var; for direct invocations the file should sit next to ' +
+      'the script.',
+  );
+}
+
 function printHelp() {
   process.stdout.write(USAGE);
 }
@@ -3347,9 +3394,30 @@ function main(argv) {
     // instance per run is correct; the AttributionEngine
     // consumes the reader + aggregator + tokenizer in its
     // attributeSession() per-call path.
+    //
+    // Task 5.1: PricingTable is built once at startup and passed
+    // into AttributionEngine as the fourth constructor argument
+    // (design.md §PricingTable Implementation Notes). Path
+    // resolution order:
+    //   1. $OPENCODE_COST_PRICING_PATH — set by the Nix wrapper
+    //      (task 1.3) in production; satisfies R3.1 "bundled at
+    //      install time".
+    //   2. <script-dir>/opencode-cost-report-pricing.json — the
+    //      checked-in dev/test fallback so direct invocations
+    //      (integration tests, ad-hoc `node scripts/...`) work
+    //      without the wrapper.
+    //   3. Otherwise: throw a clear error naming both probes so
+    //      operators know exactly which knob to set.
+    const pricingPath = resolvePricingPath();
+    const pricingTable = new PricingTable(pricingPath);
     const aggregator = new SubagentAggregator(reader);
     const tokenizer = new TokenizerSplitter();
-    const engine = new AttributionEngine(reader, aggregator, tokenizer);
+    const engine = new AttributionEngine(
+      reader,
+      aggregator,
+      tokenizer,
+      pricingTable,
+    );
 
     const attributions = [];
     for (const session of reader.rootSessionsMatching(filter)) {

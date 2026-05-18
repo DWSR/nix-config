@@ -122,7 +122,7 @@
 
 ## 5. AttributionEngine: per-message cost compute, reconciliation, drift, and all new finding emit sites
 
-- [ ] 5.1 Extend AttributionEngine constructor and wire PricingTable
+- [x] 5.1 Extend AttributionEngine constructor and wire PricingTable
   - Add `pricingTable` as the fourth constructor parameter
   - Update `main()` to construct PricingTable first (reading `OPENCODE_COST_PRICING_PATH`) and pass it into the AttributionEngine constructor
   - Observable: a CLI run completes (even without other v2 changes); `require('./scripts/opencode-cost-report.js').AttributionEngine.length === 4`

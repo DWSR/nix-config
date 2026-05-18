@@ -113,6 +113,20 @@ test('AttributionEngine: constructor takes reader + aggregator + tokenizer', () 
   }
 });
 
+test('AttributionEngine: constructor arity is 4 (reader, aggregator, tokenizer, pricingTable) — task 5.1', () => {
+  // Task 5.1 observable: AttributionEngine constructor gains a fourth
+  // positional parameter `pricingTable` (design.md §AttributionEngine
+  // extended, lines 566-657; PricingTable Implementation Notes). The
+  // parameter is reserved for 5.2's per-message cost compute path;
+  // 5.1 only wires the signature + main() construction site.
+  assert.equal(
+    AttributionEngine.length,
+    4,
+    'AttributionEngine constructor must declare 4 positional params ' +
+      '(reader, aggregator, tokenizer, pricingTable)',
+  );
+});
+
 test('attributeSession(ses_root_a): authoritative buckets equal session row fields verbatim', () => {
   // R2.AC3 (a)/(e) + design.md:579-583: cachedRead/cachedWrite/
   // output/reasoning/subagentDispatch come straight from opencode
