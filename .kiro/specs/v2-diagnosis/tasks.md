@@ -149,7 +149,7 @@
   - _Requirements: 4.1, 4.2_
   - _Boundary: AttributionEngine cachedRead apportionment_
 
-- [ ] 5.4 Implement per-tool sub-bucket apportionment with cached/uncached partition
+- [x] 5.4 Implement per-tool sub-bucket apportionment with cached/uncached partition
   - For each tool in `byTool`: `cost = byTool[name].cached × cache_read_rate + byTool[name].uncached × input_rate`
   - The last per-tool bucket absorbs rounding within each cached and uncached partition independently
   - Sum-correctness invariants: per-tool cached cost sum equals the cached share of `cost.toolOutputs` within rounding; per-tool uncached cost sum equals the uncached share within rounding

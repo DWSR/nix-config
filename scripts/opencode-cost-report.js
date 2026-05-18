@@ -1684,6 +1684,12 @@ class AttributionEngine {
         // even when markersDegraded; the apportionment below
         // handles all-zero-counts cleanly.
         cachedReadBreakdown: provenance.cachedReadBreakdown,
+        // Task 5.4: per-tool weight input for the toolOutputsByTool
+        // partition apportionment. Always a Map (possibly empty) per
+        // TokenizerSplitter's contract; the apportionment block
+        // below handles size===0 cleanly as well as the degenerate
+        // sumCached===0 / sumUncached===0 weight cases.
+        byTool: provenance.byTool,
       });
     } else {
       cost = {
@@ -1759,37 +1765,43 @@ class AttributionEngine {
    * non-enumerable so it cannot leak into JSON serialization at
    * the report layer; 5.6 strips it before returning anyway.
    *
-    * The 5.4 / 5.6 containers (`subagentDispatchByAgent`,
-    * `toolOutputsByTool`) are still stubbed as `null` here —
-    * their populated values land in the named tasks. Including
-    * the keys at this boundary keeps the v2 cost-shape contract
-    * stable so downstream consumers (ReportAssembler 6.x,
-    * ReportSerializer 7.x) can write against the final shape
-    * without conditioning on which apportionment task has shipped.
-    * (`cachedReadBreakdown` is populated below by task 5.3's
-    * count-based apportionment; task 5.7 will add a
-    * `markersDegraded` branch that selects an alternate
-    * proportional-from-uncached apportionment formula.)
-    *
-    * @param {object} session session row from SqliteReader.
-    * @param {Map<string, object>} messages role-keyed messages map
-    *   already materialized by the caller (avoids a second
-    *   iteration of the lazy reader iterable).
-    * @param {object} rollup return value of
-    *   `SubagentAggregator.rollup(session.id)` — used for the
-    *   `byAgent` per-agent cost dollars and nothing else here.
-    * @param {{P_sys: number, P_hist: number, P_tool: number,
-    *          P_sum: number,
-    *          cachedReadBreakdown: object}} provenance the
-    *   proportional-split components the caller used for the
-    *   token-side uncached sub-buckets (so the cost-side sub-bucket
-    *   split matches the token-side split exactly), plus the
-    *   classifier-derived `cachedReadBreakdown` counts (one entry
-    *   per CACHED_READ_SUB_BUCKET_KEYS key) used by task 5.3 to
-    *   apportion `session.tokens_cache_read` across the six
-    *   cachedRead sub-buckets.
-    * @returns {object} CostBuckets-shaped object.
-    */
+    * The 5.8 container (`subagentDispatchByAgent`) is still
+     * stubbed as `null` here — its populated value lands in the
+     * named task. Including the key at this boundary keeps the v2
+     * cost-shape contract stable so downstream consumers
+     * (ReportAssembler 6.x, ReportSerializer 7.x) can write against
+     * the final shape without conditioning on which apportionment
+     * task has shipped. (`cachedReadBreakdown` is populated below
+     * by task 5.3's count-based apportionment; `toolOutputsByTool`
+     * is populated below by task 5.4's per-tool partition
+     * apportionment; task 5.7 will add a `markersDegraded` branch
+     * that selects an alternate proportional-from-uncached
+     * apportionment formula for the cachedRead side.)
+     *
+     * @param {object} session session row from SqliteReader.
+     * @param {Map<string, object>} messages role-keyed messages map
+     *   already materialized by the caller (avoids a second
+     *   iteration of the lazy reader iterable).
+     * @param {object} rollup return value of
+     *   `SubagentAggregator.rollup(session.id)` — used for the
+     *   `byAgent` per-agent cost dollars and nothing else here.
+     * @param {{P_sys: number, P_hist: number, P_tool: number,
+     *          P_sum: number,
+     *          cachedReadBreakdown: object,
+     *          byTool: ReadonlyMap<string, {cached: number, uncached: number}>}} provenance
+     *   the proportional-split components the caller used for the
+     *   token-side uncached sub-buckets (so the cost-side sub-bucket
+     *   split matches the token-side split exactly), plus the
+     *   classifier-derived `cachedReadBreakdown` counts (one entry
+     *   per CACHED_READ_SUB_BUCKET_KEYS key) used by task 5.3 to
+     *   apportion `session.tokens_cache_read` across the six
+     *   cachedRead sub-buckets, plus the per-tool `byTool` weight
+     *   Map (Approach C: cached === uncached per tool part) used by
+     *   task 5.4 to apportion `cost.toolOutputs` and
+     *   `cost.cachedReadBreakdown.accumulatedToolOutputsCached`
+     *   across per-tool entries independently.
+     * @returns {object} CostBuckets-shaped object.
+     */
   _computeV2Cost(session, messages, rollup, provenance) {
     const out = {
       total: session.cost || 0,
@@ -1802,15 +1814,17 @@ class AttributionEngine {
       uncachedSystemPrompt: 0,
       history: 0,
       toolOutputs: 0,
-      // 5.4 / 5.6 boundaries — stubbed null until those tasks
-      // populate. ReportAssembler/Serializer treat null as "not
-      // yet decomposed". `cachedReadBreakdown` is set here as a
-      // defensive default; the apportionment block at the bottom
-      // of this method unconditionally replaces it with a 6-key
-      // object (matching the pattern 5.2 uses for the uncached
-      // sub-buckets — both paths produce partial values on drift,
-      // and task 5.6's makeNullCostShape() override nullifies the
-      // entire shape when pricing-drift is detected).
+      // 5.8 boundary — `subagentDispatchByAgent` stays stubbed
+      // null until task 5.8 lands. ReportAssembler/Serializer
+      // treat null as "not yet decomposed". `cachedReadBreakdown`
+      // and `toolOutputsByTool` are set here as defensive
+      // defaults; the apportionment blocks at the bottom of this
+      // method unconditionally replace them with their populated
+      // shapes (6-key object and per-tool Map respectively),
+      // matching the pattern 5.2 uses for the uncached sub-buckets.
+      // All three paths produce partial values on drift; task 5.6's
+      // makeNullCostShape() override nullifies the entire shape
+      // when pricing-drift is detected.
       cachedReadBreakdown: null,
       subagentDispatchByAgent: null,
       toolOutputsByTool: null,
@@ -2048,6 +2062,118 @@ class AttributionEngine {
       cachedReadBreakdownCost[lastKey] = out.cachedRead - costApportioned;
     }
     out.cachedReadBreakdown = cachedReadBreakdownCost;
+
+    // ── Per-tool toolOutputs sub-bucket apportionment ────────────
+    // Task 5.4 / R6.2, R6.3 / design.md:585.
+    //
+    // Apportion the two parent totals — `cost.toolOutputs` (the
+    // uncached share, computed by the Flow-2 mirror block above)
+    // and `cost.cachedReadBreakdown.accumulatedToolOutputsCached`
+    // (the cached share, computed by task 5.3's cachedRead
+    // sub-bucket apportionment immediately above) — across the
+    // per-tool token weights in `provenance.byTool`. Each tool's
+    // {cached, uncached} dollar partition is computed
+    // independently using the respective parent total and the
+    // matching weight side, with the LAST iterated entry
+    // absorbing FP residuals so the sum invariants:
+    //
+    //   sum(toolOutputsByTool[*].uncached) === cost.toolOutputs                                 (ULP)
+    //   sum(toolOutputsByTool[*].cached)   === cost.cachedReadBreakdown.accumulatedToolOutputsCached (ULP)
+    //
+    // hold exactly. The absorber computation by SUBTRACTION rather
+    // than by a fresh weight×ratio multiplication is what makes
+    // both sums ULP-tight regardless of how the per-entry
+    // multiplications rounded — the same pattern task 5.3 uses
+    // for the cachedRead sub-bucket cost-side residual.
+    //
+    // Map iteration order is the order TokenizerSplitter inserted
+    // tool names, which mirrors the chronological order tool parts
+    // appeared in `partsOfSession` (ORDER BY time_created ASC). The
+    // same ordering selects the absorber on both partitions so the
+    // cached and uncached invariants close on the same entry.
+    //
+    // Per design.md ReportAssembler Implementation Notes (line 695),
+    // the Map → plain Object conversion happens at the
+    // ReportAssembler boundary (task 6.2); we emit a Map here and
+    // freeze each entry to match TokenizerSplitter's freeze pattern
+    // (lines 1391-1393) so a downstream consumer that does
+    // `cost.toolOutputsByTool.get(name).cached++` for accumulator
+    // bookkeeping cannot corrupt the per-entry partitions.
+    //
+    // Degenerate cases:
+    //   - empty byTool          → empty Map (no per-tool weights).
+    //   - sumCached === 0       → every cached entry is 0
+    //                             (the cached parent total may
+    //                             still be > 0, in which case it
+    //                             is unattributable — task 5.7's
+    //                             markersDegraded path owns the
+    //                             proportional-from-uncached
+    //                             fallback when this state is
+    //                             observed; 5.4 stays out of its
+    //                             way).
+    //   - sumUncached === 0     → every uncached entry is 0.
+    //   - parentCached === 0    → every cached entry is 0 naturally
+    //                             (multiplication × 0); the
+    //                             absorber's subtraction also
+    //                             yields 0.
+    //   - parentUncached === 0  → ditto on the uncached side.
+    const byToolIn =
+      provenance && provenance.byTool instanceof Map
+        ? provenance.byTool
+        : new Map();
+    const toolOutputsByTool = new Map();
+    if (byToolIn.size > 0) {
+      const parentUncached = out.toolOutputs;
+      const parentCached =
+        typeof cachedReadBreakdownCost.accumulatedToolOutputsCached === 'number'
+          ? cachedReadBreakdownCost.accumulatedToolOutputsCached
+          : 0;
+      let sumCached = 0;
+      let sumUncached = 0;
+      for (const entry of byToolIn.values()) {
+        sumCached +=
+          entry && typeof entry.cached === 'number' ? entry.cached : 0;
+        sumUncached +=
+          entry && typeof entry.uncached === 'number' ? entry.uncached : 0;
+      }
+      const names = [...byToolIn.keys()];
+      const lastIndex = names.length - 1;
+      let cachedApportioned = 0;
+      let uncachedApportioned = 0;
+      for (let i = 0; i <= lastIndex; i++) {
+        const name = names[i];
+        const entry = byToolIn.get(name);
+        const wCached =
+          entry && typeof entry.cached === 'number' ? entry.cached : 0;
+        const wUncached =
+          entry && typeof entry.uncached === 'number' ? entry.uncached : 0;
+        let cachedCost;
+        let uncachedCost;
+        if (i < lastIndex) {
+          cachedCost =
+            sumCached > 0 ? (parentCached * wCached) / sumCached : 0;
+          uncachedCost =
+            sumUncached > 0 ? (parentUncached * wUncached) / sumUncached : 0;
+          cachedApportioned += cachedCost;
+          uncachedApportioned += uncachedCost;
+        } else {
+          // Absorber: residual within each partition independently.
+          // When the weight-sum on that side is 0, parent dollars
+          // are unattributable — collapse the entry to 0 rather
+          // than letting the residual swallow the entire parent
+          // total (the latter would corrupt the per-tool
+          // semantics; 5.7's degraded path owns the re-distribution).
+          cachedCost = sumCached > 0 ? parentCached - cachedApportioned : 0;
+          uncachedCost =
+            sumUncached > 0 ? parentUncached - uncachedApportioned : 0;
+        }
+        toolOutputsByTool.set(
+          name,
+          Object.freeze({ cached: cachedCost, uncached: uncachedCost }),
+        );
+      }
+    }
+    out.toolOutputsByTool = toolOutputsByTool;
 
     if (pricingDrift) {
       // Non-enumerable internal marker for task 5.6 to read. The

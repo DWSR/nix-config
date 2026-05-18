@@ -390,19 +390,14 @@ test('flag ON: cost shape contains exactly the 9 flat cost fields + total', () =
         `cost.${k} must be non-negative, got ${attr.cost[k]}`,
       );
     }
-    // 5.4 / 5.6 containers — still null at this boundary.
-    // (Task 5.3 populated `cachedReadBreakdown`; the assertion that
-    // it stays null moved out and its replacement lives in the
-    // task 5.3 block lower in this file.)
+    // 5.6 / 5.8 container — still null at this boundary.
+    // (Task 5.3 populated `cachedReadBreakdown`; task 5.4 populated
+    // `toolOutputsByTool`. Their boundary-relaxation assertions live
+    // in their respective blocks lower in this file.)
     assert.equal(
       attr.cost.subagentDispatchByAgent,
       null,
-      'cost.subagentDispatchByAgent is task 5.4 / 5.6 boundary — must stay null in 5.2',
-    );
-    assert.equal(
-      attr.cost.toolOutputsByTool,
-      null,
-      'cost.toolOutputsByTool is task 5.4 boundary — must stay null in 5.2',
+      'cost.subagentDispatchByAgent is task 5.8 boundary — must stay null until subagent per-agent dispatch lands',
     );
   } finally {
     setV2CostComputeEnabled(false);
@@ -1147,6 +1142,556 @@ test('flag ON / 5.3: unclassifiedCached absorbs token integer rounding (last-buc
       Math.abs(absorberTokens - (T - 5 * expFiveTokens)) < 1e-6,
       `unclassifiedCached must carry ${T - 5 * expFiveTokens} tokens ` +
         `(T - 5×${expFiveTokens}); reconstructed ${absorberTokens}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+// ---------------------------------------------------------------------
+// Task 5.4 — per-tool sub-bucket apportionment with cached/uncached
+// partition. AttributionEngine consumes `provenance.byTool` (a Map
+// keyed by tool name carrying `{ cached, uncached }` token weights
+// per Approach C from task 3.2) and emits `cost.toolOutputsByTool`
+// as a Map of `{ cached: <usd>, uncached: <usd> }` entries.
+//
+// Apportionment formula (design.md:585, tasks.md:152-159):
+//   per-tool cached cost   = parentCached × (byTool[name].cached / sumCached)
+//   per-tool uncached cost = parentUncached × (byTool[name].uncached / sumUncached)
+// where:
+//   parentCached   = cost.cachedReadBreakdown.accumulatedToolOutputsCached
+//   parentUncached = cost.toolOutputs
+//
+// The LAST iteration entry absorbs the FP residual within each
+// partition independently so:
+//   sum(toolOutputsByTool[*].uncached) === cost.toolOutputs                                 (ULP)
+//   sum(toolOutputsByTool[*].cached)   === cost.cachedReadBreakdown.accumulatedToolOutputsCached (ULP)
+//
+// Per design.md ReportAssembler Implementation Notes (line 695),
+// the Map → plain Object conversion happens at the ReportAssembler
+// boundary (task 6.2) — AttributionEngine emits a Map here so the
+// freeze pattern from TokenizerSplitter (per-entry Object.freeze)
+// can carry through to consumers without an intermediate copy.
+//
+// Degenerate cases:
+//   - empty provenance.byTool → empty Map (no per-tool weights to
+//     attribute).
+//   - sumCached === 0 with parentCached > 0 → all cached entries 0
+//     (analogous to 5.3's all-zero-breakdown collapse; 5.7's
+//     markersDegraded path owns the proportional-from-uncached
+//     fallback).
+//   - sumUncached === 0 with parentUncached > 0 → all uncached
+//     entries 0.
+//   - parentCached === 0 or parentUncached === 0 → naturally 0 via
+//     multiplication; absorber's subtraction also yields 0.
+// ---------------------------------------------------------------------
+
+// Build a provenance with an explicit byTool map for 5.4 tests.
+// Extends makeProvenance() by accepting a `byTool` arg so tests
+// don't have to fully re-spell the rest of the provenance shape.
+function makeProvenanceWithByTool(cachedReadBreakdown, byTool, uncached = null) {
+  const base = makeProvenance(cachedReadBreakdown, uncached);
+  return { ...base, byTool };
+}
+
+test('flag ON / 5.4: cost.toolOutputsByTool is a Map populated from provenance.byTool on the matched path', () => {
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 150,
+      accumulatedToolOutputsCached: 100,
+      unclassifiedCached: 50,
+    };
+    // Per Approach C from task 3.2: cached === uncached per tool
+    // part. The classifier emits both partitions populated from the
+    // same tiktoken count; AttributionEngine apportions session-
+    // level cached/uncached dollars across those weights
+    // independently.
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 40, uncached: 40 })],
+      ['read', Object.freeze({ cached: 35, uncached: 35 })],
+      ['edit', Object.freeze({ cached: 25, uncached: 25 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.ok(
+      attr.cost.toolOutputsByTool instanceof Map,
+      'cost.toolOutputsByTool must be a Map after task 5.4 (Map → Object conversion deferred to ReportAssembler 6.2)',
+    );
+    assert.equal(
+      attr.cost.toolOutputsByTool.size,
+      3,
+      'cost.toolOutputsByTool size must match provenance.byTool size',
+    );
+    for (const name of ['bash', 'read', 'edit']) {
+      assert.ok(
+        attr.cost.toolOutputsByTool.has(name),
+        `cost.toolOutputsByTool must carry key '${name}' from provenance.byTool`,
+      );
+      const entry = attr.cost.toolOutputsByTool.get(name);
+      assert.equal(typeof entry, 'object');
+      assert.equal(typeof entry.cached, 'number');
+      assert.equal(typeof entry.uncached, 'number');
+      assert.ok(
+        Number.isFinite(entry.cached) && entry.cached >= 0,
+        `toolOutputsByTool['${name}'].cached must be finite + non-negative`,
+      );
+      assert.ok(
+        Number.isFinite(entry.uncached) && entry.uncached >= 0,
+        `toolOutputsByTool['${name}'].uncached must be finite + non-negative`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: cost.toolOutputsByTool entries are frozen against mutation', () => {
+  // Mirrors the TokenizerSplitter freeze pattern (lines 1391-1393):
+  // entries cannot be mutated by reference. The Map itself is not
+  // Object.freeze-able in a meaningful way (Map.prototype.set is
+  // not a frozen own property), but per-entry freeze blocks the
+  // primary mutation risk — a downstream consumer that does
+  // `cost.toolOutputsByTool.get(name).cached++` for accumulator
+  // bookkeeping.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 40, uncached: 40 })],
+      ['read', Object.freeze({ cached: 40, uncached: 40 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    for (const [name, entry] of attr.cost.toolOutputsByTool) {
+      assert.ok(
+        Object.isFrozen(entry),
+        `toolOutputsByTool['${name}'] must be frozen so downstream cannot mutate per-entry partitions by reference`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: per-tool uncached cost sum === cost.toolOutputs (ULP)', () => {
+  // tasks.md:155 partition invariant for the uncached side. The
+  // last-bucket-absorbs-rounding pattern makes the sum exact by
+  // construction even when the per-tool multiply-divide yields FP
+  // residuals.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    // Weights whose sum (7 = 1+2+3+1) doesn't divide
+    // parentUncached cleanly so the multiply-divide leaves a real
+    // residual the absorber must catch. Three tools so the absorber
+    // is the third (not also the first).
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 1, uncached: 1 })],
+      ['read', Object.freeze({ cached: 2, uncached: 2 })],
+      ['edit', Object.freeze({ cached: 3, uncached: 3 })],
+      ['grep', Object.freeze({ cached: 1, uncached: 1 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    let perToolUncachedSum = 0;
+    for (const entry of attr.cost.toolOutputsByTool.values()) {
+      perToolUncachedSum += entry.uncached;
+    }
+    assert.ok(
+      Math.abs(perToolUncachedSum - attr.cost.toolOutputs) < COST_EPSILON,
+      `sum(toolOutputsByTool[*].uncached) (${perToolUncachedSum}) must equal ` +
+        `cost.toolOutputs (${attr.cost.toolOutputs}) within ULP via the ` +
+        `last-bucket-absorbs-rounding pattern; observed delta = ` +
+        `${Math.abs(perToolUncachedSum - attr.cost.toolOutputs)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: per-tool cached cost sum === cost.cachedReadBreakdown.accumulatedToolOutputsCached (ULP)', () => {
+  // tasks.md:155 partition invariant for the cached side. The
+  // cached partition is bounded by accumulatedToolOutputsCached
+  // (the 5.3-emitted sub-bucket dollars for cached tool outputs),
+  // NOT by cost.toolOutputs (which is the uncached share).
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 1, uncached: 1 })],
+      ['read', Object.freeze({ cached: 2, uncached: 2 })],
+      ['edit', Object.freeze({ cached: 3, uncached: 3 })],
+      ['grep', Object.freeze({ cached: 1, uncached: 1 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    let perToolCachedSum = 0;
+    for (const entry of attr.cost.toolOutputsByTool.values()) {
+      perToolCachedSum += entry.cached;
+    }
+    const parentCached =
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached;
+    assert.ok(
+      Math.abs(perToolCachedSum - parentCached) < COST_EPSILON,
+      `sum(toolOutputsByTool[*].cached) (${perToolCachedSum}) must equal ` +
+        `cost.cachedReadBreakdown.accumulatedToolOutputsCached (${parentCached}) ` +
+        `within ULP; observed delta = ${Math.abs(perToolCachedSum - parentCached)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: per-tool apportionment matches expected weights for non-absorber entries', () => {
+  // Direct check on the apportionment formula for the non-absorber
+  // entries. With three tools at weights [40, 35, 25] (sum 100):
+  //   tool A uncached = parentUncached × 0.40
+  //   tool B uncached = parentUncached × 0.35
+  //   tool C (absorber) = parentUncached - A - B  (== 0.25 within ULP)
+  // Same shape on the cached side using the cached weights.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 150,
+      accumulatedToolOutputsCached: 100,
+      unclassifiedCached: 50,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 40, uncached: 40 })],
+      ['read', Object.freeze({ cached: 35, uncached: 35 })],
+      ['edit', Object.freeze({ cached: 25, uncached: 25 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const parentUncached = attr.cost.toolOutputs;
+    const parentCached =
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached;
+
+    // Non-absorber entries: exact multiplication.
+    const bash = attr.cost.toolOutputsByTool.get('bash');
+    const read = attr.cost.toolOutputsByTool.get('read');
+    const edit = attr.cost.toolOutputsByTool.get('edit');
+
+    assert.ok(
+      Math.abs(bash.uncached - parentUncached * 0.4) < COST_EPSILON,
+      `bash.uncached must equal parentUncached × 40/100; expected ` +
+        `${parentUncached * 0.4}, got ${bash.uncached}`,
+    );
+    assert.ok(
+      Math.abs(read.uncached - parentUncached * 0.35) < COST_EPSILON,
+      `read.uncached must equal parentUncached × 35/100; expected ` +
+        `${parentUncached * 0.35}, got ${read.uncached}`,
+    );
+    assert.ok(
+      Math.abs(bash.cached - parentCached * 0.4) < COST_EPSILON,
+      `bash.cached must equal parentCached × 40/100; expected ` +
+        `${parentCached * 0.4}, got ${bash.cached}`,
+    );
+    assert.ok(
+      Math.abs(read.cached - parentCached * 0.35) < COST_EPSILON,
+      `read.cached must equal parentCached × 35/100; expected ` +
+        `${parentCached * 0.35}, got ${read.cached}`,
+    );
+
+    // Absorber: subtract from parent. With this clean-divisible
+    // split the absorber's value also equals parent × 25/100
+    // exactly, but the test is written against the absorption
+    // formula (parent - apportioned) which is what makes the sum
+    // invariant ULP-tight regardless of weight choice.
+    assert.ok(
+      Math.abs(edit.uncached - (parentUncached - bash.uncached - read.uncached)) <
+        COST_EPSILON,
+      `edit.uncached (absorber) must equal parentUncached - bash.uncached - read.uncached`,
+    );
+    assert.ok(
+      Math.abs(edit.cached - (parentCached - bash.cached - read.cached)) <
+        COST_EPSILON,
+      `edit.cached (absorber) must equal parentCached - bash.cached - read.cached`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: empty provenance.byTool → empty cost.toolOutputsByTool Map', () => {
+  // Degenerate: no tool parts in the session. Map is empty (not
+  // null). The session-level cost.toolOutputs and
+  // accumulatedToolOutputsCached are still computed by the
+  // uncached/cached split logic; they simply have no per-tool
+  // attribution.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    const byTool = new Map(); // explicitly empty
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.ok(
+      attr.cost.toolOutputsByTool instanceof Map,
+      'cost.toolOutputsByTool must still be a Map (just empty) when no tool parts exist',
+    );
+    assert.equal(
+      attr.cost.toolOutputsByTool.size,
+      0,
+      'empty provenance.byTool → empty cost.toolOutputsByTool',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: parentUncached === 0 → all per-tool uncached entries are 0', () => {
+  // Degenerate: cost.toolOutputs is 0 (e.g., P_sum == 0 collapsed
+  // the uncached side, or no tokens_input). Cached partition can
+  // still be apportioned; uncached collapses to 0 across all tools.
+  setV2CostComputeEnabled(true);
+  try {
+    // Override the synthetic session to zero out tokens_input so
+    // cost.uncachedInput === 0 → toolOutputs === 0 via the Flow 2
+    // proportional split's all-zero absorber.
+    const ses = makeSyntheticSession({
+      id: 'ses_synth_v2_uncached_zero',
+      tokens_input: 0,
+      cost: SYN_EXPECTED_COST - (SYN_INPUT * SYN_INPUT_PER_M) / M,
+    });
+    const baseReader = makeMatchedSingleModelReader(ses);
+    const reader = {
+      partsOfSession(id) {
+        return baseReader.partsOfSession(id);
+      },
+      messagesOfSession(id) {
+        const msgs = [...baseReader.messagesOfSession(id)];
+        for (const m of msgs) {
+          if (m.role !== 'assistant') continue;
+          const parsed = JSON.parse(m.data);
+          parsed.tokens.input = 0;
+          m.data = JSON.stringify(parsed);
+        }
+        return msgs;
+      },
+      descendantSessionsOf(id) {
+        return baseReader.descendantSessionsOf(id);
+      },
+    };
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 1, uncached: 1 })],
+      ['read', Object.freeze({ cached: 1, uncached: 1 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.cost.toolOutputs,
+      0,
+      'precondition: cost.toolOutputs must be 0 in this degenerate fixture',
+    );
+    for (const [name, entry] of attr.cost.toolOutputsByTool) {
+      assert.equal(
+        entry.uncached,
+        0,
+        `toolOutputsByTool['${name}'].uncached must be 0 when cost.toolOutputs === 0`,
+      );
+    }
+    // The cached side is independent — accumulatedToolOutputsCached
+    // is computed from session.tokens_cache_read which is still
+    // non-zero, so cached entries reflect the real apportionment.
+    let perToolCachedSum = 0;
+    for (const entry of attr.cost.toolOutputsByTool.values()) {
+      perToolCachedSum += entry.cached;
+    }
+    assert.ok(
+      Math.abs(
+        perToolCachedSum -
+          attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached,
+      ) < COST_EPSILON,
+      `cached partition sum invariant must hold independently of uncached collapse`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: parentCached === 0 → all per-tool cached entries are 0', () => {
+  // Degenerate: accumulatedToolOutputsCached is 0 (e.g.,
+  // markersDegraded collapsed the cached-side breakdown, or the
+  // session never read tool-output content from cache). Uncached
+  // partition is unaffected.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 100,
+      agentsMdCached: 50,
+      mcpToolSchemasCached: 50,
+      accumulatedHistoryCached: 150,
+      accumulatedToolOutputsCached: 0, // explicitly zero
+      unclassifiedCached: 150,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 1, uncached: 1 })],
+      ['read', Object.freeze({ cached: 1, uncached: 1 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached,
+      0,
+      'precondition: accumulatedToolOutputsCached must be 0 in this fixture',
+    );
+    for (const [name, entry] of attr.cost.toolOutputsByTool) {
+      assert.equal(
+        entry.cached,
+        0,
+        `toolOutputsByTool['${name}'].cached must be 0 when accumulatedToolOutputsCached === 0`,
+      );
+    }
+    // The uncached side is independent — sum invariant still holds.
+    let perToolUncachedSum = 0;
+    for (const entry of attr.cost.toolOutputsByTool.values()) {
+      perToolUncachedSum += entry.uncached;
+    }
+    assert.ok(
+      Math.abs(perToolUncachedSum - attr.cost.toolOutputs) < COST_EPSILON,
+      `uncached partition sum invariant must hold independently of cached collapse`,
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+test('flag ON / 5.4: single-tool session → the lone entry receives the full parent in each partition', () => {
+  // Edge: byTool has exactly one entry. The loop's only iteration
+  // is also the absorber, so the entry receives parent - 0 in each
+  // partition. Verifies the absorber-as-first-and-only branch
+  // doesn't double-count or zero the entry.
+  setV2CostComputeEnabled(true);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 100,
+      accumulatedToolOutputsCached: 80,
+      unclassifiedCached: 70,
+    };
+    const byTool = new Map([
+      ['bash', Object.freeze({ cached: 50, uncached: 50 })],
+    ]);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(makeProvenanceWithByTool(breakdown, byTool)),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const bash = attr.cost.toolOutputsByTool.get('bash');
+    assert.ok(bash !== undefined, "single-tool 'bash' entry must exist");
+    assert.ok(
+      Math.abs(bash.uncached - attr.cost.toolOutputs) < COST_EPSILON,
+      `single-tool entry must receive the full parent uncached (${attr.cost.toolOutputs}); got ${bash.uncached}`,
+    );
+    assert.ok(
+      Math.abs(
+        bash.cached -
+          attr.cost.cachedReadBreakdown.accumulatedToolOutputsCached,
+      ) < COST_EPSILON,
+      `single-tool entry must receive the full parent cached`,
     );
   } finally {
     setV2CostComputeEnabled(false);
