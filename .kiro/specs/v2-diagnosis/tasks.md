@@ -296,7 +296,7 @@
   - _Requirements: 7.1, 7.2_
   - _Boundary: tests/opencode-cost-diagnosis/integration/golden/_
 
-- [ ] 8.2 (P) Add cost-invariant integration test
+- [x] 8.2 (P) Add cost-invariant integration test
   - Create `tests/opencode-cost-diagnosis/integration/cost-invariant.test.js`
   - Synthesize a fixture session whose per-bucket sum diverges beyond tolerance from `session.cost`; run the full pipeline; assert the report contains a `cost_invariant_violation` finding tagged to that session and is emitted (not blocked)
   - Synthesize a within-tolerance session; assert no such finding fires
