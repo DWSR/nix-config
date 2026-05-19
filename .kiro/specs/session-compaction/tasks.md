@@ -78,7 +78,7 @@ not blocking spec completion)**:
     documented assertion message
   - _Requirements: 1.3, 1.5, 2.2, 2.4, 2.6, 2.8, 3.6, 4.1, 5.1, 5.4, 7.1, 7.6_
 
-- [ ] 1.4 Wire module into common configuration
+- [x] 1.4 Wire module into common configuration
   - Add `./session-compaction.nix` to the `imports` list in
     `home-manager/common/default.nix` (peer of
     `./opencode-cost-diagnosis.nix`)

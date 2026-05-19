@@ -17,6 +17,7 @@
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
     ./opencode.nix
+    ./session-compaction.nix
     ./sqlite-backup.nix
     ./ssh.nix
     ./starship.nix
@@ -188,6 +189,7 @@
   programs.k9s.enable = true;
   programs.memory-sync.enable = true;
   programs.opencode-cost-diagnosis.enable = true;
+  programs.session-compaction.enable = true;
   programs.nix-index.enable = true;
   programs.nix-index-database.comma.enable = true;
   programs.nix-your-shell.enable = true;
