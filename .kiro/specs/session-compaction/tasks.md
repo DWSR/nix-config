@@ -328,7 +328,7 @@ not blocking spec completion)**:
     sessionID, turnCount, totalInputTokens, wallTimeMillis }`
   - _Requirements: 6.5_
 
-- [ ] 3.6 session.compacted handler — trigger attribution + cooldown reset
+- [x] 3.6 session.compacted handler — trigger attribution + cooldown reset
   - Register `'session.compacted'` named hook
   - Look up `inFlightAttempts.get(input.sessionID)` (populated by
     `CompactionInvoker` in 2.4 / 3.2 / 3.3)

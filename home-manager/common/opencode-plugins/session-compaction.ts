@@ -1943,5 +1943,96 @@ export const SessionCompactionPlugin: Plugin = async (ctx) => {
         wallTimeMillis: wallTimeMillis(input.sessionID),
       })
     },
+    // ============================================================
+    // session.compacted handler (task 3.6)
+    // ============================================================
+    //
+    // Post-compaction attribution and cooldown re-anchor. Fires
+    // after opencode finishes a compaction — whether the plugin
+    // initiated it (automatic threshold trip or manual /compact)
+    // or opencode itself did (native TUI `session.compact` keybind
+    // or any other non-plugin-initiated path). This handler is the
+    // ONLY place that distinguishes the three CompactionTrigger
+    // variants in the log stream (R6.1):
+    //
+    //   - `consumeInFlightAttempt(sessionID)` returns an attempt
+    //     ⇒ the plugin initiated this compaction; attribute to the
+    //     attempt's trigger (`"automatic"` or `"manual"`). The
+    //     consume-side is atomic: the entry is removed from
+    //     `inFlightAttempts` in the same call so a race with a
+    //     duplicate `session.compacted` cannot double-attribute.
+    //   - No attempt registered ⇒ opencode initiated this
+    //     compaction (TUI keybind, internal auto-trigger);
+    //     attribute to `"external"`. This is the fix for design
+    //     Critical Issue 2: without external attribution the
+    //     plugin would silently lose visibility into opencode-
+    //     native compactions and the operator's `app.log` stream
+    //     would carry no entry at all for them.
+    //
+    // After attribution, `resetStartedAt(sessionID, Date.now())`
+    // re-anchors the SessionState wall-clock so the next
+    // `evaluateThreshold` call measures wall-time from THIS
+    // compaction event. Without this, a long-running session that
+    // just compacted would still trip the wall-time threshold
+    // immediately on the next message.updated.
+    //
+    // Empirical caveat (design open item): the design assumes
+    // `Session.time.compacting` persists post-compaction so the
+    // task-3.2 message.updated handler's cooldown read continues
+    // to see it. If empirical observation shows the field is
+    // cleared at the end of the compacting phase, the fallback is
+    // to record `lastCompactionAt` in a module-scoped Map here and
+    // have `evaluateThreshold` prefer that over
+    // `Session.time.compacting`. v1 implements the designed path;
+    // any deviation will be recorded in the steering doc and
+    // implemented as a follow-up.
+    //
+    // Order of guards mirrors every other handler in this plugin:
+    //
+    //   1. Self-check short-circuit (R7.4). If the startup probe
+    //      classified the plugin as disabled, do nothing.
+    //   2. Ignore-set short-circuit (R5.2, R5.5). Sessions the
+    //      task-3.1 gating logic flagged as out-of-scope are
+    //      skipped so unwatched subagents do not produce
+    //      compacted-event log noise. The plugin would never have
+    //      registered an in-flight attempt for an ignored session
+    //      (task 3.2 short-circuits before invokeCompaction), so
+    //      skipping here cannot strand an attempt in the Map.
+    "session.compacted": async (input: { sessionID: string }) => {
+      // R7.4 short-circuit: every handler runs the self-check on
+      // entry. After the first event (any kind), subsequent calls
+      // return the cached result instantly.
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      // R5.2 / R5.5: skip sessions classified as out-of-scope by
+      // the task-3.1 gating logic. Ignored sessions never reach
+      // invokeCompaction (task 3.2 / 3.3 short-circuit upstream),
+      // so there is no risk of leaving a stale attempt in
+      // `inFlightAttempts`.
+      if (isSessionIgnored(input.sessionID)) return
+
+      // Atomic consume: returns the attempt and removes it from
+      // `inFlightAttempts` in a single call. Presence ⇒ plugin-
+      // initiated (use attempt.trigger); absence ⇒ opencode-
+      // initiated (attribute to `"external"`, design Critical
+      // Issue 2 fix).
+      const attempt = consumeInFlightAttempt(input.sessionID)
+      const trigger: CompactionTrigger = attempt?.trigger ?? "external"
+
+      // R6.1: post-compaction observation. Exactly one entry per
+      // compaction event with `extra.trigger` set to one of the
+      // three CompactionTrigger variants so the operator can grep
+      // for compaction provenance.
+      await logCompacted(client, input.sessionID, trigger)
+
+      // Re-anchor the session's wall-clock so the next threshold
+      // evaluation (task 3.2 message.updated) measures from this
+      // compaction event. resetStartedAt is a no-op for unknown
+      // sessions, so an out-of-order session.compacted (no prior
+      // session.created seen by this plugin) is silently
+      // tolerated.
+      resetStartedAt(input.sessionID, Date.now())
+    },
   }
 }
