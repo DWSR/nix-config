@@ -3137,25 +3137,31 @@ const PER_BUCKET_COST_KEYS = Object.freeze([
 //
 // Default OFF. The v2 per-message cost-compute path replaces the
 // v1 all-null cost shape with populated dollar values, which is a
-// JSON-shape change that would break the byte-identical integration
-// goldens until task 8.1 refreshes them. The flag preserves the
-// v1 emission path by default so the goldens stay valid through
-// the 5.x rollout window. Unit tests for the v2 path opt in via
-// `setV2CostComputeEnabled(true)` and MUST reset to false in a
-// `try/finally` so the flag never leaks into the v1-shape suite.
+// JSON-shape change that broke the byte-identical integration
+// goldens; task 8.1 refreshed those goldens against the v2 shape
+// and flipped this default from `false` to `true`. The flag and
+// its setter are intentionally PRESERVED as dead-code-on-the-ON-
+// path so a successor cleanup task (per tasks.md Implementation
+// Note 5.2) can delete the flag, the setter, and the v1
+// `makeZeroCostBuckets()` helper together in a single focused
+// commit. Unit tests that exercise the legacy v1 emission path
+// (e.g., the "flag OFF" coverage in serializer/report-assembler/
+// attribution-v2-cost) flip the flag OFF in their setup and MUST
+// reset to `true` in a `try/finally` so the new default never
+// leaks across tests.
 //
 // A module-level mutable `let` (with a setter) is intentional: the
 // alternative — a per-engine constructor argument — would force
 // every caller (production main(), every existing v1 unit test,
 // every integration harness) to plumb the flag through, defeating
-// the "transparent OFF" property. The setter is a deliberate
+// the "transparent default" property. The setter is a deliberate
 // narrow surface to make stateful tests grep-able.
 //
-// Removal plan: this flag is removed once task 8.1 refreshes the
-// integration goldens; the v2 cost path then becomes
-// unconditional. A successor task may delete the flag and the v1
-// `makeZeroCostBuckets()` helper together.
-let V2_COST_COMPUTE_ENABLED = false;
+// Removal plan: 8.1 has landed the goldens; this default is now
+// `true`. The setter and v1 `makeZeroCostBuckets()` helper remain
+// for a successor cleanup task per Implementation Note 5.2 — they
+// are dead code that the cleanup task can delete safely.
+let V2_COST_COMPUTE_ENABLED = true;
 
 function setV2CostComputeEnabled(value) {
   V2_COST_COMPUTE_ENABLED = Boolean(value);

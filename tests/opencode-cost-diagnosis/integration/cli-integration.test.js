@@ -420,10 +420,35 @@ test('integration (4): full-attribution report contains the disclaimer in both M
       d.accuracyClass, 'relative-only',
       'disclaimer must surface accuracyClass so an operator knows the bound',
     );
+    // v2 (task 8.1: V2_COST_COMPUTE_ENABLED default flipped to true)
+    // extends affectedBuckets with the cachedRead sub-buckets and the
+    // per-tool / per-agent dimension labels. See
+    // TOKENIZER_AFFECTED_BUCKETS_V2 in scripts/opencode-cost-report.js
+    // (lines 3063-3079) for the canonical ordering, and design.md
+    // §ReportSerializer (extended) for the rationale. The v1 list was
+    // the three uncached sub-buckets only and is now retained as
+    // TOKENIZER_AFFECTED_BUCKETS for the flag-OFF emission path
+    // (preserved for the successor cleanup task).
     assert.deepEqual(
       d.affectedBuckets,
-      ['uncachedSystemPrompt', 'history', 'toolOutputs'],
-      'affectedBuckets must enumerate the three tokenizer-derived buckets',
+      [
+        // v1: uncached sub-buckets (proportional split of session.tokens_input)
+        'uncachedSystemPrompt',
+        'history',
+        'toolOutputs',
+        // v2: cachedRead sub-buckets (R4.4 tokenizer-derived)
+        'systemPromptCached',
+        'agentsMdCached',
+        'mcpToolSchemasCached',
+        'accumulatedHistoryCached',
+        'accumulatedToolOutputsCached',
+        'unclassifiedCached',
+        // v2: per-tool / per-agent dimension labels (R5.4 / R6.5)
+        'toolOutputsByTool',
+        'subagentDispatchByAgent',
+      ],
+      'affectedBuckets must enumerate the v2 tokenizer-affected buckets ' +
+        '(3 uncached + 6 cachedRead sub-buckets + 2 dimension labels)',
     );
     assert.deepEqual(
       d.authoritativeBuckets,
@@ -449,8 +474,9 @@ test('integration (4): full-attribution report contains the disclaimer in both M
     );
     assert.match(
       md,
-      /Affected buckets \(tokenizer-derived, relative-only\): uncachedSystemPrompt, history, toolOutputs/,
-      'MD must list the affected buckets human-readably',
+      /Affected buckets \(tokenizer-derived, relative-only\): uncachedSystemPrompt, history, toolOutputs, systemPromptCached, agentsMdCached, mcpToolSchemasCached, accumulatedHistoryCached, accumulatedToolOutputsCached, unclassifiedCached, toolOutputsByTool, subagentDispatchByAgent/,
+      'MD must list the v2 affected buckets human-readably (3 uncached + ' +
+        '6 cachedRead sub-buckets + 2 dimension labels)',
     );
     assert.match(
       md,

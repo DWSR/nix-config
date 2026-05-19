@@ -2,13 +2,33 @@
   "byProject": {
     "/Users/test/project-a": {
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0.03,
+        "subagentDispatchByAgent": {
+          "general": 0.03
+        },
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {
+          "bash": {
+            "cached": 0.0006479999999999999,
+            "uncached": 0.01296296296296296
+          }
+        },
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-a",
       "sessionCount": 1,
@@ -25,13 +45,33 @@
     },
     "/Users/test/project-b": {
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0.03,
+        "subagentDispatchByAgent": {
+          "general": 0.03
+        },
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {
+          "bash": {
+            "cached": 0.0006479999999999999,
+            "uncached": 0.01296296296296296
+          }
+        },
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-b",
       "sessionCount": 1,
@@ -48,13 +88,31 @@
     },
     "/Users/test/project-c": {
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0,
+        "subagentDispatchByAgent": {},
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {
+          "bash": {
+            "cached": 0.0006479999999999999,
+            "uncached": 0.01296296296296296
+          }
+        },
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-c",
       "sessionCount": 1,
@@ -72,30 +130,80 @@
   },
   "findings": [
     {
-      "detail": "session ses_root_a: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "detail": "session ses_root_a: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
       "kind": "per_bucket_cost_deferred",
       "sessionId": "ses_root_a"
     },
     {
-      "detail": "session ses_root_b: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "detail": "session ses_root_a: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.10125 |delta|=0.051250000000000004 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+      "kind": "cost_invariant_violation",
+      "sessionId": "ses_root_a"
+    },
+    {
+      "detail": "session ses_root_a: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+      "kind": "cached_read_classifier_degraded",
+      "sessionId": "ses_root_a"
+    },
+    {
+      "detail": "session ses_root_b: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
       "kind": "per_bucket_cost_deferred",
       "sessionId": "ses_root_b"
     },
     {
-      "detail": "session ses_root_c: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "detail": "session ses_root_b: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.10125 |delta|=0.051250000000000004 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+      "kind": "cost_invariant_violation",
+      "sessionId": "ses_root_b"
+    },
+    {
+      "detail": "session ses_root_b: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+      "kind": "cached_read_classifier_degraded",
+      "sessionId": "ses_root_b"
+    },
+    {
+      "detail": "session ses_root_c: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
       "kind": "per_bucket_cost_deferred",
+      "sessionId": "ses_root_c"
+    },
+    {
+      "detail": "session ses_root_c: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.07125000000000001 |delta|=0.021250000000000005 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+      "kind": "cost_invariant_violation",
+      "sessionId": "ses_root_c"
+    },
+    {
+      "detail": "session ses_root_c: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+      "kind": "cached_read_classifier_degraded",
       "sessionId": "ses_root_c"
     }
   ],
   "globalTotals": {
     "cost": {
-      "cachedRead": null,
-      "cachedWrite": null,
-      "output": null,
-      "reasoning": null,
-      "subagentDispatch": null,
+      "cachedRead": 0.0075,
+      "cachedReadBreakdown": {
+        "accumulatedHistoryCached": 0.0038894999999999997,
+        "accumulatedToolOutputsCached": 0.0019439999999999998,
+        "agentsMdCached": 0,
+        "mcpToolSchemasCached": 0,
+        "systemPromptCached": 0.0016665,
+        "unclassifiedCached": 1.3010426069826053e-18
+      },
+      "cachedWrite": 0.018750000000000003,
+      "history": 0.07777777777777778,
+      "output": 0.037500000000000006,
+      "reasoning": 0,
+      "subagentDispatch": 0.06,
+      "subagentDispatchByAgent": {
+        "general": 0.06
+      },
+      "toolOutputs": 0.03888888888888888,
+      "toolOutputsByTool": {
+        "bash": {
+          "cached": 0.0019439999999999998,
+          "uncached": 0.03888888888888888
+        }
+      },
       "total": 0.15000000000000002,
-      "uncachedInput": null
+      "uncachedInput": 0.15000000000000002,
+      "uncachedSystemPrompt": 0.03333333333333334
     },
     "tokens": {
       "cachedRead": 15000,
@@ -108,6 +216,10 @@
       "uncachedSystemPrompt": 6666
     }
   },
+  "pricing": {
+    "pinDate": "2026-05-18",
+    "pinSource": "https://models.dev/api.json"
+  },
   "reportType": "opencode-cost-diagnosis",
   "schemaVersion": 1,
   "sessionCount": 3,
@@ -115,19 +227,42 @@
     {
       "agent": "build",
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0.03,
+        "subagentDispatchByAgent": {
+          "general": 0.03
+        },
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {},
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-a",
       "findings": [
         {
-          "detail": "session ses_root_a: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "detail": "session ses_root_a: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
           "kind": "per_bucket_cost_deferred"
+        },
+        {
+          "detail": "session ses_root_a: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.10125 |delta|=0.051250000000000004 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+          "kind": "cost_invariant_violation"
+        },
+        {
+          "detail": "session ses_root_a: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+          "kind": "cached_read_classifier_degraded"
         }
       ],
       "model": "claude-opus-4-7",
@@ -148,19 +283,42 @@
     {
       "agent": "general",
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0.03,
+        "subagentDispatchByAgent": {
+          "general": 0.03
+        },
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {},
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-b",
       "findings": [
         {
-          "detail": "session ses_root_b: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "detail": "session ses_root_b: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
           "kind": "per_bucket_cost_deferred"
+        },
+        {
+          "detail": "session ses_root_b: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.10125 |delta|=0.051250000000000004 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+          "kind": "cost_invariant_violation"
+        },
+        {
+          "detail": "session ses_root_b: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+          "kind": "cached_read_classifier_degraded"
         }
       ],
       "model": "claude-opus-4-7",
@@ -181,19 +339,40 @@
     {
       "agent": "explore",
       "cost": {
-        "cachedRead": null,
-        "cachedWrite": null,
-        "output": null,
-        "reasoning": null,
-        "subagentDispatch": null,
+        "cachedRead": 0.0025,
+        "cachedReadBreakdown": {
+          "accumulatedHistoryCached": 0.0012965,
+          "accumulatedToolOutputsCached": 0.0006479999999999999,
+          "agentsMdCached": 0,
+          "mcpToolSchemasCached": 0,
+          "systemPromptCached": 0.0005555,
+          "unclassifiedCached": 4.336808689942018e-19
+        },
+        "cachedWrite": 0.00625,
+        "history": 0.02592592592592593,
+        "output": 0.0125,
+        "reasoning": 0,
+        "subagentDispatch": 0,
+        "subagentDispatchByAgent": {},
+        "toolOutputs": 0.01296296296296296,
+        "toolOutputsByTool": {},
         "total": 0.05,
-        "uncachedInput": null
+        "uncachedInput": 0.05,
+        "uncachedSystemPrompt": 0.011111111111111113
       },
       "directory": "/Users/test/project-c",
       "findings": [
         {
-          "detail": "session ses_root_c: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "detail": "session ses_root_c: per-bucket cost is now populated by v2 (was null in v1). This finding kind is retained for R7.AC4 forward-compatibility and now records the v1->v2 migration of the per-bucket cost fields rather than a deferred state.",
           "kind": "per_bucket_cost_deferred"
+        },
+        {
+          "detail": "session ses_root_c: per-bucket sum diverged from session.cost beyond tolerance. expected=0.05 actual=0.07125000000000001 |delta|=0.021250000000000005 tolerance=0.01 (= max(0.001 × 0.05, 0.01)). Informational only; report continues to emit.",
+          "kind": "cost_invariant_violation"
+        },
+        {
+          "detail": "session ses_root_c: TokenizerSplitter content-shape markers fired unreliably for 3 of 5 cachedRead sub-bucket(s): [systemPrompt, agentsMd, mcpToolSchemas]. AttributionEngine fell back to the proportional-from-uncached split (design.md Decision 6); agentsMdCached and mcpToolSchemasCached are 0; the other three named sub-buckets carry the systemPrompt:history:toolOutput ratio from the uncached side. R4.AC1 satisfied: all 5 named sub-buckets present on cost.cachedReadBreakdown.",
+          "kind": "cached_read_classifier_degraded"
         }
       ],
       "model": "claude-opus-4-7",
@@ -217,7 +396,15 @@
     "affectedBuckets": [
       "uncachedSystemPrompt",
       "history",
-      "toolOutputs"
+      "toolOutputs",
+      "systemPromptCached",
+      "agentsMdCached",
+      "mcpToolSchemasCached",
+      "accumulatedHistoryCached",
+      "accumulatedToolOutputsCached",
+      "unclassifiedCached",
+      "toolOutputsByTool",
+      "subagentDispatchByAgent"
     ],
     "authoritativeBuckets": [
       "cachedRead",
@@ -227,8 +414,13 @@
       "subagentDispatch"
     ],
     "encoding": "cl100k_base",
-    "humanReadable": "Bucket totals for uncachedSystemPrompt, history, toolOutputs are tiktoken (cl100k_base) estimates derived from a proportional split of opencode's authoritative session.tokens_input; they are relative-only and suitable for ranking cost drivers, but are NOT billing-grade absolute counts. The three buckets nevertheless sum exactly to opencode's stored tokens_input value (last bucket absorbs rounding). Authoritative buckets (cachedRead, cachedWrite, output, reasoning, subagentDispatch) are read directly from opencode and require no estimation. Supported opencode version range: >=0.18.0 <0.30.0.",
+    "humanReadable": "Bucket totals for uncachedSystemPrompt, history, toolOutputs, systemPromptCached, agentsMdCached, mcpToolSchemasCached, accumulatedHistoryCached, accumulatedToolOutputsCached, unclassifiedCached, toolOutputsByTool, subagentDispatchByAgent are tiktoken (cl100k_base) estimates derived from a proportional split of opencode's authoritative session.tokens_input; they are relative-only and suitable for ranking cost drivers, but are NOT billing-grade absolute counts. The three buckets nevertheless sum exactly to opencode's stored tokens_input value (last bucket absorbs rounding). Authoritative buckets (cachedRead, cachedWrite, output, reasoning, subagentDispatch) are read directly from opencode and require no estimation. Supported opencode version range: >=0.18.0 <0.30.0.",
     "library": "tiktoken",
-    "sumCorrectnessGuarantee": "Uncached sub-buckets sum exactly to opencode.session.tokens_input"
+    "sumCorrectnessGuarantee": "Uncached sub-buckets sum exactly to opencode.session.tokens_input",
+    "thresholds": {
+      "subagentBelowThresholdChildFloor": 1,
+      "subagentBelowThresholdPct": 0.01,
+      "toolBelowThresholdPct": 0.01
+    }
   }
 }

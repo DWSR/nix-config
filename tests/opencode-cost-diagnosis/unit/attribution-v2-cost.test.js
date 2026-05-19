@@ -264,11 +264,16 @@ test('setV2CostComputeEnabled is exported', () => {
   assert.equal(typeof setV2CostComputeEnabled, 'function');
 });
 
-test('V2 cost compute is OFF by default — engine emits the v1 6-key cost shape', () => {
-  // R7.AC1 / R7.AC2: byte-identical golden output during the
-  // staged rollout window depends on the flag defaulting to OFF.
-  // We do NOT call setV2CostComputeEnabled here so the flag's
-  // module-scope default is exercised directly.
+test('V2 cost compute is ON by default — engine emits the v2 populated cost shape', () => {
+  // Post task 8.1: the integration goldens were refreshed against
+  // the v2 shape and V2_COST_COMPUTE_ENABLED was flipped from
+  // `false` to `true` as its module-scope default. This test pins
+  // the new default state — we do NOT call setV2CostComputeEnabled
+  // here so the flag's module-scope default is exercised directly.
+  // The legacy v1 OFF coverage now lives in the explicitly-flagged
+  // "flag OFF" tests below (see "flag OFF: …"), which set the flag
+  // to false in setup and reset to true (the new default) in
+  // finally.
   const ses = makeSyntheticSession();
   const reader = makeMatchedSingleModelReader(ses);
   const pricing = makeMatchedSinglePricing();
@@ -280,9 +285,9 @@ test('V2 cost compute is OFF by default — engine emits the v1 6-key cost shape
   );
   const attr = eng.attributeSession(ses);
 
-  // v1 cost shape: total (from session.cost) plus six null
-  // per-bucket fields. The three v2 uncached sub-bucket cost
-  // keys must NOT be present in OFF mode.
+  // v2 cost shape: total (from session.cost) plus six populated
+  // per-bucket fields. The three v2 uncached sub-bucket cost keys
+  // (uncachedSystemPrompt, history, toolOutputs) MUST be present.
   assert.equal(attr.cost.total, SYN_EXPECTED_COST);
   for (const k of [
     'cachedRead',
@@ -292,17 +297,27 @@ test('V2 cost compute is OFF by default — engine emits the v1 6-key cost shape
     'reasoning',
     'subagentDispatch',
   ]) {
-    assert.equal(
+    assert.notEqual(
       attr.cost[k],
       null,
-      `flag OFF: cost.${k} must be null (v1 shape preserved)`,
+      `flag ON (default): cost.${k} must be populated (v2 numeric value)`,
+    );
+    assert.equal(
+      typeof attr.cost[k],
+      'number',
+      `flag ON (default): cost.${k} must be a number`,
     );
   }
   for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(attr.cost, k),
-      false,
-      `flag OFF: cost.${k} must not appear (v1 shape, no v2 extensions)`,
+      true,
+      `flag ON (default): cost.${k} must appear (v2 uncached sub-bucket)`,
+    );
+    assert.equal(
+      typeof attr.cost[k],
+      'number',
+      `flag ON (default): cost.${k} must be a number`,
     );
   }
 });
@@ -329,7 +344,7 @@ test('flag ON: matched single-model session — cost.total === session.cost', ()
     // session.cost regardless of pricing-table outcomes.
     assert.equal(attr.cost.total, ses.cost);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -418,7 +433,7 @@ test('flag ON: cost shape contains exactly the 9 flat cost fields + total', () =
       'cost.subagentDispatchByAgent must be {} when rollup.byAgent is empty (no descendants), not null',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -462,7 +477,7 @@ test('flag ON: per-bucket cost values equal tokens × rate / 1e6 for each flat f
       `cost.reasoning expected ≈ ${expReasoning}, got ${attr.cost.reasoning}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -494,7 +509,7 @@ test('flag ON: cost.uncachedSystemPrompt + history + toolOutputs === cost.uncach
         `cost.uncachedInput(${attr.cost.uncachedInput}) within tolerance`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -539,7 +554,7 @@ test('flag ON: cost.subagentDispatch === sum(SubagentAggregator.byAgent[*].cost)
         `(${expSubagentDispatchCost}); got ${attr.cost.subagentDispatch}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -575,7 +590,7 @@ test('flag ON: token-side fields unchanged (v1 BucketTotals contract preserved)'
       'tokens shape must be byte-identical regardless of cost flag state',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -609,7 +624,7 @@ test('flag ON: identity/findings carry through unchanged from v1 path', () => {
       'per_bucket_cost_deferred must still be emitted under the v2 flag (5.9 rewrites the detail, 5.2 keeps the emit)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -692,7 +707,7 @@ test('flag ON: P_sum==0 collapses all three uncached sub-bucket costs to 0', () 
     );
     assert.equal(uci.length, 1);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -813,7 +828,7 @@ test('flag ON / 5.3: cost.cachedReadBreakdown is a populated 6-key object on the
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -867,7 +882,7 @@ test('flag ON / 5.3: cost sum invariant — sum(cachedReadBreakdown.*) === cost.
         `the ULP-scale tolerance the absorber pattern guarantees`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -962,7 +977,7 @@ test('flag ON / 5.3: token sum invariant — sum(per-sub-bucket tokens) === sess
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1031,7 +1046,7 @@ test('flag ON / 5.3: T_cacheR === 0 collapses every sub-bucket cost to 0', () =>
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1091,7 +1106,7 @@ test('flag ON / 5.3: T_cacheR > 0 but all breakdown counts === 0 collapses sub-b
     // intentionally does NOT re-attribute on its own because the
     // markersDegraded signal isn't yet a branch in this engine.
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1162,7 +1177,7 @@ test('flag ON / 5.3: unclassifiedCached absorbs token integer rounding (last-buc
         `(T - 5×${expFiveTokens}); reconstructed ${absorberTokens}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1270,7 +1285,7 @@ test('flag ON / 5.4: cost.toolOutputsByTool is a Map populated from provenance.b
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1312,7 +1327,7 @@ test('flag ON / 5.4: cost.toolOutputsByTool entries are frozen against mutation'
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1362,7 +1377,7 @@ test('flag ON / 5.4: per-tool uncached cost sum === cost.toolOutputs (ULP)', () 
         `${Math.abs(perToolUncachedSum - attr.cost.toolOutputs)}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1409,7 +1424,7 @@ test('flag ON / 5.4: per-tool cached cost sum === cost.cachedReadBreakdown.accum
         `within ULP; observed delta = ${Math.abs(perToolCachedSum - parentCached)}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1490,7 +1505,7 @@ test('flag ON / 5.4: per-tool apportionment matches expected weights for non-abs
       `edit.cached (absorber) must equal parentCached - bash.cached - read.cached`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1530,7 +1545,7 @@ test('flag ON / 5.4: empty provenance.byTool → empty cost.toolOutputsByTool Ma
       'empty provenance.byTool → empty cost.toolOutputsByTool',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1613,7 +1628,7 @@ test('flag ON / 5.4: parentUncached === 0 → all per-tool uncached entries are 
       `cached partition sum invariant must hold independently of uncached collapse`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1667,7 +1682,7 @@ test('flag ON / 5.4: parentCached === 0 → all per-tool cached entries are 0', 
       `uncached partition sum invariant must hold independently of cached collapse`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1712,7 +1727,7 @@ test('flag ON / 5.4: single-tool session → the lone entry receives the full pa
       `single-tool entry must receive the full parent cached`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1780,7 +1795,7 @@ test('flag ON / 5.5: out-of-tolerance session emits exactly one cost_invariant_v
     assert.equal(typeof attr.cost, 'object');
     assert.equal(attr.cost.total, inflated);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1808,7 +1823,7 @@ test('flag ON / 5.5: within-tolerance session emits NO cost_invariant_violation 
       'within-tolerance session must NOT emit cost_invariant_violation',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1856,7 +1871,7 @@ test('flag ON / 5.5: violation just above the $0.01 floor fires; just below does
       'delta of $0.011 must trigger (above $0.01 floor)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1865,28 +1880,38 @@ test('flag OFF: reconciliation never runs (v1 null-shape path)', () => {
   // fields null. Reconciliation MUST NOT fire on flag OFF — even
   // if session.cost would be "out of tolerance" against a
   // computed-but-not-present per-bucket sum.
-  const ses = makeSyntheticSession({ cost: SYN_EXPECTED_COST + 100.0 });
-  const reader = makeMatchedSingleModelReader(ses);
-  const eng = new AttributionEngine(
-    reader,
-    new SubagentAggregator(reader),
-    new TokenizerSplitter(),
-    makeMatchedSinglePricing(),
-  );
-  const attr = eng.attributeSession(ses);
-  assert.equal(
-    attr.findings.filter((f) => f.kind === 'cost_invariant_violation')
-      .length,
-    0,
-    'flag OFF must not emit cost_invariant_violation',
-  );
+  // Post task 8.1: default is ON, so set the flag explicitly here
+  // and restore to ON in finally.
+  setV2CostComputeEnabled(false);
+  try {
+    const ses = makeSyntheticSession({ cost: SYN_EXPECTED_COST + 100.0 });
+    const reader = makeMatchedSingleModelReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.findings.filter((f) => f.kind === 'cost_invariant_violation')
+        .length,
+      0,
+      'flag OFF must not emit cost_invariant_violation',
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
-test('flag toggles cleanly OFF after every test (no leakage)', () => {
-  // Defensive: every test above resets the flag in `finally`. This
-  // bottom-of-file test confirms that the flag is in fact OFF at
-  // the suite boundary so the global v1-shape tests in
-  // attribution.test.js cannot pick up our state.
+test('flag toggles cleanly ON after every test (no leakage)', () => {
+  // Defensive: every test above sets the flag in setup and resets
+  // in `finally`. Post task 8.1 the default flipped to ON, so this
+  // bottom-of-file test confirms that after the whole suite the
+  // flag is restored to its new ON default — i.e. that no test
+  // above left it in an inconsistent state. The v1 shape (no
+  // uncached sub-bucket cost keys) must NOT appear in the default-
+  // state run.
   const ses = makeSyntheticSession();
   const reader = makeMatchedSingleModelReader(ses);
   const eng = new AttributionEngine(
@@ -1899,8 +1924,8 @@ test('flag toggles cleanly OFF after every test (no leakage)', () => {
   for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
     assert.equal(
       Object.prototype.hasOwnProperty.call(attr.cost, k),
-      false,
-      `flag must be OFF at suite boundary; cost.${k} must not appear`,
+      true,
+      `flag must be ON at suite boundary; cost.${k} must appear (v2 shape)`,
     );
   }
 });
@@ -2165,7 +2190,7 @@ test('flag ON / 5.6: drift session — cost.cachedRead === null AND every other 
       'drift cost.total must equal session.cost',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2208,7 +2233,7 @@ test('flag ON / 5.6: drift session emits exactly one pricing_table_drift finding
       'pricing_table_drift detail must name the unrecognized providerID/modelID key',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2246,7 +2271,7 @@ test('flag ON / 5.6: drift session token-side BucketTotals fields remain populat
       'tokens.uncachedSystemPrompt + history + toolOutputs must equal session.tokens_input on drift',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2271,7 +2296,7 @@ test('flag ON / 5.6: drift session must NOT emit cost_invariant_violation (drift
       'drift suppresses cost_invariant_violation (5.5 reconciliation gated on _v2PricingDrift)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2318,7 +2343,7 @@ test('flag ON / 5.6: drift cost shape matches makeNullCostShape(session.cost) ke
       '_v2DriftKey must not be enumerable on the drift cost shape',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2381,35 +2406,41 @@ test('flag ON / 5.6: across two sessions in one engine run, matched stays popula
     assert.equal(drift.length, 1);
     assert.match(drift[0].detail, new RegExp(driftSes.id));
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('flag OFF / 5.6: drift fallback path is not exercised (v1 null-shape path)', () => {
   // R7.AC1 forward-compat: flag-OFF runs the v1 cost shape. The
   // 5.6 drift fallback only runs when the flag is ON.
-  const ses = makeSyntheticSession({ id: 'ses_drift_flag_off' });
-  const reader = makeMissingModelIdReader(ses);
-  const eng = new AttributionEngine(
-    reader,
-    new SubagentAggregator(reader),
-    new TokenizerSplitter(),
-    makeMatchedSinglePricing(),
-  );
-  const attr = eng.attributeSession(ses);
-  // No pricing_table_drift finding on flag OFF.
-  assert.equal(
-    attr.findings.filter((f) => f.kind === 'pricing_table_drift').length,
-    0,
-    'flag OFF must not emit pricing_table_drift',
-  );
-  // v1 cost shape: total + six v1 nulls, no v2 keys.
-  for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(attr.cost, k),
-      false,
-      `flag OFF must not surface v2 sub-bucket cost.${k}`,
+  // Post task 8.1: default is ON; explicit OFF + finally restore.
+  setV2CostComputeEnabled(false);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_drift_flag_off' });
+    const reader = makeMissingModelIdReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
     );
+    const attr = eng.attributeSession(ses);
+    // No pricing_table_drift finding on flag OFF.
+    assert.equal(
+      attr.findings.filter((f) => f.kind === 'pricing_table_drift').length,
+      0,
+      'flag OFF must not emit pricing_table_drift',
+    );
+    // v1 cost shape: total + six v1 nulls, no v2 keys.
+    for (const k of ['uncachedSystemPrompt', 'history', 'toolOutputs']) {
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(attr.cost, k),
+        false,
+        `flag OFF must not surface v2 sub-bucket cost.${k}`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2526,7 +2557,7 @@ test('flag ON / 5.7: markersDegraded=true → agentsMdCached === 0 AND mcpToolSc
       'accumulatedToolOutputsCached must receive its proportional share from the uncached side',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2574,7 +2605,7 @@ test('flag ON / 5.7: markersDegraded=true emits exactly one cached_read_classifi
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2688,7 +2719,7 @@ test('flag ON / 5.7: markersDegraded=true proportional split mirrors the uncache
         `cost.cachedRead (${attr.cost.cachedRead}) within ULP via absorber-by-subtraction`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2734,7 +2765,7 @@ test('flag ON / 5.7: markersDegraded=true does NOT emit cached_read_classificati
       1,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2804,7 +2835,7 @@ test('flag ON / 5.7: high-residual count-based path (60%+ unclassified) emits ca
       `cached_read_classification_residual detail must name the residual ratio (~${ratioFirstTwo})`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2839,7 +2870,7 @@ test('flag ON / 5.7: low-residual count-based path (<5% unclassified) does NOT e
       'low-residual (<5%) session must NOT emit cached_read_classification_residual',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2897,7 +2928,7 @@ test('flag ON / 5.7: T_cacheR === 0 does NOT emit cached_read_classification_res
       'T_cacheR===0 must NOT emit cached_read_classification_residual',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2955,46 +2986,52 @@ test('flag ON / 5.7: degraded path with P_sum===0 collapses 5 named sub-buckets 
       'degraded finding must fire even with P_sum===0',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('flag OFF / 5.7: degraded markers do NOT trigger cached_read_classifier_degraded finding', () => {
   // R7.AC1 forward-compat: flag-OFF runs v1 cost shape. 5.7's
   // finding emit sites only run when V2_COST_COMPUTE_ENABLED.
-  const ses = makeSyntheticSession({ id: 'ses_synth_v2_5_7_off' });
-  const reader = makeMatchedSingleModelReader(ses);
-  const breakdown = {
-    systemPromptCached: 0,
-    agentsMdCached: 0,
-    mcpToolSchemasCached: 0,
-    accumulatedHistoryCached: 0,
-    accumulatedToolOutputsCached: 0,
-    unclassifiedCached: 0,
-  };
-  const eng = new AttributionEngine(
-    reader,
-    new SubagentAggregator(reader),
-    makeStubTokenizer(
-      makeProvenanceDegraded(breakdown, ['systemPrompt', 'agentsMd']),
-    ),
-    makeMatchedSinglePricing(),
-  );
-  const attr = eng.attributeSession(ses);
-  assert.equal(
-    attr.findings.filter(
-      (f) => f.kind === 'cached_read_classifier_degraded',
-    ).length,
-    0,
-    'flag OFF must not emit cached_read_classifier_degraded',
-  );
-  assert.equal(
-    attr.findings.filter(
-      (f) => f.kind === 'cached_read_classification_residual',
-    ).length,
-    0,
-    'flag OFF must not emit cached_read_classification_residual',
-  );
+  // Post task 8.1: default is ON; explicit OFF + finally restore.
+  setV2CostComputeEnabled(false);
+  try {
+    const ses = makeSyntheticSession({ id: 'ses_synth_v2_5_7_off' });
+    const reader = makeMatchedSingleModelReader(ses);
+    const breakdown = {
+      systemPromptCached: 0,
+      agentsMdCached: 0,
+      mcpToolSchemasCached: 0,
+      accumulatedHistoryCached: 0,
+      accumulatedToolOutputsCached: 0,
+      unclassifiedCached: 0,
+    };
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      makeStubTokenizer(
+        makeProvenanceDegraded(breakdown, ['systemPrompt', 'agentsMd']),
+      ),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classifier_degraded',
+      ).length,
+      0,
+      'flag OFF must not emit cached_read_classifier_degraded',
+    );
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'cached_read_classification_residual',
+      ).length,
+      0,
+      'flag OFF must not emit cached_read_classification_residual',
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -3156,7 +3193,7 @@ test('flag ON / 5.8: parent + 2 null-agent descendants (first carries data.agent
         `subagent_agent_attribution_drift finding; got: ${drift[0].detail}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -3198,7 +3235,7 @@ test('flag ON / 5.8: descendant with mixed data.agent values reports the modal (
         `beats build (2) and review (1)); got: ${drift[0].detail}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -3242,7 +3279,7 @@ test('flag ON / 5.8: each null-agent descendant with drift emits an independent 
       `findings must collectively name descB (${descB}) + "build"`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -3269,33 +3306,39 @@ test('flag ON / 5.8: empty nullAgentDescendantIds emits no drift findings', () =
       'no null-agent descendants → no drift findings',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('flag OFF / 5.8: drift finding is NOT emitted (gated by V2_COST_COMPUTE_ENABLED for goldens stability)', () => {
   // R7.AC1 / R7.AC4: flag-OFF preserves v1's findings array
   // contents. 5.8's emit is gated under V2_COST_COMPUTE_ENABLED
-  // alongside every other v2 finding so the integration goldens
-  // stay byte-stable until task 8.1 refreshes them.
-  const parent = makeSyntheticSession({ id: 'ses_parent_5_8_off' });
-  const desc = 'ses_null_drift_off';
-  const descendantMessages = new Map([[desc, ['general', 'general']]]);
-  const reader = makeNullAgentDriftReader(parent, descendantMessages);
-  const eng = new AttributionEngine(
-    reader,
-    makeMockAggregatorWithNullDescendants(parent.id, [desc]),
-    new TokenizerSplitter(),
-    makeMatchedSinglePricing(),
-  );
-  const attr = eng.attributeSession(parent);
-  assert.equal(
-    attr.findings.filter(
-      (f) => f.kind === 'subagent_agent_attribution_drift',
-    ).length,
-    0,
-    'flag OFF must not emit subagent_agent_attribution_drift',
-  );
+  // alongside every other v2 finding so the v1 path stays under
+  // test until the successor cleanup task deletes the v1 helper.
+  // Post task 8.1: default is ON; explicit OFF + finally restore.
+  setV2CostComputeEnabled(false);
+  try {
+    const parent = makeSyntheticSession({ id: 'ses_parent_5_8_off' });
+    const desc = 'ses_null_drift_off';
+    const descendantMessages = new Map([[desc, ['general', 'general']]]);
+    const reader = makeNullAgentDriftReader(parent, descendantMessages);
+    const eng = new AttributionEngine(
+      reader,
+      makeMockAggregatorWithNullDescendants(parent.id, [desc]),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(parent);
+    assert.equal(
+      attr.findings.filter(
+        (f) => f.kind === 'subagent_agent_attribution_drift',
+      ).length,
+      0,
+      'flag OFF must not emit subagent_agent_attribution_drift',
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -3385,49 +3428,54 @@ test('flag ON / 5.9: per_bucket_cost_deferred detail uses canonical v2 wording f
       `flag ON: detail must not contain the v1 "deferred to a follow-on spec" wording; got: ${JSON.stringify(f.detail)}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('flag OFF / 5.9: per_bucket_cost_deferred detail still uses the v1 wording so integration goldens stay valid', () => {
-  // R7.AC1 / R7.AC2: byte-identical golden output during the
-  // staged rollout window depends on the flag defaulting to OFF.
-  // The integration goldens at
-  // tests/opencode-cost-diagnosis/integration/golden/fixture-365d-all.{md,json}
-  // contain the v1 detail string verbatim; this test is the unit-
-  // level guard that mirrors that invariant so a regression is
-  // caught here before the slower integration suite runs.
-  const ses = makeSyntheticSession();
-  const reader = makeMatchedSingleModelReader(ses);
-  const eng = new AttributionEngine(
-    reader,
-    new SubagentAggregator(reader),
-    new TokenizerSplitter(),
-    makeMatchedSinglePricing(),
-  );
-  const attr = eng.attributeSession(ses);
-  const pbcd = attr.findings.filter(
-    (f) => f.kind === 'per_bucket_cost_deferred',
-  );
-  assert.equal(
-    pbcd.length,
-    1,
-    'flag OFF: per_bucket_cost_deferred must still be emitted once per session',
-  );
-  const f = pbcd[0];
-  assert.equal(f.kind, 'per_bucket_cost_deferred');
-  assert.ok(
-    f.detail.startsWith(`session ${ses.id}: `),
-    `flag OFF: detail must begin with "session ${ses.id}: " prefix; got: ${JSON.stringify(f.detail)}`,
-  );
-  assert.ok(
-    f.detail.includes(V1_PBCD_DETAIL_FRAGMENT),
-    `flag OFF: detail must contain v1 wording fragment "${V1_PBCD_DETAIL_FRAGMENT}"; got: ${JSON.stringify(f.detail)}`,
-  );
-  assert.ok(
-    !f.detail.includes('per-bucket cost is now populated by v2'),
-    `flag OFF: detail must not contain the v2 wording; got: ${JSON.stringify(f.detail)}`,
-  );
+  // R7.AC1 / R7.AC4: the v1 detail string remains under test even
+  // after task 8.1 flipped the default to ON, because the v1
+  // wording is still emitted by the legacy `makeZeroCostBuckets()`
+  // path which Implementation Note 5.2 explicitly preserves for a
+  // successor cleanup task. The v2 integration goldens now contain
+  // the v2 wording (see fixture-365d-all.{md,json}); the v1
+  // wording is asserted here under an explicit flag-OFF wrap.
+  setV2CostComputeEnabled(false);
+  try {
+    const ses = makeSyntheticSession();
+    const reader = makeMatchedSingleModelReader(ses);
+    const eng = new AttributionEngine(
+      reader,
+      new SubagentAggregator(reader),
+      new TokenizerSplitter(),
+      makeMatchedSinglePricing(),
+    );
+    const attr = eng.attributeSession(ses);
+    const pbcd = attr.findings.filter(
+      (f) => f.kind === 'per_bucket_cost_deferred',
+    );
+    assert.equal(
+      pbcd.length,
+      1,
+      'flag OFF: per_bucket_cost_deferred must still be emitted once per session',
+    );
+    const f = pbcd[0];
+    assert.equal(f.kind, 'per_bucket_cost_deferred');
+    assert.ok(
+      f.detail.startsWith(`session ${ses.id}: `),
+      `flag OFF: detail must begin with "session ${ses.id}: " prefix; got: ${JSON.stringify(f.detail)}`,
+    );
+    assert.ok(
+      f.detail.includes(V1_PBCD_DETAIL_FRAGMENT),
+      `flag OFF: detail must contain v1 wording fragment "${V1_PBCD_DETAIL_FRAGMENT}"; got: ${JSON.stringify(f.detail)}`,
+    );
+    assert.ok(
+      !f.detail.includes('per-bucket cost is now populated by v2'),
+      `flag OFF: detail must not contain the v2 wording; got: ${JSON.stringify(f.detail)}`,
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 // ---------------------------------------------------------------------
@@ -3876,7 +3924,7 @@ test('5.10: multi-model accumulation — two assistant messages on DIFFERENT (pr
       0,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -3970,7 +4018,7 @@ test('5.10: one-of-many drift — a multi-message session where ONLY ONE assista
       'pricing_table_drift detail must NOT name the matched model (claude-opus-4-7)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4018,7 +4066,7 @@ test('5.10: drift session still emits per_bucket_cost_deferred (R7.AC4 preserved
       `drift session: per_bucket_cost_deferred detail must still begin with "session ${ses.id}: " prefix`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4056,7 +4104,7 @@ test('5.10: drift session per_bucket_cost_deferred carries v2 canonical wording 
       `drift session: v1 wording must NOT leak when flag is ON; got: ${JSON.stringify(pbcd.detail)}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4098,7 +4146,7 @@ test('5.10: pricing_table_drift detail names providerID and modelID as INDEPENDE
       `drift detail must include the canonical "providerID/modelID" composite; got: ${JSON.stringify(drift.detail)}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4171,7 +4219,7 @@ test('5.10: all-clear happy path — matched single-model session with NON-degra
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4340,7 +4388,7 @@ test('5.10: reconciliation percentage-based tolerance — large session uses 0.1
       `percentage-branch ABOVE: delta ${deltaAbove} > tolerance ${pctTolerance} must fire exactly one cost_invariant_violation`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4422,7 +4470,7 @@ test('5.10: cross-cutting — markersDegraded AND cost_invariant_violation both 
       'cross-cutting: degraded path MUST still suppress the residual finding even when cost_invariant_violation fires',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4549,7 +4597,7 @@ test('flag ON / 5.11: subagentDispatchByAgent populated from rollup.byAgent — 
       'subagentDispatchByAgent must be frozen (Readonly<Record<...>> contract)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4633,7 +4681,7 @@ test('flag ON / 5.11: drift session — subagentDispatchByAgent === null (makeNu
       'drift: exactly one pricing_table_drift finding must fire (5.6 contract; 5.11 must not suppress)',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -4694,6 +4742,6 @@ test('flag ON / 5.11: subagentDispatchByAgent is a plain object (matches mergeBy
       'subagentDispatchByAgent must preserve each agent key with the per-agent cost dollars',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });

@@ -287,7 +287,7 @@
 
 ## 8. Golden refresh and integration tests
 
-- [ ] 8.1 Refresh integration golden files via UPDATE_GOLDEN=1
+- [x] 8.1 Refresh integration golden files via UPDATE_GOLDEN=1
   - Run `UPDATE_GOLDEN=1 node tests/opencode-cost-diagnosis/integration/run.js` against the existing `fixture-365d-all` fixture
   - Manually inspect the diff to confirm the new fields, new sections, and pricing pin block appear in the expected positions; verify alphabetical JSON ordering is preserved
   - Commit the refreshed `fixture-365d-all.{md,json}` AND retain the prior v1 versions as `fixture-365d-all-v1.{md,json}` under the same golden directory for migration-PR review (per Migration Strategy)

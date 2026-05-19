@@ -257,17 +257,28 @@ test('assemble(fixture): globalTotals.cost.total equals sum of session cost.tota
   );
 });
 
-test('assemble(fixture): per-bucket cost fields on globalTotals.cost all null (forward-compat)', () => {
-  const attrs = attributeAllFixtureSessions();
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble(attrs);
+test('assemble(fixture): per-bucket cost fields on globalTotals.cost all null (forward-compat) — flag OFF', () => {
+  // Task 8.1 flipped V2_COST_COMPUTE_ENABLED's module-scope default
+  // from `false` to `true`. This test continues to pin the v1
+  // legacy invariant ("per-bucket fields null in v1") so the
+  // `makeZeroCostBuckets()` path stays under test until the
+  // successor cleanup task deletes it. Explicit OFF setup, restore
+  // to the new ON default in finally.
+  setV2CostComputeEnabled(false);
+  try {
+    const attrs = attributeAllFixtureSessions();
+    const assembler = new ReportAssembler();
+    const report = assembler.assemble(attrs);
 
-  for (const k of PER_BUCKET_COST_FIELDS) {
-    assert.equal(
-      report.globalTotals.cost[k],
-      null,
-      `globalTotals.cost.${k} must be null in v1 (per_bucket_cost_deferred)`,
-    );
+    for (const k of PER_BUCKET_COST_FIELDS) {
+      assert.equal(
+        report.globalTotals.cost[k],
+        null,
+        `globalTotals.cost.${k} must be null in v1 (per_bucket_cost_deferred)`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -289,120 +300,152 @@ test('assemble(fixture): byProject has 3 keys (one per distinct cwd)', () => {
   ]);
 });
 
-test('assemble(fixture): each ProjectAggregate carries directory, sessionCount=1, summed tokens, and cost.total', () => {
-  const attrs = attributeAllFixtureSessions();
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble(attrs);
+test('assemble(fixture): each ProjectAggregate carries directory, sessionCount=1, summed tokens, and cost.total — flag OFF', () => {
+  // Task 8.1 flipped the V2 default to ON; this test pins the v1
+  // ProjectAggregate shape (per-bucket cost fields null) and so
+  // explicitly sets flag OFF. Restores to ON (new default) in
+  // finally to prevent cross-test pollution.
+  setV2CostComputeEnabled(false);
+  try {
+    const attrs = attributeAllFixtureSessions();
+    const assembler = new ReportAssembler();
+    const report = assembler.assemble(attrs);
 
-  for (const dir of [
-    '/Users/test/project-a',
-    '/Users/test/project-b',
-    '/Users/test/project-c',
-  ]) {
-    const agg = report.byProject[dir];
-    assert.equal(agg.directory, dir, `byProject[${dir}].directory`);
-    assert.equal(agg.sessionCount, 1, `byProject[${dir}].sessionCount`);
+    for (const dir of [
+      '/Users/test/project-a',
+      '/Users/test/project-b',
+      '/Users/test/project-c',
+    ]) {
+      const agg = report.byProject[dir];
+      assert.equal(agg.directory, dir, `byProject[${dir}].directory`);
+      assert.equal(agg.sessionCount, 1, `byProject[${dir}].sessionCount`);
 
-    // Find the source session attribution for this project.
-    const src = attrs.find((a) => a.directory === dir);
-    assert.ok(src, `fixture must contain a session for ${dir}`);
+      // Find the source session attribution for this project.
+      const src = attrs.find((a) => a.directory === dir);
+      assert.ok(src, `fixture must contain a session for ${dir}`);
 
-    // Tokens equal the single source session verbatim (one session
-    // per project in this fixture, so the project sum is the
-    // identity).
-    for (const k of Object.keys(src.tokens)) {
-      assert.equal(
-        agg.tokens[k],
-        src.tokens[k],
-        `byProject[${dir}].tokens.${k}`,
+      // Tokens equal the single source session verbatim (one session
+      // per project in this fixture, so the project sum is the
+      // identity).
+      for (const k of Object.keys(src.tokens)) {
+        assert.equal(
+          agg.tokens[k],
+          src.tokens[k],
+          `byProject[${dir}].tokens.${k}`,
+        );
+      }
+
+      // cost.total equals source session.cost.total
+      assert.ok(
+        Math.abs(agg.cost.total - src.cost.total) < 1e-9,
+        `byProject[${dir}].cost.total expected ${src.cost.total}, got ${agg.cost.total}`,
       );
-    }
 
-    // cost.total equals source session.cost.total
-    assert.ok(
-      Math.abs(agg.cost.total - src.cost.total) < 1e-9,
-      `byProject[${dir}].cost.total expected ${src.cost.total}, got ${agg.cost.total}`,
-    );
-
-    // Per-bucket cost fields all null (forward-compat).
-    for (const k of PER_BUCKET_COST_FIELDS) {
-      assert.equal(
-        agg.cost[k],
-        null,
-        `byProject[${dir}].cost.${k} must be null in v1`,
-      );
+      // Per-bucket cost fields all null (forward-compat).
+      for (const k of PER_BUCKET_COST_FIELDS) {
+        assert.equal(
+          agg.cost[k],
+          null,
+          `byProject[${dir}].cost.${k} must be null in v1`,
+        );
+      }
     }
+  } finally {
+    setV2CostComputeEnabled(true);
   }
 });
 
 /* ── TokenizerDisclaimer ───────────────────────────────────────── */
 
-test('assemble(fixture): tokenizer_disclaimer matches design.md:912-921 shape', () => {
-  const attrs = attributeAllFixtureSessions();
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble(attrs);
+test('assemble(fixture): tokenizer_disclaimer matches design.md:912-921 shape — flag OFF (v1 affectedBuckets)', () => {
+  // Task 8.1 flipped the V2 default to ON, which extends
+  // affectedBuckets with the cachedRead sub-buckets and the
+  // per-tool / per-agent dimension labels (see
+  // TOKENIZER_AFFECTED_BUCKETS_V2 in scripts/opencode-cost-report.js).
+  // This test continues to pin the v1 disclaimer shape (the
+  // 3-bucket list) and so explicitly sets flag OFF. The v2 shape
+  // is covered by integration golden fixture-365d-all.{md,json}
+  // and by the affectedBuckets coverage in cli-integration test 4.
+  setV2CostComputeEnabled(false);
+  try {
+    const attrs = attributeAllFixtureSessions();
+    const assembler = new ReportAssembler();
+    const report = assembler.assemble(attrs);
 
-  const d = report.tokenizer_disclaimer;
-  assert.equal(d.library, 'tiktoken');
-  assert.equal(d.encoding, 'cl100k_base');
-  assert.equal(d.accuracyClass, 'relative-only');
-  assert.deepEqual(d.affectedBuckets, [
-    'uncachedSystemPrompt',
-    'history',
-    'toolOutputs',
-  ]);
-  assert.deepEqual(d.authoritativeBuckets, [
-    'cachedRead',
-    'cachedWrite',
-    'output',
-    'reasoning',
-    'subagentDispatch',
-  ]);
-  assert.equal(typeof d.sumCorrectnessGuarantee, 'string');
-  assert.ok(d.sumCorrectnessGuarantee.length > 0);
-  assert.equal(typeof d.humanReadable, 'string');
-  assert.ok(d.humanReadable.length > 0);
+    const d = report.tokenizer_disclaimer;
+    assert.equal(d.library, 'tiktoken');
+    assert.equal(d.encoding, 'cl100k_base');
+    assert.equal(d.accuracyClass, 'relative-only');
+    assert.deepEqual(d.affectedBuckets, [
+      'uncachedSystemPrompt',
+      'history',
+      'toolOutputs',
+    ]);
+    assert.deepEqual(d.authoritativeBuckets, [
+      'cachedRead',
+      'cachedWrite',
+      'output',
+      'reasoning',
+      'subagentDispatch',
+    ]);
+    assert.equal(typeof d.sumCorrectnessGuarantee, 'string');
+    assert.ok(d.sumCorrectnessGuarantee.length > 0);
+    assert.equal(typeof d.humanReadable, 'string');
+    assert.ok(d.humanReadable.length > 0);
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 /* ── Empty-DB shape (R2.AC8) ───────────────────────────────────── */
 
-test('assemble([]): valid empty DiagnosticReport with disclaimer present', () => {
-  const assembler = new ReportAssembler();
-  const report = assembler.assemble([]);
+test('assemble([]): valid empty DiagnosticReport with disclaimer present — flag OFF (v1 shape)', () => {
+  // Task 8.1 flipped the V2 default to ON; this test pins the v1
+  // empty-DB shape (per-bucket cost null + 3-bucket disclaimer
+  // affectedBuckets). Explicit OFF setup, restore to ON in finally.
+  // R2.AC8 (empty-DB happy path) is also covered by integration
+  // test 3 against the new v2 default.
+  setV2CostComputeEnabled(false);
+  try {
+    const assembler = new ReportAssembler();
+    const report = assembler.assemble([]);
 
-  assert.equal(report.schemaVersion, 1);
-  assert.equal(report.reportType, 'opencode-cost-diagnosis');
-  assert.equal(report.sessionCount, 0);
-  assert.deepEqual(report.sessions, []);
-  assert.deepEqual(report.byProject, {});
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.reportType, 'opencode-cost-diagnosis');
+    assert.equal(report.sessionCount, 0);
+    assert.deepEqual(report.sessions, []);
+    assert.deepEqual(report.byProject, {});
 
-  // globalTotals is structurally present, every bucket zero, every
-  // per-bucket cost null.
-  for (const k of [
-    'cachedRead',
-    'cachedWrite',
-    'uncachedSystemPrompt',
-    'history',
-    'toolOutputs',
-    'output',
-    'reasoning',
-    'subagentDispatch',
-  ]) {
-    assert.equal(report.globalTotals.tokens[k], 0);
+    // globalTotals is structurally present, every bucket zero, every
+    // per-bucket cost null.
+    for (const k of [
+      'cachedRead',
+      'cachedWrite',
+      'uncachedSystemPrompt',
+      'history',
+      'toolOutputs',
+      'output',
+      'reasoning',
+      'subagentDispatch',
+    ]) {
+      assert.equal(report.globalTotals.tokens[k], 0);
+    }
+    assert.equal(report.globalTotals.cost.total, 0);
+    for (const k of PER_BUCKET_COST_FIELDS) {
+      assert.equal(report.globalTotals.cost[k], null);
+    }
+
+    // Disclaimer is structurally present even in the empty case.
+    assert.equal(typeof report.tokenizer_disclaimer, 'object');
+    assert.equal(report.tokenizer_disclaimer.library, 'tiktoken');
+    assert.deepEqual(report.tokenizer_disclaimer.affectedBuckets, [
+      'uncachedSystemPrompt',
+      'history',
+      'toolOutputs',
+    ]);
+  } finally {
+    setV2CostComputeEnabled(true);
   }
-  assert.equal(report.globalTotals.cost.total, 0);
-  for (const k of PER_BUCKET_COST_FIELDS) {
-    assert.equal(report.globalTotals.cost[k], null);
-  }
-
-  // Disclaimer is structurally present even in the empty case.
-  assert.equal(typeof report.tokenizer_disclaimer, 'object');
-  assert.equal(report.tokenizer_disclaimer.library, 'tiktoken');
-  assert.deepEqual(report.tokenizer_disclaimer.affectedBuckets, [
-    'uncachedSystemPrompt',
-    'history',
-    'toolOutputs',
-  ]);
 });
 
 /* ── caching_not_enabled global finding (R2.AC7) ───────────────── */
@@ -762,46 +805,52 @@ function makeDriftCost(sessionCost) {
 
 test('assemble: flag OFF leaves per-bucket cost fields null (v1 invariant)', () => {
   // Belt-and-suspenders: explicitly confirm the v1 shape with the
-  // flag in its default state. Every other "all-null" assertion in
-  // this file implicitly relies on this, but pinning it as its own
-  // case makes a future regression diagnosable from this test name.
-  // We do NOT call setV2CostComputeEnabled here so the default OFF
-  // state is exercised.
-  const attrs = [
-    makeAttribution({
-      sessionId: 'ses_a',
-      directory: '/p/a',
-      tokens: { cachedRead: 5000 },
-      cost: makeV2Cost({ total: 0.5, cachedRead: 0.1 }),
-    }),
-    makeAttribution({
-      sessionId: 'ses_b',
-      directory: '/p/a',
-      tokens: { cachedRead: 5000 },
-      cost: makeV2Cost({ total: 0.25, cachedRead: 0.05 }),
-    }),
-  ];
-  const report = new ReportAssembler().assemble(attrs);
+  // flag forced OFF. Every other "all-null" assertion in this file
+  // explicitly wraps with setV2CostComputeEnabled(false), but
+  // pinning it as its own case makes a future regression
+  // diagnosable from this test name.
+  // Post task 8.1: the module-scope default is ON, so we must set
+  // the flag explicitly here and restore it in finally.
+  setV2CostComputeEnabled(false);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({ total: 0.5, cachedRead: 0.1 }),
+      }),
+      makeAttribution({
+        sessionId: 'ses_b',
+        directory: '/p/a',
+        tokens: { cachedRead: 5000 },
+        cost: makeV2Cost({ total: 0.25, cachedRead: 0.05 }),
+      }),
+    ];
+    const report = new ReportAssembler().assemble(attrs);
 
-  // globalTotals.cost: total accumulated, every per-key field null.
-  assert.ok(Math.abs(report.globalTotals.cost.total - 0.75) < 1e-9);
-  for (const k of PER_BUCKET_COST_FIELDS) {
-    assert.equal(
-      report.globalTotals.cost[k],
-      null,
-      `flag OFF: globalTotals.cost.${k} must remain null`,
-    );
-  }
+    // globalTotals.cost: total accumulated, every per-key field null.
+    assert.ok(Math.abs(report.globalTotals.cost.total - 0.75) < 1e-9);
+    for (const k of PER_BUCKET_COST_FIELDS) {
+      assert.equal(
+        report.globalTotals.cost[k],
+        null,
+        `flag OFF: globalTotals.cost.${k} must remain null`,
+      );
+    }
 
-  // byProject[].cost: same invariant.
-  const agg = report.byProject['/p/a'];
-  assert.ok(Math.abs(agg.cost.total - 0.75) < 1e-9);
-  for (const k of PER_BUCKET_COST_FIELDS) {
-    assert.equal(
-      agg.cost[k],
-      null,
-      `flag OFF: byProject[/p/a].cost.${k} must remain null`,
-    );
+    // byProject[].cost: same invariant.
+    const agg = report.byProject['/p/a'];
+    assert.ok(Math.abs(agg.cost.total - 0.75) < 1e-9);
+    for (const k of PER_BUCKET_COST_FIELDS) {
+      assert.equal(
+        agg.cost[k],
+        null,
+        `flag OFF: byProject[/p/a].cost.${k} must remain null`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -876,7 +925,7 @@ test('assemble: flag ON aggregates per-bucket cost across matched sessions on gl
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -939,7 +988,7 @@ test('assemble: flag ON drift session skips per-key accumulation but contributes
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -976,7 +1025,7 @@ test('assemble: flag ON drift-only suite produces zero per-key sums but non-zero
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1084,7 +1133,7 @@ test('assemble: flag ON aggregates per-bucket cost on byProject symmetrically', 
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1123,7 +1172,7 @@ test('assemble: flag ON exposes all 9 PER_BUCKET_COST_KEYS on the aggregator sha
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1256,7 +1305,7 @@ test('assemble: flag ON aggregates cachedReadBreakdown deep-merge across session
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1325,7 +1374,7 @@ test('assemble: flag ON byProject[A].cachedReadBreakdown.systemPromptCached equa
       `/p/b systemPromptCached expected 0.99, got ${aB.cost.cachedReadBreakdown.systemPromptCached}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1372,7 +1421,7 @@ test('assemble: flag ON aggregates subagentDispatchByAgent merge across sessions
       `subagentDispatchByAgent.build expected 0.10 (B only), got ${sda.build}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1440,7 +1489,7 @@ test('assemble: flag ON aggregates toolOutputsByTool merge with {cached,uncached
       `tot.edit.uncached expected 0.05 (B only), got ${tot.edit.uncached}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1518,7 +1567,7 @@ test('assemble: flag ON per-project byAgent and byTool merges are isolated by di
       `/p/b bash.cached expected 0.99, got ${aB.cost.toolOutputsByTool.bash.cached}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1571,7 +1620,7 @@ test('assemble: flag ON defensively converts Map<string,*> contributions to plai
     assert.ok(!(aA.cost.subagentDispatchByAgent instanceof Map));
     assert.ok(!(aA.cost.toolOutputsByTool instanceof Map));
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1645,7 +1694,7 @@ test('assemble: flag ON drift contributions (null nested fields) skip merge but 
       `expected exactly 1 tool key (drift contributed nothing), got ${Object.keys(tot).join(',')}`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1686,7 +1735,7 @@ test('assemble: flag ON drift-only suite yields zero/empty sub-bucket shape but 
     assert.deepEqual(report.globalTotals.cost.subagentDispatchByAgent, {});
     assert.deepEqual(report.globalTotals.cost.toolOutputsByTool, {});
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1732,54 +1781,61 @@ test('assemble: flag ON exposes cachedReadBreakdown / byAgent / byTool on global
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('assemble: flag OFF preserves v1 shape — no cachedReadBreakdown / byAgent / byTool on aggregator', () => {
   // v1 invariant. Even when the attribution carries the v2 nested
   // structures, the flag-OFF aggregator must NOT add them to
-  // globalTotals.cost or to byProject entries — otherwise the
-  // byte-identical integration goldens (8.1) would shift.
-  const attrs = [
-    makeAttribution({
-      sessionId: 'ses_a',
-      directory: '/p/a',
-      cost: makeV2CostExtended({
-        total: 0.50,
-        cachedReadBreakdown: {
-          systemPromptCached: 0.10,
-          agentsMdCached: 0,
-          mcpToolSchemasCached: 0,
-          accumulatedHistoryCached: 0,
-          accumulatedToolOutputsCached: 0,
-          unclassifiedCached: 0,
-        },
-        subagentDispatchByAgent: { general: 0.05 },
-        toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+  // globalTotals.cost or to byProject entries — preserved so the
+  // legacy v1 emission path remains under test until the successor
+  // cleanup task deletes it (Implementation Note 5.2).
+  // Post task 8.1: default is ON; explicit OFF + finally restore.
+  setV2CostComputeEnabled(false);
+  try {
+    const attrs = [
+      makeAttribution({
+        sessionId: 'ses_a',
+        directory: '/p/a',
+        cost: makeV2CostExtended({
+          total: 0.50,
+          cachedReadBreakdown: {
+            systemPromptCached: 0.10,
+            agentsMdCached: 0,
+            mcpToolSchemasCached: 0,
+            accumulatedHistoryCached: 0,
+            accumulatedToolOutputsCached: 0,
+            unclassifiedCached: 0,
+          },
+          subagentDispatchByAgent: { general: 0.05 },
+          toolOutputsByTool: { read: { cached: 0.01, uncached: 0.02 } },
+        }),
       }),
-    }),
-  ];
-  const report = new ReportAssembler().assemble(attrs);
-  assert.equal(
-    report.globalTotals.cost.cachedReadBreakdown,
-    undefined,
-    'flag OFF: globalTotals.cost.cachedReadBreakdown must not be present',
-  );
-  assert.equal(
-    report.globalTotals.cost.subagentDispatchByAgent,
-    undefined,
-    'flag OFF: globalTotals.cost.subagentDispatchByAgent must not be present',
-  );
-  assert.equal(
-    report.globalTotals.cost.toolOutputsByTool,
-    undefined,
-    'flag OFF: globalTotals.cost.toolOutputsByTool must not be present',
-  );
-  const aA = report.byProject['/p/a'];
-  assert.equal(aA.cost.cachedReadBreakdown, undefined);
-  assert.equal(aA.cost.subagentDispatchByAgent, undefined);
-  assert.equal(aA.cost.toolOutputsByTool, undefined);
+    ];
+    const report = new ReportAssembler().assemble(attrs);
+    assert.equal(
+      report.globalTotals.cost.cachedReadBreakdown,
+      undefined,
+      'flag OFF: globalTotals.cost.cachedReadBreakdown must not be present',
+    );
+    assert.equal(
+      report.globalTotals.cost.subagentDispatchByAgent,
+      undefined,
+      'flag OFF: globalTotals.cost.subagentDispatchByAgent must not be present',
+    );
+    assert.equal(
+      report.globalTotals.cost.toolOutputsByTool,
+      undefined,
+      'flag OFF: globalTotals.cost.toolOutputsByTool must not be present',
+    );
+    const aA = report.byProject['/p/a'];
+    assert.equal(aA.cost.cachedReadBreakdown, undefined);
+    assert.equal(aA.cost.subagentDispatchByAgent, undefined);
+    assert.equal(aA.cost.toolOutputsByTool, undefined);
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 /* ── Task 6.3: pricing pin block, threshold metadata, extended affectedBuckets ── */
@@ -1853,7 +1909,7 @@ test('assemble: flag ON + pricingTable injects top-level pricing block', () => {
     assert.equal(report.pricing.pinSource, 'synthetic-test-fixture');
     assert.equal(report.pricing.pinVersion, 'v1.0-test');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1878,7 +1934,7 @@ test('assemble: flag ON + pricingTable — report.pricing is independent of pinM
     report.pricing.note = 'consumer-annotation';
     assert.equal(report.pricing.note, 'consumer-annotation');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1904,7 +1960,7 @@ test('assemble: flag ON without pricingTable omits the pricing block', () => {
       'flag ON without pricingTable: report.pricing must be omitted',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1925,7 +1981,7 @@ test('assemble: flag ON injects tokenizer_disclaimer.thresholds with R5.4 / R6.5
     // Canonical R6.5 disclosure: tool below-threshold fold percentage.
     assert.equal(t.toolBelowThresholdPct, 0.01);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1968,38 +2024,44 @@ test('assemble: flag ON extends tokenizer_disclaimer.affectedBuckets with cached
       'affectedBuckets must include the byAgent dimension label',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
 test('assemble: flag OFF preserves v1 disclaimer shape verbatim — no thresholds, no top-level pricing, v1 affectedBuckets list', () => {
   // v1 invariant: flag-OFF emission must NOT acquire any of the v2
-  // additions. The byte-identical integration goldens 8.1 will
-  // refresh against the flag-ON shape; flag-OFF must continue to
-  // emit the exact v1 disclaimer through the 5.x/6.x rollout window.
-  const pricingTable = new PricingTable(SYNTHETIC_PRICING);
-  // Even when pricingTable IS supplied, flag-OFF must suppress the
-  // pricing block — the flag is the authoritative gate, not the
-  // presence of the table. (Operators flipping the flag back to
-  // OFF during a regression hunt must see the exact v1 emission.)
-  const report = new ReportAssembler(pricingTable).assemble([]);
+  // additions. Post task 8.1 the integration goldens encode the
+  // flag-ON shape; flag-OFF must continue to emit the exact v1
+  // disclaimer so the legacy path stays under test until the
+  // successor cleanup task deletes it.
+  setV2CostComputeEnabled(false);
+  try {
+    const pricingTable = new PricingTable(SYNTHETIC_PRICING);
+    // Even when pricingTable IS supplied, flag-OFF must suppress the
+    // pricing block — the flag is the authoritative gate, not the
+    // presence of the table. (Operators flipping the flag back to
+    // OFF during a regression hunt must see the exact v1 emission.)
+    const report = new ReportAssembler(pricingTable).assemble([]);
 
-  // No top-level pricing
-  assert.equal(report.pricing, undefined, 'flag OFF: report.pricing must be absent');
+    // No top-level pricing
+    assert.equal(report.pricing, undefined, 'flag OFF: report.pricing must be absent');
 
-  // No thresholds inside the disclaimer
-  assert.equal(
-    report.tokenizer_disclaimer.thresholds,
-    undefined,
-    'flag OFF: tokenizer_disclaimer.thresholds must be absent',
-  );
+    // No thresholds inside the disclaimer
+    assert.equal(
+      report.tokenizer_disclaimer.thresholds,
+      undefined,
+      'flag OFF: tokenizer_disclaimer.thresholds must be absent',
+    );
 
-  // affectedBuckets is the exact v1 3-element list (preserved order)
-  assert.deepEqual(report.tokenizer_disclaimer.affectedBuckets, [
-    'uncachedSystemPrompt',
-    'history',
-    'toolOutputs',
-  ]);
+    // affectedBuckets is the exact v1 3-element list (preserved order)
+    assert.deepEqual(report.tokenizer_disclaimer.affectedBuckets, [
+      'uncachedSystemPrompt',
+      'history',
+      'toolOutputs',
+    ]);
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 test('assemble: flag ON pricing.pinVersion is omitted when source JSON lacks it', () => {
@@ -2029,7 +2091,7 @@ test('assemble: flag ON pricing.pinVersion is omitted when source JSON lacks it'
       'pricing.pinVersion must be absent when source JSON omits it',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
     fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true });
   }
 });
@@ -2289,7 +2351,7 @@ test('assemble: flag ON end-to-end composition — every v2 surface present and 
       `cross-cutting: globalTotals.cost.cachedRead (${g.cachedRead}) must equal sum across byProject (${projSumCachedRead})`,
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2386,7 +2448,7 @@ test('assemble: flag ON aggregates per-bucket and nested sub-buckets correctly a
     const sumProj = Object.values(report.byProject).reduce((s, p) => s + p.cost.cachedRead, 0);
     assert.ok(Math.abs(g.cachedRead - sumProj) < 1e-9);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2532,7 +2594,7 @@ test('assemble([]): flag ON + pricingTable produces valid empty report with pric
     assert.ok(ab.includes('toolOutputsByTool'));
     assert.ok(ab.includes('subagentDispatchByAgent'));
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -2658,6 +2720,6 @@ test('assemble: flag ON mixes matched + drift sessions ACROSS multiple projects 
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });

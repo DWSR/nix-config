@@ -1,0 +1,234 @@
+{
+  "byProject": {
+    "/Users/test/project-a": {
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-a",
+      "sessionCount": 1,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 10350,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    },
+    "/Users/test/project-b": {
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-b",
+      "sessionCount": 1,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 10350,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    },
+    "/Users/test/project-c": {
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-c",
+      "sessionCount": 1,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 0,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    }
+  },
+  "findings": [
+    {
+      "detail": "session ses_root_a: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "kind": "per_bucket_cost_deferred",
+      "sessionId": "ses_root_a"
+    },
+    {
+      "detail": "session ses_root_b: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "kind": "per_bucket_cost_deferred",
+      "sessionId": "ses_root_b"
+    },
+    {
+      "detail": "session ses_root_c: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+      "kind": "per_bucket_cost_deferred",
+      "sessionId": "ses_root_c"
+    }
+  ],
+  "globalTotals": {
+    "cost": {
+      "cachedRead": null,
+      "cachedWrite": null,
+      "output": null,
+      "reasoning": null,
+      "subagentDispatch": null,
+      "total": 0.15000000000000002,
+      "uncachedInput": null
+    },
+    "tokens": {
+      "cachedRead": 15000,
+      "cachedWrite": 3000,
+      "history": 15555,
+      "output": 1500,
+      "reasoning": 300,
+      "subagentDispatch": 20700,
+      "toolOutputs": 7779,
+      "uncachedSystemPrompt": 6666
+    }
+  },
+  "reportType": "opencode-cost-diagnosis",
+  "schemaVersion": 1,
+  "sessionCount": 3,
+  "sessions": [
+    {
+      "agent": "build",
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-a",
+      "findings": [
+        {
+          "detail": "session ses_root_a: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "kind": "per_bucket_cost_deferred"
+        }
+      ],
+      "model": "claude-opus-4-7",
+      "sessionId": "ses_root_a",
+      "timeCreated": 1778775290084,
+      "timeUpdated": 1778775290184,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 10350,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    },
+    {
+      "agent": "general",
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-b",
+      "findings": [
+        {
+          "detail": "session ses_root_b: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "kind": "per_bucket_cost_deferred"
+        }
+      ],
+      "model": "claude-opus-4-7",
+      "sessionId": "ses_root_b",
+      "timeCreated": 1778775291084,
+      "timeUpdated": 1778775291184,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 10350,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    },
+    {
+      "agent": "explore",
+      "cost": {
+        "cachedRead": null,
+        "cachedWrite": null,
+        "output": null,
+        "reasoning": null,
+        "subagentDispatch": null,
+        "total": 0.05,
+        "uncachedInput": null
+      },
+      "directory": "/Users/test/project-c",
+      "findings": [
+        {
+          "detail": "session ses_root_c: cost.total = 0.05 is populated from opencode's authoritative session.cost; per-bucket cost fields (cachedRead/cachedWrite/uncachedInput/output/reasoning/subagentDispatch) require recomputing from token counts × model pricing and are deferred to a follow-on spec. Set to null in v1; shape preserved for forward-compat.",
+          "kind": "per_bucket_cost_deferred"
+        }
+      ],
+      "model": "claude-opus-4-7",
+      "sessionId": "ses_root_c",
+      "timeCreated": 1778775292084,
+      "timeUpdated": 1778775292184,
+      "tokens": {
+        "cachedRead": 5000,
+        "cachedWrite": 1000,
+        "history": 5185,
+        "output": 500,
+        "reasoning": 100,
+        "subagentDispatch": 0,
+        "toolOutputs": 2593,
+        "uncachedSystemPrompt": 2222
+      }
+    }
+  ],
+  "tokenizer_disclaimer": {
+    "accuracyClass": "relative-only",
+    "affectedBuckets": [
+      "uncachedSystemPrompt",
+      "history",
+      "toolOutputs"
+    ],
+    "authoritativeBuckets": [
+      "cachedRead",
+      "cachedWrite",
+      "output",
+      "reasoning",
+      "subagentDispatch"
+    ],
+    "encoding": "cl100k_base",
+    "humanReadable": "Bucket totals for uncachedSystemPrompt, history, toolOutputs are tiktoken (cl100k_base) estimates derived from a proportional split of opencode's authoritative session.tokens_input; they are relative-only and suitable for ranking cost drivers, but are NOT billing-grade absolute counts. The three buckets nevertheless sum exactly to opencode's stored tokens_input value (last bucket absorbs rounding). Authoritative buckets (cachedRead, cachedWrite, output, reasoning, subagentDispatch) are read directly from opencode and require no estimation. Supported opencode version range: >=0.18.0 <0.30.0.",
+    "library": "tiktoken",
+    "sumCorrectnessGuarantee": "Uncached sub-buckets sum exactly to opencode.session.tokens_input"
+  }
+}

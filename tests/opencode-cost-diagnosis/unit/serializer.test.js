@@ -206,26 +206,39 @@ test('formatJson: nested object keys at every level are alphabetical', () => {
   assertSortedKeysDeep(parsed);
 });
 
-test('formatJson: arrays preserve their input order (only object keys are sorted)', () => {
+test('formatJson: arrays preserve their input order (only object keys are sorted) — flag OFF (v1 affectedBuckets)', () => {
   // The custom replacer must sort object keys but MUST NOT reorder
   // array elements — that would corrupt the disclaimer's
   // affectedBuckets/authoritativeBuckets sequence and the
   // sessions/findings arrays. This test exercises both an array of
   // strings (disclaimer.affectedBuckets) and the sessions array's
   // ordering (matches the assembler's input order).
-  const report = assembleFixture();
-  const out = new ReportSerializer().formatJson(report);
-  const parsed = JSON.parse(out);
-  assert.deepEqual(
-    parsed.tokenizer_disclaimer.affectedBuckets,
-    ['uncachedSystemPrompt', 'history', 'toolOutputs'],
-    'affectedBuckets array order must be preserved',
-  );
-  assert.deepEqual(
-    parsed.sessions.map((s) => s.sessionId),
-    report.sessions.map((s) => s.sessionId),
-    'sessions array order must be preserved from the assembler',
-  );
+  //
+  // Post task 8.1: the V2 default flipped to ON, which extends
+  // affectedBuckets with the cachedRead sub-buckets and the per-
+  // tool / per-agent dimension labels. This test continues to pin
+  // the v1 3-bucket sequence via explicit OFF wrap; the v2
+  // sequence is asserted by integration test 4 and by
+  // attribution-v2-cost coverage. Restores ON in finally to
+  // preserve the new default for downstream tests.
+  setV2CostComputeEnabled(false);
+  try {
+    const report = assembleFixture();
+    const out = new ReportSerializer().formatJson(report);
+    const parsed = JSON.parse(out);
+    assert.deepEqual(
+      parsed.tokenizer_disclaimer.affectedBuckets,
+      ['uncachedSystemPrompt', 'history', 'toolOutputs'],
+      'affectedBuckets array order must be preserved',
+    );
+    assert.deepEqual(
+      parsed.sessions.map((s) => s.sessionId),
+      report.sessions.map((s) => s.sessionId),
+      'sessions array order must be preserved from the assembler',
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 /* ── JSON: no wall-clock fields ────────────────────────────────── */
@@ -645,7 +658,7 @@ test('formatMarkdown (flag ON): contains **PRICING PIN**: substring after tokeni
     assert.ok(out.includes('synthetic-test-fixture'), 'pin block must include pinSource');
     assert.ok(out.includes('2026-01-01'), 'pin block must include pinDate');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -690,7 +703,7 @@ test('formatMarkdown (flag ON): renders per-agent fold threshold and per-tool fo
     assert.ok(thresholdIdx > affectedIdx, 'thresholds must appear after affectedBuckets');
     assert.ok(thresholdIdx < sepIdx, 'thresholds must appear before the disclaimer ---');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -774,7 +787,7 @@ test('formatMarkdown (flag ON): per-session blocks render cachedRead breakdown, 
     assert.ok(out.includes('bash'), 'per-tool table must include bash row');
     assert.ok(out.includes('read'), 'per-tool table must include read row');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -820,7 +833,7 @@ test('formatMarkdown (flag ON): drift session (null byAgent/byTool/cachedReadBre
       'first line invariant preserved on drift report',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -830,42 +843,48 @@ test('formatMarkdown (flag ON): drift session (null byAgent/byTool/cachedReadBre
  * tests above continue to pass as the binding observable; this
  * single test pins the absence of the new strings explicitly). */
 test('formatMarkdown (flag OFF): contains none of the v2 disclaimer/threshold/table substrings', () => {
-  // Default flag state (OFF) — fixture-driven report assembled
-  // without a pricingTable. Mirrors the existing v1 serializer.test
-  // cases above so this is the same path the byte-identical
-  // integration goldens exercise.
-  const report = assembleFixture();
-  const out = new ReportSerializer().formatMarkdown(report);
-  assert.equal(
-    out.includes('**PRICING PIN**:'),
-    false,
-    'flag OFF: pricing pin substring must be absent',
-  );
-  assert.equal(
-    out.includes('per-agent fold threshold:'),
-    false,
-    'flag OFF: threshold rendering must be absent',
-  );
-  assert.equal(
-    out.includes('per-tool fold threshold:'),
-    false,
-    'flag OFF: threshold rendering must be absent',
-  );
-  assert.equal(
-    out.includes('CachedRead sub-bucket'),
-    false,
-    'flag OFF: cachedRead breakdown table must be absent',
-  );
-  assert.equal(
-    out.includes('| Agent | Cost |'),
-    false,
-    'flag OFF: per-agent table must be absent',
-  );
-  assert.equal(
-    out.includes('| Tool | Cached cost | Uncached cost |'),
-    false,
-    'flag OFF: per-tool table must be absent',
-  );
+  // Post task 8.1: the V2 default flipped to ON, so this test
+  // explicitly forces flag OFF to pin the legacy v1 Markdown shape.
+  // The byte-identical integration goldens now encode the v2 shape;
+  // this unit-level test ensures the v1 emission path stays
+  // regression-free until the successor cleanup task deletes it.
+  setV2CostComputeEnabled(false);
+  try {
+    const report = assembleFixture();
+    const out = new ReportSerializer().formatMarkdown(report);
+    assert.equal(
+      out.includes('**PRICING PIN**:'),
+      false,
+      'flag OFF: pricing pin substring must be absent',
+    );
+    assert.equal(
+      out.includes('per-agent fold threshold:'),
+      false,
+      'flag OFF: threshold rendering must be absent',
+    );
+    assert.equal(
+      out.includes('per-tool fold threshold:'),
+      false,
+      'flag OFF: threshold rendering must be absent',
+    );
+    assert.equal(
+      out.includes('CachedRead sub-bucket'),
+      false,
+      'flag OFF: cachedRead breakdown table must be absent',
+    );
+    assert.equal(
+      out.includes('| Agent | Cost |'),
+      false,
+      'flag OFF: per-agent table must be absent',
+    );
+    assert.equal(
+      out.includes('| Tool | Cached cost | Uncached cost |'),
+      false,
+      'flag OFF: per-tool table must be absent',
+    );
+  } finally {
+    setV2CostComputeEnabled(true);
+  }
 });
 
 /* ── Task 7.2: JSON output for v2 ────────────────────────────────── */
@@ -983,7 +1002,7 @@ test('formatJson (flag ON): top-level pricing field present with pinDate string 
     assert.equal(topKeys[pricingIdx - 1], 'globalTotals');
     assert.equal(topKeys[pricingIdx + 1], 'reportType');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1038,7 +1057,7 @@ test('formatJson (flag ON): the literal substring "generatedAt" is absent from t
     }
     noGeneratedAtKey(JSON.parse(out), '$');
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1134,7 +1153,7 @@ test('formatJson (flag ON): alphabetical key order preserved at every nested lev
     assert.equal(typeof cost.toolOutputsByTool, 'object');
     assert.equal(Array.isArray(cost.toolOutputsByTool), false);
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1175,7 +1194,7 @@ test('formatJson (flag ON): pricing.pinVersion is absent in JSON when source pri
       'JSON must not contain the "pinVersion" key when source omits it',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
@@ -1272,7 +1291,7 @@ test('formatJson (flag ON): drift-session null cost shape (makeNullCostShape()) 
       'drift session JSON must still exclude generatedAt',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1483,7 +1502,7 @@ test('formatMarkdown (flag ON): contains v1→v2 migration disclaimer between pr
       'migration disclaimer must appear BEFORE the disclaimer-zone --- separator',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1584,7 +1603,7 @@ test('formatMarkdown (flag ON): byte-identical across two successive invocations
       );
     }
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1655,7 +1674,7 @@ test('formatJson (flag ON): byte-identical across two successive invocations on 
       'per-tool cached/uncached keys must be alphabetical at every nested level',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
 
@@ -1692,6 +1711,6 @@ test('formatMarkdown (flag ON): migration disclaimer names `per_bucket_cost_defe
       'migration disclaimer must name R7.AC4 as the forward-compat anchor',
     );
   } finally {
-    setV2CostComputeEnabled(false);
+    setV2CostComputeEnabled(true);
   }
 });
