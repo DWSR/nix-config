@@ -113,7 +113,7 @@ not blocking spec completion)**:
 
 - [ ] 2. Core: plugin internal seams (single TS file; sequential)
 
-- [ ] 2.1 SessionTokenTracker
+- [x] 2.1 SessionTokenTracker
   - Implement per-session state as a `Map<sessionID, SessionState>`
     in plugin-module scope; SessionState shape per design §Service
     Interface
@@ -562,3 +562,8 @@ not blocking spec completion)**:
 - **Task 1.4 (resolved)** — `home.opencode.wrapperCommands` accepts
   list-merge across modules cleanly; no collision with the Shopify
   host's existing devx export snippet (verified post-1.4 flake check).
+- **Task 2.1 (resolved)** — `recordMessage` early-returns for tokenless
+  messages (UserMessages). `turnCount` is derived from
+  `messageTokens.size` rather than tracked separately, matching
+  R2.10's "LLM turns" semantic and avoiding the first-sight
+  double-count bug on repeat UserMessage `message.updated` events.
