@@ -379,7 +379,7 @@ not blocking spec completion)**:
   - _Requirements: 2.1_
   - _Boundary: tests/session-compaction/session-token-tracker.test.ts_
 
-- [ ] 4.3 (P) CavememContextSource unit tests
+- [x] 4.3 (P) CavememContextSource unit tests
   - Create `tests/session-compaction/cavemem-context-source.test.ts`
     covering design §Testing Strategy / Unit Tests #6–#7: timeout
     produces empty result; never writes (verify via mocked spawn
