@@ -866,3 +866,452 @@ test('formatMarkdown (flag OFF): contains none of the v2 disclaimer/threshold/ta
     'flag OFF: per-tool table must be absent',
   );
 });
+
+/* ── Task 7.2: JSON output for v2 ────────────────────────────────── */
+//
+// Task 7.2 verifies that the JSON path of ReportSerializer correctly
+// surfaces the v2-additive `pricing` top-level field (sourced from
+// ReportAssembler at task 6.3) while preserving every v1 JSON
+// invariant. The replacer at `scripts/opencode-cost-report.js`
+// formatJson() is GENERIC (sorts every plain-object's keys
+// alphabetically); the Map→Object conversion done by the assembler
+// in task 6.2 means the existing replacer handles `byAgent` and
+// `byTool` automatically. So 7.2 is primarily a verification + test
+// coverage task: no production change is expected. The RED phase
+// for this task is N/A for the production code path — tasks 6.2 and
+// 6.3 already delivered the data path; the tests below pass under
+// the current implementation. RED phase IS however meaningful for
+// the observables themselves: each assertion would fail if a
+// future regression broke the data path (e.g. assembler skipping
+// `pricing`, serializer injecting `generatedAt`, or someone
+// returning Map types into the JSON layer).
+//
+// Requirements covered:
+//   - R3.3 — pricing pin in JSON output (`parsed.pricing.pinDate`
+//     present, `pinSource` present, optional `pinVersion` flows
+//     through).
+//   - R7.1 — additive JSON schema (no rename / no shape change of
+//     v1 fields; `pricing` slots in alphabetically without
+//     disturbing v1 keys).
+//   - R7.2 — byte-identical JSON determinism (no `generatedAt`
+//     anywhere; alphabetical key order preserved at every nested
+//     level after 6.2's Map→Object conversion).
+//
+// Observables enumerated by the 7.2 task brief, one test apiece:
+//   (1) Flag ON + pricingTable supplied → JSON has `pricing` at
+//       top-level, slotted alphabetically (between `globalTotals`
+//       and `reportType`). `parsed.pricing.pinDate` is a string.
+//   (2) `generatedAt` substring is absent under BOTH flag states.
+//   (3) Nested alphabetical ordering holds at every level,
+//       including `byAgent` / `byTool` maps now-plain-objects
+//       after 6.2.
+//   (4) `pricing.pinVersion` is optional — when source JSON omits
+//       it, it is absent from JSON output and a round-trip
+//       preserves the absence.
+//   (5) Drift-session `null` cost shape (per makeNullCostShape())
+//       survives JSON round-trip with every `null` preserved.
+
+/* Observable 1: pricing top-level field present, alphabetical
+ * position, pinDate is a string. */
+test('formatJson (flag ON): top-level pricing field present with pinDate string and alphabetical placement between globalTotals and reportType', () => {
+  try {
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_json_pricing_a',
+        directory: '/p/a',
+        cost: makeV2CostExtendedForSerializerTest({ total: 0.05 }),
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatJson(report);
+    const parsed = JSON.parse(out);
+
+    // R3.3: pricing block must be present and shaped.
+    assert.equal(
+      typeof parsed.pricing,
+      'object',
+      'parsed.pricing must be an object on flag-ON + pricingTable supplied',
+    );
+    assert.notEqual(
+      parsed.pricing,
+      null,
+      'parsed.pricing must be non-null',
+    );
+    assert.equal(
+      typeof parsed.pricing.pinDate,
+      'string',
+      'parsed.pricing.pinDate must be a string',
+    );
+    assert.equal(
+      typeof parsed.pricing.pinSource,
+      'string',
+      'parsed.pricing.pinSource must be a string',
+    );
+    // synthetic fixture sources from line 31-33 of synthetic-pricing.json
+    assert.equal(parsed.pricing.pinDate, '2026-01-01');
+    assert.equal(parsed.pricing.pinSource, 'synthetic-test-fixture');
+
+    // R7.1: alphabetical placement — `pricing` between
+    // `globalTotals` and `reportType`. This is the most direct
+    // proof that the generic replacer in formatJson handles new
+    // top-level fields without bespoke logic. Hard-pin the exact
+    // top-level shape so a future drift surfaces here, not later
+    // in an integration golden.
+    const topKeys = Object.keys(parsed);
+    const expectedTopKeys = [
+      'byProject',
+      'findings',
+      'globalTotals',
+      'pricing',
+      'reportType',
+      'schemaVersion',
+      'sessionCount',
+      'sessions',
+      'tokenizer_disclaimer',
+    ];
+    assert.deepEqual(
+      topKeys,
+      expectedTopKeys,
+      `top-level JSON keys must be exactly the v1 set + pricing in alphabetical order; got ${JSON.stringify(topKeys)}`,
+    );
+
+    // Spot-check the alphabetical adjacency explicitly so a
+    // regression that wires `pricing` outside the sort path
+    // surfaces with a precise error.
+    const pricingIdx = topKeys.indexOf('pricing');
+    assert.equal(topKeys[pricingIdx - 1], 'globalTotals');
+    assert.equal(topKeys[pricingIdx + 1], 'reportType');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Observable 2: generatedAt is never in JSON, under BOTH flag
+ * states. The existing flag-OFF case is already covered by the
+ * v1-era `formatJson: no generatedAt / no wall-clock fields` test
+ * above; this companion test pins the same invariant on the
+ * flag-ON path (where new fields and a new code path through the
+ * assembler are exercised) so a future leak through `pricing` or
+ * an assembler-injected metadata block surfaces here. */
+test('formatJson (flag ON): the literal substring "generatedAt" is absent from the serialized text', () => {
+  try {
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_json_no_genat',
+        directory: '/p/a',
+        cost: makeV2CostExtendedForSerializerTest({ total: 0.05 }),
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatJson(report);
+
+    // R7.2 / R7.AC2: byte-identical determinism requires
+    // generatedAt NEVER to appear in JSON output, even when the
+    // v2 emission path is active and a new top-level field
+    // (`pricing`) has been added.
+    assert.equal(
+      out.includes('generatedAt'),
+      false,
+      'JSON output must not contain the substring "generatedAt"',
+    );
+
+    // Walk the parsed object and assert no key (at any nesting
+    // depth) is named `generatedAt`. Belt-and-suspenders against
+    // a future regression that escapes the literal substring
+    // (e.g. a key spelled "generatedAt " with a trailing space).
+    function noGeneratedAtKey(v, label) {
+      if (Array.isArray(v)) {
+        v.forEach((x, i) => noGeneratedAtKey(x, `${label}[${i}]`));
+        return;
+      }
+      if (v && typeof v === 'object') {
+        for (const [k, vv] of Object.entries(v)) {
+          assert.notEqual(
+            k.trim(),
+            'generatedAt',
+            `JSON must not contain "generatedAt" key; found at ${label}`,
+          );
+          noGeneratedAtKey(vv, `${label}.${k}`);
+        }
+      }
+    }
+    noGeneratedAtKey(JSON.parse(out), '$');
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Observable 3: nested alphabetical ordering preserved at every
+ * level, including the byAgent and byTool maps (which are plain
+ * objects after task 6.2's Map→Object conversion). Exercises a
+ * populated session so the per-session.cost.subagentDispatchByAgent
+ * and toolOutputsByTool objects actually have keys to sort. */
+test('formatJson (flag ON): alphabetical key order preserved at every nested level, including byAgent and byTool plain-object maps', () => {
+  try {
+    // Construct adversarial agent/tool names whose unsorted
+    // insertion order disagrees with the expected alphabetical
+    // order — this forces the assertion to FAIL loudly if the
+    // generic replacer ever stops visiting nested objects.
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_nested_alpha',
+        directory: '/p/a',
+        cost: makeV2CostExtendedForSerializerTest({
+          total: 1.0,
+          uncachedSystemPrompt: 0.08,
+          history: 0.20,
+          toolOutputs: 0.02,
+          cachedRead: 0.30,
+          cachedReadBreakdown: {
+            // Insertion order intentionally NOT alphabetical so a
+            // bug that skips this nested object would yield a
+            // key sequence that triggers assertSortedKeysDeep.
+            systemPromptCached: 0.10,
+            mcpToolSchemasCached: 0.04,
+            accumulatedHistoryCached: 0.08,
+            unclassifiedCached: 0.01,
+            agentsMdCached: 0.05,
+            accumulatedToolOutputsCached: 0.02,
+          },
+          subagentDispatchByAgent: {
+            // Insertion order ≠ alphabetical.
+            zebra: 0.05,
+            build: 0.20,
+            review: 0.10,
+          },
+          toolOutputsByTool: {
+            // Insertion order ≠ alphabetical, and the nested
+            // {cached, uncached} sub-objects must also sort.
+            read: { uncached: 0.008, cached: 0.002 },
+            bash: { uncached: 0.010, cached: 0.005 },
+          },
+        }),
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatJson(report);
+    const parsed = JSON.parse(out);
+
+    // The shared deep walker pins the invariant uniformly.
+    assertSortedKeysDeep(parsed);
+
+    // Spot-pin the precise nested key orders so a regression
+    // surfaces with a targeted error message, not just a generic
+    // "keys not sorted" at some path.
+    const cost = parsed.sessions[0].cost;
+    assert.deepEqual(
+      Object.keys(cost.cachedReadBreakdown),
+      [...Object.keys(cost.cachedReadBreakdown)].sort(),
+    );
+    assert.deepEqual(
+      Object.keys(cost.subagentDispatchByAgent),
+      ['build', 'review', 'zebra'],
+      'subagentDispatchByAgent keys must serialize in alphabetical order',
+    );
+    assert.deepEqual(
+      Object.keys(cost.toolOutputsByTool),
+      ['bash', 'read'],
+      'toolOutputsByTool keys must serialize in alphabetical order',
+    );
+    // Nested partition objects ({cached, uncached}) must also
+    // sort — the generic replacer is recursive.
+    assert.deepEqual(
+      Object.keys(cost.toolOutputsByTool.bash),
+      ['cached', 'uncached'],
+    );
+    assert.deepEqual(
+      Object.keys(cost.toolOutputsByTool.read),
+      ['cached', 'uncached'],
+    );
+
+    // Plain-object posture (R6.2): byAgent and byTool must NOT
+    // serialize as Map-or-Array; their parsed form must be a
+    // plain object. JSON.parse already enforces this, but the
+    // typeof assertion makes the invariant explicit.
+    assert.equal(typeof cost.subagentDispatchByAgent, 'object');
+    assert.equal(Array.isArray(cost.subagentDispatchByAgent), false);
+    assert.equal(typeof cost.toolOutputsByTool, 'object');
+    assert.equal(Array.isArray(cost.toolOutputsByTool), false);
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Observable 4: pricing.pinVersion is optional — when the source
+ * JSON lacks it, the JSON round-trip must NOT inject it (consistent
+ * with the assembler-level test in report-assembler.test.js). */
+test('formatJson (flag ON): pricing.pinVersion is absent in JSON when source pricing JSON omits it', () => {
+  // Build a stripped pricing fixture in a tmp dir so this test
+  // does not depend on (and cannot pollute) the synthetic
+  // pricing fixture file.
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const stripped = JSON.parse(fs.readFileSync(SYNTHETIC_PRICING, 'utf8'));
+  delete stripped.pinVersion;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ser-json-7-2-'));
+  const tmpFile = path.join(tmpDir, 'pricing-no-version.json');
+  fs.writeFileSync(tmpFile, JSON.stringify(stripped));
+
+  setV2CostComputeEnabled(true);
+  try {
+    const pt = new PricingTable(tmpFile);
+    const report = new ReportAssembler(pt).assemble([]);
+    const out = new ReportSerializer().formatJson(report);
+    const parsed = JSON.parse(out);
+
+    assert.equal(parsed.pricing.pinDate, '2026-01-01');
+    assert.equal(parsed.pricing.pinSource, 'synthetic-test-fixture');
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(parsed.pricing, 'pinVersion'),
+      'pricing.pinVersion must be absent in JSON when source omits it',
+    );
+    // Literal substring guard — defends against the very unlikely
+    // case of pinVersion leaking via a comment or an internal
+    // metadata blob.
+    assert.equal(
+      out.includes('"pinVersion"'),
+      false,
+      'JSON must not contain the "pinVersion" key when source omits it',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+/* Observable 5: drift-session null cost shape (per
+ * makeNullCostShape()) survives JSON round-trip — every nested
+ * `null` is preserved, no entry is silently dropped, alphabetical
+ * order holds. This pins the contract that a v2 reader observing
+ * `cost.cachedRead === null` (drift fallback per R3.AC4) sees
+ * exactly that, not `undefined` or a missing key. */
+test('formatJson (flag ON): drift-session null cost shape (makeNullCostShape()) round-trips through JSON with every null preserved', () => {
+  try {
+    // Replicate the makeNullCostShape() drift shape inline so the
+    // assertion below matches the design contract verbatim. The
+    // helper itself is also exported (per task 1.5) but we want
+    // the test to be self-evidencing about the exact shape it
+    // expects to see after JSON round-trip.
+    const driftCost = {
+      total: 0.42,
+      cachedRead: null,
+      cachedWrite: null,
+      uncachedInput: null,
+      output: null,
+      reasoning: null,
+      subagentDispatch: null,
+      uncachedSystemPrompt: null,
+      history: null,
+      toolOutputs: null,
+      cachedReadBreakdown: null,
+      subagentDispatchByAgent: null,
+      toolOutputsByTool: null,
+    };
+    const attrs = [
+      makeSerializerTestAttribution({
+        sessionId: 'ses_drift_json_x',
+        directory: '/p/drift',
+        cost: driftCost,
+      }),
+    ];
+    const report = assembleSerializerTestReport(attrs);
+    const out = new ReportSerializer().formatJson(report);
+    const parsed = JSON.parse(out);
+
+    const c = parsed.sessions[0].cost;
+    // total survives.
+    assert.equal(c.total, 0.42, 'drift session cost.total must round-trip as 0.42');
+
+    // Every per-bucket cost null preserved verbatim.
+    const nullKeys = [
+      'cachedRead',
+      'cachedReadBreakdown',
+      'cachedWrite',
+      'history',
+      'output',
+      'reasoning',
+      'subagentDispatch',
+      'subagentDispatchByAgent',
+      'toolOutputs',
+      'toolOutputsByTool',
+      'uncachedInput',
+      'uncachedSystemPrompt',
+    ];
+    for (const k of nullKeys) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(c, k),
+        `drift session cost must retain key ${k} after JSON round-trip`,
+      );
+      assert.equal(
+        c[k],
+        null,
+        `drift session cost.${k} must round-trip as null (got ${JSON.stringify(c[k])})`,
+      );
+    }
+
+    // Alphabetical ordering still holds for the cost object
+    // (nested-null entries must not have been moved or
+    // collapsed). Compare to the sorted reference rather than to
+    // a hand-written sequence so this remains stable if v2 adds
+    // another cost key.
+    assert.deepEqual(
+      Object.keys(c),
+      [...Object.keys(c)].sort(),
+      'drift session cost keys must remain alphabetical with nulls present',
+    );
+
+    // Top-level invariants still hold under drift: pricing block
+    // is still present (drift is per-session, not per-report),
+    // and generatedAt is still absent.
+    assert.equal(typeof parsed.pricing, 'object');
+    assert.equal(typeof parsed.pricing.pinDate, 'string');
+    assert.equal(
+      out.includes('generatedAt'),
+      false,
+      'drift session JSON must still exclude generatedAt',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Flag-OFF additive-contract pin: under flag OFF, `pricing` must
+ * NOT appear in JSON — R7.AC1 forward-compat requires v1's key set
+ * to remain exactly equal to v1's when v2 is dormant. Companion
+ * to the flag-OFF Markdown absence test above. The existing
+ * `formatJson: top-level keys appear in alphabetical order` test
+ * implicitly covers this by asserting `topKeys === sorted(topKeys)`,
+ * but does NOT pin the absence of `pricing` specifically; this test
+ * does. */
+test('formatJson (flag OFF): top-level pricing key is absent — v1 byte-identical key set preserved', () => {
+  // Default flag state (OFF) — fixture-driven report assembled
+  // without a pricingTable. Mirrors the flag-OFF Markdown
+  // companion test above.
+  const report = assembleFixture();
+  const out = new ReportSerializer().formatJson(report);
+  const parsed = JSON.parse(out);
+
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(parsed, 'pricing'),
+    false,
+    'flag OFF: top-level "pricing" key must be absent (v1 byte-identical contract)',
+  );
+  // Companion literal-substring assertion guards against a
+  // future regression that wires pricing through a different
+  // path (e.g., as a comment header or sidecar metadata).
+  assert.equal(
+    out.includes('"pricing"'),
+    false,
+    'flag OFF: "pricing" string must not appear anywhere in JSON output',
+  );
+
+  // generatedAt invariant holds under flag OFF as well (the v1
+  // case already has a test for this, but stating it here gives
+  // the 7.2 observables a single landing site that covers both
+  // flag states explicitly).
+  assert.equal(
+    out.includes('generatedAt'),
+    false,
+    'flag OFF: generatedAt must remain absent in JSON',
+  );
+});

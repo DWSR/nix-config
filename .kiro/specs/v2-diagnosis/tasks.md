@@ -270,7 +270,7 @@
   - _Requirements: 3.3, 4.4, 5.4, 6.5, 7.1_
   - _Boundary: ReportSerializer Markdown_
 
-- [ ] 7.2 Extend ReportSerializer JSON output
+- [x] 7.2 Extend ReportSerializer JSON output
   - Add the `pricing` top-level field; verify it slots alphabetically via the existing replacer at `scripts/opencode-cost-report.js:1785-1802` (no replacer change needed; the Map→Object conversion already happened in 6.2)
   - Preserve the `generatedAt`-not-in-JSON invariant (only present in Markdown) — this is load-bearing for R7.AC2 byte-identical determinism
   - Observable: a unit test serializes a sample report to JSON, parses it back, and asserts `parsed.pricing.pinDate` is present; the JSON contains no `generatedAt` key; `Object.keys(parsed)` is sorted alphabetically at every nested level (including byAgent and byTool maps which are now plain objects after 6.2)
