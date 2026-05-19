@@ -90,7 +90,7 @@ not blocking spec completion)**:
     derivation references `session-compaction.ts` as a path
   - _Requirements: 1.1, 1.2_
 
-- [ ] 1.5 End-to-end install verification on a real host
+- [x] 1.5 End-to-end install verification on a real host
   - Run `darwin-rebuild switch --flake .#<host>` on at least one host
   - Verify `ls -la ~/.config/opencode/plugins/session-compaction.ts`
     resolves to the in-tree source path
@@ -549,3 +549,16 @@ not blocking spec completion)**:
     sections rendered; cavemem CLI `cavemem --help` shows the
     same subcommand set as design §Allowed Dependencies
   - _Requirements: 8.1, 8.2, 8.3_
+
+## Implementation Notes
+
+- **Task 1.5 (resolved)** — `client.app.log` writes land at
+  `~/.local/share/opencode/log/` (singular `log/`, NOT `logs/` as
+  the design speculatively assumed). The steering doc (task 6.1)
+  must document this exact path under R6.3.
+- **Task 1.2 (resolved)** — implementer sub-agents occasionally emit
+  non-standard status report formats; a re-dispatch in the same
+  session reliably produces the exact structured block.
+- **Task 1.4 (resolved)** — `home.opencode.wrapperCommands` accepts
+  list-merge across modules cleanly; no collision with the Shopify
+  host's existing devx export snippet (verified post-1.4 flake check).
