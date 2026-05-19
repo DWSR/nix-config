@@ -42,7 +42,7 @@ not blocking spec completion)**:
     opencode's startup log
   - _Requirements: 1.2, 1.4, 7.6_
 
-- [ ] 1.2 Stub slash command markdown
+- [x] 1.2 Stub slash command markdown
   - Create `home-manager/common/commands/compact.md` with frontmatter
     `description: Trigger session compaction` and a short LLM-readable
     body indicating the session-compaction plugin will execute the
