@@ -29,7 +29,7 @@ not blocking spec completion)**:
 
 - [ ] 1. Foundation: install pipeline and plugin loading
 
-- [ ] 1.1 Stub plugin file with type-safe empty handlers
+- [x] 1.1 Stub plugin file with type-safe empty handlers
   - Create `home-manager/common/opencode-plugins/session-compaction.ts`
     importing `Plugin` from `@opencode-ai/plugin`
   - Export `SessionCompactionPlugin: Plugin = async (ctx) => ({})` —
