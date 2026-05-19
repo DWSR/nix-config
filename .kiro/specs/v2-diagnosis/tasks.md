@@ -278,7 +278,7 @@
   - _Requirements: 3.3, 7.1, 7.2_
   - _Boundary: ReportSerializer JSON_
 
-- [ ] 7.3 ReportSerializer unit tests
+- [x] 7.3 ReportSerializer unit tests
   - Extend `tests/opencode-cost-diagnosis/unit/serializer.test.js`: cover Markdown pricing pin block placement, threshold rendering presence, migration disclaimer presence, new section rendering; cover JSON pricing field placement, alphabetical ordering preserved at every level, `generatedAt` absence, byAgent/byTool serialized as plain objects
   - Observable: serializer.test.js gains at least 5 new cases and all pass
   - _Depends: 7.1, 7.2_

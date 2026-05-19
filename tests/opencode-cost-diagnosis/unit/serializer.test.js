@@ -37,6 +37,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
 
 const {
   SqliteReader,
@@ -1314,4 +1315,383 @@ test('formatJson (flag OFF): top-level pricing key is absent — v1 byte-identic
     false,
     'flag OFF: generatedAt must remain absent in JSON',
   );
+});
+
+/* ── Task 7.3: gap coverage (migration disclaimer + v2 byte-identical determinism) ── */
+//
+// Task 7.3 fills the explicit coverage gaps left by 7.1 and 7.2.
+// The "at least 5 new cases" observable in the 7.3 task brief is
+// already met by the 11 tests 7.1 + 7.2 added above; this section
+// targets the surfaces those tests did NOT exercise:
+//
+//   1. Migration disclaimer PRESENCE in the rendered Markdown
+//      (frozen wording from design.md:686 / production code at
+//      scripts/opencode-cost-report.js:4139-4143). 7.1 wired the
+//      block but did not pin its substring or placement.
+//
+//   2. Migration disclaimer OPERATOR-REMOVABLE contract: the
+//      `V2_MIGRATION_DISCLAIMER_ENABLED` constant lives at module
+//      scope as a `const` so a one-line operator commit retires
+//      the note after cutover (design.md:686 + production note at
+//      scripts/opencode-cost-report.js:3164-3182). There is no
+//      runtime setter — the constant is intentionally unexported
+//      so the toggle is a source-edit, not a test affordance —
+//      so this test asserts the source-file shape directly. If a
+//      future refactor moves the constant out of module scope or
+//      renames it, this test fires and forces the docs / cutover
+//      runbook to be updated alongside.
+//
+//   3. v2 Markdown byte-identical determinism — 7.1 introduced
+//      the pricing-pin block, the threshold block, the migration
+//      disclaimer, the cachedRead breakdown table, the per-agent
+//      table, and the per-tool table. Any of those paths could
+//      have smuggled in Map iteration order, Date.now, or a
+//      non-deterministic sort. The v1 byte-identical test at
+//      line 133 only exercises the flag-OFF path; this test pins
+//      the v2 path under flag ON.
+//
+//   4. v2 JSON byte-identical determinism — same argument applied
+//      to formatJson. The 7.2 tests verified pricing presence /
+//      alphabetical ordering / generatedAt absence individually
+//      but did not pin two-call byte-identity on a FULL v2 report
+//      (pricing + cachedReadBreakdown + byAgent + byTool + a
+//      drift session round-trip in a single payload).
+//
+//   5. Migration disclaimer references the literal
+//      `per_bucket_cost_deferred` finding code (grep-anchor for
+//      operator audits). The wording in design.md:686 names the
+//      finding explicitly so an operator running `grep` on the
+//      reports can correlate the disclaimer with the v1 finding
+//      kind code that still appears in the JSON `findings[]`. If
+//      a future copy-edit drops the literal, operator audit
+//      tooling loses its grep target — this test pins it.
+//
+// Requirements: R3.3 (pricing pin placement), R4.4 (cachedRead
+// disclaimer), R5.4 / R6.5 (threshold disclosure), R7.1 (additive
+// shape), R7.2 (byte-identical determinism extended to v2 path).
+
+/* Helper: build a full v2 report exercising every flag-ON code path
+ * (populated session + drift session + pricing + thresholds +
+ * migration disclaimer). Used by the byte-identical determinism
+ * tests below so the two calls hit ALL of the v2 surfaces in one
+ * shot. Caller is responsible for the setV2CostComputeEnabled
+ * try/finally bracket. */
+function buildFullV2ReportForDeterminism() {
+  const populated = makeSerializerTestAttribution({
+    sessionId: 'ses_det_populated',
+    directory: '/p/populated',
+    cost: makeV2CostExtendedForSerializerTest({
+      total: 1.0,
+      uncachedSystemPrompt: 0.08,
+      history: 0.20,
+      toolOutputs: 0.02,
+      cachedRead: 0.30,
+      cachedReadBreakdown: {
+        systemPromptCached: 0.10,
+        agentsMdCached: 0.05,
+        mcpToolSchemasCached: 0.04,
+        accumulatedHistoryCached: 0.08,
+        accumulatedToolOutputsCached: 0.02,
+        unclassifiedCached: 0.01,
+      },
+      // Deliberately out-of-alphabetical-input-order to force the
+      // serializer's replacer to sort. If the sort itself is the
+      // determinism leak (e.g. depends on Map iteration), this
+      // test will catch it.
+      subagentDispatchByAgent: {
+        review: 0.05,
+        build: 0.20,
+      },
+      toolOutputsByTool: {
+        read: { uncached: 0.008, cached: 0.002 },
+        bash: { cached: 0.005, uncached: 0.010 },
+      },
+    }),
+  });
+  const drift = makeSerializerTestAttribution({
+    sessionId: 'ses_det_drift',
+    directory: '/p/drift',
+    cost: {
+      total: 0.42,
+      cachedRead: null,
+      cachedWrite: null,
+      uncachedInput: null,
+      output: null,
+      reasoning: null,
+      subagentDispatch: null,
+      uncachedSystemPrompt: null,
+      history: null,
+      toolOutputs: null,
+      cachedReadBreakdown: null,
+      subagentDispatchByAgent: null,
+      toolOutputsByTool: null,
+    },
+  });
+  return assembleSerializerTestReport([populated, drift]);
+}
+
+/* Test 1: Migration disclaimer presence + placement (flag ON). */
+test('formatMarkdown (flag ON): contains v1→v2 migration disclaimer between pricing pin and the --- separator', () => {
+  try {
+    const report = assembleSerializerTestReport([
+      makeSerializerTestAttribution({
+        sessionId: 'ses_migration_a',
+        directory: '/p/migration',
+        cost: makeV2CostExtendedForSerializerTest({ total: 0.10 }),
+      }),
+    ]);
+    const out = new ReportSerializer().formatMarkdown(report);
+
+    // The exact wording is the design.md:686 substring frozen
+    // into production at scripts/opencode-cost-report.js:4140-4143.
+    // We assert the leading + trailing fragments separately so a
+    // copy-edit that re-flows the string does not silently
+    // tank the test — both fragments are part of the audit
+    // contract (header label + R7.AC4 anchor).
+    assert.ok(
+      out.includes('**v1→v2 migration**: per-bucket cost fields now carry populated values;'),
+      `markdown must contain the migration disclaimer header substring; got:\n${out.slice(0, 1500)}`,
+    );
+    assert.ok(
+      out.includes('rewritten to reflect the populated state.'),
+      `markdown must contain the migration disclaimer trailing fragment; got:\n${out.slice(0, 1500)}`,
+    );
+
+    // Placement contract (7.1 design): migration disclaimer sits
+    // AFTER the pricing pin block AND AFTER the threshold block,
+    // but BEFORE the disclaimer-zone `---` separator. Three
+    // independent assertions so a regression reports which
+    // ordering invariant broke.
+    const pinIdx = out.indexOf('**PRICING PIN**:');
+    const thresholdIdx = out.indexOf('per-agent fold threshold:');
+    const migrationIdx = out.indexOf('**v1→v2 migration**:');
+    const sepIdx = out.indexOf('\n---\n');
+    assert.ok(pinIdx !== -1, 'precondition: pricing pin block must still be present');
+    assert.ok(thresholdIdx !== -1, 'precondition: threshold block must still be present');
+    assert.ok(migrationIdx !== -1, 'precondition: migration disclaimer must be present');
+    assert.ok(sepIdx !== -1, 'precondition: disclaimer-zone --- separator must be present');
+    assert.ok(
+      migrationIdx > pinIdx,
+      'migration disclaimer must appear AFTER the pricing pin block',
+    );
+    assert.ok(
+      migrationIdx > thresholdIdx,
+      'migration disclaimer must appear AFTER the threshold block',
+    );
+    assert.ok(
+      migrationIdx < sepIdx,
+      'migration disclaimer must appear BEFORE the disclaimer-zone --- separator',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Test 2: Operator-removable contract (source-file shape). */
+test('V2_MIGRATION_DISCLAIMER_ENABLED is a module-scope const with literal boolean — operator-removable in a one-line edit', () => {
+  // The 7.1 task brief required the migration disclaimer to be
+  // "gated by a module-level constant the operator can remove
+  // later in a follow-up commit." The constant is intentionally
+  // NOT exported (no runtime setter) — operator removal is a
+  // source edit, not a test affordance — so this test asserts
+  // the source-file shape directly.
+  //
+  // If a future refactor moves the constant out of module scope,
+  // renames it, gates it behind a function-argument flag, or
+  // exports a setter, this test fires and forces the docs +
+  // cutover runbook to be updated alongside. Manual verification
+  // that flipping `true` → `false` removes the disclaimer line
+  // happens in the cutover-cleanup PR as a diff inspection on the
+  // golden Markdown output (per design.md "Migration Strategy" >
+  // Cleanup phase).
+  const source = fs.readFileSync(
+    path.join(__dirname, '../../../scripts/opencode-cost-report.js'),
+    'utf8',
+  );
+
+  // Module scope = anchored to start-of-line (no leading
+  // whitespace). `const` + literal boolean (true OR false to
+  // accommodate the cutover-cleanup PR that flips it to false
+  // without breaking this test). A trailing `;` keeps the
+  // detection tight enough to reject the inevitable
+  // "V2_MIGRATION_DISCLAIMER_ENABLED_BY_DEFAULT" rename.
+  const re = /^const V2_MIGRATION_DISCLAIMER_ENABLED = (true|false);$/m;
+  const m = source.match(re);
+  assert.ok(
+    m !== null,
+    'V2_MIGRATION_DISCLAIMER_ENABLED must remain a module-scope `const` with a literal boolean value so the operator-removal commit stays a one-line edit',
+  );
+
+  // Snapshot the current value. As of 7.1 it is `true`; the
+  // cutover-cleanup PR flips it to `false`. This assertion just
+  // pins that the file is in ONE of the two intended states
+  // (not, say, set to a dynamic expression).
+  assert.ok(
+    m[1] === 'true' || m[1] === 'false',
+    'V2_MIGRATION_DISCLAIMER_ENABLED must be exactly `true` or `false`',
+  );
+
+  // The constant must NOT be exported. The 7.1 design note
+  // (scripts/opencode-cost-report.js:3164-3182) is explicit: the
+  // operator removes the disclaimer via a source edit, NOT via a
+  // runtime toggle. Exporting it would imply a public API
+  // contract this script does not intend to make.
+  const exportBlock = source.slice(source.indexOf('module.exports = {'));
+  assert.equal(
+    exportBlock.includes('V2_MIGRATION_DISCLAIMER_ENABLED'),
+    false,
+    'V2_MIGRATION_DISCLAIMER_ENABLED must NOT be exported; runtime toggling is intentionally disallowed',
+  );
+});
+
+/* Test 3: v2 Markdown byte-identical determinism. */
+test('formatMarkdown (flag ON): byte-identical across two successive invocations on a full v2 report (pricing + breakdown + byAgent + byTool + drift)', () => {
+  try {
+    const report = buildFullV2ReportForDeterminism();
+    const serializer = new ReportSerializer();
+    // Pass NO opts so the optional generatedAt timestamp does
+    // not enter the path — byte-identical is only guaranteed
+    // when the wall-clock surface is absent. The 7.1 surfaces
+    // (pricing pin block, thresholds, migration disclaimer,
+    // cachedRead breakdown table, per-agent table, per-tool
+    // table, drift placeholders) all flow through this call.
+    const out1 = serializer.formatMarkdown(report);
+    const out2 = serializer.formatMarkdown(report);
+    assert.equal(
+      out1,
+      out2,
+      'two successive formatMarkdown calls on the same v2 report must produce byte-identical output',
+    );
+
+    // Defensive sanity: confirm the call actually exercised the
+    // full v2 path (not a silently truncated empty render that
+    // would byte-equal itself trivially). Each substring is a
+    // distinct 7.1 surface.
+    for (const probe of [
+      '**PRICING PIN**:',
+      'per-agent fold threshold:',
+      'per-tool fold threshold:',
+      '**v1→v2 migration**:',
+      'CachedRead sub-bucket',
+      '| Agent | Cost |',
+      '| Tool | Cached cost | Uncached cost |',
+      'ses_det_populated',
+      'ses_det_drift',
+    ]) {
+      assert.ok(
+        out1.includes(probe),
+        `sanity: byte-identical input must still exercise the full v2 path; missing "${probe}"`,
+      );
+    }
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Test 4: v2 JSON byte-identical determinism. */
+test('formatJson (flag ON): byte-identical across two successive invocations on a full v2 report (pricing + breakdown + byAgent + byTool + drift)', () => {
+  try {
+    const report = buildFullV2ReportForDeterminism();
+    const serializer = new ReportSerializer();
+    const out1 = serializer.formatJson(report);
+    const out2 = serializer.formatJson(report);
+    assert.equal(
+      out1,
+      out2,
+      'two successive formatJson calls on the same v2 report must produce byte-identical output',
+    );
+
+    // Sanity-check: the byte-identical output must still carry
+    // the v2 surfaces (pricing + per-session byAgent/byTool plain
+    // objects). Without this, a regression that produced an empty
+    // `{}` payload would silently pass.
+    const parsed = JSON.parse(out1);
+    assert.equal(typeof parsed.pricing, 'object', 'sanity: pricing block must be present');
+    assert.notEqual(parsed.pricing, null, 'sanity: pricing block must be non-null');
+    assert.equal(
+      parsed.sessions.length,
+      2,
+      'sanity: both populated + drift sessions must round-trip',
+    );
+
+    // Plain-object check for byAgent / byTool (the 6.2 Map→Object
+    // conversion is the contract that makes this determinism
+    // possible — Map ordering is not deterministic across V8
+    // versions, but Object.keys after the assembler's sort is).
+    const populated = parsed.sessions.find((s) => s.sessionId === 'ses_det_populated');
+    assert.ok(populated, 'sanity: populated session must round-trip by id');
+    assert.equal(
+      Object.getPrototypeOf(populated.cost.subagentDispatchByAgent),
+      Object.prototype,
+      'byAgent must serialize as a plain object (not Map / not custom prototype)',
+    );
+    assert.equal(
+      Object.getPrototypeOf(populated.cost.toolOutputsByTool),
+      Object.prototype,
+      'byTool must serialize as a plain object (not Map / not custom prototype)',
+    );
+
+    // And the byAgent / byTool key orders must be alphabetical
+    // even though the helper deliberately constructed them in
+    // out-of-alphabetical input order. This is the binding link
+    // between Map→Object conversion (6.2) and the generic
+    // replacer's per-level sort (4.3 baseline).
+    assert.deepEqual(
+      Object.keys(populated.cost.subagentDispatchByAgent),
+      ['build', 'review'],
+      'byAgent keys must be alphabetical post-serialization',
+    );
+    assert.deepEqual(
+      Object.keys(populated.cost.toolOutputsByTool),
+      ['bash', 'read'],
+      'byTool keys must be alphabetical post-serialization',
+    );
+    // Per-tool nested cached/uncached object also keyed
+    // alphabetically — the recursive replacer must hit every
+    // level, not just the top.
+    assert.deepEqual(
+      Object.keys(populated.cost.toolOutputsByTool.bash),
+      ['cached', 'uncached'],
+      'per-tool cached/uncached keys must be alphabetical at every nested level',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
+});
+
+/* Test 5: Migration disclaimer names the v1 finding code literally
+ * (operator-grep anchor). */
+test('formatMarkdown (flag ON): migration disclaimer names `per_bucket_cost_deferred` literally as the operator-audit grep anchor', () => {
+  try {
+    const report = assembleSerializerTestReport([
+      makeSerializerTestAttribution({
+        sessionId: 'ses_grep_anchor',
+        directory: '/p/grep',
+        cost: makeV2CostExtendedForSerializerTest({ total: 0.05 }),
+      }),
+    ]);
+    const out = new ReportSerializer().formatMarkdown(report);
+
+    // The design.md:686 wording deliberately names the v1
+    // finding code with backticks so operators can grep across
+    // the Markdown reports and correlate the disclaimer with
+    // the v1 finding kind that still appears in JSON
+    // findings[]. R7.AC4 forward-compat depends on this code
+    // staying grep-able; a future copy-edit that drops the
+    // literal (e.g. paraphrases to "the deferred finding") would
+    // silently break the audit workflow.
+    assert.ok(
+      out.includes('`per_bucket_cost_deferred`'),
+      `migration disclaimer must name the finding code in backticks as a grep anchor; got:\n${out.slice(0, 1500)}`,
+    );
+    // R7.AC4 anchor — the parenthetical naming the requirement
+    // makes the linkage between the disclaimer and the spec
+    // explicit so an operator can cross-reference.
+    assert.ok(
+      out.includes('(R7.AC4)'),
+      'migration disclaimer must name R7.AC4 as the forward-compat anchor',
+    );
+  } finally {
+    setV2CostComputeEnabled(false);
+  }
 });
