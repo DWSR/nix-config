@@ -1502,5 +1502,129 @@ export const SessionCompactionPlugin: Plugin = async (ctx) => {
         config,
       )
     },
+    // ============================================================
+    // message.updated handler (task 3.2)
+    // ============================================================
+    //
+    // The runtime driver of the automatic-compaction path. On every
+    // `message.updated` event opencode emits, this handler:
+    //
+    //   1. Runs the startup self-check; short-circuits the rest of
+    //      the handler if it has failed (R7.4).
+    //   2. Skips sessions the task-3.1 gating logic flagged as
+    //      out-of-scope — unwatched subagents, allowlist misses
+    //      (R5.2, R5.5). Skipping happens BEFORE token aggregation
+    //      so ignored sessions never grow plugin-side state.
+    //   3. Feeds the message through the SessionTokenTracker seam
+    //      (task 2.1). UserMessages are no-ops inside `recordMessage`;
+    //      only AssistantMessages with a `tokens` payload advance the
+    //      per-session aggregates and turnCount.
+    //   4. Reads `Session.time.compacting` via `client.session.get`
+    //      to source the cooldown signal (Decision D.7 in design
+    //      §Implementation Notes — the cooldown is anchored to the
+    //      most recent compaction tracked by opencode itself, not to
+    //      a plugin-side counter). A missing field, a null value, or
+    //      a thrown SDK error are all treated as "never compacted":
+    //      `lastCompactionAt = null` so `evaluateThreshold` does not
+    //      apply a cooldown window. Per R2.9, the SDK failure must
+    //      not block the handler.
+    //   5. Runs `evaluateThreshold` (task 2.2) — the pure decision
+    //      function — with a single `now = Date.now()` captured once
+    //      and passed verbatim to `invokeCompaction` so the threshold
+    //      evaluation and the resulting attempt timestamp agree.
+    //   6. On `shouldCompact: true` → `invokeCompaction` (task 2.4),
+    //      attributed `"automatic"`. The return value is discarded;
+    //      success and failure are both self-logged inside the
+    //      invoker (R7.5: no caller-side re-emit).
+    //   7. On `shouldCompact: false` → `logSuppression` (task 2.6)
+    //      with the evaluator's reason string so the operator can
+    //      grep for why a session is not compacting (R6.4). The
+    //      `zero_turns` path (R2.10) also flows through here:
+    //      UserMessage-only sessions never trip a token or wall-time
+    //      threshold, so the evaluator returns `zero_turns` and the
+    //      suppression log fires.
+    //
+    // The handler is `async` and never throws: every external call is
+    // either pure, internally try/caught, or wrapped here.
+    "message.updated": async (input: { info: MessageInfo }) => {
+      // R7.4 short-circuit: every handler runs the self-check on
+      // entry. After the first event (any kind), subsequent calls
+      // return the cached result instantly.
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      const sessionID = input.info.sessionID
+      // R5.2 / R5.5: skip sessions classified as out-of-scope by
+      // the task-3.1 gating logic. Short-circuit BEFORE recordMessage
+      // so ignored sessions do not accumulate plugin-side state.
+      if (isSessionIgnored(sessionID)) return
+
+      // Update per-message token aggregates via the task-2.1 seam.
+      // UserMessages (no `tokens` payload) are no-ops inside the
+      // tracker; AssistantMessages advance the per-session totals
+      // and turnCount.
+      recordMessage(sessionID, input.info)
+
+      // Defensive: a `message.updated` without a prior
+      // `session.created` (out-of-order events, plugin reload mid-
+      // session, etc.) has no SessionState to evaluate against.
+      // Skip rather than fabricate a synthetic state.
+      const state = sessionStates.get(sessionID)
+      if (!state) return
+
+      const config = getOrLoadConfig()
+
+      // Decision D.7 (design §Implementation Notes): the cooldown
+      // signal is sourced from `Session.time.compacting` rather than
+      // a plugin-side timestamp so it survives plugin reload and so
+      // multiple plugin instances cannot disagree about the cooldown
+      // window. A read failure, a missing `time` field, or a missing
+      // `compacting` sub-field are all treated as "never compacted"
+      // (null) — graceful per R2.9; the threshold evaluator simply
+      // skips the cooldown clause.
+      let lastCompactionAt: number | null = null
+      try {
+        const result = await client.session.get({
+          path: { id: sessionID },
+        })
+        const session = result as {
+          readonly time?: {
+            readonly compacting?: number | null
+          }
+        }
+        lastCompactionAt = session.time?.compacting ?? null
+      } catch {
+        lastCompactionAt = null
+      }
+
+      // Capture `now` once so the evaluator and any resulting
+      // `invokeCompaction` attempt agree on the timestamp.
+      const now = Date.now()
+      const decision = evaluateThreshold(
+        state,
+        config,
+        lastCompactionAt,
+        now,
+      )
+
+      if (decision.shouldCompact) {
+        // R2.3 / R2.5: token or wall-time threshold tripped.
+        // CompactionInvoker self-logs both success (R6.1) and
+        // failure (R7.5); we discard the result.
+        await invokeCompaction(
+          client,
+          sessionID,
+          "automatic",
+          decision.reason,
+          now,
+        )
+      } else {
+        // R6.4: every suppression carries the evaluator's reason
+        // so the operator can attribute the miss without re-
+        // deriving cause. R2.7 in-cooldown and R2.10 zero-turn
+        // paths both flow through here.
+        await logSuppression(client, sessionID, decision.reason)
+      }
+    },
   }
 }

@@ -255,7 +255,7 @@ not blocking spec completion)**:
     `watchSubagents = false`) all subagents are silently ignored
   - _Requirements: 5.1, 5.2, 5.3, 5.5, 6.5_
 
-- [ ] 3.2 message.updated handler — token accumulation + automatic trigger
+- [x] 3.2 message.updated handler — token accumulation + automatic trigger
   - Register `'message.updated'` named hook on the plugin's return
   - Short-circuit if `selfCheckResult === "failed"` or session is in
     the ignore-set from 3.1
