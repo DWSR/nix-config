@@ -155,7 +155,7 @@ not blocking spec completion)**:
   - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.10_
   - _Boundary: SessionCompactionPlugin (internal seam)_
 
-- [ ] 2.3 PluginSelfCheck
+- [x] 2.3 PluginSelfCheck
   - Runs once on the first received event after plugin load (any
     event type); idempotent per plugin lifecycle
   - Probes presence and basic call-ability of `client.session.summarize`,

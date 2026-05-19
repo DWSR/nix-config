@@ -350,4 +350,172 @@ export function evaluateThreshold(
   return { shouldCompact: false, reason: "no_threshold_met" }
 }
 
+// ============================================================
+// PluginSelfCheck (task 2.3)
+// ============================================================
+//
+// Startup API-probe seam. R7.2 requires the plugin to confirm
+// opencode's SDK client surface matches the shape this plugin
+// depends on; R7.3 requires self-disabling for the session on
+// failure with a structured error naming the gap; R7.4 requires
+// every other handler to short-circuit while disabled. The probe
+// itself is idempotent and runs on the first received event of
+// any kind (task 3.x handlers call `runSelfCheckIfNeeded(client)`
+// at entry; until then the seam is unreachable from opencode's
+// runtime).
+//
+// The probe is intentionally side-effect-free: it inspects
+// `typeof` for each method we depend on and emits exactly one
+// `app.log` entry per outcome path. No SDK method is invoked
+// with real arguments here — calling `session.summarize` or
+// `session.get` for a probe would mutate opencode state or page
+// the user with toasts. The R5.6 subagent-observability warn-once
+// belongs to task 3.1 (session.created handler), where the actual
+// `parentID` shape is observable; this seam only establishes the
+// broader self-check infrastructure that 3.1 builds on.
+
+// PluginClient is the minimal subset of opencode's SDK client
+// surface this plugin touches. The runtime `Client` type (passed
+// to the plugin via `ctx.client`) has more surface; we only
+// annotate the methods we actually use so the type contract is
+// reviewable in isolation. `@opencode-ai/plugin` does not
+// re-export the SDK Client type, so we declare locally — same
+// precedent as MessageInfo above.
+//
+// Every method returns a Promise (the opencode SDK client is
+// async-by-construction); the probe checks only `typeof === "function"`,
+// so the Promise return types are advisory for callers, not the
+// probe.
+export interface PluginClient {
+  readonly session: {
+    readonly summarize: (params: {
+      readonly path: { readonly id: string }
+      readonly body: Record<string, unknown>
+    }) => Promise<boolean>
+    readonly get: (params: {
+      readonly path: { readonly id: string }
+    }) => Promise<unknown>
+  }
+  readonly app: {
+    readonly log: (params: {
+      readonly body: {
+        readonly service: string
+        readonly level: "info" | "warn" | "error" | "debug"
+        readonly message: string
+        readonly extra?: Record<string, unknown>
+      }
+    }) => Promise<boolean>
+  }
+  readonly tui: {
+    readonly showToast: (params: {
+      readonly body: {
+        readonly message: string
+        readonly variant: "info" | "success" | "warning" | "error"
+        readonly title?: string
+      }
+    }) => Promise<boolean>
+  }
+}
+
+// Module-scoped self-check result. `null` = not yet probed;
+// `"ok"` / `"failed"` = terminal outcomes set on first probe.
+// Mutable (so `let`, not `const`); read via the exported getter
+// so the field stays encapsulated and future handlers can branch
+// on `selfCheckResult === "failed"` per R7.4.
+let selfCheckResult: "ok" | "failed" | null = null
+
+/**
+ * Read the current self-check outcome. Returns `null` until the
+ * first event-handler invocation calls `runSelfCheckIfNeeded`;
+ * `"ok"` or `"failed"` thereafter. Exported so task 3.x handlers
+ * (and task 4.4 tests) can branch without re-running the probe.
+ */
+export function getSelfCheckResult(): "ok" | "failed" | null {
+  return selfCheckResult
+}
+
+/**
+ * Idempotent startup self-check. On the first invocation, probes
+ * the four SDK methods the plugin depends on and emits one
+ * structured `app.log` entry summarizing the outcome. On every
+ * subsequent invocation, returns the cached result without
+ * re-probing.
+ *
+ * Probe semantics: `typeof client.<surface>.<method> === "function"`
+ * for each of `session.summarize`, `session.get`, `app.log`, and
+ * `tui.showToast`. We never actually call the SDK methods here;
+ * a real call would mutate opencode state (summarize) or page
+ * the user (showToast). Existence-by-typeof is the strongest
+ * non-destructive contract we can assert at startup.
+ *
+ * Outcome paths (mutually exclusive — exactly one log per call
+ * that performs a real probe; cached calls log nothing):
+ *
+ *   - All four probes pass → `selfCheckResult = "ok"`, emit
+ *     `service: "session-compaction", level: "info", message:
+ *     "self-check passed"`. Returns `"ok"`.
+ *   - One or more probes fail → `selfCheckResult = "failed"`,
+ *     emit `service: "session-compaction", level: "error",
+ *     message: "self-check failed", extra: { missing: [...] }`
+ *     listing every gap in a single entry. Returns `"failed"`.
+ *
+ * The error path makes a best-effort `app.log` call: if
+ * `app.log` itself is the missing surface, the entry naturally
+ * has no sink, but the module-scoped flag is still set so
+ * handlers short-circuit per R7.4. Awaiting the log keeps the
+ * promise chain deterministic for tests.
+ */
+export async function runSelfCheckIfNeeded(
+  client: PluginClient,
+): Promise<"ok" | "failed"> {
+  if (selfCheckResult !== null) return selfCheckResult
+
+  // Collect every missing surface in one pass so the failure
+  // log names all gaps in a single entry (per task brief
+  // acceptance criterion: no per-gap log spam).
+  const missing: Array<string> = []
+  if (typeof client.session?.summarize !== "function") {
+    missing.push("session.summarize")
+  }
+  if (typeof client.session?.get !== "function") {
+    missing.push("session.get")
+  }
+  if (typeof client.app?.log !== "function") {
+    missing.push("app.log")
+  }
+  if (typeof client.tui?.showToast !== "function") {
+    missing.push("tui.showToast")
+  }
+
+  if (missing.length === 0) {
+    selfCheckResult = "ok"
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "self-check passed",
+      },
+    })
+    return "ok"
+  }
+
+  selfCheckResult = "failed"
+  // Best-effort: if `app.log` is itself in `missing` the call
+  // below will throw, but the flag is already set so the
+  // short-circuit semantics in R7.4 are preserved. We still
+  // attempt the log so the operator sees the gap when the
+  // missing surface is anything *other* than `app.log`.
+  if (typeof client.app?.log === "function") {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "error",
+        message: "self-check failed",
+        extra: { missing },
+      },
+    })
+  }
+  return "failed"
+}
+
 export const SessionCompactionPlugin: Plugin = async (ctx) => ({})
