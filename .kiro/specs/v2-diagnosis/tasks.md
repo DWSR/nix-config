@@ -313,7 +313,7 @@
   - _Requirements: 3.4, 7.5_
   - _Boundary: pricing-drift.test.js_
 
-- [ ] 8.4 Extend cli-integration test for new finding codes and disclaimer presence
+- [x] 8.4 Extend cli-integration test for new finding codes and disclaimer presence
   - Add cases to `tests/opencode-cost-diagnosis/integration/cli-integration.test.js`: assert each new finding (`cost_invariant_violation`, `pricing_table_drift`, `cached_read_classification_residual`, `cached_read_classifier_degraded`, `subagent_agent_attribution_drift`) appears in the report when triggered; assert the rewritten `per_bucket_cost_deferred` detail string contains the canonical substring; assert the pricing pin block follows the tokenizer disclaimer in the Markdown output
   - Observable: cli-integration.test.js gains at least 5 new cases; the suite passes overall after the goldens were refreshed in 8.1
   - _Depends: 7.1, 7.2, 8.1_

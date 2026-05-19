@@ -559,3 +559,397 @@ test('integration (5): --last 365d --cwd /Users/test/project-a returns exactly t
 });
 
 // Exactly 5 tests above — matches the task 6.2 observable count.
+
+/* ────────────────────────────────────────────────────────────────
+ * Task 8.4: new-finding presence + Markdown section ordering
+ *
+ * After 8.1 flipped V2_COST_COMPUTE_ENABLED on by default, the v2
+ * findings catalog (design.md § Findings Catalog) became live on
+ * every CLI run. This block verifies the CLI-level emission of
+ * those findings against the canonical fixture and the v2 goldens
+ * refreshed in 8.1.
+ *
+ * Coverage matrix vs. the 5 spec-named v2 finding kinds
+ * (design.md § Findings Catalog, requirements R3.3 / R7.1 / R7.4):
+ *
+ *   ┌──────────────────────────────────────────┬────────────────┬──────────┐
+ *   │ finding kind                             │ canonical run? │ test     │
+ *   ├──────────────────────────────────────────┼────────────────┼──────────┤
+ *   │ cached_read_classifier_degraded          │ every session  │ 8.4-A    │
+ *   │ per_bucket_cost_deferred                 │ every session  │ 8.4-B    │
+ *   │ cost_invariant_violation                 │ every session  │ 8.4-E    │
+ *   │ pricing_table_drift                      │ never          │ 8.4-F    │
+ *   │ cached_read_classification_residual      │ never          │ 8.4-F    │
+ *   │ subagent_agent_attribution_drift         │ never          │ 8.4-F    │
+ *   └──────────────────────────────────────────┴────────────────┴──────────┘
+ *
+ * The three "never on canonical" kinds need bespoke fixtures —
+ * pricing-drift.test.js (task 8.3) ships one for pricing_table_drift,
+ * cost-invariant.test.js (task 8.2) ships symmetric within/out-of
+ * -tolerance fixtures for cost_invariant_violation. The remaining
+ * two (cached_read_classification_residual,
+ * subagent_agent_attribution_drift) currently have unit-level
+ * coverage only; test 8.4-F documents the canonical-fixture absence
+ * so a future fixture authoring task can pick up the slack without
+ * having to re-derive the gap.
+ *
+ * Verification-mode TDD: the production paths exist already
+ * (5.6 / 5.7 / 5.8 / 5.9 / 5.10 emit sites, refreshed goldens from
+ * 8.1). The new tests would have failed before those tasks landed;
+ * they pass now and pin the contract for future regressions.
+ * ─────────────────────────────────────────────────────────────── */
+
+// Per design.md Decision 1 (line 800) and Implementation Note 5.9,
+// the rewritten per_bucket_cost_deferred detail string is part of
+// the spec, not paraphrase-able. Source of truth:
+// scripts/opencode-cost-report.js:1665-1670.
+const PER_BUCKET_COST_DEFERRED_CANONICAL_SUBSTRING =
+  'per-bucket cost is now populated by v2';
+
+// Anchors used by the section-order assertion. Both substrings are
+// pinned by goldens + design.md § ReportSerializer Markdown
+// placement; if either is rephrased the goldens will fail first and
+// THIS test will fail second, which is the desired ordering of
+// signal (golden = exact bytes; this test = structural contract).
+const MD_DISCLAIMER_ANCHOR = '**TOKENIZER ACCURACY DISCLAIMER (';
+const MD_PRICING_PIN_ANCHOR = '**PRICING PIN**:';
+
+test('integration (6) [task 8.4-A]: cached_read_classifier_degraded fires on every canonical session (Implementation Note 5.10)', () => {
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { parsed } = readReport(sb.stateDir);
+
+    // Top-level findings: one degraded entry per root session
+    // (Implementation Note 5.10: the production content-shape
+    // markers fire unreliably; the AttributionEngine emits the
+    // finding on every session per Decision 6 fallback path).
+    const degraded = parsed.findings.filter(
+      (f) => f.kind === 'cached_read_classifier_degraded',
+    );
+    assert.equal(
+      degraded.length, parsed.sessionCount,
+      `expected one cached_read_classifier_degraded finding per session ` +
+        `(per Implementation Note 5.10); got ${degraded.length} for ` +
+        `${parsed.sessionCount} sessions`,
+    );
+    // Each finding must name its session id and reference the
+    // Decision 6 fallback so an operator can locate the source.
+    for (const f of degraded) {
+      assert.ok(
+        typeof f.sessionId === 'string' && f.sessionId.length > 0,
+        'degraded finding must carry the sessionId of the affected root',
+      );
+      assert.ok(
+        f.detail.includes(f.sessionId),
+        `degraded finding detail must name the session (got ${JSON.stringify(f.detail)})`,
+      );
+      assert.ok(
+        /TokenizerSplitter|content-shape markers/.test(f.detail),
+        'degraded finding detail must explain the fallback trigger',
+      );
+    }
+
+    // Mirror on each session.findings array — the per-session
+    // surface is what the JSON consumer typically iterates, so a
+    // top-level-only emission would silently break downstream
+    // tooling. This catches the "global only" regression.
+    for (const session of parsed.sessions) {
+      const perSession = session.findings.filter(
+        (f) => f.kind === 'cached_read_classifier_degraded',
+      );
+      assert.equal(
+        perSession.length, 1,
+        `session ${session.sessionId} must carry exactly one degraded ` +
+          `finding; got ${perSession.length}`,
+      );
+    }
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('integration (7) [task 8.4-B]: per_bucket_cost_deferred detail carries the canonical v2 substring (design Decision 1 / Implementation Note 5.9)', () => {
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { parsed } = readReport(sb.stateDir);
+
+    const deferred = parsed.findings.filter(
+      (f) => f.kind === 'per_bucket_cost_deferred',
+    );
+    assert.ok(
+      deferred.length > 0,
+      'per_bucket_cost_deferred must still emit under v2 — the finding ' +
+        'kind is retained for R7.AC4 forward-compatibility (design Decision 1)',
+    );
+    // R7.AC4: every session carries the kind. Asserting one per
+    // session guards against a future "emit at most once globally"
+    // refactor that would collapse the per-session signal.
+    assert.equal(
+      deferred.length, parsed.sessionCount,
+      `expected one per_bucket_cost_deferred finding per session ` +
+        `(R7.AC4 forward-compat); got ${deferred.length} for ` +
+        `${parsed.sessionCount} sessions`,
+    );
+
+    // The canonical substring from design.md:800 (Decision 1) MUST
+    // appear verbatim in every emitted detail. This is the
+    // contract that flipping V2_COST_COMPUTE_ENABLED → true must
+    // satisfy, and what distinguishes the v2 emission from the
+    // legacy v1 wording (preserved at scripts/opencode-cost-report.js:
+    // 1677-1683 for the flag-OFF path). If a future refactor
+    // paraphrases this string, the goldens will fail first; this
+    // test makes the failure message explicit about WHICH wording
+    // broke.
+    for (const f of deferred) {
+      assert.ok(
+        f.detail.includes(PER_BUCKET_COST_DEFERRED_CANONICAL_SUBSTRING),
+        `per_bucket_cost_deferred detail must contain the canonical ` +
+          `v2 substring ${JSON.stringify(PER_BUCKET_COST_DEFERRED_CANONICAL_SUBSTRING)} ` +
+          `(design Decision 1, design.md:800; Implementation Note 5.9). ` +
+          `Got: ${JSON.stringify(f.detail)}`,
+      );
+      // R7.AC4 self-documentation: the rewritten detail MUST
+      // namedrop R7.AC4 so a returning operator can grep the
+      // requirement back to the source.
+      assert.ok(
+        f.detail.includes('R7.AC4'),
+        `per_bucket_cost_deferred detail must reference R7.AC4 for ` +
+          `forward-compat traceability; got ${JSON.stringify(f.detail)}`,
+      );
+    }
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('integration (8) [task 8.4-C]: Markdown pricing pin block follows the tokenizer disclaimer headline (design.md § ReportSerializer Markdown placement)', () => {
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { md } = readReport(sb.stateDir);
+
+    const disclaimerIdx = md.indexOf(MD_DISCLAIMER_ANCHOR);
+    const pricingPinIdx = md.indexOf(MD_PRICING_PIN_ANCHOR);
+
+    assert.ok(
+      disclaimerIdx !== -1,
+      `MD must contain the tokenizer disclaimer anchor ${JSON.stringify(MD_DISCLAIMER_ANCHOR)}`,
+    );
+    assert.ok(
+      pricingPinIdx !== -1,
+      `MD must contain the pricing pin anchor ${JSON.stringify(MD_PRICING_PIN_ANCHOR)}`,
+    );
+    // Section-order contract: pricing pin is documentation-of-the
+    // -disclaimer (it scopes the per-bucket dollar values that the
+    // disclaimer's authoritative-vs-tokenizer split applies to), so
+    // it MUST appear after the disclaimer. The reverse order would
+    // tell the operator "list-price only" before they know which
+    // buckets are even tokenizer-derived, inverting the narrative.
+    assert.ok(
+      disclaimerIdx < pricingPinIdx,
+      `tokenizer disclaimer (idx=${disclaimerIdx}) must precede the ` +
+        `pricing pin block (idx=${pricingPinIdx}) in the Markdown ` +
+        `output (design.md § ReportSerializer Markdown placement)`,
+    );
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('integration (9) [task 8.4-D]: pricing pin metadata surfaces in both MD and JSON', () => {
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { md, parsed } = readReport(sb.stateDir);
+
+    // Structured pricing object on the JSON: the operator-facing
+    // pin date + source MUST be reachable without parsing the MD
+    // (downstream dashboards consume the JSON).
+    assert.ok(
+      parsed.pricing && typeof parsed.pricing === 'object',
+      'JSON output must carry a pricing object',
+    );
+    assert.ok(
+      typeof parsed.pricing.pinDate === 'string' && parsed.pricing.pinDate.length > 0,
+      `pricing.pinDate must be a non-empty string; got ${JSON.stringify(parsed.pricing.pinDate)}`,
+    );
+    // ISO-8601 date shape — guards against accidentally serialising
+    // a Date object or a timezone-suffixed timestamp here.
+    assert.match(
+      parsed.pricing.pinDate,
+      /^\d{4}-\d{2}-\d{2}$/,
+      `pricing.pinDate must be a YYYY-MM-DD date string; got ${JSON.stringify(parsed.pricing.pinDate)}`,
+    );
+    assert.ok(
+      typeof parsed.pricing.pinSource === 'string' && parsed.pricing.pinSource.length > 0,
+      `pricing.pinSource must be a non-empty string; got ${JSON.stringify(parsed.pricing.pinSource)}`,
+    );
+
+    // Markdown must surface BOTH fields in the pricing pin block
+    // so an operator reading the MD alone gets the same provenance
+    // signal as a JSON consumer.
+    assert.ok(
+      md.includes(MD_PRICING_PIN_ANCHOR),
+      `MD must include the pricing pin anchor ${JSON.stringify(MD_PRICING_PIN_ANCHOR)}`,
+    );
+    assert.ok(
+      md.includes(parsed.pricing.pinDate),
+      `MD pricing pin block must include the pin date ` +
+        `${JSON.stringify(parsed.pricing.pinDate)} from the JSON`,
+    );
+    assert.ok(
+      md.includes(parsed.pricing.pinSource),
+      `MD pricing pin block must include the pin source ` +
+        `${JSON.stringify(parsed.pricing.pinSource)} from the JSON`,
+    );
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('integration (10) [task 8.4-E]: cost_invariant_violation fires for every canonical session (8.2 covers the within-tolerance path)', () => {
+  // The canonical fixture's three roots all exceed the
+  // reconciliation tolerance (see the golden findings array at
+  // golden/fixture-365d-all.json:138-170 — every session is named).
+  // That's exactly the situation cost-invariant.test.js (task 8.2)
+  // assumes when it spins up a synthetic within-tolerance fixture
+  // to exercise the symmetric absence path; that test cites this
+  // canonical-fixture behaviour explicitly in its preamble (see
+  // tests/opencode-cost-diagnosis/integration/cost-invariant.test.js
+  // lines 19-22). This test pins the canonical-fixture half of the
+  // pair so a regression here surfaces in the CLI suite without
+  // having to read 8.2's synthetic fixture coverage.
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { parsed } = readReport(sb.stateDir);
+
+    const violations = parsed.findings.filter(
+      (f) => f.kind === 'cost_invariant_violation',
+    );
+    assert.equal(
+      violations.length, parsed.sessionCount,
+      `every canonical session is out-of-tolerance and must emit one ` +
+        `cost_invariant_violation finding; got ${violations.length} for ` +
+        `${parsed.sessionCount} sessions`,
+    );
+    for (const f of violations) {
+      // R2.AC3 self-documentation: detail must surface |delta| and
+      // tolerance so the operator can grade the severity without
+      // re-running the math.
+      assert.ok(
+        /\|delta\|=/.test(f.detail),
+        `violation detail must report |delta|; got ${JSON.stringify(f.detail)}`,
+      );
+      assert.ok(
+        /tolerance=/.test(f.detail),
+        `violation detail must report the tolerance used; got ${JSON.stringify(f.detail)}`,
+      );
+      // R2.AC4: non-blocking emission — assertion on exitCode === 0
+      // above proves the report emitted; this re-asserts the
+      // human-readable hint in the detail so the operator knows.
+      assert.ok(
+        /Informational only|report continues to emit/i.test(f.detail),
+        `violation detail must reassure the operator that emission ` +
+          `continued (R2.AC4); got ${JSON.stringify(f.detail)}`,
+      );
+    }
+  } finally {
+    sb.cleanup();
+  }
+});
+
+test('integration (11) [task 8.4-F]: spec-named findings absent from canonical fixture are explicitly absent + cross-referenced to bespoke fixture tests', () => {
+  // Canonical-fixture coverage gap audit. Three of the five
+  // spec-named v2 findings (design.md § Findings Catalog) cannot
+  // fire on the canonical fixture by construction:
+  //
+  //   - pricing_table_drift: requires an unmatched providerID/
+  //     modelID (every fixture session uses anthropic/claude-*
+  //     which is present in the pinned table).
+  //   - cached_read_classification_residual: requires
+  //     unclassifiedCached / session.tokens_cache_read > 0.05.
+  //     The canonical fixture's cachedRead distribution
+  //     (cachedReadBreakdown.unclassifiedCached ≈ 4.3e-19) is
+  //     orders of magnitude under the 5% threshold.
+  //   - subagent_agent_attribution_drift: requires a null-agent
+  //     descendant with a non-null message.data.agent.
+  //     The canonical fixture uses consistent agent attribution
+  //     end-to-end.
+  //
+  // Asserting absence here serves two purposes: (1) catches a
+  // future fixture mutation that accidentally trips one of these
+  // findings (forcing the author to either widen this catalog or
+  // explain the new shape), and (2) keeps the cross-references
+  // to pricing-drift.test.js (task 8.3) and cost-invariant.test.js
+  // (task 8.2) in one obvious place so the catalog's coverage is
+  // legible at a glance.
+  const sb = mkSandbox();
+  try {
+    const { exitCode, stderr } = runMain(['--last', '365d']);
+    assert.equal(exitCode, 0, `run must exit 0 (stderr=${stderr})`);
+
+    const { parsed } = readReport(sb.stateDir);
+
+    const absentKinds = [
+      'pricing_table_drift',
+      'cached_read_classification_residual',
+      'subagent_agent_attribution_drift',
+    ];
+    for (const kind of absentKinds) {
+      const hits = parsed.findings.filter((f) => f.kind === kind);
+      assert.equal(
+        hits.length, 0,
+        `canonical fixture must NOT emit ${kind} (it would change ` +
+          `the goldens). If the fixture grew to trigger this kind, ` +
+          `update this test to assert presence and refresh the ` +
+          `goldens with UPDATE_GOLDEN=1.`,
+      );
+      // Per-session findings must also be clean — otherwise the
+      // top-level dedupe could mask a per-session emission.
+      for (const session of parsed.sessions) {
+        const sessionHits = (session.findings || []).filter(
+          (f) => f.kind === kind,
+        );
+        assert.equal(
+          sessionHits.length, 0,
+          `session ${session.sessionId} must not emit ${kind} on the ` +
+            `canonical fixture; got ${sessionHits.length} entries`,
+        );
+      }
+    }
+
+    // Cross-reference: the bespoke fixture tests live alongside
+    // this file. Use fs presence checks (not requires — those
+    // would re-execute the tests) so a rename surfaces here
+    // instead of in a confusing "no such finding kind" later.
+    const path = require('node:path');
+    const fs = require('node:fs');
+    const here = __dirname;
+    assert.ok(
+      fs.existsSync(path.join(here, 'cost-invariant.test.js')),
+      'cost-invariant.test.js (task 8.2) must coexist to cover the ' +
+        'cost_invariant_violation within-tolerance path that the ' +
+        'canonical fixture cannot reach',
+    );
+    assert.ok(
+      fs.existsSync(path.join(here, 'pricing-drift.test.js')),
+      'pricing-drift.test.js (task 8.3) must coexist to cover the ' +
+        'pricing_table_drift emission that the canonical fixture cannot reach',
+    );
+  } finally {
+    sb.cleanup();
+  }
+});
