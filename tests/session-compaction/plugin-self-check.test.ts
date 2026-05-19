@@ -59,7 +59,7 @@ import {
   getSelfCheckResult,
   runSelfCheckIfNeeded,
   type PluginClient,
-} from "../../home-manager/common/opencode-plugins/session-compaction.ts"
+} from "../../home-manager/common/session-compaction-internal/session-compaction-impl.ts"
 
 // Shape of the `body` payload `runSelfCheckIfNeeded` passes to
 // `client.app.log`. Mirrors the inline type in `PluginClient`;

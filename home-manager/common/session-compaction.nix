@@ -51,10 +51,33 @@
 {
   lib,
   config,
+  pkgs,
   ...
 }:
 let
   cfg = config.programs.session-compaction;
+
+  # Task 3.7: the entry plugin file imports the impl module via a
+  # relative path. `xdg.configFile.<path>.source = <file>` wraps
+  # each file in its own per-file derivation (e.g.
+  # `/nix/store/HASH-hm_sessioncompaction.ts`), and Bun resolves
+  # relative imports against the symlink's REAL path, so a
+  # `../session-compaction-internal/…` import from a per-file
+  # derivation resolves to `/nix/store/session-compaction-internal/…`
+  # — which does not exist.
+  #
+  # Workaround: bundle both files into a single directory
+  # derivation so the symlinks point INTO the same parent on disk.
+  # The entry's `../session-compaction-internal/…` then resolves
+  # correctly inside the derivation tree.
+  sessionCompactionTree = pkgs.runCommandLocal "session-compaction-plugin-tree" { } ''
+    mkdir -p $out/plugins
+    mkdir -p $out/session-compaction-internal
+    install -m 0644 ${./opencode-plugins/session-compaction.ts} \
+      $out/plugins/session-compaction.ts
+    install -m 0644 ${./session-compaction-internal/session-compaction-impl.ts} \
+      $out/session-compaction-internal/session-compaction-impl.ts
+  '';
 in
 {
   options.programs.session-compaction = {
@@ -116,8 +139,24 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # Both files reference the SAME directory derivation
+    # (`sessionCompactionTree`), so the symlinks point into one
+    # on-disk parent. Bun follows the symlink for the entry,
+    # lands at `<tree>/plugins/session-compaction.ts`, and the
+    # entry's `../session-compaction-internal/session-compaction-impl.ts`
+    # import resolves to `<tree>/session-compaction-internal/…`
+    # — which exists. See `sessionCompactionTree` declaration
+    # above for the full rationale.
+    #
+    # The impl is deployed OUTSIDE the `opencode/plugins/` scan
+    # path (`opencode/session-compaction-internal/…`) so
+    # opencode's user-plugin loader never iterates its exports —
+    # see .kiro/specs/session-compaction/design.md §Components /
+    # SessionCompactionPlugin / Plugin File Export Constraint.
     xdg.configFile."opencode/plugins/session-compaction.ts".source =
-      ./opencode-plugins/session-compaction.ts;
+      "${sessionCompactionTree}/plugins/session-compaction.ts";
+    xdg.configFile."opencode/session-compaction-internal/session-compaction-impl.ts".source =
+      "${sessionCompactionTree}/session-compaction-internal/session-compaction-impl.ts";
 
     programs.opencode.commands.compact = ./commands/compact.md;
 

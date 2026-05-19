@@ -352,7 +352,7 @@ not blocking spec completion)**:
     `"external"`
   - _Requirements: 6.1, 6.2_
 
-- [ ] 3.7 BUG FIX: collapse plugin file to a single function export
+- [x] 3.7 BUG FIX: collapse plugin file to a single function export
   - **Problem (observed 2026-05-19, host log
     `~/.local/share/opencode/log/2026-05-19T22{4445,4451,4640,4742}.log`):**
     after task 3.6 landed, the deployed plugin fails to load with

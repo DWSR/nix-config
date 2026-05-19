@@ -35,7 +35,7 @@ import {
   turnCount,
   wallTimeMillis,
   type MessageInfo,
-} from "../../home-manager/common/opencode-plugins/session-compaction.ts"
+} from "../../home-manager/common/session-compaction-internal/session-compaction-impl.ts"
 
 // ---------------------------------------------------------------
 // Helpers

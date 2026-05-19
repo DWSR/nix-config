@@ -47,7 +47,7 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { fetchCavememContext } from "../../home-manager/common/opencode-plugins/session-compaction.ts"
+import { fetchCavememContext } from "../../home-manager/common/session-compaction-internal/session-compaction-impl.ts"
 
 // ---------------------------------------------------------------
 // Helpers
