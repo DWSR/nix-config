@@ -1867,5 +1867,81 @@ export const SessionCompactionPlugin: Plugin = async (ctx) => {
         result.text.length,
       )
     },
+    // ============================================================
+    // session.idle handler (task 3.5)
+    // ============================================================
+    //
+    // R6.5 session-idle observability. Fires when opencode marks a
+    // session idle (no in-flight LLM turn). The handler emits a
+    // single info-level `app.log` entry summarizing the per-session
+    // aggregates so the operator can correlate idle-time totals
+    // with cost-diagnostic data without re-deriving them from raw
+    // messages.
+    //
+    // Order of guards mirrors every other handler in this plugin:
+    //
+    //   1. Self-check short-circuit (R7.4). If the startup probe
+    //      classified the plugin as disabled, do nothing.
+    //   2. Ignore-set short-circuit (R5.2, R5.5). Sessions the
+    //      task-3.1 gating logic flagged as out-of-scope are skipped
+    //      so unwatched subagents do not produce idle-summary log
+    //      noise.
+    //   3. SessionState lookup. A `session.idle` event without a
+    //      prior `session.created` (out-of-order events, plugin
+    //      reload mid-session, etc.) has no aggregates to summarize;
+    //      we skip rather than emit a placeholder entry with zeroed
+    //      fields that would mislead the operator.
+    //
+    // The handler is intentionally read-only: it does NOT call
+    // `recordMessage`, does NOT mutate any module-scoped state, and
+    // — critically — does NOT remove the session's state from
+    // `sessionStates`. opencode may resume an idle session at any
+    // point; preserving the SessionState lets the resumed session
+    // keep accumulating against its existing aggregates rather than
+    // restarting from zero (design §Event Contract: "do NOT remove
+    // session state (it may resume)").
+    //
+    // `compactionEvents` is intentionally omitted from the summary
+    // call: the design's Logger Contract declares the field
+    // optional, the task brief explicitly only requires the three
+    // aggregate fields (turnCount, totalInputTokens, wallTimeMillis),
+    // and the natural sources for an accurate count
+    // (`inFlightAttempts` is consumed by task 3.6;
+    // `session.compacted` is fired post-hoc) make a faithful counter
+    // a separate piece of state that is out of scope for v1. The
+    // logger wrapper defaults the field to 0 in the emitted log so
+    // the entry shape stays uniform across calls.
+    "session.idle": async (input: { sessionID: string }) => {
+      // R7.4 short-circuit: every handler runs the self-check on
+      // entry. After the first event (any kind), subsequent calls
+      // return the cached result instantly.
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      // R5.2 / R5.5: skip sessions classified as out-of-scope by
+      // the task-3.1 gating logic so unwatched subagents do not
+      // produce idle-summary log noise.
+      if (isSessionIgnored(input.sessionID)) return
+
+      // Defensive: a `session.idle` without a prior
+      // `session.created` has no SessionState to summarize. The
+      // task-2.1 helpers (`turnCount`, `totalInputTokens`,
+      // `wallTimeMillis`) all return 0 for unknown sessions, but
+      // emitting a zeroed summary for a session we never observed
+      // would mislead the operator into thinking the plugin had
+      // tracked the session.
+      if (!sessionStates.has(input.sessionID)) return
+
+      // R6.5: emit the idle summary. Read-only: no state mutation,
+      // no Map deletion. opencode may resume the session at any
+      // point; the SessionState stays in `sessionStates` so a
+      // resumed session keeps accumulating against existing
+      // aggregates instead of restarting from zero.
+      await logSessionIdle(client, input.sessionID, {
+        turnCount: turnCount(input.sessionID),
+        totalInputTokens: totalInputTokens(input.sessionID),
+        wallTimeMillis: wallTimeMillis(input.sessionID),
+      })
+    },
   }
 }

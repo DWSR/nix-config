@@ -312,7 +312,7 @@ not blocking spec completion)**:
     and zero cavemem subprocess invocations
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 3.6, 6.2_
 
-- [ ] 3.5 session.idle handler — emit session summary log
+- [x] 3.5 session.idle handler — emit session summary log
   - Register `'session.idle'` named hook
   - On each event, look up `SessionState` for `input.sessionID`;
     emit `logSessionIdle(sessionID, { turnCount, totalInputTokens,
