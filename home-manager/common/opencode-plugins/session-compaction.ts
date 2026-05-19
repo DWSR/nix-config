@@ -518,4 +518,190 @@ export async function runSelfCheckIfNeeded(
   return "failed"
 }
 
+// ============================================================
+// CompactionInvoker (task 2.4)
+// ============================================================
+//
+// Single entry point for `client.session.summarize`. Every
+// compaction the plugin originates — threshold trip (task 3.2),
+// `/compact` slash command (task 3.3) — funnels through
+// `invokeCompaction`. Externally-triggered compactions
+// (opencode-native TUI keybind, or any opencode internal
+// auto-trigger we did not initiate) never call this function;
+// task 3.6's `session.compacted` handler detects the absence of
+// a tracked `CompactionAttempt` and attributes those to
+// `"external"`.
+//
+// Failure semantics (R2.9, R7.5):
+//   - Errors are caught, recorded, and surfaced via the
+//     `CompactionResult` return value; they never propagate to
+//     opencode's main loop.
+//   - One `app.log` entry per outcome (info on success, error on
+//     failure). No retry inside this function — R7.5's
+//     "no retry within cooldown" is enforced upstream by
+//     `evaluateThreshold` reading `Session.time.compacting`. The
+//     `lastErrorAt` Map is exposed so the manual-compaction
+//     handler (task 3.3) and any future suppression-log path can
+//     attribute or rate-limit on per-session error history.
+
+// CompactionTrigger discriminated union. Three observable sources;
+// the plugin must attribute every `session.compacted` event to
+// exactly one of them for R6 (observability). Shape matches design
+// §Service Interface byte-for-byte.
+export type CompactionTrigger =
+  | "automatic"
+  | "manual"
+  | "external"
+
+// CompactionAttempt is the record stored in `inFlightAttempts`
+// between `invokeCompaction` succeeding and `session.compacted`
+// firing. Task 3.6 consumes it for trigger attribution. Shape
+// matches design §Service Interface byte-for-byte.
+export interface CompactionAttempt {
+  readonly sessionID: string
+  readonly trigger: CompactionTrigger
+  readonly reason: string
+  readonly timestamp: number
+}
+
+// CompactionResult is `invokeCompaction`'s only output. Callers
+// (task 3.2 threshold-trip path, task 3.3 manual path) inspect
+// `succeeded` / `error` to decide whether to surface a
+// `tui.showToast` to the operator. Shape matches design §Service
+// Interface byte-for-byte.
+export interface CompactionResult {
+  readonly attempt: CompactionAttempt
+  readonly succeeded: boolean
+  readonly error: string | null
+}
+
+// Module-scoped in-flight attempts. Keyed by sessionID; one entry
+// at most per session because opencode serializes plugin handlers
+// per session and `session.compacted` consumes the entry as soon
+// as it fires. Set ONLY on successful `session.summarize` calls
+// (failed compactions intentionally do NOT register an attempt:
+// if a failed call were registered, the next opencode-native
+// compaction for the same session would be mis-attributed to
+// `"automatic"` / `"manual"` instead of `"external"`).
+const inFlightAttempts: Map<string, CompactionAttempt> = new Map()
+
+// Module-scoped per-session error timestamps. Set ONLY on
+// failure. Exposed via `getLastErrorAt` for callers that want to
+// inspect per-session error history without granting them write
+// access to the Map.
+const lastErrorAt: Map<string, number> = new Map()
+
+/**
+ * Invoke opencode's native compaction for a session. The single
+ * entry point into `client.session.summarize` for this plugin;
+ * task 3.2 (automatic) and task 3.3 (manual) call this and
+ * inspect the returned `CompactionResult`.
+ *
+ * Outcome paths (mutually exclusive — exactly one `app.log` per
+ * call):
+ *
+ *   - SDK accepts the call → register a `CompactionAttempt` in
+ *     `inFlightAttempts` for task 3.6 to consume on the
+ *     subsequent `session.compacted` event; emit info-level
+ *     `app.log` `"compaction triggered"` with `trigger` and
+ *     `reason`; return `{ attempt, succeeded: true, error: null }`.
+ *   - SDK rejects → extract `errorMessage` defensively
+ *     (`Error.message` or `String(e)` for non-Error throws);
+ *     set `lastErrorAt[sessionID] = now`; emit error-level
+ *     `app.log` `"compaction failed"` with `errorMessage`;
+ *     return `{ attempt, succeeded: false, error: errorMessage }`.
+ *
+ * R2.9: failures are recorded and surfaced via the return value;
+ * they never propagate to opencode's main loop.
+ * R7.5: this function never retries. The cooldown gate is enforced
+ * by `evaluateThreshold` reading `Session.time.compacting`; the
+ * `lastErrorAt` Map is for callers that want per-session error
+ * attribution, not for re-entry suppression.
+ */
+export async function invokeCompaction(
+  client: PluginClient,
+  sessionID: string,
+  trigger: CompactionTrigger,
+  reason: string,
+  now: number,
+): Promise<CompactionResult> {
+  const attempt: CompactionAttempt = {
+    sessionID,
+    trigger,
+    reason,
+    timestamp: now,
+  }
+
+  try {
+    await client.session.summarize({
+      path: { id: sessionID },
+      body: {},
+    })
+  } catch (e: unknown) {
+    // Defensive extraction: opencode's SDK throws Error in the
+    // common path, but the runtime can surface non-Error throws
+    // (string rejections, undefined, etc.). String(e) is the
+    // last-resort coercion that never throws.
+    const errorMessage =
+      e instanceof Error ? e.message : String(e)
+    lastErrorAt.set(sessionID, now)
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "error",
+        message: "compaction failed",
+        extra: { sessionID, trigger, reason, errorMessage },
+      },
+    })
+    return { attempt, succeeded: false, error: errorMessage }
+  }
+
+  // Success path: register the attempt FIRST so the consume-side
+  // (task 3.6) can attribute correctly even if the
+  // `session.compacted` event races the info log.
+  inFlightAttempts.set(sessionID, attempt)
+  await client.app.log({
+    body: {
+      service: "session-compaction",
+      level: "info",
+      message: "compaction triggered",
+      extra: { sessionID, trigger, reason },
+    },
+  })
+  return { attempt, succeeded: true, error: null }
+}
+
+/**
+ * Atomically claim the in-flight `CompactionAttempt` for a
+ * session, if any. Returns the attempt and removes it from the
+ * Map in a single call so only one consumer can succeed per
+ * attempt; subsequent calls for the same sessionID return `null`
+ * until a new `invokeCompaction` succeeds.
+ *
+ * Called by task 3.6's `session.compacted` handler: presence of
+ * an attempt means the plugin initiated the compaction
+ * (attribute to `attempt.trigger`); absence means opencode-native
+ * (attribute to `"external"`).
+ */
+export function consumeInFlightAttempt(
+  sessionID: string,
+): CompactionAttempt | null {
+  const attempt = inFlightAttempts.get(sessionID)
+  if (!attempt) return null
+  inFlightAttempts.delete(sessionID)
+  return attempt
+}
+
+/**
+ * Read-only accessor for the per-session last-error timestamp.
+ * Returns `null` if the session has never had a recorded
+ * compaction failure. Exposed for the manual-compaction handler
+ * (task 3.3) and any future suppression-log path that wants to
+ * attribute or rate-limit on error history.
+ */
+export function getLastErrorAt(sessionID: string): number | null {
+  const value = lastErrorAt.get(sessionID)
+  return value === undefined ? null : value
+}
+
 export const SessionCompactionPlugin: Plugin = async (ctx) => ({})

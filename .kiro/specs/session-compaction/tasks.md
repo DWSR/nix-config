@@ -177,7 +177,7 @@ not blocking spec completion)**:
   - _Requirements: 5.6, 7.2, 7.3, 7.4_
   - _Boundary: SessionCompactionPlugin (internal seam)_
 
-- [ ] 2.4 CompactionInvoker
+- [x] 2.4 CompactionInvoker
   - Wraps `client.session.summarize({ path: { id: sessionID },
     body: {} })` with try/catch
   - On success: register a `CompactionAttempt` in module-scoped
