@@ -235,7 +235,7 @@ not blocking spec completion)**:
 
 - [ ] 3. Integration: event handlers, slash command, augmentation hook
 
-- [ ] 3.1 session.created handler — initialize state, subagent gating
+- [x] 3.1 session.created handler — initialize state, subagent gating
   - Register the named hook `'session.created'` on the plugin's
     return object
   - On each event, call `client.session.get({ path: { id: input.info.id } })`
@@ -567,3 +567,7 @@ not blocking spec completion)**:
   `messageTokens.size` rather than tracked separately, matching
   R2.10's "LLM turns" semantic and avoiding the first-sight
   double-count bug on repeat UserMessage `message.updated` events.
+- **Task 3.1 (resolved)** — R5.6's "benign degradation" path needed
+  warn-level logging, not error-level. Added a `logWarn` wrapper
+  alongside `logError`. R5.6's subagent-observability fallback emits
+  warn; SDK failures (R7.5) still emit error via `logError`.

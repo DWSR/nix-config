@@ -1176,4 +1176,331 @@ export async function logError(
   }
 }
 
-export const SessionCompactionPlugin: Plugin = async (ctx) => ({})
+/**
+ * Emit a handler-scope benign degradation (design §Error Handling,
+ * R5.6). Same shape as `logError` but at `level: "warn"`, for
+ * paths where the plugin gracefully continues despite a broken
+ * dependency — e.g. the subagent observability path being
+ * unavailable while `watchSubagents` is enabled. The `context`
+ * field names the code site so the operator can attribute the
+ * warning without parsing the message text.
+ */
+export async function logWarn(
+  client: PluginClient,
+  sessionID: string,
+  payload: { readonly message: string; readonly context: string },
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "warn",
+        message: payload.message,
+        extra: { sessionID, context: payload.context },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+// ============================================================
+// Plugin bootstrap: config loader, ignore set, session.created
+// handler (task 3.1)
+// ============================================================
+//
+// The first event-handler wiring on the plugin's exported
+// function. Earlier seams (SessionTokenTracker, ThresholdEvaluator,
+// CompactionInvoker, CavememContextSource, SessionCompactionLogger,
+// PluginSelfCheck) were declared as pure modules with no runtime
+// connection to opencode's event bus. This section closes the gap
+// for `session.created`:
+//
+//   1. `loadConfigFromEnv()` parses the seven SESSION_COMPACTION_*
+//      env vars the HM module exports (task 1.3) into a typed
+//      `ThresholdConfig`. The trichotomy parser
+//      (`parseSubagentAllowlist`) honors the same sentinel scheme
+//      documented in session-compaction.nix lines 128-137:
+//        - unset / empty   → match-any
+//        - "__MATCH_NONE__" → match-none
+//        - "a,b,c"          → match-listed
+//      Conflating any two of those would silently misconfigure the
+//      watcher (R5.5).
+//
+//   2. Module-scoped state:
+//        - `pluginConfig` — lazy-loaded ThresholdConfig snapshot,
+//          cached for the plugin process lifetime. `getOrLoadConfig`
+//          is the only reader/writer.
+//        - `ignoredSessions` — Set of sessionIDs that should be
+//          skipped by every other handler (tasks 3.2, 3.6 consult
+//          via `isSessionIgnored`). Populated by the gating logic
+//          below: non-watched subagents, allowlist misses.
+//        - `subagentObservabilityWarned` — R5.6 one-time warn flag.
+//          Flips true after the first failed `client.session.get`
+//          while `watchSubagents` is enabled, so the operator sees
+//          exactly one error entry per plugin lifetime instead of
+//          one per subagent.
+//
+//   3. `session.created` handler — the runtime entry point:
+//        a. Run the self-check; short-circuit if it has failed
+//           (R7.4).
+//        b. Lazy-load the config snapshot (idempotent).
+//        c. Read `parentID` and `agent` from `client.session.get`.
+//           Read failure is graceful: state is still initialized
+//           with null parent/agent so later handlers don't NPE,
+//           and the warn-once R5.6 path fires when applicable.
+//        d. Initialize `SessionState` via the task-2.1 seam.
+//        e. Apply subagent gating: subagents (parentID !== null)
+//           are added to `ignoredSessions` when watchSubagents is
+//           off, or when the allowlist trichotomy excludes them.
+//        f. Emit the R6.5 session-start log carrying the active
+//           config snapshot so the operator can later audit which
+//           threshold values were live for any historical session.
+
+const SUBAGENT_ALLOWLIST_MATCH_NONE_SENTINEL = "__MATCH_NONE__"
+
+/**
+ * Parse the `SESSION_COMPACTION_SUBAGENT_ALLOWLIST` env var into
+ * the discriminated-union shape `ThresholdConfig.subagentAllowlist`
+ * declares. Trichotomy contract (mirrors session-compaction.nix
+ * lines 128-137):
+ *   - undefined OR empty string → `{ kind: "match-any" }`
+ *   - exactly `"__MATCH_NONE__"` → `{ kind: "match-none" }`
+ *   - otherwise → split on ",", trim each element, drop empties,
+ *     return `{ kind: "match-listed", agents }`. A list that ends
+ *     up empty after trimming (e.g. raw input was just commas)
+ *     falls back to `match-any` rather than silently degenerating
+ *     into a no-op match-none.
+ */
+function parseSubagentAllowlist(
+  raw: string | undefined,
+): SubagentAllowlist {
+  if (raw === undefined || raw.length === 0) {
+    return { kind: "match-any" }
+  }
+  if (raw === SUBAGENT_ALLOWLIST_MATCH_NONE_SENTINEL) {
+    return { kind: "match-none" }
+  }
+  const agents = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  if (agents.length === 0) {
+    return { kind: "match-any" }
+  }
+  return { kind: "match-listed", agents }
+}
+
+/**
+ * Parse a non-negative integer from an env var. Returns `fallback`
+ * when the value is missing, empty, non-numeric, or negative.
+ * Centralized so every numeric env var follows the same parsing
+ * contract.
+ */
+function parseNonNegativeIntEnv(
+  raw: string | undefined,
+  fallback: number,
+): number {
+  if (raw === undefined || raw.length === 0) return fallback
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n) || n < 0) return fallback
+  return n
+}
+
+/**
+ * Parse the HM module's boolean env-var convention: `"1"` is true,
+ * everything else (including `"0"`, unset, empty, and any other
+ * value) is false. Matches `${if cfg.X then "1" else "0"}` exactly.
+ */
+function parseBoolEnv(raw: string | undefined): boolean {
+  return raw === "1"
+}
+
+/**
+ * Read the seven SESSION_COMPACTION_* env vars the HM module
+ * exports (task 1.3) into a `ThresholdConfig`. Token and wall-time
+ * threshold axes are normalized so `0` → `null` per R2.8 (the
+ * canonical "disabled" form in the type signature; the evaluator
+ * already treats both as disabled but the type contract prefers
+ * `null`).
+ *
+ * Called exactly once per plugin process via `getOrLoadConfig`;
+ * lazy on the first event so test harnesses (task 4.x) that set
+ * env vars after `require()` still see the right values.
+ */
+function loadConfigFromEnv(): ThresholdConfig {
+  const tokens = parseNonNegativeIntEnv(
+    process.env.SESSION_COMPACTION_THRESHOLD_TOKENS,
+    0,
+  )
+  const wallHours = parseNonNegativeIntEnv(
+    process.env.SESSION_COMPACTION_THRESHOLD_WALL_HOURS,
+    0,
+  )
+  return {
+    thresholdTokens: tokens > 0 ? tokens : null,
+    thresholdWallTimeHours: wallHours > 0 ? wallHours : null,
+    cooldownMinutes: parseNonNegativeIntEnv(
+      process.env.SESSION_COMPACTION_COOLDOWN_MINUTES,
+      0,
+    ),
+    augmentationEnabled: parseBoolEnv(
+      process.env.SESSION_COMPACTION_AUGMENTATION_ENABLED,
+    ),
+    watchSubagents: parseBoolEnv(
+      process.env.SESSION_COMPACTION_WATCH_SUBAGENTS,
+    ),
+    subagentAllowlist: parseSubagentAllowlist(
+      process.env.SESSION_COMPACTION_SUBAGENT_ALLOWLIST,
+    ),
+    cavememContextTimeoutMillis: resolveCavememTimeoutMillis(),
+  }
+}
+
+// Module-scoped, lazy-loaded config snapshot. `null` until the
+// first event triggers `getOrLoadConfig`. Mutable (so `let`); the
+// only writer is `getOrLoadConfig`.
+let pluginConfig: ThresholdConfig | null = null
+
+/**
+ * Idempotent config accessor. First call invokes
+ * `loadConfigFromEnv()` and caches the result; subsequent calls
+ * return the cached snapshot. The plugin's effective configuration
+ * is therefore frozen at the first received event and stable for
+ * the rest of the process lifetime — a deliberate choice so the
+ * config snapshot logged in `logSessionStart` (R6.5) matches what
+ * the rest of the plugin's handlers actually use.
+ */
+function getOrLoadConfig(): ThresholdConfig {
+  if (pluginConfig === null) {
+    pluginConfig = loadConfigFromEnv()
+  }
+  return pluginConfig
+}
+
+// Module-scoped set of sessionIDs that subsequent handlers
+// (tasks 3.2 message.updated, 3.6 session.compacted) must skip.
+// Populated by the gating logic in the `session.created` handler:
+// non-watched subagents (R5.2), or subagents excluded by the
+// allowlist trichotomy (R5.5).
+const ignoredSessions: Set<string> = new Set()
+
+/**
+ * Read-only predicate over the ignore set. True for sessions that
+ * the `session.created` handler classified as out-of-scope. Tasks
+ * 3.2 and 3.6 consult this at handler entry to short-circuit.
+ * Exported (not just module-scoped) because those handlers live
+ * in this same file but are exercised by integration tests
+ * (task 5.4) that import the predicate directly.
+ */
+export function isSessionIgnored(sessionID: string): boolean {
+  return ignoredSessions.has(sessionID)
+}
+
+// R5.6 warn-once flag. Set on the first `client.session.get`
+// failure observed while `watchSubagents` is enabled; never reset.
+// Module-scoped so the warn fires exactly once per plugin process
+// regardless of how many subagent sessions hit the same gap.
+let subagentObservabilityWarned: boolean = false
+
+export const SessionCompactionPlugin: Plugin = async (ctx) => {
+  // Bridge opencode's runtime client type to our minimal
+  // PluginClient interface. The double cast through `unknown`
+  // avoids `any` while expressing that the runtime shape and our
+  // local interface are structurally compatible but nominally
+  // unrelated — opencode does not re-export its SDK Client type
+  // from `@opencode-ai/plugin`.
+  const client = ctx.client as unknown as PluginClient
+  return {
+    "session.created": async (input: { info: { id: string } }) => {
+      // R7.4 short-circuit: every handler runs the self-check on
+      // entry. After the first event (any kind), subsequent calls
+      // return the cached result instantly.
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      // Lazy-load the operator's config snapshot. Idempotent
+      // across the plugin process lifetime; subsequent handlers
+      // see the same instance.
+      const config = getOrLoadConfig()
+
+      // Read parentID and agent name from opencode. Failure is
+      // non-fatal: we still initialize the session with null
+      // values so later handlers do not NPE, and we emit a single
+      // R5.6 warn-once entry if the observability path is broken
+      // but `watchSubagents` was requested.
+      let parentID: string | null = null
+      let agentName: string | null = null
+      try {
+        const result = await client.session.get({
+          path: { id: input.info.id },
+        })
+        const session = result as {
+          readonly parentID?: string | null
+          readonly agent?: string | null
+        }
+        parentID = session.parentID ?? null
+        agentName = session.agent ?? null
+      } catch {
+        if (config.watchSubagents && !subagentObservabilityWarned) {
+          subagentObservabilityWarned = true
+          // R5.6: benign degradation — main-thread coverage
+          // continues, so this is warn-level, not error-level.
+          await logWarn(client, input.info.id, {
+            message:
+              "subagent observability check failed; " +
+              "main-thread coverage continues",
+            context: "session.created",
+          })
+        }
+      }
+
+      // Initialize state via the task-2.1 seam. Idempotent: a
+      // repeat session.created event for the same sessionID
+      // leaves any existing in-flight aggregates alone.
+      initializeSession(input.info.id, parentID, agentName, Date.now())
+
+      // Subagent gating (R5.1, R5.2, R5.3, R5.5). A null parentID
+      // means main-thread session — never ignored. A non-null
+      // parentID means subagent: gate on the operator's
+      // watchSubagents toggle and, when enabled, the allowlist
+      // trichotomy.
+      const isSubagent = parentID !== null
+      if (isSubagent) {
+        if (!config.watchSubagents) {
+          // R5.2: subagent watch off → ignore every subagent.
+          ignoredSessions.add(input.info.id)
+        } else {
+          // R5.5: allowlist gates which subagents we track.
+          const allow = config.subagentAllowlist
+          if (allow.kind === "match-none") {
+            ignoredSessions.add(input.info.id)
+          } else if (allow.kind === "match-listed") {
+            // Subagent must declare an agent name AND it must
+            // be on the list. A subagent with no agent name
+            // (opencode runtime variant) cannot be allowlisted
+            // by definition, so it is ignored.
+            if (
+              agentName === null ||
+              !allow.agents.includes(agentName)
+            ) {
+              ignoredSessions.add(input.info.id)
+            }
+          }
+          // allow.kind === "match-any" → never added to the set.
+        }
+      }
+
+      // R6.5: emit the session-start record carrying the active
+      // config snapshot so historical sessions can be audited
+      // against the configuration that was live at startup.
+      await logSessionStart(
+        client,
+        input.info.id,
+        parentID,
+        agentName,
+        config,
+      )
+    },
+  }
+}
