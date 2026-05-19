@@ -14,6 +14,7 @@
 // empty and the seam is unreachable from opencode's runtime.
 
 import type { Plugin } from "@opencode-ai/plugin"
+import { spawn } from "node:child_process"
 
 // Minimal duck-typed shape for opencode's Message payload, mirroring
 // the subset this seam reads from `types.gen.ts`. The
@@ -702,6 +703,198 @@ export function consumeInFlightAttempt(
 export function getLastErrorAt(sessionID: string): number | null {
   const value = lastErrorAt.get(sessionID)
   return value === undefined ? null : value
+}
+
+// ============================================================
+// CavememContextSource (task 2.5)
+// ============================================================
+//
+// Read-only spawn of `cavemem search` to fetch context for the
+// augmentation path (task 3.4). The only cavemem subcommand this
+// plugin ever invokes is `search` (R3.4, R8.4); the arg list is
+// hardcoded except for the sessionID and limit, so no operator-
+// controlled string ever determines which cavemem subcommand
+// runs. Every failure path (spawn error, non-zero exit, timeout)
+// returns an empty result; the function never throws (R3.3 —
+// compaction must proceed even if cavemem is unreachable).
+//
+// Stderr is discarded by setting `stdio[2] = "ignore"` so cavemem's
+// own error messages cannot leak into the caller's `app.log`
+// stream. Stdout is capped at 4096 bytes; once the cap is
+// reached, subsequent chunks are dropped and a sentinel marker
+// `…[truncated]` is appended to the returned text.
+
+// CavememContextResult mirrors design §Service Interface byte-
+// for-byte. Empty `text` + empty `source` is the canonical
+// sentinel for "no context retrieved"; `elapsedMillis` is always
+// populated so callers can attribute timing without branching.
+export interface CavememContextResult {
+  readonly text: string
+  readonly source: string
+  readonly elapsedMillis: number
+}
+
+const CAVEMEM_CLI = "cavemem"
+const CAVEMEM_DEFAULT_TIMEOUT_MS = 2000
+const CAVEMEM_STDOUT_CAP_BYTES = 4096
+const CAVEMEM_TRUNCATION_MARKER = "…[truncated]"
+const CAVEMEM_DEFAULT_LIMIT = 10
+
+/**
+ * Resolve the per-call timeout from the HM-module-exported env
+ * var `SESSION_COMPACTION_CAVEMEM_TIMEOUT_MS` (task 1.3), falling
+ * back to `CAVEMEM_DEFAULT_TIMEOUT_MS` (2000ms) when the var is
+ * missing, empty, non-numeric, or non-positive. Tests (task 4.3)
+ * override the env var directly. Returns a strictly positive
+ * integer count of milliseconds.
+ */
+function resolveCavememTimeoutMillis(): number {
+  const raw = process.env.SESSION_COMPACTION_CAVEMEM_TIMEOUT_MS
+  if (typeof raw !== "string" || raw.length === 0) {
+    return CAVEMEM_DEFAULT_TIMEOUT_MS
+  }
+  const parsed = Number.parseInt(raw, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return CAVEMEM_DEFAULT_TIMEOUT_MS
+  }
+  return parsed
+}
+
+/**
+ * Spawn `cavemem search --session <sessionID> --limit <limit>`
+ * and return its stdout, bounded by the configured timeout and a
+ * 4096-byte stdout cap. Read-only by construction: the only
+ * cavemem subcommand this plugin invokes is `search`, and the
+ * arg list is hardcoded except for the caller-supplied sessionID
+ * and limit (R3.4, R8.4).
+ *
+ * Failure semantics (R3.3 — cavemem unreachable/empty must not
+ * block compaction; the function never throws):
+ *
+ *   - Spawn error (ENOENT, EPERM, etc.) → `{ text: "",
+ *     source: "", elapsedMillis: <small, typically <100ms> }`.
+ *   - Subprocess exits non-zero → `{ text: "", source: "",
+ *     elapsedMillis }`.
+ *   - Subprocess exceeds the timeout → SIGTERM the child;
+ *     resolve `{ text: "", source: "", elapsedMillis ≈ timeout }`.
+ *   - Stdout exceeds 4096 bytes → truncate at the cap and
+ *     append `"…[truncated]"`.
+ *   - Subprocess exits zero with empty stdout → `{ text: "",
+ *     source: "cavemem search", elapsedMillis }` (a successful
+ *     call returning no payload is distinguishable from a
+ *     failure by the non-empty `source`).
+ *
+ * The Promise resolves at most once; the `settled` guard handles
+ * the race between the `close` event and the timeout timer.
+ */
+export async function fetchCavememContext(
+  sessionID: string,
+  limit?: number,
+): Promise<CavememContextResult> {
+  const startedAt = Date.now()
+  const timeoutMillis = resolveCavememTimeoutMillis()
+  const effectiveLimit = limit ?? CAVEMEM_DEFAULT_LIMIT
+
+  return new Promise<CavememContextResult>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const chunks: Array<Buffer> = []
+    let collected = 0
+    let truncated = false
+
+    const empty = (): CavememContextResult => ({
+      text: "",
+      source: "",
+      elapsedMillis: Date.now() - startedAt,
+    })
+
+    const finish = (result: CavememContextResult): void => {
+      if (settled) return
+      settled = true
+      if (timer !== undefined) clearTimeout(timer)
+      resolve(result)
+    }
+
+    let child: ReturnType<typeof spawn>
+    try {
+      child = spawn(
+        CAVEMEM_CLI,
+        [
+          "search",
+          "--session",
+          sessionID,
+          "--limit",
+          String(effectiveLimit),
+        ],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      )
+    } catch {
+      // Synchronous spawn failures are rare (most surface as
+      // async 'error' events) but possible (e.g. argv too large).
+      // Resolve empty so callers never observe a thrown
+      // exception — R3.3 demands compaction proceeds regardless.
+      resolve(empty())
+      return
+    }
+
+    timer = setTimeout(() => {
+      // R3.3 timeout bound: kill the subprocess and resolve
+      // empty. The killed child's subsequent 'close' event is
+      // ignored by the `settled` guard inside `finish`.
+      try {
+        child.kill("SIGTERM")
+      } catch {
+        // kill() returns false (does not throw) when the
+        // process is already gone; the catch is defensive for
+        // unexpected runtime variants.
+      }
+      finish(empty())
+    }, timeoutMillis)
+
+    child.on("error", () => {
+      // Async spawn error — most commonly ENOENT when cavemem
+      // is not on PATH. Resolve empty; never throw.
+      finish(empty())
+    })
+
+    if (child.stdout) {
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (truncated) return
+        const remaining = CAVEMEM_STDOUT_CAP_BYTES - collected
+        if (remaining <= 0) {
+          truncated = true
+          return
+        }
+        if (chunk.length <= remaining) {
+          chunks.push(chunk)
+          collected += chunk.length
+        } else {
+          chunks.push(chunk.subarray(0, remaining))
+          collected += remaining
+          truncated = true
+        }
+      })
+      child.stdout.on("error", () => {
+        // Stream errors are non-fatal: the 'close' event still
+        // fires and produces the final result via `finish`.
+      })
+    }
+
+    child.on("close", (code) => {
+      if (code !== 0) {
+        finish(empty())
+        return
+      }
+      const text =
+        Buffer.concat(chunks).toString("utf8") +
+        (truncated ? CAVEMEM_TRUNCATION_MARKER : "")
+      finish({
+        text,
+        source: "cavemem search",
+        elapsedMillis: Date.now() - startedAt,
+      })
+    })
+  })
 }
 
 export const SessionCompactionPlugin: Plugin = async (ctx) => ({})

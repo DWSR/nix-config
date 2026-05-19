@@ -197,7 +197,7 @@ not blocking spec completion)**:
   - _Requirements: 2.9, 7.5_
   - _Boundary: SessionCompactionPlugin (internal seam)_
 
-- [ ] 2.5 CavememContextSource
+- [x] 2.5 CavememContextSource
   - Spawn `cavemem search --session <id> --limit <n>` via Bun `$`
     shell, mirroring the spawn pattern in
     `home-manager/common/opencode-plugins/cavemem.js:46-58`
