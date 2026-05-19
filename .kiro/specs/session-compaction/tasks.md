@@ -274,7 +274,7 @@ not blocking spec completion)**:
     additional calls fire for the same session
   - _Requirements: 2.1, 2.3, 2.5, 2.7, 2.9, 2.10, 6.4_
 
-- [ ] 3.3 command.executed handler — manual /compact dispatch
+- [x] 3.3 command.executed handler — manual /compact dispatch
   - Register `'command.executed'` named hook
   - Filter on `input.name === "compact"`; ignore all other commands
   - If `SessionTokenTracker.turnCount(input.sessionID) === 0`:

@@ -1626,5 +1626,130 @@ export const SessionCompactionPlugin: Plugin = async (ctx) => {
         await logSuppression(client, sessionID, decision.reason)
       }
     },
+    // ============================================================
+    // command.executed handler (task 3.3)
+    // ============================================================
+    //
+    // The manual-compaction entry point. Fires for every opencode
+    // slash command; we filter on `input.name === "compact"` and
+    // ignore everything else. The handler funnels into the SAME
+    // `invokeCompaction` seam (task 2.4) as the automatic-threshold
+    // path so the downstream augmentation chain (task 3.4) and
+    // session.compacted attribution (task 3.6) treat manual and
+    // automatic compactions identically — only the
+    // `CompactionAttempt.trigger` distinguishes them in the logs.
+    //
+    // Ordering of guards is deliberate:
+    //
+    //   1. Command-name filter FIRST. opencode emits
+    //      `command.executed` for every slash command; running the
+    //      self-check or any other plugin logic for unrelated
+    //      commands would generate noise. Returning early on
+    //      `input.name !== "compact"` is the cleanest gate.
+    //   2. Self-check short-circuit (R7.4). Identical to every
+    //      other handler in this plugin.
+    //   3. We deliberately do NOT consult `isSessionIgnored`. The
+    //      ignore set (populated by task 3.1's subagent gating) is
+    //      a policy for AUTOMATIC compaction only — an operator
+    //      who runs `/compact` on a subagent session has made an
+    //      explicit choice that overrides the gating policy.
+    //   4. Zero-turn check (R4.4): if the session has produced
+    //      zero LLM turns, log `zero_turns_manual` so the
+    //      suppression-log path attributes the miss, surface a
+    //      `tui.showToast` to the operator with "Nothing to
+    //      compact.", and return WITHOUT invoking compaction.
+    //   5. Otherwise (R4.2): `invokeCompaction` with
+    //      trigger="manual", reason="user_initiated". On
+    //      `succeeded: false` (R4.5), surface the invoker's error
+    //      message via `tui.showToast` at error variant. Never
+    //      throw — the invoker already self-logs and returns the
+    //      error string in the result.
+    //
+    // Toast emission is best-effort: a thrown `showToast` (e.g.
+    // tui.showToast became unavailable mid-session) is swallowed
+    // so the handler cannot propagate an error to opencode's main
+    // loop (R7.5).
+    "command.executed": async (input: {
+      name: string
+      sessionID: string
+      arguments: string
+      messageID: string
+    }) => {
+      // Command-name filter precedes the self-check so unrelated
+      // commands do not even pay the cost of the cached-result
+      // lookup. opencode emits `command.executed` for every slash
+      // command; we only care about `/compact`.
+      if (input.name !== "compact") return
+
+      // R7.4 short-circuit (after the filter — see above).
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      // R4.4: zero-turn no-op. Manual /compact on a session that
+      // has produced zero LLM turns surfaces a toast and emits a
+      // suppression log entry, but does NOT invoke compaction. The
+      // suppression reason `zero_turns_manual` distinguishes the
+      // manual path from the automatic path's `zero_turns` so the
+      // operator can grep manual-vs-automatic skip causes
+      // separately. `turnCount(sessionID)` returns 0 for unknown
+      // sessions, which is the correct fall-through here (a manual
+      // /compact arriving before session.created is functionally
+      // equivalent to a zero-turn session — defensive).
+      if (turnCount(input.sessionID) === 0) {
+        await logSuppression(
+          client,
+          input.sessionID,
+          "zero_turns_manual",
+        )
+        try {
+          await client.tui.showToast({
+            body: {
+              message: "Nothing to compact.",
+              variant: "info",
+            },
+          })
+        } catch {
+          // Best-effort: toast failures must not propagate
+          // (R7.5). The suppression log above is the durable
+          // observability surface.
+        }
+        return
+      }
+
+      // R4.2 / R4.3: invoke compaction. The SAME seam as the
+      // automatic path (task 3.2), so the augmentation chain
+      // (task 3.4) and session.compacted attribution (task 3.6)
+      // fire identically. `trigger="manual"` and
+      // `reason="user_initiated"` are the canonical manual-path
+      // values per design §Service Interface.
+      const result = await invokeCompaction(
+        client,
+        input.sessionID,
+        "manual",
+        "user_initiated",
+        Date.now(),
+      )
+
+      // R4.5: surface invoker failures to the operator via a
+      // toast. The invoker has already self-logged the error
+      // (logError inside invokeCompaction), so this toast is
+      // purely the user-visible surface — we do not re-emit an
+      // app.log entry. Fallback message covers the (theoretically
+      // impossible) case where `succeeded: false` but `error` is
+      // null; the type allows it so we defend.
+      if (!result.succeeded) {
+        try {
+          await client.tui.showToast({
+            body: {
+              message: result.error ?? "Compaction failed.",
+              variant: "error",
+            },
+          })
+        } catch {
+          // Best-effort: toast failures must not propagate
+          // (R7.5).
+        }
+      }
+    },
   }
 }
