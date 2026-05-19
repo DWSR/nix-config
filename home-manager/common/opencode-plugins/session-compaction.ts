@@ -490,32 +490,16 @@ export async function runSelfCheckIfNeeded(
 
   if (missing.length === 0) {
     selfCheckResult = "ok"
-    await client.app.log({
-      body: {
-        service: "session-compaction",
-        level: "info",
-        message: "self-check passed",
-      },
-    })
+    await logSelfCheck(client, "ok")
     return "ok"
   }
 
   selfCheckResult = "failed"
-  // Best-effort: if `app.log` is itself in `missing` the call
-  // below will throw, but the flag is already set so the
-  // short-circuit semantics in R7.4 are preserved. We still
-  // attempt the log so the operator sees the gap when the
-  // missing surface is anything *other* than `app.log`.
-  if (typeof client.app?.log === "function") {
-    await client.app.log({
-      body: {
-        service: "session-compaction",
-        level: "error",
-        message: "self-check failed",
-        extra: { missing },
-      },
-    })
-  }
+  // Best-effort: if `app.log` is itself in `missing` the wrapper's
+  // try/catch swallows the resulting TypeError so the flag-set
+  // above governs R7.4 short-circuit semantics regardless of
+  // whether the log entry actually reaches opencode.
+  await logSelfCheck(client, "failed", missing)
   return "failed"
 }
 
@@ -646,13 +630,9 @@ export async function invokeCompaction(
     const errorMessage =
       e instanceof Error ? e.message : String(e)
     lastErrorAt.set(sessionID, now)
-    await client.app.log({
-      body: {
-        service: "session-compaction",
-        level: "error",
-        message: "compaction failed",
-        extra: { sessionID, trigger, reason, errorMessage },
-      },
+    await logError(client, sessionID, {
+      message: errorMessage,
+      context: "invokeCompaction",
     })
     return { attempt, succeeded: false, error: errorMessage }
   }
@@ -661,14 +641,7 @@ export async function invokeCompaction(
   // (task 3.6) can attribute correctly even if the
   // `session.compacted` event races the info log.
   inFlightAttempts.set(sessionID, attempt)
-  await client.app.log({
-    body: {
-      service: "session-compaction",
-      level: "info",
-      message: "compaction triggered",
-      extra: { sessionID, trigger, reason },
-    },
-  })
+  await logTrigger(client, attempt)
   return { attempt, succeeded: true, error: null }
 }
 
@@ -895,6 +868,312 @@ export async function fetchCavememContext(
       })
     })
   })
+}
+
+// ============================================================
+// SessionCompactionLogger (task 2.6)
+// ============================================================
+//
+// Centralized wrapper around `client.app.log` for every emission
+// the plugin produces. Design §Components / SessionCompactionPlugin
+// / Logger Contract fixes the envelope:
+//   - `service: "session-compaction"` literal on every entry
+//     (R6.1, R6.2, R6.4, R6.5 — grepability in the operator's
+//     log sink).
+//   - `level: "debug" | "info" | "warn" | "error"`.
+//   - `extra` carries structured fields (sessionID, trigger,
+//     reason, etc.); free-form prose stays in `message`.
+//
+// Every wrapper:
+//   - Is `async` and returns `Promise<void>`. Awaiting keeps the
+//     emission ordering deterministic relative to surrounding
+//     state mutations (e.g. `inFlightAttempts.set` before
+//     `logTrigger` in CompactionInvoker).
+//   - Swallows `app.log` failures with a try/catch that never
+//     re-throws. Logging is best-effort observability; it must
+//     never block opencode's event loop or propagate an error to
+//     a calling handler (R7.4 / R7.5 — a self-disabled or
+//     SDK-broken plugin must still hand control back to opencode
+//     cleanly).
+//   - Performs zero state mutation, zero Map reads, zero side
+//     effects beyond the single `client.app.log` call. The
+//     surrounding handlers own state; loggers only emit.
+//
+// The eight methods cover every emission shape declared in design
+// §Event Contract:
+//   logSelfCheck       — startup self-check (R7.2, R7.3)
+//   logSessionStart    — session.created init (R6.5)
+//   logSessionIdle     — session.idle summary (R6.5)
+//   logTrigger         — compaction triggered (R6.1)
+//   logSuppression     — automatic compaction suppressed (R6.4)
+//   logAugmentation    — cavemem context pushed (R6.2)
+//   logCompacted       — session.compacted observation (R6.1)
+//   logError           — handler-scope failure (R7.5)
+
+/**
+ * Emit the startup self-check outcome. Called by
+ * `runSelfCheckIfNeeded` on the first event of any kind.
+ *
+ * `"ok"` path → info-level `"self-check passed"` with no extras.
+ * `"failed"` path → error-level `"self-check failed"` carrying
+ * the list of missing SDK surfaces under `extra.missing` so the
+ * operator sees every gap in one entry (no per-gap log spam).
+ *
+ * When `result === "failed"` and `missing` is omitted, the field
+ * is included as an empty array so the log shape stays uniform
+ * across failure variants.
+ */
+export async function logSelfCheck(
+  client: PluginClient,
+  result: "ok" | "failed",
+  missing?: ReadonlyArray<string>,
+): Promise<void> {
+  try {
+    if (result === "ok") {
+      await client.app.log({
+        body: {
+          service: "session-compaction",
+          level: "info",
+          message: "self-check passed",
+        },
+      })
+      return
+    }
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "error",
+        message: "self-check failed",
+        extra: { missing: missing ?? [] },
+      },
+    })
+  } catch {
+    // Swallow: `app.log` itself may be the missing surface on
+    // the failure path. The module-scoped `selfCheckResult` flag
+    // is set independently so handlers short-circuit per R7.4
+    // even when no log entry reaches opencode.
+  }
+}
+
+/**
+ * Emit the per-session startup record (R6.5). Called by task 3.1's
+ * `session.created` handler immediately after `initializeSession`.
+ * The full `ThresholdConfig` snapshot is included so the operator
+ * can later confirm which threshold values were active for any
+ * historical session.
+ */
+export async function logSessionStart(
+  client: PluginClient,
+  sessionID: string,
+  parentID: string | null,
+  agentName: string | null,
+  config: ThresholdConfig,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "session started",
+        extra: {
+          sessionID,
+          parentID,
+          agentName,
+          thresholdTokens: config.thresholdTokens,
+          thresholdWallTimeHours: config.thresholdWallTimeHours,
+          cooldownMinutes: config.cooldownMinutes,
+          augmentationEnabled: config.augmentationEnabled,
+          watchSubagents: config.watchSubagents,
+          subagentAllowlist: config.subagentAllowlist,
+          cavememContextTimeoutMillis:
+            config.cavememContextTimeoutMillis,
+        },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract: logging is never load-bearing.
+  }
+}
+
+/**
+ * Emit the session-idle summary (R6.5). Called by task 3.5's
+ * `session.idle` handler. Carries the per-session aggregates so
+ * the operator can correlate idle-time totals with cost-diagnostic
+ * data without re-deriving them from raw messages.
+ */
+export async function logSessionIdle(
+  client: PluginClient,
+  sessionID: string,
+  summary: {
+    readonly turnCount: number
+    readonly totalInputTokens: number
+    readonly wallTimeMillis: number
+    readonly compactionEvents?: number
+  },
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "session idle",
+        extra: {
+          sessionID,
+          turnCount: summary.turnCount,
+          totalInputTokens: summary.totalInputTokens,
+          wallTimeMillis: summary.wallTimeMillis,
+          compactionEvents: summary.compactionEvents ?? 0,
+        },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+/**
+ * Emit "compaction triggered" (R6.1). Called by CompactionInvoker
+ * on the success path immediately after registering the attempt
+ * in `inFlightAttempts`. Carries the full `CompactionAttempt`
+ * fields so the operator can attribute the event to its origin
+ * (`automatic` | `manual` | `external`).
+ */
+export async function logTrigger(
+  client: PluginClient,
+  attempt: CompactionAttempt,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "compaction triggered",
+        extra: {
+          sessionID: attempt.sessionID,
+          trigger: attempt.trigger,
+          reason: attempt.reason,
+          timestamp: attempt.timestamp,
+        },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+/**
+ * Emit "compaction suppressed" (R6.4). Called by task 3.2's
+ * threshold-trip path when `evaluateThreshold` returns
+ * `shouldCompact: false` for a session that has produced LLM
+ * turns. The `reason` string is the evaluator's own reason
+ * (e.g. `"in_cooldown:120s_remaining"`, `"tokens_disabled"`).
+ */
+export async function logSuppression(
+  client: PluginClient,
+  sessionID: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "compaction suppressed",
+        extra: { sessionID, reason },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+/**
+ * Emit "augmentation pushed" (R6.2). Called by task 3.4's
+ * `experimental.session.compacting` handler after pushing
+ * cavemem context onto `output.context`. The `source` field
+ * names the augmenting context's origin (e.g. `"cavemem search"`)
+ * so the operator can later determine what was injected.
+ */
+export async function logAugmentation(
+  client: PluginClient,
+  sessionID: string,
+  source: string,
+  lengthChars: number,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "augmentation pushed",
+        extra: {
+          sessionID,
+          augmentationSource: source,
+          augmentationLengthChars: lengthChars,
+        },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+/**
+ * Emit "session compacted" (R6.1). Called by task 3.6's
+ * `session.compacted` handler — this is the post-compaction
+ * observation that records the trigger attribution. The
+ * `trigger` parameter is the result of inspecting
+ * `consumeInFlightAttempt(sessionID)`: an in-flight attempt
+ * means the plugin initiated the compaction (use the attempt's
+ * trigger); no attempt means opencode-native (use `"external"`).
+ */
+export async function logCompacted(
+  client: PluginClient,
+  sessionID: string,
+  trigger: CompactionTrigger,
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "info",
+        message: "session compacted",
+        extra: { sessionID, trigger },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
+}
+
+/**
+ * Emit a handler-scope failure (R7.5). Called by any handler that
+ * catches an error it does not propagate. `err.context` names the
+ * code site (e.g. `"invokeCompaction"`, `"sessionCreatedHandler"`)
+ * so the operator can attribute failures without re-deriving
+ * cause from the message text.
+ */
+export async function logError(
+  client: PluginClient,
+  sessionID: string,
+  err: { readonly message: string; readonly context: string },
+): Promise<void> {
+  try {
+    await client.app.log({
+      body: {
+        service: "session-compaction",
+        level: "error",
+        message: "session-compaction error",
+        extra: {
+          sessionID,
+          errorMessage: err.message,
+          context: err.context,
+        },
+      },
+    })
+  } catch {
+    // Swallow per Logger Contract.
+  }
 }
 
 export const SessionCompactionPlugin: Plugin = async (ctx) => ({})

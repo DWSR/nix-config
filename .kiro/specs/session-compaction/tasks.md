@@ -215,7 +215,7 @@ not blocking spec completion)**:
   - _Requirements: 3.3, 3.4, 8.4_
   - _Boundary: SessionCompactionPlugin (internal seam)_
 
-- [ ] 2.6 SessionCompactionLogger
+- [x] 2.6 SessionCompactionLogger
   - Wraps `client.app.log({ body: { service: "session-compaction",
     level, message, extra } })` per design §Logger Contract
   - Convenience methods covering every emission shape declared in
