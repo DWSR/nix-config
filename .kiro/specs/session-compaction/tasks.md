@@ -54,7 +54,7 @@ not blocking spec completion)**:
     task 1.4 lands
   - _Requirements: 4.1_
 
-- [ ] 1.3 Create HM module with options and peer assertion
+- [x] 1.3 Create HM module with options and peer assertion
   - Create `home-manager/common/session-compaction.nix` mirroring
     `home-manager/common/opencode-cost-diagnosis.nix:1-141` structure
   - Expose `programs.session-compaction` option attrset with all
