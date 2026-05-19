@@ -369,7 +369,7 @@ not blocking spec completion)**:
   - _Requirements: 2.2, 2.3, 2.4, 2.5, 2.7, 2.8, 2.10_
   - _Boundary: tests/session-compaction/threshold-evaluator.test.ts_
 
-- [ ] 4.2 (P) SessionTokenTracker unit tests
+- [x] 4.2 (P) SessionTokenTracker unit tests
   - Create `tests/session-compaction/session-token-tracker.test.ts`
     covering design §Testing Strategy / Unit Tests #5: dedupe by
     messageID; aggregation across multiple messages; wall-time
