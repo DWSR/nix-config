@@ -1751,5 +1751,121 @@ export const SessionCompactionPlugin: Plugin = async (ctx) => {
         }
       }
     },
+    // ============================================================
+    // experimental.session.compacting handler (task 3.4)
+    // ============================================================
+    //
+    // Pre-compaction augmentation hook. opencode fires this event
+    // immediately before generating its native session summary; the
+    // handler may push additional context onto `output.context`
+    // which opencode then folds into the inputs of its summary
+    // generation. The handler MUST NOT set `output.prompt` (R3.5 —
+    // augment, never replace) and MUST NOT throw (compaction must
+    // proceed even if augmentation fails — R3.3).
+    //
+    // Order of guards is deliberate:
+    //
+    //   1. Self-check short-circuit (R7.4). If the startup probe
+    //      classified the plugin as disabled, do nothing. opencode's
+    //      native summarization proceeds unaugmented.
+    //   2. Augmentation-disabled gate (R3.6). If the operator
+    //      disabled augmentation via the install module option,
+    //      emit a `logSuppression` with reason
+    //      `"augmentation_disabled"` and return WITHOUT invoking
+    //      cavemem. Integration test 5.3 asserts zero cavemem
+    //      subprocess invocations on this path.
+    //   3. Cavemem query via CavememContextSource (task 2.5). The
+    //      `fetchCavememContext` helper is contractually never-throws
+    //      (every failure path resolves an empty result), but we
+    //      wrap in try/catch defensively so a future refactor that
+    //      accidentally lets it throw cannot propagate an exception
+    //      into opencode's compaction loop. A caught exception
+    //      records an `app.log` error entry and returns without
+    //      modifying `output`.
+    //   4. Empty-result gate (R3.3). Cavemem returns
+    //      `result.text === ""` for spawn failure, non-zero exit,
+    //      timeout, AND for a successful call with no payload. All
+    //      four cases must let compaction proceed unaugmented; we
+    //      emit a `logSuppression` with reason `"augmentation_empty"`
+    //      for observability and return without touching `output`.
+    //   5. Non-empty result (R3.2, R3.5): `output.context.push(text)`
+    //      and emit `logAugmentation` (R6.2) carrying the source
+    //      attribution and pushed length. `output.prompt` is NEVER
+    //      assigned anywhere in this handler.
+    "experimental.session.compacting": async (
+      input: { sessionID: string },
+      output: { context: string[]; prompt?: string },
+    ) => {
+      // R7.4 short-circuit. opencode's native summary still
+      // proceeds — we simply add nothing to it.
+      await runSelfCheckIfNeeded(client)
+      if (getSelfCheckResult() === "failed") return
+
+      const config = getOrLoadConfig()
+
+      // R3.6: augmentation explicitly disabled. Emit a suppression
+      // log so the operator can grep for skipped augmentations,
+      // then return WITHOUT invoking cavemem. The cavemem
+      // subprocess is never spawned on this path (integration
+      // test 5.3 asserts zero invocations).
+      if (!config.augmentationEnabled) {
+        await logSuppression(
+          client,
+          input.sessionID,
+          "augmentation_disabled",
+        )
+        return
+      }
+
+      // R3.1 / R3.2: query cavemem for prior-session context tied
+      // to `input.sessionID`. `fetchCavememContext` is
+      // contractually never-throws (task 2.5); the try/catch is
+      // belt-and-braces against future refactors. Per R3.3 a
+      // thrown exception is treated the same as an empty result:
+      // record the error, leave `output` untouched, return.
+      let result: CavememContextResult
+      try {
+        result = await fetchCavememContext(input.sessionID)
+      } catch (e: unknown) {
+        const errorMessage =
+          e instanceof Error ? e.message : String(e)
+        await logError(client, input.sessionID, {
+          message: errorMessage,
+          context: "experimental.session.compacting",
+        })
+        return
+      }
+
+      // R3.3: empty result (cavemem unreachable, non-zero exit,
+      // timeout, or successful call with no payload). Let
+      // compaction proceed unaugmented. The suppression log gives
+      // the operator an observability hook without distinguishing
+      // failure modes (CavememContextSource itself collapses the
+      // four cases into a single empty-text sentinel).
+      if (result.text.length === 0) {
+        await logSuppression(
+          client,
+          input.sessionID,
+          "augmentation_empty",
+        )
+        return
+      }
+
+      // R3.5: augment, never replace. Push onto `output.context`;
+      // do NOT assign `output.prompt`. opencode's native
+      // summarization treats `output.context` as additional input
+      // to its summary generation, preserving opencode's own
+      // summary semantics.
+      output.context.push(result.text)
+      // R6.2: record the augmentation event with the source
+      // attribution and pushed length so the operator can audit
+      // what was injected for any historical compaction.
+      await logAugmentation(
+        client,
+        input.sessionID,
+        result.source,
+        result.text.length,
+      )
+    },
   }
 }

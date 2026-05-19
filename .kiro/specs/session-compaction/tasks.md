@@ -292,7 +292,7 @@ not blocking spec completion)**:
     summarize call
   - _Requirements: 4.2, 4.3, 4.4, 4.5_
 
-- [ ] 3.4 experimental.session.compacting handler — augmentation
+- [x] 3.4 experimental.session.compacting handler — augmentation
   - Register `'experimental.session.compacting'` named hook with
     `(input, output) => …` signature
   - Short-circuit if `selfCheckResult === "failed"`
@@ -571,3 +571,11 @@ not blocking spec completion)**:
   warn-level logging, not error-level. Added a `logWarn` wrapper
   alongside `logError`. R5.6's subagent-observability fallback emits
   warn; SDK failures (R7.5) still emit error via `logError`.
+- **Task 3.4 (non-blocking nit deferred)** — augmentation-skipped paths
+  (R3.6 augmentationEnabled=false; R3.3 empty cavemem result) currently
+  reuse `logSuppression` (which emits `message: "compaction suppressed"`).
+  Semantic intent is preserved via `extra.reason` (`augmentation_disabled` /
+  `augmentation_empty`) but the message text is misleading because these
+  paths don't suppress compaction — they skip augmentation while letting
+  opencode's native summary proceed. Future polish: introduce a dedicated
+  `logAugmentationSkipped` wrapper and migrate the two call sites.
