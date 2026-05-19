@@ -354,7 +354,7 @@ not blocking spec completion)**:
 
 - [ ] 4. Validation: unit tests (parallel — separate test files)
 
-- [ ] 4.1 (P) ThresholdEvaluator unit tests
+- [x] 4.1 (P) ThresholdEvaluator unit tests
   - Create `tests/session-compaction/threshold-evaluator.test.ts`
     covering design §Testing Strategy / Unit Tests #1–#4: token
     threshold trip exactly at boundary; wall-time threshold trip;
