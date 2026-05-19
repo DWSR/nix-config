@@ -213,7 +213,9 @@ home-manager/
 ├── common/
 │   ├── session-compaction.nix          # HM module: options, install, assertions
 │   ├── opencode-plugins/
-│   │   └── session-compaction.ts       # Plugin: trigger logic + hook handlers
+│   │   └── session-compaction.ts       # Plugin entry: ONLY exports SessionCompactionPlugin (see §Plugin File Export Constraint)
+│   ├── session-compaction-internal/
+│   │   └── session-compaction-impl.ts  # Internal seams (helpers + handler bodies). Symlinked outside ~/.config/opencode/plugins/ so opencode never scans it. Imported by the entry via relative path.
 │   └── commands/
 │       └── compact.md                  # Slash command body (LLM-readable)
 └── ...
@@ -228,6 +230,7 @@ tests/
     ├── session-token-tracker.test.ts   # Per-session state aggregation
     ├── cavemem-context-source.test.ts  # Subprocess wrapper with timeout
     └── plugin-self-check.test.ts       # Startup API probe
+                                        # All four import from session-compaction-impl.ts (NOT from the plugin entry).
 ```
 
 ### Modified Files
@@ -244,16 +247,32 @@ tests/
 
 ### File Responsibility Notes
 
-- `session-compaction.ts` is a single file containing six internal
-  seams (D.8 in research.md) presented as one plugin export. Each
-  seam is internally testable; tests live under
-  `tests/session-compaction/` and import the seams via named exports.
+- `session-compaction.ts` is the plugin entry. Under the
+  architectural invariant in §Plugin File Export Constraint, this
+  file MUST expose exactly one function-shaped named export
+  (`SessionCompactionPlugin`). It is intentionally thin: it imports
+  the seams from the sibling `session-compaction-impl.ts` module,
+  bridges `ctx.client` to the typed `PluginClient`, and returns the
+  six `Hooks` handlers — each of which simply delegates to a
+  handler body exported from the impl module.
+- `session-compaction-impl.ts` is the **only** place the six
+  internal seams (D.8 in research.md) are defined and exported.
+  Lives in `home-manager/common/session-compaction-internal/` so
+  that when the HM module symlinks it into
+  `~/.config/opencode/session-compaction-internal/`, opencode's
+  plugin scanner (which only walks `~/.config/opencode/plugins/`)
+  never imports it as a plugin. Unit tests under
+  `tests/session-compaction/` import the seams from this module via
+  named exports.
 - `compact.md` is content-only (LLM-readable description of the
   command and what the plugin does). No imperative behavior;
   the plugin handles `command.executed` events.
 - `session-compaction.nix` is the **only** Nix file that imports
-  the plugin source path. The plugin path is `./opencode-plugins/
-  session-compaction.ts` relative to the HM module file.
+  the plugin source paths. It declares two `xdg.configFile` entries
+  — one for the entry under `opencode/plugins/`, one for the impl
+  under `opencode/session-compaction-internal/` — so both files
+  land in the home-manager-files derivation and the entry's
+  relative import resolves correctly at runtime.
 
 ## System Flows
 
@@ -418,11 +437,56 @@ Key flow decisions:
 
 **Contracts**: Service [x] / API [ ] / Event [x] / Batch [ ] / State [x]
 
+##### Plugin File Export Constraint (R7.6)
+
+**Architectural invariant** — surfaced 2026-05-19 by the task-3.7
+bug. Any file dropped into `~/.config/opencode/plugins/` is treated
+as a plugin module by opencode's user-plugin loader. The loader
+walks every named export of that module and invokes each
+function-shaped value as a candidate `Plugin` entry point
+(signature `(input: PluginInput, options?: PluginOptions) =>
+Promise<Hooks>`). When a non-Plugin helper happens to be exported,
+the loader calls it with the `PluginInput` as its first positional
+argument; if the helper's body dereferences any of the missing
+trailing parameters, it throws `undefined is not an object …`,
+which the loader logs as `failed to load plugin` and which then
+cascades into the wider config-hook / provider-list failure path
+that renders opencode unusable for the session.
+
+**Therefore**: the plugin file (`session-compaction.ts`) MUST
+expose **exactly one** function-shaped named export — the
+`SessionCompactionPlugin` entry point. All internal seams
+(`SessionTokenTracker`, `ThresholdEvaluator`, `CompactionInvoker`,
+`CavememContextSource`, `SessionCompactionLogger`,
+`PluginSelfCheck`, plus the ignore-set / config-loader helpers
+listed in §Service Interface below) must either be **non-exported**
+(file-local `const` / `function`) **or live in a sibling file
+located outside the `opencode/plugins/` scan path**. The two-file
+split is the canonical layout used by this spec because the unit
+tests under `tests/session-compaction/**` need to import the seams
+directly; deploying them under
+`~/.config/opencode/session-compaction-internal/` (or any other
+non-`plugins` subdirectory) keeps them out of the loader's reach
+while keeping them importable by the plugin entry via a relative
+path that resolves through the home-manager-files Nix store
+layout.
+
+A namespace-export workaround (a single non-function export
+grouping every helper, e.g. `export const __internals = { … }`)
+is plausible but depends on the empirically-unverified assumption
+that opencode's loader skips non-function exports. The two-file
+split sidesteps that assumption entirely and is the recommended
+layout.
+
 ##### Service Interface
 
 ```typescript
 import type { Plugin } from "@opencode-ai/plugin"
 
+// Plugin file: ONLY exports SessionCompactionPlugin (see
+// "Plugin File Export Constraint" above for the architectural
+// invariant). All seams referenced below live in a sibling impl
+// module that opencode never scans.
 export const SessionCompactionPlugin: Plugin = async (ctx) => {
   return {
     "session.created": async (input) => void,

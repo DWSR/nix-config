@@ -352,6 +352,82 @@ not blocking spec completion)**:
     `"external"`
   - _Requirements: 6.1, 6.2_
 
+- [ ] 3.7 BUG FIX: collapse plugin file to a single function export
+  - **Problem (observed 2026-05-19, host log
+    `~/.local/share/opencode/log/2026-05-19T22{4445,4451,4640,4742}.log`):**
+    after task 3.6 landed, the deployed plugin fails to load with
+    `error=undefined is not an object (evaluating
+    'config.cooldownMinutes') failed to load plugin`. The error
+    cascades into `plugin config hook failed` and
+    `2 of 5 requests failed: config.providers / provider.list`,
+    which renders opencode unusable until home-manager is rolled
+    back to a previous generation. The host has been running on
+    the task-1.1 stub generation since 22:48:50.
+  - **Root cause** (reproduced 2026-05-19 with node iterating the
+    module's named exports against a synthetic `PluginInput`):
+    opencode's user-plugin loader walks every named export of
+    `~/.config/opencode/plugins/*.{ts,js}` and invokes each
+    function-shaped value as a candidate Plugin entry point. The
+    current `session-compaction.ts` exposes 24 function exports
+    (`evaluateThreshold`, `recordMessage`, `invokeCompaction`,
+    `fetchCavememContext`, the eight logger wrappers, etc.); when
+    opencode calls `evaluateThreshold(pluginInput)` the second
+    parameter `config` is `undefined`, and the cooldown branch
+    dereferences `config.cooldownMinutes`, throwing the observed
+    error. cavemem.js is unaffected because it exports a single
+    function (`cavemem`).
+  - **Architectural constraint surfaced**: any file under
+    `~/.config/opencode/plugins/` is treated as a plugin module
+    and MUST expose exactly one function-shaped named export — the
+    `Plugin` entry point. Helpers/seams must either be
+    non-exported (file-local) or live outside the plugin scan
+    path.
+  - **Fix (preferred — two-file architecture)**: split the source
+    into:
+    - `home-manager/common/opencode-plugins/session-compaction.ts`
+      — thin entry. Imports from the impl module; exposes ONLY
+      `export const SessionCompactionPlugin: Plugin = async (ctx)
+      => { … }`.
+    - `home-manager/common/session-compaction-internal/session-compaction-impl.ts`
+      (a sibling directory NOT named `opencode-plugins`) —
+      every seam currently exported from the plugin file
+      (`SessionTokenTracker`, `ThresholdEvaluator`,
+      `CompactionInvoker`, `CavememContextSource`,
+      `SessionCompactionLogger`, `PluginSelfCheck`, the
+      ignore-set helpers, and the handler bodies, if extracted).
+    - Update `session-compaction.nix` to `xdg.configFile`-symlink
+      the impl file to a non-plugins path under
+      `~/.config/opencode/` (e.g.
+      `opencode/session-compaction-internal/impl.ts`). The entry
+      file imports it via a relative path that resolves through
+      the home-manager-files Nix store layout (e.g.
+      `import { … } from "../session-compaction-internal/impl.ts"`).
+    - Update tests under `tests/session-compaction/**` to import
+      from the impl module instead of the plugin entry.
+  - **Fix (alternative — single-file namespace pattern)**: keep
+    one file but drop `export` from every helper and group them
+    in a single non-function namespace export (e.g.
+    `export const __sessionCompactionInternals = { evaluateThreshold,
+    recordMessage, … }`). Tests destructure from the namespace.
+    Requires empirically confirming (under the deployed opencode
+    binary) that the loader skips non-function exports — the
+    cleaner two-file split avoids that dependency on undocumented
+    loader behavior.
+  - Observable: after `darwin-rebuild switch` the
+    `~/.local/share/opencode/log/<latest>.log` shows
+    `service=plugin path=…/session-compaction.ts loading plugin`
+    immediately followed by `service=mcp` lines and NO `failed to
+    load plugin` entry; `app.log` contains
+    `service:"session-compaction", message:"self-check passed"` on
+    first session created; existing unit tests under
+    `tests/session-compaction/**` continue to pass against the new
+    impl-module import path.
+  - _Requirements: 1.2, 1.4, 7.6 (revisit — install-time
+    invariant violated under the original layout)_
+  - _Boundary: home-manager/common/opencode-plugins/session-compaction.ts
+    + new sibling impl module + home-manager/common/session-compaction.nix
+    + tests/session-compaction/**_
+
 - [ ] 4. Validation: unit tests (parallel — separate test files)
 
 - [x] 4.1 (P) ThresholdEvaluator unit tests
@@ -579,3 +655,26 @@ not blocking spec completion)**:
   paths don't suppress compaction — they skip augmentation while letting
   opencode's native summary proceed. Future polish: introduce a dedicated
   `logAugmentationSkipped` wrapper and migrate the two call sites.
+- **Bug surfaced post-3.6 (2026-05-19) — plugin fails to load with
+  multiple function exports** — see task 3.7 above. Symptom in the
+  host log: `service=plugin path=…/session-compaction.ts
+  error=undefined is not an object (evaluating
+  'config.cooldownMinutes') failed to load plugin`, cascading into
+  `plugin config hook failed` and a 2-of-5 server-request failure
+  that renders opencode unusable. Root cause: opencode's user-plugin
+  loader iterates every named export of files under
+  `~/.config/opencode/plugins/` and invokes each function-shaped
+  value with the `PluginInput`. The `session-compaction.ts` file's
+  24 helper exports (`evaluateThreshold`, `recordMessage`, etc.)
+  get called as if they were Plugin entry points; the first throw
+  (`evaluateThreshold(ctx)` → `config.cooldownMinutes` on
+  `undefined`) aborts the load. Reproduced 2026-05-19 by importing
+  the file under node and iterating the named exports — see task
+  3.7's "Root cause" block for the exact trace. Until 3.7 lands,
+  the host is running on the stub-plugin generation (commit
+  `8fb26b0`); the full plugin source is committed but not
+  effectively deployed. New architectural invariant added to
+  design.md §Components / SessionCompactionPlugin / Service
+  Interface: **plugin file under `~/.config/opencode/plugins/`
+  MUST expose exactly one function-shaped named export — the
+  Plugin entry point.**
