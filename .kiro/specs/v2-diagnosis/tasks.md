@@ -322,7 +322,7 @@
 
 ## 9. Final validation: forward-compat sanity and v1 invariant preservation
 
-- [ ] 9.1 Forward-compat structural verification pass
+- [x] 9.1 Forward-compat structural verification pass
   - Write a verification helper (extending `tests/opencode-cost-diagnosis/integration/_helpers.js` or as a standalone script): parse the v1 golden JSON (`fixture-365d-all-v1.json`) AND the v2 output JSON; for each key in v1, assert it is present in v2 with the same type and the same alphabetical position; assert no v1 finding kind code was removed; assert each `cost.X` that was `null` in v1 is now a number in v2 for matched-pricing sessions (R7.AC5); confirm no `generatedAt` key appears in v2 JSON; confirm 0600 file-permission posture on the output files
   - Observable: the verification script prints a labeled PASS/FAIL checklist (`v1-keys-present: PASS|FAIL`, `alphabetical-ordering: PASS|FAIL`, `findings-preserved: PASS|FAIL`, `null-to-value: PASS|FAIL`, `no-generatedAt-in-json: PASS|FAIL`, `file-permission-0600: PASS|FAIL`); all PASS for cutover
   - _Depends: 8.1_
