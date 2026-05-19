@@ -477,7 +477,7 @@ not blocking spec completion)**:
 
 - [ ] 5. Validation: integration tests (parallel — separate test files)
 
-- [ ] 5.1 (P) Automatic-flow end-to-end integration test
+- [x] 5.1 (P) Automatic-flow end-to-end integration test
   - Create `tests/session-compaction/integration/automatic-flow.test.ts`
   - Stub opencode runtime: a synthetic `message.updated` sequence
     drives threshold trip; assert `client.session.summarize` called
