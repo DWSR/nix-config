@@ -390,7 +390,7 @@ not blocking spec completion)**:
   - _Requirements: 3.3, 3.4_
   - _Boundary: tests/session-compaction/cavemem-context-source.test.ts_
 
-- [ ] 4.4 (P) PluginSelfCheck unit tests
+- [x] 4.4 (P) PluginSelfCheck unit tests
   - Create `tests/session-compaction/plugin-self-check.test.ts`
     covering design §Testing Strategy / Unit Tests #8: missing SDK
     method flips `disabled` flag; handlers short-circuit thereafter
