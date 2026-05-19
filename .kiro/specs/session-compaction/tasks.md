@@ -137,7 +137,7 @@ not blocking spec completion)**:
   - _Requirements: 2.1, 8.5_
   - _Boundary: SessionCompactionPlugin (internal seam)_
 
-- [ ] 2.2 ThresholdEvaluator
+- [x] 2.2 ThresholdEvaluator
   - Implement as a pure function: given `SessionState` +
     `ThresholdConfig` + most-recent compaction timestamp from
     `Session.time.compacting`, return `ThresholdDecision = {

@@ -195,4 +195,159 @@ export function resetStartedAt(sessionID: string, now: number): void {
   })
 }
 
+// ============================================================
+// ThresholdEvaluator (task 2.2)
+// ============================================================
+//
+// Pure function: given the per-session aggregates, the operator's
+// ThresholdConfig, and the most-recent compaction timestamp
+// (mirrors `Session.time.compacting`), produce a ThresholdDecision.
+// Wired into `message.updated` by task 3.2; until then this seam
+// is unreachable from opencode's runtime.
+
+// ThresholdConfig mirrors design §Components / SessionCompactionPlugin
+// / Service Interface byte-for-byte. The Nix install module emits a
+// matching env-var contract that task 3.x parses into this shape.
+export interface ThresholdConfig {
+  readonly thresholdTokens: number | null
+  readonly thresholdWallTimeHours: number | null
+  readonly cooldownMinutes: number
+  readonly augmentationEnabled: boolean
+  readonly watchSubagents: boolean
+  readonly subagentAllowlist: SubagentAllowlist
+  readonly cavememContextTimeoutMillis: number
+}
+
+// SubagentAllowlist trichotomy preserved across the
+// Nix → env-var → TS boundary. The three kind-tagged variants
+// prevent the watcher from silently degenerating into "match every
+// subagent" when the operator meant "match none". Shape matches
+// design §Service Interface byte-for-byte.
+export type SubagentAllowlist =
+  | { kind: "match-any" }
+  | { kind: "match-none" }
+  | { kind: "match-listed"; agents: ReadonlyArray<string> }
+
+// ThresholdDecision is the evaluator's only output. The reason
+// string follows the convention documented in design §Service
+// Interface so the suppression-log path (task 5.x) can attribute
+// every miss without re-deriving cause.
+export interface ThresholdDecision {
+  readonly shouldCompact: boolean
+  readonly reason: string
+}
+
+/**
+ * Pure threshold evaluator. Decides whether the session should
+ * undergo automatic compaction given current state, operator
+ * configuration, and the most-recent compaction timestamp.
+ *
+ * Caller supplies `now` (ms since epoch); this function never reads
+ * wall-clock time internally so tests (task 4.1) can pin time.
+ *
+ * Precedence (matches design §Service Interface):
+ *   1. Zero turns         → reason "zero_turns" (R2.10).
+ *   2. In cooldown        → reason "in_cooldown:<sec>s_remaining"
+ *                           (R2.6, R2.7).
+ *   3. Token trip         → reason "tokens_exceeded:<total>"
+ *                           (R2.2, R2.3).
+ *   4. Wall-time trip     → reason "wall_time_exceeded:<hours>h"
+ *                           (R2.4, R2.5).
+ *   5. Fall-through       → reason "tokens_disabled" /
+ *                           "wall_time_disabled" / "no_threshold_met"
+ *                           per R2.8 (null/0 → disabled).
+ *
+ * `lastCompactionAt = null` means the session has never been
+ * compacted (read from `Session.time.compacting` by the caller),
+ * so the cooldown window does not apply.
+ */
+export function evaluateThreshold(
+  state: SessionState,
+  config: ThresholdConfig,
+  lastCompactionAt: number | null,
+  now: number,
+): ThresholdDecision {
+  // R2.10: zero-turn no-op precedes every other check. A session
+  // that has produced zero LLM turns is never a compaction
+  // candidate, regardless of wall-time or token configuration.
+  if (state.turnCount === 0) {
+    return { shouldCompact: false, reason: "zero_turns" }
+  }
+
+  // R2.6, R2.7: cooldown short-circuits all trips. A zero or
+  // negative `cooldownMinutes` disables the cooldown gate entirely
+  // (operator opt-out path). `lastCompactionAt === null` means the
+  // session has never been compacted, so there is nothing to
+  // cooldown from.
+  if (lastCompactionAt !== null && config.cooldownMinutes > 0) {
+    const cooldownMillis = config.cooldownMinutes * 60 * 1000
+    const elapsedSinceCompaction = now - lastCompactionAt
+    if (elapsedSinceCompaction < cooldownMillis) {
+      const remainingSeconds = Math.ceil(
+        (cooldownMillis - elapsedSinceCompaction) / 1000,
+      )
+      return {
+        shouldCompact: false,
+        reason: `in_cooldown:${remainingSeconds}s_remaining`,
+      }
+    }
+  }
+
+  // R2.8: `null` or `0` disables a threshold axis. After this point
+  // the booleans gate every read of the underlying threshold value.
+  const tokensThreshold = config.thresholdTokens
+  const tokensEnabled =
+    tokensThreshold !== null && tokensThreshold > 0
+  const wallTimeThreshold = config.thresholdWallTimeHours
+  const wallTimeEnabled =
+    wallTimeThreshold !== null && wallTimeThreshold > 0
+
+  // R2.2, R2.3: token threshold trip. Sum uses the same
+  // `input + cacheRead` formula SessionTokenTracker exposes via
+  // `totalInputTokens(sessionID)`. We inline the sum here because
+  // the evaluator is pure: state is the input, no module-scoped
+  // Map lookup needed (design §Data Models / Logical Data Model).
+  if (tokensEnabled) {
+    let total = 0
+    for (const tokens of state.messageTokens.values()) {
+      total += tokens.input + tokens.cacheRead
+    }
+    if (total > (tokensThreshold as number)) {
+      return {
+        shouldCompact: true,
+        reason: `tokens_exceeded:${total}`,
+      }
+    }
+  }
+
+  // R2.4, R2.5: wall-time trip. Elapsed is measured from the
+  // current `startedAt` anchor, which task 3.6 re-anchors via
+  // `resetStartedAt` on every `session.compacted` event so the
+  // wall-clock threshold measures from the most recent compaction.
+  if (wallTimeEnabled) {
+    const elapsedHours = (now - state.startedAt) / (3600 * 1000)
+    if (elapsedHours > (wallTimeThreshold as number)) {
+      const hours = Math.floor(elapsedHours)
+      return {
+        shouldCompact: true,
+        reason: `wall_time_exceeded:${hours}h`,
+      }
+    }
+  }
+
+  // R2.8: fall-through. Surface the most-specific disabled reason
+  // so the suppression-log path can attribute the miss without
+  // re-deriving cause. When both axes are disabled,
+  // "tokens_disabled" is the canonical reason (both axes treated
+  // interchangeably for the suppression log per design §Service
+  // Interface).
+  if (!tokensEnabled) {
+    return { shouldCompact: false, reason: "tokens_disabled" }
+  }
+  if (!wallTimeEnabled) {
+    return { shouldCompact: false, reason: "wall_time_disabled" }
+  }
+  return { shouldCompact: false, reason: "no_threshold_met" }
+}
+
 export const SessionCompactionPlugin: Plugin = async (ctx) => ({})
