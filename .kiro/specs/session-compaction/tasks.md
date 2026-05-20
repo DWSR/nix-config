@@ -530,7 +530,7 @@ not blocking spec completion)**:
   - _Requirements: 5.2, 5.3, 5.5_
   - _Boundary: tests/session-compaction/integration/subagent-gating.test.ts_
 
-- [ ] 5.5 (P) External-trigger attribution integration test
+- [x] 5.5 (P) External-trigger attribution integration test
   - Create `tests/session-compaction/integration/external-trigger.test.ts`
   - Stub a `session.compacted` event with no preceding
     plugin-initiated `CompactionAttempt` for that sessionID; assert
