@@ -8,7 +8,7 @@ let
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
     opencode-session-id = "{env:OPENCODE_SESSION_ID}";
     Shopify-Usage-Tag = builtins.toJSON [
-      "opencode"
+      "opencode_cli"
       "{env:OPENCODE_SESSION_ID}"
       "rtk:disabled"
     ];
