@@ -1,18 +1,17 @@
 # Spec-Driven Development with cc-sdd
 
 This host installs the cc-sdd Kiro-style SDD toolset globally via Nix
-(see `home-manager/common/cc-sdd.nix`). The 17 `kiro-*` skills below
-are available from any project — you do NOT need to run any bootstrap
-to invoke `/kiro-discovery`, `/kiro-spec-init`, or any of the
-`/kiro-*` slash commands. They are loaded from
-`~/.config/opencode/skills/` automatically.
+(see `home-manager/common/cc-sdd.nix`). The 17 `kiro-*` skills are
+available from any project — no bootstrap required to invoke
+`/kiro-discovery`, `/kiro-spec-init`, or any `/kiro-*` slash command.
+Skills load from `~/.config/opencode/skills/` automatically.
 
 ## When to use SDD
 
-Use the cc-sdd workflow for **non-trivial, multi-step work** where
-explicit, reviewable intent documents pay off. Concretely:
+Use cc-sdd for **non-trivial, multi-step work** where explicit,
+reviewable intent documents pay off:
 
-- Greenfield features whose requirements aren't yet pinned down.
+- Greenfield features with unset requirements.
 - Large refactors / N→N+1 rewrites where a spec anchors acceptable
   behaviour.
 - Cross-team / cross-component changes where contracts matter.
@@ -32,19 +31,19 @@ for a nut. Don't.)
 ## Per-project bootstrap (templates only)
 
 Skill prompts work globally, but they reference templates in
-`<cwd>/.kiro/settings/templates/` when generating spec artifacts. The
-first time you start an SDD feature in a project, run:
+`<cwd>/.kiro/settings/templates/` when generating spec artifacts.
+First time you start an SDD feature in a project, run:
 
 ```
 cc-sdd-init
 ```
 
-(provided by `scripts/cc-sdd-init.nix` and on PATH via the
-`cc-sdd` HM module.) This materialises `.kiro/settings/templates/`,
+(Provided by `scripts/cc-sdd-init.nix`, on PATH via the `cc-sdd` HM
+module.) Materialises `.kiro/settings/templates/`,
 `.kiro/settings/steering/`, and `.kiro/settings/steering-custom/` from
 the Nix-managed cc-sdd template tree. After that, all `/kiro-*` skills
-work end-to-end. You can commit `.kiro/` to the project (recommended
-for shared specs) or `.gitignore` it (for solo / experimental work).
+work end-to-end. Commit `.kiro/` to the project (recommended for
+shared specs) or `.gitignore` it (solo / experimental).
 
 ## Two memory systems coexist
 
@@ -53,14 +52,14 @@ This repo has two distinct "memory" notions; do not confuse them:
 - **Obsidian vault** (above): cross-project, cross-session knowledge —
   decisions, patterns, framework research, debugging notes. Persistent
   across machines via Google Drive sync. Always loaded.
-- **`.kiro/steering/`** (below, cc-sdd's notion): per-project
-  steering documents capturing project-wide conventions
-  (`product.md`, `tech.md`, `structure.md`, plus custom files).
-  Created via `/kiro-steering`. Project-local; commit to the project.
+- **`.kiro/steering/`** (cc-sdd's notion): per-project steering
+  documents capturing project-wide conventions (`product.md`,
+  `tech.md`, `structure.md`, plus custom files). Created via
+  `/kiro-steering`. Project-local; commit to the project.
 
-Both are useful for different scopes. The Obsidian memory rules above
-take precedence — start every session with the vault startup check
-regardless of whether SDD is being used.
+Both useful for different scopes. Obsidian rules above take precedence
+— start every session with the vault startup check regardless of
+whether SDD is being used.
 
 ## Vault references
 
@@ -71,9 +70,33 @@ regardless of whether SDD is being used.
   integration is wired, the architectural choices made, the risk
   register
 
----
+## Skills Structure
+Skills are located in `.opencode/skills/kiro-*/SKILL.md`
+- Each skill is a directory with a `SKILL.md` file
+- Use `/skills` to inspect currently available skills
+- Invoke a skill directly with `/kiro-<skill-name>`
+- **If there is even a 1% chance a skill applies to the current task, invoke it.** Do not skip skills because the task seems simple.
+- `kiro-review` — task-local adversarial review protocol used by reviewer subagents
+- `kiro-debug` — root-cause-first debug protocol used by debugger subagents
+- `kiro-verify-completion` — fresh-evidence gate before success or completion claims
 
-The remainder of this section is the cc-sdd quickstart, vendored
-verbatim from the upstream cc-sdd package via the
-`pkgs.cc-sdd-skills` derivation. It documents the slash-command
-catalogue, the spec lifecycle, and the skill structure.
+## Workflow
+
+- **Discovery (entry point):** `/kiro-discovery "idea"` — determines
+  action path; writes `brief.md` (+ `roadmap.md` for multi-spec).
+- **Phase 1 (Specification):** single → `/kiro-spec-quick {feature}
+  [--auto]`, or step-by-step (`/kiro-spec-init "description"` →
+  `/kiro-spec-requirements {feature}` → optional
+  `/kiro-validate-gap` → `/kiro-spec-design {feature} [-y]` → optional
+  `/kiro-validate-design` → `/kiro-spec-tasks {feature} [-y]`).
+  Multi-spec → `/kiro-spec-batch` (parallel by dependency wave).
+- **Phase 2 (Implementation):** `/kiro-impl {feature} [tasks]`. Without
+  task numbers → autonomous (subagent per task + independent review +
+  final validation). With task numbers → manual (selected tasks in
+  main context, still reviewer-gated).
+- **Validation:** `/kiro-validate-impl {feature}` (standalone re-run).
+- **Progress check:** `/kiro-spec-status {feature}` (anytime).
+
+3-phase approval workflow: Requirements → Design → Tasks →
+Implementation. Human review required each phase; use `-y` only for
+intentional fast-track.

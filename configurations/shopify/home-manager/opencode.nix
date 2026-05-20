@@ -1,5 +1,4 @@
 {
-  pkgs,
   lib,
   config,
   ...
@@ -30,10 +29,21 @@ in
   # concatenated version that adds Shopify-host-specific Graphite guidance.
   # The common module declares programs.opencode.rules, so mkForce is
   # required to replace rather than collide. The rendered file is the
-  # three common chunks (memory + cc-sdd preamble + cc-sdd quickstart)
-  # plus the Shopify-only Graphite addendum, separated by blank lines.
-  # See memories/2026-04-30-graphite-pitfalls.md for the consolidated
-  # pitfalls catalog the Graphite addendum mirrors.
+  # two common chunks (memory + cc-sdd preamble) plus the Shopify-only
+  # Graphite addendum, separated by blank lines. The upstream
+  # cc-sdd quickstart (pkgs.cc-sdd-skills/agents-md) is intentionally
+  # NOT included — the slash-command catalogue is already covered by
+  # the cc-sdd preamble and the per-skill SKILL.md frontmatter that
+  # opencode loads from ~/.config/opencode/skills/. See
+  # memories/2026-05-20-agents-md-compression.md for the rationale.
+  #
+  # The agents-graphite.md addendum is the lean version: decision
+  # matrix, green-path rule, bypass-autonomy rule, pitfall index, and
+  # workflow rules summary. The full Category A/B/C bash recovery
+  # catalogue lives in the graphite-pitfalls skill (./skills/) and
+  # only loads when a gt command has actually failed. See
+  # memories/2026-04-30-graphite-pitfalls.md for the deeper
+  # investigative reference (new failure modes not yet in the skill).
   #
   # The home-manager opencode module's `rules` option is `lines`-typed
   # (null | string), not a path or derivation. Pass the concatenated
@@ -42,10 +52,19 @@ in
     lib.concatStringsSep "\n\n" [
       (builtins.readFile ../../../home-manager/common/agents.md)
       (builtins.readFile ../../../home-manager/common/agents-cc-sdd.md)
-      (builtins.readFile "${pkgs.cc-sdd-skills}/agents-md")
       (builtins.readFile ./agents-graphite.md)
     ]
   );
+
+  # Shopify-only graphite-pitfalls skill — full Category A/B/C bash
+  # recovery catalogue for gt failures. Loads only on an explicit gt
+  # error per the skill's narrow trigger description (see SKILL.md).
+  # Co-installed alongside the cc-sdd kiro-* skills under
+  # ~/.config/opencode/skills/ per the pattern documented in
+  # home-manager/common/cc-sdd.nix lines 64-68.
+  xdg.configFile."opencode/skills/graphite-pitfalls" = {
+    source = ./skills/graphite-pitfalls;
+  };
 
   # Apply the vendored caveman-lite output style to every common subagent
   # (nix-pkg, nvim-tailor, security-auditor, vault-curator,

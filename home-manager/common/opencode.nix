@@ -149,20 +149,22 @@
             --run '${lib.concatStringsSep "\n" config.home.opencode.wrapperCommands}'
         '';
       };
-      # AGENTS.md is composed from three vendored chunks:
+      # AGENTS.md is composed from two vendored chunks:
       #   1. ./agents.md            — Obsidian memory system + commit conventions
-      #   2. ./agents-cc-sdd.md     — bridging preamble: when SDD applies, how
-      #                               cc-sdd-init bootstraps templates, how the
-      #                               two memory systems coexist
-      #   3. cc-sdd's quickstart    — slash-command catalogue and skill layout,
-      #                               sourced from pkgs.cc-sdd-skills so version
-      #                               bumps refresh the docs automatically
+      #   2. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
+      #                               two-memory-system distinction + the kiro
+      #                               skills catalog + workflow summary
+      # The upstream cc-sdd quickstart (pkgs.cc-sdd-skills/agents-md) is
+      # intentionally NOT included — its slash-command catalogue duplicates
+      # what each kiro-* SKILL.md frontmatter already exposes to opencode at
+      # session start, and its "Skills Structure" block is now inlined
+      # verbatim into ./agents-cc-sdd.md. See
+      # memories/2026-05-20-agents-md-compression.md for the rationale.
       # Hosts that need to layer on more guidance (e.g. Shopify's Graphite
       # addendum) override this with lib.mkForce, prepending the same chunks.
       rules = lib.concatStringsSep "\n\n" [
         (builtins.readFile ./agents.md)
         (builtins.readFile ./agents-cc-sdd.md)
-        (builtins.readFile "${pkgs.cc-sdd-skills}/agents-md")
       ];
 
       # Subagent prompts. When `home.opencode.enableCaveman = true`, the
