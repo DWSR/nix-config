@@ -513,7 +513,7 @@ not blocking spec completion)**:
   - _Requirements: 3.6_
   - _Boundary: tests/session-compaction/integration/augmentation-disabled.test.ts_
 
-- [ ] 5.4 (P) Subagent gating + allowlist trichotomy integration test
+- [x] 5.4 (P) Subagent gating + allowlist trichotomy integration test
   - Create `tests/session-compaction/integration/subagent-gating.test.ts`
     covering four scenarios in one suite:
     (a) `watchSubagents=false`: subagent session does NOT trigger
