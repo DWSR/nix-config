@@ -591,6 +591,18 @@ not blocking spec completion)**:
     for each session and explicitly states PASS or FAIL against
     every criterion in Procedure 1
   - _Requirements: 9.1, 9.4_
+  - _Blocked: requires operator-driven validation against real
+    opencode workload data — the implementation agent cannot
+    select pre-existing $100+/24h+ sessions from the user's
+    cost-report history, drive a multi-day live re-execution
+    against them, or capture pre/post bucket values without
+    operator participation. Structural prerequisites verified:
+    plugin loads cleanly on the host (post-task-3.7 bug fix),
+    `opencode-cost-report` is installed and produces all four
+    canonical sections, the seven `SESSION_COMPACTION_*` env vars
+    are exported in fresh opencode shells, and `nix flake check`
+    passes. Operator runs Procedure 1 manually per the steering
+    doc once enough qualifying workload sessions exist._
 
 - [ ] 6.3 Run Procedure 2 outlier-cap test
   - Drive a single opencode session past `thresholdTokens` (default
@@ -603,6 +615,16 @@ not blocking spec completion)**:
     before the cost threshold; no session reaches the 30-day-outlier
     cost profile (~$1,567 v1 cost) without compaction
   - _Requirements: 9.3_
+  - _Blocked: requires driving a single opencode session past the
+    500K-token threshold (or replaying an archived outlier session
+    of equivalent shape) — a multi-hour real workload that the
+    implementation agent cannot execute autonomously. The 30-day
+    outlier shape on this host (~$1,567 v1 cost; cf. brief.md)
+    occurred over several long-running real sessions. Operator
+    drives this validation either by intentionally accumulating
+    tool-output-heavy turns or by waiting for an organic high-cost
+    session to occur and observing `app.log` for the expected
+    compaction trigger before the cost threshold crosses $500._
 
 - [ ] 7. Composition verification
 
@@ -625,6 +647,18 @@ not blocking spec completion)**:
     sections rendered; cavemem CLI `cavemem --help` shows the
     same subcommand set as design §Allowed Dependencies
   - _Requirements: 8.1, 8.2, 8.3_
+  - _Blocked: depends on tasks 6.2 / 6.3 producing at least one
+    real `session.compacted` event ("CompactionPart rows") on the
+    host's DB — the cost-report coexistence assertion specifically
+    targets the new row shape and cannot be validated without one.
+    Structural sub-assertions that do NOT require a compaction
+    event are passing: `opencode-cost-report --help` runs cleanly,
+    `cavemem --help` shows the same subcommand set as pre-enablement,
+    `nix flake check` passes with both modules enabled, the
+    `programs.opencode.commands` attrset merges without collision
+    (verified by the successful task 1.5 darwin-rebuild). Operator
+    runs the cost-report coexistence assertion once 6.2 or 6.3 has
+    produced a compaction event in the host's live DB._
 
 ## Implementation Notes
 
