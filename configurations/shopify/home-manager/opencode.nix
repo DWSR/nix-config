@@ -6,7 +6,12 @@
 let
   proxyHeader = {
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
-    opencode-session-id = "{OPENCODE_SESSION_ID}";
+    opencode-session-id = "{env:OPENCODE_SESSION_ID}";
+    Shopify-Usage-Tag = builtins.toJSON [
+      "opencode"
+      "{env:OPENCODE_SESSION_ID}"
+      "rtk:disabled"
+    ];
   };
 
   mkProvider = baseURL: {
@@ -22,6 +27,7 @@ in
     enable = true;
     text = builtins.toJSON {
       theme = "nord";
+      scroll_acceleration.enabled = true;
     };
   };
 
