@@ -211,23 +211,23 @@ final: prev: {
   });
 
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "1.14.50";
+    version = "1.15.5";
 
     src = final.fetchFromGitHub {
       owner = "anomalyco";
       repo = "opencode";
-      tag = "v1.14.50";
-      hash = "sha256-SMWJb0Ykxklnh8DQ6UcSv1JIeuqK2qKyUgrwB8ioZCI=";
+      tag = "v1.15.5";
+      hash = "sha256-HZiqia9QzkJMfRQ6bzFBsiGXNHv1WFLUdwhekE+rXM8=";
     };
 
-    vendorHash = "sha256-BWzzOkrURHFFG2Q+/k8U5ePGR/ai8fz6xUJkLmN3TKQ=";
+    vendorHash = "sha256-jKhT3/XtjYlVh+d/3uMIGfXvWv+LEjTuodwRVDzgCUM=";
 
     node_modules = old.node_modules.overrideAttrs (_oldNm: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";
         repo = "opencode";
-        tag = "v1.14.50";
-        hash = "sha256-SMWJb0Ykxklnh8DQ6UcSv1JIeuqK2qKyUgrwB8ioZCI=";
+        tag = "v1.15.5";
+        hash = "sha256-HZiqia9QzkJMfRQ6bzFBsiGXNHv1WFLUdwhekE+rXM8=";
       };
 
       # opencode's build-time generate.ts imports prettier (a root-workspace
@@ -237,7 +237,7 @@ final: prev: {
       # install without filters so prettier lands in node_modules.
       #
       # First needed at the anomalyco fork's v1.14.20; still required at
-      # v1.14.50 (verified 2026-05-14). When bumping, retry without this
+      # v1.15.5 (verified 2026-05-20). When bumping, retry without this
       # override only if upstream has stopped pulling prettier into
       # generate.ts; otherwise leave it in place.
       buildPhase = ''
@@ -256,7 +256,7 @@ final: prev: {
         runHook postBuild
       '';
 
-      outputHash = "sha256-BWzzOkrURHFFG2Q+/k8U5ePGR/ai8fz6xUJkLmN3TKQ=";
+      outputHash = "sha256-jKhT3/XtjYlVh+d/3uMIGfXvWv+LEjTuodwRVDzgCUM=";
     });
   });
 
