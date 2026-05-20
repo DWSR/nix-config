@@ -547,7 +547,7 @@ not blocking spec completion)**:
 
 - [ ] 6. Validation: steering doc and manual replay procedure
 
-- [ ] 6.1 Author steering document
+- [x] 6.1 Author steering document
   - Create `.kiro/steering/session-compaction.md` per design
     §Components / SteeringDoc / Implementation Notes content list:
     (1) when to invoke `/compact` manually; (2) what context
