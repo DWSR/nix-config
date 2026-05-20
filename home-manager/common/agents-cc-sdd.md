@@ -100,3 +100,93 @@ Skills are located in `.opencode/skills/kiro-*/SKILL.md`
 3-phase approval workflow: Requirements → Design → Tasks →
 Implementation. Human review required each phase; use `-y` only for
 intentional fast-track.
+
+## Spec writing style
+
+cc-sdd's templates can produce 5,000-line specs for moderately-scoped
+features when the LLM defaults to "fill every heading exhaustively"
+and "restate context for clarity." Apply these negative rules to
+every `/kiro-spec-*` output (brief.md, requirements.md, design.md,
+tasks.md, research.md).
+
+### Prose rules (all spec documents)
+
+Do not write:
+
+- **Rationalizing tails on EARS criteria.** The Objective line states
+  the why once. Acceptance criteria are assertions, not narrated
+  motives. Bad: "The Disk Generator shall not emit
+  `systemd-udev-settle`, so boot is not blocked." Good: "The Disk
+  Generator shall not emit `systemd-udev-settle`."
+- **Phatic preambles.** Forbid: "This section discusses…", "Applied
+  the lenses…", "Outcomes captured here so…", "It is worth noting…",
+  "In summary…". Start with the substance.
+- **Defensive padding.** Forbid "cheap insurance", "forward-compat",
+  "in some cases", "potentially", "may be needed in the future" as
+  decision justifications. One-line decisions get one line. If you
+  cannot justify the decision in one sentence, the decision may not
+  be needed.
+- **Bold-tag-then-explain when a single sentence works.** The
+  `**Field**: value` rhythm is for tables and reference data, not
+  for paragraphs whose every field has one trivial fact.
+- **ALL CAPS for emphasis.** Reserve uppercase MUST / SHALL /
+  MUST NOT for EARS acceptance criteria. Design prose uses sentence
+  case.
+- **Hedged language.** "X", not "X (likely)" / "in some cases X" /
+  "potentially X" / "this may…". If you genuinely don't know, write
+  one sentence saying so and stop.
+- **Numbered lists when order does not matter.** Bullets otherwise.
+
+Em-dash budget: at most one per paragraph.
+
+### Cross-document de-duplication
+
+The five spec documents have distinct purposes. Each downstream
+document MUST NOT restate context from upstream ones.
+
+- **brief.md** is the source of the problem statement, the approach,
+  and the scope decisions. Other documents reference it; they do not
+  restate it.
+- **requirements.md `## Introduction`** is 1–3 sentences naming the
+  feature and pointing at brief.md. `## Boundary Context` (if
+  present) is a delta from brief.md's `## Out of Boundary`, not a
+  restatement.
+- **design.md `## Overview`** is 1–2 sentences.
+  `### Existing Architecture Analysis` (if present) is ≤10 lines
+  describing what is changing, not a re-tour of the current system.
+  `## Boundary Commitments` references requirements.md by section
+  name and states only deltas.
+- **design.md `## Components and Interfaces`** describes contracts
+  and responsibilities. It MUST NOT inline full implementation code
+  (complete unit files, full config snippets, function bodies); those
+  belong in tasks and code review. Code blocks here are signatures,
+  schemas, and small fragments only.
+- **tasks.md** states WHAT each task does, not WHY. The why is in
+  design and requirements. Observable Completion is one fragment.
+- **research.md** captures *new information found during discovery*
+  (external quirks, version compatibility, benchmarks). Decisions
+  that flow from that research belong in design.md. Combined
+  Synthesis + Gap Analysis sections cap at 100 lines; if longer, you
+  found a scope problem, not a documentation need.
+
+When the same fact is genuinely needed in two places (e.g. a contract
+that both design.md and tasks.md reference), state it in one place
+and link by section name.
+
+### Soft line caps
+
+Treat these as the threshold at which to ask "should this be split?"
+rather than "should I keep writing?":
+
+| Document        | Cap (lines)                                       |
+|-----------------|---------------------------------------------------|
+| brief.md        | 150                                               |
+| requirements.md | 500                                               |
+| design.md       | 1200                                              |
+| research.md     | 400                                               |
+| tasks.md        | ~12 lines per task (check density, no total cap)  |
+
+Counts include every line (headings, blanks, bullets, code, tables).
+If a document exceeds its cap, stop and ask the user whether the
+spec should be split into multiple smaller specs. Do not raise the
+cap to fit the content.
