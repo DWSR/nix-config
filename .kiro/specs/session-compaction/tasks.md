@@ -490,7 +490,7 @@ not blocking spec completion)**:
   - _Requirements: 2.3, 3.1, 3.2_
   - _Boundary: tests/session-compaction/integration/automatic-flow.test.ts_
 
-- [ ] 5.2 (P) Manual /compact integration test
+- [x] 5.2 (P) Manual /compact integration test
   - Create `tests/session-compaction/integration/manual-flow.test.ts`
   - Stub `command.executed` with `name: "compact"`; assert
     `session.summarize` called and the augmentation handler fires
