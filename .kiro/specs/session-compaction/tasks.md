@@ -502,7 +502,7 @@ not blocking spec completion)**:
   - _Requirements: 4.2, 4.3, 4.4_
   - _Boundary: tests/session-compaction/integration/manual-flow.test.ts_
 
-- [ ] 5.3 (P) Augmentation-disabled branch integration test
+- [x] 5.3 (P) Augmentation-disabled branch integration test
   - Create `tests/session-compaction/integration/augmentation-disabled.test.ts`
   - Configure plugin with `augmentationEnabled = false`; same
     trigger sequence as 5.1; assert compaction fires, cavemem
