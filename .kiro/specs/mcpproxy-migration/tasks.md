@@ -119,7 +119,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 13.1_
   - _Boundary: home-manager/common/agents.md_
 
-- [ ] 9.2 (P) Rewrite vault-curator subagent prompts for the four-tool surface
+- [x] 9.2 (P) Rewrite vault-curator subagent prompts for the four-tool surface
   - Replace each of the 14 `hub_obsidian__*` invocations with the discover-then-invoke pattern (retrieve_tools query + appropriate `call_tool_*` invocation; deletes use `call_tool_destructive`)
   - Preserve all dedup, merge, and delete semantics described in the prompt — the rewrite is mechanical, not behavioral
   - **Observable completion**: `grep -E 'hub_[a-z]' home-manager/common/agents/vault-curator.md` returns zero matches
