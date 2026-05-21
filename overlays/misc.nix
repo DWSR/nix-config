@@ -258,6 +258,26 @@ final: prev: {
 
       outputHash = "sha256-jKhT3/XtjYlVh+d/3uMIGfXvWv+LEjTuodwRVDzgCUM=";
     });
+
+    # Caveman-lite compressions of the bundled model-specific system
+    # prompts (anthropic / beast / codex / default / gemini / gpt /
+    # kimi / trinity). Replaces each .txt file Bun bundles in at
+    # build time via `import PROMPT_X from "./prompt/X.txt"` in
+    # packages/opencode/src/session/system.ts. Source baseline,
+    # compression style, refresh procedure, and verification steps
+    # documented in ./opencode-prompts/README.md. If upstream renames
+    # any of these files, the `cp -f` below will fail loud at build
+    # time — that is the canary.
+    postPatch = (old.postPatch or "") + ''
+      cp -f ${./opencode-prompts/anthropic.txt} packages/opencode/src/session/prompt/anthropic.txt
+      cp -f ${./opencode-prompts/beast.txt}     packages/opencode/src/session/prompt/beast.txt
+      cp -f ${./opencode-prompts/codex.txt}     packages/opencode/src/session/prompt/codex.txt
+      cp -f ${./opencode-prompts/default.txt}   packages/opencode/src/session/prompt/default.txt
+      cp -f ${./opencode-prompts/gemini.txt}    packages/opencode/src/session/prompt/gemini.txt
+      cp -f ${./opencode-prompts/gpt.txt}       packages/opencode/src/session/prompt/gpt.txt
+      cp -f ${./opencode-prompts/kimi.txt}      packages/opencode/src/session/prompt/kimi.txt
+      cp -f ${./opencode-prompts/trinity.txt}   packages/opencode/src/session/prompt/trinity.txt
+    '';
   });
 
   # cc-sdd: Kiro-style spec-driven development scaffolder (gotalab/cc-sdd, MIT).
