@@ -40,7 +40,7 @@
 
 ## Phase 2: Core implementation
 
-- [ ] 5. Rewrite the MCP orchestrator module for mcpproxy
+- [x] 5. Rewrite the MCP orchestrator module for mcpproxy
 
 - [x] 5.1 Replace the orchestrator's option surface and config rendering
   - Add a new `home.mcp.listenPort` option (default 8080) with a documented description
