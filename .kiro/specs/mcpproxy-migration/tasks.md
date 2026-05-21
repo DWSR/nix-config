@@ -133,7 +133,7 @@
   - _Requirements: 4.1, 4.3_
   - _Boundary: home-manager/common/agents/vault-synthesizer.md_
 
-- [ ] 9.4 (P) Rewrite security-auditor subagent prompts for the four-tool surface
+- [x] 9.4 (P) Rewrite security-auditor subagent prompts for the four-tool surface
   - Replace the 2 `hub_obsidian__write-note` invocations with the discover-then-invoke pattern (`call_tool_write` for note creation)
   - **Observable completion**: `grep -E 'hub_[a-z]' home-manager/common/agents/security-auditor.md` returns zero matches
   - _Requirements: 4.1, 4.3_

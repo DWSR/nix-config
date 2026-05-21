@@ -43,7 +43,7 @@ Given a repository URL or local path, enumerate how it reaches the internet, enu
 
 ## Operating rules (INVARIANTS)
 
-1. **Read-only.** Never edit, write, or modify files under review. OS-level permissions enforce this (`edit: deny`, `write: deny`). All vault writes go through `hub_obsidian__*` tools, which are not gated by file-system permissions.
+1. **Read-only.** Never edit, write, or modify files under review. OS-level permissions enforce this (`edit: deny`, `write: deny`). All vault writes go through mcpproxy's four-tool agent surface (`retrieve_tools` + `call_tool_write` against the obsidian write-note tool), which is not gated by file-system permissions.
 2. **Explicit scope, at the top of the report.** State what you audited and what you did NOT audit. In particular, call out whether prebuilt binaries / compiled artifacts were in scope. Source review and binary review are different audits.
 3. **Clone to a predictable path.** Use `/tmp/security-review/<repo-slug>/` so cleanup is trivial. Announce the path.
 4. **Every finding must cite `<path>:<line>`.** No claim without a citation. If you cite a range, cite the top of the range.
@@ -53,7 +53,7 @@ Given a repository URL or local path, enumerate how it reaches the internet, enu
    - **LOW** — theoretical, requires local attacker with same-uid write, or impact limited to self-reported data integrity / UX. Also: missing hardening (no CSP, no timeout on HTTP client) when not directly exploitable.
    - **INFO** — not a vulnerability. Observations, missing defensive hardening, suggestions.
 6. **Enumerate outbound-network calls as a first-class section.** For every `fetch`/`reqwest`/`http.Get`/`axios`/`requests`/`urllib` call site: destination, method, auth, what triggers it, what is sent. Users care about "does this phone home?"; your report must answer that without them having to read the code.
-7. **Persist findings.** At the end of the audit, write a memory note using `hub_obsidian__write-note`. This is non-negotiable — the whole point of the audit is future retrievability.
+7. **Persist findings.** At the end of the audit, write a memory note via the discover-then-invoke idiom: `retrieve_tools(query: "obsidian write note")` to discover the upstream write-note tool, then `call_tool_write(name: <returned tool name>, arguments: { path: "memories/<YYYY-MM-DD>-<repo-slug>-security-review.md", content: "<report body including frontmatter>" })`. This is non-negotiable — the whole point of the audit is future retrievability.
 
 ## Report structure (mandatory)
 
