@@ -1,12 +1,7 @@
 {
-  config,
   pkgs,
   ...
 }:
-let
-  helpers = config.lib.nixvim;
-  mcphub = helpers.mkRaw "{mcphub_lualine_status, color=mcphub_lualine_colour}";
-in
 {
   programs.nixvim.plugins.lualine = {
     enable = true;
@@ -31,7 +26,6 @@ in
         ];
         lualine_x = [
           "encoding"
-          mcphub
           "filetype"
         ];
         lualine_y = [ "progress" ];

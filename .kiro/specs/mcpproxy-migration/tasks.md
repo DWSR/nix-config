@@ -184,7 +184,7 @@
   - _Requirements: 11.2_
   - _Boundary: home-manager/nixvim/plugins/codecompanion.nix_
 
-- [ ] 10.3 (P) Remove the lualine mcphub status component
+- [x] 10.3 (P) Remove the lualine mcphub status component
   - Remove the `mcphub = helpers.mkRaw "..."` let-binding (L8) and the `mcphub` use-site in `sections.lualine_x` (L34)
   - Clean up the `let` block if it becomes vacuous
   - **Observable completion**: `grep mcphub home-manager/nixvim/plugins/lualine.nix` returns zero matches; nvim opens with a clean lualine status line
