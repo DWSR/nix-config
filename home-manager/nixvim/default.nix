@@ -37,7 +37,6 @@ in
     ./plugins/lualine.nix
     ./plugins/markdown-preview.nix
     ./plugins/matchup.nix
-    ./plugins/mcphub.nix
     ./plugins/mini-surround.nix
     ./plugins/render-markdown.nix
     ./plugins/navic.nix

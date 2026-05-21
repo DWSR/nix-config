@@ -169,7 +169,7 @@
 
 - [ ] 10. Tear down nvim MCP integration
 
-- [ ] 10.1 (P) Delete the mcphub.nvim plugin file and its imports entry
+- [x] 10.1 (P) Delete the mcphub.nvim plugin file and its imports entry
   - Remove `home-manager/nixvim/plugins/mcphub.nix` entirely
   - Remove the `./plugins/mcphub.nix` entry from the imports list in `home-manager/nixvim/default.nix`
   - **Observable completion**: `home-manager/nixvim/plugins/mcphub.nix` no longer exists in the working tree; the imports list contains no reference to it; `darwin-rebuild build` does not report a missing-import error for mcphub
