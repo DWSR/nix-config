@@ -275,3 +275,8 @@
   - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 4.5, 6.3, 7.5, 8.5, 11.5, 12.3_
   - _Depends: 13.2_
   - _Boundary: personal host runtime_
+
+## Implementation Notes
+
+- **5.1**: `tool-gateway` in `configurations/shopify/home-manager/default.nix:112` uses `${cmd: cut -d= ...}` for its auth header. mcpproxy only resolves `${keyring:...}`, NOT `${cmd:...}`. This will fail at runtime in task 14.1 acceptance. Pre-existing tech debt — out of boundary for the renderer rewrite. Either migrate `tool-gateway-token` into the SOPS+keychain pipeline OR document as a known runtime gap before task 14.1.
+- **5.1**: The renderer maps `extraServers.<name>.type` → `mcpServers[].protocol`. Current type values (`http`, `streamable-http`) map 1:1 to mcpproxy protocol names; missing `type` defaults to `stdio`. Future extra-server additions must use one of these three values.
