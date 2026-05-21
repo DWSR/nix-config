@@ -139,7 +139,7 @@
   - _Requirements: 4.1, 4.3_
   - _Boundary: home-manager/common/agents/security-auditor.md_
 
-- [ ] 9.5 (P) Rewrite Shopify-host stack-captain subagent prompts
+- [x] 9.5 (P) Rewrite Shopify-host stack-captain subagent prompts
   - Replace the 13 `hub_github__*` and `hub_buildkite__*` invocations with the discover-then-invoke pattern
   - **Observable completion**: `grep -E 'hub_[a-z]' configurations/shopify/home-manager/agents/stack-captain.md` returns zero matches
   - _Requirements: 4.1, 4.3_
