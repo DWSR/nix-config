@@ -176,7 +176,7 @@
   - _Requirements: 11.1_
   - _Boundary: home-manager/nixvim/plugins/mcphub.nix, home-manager/nixvim/default.nix_
 
-- [ ] 10.2 (P) Strip codecompanion's MCP extension wiring
+- [x] 10.2 (P) Strip codecompanion's MCP extension wiring
   - Remove the `before.__raw` lz.n hook block (around L15-25) that triggers `mcphub.nvim` loading
   - Remove the `extensions.mcphub` block (around L43-58)
   - Preserve everything else: codecompanion enable, package, lazyLoad cmd list, display/snacks settings, keymaps
