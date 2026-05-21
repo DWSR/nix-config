@@ -108,7 +108,7 @@
   - _Requirements: 9.1, 9.2, 9.3_
   - _Boundary: scripts/memory-sync.nix_
 
-- [ ] 9. Rewrite agent contracts for the four-tool retrieve_tools surface
+- [x] 9. Rewrite agent contracts for the four-tool retrieve_tools surface
 
 - [x] 9.1 (P) Rewrite AGENTS.md startup gate, memory-recall rules, and failure messages
   - Replace the direct `hub_obsidian__list-notes` and `hub_cavemem__list_sessions` calls in the startup gate with the documented two-step idiom: `retrieve_tools(query: …)` to discover the tool, then `call_tool_read(name: …, arguments: …)` to invoke it (one retrieve_tools + one call_tool_read pair per server, four calls total)
@@ -159,7 +159,7 @@
   - _Requirements: 13.2, 13.4_
   - _Boundary: home-manager/common/agents-cc-sdd.md, home-manager/common/agents/nix-pkg.md_
 
-- [ ] 9.8 (P) Verify no hub_* references remain across all in-scope agent files
+- [x] 9.8 (P) Verify no hub_* references remain across all in-scope agent files
   - Run a recursive grep for `hub_[a-z]` across every file rewritten in 9.1-9.6
   - Confirm zero matches across the agent-contract scope
   - **Observable completion**: `grep -rE 'hub_[a-z]' home-manager/common/agents.md home-manager/common/agents/ configurations/shopify/home-manager/agents/ configurations/shopify/home-manager/agents-graphite.md configurations/shopify/home-manager/skills/graphite-pitfalls/` exits 1 (no matches)
