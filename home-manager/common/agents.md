@@ -4,22 +4,36 @@ All sessions MUST use BOTH Obsidian vault + cavemem for persistent memory.
 Obsidian = curated agent-authored memories. Cavemem = ambient transcripts /
 summaries via opencode hooks. Non-negotiable.
 
+Both servers are reached through mcpproxy's four-tool agent surface:
+`retrieve_tools`, `call_tool_read`, `call_tool_write`, and
+`call_tool_destructive`. Direct `hub_<server>__<tool>` invocation is not
+available; every operation is a two-step idiom — discover the tool name with
+`retrieve_tools`, then invoke it through the appropriate `call_tool_*`
+verb based on the operation's side-effect class (read / write / destructive).
+
 ## Startup Check
 
 BEFORE responding to any user message, you MUST verify that BOTH MCP servers
-are available:
+are available via mcpproxy by performing the following four calls (one
+`retrieve_tools` + one `call_tool_read` pair per server):
 
-1. Call `hub_obsidian__list-notes` with `directory` set to `"memories"` and
-   `limit` set to `1`.
-2. Call `hub_cavemem__list_sessions` with a small limit (e.g. `1`) to confirm
-   the cavemem MCP server is reachable.
+1. `retrieve_tools(query: "obsidian list-notes")`
+   → expect a tool from server `obsidian`.
+2. `call_tool_read(name: <tool name returned in step 1>,`
+   `                arguments: { directory: "memories", limit: 1 })`.
+3. `retrieve_tools(query: "cavemem list sessions")`
+   → expect a tool from server `cavemem`.
+4. `call_tool_read(name: <tool name returned in step 3>,`
+   `                arguments: { limit: 1 })`.
 
-If EITHER call FAILS or the corresponding MCP tools (`hub_obsidian__*` or
-`hub_cavemem__*`) are not available:
-1. Tell the user: "Obsidian or cavemem MCP tools are unavailable. I cannot
-   create curated memories or rely on ambient session capture. Ensure mcphub
-   is running with both the obsidian and cavemem servers registered, then
-   retry."
+If ANY of those four calls FAILS, or if `retrieve_tools` returns no tool
+from the expected upstream server, or if mcpproxy itself is unreachable:
+
+1. Tell the user: "mcpproxy is unreachable, or the obsidian/cavemem upstream
+   servers are not registered with it. I cannot create curated memories or
+   rely on ambient session capture. Verify the mcpproxy daemon is running
+   (launchd label `com.smart-mcp-proxy.mcpproxy`) and that both the obsidian
+   and cavemem upstream servers appear in its rendered config, then retry."
 2. DO NOT proceed with any work.
 3. DO NOT attempt workarounds such as writing to local files or skipping
    either system.
@@ -35,15 +49,25 @@ Agents MUST NOT write transcription or summary notes to Obsidian. Legacy
 `conversations/transcriptions/` and `conversations/summaries/` hold archived
 history only, not live capture.
 
-Ad hoc observation retrieval — use `hub_cavemem__` MCP tools:
+Ad hoc observation retrieval — the cavemem upstream server exposes
+recent-session listing, per-session timeline, full observation bodies by
+ID, and full-text + semantic search across all observations. Invoke any
+of those via the discover-then-invoke idiom against mcpproxy:
 
-- `hub_cavemem__list_sessions` — recent sessions
-- `hub_cavemem__timeline` — chronological observation stream for a session
-- `hub_cavemem__get_observations` — full bodies by ID
-- `hub_cavemem__search` — full-text + semantic over all observations
+```
+1. retrieve_tools(query: "cavemem search")
+   → expect a tool from server "cavemem"
+2. call_tool_read(name: <returned tool name>,
+                  arguments: { query: "<search terms>" })
+```
 
-Same surface available as `cavemem search` for human lookups outside agent
-sessions.
+Substitute the appropriate query keywords (`list sessions`, `timeline`,
+`get observations`, `search`) and arguments for the operation you need.
+All cavemem operations are read-only, so they always go through
+`call_tool_read`.
+
+The same surface is available as `cavemem search` for human lookups outside
+agent sessions.
 
 Curated memory creation = explicit agent-driven act, governed by "Memories"
 below.
@@ -54,13 +78,23 @@ After session init, and whenever a question / problem / topic may have been
 addressed before, search memories BEFORE using other research tools (web
 fetches, codebase exploration, task agents).
 
+All Obsidian vault operations go through mcpproxy via the discover-then-invoke
+idiom. Read-side vault tools (search by tags, search vault content, read a
+note, list notes, get note metadata) are invoked through `call_tool_read`
+after a `retrieve_tools` discovery; write operations (`call_tool_write`) are
+covered under "Memories" below.
+
 ### At session start
 
 Search for memories tied to the current project:
 
-1. `hub_obsidian__search-by-tags` with the project name tag, `directory`
-   `"memories"`.
-2. Review returned memories to prime context with prior decisions, patterns,
+1. Discover the tag-search tool:
+   `retrieve_tools(query: "obsidian search by tags")`
+   → expect a tool from server `obsidian`.
+2. Invoke it:
+   `call_tool_read(name: <returned tool name>,`
+   `                arguments: { tags: ["<project-name>"], directory: "memories" })`.
+3. Review returned memories to prime context with prior decisions, patterns,
    discoveries.
 
 ### During the session
@@ -73,11 +107,15 @@ When a task involves any of:
 - Answering questions about prior work or decisions
 - Researching libraries / tools / integrations possibly evaluated before
 
-→ Search memories FIRST:
+→ Search memories FIRST. For each search, run the two-step idiom (discover
+the tool with `retrieve_tools`, then invoke it through `call_tool_read`):
 
-1. `hub_obsidian__search-vault` with keywords, `path` `"memories/"`.
-2. `hub_obsidian__search-by-tags` with topic tags, `directory` `"memories"`.
-3. Read matches with `hub_obsidian__read-note`.
+1. Vault-content keyword search — `retrieve_tools(query: "obsidian search vault")`
+   then invoke with arguments `{ query: "<keywords>", path: "memories/" }`.
+2. Tag search — `retrieve_tools(query: "obsidian search by tags")` then invoke
+   with arguments `{ tags: [<topic tags>], directory: "memories" }`.
+3. Read matches — `retrieve_tools(query: "obsidian read note")` then invoke
+   with arguments `{ path: "<note path>" }` for each match worth reading.
 4. Complete answer in memory → use it; do NOT re-research.
 5. Partial context → use as starting point, supplement as needed.
 6. No matches → normal research.
@@ -96,7 +134,9 @@ patterns for future-session retrieval. Highest-value output of the memory
 system.
 
 - **Path:** `memories/{date}-{slug}.md` (slug 3-5 words, kebab-case)
-- **Tool:** `hub_obsidian__write-note`
+- **Invocation:** create or update via `call_tool_write` against the
+  obsidian write-note tool (discovered through `retrieve_tools`). See
+  "Obsidian Tool Reference" below for the canonical worked example.
 
 ### When to create a memory
 
@@ -117,17 +157,22 @@ Do NOT create for:
 
 ### Deduplication
 
-BEFORE creating, ALWAYS check for related memories:
+BEFORE creating, ALWAYS check for related memories (each step is a
+`retrieve_tools` discovery followed by a `call_tool_read` invocation):
 
-1. `hub_obsidian__search-by-tags` with the primary topic tags you intend to
-   use, `directory` `"memories"`.
-2. `hub_obsidian__search-vault` with key terms from the title, `path`
-   `"memories/"`.
-3. Substantially similar memory exists → UPDATE it: read with
-   `hub_obsidian__read-note`, write updated content back to the same path
-   with `hub_obsidian__write-note`. Add the current session to its context;
-   refine content.
-4. Create new only if no existing memory covers the same ground.
+1. Tag search — discover via `retrieve_tools(query: "obsidian search by tags")`,
+   then invoke with `{ tags: [<primary topic tags you intend to use>], directory: "memories" }`.
+2. Vault-content search — discover via `retrieve_tools(query: "obsidian search vault")`,
+   then invoke with `{ query: "<key terms from the title>", path: "memories/" }`.
+3. Substantially similar memory exists → UPDATE it: read via
+   `retrieve_tools(query: "obsidian read note")` + `call_tool_read` with
+   `{ path: "<existing path>" }`, then write the updated content back to the
+   same path via `retrieve_tools(query: "obsidian write note")` +
+   `call_tool_write` with `{ path: "<existing path>", content: "<merged body>" }`.
+   Add the current session to its context; refine content.
+4. Create new only if no existing memory covers the same ground — same
+   `call_tool_write` invocation against the write-note tool, at a fresh
+   `memories/{date}-{slug}.md` path.
 
 ### Memory note format
 
@@ -167,20 +212,47 @@ sessions:
 
 ## Obsidian Tool Reference
 
-You MUST use ONLY these tools for vault operations. Do NOT use Bash, Write,
-Read, or any other tool against the Obsidian vault.
+You MUST use ONLY mcpproxy's four-tool agent surface for vault operations.
+Do NOT use Bash, Write, Read, or any other local tool against the Obsidian
+vault.
 
-| Operation | Tool |
-|---|---|
-| Create or update a note | `hub_obsidian__write-note` |
-| Read a note | `hub_obsidian__read-note` |
-| Search by content | `hub_obsidian__search-vault` |
-| Search by tags | `hub_obsidian__search-by-tags` |
-| List notes in a directory | `hub_obsidian__list-notes` |
-| Get note metadata | `hub_obsidian__get-note-metadata` |
+The procedure for every vault operation is uniform:
+
+1. **Discover** the tool with `retrieve_tools(query: "<short description>")`.
+   The query string should name the upstream server (`obsidian`) and the
+   operation (`search by tags`, `read note`, `write note`, etc.). The
+   response will include the canonical upstream tool name.
+2. **Invoke** the returned tool with the appropriate verb based on its
+   side-effect class:
+   - `call_tool_read` for any non-mutating operation (search by tags,
+     search vault content, read a note, list notes in a directory, get
+     note metadata).
+   - `call_tool_write` for any mutation that creates, updates, or otherwise
+     modifies vault content (writing a note).
+   - `call_tool_destructive` for any irreversible removal (deleting a
+     note).
+
+Worked example — writing or updating a note:
+
+```
+1. retrieve_tools(query: "obsidian write note")
+   → expect a tool from server "obsidian"
+2. call_tool_write(name: <returned tool name>,
+                   arguments: { path: "memories/2026-05-21-my-fact.md",
+                                content: "<note body including frontmatter>" })
+```
+
+Worked example — reading a note:
+
+```
+1. retrieve_tools(query: "obsidian read note")
+   → expect a tool from server "obsidian"
+2. call_tool_read(name: <returned tool name>,
+                  arguments: { path: "memories/2026-05-21-my-fact.md" })
+```
 
 All note paths MUST end with `.md`. Directories are created implicitly by the
-Obsidian MCP server on write.
+Obsidian upstream server on write.
 
 ## Tag Guidelines
 

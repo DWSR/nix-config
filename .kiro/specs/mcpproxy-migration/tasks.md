@@ -110,7 +110,7 @@
 
 - [ ] 9. Rewrite agent contracts for the four-tool retrieve_tools surface
 
-- [ ] 9.1 (P) Rewrite AGENTS.md startup gate, memory-recall rules, and failure messages
+- [x] 9.1 (P) Rewrite AGENTS.md startup gate, memory-recall rules, and failure messages
   - Replace the direct `hub_obsidian__list-notes` and `hub_cavemem__list_sessions` calls in the startup gate with the documented two-step idiom: `retrieve_tools(query: …)` to discover the tool, then `call_tool_read(name: …, arguments: …)` to invoke it (one retrieve_tools + one call_tool_read pair per server, four calls total)
   - Rewrite the memory-recall section so all `hub_obsidian__*` and `hub_cavemem__*` references follow the discover-then-invoke pattern while preserving the existing when-to-search, deduplication, and memory-format semantics
   - Update the startup-gate failure message to name mcpproxy and provide a recovery hint referencing the new launchd label `com.smart-mcp-proxy.mcpproxy`
