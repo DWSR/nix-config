@@ -9,4 +9,13 @@ _: {
   # and home-manager/common/opencode.nix for the option definition and
   # wiring.
   home.opencode.enableCaveman = true;
+
+  # Route opencode MCP traffic through the local mcpproxy daemon
+  # (managed by home-manager/common/mcpproxy.nix). Mirrors the Shopify
+  # host's entry in configurations/shopify/home-manager/opencode.nix.
+  programs.opencode.settings.mcp.mcpproxy = {
+    type = "remote";
+    url = "http://127.0.0.1:8080/mcp";
+    enabled = true;
+  };
 }

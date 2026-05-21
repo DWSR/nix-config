@@ -93,7 +93,7 @@
   - _Requirements: 10.1, 10.3_
   - _Boundary: configurations/shopify/home-manager/opencode.nix_
 
-- [ ] 7.3 (P) Add a personal-host opencode mcpproxy entry
+- [x] 7.3 (P) Add a personal-host opencode mcpproxy entry
   - Add a `programs.opencode.settings.mcp.mcpproxy` block with `type = "remote"`, `url = "http://127.0.0.1:8080/mcp"`, `enabled = true`
   - **Observable completion**: The rendered personal-host `~/.config/opencode/opencode.json` contains exactly one remote MCP entry under key `mcpproxy` pointing at `127.0.0.1:8080`
   - _Requirements: 10.2_
