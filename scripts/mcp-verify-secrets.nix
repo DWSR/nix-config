@@ -4,13 +4,14 @@
 #
 # Parity check between the on-disk encrypted secrets store and the
 # consumer surfaces (login keychain, gh auth state). Exit 0 against a
-# freshly-activated host means every declared MCP secret in the
-# encrypted yaml is value-identical to the corresponding `mcp-hub`-
-# account login Keychain entry, and (if declared) the `gh` CLI is
-# authenticated against github.com. Originally introduced as the R8.1
-# verification gate authorising R8.2 decommissioning; now serves the
-# same role for ongoing rotation verification (see secrets/README.md
-# Rotation step 5).
+# freshly-activated host means every declared secret in the encrypted
+# yaml is value-identical to its routed login Keychain entry — MCP
+# secrets under service `mcpproxy`, sqlite-backup secrets under
+# service `nix-config-secrets`, account always the secret name — and
+# (if declared) the `gh` CLI is authenticated against github.com.
+# Originally introduced as the R8.1 verification gate authorising R8.2
+# decommissioning; now serves the same role for ongoing rotation
+# verification (see secrets/README.md Rotation step 5).
 #
 # Decryption happens in memory: `sops -d --output-type json` streams the
 # decrypted yaml as JSON to stdout, jq splits it into TSV `(key, value)`
@@ -128,24 +129,37 @@ pkgs.writeShellApplication {
     gh_declared=false
     gh_expected=""
 
-    # MCP-secret loop. Defer gh-token to a dedicated `gh auth status`
+    # Route a secret NAME to its Keychain SERVICE (-s axis). The
+    # account (-a axis) is always the secret name. Mirrors the
+    # routing rule in scripts/mcp-secrets-activate.nix:184-189 and the
+    # design's routing table (Domain C / R12.1) — keep these three
+    # in sync.
+    route_service() {
+      case "$1" in
+        sqlite-backup-*) printf '%s' nix-config-secrets ;;
+        *)               printf '%s' mcpproxy           ;;
+      esac
+    }
+
+    # Secret loop. Defer gh-token to a dedicated `gh auth status`
     # check after the loop because gh does not store its credential
-    # under `mcp-hub` in the login keychain.
-    while IFS=$'\t' read -r service expected; do
-      if [ "$service" = "gh-token" ]; then
+    # in the login keychain under any of our service names.
+    while IFS=$'\t' read -r name expected; do
+      if [ "$name" = "gh-token" ]; then
         gh_declared=true
         gh_expected="$expected"
         continue
       fi
-      if actual="$(/usr/bin/security find-generic-password -s "$service" -a mcp-hub -w 2>/dev/null)"; then
+      keychain_service="$(route_service "$name")"
+      if actual="$(/usr/bin/security find-generic-password -s "$keychain_service" -a "$name" -w 2>/dev/null)"; then
         if [ "$actual" = "$expected" ]; then
-          printf 'MATCH    %s\n' "$service"
+          printf 'MATCH    %s\n' "$name"
         else
-          printf 'MISMATCH %s\n' "$service"
+          printf 'MISMATCH %s\n' "$name"
           mismatches=$((mismatches + 1))
         fi
       else
-        printf 'MISSING  %s\n' "$service"
+        printf 'MISSING  %s\n' "$name"
         missing=$((missing + 1))
       fi
     done <<<"$declared_pairs"

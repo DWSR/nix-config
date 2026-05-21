@@ -30,7 +30,7 @@
   - _Requirements: 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 12.2_
   - _Boundary: scripts/mcp-secrets-activate.nix_
 
-- [ ] 4. Update the secret verification script to read new layouts
+- [x] 4. Update the secret verification script to read new layouts
   - Change keychain read axes to `(-s mcpproxy -a <secret>)` for MCP secrets and `(-s nix-config-secrets -a <secret>)` for sqlite-backup secrets
   - Preserve the existing output format (`MATCH | MISMATCH | MISSING` per service) and exit codes (0/1/2/3)
   - Preserve the gh-token verification path (`gh auth status`) unchanged
