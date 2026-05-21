@@ -74,7 +74,7 @@
   - _Requirements: 7.1, 7.2, 7.4, 7.5, 8.3, 8.4, 13.5_
   - _Boundary: home-manager/common/cavemem.nix_
 
-- [ ] 7. Update opencode integration on both hosts
+- [x] 7. Update opencode integration on both hosts
 
 - [x] 7.1 (P) Rewrite the opencode wrapper preflight for mcpproxy
   - Replace the existing mcphub `/api/health` probe (around L85-92) with the sequence: read api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, probe `GET /healthz`, then probe `GET /api/v1/servers/obsidian` with `X-API-Key` header
