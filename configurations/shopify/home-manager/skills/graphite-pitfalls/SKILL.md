@@ -229,9 +229,10 @@ validates every entry on every command, so any dead entry blocks ALL
 commands.
 
 `gt repo init` cannot fix this non-interactively: it prompts to confirm
-"You are about to reset your trunk branches…" and `hub_gt_mcp` can't
-answer the prompt, so it errors with `Cannot perform interactive
-operation in non-interactive mode`.
+"You are about to reset your trunk branches…" and mcpproxy's
+`call_tool_write` against the gt run-command tool can't answer the prompt,
+so it errors with `Cannot perform interactive operation in non-interactive
+mode`.
 
 **Recovery (surgical, no flags needed):**
 
@@ -410,10 +411,11 @@ leaving as draft unless the user asks otherwise.
 
 ### C6. `pull_request_review_write` does NOT have a `resolve_thread` method
 
-The `hub_github__pull_request_review_write` MCP tool's supported
-`method` values are `create`, `submit_pending`, and `delete_pending`.
-There is NO `resolve_thread` method. Older runbooks (including parts
-of the make-stack-green slash command) claim it exists; they're wrong.
+The GitHub MCP `pull_request_review_write` tool (invoked via mcpproxy's
+`retrieve_tools` + `call_tool_write` idiom) supports only `method` values
+`create`, `submit_pending`, and `delete_pending`. There is NO
+`resolve_thread` method. Older runbooks (including parts of the
+make-stack-green slash command) claim it exists; they're wrong.
 
 **Recovery (no flags / no auth needed beyond gh):**
 

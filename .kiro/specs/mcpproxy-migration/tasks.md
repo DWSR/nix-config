@@ -145,7 +145,7 @@
   - _Requirements: 4.1, 4.3_
   - _Boundary: configurations/shopify/home-manager/agents/stack-captain.md_
 
-- [ ] 9.6 (P) Rewrite Shopify-host agents-graphite and graphite-pitfalls skill
+- [x] 9.6 (P) Rewrite Shopify-host agents-graphite and graphite-pitfalls skill
   - Replace the 3 references in `agents-graphite.md` (`hub_gt_mcp__run_gt_cmd`, `hub_github__pull_request_review_write`) with the discover-then-invoke pattern
   - Replace the 2 references in the `graphite-pitfalls/SKILL.md` (`hub_gt_mcp`, `hub_github__pull_request_review_write`) similarly
   - **Observable completion**: `grep -rE 'hub_[a-z]' configurations/shopify/home-manager/agents-graphite.md configurations/shopify/home-manager/skills/graphite-pitfalls/` returns zero matches
