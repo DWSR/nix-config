@@ -31,6 +31,7 @@ in
 
     packages = with pkgs; [
       gcloud
+      mitmproxy
       podman
       stern
       uv
