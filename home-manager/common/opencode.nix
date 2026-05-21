@@ -197,6 +197,16 @@
           display = "summarized";
         };
 
+        # Disable opencode's built-in `title` and `summary` agents. Both
+        # are hidden internal agents that run extra LLM calls (title on
+        # every new session, summary on every compaction). We don't rely
+        # on either: session titles aren't used in our workflow, and
+        # cavemem's ambient capture already preserves the context that
+        # `summary` would otherwise regenerate. Schema: see `agent.*.disable`
+        # at https://opencode.ai/config.json.
+        agent.title.disable = true;
+        agent.summary.disable = true;
+
         # Override the built-in `command` for LSPs whose opencode default
         # ignores PATH (and, for `typescript`, also ignores the
         # OPENCODE_DISABLE_LSP_DOWNLOAD flag):
