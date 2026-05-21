@@ -99,7 +99,7 @@
   - _Requirements: 10.2_
   - _Boundary: configurations/personal/home-manager/opencode.nix_
 
-- [ ] 8. (P) Rewrite the memory-sync CLI probe for mcpproxy
+- [x] 8. (P) Rewrite the memory-sync CLI probe for mcpproxy
   - Rename the `MCPHUB_BASE` constant to `MCPPROXY_BASE` and set it to `http://127.0.0.1:8080`
   - Rewrite the `probe_mcp_server <name> <exit-code>` helper to call `GET /api/v1/servers/<name>` with `X-API-Key` header (api key read at runtime via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`)
   - Update recovery-hint strings to reference the new launchd label `com.smart-mcp-proxy.mcpproxy`

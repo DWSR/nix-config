@@ -40,11 +40,13 @@ pkgs.writeShellApplication {
     LOG_DIR="''${STATE_DIR}/logs"
     export STATE_DIR MARKER_FILE LOCK_DIR LOG_DIR
 
-    # mcphub HTTP base; the cavemem and obsidian probes (task 3.1) hit
-    # /api/servers/info on this URL. Hardcoded per design Decision 6 +
-    # cavemem-integration spec's mcphub-default-port memory.
-    MCPHUB_BASE="http://localhost:37373"
-    export MCPHUB_BASE
+    # mcpproxy HTTP base; the cavemem and obsidian probes hit
+    # /api/v1/servers/<name> on this URL with an X-API-Key header.
+    # Hardcoded per design Decision 6 + the mcpproxy-migration spec
+    # (Domain F). The api key is read at probe time via
+    # `security find-generic-password -s mcpproxy -a mcpproxy-api-key`.
+    MCPPROXY_BASE="http://127.0.0.1:8080"
+    export MCPPROXY_BASE
 
     # Create the state directories on every non-help invocation, BEFORE
     # acquire_lock (Req 4.AC6 — lock acquisition must not race against
@@ -635,53 +637,69 @@ pkgs.writeShellApplication {
     }
 
     # probe_mcp_server <server-name> <exit-code-on-failure>
-    # Pre-flight HTTP-transport health probe against mcphub
-    # (Req 5.1, 5.2, 5.3, 5.4, 5.6; Decision 6 — pre-flight at the
-    # HTTP-transport layer, NOT at the MCP-tool layer). Issues a
-    # short-timeout (≤ 2s) POST to $MCPHUB_BASE/api/servers/info with
-    # body {"server_name":"<name>"} and grep-asserts that the response
-    # body contains "status":"connected". On any failure (curl non-2xx,
-    # connect refused, timeout, OR a response whose status field is not
-    # "connected"), prints an actionable two-line error to stderr naming
-    # the server explicitly and the launchctl-kickstart recovery hint
-    # (Req 5.2, 5.4, 8.5, 8.6), and exits with the supplied exit code.
+    # Pre-flight HTTP-transport health probe against mcpproxy
+    # (Req 5.1, 5.2, 5.3, 5.4, 5.6, 9.1, 9.2, 9.3; Decision 6 — pre-flight
+    # at the HTTP-transport layer, NOT at the MCP-tool layer). Reads the
+    # mcpproxy api key from the macOS Keychain
+    # (service=mcpproxy, account=mcpproxy-api-key) at helper entry, then
+    # issues a short-timeout (≤ 2s) GET to
+    # $MCPPROXY_BASE/api/v1/servers/<name> with an `X-API-Key` header.
+    # The response body is asserted with a permissive regex that matches
+    # both `"status":"connected"` and `"connected":true` shapes (mcpproxy
+    # currently emits the latter but the regex tolerates either).
     #
-    # The endpoint shape is documented in
-    # `memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md`:
-    # mcp-hub v4.2.1 does NOT expose `GET /api/servers/<name>` — that
-    # path returns 404. The POST /api/servers/info shape was verified
-    # live during the cavemem-integration spec's task 9.2 pass and is
-    # the documented per-server status surface. The reference probe in
-    # `home-manager/common/cavemem.nix:549-559` mirrors this shape; we
-    # match its style (separate stderr lines, --max-time 2,
-    # `"status":"connected"` grep) so failure-mode parity holds.
+    # On any failure (keychain lookup empty, curl non-2xx, connect
+    # refused, timeout, OR a response whose connected/status field does
+    # not match), prints an actionable two-line error to stderr naming
+    # the server explicitly and the new mcpproxy launchctl-kickstart
+    # recovery hint (Req 5.2, 5.4, 9.2, 9.3, 8.5, 8.6), and exits with
+    # the supplied exit code. Per the task body, an empty api key is
+    # treated as "mcpproxy not configured" — which manifests as the
+    # server being unreachable — and surfaces the same exit code.
+    #
+    # The endpoint shape and assertion regex mirror the live mcpproxy
+    # preflight probes in `home-manager/common/cavemem.nix` (cavemem
+    # branch, ~L498-514) and `home-manager/common/opencode.nix`
+    # (obsidian branch, ~L131-147). Keeping the three probes in lockstep
+    # means failure-mode parity holds across the activation script, the
+    # opencode wrapper preflight, and this memory-sync CLI.
     #
     # Caller contract:
-    #   - $MCPHUB_BASE must be set (top-of-script default is
-    #     "http://localhost:37373").
+    #   - $MCPPROXY_BASE must be set (top-of-script default is
+    #     "http://127.0.0.1:8080").
     #   - Caller decides WHEN to invoke (after lock acquisition, before
     #     subagent spawn — Req 5.1).
     #   - Caller decides whether to suppress success output via --verbose
     #     gating; this helper is silent on success per Req 5.5.
     #
     # Wired into the post-lock pre-flight sequence below (cavemem first
-    # with exit 4, then obsidian with exit 5) per Req 5.1, 5.3.
+    # with exit 4, then obsidian with exit 5) per Req 5.1, 5.3, 9.3.
     probe_mcp_server() {
       local name="$1"
       local exit_code="$2"
-      local body
-      body="{\"server_name\":\"''${name}\"}"
+
+      # Read the mcpproxy api key from the macOS Keychain. Use the
+      # absolute path `/usr/bin/security` to match the reference probes
+      # in cavemem.nix / opencode.nix — `security` is not on the
+      # writeShellApplication PATH so a bare invocation would fail under
+      # `set -u` / `set -e` even though we silence stderr.
+      local api_key
+      api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || api_key=""
+
+      if [ -z "$api_key" ]; then
+        echo "memory-sync: ERROR: ''${name} MCP unreachable: mcpproxy API key missing from macOS Keychain (service=mcpproxy, account=mcpproxy-api-key)." >&2
+        echo "Recovery: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
+        exit "$exit_code"
+      fi
 
       local response
       response=$(curl -sf --max-time 2 \
-        -X POST \
-        -H "Content-Type: application/json" \
-        -d "$body" \
-        "$MCPHUB_BASE/api/servers/info" 2>/dev/null) || response=""
+        -H "X-API-Key: $api_key" \
+        "$MCPPROXY_BASE/api/v1/servers/$name" 2>/dev/null) || response=""
 
-      if ! printf "%s" "$response" | grep -q "\"status\":\"connected\""; then
+      if ! printf "%s" "$response" | grep -qE "\"(status|connected)\"[[:space:]]*:[[:space:]]*(\"connected\"|true)"; then
         echo "memory-sync: ERROR: ''${name} MCP unreachable." >&2
-        echo "Recovery: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+        echo "Recovery: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
         exit "$exit_code"
       fi
     }
@@ -745,13 +763,16 @@ pkgs.writeShellApplication {
                      non-zero. Marker untouched.
       Exit code 3    Marker unwritable: parent dir uncreatable, or
                      tempfile write or rename(2) failed.
-      Exit code 4    Cavemem MCP unreachable: pre-flight probe failed
-                     (connect refused, timeout, non-2xx, or
-                     "status":"connected" assertion missed).
-                     Recovery hint: launchctl kickstart
-                     gui/$(id -u)/com.ravitemer.mcp-hub.
-      Exit code 5    Obsidian MCP unreachable: cavemem probe passed
-                     but obsidian probe failed. Same recovery hint.
+      Exit code 4    Cavemem MCP unreachable through mcpproxy:
+                     pre-flight probe failed (mcpproxy api key
+                     missing from Keychain, connect refused,
+                     timeout, non-2xx, or the connected/status
+                     field on /api/v1/servers/cavemem did not
+                     report connected). Recovery hint: launchctl
+                     kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy.
+      Exit code 5    Obsidian MCP unreachable through mcpproxy:
+                     cavemem probe passed but obsidian probe failed.
+                     Same recovery hint.
       Exit code 6    Lock held: another memory-sync invocation is in
                      progress. Wait, or remove the lock dir manually
                      if you are sure no other run is running.
