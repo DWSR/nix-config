@@ -63,7 +63,7 @@
   - _Depends: 5.1_
   - _Boundary: home-manager/mcp/default.nix_
 
-- [ ] 6. (P) Close the cavemem split-brain and rewrite its wrapper probe
+- [x] 6. (P) Close the cavemem split-brain and rewrite its wrapper probe
   - Remove the `programs.opencode.settings.mcp.cavemem` block (around L491-501) so opencode reaches cavemem only via mcpproxy
   - Keep the `home.mcp.extraServers.cavemem` entry (L431-437); the orchestrator's translator (task 5.1) renders it into mcpproxy's array form, preserving the `CAVEMEM_DATA_DIR` env propagation
   - Rewrite the cavemem wrapper-probe snippet (around L549-557) to: read the api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, then probe `GET http://127.0.0.1:8080/healthz` (no auth) for liveness, then probe `GET http://127.0.0.1:8080/api/v1/servers/cavemem` with `X-API-Key` header for cavemem connection state

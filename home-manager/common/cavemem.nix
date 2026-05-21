@@ -4,9 +4,9 @@
 
   This module exposes the `home.cavemem.*` option surface that downstream
   tasks consume to render `${dataDir}/settings.json` (Task 4.1), the
-  vendored opencode plugin (Task 4.2), the mcphub `cavemem` server entry
-  (Task 5.1), the opencode `mcpServers.cavemem` entry (Task 5.2), and
-  the opencode wrapper's cavemem health check (Task 5.3). The option
+  vendored opencode plugin (Task 4.2), the mcpproxy `cavemem` upstream
+  entry (via `home.mcp.extraServers.cavemem`, Task 5.1), and the
+  opencode wrapper's cavemem health check (Task 5.3). The option
   surface is the cross-task contract: per spec Req 10.1 and 10.5,
   `dataDir` and the `embedding.*` shape are read by the future
   sqlite-backup extension and the one-shot importer (Task 8.x), and a
@@ -22,10 +22,10 @@
     * `home.cavemem.compression.intensity` — consumed by the
       settings.json renderer (Task 4.1). Mirrors cavemem's
       `compression.intensity` enum verbatim.
-    * mcphub server name (Task 5.1) — the literal string `cavemem`. Not
-      an option; documented in the `dataDir` description so the
-      future synthesizer-agent's tool allow-list can target it without
-      ambiguity.
+    * mcpproxy upstream server name (Task 5.1) — the literal string
+      `cavemem`. Not an option; documented in the `dataDir` description
+      so the future synthesizer-agent's tool allow-list can target it
+      without ambiguity.
 
   Tasks 3.1 and 4.1 of the spec land here:
 
@@ -34,10 +34,9 @@
   - 4.1 renders `${dataDir}/settings.json` from the option values
     (Req 2.4, 3.4, 3.5, 3.6, 3.7) via `home.file`.
 
-  Plugin file emission, mcphub wiring, opencode wiring, and
-  wrapper-command extension still land in later tasks (4.2, 5.1, 5.2,
-  5.3), which append to the same `config = lib.mkIf cfg.enable { ... }`
-  block.
+  Plugin file emission, mcpproxy upstream wiring, and wrapper-command
+  extension still land in later tasks (4.2, 5.1, 5.3), which append to
+  the same `config = lib.mkIf cfg.enable { ... }` block.
 
   Spec: .kiro/specs/cavemem-integration/{requirements,design,tasks}.md
 */
@@ -211,11 +210,10 @@ in
   };
 
   # Config block for Task 3.1 (package on PATH, Req 2.3) and Task 4.1
-  # (settings.json render, Req 2.4 + 3.4-3.7). Task 4.2/5.1/5.2/5.3
-  # will append further attributes (plugin file, mcphub entry,
-  # opencode mcpServers entry, wrapper health check) to this same
-  # block. When `enable` is false the module contributes nothing
-  # (Req 2.7).
+  # (settings.json render, Req 2.4 + 3.4-3.7). Task 4.2/5.1/5.3 will
+  # append further attributes (plugin file, mcpproxy upstream entry,
+  # wrapper health check) to this same block. When `enable` is false
+  # the module contributes nothing (Req 2.7).
   config = lib.mkIf cfg.enable (
     let
       e = cfg.embedding;
@@ -379,55 +377,54 @@ in
       # vendored plugin lives (committed in 4e868a7).
       xdg.configFile."opencode/plugins/cavemem.js".source = ./opencode-plugins/cavemem.js;
 
-      # Task 5.1 (Req 4.1, 4.2, 4.4, 10.2; design.md §McphubExtraServers):
-      # register cavemem with mcphub via the `home.mcp.extraServers`
-      # extension surface (defined in `home-manager/mcp/default.nix`).
-      # The renderer there merges this attrset into
-      # `~/.config/mcphub/servers.json` alongside the built-in obsidian,
-      # github, and nixos entries.
+      # Register cavemem with the mcpproxy orchestrator via the
+      # `home.mcp.extraServers` extension surface (defined in
+      # `home-manager/mcp/default.nix`). The orchestrator's translator
+      # (mcpproxy-migration spec, task 5.1) renders this attrset into
+      # mcpproxy's `~/.config/mcpproxy/mcp_config.json` array form
+      # alongside the obsidian, github, and nixos entries, preserving
+      # the `CAVEMEM_DATA_DIR` env propagation below (R7.3 of the
+      # mcpproxy-migration spec).
       #
-      # Server name is the literal string `cavemem` (Req 10.2 / Req 4.2)
-      # — a locked downstream contract so the future
-      # vault-synthesizer-agent's tool allow-list can target the four
-      # `hub_cavemem__{list_sessions,timeline,get_observations,search}`
-      # tools (Req 10.6) without ambiguity. Renaming this attribute key
-      # is a breaking contract change.
+      # Server name is the literal string `cavemem` (cavemem-integration
+      # spec Req 10.2 / Req 4.2) — a locked downstream contract. Note
+      # that the mcpproxy migration intentionally breaks the
+      # `hub_cavemem__*` tool-name surface (the four-tool agent surface
+      # is now `cavemem_*` through mcpproxy's retrieve_tools mode), but
+      # the upstream server name itself stays `cavemem` so module
+      # consumers and agent allow-lists keep a stable identifier.
+      # Renaming this attribute key is still a breaking contract change.
       #
-      # Command is the wrapped binary built in task 1.2
-      # (`overlays/mcp-servers.nix` `cavemem` derivation). The wrapper
-      # is `makeWrapper ${nodejs}/bin/node ... --add-flags
-      # ${out}/lib/node_modules/cavemem/dist/index.js`, so
+      # Command is the wrapped binary built in the cavemem-integration
+      # spec's task 1.2 (`overlays/mcp-servers.nix` `cavemem`
+      # derivation). The wrapper is `makeWrapper ${nodejs}/bin/node ...
+      # --add-flags ${out}/lib/node_modules/cavemem/dist/index.js`, so
       # `cavemem mcp` is equivalent to upstream's own opencode-installer
-      # invocation `node <cliPath> mcp` (verified against the patched
-      # `packages/installers/src/opencode.ts` and against
-      # `apps/cli/src/commands/mcp.ts` in cavemem v0.2.1, both of which
-      # treat `mcp` as the canonical MCP-server subcommand).
+      # invocation `node <cliPath> mcp`.
       #
       # The `env.CAVEMEM_DATA_DIR` entry below is honored by the
-      # `cavemem-data-dir-env.patch` overlay landed in task 1.3
-      # (commit 01373e7), which introduces a single-bottleneck
-      # `resolveDataDir()` helper in `packages/config/src/loader.ts`
-      # that reads `process.env.CAVEMEM_DATA_DIR` (when set and
-      # non-empty after trim) before falling back to the hardcoded
-      # `~/.cavemem` default. Without this env entry, cavemem v0.2.1
-      # would still read settings.json and write data.db at
-      # `~/.cavemem` regardless of `cfg.dataDir`, making the
-      # `home.cavemem.dataDir` option (Req 10.1, locked downstream
-      # contract) a no-op for the mcphub-launched server. Setting
-      # the env here closes that loop so the mcphub-spawned cavemem
-      # process reads the same settings.json that this module
-      # renders at `${"$"}{cfg.dataDir}/settings.json` (Task 4.1)
-      # and writes its SQLite database under the same directory the
-      # future sqlite-backup extension and the one-shot importer
-      # (Task 8.x) target.
+      # `cavemem-data-dir-env.patch` overlay (commit 01373e7), which
+      # introduces a single-bottleneck `resolveDataDir()` helper in
+      # `packages/config/src/loader.ts` that reads
+      # `process.env.CAVEMEM_DATA_DIR` (when set and non-empty after
+      # trim) before falling back to the hardcoded `~/.cavemem`
+      # default. Without this env entry, cavemem would still read
+      # settings.json and write data.db at `~/.cavemem` regardless of
+      # `cfg.dataDir`, making the `home.cavemem.dataDir` option
+      # (cavemem-integration Req 10.1) a no-op for the
+      # mcpproxy-launched upstream. Setting the env here closes that
+      # loop so the mcpproxy-spawned cavemem process reads the same
+      # settings.json that this module renders at
+      # `${"$"}{cfg.dataDir}/settings.json` and writes its SQLite
+      # database under the same directory the sqlite-backup extension
+      # and the one-shot vault importer target.
       #
       # The `home.mcp.extraServers` option type (defined in
       # `home-manager/mcp/default.nix` as `attrsOf attrs`) accepts
-      # arbitrary per-server attributes, and the renderer there
-      # serializes the whole attrset via `builtins.toJSON` into
-      # `~/.config/mcphub/servers.json`; the existing `github`
-      # server's `env.GITHUB_PERSONAL_ACCESS_TOKEN` entry confirms
-      # mcphub propagates `env` to the spawned process.
+      # arbitrary per-server attributes; the mcpproxy orchestrator's
+      # translator consumes the whole attrset and converts it into
+      # mcpproxy's stdio-transport array entry, propagating `env`
+      # through to the spawned process.
       home.mcp.extraServers.cavemem = {
         command = "${pkgs.cavemem}/bin/cavemem";
         args = [ "mcp" ];
@@ -436,123 +433,83 @@ in
         };
       };
 
-      # Task 5.2 (Req 4.3, 4.5; design.md §OpencodeSettings): expose
-      # cavemem to opencode as a second MCP surface, alongside the
-      # mcphub registration above. Opencode reads MCP servers directly
-      # from its rendered `~/.config/opencode/opencode.json` and
-      # spawns them itself; mcphub is a separate hub that opencode
-      # ALSO talks to via its own MCP entry. So cavemem ends up
-      # reachable through two paths: (a) opencode → cavemem directly,
-      # and (b) opencode → mcphub → cavemem. Both spawn the same
-      # binary with the same args; both must therefore set the same
-      # CAVEMEM_DATA_DIR env (see split-brain note below).
-      #
-      # Per Req 4.5 the cavemem module MUST NOT write opencode.json
-      # directly. We contribute through `programs.opencode.settings`,
-      # the freeform attrset that the nix-community
-      # `programs.opencode` HM module serializes into opencode.json.
-      #
-      # Shape: opencode's config schema (per
-      # https://opencode.ai/docs/mcp-servers/#local and the HM
-      # module's transformer at modules/programs/opencode.nix:20-41)
-      # uses the top-level key `mcp` (NOT `mcpServers`), with each
-      # entry shaped as:
-      #   { type = "local";
-      #     command = [ <binary> <arg>... ];      # single array
-      #     environment = { ... };                # NOT `env`
-      #     enabled = true; }
-      # The task brief's `mcpServers.cavemem = { command; args; env; }`
-      # phrasing is the mcphub-extraServers shape (correct for
-      # `home.mcp.extraServers` above, NOT for opencode); the brief
-      # explicitly hedges with "or the equivalent shape opencode
-      # expects" for exactly this case. Verified against
-      # nix-community/home-manager rev cc09c0f
-      # (modules/programs/opencode.nix:209-212) and against the
-      # mcp-integration test fixture
-      # (tests/modules/programs/opencode/mcp-integration.json) which
-      # both render `mcp.<name>.{type,command-as-array,environment}`.
-      #
-      # The `environment.CAVEMEM_DATA_DIR` entry mirrors the mcphub
-      # entry's `env.CAVEMEM_DATA_DIR` for the same reason it was
-      # added there in the task 5.1 amendment: cavemem v0.2.1 (with
-      # the cavemem-data-dir-env.patch from task 1.3, commit 01373e7)
-      # honors `process.env.CAVEMEM_DATA_DIR` via a single-bottleneck
-      # `resolveDataDir()` helper before falling back to the
-      # hardcoded `~/.cavemem` default. Without this env entry on the
-      # opencode-spawned process, opencode-spawned cavemem would
-      # read settings.json and write data.db at `~/.cavemem` while
-      # mcphub-spawned cavemem reads/writes under `${cfg.dataDir}` —
-      # a split-brain dataDir resolution that would corrupt the
-      # observation timeline (two SQLite databases, two settings.json
-      # files, two embedding caches) and silently break Req 10.1's
-      # locked-downstream-contract guarantee that `home.cavemem.dataDir`
-      # is the canonical location for the future sqlite-backup
-      # extension and the one-shot vault importer (Task 8.x).
-      programs.opencode.settings.mcp.cavemem = {
-        type = "local";
-        command = [
-          "${pkgs.cavemem}/bin/cavemem"
-          "mcp"
-        ];
-        environment = {
-          CAVEMEM_DATA_DIR = cfg.dataDir;
-        };
-        enabled = true;
-      };
+      # Historical note (mcpproxy-migration spec, R7.1 / R7.2):
+      # before the mcpproxy migration this module also wrote a direct
+      # `programs.opencode.settings.mcp.cavemem` entry so opencode
+      # could spawn cavemem itself in parallel with mcphub spawning
+      # it through `home.mcp.extraServers`. That split-brain routing
+      # was deliberately closed by removing the direct opencode entry:
+      # cavemem is now reachable to opencode ONLY through mcpproxy's
+      # four-tool surface, and `home.mcp.extraServers.cavemem` above
+      # is the single registration point. The CAVEMEM_DATA_DIR env
+      # propagation continues to flow through the orchestrator's
+      # translator, so the dataDir contract is preserved.
 
-      # Task 5.3 (Req 5.1-5.5; design.md §OpencodeWrapperHealthCheck):
-      # append a cavemem-specific readiness probe to the opencode
-      # wrapper's pre-launch checks. Mirrors the existing obsidian
-      # probe in `home-manager/common/opencode.nix` (lines 54-62) in
-      # style — same `/usr/bin/curl --max-time 2` invocation, same
-      # `echo ... >&2; exit 1` failure path, same
-      # `launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub`
-      # recovery hint — but probes the cavemem-server-specific
-      # endpoint instead of the generic `/api/health` so that
-      # mcphub-up-but-cavemem-down still hard-fails the wrapper
-      # (Req 5.1, 5.2). The error message names cavemem explicitly
-      # (Req 5.3).
+      # Opencode wrapper preflight: verify cavemem's upstream
+      # connection state through mcpproxy (mcpproxy-migration spec,
+      # R8.3, R8.4; design.md §Domain D). The opencode wrapper
+      # composition appends this snippet to the list contributed by
+      # `home-manager/common/opencode.nix`, which performs the
+      # mcpproxy liveness probe and the obsidian per-upstream probe
+      # first; this snippet then re-probes liveness defensively and
+      # checks cavemem's per-upstream connection state. Any failure
+      # exits 1 with a stderr message naming "cavemem" / "mcpproxy"
+      # and a recovery hint referencing the new launchd label
+      # `com.smart-mcp-proxy.mcpproxy` (R8.4).
       #
-      # Endpoint: `POST http://localhost:37373/api/servers/info` with
-      # body `{"server_name": "cavemem"}` returns the cavemem server's
-      # registration + connection state. mcp-hub does NOT expose a
-      # `GET /api/servers/<name>` route — that path returns 404 — so
-      # we use the documented `/info` POST endpoint and grep for
-      # `"status":"connected"` in the response. (The original prototype
-      # of this probe used the non-existent GET path; that 404'd in
-      # production and trivially aborted the wrapper. Hotfixed to the
-      # POST endpoint after task 9.2 surfaced the bug live.)
-      #
-      # `home.opencode.wrapperCommands` is `listOf lines`; HM list-merge
-      # semantics concatenate this entry after the obsidian snippet
-      # contributed by `home-manager/common/opencode.nix`. Snippets run
-      # sequentially inside the wrapper's `--run` block (joined by
-      # `lib.concatStringsSep "\n"`), so either snippet's `exit 1`
-      # halts the wrapper before the underlying opencode binary is
-      # exec'd. Both checks therefore run in order and either failure
-      # is fatal (Req 5.5) without one snippet needing knowledge of
-      # the other.
+      # Probe sequence:
+      #   1. Read mcpproxy's API key from the macOS Keychain via
+      #      `security find-generic-password -s mcpproxy -a
+      #      mcpproxy-api-key -w`. The keychain entry is provisioned
+      #      by task 2 of the mcpproxy-migration spec. If the entry is
+      #      missing the probe fails with a specific stderr message
+      #      BEFORE attempting curl, so an operator sees the keychain
+      #      problem distinctly from a connectivity problem.
+      #   2. `GET http://127.0.0.1:8080/healthz` (no auth) — re-probes
+      #      mcpproxy liveness defensively even though the
+      #      opencode.nix snippet has already done this; the cost is
+      #      a single localhost curl and the failure message points
+      #      operators at the cavemem-specific recovery path.
+      #   3. `GET http://127.0.0.1:8080/api/v1/servers/cavemem` with
+      #      `X-API-Key` header. Greps the JSON body for an upstream
+      #      connection state matching either `"connected":true` or
+      #      `"status":"connected"` (mcpproxy v0.33.1 emits one of
+      #      these shapes depending on the server's stdio state). The
+      #      probe exits 1 if neither pattern matches.
       #
       # Gating: the entire `config = lib.mkIf cfg.enable { ... }`
       # block is enable-gated, so disabled hosts contribute nothing
-      # to `wrapperCommands` and the cavemem probe is absent from
-      # the rendered wrapper (Req 5.4).
+      # to `wrapperCommands` and this probe is absent from the
+      # rendered wrapper (cavemem-integration Req 5.4).
       #
-      # Quoting note: this snippet is composed into the opencode wrapper
-      # via `wrapProgram ... --run STR`, where STR is the joined list of
-      # all wrapperCommands wrapped in shell single-quotes by makeWrapper.
-      # That means a single quote anywhere inside the snippet would close
-      # the outer single-quoted string and break wrapper composition.
-      # Use double quotes (with backslash-escaped inner double quotes
-      # where needed) throughout. The obsidian probe in
-      # `home-manager/common/opencode.nix` follows the same convention.
+      # Quoting note: this snippet is composed into the opencode
+      # wrapper via `wrapProgram ... --run STR`, where STR is the
+      # joined list of all wrapperCommands wrapped in shell
+      # single-quotes by makeWrapper. A single quote anywhere inside
+      # the snippet would close the outer single-quoted string and
+      # break wrapper composition (see
+      # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
+      # and design.md L673). Use double quotes (with backslash-escaped
+      # inner double quotes where needed) throughout. The obsidian
+      # probe in `home-manager/common/opencode.nix` follows the same
+      # convention.
       home.opencode.wrapperCommands = [
         ''
-          cavemem_body="{\"server_name\":\"cavemem\"}"
-          cavemem_info=$(/usr/bin/curl -sf --max-time 2 -X POST -H "Content-Type: application/json" -d "$cavemem_body" http://localhost:37373/api/servers/info 2>/dev/null) || cavemem_info=""
-          if ! printf "%s" "$cavemem_info" | grep -q "\"status\":\"connected\""; then
-            echo "ERROR: cavemem MCP server is not reachable via mcphub. Ambient memory capture is unavailable." >&2
-            echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+          cavemem_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""
+          if [ -z "$cavemem_api_key" ]; then
+            echo "ERROR: cavemem MCP server not reachable via mcpproxy: mcpproxy API key missing from macOS Keychain (service=mcpproxy, account=mcpproxy-api-key)." >&2
+            echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
+            exit 1
+          fi
+          if ! /usr/bin/curl -sf --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+            echo "ERROR: cavemem MCP server not reachable via mcpproxy: liveness probe to http://127.0.0.1:8080/healthz failed." >&2
+            echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
+            exit 1
+          fi
+          cavemem_status=$(/usr/bin/curl -sf --max-time 2 -H "X-API-Key: $cavemem_api_key" http://127.0.0.1:8080/api/v1/servers/cavemem 2>/dev/null) || cavemem_status=""
+          if ! printf "%s" "$cavemem_status" | grep -qE "\"(status|connected)\"[[:space:]]*:[[:space:]]*(\"connected\"|true)"; then
+            echo "ERROR: cavemem MCP server not reachable via mcpproxy: upstream not connected at /api/v1/servers/cavemem." >&2
+            echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
             exit 1
           fi
         ''
