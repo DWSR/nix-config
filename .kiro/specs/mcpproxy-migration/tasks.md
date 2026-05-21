@@ -152,7 +152,7 @@
   - _Requirements: 4.1, 4.3_
   - _Boundary: configurations/shopify/home-manager/agents-graphite.md, configurations/shopify/home-manager/skills/graphite-pitfalls/SKILL.md_
 
-- [ ] 9.7 (P) Update agents-cc-sdd.md and nix-pkg subagent for mcpproxy terminology
+- [x] 9.7 (P) Update agents-cc-sdd.md and nix-pkg subagent for mcpproxy terminology
   - Scan `agents-cc-sdd.md` for narrative references to "mcphub" or "mcp-hub" and update them to "mcpproxy"
   - Update the `nix-pkg.md` troubleshooting table row referencing the mcphub preflight to reference the mcpproxy preflight
   - **Observable completion**: `grep -E 'mcphub|mcp-hub' home-manager/common/agents-cc-sdd.md home-manager/common/agents/nix-pkg.md` returns zero non-historical matches
