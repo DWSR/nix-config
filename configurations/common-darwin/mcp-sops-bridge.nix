@@ -65,13 +65,28 @@ let
 
   mcp-secrets-activate = import ../../scripts/mcp-secrets-activate.nix { inherit pkgs; };
 
+  # Bridge-owned MCP secrets that are NOT derived from home-manager's
+  # `home.mcp.keychainSecrets` (which is keyed by upstream MCP server
+  # name). These secrets support mcpproxy itself rather than any
+  # specific upstream — `mcpproxy-api-key` gates mcpproxy's HTTP
+  # admin API (`/api/v1/*`) and is consumed by mcpproxy's own
+  # `${keyring:mcpproxy-api-key}` placeholder at daemon start time,
+  # not spawned-process env-var injection. The bridge still flows
+  # them through the same SOPS → `/run/secrets/<name>` → Keychain
+  # pipeline as the HM-declared secrets, so downstream consumers
+  # (the activation script, the verify script, the operator's
+  # rotation runbook) treat them uniformly.
+  bridgeOwnedKeychainSecrets = [ "mcpproxy-api-key" ];
+
+  allKeychainSecretNames = builtins.attrNames hmMcp.keychainSecrets ++ bridgeOwnedKeychainSecrets;
+
   # Manifest enumerating the secret slots this activation should sync.
   # Rendered into the Nix store at build time so any change to the
   # declared secret list re-renders the manifest path, keeping the
   # activation script in lockstep with `sops.secrets.*` declarations.
   manifest = pkgs.writeText "mcp-secrets-manifest.json" (
     builtins.toJSON {
-      keychainSecrets = builtins.attrNames hmMcp.keychainSecrets;
+      keychainSecrets = allKeychainSecretNames;
       ghAuthToken = hmMcp.ghAuthToken != null;
     }
   );
@@ -110,13 +125,22 @@ in
       gnupg.sshKeyPaths = [ ];
 
       # Derive sops.secrets declarations from the HM-declared secret
-      # set. Each name becomes a `/run/secrets/<name>` file decrypted
-      # from the host's `sops.defaultSopsFile` (set per-host). The
-      # gh-token slot is conditional on ghAuthToken being non-null.
+      # set plus the bridge-owned set defined above. Each name becomes
+      # a `/run/secrets/<name>` file decrypted from the host's
+      # `sops.defaultSopsFile` (set per-host). The gh-token slot is
+      # conditional on ghAuthToken being non-null.
       secrets = lib.mkMerge [
         (lib.mapAttrs (_name: _opUri: {
           sopsFile = config.sops.defaultSopsFile;
         }) hmMcp.keychainSecrets)
+        (lib.listToAttrs (
+          map (
+            name:
+            lib.nameValuePair name {
+              sopsFile = config.sops.defaultSopsFile;
+            }
+          ) bridgeOwnedKeychainSecrets
+        ))
         (lib.mkIf (hmMcp.ghAuthToken != null) {
           "gh-token" = {
             sopsFile = config.sops.defaultSopsFile;

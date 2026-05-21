@@ -11,7 +11,7 @@
   - _Requirements: 1.1, 1.6_
   - _Boundary: overlays/mcp-servers.nix_
 
-- [ ] 2. Add the mcpproxy API key as a SOPS-bridged secret
+- [x] 2. Add the mcpproxy API key as a SOPS-bridged secret
   - Generate a 256-bit hex key (`openssl rand -hex 32`) per host and add it as `mcpproxy-api-key` to `secrets/mcp.shopify.yaml` and `secrets/mcp.personal.yaml`
   - Extend the SOPS bridge manifest renderer to declare `mcpproxy-api-key` as one of the operator-declared MCP secrets so the activation script picks it up
   - Confirm the key surfaces under `/run/secrets/mcpproxy-api-key` after `sops-nix` activation completes
