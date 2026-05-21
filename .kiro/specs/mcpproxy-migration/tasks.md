@@ -19,7 +19,7 @@
   - _Requirements: 5.1, 5.2, 5.4_
   - _Boundary: secrets/, configurations/common-darwin/mcp-sops-bridge.nix_
 
-- [ ] 3. Migrate the secret-bridge activation script to mcpproxy's keychain layout
+- [x] 3. Migrate the secret-bridge activation script to mcpproxy's keychain layout
   - Swap the keychain write axes for MCP secrets from `(-s <secret> -a mcp-hub)` to `(-s mcpproxy -a <secret>)`
   - Add a parallel write path for sqlite-backup secrets at `(-s nix-config-secrets -a <secret>)`
   - In the same activation pass, delete legacy `(-s <secret> -a mcp-hub)` entries for both MCP and sqlite-backup secrets; cleanup is driven by the installed-services registry, so only script-installed entries are removed

@@ -23,12 +23,31 @@
 # round-trip entirely. Otherwise it runs `gh auth login --with-token`
 # and atomically updates the hash file.
 #
-# Stale cleanup (R5.1 + R5.2, registry-driven): the previous declared
-# set is read from `/var/lib/mcp-keychain-sync/installed-services` (one
-# service per line, sorted), and `comm -23 was current` yields services
-# that are no longer declared. Each stale entry is removed via
-# `security delete-generic-password`. Entries we never installed are
-# never touched — R5.2 forbids enumerating the Keychain for cleanup.
+# Keychain layout (R5.4, R12.1): the script writes every secret name
+# under the mcpproxy-expected layout. Routing by name pattern:
+#   - names matching `sqlite-backup-*` → `-s nix-config-secrets -a <name>`
+#   - everything else                  → `-s mcpproxy        -a <name>`
+# The previous layout (`-s <name> -a mcp-hub`) is treated as legacy
+# and deleted in the same activation pass once the new-layout writes
+# have all succeeded.
+#
+# Cleanup (R5.1 + R5.2 + R6.2 + R6.3, registry-driven): the previous
+# declared set is read from `/var/lib/mcp-keychain-sync/installed-services`
+# (one secret name per line, sorted). Two cleanup passes run after the
+# new-layout WRITE phase has completed without error (ordering
+# invariant: write-then-delete, so a partial write aborts before any
+# delete and the legacy entries remain a recovery path):
+#   1. Legacy migration: for every name in the previous registry,
+#      attempt to delete `-s <name> -a mcp-hub`. Idempotent: deleting
+#      a missing entry is a benign no-op, so re-runs on an
+#      already-migrated host report zero work without erroring.
+#   2. Stale new-layout: for every name in (previous \ current),
+#      attempt to delete it from its routed new-layout service. This
+#      is the long-standing stale-entry behaviour, now aware of the
+#      routing function.
+# Entries we never installed are never touched — R5.2 forbids
+# enumerating the Keychain for cleanup; both passes iterate only over
+# names that appear in the registry.
 #
 # Registry update is atomic: a tempfile is written, then `mv` renames
 # it over `/var/lib/mcp-keychain-sync/installed-services` in a single
@@ -62,14 +81,23 @@ pkgs.writeShellApplication {
       mcp-secrets-activate <username> <manifest-path>
 
     Arguments:
-      username        target user (the mcp-hub Keychain account holder)
+      username        target user (owns the login.keychain-db this script writes to)
       manifest-path   JSON manifest rendered by mcp-sops-bridge module
 
     Manifest schema:
-      {"keychainSecrets": ["mcp-github-token", ...], "ghAuthToken": true|false}
+      {"keychainSecrets": ["mcp-github-token", "sqlite-backup-*", ...],
+       "ghAuthToken": true|false}
+
+    Keychain layout (written by this script):
+      - sqlite-backup-*    -> -s nix-config-secrets -a <name>
+      - everything else    -> -s mcpproxy           -a <name>
+    Legacy layout (deleted by this script):
+      - any registered name -> -s <name> -a mcp-hub
 
     Side effects:
-      - Adds/updates/removes Keychain entries with service in keychainSecrets
+      - Writes Keychain entries in the routed new layout for every name in keychainSecrets
+      - Deletes legacy `-a mcp-hub` Keychain entries for every name in the registry
+      - Removes new-layout Keychain entries for names dropped from keychainSecrets
       - Conditionally invokes gh auth login --with-token / gh auth logout
       - Updates /var/lib/mcp-keychain-sync/installed-services (atomic)
       - Touches/removes /var/lib/mcp-keychain-sync/gh-token-installed
@@ -148,17 +176,36 @@ pkgs.writeShellApplication {
     mkdir -p "$REGISTRY_DIR"
     chmod 700 "$REGISTRY_DIR"
 
-    # Per-secret loop. `add-generic-password -U` is idempotent: it
-    # updates an existing entry's value or creates one if missing.
-    # No-op when value already matches (R1.5).
-    for service in "''${SECRET_NAMES[@]}"; do
-      value="$(cat "/run/secrets/$service")"
+    # Route a secret NAME to its Keychain SERVICE (-s axis). The
+    # account (-a axis) is always the secret name; the service tells
+    # mcpproxy (or sqlite-backup) where to look. Keep this function
+    # in sync with the verify script's resolver and with the design's
+    # routing table (Domain C / R12.1).
+    route_service() {
+      case "$1" in
+        sqlite-backup-*) printf '%s' nix-config-secrets ;;
+        *)               printf '%s' mcpproxy           ;;
+      esac
+    }
+
+    # WRITE phase (R5.4, R6.1). Runs FIRST in the mutation pass — the
+    # ordering invariant (write-then-delete) requires every new-layout
+    # entry to be in place before any legacy delete runs, so that a
+    # write failure (exit 2) aborts activation while the legacy
+    # `-a mcp-hub` entries are still recoverable.
+    #
+    # `add-generic-password -U` is idempotent: it updates an existing
+    # entry's value or creates one if missing. No-op when value already
+    # matches (R1.5).
+    for name in "''${SECRET_NAMES[@]}"; do
+      value="$(cat "/run/secrets/$name")"
+      service="$(route_service "$name")"
       if ! sudo -u "$USERNAME" -H /usr/bin/security add-generic-password \
-           -U -s "$service" -a mcp-hub -w "$value" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
-        echo "mcp-secrets-activate: error: failed to add Keychain entry for $service" >&2
+           -U -s "$service" -a "$name" -w "$value" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+        echo "mcp-secrets-activate: error: failed to add Keychain entry $service/$name" >&2
         exit 2
       fi
-      printf 'mcp-secrets: %s %s\n' add-or-update "$service" >&2
+      printf 'mcp-secrets: %s %s/%s\n' add-or-update "$service" "$name" >&2
     done
 
     # gh-token slot. Three states:
@@ -209,25 +256,51 @@ pkgs.writeShellApplication {
       printf 'mcp-secrets: gh logout\n' >&2
     fi
 
-    # Stale Keychain cleanup. Driven entirely by the registry diff
-    # (R5.2) — entries we never installed are never enumerated.
+    # Cleanup phase. Runs AFTER the WRITE phase (ordering invariant
+    # — see header). Both passes iterate the registry only; entries
+    # we never installed are never enumerated (R5.2).
     current_sorted="$(printf '%s\n' "''${SECRET_NAMES[@]}" | sort)"
     previous_sorted=""
     if [ -f "$REGISTRY_FILE" ]; then
       previous_sorted="$(cat "$REGISTRY_FILE")"
     fi
 
+    # Pass 1: legacy migration cleanup (R6.2, R6.3, R6.4, R12.2).
+    # For every secret name the script has previously installed
+    # (anywhere — under mcp-hub before this migration, under the new
+    # layout after), attempt to delete the legacy `-a mcp-hub` entry.
+    # On a host that has already been migrated (or a clean install)
+    # every delete is a benign no-op (`|| true`) and the host reports
+    # no legacy work — preserving the idempotency requirement.
     if [ -n "$previous_sorted" ]; then
-      while IFS= read -r stale_service; do
-        if [ -z "$stale_service" ]; then
+      while IFS= read -r legacy_name; do
+        if [ -z "$legacy_name" ]; then
           continue
         fi
+        if sudo -u "$USERNAME" -H /usr/bin/security delete-generic-password \
+             -s "$legacy_name" -a mcp-hub "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+          printf 'mcp-secrets: remove-legacy %s/mcp-hub\n' "$legacy_name" >&2
+        fi
+      done <<< "$previous_sorted"
+    fi
+
+    # Pass 2: stale new-layout cleanup. Driven by the registry diff
+    # (prev \ current) — secret names dropped from the manifest. Each
+    # stale entry is deleted from its routed new-layout service so
+    # that the routing function is the single source of truth for
+    # where the entry lives.
+    if [ -n "$previous_sorted" ]; then
+      while IFS= read -r stale_name; do
+        if [ -z "$stale_name" ]; then
+          continue
+        fi
+        stale_service="$(route_service "$stale_name")"
         # `|| true` because deletion of a missing entry is benign
         # (someone already removed it; we still want to clear our
         # registry tracking on the next step).
         sudo -u "$USERNAME" -H /usr/bin/security delete-generic-password \
-          -s "$stale_service" -a mcp-hub "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
-        printf 'mcp-secrets: remove %s\n' "$stale_service" >&2
+          -s "$stale_service" -a "$stale_name" "$KEYCHAIN_PATH" >/dev/null 2>&1 || true
+        printf 'mcp-secrets: remove %s/%s\n' "$stale_service" "$stale_name" >&2
       done < <(comm -23 <(echo "$previous_sorted") <(echo "$current_sorted"))
     fi
 
