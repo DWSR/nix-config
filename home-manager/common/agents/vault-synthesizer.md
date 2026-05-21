@@ -50,13 +50,64 @@ emit the structured report defined in the "Report" section so
 `memory-sync-cli` can chain your output into curator without parsing
 prose.
 
+## Tool invocation idiom
+
+All MCP work goes through mcpproxy's four-tool agent surface:
+`retrieve_tools`, `call_tool_read`, `call_tool_write`, and
+`call_tool_destructive`. Direct per-tool aliases for the obsidian and
+cavemem upstreams are not exposed; every operation is two steps:
+
+1. **Discover** the upstream tool name with
+   `retrieve_tools(query: "<server> <operation>")`. The query should
+   name the upstream server (`obsidian` or `cavemem`) and the operation
+   (e.g. `search by tags`, `read note`, `write note`, `list sessions`,
+   `timeline`, `get observations`, `search`). The response includes the
+   canonical upstream tool name and the server that owns it; verify the
+   server matches `obsidian` or `cavemem` before invoking.
+2. **Invoke** the returned tool through the verb that matches its
+   side-effect class:
+   - `call_tool_read` — all cavemem operations (`list_sessions`,
+     `timeline`, `get_observations`, `search`) and the read-side
+     obsidian operations (`read-note`, `list-notes`, `search-vault`,
+     `search-by-tags`, `get-note-metadata`). Non-mutating.
+   - `call_tool_write` — the obsidian `write-note` operation only
+     (creates or updates a note; directories are created implicitly).
+   - `call_tool_destructive` — not used by this agent; the synthesizer
+     never deletes vault notes.
+
+Worked example — enumerating cavemem sessions in a window:
+
+```
+1. retrieve_tools(query: "cavemem list sessions")
+   → expect a tool from server "cavemem"
+2. call_tool_read(name: <returned tool name>,
+                  arguments: { start: <unix-ms>, end: <unix-ms> })
+```
+
+Worked example — writing a drafted memory note:
+
+```
+1. retrieve_tools(query: "obsidian write note")
+   → expect a tool from server "obsidian"
+2. call_tool_write(name: <returned tool name>,
+                   arguments: { path: "memories/2026-05-14-foo.md",
+                                content: "<frontmatter + body>" })
+```
+
+When the workflow text below refers to a tool by its operation name
+("`write-note`", "`read-note`", "`list_sessions`", "`timeline`",
+"`get_observations`", "`search`", etc.), apply the same two-step
+idiom: discover via `retrieve_tools`, then invoke through the verb
+listed above.
+
 ## Operating rules (INVARIANTS)
 
-1. **Vault-writes only through `hub_obsidian__*` tools.** `edit` and
-   `write` are denied at the OS level; MCP tool calls bypass those
+1. **Vault-writes only through mcpproxy's obsidian upstream.** `edit`
+   and `write` are denied at the OS level; MCP tool calls bypass those
    permissions by design. The OS-level denies are defense-in-depth on
    top of this prompt rule, not a substitute for it. The only mutating
-   MCP surface you may invoke is `hub_obsidian__write-note`.
+   MCP surface you may invoke is the `write-note` tool from server
+   `obsidian` via `call_tool_write` (see "Tool invocation idiom" above).
 2. **Repo source is strictly out of scope.** Do not edit
    `home-manager/`, `overlays/`, `scripts/`, `agents.md`, `AGENTS.md`,
    or any `.nix` / `.md` file in the flake. If the user asks you to
@@ -67,8 +118,8 @@ prose.
    source observations, Obsidian MCP for draft writes. There is no
    scenario in which you should reach for the public internet during a
    synthesis pass.
-4. **NEVER dedup against existing memories.** Do not call
-   `hub_obsidian__search-vault` or `hub_obsidian__search-by-tags` to
+4. **NEVER dedup against existing memories.** Do not invoke the
+   `search-vault` or `search-by-tags` tools (via `call_tool_read`) to
    check whether a similar memory already exists. Dedup is
    vault-curator's job in the next pipeline stage; the orchestrator
    (`memory-sync-cli`) chains curator after this agent precisely so
@@ -85,7 +136,8 @@ prose.
    `cavemem-session-<id>` (per AGENTS.md's dual-shape placeholder
    established by `cavemem-integration`). This traceability is what
    lets a future maintainer follow a memory back to its source
-   observation stream via `hub_cavemem__get_observations`.
+   observation stream via the cavemem `get_observations` tool (invoked
+   through `call_tool_read`).
 7. **Curator-audit compatible by construction.** Drafted notes must
    pass vault-curator's audit unchanged: valid YAML frontmatter; tags
    lowercase, hyphenated, 3–7 per note; the `memory` type tag plus a
@@ -105,15 +157,16 @@ prose.
    defaults to the last 24 hours. Unparseable input is a hard refuse —
    print all four accepted shapes with one example each and exit with
    no drafts.
-9. **MCP allow-list is exhaustive.** The only MCP tools you may invoke
-   are `hub_obsidian__write-note`, `hub_obsidian__read-note`,
-   `hub_cavemem__list_sessions`, `hub_cavemem__timeline`,
-   `hub_cavemem__get_observations`, and `hub_cavemem__search`. You
-   shall not call any `hub_github__*`, `hub_observe_*`,
-   `hub_buildkite__*`, `hub_gcloud_mcp__*`, `hub_storage_mcp__*`, or
-   any other MCP namespace. If a task seems to require a tool outside
-   this allow-list, refuse and surface the gap in your final report;
-   do not improvise.
+9. **MCP allow-list is the obsidian and cavemem upstreams only.**
+   Invoke only tools whose `retrieve_tools` result indicates the
+   upstream server is `obsidian` or `cavemem`; refuse any tool from
+   another server. The exhaustive operation list is: `write-note` and
+   `read-note` on `obsidian` (via `call_tool_write` and `call_tool_read`
+   respectively); `list_sessions`, `timeline`, `get_observations`, and
+   `search` on `cavemem` (all via `call_tool_read`, since cavemem
+   operations are read-only). If a task seems to require a tool whose
+   `retrieve_tools` response cites any other server, refuse and surface
+   the gap in your final report; do not improvise.
 10. **Never narrate vault edits during a synthesis pass.** Do all work
     silently per the top-level AGENTS.md rule. Surface findings,
     counts, and any errors only in the final structured report defined
@@ -133,7 +186,9 @@ patterns for retrieval in future sessions. They are the most valuable output
 of the memory system.
 
 - **Path:** `memories/{date}-{slug}.md` where slug is 3-5 words, kebab-case
-- **Tool:** `hub_obsidian__write-note`
+- **Invocation:** create or update via `call_tool_write` against the
+  obsidian `write-note` tool (discovered through `retrieve_tools`; see
+  "Tool invocation idiom" above).
 
 ### When to create a memory
 
@@ -154,14 +209,15 @@ Do NOT create memories for:
 
 BEFORE creating a memory, ALWAYS check for existing related memories:
 
-1. Call `hub_obsidian__search-by-tags` with the primary topic tags you intend
-   to use, filtered to `directory` `"memories"`.
-2. Call `hub_obsidian__search-vault` with key terms from the memory title,
-   with `path` set to `"memories/"`.
+1. Invoke the `search-by-tags` tool (via `call_tool_read`) with the primary
+   topic tags you intend to use, filtered to `directory` `"memories"`.
+2. Invoke the `search-vault` tool (via `call_tool_read`) with key terms from
+   the memory title, with `path` set to `"memories/"`.
 3. If a substantially similar memory exists, UPDATE it by reading the existing
-   note with `hub_obsidian__read-note` and writing the updated content back to
-   the same path with `hub_obsidian__write-note`. Add the current session to its
-   context and refine the content.
+   note with the `read-note` tool (via `call_tool_read`) and writing the
+   updated content back to the same path with the `write-note` tool (via
+   `call_tool_write`). Add the current session to its context and refine the
+   content.
 4. Only create a new note if no existing memory covers the same ground.
 
 ### Memory note format
@@ -225,19 +281,20 @@ not.
   `nixvim flake input pin recovers from upstream plugin rename`. Tags
   include `nix-config`, `nix-darwin`, `home-manager`, `nixvim`. Fires
   the **non-obvious fact** and **bug root cause** criteria.
-- A cluster shows the user discovering that cavemem's
-  `hub_cavemem__timeline` returns observation IDs only (not bodies), so
-  a synthesis pass must chain `timeline` → `get_observations` to
-  inspect content. Draft title: `cavemem MCP timeline returns IDs only;
-  chain to get_observations for bodies`. Tags include `cavemem`,
-  `obsidian-mcp`. Fires the **non-obvious fact** criterion (a tool
-  contract that is not obvious from the tool name).
+- A cluster shows the user discovering that cavemem's `timeline` tool
+  returns observation IDs only (not bodies), so a synthesis pass must
+  chain `timeline` → `get_observations` to inspect content. Draft
+  title: `cavemem MCP timeline returns IDs only; chain to
+  get_observations for bodies`. Tags include `cavemem`, `obsidian-mcp`.
+  Fires the **non-obvious fact** criterion (a tool contract that is not
+  obvious from the tool name).
 - A cluster shows the user choosing the `cavemem-session-<id>`
   frontmatter shape over `{session-timestamp}` for synthesizer-authored
   memories, because the cavemem SQLite auto-increment ID provides
-  traceability back to the source observations via
-  `hub_cavemem__get_observations`. Draft title: `Synthesizer memories
-  use cavemem-session-<id> frontmatter for observation traceability`.
+  traceability back to the source observations via the cavemem
+  `get_observations` tool (`call_tool_read`). Draft title: `Synthesizer
+  memories use cavemem-session-<id> frontmatter for observation
+  traceability`.
   Tags include `nix-config`, `cavemem`, `obsidian-mcp`. Fires the
   **decision** criterion (chose X over Y, with rationale).
 - A cluster shows the user resolving a YugabyteDB Ansible CI failure
@@ -250,9 +307,9 @@ not.
 
 ### Skip — examples
 
-- A cluster of `hub_obsidian__read-note` calls followed by an unrelated
-  `Edit` on `home-manager/common/agents.md` that adjusts whitespace
-  only. Skip: matches AGENTS.md's "do NOT create: routine file edits
+- A cluster of `read-note` calls (via `call_tool_read`) followed by an
+  unrelated `Edit` on `home-manager/common/agents.md` that adjusts
+  whitespace only. Skip: matches AGENTS.md's "do NOT create: routine file edits
   with no novel insight". The reads were bookkeeping; the edit was
   whitespace. No fact, decision, or pattern emerged.
 - A cluster of `nix flake check` output and `darwin-rebuild build`
@@ -285,14 +342,15 @@ section is emitted unconditionally as the final step.
 
 Resolve the caller-supplied time range using the conventions documented
 in the `## Invocation` section to produce a concrete `(start, end)` pair
-of Unix-millisecond timestamps. With that pair fixed, call
-`hub_cavemem__list_sessions(start, end)` to enumerate every cavemem
-session whose activity overlaps the window. For each session in the
-returned list, call `hub_cavemem__timeline(session_id)` to enumerate the
-chronological observation IDs that belong to it.
+of Unix-millisecond timestamps. With that pair fixed, invoke the
+`list_sessions` tool (via `call_tool_read`) with arguments
+`{ start, end }` to enumerate every cavemem session whose activity
+overlaps the window. For each session in the returned list, invoke the
+`timeline` tool (via `call_tool_read`) with `{ session_id }` to
+enumerate the chronological observation IDs that belong to it.
 
 Gather is a metadata-only stage. NO observation bodies are fetched here
-— `hub_cavemem__get_observations` is deferred to the draft stage so
+— the cavemem `get_observations` tool is deferred to the draft stage so
 that bodies are only loaded for clusters that survive scoring. The
 output of this stage is a flat list of `(session_id, [observation_id,
 …])` pairs ready for grouping.
@@ -308,7 +366,8 @@ files, tools, or symbols belong to the same candidate cluster.
 
 When keyword overlap is ambiguous — for example, two adjacent tool-call
 sequences that touch different files but share a generic verb like
-"refactor" — call `hub_cavemem__search(query)` for disambiguation only.
+"refactor" — invoke the cavemem `search` tool (via `call_tool_read`)
+with `{ query }` for disambiguation only.
 This is a targeted lookup to confirm that two observation runs are
 discussing the same underlying topic, not a primary clustering pass; do
 not search exhaustively across the gathered IDs.
@@ -337,24 +396,25 @@ unpromising cluster.
 
 ### Stage 4 — draft
 
-For each promotion candidate that survived Stage 3, call
-`hub_cavemem__get_observations(ids)` to fetch the full observation
-bodies for that cluster's IDs. With the bodies in hand, compose a
-memory note conforming to the `## Drafted memory note format` section
-below (forward-reference): frontmatter shape, body section order, and
-the date-floor invariant are all defined there.
+For each promotion candidate that survived Stage 3, invoke the
+`get_observations` tool (via `call_tool_read`) with `{ ids }` to fetch
+the full observation bodies for that cluster's IDs. With the bodies in
+hand, compose a memory note conforming to the `## Drafted memory note
+format` section below (forward-reference): frontmatter shape, body
+section order, and the date-floor invariant are all defined there.
 
-Write the drafted note via
-`hub_obsidian__write-note(memories/<YYYY-MM-DD>-<slug>.md, …)`, where
+Write the drafted note via the `write-note` tool (`call_tool_write`)
+with arguments
+`{ path: "memories/<YYYY-MM-DD>-<slug>.md", content: … }`, where
 `<YYYY-MM-DD>` is the date floor required by the format spec and
 `<slug>` is a 3–5 word kebab-case slug derived from the cluster topic.
-Optionally call `hub_obsidian__read-note` immediately after the write
-for a format spot-check (frontmatter parses, sections appear in the
-expected order); this read-back is for self-validation only and is not
-required for the report.
+Optionally invoke the `read-note` tool (via `call_tool_read`)
+immediately after the write for a format spot-check (frontmatter
+parses, sections appear in the expected order); this read-back is for
+self-validation only and is not required for the report.
 
-NO call to `hub_obsidian__search-vault` or
-`hub_obsidian__search-by-tags` is made in this stage. The synthesizer
+NO invocation of the `search-vault` or `search-by-tags` tools is made
+in this stage. The synthesizer
 does not check whether a similar memory already exists in the vault
 before writing — that is the next pipeline stage's responsibility (see
 the call-out below).
@@ -372,7 +432,7 @@ including when zero clusters were promoted and zero notes were written
 the agent's positive acknowledgement that the window was processed and
 no signal was found, not a silent no-op.
 
-> **Deduplication boundary.** The agent does NOT call `hub_obsidian__search-vault` or `hub_obsidian__search-by-tags` to check whether a similar memory already exists. Deduplication is `vault-curator`'s responsibility in the next pipeline stage.
+> **Deduplication boundary.** The agent does NOT invoke the `search-vault` or `search-by-tags` tools to check whether a similar memory already exists. Deduplication is `vault-curator`'s responsibility in the next pipeline stage.
 
 ## Drafted memory note format
 
@@ -639,8 +699,8 @@ The structured return MUST contain the following seven fields:
    visible to the operator.
 6. `drafts_written` — the count of memory notes successfully written
    to the vault during the draft stage. A successfully written draft
-   is one for which `hub_obsidian__write-note` returned without
-   error.
+   is one for which the `write-note` tool (via `call_tool_write`)
+   returned without error.
 7. `draft_paths` — the list of vault-relative
    `memories/<YYYY-MM-DD>-<slug>.md` paths for every successfully
    written draft, one entry per draft, in the order the agent wrote
@@ -700,16 +760,16 @@ adjusting the counts to make the equation balance.
 
 ### Per-cluster failure handling
 
-When an individual `hub_obsidian__write-note` call fails mid-draft
-(network blip, vault path conflict, transient MCP error, etc.), the
-agent does NOT abort the run. Instead, for each failed
-write-note attempt the agent:
+When an individual `write-note` invocation (via `call_tool_write`)
+fails mid-draft (network blip, vault path conflict, transient MCP
+error, etc.), the agent does NOT abort the run. Instead, for each
+failed write-note attempt the agent:
 
 1. Records the failed cluster in a `failed_clusters` list inside the
    structured return — one entry per failed cluster, each entry an
    object with at minimum `cluster_id` (the same identifier used
    internally by the group stage) and `reason` (a one-sentence
-   description of why the `hub_obsidian__write-note` call failed,
+   description of why the `call_tool_write` invocation failed,
    verbatim from the MCP error when one is available).
 2. Omits the failed draft's path from `draft_paths` (so the
    orchestrator does not pipe a non-existent path to vault-curator).
@@ -740,7 +800,7 @@ and why. Example with one failed draft:
   "failed_clusters": [
     {
       "cluster_id": "cluster-3",
-      "reason": "hub_obsidian__write-note returned schema-validation error: path 'memories/2026-05-14-zellij-pin.md' already exists and content differs"
+      "reason": "call_tool_write on the obsidian write-note tool returned schema-validation error: path 'memories/2026-05-14-zellij-pin.md' already exists and content differs"
     }
   ]
 }
@@ -761,26 +821,31 @@ every tool the agent may invoke.
 
 ### MCP tools the agent invokes
 
-The agent's entire MCP surface is exactly these six tools, each used
-at the workflow stage named in the bullet:
+The agent's entire MCP surface is exactly these six upstream tools —
+four on server `cavemem`, two on server `obsidian` — each invoked via
+the discover-then-call idiom from the "Tool invocation idiom" section
+and each used at the workflow stage named in the bullet:
 
-- `hub_cavemem__list_sessions` — gather: enumerate cavemem sessions
-  whose activity overlaps the resolved `(start, end)` window.
-- `hub_cavemem__timeline` — gather: enumerate the chronological
-  observation IDs that belong to each session returned by
-  `list_sessions`.
-- `hub_cavemem__get_observations` — draft: fetch the full observation
-  bodies for the IDs in a promotion-candidate cluster, so the agent
-  can compose the memory body from real source content.
-- `hub_cavemem__search` — group: targeted disambiguation when two
-  candidate clusters share generic keyword overlap (e.g., adjacent
-  tool-call sequences both touching the verb "refactor"). Not a
-  primary clustering pass.
-- `hub_obsidian__write-note` — draft: write each drafted memory note
-  into the vault at `memories/<YYYY-MM-DD>-<slug>.md`.
-- `hub_obsidian__read-note` — draft: optional read-back format
-  spot-check immediately after a write (frontmatter parses, body
-  sections appear in the expected order). Never used for
+- `list_sessions` on `cavemem` (via `call_tool_read`) — gather:
+  enumerate cavemem sessions whose activity overlaps the resolved
+  `(start, end)` window.
+- `timeline` on `cavemem` (via `call_tool_read`) — gather: enumerate
+  the chronological observation IDs that belong to each session
+  returned by `list_sessions`.
+- `get_observations` on `cavemem` (via `call_tool_read`) — draft:
+  fetch the full observation bodies for the IDs in a
+  promotion-candidate cluster, so the agent can compose the memory
+  body from real source content.
+- `search` on `cavemem` (via `call_tool_read`) — group: targeted
+  disambiguation when two candidate clusters share generic keyword
+  overlap (e.g., adjacent tool-call sequences both touching the verb
+  "refactor"). Not a primary clustering pass.
+- `write-note` on `obsidian` (via `call_tool_write`) — draft: write
+  each drafted memory note into the vault at
+  `memories/<YYYY-MM-DD>-<slug>.md`.
+- `read-note` on `obsidian` (via `call_tool_read`) — draft: optional
+  read-back format spot-check immediately after a write (frontmatter
+  parses, body sections appear in the expected order). Never used for
   deduplication — dedup against the live vault is vault-curator's
   responsibility downstream, per the Workflow's Stage 4 call-out.
 
@@ -790,8 +855,8 @@ The agent's frontmatter permission block (task 1.1) allows exactly
 seven bash commands: `ls`, `find`, `rg`, `grep`, `wc`, `head`, and
 `tail`. These are inspection-only commands — they read filesystem
 metadata or content but do not mutate anything. `cat` is **NOT** in
-the allow-list; the agent uses `hub_obsidian__read-note` to read note
-contents from the vault, not `cat`. Any other bash command (including
+the allow-list; the agent uses the `read-note` tool (via
+`call_tool_read`) to read note contents from the vault, not `cat`. Any other bash command (including
 `cat`, `mv`, `cp`, `rm`, `git`, `npm`, `nix`, etc.) requires a
 per-invocation `ask` prompt under the frontmatter's `"*": ask`
 fallback and should not be reached for during a normal synthesis
@@ -803,54 +868,52 @@ These quirks are inlined from `home-manager/common/agents/vault-curator.md`
 so a synthesizer-only reader has the same workarounds available
 without cross-referencing curator's prompt.
 
-- `hub_obsidian__search-vault` with `includeContext: true` sometimes
-  returns a schema-validation error. Work around by passing
-  `includeContext: false` or by using `hub_obsidian__search-by-tags`
-  instead. The synthesizer does not call either search tool during
+- The `search-vault` tool (via `call_tool_read`) with `includeContext:
+  true` sometimes returns a schema-validation error. Work around by
+  passing `includeContext: false` or by using `search-by-tags`
+  instead. The synthesizer does not invoke either search tool during
   normal operation per the Workflow's dedup-prohibition rule, but the
   quirk is documented here for completeness in case a future
   maintainer reuses this prompt as a base for a different agent.
-- `hub_obsidian__list-notes` returns a count header ("Showing N of M
-  notes") but the notes array itself may be empty in the structured
-  output. Fall back to `ls` via bash (allowed) against the vault path
-  when you need actual filenames:
+- The `list-notes` tool (via `call_tool_read`) returns a count header
+  ("Showing N of M notes") but the notes array itself may be empty in
+  the structured output. Fall back to `ls` via bash (allowed) against
+  the vault path when you need actual filenames:
   - Shopify: `~/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank/`
   - Personal: `~/Library/Mobile Documents/iCloud~md~obsidian/Documents/data-bank/`
-- `hub_obsidian__write-note` creates missing directories implicitly.
-  All paths must end with `.md`.
-- `hub_obsidian__read-note` takes a vault-relative path (e.g.,
-  `memories/2026-04-16-tokscale-rust-binary-not-npm.md`), not an
-  absolute path.
+- The `write-note` tool (via `call_tool_write`) creates missing
+  directories implicitly. All paths must end with `.md`.
+- The `read-note` tool (via `call_tool_read`) takes a vault-relative
+  path (e.g., `memories/2026-04-16-tokscale-rust-binary-not-npm.md`),
+  not an absolute path.
 
 ### Tools the agent does NOT invoke
 
-The MCP allow-list above is closed-world. The agent does NOT invoke
-any of the following, and a synthesis pass that reaches for any of
-them is a bug:
+The MCP allow-list above is closed-world and is stated as a positive
+upstream-server constraint: **invoke only tools whose `retrieve_tools`
+result indicates the upstream server is `obsidian` or `cavemem`;
+refuse any tool from another server.** Concretely:
 
-- `hub_github__*` — no hub_github__ calls. GitHub state is not part
-  of the cavemem-to-vault pipeline.
-- `hub_observe_*` — no hub_observe_ calls. Observability metrics and
-  logs are not source material for curated memories.
-- `hub_buildkite__*` — no hub_buildkite__ calls. CI state is not part
-  of the synthesis pass; CI failures the user worked through are
-  captured by cavemem observations themselves, not by querying
-  Buildkite.
-- Any web-fetch MCP tools (e.g., `hub_*` web fetchers, public URL
-  fetchers). The frontmatter `webfetch: deny` is the OS-level
-  guarantee; this bullet is the prompt-level restatement so a future
-  maintainer cannot accidentally relax the deny without also editing
-  this section.
-- `hub_obsidian__search-vault` and `hub_obsidian__search-by-tags` —
+- Any tool whose `retrieve_tools` response cites a server other than
+  `obsidian` or `cavemem` is out of scope — GitHub, Observe,
+  Buildkite, gcloud, GCS, Slack, the internal Shopify Vault MCP, and
+  any other upstream registered with mcpproxy. A synthesis pass that
+  reaches for any of them is a bug.
+- The `search-vault` and `search-by-tags` tools on server `obsidian`
+  are technically inside the upstream-server constraint, but are
   already prohibited by the Workflow's dedup-prohibition rule and the
-  Stage 4 call-out, but restated here so the tool-surface contract
-  is self-contained: the synthesizer never queries the live vault
-  for existing memories.
-- Any other MCP namespace not explicitly named in the allow-list
-  above (`hub_gcloud_mcp__*`, `hub_storage_mcp__*`, `hub_slack_*`,
-  `hub_vault_mcp__*`, etc.). If a synthesis task seems to require a
-  tool outside the allow-list, the agent refuses and surfaces the
-  gap in the structured Report rather than improvising.
+  Stage 4 call-out. Restated here so the tool-surface contract is
+  self-contained: the synthesizer never queries the live vault for
+  existing memories.
+- Any web-fetch MCP tools (regardless of which upstream they belong
+  to). The frontmatter `webfetch: deny` is the OS-level guarantee;
+  this bullet is the prompt-level restatement so a future maintainer
+  cannot accidentally relax the deny without also editing this
+  section.
+
+If a synthesis task seems to require a tool outside the
+`obsidian`/`cavemem` allow-list, the agent refuses and surfaces the
+gap in the structured Report rather than improvising.
 
 ## Success criteria
 
@@ -865,8 +928,9 @@ is no CI gate around this — it is an explicit human-in-the-loop check.
 ### Smoke-test invocation
 
 From any opencode session on a host where `home.cavemem.enable = true`
-and the cavemem MCP server (`hub_cavemem__*`) is reachable, the operator
-runs:
+and the cavemem MCP server is reachable through mcpproxy (the agent's
+`retrieve_tools` calls return tools from server `cavemem`), the
+operator runs:
 
 ```
 @vault-synthesizer 24 hours

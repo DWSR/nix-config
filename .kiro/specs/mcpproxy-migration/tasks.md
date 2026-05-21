@@ -126,7 +126,7 @@
   - _Requirements: 4.1, 4.3_
   - _Boundary: home-manager/common/agents/vault-curator.md_
 
-- [ ] 9.3 (P) Rewrite vault-synthesizer subagent prompts for the four-tool surface
+- [x] 9.3 (P) Rewrite vault-synthesizer subagent prompts for the four-tool surface
   - Replace each of the 51 `hub_obsidian__*` and `hub_cavemem__*` invocations with the discover-then-invoke pattern
   - Replace the negative allow-list ("no `hub_buildkite__*`, no `hub_observe_*`, no `hub_gcloud_mcp__*`, no `hub_storage_mcp__*`") with the upstream-server-name pattern ("invoke only tools whose retrieve_tools result indicates the server is `obsidian` or `cavemem`; refuse any tool from another server")
   - **Observable completion**: `grep -E 'hub_[a-z]' home-manager/common/agents/vault-synthesizer.md` returns zero matches
