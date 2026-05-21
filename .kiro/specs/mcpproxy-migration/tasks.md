@@ -42,7 +42,7 @@
 
 - [ ] 5. Rewrite the MCP orchestrator module for mcpproxy
 
-- [ ] 5.1 Replace the orchestrator's option surface and config rendering
+- [x] 5.1 Replace the orchestrator's option surface and config rendering
   - Add a new `home.mcp.listenPort` option (default 8080) with a documented description
   - Replace the `servers.json` renderer with an `mcp_config.json` renderer that emits mcpproxy's array shape (`mcpServers: [{name, command, args, env, protocol, enabled, quarantined}]`)
   - Implement an internal attrset→array translator so `home.mcp.extraServers` keeps its `attrsOf attrs` shape; the 15+ cross-host call sites compile unchanged
