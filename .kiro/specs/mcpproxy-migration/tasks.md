@@ -85,7 +85,7 @@
   - _Requirements: 8.1, 8.2, 8.4, 8.5_
   - _Boundary: home-manager/common/opencode.nix_
 
-- [ ] 7.2 (P) Replace the Shopify-host opencode mcp.hub entry
+- [x] 7.2 (P) Replace the Shopify-host opencode mcp.hub entry
   - Rename the `programs.opencode.settings.mcp.hub` block to `programs.opencode.settings.mcp.mcpproxy`
   - Change the `url` from `http://localhost:37373/mcp/` to `http://127.0.0.1:8080/mcp`
   - Preserve `type = "remote"`, `enabled = true`
