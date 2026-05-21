@@ -53,7 +53,7 @@
   - _Depends: 1, 2_
   - _Boundary: home-manager/mcp/default.nix_
 
-- [ ] 5.2 Replace the orchestrator's launchd plist and packages
+- [x] 5.2 Replace the orchestrator's launchd plist and packages
   - Replace the launchd plist with label `com.smart-mcp-proxy.mcpproxy`, listening on `127.0.0.1:${toString cfg.listenPort}`, `KeepAlive = true`, `RunAtLoad = true`, additional ProgramArguments `--log-to-file=false`, log paths under `~/Library/Logs/mcpproxy/launchd.{log,error.log}`
   - Preserve the existing PATH supplementation (`google-cloud-sdk`, `git-lfs`) so spawned upstreams (gcloud-mcp, github-mcp-server) continue to find their tools
   - Rename the restart-helper `writeScriptBin` from `restart-mcp-hub` to `restart-mcpproxy`; point `launchctl kickstart` at the new label

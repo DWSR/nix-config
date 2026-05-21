@@ -190,13 +190,13 @@ in
 
   config = lib.mkIf config.home.mcp.enable {
     home.packages = [
-      pkgs.mcp-hub
+      pkgs.mcpproxy-go
       pkgs.github-mcp-server
       pkgs.mcp-nixos
       pkgs.mcp-obsidian
-      (pkgs.writeScriptBin "restart-mcp-hub" ''
+      (pkgs.writeScriptBin "restart-mcpproxy" ''
         #!/bin/sh
-        exec launchctl kickstart -k "gui/$(id -u)/com.ravitemer.mcp-hub"
+        exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"
       '')
     ];
 
@@ -205,17 +205,22 @@ in
       text = builtins.toJSON renderedConfig;
     };
 
-    launchd.agents.mcp-hub = {
+    # launchd refuses to auto-create StandardOutPath / StandardErrorPath
+    # parent directories; ensure ~/Library/Logs/mcpproxy exists before
+    # the agent starts.
+    home.activation.mcpproxyLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p "${config.home.homeDirectory}/Library/Logs/mcpproxy"
+    '';
+
+    launchd.agents.mcpproxy = {
       enable = true;
       config = {
-        Label = "com.ravitemer.mcp-hub";
+        Label = "com.smart-mcp-proxy.mcpproxy";
         ProgramArguments = [
-          "${pkgs.mcp-hub}/bin/mcp-hub"
-          "--port"
-          "37373"
-          "--config"
-          "${config.xdg.configHome}/mcphub/servers.json"
-          "--watch"
+          (lib.getExe pkgs.mcpproxy-go)
+          "serve"
+          "--config=${config.xdg.configHome}/mcpproxy/mcp_config.json"
+          "--log-to-file=false"
         ];
         RunAtLoad = true;
         KeepAlive = true;
@@ -225,8 +230,8 @@ in
             pkgs.git-lfs
           ]
           + ":/usr/bin:/bin";
-        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcp-hub.log";
-        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcp-hub-error.log";
+        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.log";
+        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.error.log";
       };
     };
   };
