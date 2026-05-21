@@ -83,11 +83,66 @@
         base;
 
     home.opencode.wrapperCommands = [
-      # MCP hub health check — fail fast if obsidian memory tools aren't available.
+      # mcpproxy preflight: verify the orchestrator itself is up and the
+      # obsidian upstream is connected before opencode starts. Replaces
+      # the pre-migration mcp-orchestrator health probe
+      # (mcpproxy-migration spec, R8.1, R8.2, R8.4; design.md §Domain E).
+      # The cavemem per-upstream probe lives in
+      # `home-manager/common/cavemem.nix` and appends after this snippet
+      # via HM list-merge on `wrapperCommands`.
+      #
+      # Probe sequence:
+      #   1. Read mcpproxy's API key from the macOS Keychain via
+      #      `security find-generic-password -s mcpproxy -a
+      #      mcpproxy-api-key -w`. The keychain entry is provisioned by
+      #      the SOPS bridge during home-manager activation. A missing
+      #      key fails with a specific stderr message BEFORE attempting
+      #      curl so an operator distinguishes a keychain problem from
+      #      a connectivity problem.
+      #   2. `GET http://127.0.0.1:8080/healthz` (no auth) — mcpproxy
+      #      liveness probe (R8.1). Failure exits 1 naming "mcpproxy"
+      #      as the failing component.
+      #   3. `GET http://127.0.0.1:8080/api/v1/servers/obsidian` with
+      #      `X-API-Key` header. Greps the JSON body for an upstream
+      #      connection state matching either `"connected":true` or
+      #      `"status":"connected"` (mcpproxy v0.33.1 emits one of these
+      #      shapes depending on stdio state). Failure exits 1 naming
+      #      "obsidian" as the failing component (R8.2).
+      #
+      # Every failure stderr message includes the recovery hint
+      # `launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy`
+      # (R8.4) — the new mcpproxy launchd label.
+      #
+      # The `opencode-prewarm` launchd agent below (L237) invokes the
+      # UNWRAPPED `home.opencode.package` binary, so this preflight is
+      # bypassed at login (R8.5).
+      #
+      # Quoting note: this snippet is composed into the opencode wrapper
+      # via `wrapProgram ... --run STR`, where STR is wrapped in shell
+      # single-quotes by makeWrapper. A single quote anywhere inside the
+      # snippet would close the outer single-quoted string and break
+      # wrapper composition (see
+      # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
+      # and design.md L711-713). Use double quotes (with backslash-
+      # escaped inner double quotes where needed) throughout. The
+      # cavemem probe in `home-manager/common/cavemem.nix` follows the
+      # same convention.
       ''
-        if ! /usr/bin/curl -sf --max-time 2 http://localhost:37373/api/health >/dev/null 2>&1; then
-          echo "ERROR: MCP hub is not running. Obsidian memory tools are unavailable." >&2
-          echo "Start it with: launchctl kickstart gui/$(id -u)/com.ravitemer.mcp-hub" >&2
+        mcpproxy_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || mcpproxy_api_key=""
+        if [ -z "$mcpproxy_api_key" ]; then
+          echo "ERROR: mcpproxy unreachable: mcpproxy API key missing from macOS Keychain (service=mcpproxy, account=mcpproxy-api-key)." >&2
+          echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
+          exit 1
+        fi
+        if ! /usr/bin/curl -sf --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
+          echo "ERROR: mcpproxy unreachable: liveness probe to http://127.0.0.1:8080/healthz failed." >&2
+          echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
+          exit 1
+        fi
+        obsidian_status=$(/usr/bin/curl -sf --max-time 2 -H "X-API-Key: $mcpproxy_api_key" http://127.0.0.1:8080/api/v1/servers/obsidian 2>/dev/null) || obsidian_status=""
+        if ! printf "%s" "$obsidian_status" | grep -qE "\"(status|connected)\"[[:space:]]*:[[:space:]]*(\"connected\"|true)"; then
+          echo "ERROR: obsidian MCP server not reachable via mcpproxy: upstream not connected at /api/v1/servers/obsidian." >&2
+          echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
           exit 1
         fi
       ''

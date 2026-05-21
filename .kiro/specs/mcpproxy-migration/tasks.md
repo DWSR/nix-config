@@ -76,7 +76,7 @@
 
 - [ ] 7. Update opencode integration on both hosts
 
-- [ ] 7.1 (P) Rewrite the opencode wrapper preflight for mcpproxy
+- [x] 7.1 (P) Rewrite the opencode wrapper preflight for mcpproxy
   - Replace the existing mcphub `/api/health` probe (around L85-92) with the sequence: read api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, probe `GET /healthz`, then probe `GET /api/v1/servers/obsidian` with `X-API-Key` header
   - Each probe failure must exit 1 with a stderr message naming the failing component (mcpproxy itself, obsidian) and a recovery hint referencing the new launchd label
   - Preserve the existing single-quote convention (no literal single quotes inside the wrapper snippet)
