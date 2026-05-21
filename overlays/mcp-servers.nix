@@ -575,6 +575,31 @@ in
     };
   };
 
+  mcpproxy-go = final.buildGoModule {
+    pname = "mcpproxy-go";
+    version = "0.33.1";
+
+    src = final.fetchFromGitHub {
+      owner = "smart-mcp-proxy";
+      repo = "mcpproxy-go";
+      tag = "v0.33.1";
+      hash = "sha256-QjkDlpURQGkGmjCY/Bqev4TSldChSovJPLSKW5zRPpA=";
+    };
+
+    vendorHash = "sha256-VEQookLyn9ix0CY/4VYqHFa6UTrOQS8PfruUkf5bA7k=";
+    subPackages = [ "cmd/mcpproxy" ];
+
+    env.CGO_ENABLED = 0;
+    doCheck = false;
+
+    meta = with final.lib; {
+      description = "Smart MCP proxy daemon that exposes a four-tool surface over upstream MCP servers";
+      homepage = "https://github.com/smart-mcp-proxy/mcpproxy-go";
+      license = licenses.mit;
+      mainProgram = "mcpproxy";
+    };
+  };
+
   # Google Cloud MCP servers — all use the same template
   gcloud-mcp = mkGcloudMcp {
     pname = "gcloud-mcp";

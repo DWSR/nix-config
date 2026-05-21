@@ -2,7 +2,7 @@
 
 ## Phase 1: Foundation
 
-- [ ] 1. Package the mcpproxy daemon for Nix consumption
+- [x] 1. Package the mcpproxy daemon for Nix consumption
   - Add a `pkgs.mcpproxy-go` derivation using `buildGoModule` pinned to upstream tag `v0.33.1` (commit `1356c60`)
   - Build only the headless `cmd/mcpproxy` subpackage; do not build the tray binary
   - Disable cgo (`CGO_ENABLED=0`) and skip upstream tests (`doCheck = false`)
