@@ -21,7 +21,7 @@
   - _Boundary: InstructionProfileRuntime_
 
 - [ ] 2. Define budget metadata and permission rendering
-- [ ] 2.1 Define the canonical budget catalog and metadata schema
+- [x] 2.1 Define the canonical budget catalog and metadata schema
   - Model common, built-in, and host-specific agents with stable names, source type, host scope, instruction profile, permission budget, smoke class, and budget state.
   - Reject enforced agents missing permission budgets or instruction profiles.
   - Done when metadata validation accepts complete catalog entries and rejects incomplete enforced entries.

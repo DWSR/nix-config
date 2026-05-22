@@ -2,5 +2,26 @@
   "version": 1,
   "host": "all",
   "enforcementEnabled": false,
-  "agents": {}
+  "agents": {
+    "explore": {
+      "name": "explore",
+      "source": "builtin",
+      "hostScope": "all",
+      "state": { "kind": "enforced", "reason": "default" },
+      "instructionProfile": "readonly-codebase",
+      "permissionBudget": { "read": "allow", "glob": "allow", "grep": "allow", "list": "allow" },
+      "capabilityRationale": [],
+      "smokeClass": "readonly-codebase-question"
+    },
+    "general": {
+      "name": "general",
+      "source": "builtin",
+      "hostScope": "all",
+      "state": { "kind": "enforced", "reason": "default" },
+      "instructionProfile": "general-research",
+      "permissionBudget": { "read": "allow", "glob": "allow", "grep": "allow", "list": "allow", "webfetch": "allow" },
+      "capabilityRationale": [],
+      "smokeClass": "general-research"
+    }
+  }
 }

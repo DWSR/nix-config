@@ -5,6 +5,7 @@
 }:
 let
   cfg = config.programs.subagent-context-budget;
+  budgetCatalog = import ./subagent-context-budget/budgets.nix { inherit lib; };
 
   agentBudgetType = lib.types.submodule {
     options = {
@@ -34,11 +35,24 @@ let
     };
   };
 
-  emptyBudgetMetadata = {
-    version = 1;
-    enforcementEnabled = false;
-    agents = { };
-  };
+  isEnforced = agent: agent.state.kind == "enforced";
+  hasInstructionProfile =
+    agent: (agent.instructionProfile or null) != null && (agent.instructionProfile or "") != "";
+  hasPermissionBudget = agent: (agent.permissionBudget or { }) != { };
+  catalogValidationErrors = lib.flatten (
+    lib.mapAttrsToList (
+      name: agent:
+      lib.optional (
+        agent.name != name
+      ) "subagent budget catalog entry '${name}' must use the same stable name as its key"
+      ++ lib.optional (
+        isEnforced agent && !hasInstructionProfile agent
+      ) "subagent budget catalog entry '${name}' is enforced but has no instructionProfile"
+      ++ lib.optional (
+        isEnforced agent && !hasPermissionBudget agent
+      ) "subagent budget catalog entry '${name}' is enforced but has no permissionBudget"
+    ) budgetCatalog.agents
+  );
 in
 {
   options.programs.subagent-context-budget = {
@@ -107,8 +121,14 @@ in
           implemented.
         '';
       }
+      {
+        assertion = catalogValidationErrors == [ ];
+        message = lib.concatStringsSep "\n" catalogValidationErrors;
+      }
     ];
 
-    xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON emptyBudgetMetadata;
+    xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON (
+      budgetCatalog.metadata // { enforcementEnabled = cfg.enforce; }
+    );
   };
 }
