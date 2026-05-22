@@ -1,0 +1,13 @@
+{
+  "runtime": {
+    "enabled": false,
+    "availableHooks": [],
+    "sessionAgentLookupAvailable": false
+  },
+  "expected": {
+    "status": "disabled",
+    "requiredHook": "experimental.system.prompt",
+    "missing": [],
+    "reason": "budget-enforcement-disabled"
+  }
+}

@@ -13,7 +13,7 @@
   - Done when the CLI help command and empty test suite run through the project test wrapper.
   - _Requirements: 5.7, 7.1, 8.4_
   - _Boundary: BudgetCLI_
-- [ ] 1.3 Create runtime plugin packaging and self-check harness
+- [x] 1.3 Create runtime plugin packaging and self-check harness
   - Add the plugin packaging path and a self-check command path that can report hook availability without changing prompts.
   - Add a fixture-driven test harness for plugin self-check responses.
   - Done when the packaged plugin can be loaded in a test harness and reports `disabled`, `ready`, or `failed` deterministically.

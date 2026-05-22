@@ -1,0 +1,16 @@
+{
+  "runtime": {
+    "enabled": true,
+    "availableHooks": ["message.updated"],
+    "sessionAgentLookupAvailable": false
+  },
+  "expected": {
+    "status": "failed",
+    "requiredHook": "experimental.system.prompt",
+    "missing": [
+      "hook:experimental.system.prompt",
+      "session-agent-lookup"
+    ],
+    "reason": "runtime-prerequisites-missing"
+  }
+}
