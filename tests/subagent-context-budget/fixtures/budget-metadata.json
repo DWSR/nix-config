@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "host": "all",
+  "enforcementEnabled": false,
+  "agents": {}
+}

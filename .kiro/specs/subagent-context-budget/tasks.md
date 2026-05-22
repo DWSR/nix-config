@@ -7,7 +7,7 @@
   - Done when both host configurations can evaluate with the module enabled and produce an empty budget metadata artifact.
   - _Requirements: 7.1, 8.4, 8.5_
   - _Boundary: BudgetModule_
-- [ ] 1.2 Create the Node CLI and test runner scaffolding
+- [x] 1.2 Create the Node CLI and test runner scaffolding
   - Add a CLI entrypoint with `audit`, `validate`, and `smoke-plan` command placeholders.
   - Add Node test runner plumbing and initial fixtures for metadata and diagnostic reports.
   - Done when the CLI help command and empty test suite run through the project test wrapper.

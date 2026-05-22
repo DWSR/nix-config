@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "privacy": {
+    "includeContent": false,
+    "promptBodiesIncluded": false,
+    "toolOutputBodiesIncluded": false
+  },
+  "sessions": [],
+  "global": {
+    "subagentDispatchTokens": 0,
+    "subagentDispatchByAgent": null,
+    "residualAgentTokens": 0
+  }
+}
