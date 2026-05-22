@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "smokeDefinitions": [
+    {
+      "class": "cavemem-to-memory-draft",
+      "agentName": "vault-synthesizer",
+      "hostScope": "all",
+      "representativeTask": "Discover the cavemem search/list tool via mcpproxy retrieve_tools, read the most recent cavemem session timeline, and emit a draft memory note (frontmatter + Context + Details) as response text. Do not invoke any vault write or destructive tool; produce only the draft.",
+      "expectations": {
+        "passCriteria": [
+          "response contains a markdown code block with a Memories-format frontmatter that includes `sessions: cavemem-session-<id>`",
+          "draft includes ## Context and ## Details sections referencing at least one observation pulled from the cavemem timeline",
+          "response names the cavemem tools it invoked (e.g. mcpproxy_retrieve_tools, mcpproxy_call_tool_read)"
+        ],
+        "failureSignals": [
+          "agent reports missing mcpproxy_call_tool_read permission",
+          "agent attempts mcpproxy_call_tool_destructive (which is ask-gated) and stalls awaiting permission",
+          "agent emits the draft without referencing any specific cavemem session id"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when vault-synthesizer.state.kind == 'unbudgeted'; ValidationComparator surfaces the skip only if the smoke result was marked required."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "mcpproxy_call_tool_destructive is gated with ask but the smoke task explicitly forbids destructive calls; all required tools (mcpproxy_retrieve_tools, mcpproxy_call_tool_read, mcpproxy_call_tool_write) are allow rules. Smoke runner asserts the agent never reaches the ask-gated tool."
+      },
+      "directInvocation": "opencode run --agent vault-synthesizer -- 'Read latest cavemem session timeline and draft a memory note (text only, no vault write).'",
+      "notes": "Draft-only — the smoke must not write to the vault even though mcpproxy_call_tool_write is allow. Prevents pollution of the curated vault from automated smoke runs."
+    },
+    {
+      "class": "general-research",
+      "agentName": "general",
+      "hostScope": "all",
+      "representativeTask": "Summarise the contributing-section of this repository's top-level README and identify one documentation gap, citing the README heading and (optionally) one upstream documentation URL fetched via webfetch.",
+      "expectations": {
+        "passCriteria": [
+          "response cites a specific README heading present in README.md",
+          "response names at least one documentation gap with a one-sentence justification",
+          "response lists each tool the agent invoked (read, glob, grep, webfetch, lsp)"
+        ],
+        "failureSignals": [
+          "agent reports missing read or webfetch permission",
+          "agent attempts edit, write, or bash and reports it is not permitted",
+          "agent stalls awaiting a permission prompt"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when general.state.kind == 'unbudgeted'; ValidationComparator records the skip and only fails the run if the smoke result was required."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "Every tool the smoke task needs (read, glob, grep, list, webfetch, lsp, todowrite, question, skill) is an allow rule on the general budget; the smoke prompt never invokes a tool outside that set."
+      },
+      "directInvocation": "opencode run --agent general -- 'Summarise the README contributing section and identify one documentation gap. Cite headings; at most one webfetch.'",
+      "notes": "Bounded multi-step research per design.md Operator Smoke Tests bullet for `general`."
+    },
+    {
+      "class": "nix-package-evaluation",
+      "agentName": "nix-pkg",
+      "hostScope": "all",
+      "representativeTask": "Run `nix flake show --json` against the repository flake, parse the output, and report which `darwinConfigurations.<host>` outputs exist. Do NOT invoke `nixos-rebuild` or any mutating nix subcommand.",
+      "expectations": {
+        "passCriteria": [
+          "response names at least one `darwinConfigurations.<host>` output present in the flake",
+          "response shows that `nix flake show` was the command actually run (cited from agent tool history)",
+          "response explicitly states that no `nixos-rebuild` subcommand was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts `nixos-rebuild` (which is ask-gated) and stalls awaiting permission",
+          "agent reports missing bash.nix permission",
+          "agent invokes a bash subcommand outside the `nix` allowlist"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when nix-pkg.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "bash.nixos-rebuild is ask-gated; the smoke prompt explicitly forbids it. bash.nix and webfetch are allow rules. Smoke runner asserts the agent's bash invocations all match the `nix` allowlist."
+      },
+      "directInvocation": "opencode run --agent nix-pkg -- 'Run `nix flake show --json` and report the darwinConfigurations outputs. No nixos-rebuild.'",
+      "notes": "Design.md spec: 'package-evaluation dry run that reaches planning output before mutation' — `nix flake show` is dry evaluation."
+    },
+    {
+      "class": "nvim-config-inspection",
+      "agentName": "nvim-tailor",
+      "hostScope": "all",
+      "representativeTask": "Identify which Neovim plugin or module manages LSP integration in this repository's home-manager neovim configuration, and return the home-manager file path plus line number where the plugin is declared.",
+      "expectations": {
+        "passCriteria": [
+          "response includes a `home-manager/**/*.nix:<line>` reference for the LSP-related plugin declaration",
+          "response names the plugin (e.g. `nvim-lspconfig`, `lsp-zero`) — not just 'the LSP plugin'",
+          "response lists tools used (read, grep, glob, list)"
+        ],
+        "failureSignals": [
+          "agent reports missing read, grep, or glob permission",
+          "agent attempts edit/write and reports it is not permitted",
+          "agent returns generic plugin advice without citing a repository file"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when nvim-tailor.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "All tools the smoke needs (read, glob, grep, list, webfetch, lsp) are allow rules; no ask permissions are present on the nvim-tailor budget."
+      },
+      "directInvocation": "opencode run --agent nvim-tailor -- 'Find the LSP plugin declaration in home-manager neovim config and return file:line.'",
+      "notes": "Read/config-inspection task per design.md."
+    },
+    {
+      "class": "readonly-codebase-question",
+      "agentName": "explore",
+      "hostScope": "all",
+      "representativeTask": "Locate the definition of `validateBudgetMetadata` in this repository and return its file path with line number using LSP or grep.",
+      "expectations": {
+        "passCriteria": [
+          "response returns `scripts/subagent-context-budget.js:<line>` where <line> is the line containing `function validateBudgetMetadata`",
+          "response cites whether LSP goToDefinition, grep, or read was used to find it",
+          "no file write or edit is attempted"
+        ],
+        "failureSignals": [
+          "agent reports missing read, grep, glob, list, or lsp permission",
+          "agent attempts to invoke webfetch (which is not in explore's budget)",
+          "agent attempts edit/write and reports it is not permitted"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when explore.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "explore's budget has no ask rules; read, glob, grep, list, lsp, todowrite, question, skill are all allow. The smoke prompt never needs webfetch or any mutation tool."
+      },
+      "directInvocation": "opencode run --agent explore -- 'Find the definition of validateBudgetMetadata and return file_path:line_number.'",
+      "notes": "Read-only codebase question per design.md."
+    },
+    {
+      "class": "security-fixture-audit",
+      "agentName": "security-auditor",
+      "hostScope": "all",
+      "representativeTask": "Audit the files under `tests/subagent-context-budget/fixtures/` for any pattern resembling a secret (API key, bearer token, private key block). Use grep and read only. Use `git log --oneline -- <path>` to spot-check recent provenance. Do not invoke any git mutating subcommand (commit, push, reset, rebase).",
+      "expectations": {
+        "passCriteria": [
+          "response returns a verdict: either 'no findings' or a list of `<file>:<line>` references with a short description of each candidate finding",
+          "response cites whether `git log` (or other read-only git subcommands) was used and on which paths",
+          "agent confirms no git mutating subcommand was attempted"
+        ],
+        "failureSignals": [
+          "agent reports missing bash.git, read, or grep permission",
+          "agent invokes `git commit`, `git push`, `git reset`, or `git rebase`",
+          "agent attempts an edit/write operation"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when security-auditor.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "bash.git is allow but covers all git subcommands; the smoke prompt restricts the agent to read-only git subcommands (log, show, diff). Smoke runner asserts no mutating git invocation appears in the tool history."
+      },
+      "directInvocation": "opencode run --agent security-auditor -- 'Audit tests/subagent-context-budget/fixtures/ for secrets-like patterns. Read-only.'",
+      "notes": "Read-only audit on fixture paths per design.md."
+    },
+    {
+      "class": "shopify-source-trace",
+      "agentName": "yb-sleuth",
+      "hostScope": "shopify",
+      "representativeTask": "On a Shopify-host worktree of the Yugabyte source tree, locate where the configuration flag `tablet_creation_timeout_ms` is parsed or registered. Return a `<file>:<line>` reference and the surrounding ~5-line context. Use grep, read, and `git log` only.",
+      "expectations": {
+        "passCriteria": [
+          "response returns a `<file>:<line>` reference inside the Yugabyte source tree for the named flag",
+          "response shows the surrounding context lines (≈5) verbatim",
+          "agent cites the tools used (grep, read, optionally git log/blame)"
+        ],
+        "failureSignals": [
+          "agent reports missing bash.git, grep, or read permission",
+          "agent attempts a git mutating subcommand or any non-git bash command",
+          "agent attempts edit/write"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts (hostScope mismatch) and when yb-sleuth.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "yb-sleuth's budget has bash.git allow but no other bash subcommands; webfetch is allow; no ask rules. The smoke prompt restricts git to read-only subcommands (log, blame, show)."
+      },
+      "directInvocation": "opencode run --agent yb-sleuth -- 'Trace where tablet_creation_timeout_ms is parsed; return file:line and ~5 lines of context.'",
+      "notes": "Shopify-host smoke. Only runs when hostScope=shopify is detected."
+    },
+    {
+      "class": "shopify-stack-plan",
+      "agentName": "stack-captain",
+      "hostScope": "shopify",
+      "representativeTask": "On a Shopify-host repo with an active Graphite stack, produce a textual review-plan describing the bottom-up review order for the current stack. Use `gt log`, `git log`, and `gh pr list` (read-only). Do NOT invoke `gt submit`, `gt modify`, `git push`, `gh pr edit`, or any vault-write mcp call.",
+      "expectations": {
+        "passCriteria": [
+          "response lists each branch in the active Graphite stack in bottom-up order with its branch name and PR number",
+          "response names the read-only commands actually invoked (e.g. `gt log`, `gh pr list`)",
+          "response explicitly states no mutating gt/git/gh subcommand was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts `gt submit`, `gt modify`, `git push`, `git rebase`, or `gh pr edit`/`gh pr create`",
+          "agent attempts an mcpproxy_call_tool_write call (which is ask-gated) and stalls awaiting permission",
+          "agent reports missing bash.git, bash.gh, or mcpproxy_retrieve_tools permission"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts (hostScope mismatch) and when stack-captain.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "mcpproxy_call_tool_write is ask-gated on stack-captain; the smoke prompt explicitly forbids it. bash.git and bash.gh cover all subcommands but the smoke restricts them to read-only ones; smoke runner asserts no mutating gt/git/gh invocation appears in the tool history."
+      },
+      "directInvocation": "opencode run --agent stack-captain -- 'Output a review-order plan for the current Graphite stack. Read-only; no submit, no push, no edit.'",
+      "notes": "Shopify-host smoke. Plan-only — never mutates the stack."
+    },
+    {
+      "class": "vault-dedup-plan",
+      "agentName": "vault-curator",
+      "hostScope": "all",
+      "representativeTask": "Search the Obsidian vault for memories tagged `subagent-context-budget` via mcpproxy, retrieve their titles and paths, and emit a dedup plan as response text (which to merge, which to keep, with one-line rationale per pair). Do not write any note.",
+      "expectations": {
+        "passCriteria": [
+          "response lists the memory paths returned by the tag search, alphabetised",
+          "response gives a per-pair merge-or-keep decision with a one-sentence rationale",
+          "response confirms no vault write or destructive call was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts mcpproxy_call_tool_write (which is allow but the smoke task forbids it)",
+          "agent reports missing mcpproxy_retrieve_tools or mcpproxy_call_tool_read permission",
+          "agent emits the plan without a list of actual memory paths returned by the search"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when vault-curator.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "mcpproxy_call_tool_write is allow on vault-curator (the agent does perform writes in non-smoke usage) but the smoke prompt explicitly restricts the agent to read-only mcpproxy calls; the smoke runner asserts no write call appears in the tool history. No ask-gated permission is present, so no indefinite prompt is possible regardless."
+      },
+      "directInvocation": "opencode run --agent vault-curator -- 'Dedup plan for memories tagged subagent-context-budget. Read-only; no writes.'",
+      "notes": "Vault read/dedup plan without bulk writes per design.md."
+    }
+  ]
+}

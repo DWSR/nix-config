@@ -101,7 +101,7 @@
   - _Boundary: ValidationComparator_
 
 - [ ] 5. Implement smoke planning and execution
-- [ ] 5.1 (P) Define representative smoke tasks for each agent class
+- [x] 5.1 (P) Define representative smoke tasks for each agent class
   - Cover built-in agents, common custom agents, and Shopify-specific agents with small representative workflows.
   - Avoid indefinite permission prompts in non-interactive smoke scenarios.
   - Done when every budgeted agent has a smoke definition with expected pass, fail, and skipped-unbudgeted states.

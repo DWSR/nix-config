@@ -1425,12 +1425,281 @@ function main(argv) {
   return 0;
 }
 
+// ---------------------------------------------------------------------
+// SmokeTestRunner catalog (task 5.1)
+//
+// Loads and validates the per-agent smoke-test catalog at
+// `home-manager/common/subagent-context-budget/smoke-catalog.json`.
+// Task 5.1 owns the data + schema; the runner itself is built in
+// tasks 5.2 (plan), 5.3 (result handling), and 5.4 (Nix smoke
+// wrapper).
+//
+// Requirements: 6.1 (smoke per agent), 6.2 (representative tasks),
+// 6.5 (preserve direct invocation), 7.2 (host parity).
+// ---------------------------------------------------------------------
+
+const SMOKE_HOST_SCOPES = Object.freeze(new Set(HOST_SCOPES));
+const SMOKE_NONINTERACTIVE_STRATEGIES = Object.freeze(new Set([
+  'allow-only',
+  'auto-allow-ask',
+  'task-restricts-ask',
+]));
+
+function smokeError(definitionIndex, field, message) {
+  return { definitionIndex, field, message };
+}
+
+function validateSmokeDefinition(index, def) {
+  const errors = [];
+  if (!isObject(def)) {
+    return [smokeError(index, 'definition', 'smoke definition must be an object')];
+  }
+
+  if (!isNonEmptyString(def.class)) {
+    errors.push(smokeError(index, 'class', 'smoke definition must define a non-empty class'));
+  }
+  if (!isNonEmptyString(def.agentName)) {
+    errors.push(smokeError(index, 'agentName', 'smoke definition must define a non-empty agentName'));
+  }
+  if (!SMOKE_HOST_SCOPES.has(def.hostScope)) {
+    errors.push(smokeError(index, 'hostScope', 'hostScope must be all, shopify, or personal'));
+  }
+  if (!isNonEmptyString(def.representativeTask)) {
+    errors.push(smokeError(index, 'representativeTask', 'representativeTask must be a non-empty string'));
+  }
+
+  if (!isObject(def.expectations)) {
+    errors.push(smokeError(index, 'expectations', 'expectations must be an object'));
+  } else {
+    if (!Array.isArray(def.expectations.passCriteria) || def.expectations.passCriteria.length === 0
+      || !def.expectations.passCriteria.every(isNonEmptyString)) {
+      errors.push(smokeError(index, 'expectations.passCriteria', 'expectations.passCriteria must be a non-empty array of non-empty strings'));
+    }
+    if (!Array.isArray(def.expectations.failureSignals) || def.expectations.failureSignals.length === 0
+      || !def.expectations.failureSignals.every(isNonEmptyString)) {
+      errors.push(smokeError(index, 'expectations.failureSignals', 'expectations.failureSignals must be a non-empty array of non-empty strings'));
+    }
+    if (!isNonEmptyString(def.expectations.skippedUnbudgeted)) {
+      errors.push(smokeError(index, 'expectations.skippedUnbudgeted', 'expectations.skippedUnbudgeted must be a non-empty string'));
+    }
+  }
+
+  if (!isObject(def.nonInteractive)) {
+    errors.push(smokeError(index, 'nonInteractive', 'nonInteractive must be an object'));
+  } else {
+    if (!SMOKE_NONINTERACTIVE_STRATEGIES.has(def.nonInteractive.strategy)) {
+      errors.push(smokeError(
+        index,
+        'nonInteractive.strategy',
+        'nonInteractive.strategy must be allow-only, auto-allow-ask, or task-restricts-ask',
+      ));
+    }
+    if (!isNonEmptyString(def.nonInteractive.details)) {
+      errors.push(smokeError(index, 'nonInteractive.details', 'nonInteractive.details must be a non-empty string'));
+    }
+  }
+
+  if (!isNonEmptyString(def.directInvocation)) {
+    errors.push(smokeError(index, 'directInvocation', 'directInvocation must be a non-empty string'));
+  } else if (isNonEmptyString(def.agentName) && !def.directInvocation.includes(def.agentName)) {
+    errors.push(smokeError(index, 'directInvocation', `directInvocation must mention agentName ${def.agentName}`));
+  }
+
+  if (hasOwn(def, 'notes') && def.notes !== null && typeof def.notes !== 'string') {
+    errors.push(smokeError(index, 'notes', 'notes, when present, must be a string or null'));
+  }
+
+  return errors;
+}
+
+/**
+ * Validate a smoke catalog object. Performs schema validation by
+ * default, and optional cross-checks against a budget metadata object
+ * when `options.budgetMetadata` is supplied.
+ *
+ * Catalog-level checks:
+ *   - schemaVersion must be 1
+ *   - smokeDefinitions must be an array
+ *   - definitions must be alphabetised by class (deterministic order
+ *     when serialised, per design.md `SmokeTestRunner`)
+ *   - no duplicate `class` entries
+ *
+ * Cross-check (when budgetMetadata is provided):
+ *   - every smoke `agentName` must appear in budgetMetadata.agents
+ *   - the budgeted agent's smokeClass must equal the smoke `class`
+ *   - the budgeted agent's hostScope must equal the smoke `hostScope`
+ *
+ * Returns `{ ok: true, value: { definitionCount, classes, agentNames } }`
+ * on success, `{ ok: false, errors: [...] }` on failure.
+ *
+ * Requirements: 6.1, 6.2, 6.5, 7.2.
+ *
+ * @param {unknown} catalog
+ * @param {{ budgetMetadata?: object }} [options]
+ */
+function validateSmokeCatalog(catalog, options) {
+  const errors = [];
+
+  if (!isObject(catalog)) {
+    return { ok: false, errors: [{ definitionIndex: null, field: 'catalog', message: 'catalog must be an object' }] };
+  }
+
+  if (catalog.schemaVersion !== 1) {
+    errors.push({ definitionIndex: null, field: 'schemaVersion', message: 'schemaVersion must be 1' });
+  }
+
+  if (!Array.isArray(catalog.smokeDefinitions)) {
+    errors.push({ definitionIndex: null, field: 'smokeDefinitions', message: 'smokeDefinitions must be an array' });
+    return { ok: false, errors };
+  }
+
+  const definitions = catalog.smokeDefinitions;
+  const seenClasses = new Map(); // class -> first index seen
+
+  definitions.forEach((def, index) => {
+    errors.push(...validateSmokeDefinition(index, def));
+
+    if (isObject(def) && isNonEmptyString(def.class)) {
+      if (seenClasses.has(def.class)) {
+        errors.push({
+          definitionIndex: index,
+          field: 'class',
+          message: `duplicate class ${def.class} also at index ${seenClasses.get(def.class)}`,
+        });
+      } else {
+        seenClasses.set(def.class, index);
+      }
+    }
+  });
+
+  // Determinism: definitions must be alphabetised by class.
+  const orderedClasses = definitions
+    .filter((d) => isObject(d) && isNonEmptyString(d.class))
+    .map((d) => d.class);
+  const sortedClasses = [...orderedClasses].sort();
+  for (let i = 0; i < orderedClasses.length; i += 1) {
+    if (orderedClasses[i] !== sortedClasses[i]) {
+      errors.push({
+        definitionIndex: i,
+        field: 'class',
+        message: `smoke definitions must be alphabetically sorted by class; expected ${sortedClasses[i]} at index ${i}, got ${orderedClasses[i]}`,
+      });
+      break;
+    }
+  }
+
+  // Cross-check against budget metadata when supplied.
+  const budgetMetadata = options && isObject(options.budgetMetadata) ? options.budgetMetadata : null;
+  if (budgetMetadata) {
+    const agents = isObject(budgetMetadata.agents) ? budgetMetadata.agents : {};
+    definitions.forEach((def, index) => {
+      if (!isObject(def)) return;
+      if (!isNonEmptyString(def.agentName)) return;
+      const agent = agents[def.agentName];
+      if (!isObject(agent)) {
+        errors.push({
+          definitionIndex: index,
+          field: 'agentName',
+          message: `agentName ${def.agentName} not found in budget metadata agents`,
+        });
+        return;
+      }
+      if (isNonEmptyString(def.class) && agent.smokeClass !== def.class) {
+        errors.push({
+          definitionIndex: index,
+          field: 'class',
+          message: `smoke class ${def.class} does not match smokeClass ${agent.smokeClass} declared for agent ${def.agentName} in budget metadata`,
+        });
+      }
+      if (isNonEmptyString(def.hostScope) && agent.hostScope !== def.hostScope) {
+        errors.push({
+          definitionIndex: index,
+          field: 'hostScope',
+          message: `smoke hostScope ${def.hostScope} does not match agent ${def.agentName} hostScope ${agent.hostScope} in budget metadata`,
+        });
+      }
+    });
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  const classes = definitions.map((d) => d.class);
+  const agentNames = definitions.map((d) => d.agentName);
+  return {
+    ok: true,
+    value: {
+      definitionCount: definitions.length,
+      classes,
+      agentNames,
+    },
+  };
+}
+
+/**
+ * Read and validate a smoke catalog file. Returns
+ * `{ ok: true, value: { ...catalog, definitionCount, classes, agentNames } }`
+ * on success, `{ ok: false, error: { kind, message } }` on filesystem
+ * or JSON errors, or `{ ok: false, errors: [...] }` on schema errors.
+ *
+ * Optional `options.budgetMetadata` triggers the same cross-check as
+ * `validateSmokeCatalog`.
+ *
+ * @param {string} filePath
+ * @param {{ budgetMetadata?: object }} [options]
+ */
+function loadSmokeCatalog(filePath, options) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: err.code === 'ENOENT' ? 'not-found' : 'read-error',
+        message: `failed to read smoke catalog ${filePath}: ${err.message}`,
+      },
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: 'invalid-json',
+        message: `failed to parse smoke catalog ${filePath}: ${err.message}`,
+      },
+    };
+  }
+
+  const validation = validateSmokeCatalog(parsed, options);
+  if (!validation.ok) {
+    return validation;
+  }
+
+  return {
+    ok: true,
+    value: {
+      schemaVersion: parsed.schemaVersion,
+      smokeDefinitions: parsed.smokeDefinitions,
+      definitionCount: validation.value.definitionCount,
+      classes: validation.value.classes,
+      agentNames: validation.value.agentNames,
+    },
+  };
+}
+
 module.exports = {
   COMMANDS,
   buildAuditReport,
   buildValidationReport,
   compareReports,
   detectPricingDrift,
+  loadSmokeCatalog,
   main,
   normalizeDispatchSummary,
   parseReport,
@@ -1445,6 +1714,7 @@ module.exports = {
   validateAgentBudget,
   validateBudgetMetadata,
   validateMinimalBaseline,
+  validateSmokeCatalog,
 };
 
 if (require.main === module) {
