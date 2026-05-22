@@ -46,7 +46,7 @@
   - _Depends: 2.1, 2.2_
   - _Requirements: 2.1, 2.4, 2.5, 6.5, 7.5, 8.1, 8.5_
   - _Boundary: AgentRenderer_
-- [ ] 2.5 Add per-agent escape hatches
+- [x] 2.5 Add per-agent escape hatches
   - Support disabling budget enforcement per agent without changing any other agent budget.
   - Record disabled state in metadata for audit and validation consumers.
   - Done when disabling one agent marks only that agent `unbudgeted` in metadata and preserves its previous behavior in rendered config.

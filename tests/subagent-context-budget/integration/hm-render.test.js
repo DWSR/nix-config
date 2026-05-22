@@ -52,6 +52,50 @@ function renderedAgentPermissionsExpr() {
   `;
 }
 
+function disabledAgentEscapeHatchExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      hmWithDisabledAgent = host: disabledAgent:
+        (flake.darwinConfigurations.\${host}.extendModules {
+          modules = [
+            ({ ... }: {
+              home-manager.users.brandonmcnama.programs.subagent-context-budget = {
+                enforce = true;
+                agents.\${disabledAgent}.disableBudget = true;
+              };
+            })
+          ];
+        }).config.home-manager.users.brandonmcnama;
+      personal = hmWithDisabledAgent "Brandons-MacBook-Pro" "general";
+      shopify = hmWithDisabledAgent "ShopifyLaptop" "yb-sleuth";
+      personalMetadata = builtins.fromJSON personal.xdg.configFile.\${personal.programs.subagent-context-budget.metadataPath}.text;
+      shopifyMetadata = builtins.fromJSON shopify.xdg.configFile.\${shopify.programs.subagent-context-budget.metadataPath}.text;
+      personalAgents = personal.programs.opencode.settings.agent or { };
+      shopifyAgents = shopify.programs.opencode.settings.agent or { };
+    in
+    {
+      personal = {
+        generalState = personalMetadata.agents.general.state;
+        exploreState = personalMetadata.agents.explore.state;
+        nixPkgState = personalMetadata.agents."nix-pkg".state;
+        hasGeneralPermissionOverride =
+          builtins.hasAttr "general" personalAgents
+          && builtins.hasAttr "permission" personalAgents.general;
+        explorePermission = personalAgents.explore.permission;
+      };
+      shopify = {
+        ybSleuthState = shopifyMetadata.agents."yb-sleuth".state;
+        stackCaptainState = shopifyMetadata.agents."stack-captain".state;
+        hasYbSleuthPermissionOverride =
+          builtins.hasAttr "yb-sleuth" shopifyAgents
+          && builtins.hasAttr "permission" shopifyAgents."yb-sleuth";
+        stackCaptainPermission = shopifyAgents."stack-captain".permission;
+      };
+    }
+  `;
+}
+
 test('rendered OpenCode config applies permissions for built-in and Markdown agents by stable name', () => {
   const rendered = nixEvalJson(renderedAgentPermissionsExpr());
 
@@ -84,4 +128,35 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'ask');
   assert.deepEqual(rendered.shopify.ybSleuth.bash, { git: 'allow' });
+});
+
+test('per-agent disableBudget marks only that agent unbudgeted and leaves rendered config unchanged', () => {
+  const rendered = nixEvalJson(disabledAgentEscapeHatchExpr());
+
+  assert.deepEqual(rendered.personal.generalState, {
+    kind: 'unbudgeted',
+    reason: 'operator-escape-hatch',
+  });
+  assert.deepEqual(rendered.personal.exploreState, { kind: 'enforced', reason: 'default' });
+  assert.deepEqual(rendered.personal.nixPkgState, { kind: 'enforced', reason: 'default' });
+  assert.equal(rendered.personal.hasGeneralPermissionOverride, false);
+  assert.deepEqual(rendered.personal.explorePermission, {
+    read: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    list: 'allow',
+    todowrite: 'allow',
+    question: 'allow',
+    skill: 'allow',
+    lsp: 'allow',
+  });
+
+  assert.deepEqual(rendered.shopify.ybSleuthState, {
+    kind: 'unbudgeted',
+    reason: 'operator-escape-hatch',
+  });
+  assert.deepEqual(rendered.shopify.stackCaptainState, { kind: 'enforced', reason: 'host-override' });
+  assert.equal(rendered.shopify.hasYbSleuthPermissionOverride, false);
+  assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_retrieve_tools, 'allow');
+  assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'ask');
 });

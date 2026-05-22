@@ -6,6 +6,10 @@
 let
   cfg = config.programs.subagent-context-budget;
   budgetCatalog = import ./subagent-context-budget/budgets.nix { inherit lib; };
+  unbudgeted = {
+    kind = "unbudgeted";
+    reason = "operator-escape-hatch";
+  };
 
   agentBudgetType = lib.types.submodule {
     options = {
@@ -40,8 +44,19 @@ let
   isRenderedMarkdownAgent = agent: builtins.hasAttr agent.name config.programs.opencode.agents;
   shouldRenderAgent =
     agent: isEnforced agent && (isBuiltinAgent agent || isRenderedMarkdownAgent agent);
+  applyAgentControls =
+    name: agent:
+    let
+      controls = cfg.agents.${name} or { };
+    in
+    if controls.disableBudget or false then agent // { state = unbudgeted; } else agent;
+  effectiveAgents = lib.mapAttrs applyAgentControls budgetCatalog.agents;
+  effectiveMetadata = budgetCatalog.metadata // {
+    enforcementEnabled = cfg.enforce;
+    agents = effectiveAgents;
+  };
   renderedAgentOverrides = lib.mapAttrs (_: agent: { permission = agent.permissionBudget; }) (
-    lib.filterAttrs (_: shouldRenderAgent) budgetCatalog.agents
+    lib.filterAttrs (_: shouldRenderAgent) effectiveAgents
   );
   hasInstructionProfile =
     agent: (agent.instructionProfile or null) != null && (agent.instructionProfile or "") != "";
@@ -133,9 +148,7 @@ in
       }
     ];
 
-    xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON (
-      budgetCatalog.metadata // { enforcementEnabled = cfg.enforce; }
-    );
+    xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON effectiveMetadata;
 
     xdg.configFile.${cfg.minimalBaselinePath}.source =
       ./subagent-context-budget/minimal-readonly-baseline.json;
