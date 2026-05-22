@@ -115,7 +115,7 @@
   - _Depends: 4.2, 5.1_
   - _Requirements: 6.1, 6.5, 7.5_
   - _Boundary: BudgetCLI, SmokeTestRunner_
-- [ ] 5.3 Implement smoke result handling
+- [x] 5.3 Implement smoke result handling
   - Record per-agent smoke outcomes and classify missing tool or instruction regressions as insufficient budgets.
   - Feed smoke failures into validation failure output.
   - Done when validation fails if any required smoke result fails and names the failing agent.

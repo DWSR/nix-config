@@ -69,6 +69,13 @@ const BUDGET_STATE_REASONS = Object.freeze({
   enforced: Object.freeze(['default', 'host-override']),
   unbudgeted: Object.freeze(['operator-escape-hatch']),
 });
+const SMOKE_RESULT_STATUSES = Object.freeze(new Set(['pass', 'fail', 'skipped-unbudgeted']));
+const SMOKE_FAILURE_CATEGORIES = Object.freeze(new Set([
+  'denied-required-tool',
+  'missing-instruction',
+  'non-zero-command',
+  'unspecified',
+]));
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -996,6 +1003,204 @@ function buildAgentReductions(baselineByAgent, postByAgent) {
   return out;
 }
 
+function smokeResultError(index, agentName, field, message) {
+  return { resultIndex: index, agentName, field, message };
+}
+
+function detailForSmokeFailure(rawFailure) {
+  if (isObject(rawFailure) && isNonEmptyString(rawFailure.detail)) {
+    return rawFailure.detail;
+  }
+  return 'smoke test failed without structured evidence';
+}
+
+/**
+ * Classify synthetic smoke-runner failure evidence into the categories
+ * used by validation output. This is a pure data-layer helper; it does
+ * not execute smoke tests.
+ *
+ * @param {unknown} rawFailure
+ * @returns {{ category: string, detail: string, missingCapability?: string }}
+ */
+function classifySmokeFailure(rawFailure) {
+  const failure = isObject(rawFailure) ? rawFailure : {};
+  const evidence = isObject(failure.evidence) ? failure.evidence : {};
+  const out = { category: 'unspecified', detail: detailForSmokeFailure(failure) };
+
+  if (isNonEmptyString(evidence.missingTool)) {
+    out.category = 'denied-required-tool';
+    out.missingCapability = evidence.missingTool;
+    return out;
+  }
+  if (isNonEmptyString(evidence.missingFragment)) {
+    out.category = 'missing-instruction';
+    out.missingCapability = evidence.missingFragment;
+    return out;
+  }
+  if (Number.isInteger(evidence.exitCode) && evidence.exitCode !== 0) {
+    out.category = 'non-zero-command';
+    return out;
+  }
+
+  return out;
+}
+
+function normalizeSmokeFailure(result) {
+  const explicit = isObject(result) && isObject(result.failure) ? result.failure : null;
+  const failure = explicit || classifySmokeFailure(result);
+  const out = {};
+
+  if (isNonEmptyString(failure.category)) {
+    out.category = failure.category;
+  }
+  if (isNonEmptyString(failure.detail)) {
+    out.detail = failure.detail;
+  } else if (!explicit && isObject(result) && isNonEmptyString(result.detail)) {
+    out.detail = result.detail;
+  }
+  if (isNonEmptyString(failure.missingCapability)) {
+    out.missingCapability = failure.missingCapability;
+  }
+
+  return out;
+}
+
+function smokeDefinitionsByClass(catalog) {
+  const definitions = Array.isArray(catalog && catalog.smokeDefinitions)
+    ? catalog.smokeDefinitions
+    : [];
+  const out = new Map();
+  for (const def of definitions) {
+    if (isObject(def) && isNonEmptyString(def.class)) {
+      out.set(def.class, def);
+    }
+  }
+  return out;
+}
+
+/**
+ * Validate and normalize synthetic per-agent smoke results from a smoke
+ * runner. Cross-checks are intentionally limited to static metadata and
+ * catalog data; live smoke execution belongs to a later task.
+ *
+ * @param {unknown} results
+ * @param {unknown} catalog
+ * @param {unknown} metadata
+ * @returns {{ ok: true, value: object } | { ok: false, errors: Array<object> }}
+ */
+function validateSmokeResults(results, catalog, metadata) {
+  if (!Array.isArray(results)) {
+    return {
+      ok: false,
+      errors: [smokeResultError(null, null, 'results', 'smoke results must be an array')],
+    };
+  }
+
+  const errors = [];
+  const normalized = [];
+  const agents = isObject(metadata) && isObject(metadata.agents) ? metadata.agents : {};
+  const classes = smokeDefinitionsByClass(catalog);
+
+  results.forEach((result, index) => {
+    if (!isObject(result)) {
+      errors.push(smokeResultError(index, null, 'result', 'smoke result must be an object'));
+      return;
+    }
+
+    const agentName = isNonEmptyString(result.agentName) ? result.agentName : null;
+    const smokeClass = isNonEmptyString(result.class) ? result.class : null;
+    const entry = {};
+
+    if (!agentName) {
+      errors.push(smokeResultError(index, null, 'agentName', 'smoke result must name an agent'));
+    } else {
+      entry.agentName = agentName;
+      if (!isObject(agents[agentName])) {
+        errors.push(smokeResultError(index, agentName, 'agentName', `agent ${agentName} not found in budget metadata`));
+      }
+    }
+
+    if (!smokeClass) {
+      errors.push(smokeResultError(index, agentName, 'class', 'smoke result must name a smoke class'));
+    } else {
+      entry.class = smokeClass;
+      if (!classes.has(smokeClass)) {
+        errors.push(smokeResultError(index, agentName, 'class', `smoke class ${smokeClass} not found in smoke catalog`));
+      } else {
+        const catalogDefinition = classes.get(smokeClass);
+        if (
+          agentName
+          && isObject(catalogDefinition)
+          && isNonEmptyString(catalogDefinition.agentName)
+          && catalogDefinition.agentName !== agentName
+        ) {
+          errors.push(smokeResultError(index, agentName, 'class', `smoke class ${smokeClass} belongs to catalog agent ${catalogDefinition.agentName}, not result agent ${agentName}`));
+        }
+      }
+    }
+
+    const agent = agentName ? agents[agentName] : null;
+    if (isObject(agent) && smokeClass && agent.smokeClass !== smokeClass) {
+      errors.push(smokeResultError(index, agentName, 'class', `smoke class ${smokeClass} does not match smokeClass ${agent.smokeClass} declared for agent ${agentName}`));
+    }
+
+    if (!SMOKE_RESULT_STATUSES.has(result.status)) {
+      errors.push(smokeResultError(index, agentName, 'status', 'status must be pass, fail, or skipped-unbudgeted'));
+    } else {
+      entry.status = result.status;
+    }
+
+    if (result.status === 'fail') {
+      const failure = normalizeSmokeFailure(result);
+      const hasExplicitFailureDetail = isNonEmptyString(result.detail)
+        || (isObject(result.failure) && isNonEmptyString(result.failure.detail));
+      if (!SMOKE_FAILURE_CATEGORIES.has(failure.category)) {
+        errors.push(smokeResultError(index, agentName, 'failure.category', 'failure.category must be denied-required-tool, missing-instruction, non-zero-command, or unspecified'));
+      }
+      if (!hasExplicitFailureDetail) {
+        errors.push(smokeResultError(index, agentName, 'failure.detail', 'failure.detail must be a non-empty string'));
+      }
+      entry.failure = failure;
+    }
+
+    if (result.status === 'skipped-unbudgeted') {
+      const skip = isObject(result.skip) ? result.skip : {};
+      if (skip.reason !== 'operator-escape-hatch') {
+        errors.push(smokeResultError(index, agentName, 'skip.reason', 'skipped-unbudgeted requires skip.reason operator-escape-hatch'));
+      }
+      if (!isNonEmptyString(skip.explanation)) {
+        errors.push(smokeResultError(index, agentName, 'skip.explanation', 'skipped-unbudgeted requires a non-empty skip.explanation'));
+      }
+      entry.skip = {
+        reason: skip.reason,
+        explanation: skip.explanation,
+      };
+    }
+
+    normalized.push(entry);
+  });
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  normalized.sort((a, b) => a.agentName.localeCompare(b.agentName));
+  const summary = {
+    resultCount: normalized.length,
+    passCount: normalized.filter((result) => result.status === 'pass').length,
+    failCount: normalized.filter((result) => result.status === 'fail').length,
+    skippedUnbudgetedCount: normalized.filter((result) => result.status === 'skipped-unbudgeted').length,
+  };
+
+  return {
+    ok: true,
+    value: stableSortKeys({
+      results: normalized,
+      summary,
+    }),
+  };
+}
+
 /**
  * Compare baseline and post `CostReportSummary` objects and return a
  * deterministic `ValidationReport` per design.md (~ lines 530-554).
@@ -1058,7 +1263,18 @@ function compareReports(baseline, post, options) {
     });
     for (const result of sorted) {
       if (isObject(result) && result.status === 'fail' && isNonEmptyString(result.agentName)) {
-        failures.push({ kind: 'smoke-failure', agentName: result.agentName });
+        const failure = normalizeSmokeFailure(result);
+        const smokeFailure = { kind: 'smoke-failure', agentName: result.agentName };
+        if (isNonEmptyString(failure.category)) {
+          smokeFailure.category = failure.category;
+        }
+        if (isNonEmptyString(failure.detail)) {
+          smokeFailure.detail = failure.detail;
+        }
+        if (isNonEmptyString(failure.missingCapability)) {
+          smokeFailure.missingCapability = failure.missingCapability;
+        }
+        failures.push(smokeFailure);
       }
     }
   }
@@ -1118,7 +1334,12 @@ function describeFailure(failure) {
     case 'missing-diagnostic-field':
       return `missing-diagnostic-field: ${failure.field}`;
     case 'smoke-failure':
-      return `smoke-failure: ${failure.agentName}`;
+      return [
+        `smoke-failure: ${failure.agentName}`,
+        isNonEmptyString(failure.category) ? `category=${failure.category}` : null,
+        isNonEmptyString(failure.missingCapability) ? `missingCapability=${failure.missingCapability}` : null,
+        isNonEmptyString(failure.detail) ? `detail=${failure.detail}` : null,
+      ].filter(Boolean).join(' ');
     case 'plugin-self-check-failed':
       return `plugin-self-check-failed: ${failure.detail}`;
     default:
@@ -2042,6 +2263,7 @@ module.exports = {
   buildAuditReport,
   buildSmokePlan,
   buildValidationReport,
+  classifySmokeFailure,
   compareReports,
   detectPricingDrift,
   loadSmokeCatalog,
@@ -2064,6 +2286,7 @@ module.exports = {
   validateBudgetMetadata,
   validateMinimalBaseline,
   validateSmokeCatalog,
+  validateSmokeResults,
 };
 
 if (require.main === module) {
