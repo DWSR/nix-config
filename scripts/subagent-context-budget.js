@@ -5,8 +5,16 @@
  * Task 1.2 owns only CLI and test-runner scaffolding. The audit,
  * validate, and smoke-plan commands intentionally return deterministic
  * placeholders until later tasks add report parsing and comparison.
+ *
+ * Task 4.2 replaces the `audit` placeholder with a real report that
+ * combines budget metadata, the minimal read-only baseline artifact,
+ * diagnostic usage from the cost-report adapter, and observed tool
+ * data into deterministic JSON and Markdown audit reports
+ * (Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 4.2, 4.3, 7.3).
  */
 'use strict';
+
+const fs = require('node:fs');
 
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
@@ -563,12 +571,401 @@ function parseReport(input) {
   };
 }
 
+// ---------------------------------------------------------------------
+// AuditReport (task 4.2)
+//
+// Combines budget metadata, baseline artifact, diagnostic usage, and
+// observed tool data into deterministic JSON and Markdown audit
+// reports. Per design.md `BudgetCLI` (~ lines 439-464), the report is
+// JSON by default and Markdown via `--format markdown`; the Markdown
+// is derived from the same object (design.md:625 — "Markdown is
+// derived from the same object").
+//
+// Determinism: all object keys are emitted in alphabetical order via
+// `stableSortKeys`. Arrays preserve construction order, which is also
+// alphabetical for agent names and permission keys. No wall-clock
+// timestamps are introduced.
+//
+// Per-tool observed data is a v2 future extension. The diagnostic's
+// `subagentDispatchByAgent` map exposes per-agent *dispatch token*
+// totals, not per-tool names. The audit report surfaces those token
+// counts as `observedTools.tokenCount` and notes the v2 limitation in
+// `observedToolsNote`. Agents not present in the map are marked
+// `{kind: "absent"}` — never inferred (R1.4).
+// ---------------------------------------------------------------------
+
+/**
+ * Recursively re-emit an object with alphabetically sorted keys.
+ * Arrays preserve order. Primitives are returned unchanged.
+ *
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function stableSortKeys(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableSortKeys);
+  }
+  if (value === null || typeof value !== 'object') {
+    return value;
+  }
+  const out = {};
+  for (const key of Object.keys(value).sort()) {
+    out[key] = stableSortKeys(value[key]);
+  }
+  return out;
+}
+
+function describePermissionAction(rule) {
+  if (typeof rule === 'string') {
+    return rule;
+  }
+  if (isObject(rule)) {
+    // Sub-keyed permission objects (e.g. bash sub-rules); summarize.
+    return 'object';
+  }
+  return 'unknown';
+}
+
+function buildAgentEntry(name, agent, observedByAgent, baselineMeasured) {
+  const observed = observedByAgent !== null
+    && isObject(observedByAgent)
+    && Object.prototype.hasOwnProperty.call(observedByAgent, name)
+    ? { kind: 'observed', tokenCount: observedByAgent[name] }
+    : { kind: 'absent' };
+
+  let baselineDelta;
+  if (baselineMeasured.status === 'placeholder') {
+    baselineDelta = { kind: 'baseline-placeholder' };
+  } else {
+    // Task 4.2 has no first-turn-tokens measurement source for
+    // individual agents in the diagnostic; firstTurnInputTokens is
+    // always null and so is deltaTokens. Future tasks add the
+    // measurement source.
+    const observedFirstTurn = null;
+    baselineDelta = {
+      kind: 'measured',
+      baselineTokens: baselineMeasured.firstTurnInput,
+      observedTokens: observedFirstTurn,
+      deltaTokens: observedFirstTurn === null
+        ? null
+        : observedFirstTurn - baselineMeasured.firstTurnInput,
+    };
+  }
+
+  const instructionContext = isNonEmptyString(agent.instructionProfile)
+    ? { profile: agent.instructionProfile }
+    : { profile: null };
+
+  const permissions = isObject(agent.permissionBudget)
+    ? Object.keys(agent.permissionBudget).sort().map((key) => ({
+      key,
+      action: describePermissionAction(agent.permissionBudget[key]),
+    }))
+    : [];
+
+  return {
+    name,
+    source: agent.source,
+    hostScope: agent.hostScope,
+    state: { kind: agent.state.kind, reason: agent.state.reason },
+    instructionContext,
+    exposedToolContext: { permissions },
+    observedTools: observed,
+    baselineDelta,
+    firstTurnInputTokens: null,
+  };
+}
+
+/**
+ * Build a deterministic audit report from validated budget metadata
+ * and a parsed diagnostic. Validation is performed inline so the CLI
+ * `main()` and tests can call this with raw parsed JSON.
+ *
+ * Requirements: 1.1 (enumerate every agent), 1.2 (first-turn tokens
+ * or absent), 1.3 (observed-tool data), 1.4 (mark missing data
+ * absent), 1.5 (separate dimensions), 4.2/4.3 (baseline delta), 7.3
+ * (host-specific surfaces), 5.7 (privacy preservation).
+ *
+ * @param {unknown} metadata — parsed budget metadata JSON
+ * @param {unknown} diagnostic — parsed diagnostic report JSON
+ * @returns {{ ok: true, value: object } | { ok: false, error: object }}
+ */
+function buildAuditReport(metadata, diagnostic) {
+  const validation = validateBudgetMetadata(metadata);
+  if (!validation.ok) {
+    return {
+      ok: false,
+      error: { kind: 'invalid-metadata', errors: validation.errors },
+    };
+  }
+
+  const parsed = parseReport(diagnostic);
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  const observedByAgent = parsed.value.global.subagentDispatchByAgent;
+  const baselineMeasured = metadata.minimalBaseline.measuredTokens;
+
+  const agentNames = Object.keys(metadata.agents).sort();
+  const agents = agentNames.map((name) => buildAgentEntry(
+    name,
+    metadata.agents[name],
+    observedByAgent,
+    baselineMeasured,
+  ));
+
+  const enforcedCount = agents.filter((a) => a.state.kind === 'enforced').length;
+  const unbudgetedCount = agents.filter((a) => a.state.kind === 'unbudgeted').length;
+  const hostSpecificAgents = metadata.host === 'all'
+    ? []
+    : agents
+      .filter((a) => a.hostScope !== 'all')
+      .map((a) => a.name)
+      .sort();
+
+  const minimalBaseline = {
+    name: metadata.minimalBaseline.name,
+    measuredTokens: { ...baselineMeasured },
+    instructionCategories: [...metadata.minimalBaseline.instructionCategories].sort(),
+    allowedToolCategories: [...metadata.minimalBaseline.allowedToolCategories].sort(),
+  };
+
+  const report = {
+    schemaVersion: 1,
+    command: 'audit',
+    host: metadata.host,
+    enforcementEnabled: metadata.enforcementEnabled,
+    minimalBaseline,
+    agents,
+    observedToolsNote: 'per-tool data not available in diagnostic v2; tokenCount is dispatch tokens',
+    summary: {
+      agentCount: agents.length,
+      enforcedCount,
+      unbudgetedCount,
+      host: metadata.host,
+      hostSpecificAgents,
+    },
+  };
+
+  return { ok: true, value: stableSortKeys(report) };
+}
+
+/**
+ * Deterministic JSON renderer. The report is already key-sorted by
+ * `stableSortKeys`; `JSON.stringify` then preserves that order.
+ *
+ * @param {object} report
+ * @returns {string}
+ */
+function renderAuditReportJson(report) {
+  return JSON.stringify(report, null, 2);
+}
+
+function renderMarkdownTable(headerCells, rows) {
+  const lines = [];
+  lines.push(`| ${headerCells.join(' | ')} |`);
+  lines.push(`| ${headerCells.map(() => '---').join(' | ')} |`);
+  for (const row of rows) {
+    lines.push(`| ${row.join(' | ')} |`);
+  }
+  return lines.join('\n');
+}
+
+function describeMeasuredTokens(tokens) {
+  if (tokens.status === 'placeholder') {
+    return 'placeholder (no measurement yet)';
+  }
+  return `${tokens.firstTurnInput} tokens (source: ${tokens.source || 'unknown'})`;
+}
+
+function describeObservedTools(observed) {
+  if (observed.kind === 'absent') {
+    return 'absent (no recent dispatch data)';
+  }
+  return `dispatch tokens: ${observed.tokenCount}`;
+}
+
+function describeBaselineDelta(delta) {
+  if (delta.kind === 'baseline-placeholder') {
+    return 'baseline-placeholder (no measured baseline)';
+  }
+  const obs = delta.observedTokens === null ? 'absent' : `${delta.observedTokens}`;
+  const diff = delta.deltaTokens === null ? 'absent' : `${delta.deltaTokens}`;
+  return `baseline ${delta.baselineTokens}, observed ${obs}, delta ${diff}`;
+}
+
+function describeFirstTurnTokens(value) {
+  return value === null ? 'absent' : `${value}`;
+}
+
+/**
+ * Deterministic Markdown renderer. Derived from the same audit-report
+ * object as the JSON output, so byte stability follows from the JSON
+ * stability. No timestamps or wall-clock fields appear.
+ *
+ * @param {object} report
+ * @returns {string}
+ */
+function renderAuditReportMarkdown(report) {
+  const sections = [];
+  sections.push('# Subagent Context Budget — Audit Report');
+  sections.push('');
+
+  sections.push('## Overview');
+  sections.push('');
+  sections.push(`- Host: ${report.host}`);
+  sections.push(`- Enforcement enabled: ${report.enforcementEnabled}`);
+  sections.push(`- Agent count: ${report.summary.agentCount}`);
+  sections.push(`- Enforced count: ${report.summary.enforcedCount}`);
+  sections.push(`- Unbudgeted count: ${report.summary.unbudgetedCount}`);
+  const hostSpecific = report.summary.hostSpecificAgents.length === 0
+    ? '(none)'
+    : report.summary.hostSpecificAgents.join(', ');
+  sections.push(`- Host-specific agents: ${hostSpecific}`);
+  sections.push('');
+
+  sections.push('## Minimal read-only baseline');
+  sections.push('');
+  const baseline = report.minimalBaseline;
+  sections.push(`- Name: ${baseline.name}`);
+  sections.push(`- Measured tokens: ${describeMeasuredTokens(baseline.measuredTokens)}`);
+  sections.push(`- Instruction categories: ${baseline.instructionCategories.join(', ')}`);
+  sections.push(`- Allowed tool categories: ${baseline.allowedToolCategories.join(', ')}`);
+  sections.push('');
+
+  sections.push('## Agents');
+  sections.push('');
+  sections.push(`> Observed tools: ${report.observedToolsNote}`);
+  sections.push('');
+
+  for (const agent of report.agents) {
+    sections.push(`### ${agent.name}`);
+    sections.push('');
+    sections.push(`- Source: ${agent.source}`);
+    sections.push(`- Host scope: ${agent.hostScope}`);
+    sections.push(`- State: ${agent.state.kind} (${agent.state.reason})`);
+    sections.push('');
+
+    sections.push('#### Instruction context');
+    sections.push('');
+    const profile = agent.instructionContext.profile === null
+      ? 'absent (unbudgeted)'
+      : agent.instructionContext.profile;
+    sections.push(`- Profile: ${profile}`);
+    sections.push('');
+
+    sections.push('#### Exposed tool context');
+    sections.push('');
+    if (agent.exposedToolContext.permissions.length === 0) {
+      sections.push('- (no permissions budgeted)');
+    } else {
+      sections.push(renderMarkdownTable(
+        ['Permission', 'Action'],
+        agent.exposedToolContext.permissions.map((p) => [p.key, p.action]),
+      ));
+    }
+    sections.push('');
+
+    sections.push('#### Observed tools');
+    sections.push('');
+    sections.push(`- ${describeObservedTools(agent.observedTools)}`);
+    sections.push('');
+
+    sections.push('#### Baseline delta');
+    sections.push('');
+    sections.push(`- ${describeBaselineDelta(agent.baselineDelta)}`);
+    sections.push('');
+
+    sections.push('#### First-turn input tokens');
+    sections.push('');
+    sections.push(`- ${describeFirstTurnTokens(agent.firstTurnInputTokens)}`);
+    sections.push('');
+  }
+
+  return `${sections.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+// ---------------------------------------------------------------------
+// CLI argument parsing
+// ---------------------------------------------------------------------
+
+function parseAuditFlags(rest) {
+  const flags = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === '--metadata' || arg === '--diagnostic' || arg === '--format') {
+      flags[arg.slice(2)] = rest[i + 1];
+      i += 1;
+    }
+  }
+  return flags;
+}
+
+function formatValidationErrors(errors) {
+  return errors
+    .map((e) => `  - [${e.agent}] ${e.field}: ${e.message}`)
+    .join('\n');
+}
+
+function runAuditCommand(rest) {
+  const flags = parseAuditFlags(rest);
+  if (!isNonEmptyString(flags.metadata)) {
+    writeStderr('audit: missing required --metadata <path>\n');
+    return 1;
+  }
+  if (!isNonEmptyString(flags.diagnostic)) {
+    writeStderr('audit: missing required --diagnostic <path>\n');
+    return 1;
+  }
+
+  let metadata;
+  try {
+    metadata = JSON.parse(fs.readFileSync(flags.metadata, 'utf8'));
+  } catch (err) {
+    writeStderr(`audit: failed to read metadata file ${flags.metadata}: ${err.message}\n`);
+    return 1;
+  }
+
+  let diagnostic;
+  try {
+    diagnostic = JSON.parse(fs.readFileSync(flags.diagnostic, 'utf8'));
+  } catch (err) {
+    writeStderr(`audit: failed to read diagnostic file ${flags.diagnostic}: ${err.message}\n`);
+    return 1;
+  }
+
+  const result = buildAuditReport(metadata, diagnostic);
+  if (!result.ok) {
+    const error = result.error;
+    if (error.kind === 'invalid-metadata') {
+      writeStderr(`audit: invalid-metadata\n${formatValidationErrors(error.errors)}\n`);
+    } else if (error.kind === 'pricing-drift') {
+      writeStderr(`audit: pricing-drift: ${error.detail}\n`);
+    } else if (error.kind === 'missing-field') {
+      writeStderr(`audit: missing-field in diagnostic: ${error.field}\n`);
+    } else if (error.kind === 'invalid-shape') {
+      writeStderr(`audit: invalid-shape in diagnostic: ${error.field}\n`);
+    } else {
+      writeStderr(`audit: ${JSON.stringify(error)}\n`);
+    }
+    return 1;
+  }
+
+  if (flags.format === 'markdown') {
+    writeStdout(renderAuditReportMarkdown(result.value));
+  } else {
+    writeStdout(`${renderAuditReportJson(result.value)}\n`);
+  }
+  return 0;
+}
+
 function usage() {
   return [
     'Usage: subagent-context-budget <command> [options]',
     '',
     'Commands:',
-    '  audit        Placeholder for budget metadata and diagnostic audit reports',
+    '  audit        Render an audit report from budget metadata and a diagnostic JSON',
     '  validate     Placeholder for baseline/post diagnostic validation reports',
     '  smoke-plan   Placeholder for agent smoke-plan report generation',
     '',
@@ -614,18 +1011,26 @@ function main(argv) {
     return 1;
   }
 
+  if (command === 'audit') {
+    return runAuditCommand(args.slice(1));
+  }
+
   writeStdout(`${JSON.stringify(placeholderReport(command), null, 2)}\n`);
   return 0;
 }
 
 module.exports = {
   COMMANDS,
+  buildAuditReport,
   detectPricingDrift,
   main,
   normalizeDispatchSummary,
   parseReport,
   parseSession,
   placeholderReport,
+  renderAuditReportJson,
+  renderAuditReportMarkdown,
+  stableSortKeys,
   usage,
   validateAgentBudget,
   validateBudgetMetadata,

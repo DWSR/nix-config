@@ -52,7 +52,11 @@ test('main(--help): prints command surface and exits 0', () => {
   }
 });
 
-for (const command of ['audit', 'validate', 'smoke-plan']) {
+// `audit` is no longer a placeholder as of task 4.2; see
+// `audit-report.test.js` for the real audit-report contract. The
+// validate and smoke-plan commands remain placeholders pending tasks
+// 4.3 and 5.*.
+for (const command of ['validate', 'smoke-plan']) {
   test(`main(${command}): exposes a deterministic placeholder`, () => {
     const { exitCode, stdout, stderr } = captureMain([command]);
 
@@ -70,6 +74,14 @@ for (const command of ['audit', 'validate', 'smoke-plan']) {
     assert.equal(serialized.includes('toolOutput'), false);
   });
 }
+
+test('main(audit): without required flags exits 1 with a named-flag error (no placeholder)', () => {
+  const { exitCode, stdout, stderr } = captureMain(['audit']);
+
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, '');
+  assert.ok(stderr.includes('--metadata'));
+});
 
 test('main(unknown): exits 1 and names the offending command', () => {
   const { exitCode, stdout, stderr } = captureMain(['bogus']);

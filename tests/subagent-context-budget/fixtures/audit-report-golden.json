@@ -1,0 +1,76 @@
+{
+  "agents": [
+    {
+      "baselineDelta": { "kind": "baseline-placeholder" },
+      "exposedToolContext": {
+        "permissions": [
+          { "action": "allow", "key": "glob" },
+          { "action": "allow", "key": "grep" },
+          { "action": "allow", "key": "list" },
+          { "action": "allow", "key": "read" }
+        ]
+      },
+      "firstTurnInputTokens": null,
+      "hostScope": "all",
+      "instructionContext": { "profile": "readonly-codebase" },
+      "name": "explore",
+      "observedTools": { "kind": "observed", "tokenCount": 800 },
+      "source": "builtin",
+      "state": { "kind": "enforced", "reason": "default" }
+    },
+    {
+      "baselineDelta": { "kind": "baseline-placeholder" },
+      "exposedToolContext": {
+        "permissions": [
+          { "action": "allow", "key": "glob" },
+          { "action": "allow", "key": "grep" },
+          { "action": "allow", "key": "list" },
+          { "action": "allow", "key": "read" },
+          { "action": "allow", "key": "webfetch" }
+        ]
+      },
+      "firstTurnInputTokens": null,
+      "hostScope": "all",
+      "instructionContext": { "profile": "general-research" },
+      "name": "general",
+      "observedTools": { "kind": "observed", "tokenCount": 400 },
+      "source": "builtin",
+      "state": { "kind": "enforced", "reason": "default" }
+    }
+  ],
+  "command": "audit",
+  "enforcementEnabled": false,
+  "host": "all",
+  "minimalBaseline": {
+    "allowedToolCategories": [
+      "clarification",
+      "code-search",
+      "local-read",
+      "mcp-discovery",
+      "mcp-read",
+      "planning",
+      "skill-loading"
+    ],
+    "instructionCategories": [
+      "memory-mcpproxy",
+      "readonly-operation",
+      "universal"
+    ],
+    "measuredTokens": {
+      "firstTurnInput": null,
+      "measuredAt": null,
+      "source": null,
+      "status": "placeholder"
+    },
+    "name": "minimal-readonly"
+  },
+  "observedToolsNote": "per-tool data not available in diagnostic v2; tokenCount is dispatch tokens",
+  "schemaVersion": 1,
+  "summary": {
+    "agentCount": 2,
+    "enforcedCount": 2,
+    "host": "all",
+    "hostSpecificAgents": [],
+    "unbudgetedCount": 0
+  }
+}

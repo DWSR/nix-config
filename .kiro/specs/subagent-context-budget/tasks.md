@@ -85,7 +85,7 @@
   - _Depends: 1.2_
   - _Requirements: 1.3, 5.1, 5.2, 5.3, 5.5, 5.6, 5.7_
   - _Boundary: CostReportAdapter_
-- [ ] 4.2 Build the audit report command
+- [x] 4.2 Build the audit report command
   - Combine budget metadata, baseline artifact, diagnostic usage, and observed tool data into deterministic JSON and Markdown audit reports.
   - Mark missing recent usage as absent instead of inferring tool use.
   - Done when audit fixtures show instruction context, exposed tool context, observed tools, baseline deltas, and absent usage separately.

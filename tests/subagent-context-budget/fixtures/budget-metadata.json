@@ -44,7 +44,7 @@
       "state": { "kind": "enforced", "reason": "default" },
       "instructionProfile": "general-research",
       "permissionBudget": { "read": "allow", "glob": "allow", "grep": "allow", "list": "allow", "webfetch": "allow" },
-      "capabilityRationale": [],
+      "capabilityRationale": ["web access for documented research tasks"],
       "smokeClass": "general-research"
     }
   }
