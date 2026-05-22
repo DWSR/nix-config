@@ -47,6 +47,12 @@ in
         "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
       };
 
+      fileSourcedEnv.TOOL_GATEWAY_TOKEN = {
+        path = "${config.home.homeDirectory}/.cache/tool-gateway-token";
+        transform = "/usr/bin/cut -d= -f2-";
+        triggersRestart = true;
+      };
+
       # gh CLI auth token. Reuses the same PAT as mcp-github-token because
       # both consumers need the same GitHub repo / read scopes; the PAT is
       # already provisioned for mcphub's github MCP server. If you ever
@@ -89,7 +95,7 @@ in
         tool-gateway = {
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
-          headers.Authorization = "Bearer \${cmd: cut -d= -f2- ~/.cache/tool-gateway-token}";
+          headers.Authorization = "Bearer " + "\${env:TOOL_GATEWAY_TOKEN}";
         };
 
         gcloud-mcp = {

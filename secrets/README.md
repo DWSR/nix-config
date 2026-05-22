@@ -457,7 +457,10 @@ folding it into the per-host MCP-secrets boundary.
   tooling outside this repo's control. Lifecycle is owned by
   `devx`, refreshed automatically when expired. We do not have
   authoritative provenance for the value, so we cannot meaningfully
-  re-encrypt or rotate it from here.
+  re-encrypt or rotate it from here. mcpproxy consumes it through
+  `home.mcp.fileSourcedEnv` as a runtime `${env:TOOL_GATEWAY_TOKEN}`
+  placeholder; the value remains outside SOPS and outside the Nix
+  store.
 
 - **1Password SSH commit signing.** Uses in-band auth via the 1P
   agent (the agent socket is queried for each signing operation).

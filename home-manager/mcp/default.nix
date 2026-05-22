@@ -34,8 +34,8 @@ let
   # the keychain via the Apple-signed `/usr/bin/security` binary, which
   # has reliable Keychain access regardless of how mcpproxy is packaged.
   #
-  # See `mcpproxyWrapper` below and the SOPS bridge in
-  # `configurations/common-darwin/mcp-sops-bridge.nix` +
+  # See `mcpproxyWrapper` below, `home.mcp.fileSourcedEnv`, and the
+  # SOPS bridge in `configurations/common-darwin/mcp-sops-bridge.nix` +
   # `scripts/mcp-secrets-activate.nix` for the secret-flow contract.
   readKeychainSecret = name: "\${env:" + toEnvVarName name + "}";
 
@@ -139,10 +139,46 @@ let
     builtins.attrNames cfg.keychainSecrets
   );
 
+  keychainEnvVarNames = map toEnvVarName daemonSecretNames;
+  fileSourcedEnvNames = builtins.attrNames cfg.fileSourcedEnv;
+  fileSourcedEnvNameCollisions = lib.intersectLists keychainEnvVarNames fileSourcedEnvNames;
+
+  fileSourcedEnvWatchPaths = lib.mapAttrsToList (_name: entry: entry.path) (
+    lib.filterAttrs (_name: entry: entry.triggersRestart) cfg.fileSourcedEnv
+  );
+
+  renderFileSourcedEnvExport =
+    envName: entry:
+    let
+      sourcePath = lib.escapeShellArg entry.path;
+      failureDisposition = if entry.required then "aborting" else "continuing";
+      failureAction = if entry.required then "exit 1" else ":";
+    in
+    ''
+      unset ${envName} || true
+      if [ -r ${sourcePath} ]; then
+        if file_sourced_value="$({ ${entry.transform}; } < ${sourcePath})" && [ -n "$file_sourced_value" ]; then
+          export ${envName}="$file_sourced_value"
+        else
+          echo "mcpproxy-launchd-wrapper: file-sourced env ${envName} source ${sourcePath} is empty or malformed; ${failureDisposition}" >&2
+          ${failureAction}
+        fi
+        unset file_sourced_value || true
+      else
+        echo "mcpproxy-launchd-wrapper: file-sourced env ${envName} source ${sourcePath} is missing or unreadable; ${failureDisposition}" >&2
+        ${failureAction}
+      fi
+    '';
+
+  fileSourcedEnvExports = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList renderFileSourcedEnvExport cfg.fileSourcedEnv
+  );
+
   # Launchd wrapper around `mcpproxy serve`. Reads every declared
   # MCP secret from the macOS Keychain via Apple's `/usr/bin/security`
-  # binary, exports each as the env var the rendered `mcp_config.json`
-  # references via `${env:NAME}` placeholders, then exec's mcpproxy.
+  # binary plus any `home.mcp.fileSourcedEnv` runtime files, exports
+  # each as the env var the rendered `mcp_config.json` references via
+  # `${env:NAME}` placeholders, then exec's mcpproxy.
   #
   # This is a workaround for two mcpproxy v0.33.1 limitations:
   #
@@ -182,6 +218,8 @@ let
           export ${envName}
         ''
       ) daemonSecretNames}
+
+      ${fileSourcedEnvExports}
 
       exec ${lib.getExe pkgs.mcpproxy-go} "$@"
     '';
@@ -244,6 +282,68 @@ in
       };
     };
 
+    fileSourcedEnv = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            path = lib.mkOption {
+              type = lib.types.str;
+              description = ''
+                Absolute path to the source file. The launchd wrapper reads
+                this file at daemon startup, so the path is not required to
+                exist during Nix evaluation or Home Manager activation.
+              '';
+              example = "/Users/me/.cache/tool-gateway-token";
+            };
+
+            transform = lib.mkOption {
+              type = lib.types.str;
+              default = "/bin/cat";
+              description = ''
+                Shell pipeline that receives the file content on stdin and
+                writes the environment variable value on stdout. The pipeline
+                runs inside the launchd wrapper once per daemon start.
+              '';
+              example = "/usr/bin/cut -d= -f2-";
+            };
+
+            required = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Abort the wrapper when the file is missing, unreadable, or
+                transforms to an empty value. When false, the wrapper logs a
+                warning and starts mcpproxy without exporting the env var.
+              '';
+            };
+
+            triggersRestart = lib.mkOption {
+              type = lib.types.bool;
+              default = false;
+              description = ''
+                Add the source file to the launchd agent's WatchPaths so
+                mcpproxy restarts and re-reads the value after external
+                tooling rewrites the file.
+              '';
+            };
+          };
+        }
+      );
+      default = { };
+      description = ''
+        Environment variables sourced from runtime files outside the
+        SOPS+Keychain pipeline. Attribute names are env var names referenced
+        from mcpproxy config as `${"\${env:NAME}"}` placeholders.
+      '';
+      example = {
+        TOOL_GATEWAY_TOKEN = {
+          path = "/Users/me/.cache/tool-gateway-token";
+          transform = "/usr/bin/cut -d= -f2-";
+          triggersRestart = true;
+        };
+      };
+    };
+
     listenPort = lib.mkOption {
       type = lib.types.port;
       default = 8080;
@@ -280,6 +380,19 @@ in
   };
 
   config = lib.mkIf config.home.mcp.enable {
+    assertions = [
+      {
+        assertion = lib.all (
+          name: builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null
+        ) fileSourcedEnvNames;
+        message = "home.mcp.fileSourcedEnv attribute names must be valid shell environment variable names.";
+      }
+      {
+        assertion = fileSourcedEnvNameCollisions == [ ];
+        message = "home.mcp.fileSourcedEnv names conflict with Keychain-sourced env vars: ${lib.concatStringsSep ", " fileSourcedEnvNameCollisions}";
+      }
+    ];
+
     home.packages = [
       pkgs.mcpproxy-go
       pkgs.github-mcp-server
@@ -342,6 +455,9 @@ in
           + ":/usr/bin:/bin";
         StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.log";
         StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.error.log";
+      }
+      // lib.optionalAttrs (fileSourcedEnvWatchPaths != [ ]) {
+        WatchPaths = fileSourcedEnvWatchPaths;
       };
     };
   };
