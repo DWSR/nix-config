@@ -628,3 +628,229 @@ from the gap analysis).
 - `requirements.md` — 14 EARS requirements + Boundary Context.
 - Sections 1-7 of this file — gap analysis (sub-agent inventory +
   mcpproxy internals).
+
+---
+
+# Gap Analysis Addendum: Home Manager Config Ownership Protection
+
+Date: 2026-05-22T17:39:16Z
+
+Requirements approval warning: `spec.json` currently has
+`approvals.requirements.approved = false`; this analysis proceeds because
+gap validation can inform design and requirement revisions. Core steering
+files `product.md`, `tech.md`, and `structure.md` are not present under
+`.kiro/steering/`; roadmap context was used instead.
+
+## 1. Current State Investigation
+
+### Implemented migration surface
+
+The working tree already contains most of the migration implementation:
+
+- `pkgs.mcpproxy-go` exists as a `buildGoModule` package in
+  `overlays/mcp-servers.nix`.
+- `home-manager/mcp/default.nix` renders the mcpproxy config and owns the
+  launchd agent. The Home Manager-owned config path is
+  `xdg.configFile."mcpproxy/mcp_config.json"` (`home-manager/mcp/default.nix:407-410`).
+- The launchd agent invokes `mcpproxy-launchd-wrapper serve` and passes
+  `--config=${XDG_CONFIG_HOME}/mcpproxy/mcp_config.json` directly to
+  mcpproxy (`home-manager/mcp/default.nix:419-447`).
+- The wrapper reads Keychain and file-sourced secrets, exports them as env
+  vars, and `exec`s mcpproxy (`home-manager/mcp/default.nix:177-225`).
+- The secret bridge routes MCP secrets to service `mcpproxy` and
+  sqlite-backup secrets to service `nix-config-secrets`, then deletes legacy
+  `-a mcp-hub` entries after the write phase
+  (`scripts/mcp-secrets-activate.nix:179-288`).
+- Opencode, cavemem, and memory-sync probes use `GET /api/v1/servers` and
+  filter the collection because mcpproxy v0.33.1 does not support read-side
+  `GET /api/v1/servers/{id}` (`home-manager/common/opencode.nix:142-147`,
+  `home-manager/common/cavemem.nix:509-514`, `scripts/memory-sync.nix:697-708`).
+- Cavemem is registered via `home.mcp.extraServers.cavemem` and the direct
+  opencode local-MCP route is documented as removed
+  (`home-manager/common/cavemem.nix:380-447`).
+
+### Newly identified gap
+
+Requirement 15 is not satisfied by the current launchd configuration. The
+daemon still receives the Home Manager-owned config path directly
+(`home-manager/mcp/default.nix:433-435`). The current protection only passes
+`--allow-server-add=false` and `--allow-server-remove=false`; the module
+comment explicitly says other management features remain available
+(`home-manager/mcp/default.nix:437-446`).
+
+Runtime research found additional write paths:
+
+- `mcpproxy serve --help` exposes `--read-only` and `--disable-management`,
+  but the current service starts with both false.
+- Startup cleanup always inspects the configured path for deprecated fields
+  and can create `<config>.bak` before modifying it.
+- `SaveConfig` uses temp-file + rename with mode `0600`, which can replace a
+  Home Manager symlink with a regular file.
+- The current local `.bak` contains the resolved top-level API key. Treat
+  runtime config copies and backups as secret-bearing artifacts.
+
+### Stale spec/design assumptions to correct in design
+
+- Older design text still assumes mcpproxy can safely consume
+  `${keyring:<name>}` placeholders for the top-level API key. Current code
+  uses `${env:NAME}` placeholders plus a launchd wrapper because top-level
+  `api_key` was loaded before mcpproxy's secret-resolution pipeline
+  (`home-manager/mcp/default.nix:177-199`).
+- Older design text assumes read-side `GET /api/v1/servers/{id}` exists;
+  current code correctly uses `GET /api/v1/servers` collection filtering.
+- `secrets/README.md` still says mcpproxy `${keyring:<account>}` placeholders
+  resolve under the stable service name (`secrets/README.md:30-35`), which
+  conflicts with the wrapper/env contract now used for the daemon.
+
+## 2. Requirement-to-Asset Map
+
+| Req | Current assets | Gap / status |
+|---|---|---|
+| 1 | mcpproxy package, launchd label, logs, restart helper in `home-manager/mcp/default.nix` | Mostly implemented; runtime loaded-service evidence still required. |
+| 2 | Base servers, `extraServers`, env propagation, global quarantine off | Static assets present; connected-status evidence remains runtime-only. |
+| 3 | `routing_mode = "retrieve_tools"`; no `tools_limit` override | Verify live MCP `tools/list` still exposes exactly four tools. |
+| 4 | Agent prompts migrated; only explanatory `hub_` text remains in AGENTS.md | Verify rendered prompts and fresh startup gate. |
+| 5 | Wrapper/env secret flow and SOPS bridge new layout | Implemented; README/design wording needs alignment. |
+| 6 | Write-then-delete legacy cleanup in activation script | Implemented; one-shot host activation evidence still required. |
+| 7 | Cavemem via `home.mcp.extraServers.cavemem`; direct route removed | Implemented; fresh-session evidence still required. |
+| 8 | Opencode wrapper probes mcpproxy liveness + obsidian status | Implemented; keep collection endpoint pattern. |
+| 9 | Memory-sync probes mcpproxy collection endpoint | Implemented; exit-code acceptance evidence remains. |
+| 10 | Both host configs point opencode at local mcpproxy | Implemented; rendered config/e2e route evidence remains. |
+| 11 | Nvim MCP teardown appears static-complete | Need nvim launch smoke evidence. |
+| 12 | `nix-config-secrets` routing and sqlite manifest integration | Implemented; sqlite-backup command smoke evidence remains. |
+| 13 | Most docs updated | `secrets/README.md` still has stale keyring-placeholder wording. |
+| 14 | Probe pieces exist | Full clean activation/fresh opencode/memory-sync/darwin check evidence remains. |
+| 15 | Only add/remove flags exist | Missing: isolate mcpproxy startup cleanup and runtime persistence from the HM-owned config path. |
+
+## 3. Implementation Approach Options
+
+### Option A: Extend the existing launchd wrapper with a runtime config copy
+
+Before `exec`, copy the Home Manager-rendered config into a private
+user-owned runtime path, validate the copy, then invoke mcpproxy with
+`--config=<runtime-copy>`. Copy on every managed start so the latest Home
+Manager generation remains the source for the effective runtime config.
+
+- **Pros**: Minimal surface; preserves current secret wrapper; directly
+  satisfies R15.1-R15.4; mcpproxy can still write its own effective runtime
+  config without touching the HM symlink.
+- **Cons**: Wrapper grows; the runtime copy and `.bak` must be treated as
+  secret-bearing; runtime UI/API changes are either ephemeral or become an
+  imperative shadow depending on chosen path lifecycle.
+- **Complexity**: S-M. **Risk**: Medium.
+
+### Option B: Add a dedicated runtime-config preparation helper
+
+Factor config-copy, permissions, validation, and cleanup into a small helper
+script or shell function invoked by the wrapper.
+
+- **Pros**: Cleaner test boundary; reusable by manual diagnostics; easier to
+  unit-test failure messages.
+- **Cons**: Adds another derivation/interface; may be more structure than this
+  one gap needs.
+- **Complexity**: M. **Risk**: Medium.
+
+### Option C: Rely on mcpproxy flags only
+
+Add `--read-only` and/or `--disable-management` to the existing launchd args,
+possibly alongside the existing add/remove flags.
+
+- **Pros**: Smallest code change if upstream flags cover every write path.
+- **Cons**: Local source research indicates management-tool gating and HTTP
+  add/remove/patch persistence do not map cleanly; startup cleanup still
+  touches the configured path. This is unlikely to satisfy R15 alone.
+- **Complexity**: S. **Risk**: High if used as the only mitigation.
+
+### Option D: Filesystem immutability or permissions
+
+Protect `~/.config/mcpproxy/mcp_config.json` with macOS flags, root ownership,
+or read-only permissions.
+
+- **Pros**: Blocks writes bluntly in emergencies.
+- **Cons**: Explicitly out of scope under R15.6; can break Home Manager
+  activation and mcpproxy startup; not a declarative solution.
+- **Complexity**: S. **Risk**: High. Not a design candidate except as manual
+  recovery context.
+
+## 4. Integration Challenges
+
+- The runtime copy must be refreshed on each managed start to satisfy R15.3;
+  a persistent copy that drifts from Home Manager would reintroduce imperative
+  config ownership.
+- The copy target must not be world-readable. Even though the rendered config
+  uses env placeholders, mcpproxy backups can contain the resolved API key
+  after startup cleanup or persistence.
+- The wrapper must fail before `exec` when preparation fails, using the
+  existing `mcpproxy-launchd-wrapper:` stderr style
+  (`home-manager/mcp/default.nix:212-216`).
+- Acceptance needs an explicit symlink-preservation check: after restart and
+  after a mcpproxy operation that previously rewrote config, the HM path
+  remains a symlink or HM-managed file and no `.bak` appears beside it.
+- Updating design must reconcile previous post-activation fixes: env-wrapper
+  secrets, collection endpoint probes, and add/remove flag limitations.
+
+## 5. Research Needed for Design
+
+1. Choose runtime-copy path and lifecycle. Candidate: a private path under
+   `~/.mcpproxy/` or `XDG_RUNTIME_DIR` with mode `0600`. Avoid `/tmp`.
+2. Decide whether to delete stale runtime-copy `.bak` files on each wrapper
+   start, keep them for diagnostics, or rotate them. Security favors cleanup.
+3. Decide whether to also pass `--read-only` or `--disable-management` as an
+   additive hardening measure. This requires checking whether any retained
+   mcpproxy functionality depends on management writes.
+4. Update stale design/research sections before task generation so implementers
+   do not follow obsolete `${keyring:...}` or per-server GET guidance.
+
+## 6. Preferred Direction for Design Consideration
+
+Option A is the strongest fit for R15 because it protects the declarative
+source without requiring upstream patches or manual filesystem flags. Option B
+is worth considering if design wants a separately testable helper. Options C
+and D are insufficient as primary strategies.
+
+## 7. Design Synthesis Addendum
+
+### Generalization Findings
+
+- The existing `mcpproxy-launchd-wrapper` is already the single runtime
+  preparation boundary for Keychain secrets and file-sourced env vars. Config
+  ownership protection is the same kind of pre-exec concern, so it should be
+  added to that wrapper rather than creating a second launch path.
+- The same prepared-runtime-config contract covers startup cleanup,
+  save-configuration persistence, and backup-file generation. Design only needs
+  one invariant: mcpproxy never receives the Home Manager-owned config path.
+
+### Build vs. Adopt
+
+- Adopt the platform's existing shell/runtime primitives (`install`, `mktemp`
+  or equivalent, mode `0600`, fail-fast stderr) instead of adding a new tool or
+  upstream patch.
+- Keep upstream mcpproxy unpatched. The wrapper treats mcpproxy's config writes
+  as expected runtime behavior and moves the mutable target away from the
+  declarative source.
+
+### Simplification
+
+- Do not add a new helper derivation unless task implementation discovers that
+  shell-level validation is too large for the existing wrapper. The current
+  design keeps the change in `home-manager/mcp/default.nix`.
+- Do not make `--read-only` / `--disable-management` the primary fix. They may
+  be considered hardening later, but they do not address startup cleanup writes
+  to the configured path.
+- Do not use filesystem immutability. It conflicts with R15.6 and Home Manager
+  activation semantics.
+
+### Design Decision: Runtime config copy selected
+
+- **Context**: mcpproxy writes and backs up the configured path during startup
+  cleanup and runtime persistence; the current launchd service passes the
+  Home Manager-owned config path directly.
+- **Alternatives considered**: extend existing wrapper, add dedicated helper,
+  rely on mcpproxy flags, filesystem immutability.
+- **Selected approach**: extend the existing wrapper to copy the HM-rendered
+  config to a private runtime path on every managed start, then pass that copy
+  as `--config`.
+- **Rationale**: satisfies R15 with the smallest boundary change and preserves
+  the existing wrapper's secret-export flow.
+- **Trade-offs**: the runtime copy and `.bak` files must be treated as
+  secret-bearing because mcpproxy can persist the resolved API key.

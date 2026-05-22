@@ -282,6 +282,7 @@
 - [ ] 14. Run R14 acceptance checks on each host
 
 - [ ] 14.1 (P) Activate on the Shopify host and run R14 acceptance checks
+  - _Blocked: Task 14.1 requires nix-darwin system activation, and the current agent session cannot provide interactive root credentials. The stale mcpproxy runtime state is expected because the new Home Manager generation has not been activated._
   - Run `darwin-rebuild switch --flake .#<shopify-host>`; confirm activation completes without errors
   - Confirm the legacy `com.ravitemer.mcp-hub` launchd agent is no longer loaded; `pkgs.mcp-hub` is no longer on PATH; no `-a mcp-hub` keychain entries remain for any prior secret name
   - Confirm the Home Manager-owned source config path remains a symlink or managed file after mcpproxy starts; confirm any mcpproxy-generated `.bak` file appears only under the private runtime config directory, not adjacent to the source path

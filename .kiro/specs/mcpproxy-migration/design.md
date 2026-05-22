@@ -39,6 +39,9 @@ of the plugin stays.
   opencode only via mcpproxy.
 - Migrate keychain layouts (MCP + sqlite-backup) in a single
   `darwin-rebuild switch` per host with no operator follow-up.
+- Preserve the Home Manager-owned mcpproxy config as the declarative
+  source of truth even when mcpproxy performs startup cleanup or
+  runtime config persistence.
 - Preserve every existing operator-visible failure mode (opencode
   wrapper preflight, memory-sync CLI exit codes, sqlite-backup
   verification) while pointing them at mcpproxy.
@@ -54,6 +57,9 @@ of the plugin stays.
   `Out of scope`.)
 - Formally closing the `mcp-server-allowlist` deferred spec —
   superseded but kept in roadmap for traceability.
+- Preventing mcpproxy from maintaining its own runtime state, or
+  relying on manual filesystem immutability flags such as
+  `chflags uchg` to protect declarative files.
 
 ## Boundary Commitments
 
@@ -63,7 +69,8 @@ of the plugin stays.
   derivation (sourced from a tag-pinned `fetchFromGitHub`).
 - The rewritten `home-manager/mcp/default.nix` module:
   `mcp_config.json` rendering, launchd plist, listen port option,
-  quarantine settings, restart helper.
+  quarantine settings, restart helper, runtime config copy
+  preparation, and config-ownership protection.
 - The new SOPS-bridged `mcpproxy-api-key` secret added to
   `secrets/mcp.{shopify,personal}.yaml` and consumed by both the
   bridge and the renderer.
@@ -117,6 +124,11 @@ of the plugin stays.
   it reads from changes.
 - mcpproxy quarantine workflow customisation beyond a single
   global flag.
+- mcpproxy's own runtime state outside the Home Manager-owned config
+  path; runtime config copies and backups may be created only under
+  the managed runtime path.
+- Manual filesystem immutability flags, root-owned local config
+  edits, or operator-maintained patches as the protection mechanism.
 - BM25 / `top_k` / `tools_limit` tuning (defer to future spec if
   needed).
 - `enabled_tools` / `disabled_tools` per-server filters (not used
@@ -134,8 +146,11 @@ of the plugin stays.
   current shape (`attrsOf attrs`) with internal translation to
   mcpproxy's array shape during rendering.
 - The existing `home.mcp.readKeychainSecret` helper — body changes
-  to emit `${keyring:<name>}` placeholders; 15 call-site consumers
-  remain unchanged.
+  to emit `${env:<NAME>}` placeholders; the launchd wrapper reads
+  Keychain entries and file-sourced values before exec. Existing
+  call-site consumers remain unchanged.
+- The existing `mcpproxy-launchd-wrapper` — extended to prepare the
+  effective runtime config before execing mcpproxy.
 - The existing `home.opencode.wrapperCommands` option — appended to
   with new probe snippets (matches current cavemem/opencode patterns).
 - The existing `home.cavemem.dataDir` option — consumed unchanged
@@ -151,14 +166,17 @@ of the plugin stays.
 
 - **mcpproxy schema break**: any `Config` / `ServerConfig` field
   shape change in mcpproxy ≥ v0.34. Revalidate the renderer.
-- **mcpproxy keyring placeholder syntax change**: change from
-  `${keyring:<name>}` to anything else. Revalidate the bridge
-  output.
+- **mcpproxy config persistence behaviour changes**: startup cleanup,
+  backup creation, or save semantics change. Revalidate the runtime
+  config copy and symlink-preservation checks.
+- **mcpproxy env placeholder semantics change**: `${env:<NAME>}`
+  resolution no longer applies to top-level `api_key`, per-server
+  env, or headers. Revalidate the wrapper export flow.
 - **mcpproxy `retrieve_tools` mode change**: change to the
   4-tool surface (different tool names, different `call_with`
   semantics). Revalidate AGENTS.md and all subagent prompts.
 - **mcpproxy HTTP API change**: `/healthz`, `/api/v1/status`, or
-  `/api/v1/servers/{id}` shape change. Revalidate all four probe
+  `/api/v1/servers` collection shape change. Revalidate all four probe
   consumers (opencode wrapper, cavemem wrapper, memory-sync CLI,
   restart helper).
 - **Sopsbridge contract change**: if `mcp-secrets-sops-nix` spec
@@ -213,6 +231,9 @@ graph TB
     SOPS[SOPS source files]
     Activate[mcp-secrets-activate.nix]
     Keychain[macOS Keychain]
+    Wrapper[mcpproxy launch wrapper]
+    HMConfig[HM rendered config]
+    RuntimeConfig[private runtime config]
     MCPProxy[mcpproxy launchd agent]
     Obsidian[obsidian upstream]
     Github[github upstream]
@@ -228,7 +249,11 @@ graph TB
     Activate -->|service mcpproxy account secret-name| Keychain
     Activate -->|service mcpproxy account mcpproxy-api-key| Keychain
     Activate -->|service nix-config-secrets account passphrase| Keychain
-    MCPProxy -->|reads keyring placeholders| Keychain
+    HMConfig --> Wrapper
+    Keychain -->|secret exports| Wrapper
+    Wrapper -->|copies each start| RuntimeConfig
+    Wrapper --> MCPProxy
+    MCPProxy -->|reads runtime copy| RuntimeConfig
     MCPProxy -->|spawns stdio| Obsidian
     MCPProxy -->|spawns stdio| Github
     MCPProxy -->|spawns stdio| Nixos
@@ -264,24 +289,13 @@ graph TB
 | Packaging | `buildGoModule` (nixpkgs 24.11+) | `pkgs.mcpproxy-go` derivation | Matches `buildkite-mcp-server` / `slack-mcp-server` pattern; `CGO_ENABLED=0`; `vendorHash`; tag pin |
 | Go toolchain | `pkgs.go_1_24` (≥ 1.24.2) | mcpproxy's required Go version | No `replace` directives in mcpproxy's `go.mod`; offline vendoring works |
 | Process supervision | Apple `launchd` | Run mcpproxy daemon at login + restart on exit | New label `com.smart-mcp-proxy.mcpproxy`; PATH supplemented with `google-cloud-sdk` + `git-lfs` for spawned upstreams |
-| Secret material storage | macOS Keychain (via `/usr/bin/security`) | Runtime resolution of `${keyring:<name>}` placeholders | service = `"mcpproxy"` for MCP secrets; service = `"nix-config-secrets"` for sqlite-backup secrets; account = secret name in both cases |
+| Secret material storage | macOS Keychain (via `/usr/bin/security`) | Launch wrapper exports `${env:<NAME>}` placeholders before mcpproxy starts | service = `"mcpproxy"` for MCP secrets; service = `"nix-config-secrets"` for sqlite-backup secrets; account = secret name in both cases |
+| Runtime config copy | User-private file under mcpproxy data dir | Mutable effective config passed to mcpproxy so HM config remains untouched | Runtime copy and `.bak` are treated as secret-bearing because mcpproxy may persist resolved API keys |
 | Secret source-of-truth | SOPS (per-host yaml in `secrets/`) | Encrypted source for all 13+ MCP secrets + sqlite-backup passphrases + new `mcpproxy-api-key` | Unchanged |
 | Agent runtime | opencode (existing pinned version) | Consumes mcpproxy at `http://127.0.0.1:8080/mcp` | New per-host `programs.opencode.settings.mcp.mcpproxy` entry replaces `mcp.hub` (Shopify) / adds first MCP entry (personal) |
 | Codecompanion plugin | `codecompanion-nvim` (existing pinned version) | Non-MCP chat plugin in nvim | MCP extension stripped; rest of the plugin preserved |
 
 ## File Structure Plan
-
-### Created
-
-```
-.kiro/specs/mcpproxy-migration/           # (already exists from spec init)
-overlays/mcp-servers.nix                  # Modified, not created
-```
-
-No new dedicated directories or files for this spec — all work
-is in-place modifications to existing modules. A new SOPS secret
-key (`mcpproxy-api-key`) is added to existing
-`secrets/mcp.{shopify,personal}.yaml` files.
 
 ### Modified
 
@@ -297,9 +311,12 @@ key (`mcpproxy-api-key`) is added to existing
   `home.mcp.listenPort` (default 8080). Removed: `extraServers`
   shape stays attrset but internal translator emits mcpproxy's
   array form. `readKeychainSecret` body changes to emit
-  `"\${keyring:" + name + "}"`. Launchd label flips to
-  `com.smart-mcp-proxy.mcpproxy`. `restart-mcp-hub` script
-  renamed to `restart-mcpproxy`. PATH supplementation preserved.
+  `"\${env:" + toEnvVarName name + "}"`. The launchd wrapper
+  reads the corresponding Keychain entries and file-sourced env vars,
+  prepares a private runtime copy of the HM-rendered config on each
+  start, then passes that runtime copy to mcpproxy. Launchd label flips
+  to `com.smart-mcp-proxy.mcpproxy`. `restart-mcp-hub` script renamed
+  to `restart-mcpproxy`. PATH supplementation preserved.
 
 #### Secret bridge
 - `scripts/mcp-secrets-activate.nix` — keychain write axes swap
@@ -405,13 +422,13 @@ key (`mcpproxy-api-key`) is added to existing
 | 2.1, 2.5 | 4 upstream servers configured with secret env propagation | Orchestrator module + extraServers translator | `mcpServers[]` array; per-server `env` map | — |
 | 2.2 | All upstreams bypass quarantine | Orchestrator module | Global `quarantine_enabled: false` | — |
 | 2.3 | Extension surface for new servers | Orchestrator module | `home.mcp.extraServers` (attrset, internally translated) | — |
-| 2.4 | Connected status reachable via runtime API | Orchestrator module + mcpproxy daemon | `GET /api/v1/servers/{id}` | Probe flow |
+| 2.4 | Connected status reachable via runtime API | Orchestrator module + mcpproxy daemon | `GET /api/v1/servers` collection filtered by server name | Probe flow |
 | 3.1, 3.2, 3.3 | Exactly 4 tools exposed; no hub_* prefix; default tools_limit | Orchestrator module + mcpproxy daemon | `mcp_config.json` defaults (no `tools_limit` override); mcpproxy `/mcp` endpoint | — |
 | 3.4, 3.5 | retrieve_tools + call_tool_* primitives behave | mcpproxy daemon (out-of-spec; vetted) | mcpproxy's MCP transport | Agent invocation flow |
 | 4.1, 4.2, 4.3 | No `hub_*` refs; retrieve_tools idiom; semantics preserved | Agent contracts rewrite | AGENTS.md startup-gate format; subagent prompt format | Agent invocation flow |
 | 4.4 | Failure message names mcpproxy + launchd label | AGENTS.md startup-gate | Failure-message string | — |
 | 4.5 | Startup gate succeeds fresh session | Agent contracts + orchestrator | End-to-end through mcpproxy | R14 acceptance |
-| 5.1, 5.2, 5.3 | Keyring placeholders; no Nix-store secret values; no mcpproxy keyring write | Secret bridge + orchestrator module | `${keyring:<name>}` placeholders; `readKeychainSecret` helper body | — |
+| 5.1, 5.2, 5.3 | Env placeholders; no Nix-store secret values; no mcpproxy keyring write | Secret bridge + orchestrator module + launch wrapper | `${env:<NAME>}` placeholders; wrapper Keychain export; `readKeychainSecret` helper body | Activation flow |
 | 5.4, 5.5 | Bridge writes new layout; updates on SOPS change | Secret bridge | `security add-generic-password -U -s mcpproxy -a <secret-name>` | Activation flow |
 | 6.1, 6.2, 6.3, 6.4 | One-shot migration: write new + delete old; idempotent on clean hosts | Secret bridge activation pathway | Activation script: write new + cleanup old in same pass | Activation flow |
 | 6.5 | Verify reports new-layout presence + mismatches | Secret bridge verification | `mcp-verify-secrets.nix` MATCH/MISMATCH/MISSING per secret | — |
@@ -430,6 +447,7 @@ key (`mcpproxy-api-key`) is added to existing
 | 12.1, 12.2, 12.3, 12.4, 12.5 | sqlite-backup secrets under neutral account; migration + verification + docs updated | Sqlite-backup keychain rename + secret bridge | Manifest-driven account read (jq); activation cleanup of legacy entries | Activation flow |
 | 13.1, 13.2, 13.3, 13.4, 13.5 | Docs reference mcpproxy; historical context optional | Documentation alignment | Plain text edits | — |
 | 14.1, 14.2, 14.3, 14.4, 14.5 | End-to-end acceptance evidence | Cross-cutting (all components) | — | All flows |
+| 15.1, 15.2, 15.3, 15.4, 15.5, 15.6 | HM-owned config remains untouched while mcpproxy uses a mutable runtime copy | Orchestrator module + launch wrapper + runtime config copy | HM config source path; runtime config path; wrapper fail-fast stderr contract | Runtime config preparation flow |
 
 ## Components and Interfaces
 
@@ -454,14 +472,19 @@ Single binary `mcpproxy` at `bin/mcpproxy`. Pinned to tag `v0.33.1` (commit `135
 
 | Field | Detail |
 |-------|--------|
-| Intent | Render mcpproxy's config, manage its launchd agent, expose extension points, emit keychain placeholders |
-| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.5, 3.2, 5.1, 5.2, 7.3 |
+| Intent | Render mcpproxy's declarative config, prepare a runtime config copy, manage its launchd agent, expose extension points, emit env placeholders |
+| Requirements | 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.5, 3.2, 5.1, 5.2, 5.3, 7.3, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6 |
 
 **Responsibilities & Constraints**
 - Renders `~/.config/mcpproxy/mcp_config.json` from a Nix-side
   attrset of upstream servers; preserves the `attrsOf attrs` shape
   of `home.mcp.extraServers` by converting attrset → array
   internally.
+- Treats the XDG config path as the declarative source only. The
+  wrapper copies it into a private runtime path on every managed
+  start and passes that runtime path to `mcpproxy --config` so
+  startup cleanup and runtime saves cannot replace the Home Manager
+  symlink.
 - Defines the launchd plist with label
   `com.smart-mcp-proxy.mcpproxy`, listening on
   `127.0.0.1:${listenPort}`, replicating the existing PATH
@@ -470,10 +493,11 @@ Single binary `mcpproxy` at `bin/mcpproxy`. Pinned to tag `v0.33.1` (commit `135
   avoid duplicate logs in `~/Library/Logs/mcpproxy/main.log`.
 - Provides `restart-mcpproxy` script (writeScriptBin) that runs
   `launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"`.
-- Emits `${keyring:<name>}` for every secret reference via the
-  `readKeychainSecret` helper.
-- Pre-bakes `mcpproxy-api-key` into the rendered config's
-  `api_key` field via the same placeholder mechanism.
+- Emits `${env:<NAME>}` for every secret reference via the
+  `readKeychainSecret` helper. The wrapper exports those env vars
+  from Keychain and file-sourced inputs before exec.
+- References `mcpproxy-api-key` through `${env:MCPPROXY_API_KEY}` in
+  the rendered config; wrapper-time export provides the value.
 - Sets `quarantine_enabled: false` globally; omits per-server
   quarantine fields.
 
@@ -482,8 +506,10 @@ Single binary `mcpproxy` at `bin/mcpproxy`. Pinned to tag `v0.33.1` (commit `135
   `config.home.mcp.readKeychainSecret`; the cavemem module's
   `home.mcp.extraServers.cavemem` entry.
 - Outbound: `pkgs.mcpproxy-go`, the launchd subsystem, the
-  rendered `mcp_config.json`, the keychain via mcpproxy's runtime.
-- External: macOS launchd (P0); macOS Keychain via mcpproxy (P0).
+  rendered source `mcp_config.json`, the private runtime config copy,
+  and wrapper-exported env vars.
+- External: macOS launchd (P0); macOS Keychain via `/usr/bin/security`
+  in the wrapper (P0).
 
 **Contracts**: Service [x] / API [x] / Event [ ] / Batch [ ] / State [ ]
 
@@ -500,7 +526,7 @@ options.home.mcp = {
   extraServers = mkOption { type = attrsOf attrs; ... };      # preserved
   readKeychainSecret = mkOption {                              # preserved
     type = raw; readOnly = true;
-    default = name: "\${keyring:" + name + "}";
+    default = name: "\${env:" + toEnvVarName name + "}";
   };
 };
 ```
@@ -509,10 +535,27 @@ options.home.mcp = {
   must have populated keychain entries for every referenced
   secret name before mcpproxy starts.
 - Postconditions: `mcp_config.json` is rendered to the XDG config
-  path; launchd agent is loaded; restart helper is on PATH.
-- Invariants: `readKeychainSecret` output is a `${keyring:<name>}`
-  placeholder string; no secret values appear in the Nix store;
-  no `mcp-hub` references remain.
+  path; a private runtime copy is prepared on launch; launchd agent
+  is loaded; restart helper is on PATH.
+- Invariants: `readKeychainSecret` output is a `${env:<NAME>}`
+  placeholder string; no secret values appear in the Nix store; the
+  XDG config path remains Home Manager-owned; no `mcp-hub`
+  references remain.
+
+##### Service Interface (runtime config preparation)
+
+```text
+prepareRuntimeConfig(sourcePath, runtimePath) -> runtimePath | failure
+```
+
+- Preconditions: source path exists and contains valid JSON; runtime
+  parent directory can be created with user-private permissions.
+- Postconditions: runtime path contains a fresh copy of the source;
+  runtime path mode is `0600`; stale runtime `.bak` artifacts are
+  removed or confined under the runtime directory; mcpproxy receives
+  `--config=<runtimePath>`.
+- Invariants: the source path is never opened for writing by the
+  wrapper; mcpproxy never receives the Home Manager-owned source path.
 
 ##### API Contract (HTTP probe targets exposed by mcpproxy)
 
@@ -523,18 +566,23 @@ remaining at these paths.
 |--------|----------|------|-----|
 | GET | `/healthz` | none | Liveness probe (opencode wrapper, restart helper) |
 | GET | `/api/v1/status` | API key | Aggregate state probe |
-| GET | `/api/v1/servers/{name}` | API key | Per-upstream connection state (opencode wrapper, cavemem wrapper, memory-sync) |
+| GET | `/api/v1/servers` | API key | Collection endpoint filtered by server name for per-upstream connection state (opencode wrapper, cavemem wrapper, memory-sync) |
 | GET | `/mcp` (or POST) | none (default) | Opencode remote-MCP transport |
 
 **Implementation Notes**
 - Integration: `xdg.configFile."mcpproxy/mcp_config.json".text =
   builtins.toJSON (renderConfig cfg)`. Renderer is a pure Nix
-  function from option set → JSON-ready attrset.
+  function from option set → JSON-ready attrset. The launchd wrapper
+  prepares the runtime copy before `exec` and rewrites the `--config`
+  argument to that copy.
 - Validation: an assertion verifies that every entry in
   `home.mcp.extraServers` has the required `command` or `url`
-  field for its `protocol`.
+  field for its `protocol`; runtime validation verifies the config
+  copy exists and is parseable before starting mcpproxy.
 - Risks: schema drift in mcpproxy v0.34+ — pinned at v0.33.1;
-  flagged in revalidation triggers.
+  flagged in revalidation triggers. Runtime copies and `.bak` files
+  are treated as secret-bearing because mcpproxy may persist the
+  resolved API key.
 
 ### Domain C: Secret bridge
 
@@ -652,8 +700,9 @@ remaining at these paths.
 - Rewrites the L549-557 wrapper probe to:
   1. `GET http://127.0.0.1:8080/healthz` for mcpproxy liveness
      (no auth);
-  2. `GET http://127.0.0.1:8080/api/v1/servers/cavemem` with
-     `X-API-Key` header for cavemem connection state.
+  2. `GET http://127.0.0.1:8080/api/v1/servers` with
+     `X-API-Key` header, filtered for the `cavemem` entry whose
+     `connected` field is true.
 - Failure messages name "mcpproxy" and the new launchd label.
 - Cavemem module's option surface (`dataDir`, `embedding.*`,
   `compression.intensity`) is unchanged.
@@ -684,14 +733,14 @@ remaining at these paths.
 
 | Field | Detail |
 |-------|--------|
-| Intent | Replace the mcp-hub `/api/health` preflight with mcpproxy's `/healthz` + per-server `/api/v1/servers/obsidian` probe |
+| Intent | Replace the mcp-hub `/api/health` preflight with mcpproxy's `/healthz` + collection-filtered obsidian probe |
 | Requirements | 8.1, 8.2, 8.4, 8.5 |
 
 **Responsibilities & Constraints**
 - Probe sequence (in `wrapperCommands` order):
   1. `GET /healthz` → exit 1 if non-2xx.
-  2. `GET /api/v1/servers/obsidian` (API key) → exit 1 if
-     `status != connected`.
+   2. `GET /api/v1/servers` (API key) → filter for the `obsidian`
+      entry and exit 1 if `connected != true`.
   3. (Cavemem probe contributed by `cavemem.nix`'s own
      `wrapperCommands` entry — appended via HM list-merge.)
 - Each failure emits a stderr line naming the failing component
@@ -754,7 +803,8 @@ remaining at these paths.
 **Responsibilities & Constraints**
 - `MCPHUB_BASE` renamed to `MCPPROXY_BASE = "http://127.0.0.1:8080"`.
 - `probe_mcp_server` helper rewritten to call
-  `GET /api/v1/servers/<name>` with `X-API-Key` header.
+  `GET /api/v1/servers` with `X-API-Key` header and filter by
+  server name.
 - Recovery hint on failure: references new launchd label
   `com.smart-mcp-proxy.mcpproxy`.
 - Per-precondition exit codes preserved verbatim (4 for cavemem
@@ -801,9 +851,9 @@ hub_obsidian__list-notes(directory: "memories", limit: 1)
 After:
 ```
 1. retrieve_tools(query: "obsidian list-notes")
-   → expect a tool from server "obsidian"
+   → expect a tool name in `obsidian:<tool>` form
 2. call_tool_read(name: <returned tool name>,
-                  arguments: { directory: "memories", limit: 1 })
+                  args: { directory: "memories", limit: 1 })
 ```
 
 **Contracts**: Service [ ] / API [ ] / Event [ ] / Batch [ ] / State [ ]
@@ -924,6 +974,9 @@ sequenceDiagram
     participant Bridge as mcp-sops-bridge.nix
     participant Act as mcp-secrets-activate.nix
     participant KC as macOS Keychain
+    participant Wrap as mcpproxy wrapper
+    participant Src as HM config
+    participant Run as runtime config
     participant MP as mcpproxy launchd agent
 
     Op->>DR: darwin-rebuild switch
@@ -936,7 +989,11 @@ sequenceDiagram
     Act->>KC: delete legacy -a mcp-hub entries (MCP + sqlite-backup)
     Act->>Act: update registry
     DR->>MP: load launchd agent
-    MP->>KC: resolve ${keyring:...} placeholders at spawn time
+    MP->>Wrap: start wrapper
+    Wrap->>KC: read secrets and export env vars
+    Wrap->>Src: read HM rendered config
+    Wrap->>Run: write fresh private runtime copy
+    Wrap->>MP: exec mcpproxy with runtime config path
     MP-->>Op: ready on 127.0.0.1:8080
 ```
 
@@ -966,11 +1023,11 @@ sequenceDiagram
     alt healthz fails
         Wrap->>Op: stderr "mcpproxy unreachable"; exit 1
     end
-    Wrap->>MP: GET /api/v1/servers/obsidian with X-API-Key
+    Wrap->>MP: GET /api/v1/servers with X-API-Key filter obsidian
     alt obsidian not connected
         Wrap->>Op: stderr "obsidian not connected via mcpproxy"; exit 1
     end
-    Wrap->>MP: GET /api/v1/servers/cavemem with X-API-Key
+    Wrap->>MP: GET /api/v1/servers with X-API-Key filter cavemem
     alt cavemem not connected
         Wrap->>Op: stderr "cavemem not connected via mcpproxy"; exit 1
     end
@@ -996,7 +1053,7 @@ sequenceDiagram
 
     Agent->>MP: retrieve_tools(query "list obsidian notes")
     MP-->>Agent: [{ name "list-notes", call_with "call_tool_read", schema {...} }]
-    Agent->>MP: call_tool_read(name "list-notes", arguments {directory "memories", limit 1})
+    Agent->>MP: call_tool_read(name "obsidian:list-notes", args {directory "memories", limit 1})
     MP->>Up: route MCP tool call
     Up-->>MP: tool response
     MP-->>Agent: routed response
@@ -1005,9 +1062,11 @@ sequenceDiagram
 Key decisions:
 - Each direct `hub_*` call in legacy prompts maps to a 2-step
   retrieve+invoke pair.
-- Tool name in `call_tool_*` is the upstream's original name (no
-  prefix). Subagent allowlists reference the upstream server
-  name in retrieve_tools' returned metadata.
+- Tool name in `call_tool_*` is the server-qualified name returned by
+  `retrieve_tools` (for example `obsidian:list-notes`). Subagent
+  allowlists reference the upstream server name in retrieve_tools'
+  returned metadata, and call arguments use the mcpproxy wrapper's
+  `args` field.
 
 ## Data Models
 
@@ -1016,63 +1075,25 @@ Key decisions:
 mcpproxy's schema is external; this design pins to v0.33.1 and
 renders only the fields needed:
 
-```json
-{
-  "listen": "127.0.0.1:8080",
-  "data_dir": "/Users/<operator>/.mcpproxy",
-  "tools_limit": 15,
-  "routing_mode": "retrieve_tools",
-  "quarantine_enabled": false,
-  "api_key": "${keyring:mcpproxy-api-key}",
-  "require_mcp_auth": false,
-  "mcpServers": [
-    {
-      "name": "obsidian",
-      "protocol": "stdio",
-      "command": "/nix/store/.../bin/mcp-obsidian",
-      "args": ["<vault-path>"],
-      "enabled": true,
-      "quarantined": false
-    },
-    {
-      "name": "github",
-      "protocol": "stdio",
-      "command": "/nix/store/.../bin/github-mcp-server",
-      "args": ["stdio", "--toolsets=all"],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "${keyring:mcp-github-token}"
-      },
-      "enabled": true,
-      "quarantined": false
-    },
-    {
-      "name": "mcp-nixos",
-      "protocol": "stdio",
-      "command": "/nix/store/.../bin/mcp-nixos",
-      "args": ["--"],
-      "enabled": true,
-      "quarantined": false
-    },
-    {
-      "name": "cavemem",
-      "protocol": "stdio",
-      "command": "/nix/store/.../bin/cavemem",
-      "args": ["mcp"],
-      "env": {
-        "CAVEMEM_DATA_DIR": "/Users/<operator>/.local/share/cavemem"
-      },
-      "enabled": true,
-      "quarantined": false
-    }
-  ]
-}
-```
+- Top-level: `listen`, `data_dir`, `routing_mode = "retrieve_tools"`,
+  `quarantine_enabled = false`, `api_key = "${env:MCPPROXY_API_KEY}"`,
+  `require_mcp_auth = false`, and `mcpServers`.
+- Per-server: `name`, `protocol`, `command`/`url`, optional `args`, optional
+  `env` / `headers`, `enabled = true`, and `quarantined = false`.
+- Base servers: `obsidian`, `github`, `mcp-nixos`, and `cavemem`; host-specific
+  extras append through the same renderer.
 
 Fields intentionally omitted (mcpproxy populates defaults via
 `Validate()`): `tls`, `logging`, `docker_isolation`, `tokenizer`,
 `intent_declaration`, `sensitive_data_detection`, `environment`,
-`registries`. `tools_limit: 15` (default) is emitted explicitly to
-make the retrieve_tools-mode assumption visible.
+`registries`, and `tools_limit`. The module does not override
+`tools_limit`; retrieve_tools mode is selected by `routing_mode`.
+
+The Home Manager-rendered file is a source artifact. The wrapper
+copies it to a private runtime path on every launch and passes that
+runtime copy to mcpproxy. Any runtime copy or `.bak` file is treated
+as secret-bearing because mcpproxy may persist the resolved API key
+after reading `${env:MCPPROXY_API_KEY}`.
 
 Host-specific extra servers are appended to the `mcpServers` array
 by the same renderer reading `home.mcp.extraServers`.
@@ -1091,29 +1112,29 @@ operator-visible error messages; preserve recovery hints.
 | Activation guard failure (missing /run/secrets/*) | `mcp-secrets-activate.nix` | Exit 1; named-path stderr message |
 | Keychain write failure | `mcp-secrets-activate.nix` | Exit 2; legacy entries preserved |
 | Keychain legacy cleanup failure | `mcp-secrets-activate.nix` | Exit 4 (registry-related); host has duplicate entries; manual cleanup possible |
-| mcpproxy refuses to start (missing keyring entry) | mcpproxy daemon | logged in `~/Library/Logs/mcpproxy/main.log`; launchd restart loop until operator intervenes |
+| Runtime config preparation failure | `mcpproxy-launchd-wrapper` | Exit before `exec`; stderr prefix `mcpproxy-launchd-wrapper:` names copy/validation failure |
+| mcpproxy refuses to start (missing env value or malformed runtime config) | mcpproxy daemon / wrapper | logged in `~/Library/Logs/mcpproxy/launchd.error.log`; launchd restart loop until operator intervenes |
 | Opencode wrapper probe failure (mcpproxy down) | `opencode.nix` wrapper | Exit 1; "mcpproxy unreachable; launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" |
 | Opencode wrapper probe failure (obsidian or cavemem not connected) | `opencode.nix` + `cavemem.nix` wrappers | Exit 1; named-component stderr message |
 | Memory-sync probe failure | `memory-sync.nix` | Distinct non-zero exit per precondition; recovery hint references new label |
 | Sqlite-backup verify-credentials failure | `sqlite-backup-cli.nix` | Named-secret + named-account error message |
 | API key missing in keychain (probe time) | wrapper preflight | Exit 1 with clear "mcpproxy-api-key not in keychain; re-run darwin-rebuild" hint |
+| mcpproxy creates runtime `.bak` with resolved API key | mcpproxy daemon | Backup remains confined to the private runtime config directory; source HM path remains untouched |
 
 ### Monitoring
 
-- mcpproxy logs to `~/Library/Logs/mcpproxy/launchd.log` and
-  `launchd-error.log` (via launchd `StandardOutPath` /
-  `StandardErrorPath`; mcpproxy's own `--log-to-file=false` disables
-  duplicate file logging).
-- The opencode-prewarm agent logs separately to
-  `~/Library/Logs/opencode-prewarm{,error}.log` (unchanged).
-- No new observability surface introduced.
+- mcpproxy logs only through launchd paths under
+  `~/Library/Logs/mcpproxy/`; `--log-to-file=false` disables
+  duplicate mcpproxy-managed logs.
+- The opencode-prewarm agent keeps its existing separate logs.
+- Config ownership monitoring is file-state based: acceptance checks
+  inspect `~/.config/mcpproxy/mcp_config.json` and its adjacent `.bak`
+  path to confirm mcpproxy never rewrites the HM-owned source.
 
 ## Testing Strategy
-
-Tests derive from R14 acceptance criteria. Each item is a concrete verification command run on a representative host.
-
 **Unit / Module**:
-- Orchestrator config rendering (Nix module test): assert rendered `mcp_config.json` shape — array `mcpServers`, `quarantine_enabled: false`, `${keyring:...}` placeholders, no `mcp-hub` strings.
+- Orchestrator config rendering (Nix module test): assert rendered `mcp_config.json` shape — array `mcpServers`, `quarantine_enabled: false`, `${env:...}` placeholders, no secret literal values, no `mcp-hub` strings, no `tools_limit` override.
+- Runtime config preparation test: with a sample HM-rendered config, the wrapper prepares a `0600` runtime copy, passes that copy as `--config`, and leaves the source path untouched; with invalid source JSON or unwritable runtime directory, it exits before `exec` with a `mcpproxy-launchd-wrapper:` error.
 - Activation script idempotency: run twice in succession; both runs succeed; keychain ends in new layout each time, no legacy entries remain.
 - Agent contract grep gate (R4.1): CI grep for `hub_[a-z]` across in-scope agent files returns zero matches.
 
@@ -1123,6 +1144,7 @@ Tests derive from R14 acceptance criteria. Each item is a concrete verification 
 - Memory-sync probe (R9.1, R9.2): with mcpproxy down, CLI exits with obsidian-unreachable code; recovery hint references new launchd label.
 - Sqlite-backup operations (R12.3): `sqlite-backup verify-credentials` succeeds against `-a nix-config-secrets` after migration.
 - Nvim startup (R11.5): `nvim +qa` returns clean with no mcphub-related errors.
+- Config ownership protection (R15): after launchd restart and after an mcpproxy operation that previously triggered config persistence, `~/.config/mcpproxy/mcp_config.json` remains the Home Manager-managed source file/symlink and no adjacent source-path `mcp_config.json.bak` is created.
 
 **E2E Acceptance (R14)**: Fresh activation on each host → all 5 R14 checks pass on both Shopify and personal.
 
@@ -1153,8 +1175,9 @@ entry with the generated value. Builds the new generation locally
 
 `darwin-rebuild switch` runs `mcp-secrets-activate.nix` first
 (writes new layout, deletes legacy), then loads the new launchd
-agent. mcpproxy starts and resolves `${keyring:mcpproxy-api-key}`
-from the freshly populated keychain. The old
+agent. The wrapper reads `mcpproxy-api-key` from the freshly
+populated keychain, exports `MCPPROXY_API_KEY`, prepares the private
+runtime config copy, and starts mcpproxy against that copy. The old
 `com.ravitemer.mcp-hub` launchd agent is implicitly unloaded when
 its `.plist` no longer exists in `~/Library/LaunchAgents/`.
 

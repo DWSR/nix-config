@@ -15,14 +15,19 @@ coordinated cutover: every consumer that talks to mcp-hub today either
 moves onto mcpproxy or loses its MCP surface in the case of nvim's
 codecompanion MCP extension. The acceptance gate is the AGENTS.md
 mandatory startup check operating end-to-end on a fresh opencode
-session against the migrated stack.
+session against the migrated stack. This revision also covers the
+post-cutover requirement that mcpproxy must not replace or rewrite the
+Home Manager-owned rendered config when it performs startup cleanup or
+runtime persistence.
 
 ## Boundary Context
 
 - **In scope**: mcpproxy-go Nix packaging; the orchestrator module
   rewrite covering config rendering, launchd agent, and the restart
-  helper; the secret-bridge layout swap with one-shot cleanup of
-  legacy entries; the cavemem split-brain closure; the opencode
+  helper; protection of the Home Manager-owned rendered mcpproxy
+  configuration from mcpproxy's own runtime writes; the secret-bridge
+  layout swap with one-shot cleanup of legacy entries; the cavemem
+  split-brain closure; the opencode
   integration changes (per-host remote-MCP wiring + wrapper preflight);
   the memory-sync CLI's MCP-availability probe; the agent-contract
   rewrite (AGENTS.md startup gate + memory-recall rules + every
@@ -41,9 +46,11 @@ session against the migrated stack.
   replacement plugin for `mcphub.nvim`; opencode plugin or hook
   architecture changes; modifying cavemem internals (Zod schema,
   embedding behaviour, upstream patches); customising mcpproxy's
-  quarantine workflow beyond per-server approval. The deferred
-  `mcp-server-allowlist` spec is superseded but not formally closed
-  in this spec body.
+  quarantine workflow beyond per-server approval; relying on manual
+  filesystem immutability flags to protect the rendered config;
+  preventing mcpproxy from writing its own runtime state outside the
+  Home Manager-owned config path. The deferred `mcp-server-allowlist`
+  spec is superseded but not formally closed in this spec body.
 
 - **Adjacent expectations**:
   - `mcp-secrets-sops-nix`'s SOPS-as-source-of-truth model continues
@@ -60,6 +67,10 @@ session against the migrated stack.
   - `opencode-cost-diagnosis` is the measurement vehicle for
     verifying this spec's cost-reduction claim; nothing here
     changes the diagnostic itself.
+  - mcpproxy may continue to maintain runtime state that belongs to
+    mcpproxy itself; this spec's config-protection requirement only
+    preserves the Home Manager-owned rendered configuration as the
+    declarative source of truth.
 
 ## Requirements
 
@@ -118,11 +129,12 @@ session against the migrated stack.
 
 #### Acceptance Criteria
 
-1. The mcpproxy orchestrator module shall reference secret values in its rendered configuration through mcpproxy's macOS Keychain placeholder mechanism, with no secret value written to the rendered configuration file.
-2. When mcpproxy spawns an upstream server that requires a secret, the mcpproxy daemon shall populate the spawned process's environment variable with the secret value retrieved from the macOS Keychain at spawn time.
-3. The mcpproxy orchestrator module shall not depend on mcpproxy's own keyring-write path; secret material reaches the macOS Keychain via the existing SOPS-bridge activation script only.
-4. While the home-manager activation runs, the secret bridge shall write every operator-declared MCP secret to the macOS Keychain in the layout that mcpproxy expects.
-5. When an operator-declared MCP secret's source value changes in SOPS, the secret bridge shall update the corresponding macOS Keychain entry in place during the next activation.
+1. The mcpproxy orchestrator module shall reference secret values in its rendered configuration without writing any secret value to the rendered configuration file.
+2. When mcpproxy starts under the managed launchd agent, the managed launch pathway shall provide the daemon's required API key without requiring the operator to run a manual secret-initialization command.
+3. When mcpproxy spawns an upstream server that requires a secret, the managed launch pathway shall provide the secret value to the spawned process without persisting that secret value in the Home Manager-owned rendered configuration.
+4. The mcpproxy orchestrator module shall not depend on mcpproxy's own keyring-write path; secret material reaches the macOS Keychain via the existing SOPS-bridge activation script only.
+5. While the home-manager activation runs, the secret bridge shall write every operator-declared MCP secret to the macOS Keychain in the layout that mcpproxy expects.
+6. When an operator-declared MCP secret's source value changes in SOPS, the secret bridge shall update the corresponding macOS Keychain entry in place during the next activation.
 
 ### Requirement 6: One-shot keychain layout migration
 
@@ -142,7 +154,7 @@ session against the migrated stack.
 
 #### Acceptance Criteria
 
-1. Opencode's rendered configuration on every host shall not contain any direct local-MCP entry for cavemem.
+1. The opencode rendered configuration on every host shall not contain any direct local-MCP entry for cavemem.
 2. While mcpproxy is running, cavemem shall be reachable to opencode only through mcpproxy's four-tool surface.
 3. The mcpproxy orchestrator module shall set the cavemem upstream's environment so that its `CAVEMEM_DATA_DIR` matches the value the cavemem module's `dataDir` option resolves to, preserving the existing observation history across the cutover.
 4. The cavemem module's option surface (`dataDir`, `embedding.*`, `compression.intensity`) and its existing settings.json rendering behaviour shall remain unchanged by this spec.
@@ -190,7 +202,7 @@ session against the migrated stack.
 1. The rendered nixvim configuration shall not include the `mcphub.nvim` plugin or any code path that loads it.
 2. The rendered nixvim configuration shall include `codecompanion-nvim` with its MCP extension wiring removed (no `extensions.mcphub` block, no `mcphub.nvim`-triggering `before` hook), so that `:CodeCompanion` opens the chat interface without attempting to load MCP tools.
 3. The rendered nixvim lualine status line shall not include the `mcphub` status component.
-4. After this spec's changes apply, the flake's input set shall not contain the `mcphub` or `mcphub-nvim` inputs.
+4. The flake's input set shall not contain the `mcphub` or `mcphub-nvim` inputs.
 5. When the operator launches `nvim` after activation, nvim shall start without any error or warning message that references mcphub, mcp-hub, or any removed plugin.
 
 ### Requirement 12: Sqlite-backup keychain account rename
@@ -228,3 +240,16 @@ session against the migrated stack.
 3. When the operator launches opencode on a host that has completed a clean activation, the opencode wrapper preflight checks shall succeed for mcpproxy itself, obsidian, and cavemem.
 4. When home-manager activation runs once on a host that started with legacy `mcp-hub` keychain entries, no `mcp-hub`-accounted keychain entries shall remain after the activation completes.
 5. When the operator runs `darwin-rebuild check` (or an equivalent eval-time verification command) against the post-migration config, that command shall succeed with no warnings or errors that name `mcp-hub` or `mcphub`.
+
+### Requirement 15: Home Manager config ownership protection
+
+**Objective:** As the operator, I want mcpproxy runtime cleanup and persistence to leave the Home Manager-owned config untouched, so that declarative activation remains the source of truth and mcpproxy startup cannot detach the managed symlink.
+
+#### Acceptance Criteria
+
+1. When mcpproxy starts or restarts under the managed launchd agent, the mcpproxy orchestrator module shall keep the Home Manager-owned rendered configuration path intact as a Home Manager-managed file or symlink.
+2. If mcpproxy performs startup cleanup or runtime configuration persistence, the mcpproxy configuration protection shall prevent those writes from replacing, rewriting, or backing up the Home Manager-owned rendered configuration path.
+3. When Home Manager renders a new mcpproxy configuration generation, the next managed mcpproxy start shall use that rendered generation as the source for the effective runtime configuration.
+4. If the effective runtime configuration cannot be prepared, the managed mcpproxy launch shall fail before starting mcpproxy and shall write a stderr message naming the preparation failure.
+5. While config protection is active, the managed mcpproxy launch shall preserve the behaviours required by Requirements 1 through 10 and Requirement 14.
+6. The mcpproxy configuration protection shall require no manual filesystem immutability flag, root-owned config edit, or operator-maintained local patch to survive mcpproxy startup cleanup.
