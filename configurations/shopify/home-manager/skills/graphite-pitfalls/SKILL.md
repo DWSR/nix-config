@@ -229,10 +229,9 @@ validates every entry on every command, so any dead entry blocks ALL
 commands.
 
 `gt repo init` cannot fix this non-interactively: it prompts to confirm
-"You are about to reset your trunk branches…" and mcpproxy's
-`call_tool_write` against the gt run-command tool can't answer the prompt,
-so it errors with `Cannot perform interactive operation in non-interactive
-mode`.
+"You are about to reset your trunk branches…" and `gt-mcp:run_gt_cmd`
+(invoked via `call_tool_write`) can't answer the prompt, so it errors
+with `Cannot perform interactive operation in non-interactive mode`.
 
 **Recovery (surgical, no flags needed):**
 

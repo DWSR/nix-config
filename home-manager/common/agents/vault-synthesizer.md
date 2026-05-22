@@ -61,44 +61,55 @@ cavemem upstreams are not exposed; every operation is two steps:
    `retrieve_tools(query: "<server> <operation>")`. The query should
    name the upstream server (`obsidian` or `cavemem`) and the operation
    (e.g. `search by tags`, `read note`, `write note`, `list sessions`,
-   `timeline`, `get observations`, `search`). The response includes the
-   canonical upstream tool name and the server that owns it; verify the
-   server matches `obsidian` or `cavemem` before invoking.
+   `timeline`, `get observations`, `search`). Each result's `name`
+   field is the canonical upstream tool name in `server:tool` form
+   (e.g. `obsidian:write-note`, `cavemem:list_sessions`); verify the
+   server prefix matches `obsidian` or `cavemem` before invoking. The
+   `call_with` field recommends which `call_tool_*` variant to use.
 2. **Invoke** the returned tool through the verb that matches its
    side-effect class:
-   - `call_tool_read` — all cavemem operations (`list_sessions`,
-     `timeline`, `get_observations`, `search`) and the read-side
-     obsidian operations (`read-note`, `list-notes`, `search-vault`,
-     `search-by-tags`, `get-note-metadata`). Non-mutating.
-   - `call_tool_write` — the obsidian `write-note` operation only
+   - `call_tool_read` — all cavemem operations (`cavemem:list_sessions`,
+     `cavemem:timeline`, `cavemem:get_observations`, `cavemem:search`)
+     and the read-side obsidian operations (`obsidian:read-note`,
+     `obsidian:list-notes`, `obsidian:search-vault`,
+     `obsidian:search-by-tags`, `obsidian:get-note-metadata`).
+     Non-mutating.
+   - `call_tool_write` — the `obsidian:write-note` operation only
      (creates or updates a note; directories are created implicitly).
    - `call_tool_destructive` — not used by this agent; the synthesizer
      never deletes vault notes.
+
+Every `call_tool_*` invocation takes:
+- `name`: the upstream tool name in `server:tool` form, exactly as
+  returned by `retrieve_tools` (do NOT guess or invent it).
+- `args`: a JSON object holding the upstream tool's parameters
+  (NOT the legacy `arguments` field name).
 
 Worked example — enumerating cavemem sessions in a window:
 
 ```
 1. retrieve_tools(query: "cavemem list sessions")
-   → expect a tool from server "cavemem"
-2. call_tool_read(name: <returned tool name>,
-                  arguments: { start: <unix-ms>, end: <unix-ms> })
+   → result includes `{ "name": "cavemem:list_sessions", "call_with": "call_tool_read", ... }`
+2. call_tool_read(name: "cavemem:list_sessions",
+                  args: { start: <unix-ms>, end: <unix-ms> })
 ```
 
 Worked example — writing a drafted memory note:
 
 ```
 1. retrieve_tools(query: "obsidian write note")
-   → expect a tool from server "obsidian"
-2. call_tool_write(name: <returned tool name>,
-                   arguments: { path: "memories/2026-05-14-foo.md",
-                                content: "<frontmatter + body>" })
+   → result includes `{ "name": "obsidian:write-note", "call_with": "call_tool_write", ... }`
+2. call_tool_write(name: "obsidian:write-note",
+                   args: { path: "memories/2026-05-14-foo.md",
+                           content: "<frontmatter + body>" })
 ```
 
-When the workflow text below refers to a tool by its operation name
-("`write-note`", "`read-note`", "`list_sessions`", "`timeline`",
-"`get_observations`", "`search`", etc.), apply the same two-step
-idiom: discover via `retrieve_tools`, then invoke through the verb
-listed above.
+When the workflow text below refers to a tool by its short operation
+name ("`write-note`", "`read-note`", "`list_sessions`", "`timeline`",
+"`get_observations`", "`search`", etc.), apply the same two-step idiom:
+discover via `retrieve_tools` (the result's `name` field is what you
+pass to `call_tool_*`), then invoke through the verb listed above.
+Pass parameters in the `args` object, not as positional arguments.
 
 ## Operating rules (INVARIANTS)
 

@@ -1,11 +1,12 @@
 # Working with Graphite (gt)
 
-`gt` (Graphite CLI, invoked via mcpproxy's discover-then-invoke idiom —
-`retrieve_tools` against the gt MCP server, then `call_tool_write` against
-the returned run-command tool) is the preferred tool
-for stacked PRs in internal Shopify repos. Wraps git; has known failure
-modes around strict commit/rebase hooks, shared worktree metadata, and
-state drift.
+`gt` (Graphite CLI, invoked via mcpproxy's discover-then-invoke idiom
+— `retrieve_tools(query: "gt run gt command")` returns
+`gt-mcp:run_gt_cmd`, then invoke with
+`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { command: "<gt subcommand>" })`)
+is the preferred tool for stacked PRs in internal Shopify repos.
+Wraps git; has known failure modes around strict commit/rebase hooks,
+shared worktree metadata, and state drift.
 
 Full recovery catalog lives in the `graphite-pitfalls` skill. Load it
 ONLY on an actual gt failure (triggers in Pitfall index below). For
@@ -26,11 +27,11 @@ Before any gt command:
 ## Green path: gt-MCP-only stacks don't need `--force`
 
 If every commit, rebase, and push in a stack went through the gt MCP
-(mcpproxy's `call_tool_write` against the gt run-command tool — discovered
+(mcpproxy's `call_tool_write` against `gt-mcp:run_gt_cmd` — discovered
 via `retrieve_tools` — invoking `gt create`, `gt modify`, `gt submit`,
-`gt restack`, `gt sync`, `gt track`), then `gt submit --no-interactive`
-succeeds WITHOUT `--force`. Metadata stays in lock-step with the remote;
-no SHA divergence.
+`gt restack`, `gt sync`, `gt track` via `args: { command: "<gt subcommand>" }`),
+then `gt submit --no-interactive` succeeds WITHOUT `--force`. Metadata
+stays in lock-step with the remote; no SHA divergence.
 
 `--force` is only relevant when the stack was manipulated OUTSIDE the
 gt MCP:
@@ -95,7 +96,7 @@ for the bash recovery.
 - **C3** — force-pushing the bottom of an N-PR stack invalidates approvals on all upstack PRs
 - **C4** — open-source repos: don't use gt (use plain git + `gh pr create`)
 - **C5** — `gt submit --no-interactive` always creates PRs as drafts (no override flag)
-- **C6** — the GitHub MCP `pull_request_review_write` tool (invoked via mcpproxy's `retrieve_tools` + `call_tool_write` idiom) has NO `resolve_thread` method; use `gh api graphql` instead
+- **C6** — the `github:pull_request_review_write` tool (invoked via mcpproxy's `retrieve_tools` + `call_tool_write` idiom) has NO `resolve_thread` method; use `gh api graphql` instead
 - **C7** — CI-fix cycles on stacked PRs are amplified-cost (~20 force-pushes per 5-cycle 4-PR debug session)
 
 ## Workflow rules summary

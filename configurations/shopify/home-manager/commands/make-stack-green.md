@@ -21,15 +21,53 @@ No arguments. Operates on the current Graphite PR stack in the working directory
 - Buildkite MCP must be available (CI job log analysis)
 - GT MCP must be available (stack management, `gt modify`, `gt submit`)
 
+## Tool invocation idiom
+
+All MCP work goes through mcpproxy's four-tool agent surface
+(`retrieve_tools` + `call_tool_*`). For each upstream tool referenced
+below, discover its canonical name with
+`retrieve_tools(query: "<server> <operation>")` — the result's `name`
+field is in `server:tool` form and the `call_with` field recommends
+the verb. Invoke through the verb that matches the operation's
+side-effect class:
+
+- `call_tool_read` — read-only operations: `github:pull_request_read`,
+  `github:get_job_logs`.
+- `call_tool_write` — state-mutating operations: `gt-mcp:run_gt_cmd`
+  (every `gt` subcommand changes VCS state),
+  `github:request_copilot_review`, `github:add_issue_comment`,
+  `github:pull_request_review_write` (only for `method: "create"`,
+  `"submit_pending"`, `"delete_pending"`).
+- `call_tool_destructive` — not used by this command.
+
+**Known gap**: `github:pull_request_review_write` does NOT have a
+`resolve_thread` method, despite what older runbooks claim. To resolve
+a review thread, fall back to `gh api graphql` with the
+`resolveReviewThread` mutation — see the `graphite-pitfalls` skill C6
+for the canonical incantation. The bash invocation is the documented
+recovery; no other MCP tool exposes thread resolution.
+
+Every `call_tool_*` invocation takes:
+- `name`: the upstream tool name in `server:tool` form, exactly as
+  returned by `retrieve_tools` (do NOT guess or invent it).
+- `args`: a JSON object holding the upstream tool's parameters
+  (NOT the legacy `arguments` field name).
+
+When the workflow text below references a tool by its short name (e.g.
+"invoke `github:pull_request_read` with `method: get_status`"), apply
+the two-step idiom: discover via `retrieve_tools`, then invoke through
+the appropriate `call_tool_*` verb listed above, passing the upstream
+tool's parameters in `args`.
+
 ## Instructions
 
 ### Step 0: Identify the stack and request Copilot reviews
 
-1. Use `hub_gt_mcp__run_gt_cmd` to run `gt state` and identify the full PR stack (bottom to top).
+1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt state" }` to identify the full PR stack (bottom to top).
 
 2. For each PR in the stack, determine the PR number and owner/repo from the branch context.
 
-3. For each PR, use `hub_github__request_copilot_review` to request a Copilot review. This is fire-and-forget — Copilot reviews asynchronously while we work on CI fixes.
+3. For each PR, invoke `github:request_copilot_review` (via `call_tool_write`) to request a Copilot review. This is fire-and-forget — Copilot reviews asynchronously while we work on CI fixes.
 
 4. Present the stack overview to the user: PR numbers, titles, branches, current CI status.
 
@@ -41,7 +79,7 @@ For each PR:
 
 #### Step 1a: Fix CI failures
 
-1. Use `hub_github__pull_request_read` with `method: "get_status"` to get the CI status of the PR's head commit.
+1. Invoke `github:pull_request_read` (via `call_tool_read`) with `args: { method: "get_status", ... }` to get the CI status of the PR's head commit.
 
 2. If all checks pass: skip to Step 1b.
 
@@ -49,7 +87,7 @@ For each PR:
 
 **Analyze the failure:**
 - Identify the failing check(s) from the commit status.
-- Use `hub_github__get_job_logs` with `failed_only: true` and the workflow `run_id` to get detailed failure logs.
+- Invoke `github:get_job_logs` (via `call_tool_read`) with `args: { failed_only: true, run_id: <id>, ... }` to get detailed failure logs.
 - Read the logs to identify the root cause.
 
 **Assess the fix size:**
@@ -73,17 +111,17 @@ For each PR:
      - Test coverage: does the fix need an accompanying test?
    - If the reviewer raises concerns: iterate on the fix before committing.
 
-3. Checkout the correct branch for this PR. Use `hub_gt_mcp__run_gt_cmd` to run `gt modify --message "<description of fix>"` to amend the commit and automatically restack.
+3. Checkout the correct branch for this PR. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt modify --message \"<description of fix>\"" }` to amend the commit and automatically restack.
 
-4. Use `hub_gt_mcp__run_gt_cmd` to run `gt submit --no-interactive --stack` to push all branches.
+4. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt submit --no-interactive --stack" }` to push all branches.
 
-5. Wait for CI to re-run on this PR. Poll using `hub_github__pull_request_read` with `method: "get_status"`.
+5. Wait for CI to re-run on this PR. Poll using `github:pull_request_read` (via `call_tool_read`) with `args: { method: "get_status", ... }`.
 
 6. If CI still fails: repeat from the analysis step. Maximum 3 attempts per PR — if still failing after 3 attempts, present the situation to the user and ask how to proceed.
 
 #### Step 1b: Wait for binks review
 
-1. Use `hub_github__pull_request_read` with `method: "get_status"` and look for the "PR Review Bot Comments Addressed" check from `binks.shopify.io`.
+1. Invoke `github:pull_request_read` (via `call_tool_read`) with `args: { method: "get_status", ... }` and look for the "PR Review Bot Comments Addressed" check from `binks.shopify.io`.
 
 2. Check the status of this check:
    - **pending / in_progress**: Binks is still reviewing. Wait 30 seconds and poll again. New comments may appear while binks is working.
@@ -95,7 +133,7 @@ For each PR:
 
 #### Step 1c: Address bot review comments
 
-1. Use `hub_github__pull_request_read` with `method: "get_review_comments"` to get all review comments.
+1. Invoke `github:pull_request_read` (via `call_tool_read`) with `args: { method: "get_review_comments", ... }` to get all review comments.
 
 2. Filter to unresolved comments from bot authors (identified by `[bot]` suffix in username, e.g., `binks-code-reviewer[bot]`, `copilot[bot]`).
 
@@ -114,20 +152,20 @@ For each PR:
   - **Large**: present to user with implementation options.
 - Fix the code.
 - Peer review the fix (Agent 2 reviews).
-- Reply to the comment thread explaining the fix using `hub_github__add_issue_comment` on the PR.
-- Resolve the thread using `hub_github__pull_request_review_write` with `method: "resolve_thread"` and the comment's `threadId`.
+- Reply to the comment thread explaining the fix by invoking `github:add_issue_comment` (via `call_tool_write`) on the PR.
+- Resolve the thread via `gh api graphql` with the `resolveReviewThread` mutation (see `graphite-pitfalls` C6 for the canonical incantation). Look up the `threadId` (PRRT_…) by matching the comment's `databaseId` against `reviewThreads` returned from a GraphQL query against `repository.pullRequest.reviewThreads`.
 
 **Category B — Stacked PR false positive**: The comment flags missing functionality that exists in another PR in the stack.
 - Reply to the comment explaining the stacked PR context: "This is by design for a stacked PR — this PR adds [X], and PR #[YYYY] in the stack adds [Y]."
-- Resolve the thread using `hub_github__pull_request_review_write` with `method: "resolve_thread"`.
+- Resolve the thread via `gh api graphql resolveReviewThread` as above.
 
 **Category C — Not applicable / incorrect**: The comment doesn't make sense for this code or is factually wrong.
 - React to the comment with 👎 using bash: `gh api repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions -f content="-1"`
 - Reply explaining why the comment is not applicable.
-- Resolve the thread using `hub_github__pull_request_review_write` with `method: "resolve_thread"`.
+- Resolve the thread via `gh api graphql resolveReviewThread` as above.
 
 4. After addressing all comments on this PR:
-   - If any code changes were made: use `hub_gt_mcp__run_gt_cmd` to run `gt modify` with a descriptive message, then `gt submit --no-interactive --stack`.
+   - If any code changes were made: invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt modify --message \"<message>\"" }`, then again with `args: { command: "gt submit --no-interactive --stack" }`.
    - Wait for CI to re-run.
 
 #### Step 1d: Verify this PR is green
@@ -143,7 +181,7 @@ For each PR:
 
 After all PRs have been processed:
 
-1. Use `hub_gt_mcp__run_gt_cmd` to run `gt state` to confirm the stack is clean.
+1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt state" }` to confirm the stack is clean.
 2. For each PR: verify CI green + zero unresolved bot threads.
 3. If any PR still has issues: report which ones and what's remaining.
 
@@ -159,18 +197,18 @@ Present a summary including:
 
 ## Tool Reference
 
-| Capability | Tool | Method/Parameters |
-|---|---|---|
-| Get PR stack | `hub_gt_mcp__run_gt_cmd` | `gt state` |
-| Modify PR commit | `hub_gt_mcp__run_gt_cmd` | `gt modify --message "..."` |
-| Submit stack | `hub_gt_mcp__run_gt_cmd` | `gt submit --no-interactive --stack` |
-| Get CI status | `hub_github__pull_request_read` | `method: "get_status"` |
-| Get review comments | `hub_github__pull_request_read` | `method: "get_review_comments"` |
-| Get failed CI logs | `hub_github__get_job_logs` | `failed_only: true` |
-| Request Copilot review | `hub_github__request_copilot_review` | `owner, repo, pullNumber` |
-| Reply to PR comment | `hub_github__add_issue_comment` | `owner, repo, issue_number, body` |
-| Resolve review thread | `hub_github__pull_request_review_write` | `method: "resolve_thread"`, `threadId: "PRRT_..."` |
-| React with 👎 | bash `gh api` | `repos/{o}/{r}/pulls/comments/{id}/reactions -f content="-1"` |
+| Capability | Tool name (`server:tool`) | `call_tool_*` verb | Key `args` |
+|---|---|---|---|
+| Get PR stack | `gt-mcp:run_gt_cmd` | `call_tool_write` | `command: "gt state"` |
+| Modify PR commit | `gt-mcp:run_gt_cmd` | `call_tool_write` | `command: "gt modify --message \"...\""` |
+| Submit stack | `gt-mcp:run_gt_cmd` | `call_tool_write` | `command: "gt submit --no-interactive --stack"` |
+| Get CI status | `github:pull_request_read` | `call_tool_read` | `method: "get_status"` |
+| Get review comments | `github:pull_request_read` | `call_tool_read` | `method: "get_review_comments"` |
+| Get failed CI logs | `github:get_job_logs` | `call_tool_read` | `failed_only: true` |
+| Request Copilot review | `github:request_copilot_review` | `call_tool_write` | `owner, repo, pullNumber` |
+| Reply to PR comment | `github:add_issue_comment` | `call_tool_write` | `owner, repo, issue_number, body` |
+| Resolve review thread | bash `gh api graphql` | n/a (no MCP tool — `pull_request_review_write` does NOT support `resolve_thread`; see graphite-pitfalls C6) | `resolveReviewThread(input: {threadId: $threadId})` |
+| React with 👎 | bash `gh api` | n/a (no MCP tool) | `repos/{o}/{r}/pulls/comments/{id}/reactions -f content="-1"` |
 
 ## Notes
 

@@ -52,47 +52,61 @@ upstream are not exposed; every operation is two steps:
 1. **Discover** the upstream tool name with
    `retrieve_tools(query: "obsidian <operation>")`. The query should name
    the upstream server (`obsidian`) and the operation (e.g. `search by
-   tags`, `read note`, `write note`). The response includes the canonical
-   upstream tool name.
+   tags`, `read note`, `write note`). Each result's `name` field is the
+   canonical upstream tool name in `server:tool` form (e.g.
+   `obsidian:write-note`); the `call_with` field recommends which
+   `call_tool_*` variant to use.
 2. **Invoke** the returned tool through the verb that matches its
    side-effect class:
-   - `call_tool_read` — `list-notes`, `search-by-tags`, `search-vault`,
-     `read-note`, `get-note-metadata`. All non-mutating operations.
-   - `call_tool_write` — `write-note` (creates or updates a note;
-     directories are created implicitly).
-   - `call_tool_destructive` — `delete-note` (irreversible removal).
+   - `call_tool_read` — `obsidian:list-notes`, `obsidian:search-by-tags`,
+     `obsidian:search-vault`, `obsidian:read-note`,
+     `obsidian:get-note-metadata`. All non-mutating operations.
+   - `call_tool_write` — `obsidian:write-note` (creates or updates a
+     note; directories are created implicitly).
+   - `call_tool_destructive` — `obsidian:delete-note` (irreversible
+     removal).
+
+Every `call_tool_*` invocation takes:
+- `name`: the upstream tool name in `server:tool` form, exactly as
+  returned by `retrieve_tools` (do NOT guess or invent it).
+- `args`: a JSON object holding the upstream tool's parameters
+  (NOT the legacy `arguments` field name).
 
 Worked example — searching memories by tag:
 
 ```
 1. retrieve_tools(query: "obsidian search by tags")
-   → expect a tool from server "obsidian"
-2. call_tool_read(name: <returned tool name>,
-                  arguments: { tags: ["memory", "graphite"],
-                               directory: "memories" })
+   → result includes `{ "name": "obsidian:search-by-tags", "call_with": "call_tool_read", ... }`
+2. call_tool_read(name: "obsidian:search-by-tags",
+                  args: { tags: ["memory", "graphite"],
+                          directory: "memories" })
 ```
 
 Worked example — writing (or updating) a note:
 
 ```
 1. retrieve_tools(query: "obsidian write note")
-2. call_tool_write(name: <returned tool name>,
-                   arguments: { path: "memories/2026-05-21-foo.md",
-                                content: "<frontmatter + body>" })
+   → result includes `{ "name": "obsidian:write-note", "call_with": "call_tool_write", ... }`
+2. call_tool_write(name: "obsidian:write-note",
+                   args: { path: "memories/2026-05-21-foo.md",
+                           content: "<frontmatter + body>" })
 ```
 
 Worked example — deleting a duplicate:
 
 ```
 1. retrieve_tools(query: "obsidian delete note")
-2. call_tool_destructive(name: <returned tool name>,
-                         arguments: { path: "memories/<duplicate>.md" })
+   → result includes `{ "name": "obsidian:delete-note", "call_with": "call_tool_destructive", ... }`
+2. call_tool_destructive(name: "obsidian:delete-note",
+                         args: { path: "memories/<duplicate>.md" })
 ```
 
-When the workflow text below refers to a tool by its operation name
+When the workflow text below refers to a tool by its short operation name
 ("`read-note`", "`write-note`", "`search-by-tags`", etc.), apply the
-same two-step idiom: discover via `retrieve_tools`, then invoke through
-the verb listed above.
+same two-step idiom: discover via `retrieve_tools` (the result's `name`
+field is what you pass to `call_tool_*`), then invoke through the verb
+listed above. Pass parameters in the `args` object, not as positional
+arguments.
 
 ## Inlined vault memory system rules
 

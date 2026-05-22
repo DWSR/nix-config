@@ -72,28 +72,41 @@ buildkite upstreams are not exposed; every operation is two steps:
    `retrieve_tools(query: "<server> <operation>")`. The query names
    the upstream server (`github` or `buildkite`) and the operation
    (e.g. `pull request read`, `request copilot review`, `pull request
-   review write`, `get build`, `get job logs`, `rebuild build`). The
-   response includes the canonical upstream tool name and the server
-   that owns it; verify the server matches `github` or `buildkite`
-   before invoking.
+   review write`, `get build`, `get job logs`, `rebuild build`). Each
+   result's `name` field is the canonical upstream tool name in
+   `server:tool` form (e.g. `github:pull_request_read`,
+   `buildkite:rebuild_build`); verify the server prefix matches
+   `github` or `buildkite` before invoking. The `call_with` field
+   recommends which `call_tool_*` variant to use.
 2. **Invoke** the returned tool through the verb that matches its
    side-effect class:
-   - `call_tool_read` — all GitHub reads (pull-request reads,
+   - `call_tool_read` — all GitHub reads (`github:pull_request_read`,
      review-thread queries, status checks) and all Buildkite reads
-     (`get-build`, `get-job-logs`, `tail-logs`, build/job lookups).
+     (`buildkite:get_build`, `buildkite:get_job_logs`,
+     `buildkite:tail_logs`, build/job lookups).
    - `call_tool_write` — GitHub mutations this agent uses
-     (`request-copilot-review`, `pull-request review-write` with
-     `method: "resolve_thread"`, `add-comment-to-pending-review`,
-     `add-issue-comment`) and Buildkite mutations (`rebuild-build`).
+     (`github:request_copilot_review`,
+     `github:pull_request_review_write` with
+     `args: { method: "resolve_thread", ... }`,
+     `github:add_comment_to_pending_review`,
+     `github:add_issue_comment`) and Buildkite mutations
+     (`buildkite:rebuild_build`).
    - `call_tool_destructive` — not used by this agent. Stack-captain
      never merges PRs (the human merges) and never deletes branches
      or builds.
 
+Every `call_tool_*` invocation takes:
+- `name`: the upstream tool name in `server:tool` form, exactly as
+  returned by `retrieve_tools` (do NOT guess or invent it).
+- `args`: a JSON object holding the upstream tool's parameters
+  (NOT the legacy `arguments` field name).
+
 Inline references throughout this prompt use the shorthand "the
-`<tool>` tool (via `call_tool_<verb>`)". Run `retrieve_tools` to
-fetch the canonical upstream name first, then invoke through the
-matching verb. `gh api` remains the documented fallback for the
-handful of GraphQL mutations (reactions, thread-resolution edge
+`<server>:<tool>` tool (via `call_tool_<verb>`)". Run
+`retrieve_tools` to confirm the canonical upstream name first, then
+invoke through the matching verb, passing the upstream tool's
+parameters in `args`. `gh api` remains the documented fallback for
+the handful of GraphQL mutations (reactions, thread-resolution edge
 cases) where the MCP path is missing or unreliable.
 
 ## The stack-to-green loop (canonical workflow)

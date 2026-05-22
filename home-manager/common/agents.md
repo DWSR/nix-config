@@ -18,13 +18,15 @@ are available via mcpproxy by performing the following four calls (one
 `retrieve_tools` + one `call_tool_read` pair per server):
 
 1. `retrieve_tools(query: "obsidian list-notes")`
-   → expect a tool from server `obsidian`.
-2. `call_tool_read(name: <tool name returned in step 1>,`
-   `                arguments: { directory: "memories", limit: 1 })`.
+   → expect a result whose `name` field has the form `obsidian:<tool>`
+   (e.g. `obsidian:list-notes`).
+2. `call_tool_read(name: <name returned in step 1>,`
+   `                args: { directory: "memories", limit: 1 })`.
 3. `retrieve_tools(query: "cavemem list sessions")`
-   → expect a tool from server `cavemem`.
-4. `call_tool_read(name: <tool name returned in step 3>,`
-   `                arguments: { limit: 1 })`.
+   → expect a result whose `name` field has the form `cavemem:<tool>`
+   (e.g. `cavemem:list_sessions`).
+4. `call_tool_read(name: <name returned in step 3>,`
+   `                args: { limit: 1 })`.
 
 If ANY of those four calls FAILS, or if `retrieve_tools` returns no tool
 from the expected upstream server, or if mcpproxy itself is unreachable:
@@ -56,15 +58,18 @@ of those via the discover-then-invoke idiom against mcpproxy:
 
 ```
 1. retrieve_tools(query: "cavemem search")
-   → expect a tool from server "cavemem"
-2. call_tool_read(name: <returned tool name>,
-                  arguments: { query: "<search terms>" })
+   → expect a result whose `name` field has the form `cavemem:<tool>`
+     (e.g. `cavemem:search`).
+2. call_tool_read(name: <name returned in step 1>,
+                  args: { query: "<search terms>" })
 ```
 
 Substitute the appropriate query keywords (`list sessions`, `timeline`,
-`get observations`, `search`) and arguments for the operation you need.
+`get observations`, `search`) and `args` payloads for the operation you need.
 All cavemem operations are read-only, so they always go through
-`call_tool_read`.
+`call_tool_read`. The `args` field of `call_tool_read` is a JSON object
+(not the raw upstream tool's kwargs flattened in line) — mcpproxy unpacks
+it before forwarding the call to the upstream server.
 
 The same surface is available as `cavemem search` for human lookups outside
 agent sessions.
@@ -90,10 +95,11 @@ Search for memories tied to the current project:
 
 1. Discover the tag-search tool:
    `retrieve_tools(query: "obsidian search by tags")`
-   → expect a tool from server `obsidian`.
+   → expect a result whose `name` field has the form `obsidian:<tool>`
+   (e.g. `obsidian:search-by-tags`).
 2. Invoke it:
-   `call_tool_read(name: <returned tool name>,`
-   `                arguments: { tags: ["<project-name>"], directory: "memories" })`.
+   `call_tool_read(name: <name returned in step 1>,`
+   `                args: { tags: ["<project-name>"], directory: "memories" })`.
 3. Review returned memories to prime context with prior decisions, patterns,
    discoveries.
 
@@ -111,11 +117,11 @@ When a task involves any of:
 the tool with `retrieve_tools`, then invoke it through `call_tool_read`):
 
 1. Vault-content keyword search — `retrieve_tools(query: "obsidian search vault")`
-   then invoke with arguments `{ query: "<keywords>", path: "memories/" }`.
+   then invoke with `args: { query: "<keywords>", path: "memories/" }`.
 2. Tag search — `retrieve_tools(query: "obsidian search by tags")` then invoke
-   with arguments `{ tags: [<topic tags>], directory: "memories" }`.
+   with `args: { tags: [<topic tags>], directory: "memories" }`.
 3. Read matches — `retrieve_tools(query: "obsidian read note")` then invoke
-   with arguments `{ path: "<note path>" }` for each match worth reading.
+   with `args: { path: "<note path>" }` for each match worth reading.
 4. Complete answer in memory → use it; do NOT re-research.
 5. Partial context → use as starting point, supplement as needed.
 6. No matches → normal research.
@@ -220,8 +226,11 @@ The procedure for every vault operation is uniform:
 
 1. **Discover** the tool with `retrieve_tools(query: "<short description>")`.
    The query string should name the upstream server (`obsidian`) and the
-   operation (`search by tags`, `read note`, `write note`, etc.). The
-   response will include the canonical upstream tool name.
+   operation (`search by tags`, `read note`, `write note`, etc.). Each
+   result's `name` field is the canonical upstream tool name in the
+   `server:tool` form (e.g. `obsidian:write-note`); the `call_with` field
+   recommends which `call_tool_*` variant to use based on the tool's
+   side-effect class.
 2. **Invoke** the returned tool with the appropriate verb based on its
    side-effect class:
    - `call_tool_read` for any non-mutating operation (search by tags,
@@ -232,23 +241,29 @@ The procedure for every vault operation is uniform:
    - `call_tool_destructive` for any irreversible removal (deleting a
      note).
 
+Every `call_tool_*` invocation takes:
+- `name`: the upstream tool name in `server:tool` form, exactly as
+  returned by `retrieve_tools` (do NOT guess or invent it).
+- `args`: a JSON object holding the upstream tool's parameters
+  (NOT the legacy `arguments` field name).
+
 Worked example — writing or updating a note:
 
 ```
 1. retrieve_tools(query: "obsidian write note")
-   → expect a tool from server "obsidian"
-2. call_tool_write(name: <returned tool name>,
-                   arguments: { path: "memories/2026-05-21-my-fact.md",
-                                content: "<note body including frontmatter>" })
+   → result includes `{ "name": "obsidian:write-note", "call_with": "call_tool_write", ... }`
+2. call_tool_write(name: "obsidian:write-note",
+                   args: { path: "memories/2026-05-21-my-fact.md",
+                           content: "<note body including frontmatter>" })
 ```
 
 Worked example — reading a note:
 
 ```
 1. retrieve_tools(query: "obsidian read note")
-   → expect a tool from server "obsidian"
-2. call_tool_read(name: <returned tool name>,
-                  arguments: { path: "memories/2026-05-21-my-fact.md" })
+   → result includes `{ "name": "obsidian:read-note", "call_with": "call_tool_read", ... }`
+2. call_tool_read(name: "obsidian:read-note",
+                  args: { path: "memories/2026-05-21-my-fact.md" })
 ```
 
 All note paths MUST end with `.md`. Directories are created implicitly by the

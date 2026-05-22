@@ -23,11 +23,31 @@ Where `<environment>` is one of: `testing`, `staging`, `production`.
 - GitHub MCP must be available (for PR merging)
 - GT MCP must be available (for PR stack identification)
 
+## Tool invocation idiom
+
+All MCP work goes through mcpproxy's four-tool agent surface
+(`retrieve_tools` + `call_tool_*`). For each upstream tool referenced
+below, discover its canonical name with
+`retrieve_tools(query: "<server> <operation>")` — the result's `name`
+field is in `server:tool` form (e.g. `gt-mcp:run_gt_cmd`,
+`github:merge_pull_request`) and the `call_with` field recommends the
+verb. Invoke with the matching `call_tool_*`:
+
+- `call_tool_read` for read-only operations (e.g. PR state queries).
+- `call_tool_write` for state-mutating operations (gt subcommands,
+  PR merges, review writes, comment adds).
+- `call_tool_destructive` for irreversible removals (none in this
+  command).
+
+Pass parameters in the `args` field (a JSON object), not the legacy
+`arguments` field. Example:
+`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { command: "gt state" })`.
+
 ## Instructions
 
 ### Step 0: Detect context and validate
 
-1. Use `hub_gt_mcp__run_gt_cmd` to run `gt state` and identify the current Graphite PR stack.
+1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt state" }` to identify the current Graphite PR stack.
 
 2. Read the PR titles to find the target version. Look for a PR titled like "add <version> to downloaded versions" — extract the version from the title.
 
@@ -178,7 +198,7 @@ After ALL clusters in the environment have been upgraded successfully:
 
 1. Identify the PR number for the environment's inventory PR (from Step 0).
 
-2. Use `hub_github__merge_pull_request` to merge it:
+2. Invoke `github:merge_pull_request` (via `call_tool_write`) to merge it, passing `args`:
    - **owner**: the repo owner (from the PR URL)
    - **repo**: the repo name
    - **pullNumber**: the PR number
