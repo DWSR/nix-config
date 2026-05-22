@@ -174,7 +174,7 @@
   - _Depends: 6.3, 7.2_
   - _Requirements: 1.1, 1.5, 2.4, 5.4, 6.4, 7.5_
   - _Boundary: BudgetCLI, SmokeTestRunner, ValidationComparator_
-- [ ] 8.2 Validate host evaluation and runtime prerequisites
+- [x] 8.2 Validate host evaluation and runtime prerequisites
   - Evaluate both nix-darwin host configurations and run the runtime smoke wrapper against the rendered artifacts.
   - Confirm requirement coverage through the passing unit, integration, smoke, and validation artifacts from prior tasks.
   - Done when both host configurations evaluate successfully and the smoke wrapper confirms installed CLI, metadata, and plugin self-check availability.
