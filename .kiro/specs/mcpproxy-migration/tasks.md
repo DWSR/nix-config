@@ -259,7 +259,7 @@
   - _Depends: 5.1, 5.2_
   - _Boundary: home-manager/mcp/default.nix_
 
-- [ ] 13.4 Align config-protection docs and assertions with the runtime-copy contract
+- [x] 13.4 Align config-protection docs and assertions with the runtime-copy contract
   - Update module comments and operator-facing secrets documentation so they describe the `${env:<NAME>}` wrapper-export flow and the private runtime config copy, not mcpproxy `${keyring:...}` resolution for the managed daemon
   - Add or update Nix-side assertions that the rendered source config uses env placeholders, omits `tools_limit`, and contains no literal secret values
   - Add explicit operator-facing verification commands in `secrets/README.md` for inspecting the source config path and adjacent `.bak` path after a managed restart

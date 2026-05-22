@@ -25,14 +25,14 @@ let
   # exports it as an env var; mcpproxy then substitutes the placeholder
   # by reading its own process env at spawn time.
   #
-  # mcpproxy v0.33.1 does NOT resolve `${keyring:...}` placeholders for
-  # the top-level `api_key` field (only for per-server `env` and
-  # `headers` fields), and its macOS Keychain backend refuses to write
-  # under Nix packaging (the "refusing to write to avoid OS modal prompts"
-  # safety check). Funneling every secret through `${env:...}` + a
-  # launchd wrapper script eliminates both problems: the wrapper reads
-  # the keychain via the Apple-signed `/usr/bin/security` binary, which
-  # has reliable Keychain access regardless of how mcpproxy is packaged.
+  # mcpproxy v0.33.1 does not run the top-level `api_key` field through
+  # the same secret-resolution path as per-server values, and its macOS
+  # Keychain backend refuses to write under Nix packaging (the "refusing
+  # to write to avoid OS modal prompts" safety check). Funneling every
+  # secret through `${env:...}` + a launchd wrapper script eliminates both
+  # problems: the wrapper reads the keychain via the Apple-signed
+  # `/usr/bin/security` binary, which has reliable Keychain access
+  # regardless of how mcpproxy is packaged.
   #
   # See `mcpproxyWrapper` below, `home.mcp.fileSourcedEnv`, and the
   # SOPS bridge in `configurations/common-darwin/mcp-sops-bridge.nix` +
@@ -118,6 +118,8 @@ let
     mcpServers = lib.mapAttrsToList renderServer mergedServers;
   };
 
+  renderedConfigText = builtins.toJSON renderedConfig;
+
   sourceConfigPath = "${config.xdg.configHome}/mcpproxy/mcp_config.json";
   runtimeConfigDir = "${config.home.homeDirectory}/.mcpproxy/runtime-config";
   runtimeConfigPath = "${runtimeConfigDir}/mcp_config.json";
@@ -189,9 +191,9 @@ let
   # This is a workaround for two mcpproxy v0.33.1 limitations:
   #
   #   1. The top-level `api_key` field is read from the config file
-  #      before the secret-resolution pipeline runs, so
-  #      `${keyring:mcpproxy-api-key}` is treated as a literal string
-  #      and the daemon rejects every request with `Invalid API key`.
+  #      before mcpproxy's native secret-resolution pipeline runs, so
+  #      native keyring placeholders are not suitable for the managed
+  #      daemon's bearer token.
   #   2. mcpproxy's macOS Keychain backend (via go-keyring) refuses to
   #      write under Nix-packaged binaries that aren't codesigned with
   #      a developer identity; it can read, but reads are also flaky
@@ -436,6 +438,32 @@ in
         assertion = fileSourcedEnvNameCollisions == [ ];
         message = "home.mcp.fileSourcedEnv names conflict with Keychain-sourced env vars: ${lib.concatStringsSep ", " fileSourcedEnvNameCollisions}";
       }
+      {
+        assertion = renderedConfig.api_key == readKeychainSecret "mcpproxy-api-key";
+        message = ''
+          home.mcp rendered source config must reference mcpproxy-api-key
+          through the launchd-wrapper ${"\${env:MCPPROXY_API_KEY}"} flow.
+        '';
+      }
+      {
+        assertion = lib.hasPrefix "\${env:" githubToken && lib.hasSuffix "}" githubToken;
+        message = ''
+          home.mcp.githubToken must be supplied as a launchd-wrapper
+          ${"\${env:...}"} placeholder, not as a literal token.
+        '';
+      }
+      {
+        assertion = !(renderedConfig ? tools_limit);
+        message = "home.mcp rendered source config must not set tools_limit; retrieve_tools mode relies on mcpproxy defaults.";
+      }
+      {
+        assertion = builtins.match ".*\\$\\{keyring.*" renderedConfigText == null;
+        message = "home.mcp rendered source config must use launchd-wrapper env placeholders, not mcpproxy keyring placeholders.";
+      }
+      {
+        assertion = builtins.match ".*op://.*" renderedConfigText == null;
+        message = "home.mcp rendered source config must not contain literal 1Password secret source references.";
+      }
     ];
 
     home.packages = [
@@ -451,7 +479,7 @@ in
 
     xdg.configFile."mcpproxy/mcp_config.json" = {
       enable = true;
-      text = builtins.toJSON renderedConfig;
+      text = renderedConfigText;
     };
 
     # launchd refuses to auto-create StandardOutPath / StandardErrorPath
@@ -470,9 +498,9 @@ in
           # (via Apple's signed `/usr/bin/security`) and exports each as
           # an env var BEFORE exec'ing mcpproxy. This bypasses two
           # mcpproxy v0.33.1 quirks: the top-level `api_key` field is
-          # not run through the secret-resolution pipeline (so
-          # `${keyring:...}` would never resolve), and the daemon's own
-          # macOS Keychain backend is unreliable under Nix packaging.
+          # not run through the native secret-resolution pipeline, and
+          # the daemon's own macOS Keychain backend is unreliable under
+          # Nix packaging.
           # See the `mcpproxyWrapper` definition in this file for the
           # full rationale.
           (lib.getExe mcpproxyWrapper)

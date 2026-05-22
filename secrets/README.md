@@ -30,9 +30,9 @@ anchor name in `.sops.yaml`.
 The SOPS bridge writes the decrypted secret values into the macOS
 login keychain in two distinct `service` namespaces. Both consume
 the SAME per-host encrypted yaml; the split exists so the
-sqlite-backup pathway can rotate independently and so mcpproxy's
-`${keyring:<account>}` placeholders resolve under a stable service
-name.
+sqlite-backup pathway can rotate independently and so the managed
+mcpproxy launchd wrapper can export MCP secrets as `${env:<NAME>}`
+variables before starting the daemon.
 
 | Service              | Accounts (examples)                              | Consumer                       |
 | -------------------- | ------------------------------------------------ | ------------------------------ |
@@ -364,20 +364,50 @@ by replacing the value in the encrypted store and re-activating.
    The SOPS bridge decrypts the new value and writes it into the
    login keychain at `service = "mcpproxy"`,
    `account = "mcpproxy-api-key"`, replacing the previous entry.
-   mcpproxy's launchd agent restarts and picks up the new value
-   via its `${keyring:mcpproxy-api-key}` placeholder.
+   mcpproxy's launchd agent restarts through the
+   `mcpproxy-launchd-wrapper`, which reads that keychain entry and
+   exports `MCPPROXY_API_KEY` for the rendered
+   `${env:MCPPROXY_API_KEY}` placeholder.
 
-5. **Verify.** The value visible to mcpproxy should match what is
-   now stored in the keychain:
+5. **Verify.** The value visible to the managed wrapper should match
+   what is now stored in the keychain:
 
    ```sh
    security find-generic-password -s mcpproxy -a mcpproxy-api-key -w
    ```
 
-   The output is the rotated 64-character hex string. The mcpproxy
-   daemon should also still respond on `/healthz`; clients that
-   present the new key (opencode wrapper, memory-sync CLI) should
-   continue to authenticate successfully.
+   The output is the rotated 64-character hex string. The rendered
+   Home Manager source config should contain only the env placeholder,
+   should remain a managed source file or symlink after restart, and
+   should not gain an adjacent backup:
+
+   ```sh
+   source_config="${XDG_CONFIG_HOME:-$HOME/.config}/mcpproxy/mcp_config.json"
+
+   grep -F '"api_key":"${env:MCPPROXY_API_KEY}"' "$source_config"
+   ! grep -F '"tools_limit"' "$source_config"
+   ls -l "$source_config"
+   test ! -e "$source_config.bak"
+
+   restart-mcpproxy
+   sleep 2
+
+   ls -l "$source_config"
+   test ! -e "$source_config.bak"
+   ls -l "$HOME/.mcpproxy/runtime-config/mcp_config.json"
+   test ! -e "$HOME/.mcpproxy/runtime-config/mcp_config.json.bak" \
+     || ls -l "$HOME/.mcpproxy/runtime-config/mcp_config.json.bak"
+   ```
+
+   The runtime config path is the mutable private copy mcpproxy may
+   rewrite or back up. The source config path and its adjacent `.bak`
+   path are the ownership-protection check: after a managed restart,
+   mcpproxy should not have replaced the source file or created
+   `$source_config.bak`.
+
+   The mcpproxy daemon should also still respond on `/healthz`;
+   clients that present the new key (opencode wrapper, memory-sync CLI)
+   should continue to authenticate successfully.
 
    If `mcp-verify-secrets` is wired to check the api-key entry,
    run it as well to catch any drift the manual check missed.
