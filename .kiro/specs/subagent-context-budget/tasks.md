@@ -168,7 +168,7 @@
   - _Boundary: BudgetCLI, OperatorRunbook_
 
 - [ ] 8. Validate full feature behavior
-- [ ] 8.1 Run end-to-end fixture validation
+- [x] 8.1 Run end-to-end fixture validation
   - Execute the full fixture path from metadata render through audit, smoke-plan, validation comparison, and failure reporting.
   - Done when committed fixtures prove pass and fail paths for audit, validation, smoke, and escape-hatch states.
   - _Depends: 6.3, 7.2_

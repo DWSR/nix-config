@@ -1,0 +1,180 @@
+{
+  "audit": {
+    "agentStates": {
+      "explore": "enforced",
+      "general": "enforced"
+    },
+    "observedTools": {
+      "explore": {
+        "kind": "observed",
+        "tokenCount": 800
+      },
+      "general": {
+        "kind": "observed",
+        "tokenCount": 400
+      }
+    },
+    "summary": {
+      "agentCount": 2,
+      "enforcedCount": 2,
+      "host": "all",
+      "hostSpecificAgents": [],
+      "unbudgetedCount": 0
+    }
+  },
+  "escapeHatch": {
+    "auditAgentStates": {
+      "explore": "enforced",
+      "general": "unbudgeted"
+    },
+    "smokePlanStates": {
+      "explore": "enforced",
+      "general": "skipped-unbudgeted"
+    },
+    "smokeResultsSummary": {
+      "failCount": 0,
+      "passCount": 1,
+      "resultCount": 2,
+      "skippedUnbudgetedCount": 1
+    },
+    "validation": {
+      "byAgent": {
+        "explore": {
+          "baselineTokens": 800,
+          "postTokens": 400,
+          "reductionPct": 50
+        },
+        "general": {
+          "baselineTokens": 400,
+          "postTokens": 200,
+          "reductionPct": 50
+        }
+      },
+      "failures": [],
+      "hints": [],
+      "reductionPct": 46.666666666666664,
+      "residualAgentTokens": 200,
+      "status": "pass"
+    }
+  },
+  "residualValidation": {
+    "byAgent": {
+      "explore": {
+        "baselineTokens": 1500,
+        "postTokens": 200,
+        "reductionPct": 86.66666666666667
+      },
+      "general": {
+        "baselineTokens": 500,
+        "postTokens": 100,
+        "reductionPct": 80
+      }
+    },
+    "failures": [],
+    "hints": [
+      {
+        "kind": "residual-heavy-attribution",
+        "message": "Residual buckets are not credited to named agents. Rerun with diagnostics that include per-agent attribution before claiming agent-level success."
+      }
+    ],
+    "reductionPct": 45,
+    "residualAgentTokens": 800,
+    "status": "pass"
+  },
+  "smokeFailureValidation": {
+    "byAgent": {
+      "explore": {
+        "baselineTokens": 800,
+        "postTokens": 400,
+        "reductionPct": 50
+      },
+      "general": {
+        "baselineTokens": 400,
+        "postTokens": 200,
+        "reductionPct": 50
+      }
+    },
+    "failures": [
+      {
+        "agentName": "general",
+        "category": "denied-required-tool",
+        "detail": "webfetch permission denied during representative research task",
+        "hint": {
+          "kind": "insufficient-agent-budget",
+          "message": "Budget is insufficient for general; widen that agent's permission or instruction profile, not the global budget. Missing capability: webfetch."
+        },
+        "kind": "smoke-failure",
+        "missingCapability": "webfetch"
+      }
+    ],
+    "hints": [],
+    "reductionPct": 46.666666666666664,
+    "residualAgentTokens": 200,
+    "status": "fail"
+  },
+  "smokePlan": {
+    "states": {
+      "explore": "enforced",
+      "general": "enforced"
+    },
+    "summary": {
+      "agentCount": 2,
+      "enforcedCount": 2,
+      "skippedUnbudgetedCount": 0
+    }
+  },
+  "smokeResultsSummary": {
+    "failCount": 0,
+    "passCount": 2,
+    "resultCount": 2,
+    "skippedUnbudgetedCount": 0
+  },
+  "validationFail": {
+    "byAgent": {
+      "explore": {
+        "baselineTokens": 800,
+        "postTokens": 700,
+        "reductionPct": 12.5
+      },
+      "general": {
+        "baselineTokens": 400,
+        "postTokens": 350,
+        "reductionPct": 12.5
+      }
+    },
+    "failures": [
+      {
+        "actualPct": 20,
+        "hint": {
+          "kind": "threshold-failure",
+          "message": "Validation must meet the 40% target. Review audit output, widen or adjust per-agent budgets, run smoke plan, and recapture the post report from a comparable workload."
+        },
+        "kind": "threshold-not-met",
+        "requiredPct": 40
+      }
+    ],
+    "hints": [],
+    "reductionPct": 20,
+    "residualAgentTokens": 150,
+    "status": "fail"
+  },
+  "validationPass": {
+    "byAgent": {
+      "explore": {
+        "baselineTokens": 800,
+        "postTokens": 400,
+        "reductionPct": 50
+      },
+      "general": {
+        "baselineTokens": 400,
+        "postTokens": 200,
+        "reductionPct": 50
+      }
+    },
+    "failures": [],
+    "hints": [],
+    "reductionPct": 46.666666666666664,
+    "residualAgentTokens": 200,
+    "status": "pass"
+  }
+}
