@@ -11,16 +11,33 @@ let
     else
       config.home.mcp.githubToken;
 
-  # Emit an mcpproxy `${keyring:<name>}` placeholder. The placeholder is
-  # NOT resolved at Nix evaluation time and NOT at home-manager
-  # activation time; mcpproxy resolves it at server-spawn time by
-  # reading the macOS Keychain entry written by the sops-nix bridge
-  # (see configurations/common-darwin/mcp-sops-bridge.nix and
-  # scripts/mcp-secrets-activate.nix). The keychain layout is
-  # `service = "mcpproxy"`, `account = "<name>"`.
-  readKeychainSecret = name: "\${keyring:" + name + "}";
-
   cfg = config.home.mcp;
+
+  # Convert a SOPS-bridged keychain secret name (e.g. `mcp-github-token`)
+  # to the env-var name the launchd wrapper exports for it
+  # (e.g. `MCP_GITHUB_TOKEN`). Uppercase + hyphen→underscore.
+  toEnvVarName = name: lib.toUpper (builtins.replaceStrings [ "-" ] [ "_" ] name);
+
+  # Emit an mcpproxy `${env:<NAME_UPPERCASE>}` placeholder. The placeholder
+  # is NOT resolved at Nix evaluation time and NOT at home-manager
+  # activation time. The launchd wrapper (`mcpproxyWrapper` below) reads
+  # each declared secret from the macOS Keychain at daemon startup and
+  # exports it as an env var; mcpproxy then substitutes the placeholder
+  # by reading its own process env at spawn time.
+  #
+  # mcpproxy v0.33.1 does NOT resolve `${keyring:...}` placeholders for
+  # the top-level `api_key` field (only for per-server `env` and
+  # `headers` fields), and its macOS Keychain backend refuses to write
+  # under Nix packaging (the "refusing to write to avoid OS modal prompts"
+  # safety check). Funneling every secret through `${env:...}` + a
+  # launchd wrapper script eliminates both problems: the wrapper reads
+  # the keychain via the Apple-signed `/usr/bin/security` binary, which
+  # has reliable Keychain access regardless of how mcpproxy is packaged.
+  #
+  # See `mcpproxyWrapper` below and the SOPS bridge in
+  # `configurations/common-darwin/mcp-sops-bridge.nix` +
+  # `scripts/mcp-secrets-activate.nix` for the secret-flow contract.
+  readKeychainSecret = name: "\${env:" + toEnvVarName name + "}";
 
   # Map a source extraServers attrset entry (or one of the base
   # upstreams below, built in the same attrset shape) to the array
@@ -99,6 +116,75 @@ let
     api_key = readKeychainSecret "mcpproxy-api-key";
     require_mcp_auth = false;
     mcpServers = lib.mapAttrsToList renderServer mergedServers;
+  };
+
+  # Every operator-declared MCP secret that the mcpproxy daemon
+  # actually consumes (top-level api_key + per-server env/header
+  # placeholders), plus the bridge-owned `mcpproxy-api-key`. The
+  # launchd wrapper iterates this list and exports each value from
+  # the macOS Keychain as an env var.
+  #
+  # The `sqlite-backup-*` filter matches the routing in
+  # `scripts/mcp-secrets-activate.nix`'s `route_service` helper: those
+  # secrets are written under `-s nix-config-secrets` (for the
+  # sqlite-backup CLI / verify pipeline), not under `-s mcpproxy`, so
+  # the wrapper must not try to read them under the mcpproxy service.
+  # The mcpproxy daemon does not reference sqlite-backup secrets in
+  # any rendered `mcp_config.json` placeholder anyway. Keep this
+  # predicate in sync with the activation script.
+  daemonSecretNames = [
+    "mcpproxy-api-key"
+  ]
+  ++ builtins.filter (name: !(lib.hasPrefix "sqlite-backup-" name)) (
+    builtins.attrNames cfg.keychainSecrets
+  );
+
+  # Launchd wrapper around `mcpproxy serve`. Reads every declared
+  # MCP secret from the macOS Keychain via Apple's `/usr/bin/security`
+  # binary, exports each as the env var the rendered `mcp_config.json`
+  # references via `${env:NAME}` placeholders, then exec's mcpproxy.
+  #
+  # This is a workaround for two mcpproxy v0.33.1 limitations:
+  #
+  #   1. The top-level `api_key` field is read from the config file
+  #      before the secret-resolution pipeline runs, so
+  #      `${keyring:mcpproxy-api-key}` is treated as a literal string
+  #      and the daemon rejects every request with `Invalid API key`.
+  #   2. mcpproxy's macOS Keychain backend (via go-keyring) refuses to
+  #      write under Nix-packaged binaries that aren't codesigned with
+  #      a developer identity; it can read, but reads are also flaky
+  #      under launchd's user-agent context when the keychain isn't
+  #      yet unlocked (race vs login-completion).
+  #
+  # Funnelling secret resolution through this wrapper (which uses the
+  # Apple-signed `security` binary) makes both problems disappear: the
+  # daemon never has to talk to the macOS Keychain directly. Failure of
+  # any keychain read aborts the wrapper before mcpproxy starts, so the
+  # daemon never launches with literal placeholder strings.
+  mcpproxyWrapper = pkgs.writeShellApplication {
+    name = "mcpproxy-launchd-wrapper";
+    runtimeInputs = [ ];
+    text = ''
+      set -eu
+
+      ${lib.concatMapStringsSep "\n" (
+        name:
+        let
+          envName = toEnvVarName name;
+        in
+        ''
+          if ! ${envName}="$(/usr/bin/security find-generic-password -s mcpproxy -a "${name}" -w 2>/dev/null)"; then
+            echo "mcpproxy-launchd-wrapper: failed to read '${name}' from macOS Keychain (-s mcpproxy -a ${name})" >&2
+            echo "  ensure the SOPS bridge has populated this entry; re-run \`darwin-rebuild switch\` and check" >&2
+            echo "  /var/log/install.log for mcp-secrets-activate errors." >&2
+            exit 1
+          fi
+          export ${envName}
+        ''
+      ) daemonSecretNames}
+
+      exec ${lib.getExe pkgs.mcpproxy-go} "$@"
+    '';
   };
 in
 {
@@ -179,12 +265,17 @@ in
     default = readKeychainSecret;
     readOnly = true;
     description = ''
-      Function that returns an `${"\${keyring:<name>}"}` placeholder
-      for use in rendered MCP server `env` and `headers` values.
+      Function that returns an `${"\${env:NAME}"}` placeholder for use
+      in rendered MCP server `env` and `headers` values, where `NAME`
+      is the secret name uppercased and with `-` replaced by `_`
+      (e.g. `mcp-github-token` → `${"\${env:MCP_GITHUB_TOKEN}"}`).
       mcpproxy resolves the placeholder at server-spawn time by
-      reading the matching macOS Keychain entry; the placeholder is
-      never expanded at Nix evaluation or activation time, so no
-      secret material appears in `mcp_config.json` or the Nix store.
+      reading the matching env var from its own process environment;
+      the launchd wrapper (see `mcpproxyWrapper` in this module)
+      sources every required env var from the macOS Keychain at
+      daemon startup. The placeholder is never expanded at Nix
+      evaluation or home-manager activation time, so no secret
+      material appears in `mcp_config.json` or the Nix store.
     '';
   };
 
@@ -217,7 +308,16 @@ in
       config = {
         Label = "com.smart-mcp-proxy.mcpproxy";
         ProgramArguments = [
-          (lib.getExe pkgs.mcpproxy-go)
+          # The wrapper reads every MCP secret from the macOS Keychain
+          # (via Apple's signed `/usr/bin/security`) and exports each as
+          # an env var BEFORE exec'ing mcpproxy. This bypasses two
+          # mcpproxy v0.33.1 quirks: the top-level `api_key` field is
+          # not run through the secret-resolution pipeline (so
+          # `${keyring:...}` would never resolve), and the daemon's own
+          # macOS Keychain backend is unreliable under Nix packaging.
+          # See the `mcpproxyWrapper` definition in this file for the
+          # full rationale.
+          (lib.getExe mcpproxyWrapper)
           "serve"
           "--config=${config.xdg.configHome}/mcpproxy/mcp_config.json"
           "--log-to-file=false"
