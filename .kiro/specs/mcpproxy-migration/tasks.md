@@ -46,10 +46,10 @@
   - Add a new `home.mcp.listenPort` option (default 8080) with a documented description
   - Replace the `servers.json` renderer with an `mcp_config.json` renderer that emits mcpproxy's array shape (`mcpServers: [{name, command, args, env, protocol, enabled, quarantined}]`)
   - Implement an internal attrset→array translator so `home.mcp.extraServers` keeps its `attrsOf attrs` shape; the 15+ cross-host call sites compile unchanged
-  - Update the `home.mcp.readKeychainSecret` helper body to emit `"\${keyring:" + name + "}"`; update its docstring to clarify the placeholder is resolved by mcpproxy at server-spawn time
-  - Set top-level `quarantine_enabled: false`; emit `enabled: true` and `quarantined: false` explicitly per server; reference `${keyring:mcpproxy-api-key}` in the `api_key` field; do NOT override `tools_limit` (default 15 keeps retrieve_tools mode active)
-  - **Observable completion**: `darwin-rebuild build` produces a configuration whose rendered `~/.config/mcpproxy/mcp_config.json` validates as JSON, contains `"quarantine_enabled": false`, references the api key via `${keyring:mcpproxy-api-key}`, has all four base upstream servers as array entries with `enabled: true`, omits any `tools_limit` override, and contains no `mcp-hub` strings
-  - _Requirements: 1.2, 2.1, 2.2, 2.3, 2.5, 3.1, 3.2, 3.3, 5.1, 5.2, 7.3_
+  - Update the `home.mcp.readKeychainSecret` helper body to emit `${env:<NAME>}` placeholders; update its docstring to clarify the launchd wrapper exports values before execing mcpproxy
+  - Set top-level `quarantine_enabled: false`; emit `enabled: true` and `quarantined: false` explicitly per server; reference `${env:MCPPROXY_API_KEY}` in the `api_key` field; do NOT override `tools_limit` (default keeps retrieve_tools mode active)
+  - **Observable completion**: `darwin-rebuild build` produces a configuration whose rendered `~/.config/mcpproxy/mcp_config.json` validates as JSON, contains `"quarantine_enabled": false`, references the api key via `${env:MCPPROXY_API_KEY}`, has all four base upstream servers as array entries with `enabled: true`, omits any `tools_limit` override, and contains no `mcp-hub` strings
+  - _Requirements: 1.2, 2.1, 2.2, 2.3, 2.5, 3.1, 3.2, 3.3, 5.1, 5.2, 5.3, 7.3_
   - _Depends: 1, 2_
   - _Boundary: home-manager/mcp/default.nix_
 
@@ -66,7 +66,7 @@
 - [x] 6. (P) Close the cavemem split-brain and rewrite its wrapper probe
   - Remove the `programs.opencode.settings.mcp.cavemem` block (around L491-501) so opencode reaches cavemem only via mcpproxy
   - Keep the `home.mcp.extraServers.cavemem` entry (L431-437); the orchestrator's translator (task 5.1) renders it into mcpproxy's array form, preserving the `CAVEMEM_DATA_DIR` env propagation
-  - Rewrite the cavemem wrapper-probe snippet (around L549-557) to: read the api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, then probe `GET http://127.0.0.1:8080/healthz` (no auth) for liveness, then probe `GET http://127.0.0.1:8080/api/v1/servers/cavemem` with `X-API-Key` header for cavemem connection state
+  - Rewrite the cavemem wrapper-probe snippet (around L549-557) to: read the api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, then probe `GET http://127.0.0.1:8080/healthz` (no auth) for liveness, then probe `GET http://127.0.0.1:8080/api/v1/servers` with `X-API-Key` header and filter for the `cavemem` entry with `connected == true`
   - Update failure messages to name "mcpproxy" and the new launchd label `com.smart-mcp-proxy.mcpproxy`; preserve the single-quote-free wrapper-snippet convention
   - Update the in-file narrative comments referencing the mcphub integration to reference mcpproxy; pre-migration history may stay if explicitly framed as historical
   - Leave the `options.home.cavemem` block (L56-211) and the `settings.json` rendering logic byte-identical to pre-migration
@@ -77,7 +77,7 @@
 - [x] 7. Update opencode integration on both hosts
 
 - [x] 7.1 (P) Rewrite the opencode wrapper preflight for mcpproxy
-  - Replace the existing mcphub `/api/health` probe (around L85-92) with the sequence: read api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, probe `GET /healthz`, then probe `GET /api/v1/servers/obsidian` with `X-API-Key` header
+  - Replace the existing mcphub `/api/health` probe (around L85-92) with the sequence: read api key via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`, probe `GET /healthz`, then probe `GET /api/v1/servers` with `X-API-Key` header and filter for the `obsidian` entry with `connected == true`
   - Each probe failure must exit 1 with a stderr message naming the failing component (mcpproxy itself, obsidian) and a recovery hint referencing the new launchd label
   - Preserve the existing single-quote convention (no literal single quotes inside the wrapper snippet)
   - Leave the `opencode-prewarm` launchd agent (around L237) unchanged so it continues to invoke the unwrapped binary
@@ -101,7 +101,7 @@
 
 - [x] 8. (P) Rewrite the memory-sync CLI probe for mcpproxy
   - Rename the `MCPHUB_BASE` constant to `MCPPROXY_BASE` and set it to `http://127.0.0.1:8080`
-  - Rewrite the `probe_mcp_server <name> <exit-code>` helper to call `GET /api/v1/servers/<name>` with `X-API-Key` header (api key read at runtime via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`)
+  - Rewrite the `probe_mcp_server <name> <exit-code>` helper to call `GET /api/v1/servers` with `X-API-Key` header and filter by server name (api key read at runtime via `security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`)
   - Update recovery-hint strings to reference the new launchd label `com.smart-mcp-proxy.mcpproxy`
   - Preserve the per-precondition exit-code contract verbatim: the existing distinct codes for "cavemem unreachable" (4) and "obsidian unreachable" (5) retain their semantics and values
   - **Observable completion**: With mcpproxy stopped, `memory-sync` exits with the existing obsidian-unreachable code (5); stderr names the new launchd label; the recovery hint refers to `com.smart-mcp-proxy.mcpproxy`
@@ -111,7 +111,7 @@
 - [x] 9. Rewrite agent contracts for the four-tool retrieve_tools surface
 
 - [x] 9.1 (P) Rewrite AGENTS.md startup gate, memory-recall rules, and failure messages
-  - Replace the direct `hub_obsidian__list-notes` and `hub_cavemem__list_sessions` calls in the startup gate with the documented two-step idiom: `retrieve_tools(query: …)` to discover the tool, then `call_tool_read(name: …, arguments: …)` to invoke it (one retrieve_tools + one call_tool_read pair per server, four calls total)
+  - Replace the direct `hub_obsidian__list-notes` and `hub_cavemem__list_sessions` calls in the startup gate with the documented two-step idiom: `retrieve_tools(query: …)` to discover the `server:tool` name, then `call_tool_read(name: …, args: …)` to invoke it (one retrieve_tools + one call_tool_read pair per server, four calls total)
   - Rewrite the memory-recall section so all `hub_obsidian__*` and `hub_cavemem__*` references follow the discover-then-invoke pattern while preserving the existing when-to-search, deduplication, and memory-format semantics
   - Update the startup-gate failure message to name mcpproxy and provide a recovery hint referencing the new launchd label `com.smart-mcp-proxy.mcpproxy`
   - Update narrative copy referencing "mcphub" or "mcp-hub" to reference mcpproxy
@@ -249,6 +249,34 @@
   - _Depends: 5.2, 6, 7.1, 7.3, 8, 9.1, 9.2, 9.3, 9.4, 9.7, 9.8, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12_
   - _Boundary: personal host evaluation_
 
+- [x] 13.3 Protect the Home Manager-owned mcpproxy config from runtime writes
+  - Extend the managed mcpproxy launch wrapper so it copies the Home Manager-rendered config to a private runtime path on every managed start before execing mcpproxy
+  - Ensure the runtime copy is user-private (`0600`) and that stale runtime `.bak` artifacts are removed or confined under the runtime config directory
+  - Pass the runtime copy path to mcpproxy as `--config`, while keeping `--log-to-file=false`, `--allow-server-add=false`, and `--allow-server-remove=false`
+  - Fail before `exec` with a stderr line prefixed `mcpproxy-launchd-wrapper:` if the source config is missing, cannot be copied, or the runtime copy is not parseable JSON
+  - **Observable completion**: after `restart-mcpproxy`, the mcpproxy process is launched with the runtime config path, `~/.config/mcpproxy/mcp_config.json` remains Home Manager-owned, and no source-path `mcp_config.json.bak` is created
+  - _Requirements: 1.1, 1.3, 5.2, 5.3, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6_
+  - _Depends: 5.1, 5.2_
+  - _Boundary: home-manager/mcp/default.nix_
+
+- [ ] 13.4 Align config-protection docs and assertions with the runtime-copy contract
+  - Update module comments and operator-facing secrets documentation so they describe the `${env:<NAME>}` wrapper-export flow and the private runtime config copy, not mcpproxy `${keyring:...}` resolution for the managed daemon
+  - Add or update Nix-side assertions that the rendered source config uses env placeholders, omits `tools_limit`, and contains no literal secret values
+  - Add explicit operator-facing verification commands in `secrets/README.md` for inspecting the source config path and adjacent `.bak` path after a managed restart
+  - **Observable completion**: `grep -R '\${keyring' home-manager/mcp/default.nix secrets/README.md` returns no live-contract guidance, and `darwin-rebuild check` exercises the new config-rendering assertions
+  - _Requirements: 5.1, 13.3, 15.1, 15.2, 15.4, 15.6_
+  - _Depends: 13.3_
+  - _Boundary: home-manager/mcp/default.nix, secrets/README.md_
+
+- [ ] 13.5 Re-run host evaluation after config ownership changes
+  - Build or check both nix-darwin host configurations after the runtime-copy wrapper and documentation/assertion updates land
+  - Inspect the evaluated rendered mcpproxy config text for `${env:MCPPROXY_API_KEY}`, absence of `tools_limit`, and absence of `mcp-hub` strings
+  - Confirm the launchd ProgramArguments pass a runtime config path to mcpproxy rather than the Home Manager-owned source path
+  - **Observable completion**: both host evaluations exit 0, rendered source configs parse as JSON with the expected env placeholders, and the launchd plist no longer passes `~/.config/mcpproxy/mcp_config.json` directly to mcpproxy
+  - _Requirements: 1.6, 3.2, 5.1, 14.5, 15.1, 15.2, 15.3, 15.5_
+  - _Depends: 13.3, 13.4_
+  - _Boundary: Shopify host evaluation, personal host evaluation_
+
 ## Phase 4: Acceptance evidence
 
 - [ ] 14. Run R14 acceptance checks on each host
@@ -256,6 +284,7 @@
 - [ ] 14.1 (P) Activate on the Shopify host and run R14 acceptance checks
   - Run `darwin-rebuild switch --flake .#<shopify-host>`; confirm activation completes without errors
   - Confirm the legacy `com.ravitemer.mcp-hub` launchd agent is no longer loaded; `pkgs.mcp-hub` is no longer on PATH; no `-a mcp-hub` keychain entries remain for any prior secret name
+  - Confirm the Home Manager-owned source config path remains a symlink or managed file after mcpproxy starts; confirm any mcpproxy-generated `.bak` file appears only under the private runtime config directory, not adjacent to the source path
   - Start a fresh opencode session; confirm the AGENTS.md mandatory startup gate completes successfully
   - Run `memory-sync` preflight; confirm it completes without error
   - Trigger the opencode wrapper preflight (e.g. invoke the wrapped `opencode --version`); confirm it succeeds for mcpproxy + obsidian + cavemem
@@ -263,17 +292,18 @@
   - Run `sqlite-backup verify-credentials`; confirm secrets resolve via the new `nix-config-secrets` account
   - Open `nvim` and run `:CodeCompanion` to confirm the chat interface opens cleanly with no mcphub-related errors
   - **Idempotency check**: Re-run `darwin-rebuild switch` a second time; confirm exit 0; confirm `security find-generic-password -s <any-secret> -a mcp-hub -w` still returns "not found" (no legacy entries reappeared); confirm new-layout entries remain present
-  - **Observable completion**: All R14 acceptance checks pass on the Shopify host; the second `darwin-rebuild switch` exits 0 with no keychain mutations beyond upsert of already-present entries
-  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 4.5, 6.3, 7.5, 8.5, 11.5, 12.3_
-  - _Depends: 13.1_
+  - **Observable completion**: All R14 acceptance checks pass on the Shopify host; the source config remains Home Manager-owned after restart; the second `darwin-rebuild switch` exits 0 with no keychain mutations beyond upsert of already-present entries
+  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 4.5, 6.3, 7.5, 8.5, 11.5, 12.3, 15.1, 15.2, 15.3, 15.5_
+  - _Depends: 13.1, 13.3, 13.4, 13.5_
   - _Boundary: Shopify host runtime_
 
 - [ ] 14.2 (P) Activate on the personal host and run R14 acceptance checks
   - Same procedure as 14.1 against the personal host
+  - Confirm the Home Manager-owned source config path remains a symlink or managed file after mcpproxy starts; confirm no source-path `mcp_config.json.bak` is created
   - **Idempotency check**: Re-run `darwin-rebuild switch` a second time on the personal host; confirm exit 0; confirm no legacy `-a mcp-hub` entries reappear; confirm new-layout entries remain
-  - **Observable completion**: All R14 acceptance checks pass on the personal host; the second `darwin-rebuild switch` exits 0 with no keychain mutations beyond upsert
-  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 4.5, 6.3, 7.5, 8.5, 11.5, 12.3_
-  - _Depends: 13.2_
+  - **Observable completion**: All R14 acceptance checks pass on the personal host; the source config remains Home Manager-owned after restart; the second `darwin-rebuild switch` exits 0 with no keychain mutations beyond upsert
+  - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 4.5, 6.3, 7.5, 8.5, 11.5, 12.3, 15.1, 15.2, 15.3, 15.5_
+  - _Depends: 13.2, 13.3, 13.4, 13.5_
   - _Boundary: personal host runtime_
 
 ## Implementation Notes

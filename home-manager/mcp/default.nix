@@ -118,6 +118,10 @@ let
     mcpServers = lib.mapAttrsToList renderServer mergedServers;
   };
 
+  sourceConfigPath = "${config.xdg.configHome}/mcpproxy/mcp_config.json";
+  runtimeConfigDir = "${config.home.homeDirectory}/.mcpproxy/runtime-config";
+  runtimeConfigPath = "${runtimeConfigDir}/mcp_config.json";
+
   # Every operator-declared MCP secret that the mcpproxy daemon
   # actually consumes (top-level api_key + per-server env/header
   # placeholders), plus the bridge-owned `mcpproxy-api-key`. The
@@ -178,7 +182,9 @@ let
   # MCP secret from the macOS Keychain via Apple's `/usr/bin/security`
   # binary plus any `home.mcp.fileSourcedEnv` runtime files, exports
   # each as the env var the rendered `mcp_config.json` references via
-  # `${env:NAME}` placeholders, then exec's mcpproxy.
+  # `${env:NAME}` placeholders, copies the Home Manager-rendered
+  # config to a private runtime path, validates that runtime copy as
+  # JSON, then exec's mcpproxy.
   #
   # This is a workaround for two mcpproxy v0.33.1 limitations:
   #
@@ -199,9 +205,13 @@ let
   # daemon never launches with literal placeholder strings.
   mcpproxyWrapper = pkgs.writeShellApplication {
     name = "mcpproxy-launchd-wrapper";
-    runtimeInputs = [ ];
+    runtimeInputs = [ pkgs.jq ];
     text = ''
       set -eu
+
+      source_config=${lib.escapeShellArg sourceConfigPath}
+      runtime_config_dir=${lib.escapeShellArg runtimeConfigDir}
+      runtime_config=${lib.escapeShellArg runtimeConfigPath}
 
       ${lib.concatMapStringsSep "\n" (
         name:
@@ -220,6 +230,41 @@ let
       ) daemonSecretNames}
 
       ${fileSourcedEnvExports}
+
+      if [ ! -f "$source_config" ]; then
+        echo "mcpproxy-launchd-wrapper: source config $source_config is missing" >&2
+        exit 1
+      fi
+
+      if ! mkdir -p "$runtime_config_dir"; then
+        echo "mcpproxy-launchd-wrapper: failed to create runtime config directory $runtime_config_dir" >&2
+        exit 1
+      fi
+
+      if ! chmod 700 "$runtime_config_dir"; then
+        echo "mcpproxy-launchd-wrapper: failed to set private permissions on $runtime_config_dir" >&2
+        exit 1
+      fi
+
+      if ! rm -f "$runtime_config" "$runtime_config.bak"; then
+        echo "mcpproxy-launchd-wrapper: failed to remove stale runtime config or backup under $runtime_config_dir" >&2
+        exit 1
+      fi
+
+      if ! cp "$source_config" "$runtime_config"; then
+        echo "mcpproxy-launchd-wrapper: failed to copy source config $source_config to $runtime_config" >&2
+        exit 1
+      fi
+
+      if ! chmod 600 "$runtime_config"; then
+        echo "mcpproxy-launchd-wrapper: failed to set private permissions on runtime config $runtime_config" >&2
+        exit 1
+      fi
+
+      if ! jq -e . "$runtime_config" >/dev/null; then
+        echo "mcpproxy-launchd-wrapper: runtime config $runtime_config is not parseable JSON" >&2
+        exit 1
+      fi
 
       exec ${lib.getExe pkgs.mcpproxy-go} "$@"
     '';
@@ -432,7 +477,7 @@ in
           # full rationale.
           (lib.getExe mcpproxyWrapper)
           "serve"
-          "--config=${config.xdg.configHome}/mcpproxy/mcp_config.json"
+          "--config=${runtimeConfigPath}"
           "--log-to-file=false"
           # Prevent runtime mutation of mcp_config.json. mcpproxy
           # v0.33.1's DELETE /api/v1/servers/{id} and POST
