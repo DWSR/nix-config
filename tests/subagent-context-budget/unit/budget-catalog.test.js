@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const {
@@ -13,6 +14,29 @@ function completeMetadata(overrides = {}) {
     version: 1,
     host: 'all',
     enforcementEnabled: true,
+    minimalBaseline: {
+      name: 'minimal-readonly',
+      measuredTokens: {
+        status: 'placeholder',
+        firstTurnInput: null,
+        measuredAt: null,
+        source: null,
+      },
+      instructionCategories: [
+        'universal',
+        'memory-mcpproxy',
+        'readonly-operation',
+      ],
+      allowedToolCategories: [
+        'local-read',
+        'code-search',
+        'planning',
+        'clarification',
+        'skill-loading',
+        'mcp-discovery',
+        'mcp-read',
+      ],
+    },
     agents: {
       general: {
         name: 'general',
@@ -55,6 +79,84 @@ test('validateBudgetMetadata accepts complete built-in, common, and host catalog
   assert.equal(result.ok, true);
   assert.deepEqual(result.value.agentNames, ['general', 'nix-pkg', 'yb-sleuth']);
   assert.equal(result.value.agentCount, 3);
+  assert.deepEqual(result.value.minimalBaseline.instructionCategories, [
+    'memory-mcpproxy',
+    'readonly-operation',
+    'universal',
+  ]);
+  assert.deepEqual(result.value.minimalBaseline.allowedToolCategories, [
+    'clarification',
+    'code-search',
+    'local-read',
+    'mcp-discovery',
+    'mcp-read',
+    'planning',
+    'skill-loading',
+  ]);
+  assert.equal(result.value.minimalBaseline.measuredTokens.status, 'placeholder');
+  assert.equal(result.value.minimalBaseline.measuredTokens.firstTurnInput, null);
+});
+
+test('validateBudgetMetadata rejects minimal baseline without measured-token placeholders', () => {
+  const metadata = completeMetadata();
+  delete metadata.minimalBaseline.measuredTokens.firstTurnInput;
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: '<minimalBaseline>',
+      field: 'measuredTokens.firstTurnInput',
+      message: 'minimal read-only baseline must include first-turn token placeholder or measured count',
+    },
+  ]);
+});
+
+test('validateBudgetMetadata rejects host-specific and project-specific baseline instruction categories', () => {
+  const metadata = completeMetadata();
+  metadata.minimalBaseline.instructionCategories = [
+    'universal',
+    'memory-mcpproxy',
+    'shopify',
+    'nix-config',
+    'project-specific',
+  ];
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: '<minimalBaseline>',
+      field: 'instructionCategories.shopify',
+      message: 'minimal read-only baseline must not include host-specific or project-specific instruction categories',
+    },
+    {
+      agent: '<minimalBaseline>',
+      field: 'instructionCategories.nix-config',
+      message: 'minimal read-only baseline must not include host-specific or project-specific instruction categories',
+    },
+    {
+      agent: '<minimalBaseline>',
+      field: 'instructionCategories.project-specific',
+      message: 'minimal read-only baseline must not include host-specific or project-specific instruction categories',
+    },
+  ]);
+});
+
+test('minimal-readonly-baseline artifact is operator-readable and metadata-valid', () => {
+  const artifactPath = path.join(
+    __dirname,
+    '../../../home-manager/common/subagent-context-budget/minimal-readonly-baseline.json',
+  );
+  const minimalBaseline = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+
+  const result = validateBudgetMetadata(completeMetadata({ minimalBaseline }));
+
+  assert.equal(result.ok, true);
+  assert.equal(result.value.minimalBaseline.name, 'minimal-readonly');
+  assert.equal(result.value.minimalBaseline.measuredTokens.status, 'placeholder');
 });
 
 test('validateBudgetMetadata rejects enforced agents without permission budgets', () => {

@@ -1,6 +1,8 @@
 { lib }:
 
 let
+  minimalBaseline = builtins.fromJSON (builtins.readFile ./minimal-readonly-baseline.json);
+
   enforced = reason: {
     kind = "enforced";
     inherit reason;
@@ -171,8 +173,14 @@ in
     version = 1;
     host = "all";
     enforcementEnabled = false;
+    inherit minimalBaseline;
     inherit agents;
   };
 
-  inherit agents commonAgents hostAgents;
+  inherit
+    minimalBaseline
+    agents
+    commonAgents
+    hostAgents
+    ;
 }

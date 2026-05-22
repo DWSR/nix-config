@@ -11,6 +11,21 @@
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
 const HOST_SCOPES = Object.freeze(['all', 'shopify', 'personal']);
+const BASELINE_TOKEN_STATUSES = Object.freeze(['placeholder', 'measured']);
+const FORBIDDEN_BASELINE_INSTRUCTION_CATEGORIES = Object.freeze(new Set([
+  'host-specific',
+  'project-specific',
+  'shopify',
+  'personal',
+  'nix-config',
+]));
+const FORBIDDEN_BASELINE_TOOL_CATEGORIES = Object.freeze(new Set([
+  'write',
+  'mutation',
+  'destructive',
+  'shell',
+  'external-directory',
+]));
 const SUPPORTED_PERMISSION_KEYS = Object.freeze(new Set([
   'read',
   'edit',
@@ -58,6 +73,14 @@ function isNonEmptyObject(value) {
   return isObject(value) && Object.keys(value).length > 0;
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isValidTokenCount(value) {
+  return value === null || (Number.isInteger(value) && value >= 0);
+}
+
 function isValidBudgetState(value) {
   if (!isObject(value) || !isNonEmptyString(value.kind)) {
     return false;
@@ -85,6 +108,86 @@ function hasCapabilityRationale(agent) {
 
 function validationError(agent, field, message) {
   return { agent, field, message };
+}
+
+function validateStringArray(owner, field, value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [validationError(owner, field, `${field} must be a non-empty array`)];
+  }
+
+  const errors = [];
+  value.forEach((entry, index) => {
+    if (!isNonEmptyString(entry)) {
+      errors.push(validationError(owner, `${field}.${index}`, `${field} entries must be non-empty strings`));
+    }
+  });
+  return errors;
+}
+
+function validateMinimalBaseline(minimalBaseline) {
+  const owner = '<minimalBaseline>';
+  const errors = [];
+
+  if (!isObject(minimalBaseline)) {
+    return [validationError(owner, 'minimalBaseline', 'minimal read-only baseline must be an object')];
+  }
+
+  if (minimalBaseline.name !== 'minimal-readonly') {
+    errors.push(validationError(owner, 'name', 'minimal read-only baseline name must be minimal-readonly'));
+  }
+
+  if (!isObject(minimalBaseline.measuredTokens)) {
+    errors.push(validationError(owner, 'measuredTokens', 'minimal read-only baseline must include measured-token fields'));
+  } else {
+    const measuredTokens = minimalBaseline.measuredTokens;
+    if (!BASELINE_TOKEN_STATUSES.includes(measuredTokens.status)) {
+      errors.push(validationError(owner, 'measuredTokens.status', 'minimal read-only baseline token status must be placeholder or measured'));
+    }
+    if (!hasOwn(measuredTokens, 'firstTurnInput') || !isValidTokenCount(measuredTokens.firstTurnInput)) {
+      errors.push(validationError(owner, 'measuredTokens.firstTurnInput', 'minimal read-only baseline must include first-turn token placeholder or measured count'));
+    }
+    for (const field of ['measuredAt', 'source']) {
+      if (!hasOwn(measuredTokens, field) || !(measuredTokens[field] === null || isNonEmptyString(measuredTokens[field]))) {
+        errors.push(validationError(owner, `measuredTokens.${field}`, `minimal read-only baseline measured-token ${field} must be null or a non-empty string`));
+      }
+    }
+    if (hasOwn(measuredTokens, 'firstTurnInput') && measuredTokens.status === 'placeholder' && measuredTokens.firstTurnInput !== null) {
+      errors.push(validationError(owner, 'measuredTokens.firstTurnInput', 'placeholder minimal read-only baseline token count must be null'));
+    }
+    if (hasOwn(measuredTokens, 'firstTurnInput') && measuredTokens.status === 'measured' && !Number.isInteger(measuredTokens.firstTurnInput)) {
+      errors.push(validationError(owner, 'measuredTokens.firstTurnInput', 'measured minimal read-only baseline token count must be an integer'));
+    }
+  }
+
+  errors.push(...validateStringArray(owner, 'instructionCategories', minimalBaseline.instructionCategories));
+  errors.push(...validateStringArray(owner, 'allowedToolCategories', minimalBaseline.allowedToolCategories));
+
+  if (Array.isArray(minimalBaseline.instructionCategories)) {
+    for (const category of minimalBaseline.instructionCategories) {
+      if (FORBIDDEN_BASELINE_INSTRUCTION_CATEGORIES.has(category)) {
+        errors.push(validationError(owner, `instructionCategories.${category}`, 'minimal read-only baseline must not include host-specific or project-specific instruction categories'));
+      }
+    }
+  }
+
+  if (Array.isArray(minimalBaseline.allowedToolCategories)) {
+    for (const category of minimalBaseline.allowedToolCategories) {
+      if (FORBIDDEN_BASELINE_TOOL_CATEGORIES.has(category)) {
+        errors.push(validationError(owner, `allowedToolCategories.${category}`, 'minimal read-only baseline must include only read-only tool categories'));
+      }
+    }
+  }
+
+  return errors;
+}
+
+function summarizeMinimalBaseline(minimalBaseline) {
+  return {
+    name: minimalBaseline.name,
+    measuredTokens: { ...minimalBaseline.measuredTokens },
+    instructionCategories: [...minimalBaseline.instructionCategories].sort(),
+    allowedToolCategories: [...minimalBaseline.allowedToolCategories].sort(),
+  };
 }
 
 function validateAgentBudget(catalogName, agent) {
@@ -169,6 +272,7 @@ function validateBudgetMetadata(metadata) {
   if (!isObject(metadata.agents)) {
     errors.push(validationError('<metadata>', 'agents', 'metadata agents must be an object'));
   }
+  errors.push(...validateMinimalBaseline(metadata.minimalBaseline));
 
   const agents = isObject(metadata.agents) ? metadata.agents : {};
   for (const name of Object.keys(agents).sort()) {
@@ -185,6 +289,7 @@ function validateBudgetMetadata(metadata) {
     value: {
       agentCount: agentNames.length,
       agentNames,
+      minimalBaseline: summarizeMinimalBaseline(metadata.minimalBaseline),
     },
   };
 }
@@ -251,6 +356,7 @@ module.exports = {
   usage,
   validateAgentBudget,
   validateBudgetMetadata,
+  validateMinimalBaseline,
 };
 
 if (require.main === module) {

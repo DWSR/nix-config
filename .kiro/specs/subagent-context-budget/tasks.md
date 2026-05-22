@@ -33,7 +33,7 @@
   - Done when invalid permission keys fail validation and write-capable agents show explicit rationale in budget metadata.
   - _Requirements: 2.2, 2.3, 8.5_
   - _Boundary: BudgetCatalog_
-- [ ] 2.3 Add minimal read-only baseline metadata
+- [x] 2.3 Add minimal read-only baseline metadata
   - Define the minimal read-only baseline with instruction categories, allowed tool categories, and measured-token placeholder fields.
   - Exclude host-specific and project-specific instruction categories unless they are universal.
   - Done when the baseline artifact is rendered and metadata validation can read its categories and measured-token fields.

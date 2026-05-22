@@ -96,6 +96,15 @@ in
         XDG config path containing rendered subagent budget metadata.
       '';
     };
+
+    minimalBaselinePath = lib.mkOption {
+      type = lib.types.str;
+      readOnly = true;
+      default = "opencode/subagent-context-budget/minimal-readonly-baseline.json";
+      description = ''
+        XDG config path containing the operator-readable minimal read-only baseline artifact.
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -130,5 +139,8 @@ in
     xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON (
       budgetCatalog.metadata // { enforcementEnabled = cfg.enforce; }
     );
+
+    xdg.configFile.${cfg.minimalBaselinePath}.source =
+      ./subagent-context-budget/minimal-readonly-baseline.json;
   };
 }

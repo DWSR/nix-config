@@ -2,6 +2,30 @@
   "version": 1,
   "host": "all",
   "enforcementEnabled": false,
+  "minimalBaseline": {
+    "name": "minimal-readonly",
+    "description": "Minimal universal read-only subagent baseline for future budget comparison.",
+    "measuredTokens": {
+      "status": "placeholder",
+      "firstTurnInput": null,
+      "measuredAt": null,
+      "source": null
+    },
+    "instructionCategories": [
+      "universal",
+      "memory-mcpproxy",
+      "readonly-operation"
+    ],
+    "allowedToolCategories": [
+      "local-read",
+      "code-search",
+      "planning",
+      "clarification",
+      "skill-loading",
+      "mcp-discovery",
+      "mcp-read"
+    ]
+  },
   "agents": {
     "explore": {
       "name": "explore",
