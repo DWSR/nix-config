@@ -153,7 +153,7 @@
   - _Boundary: BudgetModule, BudgetCLI, InstructionProfileRuntime_
 
 - [ ] 7. Provide operator runbook and failure guidance
-- [ ] 7.1 Write the operator runbook for audit, validation, and rollback
+- [x] 7.1 Write the operator runbook for audit, validation, and rollback
   - Document baseline capture, budget enablement, smoke execution, post-change capture, validation, residual interpretation, and per-agent escape hatches.
   - Include the migration phases from design and the command sequence for rollback.
   - Done when the runbook lets an operator reproduce the full validation flow without reading design internals.
