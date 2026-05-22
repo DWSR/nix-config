@@ -78,7 +78,7 @@
   - _Boundary: InstructionProfileRuntime_
 
 - [ ] 4. Implement audit and diagnostic parsing
-- [ ] 4.1 (P) Build defensive diagnostic report parsing
+- [x] 4.1 (P) Build defensive diagnostic report parsing
   - Parse only public diagnostic JSON fields needed for `subagentDispatch`, per-agent maps, residual buckets, findings, and privacy posture.
   - Reject missing or malformed fields with actionable errors.
   - Done when fixture tests cover valid reports, missing fields, pricing drift, and residual-agent cases.

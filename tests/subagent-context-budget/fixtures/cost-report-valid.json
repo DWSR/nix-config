@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "privacy": {
+    "includeContent": false,
+    "promptBodiesIncluded": false,
+    "toolOutputBodiesIncluded": false
+  },
+  "global": {
+    "cost": {
+      "subagentDispatch": 1500,
+      "subagentDispatchByAgent": {
+        "explore": 800,
+        "general": 400,
+        "unknown": 300
+      }
+    },
+    "findings": []
+  },
+  "projects": [
+    {
+      "project": "/repo/example",
+      "sessions": [
+        {
+          "sessionId": "s-1",
+          "project": "/repo/example",
+          "cost": {
+            "subagentDispatch": 1000,
+            "subagentDispatchByAgent": {
+              "explore": 800,
+              "unknown": 200
+            }
+          },
+          "findings": []
+        },
+        {
+          "sessionId": "s-2",
+          "project": "/repo/example",
+          "cost": {
+            "subagentDispatch": 500,
+            "subagentDispatchByAgent": {
+              "general": 400
+            }
+          },
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "findings": []
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "privacy": {
+    "includeContent": true,
+    "promptBodiesIncluded": true,
+    "toolOutputBodiesIncluded": true
+  },
+  "global": {
+    "cost": {
+      "subagentDispatch": 200,
+      "subagentDispatchByAgent": {
+        "explore": 200
+      }
+    },
+    "findings": []
+  },
+  "projects": [
+    {
+      "project": "/repo/leak",
+      "sessions": [
+        {
+          "sessionId": "s-with-bodies",
+          "project": "/repo/leak",
+          "cost": {
+            "subagentDispatch": 200,
+            "subagentDispatchByAgent": {
+              "explore": 200
+            }
+          },
+          "promptBody": "SECRET-PROMPT-PAYLOAD",
+          "toolOutputBody": "SECRET-TOOL-OUTPUT-PAYLOAD",
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "findings": []
+}

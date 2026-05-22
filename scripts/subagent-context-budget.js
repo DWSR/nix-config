@@ -294,6 +294,275 @@ function validateBudgetMetadata(metadata) {
   };
 }
 
+// ---------------------------------------------------------------------
+// CostReportAdapter (task 4.1)
+//
+// Defensive parser for `opencode-cost-report` v2 JSON output. Reads only
+// the public fields named in design.md's `CostReportSummary` contract
+// (~ design.md:466-514) and discards everything else, preserving the
+// diagnostic's default privacy posture (R5.7). Errors are returned as
+// `Result<T, E>` values per design.md:340-343; the adapter never throws.
+//
+// Loose coupling: this module deliberately does NOT import internal
+// helpers from `scripts/opencode-cost-report.js`; only the documented
+// JSON shape is pinned.
+// ---------------------------------------------------------------------
+
+const SENTINEL_AGENT_KEYS = Object.freeze(new Set(['unknown', 'null', '']));
+const PRICING_DRIFT_FINDING = /(pricing|drift)/i;
+
+function errMissing(field) {
+  return { ok: false, error: { kind: 'missing-field', field } };
+}
+
+function errShape(field) {
+  return { ok: false, error: { kind: 'invalid-shape', field } };
+}
+
+function errPricingDrift(detail) {
+  return { ok: false, error: { kind: 'pricing-drift', detail } };
+}
+
+function isNonNegativeNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * Walk every finding bucket reachable from the public report shape and
+ * return the first `detail` (or kind, when no detail is present) that
+ * matches a pricing/drift kind. Returns `null` when no drift finding is
+ * present. Buckets walked: top-level `findings`, `global.findings`, and
+ * each per-session `findings` array. (R5.6 — fail on unusable fields.)
+ *
+ * @param {Record<string, unknown>} input
+ * @returns {string | null}
+ */
+function detectPricingDrift(input) {
+  const buckets = [];
+  if (Array.isArray(input.findings)) {
+    buckets.push(input.findings);
+  }
+  if (isObject(input.global) && Array.isArray(input.global.findings)) {
+    buckets.push(input.global.findings);
+  }
+  if (Array.isArray(input.projects)) {
+    for (const proj of input.projects) {
+      if (!isObject(proj) || !Array.isArray(proj.sessions)) continue;
+      for (const ses of proj.sessions) {
+        if (isObject(ses) && Array.isArray(ses.findings)) {
+          buckets.push(ses.findings);
+        }
+      }
+    }
+  }
+  for (const bucket of buckets) {
+    for (const finding of bucket) {
+      if (!isObject(finding) || typeof finding.kind !== 'string') continue;
+      if (PRICING_DRIFT_FINDING.test(finding.kind)) {
+        return isNonEmptyString(finding.detail) ? finding.detail : finding.kind;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Normalize a dispatch-cost node (either the global node or a session
+ * node) into a `DispatchCostSummary`. Strips residual sentinel keys
+ * (`unknown`, `null`, `''`) from the per-agent map and computes
+ * `residualAgentTokens` as `total - Σ named-agent values`. Emits `null`
+ * for the per-agent map when the upstream provides `null` or when every
+ * key was a sentinel. Returns Result with a missing-field/invalid-shape
+ * error otherwise.
+ *
+ * @param {Record<string, unknown>} node — the parent node carrying `cost`.
+ * @param {string} basePath — dotted field path used in error messages.
+ */
+function normalizeDispatchSummary(node, basePath) {
+  if (!hasOwn(node, 'cost')) {
+    return errMissing(`${basePath}.cost`);
+  }
+  if (!isObject(node.cost)) {
+    return errShape(`${basePath}.cost`);
+  }
+  const cost = node.cost;
+  if (!hasOwn(cost, 'subagentDispatch')) {
+    return errMissing(`${basePath}.cost.subagentDispatch`);
+  }
+  if (!isNonNegativeNumber(cost.subagentDispatch)) {
+    return errShape(`${basePath}.cost.subagentDispatch`);
+  }
+  if (!hasOwn(cost, 'subagentDispatchByAgent')) {
+    return errMissing(`${basePath}.cost.subagentDispatchByAgent`);
+  }
+
+  const total = cost.subagentDispatch;
+  const rawMap = cost.subagentDispatchByAgent;
+
+  if (rawMap === null) {
+    return {
+      ok: true,
+      value: {
+        subagentDispatchTokens: total,
+        subagentDispatchByAgent: null,
+        residualAgentTokens: total,
+      },
+    };
+  }
+  if (!isObject(rawMap)) {
+    return errShape(`${basePath}.cost.subagentDispatchByAgent`);
+  }
+
+  const named = {};
+  let namedSum = 0;
+  for (const key of Object.keys(rawMap)) {
+    const value = rawMap[key];
+    if (!isNonNegativeNumber(value)) {
+      return errShape(`${basePath}.cost.subagentDispatchByAgent.${key}`);
+    }
+    if (SENTINEL_AGENT_KEYS.has(key)) {
+      continue;
+    }
+    named[key] = value;
+    namedSum += value;
+  }
+  const hasNamed = Object.keys(named).length > 0;
+  const residual = Math.max(0, total - namedSum);
+  return {
+    ok: true,
+    value: {
+      subagentDispatchTokens: total,
+      subagentDispatchByAgent: hasNamed ? named : null,
+      residualAgentTokens: residual,
+    },
+  };
+}
+
+/**
+ * Parse a single session entry. Pins only the `sessionId`, `project`,
+ * and `cost` fields and discards everything else (R5.7 — privacy
+ * preservation). Returns Result with the per-session
+ * `SessionCostSummary` on success.
+ *
+ * @param {unknown} ses
+ * @param {string} basePath
+ */
+function parseSession(ses, basePath) {
+  if (!isObject(ses)) {
+    return errShape(basePath);
+  }
+  if (!hasOwn(ses, 'sessionId')) {
+    return errMissing(`${basePath}.sessionId`);
+  }
+  if (!isNonEmptyString(ses.sessionId)) {
+    return errShape(`${basePath}.sessionId`);
+  }
+  if (!hasOwn(ses, 'project')) {
+    return errMissing(`${basePath}.project`);
+  }
+  if (ses.project !== null && typeof ses.project !== 'string') {
+    return errShape(`${basePath}.project`);
+  }
+  const dispatch = normalizeDispatchSummary(ses, basePath);
+  if (!dispatch.ok) return dispatch;
+  return {
+    ok: true,
+    value: {
+      sessionID: ses.sessionId,
+      project: ses.project,
+      subagentDispatchTokens: dispatch.value.subagentDispatchTokens,
+      subagentDispatchByAgent: dispatch.value.subagentDispatchByAgent,
+      residualAgentTokens: dispatch.value.residualAgentTokens,
+    },
+  };
+}
+
+/**
+ * Defensively parse an `opencode-cost-report` v2 JSON payload into a
+ * `CostReportSummary`. The adapter is read-only, never throws, and only
+ * extracts the fields named in design.md's
+ * `CostReportSummary` / `DispatchCostSummary` / `SessionCostSummary`
+ * contracts (~ design.md:466-514).
+ *
+ * Error categories (design.md:505-508):
+ *   - `missing-field` — a required field is absent
+ *   - `invalid-shape` — a required field has the wrong type
+ *   - `pricing-drift` — the report contains a finding indicating
+ *                       pricing drift; surface upstream detail
+ *
+ * Requirements: 1.3, 5.1, 5.2, 5.3, 5.5, 5.6, 5.7.
+ *
+ * @param {unknown} input
+ * @returns {{ ok: true, value: object } | { ok: false, error: object }}
+ */
+function parseReport(input) {
+  if (!isObject(input)) {
+    return errShape('report');
+  }
+
+  if (!hasOwn(input, 'privacy')) {
+    return errMissing('privacy');
+  }
+  if (!isObject(input.privacy)) {
+    return errShape('privacy');
+  }
+
+  // Gate pricing drift before downstream parsing so the operator sees
+  // the actionable diagnostic reason instead of a derivative
+  // missing-field error.
+  const drift = detectPricingDrift(input);
+  if (drift !== null) {
+    return errPricingDrift(drift);
+  }
+
+  if (!hasOwn(input, 'global')) {
+    return errMissing('global');
+  }
+  if (!isObject(input.global)) {
+    return errShape('global');
+  }
+  const globalDispatch = normalizeDispatchSummary(input.global, 'global');
+  if (!globalDispatch.ok) {
+    return globalDispatch;
+  }
+
+  if (!hasOwn(input, 'projects')) {
+    return errMissing('projects');
+  }
+  if (!Array.isArray(input.projects)) {
+    return errShape('projects');
+  }
+
+  const sessions = [];
+  for (let pi = 0; pi < input.projects.length; pi += 1) {
+    const proj = input.projects[pi];
+    const projPath = `projects[${pi}]`;
+    if (!isObject(proj)) {
+      return errShape(projPath);
+    }
+    if (!hasOwn(proj, 'sessions')) {
+      return errMissing(`${projPath}.sessions`);
+    }
+    if (!Array.isArray(proj.sessions)) {
+      return errShape(`${projPath}.sessions`);
+    }
+    for (let si = 0; si < proj.sessions.length; si += 1) {
+      const sesPath = `${projPath}.sessions[${si}]`;
+      const sesResult = parseSession(proj.sessions[si], sesPath);
+      if (!sesResult.ok) return sesResult;
+      sessions.push(sesResult.value);
+    }
+  }
+
+  return {
+    ok: true,
+    value: {
+      sessions,
+      global: globalDispatch.value,
+    },
+  };
+}
+
 function usage() {
   return [
     'Usage: subagent-context-budget <command> [options]',
@@ -351,7 +620,11 @@ function main(argv) {
 
 module.exports = {
   COMMANDS,
+  detectPricingDrift,
   main,
+  normalizeDispatchSummary,
+  parseReport,
+  parseSession,
   placeholderReport,
   usage,
   validateAgentBudget,

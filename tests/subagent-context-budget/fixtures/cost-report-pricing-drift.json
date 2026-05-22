@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "privacy": {
+    "includeContent": false,
+    "promptBodiesIncluded": false,
+    "toolOutputBodiesIncluded": false
+  },
+  "global": {
+    "cost": {
+      "subagentDispatch": 1000,
+      "subagentDispatchByAgent": null
+    },
+    "findings": [
+      {
+        "kind": "pricing_table_drift",
+        "detail": "model claude-opus-9 missing from pinned pricing table 2026-05-01"
+      }
+    ]
+  },
+  "projects": [],
+  "findings": []
+}
