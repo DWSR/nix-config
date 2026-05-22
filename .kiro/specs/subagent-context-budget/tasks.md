@@ -1,0 +1,183 @@
+# Implementation Plan
+
+- [ ] 1. Establish feature scaffolding and validation harnesses
+- [x] 1.1 Create the Home Manager module shell and enablement path
+  - Add the feature module with disabled-by-default options, peer assertion against opencode enablement, and an enable path for both host configurations.
+  - Render no budget changes while enforcement is disabled.
+  - Done when both host configurations can evaluate with the module enabled and produce an empty budget metadata artifact.
+  - _Requirements: 7.1, 8.4, 8.5_
+  - _Boundary: BudgetModule_
+- [ ] 1.2 Create the Node CLI and test runner scaffolding
+  - Add a CLI entrypoint with `audit`, `validate`, and `smoke-plan` command placeholders.
+  - Add Node test runner plumbing and initial fixtures for metadata and diagnostic reports.
+  - Done when the CLI help command and empty test suite run through the project test wrapper.
+  - _Requirements: 5.7, 7.1, 8.4_
+  - _Boundary: BudgetCLI_
+- [ ] 1.3 Create runtime plugin packaging and self-check harness
+  - Add the plugin packaging path and a self-check command path that can report hook availability without changing prompts.
+  - Add a fixture-driven test harness for plugin self-check responses.
+  - Done when the packaged plugin can be loaded in a test harness and reports `disabled`, `ready`, or `failed` deterministically.
+  - _Requirements: 3.5, 8.5_
+  - _Boundary: InstructionProfileRuntime_
+
+- [ ] 2. Define budget metadata and permission rendering
+- [ ] 2.1 Define the canonical budget catalog and metadata schema
+  - Model common, built-in, and host-specific agents with stable names, source type, host scope, instruction profile, permission budget, smoke class, and budget state.
+  - Reject enforced agents missing permission budgets or instruction profiles.
+  - Done when metadata validation accepts complete catalog entries and rejects incomplete enforced entries.
+  - _Requirements: 1.1, 1.5, 2.1, 2.5, 7.2_
+  - _Boundary: BudgetCatalog_
+- [ ] 2.2 Add permission-budget validation and capability rationales
+  - Validate supported permission keys and reject deprecated `tools` usage in new budget metadata.
+  - Require rationale for broad mutation, web, external-directory, or shell capability.
+  - Done when invalid permission keys fail validation and write-capable agents show explicit rationale in budget metadata.
+  - _Requirements: 2.2, 2.3, 8.5_
+  - _Boundary: BudgetCatalog_
+- [ ] 2.3 Add minimal read-only baseline metadata
+  - Define the minimal read-only baseline with instruction categories, allowed tool categories, and measured-token placeholder fields.
+  - Exclude host-specific and project-specific instruction categories unless they are universal.
+  - Done when the baseline artifact is rendered and metadata validation can read its categories and measured-token fields.
+  - _Requirements: 4.1, 4.2, 4.4, 4.5_
+  - _Boundary: BudgetCatalog_
+- [ ] 2.4 Build agent permission rendering for custom and built-in agents
+  - Render per-agent permission budgets through supported OpenCode agent configuration while preserving agent names.
+  - Cover built-in `general` and `explore` overrides and current Markdown-backed custom agents.
+  - Done when rendered configuration contains budgeted permissions for enforced agents and leaves unbudgeted agents unchanged.
+  - _Depends: 2.1, 2.2_
+  - _Requirements: 2.1, 2.4, 2.5, 6.5, 7.5, 8.1, 8.5_
+  - _Boundary: AgentRenderer_
+- [ ] 2.5 Add per-agent escape hatches
+  - Support disabling budget enforcement per agent without changing any other agent budget.
+  - Record disabled state in metadata for audit and validation consumers.
+  - Done when disabling one agent marks only that agent `unbudgeted` in metadata and preserves its previous behavior in rendered config.
+  - _Depends: 2.4_
+  - _Requirements: 2.4, 7.4, 7.5_
+  - _Boundary: BudgetModule, AgentRenderer_
+
+- [ ] 3. Implement role-scoped instruction filtering
+- [ ] 3.1 (P) Define instruction fragments and profile composition
+  - Create universal, memory/mcpproxy, minimal SDD, host-specific, and role-fragment profiles.
+  - Ensure every enforced profile includes mandatory memory, cavemem, and mcpproxy safety fragments.
+  - Done when profile composition tests show unrelated workflow fragments are omitted and mandatory fragments remain present.
+  - _Depends: 1.3, 2.1_
+  - _Requirements: 3.1, 3.2, 3.3, 3.4_
+  - _Boundary: InstructionProfileRuntime_
+- [ ] 3.2 Implement subagent-only prompt filtering
+  - Apply profile-specific system text only for subagent sessions.
+  - Leave primary sessions and main-thread rules unchanged.
+  - Done when tests show subagent sessions receive filtered profiles and primary sessions preserve the original system text.
+  - _Depends: 3.1_
+  - _Requirements: 3.1, 3.2, 3.3, 3.5, 8.5_
+  - _Boundary: InstructionProfileRuntime_
+- [ ] 3.3 Add fail-closed runtime self-check behavior
+  - Detect unavailable plugin hooks, missing metadata, unknown agent names, and profile lookup failures.
+  - Report self-check status through deterministic logs and validation-readable state.
+  - Done when plugin tests cover ready, disabled, and failed states without silently applying partial filtering.
+  - _Depends: 3.2_
+  - _Requirements: 3.4, 3.5, 5.6, 8.5_
+  - _Boundary: InstructionProfileRuntime_
+
+- [ ] 4. Implement audit and diagnostic parsing
+- [ ] 4.1 (P) Build defensive diagnostic report parsing
+  - Parse only public diagnostic JSON fields needed for `subagentDispatch`, per-agent maps, residual buckets, findings, and privacy posture.
+  - Reject missing or malformed fields with actionable errors.
+  - Done when fixture tests cover valid reports, missing fields, pricing drift, and residual-agent cases.
+  - _Depends: 1.2_
+  - _Requirements: 1.3, 5.1, 5.2, 5.3, 5.5, 5.6, 5.7_
+  - _Boundary: CostReportAdapter_
+- [ ] 4.2 Build the audit report command
+  - Combine budget metadata, baseline artifact, diagnostic usage, and observed tool data into deterministic JSON and Markdown audit reports.
+  - Mark missing recent usage as absent instead of inferring tool use.
+  - Done when audit fixtures show instruction context, exposed tool context, observed tools, baseline deltas, and absent usage separately.
+  - _Depends: 2.3, 4.1_
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 4.2, 4.3, 7.3_
+  - _Boundary: BudgetCLI_
+- [ ] 4.3 Build the validation comparator
+  - Compare baseline and post-change reports by parent-session `subagentDispatch` tokens.
+  - Enforce the 40 percent reduction threshold and exclude residual buckets from named-agent credit.
+  - Done when validation fixtures produce pass, threshold-failure, missing-field, and residual-heavy reports.
+  - _Depends: 4.1_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.4_
+  - _Boundary: ValidationComparator_
+
+- [ ] 5. Implement smoke planning and execution
+- [ ] 5.1 (P) Define representative smoke tasks for each agent class
+  - Cover built-in agents, common custom agents, and Shopify-specific agents with small representative workflows.
+  - Avoid indefinite permission prompts in non-interactive smoke scenarios.
+  - Done when every budgeted agent has a smoke definition with expected pass, fail, and skipped-unbudgeted states.
+  - _Depends: 2.1_
+  - _Requirements: 6.1, 6.2, 6.5, 7.2_
+  - _Boundary: SmokeTestRunner_
+- [ ] 5.2 Add smoke-plan report generation
+  - Generate per-agent smoke-plan entries from budget metadata and smoke definitions.
+  - Include direct invocation expectations and skipped-unbudgeted states.
+  - Done when the smoke-plan output lists every enforced agent and explains any skipped unbudgeted agents.
+  - _Depends: 4.2, 5.1_
+  - _Requirements: 6.1, 6.5, 7.5_
+  - _Boundary: BudgetCLI, SmokeTestRunner_
+- [ ] 5.3 Implement smoke result handling
+  - Record per-agent smoke outcomes and classify missing tool or instruction regressions as insufficient budgets.
+  - Feed smoke failures into validation failure output.
+  - Done when validation fails if any required smoke result fails and names the failing agent.
+  - _Depends: 4.3, 5.1_
+  - _Requirements: 6.2, 6.3, 6.4_
+  - _Boundary: SmokeTestRunner, ValidationComparator_
+- [ ] 5.4 Add runtime smoke wrapper
+  - Provide an operator-run smoke verifier that checks installed CLI, rendered metadata, plugin self-check status, and smoke-plan availability.
+  - Done when the smoke wrapper exits non-zero for missing metadata or failed plugin self-check and prints the failed check name.
+  - _Depends: 3.3, 5.2, 5.3_
+  - _Requirements: 5.6, 6.4, 7.1_
+  - _Boundary: SmokeTestRunner, BudgetModule_
+
+- [ ] 6. Wire Home Manager, host configuration, and checks
+- [ ] 6.1 Integrate module output into opencode configuration
+  - Install the runtime plugin, render metadata, expose CLI packages, and register agent overrides through existing opencode configuration surfaces.
+  - Keep the main-thread rules string unchanged.
+  - Done when rendered opencode config includes plugin and agent overrides while the global rules output remains byte-identical outside budget-owned changes.
+  - _Depends: 2.5, 3.3, 5.2_
+  - _Requirements: 3.5, 7.1, 8.1, 8.3, 8.5_
+  - _Boundary: BudgetModule, AgentRenderer, InstructionProfileRuntime_
+- [ ] 6.2 Integrate host-specific budgets and parity reporting
+  - Merge host-specific agent budgets with the common catalog.
+  - Report host-specific MCP/tool surface differences in audit output.
+  - Done when common and Shopify host renders both include expected agent budgets and audit output names host-specific surfaces.
+  - _Depends: 6.1_
+  - _Requirements: 7.1, 7.2, 7.3, 7.5_
+  - _Boundary: BudgetModule, BudgetCatalog_
+- [ ] 6.3 Add flake checks and regression tests
+  - Wire unit, integration, render, and smoke-wrapper tests into the existing check pattern.
+  - Include schema validation against the OpenCode config shape used by this repo.
+  - Done when the new check command runs all budget tests and fails on invalid rendered config.
+  - _Depends: 6.2_
+  - _Requirements: 2.1, 3.5, 5.6, 7.1, 8.5_
+  - _Boundary: BudgetModule, BudgetCLI, InstructionProfileRuntime_
+
+- [ ] 7. Provide operator runbook and failure guidance
+- [ ] 7.1 Write the operator runbook for audit, validation, and rollback
+  - Document baseline capture, budget enablement, smoke execution, post-change capture, validation, residual interpretation, and per-agent escape hatches.
+  - Include the migration phases from design and the command sequence for rollback.
+  - Done when the runbook lets an operator reproduce the full validation flow without reading design internals.
+  - _Depends: 6.2_
+  - _Requirements: 4.5, 5.1, 5.2, 5.4, 5.5, 7.4, 7.5_
+  - _Boundary: OperatorRunbook_
+- [ ] 7.2 Add usage examples to CLI outputs
+  - Surface next-step hints in audit and validation failures for missing fields, plugin self-check failure, residual-heavy attribution, and threshold failure.
+  - Done when each failure fixture includes an actionable remediation hint in JSON and Markdown outputs.
+  - _Depends: 4.3, 5.3, 7.1_
+  - _Requirements: 5.6, 6.3, 7.4_
+  - _Boundary: BudgetCLI, OperatorRunbook_
+
+- [ ] 8. Validate full feature behavior
+- [ ] 8.1 Run end-to-end fixture validation
+  - Execute the full fixture path from metadata render through audit, smoke-plan, validation comparison, and failure reporting.
+  - Done when committed fixtures prove pass and fail paths for audit, validation, smoke, and escape-hatch states.
+  - _Depends: 6.3, 7.2_
+  - _Requirements: 1.1, 1.5, 2.4, 5.4, 6.4, 7.5_
+  - _Boundary: BudgetCLI, SmokeTestRunner, ValidationComparator_
+- [ ] 8.2 Validate host evaluation and runtime prerequisites
+  - Evaluate both nix-darwin host configurations and run the runtime smoke wrapper against the rendered artifacts.
+  - Confirm requirement coverage through the passing unit, integration, smoke, and validation artifacts from prior tasks.
+  - Done when both host configurations evaluate successfully and the smoke wrapper confirms installed CLI, metadata, and plugin self-check availability.
+  - _Depends: 8.1_
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 6.1, 6.2, 6.3, 6.4, 6.5, 7.1, 7.2, 7.3, 7.4, 7.5, 8.1, 8.2, 8.3, 8.4, 8.5_
+  - _Boundary: BudgetModule, BudgetCLI, InstructionProfileRuntime, SmokeTestRunner_
