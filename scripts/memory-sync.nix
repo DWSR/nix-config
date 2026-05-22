@@ -40,8 +40,9 @@ pkgs.writeShellApplication {
     LOG_DIR="''${STATE_DIR}/logs"
     export STATE_DIR MARKER_FILE LOCK_DIR LOG_DIR
 
-    # mcpproxy HTTP base; the cavemem and obsidian probes hit
-    # /api/v1/servers/<name> on this URL with an X-API-Key header.
+    # mcpproxy HTTP base; the cavemem and obsidian probes hit the
+    # collection endpoint `/api/v1/servers` on this URL with an
+    # X-API-Key header and filter the JSON body for the named server.
     # Hardcoded per design Decision 6 + the mcpproxy-migration spec
     # (Domain F). The api key is read at probe time via
     # `security find-generic-password -s mcpproxy -a mcpproxy-api-key`.
@@ -643,10 +644,11 @@ pkgs.writeShellApplication {
     # mcpproxy api key from the macOS Keychain
     # (service=mcpproxy, account=mcpproxy-api-key) at helper entry, then
     # issues a short-timeout (≤ 2s) GET to
-    # $MCPPROXY_BASE/api/v1/servers/<name> with an `X-API-Key` header.
-    # The response body is asserted with a permissive regex that matches
-    # both `"status":"connected"` and `"connected":true` shapes (mcpproxy
-    # currently emits the latter but the regex tolerates either).
+    # $MCPPROXY_BASE/api/v1/servers (the COLLECTION endpoint; the
+    # documented per-server `/api/v1/servers/{id}` path only supports
+    # DELETE and PATCH in mcpproxy v0.33.1, not GET) with an
+    # `X-API-Key` header. The response body is filtered via `jq -e`
+    # for the named server with `connected == true`.
     #
     # On any failure (keychain lookup empty, curl non-2xx, connect
     # refused, timeout, OR a response whose connected/status field does
@@ -692,12 +694,18 @@ pkgs.writeShellApplication {
         exit "$exit_code"
       fi
 
+      # mcpproxy v0.33.1 exposes per-upstream state only on the
+      # collection endpoint GET /api/v1/servers (the documented
+      # /api/v1/servers/{id} path only supports DELETE/PATCH, not
+      # GET — verified by running `OPTIONS /api/v1/servers/{id}`
+      # against the daemon and reading mcpproxy's swagger doc.json).
+      # Fetch the whole list and filter for the requested server.
       local response
       response=$(curl -sf --max-time 2 \
         -H "X-API-Key: $api_key" \
-        "$MCPPROXY_BASE/api/v1/servers/$name" 2>/dev/null) || response=""
+        "$MCPPROXY_BASE/api/v1/servers" 2>/dev/null) || response=""
 
-      if ! printf "%s" "$response" | grep -qE "\"(status|connected)\"[[:space:]]*:[[:space:]]*(\"connected\"|true)"; then
+      if ! printf "%s" "$response" | jq -e --arg name "$name" ".data.servers[] | select(.name == \$name) | select(.connected == true)" >/dev/null 2>&1; then
         echo "memory-sync: ERROR: ''${name} MCP unreachable." >&2
         echo "Recovery: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
         exit "$exit_code"
@@ -766,10 +774,10 @@ pkgs.writeShellApplication {
       Exit code 4    Cavemem MCP unreachable through mcpproxy:
                      pre-flight probe failed (mcpproxy api key
                      missing from Keychain, connect refused,
-                     timeout, non-2xx, or the connected/status
-                     field on /api/v1/servers/cavemem did not
-                     report connected). Recovery hint: launchctl
-                     kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy.
+                     timeout, non-2xx, or the cavemem entry in
+                     /api/v1/servers did not have connected=true).
+                     Recovery hint: launchctl kickstart
+                     gui/$(id -u)/com.smart-mcp-proxy.mcpproxy.
       Exit code 5    Obsidian MCP unreachable through mcpproxy:
                      cavemem probe passed but obsidian probe failed.
                      Same recovery hint.

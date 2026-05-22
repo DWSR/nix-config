@@ -321,6 +321,16 @@ in
           "serve"
           "--config=${config.xdg.configHome}/mcpproxy/mcp_config.json"
           "--log-to-file=false"
+          # Prevent runtime mutation of mcp_config.json. mcpproxy
+          # v0.33.1's DELETE /api/v1/servers/{id} and POST
+          # /api/v1/servers paths persist their changes back to the
+          # config file, detaching home-manager's symlink and turning
+          # the file into a regular operator-writable copy. Disabling
+          # the add/remove paths leaves the runtime API read-only for
+          # server inventory while keeping OAuth login, quarantine
+          # approval, and per-server enable/disable available.
+          "--allow-server-add=false"
+          "--allow-server-remove=false"
         ];
         RunAtLoad = true;
         KeepAlive = true;

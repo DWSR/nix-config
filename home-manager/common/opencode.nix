@@ -139,9 +139,13 @@
           echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
           exit 1
         fi
-        obsidian_status=$(/usr/bin/curl -sf --max-time 2 -H "X-API-Key: $mcpproxy_api_key" http://127.0.0.1:8080/api/v1/servers/obsidian 2>/dev/null) || obsidian_status=""
-        if ! printf "%s" "$obsidian_status" | grep -qE "\"(status|connected)\"[[:space:]]*:[[:space:]]*(\"connected\"|true)"; then
-          echo "ERROR: obsidian MCP server not reachable via mcpproxy: upstream not connected at /api/v1/servers/obsidian." >&2
+        # mcpproxy v0.33.1 exposes per-upstream state only on the
+        # collection endpoint GET /api/v1/servers (the documented
+        # /api/v1/servers/{id} path only supports DELETE/PATCH, not
+        # GET). Fetch the whole list and filter for the obsidian entry.
+        servers_json=$(/usr/bin/curl -sf --max-time 2 -H "X-API-Key: $mcpproxy_api_key" http://127.0.0.1:8080/api/v1/servers 2>/dev/null) || servers_json=""
+        if ! printf "%s" "$servers_json" | ${pkgs.jq}/bin/jq -e ".data.servers[] | select(.name == \"obsidian\") | select(.connected == true)" >/dev/null 2>&1; then
+          echo "ERROR: obsidian MCP server not connected via mcpproxy." >&2
           echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
           exit 1
         fi
