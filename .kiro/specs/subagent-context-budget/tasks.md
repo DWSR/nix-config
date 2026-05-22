@@ -27,7 +27,7 @@
   - Done when metadata validation accepts complete catalog entries and rejects incomplete enforced entries.
   - _Requirements: 1.1, 1.5, 2.1, 2.5, 7.2_
   - _Boundary: BudgetCatalog_
-- [ ] 2.2 Add permission-budget validation and capability rationales
+- [x] 2.2 Add permission-budget validation and capability rationales
   - Validate supported permission keys and reject deprecated `tools` usage in new budget metadata.
   - Require rationale for broad mutation, web, external-directory, or shell capability.
   - Done when invalid permission keys fail validation and write-capable agents show explicit rationale in budget metadata.

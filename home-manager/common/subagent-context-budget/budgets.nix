@@ -63,6 +63,7 @@ let
       source = "builtin";
       permissionBudget = researchBudget;
       instructionProfile = "general-research";
+      capabilityRationale = [ "web research using upstream documentation" ];
       smokeClass = "general-research";
     })
     (mkAgent {
@@ -84,7 +85,9 @@ let
         };
       };
       instructionProfile = "nix-package";
-      capabilityRationale = [ "nix evaluation and dry-run commands" ];
+      capabilityRationale = [
+        "nix evaluation, dry-run commands, and upstream package documentation lookups"
+      ];
       smokeClass = "nix-package-evaluation";
     })
     (mkAgent {
@@ -92,6 +95,7 @@ let
       source = "common-markdown";
       permissionBudget = researchBudget;
       instructionProfile = "nvim-config";
+      capabilityRationale = [ "Neovim plugin and upstream documentation lookups" ];
       smokeClass = "nvim-config-inspection";
     })
     (mkAgent {
@@ -103,7 +107,7 @@ let
         };
       };
       instructionProfile = "security-readonly";
-      capabilityRationale = [ "repository history inspection" ];
+      capabilityRationale = [ "repository history inspection and upstream advisory lookups" ];
       smokeClass = "security-fixture-audit";
     })
     (mkAgent {
@@ -141,7 +145,7 @@ let
         mcpproxy_call_tool_write = "ask";
       };
       instructionProfile = "shopify-stack";
-      capabilityRationale = [ "Graphite and GitHub stack operations" ];
+      capabilityRationale = [ "Graphite and GitHub stack operations plus upstream documentation lookup" ];
       smokeClass = "shopify-stack-plan";
     })
     (mkAgent {
@@ -155,7 +159,7 @@ let
         };
       };
       instructionProfile = "shopify-yugabyte-readonly";
-      capabilityRationale = [ "repository history inspection" ];
+      capabilityRationale = [ "repository history inspection and upstream documentation lookup" ];
       smokeClass = "shopify-source-trace";
     })
   ];

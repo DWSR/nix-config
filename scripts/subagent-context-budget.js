@@ -11,6 +11,36 @@
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
 const HOST_SCOPES = Object.freeze(['all', 'shopify', 'personal']);
+const SUPPORTED_PERMISSION_KEYS = Object.freeze(new Set([
+  'read',
+  'edit',
+  'glob',
+  'grep',
+  'list',
+  'bash',
+  'task',
+  'external_directory',
+  'todowrite',
+  'question',
+  'webfetch',
+  'websearch',
+  'lsp',
+  'skill',
+  'doom_loop',
+  'mcpproxy_retrieve_tools',
+  'mcpproxy_call_tool_read',
+  'mcpproxy_call_tool_write',
+  'mcpproxy_call_tool_destructive',
+]));
+const RATIONALE_REQUIRED_PERMISSIONS = Object.freeze({
+  edit: 'broad mutation',
+  mcpproxy_call_tool_write: 'broad mutation',
+  mcpproxy_call_tool_destructive: 'broad mutation',
+  webfetch: 'web',
+  websearch: 'web',
+  external_directory: 'external-directory',
+  bash: 'shell',
+});
 const BUDGET_STATE_REASONS = Object.freeze({
   enforced: Object.freeze(['default', 'host-override']),
   unbudgeted: Object.freeze(['operator-escape-hatch']),
@@ -35,6 +65,22 @@ function isValidBudgetState(value) {
 
   const validReasons = BUDGET_STATE_REASONS[value.kind];
   return Array.isArray(validReasons) && validReasons.includes(value.reason);
+}
+
+function permissionRuleGrantsCapability(rule) {
+  if (rule === 'allow' || rule === 'ask') {
+    return true;
+  }
+  if (!isObject(rule)) {
+    return false;
+  }
+
+  return Object.values(rule).some((action) => action === 'allow' || action === 'ask');
+}
+
+function hasCapabilityRationale(agent) {
+  return Array.isArray(agent.capabilityRationale)
+    && agent.capabilityRationale.some((entry) => isNonEmptyString(entry) && entry.trim().length > 0);
 }
 
 function validationError(agent, field, message) {
@@ -67,12 +113,34 @@ function validateAgentBudget(catalogName, agent) {
     errors.push(validationError(catalogName, 'capabilityRationale', 'agent capability rationale must be an array'));
   }
 
+  if (Object.prototype.hasOwnProperty.call(agent, 'tools')) {
+    errors.push(validationError(catalogName, 'tools', 'deprecated tools allowlists are not supported in budget metadata; use permissionBudget'));
+  }
+
   if (isObject(agent.state) && agent.state.kind === 'enforced') {
     if (!isNonEmptyString(agent.instructionProfile)) {
       errors.push(validationError(catalogName, 'instructionProfile', 'enforced agent must define an instruction profile'));
     }
     if (!isNonEmptyObject(agent.permissionBudget)) {
       errors.push(validationError(catalogName, 'permissionBudget', 'enforced agent must define a non-empty permission budget'));
+    }
+  }
+
+  if (isObject(agent.permissionBudget)) {
+    for (const permissionKey of Object.keys(agent.permissionBudget).sort()) {
+      if (permissionKey === 'tools') {
+        errors.push(validationError(catalogName, 'permissionBudget.tools', 'deprecated tools allowlists are not supported in budget metadata; use permissionBudget'));
+        continue;
+      }
+      if (!SUPPORTED_PERMISSION_KEYS.has(permissionKey)) {
+        errors.push(validationError(catalogName, `permissionBudget.${permissionKey}`, 'permission budget key is not supported; use supported permission keys and avoid undocumented mutation aliases'));
+        continue;
+      }
+
+      const rationaleCategory = RATIONALE_REQUIRED_PERMISSIONS[permissionKey];
+      if (rationaleCategory !== undefined && permissionRuleGrantsCapability(agent.permissionBudget[permissionKey]) && !hasCapabilityRationale(agent)) {
+        errors.push(validationError(catalogName, 'capabilityRationale', `agent must document rationale for ${rationaleCategory} capability: ${permissionKey}`));
+      }
     }
   }
 

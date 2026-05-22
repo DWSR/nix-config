@@ -196,3 +196,172 @@ test('validateBudgetMetadata rejects invalid unbudgeted state reasons', () => {
     },
   ]);
 });
+
+test('validateBudgetMetadata rejects unsupported permission budget keys', () => {
+  const metadata = completeMetadata();
+  metadata.agents.general.permissionBudget.write = 'allow';
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: 'general',
+      field: 'permissionBudget.write',
+      message: 'permission budget key is not supported; use supported permission keys and avoid undocumented mutation aliases',
+    },
+  ]);
+});
+
+test('validateBudgetMetadata rejects deprecated tools usage in budget metadata', () => {
+  const metadata = completeMetadata();
+  metadata.agents.general.tools = ['read', 'grep'];
+  metadata.agents['nix-pkg'].permissionBudget.tools = ['read'];
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: 'general',
+      field: 'tools',
+      message: 'deprecated tools allowlists are not supported in budget metadata; use permissionBudget',
+    },
+    {
+      agent: 'nix-pkg',
+      field: 'permissionBudget.tools',
+      message: 'deprecated tools allowlists are not supported in budget metadata; use permissionBudget',
+    },
+  ]);
+});
+
+test('validateBudgetMetadata requires rationale for mutation, web, external-directory, and shell capability', () => {
+  const metadata = completeMetadata({
+    agents: {
+      editor: {
+        name: 'editor',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'repo-editor',
+        permissionBudget: { read: 'allow', edit: 'allow' },
+        capabilityRationale: [],
+        smokeClass: 'repo-edit',
+      },
+      researcher: {
+        name: 'researcher',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'web-research',
+        permissionBudget: { read: 'allow', webfetch: 'allow' },
+        capabilityRationale: [],
+        smokeClass: 'web-research',
+      },
+      importer: {
+        name: 'importer',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'external-import',
+        permissionBudget: { read: 'allow', external_directory: 'allow' },
+        capabilityRationale: [],
+        smokeClass: 'external-import',
+      },
+      sheller: {
+        name: 'sheller',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'shell-inspection',
+        permissionBudget: { read: 'allow', bash: { git: 'allow' } },
+        capabilityRationale: [],
+        smokeClass: 'shell-inspection',
+      },
+    },
+  });
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: 'editor',
+      field: 'capabilityRationale',
+      message: 'agent must document rationale for broad mutation capability: edit',
+    },
+    {
+      agent: 'importer',
+      field: 'capabilityRationale',
+      message: 'agent must document rationale for external-directory capability: external_directory',
+    },
+    {
+      agent: 'researcher',
+      field: 'capabilityRationale',
+      message: 'agent must document rationale for web capability: webfetch',
+    },
+    {
+      agent: 'sheller',
+      field: 'capabilityRationale',
+      message: 'agent must document rationale for shell capability: bash',
+    },
+  ]);
+});
+
+test('validateBudgetMetadata rejects whitespace-only rationale for broad capabilities', () => {
+  const metadata = completeMetadata({
+    agents: {
+      editor: {
+        name: 'editor',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'repo-editor',
+        permissionBudget: { read: 'allow', edit: 'allow' },
+        capabilityRationale: ['   '],
+        smokeClass: 'repo-edit',
+      },
+    },
+  });
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors, [
+    {
+      agent: 'editor',
+      field: 'capabilityRationale',
+      message: 'agent must document rationale for broad mutation capability: edit',
+    },
+  ]);
+});
+
+test('validateBudgetMetadata accepts write-capable agents with explicit capability rationale', () => {
+  const metadata = completeMetadata({
+    agents: {
+      editor: {
+        name: 'editor',
+        source: 'common-markdown',
+        hostScope: 'all',
+        state: { kind: 'enforced', reason: 'default' },
+        instructionProfile: 'repo-editor',
+        permissionBudget: {
+          read: 'allow',
+          edit: 'allow',
+          external_directory: { '/tmp/opencode-fixtures/**': 'allow' },
+          bash: { nix: 'allow' },
+          webfetch: 'allow',
+        },
+        capabilityRationale: [
+          'repo edits, fixture imports, nix evaluation, and upstream documentation checks',
+        ],
+        smokeClass: 'repo-edit',
+      },
+    },
+  });
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.agentNames, ['editor']);
+});
