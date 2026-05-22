@@ -2,7 +2,17 @@
   "runtime": {
     "enabled": true,
     "availableHooks": ["message.updated"],
-    "sessionAgentLookupAvailable": false
+    "sessionAgentLookupAvailable": false,
+    "budgetMetadata": {
+      "version": 1,
+      "host": "all",
+      "agents": {
+        "general-research": {
+          "state": "enforced",
+          "instructionProfile": "general-research"
+        }
+      }
+    }
   },
   "expected": {
     "status": "failed",
@@ -11,6 +21,9 @@
       "hook:experimental.system.prompt",
       "session-agent-lookup"
     ],
-    "reason": "runtime-prerequisites-missing"
+    "reason": "runtime-prerequisites-missing",
+    "metadataPresent": true,
+    "unknownAgents": [],
+    "unresolvedProfiles": []
   }
 }

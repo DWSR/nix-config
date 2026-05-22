@@ -1,0 +1,26 @@
+{
+  "runtime": {
+    "enabled": true,
+    "availableHooks": ["experimental.system.prompt"],
+    "sessionAgentLookupAvailable": true,
+    "budgetMetadata": {
+      "version": 1,
+      "host": "all",
+      "agents": {
+        "general-research": {
+          "state": "enforced",
+          "instructionProfile": "ghost-profile"
+        }
+      }
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "requiredHook": "experimental.system.prompt",
+    "missing": ["profile:ghost-profile"],
+    "reason": "runtime-prerequisites-missing",
+    "metadataPresent": true,
+    "unknownAgents": [],
+    "unresolvedProfiles": ["ghost-profile"]
+  }
+}

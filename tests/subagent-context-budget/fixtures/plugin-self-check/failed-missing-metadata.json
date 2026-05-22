@@ -1,0 +1,16 @@
+{
+  "runtime": {
+    "enabled": true,
+    "availableHooks": ["experimental.system.prompt"],
+    "sessionAgentLookupAvailable": true
+  },
+  "expected": {
+    "status": "failed",
+    "requiredHook": "experimental.system.prompt",
+    "missing": ["metadata"],
+    "reason": "runtime-prerequisites-missing",
+    "metadataPresent": false,
+    "unknownAgents": [],
+    "unresolvedProfiles": []
+  }
+}

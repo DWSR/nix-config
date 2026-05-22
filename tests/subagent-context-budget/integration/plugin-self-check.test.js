@@ -28,7 +28,14 @@ test('packaged plugin module exposes the runtime plugin entrypoint', async () =>
   assert.equal(typeof mod.SubagentContextBudgetPlugin.runSelfCheckCommand, 'function');
 });
 
-for (const fixtureName of ['disabled', 'ready', 'failed']) {
+for (const fixtureName of [
+  'disabled',
+  'ready',
+  'failed',
+  'failed-missing-metadata',
+  'failed-unknown-agent',
+  'failed-unresolved-profile',
+]) {
   test(`plugin self-check fixture reports ${fixtureName} deterministically`, async () => {
     const mod = await loadPlugin();
     const fixture = readFixture(fixtureName);
@@ -65,5 +72,31 @@ test('plugin initialization logs self-check status and registers no prompt hooks
   assert.equal(logs[0].service, 'subagent-context-budget');
   assert.equal(logs[0].message, 'plugin self-check ready');
   assert.equal(logs[0].level, 'info');
+  assert.deepEqual(logs[0].extra, fixture.expected);
+});
+
+test('plugin entrypoint fails closed on failed self-check (no hooks, error log)', async () => {
+  const mod = await loadPlugin();
+  const fixture = readFixture('failed-missing-metadata');
+  const logs = [];
+
+  const hooks = await mod.SubagentContextBudgetPlugin({
+    client: {
+      app: {
+        log: async ({ body }) => {
+          logs.push(body);
+          return true;
+        },
+      },
+    },
+    subagentContextBudget: fixture.runtime,
+  });
+
+  // Fail-closed posture: no behavioral hook registered, no partial filtering.
+  assert.deepEqual(hooks, {});
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0].service, 'subagent-context-budget');
+  assert.equal(logs[0].level, 'error');
+  assert.equal(logs[0].message, 'plugin self-check failed');
   assert.deepEqual(logs[0].extra, fixture.expected);
 });

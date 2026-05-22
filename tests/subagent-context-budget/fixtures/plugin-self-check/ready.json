@@ -2,12 +2,25 @@
   "runtime": {
     "enabled": true,
     "availableHooks": ["experimental.system.prompt"],
-    "sessionAgentLookupAvailable": true
+    "sessionAgentLookupAvailable": true,
+    "budgetMetadata": {
+      "version": 1,
+      "host": "all",
+      "agents": {
+        "general-research": {
+          "state": "enforced",
+          "instructionProfile": "general-research"
+        }
+      }
+    }
   },
   "expected": {
     "status": "ready",
     "requiredHook": "experimental.system.prompt",
     "missing": [],
-    "reason": "hook-and-agent-lookup-available"
+    "reason": "hook-and-agent-lookup-available",
+    "metadataPresent": true,
+    "unknownAgents": [],
+    "unresolvedProfiles": []
   }
 }

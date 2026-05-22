@@ -1,0 +1,25 @@
+{
+  "runtime": {
+    "enabled": true,
+    "availableHooks": ["experimental.system.prompt"],
+    "sessionAgentLookupAvailable": true,
+    "budgetMetadata": {
+      "version": 1,
+      "host": "all",
+      "agents": {
+        "phantom-agent": {
+          "state": "enforced"
+        }
+      }
+    }
+  },
+  "expected": {
+    "status": "failed",
+    "requiredHook": "experimental.system.prompt",
+    "missing": ["agent:phantom-agent"],
+    "reason": "runtime-prerequisites-missing",
+    "metadataPresent": true,
+    "unknownAgents": ["phantom-agent"],
+    "unresolvedProfiles": []
+  }
+}

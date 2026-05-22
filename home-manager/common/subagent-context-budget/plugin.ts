@@ -130,12 +130,16 @@ const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object
  * @property {boolean} [enabled]
  * @property {readonly string[]} [availableHooks]
  * @property {boolean} [sessionAgentLookupAvailable]
+ * @property {object} [budgetMetadata]
  *
  * @typedef {object} SelfCheckResult
  * @property {SelfCheckStatus} status
  * @property {string} requiredHook
  * @property {readonly string[]} missing
  * @property {string} reason
+ * @property {boolean} [metadataPresent]
+ * @property {readonly string[]} [unknownAgents]
+ * @property {readonly string[]} [unresolvedProfiles]
  */
 
 /** @param {unknown} value */
@@ -150,6 +154,7 @@ function normalizeRuntime(runtime) {
       enabled: false,
       availableHooks: [],
       sessionAgentLookupAvailable: false,
+      budgetMetadata: undefined,
     }
   }
 
@@ -160,6 +165,83 @@ function normalizeRuntime(runtime) {
       ? value.availableHooks.filter((hook) => typeof hook === "string")
       : [],
     sessionAgentLookupAvailable: value.sessionAgentLookupAvailable === true,
+    budgetMetadata: isObject(value.budgetMetadata) ? value.budgetMetadata : undefined,
+  }
+}
+
+/**
+ * Inspect a runtime-supplied budget metadata object and identify which agent
+ * entries cannot be mapped to a resolvable instruction profile. Returns a
+ * structure that downstream self-check logic uses to assemble both the
+ * deterministic `missing[]` sentinels and the validation-readable optional
+ * fields. Does not read from disk: the runtime caller (HM-wired plugin) is
+ * responsible for hydrating `budgetMetadata` from the rendered metadata file.
+ *
+ * @param {unknown} budgetMetadata
+ */
+function inspectBudgetMetadata(budgetMetadata) {
+  if (!isObject(budgetMetadata)) {
+    return {
+      metadataPresent: false,
+      agentMapPresent: false,
+      unknownAgents: /** @type {readonly string[]} */ ([]),
+      unresolvedProfiles: /** @type {readonly string[]} */ ([]),
+    }
+  }
+
+  const metadata = /** @type {Record<string, unknown>} */ (budgetMetadata)
+  const agents = metadata.agents
+  if (!isObject(agents)) {
+    return {
+      metadataPresent: true,
+      agentMapPresent: false,
+      unknownAgents: /** @type {readonly string[]} */ ([]),
+      unresolvedProfiles: /** @type {readonly string[]} */ ([]),
+    }
+  }
+
+  const entries = Object.entries(/** @type {Record<string, unknown>} */ (agents))
+  if (entries.length === 0) {
+    return {
+      metadataPresent: true,
+      agentMapPresent: false,
+      unknownAgents: /** @type {readonly string[]} */ ([]),
+      unresolvedProfiles: /** @type {readonly string[]} */ ([]),
+    }
+  }
+
+  const unknownAgents: string[] = []
+  const unresolvedSet = new Set<string>()
+
+  for (const [agentName, agentEntry] of entries) {
+    if (!isObject(agentEntry)) {
+      unknownAgents.push(agentName)
+      continue
+    }
+    const entry = agentEntry as Record<string, unknown>
+    // Escape-hatch state: unbudgeted agents intentionally bypass profile
+    // enforcement. Per requirement 2.4 their absence from the profile map is
+    // not a self-check failure.
+    if (entry.state === "unbudgeted") {
+      continue
+    }
+    const profileName = entry.instructionProfile
+    if (typeof profileName !== "string" || profileName.length === 0) {
+      unknownAgents.push(agentName)
+      continue
+    }
+    if (!Object.prototype.hasOwnProperty.call(INSTRUCTION_PROFILES, profileName)) {
+      unresolvedSet.add(profileName)
+    }
+  }
+
+  return {
+    metadataPresent: true,
+    agentMapPresent: true,
+    unknownAgents: /** @type {readonly string[]} */ (unknownAgents.slice().sort()),
+    unresolvedProfiles: /** @type {readonly string[]} */ (
+      Array.from(unresolvedSet).sort()
+    ),
   }
 }
 
@@ -222,6 +304,19 @@ function composeInstructionProfile(profileName: string, options: ComposeOptions 
 /**
  * Evaluate runtime prerequisites without registering hooks or mutating prompts.
  *
+ * Collects every failure mode the plugin must fail closed on:
+ * - hook availability (`hook:experimental.system.prompt`)
+ * - session-agent lookup availability (`session-agent-lookup`)
+ * - budget metadata presence (`metadata`)
+ * - non-empty agent map (`agent-map`)
+ * - agent entries that map to a resolvable profile (`agent:<name>`)
+ * - referenced profiles that exist in INSTRUCTION_PROFILES (`profile:<name>`)
+ *
+ * The `disabled` branch stays minimal (no metadata fields) so existing
+ * disabled fixtures remain unchanged. Enabled results always include the new
+ * optional fields (`metadataPresent`, `unknownAgents`, `unresolvedProfiles`)
+ * so the audit and validation CLIs can ingest a stable machine-readable shape.
+ *
  * @param {SelfCheckRuntime | unknown} runtime
  * @returns {SelfCheckResult}
  */
@@ -237,12 +332,26 @@ function selfCheck(runtime) {
     }
   }
 
+  const metadataInfo = inspectBudgetMetadata(normalized.budgetMetadata)
   const missing: string[] = []
+
   if (!normalized.availableHooks.includes(REQUIRED_SYSTEM_HOOK)) {
     missing.push(`hook:${REQUIRED_SYSTEM_HOOK}`)
   }
   if (!normalized.sessionAgentLookupAvailable) {
     missing.push("session-agent-lookup")
+  }
+  if (!metadataInfo.metadataPresent) {
+    missing.push("metadata")
+  } else if (!metadataInfo.agentMapPresent) {
+    missing.push("agent-map")
+  } else {
+    for (const agentName of metadataInfo.unknownAgents) {
+      missing.push(`agent:${agentName}`)
+    }
+    for (const profileName of metadataInfo.unresolvedProfiles) {
+      missing.push(`profile:${profileName}`)
+    }
   }
 
   if (missing.length > 0) {
@@ -251,6 +360,9 @@ function selfCheck(runtime) {
       requiredHook: REQUIRED_SYSTEM_HOOK,
       missing,
       reason: "runtime-prerequisites-missing",
+      metadataPresent: metadataInfo.metadataPresent,
+      unknownAgents: metadataInfo.unknownAgents,
+      unresolvedProfiles: metadataInfo.unresolvedProfiles,
     }
   }
 
@@ -259,6 +371,9 @@ function selfCheck(runtime) {
     requiredHook: REQUIRED_SYSTEM_HOOK,
     missing: [],
     reason: "hook-and-agent-lookup-available",
+    metadataPresent: true,
+    unknownAgents: [],
+    unresolvedProfiles: [],
   }
 }
 
@@ -433,6 +548,7 @@ export const SubagentContextBudgetPlugin = Object.assign(pluginEntrypoint, {
   composeInstructionProfile,
   decideProfile,
   decide,
+  inspectBudgetMetadata,
   instructionFragments: INSTRUCTION_FRAGMENTS,
   instructionProfiles: INSTRUCTION_PROFILES,
   selfCheck,

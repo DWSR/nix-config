@@ -69,7 +69,7 @@
   - _Depends: 3.1_
   - _Requirements: 3.1, 3.2, 3.3, 3.5, 8.5_
   - _Boundary: InstructionProfileRuntime_
-- [ ] 3.3 Add fail-closed runtime self-check behavior
+- [x] 3.3 Add fail-closed runtime self-check behavior
   - Detect unavailable plugin hooks, missing metadata, unknown agent names, and profile lookup failures.
   - Report self-check status through deterministic logs and validation-readable state.
   - Done when plugin tests cover ready, disabled, and failed states without silently applying partial filtering.
