@@ -15,7 +15,7 @@
 #     subcommands plus `--help`.
 #   * Shared helpers used by every subcommand: manifest reader (jq +
 #     baked path), Keychain reader (absolute-path
-#     /usr/bin/security ... -a "$(jq -r .keychainAccount …)"),
+#     /usr/bin/security -s "$(jq -r .keychainService …)" -a <secret>),
 #     per-database mkdir lockfile,
 #     log start/end timestamps, and the unknown-database error UX
 #     mandated by R13.AC10 (any subcommand handed an unknown <db>
@@ -72,23 +72,22 @@ pkgs.writeShellApplication {
     # cost of being defensive here is one function call at build time).
     MANIFEST_PATH=${lib.escapeShellArg "${manifestPath}"}
 
-    # Keychain account is sourced from the rendered manifest at runtime
-    # (R12.AC1, R12.AC3, R12.AC4): the HM module surface exposes
-    # `home.sqliteBackup.keychainAccount`, which is rendered into the
-    # manifest's `.keychainAccount` field. Reading it here — instead of
-    # baking a hardcoded `mcp-hub` constant — lets each host pick the
-    # account name that matches its secrets layout (e.g.
-    # `nix-config-secrets` on hosts that co-locate sqlite-backup
-    # secrets with the unified secrets bundle) without re-deriving
-    # this script. A missing or empty field is a manifest bug worth
-    # failing loudly for, so we validate and exit non-zero rather than
-    # silently defaulting.
-    KEYCHAIN_ACCOUNT="$(jq -r '.keychainAccount // empty' "$MANIFEST_PATH")"
-    if [ -z "$KEYCHAIN_ACCOUNT" ]; then
-      echo "sqlite-backup: manifest at $MANIFEST_PATH is missing required '.keychainAccount' field" >&2
+    # Keychain service is sourced from the rendered manifest at runtime
+    # (R12.AC1, R12.AC3, R12.AC4). The HM module renders
+    # `keychainService = "nix-config-secrets"` (post-mcpproxy
+    # migration); sqlite-backup secrets live at
+    # `(-s nix-config-secrets -a <secret-name>)` to match the
+    # axis convention the activation script uses for both MCP
+    # (`-s mcpproxy -a <name>`) and sqlite-backup secrets. Reading the
+    # value here lets each host configure a different service prefix
+    # without re-deriving the cli script. A missing or empty field
+    # is a manifest bug worth failing loudly for.
+    KEYCHAIN_SERVICE="$(jq -r '.keychainService // empty' "$MANIFEST_PATH")"
+    if [ -z "$KEYCHAIN_SERVICE" ]; then
+      echo "sqlite-backup: manifest at $MANIFEST_PATH is missing required '.keychainService' field" >&2
       exit 1
     fi
-    readonly KEYCHAIN_ACCOUNT
+    readonly KEYCHAIN_SERVICE
 
     # Apple's `security` is not a Nix package; the absolute path is the
     # supported way to invoke it from a writeShellApplication's PATH-
@@ -172,11 +171,11 @@ pkgs.writeShellApplication {
       ' "$MANIFEST_PATH"
     }
 
-    # get_secret_service <kind>
-    # Returns the Keychain SERVICE name (the `-s` argument to
+    # get_secret_account <kind>
+    # Returns the Keychain ACCOUNT name (the `-a` argument to
     # `security`) for one of the two secret kinds the pipeline
-    # consumes. The matching account is always KEYCHAIN_ACCOUNT.
-    get_secret_service() {
+    # consumes. The matching service is always KEYCHAIN_SERVICE.
+    get_secret_account() {
       local kind="$1"
       case "$kind" in
         archive)
@@ -193,25 +192,27 @@ pkgs.writeShellApplication {
     }
 
     # shellcheck disable=SC2329  # consumed by tasks 3.3 and 3.5
-    get_keychain_account() {
-      printf '%s\n' "$KEYCHAIN_ACCOUNT"
+    get_keychain_service() {
+      printf '%s\n' "$KEYCHAIN_SERVICE"
     }
 
     # ----------------------------------------------------------------
     # Keychain reader
     # ----------------------------------------------------------------
 
-    # read_keychain_secret <service>
+    # read_keychain_secret <account>
     # Print the plaintext password to stdout, propagate `security`'s
     # exit code so callers can distinguish missing-entry from other
     # failures. Used both directly by `verify-credentials` and as the
     # implementation of `RESTIC_PASSWORD_COMMAND` /
-    # `RCLONE_PASSWORD_COMMAND` in the tier-trigger flows.
+    # `RCLONE_PASSWORD_COMMAND` in the tier-trigger flows. The argument
+    # is the keychain ACCOUNT (e.g. `sqlite-backup-archive-passphrase`);
+    # the service is always `$KEYCHAIN_SERVICE` (e.g. `nix-config-secrets`).
     # shellcheck disable=SC2329  # consumed by tasks 3.2, 3.3, 3.5
     read_keychain_secret() {
-      local service="$1"
+      local account="$1"
       "$SECURITY_BIN" find-generic-password \
-        -s "$service" -a "$KEYCHAIN_ACCOUNT" -w
+        -s "$KEYCHAIN_SERVICE" -a "$account" -w
     }
 
     # ----------------------------------------------------------------
@@ -404,14 +405,14 @@ pkgs.writeShellApplication {
         printf 'never\n'
         return
       fi
-      local service
-      service="$(get_secret_service archive 2>/dev/null || true)"
-      if [ -z "$service" ] || [ "$service" = "null" ]; then
+      local account
+      account="$(get_secret_account archive 2>/dev/null || true)"
+      if [ -z "$account" ] || [ "$account" = "null" ]; then
         printf 'never\n'
         return
       fi
       local pw
-      if ! pw="$(read_keychain_secret "$service" 2>/dev/null)"; then
+      if ! pw="$(read_keychain_secret "$account" 2>/dev/null)"; then
         printf 'never\n'
         return
       fi
@@ -590,8 +591,8 @@ pkgs.writeShellApplication {
       # design.md §"Implementation Notes"), so RESTIC_FROM_PASSWORD_COMMAND
       # is always equal to RESTIC_PASSWORD_COMMAND.
       local archive_secret rclone_secret
-      archive_secret="$(get_secret_service archive)"
-      rclone_secret="$(get_secret_service rclone-config)"
+      archive_secret="$(get_secret_account archive)"
+      rclone_secret="$(get_secret_account rclone-config)"
       if [ -z "$archive_secret" ] || [ "$archive_secret" = "null" ]; then
         echo "sqlite-backup: $db: $subcmd: missing archivePassphraseSecret in manifest" >&2
         log_end "$db" "$subcmd" 1
@@ -603,15 +604,17 @@ pkgs.writeShellApplication {
         return 1
       fi
 
-      # KEYCHAIN_ACCOUNT and the secret service names are
-      # Nix-rendered identifiers from the HM module surface (by
-      # convention `[a-z0-9-]+`), so no shell metacharacters require
-      # quoting in the command string. The exported value is parsed
-      # by restic's / rclone's own shell when each tool needs the
-      # passphrase, so the value MUST be a properly word-quoted
-      # shell command — the simple concatenation here is intentional.
-      RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $archive_secret -a $KEYCHAIN_ACCOUNT -w"
-      RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $rclone_secret -a $KEYCHAIN_ACCOUNT -w"
+      # KEYCHAIN_SERVICE and the secret account names are Nix-rendered
+      # identifiers from the HM module surface (by convention
+      # `[a-z0-9-]+`), so no shell metacharacters require quoting in
+      # the command string. The exported value is parsed by restic's
+      # / rclone's own shell when each tool needs the passphrase, so
+      # the value MUST be a properly word-quoted shell command — the
+      # simple concatenation here is intentional. Axis orientation:
+      # `-s <service> -a <secret-name>` matches the activation
+      # script's write side.
+      RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $KEYCHAIN_SERVICE -a $archive_secret -w"
+      RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $KEYCHAIN_SERVICE -a $rclone_secret -w"
       RESTIC_FROM_PASSWORD_COMMAND="$RESTIC_PASSWORD_COMMAND"
       export RESTIC_PASSWORD_COMMAND RCLONE_PASSWORD_COMMAND RESTIC_FROM_PASSWORD_COMMAND
 
@@ -840,21 +843,21 @@ pkgs.writeShellApplication {
         optional_db_check "''${1:-}"
         scope_db="''${1:-}"
 
-        rclone_secret_service="$(get_secret_service rclone-config)"
-        if [ -z "$rclone_secret_service" ] || [ "$rclone_secret_service" = "null" ]; then
+        rclone_secret_account="$(get_secret_account rclone-config)"
+        if [ -z "$rclone_secret_account" ] || [ "$rclone_secret_account" = "null" ]; then
           echo "sqlite-backup: manifest does not declare rcloneConfigPassphraseSecret" >&2
           exit 1
         fi
 
         # `rclone` exec's RCLONE_PASSWORD_COMMAND through its own
         # shell to obtain the config-decryption passphrase. Both
-        # KEYCHAIN_ACCOUNT (sourced from the manifest's
-        # `.keychainAccount` field at script init; a Nix-rendered
+        # KEYCHAIN_SERVICE (sourced from the manifest's
+        # `.keychainService` field at script init; a Nix-rendered
         # identifier from the HM module surface) and the secret
-        # service name (also Nix-rendered, by convention `[a-z0-9-]+`)
+        # account name (also Nix-rendered, by convention `[a-z0-9-]+`)
         # are free of shell metacharacters, so the unquoted
         # concatenation is intentional.
-        RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $rclone_secret_service -a $KEYCHAIN_ACCOUNT -w"
+        RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $KEYCHAIN_SERVICE -a $rclone_secret_account -w"
         export RCLONE_PASSWORD_COMMAND
 
         if ! preflight_out="$(rclone config encryption check 2>&1)"; then
@@ -1044,17 +1047,17 @@ pkgs.writeShellApplication {
 
         # Archive passphrase is always required (it encrypts both the
         # local and the remote restic repo).
-        restore_archive_secret="$(get_secret_service archive)"
+        restore_archive_secret="$(get_secret_account archive)"
         if [ -z "$restore_archive_secret" ] || [ "$restore_archive_secret" = "null" ]; then
           echo "sqlite-backup: $restore_db: restore: missing archivePassphraseSecret in manifest" >&2
           log_end "$restore_db" restore 1
           exit 1
         fi
-        # Same word-quoting note as tier_trigger: KEYCHAIN_ACCOUNT and
-        # the secret service name are Nix-rendered identifiers and
+        # Same word-quoting note as tier_trigger: KEYCHAIN_SERVICE and
+        # the secret account name are Nix-rendered identifiers and
         # contain no shell metacharacters, so the simple unquoted
         # concatenation here is intentional.
-        RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $restore_archive_secret -a $KEYCHAIN_ACCOUNT -w"
+        RESTIC_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $KEYCHAIN_SERVICE -a $restore_archive_secret -w"
         export RESTIC_PASSWORD_COMMAND
 
         # Repo selection.
@@ -1070,13 +1073,13 @@ pkgs.writeShellApplication {
 
           # rclone needs its own config-decryption passphrase to
           # reach any encrypted-config destination.
-          restore_rclone_secret="$(get_secret_service rclone-config)"
+          restore_rclone_secret="$(get_secret_account rclone-config)"
           if [ -z "$restore_rclone_secret" ] || [ "$restore_rclone_secret" = "null" ]; then
             echo "sqlite-backup: $restore_db: restore: missing rcloneConfigPassphraseSecret in manifest" >&2
             log_end "$restore_db" restore 1
             exit 1
           fi
-          RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $restore_rclone_secret -a $KEYCHAIN_ACCOUNT -w"
+          RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $KEYCHAIN_SERVICE -a $restore_rclone_secret -w"
           export RCLONE_PASSWORD_COMMAND
         else
           restore_repo="$(get_database_field "$restore_db" repoDir)"

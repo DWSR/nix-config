@@ -203,9 +203,12 @@ in
       type = types.str;
       default = "sqlite-backup-archive-passphrase";
       description = ''
-        macOS Keychain service name (under the `nix-config-secrets` account)
+        macOS Keychain account name (under the `nix-config-secrets` service)
         that holds the passphrase used by restic to encrypt
-        archive-tier snapshots before they leave the host.
+        archive-tier snapshots before they leave the host. The
+        Keychain entry is written by the SOPS-bridged activation
+        script as `-s nix-config-secrets -a <secret>`; the cli and
+        verify scripts read it back with the same axis orientation.
       '';
     };
 
@@ -213,10 +216,12 @@ in
       type = types.str;
       default = "sqlite-backup-rclone-config-passphrase";
       description = ''
-        macOS Keychain service name (under the `nix-config-secrets` account)
+        macOS Keychain account name (under the `nix-config-secrets` service)
         that holds the passphrase used to decrypt the operator-
         managed `~/.config/rclone/rclone.conf` at activation time
         (R17 verification) and at runtime for off-host shipment.
+        Same `-s nix-config-secrets -a <secret>` orientation as
+        `archivePassphraseSecret`.
       '';
     };
 
@@ -344,10 +349,15 @@ in
           rcloneConfigPath = "${config.xdg.configHome}/rclone/rclone.conf";
           inherit (cfg) rcloneConfigPassphraseSecret archivePassphraseSecret;
           # Per Mechanism A in design.md §Boundary Commitments: every
-          # secret consumed by this pipeline lives under the shared
-          # `nix-config-secrets` Keychain account, so it is a derived constant
-          # rather than a per-secret option.
-          keychainAccount = "nix-config-secrets";
+          # secret consumed by this pipeline is stored in the macOS
+          # Keychain under SERVICE = `nix-config-secrets`, ACCOUNT =
+          # secret name (e.g. `sqlite-backup-archive-passphrase`).
+          # The activation script (`mcp-secrets-activate.nix`) writes
+          # the entries with this orientation; the cli and verify
+          # scripts read them back the same way. This swapped-axis
+          # form matches the post-mcpproxy-migration convention shared
+          # with MCP secrets (which use SERVICE = `mcpproxy`).
+          keychainService = "nix-config-secrets";
           inherit (cfg) rcloneDestinations;
           databases = map (db: {
             inherit (db)

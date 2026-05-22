@@ -32,8 +32,8 @@
 # -u <user> --set-home` so it runs in the operator's launchd domain.
 # This mirrors home-manager's own nix-darwin activation pattern
 # (`nix-darwin/default.nix:27-37` in the home-manager flake) and is
-# necessary because `/usr/bin/security find-generic-password -a
-# nix-config-secrets` (or whatever account the manifest dictates;
+# necessary because `/usr/bin/security find-generic-password -s
+# nix-config-secrets` (or whatever service the manifest dictates;
 # the verify script reads the value from the rendered sqlite-backup
 # manifest at runtime) only reads from the user-scoped login
 # Keychain — a bare
@@ -73,7 +73,7 @@
 # module's `_manifestPath` renderer at
 # `home-manager/common/sqlite-backup.nix:342`): the script reads
 # `.rcloneConfigPath`, `.rcloneConfigPassphraseSecret`,
-# `.archivePassphraseSecret`, `.keychainAccount`, `.rcloneDestinations`
+# `.archivePassphraseSecret`, `.keychainService`, `.rcloneDestinations`
 # (attrset of `{ type, ... }`), and `.databases[]` (for the
 # referencing-database name in destination-missing errors). The
 # manifest path itself is baked into the Nix store at HM render
@@ -106,18 +106,20 @@ let
       rclone_config_path="$(jq -r '.rcloneConfigPath' "$manifest_path")"
       rclone_passphrase_secret="$(jq -r '.rcloneConfigPassphraseSecret' "$manifest_path")"
       archive_passphrase_secret="$(jq -r '.archivePassphraseSecret' "$manifest_path")"
-      keychain_account="$(jq -r '.keychainAccount' "$manifest_path")"
+      keychain_service="$(jq -r '.keychainService' "$manifest_path")"
 
       # ---- Step 1: Passphrase availability (R17.5 missing-passphrase) ----
       # Both passphrases are checked even though only the rclone-config
       # passphrase is consumed by the encryption check below — the
       # archive passphrase is required for every backup run, so its
       # absence at activation time is also an R17.5-class failure
-      # surfacing the same Keychain-bridge breakage.
+      # surfacing the same Keychain-bridge breakage. Axis orientation
+      # matches the activation script's write side:
+      # `-s <service> -a <secret-name>`.
       for secret in "$archive_passphrase_secret" "$rclone_passphrase_secret"; do
         if ! /usr/bin/security find-generic-password \
-              -s "$secret" -a "$keychain_account" -w >/dev/null 2>&1; then
-          echo "sqlite-backup-verify-rclone-config: missing passphrase in Keychain: $secret (account: $keychain_account)" >&2
+              -s "$keychain_service" -a "$secret" -w >/dev/null 2>&1; then
+          echo "sqlite-backup-verify-rclone-config: missing passphrase in Keychain: $secret (service: $keychain_service)" >&2
           echo "  ensure the secret is present in 'secrets/mcp.<host>.yaml' and declared in 'home.mcp.keychainSecrets'," >&2
           echo "  then re-run 'darwin-rebuild switch' so the mcp-secrets bridge populates the Keychain entry." >&2
           exit 11
@@ -138,7 +140,7 @@ let
       # encrypted AND the supplied passphrase decrypts it. The output
       # disambiguates plaintext-config from passphrase-mismatch — both
       # are non-zero exits but with different messages.
-      export RCLONE_PASSWORD_COMMAND="/usr/bin/security find-generic-password -s $rclone_passphrase_secret -a $keychain_account -w"
+      export RCLONE_PASSWORD_COMMAND="/usr/bin/security find-generic-password -s $keychain_service -a $rclone_passphrase_secret -w"
       encryption_output=""
       if encryption_output="$(rclone config encryption check 2>&1)"; then
         :
