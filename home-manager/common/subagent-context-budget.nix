@@ -1,10 +1,17 @@
 {
+  pkgs,
   lib,
   config,
   ...
 }:
 let
   cfg = config.programs.subagent-context-budget;
+  subagent-context-budget = pkgs.callPackage ../../scripts/subagent-context-budget.nix { };
+  subagent-context-budget-smoke-test =
+    pkgs.callPackage ../../scripts/subagent-context-budget-smoke-test.nix
+      {
+        subagentContextBudget = subagent-context-budget;
+      };
   budgetCatalog = import ./subagent-context-budget/budgets.nix { inherit lib; };
   unbudgeted = {
     kind = "unbudgeted";
@@ -110,6 +117,24 @@ in
       '';
     };
 
+    package = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      default = subagent-context-budget;
+      description = ''
+        The built `subagent-context-budget` production CLI wrapper.
+      '';
+    };
+
+    smokeTestPackage = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      default = subagent-context-budget-smoke-test;
+      description = ''
+        The built `subagent-context-budget-smoke-test` runtime verifier.
+      '';
+    };
+
     metadataPath = lib.mkOption {
       type = lib.types.str;
       readOnly = true;
@@ -130,6 +155,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    home.packages = [
+      cfg.package
+      cfg.smokeTestPackage
+    ];
+
     assertions = [
       {
         assertion = config.programs.opencode.enable;

@@ -122,7 +122,7 @@
   - _Depends: 4.3, 5.1_
   - _Requirements: 6.2, 6.3, 6.4_
   - _Boundary: SmokeTestRunner, ValidationComparator_
-- [ ] 5.4 Add runtime smoke wrapper
+- [x] 5.4 Add runtime smoke wrapper
   - Provide an operator-run smoke verifier that checks installed CLI, rendered metadata, plugin self-check status, and smoke-plan availability.
   - Done when the smoke wrapper exits non-zero for missing metadata or failed plugin self-check and prints the failed check name.
   - _Depends: 3.3, 5.2, 5.3_
