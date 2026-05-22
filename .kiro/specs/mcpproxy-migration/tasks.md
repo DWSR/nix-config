@@ -208,7 +208,7 @@
   - _Requirements: 12.1, 12.3, 12.4_
   - _Boundary: scripts/sqlite-backup-cli.nix_
 
-- [ ] 11.2 (P) Update the sqlite-backup home-manager module to emit the neutral account name
+- [x] 11.2 (P) Update the sqlite-backup home-manager module to emit the neutral account name
   - Change the manifest renderer in `sqlite-backup.nix` from `keychainAccount = "mcp-hub"` (L350) to `keychainAccount = "nix-config-secrets"`
   - Update the option docstrings for `archivePassphraseSecret` (L205-210) and `rcloneConfigPassphraseSecret` (L215-220) to reference the new account name (no longer "mcp-hub")
   - **Observable completion**: The rendered sqlite-backup manifest contains `"keychainAccount": "nix-config-secrets"`; `grep mcp-hub home-manager/common/sqlite-backup.nix` returns zero matches

@@ -203,7 +203,7 @@ in
       type = types.str;
       default = "sqlite-backup-archive-passphrase";
       description = ''
-        macOS Keychain service name (under the `mcp-hub` account)
+        macOS Keychain service name (under the `nix-config-secrets` account)
         that holds the passphrase used by restic to encrypt
         archive-tier snapshots before they leave the host.
       '';
@@ -213,7 +213,7 @@ in
       type = types.str;
       default = "sqlite-backup-rclone-config-passphrase";
       description = ''
-        macOS Keychain service name (under the `mcp-hub` account)
+        macOS Keychain service name (under the `nix-config-secrets` account)
         that holds the passphrase used to decrypt the operator-
         managed `~/.config/rclone/rclone.conf` at activation time
         (R17 verification) and at runtime for off-host shipment.
@@ -345,9 +345,9 @@ in
           inherit (cfg) rcloneConfigPassphraseSecret archivePassphraseSecret;
           # Per Mechanism A in design.md §Boundary Commitments: every
           # secret consumed by this pipeline lives under the shared
-          # `mcp-hub` Keychain account, so it is a derived constant
+          # `nix-config-secrets` Keychain account, so it is a derived constant
           # rather than a per-secret option.
-          keychainAccount = "mcp-hub";
+          keychainAccount = "nix-config-secrets";
           inherit (cfg) rcloneDestinations;
           databases = map (db: {
             inherit (db)
