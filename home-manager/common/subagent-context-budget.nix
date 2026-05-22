@@ -183,6 +183,9 @@ in
     xdg.configFile.${cfg.minimalBaselinePath}.source =
       ./subagent-context-budget/minimal-readonly-baseline.json;
 
+    xdg.configFile."opencode/plugins/subagent-context-budget.ts".source =
+      ./subagent-context-budget/plugin.ts;
+
     programs.opencode.settings = lib.mkIf cfg.enforce {
       agent = renderedAgentOverrides;
     };

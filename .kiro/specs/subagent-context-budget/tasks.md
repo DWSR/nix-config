@@ -130,7 +130,7 @@
   - _Boundary: SmokeTestRunner, BudgetModule_
 
 - [ ] 6. Wire Home Manager, host configuration, and checks
-- [ ] 6.1 Integrate module output into opencode configuration
+- [x] 6.1 Integrate module output into opencode configuration
   - Install the runtime plugin, render metadata, expose CLI packages, and register agent overrides through existing opencode configuration surfaces.
   - Keep the main-thread rules string unchanged.
   - Done when rendered opencode config includes plugin and agent overrides while the global rules output remains byte-identical outside budget-owned changes.

@@ -96,6 +96,52 @@ function disabledAgentEscapeHatchExpr() {
   `;
 }
 
+function moduleIntegrationExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      hm = host: enforce:
+        (flake.darwinConfigurations.\${host}.extendModules {
+          modules = [
+            ({ ... }: {
+              home-manager.users.brandonmcnama.programs.subagent-context-budget.enforce = enforce;
+            })
+          ];
+        }).config.home-manager.users.brandonmcnama;
+      summarize = config:
+        let
+          budget = config.programs.subagent-context-budget;
+          files = config.xdg.configFile;
+          plugin = files."opencode/plugins/subagent-context-budget.ts";
+          metadata = files.\${budget.metadataPath};
+          minimalBaseline = files.\${budget.minimalBaselinePath};
+          agents = config.programs.opencode.settings.agent or { };
+        in
+        {
+          pluginSource = toString plugin.source;
+          metadataTextPresent = metadata ? text;
+          minimalBaselineSource = toString minimalBaseline.source;
+          packageInHomePackages = builtins.elem budget.package config.home.packages;
+          smokeTestPackageInHomePackages = builtins.elem budget.smokeTestPackage config.home.packages;
+          rules = config.programs.opencode.rules;
+          agentNames = builtins.attrNames agents;
+          generalPermission = agents.general.permission or null;
+          nixPkgPermission = agents."nix-pkg".permission or null;
+        };
+      personalDisabled = summarize (hm "Brandons-MacBook-Pro" false);
+      personalEnforced = summarize (hm "Brandons-MacBook-Pro" true);
+      shopifyDisabled = summarize (hm "ShopifyLaptop" false);
+      shopifyEnforced = summarize (hm "ShopifyLaptop" true);
+    in
+    {
+      personalDisabled = personalDisabled;
+      personalEnforced = personalEnforced;
+      shopifyDisabled = shopifyDisabled;
+      shopifyEnforced = shopifyEnforced;
+    }
+  `;
+}
+
 test('rendered OpenCode config applies permissions for built-in and Markdown agents by stable name', () => {
   const rendered = nixEvalJson(renderedAgentPermissionsExpr());
 
@@ -159,4 +205,33 @@ test('per-agent disableBudget marks only that agent unbudgeted and leaves render
   assert.equal(rendered.shopify.hasYbSleuthPermissionOverride, false);
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'ask');
+});
+
+test('module integration renders plugin metadata and exposes CLI packages', () => {
+  const rendered = nixEvalJson(moduleIntegrationExpr());
+
+  for (const host of [rendered.personalDisabled, rendered.personalEnforced, rendered.shopifyDisabled, rendered.shopifyEnforced]) {
+    assert.match(host.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
+    assert.equal(host.metadataTextPresent, true);
+    assert.match(host.minimalBaselineSource, /home-manager\/common\/subagent-context-budget\/minimal-readonly-baseline\.json$/);
+    assert.equal(host.packageInHomePackages, true);
+    assert.equal(host.smokeTestPackageInHomePackages, true);
+  }
+});
+
+test('enforcement keeps global rules unchanged while plugin and agent overrides coexist', () => {
+  const rendered = nixEvalJson(moduleIntegrationExpr());
+
+  assert.equal(rendered.personalEnforced.rules, rendered.personalDisabled.rules);
+  assert.equal(rendered.shopifyEnforced.rules, rendered.shopifyDisabled.rules);
+
+  assert.match(rendered.personalEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
+  assert.ok(rendered.personalEnforced.agentNames.includes('general'));
+  assert.ok(rendered.personalEnforced.agentNames.includes('nix-pkg'));
+  assert.equal(rendered.personalEnforced.generalPermission.read, 'allow');
+  assert.equal(rendered.personalEnforced.nixPkgPermission.bash.nix, 'allow');
+
+  assert.match(rendered.shopifyEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
+  assert.ok(rendered.shopifyEnforced.agentNames.includes('general'));
+  assert.ok(rendered.shopifyEnforced.agentNames.includes('stack-captain'));
 });
