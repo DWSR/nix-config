@@ -15,7 +15,8 @@
 #     subcommands plus `--help`.
 #   * Shared helpers used by every subcommand: manifest reader (jq +
 #     baked path), Keychain reader (absolute-path
-#     /usr/bin/security ... -a mcp-hub), per-database mkdir lockfile,
+#     /usr/bin/security ... -a "$(jq -r .keychainAccount …)"),
+#     per-database mkdir lockfile,
 #     log start/end timestamps, and the unknown-database error UX
 #     mandated by R13.AC10 (any subcommand handed an unknown <db>
 #     prints the configured database names on stderr).
@@ -71,12 +72,23 @@ pkgs.writeShellApplication {
     # cost of being defensive here is one function call at build time).
     MANIFEST_PATH=${lib.escapeShellArg "${manifestPath}"}
 
-    # Keychain account is a derived constant: every secret consumed by
-    # the SQLite backup pipeline lives under the shared `mcp-hub`
-    # account established by `mcp-sops-bridge` (design.md §"Boundary
-    # Commitments", Mechanism A). Hard-coding it avoids threading a
-    # second piece of configuration through the manifest.
-    readonly KEYCHAIN_ACCOUNT=mcp-hub
+    # Keychain account is sourced from the rendered manifest at runtime
+    # (R12.AC1, R12.AC3, R12.AC4): the HM module surface exposes
+    # `home.sqliteBackup.keychainAccount`, which is rendered into the
+    # manifest's `.keychainAccount` field. Reading it here — instead of
+    # baking a hardcoded `mcp-hub` constant — lets each host pick the
+    # account name that matches its secrets layout (e.g.
+    # `nix-config-secrets` on hosts that co-locate sqlite-backup
+    # secrets with the unified secrets bundle) without re-deriving
+    # this script. A missing or empty field is a manifest bug worth
+    # failing loudly for, so we validate and exit non-zero rather than
+    # silently defaulting.
+    KEYCHAIN_ACCOUNT="$(jq -r '.keychainAccount // empty' "$MANIFEST_PATH")"
+    if [ -z "$KEYCHAIN_ACCOUNT" ]; then
+      echo "sqlite-backup: manifest at $MANIFEST_PATH is missing required '.keychainAccount' field" >&2
+      exit 1
+    fi
+    readonly KEYCHAIN_ACCOUNT
 
     # Apple's `security` is not a Nix package; the absolute path is the
     # supported way to invoke it from a writeShellApplication's PATH-
@@ -836,10 +848,12 @@ pkgs.writeShellApplication {
 
         # `rclone` exec's RCLONE_PASSWORD_COMMAND through its own
         # shell to obtain the config-decryption passphrase. Both
-        # KEYCHAIN_ACCOUNT (a script constant) and the secret
-        # service name (a Nix-rendered identifier from the HM module
-        # surface, by convention `[a-z0-9-]+`) are free of shell
-        # metacharacters, so the unquoted concatenation is intentional.
+        # KEYCHAIN_ACCOUNT (sourced from the manifest's
+        # `.keychainAccount` field at script init; a Nix-rendered
+        # identifier from the HM module surface) and the secret
+        # service name (also Nix-rendered, by convention `[a-z0-9-]+`)
+        # are free of shell metacharacters, so the unquoted
+        # concatenation is intentional.
         RCLONE_PASSWORD_COMMAND="$SECURITY_BIN find-generic-password -s $rclone_secret_service -a $KEYCHAIN_ACCOUNT -w"
         export RCLONE_PASSWORD_COMMAND
 

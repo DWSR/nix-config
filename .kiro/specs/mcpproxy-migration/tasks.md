@@ -201,7 +201,7 @@
 
 - [ ] 11. Rename sqlite-backup's keychain account to the neutral name
 
-- [ ] 11.1 (P) Update the sqlite-backup CLI to read its keychain account from the manifest
+- [x] 11.1 (P) Update the sqlite-backup CLI to read its keychain account from the manifest
   - Replace the hardcoded `readonly KEYCHAIN_ACCOUNT=mcp-hub` shell constant with a `jq` read of `.keychainAccount` from the rendered manifest at runtime
   - Update the cli script's L18 docstring referencing the `mcp-hub` account to describe the manifest-driven account read
   - **Observable completion**: The cli script's `KEYCHAIN_ACCOUNT` is sourced from the manifest via `jq`; an operator-driven `sqlite-backup verify-credentials` invocation succeeds against a host whose manifest emits `nix-config-secrets`
