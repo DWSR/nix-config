@@ -62,7 +62,7 @@
   - _Depends: 1.3, 2.1_
   - _Requirements: 3.1, 3.2, 3.3, 3.4_
   - _Boundary: InstructionProfileRuntime_
-- [ ] 3.2 Implement subagent-only prompt filtering
+- [x] 3.2 Implement subagent-only prompt filtering
   - Apply profile-specific system text only for subagent sessions.
   - Leave primary sessions and main-thread rules unchanged.
   - Done when tests show subagent sessions receive filtered profiles and primary sessions preserve the original system text.

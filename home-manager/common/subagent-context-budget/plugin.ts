@@ -273,6 +273,127 @@ function runSelfCheckCommand(runtime) {
 }
 
 /**
+ * @typedef {"primary-session" | "agent-unknown" | "profile-missing"} SkipReason
+ *
+ * @typedef {{ kind: "apply"; agentName: string; profileName: string; systemText: string }} ApplyDecision
+ * @typedef {{ kind: "skip"; reason: SkipReason }} SkipDecision
+ * @typedef {ApplyDecision | SkipDecision} ProfileDecision
+ *
+ * @typedef {object} SessionInfo
+ * @property {string} [agentName]
+ * @property {boolean} [isSubagent]
+ *
+ * @typedef {(sessionID: string) => (SessionInfo | undefined | null | Promise<SessionInfo | undefined | null>)} SessionLookup
+ *
+ * @typedef {Readonly<Record<string, string>>} AgentProfileMap
+ *
+ * @typedef {object} DecideProfileInput
+ * @property {string} [agentName]
+ * @property {boolean} [isSubagent]
+ * @property {AgentProfileMap} [profileMap]
+ *
+ * @typedef {object} DecideInput
+ * @property {string} sessionID
+ * @property {string} [currentSystemText]
+ * @property {SessionLookup} [sessionLookup]
+ * @property {AgentProfileMap} [profileMap]
+ */
+
+const SKIP_PRIMARY_SESSION = Object.freeze({ kind: "skip", reason: "primary-session" })
+const SKIP_AGENT_UNKNOWN = Object.freeze({ kind: "skip", reason: "agent-unknown" })
+const SKIP_PROFILE_MISSING = Object.freeze({ kind: "skip", reason: "profile-missing" })
+
+/**
+ * Decide whether to apply a profile system prompt based on already-resolved
+ * session identity. Pure: no I/O, deterministic on its inputs, exposed for
+ * testing the four ProfileDecision branches without spinning up the runtime
+ * hook wiring (which is task 3.3's responsibility).
+ *
+ * @param {DecideProfileInput | unknown} input
+ * @returns {ProfileDecision}
+ */
+function decideProfile(input) {
+  if (!isObject(input)) {
+    return SKIP_PRIMARY_SESSION
+  }
+  const value = /** @type {Record<string, unknown>} */ (input)
+
+  if (value.isSubagent !== true) {
+    return SKIP_PRIMARY_SESSION
+  }
+
+  const agentName = typeof value.agentName === "string" ? value.agentName : ""
+  if (agentName.length === 0) {
+    return SKIP_AGENT_UNKNOWN
+  }
+
+  const profileMap = value.profileMap
+  if (!isObject(profileMap) || !Object.prototype.hasOwnProperty.call(profileMap, agentName)) {
+    return SKIP_AGENT_UNKNOWN
+  }
+
+  const profileName = /** @type {Record<string, unknown>} */ (profileMap)[agentName]
+  if (typeof profileName !== "string" || profileName.length === 0) {
+    return SKIP_PROFILE_MISSING
+  }
+
+  const composed = composeInstructionProfile(profileName)
+  if (composed.kind !== "composed") {
+    return SKIP_PROFILE_MISSING
+  }
+
+  return {
+    kind: "apply",
+    agentName,
+    profileName,
+    systemText: composed.systemText,
+  }
+}
+
+/**
+ * Resolve a subagent session via the injected session lookup and delegate to
+ * decideProfile. Falsy or thrown lookup results map to `agent-unknown` so the
+ * runtime fails closed without applying partial filtering. Matches the
+ * InstructionProfileService.decide contract in design.md so task 3.3 can
+ * register an OpenCode system-prompt hook around this function without
+ * reshaping its inputs.
+ *
+ * @param {DecideInput | unknown} input
+ * @returns {Promise<ProfileDecision>}
+ */
+async function decide(input) {
+  if (!isObject(input)) {
+    return SKIP_AGENT_UNKNOWN
+  }
+  const value = /** @type {Record<string, unknown>} */ (input)
+
+  const sessionLookup = value.sessionLookup
+  if (typeof sessionLookup !== "function") {
+    return SKIP_AGENT_UNKNOWN
+  }
+
+  let sessionInfo
+  try {
+    sessionInfo = await sessionLookup(/** @type {string} */ (value.sessionID))
+  } catch {
+    return SKIP_AGENT_UNKNOWN
+  }
+
+  if (!isObject(sessionInfo)) {
+    return SKIP_AGENT_UNKNOWN
+  }
+
+  const session = /** @type {Record<string, unknown>} */ (sessionInfo)
+  return decideProfile({
+    agentName: typeof session.agentName === "string" ? session.agentName : undefined,
+    isSubagent: session.isSubagent === true,
+    profileMap: isObject(value.profileMap)
+      ? /** @type {AgentProfileMap} */ (value.profileMap)
+      : Object.freeze({}),
+  })
+}
+
+/**
  * @param {unknown} ctx
  * @param {SelfCheckResult} result
  */
@@ -310,6 +431,8 @@ async function pluginEntrypoint(ctx) {
 
 export const SubagentContextBudgetPlugin = Object.assign(pluginEntrypoint, {
   composeInstructionProfile,
+  decideProfile,
+  decide,
   instructionFragments: INSTRUCTION_FRAGMENTS,
   instructionProfiles: INSTRUCTION_PROFILES,
   selfCheck,
