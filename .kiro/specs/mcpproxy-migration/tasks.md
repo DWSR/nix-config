@@ -167,7 +167,7 @@
   - _Depends: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
   - _Boundary: agent-contract scope_
 
-- [ ] 10. Tear down nvim MCP integration
+- [x] 10. Tear down nvim MCP integration
 
 - [x] 10.1 (P) Delete the mcphub.nvim plugin file and its imports entry
   - Remove `home-manager/nixvim/plugins/mcphub.nix` entirely
@@ -191,7 +191,7 @@
   - _Requirements: 11.3_
   - _Boundary: home-manager/nixvim/plugins/lualine.nix_
 
-- [ ] 10.4 (P) Remove mcphub flake inputs and the mcp-hub overlay alias
+- [x] 10.4 (P) Remove mcphub flake inputs and the mcp-hub overlay alias
   - Remove the `mcphub` and `mcphub-nvim` input declarations from `flake.nix` (around L73-79)
   - Remove the `mcp-hub = inputs.mcphub.packages.${final.stdenv.hostPlatform.system}.default;` alias from `overlays/mcp-servers.nix` (around L36)
   - **Observable completion**: `nix flake metadata` shows no `mcphub` or `mcphub-nvim` inputs; `nix eval .#legacyPackages.aarch64-darwin.mcp-hub` returns an error indicating the attribute is missing; `darwin-rebuild build` succeeds

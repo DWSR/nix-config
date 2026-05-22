@@ -1,6 +1,5 @@
 # MCP server packages — all built as npm packages from the npm registry or GitHub
-{ inputs }:
-final: _prev:
+_: final: _prev:
 let
   # Builder for Google Cloud MCP servers that all follow the same pattern:
   # npm registry tarball + local package-lock for importNpmLock
@@ -33,8 +32,6 @@ let
     };
 in
 {
-  mcp-hub = inputs.mcphub.packages.${final.stdenv.hostPlatform.system}.default;
-
   # Cross-agent persistent memory for AI coding agents. Built from
   # JuliusBrussee/cavemem v0.2.1 source (a pnpm monorepo) with three
   # cherry-picked upstream patches applied to the TypeScript source
