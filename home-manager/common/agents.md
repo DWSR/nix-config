@@ -11,6 +11,16 @@ available; every operation is a two-step idiom — discover the tool name with
 `retrieve_tools`, then invoke it through the appropriate `call_tool_*`
 verb based on the operation's side-effect class (read / write / destructive).
 
+`retrieve_tools` accepts optional filter parameters (`read_only_only`,
+`exclude_destructive`, `exclude_open_world`) intended for self-restricting
+discovery scope. DO NOT pass any of these on the calls described in this
+document. The obsidian and cavemem upstream servers do not ship MCP tool
+annotations, so any of those filters strips their results to zero and the
+Startup Check below would incorrectly fall through to the "mcpproxy
+unreachable" branch. Pass only `query` (and optionally `limit`) on every
+`retrieve_tools` call described here, regardless of which model is driving
+the session.
+
 ## Startup Check
 
 BEFORE responding to any user message, you MUST verify that BOTH MCP servers
@@ -31,13 +41,22 @@ are available via mcpproxy by performing the following four calls (one
 If ANY of those four calls FAILS, or if `retrieve_tools` returns no tool
 from the expected upstream server, or if mcpproxy itself is unreachable:
 
-1. Tell the user: "mcpproxy is unreachable, or the obsidian/cavemem upstream
-   servers are not registered with it. I cannot create curated memories or
-   rely on ambient session capture. Verify the mcpproxy daemon is running
-   (launchd label `com.smart-mcp-proxy.mcpproxy`) and that both the obsidian
-   and cavemem upstream servers appear in its rendered config, then retry."
-2. DO NOT proceed with any work.
-3. DO NOT attempt workarounds such as writing to local files or skipping
+1. **First, sanity-check the call shape.** If the failing `retrieve_tools`
+   call passed `read_only_only`, `exclude_destructive`, or
+   `exclude_open_world`, retry it with just `query` (and optionally
+   `limit`) — those filters strip obsidian and cavemem results to zero
+   because their upstream servers ship no MCP tool annotations. If the
+   unfiltered retry returns the expected `<server>:<tool>` result, the
+   original empty response was a filter false-positive: proceed normally
+   from that point and skip steps 2-4 below.
+2. **Otherwise**, tell the user: "mcpproxy is unreachable, or the
+   obsidian/cavemem upstream servers are not registered with it. I cannot
+   create curated memories or rely on ambient session capture. Verify the
+   mcpproxy daemon is running (launchd label
+   `com.smart-mcp-proxy.mcpproxy`) and that both the obsidian and cavemem
+   upstream servers appear in its rendered config, then retry."
+3. DO NOT proceed with any work.
+4. DO NOT attempt workarounds such as writing to local files or skipping
    either system.
 
 ## Ambient capture (cavemem)
