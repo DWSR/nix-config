@@ -144,7 +144,7 @@
   - _Depends: 6.1_
   - _Requirements: 7.1, 7.2, 7.3, 7.5_
   - _Boundary: BudgetModule, BudgetCatalog_
-- [ ] 6.3 Add flake checks and regression tests
+- [x] 6.3 Add flake checks and regression tests
   - Wire unit, integration, render, and smoke-wrapper tests into the existing check pattern.
   - Include schema validation against the OpenCode config shape used by this repo.
   - Done when the new check command runs all budget tests and fails on invalid rendered config.

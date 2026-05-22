@@ -126,6 +126,87 @@ function validationError(agent, field, message) {
   return { agent, field, message };
 }
 
+function openCodeConfigShapeError(field, message) {
+  return { field, message };
+}
+
+function validateOpenCodeConfigShape(renderedConfig) {
+  const errors = [];
+
+  if (!isObject(renderedConfig)) {
+    return {
+      ok: false,
+      errors: [openCodeConfigShapeError('config', 'rendered OpenCode config shape must be an object')],
+    };
+  }
+
+  const enforced = isObject(renderedConfig.enforced) ? renderedConfig.enforced : renderedConfig;
+  const disabledRules = renderedConfig.disabledRules;
+  const settings = enforced.settings;
+  const agents = isObject(settings) ? settings.agent : undefined;
+  const metadata = enforced.metadata;
+
+  if (typeof enforced.rules !== 'string') {
+    errors.push(openCodeConfigShapeError('enforced.rules', 'rendered OpenCode rules must be a string'));
+  } else if (typeof disabledRules === 'string' && enforced.rules !== disabledRules) {
+    errors.push(openCodeConfigShapeError('enforced.rules', 'budget enforcement must not change global OpenCode rules'));
+  }
+
+  if (enforced.pluginFilePresent !== true) {
+    errors.push(openCodeConfigShapeError('enforced.pluginFilePresent', 'local subagent context budget plugin file must be rendered'));
+  }
+
+  if (!isObject(settings)) {
+    errors.push(openCodeConfigShapeError('enforced.settings', 'rendered OpenCode settings must be an object'));
+  }
+  if (!isObject(agents)) {
+    errors.push(openCodeConfigShapeError('settings.agent', 'rendered OpenCode settings.agent must be an object'));
+  }
+  if (!isObject(metadata) || !isObject(metadata.agents)) {
+    errors.push(openCodeConfigShapeError('enforced.metadata', 'budget metadata with agents must be present'));
+  }
+
+  if (isObject(agents)) {
+    for (const agentName of Object.keys(agents).sort()) {
+      const agent = agents[agentName];
+      if (!isObject(agent)) {
+        errors.push(openCodeConfigShapeError(`settings.agent.${agentName}`, 'rendered agent override must be an object'));
+        continue;
+      }
+      if (hasOwn(agent, 'tools')) {
+        errors.push(openCodeConfigShapeError(`settings.agent.${agentName}.tools`, 'rendered agent override must not use deprecated tools allowlists'));
+      }
+      if (isObject(agent.permission) && hasOwn(agent.permission, 'tools')) {
+        errors.push(openCodeConfigShapeError(`settings.agent.${agentName}.permission.tools`, 'rendered agent permission must not use deprecated tools allowlists'));
+      }
+    }
+  }
+
+  if (isObject(metadata) && isObject(metadata.agents) && isObject(agents)) {
+    for (const agentName of Object.keys(metadata.agents).sort()) {
+      const metadataAgent = metadata.agents[agentName];
+      if (!isObject(metadataAgent) || !isObject(metadataAgent.state) || metadataAgent.state.kind !== 'enforced') {
+        continue;
+      }
+
+      const agentOverride = agents[agentName];
+      if (!isObject(agentOverride)) {
+        errors.push(openCodeConfigShapeError(`settings.agent.${agentName}`, 'enforced budgeted agent must render an OpenCode agent override'));
+        continue;
+      }
+      if (!isObject(agentOverride.permission)) {
+        errors.push(openCodeConfigShapeError(`settings.agent.${agentName}.permission`, 'enforced budgeted agent permission must be an object'));
+      }
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return { ok: true, value: { agentCount: Object.keys(agents).length } };
+}
+
 function validateStringArray(owner, field, value) {
   if (!Array.isArray(value) || value.length === 0) {
     return [validationError(owner, field, `${field} must be a non-empty array`)];
@@ -2342,6 +2423,7 @@ module.exports = {
   validateAgentBudget,
   validateBudgetMetadata,
   validateMinimalBaseline,
+  validateOpenCodeConfigShape,
   validateSmokeCatalog,
   validateSmokeResults,
 };

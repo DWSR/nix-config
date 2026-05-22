@@ -216,6 +216,24 @@
         // {
           formatting = treefmtEval.${system}.config.build.check self;
 
+          subagent-context-budget-tests =
+            pkgs.runCommand "subagent-context-budget-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/subagent-context-budget/
+                touch $out
+              '';
+
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             package = pkgs.prek;

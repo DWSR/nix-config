@@ -3,7 +3,12 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
+
+const {
+  validateOpenCodeConfigShape,
+} = require(path.join(__dirname, '../../../scripts/subagent-context-budget.js'));
 
 const repoRoot = path.resolve(__dirname, '../../..');
 
@@ -178,6 +183,40 @@ function moduleIntegrationExpr() {
   `;
 }
 
+function openCodeConfigShapeExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      hm = host: enforce:
+        (flake.darwinConfigurations.\${host}.extendModules {
+          modules = [
+            ({ ... }: {
+              home-manager.users.brandonmcnama.programs.subagent-context-budget.enforce = enforce;
+            })
+          ];
+        }).config.home-manager.users.brandonmcnama;
+      summarize = disabled: enforced:
+        let
+          budget = enforced.programs.subagent-context-budget;
+          files = enforced.xdg.configFile;
+        in
+        {
+          disabledRules = disabled.programs.opencode.rules;
+          enforced = {
+            rules = enforced.programs.opencode.rules;
+            settings = enforced.programs.opencode.settings;
+            pluginFilePresent = builtins.hasAttr "opencode/plugins/subagent-context-budget.ts" files;
+            metadata = builtins.fromJSON files.\${budget.metadataPath}.text;
+          };
+        };
+    in
+    {
+      personal = summarize (hm "Brandons-MacBook-Pro" false) (hm "Brandons-MacBook-Pro" true);
+      shopify = summarize (hm "ShopifyLaptop" false) (hm "ShopifyLaptop" true);
+    }
+  `;
+}
+
 test('rendered OpenCode config applies permissions for built-in and Markdown agents by stable name', () => {
   const rendered = nixEvalJson(renderedAgentPermissionsExpr());
 
@@ -291,4 +330,58 @@ test('enforcement keeps global rules unchanged while plugin and agent overrides 
   assert.match(rendered.shopifyEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
   assert.ok(rendered.shopifyEnforced.agentNames.includes('general'));
   assert.ok(rendered.shopifyEnforced.agentNames.includes('stack-captain'));
+});
+
+test('rendered OpenCode config matches budgeted config shape for both hosts', () => {
+  const rendered = nixEvalJson(openCodeConfigShapeExpr());
+
+  for (const [host, config] of Object.entries(rendered)) {
+    const result = validateOpenCodeConfigShape(config);
+    assert.equal(result.ok, true, `${host}: ${JSON.stringify(result.errors)}`);
+  }
+});
+
+test('OpenCode config shape validator rejects invalid rendered config', () => {
+  const result = validateOpenCodeConfigShape({
+    disabledRules: 'original rules',
+    enforced: {
+      rules: 'changed rules',
+      settings: {
+        agent: {
+          general: {
+            tools: { read: true },
+            permission: ['read'],
+          },
+        },
+      },
+      pluginFilePresent: false,
+      metadata: {
+        version: 1,
+        host: 'personal',
+        agents: {
+          general: {
+            state: { kind: 'enforced', reason: 'default' },
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.errors.map((error) => error.field).sort(),
+    [
+      'enforced.pluginFilePresent',
+      'enforced.rules',
+      'settings.agent.general.permission',
+      'settings.agent.general.tools',
+    ],
+  );
+});
+
+test('flake exposes subagent-context-budget test check', () => {
+  const flake = fs.readFileSync(path.join(repoRoot, 'flake.nix'), 'utf8');
+
+  assert.match(flake, /subagent-context-budget-tests/);
+  assert.match(flake, /node --test tests\/subagent-context-budget\//);
 });
