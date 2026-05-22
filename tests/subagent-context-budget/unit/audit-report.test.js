@@ -550,11 +550,11 @@ test('main(audit): emitted JSON does not include any prompt or tool-output body 
   assert.equal(stdout.includes('SECRET-TOOL-OUTPUT-PAYLOAD'), false);
 });
 
-test('main(smoke-plan): still emits a deterministic placeholder (task 5.* not implemented)', () => {
+test('main(smoke-plan): is a real command (no placeholder) as of task 5.2', () => {
+  // Without flags, smoke-plan must exit 1 instead of returning the
+  // placeholder. The real behaviour is exercised in smoke-plan.test.js.
   const { exitCode, stdout, stderr } = captureMain(['smoke-plan']);
-  assert.equal(stderr, '');
-  assert.equal(exitCode, 0);
-  const report = JSON.parse(stdout);
-  assert.equal(report.command, 'smoke-plan');
-  assert.equal(report.status, 'placeholder');
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, '');
+  assert.ok(stderr.includes('--metadata'));
 });

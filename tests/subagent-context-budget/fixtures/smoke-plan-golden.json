@@ -1,0 +1,66 @@
+{
+  "command": "smoke-plan",
+  "entries": [
+    {
+      "agentName": "explore",
+      "hostScope": "all",
+      "smoke": {
+        "class": "readonly-codebase-question",
+        "directInvocation": "opencode run --agent explore -- 'Find the definition of validateBudgetMetadata and return file_path:line_number.'",
+        "expectations": {
+          "failureSignals": [
+            "agent reports missing read, grep, glob, list, or lsp permission",
+            "agent attempts to invoke webfetch (which is not in explore's budget)",
+            "agent attempts edit/write and reports it is not permitted"
+          ],
+          "passCriteria": [
+            "response returns `scripts/subagent-context-budget.js:<line>` where <line> is the line containing `function validateBudgetMetadata`",
+            "response cites whether LSP goToDefinition, grep, or read was used to find it",
+            "no file write or edit is attempted"
+          ],
+          "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when explore.state.kind == 'unbudgeted'."
+        },
+        "nonInteractive": {
+          "details": "explore's budget has no ask rules; read, glob, grep, list, lsp, todowrite, question, skill are all allow. The smoke prompt never needs webfetch or any mutation tool.",
+          "strategy": "allow-only"
+        },
+        "representativeTask": "Locate the definition of `validateBudgetMetadata` in this repository and return its file path with line number using LSP or grep."
+      },
+      "state": "enforced"
+    },
+    {
+      "agentName": "general",
+      "hostScope": "all",
+      "smoke": {
+        "class": "general-research",
+        "directInvocation": "opencode run --agent general -- 'Summarise the README contributing section and identify one documentation gap. Cite headings; at most one webfetch.'",
+        "expectations": {
+          "failureSignals": [
+            "agent reports missing read or webfetch permission",
+            "agent attempts edit, write, or bash and reports it is not permitted",
+            "agent stalls awaiting a permission prompt"
+          ],
+          "passCriteria": [
+            "response cites a specific README heading present in README.md",
+            "response names at least one documentation gap with a one-sentence justification",
+            "response lists each tool the agent invoked (read, glob, grep, webfetch, lsp)"
+          ],
+          "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when general.state.kind == 'unbudgeted'; ValidationComparator records the skip and only fails the run if the smoke result was required."
+        },
+        "nonInteractive": {
+          "details": "Every tool the smoke task needs (read, glob, grep, list, webfetch, lsp, todowrite, question, skill) is an allow rule on the general budget; the smoke prompt never invokes a tool outside that set.",
+          "strategy": "allow-only"
+        },
+        "representativeTask": "Summarise the contributing-section of this repository's top-level README and identify one documentation gap, citing the README heading and (optionally) one upstream documentation URL fetched via webfetch."
+      },
+      "state": "enforced"
+    }
+  ],
+  "host": "all",
+  "schemaVersion": 1,
+  "summary": {
+    "agentCount": 2,
+    "enforcedCount": 2,
+    "skippedUnbudgetedCount": 0
+  }
+}

@@ -52,25 +52,17 @@ test('main(--help): prints command surface and exits 0', () => {
   }
 });
 
-// `audit` is no longer a placeholder as of task 4.2 and `validate` is
-// no longer a placeholder as of task 4.3 — see `audit-report.test.js`
-// and `validation-comparator.test.js` for the real contracts. The
-// smoke-plan command remains a placeholder pending task 5.*.
-test('main(smoke-plan): exposes a deterministic placeholder', () => {
+// `audit`, `validate`, and `smoke-plan` are now real commands as of
+// tasks 4.2, 4.3, and 5.2 respectively. See `audit-report.test.js`,
+// `validation-comparator.test.js`, and `smoke-plan.test.js` for the
+// real contracts. This test pins only the no-placeholder invariant
+// from the CLI surface.
+test('main(smoke-plan): without required flags exits 1 (no placeholder fallback)', () => {
   const { exitCode, stdout, stderr } = captureMain(['smoke-plan']);
 
-  assert.equal(exitCode, 0);
-  assert.equal(stderr, '');
-
-  const report = JSON.parse(stdout);
-  assert.equal(report.command, 'smoke-plan');
-  assert.equal(report.status, 'placeholder');
-  assert.equal(report.schemaVersion, 1);
-  assert.deepEqual(report.next, []);
-
-  const serialized = JSON.stringify(report);
-  assert.equal(serialized.includes('prompt'), false);
-  assert.equal(serialized.includes('toolOutput'), false);
+  assert.equal(exitCode, 1);
+  assert.equal(stdout, '');
+  assert.ok(stderr.includes('--metadata'));
 });
 
 test('main(audit): without required flags exits 1 with a named-flag error (no placeholder)', () => {

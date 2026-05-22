@@ -108,7 +108,7 @@
   - _Depends: 2.1_
   - _Requirements: 6.1, 6.2, 6.5, 7.2_
   - _Boundary: SmokeTestRunner_
-- [ ] 5.2 Add smoke-plan report generation
+- [x] 5.2 Add smoke-plan report generation
   - Generate per-agent smoke-plan entries from budget metadata and smoke definitions.
   - Include direct invocation expectations and skipped-unbudgeted states.
   - Done when the smoke-plan output lists every enforced agent and explains any skipped unbudgeted agents.

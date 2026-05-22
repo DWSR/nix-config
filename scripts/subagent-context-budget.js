@@ -15,6 +15,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const path = require('node:path');
 
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
@@ -1369,13 +1370,14 @@ function usage() {
     'Commands:',
     '  audit        Render an audit report from budget metadata and a diagnostic JSON',
     '  validate     Compare baseline and post diagnostic reports and render a validation report',
-    '  smoke-plan   Placeholder for agent smoke-plan report generation',
+    '  smoke-plan   Generate a per-agent smoke plan from budget metadata and the smoke catalog',
     '',
     'Options:',
     '  --metadata <path>        Rendered budget metadata JSON',
     '  --diagnostic <path>      Diagnostic report JSON for audit',
     '  --baseline <path>        Baseline diagnostic report JSON for validate',
     '  --post <path>            Post-change diagnostic report JSON for validate',
+    '  --smoke-catalog <path>   Smoke-test catalog JSON for smoke-plan',
     '  --format <json|markdown> Output format; JSON is the default',
     '  --help, -h               Show this help text',
     '',
@@ -1419,6 +1421,10 @@ function main(argv) {
 
   if (command === 'validate') {
     return runValidateCommand(args.slice(1));
+  }
+
+  if (command === 'smoke-plan') {
+    return runSmokePlanCommand(args.slice(1));
   }
 
   writeStdout(`${JSON.stringify(placeholderReport(command), null, 2)}\n`);
@@ -1693,9 +1699,348 @@ function loadSmokeCatalog(filePath, options) {
   };
 }
 
+// ---------------------------------------------------------------------
+// SmokePlan report (task 5.2)
+//
+// Builds a deterministic per-agent smoke plan by joining validated
+// budget metadata with the smoke-test catalog. Each enforced agent
+// gains a full smoke entry (representative task, expectations,
+// non-interactive strategy, direct-invocation example — R6.5). Each
+// unbudgeted (escape-hatch) agent gains a `skipped-unbudgeted` entry
+// that names the agent + host scope and cites the escape hatch
+// reason (R7.5). Catalog entries whose agent is not present in the
+// metadata are silently ignored (metadata defines scope).
+//
+// Cross-check semantics: every enforced agent in metadata MUST have
+// a matching smoke definition in the catalog (matched by agentName)
+// AND the metadata's `smokeClass` MUST equal the catalog's `class`
+// (R6.1). The unbudgeted case never requires a catalog match —
+// rolled-back agents stay unchanged (R7.5).
+//
+// Determinism: entries are sorted alphabetically by agentName via
+// `stableSortKeys`. No wall-clock or environment-dependent values.
+// ---------------------------------------------------------------------
+
+const DEFAULT_SMOKE_CATALOG_PATH = path.join(
+  __dirname,
+  '..',
+  'home-manager',
+  'common',
+  'subagent-context-budget',
+  'smoke-catalog.json',
+);
+
+const ESCAPE_HATCH_EXPLANATION = (
+  'agent is unbudgeted via the operator escape hatch; budget '
+  + 'enforcement is disabled and the agent retains its pre-budget '
+  + 'permission and instruction context. Smoke runner emits '
+  + 'skipped-unbudgeted without invoking the agent.'
+);
+
+function buildEnforcedEntry(agentName, agent, definition) {
+  return {
+    agentName,
+    hostScope: agent.hostScope,
+    state: 'enforced',
+    smoke: {
+      class: definition.class,
+      representativeTask: definition.representativeTask,
+      expectations: {
+        passCriteria: [...definition.expectations.passCriteria],
+        failureSignals: [...definition.expectations.failureSignals],
+        skippedUnbudgeted: definition.expectations.skippedUnbudgeted,
+      },
+      nonInteractive: {
+        strategy: definition.nonInteractive.strategy,
+        details: definition.nonInteractive.details,
+      },
+      directInvocation: definition.directInvocation,
+    },
+  };
+}
+
+function buildSkippedEntry(agentName, agent) {
+  return {
+    agentName,
+    hostScope: agent.hostScope,
+    state: 'skipped-unbudgeted',
+    skip: {
+      reason: agent.state.reason,
+      explanation: ESCAPE_HATCH_EXPLANATION,
+    },
+  };
+}
+
+/**
+ * Build a deterministic smoke plan from validated budget metadata and
+ * a validated smoke catalog.
+ *
+ * Requirements: 6.1 (smoke entry per enforced agent), 6.5 (preserve
+ * direct invocation), 7.5 (skipped-unbudgeted state for disabled
+ * agents).
+ *
+ * Errors:
+ *   - `invalid-metadata`: metadata failed `validateBudgetMetadata`.
+ *   - `invalid-catalog`: catalog failed `validateSmokeCatalog`.
+ *   - `missing-smoke-definition`: enforced agent has no catalog match.
+ *   - `smoke-class-mismatch`: enforced agent and catalog class disagree.
+ *
+ * @param {unknown} metadata — parsed budget metadata JSON
+ * @param {unknown} catalog — parsed smoke catalog JSON
+ * @returns {{ ok: true, value: object } | { ok: false, error: object }}
+ */
+function buildSmokePlan(metadata, catalog) {
+  const metadataValidation = validateBudgetMetadata(metadata);
+  if (!metadataValidation.ok) {
+    return {
+      ok: false,
+      error: { kind: 'invalid-metadata', errors: metadataValidation.errors },
+    };
+  }
+
+  const catalogValidation = validateSmokeCatalog(catalog);
+  if (!catalogValidation.ok) {
+    return {
+      ok: false,
+      error: { kind: 'invalid-catalog', errors: catalogValidation.errors },
+    };
+  }
+
+  const definitionsByAgent = {};
+  for (const def of catalog.smokeDefinitions) {
+    definitionsByAgent[def.agentName] = def;
+  }
+
+  const entries = [];
+  let enforcedCount = 0;
+  let skippedUnbudgetedCount = 0;
+
+  for (const agentName of Object.keys(metadata.agents).sort()) {
+    const agent = metadata.agents[agentName];
+
+    if (agent.state.kind === 'unbudgeted') {
+      entries.push(buildSkippedEntry(agentName, agent));
+      skippedUnbudgetedCount += 1;
+      continue;
+    }
+
+    // Enforced agent: must have a catalog match by agentName, and the
+    // catalog class must equal the metadata smokeClass.
+    const definition = definitionsByAgent[agentName];
+    if (!definition) {
+      return {
+        ok: false,
+        error: {
+          kind: 'missing-smoke-definition',
+          agentName,
+          message: `enforced agent ${agentName} has no matching smoke definition in the catalog`,
+        },
+      };
+    }
+    if (definition.class !== agent.smokeClass) {
+      return {
+        ok: false,
+        error: {
+          kind: 'smoke-class-mismatch',
+          agentName,
+          expectedClass: agent.smokeClass,
+          actualClass: definition.class,
+          message: `enforced agent ${agentName} smokeClass ${agent.smokeClass} does not match catalog class ${definition.class}`,
+        },
+      };
+    }
+
+    entries.push(buildEnforcedEntry(agentName, agent, definition));
+    enforcedCount += 1;
+  }
+
+  const plan = {
+    schemaVersion: 1,
+    command: 'smoke-plan',
+    host: metadata.host,
+    summary: {
+      agentCount: entries.length,
+      enforcedCount,
+      skippedUnbudgetedCount,
+    },
+    entries,
+  };
+
+  return { ok: true, value: stableSortKeys(plan) };
+}
+
+/**
+ * Deterministic JSON renderer. The plan is already key-sorted by
+ * `stableSortKeys`; `JSON.stringify` then preserves that order.
+ *
+ * @param {object} plan
+ * @returns {string}
+ */
+function renderSmokePlanJson(plan) {
+  return JSON.stringify(plan, null, 2);
+}
+
+/**
+ * Deterministic Markdown renderer. Derived from the same plan object
+ * as the JSON output, so byte stability follows from the JSON
+ * stability. No timestamps or wall-clock fields appear.
+ *
+ * @param {object} plan
+ * @returns {string}
+ */
+function renderSmokePlanMarkdown(plan) {
+  const lines = [];
+  lines.push('# Subagent Context Budget — Smoke Plan');
+  lines.push('');
+
+  lines.push('## Overview');
+  lines.push('');
+  lines.push(`- Host: ${plan.host}`);
+  lines.push(`- Agent count: ${plan.summary.agentCount}`);
+  lines.push(`- Enforced count: ${plan.summary.enforcedCount}`);
+  lines.push(`- Skipped (unbudgeted) count: ${plan.summary.skippedUnbudgetedCount}`);
+  lines.push('');
+
+  lines.push('## Agents');
+  lines.push('');
+
+  for (const entry of plan.entries) {
+    lines.push(`### ${entry.agentName}`);
+    lines.push('');
+    lines.push(`- Host scope: ${entry.hostScope}`);
+    lines.push(`- State: ${entry.state}`);
+    lines.push('');
+
+    if (entry.state === 'enforced') {
+      lines.push('#### Smoke definition');
+      lines.push('');
+      lines.push(`- Class: ${entry.smoke.class}`);
+      lines.push(`- Representative task: ${entry.smoke.representativeTask}`);
+      lines.push(`- Non-interactive strategy: ${entry.smoke.nonInteractive.strategy}`);
+      lines.push(`- Non-interactive details: ${entry.smoke.nonInteractive.details}`);
+      lines.push('');
+
+      lines.push('##### Pass criteria');
+      lines.push('');
+      for (const item of entry.smoke.expectations.passCriteria) {
+        lines.push(`- ${item}`);
+      }
+      lines.push('');
+
+      lines.push('##### Failure signals');
+      lines.push('');
+      for (const item of entry.smoke.expectations.failureSignals) {
+        lines.push(`- ${item}`);
+      }
+      lines.push('');
+
+      lines.push('##### Skipped-unbudgeted expectation');
+      lines.push('');
+      lines.push(`- ${entry.smoke.expectations.skippedUnbudgeted}`);
+      lines.push('');
+
+      lines.push('##### Direct invocation');
+      lines.push('');
+      lines.push(`- \`${entry.smoke.directInvocation}\``);
+      lines.push('');
+    } else if (entry.state === 'skipped-unbudgeted') {
+      lines.push('#### Skip');
+      lines.push('');
+      lines.push(`- Reason: ${entry.skip.reason}`);
+      lines.push(`- Explanation: ${entry.skip.explanation}`);
+      lines.push('');
+    }
+  }
+
+  return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+function parseSmokePlanFlags(rest) {
+  const flags = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (
+      arg === '--metadata'
+      || arg === '--smoke-catalog'
+      || arg === '--format'
+    ) {
+      flags[arg.slice(2)] = rest[i + 1];
+      i += 1;
+    }
+  }
+  return flags;
+}
+
+function formatSmokePlanErrors(errors) {
+  return errors
+    .map((e) => {
+      if (e.agent && e.field) {
+        return `  - [${e.agent}] ${e.field}: ${e.message}`;
+      }
+      if (typeof e.definitionIndex === 'number') {
+        return `  - [definition #${e.definitionIndex}] ${e.field}: ${e.message}`;
+      }
+      return `  - ${e.field || ''}: ${e.message || JSON.stringify(e)}`;
+    })
+    .join('\n');
+}
+
+function runSmokePlanCommand(rest) {
+  const flags = parseSmokePlanFlags(rest);
+  if (!isNonEmptyString(flags.metadata)) {
+    writeStderr('smoke-plan: missing required --metadata <path>\n');
+    return 1;
+  }
+  const catalogPath = isNonEmptyString(flags['smoke-catalog'])
+    ? flags['smoke-catalog']
+    : DEFAULT_SMOKE_CATALOG_PATH;
+
+  let metadata;
+  try {
+    metadata = JSON.parse(fs.readFileSync(flags.metadata, 'utf8'));
+  } catch (err) {
+    writeStderr(`smoke-plan: failed to read metadata file ${flags.metadata}: ${err.message}\n`);
+    return 1;
+  }
+
+  let catalog;
+  try {
+    catalog = JSON.parse(fs.readFileSync(catalogPath, 'utf8'));
+  } catch (err) {
+    writeStderr(`smoke-plan: failed to read smoke-catalog file ${catalogPath}: ${err.message}\n`);
+    return 1;
+  }
+
+  const result = buildSmokePlan(metadata, catalog);
+  if (!result.ok) {
+    const error = result.error;
+    if (error.kind === 'invalid-metadata') {
+      writeStderr(`smoke-plan: invalid-metadata\n${formatSmokePlanErrors(error.errors)}\n`);
+    } else if (error.kind === 'invalid-catalog') {
+      writeStderr(`smoke-plan: invalid-catalog\n${formatSmokePlanErrors(error.errors)}\n`);
+    } else if (error.kind === 'missing-smoke-definition') {
+      writeStderr(`smoke-plan: missing-smoke-definition: ${error.message}\n`);
+    } else if (error.kind === 'smoke-class-mismatch') {
+      writeStderr(`smoke-plan: smoke-class-mismatch: ${error.message}\n`);
+    } else {
+      writeStderr(`smoke-plan: ${JSON.stringify(error)}\n`);
+    }
+    return 1;
+  }
+
+  if (flags.format === 'markdown') {
+    writeStdout(renderSmokePlanMarkdown(result.value));
+  } else {
+    writeStdout(`${renderSmokePlanJson(result.value)}\n`);
+  }
+  return 0;
+}
+
 module.exports = {
   COMMANDS,
+  DEFAULT_SMOKE_CATALOG_PATH,
   buildAuditReport,
+  buildSmokePlan,
   buildValidationReport,
   compareReports,
   detectPricingDrift,
@@ -1704,11 +2049,15 @@ module.exports = {
   normalizeDispatchSummary,
   parseReport,
   parseSession,
+  parseSmokePlanFlags,
   placeholderReport,
   renderAuditReportJson,
   renderAuditReportMarkdown,
+  renderSmokePlanJson,
+  renderSmokePlanMarkdown,
   renderValidationReportJson,
   renderValidationReportMarkdown,
+  runSmokePlanCommand,
   stableSortKeys,
   usage,
   validateAgentBudget,
