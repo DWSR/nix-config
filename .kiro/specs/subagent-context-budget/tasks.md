@@ -39,7 +39,7 @@
   - Done when the baseline artifact is rendered and metadata validation can read its categories and measured-token fields.
   - _Requirements: 4.1, 4.2, 4.4, 4.5_
   - _Boundary: BudgetCatalog_
-- [ ] 2.4 Build agent permission rendering for custom and built-in agents
+- [x] 2.4 Build agent permission rendering for custom and built-in agents
   - Render per-agent permission budgets through supported OpenCode agent configuration while preserving agent names.
   - Cover built-in `general` and `explore` overrides and current Markdown-backed custom agents.
   - Done when rendered configuration contains budgeted permissions for enforced agents and leaves unbudgeted agents unchanged.

@@ -36,6 +36,13 @@ let
   };
 
   isEnforced = agent: agent.state.kind == "enforced";
+  isBuiltinAgent = agent: agent.source == "builtin";
+  isRenderedMarkdownAgent = agent: builtins.hasAttr agent.name config.programs.opencode.agents;
+  shouldRenderAgent =
+    agent: isEnforced agent && (isBuiltinAgent agent || isRenderedMarkdownAgent agent);
+  renderedAgentOverrides = lib.mapAttrs (_: agent: { permission = agent.permissionBudget; }) (
+    lib.filterAttrs (_: shouldRenderAgent) budgetCatalog.agents
+  );
   hasInstructionProfile =
     agent: (agent.instructionProfile or null) != null && (agent.instructionProfile or "") != "";
   hasPermissionBudget = agent: (agent.permissionBudget or { }) != { };
@@ -121,16 +128,6 @@ in
         '';
       }
       {
-        assertion = !cfg.enforce;
-        message = ''
-          programs.subagent-context-budget.enforce is not implemented yet.
-
-          Task 1.1 only enables metadata rendering. Leave enforce = false
-          until the budget catalog, renderer, and runtime plugin tasks are
-          implemented.
-        '';
-      }
-      {
         assertion = catalogValidationErrors == [ ];
         message = lib.concatStringsSep "\n" catalogValidationErrors;
       }
@@ -142,5 +139,9 @@ in
 
     xdg.configFile.${cfg.minimalBaselinePath}.source =
       ./subagent-context-budget/minimal-readonly-baseline.json;
+
+    programs.opencode.settings = lib.mkIf cfg.enforce {
+      agent = renderedAgentOverrides;
+    };
   };
 }
