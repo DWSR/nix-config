@@ -268,7 +268,7 @@
   - _Depends: 13.3_
   - _Boundary: home-manager/mcp/default.nix, secrets/README.md_
 
-- [ ] 13.5 Re-run host evaluation after config ownership changes
+- [x] 13.5 Re-run host evaluation after config ownership changes
   - Build or check both nix-darwin host configurations after the runtime-copy wrapper and documentation/assertion updates land
   - Inspect the evaluated rendered mcpproxy config text for `${env:MCPPROXY_API_KEY}`, absence of `tools_limit`, and absence of `mcp-hub` strings
   - Confirm the launchd ProgramArguments pass a runtime config path to mcpproxy rather than the Home Manager-owned source path
