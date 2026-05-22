@@ -34,7 +34,6 @@ in
       mitmproxy
       podman
       stern
-      uv
     ];
 
     mcp = {
@@ -43,8 +42,6 @@ in
 
       keychainSecrets = {
         "mcp-github-token" = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
-        "mcp-vault-token" = "op://Employee/Vault API Token/password";
-        "mcp-incident-dashboard-token" = "op://Employee/Incident Dashboard API Token/password";
         "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
         "mcp-explainify-token" = "op://Employee/explainify mcp api token/password";
         "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
@@ -58,18 +55,6 @@ in
       ghAuthToken = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
 
       extraServers = {
-        vault-mcp = {
-          type = "http";
-          url = "https://vault.shopify.io/mcp";
-          headers.Authorization = "Bearer " + readKeychainSecret "mcp-vault-token";
-        };
-
-        incident-dashboard-mcp = {
-          type = "http";
-          url = "https://incidents.shopify.io/api/mcp";
-          headers.Authorization = "Bearer " + readKeychainSecret "mcp-incident-dashboard-token";
-        };
-
         infra-central-mcp = {
           type = "http";
           url = "https://infra-central.shopify.io/api/mcp";
@@ -79,11 +64,6 @@ in
         fellow-mcp = {
           type = "streamable-http";
           url = "https://fellow.app/mcp";
-        };
-
-        gworkspace-mcp = {
-          command = "${pkgs.uv}/bin/uvx";
-          args = [ "gworkspace-mcp" ];
         };
 
         gt-mcp = {
