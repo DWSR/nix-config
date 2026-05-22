@@ -230,9 +230,9 @@
 
 ## Phase 3: Integration
 
-- [ ] 13. Verify host configurations build cleanly
+- [x] 13. Verify host configurations build cleanly
 
-- [ ] 13.1 (P) Build the Shopify host configuration without switching
+- [x] 13.1 (P) Build the Shopify host configuration without switching
   - Run `darwin-rebuild build --flake .#<shopify-host>` against the post-migration tree
   - Verify the build produces no errors related to mcphub, mcp-hub, or removed imports
   - Inspect the rendered `mcp_config.json` (find via the build output path): confirm well-formed JSON containing the four base upstream servers as array entries
@@ -241,7 +241,7 @@
   - _Depends: 5.2, 6, 7.1, 7.2, 8, 9.1, 9.5, 9.6, 9.7, 9.8, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 11.3, 12_
   - _Boundary: Shopify host evaluation_
 
-- [ ] 13.2 (P) Build the personal host configuration without switching
+- [x] 13.2 (P) Build the personal host configuration without switching
   - Run `darwin-rebuild build --flake .#<personal-host>` against the post-migration tree
   - Verify no mcphub-related errors and that the rendered opencode config includes the new `mcp.mcpproxy` entry on personal
   - **Observable completion**: `darwin-rebuild build` exits 0 for the personal host; the rendered opencode config contains a `mcp.mcpproxy` entry pointing at `127.0.0.1:8080`
