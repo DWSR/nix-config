@@ -199,7 +199,7 @@
   - _Depends: 5.2, 10.1, 10.2, 10.3_
   - _Boundary: flake.nix, overlays/mcp-servers.nix_
 
-- [ ] 11. Rename sqlite-backup's keychain account to the neutral name
+- [x] 11. Rename sqlite-backup's keychain account to the neutral name
 
 - [x] 11.1 (P) Update the sqlite-backup CLI to read its keychain account from the manifest
   - Replace the hardcoded `readonly KEYCHAIN_ACCOUNT=mcp-hub` shell constant with a `jq` read of `.keychainAccount` from the rendered manifest at runtime
@@ -215,7 +215,7 @@
   - _Requirements: 12.1, 12.4_
   - _Boundary: home-manager/common/sqlite-backup.nix_
 
-- [ ] 11.3 (P) Update the sqlite-backup verify module docstring
+- [x] 11.3 (P) Update the sqlite-backup verify module docstring
   - Update the docstring at `configurations/common-darwin/sqlite-backup-verify.nix:L35-37` to reference the new account name; no code change required (the script already reads from the manifest dynamically)
   - **Observable completion**: `grep mcp-hub configurations/common-darwin/sqlite-backup-verify.nix` returns zero matches
   - _Requirements: 12.4_

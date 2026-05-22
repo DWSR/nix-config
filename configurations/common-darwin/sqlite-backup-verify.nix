@@ -33,7 +33,10 @@
 # This mirrors home-manager's own nix-darwin activation pattern
 # (`nix-darwin/default.nix:27-37` in the home-manager flake) and is
 # necessary because `/usr/bin/security find-generic-password -a
-# mcp-hub` only reads from the user-scoped login Keychain — a bare
+# nix-config-secrets` (or whatever account the manifest dictates;
+# the verify script reads the value from the rendered sqlite-backup
+# manifest at runtime) only reads from the user-scoped login
+# Keychain — a bare
 # `sudo -u $username` from root's launchd domain would not have the
 # user's Keychain unlocked. `--set-home` ensures `$HOME` is rewritten
 # to the operator's home directory so `~/.config/rclone/rclone.conf`
