@@ -8,6 +8,121 @@
 const SERVICE = "subagent-context-budget"
 const REQUIRED_SYSTEM_HOOK = "experimental.system.prompt"
 
+type InstructionFragment = {
+  name: string
+  category: string
+  text: string
+}
+
+type ComposeOptions = {
+  extraFragments?: readonly string[]
+}
+
+const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Object.freeze({
+  universal: Object.freeze({
+    name: "universal",
+    category: "universal",
+    text: [
+      "# Universal subagent instructions",
+      "Stay inside the assigned task boundary, preserve existing user work, and report only verified results.",
+      "Use TodoWrite for multi-step work and cite files with file_path:line_number when referencing code.",
+    ].join("\n"),
+  }),
+  "memory-mcpproxy": Object.freeze({
+    name: "memory-mcpproxy",
+    category: "memory-mcpproxy",
+    text: [
+      "# Mandatory memory and mcpproxy safety",
+      "Before work, verify Obsidian and cavemem through mcpproxy retrieve_tools plus call_tool_read.",
+      "Use mcpproxy only through retrieve_tools, call_tool_read, call_tool_write, and call_tool_destructive.",
+      "Preserve Obsidian curated memories, cavemem ambient capture, and mcpproxy destructive-operation safeguards.",
+    ].join("\n"),
+  }),
+  "cc-sdd-minimal": Object.freeze({
+    name: "cc-sdd-minimal",
+    category: "workflow",
+    text: [
+      "# Minimal Spec-Driven Development instructions",
+      "Use Kiro spec documents as the source of requirements, design boundaries, and task validation.",
+      "Do not edit tasks.md from subagent implementation handoffs unless explicitly assigned that parent-controller role.",
+    ].join("\n"),
+  }),
+  "graphite-minimal": Object.freeze({
+    name: "graphite-minimal",
+    category: "workflow",
+    text: [
+      "# Minimal Graphite workflow instructions",
+      "For Shopify stacks, prefer gt through mcpproxy and ask before any force, no-verify, or environment-bypass operation.",
+      "Load the Graphite pitfall recovery playbook only after an actual gt failure.",
+    ].join("\n"),
+  }),
+  "shopify-host": Object.freeze({
+    name: "shopify-host",
+    category: "host-specific",
+    text: [
+      "# Shopify host instructions",
+      "Apply Shopify host constraints only for host-scoped agents and keep personal-host profiles free of Shopify-only workflow text.",
+    ].join("\n"),
+  }),
+  "general-research": Object.freeze({
+    name: "general-research",
+    category: "role-fragment",
+    text: "# General research role\nAnswer bounded research questions with local, memory, and approved web documentation sources.",
+  }),
+  "readonly-codebase": Object.freeze({
+    name: "readonly-codebase",
+    category: "role-fragment",
+    text: "# Read-only codebase role\nInspect files and symbols without modifying repository content.",
+  }),
+  "nix-package": Object.freeze({
+    name: "nix-package",
+    category: "role-fragment",
+    text: "# Nix package role\nInspect Nix package definitions, evaluations, and dry-run output within the assigned scope.",
+  }),
+  "nvim-config": Object.freeze({
+    name: "nvim-config",
+    category: "role-fragment",
+    text: "# Neovim configuration role\nInspect Neovim module, plugin, and configuration paths without unrelated workflow guidance.",
+  }),
+  "security-readonly": Object.freeze({
+    name: "security-readonly",
+    category: "role-fragment",
+    text: "# Security read-only role\nAudit fixture and repository paths for security concerns without mutation.",
+  }),
+  "vault-curation": Object.freeze({
+    name: "vault-curation",
+    category: "role-fragment",
+    text: "# Vault curation role\nDeduplicate, read, and update curated Obsidian memories through mcpproxy only.",
+  }),
+  "vault-synthesis": Object.freeze({
+    name: "vault-synthesis",
+    category: "role-fragment",
+    text: "# Vault synthesis role\nRead cavemem observations and draft synthesized Obsidian memories through mcpproxy only.",
+  }),
+  "shopify-stack": Object.freeze({
+    name: "shopify-stack",
+    category: "role-fragment",
+    text: "# Shopify stack role\nPlan and inspect Shopify stacked-PR workflows without applying bypasses unless explicitly authorized.",
+  }),
+  "shopify-yugabyte-readonly": Object.freeze({
+    name: "shopify-yugabyte-readonly",
+    category: "role-fragment",
+    text: "# Shopify Yugabyte read-only role\nTrace Yugabyte source context on Shopify hosts without repository mutation.",
+  }),
+})
+
+const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  "general-research": Object.freeze(["universal", "memory-mcpproxy", "general-research"]),
+  "readonly-codebase": Object.freeze(["universal", "memory-mcpproxy", "readonly-codebase"]),
+  "nix-package": Object.freeze(["universal", "memory-mcpproxy", "cc-sdd-minimal", "nix-package"]),
+  "nvim-config": Object.freeze(["universal", "memory-mcpproxy", "nvim-config"]),
+  "security-readonly": Object.freeze(["universal", "memory-mcpproxy", "security-readonly"]),
+  "vault-curation": Object.freeze(["universal", "memory-mcpproxy", "vault-curation"]),
+  "vault-synthesis": Object.freeze(["universal", "memory-mcpproxy", "vault-synthesis"]),
+  "shopify-stack": Object.freeze(["universal", "memory-mcpproxy", "graphite-minimal", "shopify-host", "shopify-stack"]),
+  "shopify-yugabyte-readonly": Object.freeze(["universal", "memory-mcpproxy", "shopify-host", "shopify-yugabyte-readonly"]),
+})
+
 /**
  * @typedef {"disabled" | "ready" | "failed"} SelfCheckStatus
  *
@@ -45,6 +160,62 @@ function normalizeRuntime(runtime) {
       ? value.availableHooks.filter((hook) => typeof hook === "string")
       : [],
     sessionAgentLookupAvailable: value.sessionAgentLookupAvailable === true,
+  }
+}
+
+/** @param {unknown} value */
+function normalizeExtraFragments(value) {
+  return Array.isArray(value)
+    ? value.filter((fragmentName) => typeof fragmentName === "string" && fragmentName.length > 0)
+    : []
+}
+
+/**
+ * Compose a profile-specific replacement system prompt from ordered fragments.
+ *
+ * @param {string} profileName
+ * @param {{ extraFragments?: readonly string[] } | unknown} options
+ */
+function composeInstructionProfile(profileName: string, options: ComposeOptions = {}) {
+  if (typeof profileName !== "string" || profileName.length === 0 || !Object.prototype.hasOwnProperty.call(INSTRUCTION_PROFILES, profileName)) {
+    return { kind: "missing-profile", profileName }
+  }
+
+  const orderedFragmentNames = [
+    ...INSTRUCTION_PROFILES[profileName],
+    ...normalizeExtraFragments(options.extraFragments),
+  ]
+  const seen = new Set<string>()
+  const fragments: InstructionFragment[] = []
+
+  for (const fragmentName of orderedFragmentNames) {
+    if (seen.has(fragmentName)) continue
+    seen.add(fragmentName)
+
+    if (!Object.prototype.hasOwnProperty.call(INSTRUCTION_FRAGMENTS, fragmentName)) {
+      return { kind: "missing-fragment", profileName, fragmentName }
+    }
+
+    const fragment = INSTRUCTION_FRAGMENTS[fragmentName]
+    fragments.push({
+      name: fragment.name,
+      category: fragment.category,
+      text: fragment.text,
+    })
+  }
+
+  const fragmentNames = fragments.map((fragment) => fragment.name)
+  for (const mandatoryName of ["universal", "memory-mcpproxy"]) {
+    if (!fragmentNames.includes(mandatoryName)) {
+      return { kind: "missing-fragment", profileName, fragmentName: mandatoryName }
+    }
+  }
+
+  return {
+    kind: "composed",
+    profileName,
+    fragments,
+    systemText: fragments.map((fragment) => fragment.text).join("\n\n"),
   }
 }
 
@@ -138,6 +309,9 @@ async function pluginEntrypoint(ctx) {
 }
 
 export const SubagentContextBudgetPlugin = Object.assign(pluginEntrypoint, {
+  composeInstructionProfile,
+  instructionFragments: INSTRUCTION_FRAGMENTS,
+  instructionProfiles: INSTRUCTION_PROFILES,
   selfCheck,
   runSelfCheckCommand,
 })

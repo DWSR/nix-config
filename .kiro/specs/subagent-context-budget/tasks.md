@@ -55,7 +55,7 @@
   - _Boundary: BudgetModule, AgentRenderer_
 
 - [ ] 3. Implement role-scoped instruction filtering
-- [ ] 3.1 (P) Define instruction fragments and profile composition
+- [x] 3.1 (P) Define instruction fragments and profile composition
   - Create universal, memory/mcpproxy, minimal SDD, host-specific, and role-fragment profiles.
   - Ensure every enforced profile includes mandatory memory, cavemem, and mcpproxy safety fragments.
   - Done when profile composition tests show unrelated workflow fragments are omitted and mandatory fragments remain present.
