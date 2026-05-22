@@ -128,6 +128,24 @@ test('compareReports: fails with threshold-not-met when reduction <40% (R5.4)', 
   assert.equal(threshold.requiredPct, 40);
   assert.ok(threshold.actualPct < 40,
     `actualPct must reflect the under-threshold reduction; got ${threshold.actualPct}`);
+  assert.equal(threshold.hint.kind, 'threshold-failure');
+  assert.ok(threshold.hint.message.includes('40% target'));
+  assert.ok(threshold.hint.message.includes('audit output'));
+});
+
+test('renderValidationReportJson/Markdown: threshold failure includes actionable remediation hint (R5.4)', () => {
+  const baseline = parseFixture('cost-report-valid.json');
+  const post = parseFixture('validation-threshold-fail-post.json');
+
+  const report = compareReports(baseline, post);
+  const json = renderValidationReportJson(report);
+  const md = renderValidationReportMarkdown(report);
+
+  assert.ok(json.includes('threshold-failure'));
+  assert.ok(json.includes('40% target'));
+  assert.ok(md.includes('Hint:'));
+  assert.ok(md.includes('run smoke plan'));
+  assert.ok(md.includes('recapture the post report'));
 });
 
 // ---------------------------------------------------------------------
@@ -145,6 +163,9 @@ test('compareReports: fails with missing-diagnostic-field when post has zero ses
   assert.ok(missing, 'must include a missing-diagnostic-field failure');
   assert.ok(typeof missing.field === 'string' && missing.field.length > 0,
     'failure must name the missing field');
+  assert.equal(missing.hint.kind, 'missing-diagnostic-field');
+  assert.ok(missing.hint.message.includes(missing.field));
+  assert.ok(missing.hint.message.includes('opencode-cost-report --format json > "$REPORT"'));
 });
 
 test('compareReports: fails with missing-diagnostic-field when baseline has zero sessions (R5.6)', () => {
@@ -206,8 +227,24 @@ test('compareReports: residual-heavy report keeps residual tokens out of named-a
   assert.equal(report.byAgent.general.postTokens, 100);
   // Residual share is reported separately (post side).
   assert.equal(report.residualAgentTokens, 800);
+  assert.ok(Array.isArray(report.hints), 'report must include hints array for report-level remediation');
+  const residualHint = report.hints.find((hint) => hint.kind === 'residual-heavy-attribution');
+  assert.ok(residualHint, 'residual-heavy report must include residual attribution hint');
+  assert.ok(residualHint.message.includes('Residual buckets are not credited to named agents'));
+  assert.ok(residualHint.message.includes('per-agent attribution'));
   // Residual must never appear in the named map.
   assert.equal(Object.prototype.hasOwnProperty.call(report.byAgent, 'unknown'), false);
+});
+
+test('renderValidationReportMarkdown: residual-heavy report includes residual attribution hint (R5.5)', () => {
+  const baseline = parseFixture('validation-residual-heavy-baseline.json');
+  const post = parseFixture('validation-residual-heavy-post.json');
+
+  const md = renderValidationReportMarkdown(compareReports(baseline, post));
+
+  assert.ok(md.includes('## Hints'));
+  assert.ok(md.includes('Residual buckets are not credited to named agents'));
+  assert.ok(md.includes('per-agent attribution'));
 });
 
 // ---------------------------------------------------------------------
@@ -229,6 +266,35 @@ test('compareReports: appends smoke-failure when smokeResults include a failed a
   const smoke = report.failures.find((f) => f.kind === 'smoke-failure');
   assert.ok(smoke, 'must surface smoke-failure');
   assert.equal(smoke.agentName, 'general');
+});
+
+test('compareReports: denied-required-tool smoke failure includes per-agent widening hint with missing capability (R6.3)', () => {
+  const baseline = parseFixture('cost-report-valid.json');
+  const post = parseFixture('validation-pass-post.json');
+
+  const report = compareReports(baseline, post, {
+    smokeResults: [
+      {
+        agentName: 'general',
+        status: 'fail',
+        detail: 'webfetch permission denied',
+        failure: {
+          category: 'denied-required-tool',
+          detail: 'webfetch permission denied',
+          missingCapability: 'webfetch',
+        },
+      },
+    ],
+  });
+
+  const smoke = report.failures.find((f) => f.kind === 'smoke-failure');
+  assert.ok(smoke, 'must surface smoke-failure');
+  assert.equal(smoke.category, 'denied-required-tool');
+  assert.equal(smoke.hint.kind, 'insufficient-agent-budget');
+  assert.ok(smoke.hint.message.includes('general'));
+  assert.ok(smoke.hint.message.includes('widen that agent'));
+  assert.ok(smoke.hint.message.includes('not the global budget'));
+  assert.ok(smoke.hint.message.includes('webfetch'));
 });
 
 test('compareReports: omits smoke-failure when smokeResults are not provided (R6.4)', () => {
@@ -277,6 +343,10 @@ test('compareReports: surfaces plugin-self-check-failed when pluginSelfCheck sta
   const selfCheck = report.failures.find((f) => f.kind === 'plugin-self-check-failed');
   assert.ok(selfCheck, 'must surface plugin-self-check-failed failure');
   assert.equal(selfCheck.detail, 'hook unavailable');
+  assert.equal(selfCheck.hint.kind, 'plugin-self-check');
+  assert.ok(selfCheck.hint.message.includes('subagent-context-budget-smoke-test'));
+  assert.ok(selfCheck.hint.message.includes('opencode app logs'));
+  assert.ok(selfCheck.hint.message.includes('plugin metadata/self-check status'));
 });
 
 test('compareReports: ignores pluginSelfCheck when status is passed', () => {

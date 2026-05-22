@@ -409,11 +409,25 @@ const SENTINEL_AGENT_KEYS = Object.freeze(new Set(['unknown', 'null', '']));
 const PRICING_DRIFT_FINDING = /(pricing|drift)/i;
 
 function errMissing(field) {
-  return { ok: false, error: { kind: 'missing-field', field } };
+  return {
+    ok: false,
+    error: {
+      kind: 'missing-field',
+      field,
+      hint: diagnosticFieldHint(field),
+    },
+  };
 }
 
 function errShape(field) {
-  return { ok: false, error: { kind: 'invalid-shape', field } };
+  return {
+    ok: false,
+    error: {
+      kind: 'invalid-shape',
+      field,
+      hint: diagnosticFieldHint(field),
+    },
+  };
 }
 
 function errPricingDrift(detail) {
@@ -422,6 +436,49 @@ function errPricingDrift(detail) {
 
 function isNonNegativeNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function diagnosticFieldHint(field) {
+  return {
+    kind: 'missing-diagnostic-field',
+    message: `Required diagnostic field ${field} is missing or unusable. Rerun opencode-cost-report --format json > "$REPORT"; if the field is still absent, check the report schema and use a supported opencode-cost-report version.`,
+  };
+}
+
+function thresholdFailureHint() {
+  return {
+    kind: 'threshold-failure',
+    message: 'Validation must meet the 40% target. Review audit output, widen or adjust per-agent budgets, run smoke plan, and recapture the post report from a comparable workload.',
+  };
+}
+
+function pluginSelfCheckHint() {
+  return {
+    kind: 'plugin-self-check',
+    message: 'Run subagent-context-budget-smoke-test, inspect opencode app logs for subagent-context-budget, and check plugin metadata/self-check status before claiming validation success.',
+  };
+}
+
+function smokeFailureHint(agentName, failure) {
+  const budgetCategory = failure.category === 'denied-required-tool'
+    || failure.category === 'missing-instruction';
+  if (!budgetCategory) {
+    return null;
+  }
+  const capability = isNonEmptyString(failure.missingCapability)
+    ? ` Missing capability: ${failure.missingCapability}.`
+    : '';
+  return {
+    kind: 'insufficient-agent-budget',
+    message: `Budget is insufficient for ${agentName}; widen that agent's permission or instruction profile, not the global budget.${capability}`,
+  };
+}
+
+function residualAttributionHint() {
+  return {
+    kind: 'residual-heavy-attribution',
+    message: 'Residual buckets are not credited to named agents. Rerun with diagnostics that include per-agent attribution before claiming agent-level success.',
+  };
 }
 
 /**
@@ -1364,15 +1421,24 @@ function compareReports(baseline, post, options) {
   // R5.6: missing-diagnostic-field surfaces empty sessions on either side
   // and zero-baseline tokens (no comparison anchor).
   if (baselineAgg.sessionCount === 0) {
-    failures.push({ kind: 'missing-diagnostic-field', field: 'baseline.sessions' });
+    failures.push({
+      kind: 'missing-diagnostic-field',
+      field: 'baseline.sessions',
+      hint: diagnosticFieldHint('baseline.sessions'),
+    });
   }
   if (postAgg.sessionCount === 0) {
-    failures.push({ kind: 'missing-diagnostic-field', field: 'post.sessions' });
+    failures.push({
+      kind: 'missing-diagnostic-field',
+      field: 'post.sessions',
+      hint: diagnosticFieldHint('post.sessions'),
+    });
   }
   if (baselineAgg.sessionCount > 0 && baselineAgg.tokensPerParent === 0) {
     failures.push({
       kind: 'missing-diagnostic-field',
       field: 'baseline.subagentDispatch',
+      hint: diagnosticFieldHint('baseline.subagentDispatch'),
     });
   }
 
@@ -1389,6 +1455,7 @@ function compareReports(baseline, post, options) {
       kind: 'threshold-not-met',
       actualPct: reductionPct,
       requiredPct: VALIDATION_THRESHOLD_PCT,
+      hint: thresholdFailureHint(),
     });
   }
 
@@ -1412,6 +1479,10 @@ function compareReports(baseline, post, options) {
         if (isNonEmptyString(failure.missingCapability)) {
           smokeFailure.missingCapability = failure.missingCapability;
         }
+        const hint = smokeFailureHint(result.agentName, failure);
+        if (hint !== null) {
+          smokeFailure.hint = hint;
+        }
         failures.push(smokeFailure);
       }
     }
@@ -1425,10 +1496,15 @@ function compareReports(baseline, post, options) {
       detail: isNonEmptyString(opts.pluginSelfCheck.detail)
         ? opts.pluginSelfCheck.detail
         : 'plugin self-check failed',
+      hint: pluginSelfCheckHint(),
     });
   }
 
   const byAgent = buildAgentReductions(baselineAgg.byAgent, postAgg.byAgent);
+  const postNamedAgentTokens = Object.values(postAgg.byAgent).reduce((sum, value) => sum + value, 0);
+  const residualHeavy = postAgg.residualTokens > postNamedAgentTokens
+    || (postAgg.residualTokens > 0 && Object.keys(postAgg.byAgent).length === 0);
+  const hints = residualHeavy ? [residualAttributionHint()] : [];
 
   const report = {
     schemaVersion: 1,
@@ -1444,6 +1520,7 @@ function compareReports(baseline, post, options) {
     residualAgentTokens: postAgg.residualTokens,
     baselineResidualAgentTokens: baselineAgg.residualTokens,
     failures,
+    hints,
   };
 
   return stableSortKeys(report);
@@ -1485,6 +1562,13 @@ function describeFailure(failure) {
   }
 }
 
+function describeHint(hint) {
+  if (!isObject(hint) || !isNonEmptyString(hint.message)) {
+    return null;
+  }
+  return hint.message;
+}
+
 /**
  * Deterministic Markdown renderer. Derived from the same
  * ValidationReport object as the JSON output. No timestamps or
@@ -1509,6 +1593,18 @@ function renderValidationReportMarkdown(report) {
   lines.push(`- Residual tokens (post): ${report.residualAgentTokens}`);
   lines.push(`- Residual tokens (baseline): ${report.baselineResidualAgentTokens}`);
   lines.push('');
+
+  if (Array.isArray(report.hints) && report.hints.length > 0) {
+    lines.push('## Hints');
+    lines.push('');
+    for (const hint of report.hints) {
+      const message = describeHint(hint);
+      if (message !== null) {
+        lines.push(`- ${message}`);
+      }
+    }
+    lines.push('');
+  }
 
   lines.push('## Per-agent reduction');
   lines.push('');
@@ -1538,6 +1634,10 @@ function renderValidationReportMarkdown(report) {
   } else {
     for (const failure of report.failures) {
       lines.push(`- ${describeFailure(failure)}`);
+      const hintMessage = describeHint(failure.hint);
+      if (hintMessage !== null) {
+        lines.push(`  - Hint: ${hintMessage}`);
+      }
     }
   }
   lines.push('');
@@ -1565,6 +1665,11 @@ function formatValidationErrors(errors) {
   return errors
     .map((e) => `  - [${e.agent}] ${e.field}: ${e.message}`)
     .join('\n');
+}
+
+function formatCliHint(error) {
+  const message = describeHint(error && error.hint);
+  return message === null ? '' : ` Hint: ${message}`;
 }
 
 function runAuditCommand(rest) {
@@ -1602,9 +1707,9 @@ function runAuditCommand(rest) {
     } else if (error.kind === 'pricing-drift') {
       writeStderr(`audit: pricing-drift: ${error.detail}\n`);
     } else if (error.kind === 'missing-field') {
-      writeStderr(`audit: missing-field in diagnostic: ${error.field}\n`);
+      writeStderr(`audit: missing-field in diagnostic: ${error.field}.${formatCliHint(error)}\n`);
     } else if (error.kind === 'invalid-shape') {
-      writeStderr(`audit: invalid-shape in diagnostic: ${error.field}\n`);
+      writeStderr(`audit: invalid-shape in diagnostic: ${error.field}.${formatCliHint(error)}\n`);
     } else {
       writeStderr(`audit: ${JSON.stringify(error)}\n`);
     }
@@ -1688,9 +1793,9 @@ function runValidateCommand(rest) {
     if (e.kind === 'pricing-drift') {
       writeStderr(`validate: pricing-drift in baseline: ${e.detail}\n`);
     } else if (e.kind === 'missing-field') {
-      writeStderr(`validate: missing-field in baseline: ${e.field}\n`);
+      writeStderr(`validate: missing-field in baseline: ${e.field}.${formatCliHint(e)}\n`);
     } else if (e.kind === 'invalid-shape') {
-      writeStderr(`validate: invalid-shape in baseline: ${e.field}\n`);
+      writeStderr(`validate: invalid-shape in baseline: ${e.field}.${formatCliHint(e)}\n`);
     } else {
       writeStderr(`validate: ${JSON.stringify(e)}\n`);
     }
@@ -1703,9 +1808,9 @@ function runValidateCommand(rest) {
     if (e.kind === 'pricing-drift') {
       writeStderr(`validate: pricing-drift in post: ${e.detail}\n`);
     } else if (e.kind === 'missing-field') {
-      writeStderr(`validate: missing-field in post: ${e.field}\n`);
+      writeStderr(`validate: missing-field in post: ${e.field}.${formatCliHint(e)}\n`);
     } else if (e.kind === 'invalid-shape') {
-      writeStderr(`validate: invalid-shape in post: ${e.field}\n`);
+      writeStderr(`validate: invalid-shape in post: ${e.field}.${formatCliHint(e)}\n`);
     } else {
       writeStderr(`validate: ${JSON.stringify(e)}\n`);
     }

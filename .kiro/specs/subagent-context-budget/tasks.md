@@ -160,7 +160,7 @@
   - _Depends: 6.2_
   - _Requirements: 4.5, 5.1, 5.2, 5.4, 5.5, 7.4, 7.5_
   - _Boundary: OperatorRunbook_
-- [ ] 7.2 Add usage examples to CLI outputs
+- [x] 7.2 Add usage examples to CLI outputs
   - Surface next-step hints in audit and validation failures for missing fields, plugin self-check failure, residual-heavy attribution, and threshold failure.
   - Done when each failure fixture includes an actionable remediation hint in JSON and Markdown outputs.
   - _Depends: 4.3, 5.3, 7.1_

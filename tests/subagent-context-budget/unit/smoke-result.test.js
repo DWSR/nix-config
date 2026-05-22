@@ -248,6 +248,10 @@ test('compareReports: smoke failures include category, missingCapability, and de
     agentName: 'explore',
     category: 'missing-instruction',
     detail: 'memory startup check missing',
+    hint: {
+      kind: 'insufficient-agent-budget',
+      message: "Budget is insufficient for explore; widen that agent's permission or instruction profile, not the global budget. Missing capability: memory-workflow.",
+    },
     missingCapability: 'memory-workflow',
   });
 });
@@ -273,4 +277,6 @@ test('renderValidationReportMarkdown: smoke failures show category and missing c
   assert.match(markdown, /denied-required-tool/);
   assert.match(markdown, /webfetch/);
   assert.match(markdown, /webfetch was denied/);
+  assert.match(markdown, /Hint: Budget is insufficient for general/);
+  assert.match(markdown, /not the global budget/);
 });

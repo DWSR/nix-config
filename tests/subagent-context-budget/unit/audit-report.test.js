@@ -481,6 +481,9 @@ test('buildAuditReport: fails when diagnostic is missing required fields', () =>
   assert.equal(result.ok, false);
   assert.equal(result.error.kind, 'missing-field');
   assert.equal(result.error.field, 'privacy');
+  assert.equal(result.error.hint.kind, 'missing-diagnostic-field');
+  assert.ok(result.error.hint.message.includes('privacy'));
+  assert.ok(result.error.hint.message.includes('opencode-cost-report --format json > "$REPORT"'));
 });
 
 // ---------------------------------------------------------------------
@@ -577,6 +580,30 @@ test('main(audit): exits non-zero on pricing-drift diagnostic and prints actiona
   assert.equal(stdout, '');
   assert.ok(stderr.includes('pricing-drift'),
     `stderr must mention pricing-drift; got: ${stderr}`);
+});
+
+test('main(audit): exits non-zero on missing diagnostic field and prints actionable hint', () => {
+  const metadataPath = path.join(FIXTURES_DIR, 'budget-metadata.json');
+  const badDiagnostic = loadFixture('cost-report-valid.json');
+  delete badDiagnostic.privacy;
+  const diagnosticPath = writeTempJson('bad-diagnostic', badDiagnostic);
+
+  try {
+    const { exitCode, stdout, stderr } = captureMain([
+      'audit',
+      '--metadata', metadataPath,
+      '--diagnostic', diagnosticPath,
+    ]);
+
+    assert.equal(exitCode, 1);
+    assert.equal(stdout, '');
+    assert.ok(stderr.includes('missing-field'));
+    assert.ok(stderr.includes('privacy'));
+    assert.ok(stderr.includes('opencode-cost-report --format json > "$REPORT"'));
+    assert.ok(stderr.includes('supported opencode-cost-report version'));
+  } finally {
+    fs.unlinkSync(diagnosticPath);
+  }
 });
 
 test('main(audit): exits non-zero on invalid metadata and prints validation errors', () => {
