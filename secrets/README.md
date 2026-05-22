@@ -25,6 +25,25 @@ helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
 appears in the `mcp.<host>.yaml` filename. It also matches the YAML
 anchor name in `.sops.yaml`.
 
+### Keychain account layout
+
+The SOPS bridge writes the decrypted secret values into the macOS
+login keychain in two distinct `service` namespaces. Both consume
+the SAME per-host encrypted yaml; the split exists so the
+sqlite-backup pathway can rotate independently and so mcpproxy's
+`${keyring:<account>}` placeholders resolve under a stable service
+name.
+
+| Service              | Accounts (examples)                              | Consumer                       |
+| -------------------- | ------------------------------------------------ | ------------------------------ |
+| `mcpproxy`           | `mcp-github-token`, `mcp-vault-token`, `mcpproxy-api-key`, … (one account per MCP secret) | mcpproxy daemon + wrappers     |
+| `nix-config-secrets` | `restic-archive-passphrase`, `rclone-config-passphrase` | sqlite-backup CLI + helpers    |
+
+`security find-generic-password -s mcpproxy -a <account> -w` (or
+`-s nix-config-secrets -a <account> -w`) returns the live value;
+the SOPS bridge keeps these in sync with `secrets/mcp.<host>.yaml`
+on every `darwin-rebuild switch`.
+
 ## Prerequisites — read this first
 
 Two environmental preconditions apply to every operation below:
@@ -232,6 +251,13 @@ Use this when a secret value (an MCP API token, a service
 credential, etc.) needs to change but the host enrollment does
 NOT change. This is the common-case maintenance flow.
 
+### Rotating a 1Password-backed secret
+
+Most MCP and sqlite-backup secrets (github token, vault token,
+restic archive passphrase, rclone config passphrase, …) are
+mirrored from 1Password into `secrets/mcp.<host>.yaml` by
+`mcp-sync-from-1password`.
+
 1. **Edit the secret in 1Password.** This is the source of truth.
    Update the field on the relevant 1P item (e.g.,
    `op://Employee/MCP/<service>/token`). All downstream copies are
@@ -279,7 +305,9 @@ NOT change. This is the common-case maintenance flow.
    to read `/var/lib/sops-nix/key.txt` for the in-process decrypt,
    then drops back to user privileges to query your login keychain
    and `gh auth status`. The keychain query MUST run as your user
-   (the entries are stored under your `mcp-hub` account), and an
+   (MCP secrets are stored under `service = "mcpproxy"` keyed by
+   the secret name as `account`; sqlite-backup secrets live under
+   `service = "nix-config-secrets"` keyed the same way), and an
    active GUI session is required so the login keychain is unlocked.
 
    This helper re-reads the now-decrypted secrets and the consumer
@@ -287,6 +315,72 @@ NOT change. This is the common-case maintenance flow.
    0 only when they agree. A non-zero exit means something on the
    activation path failed silently and warrants investigation
    before declaring the rotation complete.
+
+### Rotating `mcpproxy-api-key`
+
+`mcpproxy-api-key` is the bearer token that gates mcpproxy's local
+HTTP API (`/api/v1/*`). The opencode wrapper, the memory-sync CLI,
+and any operator preflight commands authenticate against mcpproxy
+with this value. It is NOT mirrored from 1Password — it is
+generated locally and stored directly in the SOPS yaml. Rotate it
+by replacing the value in the encrypted store and re-activating.
+
+1. **Generate a new key.** 32 random bytes, hex-encoded:
+
+   ```sh
+   openssl rand -hex 32
+   ```
+
+   Copy the resulting 64-character hex string. Do not commit it,
+   echo it into a shell history that will be uploaded anywhere,
+   or paste it into chat — the next step is the only durable copy.
+
+2. **Edit the encrypted store.** `sops edit` decrypts in-place,
+   drops you into `$EDITOR`, and re-encrypts on save:
+
+   ```sh
+   sops edit secrets/mcp.<host>.yaml
+   ```
+
+   Replace the existing `mcpproxy-api-key:` value with the
+   newly-generated hex string. Save and exit. `sops` re-encrypts
+   the file against the host's age recipient automatically.
+
+3. **Inspect and commit.** Only the encrypted blob for the
+   rotated value should change:
+
+   ```sh
+   git diff secrets/mcp.<host>.yaml
+   git add secrets/mcp.<host>.yaml
+   git commit -m "secrets(<host>): rotate mcpproxy-api-key"
+   ```
+
+4. **Activate on the host.** Pull, then:
+
+   ```sh
+   sudo darwin-rebuild switch --flake .
+   ```
+
+   The SOPS bridge decrypts the new value and writes it into the
+   login keychain at `service = "mcpproxy"`,
+   `account = "mcpproxy-api-key"`, replacing the previous entry.
+   mcpproxy's launchd agent restarts and picks up the new value
+   via its `${keyring:mcpproxy-api-key}` placeholder.
+
+5. **Verify.** The value visible to mcpproxy should match what is
+   now stored in the keychain:
+
+   ```sh
+   security find-generic-password -s mcpproxy -a mcpproxy-api-key -w
+   ```
+
+   The output is the rotated 64-character hex string. The mcpproxy
+   daemon should also still respond on `/healthz`; clients that
+   present the new key (opencode wrapper, memory-sync CLI) should
+   continue to authenticate successfully.
+
+   If `mcp-verify-secrets` is wired to check the api-key entry,
+   run it as well to catch any drift the manual check missed.
 
 ## Recovery from lost key
 

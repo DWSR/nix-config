@@ -221,7 +221,7 @@
   - _Requirements: 12.4_
   - _Boundary: configurations/common-darwin/sqlite-backup-verify.nix_
 
-- [ ] 12. (P) Update operator-facing secrets documentation
+- [x] 12. (P) Update operator-facing secrets documentation
   - Update `secrets/README.md` rotation docs to reference both keychain accounts (`mcpproxy` for MCP secrets, `nix-config-secrets` for sqlite-backup secrets)
   - Document the new `mcpproxy-api-key` secret with generation instructions (`openssl rand -hex 32`) and the `sops edit secrets/mcp.<host>.yaml` workflow
   - **Observable completion**: `grep mcp-hub secrets/README.md` returns zero non-historical matches; the new `mcpproxy-api-key` generation procedure is documented step-by-step
