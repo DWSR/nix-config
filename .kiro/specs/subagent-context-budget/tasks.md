@@ -137,7 +137,7 @@
   - _Depends: 2.5, 3.3, 5.2_
   - _Requirements: 3.5, 7.1, 8.1, 8.3, 8.5_
   - _Boundary: BudgetModule, AgentRenderer, InstructionProfileRuntime_
-- [ ] 6.2 Integrate host-specific budgets and parity reporting
+- [x] 6.2 Integrate host-specific budgets and parity reporting
   - Merge host-specific agent budgets with the common catalog.
   - Report host-specific MCP/tool surface differences in audit output.
   - Done when common and Shopify host renders both include expected agent budgets and audit output names host-specific surfaces.

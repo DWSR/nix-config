@@ -41,6 +41,10 @@
   "command": "audit",
   "enforcementEnabled": false,
   "host": "all",
+  "hostSpecificSurfaces": {
+    "agents": [],
+    "permissions": []
+  },
   "minimalBaseline": {
     "allowedToolCategories": [
       "clarification",

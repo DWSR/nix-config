@@ -634,6 +634,43 @@ function describePermissionAction(rule) {
   return 'unknown';
 }
 
+function flattenPermissionSurfaces(permissionBudget) {
+  if (!isObject(permissionBudget)) {
+    return [];
+  }
+
+  const surfaces = [];
+  for (const key of Object.keys(permissionBudget).sort()) {
+    const rule = permissionBudget[key];
+    if (isObject(rule)) {
+      for (const subKey of Object.keys(rule).sort()) {
+        surfaces.push(`${key}.${subKey}`);
+      }
+    } else {
+      surfaces.push(key);
+    }
+  }
+  return surfaces;
+}
+
+function buildHostSpecificSurfaces(metadata, agentNames) {
+  if (metadata.host === 'all') {
+    return { agents: [], permissions: [] };
+  }
+
+  const agents = agentNames
+    .filter((name) => metadata.agents[name].hostScope !== 'all')
+    .map((name) => ({
+      name,
+      hostScope: metadata.agents[name].hostScope,
+      permissions: flattenPermissionSurfaces(metadata.agents[name].permissionBudget),
+    }));
+
+  const permissions = [...new Set(agents.flatMap((agent) => agent.permissions))].sort();
+
+  return { agents, permissions };
+}
+
 function buildAgentEntry(name, agent, observedByAgent, baselineMeasured) {
   const observed = observedByAgent !== null
     && isObject(observedByAgent)
@@ -731,6 +768,7 @@ function buildAuditReport(metadata, diagnostic) {
       .filter((a) => a.hostScope !== 'all')
       .map((a) => a.name)
       .sort();
+  const hostSpecificSurfaces = buildHostSpecificSurfaces(metadata, agentNames);
 
   const minimalBaseline = {
     name: metadata.minimalBaseline.name,
@@ -743,6 +781,7 @@ function buildAuditReport(metadata, diagnostic) {
     schemaVersion: 1,
     command: 'audit',
     host: metadata.host,
+    hostSpecificSurfaces,
     enforcementEnabled: metadata.enforcementEnabled,
     minimalBaseline,
     agents,
@@ -831,7 +870,25 @@ function renderAuditReportMarkdown(report) {
     ? '(none)'
     : report.summary.hostSpecificAgents.join(', ');
   sections.push(`- Host-specific agents: ${hostSpecific}`);
+  const hostSpecificPermissions = report.hostSpecificSurfaces.permissions.length === 0
+    ? '(none)'
+    : report.hostSpecificSurfaces.permissions.join(', ');
+  sections.push(`- Host-specific permission surfaces: ${hostSpecificPermissions}`);
   sections.push('');
+
+  if (report.hostSpecificSurfaces.agents.length > 0) {
+    sections.push('## Host-specific surfaces');
+    sections.push('');
+    sections.push(renderMarkdownTable(
+      ['Agent', 'Host scope', 'Permission surfaces'],
+      report.hostSpecificSurfaces.agents.map((agent) => [
+        agent.name,
+        agent.hostScope,
+        agent.permissions.join(', '),
+      ]),
+    ));
+    sections.push('');
+  }
 
   sections.push('## Minimal read-only baseline');
   sections.push('');

@@ -234,6 +234,75 @@ test('buildAuditReport: non-"all" host scope surfaces host-specific agents separ
   }
 });
 
+test('buildAuditReport: reports host-specific agents and declared permission surfaces (R7.3)', () => {
+  const metadata = loadFixture('budget-metadata.json');
+  metadata.host = 'shopify';
+  metadata.agents['stack-captain'] = {
+    name: 'stack-captain',
+    source: 'host-markdown',
+    hostScope: 'shopify',
+    state: { kind: 'enforced', reason: 'host-override' },
+    instructionProfile: 'shopify-stack',
+    permissionBudget: {
+      read: 'allow',
+      glob: 'allow',
+      grep: 'allow',
+      list: 'allow',
+      webfetch: 'allow',
+      lsp: 'allow',
+      bash: { git: 'allow', gh: 'allow' },
+      mcpproxy_retrieve_tools: 'allow',
+      mcpproxy_call_tool_write: 'ask',
+    },
+    capabilityRationale: ['Graphite and GitHub stack operations plus upstream documentation lookup'],
+    smokeClass: 'shopify-stack-plan',
+  };
+  metadata.agents['yb-sleuth'] = {
+    name: 'yb-sleuth',
+    source: 'host-markdown',
+    hostScope: 'shopify',
+    state: { kind: 'enforced', reason: 'host-override' },
+    instructionProfile: 'shopify-yugabyte-readonly',
+    permissionBudget: {
+      read: 'allow',
+      glob: 'allow',
+      grep: 'allow',
+      list: 'allow',
+      webfetch: 'allow',
+      lsp: 'allow',
+      bash: { git: 'allow' },
+    },
+    capabilityRationale: ['repository history inspection and upstream documentation lookup'],
+    smokeClass: 'shopify-source-trace',
+  };
+  const diagnostic = loadFixture('cost-report-valid.json');
+
+  const result = buildAuditReport(metadata, diagnostic);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.summary.hostSpecificAgents, ['stack-captain', 'yb-sleuth']);
+  assert.deepEqual(result.value.hostSpecificSurfaces.agents.map((agent) => agent.name), [
+    'stack-captain',
+    'yb-sleuth',
+  ]);
+  assert.deepEqual(result.value.hostSpecificSurfaces.agents[0].permissions, [
+    'bash.gh',
+    'bash.git',
+    'glob',
+    'grep',
+    'list',
+    'lsp',
+    'mcpproxy_call_tool_write',
+    'mcpproxy_retrieve_tools',
+    'read',
+    'webfetch',
+  ]);
+  for (const permissionKey of ['mcpproxy_retrieve_tools', 'mcpproxy_call_tool_write', 'bash.git', 'bash.gh']) {
+    assert.equal(result.value.hostSpecificSurfaces.permissions.includes(permissionKey), true,
+      `host-specific permission surfaces must include ${permissionKey}`);
+  }
+});
+
 // ---------------------------------------------------------------------
 // Unbudgeted state.
 // ---------------------------------------------------------------------

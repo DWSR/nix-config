@@ -96,6 +96,42 @@ function disabledAgentEscapeHatchExpr() {
   `;
 }
 
+function renderedBudgetMetadataExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      hm = host:
+        (flake.darwinConfigurations.\${host}.extendModules {
+          modules = [
+            ({ ... }: {
+              home-manager.users.brandonmcnama.programs.subagent-context-budget.enforce = true;
+            })
+          ];
+        }).config.home-manager.users.brandonmcnama;
+      metadata = config:
+        builtins.fromJSON config.xdg.configFile.\${config.programs.subagent-context-budget.metadataPath}.text;
+      personal = metadata (hm "Brandons-MacBook-Pro");
+      shopify = metadata (hm "ShopifyLaptop");
+    in
+    {
+      personal = {
+        host = personal.host;
+        agentNames = builtins.attrNames personal.agents;
+        general = personal.agents.general;
+        hasStackCaptain = builtins.hasAttr "stack-captain" personal.agents;
+        hasYbSleuth = builtins.hasAttr "yb-sleuth" personal.agents;
+      };
+      shopify = {
+        host = shopify.host;
+        agentNames = builtins.attrNames shopify.agents;
+        general = shopify.agents.general;
+        stackCaptain = shopify.agents."stack-captain";
+        ybSleuth = shopify.agents."yb-sleuth";
+      };
+    }
+  `;
+}
+
 function moduleIntegrationExpr() {
   return `
     let
@@ -205,6 +241,27 @@ test('per-agent disableBudget marks only that agent unbudgeted and leaves render
   assert.equal(rendered.shopify.hasYbSleuthPermissionOverride, false);
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'ask');
+});
+
+test('rendered metadata is host-aware and filters Shopify-only agents from personal host', () => {
+  const rendered = nixEvalJson(renderedBudgetMetadataExpr());
+
+  assert.equal(rendered.personal.host, 'personal');
+  assert.equal(rendered.personal.agentNames.includes('general'), true);
+  assert.equal(rendered.personal.agentNames.includes('explore'), true);
+  assert.equal(rendered.personal.hasStackCaptain, false);
+  assert.equal(rendered.personal.hasYbSleuth, false);
+  assert.equal(rendered.personal.general.hostScope, 'all');
+  assert.deepEqual(rendered.personal.general.state, { kind: 'enforced', reason: 'default' });
+
+  assert.equal(rendered.shopify.host, 'shopify');
+  assert.equal(rendered.shopify.agentNames.includes('general'), true);
+  assert.equal(rendered.shopify.agentNames.includes('stack-captain'), true);
+  assert.equal(rendered.shopify.agentNames.includes('yb-sleuth'), true);
+  assert.deepEqual(rendered.shopify.stackCaptain.state, { kind: 'enforced', reason: 'host-override' });
+  assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_retrieve_tools, 'allow');
+  assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_call_tool_write, 'ask');
+  assert.deepEqual(rendered.shopify.ybSleuth.permissionBudget.bash, { git: 'allow' });
 });
 
 test('module integration renders plugin metadata and exposes CLI packages', () => {

@@ -49,6 +49,19 @@ let
   isEnforced = agent: agent.state.kind == "enforced";
   isBuiltinAgent = agent: agent.source == "builtin";
   isRenderedMarkdownAgent = agent: builtins.hasAttr agent.name config.programs.opencode.agents;
+  hostHasScopedAgent =
+    scope:
+    lib.any (agent: agent.hostScope == scope && isRenderedMarkdownAgent agent) budgetCatalog.hostAgents;
+  inferredHostScope =
+    if hostHasScopedAgent "shopify" then
+      "shopify"
+    else if hostHasScopedAgent "personal" then
+      "personal"
+    else
+      "personal";
+  currentHostScope = if cfg.hostScope == null then inferredHostScope else cfg.hostScope;
+  agentAppliesToHost =
+    agent: currentHostScope == "all" || agent.hostScope == "all" || agent.hostScope == currentHostScope;
   shouldRenderAgent =
     agent: isEnforced agent && (isBuiltinAgent agent || isRenderedMarkdownAgent agent);
   applyAgentControls =
@@ -57,8 +70,10 @@ let
       controls = cfg.agents.${name} or { };
     in
     if controls.disableBudget or false then agent // { state = unbudgeted; } else agent;
-  effectiveAgents = lib.mapAttrs applyAgentControls budgetCatalog.agents;
+  scopedCatalogAgents = lib.filterAttrs (_: agentAppliesToHost) budgetCatalog.agents;
+  effectiveAgents = lib.mapAttrs applyAgentControls scopedCatalogAgents;
   effectiveMetadata = budgetCatalog.metadata // {
+    host = currentHostScope;
     enforcementEnabled = cfg.enforce;
     agents = effectiveAgents;
   };
@@ -106,6 +121,21 @@ in
       default = "minimal-readonly";
       description = ''
         Agent baseline name used by later audit and validation commands.
+      '';
+    };
+
+    hostScope = lib.mkOption {
+      type = lib.types.nullOr (
+        lib.types.enum [
+          "all"
+          "personal"
+          "shopify"
+        ]
+      );
+      default = null;
+      description = ''
+        Host scope for rendered budget metadata. When unset, the module infers
+        the current host from configured host-specific OpenCode agents.
       '';
     };
 
