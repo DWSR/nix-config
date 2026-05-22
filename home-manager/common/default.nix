@@ -14,6 +14,7 @@
     ./ghostty.nix
     ./git.nix
     ./git-hooks.nix
+    ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
     ./opencode.nix
