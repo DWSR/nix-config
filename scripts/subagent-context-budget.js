@@ -887,6 +887,305 @@ function renderAuditReportMarkdown(report) {
 }
 
 // ---------------------------------------------------------------------
+// ValidationComparator (task 4.3)
+//
+// Compares baseline and post-change CostReportSummary objects produced
+// by `parseReport`. Enforces the ≥40% per-parent-session
+// `subagentDispatch` reduction threshold (R5.4) and surfaces failure
+// modes per design.md's `ValidationFailure` union (~ design.md:550).
+//
+// Residual handling (R5.5): the upstream `parseReport` already strips
+// sentinel keys (`unknown`, `null`, `''`) from the per-agent map and
+// folds them into `residualAgentTokens`. The comparator sums named-
+// agent tokens across sessions for `byAgent` and sums per-session
+// `residualAgentTokens` separately. Residual tokens are NEVER added
+// to a named agent's reduction credit.
+//
+// Smoke-test and plugin self-check inputs (R6.4): optional. When
+// supplied with a failing entry, the comparator appends the
+// corresponding `ValidationFailure` and flips status to `fail`. When
+// absent, no smoke or plugin failure is invented (smoke enforcement is
+// task 5.3's responsibility).
+//
+// Determinism: report keys are alphabetised via `stableSortKeys`; no
+// wall-clock or environment-dependent values appear.
+// ---------------------------------------------------------------------
+
+const VALIDATION_THRESHOLD_PCT = 40;
+
+/**
+ * Sum a CostReportSummary's per-session tokens and residual tokens,
+ * and aggregate per-named-agent tokens across every session. The
+ * upstream parser already discards residual sentinel keys, so the
+ * map here only contains named agents.
+ *
+ * @param {{ sessions: Array<object> }} summary
+ * @returns {{
+ *   sessionCount: number,
+ *   totalTokens: number,
+ *   tokensPerParent: number,
+ *   byAgent: Record<string, number>,
+ *   residualTokens: number,
+ * }}
+ */
+function aggregateSummary(summary) {
+  const sessions = summary.sessions;
+  const sessionCount = sessions.length;
+  let totalTokens = 0;
+  let residualTokens = 0;
+  const byAgent = {};
+  for (const ses of sessions) {
+    totalTokens += ses.subagentDispatchTokens;
+    residualTokens += ses.residualAgentTokens;
+    if (ses.subagentDispatchByAgent !== null && isObject(ses.subagentDispatchByAgent)) {
+      for (const [name, value] of Object.entries(ses.subagentDispatchByAgent)) {
+        byAgent[name] = (byAgent[name] || 0) + value;
+      }
+    }
+  }
+  const tokensPerParent = sessionCount === 0 ? 0 : totalTokens / sessionCount;
+  return {
+    sessionCount,
+    totalTokens,
+    tokensPerParent,
+    byAgent,
+    residualTokens,
+  };
+}
+
+/**
+ * Compute the reduction percentage from baseline to post per parent.
+ * Returns 0 when baseline is zero (the caller must already have
+ * raised a missing-diagnostic-field failure for that case).
+ *
+ * @param {number} baseline
+ * @param {number} post
+ * @returns {number}
+ */
+function computeReductionPct(baseline, post) {
+  if (baseline <= 0) return 0;
+  return ((baseline - post) / baseline) * 100;
+}
+
+/**
+ * Build the per-agent reduction map. Every agent appearing on either
+ * side is reported; the absent side reports 0 tokens. Residual buckets
+ * are excluded by construction (the parser strips sentinel keys
+ * before tokens reach this stage).
+ *
+ * @param {Record<string, number>} baselineByAgent
+ * @param {Record<string, number>} postByAgent
+ * @returns {Record<string, { baselineTokens: number, postTokens: number, reductionPct: number }>}
+ */
+function buildAgentReductions(baselineByAgent, postByAgent) {
+  const names = new Set([
+    ...Object.keys(baselineByAgent),
+    ...Object.keys(postByAgent),
+  ]);
+  const out = {};
+  for (const name of [...names].sort()) {
+    const baselineTokens = baselineByAgent[name] || 0;
+    const postTokens = postByAgent[name] || 0;
+    out[name] = {
+      baselineTokens,
+      postTokens,
+      reductionPct: computeReductionPct(baselineTokens, postTokens),
+    };
+  }
+  return out;
+}
+
+/**
+ * Compare baseline and post `CostReportSummary` objects and return a
+ * deterministic `ValidationReport` per design.md (~ lines 530-554).
+ *
+ * Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.4.
+ *
+ * @param {{ sessions: Array<object>, global: object }} baseline
+ * @param {{ sessions: Array<object>, global: object }} post
+ * @param {{
+ *   smokeResults?: Array<{ agentName: string, status: string, detail?: string }>,
+ *   pluginSelfCheck?: { status: string, detail?: string },
+ * }} [options]
+ * @returns {object} a deterministic ValidationReport
+ */
+function compareReports(baseline, post, options) {
+  const opts = isObject(options) ? options : {};
+
+  const baselineAgg = aggregateSummary(baseline);
+  const postAgg = aggregateSummary(post);
+
+  const failures = [];
+
+  // R5.6: missing-diagnostic-field surfaces empty sessions on either side
+  // and zero-baseline tokens (no comparison anchor).
+  if (baselineAgg.sessionCount === 0) {
+    failures.push({ kind: 'missing-diagnostic-field', field: 'baseline.sessions' });
+  }
+  if (postAgg.sessionCount === 0) {
+    failures.push({ kind: 'missing-diagnostic-field', field: 'post.sessions' });
+  }
+  if (baselineAgg.sessionCount > 0 && baselineAgg.tokensPerParent === 0) {
+    failures.push({
+      kind: 'missing-diagnostic-field',
+      field: 'baseline.subagentDispatch',
+    });
+  }
+
+  const reductionPct = computeReductionPct(
+    baselineAgg.tokensPerParent,
+    postAgg.tokensPerParent,
+  );
+
+  // R5.4: threshold enforcement only meaningful when baseline anchor exists.
+  const baselineUsable = baselineAgg.sessionCount > 0 && baselineAgg.tokensPerParent > 0;
+  const postUsable = postAgg.sessionCount > 0;
+  if (baselineUsable && postUsable && reductionPct < VALIDATION_THRESHOLD_PCT) {
+    failures.push({
+      kind: 'threshold-not-met',
+      actualPct: reductionPct,
+      requiredPct: VALIDATION_THRESHOLD_PCT,
+    });
+  }
+
+  // R6.4: surface smoke failures when caller supplied them.
+  if (Array.isArray(opts.smokeResults)) {
+    const sorted = [...opts.smokeResults].sort((a, b) => {
+      const an = isObject(a) && isNonEmptyString(a.agentName) ? a.agentName : '';
+      const bn = isObject(b) && isNonEmptyString(b.agentName) ? b.agentName : '';
+      return an.localeCompare(bn);
+    });
+    for (const result of sorted) {
+      if (isObject(result) && result.status === 'fail' && isNonEmptyString(result.agentName)) {
+        failures.push({ kind: 'smoke-failure', agentName: result.agentName });
+      }
+    }
+  }
+
+  // Plugin self-check surfacing (wired by task 6.1; comparator only
+  // forwards the structured input here).
+  if (isObject(opts.pluginSelfCheck) && opts.pluginSelfCheck.status === 'failed') {
+    failures.push({
+      kind: 'plugin-self-check-failed',
+      detail: isNonEmptyString(opts.pluginSelfCheck.detail)
+        ? opts.pluginSelfCheck.detail
+        : 'plugin self-check failed',
+    });
+  }
+
+  const byAgent = buildAgentReductions(baselineAgg.byAgent, postAgg.byAgent);
+
+  const report = {
+    schemaVersion: 1,
+    command: 'validate',
+    status: failures.length === 0 ? 'pass' : 'fail',
+    reductionPct,
+    requiredReductionPct: VALIDATION_THRESHOLD_PCT,
+    baselineTokensPerParent: baselineAgg.tokensPerParent,
+    postTokensPerParent: postAgg.tokensPerParent,
+    baselineSessionCount: baselineAgg.sessionCount,
+    postSessionCount: postAgg.sessionCount,
+    byAgent,
+    residualAgentTokens: postAgg.residualTokens,
+    baselineResidualAgentTokens: baselineAgg.residualTokens,
+    failures,
+  };
+
+  return stableSortKeys(report);
+}
+
+function buildValidationReport(baseline, post, options) {
+  return compareReports(baseline, post, options);
+}
+
+/**
+ * Deterministic JSON renderer for ValidationReport (mirrors
+ * `renderAuditReportJson` — keys are already sorted, so
+ * `JSON.stringify` preserves order).
+ *
+ * @param {object} report
+ * @returns {string}
+ */
+function renderValidationReportJson(report) {
+  return JSON.stringify(report, null, 2);
+}
+
+function describeFailure(failure) {
+  switch (failure.kind) {
+    case 'threshold-not-met':
+      return `threshold-not-met: actual ${failure.actualPct.toFixed(2)}% < required ${failure.requiredPct}%`;
+    case 'missing-diagnostic-field':
+      return `missing-diagnostic-field: ${failure.field}`;
+    case 'smoke-failure':
+      return `smoke-failure: ${failure.agentName}`;
+    case 'plugin-self-check-failed':
+      return `plugin-self-check-failed: ${failure.detail}`;
+    default:
+      return JSON.stringify(failure);
+  }
+}
+
+/**
+ * Deterministic Markdown renderer. Derived from the same
+ * ValidationReport object as the JSON output. No timestamps or
+ * wall-clock fields appear.
+ *
+ * @param {object} report
+ * @returns {string}
+ */
+function renderValidationReportMarkdown(report) {
+  const lines = [];
+  lines.push('# Subagent Context Budget — Validation Report');
+  lines.push('');
+
+  lines.push('## Overview');
+  lines.push('');
+  lines.push(`- Status: ${report.status}`);
+  lines.push(`- Reduction: ${report.reductionPct.toFixed(2)}% (required: ${report.requiredReductionPct}%)`);
+  lines.push(`- Baseline tokens / parent session: ${report.baselineTokensPerParent}`);
+  lines.push(`- Post tokens / parent session: ${report.postTokensPerParent}`);
+  lines.push(`- Baseline session count: ${report.baselineSessionCount}`);
+  lines.push(`- Post session count: ${report.postSessionCount}`);
+  lines.push(`- Residual tokens (post): ${report.residualAgentTokens}`);
+  lines.push(`- Residual tokens (baseline): ${report.baselineResidualAgentTokens}`);
+  lines.push('');
+
+  lines.push('## Per-agent reduction');
+  lines.push('');
+  const agentNames = Object.keys(report.byAgent).sort();
+  if (agentNames.length === 0) {
+    lines.push('- (no named agents found in either report)');
+  } else {
+    lines.push(renderMarkdownTable(
+      ['Agent', 'Baseline tokens', 'Post tokens', 'Reduction %'],
+      agentNames.map((name) => {
+        const entry = report.byAgent[name];
+        return [
+          name,
+          String(entry.baselineTokens),
+          String(entry.postTokens),
+          entry.reductionPct.toFixed(2),
+        ];
+      }),
+    ));
+  }
+  lines.push('');
+
+  lines.push('## Failures');
+  lines.push('');
+  if (report.failures.length === 0) {
+    lines.push('- (none)');
+  } else {
+    for (const failure of report.failures) {
+      lines.push(`- ${describeFailure(failure)}`);
+    }
+  }
+  lines.push('');
+
+  return `${lines.join('\n').replace(/\n+$/, '')}\n`;
+}
+
+// ---------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------
 
@@ -960,13 +1259,116 @@ function runAuditCommand(rest) {
   return 0;
 }
 
+function parseValidateFlags(rest) {
+  const flags = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (
+      arg === '--baseline'
+      || arg === '--post'
+      || arg === '--metadata'
+      || arg === '--format'
+    ) {
+      flags[arg.slice(2)] = rest[i + 1];
+      i += 1;
+    }
+  }
+  return flags;
+}
+
+function runValidateCommand(rest) {
+  const flags = parseValidateFlags(rest);
+  if (!isNonEmptyString(flags.baseline)) {
+    writeStderr('validate: missing required --baseline <path>\n');
+    return 1;
+  }
+  if (!isNonEmptyString(flags.post)) {
+    writeStderr('validate: missing required --post <path>\n');
+    return 1;
+  }
+
+  let baselineJson;
+  try {
+    baselineJson = JSON.parse(fs.readFileSync(flags.baseline, 'utf8'));
+  } catch (err) {
+    writeStderr(`validate: failed to read baseline file ${flags.baseline}: ${err.message}\n`);
+    return 1;
+  }
+
+  let postJson;
+  try {
+    postJson = JSON.parse(fs.readFileSync(flags.post, 'utf8'));
+  } catch (err) {
+    writeStderr(`validate: failed to read post file ${flags.post}: ${err.message}\n`);
+    return 1;
+  }
+
+  // The optional --metadata flag is reserved for richer rendering /
+  // per-agent labels in a future patch; reading it now lets the
+  // operator pass it without a CLI error. Validation against
+  // `validateBudgetMetadata` ensures bad metadata still surfaces.
+  if (isNonEmptyString(flags.metadata)) {
+    let metadataJson;
+    try {
+      metadataJson = JSON.parse(fs.readFileSync(flags.metadata, 'utf8'));
+    } catch (err) {
+      writeStderr(`validate: failed to read metadata file ${flags.metadata}: ${err.message}\n`);
+      return 1;
+    }
+    const metadataValidation = validateBudgetMetadata(metadataJson);
+    if (!metadataValidation.ok) {
+      writeStderr(`validate: invalid-metadata\n${formatValidationErrors(metadataValidation.errors)}\n`);
+      return 1;
+    }
+  }
+
+  const baselineParsed = parseReport(baselineJson);
+  if (!baselineParsed.ok) {
+    const e = baselineParsed.error;
+    if (e.kind === 'pricing-drift') {
+      writeStderr(`validate: pricing-drift in baseline: ${e.detail}\n`);
+    } else if (e.kind === 'missing-field') {
+      writeStderr(`validate: missing-field in baseline: ${e.field}\n`);
+    } else if (e.kind === 'invalid-shape') {
+      writeStderr(`validate: invalid-shape in baseline: ${e.field}\n`);
+    } else {
+      writeStderr(`validate: ${JSON.stringify(e)}\n`);
+    }
+    return 1;
+  }
+
+  const postParsed = parseReport(postJson);
+  if (!postParsed.ok) {
+    const e = postParsed.error;
+    if (e.kind === 'pricing-drift') {
+      writeStderr(`validate: pricing-drift in post: ${e.detail}\n`);
+    } else if (e.kind === 'missing-field') {
+      writeStderr(`validate: missing-field in post: ${e.field}\n`);
+    } else if (e.kind === 'invalid-shape') {
+      writeStderr(`validate: invalid-shape in post: ${e.field}\n`);
+    } else {
+      writeStderr(`validate: ${JSON.stringify(e)}\n`);
+    }
+    return 1;
+  }
+
+  const report = compareReports(baselineParsed.value, postParsed.value);
+
+  if (flags.format === 'markdown') {
+    writeStdout(renderValidationReportMarkdown(report));
+  } else {
+    writeStdout(`${renderValidationReportJson(report)}\n`);
+  }
+  return report.status === 'pass' ? 0 : 1;
+}
+
 function usage() {
   return [
     'Usage: subagent-context-budget <command> [options]',
     '',
     'Commands:',
     '  audit        Render an audit report from budget metadata and a diagnostic JSON',
-    '  validate     Placeholder for baseline/post diagnostic validation reports',
+    '  validate     Compare baseline and post diagnostic reports and render a validation report',
     '  smoke-plan   Placeholder for agent smoke-plan report generation',
     '',
     'Options:',
@@ -1015,6 +1417,10 @@ function main(argv) {
     return runAuditCommand(args.slice(1));
   }
 
+  if (command === 'validate') {
+    return runValidateCommand(args.slice(1));
+  }
+
   writeStdout(`${JSON.stringify(placeholderReport(command), null, 2)}\n`);
   return 0;
 }
@@ -1022,6 +1428,8 @@ function main(argv) {
 module.exports = {
   COMMANDS,
   buildAuditReport,
+  buildValidationReport,
+  compareReports,
   detectPricingDrift,
   main,
   normalizeDispatchSummary,
@@ -1030,6 +1438,8 @@ module.exports = {
   placeholderReport,
   renderAuditReportJson,
   renderAuditReportMarkdown,
+  renderValidationReportJson,
+  renderValidationReportMarkdown,
   stableSortKeys,
   usage,
   validateAgentBudget,

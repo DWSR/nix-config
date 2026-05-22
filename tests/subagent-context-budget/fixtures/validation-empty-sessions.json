@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "privacy": {
+    "includeContent": false,
+    "promptBodiesIncluded": false,
+    "toolOutputBodiesIncluded": false
+  },
+  "global": {
+    "cost": {
+      "subagentDispatch": 0,
+      "subagentDispatchByAgent": null
+    },
+    "findings": []
+  },
+  "projects": [],
+  "findings": []
+}

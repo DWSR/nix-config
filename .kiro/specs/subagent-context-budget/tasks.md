@@ -92,7 +92,7 @@
   - _Depends: 2.3, 4.1_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 4.2, 4.3, 7.3_
   - _Boundary: BudgetCLI_
-- [ ] 4.3 Build the validation comparator
+- [x] 4.3 Build the validation comparator
   - Compare baseline and post-change reports by parent-session `subagentDispatch` tokens.
   - Enforce the 40 percent reduction threshold and exclude residual buckets from named-agent credit.
   - Done when validation fixtures produce pass, threshold-failure, missing-field, and residual-heavy reports.

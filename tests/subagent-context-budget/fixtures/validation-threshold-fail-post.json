@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "schemaVersion": 2,
+  "privacy": {
+    "includeContent": false,
+    "promptBodiesIncluded": false,
+    "toolOutputBodiesIncluded": false
+  },
+  "global": {
+    "cost": {
+      "subagentDispatch": 1200,
+      "subagentDispatchByAgent": {
+        "explore": 700,
+        "general": 350,
+        "unknown": 150
+      }
+    },
+    "findings": []
+  },
+  "projects": [
+    {
+      "project": "/repo/example",
+      "sessions": [
+        {
+          "sessionId": "s-tf-1",
+          "project": "/repo/example",
+          "cost": {
+            "subagentDispatch": 800,
+            "subagentDispatchByAgent": {
+              "explore": 700,
+              "unknown": 100
+            }
+          },
+          "findings": []
+        },
+        {
+          "sessionId": "s-tf-2",
+          "project": "/repo/example",
+          "cost": {
+            "subagentDispatch": 400,
+            "subagentDispatchByAgent": {
+              "general": 350,
+              "unknown": 50
+            }
+          },
+          "findings": []
+        }
+      ]
+    }
+  ],
+  "findings": []
+}

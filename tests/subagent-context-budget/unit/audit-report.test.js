@@ -550,13 +550,11 @@ test('main(audit): emitted JSON does not include any prompt or tool-output body 
   assert.equal(stdout.includes('SECRET-TOOL-OUTPUT-PAYLOAD'), false);
 });
 
-test('main(validate) and main(smoke-plan): still emit deterministic placeholders (task 4.3+/5.* not implemented)', () => {
-  for (const cmd of ['validate', 'smoke-plan']) {
-    const { exitCode, stdout, stderr } = captureMain([cmd]);
-    assert.equal(stderr, '');
-    assert.equal(exitCode, 0);
-    const report = JSON.parse(stdout);
-    assert.equal(report.command, cmd);
-    assert.equal(report.status, 'placeholder');
-  }
+test('main(smoke-plan): still emits a deterministic placeholder (task 5.* not implemented)', () => {
+  const { exitCode, stdout, stderr } = captureMain(['smoke-plan']);
+  assert.equal(stderr, '');
+  assert.equal(exitCode, 0);
+  const report = JSON.parse(stdout);
+  assert.equal(report.command, 'smoke-plan');
+  assert.equal(report.status, 'placeholder');
 });

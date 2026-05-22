@@ -52,28 +52,26 @@ test('main(--help): prints command surface and exits 0', () => {
   }
 });
 
-// `audit` is no longer a placeholder as of task 4.2; see
-// `audit-report.test.js` for the real audit-report contract. The
-// validate and smoke-plan commands remain placeholders pending tasks
-// 4.3 and 5.*.
-for (const command of ['validate', 'smoke-plan']) {
-  test(`main(${command}): exposes a deterministic placeholder`, () => {
-    const { exitCode, stdout, stderr } = captureMain([command]);
+// `audit` is no longer a placeholder as of task 4.2 and `validate` is
+// no longer a placeholder as of task 4.3 — see `audit-report.test.js`
+// and `validation-comparator.test.js` for the real contracts. The
+// smoke-plan command remains a placeholder pending task 5.*.
+test('main(smoke-plan): exposes a deterministic placeholder', () => {
+  const { exitCode, stdout, stderr } = captureMain(['smoke-plan']);
 
-    assert.equal(exitCode, 0);
-    assert.equal(stderr, '');
+  assert.equal(exitCode, 0);
+  assert.equal(stderr, '');
 
-    const report = JSON.parse(stdout);
-    assert.equal(report.command, command);
-    assert.equal(report.status, 'placeholder');
-    assert.equal(report.schemaVersion, 1);
-    assert.deepEqual(report.next, []);
+  const report = JSON.parse(stdout);
+  assert.equal(report.command, 'smoke-plan');
+  assert.equal(report.status, 'placeholder');
+  assert.equal(report.schemaVersion, 1);
+  assert.deepEqual(report.next, []);
 
-    const serialized = JSON.stringify(report);
-    assert.equal(serialized.includes('prompt'), false);
-    assert.equal(serialized.includes('toolOutput'), false);
-  });
-}
+  const serialized = JSON.stringify(report);
+  assert.equal(serialized.includes('prompt'), false);
+  assert.equal(serialized.includes('toolOutput'), false);
+});
 
 test('main(audit): without required flags exits 1 with a named-flag error (no placeholder)', () => {
   const { exitCode, stdout, stderr } = captureMain(['audit']);
