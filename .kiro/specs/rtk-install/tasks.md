@@ -17,7 +17,7 @@
   - _Requirements: 1.2, 4.4, 7.1_
   - _Boundary: Smoke and Tests_
 
-- [ ] 1.3 Add the RTK Home Manager module scaffold
+- [x] 1.3 Add the RTK Home Manager module scaffold
   - Define the OpenCode RTK module with host default state, package exposure, metadata path, usage-tag contract, and smoke-test package option.
   - Add the OpenCode dependency assertion so evaluation fails with an actionable message if OpenCode is disabled.
   - Import and enable the module from the common Home Manager configuration so both target hosts receive the integration surface.
