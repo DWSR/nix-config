@@ -142,11 +142,9 @@ Architecture integration:
 ```text
 home-manager/common/
 ├── default.nix                         # Import and enable opencode-rtk
-├── opencode-rtk.nix                    # RTK HM module, state contract, plugin install
-├── opencode-plugins/
-│   └── rtk.ts                          # OpenCode plugin entry and rewrite logic
-└── opencode-rtk/
-    └── README.md                       # Operator guide for restart and overrides
+├── opencode-rtk.nix                    # RTK HM module, state contract, plugin install, runtime-rendered operator README
+└── opencode-plugins/
+    └── rtk.ts                          # OpenCode plugin entry and rewrite logic
 
 scripts/
 └── rtk-opencode-smoke-test.nix         # Runtime verifier package
