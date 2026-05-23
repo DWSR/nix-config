@@ -115,7 +115,7 @@
   - _Requirements: 1.2, 1.4, 3.1, 4.2, 4.4, 5.1, 5.2, 5.3, 5.4, 7.1, 7.2, 7.5_
   - _Boundary: Smoke and Tests_
 
-- [ ] 5.4 Integrate RTK tests into repository checks
+- [x] 5.4 Integrate RTK tests into repository checks
   - Add the RTK test suite to the repo's existing check flow without weakening existing checks.
   - Ensure the new checks exercise the same Node/Nix conventions as existing OpenCode plugin tests.
   - Completed state: `nix flake check` includes RTK tests and still runs existing checks.

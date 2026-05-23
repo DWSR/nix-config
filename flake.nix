@@ -234,6 +234,24 @@
                 touch $out
               '';
 
+          rtk-opencode-tests =
+            pkgs.runCommand "rtk-opencode-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --experimental-strip-types --test tests/rtk-opencode/*.test.js tests/rtk-opencode/*.test.ts
+                touch $out
+              '';
+
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             package = pkgs.prek;
