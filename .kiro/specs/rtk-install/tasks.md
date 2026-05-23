@@ -64,7 +64,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 6.8, 7.3, 7.4_
   - _Boundary: RTK Plugin_
 
-- [ ] 3.3 Install the plugin through the RTK module
+- [x] 3.3 Install the plugin through the RTK module
   - Deploy the plugin under the OpenCode local plugin scan path with Home Manager instead of running `rtk init`.
   - Ensure removing or disabling the module removes the managed plugin surface without extra cleanup.
   - Completed state: a rendered Home Manager config contains the RTK plugin file when enabled and omits it when the module is disabled.

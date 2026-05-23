@@ -156,9 +156,11 @@ in
       cfg.smokeTestPackage
     ];
 
-    xdg.configFile.${cfg.metadataPath}.text = builtins.toJSON rtkMetadata;
-
-    xdg.configFile.${operatorGuidePath}.text = operatorGuide;
+    xdg.configFile = {
+      ${cfg.metadataPath}.text = builtins.toJSON rtkMetadata;
+      ${pluginPath}.source = ./opencode-plugins/rtk.ts;
+      ${operatorGuidePath}.text = operatorGuide;
+    };
 
     # Resolver contract for `.kiro/specs/rtk-install/design.md` Runtime State.
     # This snippet is embedded into the OpenCode wrapper with makeWrapper
