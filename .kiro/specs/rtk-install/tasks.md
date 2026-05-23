@@ -90,7 +90,7 @@
   - _Boundary: RTK Module, State Resolver_
 
 - [ ] 5. Add validation coverage
-- [ ] 5.1 Add plugin unit tests for state and routing
+- [x] 5.1 Add plugin unit tests for state and routing
   - Cover enabled, disabled, missing RTK, unsafe telemetry, invalid command shape, native tool pass-through, Bash/shell rewrite, and rewrite failure cases.
   - Assert local logs contain reason codes but not full command output.
   - Completed state: the plugin test suite fails if native tools are routed, if missing RTK silently enables routing, or if rewrite failure mutates the command.

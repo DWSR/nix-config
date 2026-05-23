@@ -226,14 +226,19 @@ describe("RTK plugin command rewrite", () => {
         return { ok: true, command: "rtk should-not-run", changed: true }
       },
     })
-    const output = { args: { command: "read secret" } }
+    for (const tool of ["Read", "Grep", "Glob", "WebFetch", "Task", "LSP", "unknown"]) {
+      const output = {
+        args: { command: `${tool} secret`, pattern: "*.ts" },
+        result: { output: `${tool} output` },
+      }
+      const originalOutput = structuredClone(output)
 
-    await hook({ tool: "Read" }, output)
-    await hook({ tool: "Glob" }, output)
-    await hook({ tool: "unknown" }, output)
+      await hook({ tool }, output)
+
+      assert.deepEqual(output, originalOutput)
+    }
 
     assert.deepEqual(calls, [])
-    assert.equal(output.args.command, "read secret")
   })
 
   it("bypasses missing or non-string command shapes and logs a local reason", async () => {
