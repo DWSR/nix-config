@@ -98,7 +98,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.2, 5.2, 5.3, 5.4, 6.8, 7.1, 7.2, 7.3, 7.4_
   - _Boundary: RTK Plugin, Smoke and Tests_
 
-- [ ] 5.2 Add Home Manager render and Shopify tag tests
+- [x] 5.2 Add Home Manager render and Shopify tag tests
   - Verify plugin file rendering, metadata rendering, wrapper env exports, OpenCode peer assertion, host default override, and Shopify usage tag values.
   - Cover enabled, disabled, and per-launch override tag states for the Shopify configuration.
   - Assert the integration introduces no writer to the OpenCode session database or historical session data path.
