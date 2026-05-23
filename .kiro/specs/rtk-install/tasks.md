@@ -36,7 +36,7 @@
   - _Requirements: 3.2, 3.5, 3.6, 3.7, 5.2, 5.3, 6.2, 6.6, 7.1_
   - _Boundary: State Resolver, RTK Module_
 
-- [ ] 2.2 Render RTK metadata and operator guidance
+- [x] 2.2 Render RTK metadata and operator guidance
   - Render local metadata that records package identity, source identity, default state, env names, telemetry env, and plugin path.
   - Add operator-facing guidance for restart behavior, host defaults, per-launch overrides, rollback, and before/after measurement.
   - Keep generated state and guidance local to the host and repository-managed config.
