@@ -81,7 +81,7 @@
   - _Requirements: 3.1, 6.2, 6.3, 6.4, 6.5, 6.6_
   - _Boundary: Shopify Integration, State Resolver_
 
-- [ ] 4.2 Preserve both-host behavior and host override semantics
+- [x] 4.2 Preserve both-host behavior and host override semantics
   - Keep common enablement active for both target hosts while allowing a host to set RTK disabled by default.
   - Ensure a host default of disabled still permits a per-launch enable override when the package and plugin are available.
   - Completed state: host renders prove Shopify and personal configurations can diverge in default RTK state without duplicating package or plugin logic.
