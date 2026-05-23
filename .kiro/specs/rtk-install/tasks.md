@@ -107,7 +107,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 3.1, 3.4, 3.5, 3.6, 3.7, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.5_
   - _Boundary: RTK Module, Shopify Integration, Smoke and Tests_
 
-- [ ] 5.3 Complete the RTK OpenCode smoke verifier
+- [x] 5.3 Complete the RTK OpenCode smoke verifier
   - Extend the smoke verifier to check RTK binary availability, version/source identity, plugin file presence, metadata contents, telemetry-disable env, and effective state contract.
   - Use actionable failure labels consistent with existing smoke tests.
   - Completed state: the smoke command exits non-zero with a named failure when the binary, plugin, metadata, telemetry posture, or state contract is wrong.

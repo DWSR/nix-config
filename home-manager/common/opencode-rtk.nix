@@ -15,7 +15,7 @@ let
     packageVersion = cfg.package.version;
     sourceOwner = cfg.package.src.owner;
     sourceRepo = cfg.package.src.repo;
-    sourceRev = cfg.package.src.rev or cfg.package.src.tag;
+    sourceRev = cfg.package.src.tag or cfg.package.src.rev;
     inherit (cfg) defaultEnabled;
     overrideEnv = "OPENCODE_RTK";
     effectiveEnv = "OPENCODE_RTK_EFFECTIVE";

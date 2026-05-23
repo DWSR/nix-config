@@ -199,8 +199,10 @@ test('both hosts render RTK package, plugin, metadata, wrapper env, guide, and s
     assert.equal(host.metadataTextPresent, true);
     assert.equal(host.metadata.feature, 'rtk-install');
     assert.equal(host.metadata.packageName, 'rtk');
+    assert.equal(host.metadata.packageVersion, '0.40.0');
     assert.equal(host.metadata.sourceOwner, 'rtk-ai');
     assert.equal(host.metadata.sourceRepo, 'rtk');
+    assert.equal(host.metadata.sourceRev, 'v0.40.0');
     assert.equal(host.metadata.defaultEnabled, true);
     assert.equal(host.metadata.overrideEnv, 'OPENCODE_RTK');
     assert.equal(host.metadata.effectiveEnv, 'OPENCODE_RTK_EFFECTIVE');
