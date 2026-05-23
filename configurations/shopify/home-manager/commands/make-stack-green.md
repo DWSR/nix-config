@@ -4,7 +4,7 @@ description: Autonomously fix CI failures and address bot review comments across
 
 # Make Stack Green
 
-Autonomously process a Graphite PR stack from bottom to top, fixing CI failures and addressing bot review comments on each PR until the entire stack is green.
+Autonomously process a Graphite PR stack from bottom to top, fixing CI failures and addressing bot review comments on each PR until every actionable check is green.
 
 ## Usage
 
@@ -81,12 +81,12 @@ For each PR:
 
 1. Invoke `github:pull_request_read` (via `call_tool_read`) with `args: { method: "get_status", ... }` to get the CI status of the PR's head commit.
 
-2. If all checks pass: skip to Step 1b.
+2. If all actionable checks pass: skip to Step 1b. Ignore the `Graphite Mergeability Check`; it is expected to stay pending or red until all other checks pass and all CODEOWNERS approvals are present.
 
-3. If any checks fail:
+3. If any actionable checks fail:
 
 **Analyze the failure:**
-- Identify the failing check(s) from the commit status.
+- Identify the failing actionable check(s) from the commit status.
 - Invoke `github:get_job_logs` (via `call_tool_read`) with `args: { failed_only: true, run_id: <id>, ... }` to get detailed failure logs.
 - Read the logs to identify the root cause.
 
@@ -170,26 +170,26 @@ For each PR:
 
 #### Step 1d: Verify this PR is green
 
-1. Check CI status — all checks must pass.
+1. Check CI status — all actionable checks must pass. Ignore `Graphite Mergeability Check`; do not wait on it or treat it as a failure to fix.
 2. Check "PR Review Bot Comments Addressed" — must be success or not present.
 3. Check review threads — zero unresolved bot comment threads.
 4. If CI broke from bot-comment code fixes: loop back to Step 1a.
 5. If new bot comments appeared (from code pushes): loop back to Step 1b.
-6. If everything is green: move to the next PR up the stack.
+6. If every actionable gate is green: move to the next PR up the stack.
 
 ### Step 2: Final verification
 
 After all PRs have been processed:
 
 1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt state" }` to confirm the stack is clean.
-2. For each PR: verify CI green + zero unresolved bot threads.
+2. For each PR: verify actionable CI green + zero unresolved bot threads, excluding `Graphite Mergeability Check` from the green calculation.
 3. If any PR still has issues: report which ones and what's remaining.
 
 ### Step 3: Report
 
 Present a summary including:
 
-- **Stack overview**: each PR with final CI status and unresolved thread count
+- **Stack overview**: each PR with final actionable CI status and unresolved thread count; note `Graphite Mergeability Check` separately if it is the only remaining blocker
 - **Changes made**: per-PR list of fixes applied (CI fixes and bot comment resolutions)
 - **Comments thumbs-downed**: any bot comments that were reacted to with 👎 as not applicable
 - **Large changes deferred**: any findings that were presented to the user instead of fixed autonomously
@@ -215,6 +215,7 @@ Present a summary including:
 - **Bottom-up processing is critical.** Fixes on lower PRs propagate to upper ones via `gt modify`'s automatic restack. Starting from the top would cause cascading conflicts.
 - **`gt modify` automatically restacks.** Unlike `git commit --amend` which requires a separate `gt restack`, `gt modify` amends the commit AND restacks all upstack branches in one operation.
 - **The "PR Review Bot Comments Addressed" check is the gate for binks.** Use this status to determine if binks is still reviewing (pending/in_progress) or has completed (success/failure). Don't process bot comments while binks is still reviewing — new comments may appear.
+- **Ignore `Graphite Mergeability Check` while driving the stack green.** It depends on every other check being green plus all CODEOWNERS approvals, so it will not become green during the autonomous CI/bot-comment loop. Report it only if it remains the sole blocker after everything else is ready for human approval.
 - **Copilot reviews are requested upfront** but processed like any other bot comment. Copilot's comments appear as review comments from `copilot[bot]` and follow the same address/resolve workflow.
 - **The peer review pattern** (Agent 1 implements, Agent 2 reviews) applies to every code change, both CI fixes and bot comment fixes. This prevents scope creep and catches side effects.
 - **Reactions (👎) require the `gh` CLI** because the GitHub MCP server does not expose a reactions tool. Use `gh api repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions -f content="-1"` via bash.
