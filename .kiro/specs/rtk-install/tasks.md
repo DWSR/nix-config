@@ -9,7 +9,7 @@
   - _Requirements: 1.1, 1.4, 4.1, 4.2, 4.3, 4.4, 5.1_
   - _Boundary: RTK Package_
 
-- [ ] 1.2 Add the RTK smoke-test package scaffold
+- [x] 1.2 Add the RTK smoke-test package scaffold
   - Create the runtime verifier package entrypoint and failure-label conventions before the Home Manager module references it.
   - Include initial checks for command availability and metadata path inputs, with deeper RTK-specific checks added after integration is wired.
   - Completed state: the smoke-test package builds and can emit a named failure for a missing required input without depending on the final module.
