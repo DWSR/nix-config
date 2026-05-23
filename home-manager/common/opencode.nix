@@ -118,15 +118,13 @@
       # bypassed at login (R8.5).
       #
       # Quoting note: this snippet is composed into the opencode wrapper
-      # via `wrapProgram ... --run STR`, where STR is wrapped in shell
-      # single-quotes by makeWrapper. A single quote anywhere inside the
-      # snippet would close the outer single-quoted string and break
-      # wrapper composition (see
+      # via `wrapProgram ... --run STR`. The joined wrapperCommands value
+      # is shell-escaped with `lib.escapeShellArg` before the builder shell
+      # sees it, so apostrophes in snippet comments cannot break wrapper
+      # composition (see
       # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
       # and design.md L711-713). Use double quotes (with backslash-
-      # escaped inner double quotes where needed) throughout. The
-      # cavemem probe in `home-manager/common/cavemem.nix` follows the
-      # same convention.
+      # escaped inner double quotes where needed) for runtime shell values.
       ''
         mcpproxy_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || mcpproxy_api_key=""
         if [ -z "$mcpproxy_api_key" ]; then
@@ -205,7 +203,7 @@
         postBuild = ''
           wrapProgram $out/bin/opencode \
             --suffix PATH : ${lib.makeBinPath config.home.opencode.lspPackages} \
-            --run '${lib.concatStringsSep "\n" config.home.opencode.wrapperCommands}'
+            --run ${lib.escapeShellArg (lib.concatStringsSep "\n" config.home.opencode.wrapperCommands)}
         '';
       };
       # AGENTS.md is composed from two vendored chunks:

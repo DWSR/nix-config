@@ -483,16 +483,13 @@ in
       # rendered wrapper (cavemem-integration Req 5.4).
       #
       # Quoting note: this snippet is composed into the opencode
-      # wrapper via `wrapProgram ... --run STR`, where STR is the
-      # joined list of all wrapperCommands wrapped in shell
-      # single-quotes by makeWrapper. A single quote anywhere inside
-      # the snippet would close the outer single-quoted string and
-      # break wrapper composition (see
+      # wrapper via `wrapProgram ... --run STR`. The joined
+      # wrapperCommands value is shell-escaped with `lib.escapeShellArg`
+      # before the builder shell sees it, so apostrophes in snippet
+      # comments cannot break wrapper composition (see
       # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
       # and design.md L673). Use double quotes (with backslash-escaped
-      # inner double quotes where needed) throughout. The obsidian
-      # probe in `home-manager/common/opencode.nix` follows the same
-      # convention.
+      # inner double quotes where needed) for runtime shell values.
       home.opencode.wrapperCommands = [
         ''
           cavemem_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""

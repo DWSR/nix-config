@@ -164,7 +164,8 @@ in
 
     # Resolver contract for `.kiro/specs/rtk-install/design.md` Runtime State.
     # This snippet is embedded into the OpenCode wrapper with makeWrapper
-    # `--run`, so avoid shell single quotes anywhere inside the snippet body.
+    # `--run`; the shared wrapper shell-escapes the joined snippets before
+    # passing them to the builder shell.
     home.opencode.wrapperCommands = [
       ''
         export PATH="${lib.makeBinPath [ cfg.package ]}:$PATH"
