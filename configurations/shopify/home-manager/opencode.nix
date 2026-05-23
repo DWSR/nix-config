@@ -4,13 +4,19 @@
   ...
 }:
 let
+  rtkUsageTag =
+    if config.programs.opencode-rtk.enable then
+      config.programs.opencode-rtk.usageTag
+    else
+      "rtk:disabled";
+
   proxyHeader = {
     X-Shopify-Session-Affinity-Header = "opencode-session-id";
     opencode-session-id = "{env:OPENCODE_SESSION_ID}";
     Shopify-Usage-Tag = builtins.toJSON [
       "opencode_cli"
       "{env:OPENCODE_SESSION_ID}"
-      "rtk:disabled"
+      rtkUsageTag
     ];
   };
 

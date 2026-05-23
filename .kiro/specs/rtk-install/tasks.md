@@ -73,7 +73,7 @@
   - _Boundary: RTK Module, RTK Plugin_
 
 - [ ] 4. Wire host attribution and host-specific behavior
-- [ ] 4.1 Update Shopify usage tags to use effective RTK state
+- [x] 4.1 Update Shopify usage tags to use effective RTK state
   - Replace the static Shopify `rtk:disabled` tag with the wrapper-exported usage tag while preserving existing `opencode_cli` and session-id tags.
   - Ensure enabled, disabled, and per-launch override states produce exactly `rtk:enabled` or `rtk:disabled` in Shopify provider headers.
   - Completed state: rendered Shopify provider headers contain an env-backed RTK tag that matches the plugin's effective state for the launch.
