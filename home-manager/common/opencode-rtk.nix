@@ -196,12 +196,14 @@ in
             ;;
         esac
 
+        # Telemetry is forced off on every launch. A `bash` `export` of a
+        # literal value cannot fail, so no runtime guard for the
+        # `telemetry-unsafe` disable reason is reachable from this path.
+        # The plugin's self-check (home-manager/common/opencode-plugins/
+        # rtk.ts) is the live enforcement point if the env is later
+        # cleared outside the wrapper; the smoke test asserts the value
+        # equals "1" at session start.
         export RTK_TELEMETRY_DISABLED="1"
-        if [ "''${RTK_TELEMETRY_DISABLED:-}" != "1" ]; then
-          opencode_rtk_requested="disabled"
-          opencode_rtk_disable_reason="telemetry-unsafe"
-          echo "ERROR: RTK telemetry could not be disabled explicitly; starting OpenCode with RTK disabled." >&2
-        fi
 
         if [ "$opencode_rtk_requested" = "enabled" ] && ! command -v rtk >/dev/null 2>&1; then
           opencode_rtk_requested="disabled"
