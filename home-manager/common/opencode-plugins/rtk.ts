@@ -17,10 +17,11 @@ type StartupLog = {
   readonly level: LogLevel
   readonly message: string
   readonly extra: {
-    readonly state: StartupState
-    readonly effective: string
+    readonly state?: StartupState
+    readonly effective?: string
     readonly usageTag?: string
     readonly reason: string
+    readonly tool?: "bash" | "shell"
   }
 }
 
@@ -42,6 +43,7 @@ type AppLogger = {
 type RtkTestControls = {
   readonly env?: RtkPluginEnvironment
   readonly hasRtkBinary?: () => Promise<boolean>
+  readonly rewriteCommand?: (command: string) => Promise<RewriteResult>
 }
 
 type RtkPluginContext = {
@@ -55,6 +57,23 @@ type RtkStartupDecision = {
   readonly usageTag?: string
   readonly reason: string
 }
+
+type ToolExecuteBeforeInput = {
+  readonly tool?: unknown
+}
+
+type MutableToolOutput = {
+  args?: {
+    command?: unknown
+    readonly [key: string]: unknown
+  }
+}
+
+type RewriteErrorCode = "rtk-unavailable" | "invalid-command" | "rewrite-failed"
+
+type RewriteResult =
+  | { readonly ok: true; readonly command: string; readonly changed: boolean }
+  | { readonly ok: false; readonly code: RewriteErrorCode; readonly message: string }
 
 function getRuntimeEnv(ctx: RtkPluginContext): RtkPluginEnvironment {
   return ctx.rtk?.env ?? process.env
@@ -87,8 +106,43 @@ async function defaultHasRtkBinary(): Promise<boolean> {
   })
 }
 
+async function defaultRewriteCommand(command: string): Promise<RewriteResult> {
+  return await new Promise((resolve) => {
+    let stdout = ""
+
+    try {
+      const child = spawn("rtk", ["rewrite", command], {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+
+      child.stdout.setEncoding("utf8")
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk
+      })
+      child.once("error", () => {
+        resolve({ ok: false, code: "rtk-unavailable", message: "rtk unavailable" })
+      })
+      child.once("exit", (code) => {
+        if (code !== 0) {
+          resolve({ ok: false, code: "rewrite-failed", message: "rtk rewrite failed" })
+          return
+        }
+
+        const rewritten = stdout.trimEnd()
+        resolve({ ok: true, command: rewritten, changed: rewritten !== command })
+      })
+    } catch {
+      resolve({ ok: false, code: "rtk-unavailable", message: "rtk unavailable" })
+    }
+  })
+}
+
 async function hasRtkBinary(ctx: RtkPluginContext): Promise<boolean> {
   return await (ctx.rtk?.hasRtkBinary ?? defaultHasRtkBinary)()
+}
+
+async function rewriteCommand(ctx: RtkPluginContext, command: string): Promise<RewriteResult> {
+  return await (ctx.rtk?.rewriteCommand ?? defaultRewriteCommand)(command)
 }
 
 async function decideStartupState(ctx: RtkPluginContext): Promise<RtkStartupDecision> {
@@ -190,6 +244,82 @@ async function emitStartupLog(client: unknown, decision: RtkStartupDecision): Pr
   }
 }
 
+function isRoutedTool(input: ToolExecuteBeforeInput): input is { readonly tool: "bash" | "shell" } {
+  if (typeof input.tool !== "string") return false
+  const tool = input.tool.toLowerCase()
+  return tool === "bash" || tool === "shell"
+}
+
+async function emitRewriteLog(
+  client: unknown,
+  params: {
+    readonly level: Extract<LogLevel, "warn" | "error">
+    readonly message: string
+    readonly reason: RewriteErrorCode
+    readonly tool: "bash" | "shell"
+  },
+): Promise<void> {
+  if (!isAppLogger(client)) return
+
+  try {
+    await client.app.log({
+      body: {
+        service: RTK_PLUGIN_SERVICE,
+        level: params.level,
+        message: params.message,
+        extra: {
+          reason: params.reason,
+          tool: params.tool,
+        },
+      },
+    })
+  } catch {
+    // Logging is local observability only; it must not block tool execution.
+  }
+}
+
+async function handleToolExecuteBefore(
+  ctx: RtkPluginContext,
+  input: ToolExecuteBeforeInput,
+  output: MutableToolOutput,
+): Promise<void> {
+  if (!isRoutedTool(input)) return
+
+  const tool = input.tool.toLowerCase() as "bash" | "shell"
+  const args = output.args
+  const command = args?.command
+  if (!args || typeof command !== "string") {
+    await emitRewriteLog(ctx.client, {
+      level: "warn",
+      message: "rtk plugin rewrite skipped",
+      reason: "invalid-command",
+      tool,
+    })
+    return
+  }
+
+  let result: RewriteResult
+  try {
+    result = await rewriteCommand(ctx, command)
+  } catch {
+    result = { ok: false, code: "rewrite-failed", message: "rtk rewrite failed" }
+  }
+
+  if (!result.ok) {
+    await emitRewriteLog(ctx.client, {
+      level: "error",
+      message: "rtk plugin rewrite failed",
+      reason: result.code,
+      tool,
+    })
+    return
+  }
+
+  if (result.changed && result.command.length > 0 && result.command !== command) {
+    args.command = result.command
+  }
+}
+
 export const RtkPlugin: Plugin = async (input) => {
   const ctx = input as RtkPluginContext
   const decision = await decideStartupState(ctx)
@@ -198,9 +328,12 @@ export const RtkPlugin: Plugin = async (input) => {
   if (decision.state !== "enabled") return {}
 
   return {
-    "tool.execute.before": async () => {
-      // Task 3.1 registers the hook only after startup self-checks pass.
-      // Task 3.2 owns command inspection and RTK rewrite behavior.
+    "tool.execute.before": async (input: unknown, output: unknown) => {
+      await handleToolExecuteBefore(
+        ctx,
+        input as ToolExecuteBeforeInput,
+        output as MutableToolOutput,
+      )
     },
   }
 }

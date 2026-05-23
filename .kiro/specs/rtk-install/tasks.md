@@ -55,7 +55,7 @@
   - _Requirements: 3.1, 3.2, 5.2, 5.3, 5.4, 7.1, 7.2_
   - _Boundary: RTK Plugin_
 
-- [ ] 3.2 Add Bash and shell command rewrite behavior
+- [x] 3.2 Add Bash and shell command rewrite behavior
   - Handle only OpenCode Bash and shell tool calls and leave native tools unchanged.
   - Run `rtk rewrite` for eligible command text and mutate only the command argument when RTK returns a changed command.
   - Preserve underlying Bash tool execution, success/failure ownership, and pass-through behavior when rewrite fails.
