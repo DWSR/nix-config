@@ -46,7 +46,7 @@
   - _Boundary: RTK Module, Metadata_
 
 - [ ] 3. Implement the OpenCode RTK plugin
-- [ ] 3.1 Build plugin self-check and state handling
+- [x] 3.1 Build plugin self-check and state handling
   - Add a repo-owned OpenCode plugin that reads the wrapper-exported effective state and telemetry posture at startup.
   - Check RTK binary availability and required OpenCode logging/hook surfaces before registering rewrite behavior.
   - Emit local structured logs for enabled, disabled, missing-binary, unsafe-telemetry, and incompatible-surface states without logging command output.
