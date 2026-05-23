@@ -27,7 +27,7 @@
   - _Boundary: RTK Module_
 
 - [ ] 2. Implement runtime state and operator visibility
-- [ ] 2.1 Resolve effective RTK state in the OpenCode wrapper
+- [x] 2.1 Resolve effective RTK state in the OpenCode wrapper
   - Add wrapper-time resolution of the host default plus the `OPENCODE_RTK` per-launch override.
   - Export the effective RTK state, Shopify usage-tag value, telemetry-disable value, and disable reason before OpenCode starts.
   - Reject invalid override values with an actionable startup error and force safe disabled state when telemetry cannot be made explicit.

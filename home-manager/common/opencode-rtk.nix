@@ -6,6 +6,7 @@
 }:
 let
   cfg = config.programs.opencode-rtk;
+  defaultState = if cfg.defaultEnabled then "enabled" else "disabled";
 
   rtk-opencode-smoke-test = pkgs.callPackage ../../scripts/rtk-opencode-smoke-test.nix {
     rtk = cfg.package;
@@ -72,6 +73,59 @@ in
     home.packages = [
       cfg.package
       cfg.smokeTestPackage
+    ];
+
+    # Resolver contract for `.kiro/specs/rtk-install/design.md` Runtime State.
+    # This snippet is embedded into the OpenCode wrapper with makeWrapper
+    # `--run`, so avoid shell single quotes anywhere inside the snippet body.
+    home.opencode.wrapperCommands = [
+      ''
+        export PATH="${lib.makeBinPath [ cfg.package ]}:$PATH"
+        opencode_rtk_default="${defaultState}"
+        opencode_rtk_override="''${OPENCODE_RTK:-}"
+        opencode_rtk_disable_reason=""
+
+        case "$opencode_rtk_override" in
+          "")
+            opencode_rtk_requested="$opencode_rtk_default"
+            if [ "$opencode_rtk_requested" = "disabled" ]; then
+              opencode_rtk_disable_reason="host-default"
+            fi
+            ;;
+          "1"|"true"|"enabled")
+            opencode_rtk_requested="enabled"
+            ;;
+          "0"|"false"|"disabled")
+            opencode_rtk_requested="disabled"
+            opencode_rtk_disable_reason="override"
+            ;;
+          *)
+            export OPENCODE_RTK_EFFECTIVE="disabled"
+            export OPENCODE_RTK_USAGE_TAG="rtk:disabled"
+            export OPENCODE_RTK_DISABLE_REASON="invalid-override"
+            export RTK_TELEMETRY_DISABLED="1"
+            echo "ERROR: invalid OPENCODE_RTK value: $opencode_rtk_override. Use 1, true, enabled, 0, false, or disabled." >&2
+            exit 1
+            ;;
+        esac
+
+        export RTK_TELEMETRY_DISABLED="1"
+        if [ "''${RTK_TELEMETRY_DISABLED:-}" != "1" ]; then
+          opencode_rtk_requested="disabled"
+          opencode_rtk_disable_reason="telemetry-unsafe"
+          echo "ERROR: RTK telemetry could not be disabled explicitly; starting OpenCode with RTK disabled." >&2
+        fi
+
+        if [ "$opencode_rtk_requested" = "enabled" ] && ! command -v rtk >/dev/null 2>&1; then
+          opencode_rtk_requested="disabled"
+          opencode_rtk_disable_reason="missing-binary"
+          echo "ERROR: RTK requested for OpenCode but the rtk binary is unavailable; starting with RTK disabled." >&2
+        fi
+
+        export OPENCODE_RTK_EFFECTIVE="$opencode_rtk_requested"
+        export OPENCODE_RTK_USAGE_TAG="rtk:$opencode_rtk_requested"
+        export OPENCODE_RTK_DISABLE_REASON="$opencode_rtk_disable_reason"
+      ''
     ];
 
     assertions = [
