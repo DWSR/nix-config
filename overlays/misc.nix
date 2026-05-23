@@ -82,6 +82,36 @@ final: prev: {
     ];
   };
 
+  # RTK (Rust Token Killer) from rtk-ai/rtk. Built from source to avoid
+  # upstream CI telemetry compile variables injected into official release
+  # assets. crates.io name "rtk" resolves to an unrelated package; always
+  # fetch from the rtk-ai/rtk GitHub source.
+  rtk = final.rustPlatform.buildRustPackage rec {
+    pname = "rtk";
+    version = "0.40.0";
+
+    src = final.fetchFromGitHub {
+      owner = "rtk-ai";
+      repo = "rtk";
+      tag = "v${version}";
+      hash = "sha256-xWHIOZRpSyyOPQe/db9dxoODcnheBlpXrnKET010vVg=";
+    };
+
+    cargoHash = "sha256-DJazpSx1FCt9pjFjqsoL3MLEQLdFvLwEj3UsP0aYHmc=";
+
+    # Upstream tests exercise network services and real session data.
+    # Skip in Nix sandbox builds.
+    doCheck = false;
+
+    meta = {
+      description = "High-performance CLI proxy to minimize LLM token consumption";
+      homepage = "https://github.com/rtk-ai/rtk";
+      license = final.lib.licenses.mit;
+      mainProgram = "rtk";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   tokscale = final.rustPlatform.buildRustPackage rec {
     pname = "tokscale";
     version = "2.0.24";

@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Establish RTK package and Home Manager foundation
-- [ ] 1.1 Package RTK from the intended upstream source
+- [x] 1.1 Package RTK from the intended upstream source
   - Add a reproducible RTK package built from the pinned `rtk-ai/rtk` source rather than crates.io name resolution.
   - Expose the `rtk` binary and version/source identity so the operator and smoke tests can inspect it.
   - Ensure the package build fails on source or cargo hash drift before any OpenCode integration can be enabled.
