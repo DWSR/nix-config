@@ -130,9 +130,15 @@
           # darwinConfigurations already do this via
           # `configurations/common-darwin/default.nix`'s `nixpkgs.config`
           # block; flake-app context must opt in separately.
+          #
+          # Custom overlays are applied so `pkgs.rtk` (defined in
+          # overlays/misc.nix and consumed by the rtk-opencode-validate
+          # script + Home Manager modules) is reachable from app
+          # bindings without re-importing nixpkgs at the call site.
           pkgs = import nixpkgs {
             inherit system;
             config.allowUnfree = true;
+            overlays = [ outputs.overlays.custom-packages ];
           };
         in
         {
@@ -150,13 +156,41 @@
             type = "app";
             program = "${import ./scripts/mcp-verify-secrets.nix { inherit pkgs; }}/bin/mcp-verify-secrets";
           };
+          # Phase B operator validator for the rtk-install spec (task 6.1).
+          # The script discovers the rendered RTK metadata + plugin under
+          # XDG_CONFIG_HOME, runs the smoke verifier, and drives a before/
+          # after opencode-cost-report comparison for the Bash-tool
+          # attribution measurement. See scripts/rtk-opencode-validate.nix
+          # for the subcommand contract.
+          #
+          # `pkgs.rtk` is overlay-provided; the two script derivations are
+          # invoked via callPackage from this build (mirrors the Home
+          # Manager modules at `home-manager/common/opencode-rtk.nix:92`
+          # and `home-manager/common/opencode-cost-diagnosis.nix:60`).
+          rtk-opencode-validate = {
+            type = "app";
+            program = "${
+              pkgs.callPackage ./scripts/rtk-opencode-validate.nix {
+                rtk-opencode-smoke-test = pkgs.callPackage ./scripts/rtk-opencode-smoke-test.nix { };
+                opencode-cost-report = pkgs.callPackage ./scripts/opencode-cost-report.nix { };
+              }
+            }/bin/rtk-opencode-validate";
+          };
         }
       );
 
       checks = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
+          # Import nixpkgs WITH the custom-packages overlay so `pkgs.rtk`
+          # is reachable from the rtk-opencode-validate-check derivation
+          # below. The bare legacyPackages set does not carry overlays
+          # and would fail with "argument rtk missing" when callPackage'd
+          # against the validator script.
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ outputs.overlays.custom-packages ];
+          };
 
           # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
           nixvimTests =
@@ -251,6 +285,32 @@
                 node --experimental-strip-types --test tests/rtk-opencode/*.test.js tests/rtk-opencode/*.test.ts
                 touch $out
               '';
+
+          # Phase B operator validator builds + `--help` is non-empty
+          # (rtk-install spec task 6.1). The script's full end-to-end
+          # path requires a switched host (real metadata.json, real
+          # plugin file, real opencode-stable.db); this check proves
+          # that on the build host the derivation evaluates, the
+          # shellcheck pass embedded in writeShellApplication accepts
+          # the body, and `--help` short-circuits before any
+          # discovery, exiting 0 with a non-empty usage block.
+          rtk-opencode-validate-check =
+            let
+              validate = pkgs.callPackage ./scripts/rtk-opencode-validate.nix {
+                rtk-opencode-smoke-test = pkgs.callPackage ./scripts/rtk-opencode-smoke-test.nix { };
+                opencode-cost-report = pkgs.callPackage ./scripts/opencode-cost-report.nix { };
+              };
+            in
+            pkgs.runCommand "rtk-opencode-validate-check" { } ''
+              # Exit 0 + non-empty stdout proves the help short-circuit
+              # works without touching $HOME, $XDG_CONFIG_HOME, or the
+              # cost-report subprocess — the contract the operator
+              # relies on when running the script unsure-of-state.
+              ${validate}/bin/rtk-opencode-validate --help > help.txt
+              test -s help.txt
+              ${validate}/bin/rtk-opencode-validate --version > /dev/null
+              touch $out
+            '';
 
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;

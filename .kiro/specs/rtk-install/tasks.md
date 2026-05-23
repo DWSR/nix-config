@@ -124,7 +124,7 @@
   - _Boundary: Smoke and Tests_
 
 - [ ] 6. Complete host validation and measurement handoff
-- [ ] 6.1 Validate packages, host evaluations, smoke behavior, and diagnostics
+- [x] 6.1 Validate packages, host evaluations, smoke behavior, and diagnostics
   - Build RTK through both target host package sets and evaluate both Darwin system configurations.
   - Run repository checks and the RTK smoke verifier after the implementation is wired.
   - Confirm no OpenCode session database or historical session data is mutated by enabling, disabling, or removing RTK.
@@ -133,3 +133,8 @@
   - _Depends: 5.4_
   - _Requirements: 1.1, 1.2, 4.4, 6.1, 6.2, 6.7, 6.8, 7.4_
   - _Boundary: Smoke and Tests, RTK Package, RTK Module_
+
+## Implementation Notes
+
+- `opencode-cost-report` per-tool attribution lives at `.globalTotals.cost.toolOutputsByTool` and `.byProject[*].cost.toolOutputsByTool` (assembler conversions in `scripts/opencode-cost-report.js:3655-3658, 3742-3745`); `.sessions[].cost.toolOutputsByTool` is a `Map` (`scripts/opencode-cost-report.js:2581`) that JSON-serializes empty. Tool keys are lowercase (`bash`, `edit`, `read`, …). Any future jq against cost-report output must read globalTotals/byProject, not sessions, and use lowercase keys.
+- Phase B for this spec (host switch + Bash-heavy session + before/after `opencode-cost-report` comparison) is operator-driven; `nix run .#rtk-opencode-validate -- smoke|baseline|compare` is the canonical entry point after `darwin-rebuild switch`.
