@@ -27,7 +27,7 @@
   - _Requirements: 1.1, 1.2, 4.1, 5.6_
   - _Boundary: TimestampVisibilityPolicy_
 
-- [ ] 2.2 Preserve and complete user turn timestamp rendering
+- [x] 2.2 Preserve and complete user turn timestamp rendering
   - Keep user turn timestamps based on the existing creation-time metadata and formatter.
   - Ensure queued user turns do not replace the timestamp with the queued badge when timestamps are visible.
   - Keep timestamp metadata separate from user message text.
