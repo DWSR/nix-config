@@ -18,9 +18,6 @@
   # Home Manager appends programs.git.includes with mkAfter (order 1500).
   # Use a later order so Shopify's dev gitconfig cannot override fsmonitor.
   xdg.configFile."git/config".text = lib.mkIf config.programs.git.enable (
-    lib.mkOrder 2000 ''
-      [core]
-      	fsmonitor = true
-    ''
+    lib.mkOrder 2000 "[core]\n\tfsmonitor = false\n"
   );
 }
