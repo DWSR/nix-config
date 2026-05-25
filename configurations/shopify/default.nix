@@ -59,6 +59,7 @@
       "ejson"
       "clouddo-cli"
       "gmp"
+      "libyaml"
       "pkg-config"
     ];
 
