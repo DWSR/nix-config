@@ -80,7 +80,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4_
   - _Boundary: PatchBoundaryGuard, TimestampVerificationSuite_
 
-- [ ] 4.2 Run the patched package and smoke validation path
+- [x] 4.2 Run the patched package and smoke validation path
   - Run the patched package build canary and host-consumption check and fix build, patch application, or host evaluation failures.
   - Perform a short local OpenCode smoke run after rebuild or direct package use to confirm user and assistant turns visibly show timestamps and `/timestamps` still toggles the display.
   - Confirm the smoke path does not require runtime network access or a separate installer.
