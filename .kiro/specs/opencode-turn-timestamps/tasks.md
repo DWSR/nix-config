@@ -72,7 +72,7 @@
   - _Boundary: OverlayPatchApplicator, TimestampVerificationSuite_
 
 - [ ] 4. Validate end-to-end timestamp behavior and boundaries
-- [ ] 4.1 Run and repair the timestamp verification suite
+- [x] 4.1 Run and repair the timestamp verification suite
   - Run the timestamp contract tests and fix any gaps between the patch and the design contract.
   - Confirm user timestamps, assistant timestamps, streaming-stable creation-time behavior, formatter semantics, role limiting, visible default, and boundary guards all pass together.
   - The task is done when the timestamp contract check exits successfully from the repo flake check.
