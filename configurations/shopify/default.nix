@@ -60,6 +60,7 @@
       "clouddo-cli"
       "gmp"
       "libyaml"
+      "openssl@3"
       "pkg-config"
     ];
 
