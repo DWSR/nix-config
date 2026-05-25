@@ -63,7 +63,7 @@
   - _Requirements: 4.4, 6.5_
   - _Boundary: OverlayPatchApplicator, TimestampVerificationSuite_
 
-- [ ] 3.3 Verify both configured hosts consume the patched package
+- [x] 3.3 Verify both configured hosts consume the patched package
   - Add or extend a host evaluation check that confirms both configured nix-darwin hosts resolve OpenCode through the shared patched package path.
   - Keep the check declarative and independent of a switched host.
   - The task is done when verification fails if either configured host stops consuming the patched OpenCode package.

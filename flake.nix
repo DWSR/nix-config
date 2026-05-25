@@ -194,6 +194,32 @@
             ];
           };
 
+          opencodeTurnTimestampHosts = [
+            "ShopifyLaptop"
+            "Brandons-MacBook-Pro"
+          ];
+
+          opencodeTurnTimestampHostReport =
+            let
+              expectedPackagePath = builtins.unsafeDiscardStringContext "${pkgs.opencode-pinned}";
+            in
+            pkgs.lib.concatMapStringsSep "\n" (
+              hostName:
+              let
+                hmConfig = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                actualPackagePath = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.package}";
+                wrappedPackagePath = builtins.unsafeDiscardStringContext "${hmConfig.programs.opencode.package}";
+                wrappedInputs = map (pkg: builtins.unsafeDiscardStringContext "${pkg}") (
+                  hmConfig.programs.opencode.package.paths or [ ]
+                );
+              in
+              assert pkgs.lib.assertMsg (actualPackagePath == expectedPackagePath)
+                "opencode-turn-timestamps host package mismatch for ${hostName}: expected home.opencode.package to resolve to ${expectedPackagePath}, got ${actualPackagePath}";
+              assert pkgs.lib.assertMsg (builtins.elem expectedPackagePath wrappedInputs)
+                "opencode-turn-timestamps host wrapper mismatch for ${hostName}: expected programs.opencode.package to include ${expectedPackagePath}, got ${pkgs.lib.concatStringsSep ", " wrappedInputs}";
+              "${hostName}: home.opencode.package=${actualPackagePath}; programs.opencode.package=${wrappedPackagePath}"
+            ) opencodeTurnTimestampHosts;
+
           # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
           nixvimTests =
             if system == "aarch64-darwin" then
@@ -313,6 +339,15 @@
             test -s version.txt
             touch $out
           '';
+
+          opencode-turn-timestamps-hosts =
+            pkgs.runCommand "opencode-turn-timestamps-hosts"
+              {
+                hostReport = opencodeTurnTimestampHostReport;
+              }
+              ''
+                printf '%s\n' "$hostReport" > $out
+              '';
 
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end
