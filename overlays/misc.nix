@@ -252,6 +252,13 @@ final: prev: {
 
     vendorHash = "sha256-jKhT3/XtjYlVh+d/3uMIGfXvWv+LEjTuodwRVDzgCUM=";
 
+    # Turn timestamp rendering is patched into the pinned package at build
+    # time. Operators need a host rebuild plus a fresh OpenCode process before
+    # this behavior appears; already-running processes keep the old package.
+    patches = (old.patches or [ ]) ++ [
+      ./opencode-turn-timestamps.patch
+    ];
+
     node_modules = old.node_modules.overrideAttrs (_oldNm: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";

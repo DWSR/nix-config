@@ -46,7 +46,7 @@
   - _Boundary: AssistantTurnTimestampRenderer, TurnTimestampFormatter_
 
 - [ ] 3. Integrate the timestamp patch with the pinned OpenCode package
-- [ ] 3.1 Wire the timestamp patch into the pinned OpenCode overlay
+- [x] 3.1 Wire the timestamp patch into the pinned OpenCode overlay
   - Add the timestamp patch to the existing pinned OpenCode build without changing prompt replacement behavior.
   - Avoid dependency changes; the patched behavior must use existing OpenCode timestamp and formatting utilities.
   - Include a nearby restart note so future operators know a host rebuild plus fresh OpenCode process is required before behavior changes appear.
