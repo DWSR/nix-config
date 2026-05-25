@@ -286,6 +286,22 @@
                 touch $out
               '';
 
+          opencode-turn-timestamps-tests =
+            pkgs.runCommand "opencode-turn-timestamps-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/opencode-turn-timestamps/patch-contract.test.js
+                touch $out
+              '';
+
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end
           # path requires a switched host (real metadata.json, real

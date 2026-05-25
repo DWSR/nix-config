@@ -11,7 +11,7 @@
   - _Requirements: 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4_
   - _Boundary: PatchBoundaryGuard, TimestampVerificationSuite_
 
-- [ ] 1.2 Wire the timestamp contract tests into the repo check graph
+- [x] 1.2 Wire the timestamp contract tests into the repo check graph
   - Add a flake check that runs the timestamp contract suite with the existing Node test pattern.
   - Keep the check isolated from host-specific state so it can run before a host rebuild.
   - The task is done when the repo exposes a timestamp test check that fails before the implementation patch satisfies the contract.
