@@ -2,7 +2,16 @@ diff --git a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx b/packag
 index 3d7a3d6a..c7a5d4f2 100644
 --- a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
 +++ b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
-@@ -95,6 +95,8 @@ import { PathFormatterProvider, usePathFormatter } from "../../context/path-form
+@@ -86,24 +86,26 @@
+ import { getScrollAcceleration } from "../../util/scroll"
+ import { collapseToolOutput } from "../../util/collapse-tool-output"
+ import { TuiPluginRuntime } from "@/cli/cmd/tui/plugin/runtime"
+ import { DialogRetryAction } from "../../component/dialog-retry-action"
+ import { SessionRetry } from "@/session/retry"
+ import { getRevertDiffFiles } from "../../util/revert-diff"
+ import { useCommandPalette } from "../../context/command-palette"
+ import { useBindings, useCommandShortcut } from "../../keymap"
+ import { PathFormatterProvider, usePathFormatter } from "../../context/path-format"
  
  addDefaultParsers(parsers.parsers)
  
@@ -11,7 +20,25 @@ index 3d7a3d6a..c7a5d4f2 100644
  const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
  const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
  const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
-@@ -207,7 +209,7 @@ export function Session() {
+ const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
+ const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+ const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+ 
+ function goUpsellKeys(action: SessionRetry.Retryable["action"]) {
+   if (!action) return
+   if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+   if (action.reason === "free_tier_limit") {
+     return {
+@@ -211,25 +213,25 @@
+ 
+   const lastAssistant = createMemo(() => {
+     return messages().findLast((x) => x.role === "assistant")
+   })
+ 
+   const dimensions = useTerminalDimensions()
+   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
+   const [sidebarOpen, setSidebarOpen] = createSignal(false)
+   const [conceal, setConceal] = createSignal(true)
    const thinking = useThinkingMode()
    const thinkingMode = thinking.mode
    const showThinking = createMemo(() => true)
@@ -20,7 +47,25 @@ index 3d7a3d6a..c7a5d4f2 100644
    const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
    const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
    const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
-@@ -528,6 +530,7 @@ export function Session() {
+   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
+   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
+   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+ 
+   const wide = createMemo(() => dimensions().width > 120)
+   const sidebarVisible = createMemo(() => {
+     if (session()?.parentID) return false
+     if (sidebarOpen()) return true
+     if (sidebar() === "auto" && wide()) return true
+@@ -669,24 +671,25 @@
+       title: conceal() ? "Disable code concealment" : "Enable code concealment",
+       value: "session.toggle.conceal",
+       category: "Session",
+       run: () => {
+         setConceal((prev) => !prev)
+         dialog.clear()
+       },
+     },
+     {
        title: showTimestamps() ? "Hide timestamps" : "Show timestamps",
        value: "session.toggle.timestamps",
        category: "Session",
@@ -28,7 +73,25 @@ index 3d7a3d6a..c7a5d4f2 100644
        slash: {
          name: "timestamps",
          aliases: ["toggle-timestamps"],
-@@ -1126,12 +1130,21 @@ const MIME_BADGE: Record<string, string> = {
+       },
+       run: () => {
+         setTimestamps((prev) => (prev === "show" ? "hide" : "show"))
+         dialog.clear()
+       },
+     },
+     {
+       title: (() => {
+         const next = nextThinkingMode(thinkingMode())
+@@ -1287,24 +1290,30 @@
+ }
+ 
+ const MIME_BADGE: Record<string, string> = {
+   "text/plain": "txt",
+   "image/png": "img",
+   "image/jpeg": "img",
+   "image/gif": "img",
+   "image/webp": "img",
+   "application/pdf": "pdf",
    "application/x-directory": "dir",
  }
  
@@ -46,7 +109,20 @@ index 3d7a3d6a..c7a5d4f2 100644
    pending?: string
  }) {
    const ctx = use()
-@@ -1154,6 +1167,14 @@ function UserMessage(props: {
+   const local = useLocal()
+   const text = createMemo(() => {
+     const texts = props.parts
+       .map((x) => {
+@@ -1315,24 +1324,31 @@
+       })
+       .filter(Boolean)
+     return texts.join("\n\n")
+   })
+   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
+   const { theme } = useTheme()
+   const [hover, setHover] = createSignal(false)
+   const queued = createMemo(() => props.pending && props.message.id > props.pending)
+   const color = createMemo(() => local.agent.color(props.message.agent))
    const queuedFg = createMemo(() => selectedForeground(theme, color()))
    const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
  
@@ -60,17 +136,16 @@ index 3d7a3d6a..c7a5d4f2 100644
    const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
  
    return (
-@@ -1174,37 +1188,33 @@ function UserMessage(props: {
-             flexShrink={0}
-           >
-             <text fg={theme.text}>{text()}</text>
-             <Show when={files().length}>
-               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
-                 <For each={files()}>
-                   {(file) => {
-                     const bg = createMemo(() => {
-                       if (file.mime.startsWith("image/")) return theme.accent
-                       if (file.mime === "application/pdf") return theme.primary
+     <>
+       <Show when={text()}>
+         <box
+           id={props.message.id}
+           border={["left"]}
+           borderColor={color()}
+           customBorderChars={SplitBorder.customBorderChars}
+           marginTop={props.index === 0 ? 0 : 1}
+         >
+@@ -1361,39 +1377,37 @@
                        return theme.secondary
                      })
                      return (
@@ -87,24 +162,21 @@ index 3d7a3d6a..c7a5d4f2 100644
 -              when={queued()}
 -              fallback={
 -                <Show when={ctx.showTimestamps()}>
--                  <text fg={theme.textMuted}>
++            <Show when={metadataVisible()}>
++              <box flexDirection="row" gap={1}>
++                <Show when={queued()}>
+                   <text fg={theme.textMuted}>
 -                    <span style={{ fg: theme.textMuted }}>
 -                      {Locale.todayTimeOrDateTime(props.message.time.created)}
 -                    </span>
--                  </text>
--                </Show>
++                    <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
+                   </text>
+                 </Show>
 -              }
 -            >
 -              <text fg={theme.textMuted}>
 -                <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
 -              </text>
-+            <Show when={metadataVisible()}>
-+              <box flexDirection="row" gap={1}>
-+                <Show when={queued()}>
-+                  <text fg={theme.textMuted}>
-+                    <span style={{ bg: color(), fg: queuedFg(), bold: true }}> QUEUED </span>
-+                  </text>
-+                </Show>
 +                <Show when={timestamp()}>
 +                  <text fg={theme.textMuted}>
 +                    <span style={{ fg: theme.textMuted }}>{timestamp()}</span>
@@ -114,3 +186,88 @@ index 3d7a3d6a..c7a5d4f2 100644
              </Show>
            </box>
          </box>
+       </Show>
+       <Show when={compaction()}>
+         <box
+           marginTop={1}
+           border={["top"]}
+           title=" Compaction "
+           titleAlignment="center"
+           borderColor={theme.borderActive}
+         />
+@@ -1401,24 +1415,31 @@
+     </>
+   )
+ }
+ 
+ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+   const ctx = use()
+   const local = useLocal()
+   const { theme } = useTheme()
+   const sync = useSync()
+   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
+   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+ 
++  const timestamp = createMemo(() => {
++    if (props.message.role === "assistant") {
++      return ctx.showTimestamps() ? formatCreatedTime(props.message) : undefined
++    }
++    return undefined
++  })
++
+   const final = createMemo(() => {
+     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
+   })
+ 
+   const duration = createMemo(() => {
+     if (!final()) return 0
+     if (!props.message.time.completed) return 0
+     const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
+     if (!user || !user.time) return 0
+     return props.message.time.completed - user.time.created
+   })
+ 
+@@ -1455,39 +1476,42 @@
+           paddingTop={1}
+           paddingBottom={1}
+           paddingLeft={2}
+           marginTop={1}
+           backgroundColor={theme.backgroundPanel}
+           customBorderChars={SplitBorder.customBorderChars}
+           borderColor={theme.error}
+         >
+           <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
+         </box>
+       </Show>
+       <Switch>
+-        <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
++        <Match when={props.last || final() || timestamp() || props.message.error?.name === "MessageAbortedError"}>
+           <box paddingLeft={3}>
+             <text marginTop={1}>
+               <span
+                 style={{
+                   fg:
+                     props.message.error?.name === "MessageAbortedError"
+                       ? theme.textMuted
+                       : local.agent.color(props.message.agent),
+                 }}
+               >
+                 ▣{" "}
+               </span>{" "}
+               <span style={{ fg: theme.text }}>{Locale.titlecase(props.message.mode)}</span>
+               <span style={{ fg: theme.textMuted }}> · {model()}</span>
++              <Show when={timestamp()}>
++                <span style={{ fg: theme.textMuted }}> · {timestamp()}</span>
++              </Show>
+               <Show when={duration()}>
+                 <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
+               </Show>
+               <Show when={props.message.error?.name === "MessageAbortedError"}>
+                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
+               </Show>
+             </text>
+           </box>
+         </Match>
+       </Switch>
+     </>
+   )

@@ -36,7 +36,7 @@
   - _Requirements: 1.1, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.4, 3.5, 5.6, 6.1_
   - _Boundary: UserTurnTimestampRenderer, TurnTimestampFormatter_
 
-- [ ] 2.3 Add assistant turn timestamp rendering
+- [x] 2.3 Add assistant turn timestamp rendering
   - Render assistant turn timestamps from creation-time metadata whenever timestamps are visible, including while completion time is absent.
   - Preserve existing assistant mode, model, duration, and interrupted metadata behavior.
   - Keep assistant timestamp metadata separate from assistant message text and tool inputs.
