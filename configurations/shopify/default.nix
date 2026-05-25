@@ -58,6 +58,7 @@
     brews = [
       "ejson"
       "clouddo-cli"
+      "gmp"
       "pkg-config"
     ];
 
