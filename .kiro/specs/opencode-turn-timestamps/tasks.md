@@ -19,7 +19,7 @@
   - _Boundary: TimestampVerificationSuite_
 
 - [ ] 2. Patch the live OpenCode TUI timestamp behavior
-- [ ] 2.1 Add the feature-owned timestamp visibility default
+- [x] 2.1 Add the feature-owned timestamp visibility default
   - Add the timestamp patch scaffold against the existing OpenCode live session route.
   - Make the effective timestamp state default to visible for this feature while preserving the existing `/timestamps` and `/toggle-timestamps` operator controls.
   - Keep the state local to OpenCode TUI visibility and out of session history.

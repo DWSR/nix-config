@@ -1,0 +1,30 @@
+diff --git a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+index 3d7a3d6a..8ef4b8c1 100644
+--- a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
++++ b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
+@@ -95,6 +95,8 @@ import { PathFormatterProvider, usePathFormatter } from "../../context/path-form
+ 
+ addDefaultParsers(parsers.parsers)
+ 
++const timestampVisibilityKey = "opencode_turn_timestamps_visibility"
++const timestampVisibilityDefault = "show" // default visibility for the feature-owned key
+ const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
+ const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
+ const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
+@@ -207,7 +209,7 @@ export function Session() {
+   const thinking = useThinkingMode()
+   const thinkingMode = thinking.mode
+   const showThinking = createMemo(() => true)
+-  const [timestamps, setTimestamps] = kv.signal<"hide" | "show">("timestamps", "hide")
++  const [timestamps, setTimestamps] = kv.signal<"hide" | "show">(timestampVisibilityKey, timestampVisibilityDefault)
+   const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
+   const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
+   const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
+@@ -528,6 +530,7 @@ export function Session() {
+       title: showTimestamps() ? "Hide timestamps" : "Show timestamps",
+       value: "session.toggle.timestamps",
+       category: "Session",
++      // Preserve the existing /timestamps and /toggle-timestamps operator controls.
+       slash: {
+         name: "timestamps",
+         aliases: ["toggle-timestamps"],
