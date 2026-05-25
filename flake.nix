@@ -182,14 +182,16 @@
       checks = forAllSystems (
         system:
         let
-          # Import nixpkgs WITH the custom-packages overlay so `pkgs.rtk`
-          # is reachable from the rtk-opencode-validate-check derivation
-          # below. The bare legacyPackages set does not carry overlays
-          # and would fail with "argument rtk missing" when callPackage'd
-          # against the validator script.
+          # Import nixpkgs WITH the overlay chain used by host configs so
+          # package-level checks can evaluate custom packages that depend on
+          # `pkgs.unstable` (for example `pkgs.opencode-pinned`) without a
+          # switched host.
           pkgs = import nixpkgs {
             inherit system;
-            overlays = [ outputs.overlays.custom-packages ];
+            overlays = [
+              outputs.overlays.unstable-packages
+              outputs.overlays.custom-packages
+            ];
           };
 
           # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
@@ -301,6 +303,16 @@
                 node --test tests/opencode-turn-timestamps/patch-contract.test.js
                 touch $out
               '';
+
+          opencode-turn-timestamps-package = pkgs.runCommand "opencode-turn-timestamps-package" { } ''
+            export HOME=$(mktemp -d)
+            export XDG_CACHE_HOME="$HOME/.cache"
+            export XDG_CONFIG_HOME="$HOME/.config"
+            export XDG_DATA_HOME="$HOME/.local/share"
+            ${pkgs.opencode-pinned}/bin/opencode --version > version.txt
+            test -s version.txt
+            touch $out
+          '';
 
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end

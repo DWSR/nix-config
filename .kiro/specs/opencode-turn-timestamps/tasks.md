@@ -55,7 +55,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.5, 6.5_
   - _Boundary: OverlayPatchApplicator_
 
-- [ ] 3.2 Add the OpenCode package build canary
+- [x] 3.2 Add the OpenCode package build canary
   - Add a flake check that forces the patched pinned OpenCode package to build.
   - Ensure OpenCode source drift fails during verification before timestamp support is reported as available.
   - The task is done when the package canary is part of the repo check graph and fails if the patch no longer applies.
