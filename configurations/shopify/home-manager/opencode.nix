@@ -125,6 +125,12 @@ in
   # `home.opencode.enableCaveman` flips.
   programs.opencode.agents = {
     stack-captain = config.home.opencode.agentWithCaveman ./agents/stack-captain.md;
+    stack-status-sweeper = config.home.opencode.agentWithCaveman ./agents/stack-status-sweeper.md;
+    ci-log-sleuth = config.home.opencode.agentWithCaveman ./agents/ci-log-sleuth.md;
+    bot-thread-triager = config.home.opencode.agentWithCaveman ./agents/bot-thread-triager.md;
+    stack-preflight-auditor = config.home.opencode.agentWithCaveman ./agents/stack-preflight-auditor.md;
+    stack-fix-reviewer = config.home.opencode.agentWithCaveman ./agents/stack-fix-reviewer.md;
+    binks-overrider = config.home.opencode.agentWithCaveman ./agents/binks-overrider.md;
     yb-sleuth = config.home.opencode.agentWithCaveman ./agents/yb-sleuth.md;
   };
 

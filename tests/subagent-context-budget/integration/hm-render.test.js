@@ -464,7 +464,9 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
   });
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_retrieve_tools, 'allow');
-  assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'ask');
+  assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'allow');
+  assert.equal(rendered.shopify.stackCaptain.bash, 'allow');
+  assert.equal(rendered.shopify.stackCaptain.task, 'allow');
   assert.deepEqual(rendered.shopify.ybSleuth.bash, { git: 'allow' });
 });
 
@@ -496,7 +498,7 @@ test('per-agent disableBudget marks only that agent unbudgeted and leaves render
   assert.deepEqual(rendered.shopify.stackCaptainState, { kind: 'enforced', reason: 'host-override' });
   assert.equal(rendered.shopify.hasYbSleuthPermissionOverride, false);
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_retrieve_tools, 'allow');
-  assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'ask');
+  assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'allow');
 });
 
 test('rendered metadata is host-aware and filters Shopify-only agents from personal host', () => {
@@ -513,10 +515,16 @@ test('rendered metadata is host-aware and filters Shopify-only agents from perso
   assert.equal(rendered.shopify.host, 'shopify');
   assert.equal(rendered.shopify.agentNames.includes('general'), true);
   assert.equal(rendered.shopify.agentNames.includes('stack-captain'), true);
+  assert.equal(rendered.shopify.agentNames.includes('stack-status-sweeper'), true);
+  assert.equal(rendered.shopify.agentNames.includes('ci-log-sleuth'), true);
+  assert.equal(rendered.shopify.agentNames.includes('bot-thread-triager'), true);
+  assert.equal(rendered.shopify.agentNames.includes('stack-preflight-auditor'), true);
+  assert.equal(rendered.shopify.agentNames.includes('stack-fix-reviewer'), true);
+  assert.equal(rendered.shopify.agentNames.includes('binks-overrider'), true);
   assert.equal(rendered.shopify.agentNames.includes('yb-sleuth'), true);
   assert.deepEqual(rendered.shopify.stackCaptain.state, { kind: 'enforced', reason: 'host-override' });
   assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_retrieve_tools, 'allow');
-  assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_call_tool_write, 'ask');
+  assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_call_tool_write, 'allow');
   assert.deepEqual(rendered.shopify.ybSleuth.permissionBudget.bash, { git: 'allow' });
 });
 
@@ -547,6 +555,7 @@ test('enforcement keeps global rules unchanged while plugin and agent overrides 
   assert.match(rendered.shopifyEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
   assert.ok(rendered.shopifyEnforced.agentNames.includes('general'));
   assert.ok(rendered.shopifyEnforced.agentNames.includes('stack-captain'));
+  assert.ok(rendered.shopifyEnforced.agentNames.includes('binks-overrider'));
 });
 
 test('rendered OpenCode config matches budgeted config shape for both hosts', () => {
@@ -626,6 +635,7 @@ test('both nix-darwin hosts evaluate runtime prerequisites for the Home Manager 
   assert.equal(rendered.hosts.personal.agentNames.includes('stack-captain'), false);
   assert.equal(rendered.hosts.shopify.metadata.host, 'shopify');
   assert.equal(rendered.hosts.shopify.agentNames.includes('stack-captain'), true);
+  assert.equal(rendered.hosts.shopify.agentNames.includes('binks-overrider'), true);
   assert.equal(rendered.hosts.shopify.agentNames.includes('yb-sleuth'), true);
 });
 

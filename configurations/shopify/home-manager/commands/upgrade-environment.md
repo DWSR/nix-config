@@ -41,13 +41,13 @@ verb. Invoke with the matching `call_tool_*`:
 
 Pass parameters in the `args` field (a JSON object), not the legacy
 `arguments` field. Example:
-`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { command: "gt state" })`.
+`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { args: ["state"], cwd: "/abs/repo", why: "identify current Graphite stack" })`.
 
 ## Instructions
 
 ### Step 0: Detect context and validate
 
-1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with `args: { command: "gt state" }` to identify the current Graphite PR stack.
+1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with upstream args `{ args: ["state"], cwd: "/abs/repo", why: "identify current Graphite stack" }` to identify the current Graphite PR stack.
 
 2. Read the PR titles to find the target version. Look for a PR titled like "add <version> to downloaded versions" — extract the version from the title.
 

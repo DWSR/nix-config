@@ -152,6 +152,106 @@
       "notes": "Read-only audit on fixture paths per design.md."
     },
     {
+      "class": "shopify-binks-override",
+      "agentName": "binks-overrider",
+      "hostScope": "shopify",
+      "representativeTask": "Given owner/repo/pullNumber for a PR whose PR Review Bot Comments Addressed check is still in progress, inspect status and labels through GitHub MCP. Refuse unless the status payload proves more than 2 hours elapsed or explicit user authorization and reason are supplied. Do not use files or bash.",
+      "expectations": {
+        "passCriteria": [
+          "response is either OVERRIDDEN or REFUSED",
+          "response names GitHub MCP read/write tools used through mcpproxy when an override is allowed",
+          "response refuses when neither the 2-hour condition nor explicit authorization is present"
+        ],
+        "failureSignals": [
+          "agent uses bash, file tools, or non-GitHub MCP upstreams",
+          "agent applies any label other than Override: PR Review Bot Comments Addressed",
+          "agent overrides without proof of the 2-hour condition or explicit user authorization"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when binks-overrider.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "The budget allows mcpproxy_call_tool_write because the production agent labels/comments on PRs. The smoke task should use a refusal scenario unless a fixture PR is provided, so it must not mutate live GitHub state."
+      },
+      "directInvocation": "opencode run --agent binks-overrider -- 'Dry-run/refuse: owner=Shopify repo=globaldb-yugabyte pullNumber=1; no user authorization. Explain whether Binks override is allowed.'",
+      "notes": "Narrow GitHub MCP-only writer for the Binks override label/comment path."
+    },
+    {
+      "class": "shopify-bot-thread-triage",
+      "agentName": "bot-thread-triager",
+      "hostScope": "shopify",
+      "representativeTask": "For a supplied owner/repo and PR number list, read GitHub PR review comments through MCP and classify bot comments into actionable, stacked false positive, incorrect/not applicable, deferred, or unknown. Do not reply or resolve.",
+      "expectations": {
+        "passCriteria": [
+          "response lists classification buckets even when no comments are found",
+          "response confirms no write, reply, resolve, reaction, or label action was attempted",
+          "response names the GitHub MCP read tools used through mcpproxy"
+        ],
+        "failureSignals": [
+          "agent attempts mcpproxy_call_tool_write",
+          "agent uses bash or gh api",
+          "agent reports missing GitHub MCP read permission"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when bot-thread-triager.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "All required tools are mcpproxy_retrieve_tools and mcpproxy_call_tool_read; write/destructive tools are outside the budget."
+      },
+      "directInvocation": "opencode run --agent bot-thread-triager -- 'Classify bot review comments for the supplied PR list using GitHub MCP only. Read-only.'",
+      "notes": "Fan-out bot triage helper for stack-captain."
+    },
+    {
+      "class": "shopify-ci-log-analysis",
+      "agentName": "ci-log-sleuth",
+      "hostScope": "shopify",
+      "representativeTask": "Given a failed Buildkite or GitHub check identifier, use Buildkite/GitHub MCP read tools to summarize the failure, root cause, and likely fix. Do not retry jobs or edit files.",
+      "expectations": {
+        "passCriteria": [
+          "response identifies the failed check/job or says which identifier is missing",
+          "response includes root-cause or insufficient-input classification",
+          "response confirms no retry, edit, submit, or write action was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts mcpproxy_call_tool_write",
+          "agent runs bash",
+          "agent emits a fix without reading available logs or explaining missing identifiers"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when ci-log-sleuth.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "The budget allows local reads and mcpproxy read calls only; no ask-gated mutation is required for diagnosis."
+      },
+      "directInvocation": "opencode run --agent ci-log-sleuth -- 'Explain what identifiers are needed to diagnose a failed Buildkite job; do not mutate anything.'",
+      "notes": "Fan-out CI diagnosis helper for stack-captain."
+    },
+    {
+      "class": "shopify-fix-review",
+      "agentName": "stack-fix-reviewer",
+      "hostScope": "shopify",
+      "representativeTask": "Review a provided diff summary for a stack-captain mutation wave and return APPROVE, REQUEST_CHANGES, or ESCALATE. Use read/grep/LSP only when local file context is needed. Do not edit.",
+      "expectations": {
+        "passCriteria": [
+          "response returns APPROVE, REQUEST_CHANGES, or ESCALATE",
+          "response cites scope/correctness reasoning",
+          "response confirms no edit/write/bash/MCP mutation was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts edit or write",
+          "agent attempts bash or mcpproxy_call_tool_write",
+          "agent approves without addressing scope and side effects"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when stack-fix-reviewer.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "Read, grep, glob, list, and lsp are allow rules; mutation tools are not in the budget."
+      },
+      "directInvocation": "opencode run --agent stack-fix-reviewer -- 'Review this hypothetical mutation wave: no diff supplied. Return the appropriate verdict and why.'",
+      "notes": "Read-only reviewer for stack-captain mutation waves."
+    },
+    {
       "class": "shopify-source-trace",
       "agentName": "yb-sleuth",
       "hostScope": "shopify",
@@ -180,26 +280,76 @@
       "class": "shopify-stack-plan",
       "agentName": "stack-captain",
       "hostScope": "shopify",
-      "representativeTask": "On a Shopify-host repo with an active Graphite stack, produce a textual review-plan describing the bottom-up review order for the current stack. Use `gt log`, `git log`, and `gh pr list` (read-only). Do NOT invoke `gt submit`, `gt modify`, `git push`, `gh pr edit`, or any vault-write mcp call.",
+      "representativeTask": "On a Shopify-host repo with an active Graphite stack, produce a textual fan-out/fan-in review plan for the current stack. Prefer gt-mcp and GitHub MCP. Do NOT invoke submit, modify, label, comment, edit, or any mutating call.",
       "expectations": {
         "passCriteria": [
           "response lists each branch in the active Graphite stack in bottom-up order with its branch name and PR number",
-          "response names the read-only commands actually invoked (e.g. `gt log`, `gh pr list`)",
-          "response explicitly states no mutating gt/git/gh subcommand was attempted"
+          "response names the MCP tools it would use for stack mapping and status sweeps",
+          "response explicitly states no mutating MCP, gt, git, or gh operation was attempted"
         ],
         "failureSignals": [
-          "agent attempts `gt submit`, `gt modify`, `git push`, `git rebase`, or `gh pr edit`/`gh pr create`",
-          "agent attempts an mcpproxy_call_tool_write call (which is ask-gated) and stalls awaiting permission",
-          "agent reports missing bash.git, bash.gh, or mcpproxy_retrieve_tools permission"
+          "agent attempts `gt submit`, `gt modify`, `git push`, `git rebase`, or a GitHub write",
+          "agent applies labels/comments or edits files during the plan smoke",
+          "agent reports missing mcpproxy_retrieve_tools or mcpproxy_call_tool_read permission"
         ],
         "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts (hostScope mismatch) and when stack-captain.state.kind == 'unbudgeted' on the Shopify host."
       },
       "nonInteractive": {
         "strategy": "task-restricts-ask",
-        "details": "mcpproxy_call_tool_write is ask-gated on stack-captain; the smoke prompt explicitly forbids it. bash.git and bash.gh cover all subcommands but the smoke restricts them to read-only ones; smoke runner asserts no mutating gt/git/gh invocation appears in the tool history."
+        "details": "stack-captain has broad writer permissions in production. The smoke prompt is plan-only and explicitly forbids mutation; smoke runner asserts no mutating operation appears in the tool history."
       },
-      "directInvocation": "opencode run --agent stack-captain -- 'Output a review-order plan for the current Graphite stack. Read-only; no submit, no push, no edit.'",
+      "directInvocation": "opencode run --agent stack-captain -- 'Output a fan-out/fan-in review plan for the current Graphite stack. Plan-only; no submit, no push, no edit.'",
       "notes": "Shopify-host smoke. Plan-only — never mutates the stack."
+    },
+    {
+      "class": "shopify-stack-preflight",
+      "agentName": "stack-preflight-auditor",
+      "hostScope": "shopify",
+      "representativeTask": "Given an absolute repository cwd, use gt-mcp read-only stack commands to report stack shape and metadata risks. Do not run mutating Graphite commands or shell commands.",
+      "expectations": {
+        "passCriteria": [
+          "response reports stack shape or insufficient-input/tool-gap status",
+          "response names gt-mcp read-only args it used or would use",
+          "response confirms no mutating gt command was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts mcpproxy_call_tool_write for mutating gt args",
+          "agent runs bash gt/git/gh",
+          "agent recommends force/no-verify without flagging user authorization"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when stack-preflight-auditor.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "The helper budget only includes mcpproxy read access; production prompt restricts gt-mcp args to read-only commands."
+      },
+      "directInvocation": "opencode run --agent stack-preflight-auditor -- 'Preflight this cwd for stack risks using gt-mcp read-only commands. No mutation.'",
+      "notes": "Fan-out Graphite metadata preflight helper for stack-captain."
+    },
+    {
+      "class": "shopify-stack-status",
+      "agentName": "stack-status-sweeper",
+      "hostScope": "shopify",
+      "representativeTask": "Given owner/repo and PR numbers, use GitHub MCP read tools to collect status checks, labels, reviews, comments, and changed-file counts. Treat missing PR Review Bot Comments Addressed as green in the report. Do not mutate.",
+      "expectations": {
+        "passCriteria": [
+          "response includes a per-PR status matrix or insufficient-input status",
+          "response states missing Binks check means green for that PR",
+          "response confirms no GitHub write was attempted"
+        ],
+        "failureSignals": [
+          "agent attempts mcpproxy_call_tool_write",
+          "agent uses bash or gh api",
+          "agent treats a missing Binks check as failure"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when stack-status-sweeper.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "All required tools are mcpproxy_retrieve_tools and mcpproxy_call_tool_read."
+      },
+      "directInvocation": "opencode run --agent stack-status-sweeper -- 'Sweep status for supplied PRs using GitHub MCP only. Read-only.'",
+      "notes": "Fan-out GitHub status helper for stack-captain."
     },
     {
       "class": "vault-dedup-plan",

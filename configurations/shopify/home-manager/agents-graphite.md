@@ -2,8 +2,8 @@
 
 `gt` (Graphite CLI, invoked via mcpproxy's discover-then-invoke idiom
 — `retrieve_tools(query: "gt run gt command")` returns
-`gt-mcp:run_gt_cmd`, then invoke with
-`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { command: "<gt subcommand>" })`)
+`gt-mcp:run_gt_cmd`, then invoke with upstream args shaped like
+`{ args: ["<subcommand>", "<flag>"], cwd: "/abs/repo", why: "reason" }`)
 is the preferred tool for stacked PRs in internal Shopify repos.
 Wraps git; has known failure modes around strict commit/rebase hooks,
 shared worktree metadata, and state drift.
@@ -29,7 +29,7 @@ Before any gt command:
 If every commit, rebase, and push in a stack went through the gt MCP
 (mcpproxy's `call_tool_write` against `gt-mcp:run_gt_cmd` — discovered
 via `retrieve_tools` — invoking `gt create`, `gt modify`, `gt submit`,
-`gt restack`, `gt sync`, `gt track` via `args: { command: "<gt subcommand>" }`),
+`gt restack`, `gt sync`, `gt track` via the upstream `args` array),
 then `gt submit --no-interactive` succeeds WITHOUT `--force`. Metadata
 stays in lock-step with the remote; no SHA divergence.
 

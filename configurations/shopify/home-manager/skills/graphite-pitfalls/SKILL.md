@@ -413,8 +413,7 @@ leaving as draft unless the user asks otherwise.
 The GitHub MCP `pull_request_review_write` tool (invoked via mcpproxy's
 `retrieve_tools` + `call_tool_write` idiom) supports only `method` values
 `create`, `submit_pending`, and `delete_pending`. There is NO
-`resolve_thread` method. Older runbooks (including parts of the
-make-stack-green slash command) claim it exists; they're wrong.
+`resolve_thread` method. Older runbooks claimed it exists; they're wrong.
 
 **Recovery (no flags / no auth needed beyond gh):**
 

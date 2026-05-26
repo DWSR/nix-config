@@ -250,11 +250,13 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
       list: 'allow',
       webfetch: 'allow',
       lsp: 'allow',
-      bash: { git: 'allow', gh: 'allow' },
+      bash: 'allow',
+      task: 'allow',
       mcpproxy_retrieve_tools: 'allow',
-      mcpproxy_call_tool_write: 'ask',
+      mcpproxy_call_tool_read: 'allow',
+      mcpproxy_call_tool_write: 'allow',
     },
-    capabilityRationale: ['Graphite and GitHub stack operations plus upstream documentation lookup'],
+    capabilityRationale: ['Graphite, GitHub, Buildkite, bash fallback, and subagent orchestration for stack operations'],
     smokeClass: 'shopify-stack-plan',
   };
   metadata.agents['yb-sleuth'] = {
@@ -286,18 +288,19 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
     'yb-sleuth',
   ]);
   assert.deepEqual(result.value.hostSpecificSurfaces.agents[0].permissions, [
-    'bash.gh',
-    'bash.git',
+    'bash',
     'glob',
     'grep',
     'list',
     'lsp',
+    'mcpproxy_call_tool_read',
     'mcpproxy_call_tool_write',
     'mcpproxy_retrieve_tools',
     'read',
+    'task',
     'webfetch',
   ]);
-  for (const permissionKey of ['mcpproxy_retrieve_tools', 'mcpproxy_call_tool_write', 'bash.git', 'bash.gh']) {
+  for (const permissionKey of ['mcpproxy_retrieve_tools', 'mcpproxy_call_tool_read', 'mcpproxy_call_tool_write', 'bash', 'task']) {
     assert.equal(result.value.hostSpecificSurfaces.permissions.includes(permissionKey), true,
       `host-specific permission surfaces must include ${permissionKey}`);
   }

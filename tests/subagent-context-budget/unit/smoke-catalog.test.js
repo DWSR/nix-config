@@ -39,7 +39,13 @@ const BUDGETED_AGENTS = {
   'security-auditor': { smokeClass: 'security-fixture-audit', hostScope: 'all' },
   'vault-curator': { smokeClass: 'vault-dedup-plan', hostScope: 'all' },
   'vault-synthesizer': { smokeClass: 'cavemem-to-memory-draft', hostScope: 'all' },
+  'binks-overrider': { smokeClass: 'shopify-binks-override', hostScope: 'shopify' },
+  'bot-thread-triager': { smokeClass: 'shopify-bot-thread-triage', hostScope: 'shopify' },
+  'ci-log-sleuth': { smokeClass: 'shopify-ci-log-analysis', hostScope: 'shopify' },
+  'stack-fix-reviewer': { smokeClass: 'shopify-fix-review', hostScope: 'shopify' },
   'stack-captain': { smokeClass: 'shopify-stack-plan', hostScope: 'shopify' },
+  'stack-preflight-auditor': { smokeClass: 'shopify-stack-preflight', hostScope: 'shopify' },
+  'stack-status-sweeper': { smokeClass: 'shopify-stack-status', hostScope: 'shopify' },
   'yb-sleuth': { smokeClass: 'shopify-source-trace', hostScope: 'shopify' },
 };
 
