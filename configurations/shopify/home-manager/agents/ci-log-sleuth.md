@@ -1,7 +1,7 @@
 ---
 description: Read-only Shopify CI helper. Diagnoses failed GitHub/Buildkite checks from logs and returns root cause, likely fix, and retry guidance. Use from @stack-captain during fan-out CI analysis.
 mode: subagent
-model: anthropic/claude-opus-4-7
+model: openai/gpt-5.5
 temperature: 0.1
 permission:
   read: allow

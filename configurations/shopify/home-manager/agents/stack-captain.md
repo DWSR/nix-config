@@ -1,7 +1,7 @@
 ---
 description: Orchestrate a fan-out/fan-in workflow that drives Shopify Graphite PR stacks to actionable green. Uses gt-mcp, GitHub/Buildkite MCP, read-only helper subagents, mutation waves, final Binks gating, and metrics. Invoke with @stack-captain for any multi-PR Shopify stack.
 mode: all
-model: anthropic/claude-opus-4-7
+model: openai/gpt-5.5
 temperature: 0.1
 permission:
   edit: allow

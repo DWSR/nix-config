@@ -1,7 +1,7 @@
 ---
 description: Read-only Shopify stack patch reviewer. Reviews a proposed stack-captain mutation wave for correctness, scope, side effects, and boundary drift before amend/submit.
 mode: subagent
-model: anthropic/claude-opus-4-7
+model: openai/gpt-5.5
 temperature: 0.1
 permission:
   read: allow
