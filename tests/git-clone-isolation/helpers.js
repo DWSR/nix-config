@@ -29,6 +29,59 @@ function runGit(args, options = {}) {
   }).trim();
 }
 
+function execCommand(command, args, options = {}) {
+  const result = childProcess.spawnSync(command, args, {
+    cwd: options.cwd,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ...(options.env ?? {}),
+    },
+    input: options.input,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: options.timeout ?? 120_000,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  return {
+    status: result.status,
+    signal: result.signal,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function createCommitOnBranch(upstream, branch, files, options = {}) {
+  const indexFile = path.join(upstream.root, `fixture-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.index`);
+
+  try {
+    for (const [filePath, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+      if (path.isAbsolute(filePath) || filePath === '' || filePath.split('/').includes('..')) {
+        throw new Error(`fixture file path must be relative and stay inside the repository: ${filePath}`);
+      }
+      const oid = runGit(['hash-object', '-w', '--stdin'], { cwd: upstream.repo, input: content });
+      runGit(['update-index', '--add', '--cacheinfo', `100644,${oid},${filePath}`], {
+        cwd: upstream.repo,
+        env: { GIT_INDEX_FILE: indexFile },
+      });
+    }
+
+    const tree = runGit(['write-tree'], { cwd: upstream.repo, env: { GIT_INDEX_FILE: indexFile } });
+    const commitArgs = ['commit-tree', tree, '-m', options.message ?? `fixture commit for ${branch}`];
+    if (options.parent) {
+      commitArgs.push('-p', options.parent);
+    }
+    const commit = runGit(commitArgs, { cwd: upstream.repo });
+    runGit(['update-ref', `refs/heads/${branch}`, commit], { cwd: upstream.repo });
+    return commit;
+  } finally {
+    fs.rmSync(indexFile, { force: true });
+  }
+}
+
 function createTempRoots(prefix = 'git-clone-isolation-') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const home = path.join(root, 'home');
@@ -126,8 +179,10 @@ module.exports = {
   buildCommandUnderTest,
   cleanupTempRoots,
   commandUnderTest,
+  createCommitOnBranch,
   createLocalUpstream,
   createTempRoots,
+  execCommand,
   repoRoot,
   runGit,
 };

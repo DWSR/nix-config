@@ -69,7 +69,7 @@
   - _Requirements: 6.1_
   - _Boundary: TestHarness_
 
-- [ ] 4.2 Add cache lifecycle integration tests
+- [x] 4.2 Add cache lifecycle integration tests
   - Cover cache creation, cache refresh, bare-cache invariant, main-only cache behavior, and failed-refresh preservation.
   - Cover cache lock behavior enough to prove concurrent refreshes cannot mutate the same cache simultaneously.
   - Completed state: the cache lifecycle tests pass against local fixture repositories without network access.
