@@ -35,7 +35,7 @@ writeShellApplication {
     OPTIONS:
       --repo        Upstream repository URL.
       --branch      Base branch name. Defaults to the configured branch or main.
-      --cache-root  Cache state root. Defaults to XDG state when implemented.
+      --cache-root  Cache state root. Defaults to XDG state.
       --dest        Destination path for clone.
       --clone-root  Root directory for generated clone destinations.
       --help, -h    Print this help and exit 0.
@@ -57,10 +57,56 @@ writeShellApplication {
           fi
         }
 
+        default_cache_root() {
+          if [[ -n "''${GIT_CLONE_ISOLATION_CACHE_ROOT:-}" ]]; then
+            printf '%s\n' "$GIT_CLONE_ISOLATION_CACHE_ROOT"
+            return
+          fi
+
+          printf '%s/git-clone-isolation\n' "''${XDG_STATE_HOME:-$HOME/.local/state}"
+        }
+
+        default_clone_root() {
+          if [[ -n "''${GIT_CLONE_ISOLATION_CLONE_ROOT:-}" ]]; then
+            printf '%s\n' "$GIT_CLONE_ISOLATION_CLONE_ROOT"
+            return
+          fi
+
+          printf '%s/scratch\n' "$HOME"
+        }
+
+        repo_slug() {
+          local repo="$1"
+          local name="''${repo%/}"
+          name="''${name##*/}"
+          name="''${name%.git}"
+
+          if [[ -z "$name" ]]; then
+            name="repository"
+          fi
+
+          printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]._-' '-'
+        }
+
+        cache_identity() {
+          local repo="$1"
+          local branch="$2"
+          local cache_root="$3"
+          local slug
+          local short_hash
+
+          slug="$(repo_slug "$repo")"
+          short_hash="$(printf '%s\n%s\n' "$repo" "$branch" | sha256sum | cut -c1-12)"
+          printf '%s/%s-%s.git\n' "$cache_root" "$slug" "$short_hash"
+        }
+
         route_refresh() {
           local repo=""
           local branch="''${GIT_CLONE_ISOLATION_DEFAULT_BRANCH:-main}"
-          local cache_root=""
+          local cache_root
+          local cache_path=""
+
+          cache_root="$(default_cache_root)"
 
           while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -96,19 +142,22 @@ writeShellApplication {
             fail "invalid_arguments" "refresh requires --repo <url>; see --help"
           fi
 
-          printf 'git-clone-isolation: refresh route accepted repo=%s branch=%s' "$repo" "$branch"
-          if [[ -n "$cache_root" ]]; then
-            printf ' cache-root=%s' "$cache_root"
-          fi
-          printf '\n'
+          cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
+          printf 'git-clone-isolation: refresh route accepted repo=%s branch=%s cache-root=%s cache-path=%s\n' \
+            "$repo" "$branch" "$cache_root" "$cache_path"
         }
 
         route_clone() {
           local repo=""
           local dest=""
           local branch="''${GIT_CLONE_ISOLATION_DEFAULT_BRANCH:-main}"
-          local cache_root=""
-          local clone_root="''${GIT_CLONE_ISOLATION_CLONE_ROOT:-}"
+          local cache_root
+          local clone_root
+          local cache_path=""
+          local slug=""
+
+          cache_root="$(default_cache_root)"
+          clone_root="$(default_clone_root)"
 
           while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -154,17 +203,14 @@ writeShellApplication {
             fail "invalid_arguments" "clone requires --repo <url>; see --help"
           fi
 
-          printf 'git-clone-isolation: clone route accepted repo=%s branch=%s' "$repo" "$branch"
-          if [[ -n "$dest" ]]; then
-            printf ' dest=%s' "$dest"
+          slug="$(repo_slug "$repo")"
+          if [[ -z "$dest" ]]; then
+            dest="$clone_root/$slug"
           fi
-          if [[ -n "$cache_root" ]]; then
-            printf ' cache-root=%s' "$cache_root"
-          fi
-          if [[ -n "$clone_root" ]]; then
-            printf ' clone-root=%s' "$clone_root"
-          fi
-          printf '\n'
+          cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
+
+          printf 'git-clone-isolation: clone route accepted repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
+            "$repo" "$branch" "$dest" "$cache_root" "$clone_root" "$cache_path"
         }
 
         case "''${1:-}" in

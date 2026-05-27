@@ -17,7 +17,7 @@
   - _Boundary: CLI, TestHarness_
 
 - [ ] 2. Implement cache and clone runtime behavior
-- [ ] 2.1 Resolve operator defaults and cache identity
+- [x] 2.1 Resolve operator defaults and cache identity
   - Require repository URL from command input while resolving cache root, clone root, base branch, and destination from flags, wrapper environment, and built-in fallbacks.
   - Derive a deterministic cache path from repository identity and branch without hardcoded machine-specific paths.
   - Completed state: local checks demonstrate flag values override wrapper defaults and fallback values, missing repository URL fails validation, and two same-basename repositories produce distinct cache paths.
