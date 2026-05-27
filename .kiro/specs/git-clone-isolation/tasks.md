@@ -46,7 +46,7 @@
   - _Boundary: CloneManager, ErrorReporter_
 
 - [ ] 3. Add declarative Home Manager integration
-- [ ] 3.1 Create the common Home Manager module
+- [x] 3.1 Create the common Home Manager module
   - Add an enable gate, package option, cache root, clone root, and default branch options.
   - Install a wrapper that supplies configured defaults to the packaged command.
   - Completed state: enabling the module adds the command to `home.packages` and exposes configured defaults through the wrapper.
