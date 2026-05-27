@@ -23,6 +23,7 @@ const budgetProfileNames = [
   'general-research',
   'readonly-codebase',
   'nix-package',
+  'kiro-spec-orchestration',
   'nvim-config',
   'security-readonly',
   'vault-curation',
@@ -38,6 +39,7 @@ test('instruction fragment files exist for universal, memory, SDD, host, and rol
     'cc-sdd-minimal.md',
     'host-specific/shopify.md',
     'role-fragments/general-research.md',
+    'role-fragments/kiro-spec-orchestration.md',
     'role-fragments/readonly-codebase.md',
     'role-fragments/shopify-stack.md',
   ]) {

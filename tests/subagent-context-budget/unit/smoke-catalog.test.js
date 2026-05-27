@@ -35,6 +35,7 @@ const BUDGETED_AGENTS = {
   general: { smokeClass: 'general-research', hostScope: 'all' },
   explore: { smokeClass: 'readonly-codebase-question', hostScope: 'all' },
   'nix-pkg': { smokeClass: 'nix-package-evaluation', hostScope: 'all' },
+  'kiro-spec-orchestrator': { smokeClass: 'kiro-spec-orchestration', hostScope: 'all' },
   'nvim-tailor': { smokeClass: 'nvim-config-inspection', hostScope: 'all' },
   'security-auditor': { smokeClass: 'security-fixture-audit', hostScope: 'all' },
   'vault-curator': { smokeClass: 'vault-dedup-plan', hostScope: 'all' },

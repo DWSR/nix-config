@@ -262,6 +262,7 @@ function renderedAgentPermissionsExpr() {
         general = personal.programs.opencode.settings.agent.general.permission;
         explore = personal.programs.opencode.settings.agent.explore.permission;
         nixPkg = personal.programs.opencode.settings.agent."nix-pkg".permission;
+        kiroSpecOrchestrator = personal.programs.opencode.settings.agent."kiro-spec-orchestrator".permission;
         hasStackCaptain = builtins.hasAttr "stack-captain" personal.programs.opencode.settings.agent;
       };
       shopify = {
@@ -340,6 +341,7 @@ function renderedBudgetMetadataExpr() {
         host = personal.host;
         agentNames = builtins.attrNames personal.agents;
         general = personal.agents.general;
+        kiroSpecOrchestrator = personal.agents."kiro-spec-orchestrator";
         hasStackCaptain = builtins.hasAttr "stack-captain" personal.agents;
         hasYbSleuth = builtins.hasAttr "yb-sleuth" personal.agents;
       };
@@ -462,6 +464,13 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
     nix: 'allow',
     'nixos-rebuild': 'ask',
   });
+  assert.equal(rendered.personal.kiroSpecOrchestrator.skill, 'allow');
+  assert.equal(rendered.personal.kiroSpecOrchestrator.task, 'allow');
+  assert.equal(rendered.personal.kiroSpecOrchestrator.edit, 'allow');
+  assert.deepEqual(rendered.personal.kiroSpecOrchestrator.bash, {
+    'cc-sdd-init': 'allow',
+    git: 'allow',
+  });
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'allow');
@@ -507,13 +516,17 @@ test('rendered metadata is host-aware and filters Shopify-only agents from perso
   assert.equal(rendered.personal.host, 'personal');
   assert.equal(rendered.personal.agentNames.includes('general'), true);
   assert.equal(rendered.personal.agentNames.includes('explore'), true);
+  assert.equal(rendered.personal.agentNames.includes('kiro-spec-orchestrator'), true);
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.personal.hasYbSleuth, false);
   assert.equal(rendered.personal.general.hostScope, 'all');
   assert.deepEqual(rendered.personal.general.state, { kind: 'enforced', reason: 'default' });
+  assert.equal(rendered.personal.kiroSpecOrchestrator.permissionBudget.skill, 'allow');
+  assert.equal(rendered.personal.kiroSpecOrchestrator.permissionBudget.edit, 'allow');
 
   assert.equal(rendered.shopify.host, 'shopify');
   assert.equal(rendered.shopify.agentNames.includes('general'), true);
+  assert.equal(rendered.shopify.agentNames.includes('kiro-spec-orchestrator'), true);
   assert.equal(rendered.shopify.agentNames.includes('stack-captain'), true);
   assert.equal(rendered.shopify.agentNames.includes('stack-status-sweeper'), true);
   assert.equal(rendered.shopify.agentNames.includes('ci-log-sleuth'), true);
@@ -548,6 +561,7 @@ test('enforcement keeps global rules unchanged while plugin and agent overrides 
 
   assert.match(rendered.personalEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
   assert.ok(rendered.personalEnforced.agentNames.includes('general'));
+  assert.ok(rendered.personalEnforced.agentNames.includes('kiro-spec-orchestrator'));
   assert.ok(rendered.personalEnforced.agentNames.includes('nix-pkg'));
   assert.equal(rendered.personalEnforced.generalPermission.read, 'allow');
   assert.equal(rendered.personalEnforced.nixPkgPermission.bash.nix, 'allow');
@@ -629,6 +643,7 @@ test('both nix-darwin hosts evaluate runtime prerequisites for the Home Manager 
     assert.equal(host.metadata.enforcementEnabled, true, `${hostName} metadata must reflect enforced config`);
     assert.equal(host.agentNames.includes('general'), true, `${hostName} must render general agent metadata`);
     assert.equal(host.agentNames.includes('explore'), true, `${hostName} must render explore agent metadata`);
+    assert.equal(host.agentNames.includes('kiro-spec-orchestrator'), true, `${hostName} must render Kiro spec orchestrator metadata`);
   }
 
   assert.equal(rendered.hosts.personal.metadata.host, 'personal');

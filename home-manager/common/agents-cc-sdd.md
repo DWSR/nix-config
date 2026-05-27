@@ -84,6 +84,9 @@ Skills are located in `.opencode/skills/kiro-*/SKILL.md`
 
 - **Discovery (entry point):** `/kiro-discovery "idea"` — determines
   action path; writes `brief.md` (+ `roadmap.md` for multi-spec).
+- **Guided specification:** `@kiro-spec-orchestrator` — runs discovery →
+  init → requirements → research/gap validation → design → design validation
+  → pre-task ambiguity review → tasks. It stops before implementation.
 - **Phase 1 (Specification):** single → `/kiro-spec-quick {feature}
   [--auto]`, or step-by-step (`/kiro-spec-init "description"` →
   `/kiro-spec-requirements {feature}` → optional

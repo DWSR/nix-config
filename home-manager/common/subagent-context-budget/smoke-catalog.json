@@ -52,6 +52,31 @@
       "notes": "Bounded multi-step research per design.md Operator Smoke Tests bullet for `general`."
     },
     {
+      "class": "kiro-spec-orchestration",
+      "agentName": "kiro-spec-orchestrator",
+      "hostScope": "all",
+      "representativeTask": "For a hypothetical feature request, produce a phase-by-phase Kiro spec-generation orchestration plan that names the kiro skills to load, the documents to review, and the pre-task clarification gate. Do not write files, run cc-sdd-init, or invoke implementation skills.",
+      "expectations": {
+        "passCriteria": [
+          "response names the spec-generation sequence from discovery through tasks",
+          "response includes a pre-task ambiguity/wordiness/boundary review gate",
+          "response explicitly states that `kiro-impl` and task implementation are out of scope"
+        ],
+        "failureSignals": [
+          "agent attempts to run `kiro-impl` or `kiro-validate-impl`",
+          "agent writes spec files during the smoke despite the prompt forbidding writes",
+          "agent omits the user clarification gate before task generation"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when kiro-spec-orchestrator.state.kind == 'unbudgeted'."
+      },
+      "nonInteractive": {
+        "strategy": "task-restricts-ask",
+        "details": "The production agent can write spec files and run cc-sdd-init, but the smoke prompt is plan-only and forbids writes, bootstrap, and implementation skills. Smoke runner asserts no write/edit/bash mutation appears in tool history."
+      },
+      "directInvocation": "opencode run --agent kiro-spec-orchestrator -- 'Plan the Kiro spec-generation flow for a hypothetical feature. Do not write files or implement tasks.'",
+      "notes": "Plan-only smoke for the common Kiro spec-generation orchestrator."
+    },
+    {
       "class": "nix-package-evaluation",
       "agentName": "nix-pkg",
       "hostScope": "all",

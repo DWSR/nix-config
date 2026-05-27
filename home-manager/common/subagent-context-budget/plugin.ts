@@ -79,6 +79,15 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
     category: "role-fragment",
     text: "# Nix package role\nInspect Nix package definitions, evaluations, and dry-run output within the assigned scope.",
   }),
+  "kiro-spec-orchestration": Object.freeze({
+    name: "kiro-spec-orchestration",
+    category: "role-fragment",
+    text: [
+      "# Kiro spec orchestration role",
+      "Drive cc-sdd/Kiro specification generation through discovery, requirements, research/gap validation, design, design validation, and tasks.",
+      "Stop before implementation. Review generated artifacts for ambiguity, loose scope, boundary gaps, excessive prose, and research gaps before task generation.",
+    ].join("\n"),
+  }),
   "nvim-config": Object.freeze({
     name: "nvim-config",
     category: "role-fragment",
@@ -115,6 +124,7 @@ const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object
   "general-research": Object.freeze(["universal", "memory-mcpproxy", "general-research"]),
   "readonly-codebase": Object.freeze(["universal", "memory-mcpproxy", "readonly-codebase"]),
   "nix-package": Object.freeze(["universal", "memory-mcpproxy", "cc-sdd-minimal", "nix-package"]),
+  "kiro-spec-orchestration": Object.freeze(["universal", "memory-mcpproxy", "cc-sdd-minimal", "kiro-spec-orchestration"]),
   "nvim-config": Object.freeze(["universal", "memory-mcpproxy", "nvim-config"]),
   "security-readonly": Object.freeze(["universal", "memory-mcpproxy", "security-readonly"]),
   "vault-curation": Object.freeze(["universal", "memory-mcpproxy", "vault-curation"]),

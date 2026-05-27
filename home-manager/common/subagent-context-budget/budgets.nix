@@ -98,6 +98,23 @@ let
       smokeClass = "nix-package-evaluation";
     })
     (mkAgent {
+      name = "kiro-spec-orchestrator";
+      source = "common-markdown";
+      permissionBudget = researchBudget // {
+        edit = "allow";
+        task = "allow";
+        bash = {
+          cc-sdd-init = "allow";
+          git = "allow";
+        };
+      };
+      instructionProfile = "kiro-spec-orchestration";
+      capabilityRationale = [
+        "Kiro skill orchestration, spec document edits, bounded research, and optional template bootstrap"
+      ];
+      smokeClass = "kiro-spec-orchestration";
+    })
+    (mkAgent {
       name = "nvim-tailor";
       source = "common-markdown";
       permissionBudget = researchBudget;

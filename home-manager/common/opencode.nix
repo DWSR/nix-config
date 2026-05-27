@@ -235,6 +235,7 @@
       # based on the toggle.
       agents = {
         nix-pkg = config.home.opencode.agentWithCaveman ./agents/nix-pkg.md;
+        kiro-spec-orchestrator = config.home.opencode.agentWithCaveman ./agents/kiro-spec-orchestrator.md;
         nvim-tailor = config.home.opencode.agentWithCaveman ./agents/nvim-tailor.md;
         security-auditor = config.home.opencode.agentWithCaveman ./agents/security-auditor.md;
         vault-curator = config.home.opencode.agentWithCaveman ./agents/vault-curator.md;
