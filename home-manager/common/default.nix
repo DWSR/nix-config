@@ -14,6 +14,7 @@
     ./ghostty.nix
     ./git.nix
     ./git-hooks.nix
+    ./git-clone-isolation.nix
     ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
@@ -151,6 +152,7 @@
   };
 
   programs.cc-sdd.enable = true;
+  programs.git-clone-isolation.enable = true;
 
   programs.eza = {
     enable = true;

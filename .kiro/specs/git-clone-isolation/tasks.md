@@ -53,7 +53,7 @@
   - _Requirements: 4.1, 4.2, 4.3_
   - _Boundary: HMModule_
 
-- [ ] 3.2 Wire the module into the common host configuration
+- [x] 3.2 Wire the module into the common host configuration
   - Import the module in the common Home Manager module list.
   - Enable the module for the common host configuration without changing existing Git or zellij behavior.
   - Completed state: both nix-darwin host configurations evaluate with the module enabled and no hardcoded user path is introduced.
