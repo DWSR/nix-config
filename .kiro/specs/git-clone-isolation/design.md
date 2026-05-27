@@ -261,7 +261,7 @@ Default values:
 
 Responsibilities and constraints:
 
-- Cache identity is `<repo-slug>-<hash>.git`, where the hash is derived from upstream URL and branch.
+- Cache identity is a stable ghq-style path derived from upstream URL: `<forge>/<org>/<repo>`.
 - Cache repositories are bare and have no working tree.
 - Fetch uses explicit base-branch refspec and does not fetch tags by default.
 - Cache mutation runs under a cache-local lock directory.
@@ -269,7 +269,7 @@ Responsibilities and constraints:
 
 State contract:
 
-- Cache path: `<cacheRoot>/<repoSlug>-<shortHash>.git`.
+- Cache path: `<cacheRoot>/<forge>/<org>/<repo>`.
 - Branch ref: `refs/heads/<branch>`.
 - Remote: `origin=<upstreamUrl>`.
 
@@ -363,7 +363,7 @@ Logical records used by the CLI:
 
 - `RepositoryInput`: upstream URL, branch, optional destination.
 - `ResolvedConfig`: cache root, clone root, default branch.
-- `CacheIdentity`: repository slug, short hash, cache path.
+- `CacheIdentity`: forge, owner path, repository name, cache path.
 - `CloneResult`: destination path, upstream URL, branch, cache path.
 - `Failure`: label and detail message.
 

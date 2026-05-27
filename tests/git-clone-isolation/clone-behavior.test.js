@@ -118,6 +118,35 @@ test('clone behavior: missing cache fails without refreshing before clone creati
   }
 });
 
+test('clone behavior: GitHub URLs map to stable ghq-style cache paths', () => {
+  const roots = createTempRoots();
+  const repo = 'https://github.com/Shopify/globaldb-yugabyte';
+  const expectedCachePath = path.join(roots.cacheRoot, 'github.com', 'Shopify', 'globaldb-yugabyte');
+
+  try {
+    const result = execCommand(commandUnderTest(), [
+      'clone',
+      '--repo',
+      repo,
+      '--cache-root',
+      roots.cacheRoot,
+      '--clone-root',
+      roots.cloneRoot,
+      '--dest',
+      path.join(roots.cloneRoot, 'globaldb-yugabyte'),
+    ], {
+      env: commandEnv(roots),
+      timeout: 120_000,
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /\[git-cache-clone: clone_failed\]/);
+    assert.match(result.stderr, new RegExp(`cache=${escapeRegExp(expectedCachePath)}`));
+  } finally {
+    cleanupTempRoots(roots);
+  }
+});
+
 test('clone behavior: stale cache is used as-is before clone creation', () => {
   const upstream = createLocalUpstream();
   const roots = createTempRoots();

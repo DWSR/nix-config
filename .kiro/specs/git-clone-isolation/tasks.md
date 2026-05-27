@@ -20,7 +20,7 @@
 - [x] 2.1 Resolve operator defaults and cache identity
   - Require repository URL from command input while resolving cache root, clone root, base branch, and destination from flags, wrapper environment, and built-in fallbacks.
   - Derive a deterministic cache path from repository identity and branch without hardcoded machine-specific paths.
-  - Completed state: local checks demonstrate flag values override wrapper defaults and fallback values, missing repository URL fails validation, and two same-basename repositories produce distinct cache paths.
+  - Completed state: local checks demonstrate flag values override wrapper defaults and fallback values, missing repository URL fails validation, and GitHub URLs produce stable ghq-style cache paths such as `github.com/Shopify/globaldb-yugabyte`.
   - _Requirements: 1.4, 2.2, 4.2, 4.3_
   - _Boundary: ConfigResolver_
 

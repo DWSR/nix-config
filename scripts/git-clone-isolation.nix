@@ -97,14 +97,53 @@ writeShellApplication {
 
         cache_identity() {
           local repo="$1"
-          local branch="$2"
           local cache_root="$3"
-          local slug
-          local short_hash
+          local relative_path
 
-          slug="$(repo_slug "$repo")"
-          short_hash="$(printf '%s\n%s\n' "$repo" "$branch" | sha256sum | cut -c 1-12)"
-          printf '%s/%s-%s.git\n' "$cache_root" "$slug" "$short_hash"
+          relative_path="$(cache_relative_path "$repo")"
+          printf '%s/%s\n' "$cache_root" "$relative_path"
+        }
+
+        cache_relative_path() {
+          local repo="$1"
+          local normalized="$repo"
+
+          case "$normalized" in
+            http://*|https://*)
+              normalized="''${normalized#*://}"
+              ;;
+            ssh://*)
+              normalized="''${normalized#ssh://}"
+              normalized="''${normalized#*@}"
+              ;;
+            *@*:*)
+              normalized="''${normalized#*@}"
+              normalized="''${normalized/:/\/}"
+              ;;
+            file://*)
+              normalized="local/''${normalized#file://}"
+              ;;
+            /*)
+              normalized="local/$normalized"
+              ;;
+          esac
+
+          normalized="''${normalized%%\?*}"
+          normalized="''${normalized%%#*}"
+          normalized="''${normalized%/}"
+          normalized="''${normalized%.git}"
+          normalized="$(printf '%s' "$normalized" | tr -cs '[:alnum:]._/-' '-')"
+          normalized="''${normalized#/}"
+          normalized="''${normalized//../-}"
+          while [[ "$normalized" == *"//"* ]]; do
+            normalized="''${normalized//\/\//\/}"
+          done
+
+          if [[ -z "$normalized" ]]; then
+            normalized="repository"
+          fi
+
+          printf '%s\n' "$normalized"
         }
 
         refresh_cache() {
@@ -117,8 +156,10 @@ writeShellApplication {
           local temp_cache=""
           local backup_path=""
           local lock_acquired=0
+          local cache_parent=""
 
-          mkdir -p "$cache_root" || fail "cache_fetch_failed" "failed to create cache root: $cache_root"
+          cache_parent="$(dirname "$cache_path")"
+          mkdir -p "$cache_parent" || fail "cache_fetch_failed" "failed to create cache parent: $cache_parent"
 
           if ! mkdir "$lock_dir" 2>/dev/null; then
             fail "cache_lock_failed" "cache lock already held for $cache_path: $lock_dir"
@@ -126,7 +167,7 @@ writeShellApplication {
           lock_acquired=1
           trap 'if [[ "''${lock_acquired:-0}" == 1 ]]; then rmdir "$lock_dir" >/dev/null 2>&1 || true; fi' EXIT INT TERM
 
-          temp_dir="$(mktemp -d "$cache_root/.refresh.XXXXXXXX")" || fail "cache_fetch_failed" "failed to create temporary cache under $cache_root"
+          temp_dir="$(mktemp -d "$cache_parent/.refresh.XXXXXXXX")" || fail "cache_fetch_failed" "failed to create temporary cache under $cache_parent"
           temp_cache="$temp_dir/cache.git"
 
           if ! git init --bare "$temp_cache" >/dev/null 2>&1; then

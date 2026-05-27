@@ -158,15 +158,16 @@ Implement a CLI and expose it through `home.packages`, then add module options a
 - **Follow-up**: Tests must prove origin points to upstream and clone works after cache removal.
 
 ### Decision: deterministic cache identity
-- **Context**: Multiple upstreams and branches may share repository basenames.
+- **Context**: Operators need stable, predictable cache paths that can be found without reverse-engineering a hash.
 - **Alternatives Considered**:
-  1. Human-readable slug only.
+  1. Human-readable basename only.
   2. Hash only.
-  3. Slug plus short hash of upstream URL and branch.
-- **Selected Approach**: Use sanitized repository basename plus a 12-character hash derived from upstream URL and branch.
-- **Rationale**: Keeps paths readable while avoiding collisions.
-- **Trade-offs**: Renaming upstream URLs creates a new cache.
-- **Follow-up**: Tests should cover two URLs with the same basename.
+  3. Basename plus short hash of upstream URL and branch.
+  4. ghq-style `<forge>/<org>/<repo>` path.
+- **Selected Approach**: Use a ghq-style path derived from upstream URL, e.g. `github.com/Shopify/globaldb-yugabyte`.
+- **Rationale**: Keeps cache paths stable and discoverable while distinguishing repositories by forge and owner.
+- **Trade-offs**: Non-main branches share the same repository cache path and should be treated as explicit operator refreshes.
+- **Follow-up**: Tests should cover GitHub URL path mapping.
 
 ### Decision: lock cache mutation
 - **Context**: Two invocations can refresh the same bare cache concurrently.
@@ -182,7 +183,7 @@ Implement a CLI and expose it through `home.packages`, then add module options a
 ## Risks & Mitigations
 
 - Git alternates dependency — Always pair reference cloning with `--dissociate`; test by removing the cache and running Git commands in the clone.
-- Cache collision — Include upstream URL and branch in the cache identity hash.
+- Cache collision — Preserve forge and owner path in the cache identity.
 - Concurrent refresh — Use a cache-local lock directory and report actionable lock errors.
 - Scope creep into Graphite/zellij — Keep no-`gt`, no-worktree, no-zellij-change boundaries explicit in design and tasks.
 
