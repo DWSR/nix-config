@@ -77,7 +77,7 @@
   - _Depends: 2.1, 2.2, 4.1_
   - _Boundary: TestHarness, CacheManager_
 
-- [ ] 4.3 Add clone behavior integration tests
+- [x] 4.3 Add clone behavior integration tests
   - Cover clone-triggered cache refresh when the cache is missing or stale.
   - Cover clone creation, origin rewrite, branch checkout, independent `.git` metadata, no persistent alternates, and cache-removal usability.
   - Cover unsafe destination rejection, remote rewrite failure reporting, checkout failure reporting, and boundary regressions for no Graphite/worktree/zellij ownership.
