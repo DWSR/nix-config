@@ -373,6 +373,32 @@
             touch $out
           '';
 
+          git-clone-isolation =
+            pkgs.runCommand "git-clone-isolation"
+              {
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export XDG_CACHE_HOME="$HOME/.cache"
+                export XDG_CONFIG_HOME="$HOME/.config"
+                export XDG_DATA_HOME="$HOME/.local/share"
+                export XDG_STATE_HOME="$HOME/.local/state"
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                export GIT_CLONE_ISOLATION_BIN="${gitCloneIsolation}/bin/git-clone-isolation"
+
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+
+                node --test tests/git-clone-isolation/
+                touch $out
+              '';
+
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end
           # path requires a switched host (real metadata.json, real

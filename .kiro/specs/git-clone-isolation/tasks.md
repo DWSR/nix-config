@@ -94,7 +94,7 @@
   - _Depends: 3.1, 4.1_
   - _Boundary: TestHarness, HMModule_
 
-- [ ] 4.5 Wire validation into flake checks
+- [x] 4.5 Wire validation into flake checks
   - Add a flake check that runs the git-clone-isolation test suite in an isolated temporary home.
   - Add any required runtime inputs for local Git fixture tests.
   - Completed state: the flake exposes a `git-clone-isolation` check that runs the behavior and render tests.
