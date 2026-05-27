@@ -44,8 +44,10 @@ writeShellApplication {
     FAILURE CONTRACT:
       [git-clone-isolation: <label>] <detail>
 
-      Labels currently emitted by the command skeleton:
+      Labels currently emitted by the command:
         invalid_arguments
+        cache_fetch_failed
+        cache_lock_failed
     USAGE
         }
 
@@ -96,8 +98,78 @@ writeShellApplication {
           local short_hash
 
           slug="$(repo_slug "$repo")"
-          short_hash="$(printf '%s\n%s\n' "$repo" "$branch" | sha256sum | cut -c1-12)"
+          short_hash="$(printf '%s\n%s\n' "$repo" "$branch" | sha256sum | cut -c 1-12)"
           printf '%s/%s-%s.git\n' "$cache_root" "$slug" "$short_hash"
+        }
+
+        refresh_cache() {
+          local repo="$1"
+          local branch="$2"
+          local cache_root="$3"
+          local cache_path="$4"
+          local lock_dir="$cache_path.lock"
+          local temp_dir=""
+          local temp_cache=""
+          local backup_path=""
+          local lock_acquired=0
+
+          mkdir -p "$cache_root" || fail "cache_fetch_failed" "failed to create cache root: $cache_root"
+
+          if ! mkdir "$lock_dir" 2>/dev/null; then
+            fail "cache_lock_failed" "cache lock already held for $cache_path: $lock_dir"
+          fi
+          lock_acquired=1
+          trap 'if [[ "''${lock_acquired:-0}" == 1 ]]; then rmdir "$lock_dir" >/dev/null 2>&1 || true; fi' EXIT INT TERM
+
+          temp_dir="$(mktemp -d "$cache_root/.refresh.XXXXXXXX")" || fail "cache_fetch_failed" "failed to create temporary cache under $cache_root"
+          temp_cache="$temp_dir/cache.git"
+
+          if ! git init --bare "$temp_cache" >/dev/null 2>&1; then
+            rm -rf "$temp_dir"
+            fail "cache_fetch_failed" "failed to initialize temporary bare cache for $repo"
+          fi
+
+          if ! git --git-dir="$temp_cache" remote add origin "$repo" >/dev/null 2>&1; then
+            rm -rf "$temp_dir"
+            fail "cache_fetch_failed" "failed to configure origin for $repo"
+          fi
+
+          if ! git --git-dir="$temp_cache" fetch --no-tags origin "+refs/heads/$branch:refs/heads/$branch" >/dev/null 2>&1; then
+            rm -rf "$temp_dir"
+            fail "cache_fetch_failed" "failed to fetch branch '$branch' from $repo; existing cache preserved at $cache_path"
+          fi
+
+          if ! git --git-dir="$temp_cache" symbolic-ref HEAD "refs/heads/$branch" >/dev/null 2>&1; then
+            rm -rf "$temp_dir"
+            fail "cache_fetch_failed" "failed to set cache HEAD to branch '$branch'; existing cache preserved at $cache_path"
+          fi
+
+          if [[ -e "$cache_path" ]]; then
+            backup_path="$cache_path.previous.$$"
+            if ! mv "$cache_path" "$backup_path"; then
+              rm -rf "$temp_dir"
+              fail "cache_fetch_failed" "failed to preserve existing cache before refresh: $cache_path"
+            fi
+          fi
+
+          if ! mv "$temp_cache" "$cache_path"; then
+            if [[ -n "$backup_path" && -e "$backup_path" ]]; then
+              mv "$backup_path" "$cache_path" >/dev/null 2>&1 || true
+            fi
+            rm -rf "$temp_dir"
+            fail "cache_fetch_failed" "failed to install refreshed cache; existing cache preserved at $cache_path"
+          fi
+
+          rm -rf "$temp_dir"
+          if [[ -n "$backup_path" && -e "$backup_path" ]]; then
+            rm -rf "$backup_path"
+          fi
+
+          lock_acquired=0
+          if ! rmdir "$lock_dir"; then
+            fail "cache_lock_failed" "failed to release cache lock for $cache_path: $lock_dir"
+          fi
+          trap - EXIT INT TERM
         }
 
         route_refresh() {
@@ -143,7 +215,8 @@ writeShellApplication {
           fi
 
           cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
-          printf 'git-clone-isolation: refresh route accepted repo=%s branch=%s cache-root=%s cache-path=%s\n' \
+          refresh_cache "$repo" "$branch" "$cache_root" "$cache_path"
+          printf 'git-clone-isolation: refreshed cache repo=%s branch=%s cache-root=%s cache-path=%s\n' \
             "$repo" "$branch" "$cache_root" "$cache_path"
         }
 

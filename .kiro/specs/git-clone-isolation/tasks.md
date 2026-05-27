@@ -24,7 +24,7 @@
   - _Requirements: 1.4, 2.2, 4.2, 4.3_
   - _Boundary: ConfigResolver_
 
-- [ ] 2.2 Implement the bare cache lifecycle
+- [x] 2.2 Implement the bare cache lifecycle
   - Create or refresh a bare cache for the configured branch using a base-branch-only fetch.
   - Keep unrequested branches and tags out of the default cache.
   - Add cache-local locking so concurrent refresh attempts cannot mutate the same bare cache simultaneously.
