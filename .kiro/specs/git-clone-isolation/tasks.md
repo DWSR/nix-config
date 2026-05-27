@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Establish the CLI package and command contract
+- [x] 1. Establish the CLI package and command contract
 - [x] 1.1 Create the packaged command skeleton
   - Add a packaged operator command with `refresh`, `clone`, `--help`, and `--version` routing.
   - Add argument validation and stable failure-label output for invalid commands before any cache or network access.
@@ -16,7 +16,7 @@
   - _Depends: 1.1_
   - _Boundary: CLI, TestHarness_
 
-- [ ] 2. Implement cache and clone runtime behavior
+- [x] 2. Implement cache and clone runtime behavior
 - [x] 2.1 Resolve operator defaults and cache identity
   - Require repository URL from command input while resolving cache root, clone root, base branch, and destination from flags, wrapper environment, and built-in fallbacks.
   - Derive a deterministic cache path from repository identity and branch without hardcoded machine-specific paths.
@@ -45,7 +45,7 @@
   - _Depends: 2.1, 2.2_
   - _Boundary: CloneManager, ErrorReporter_
 
-- [ ] 3. Add declarative Home Manager integration
+- [x] 3. Add declarative Home Manager integration
 - [x] 3.1 Create the common Home Manager module
   - Add an enable gate, package option, cache root, clone root, and default branch options.
   - Install a wrapper that supplies configured defaults to the packaged command.
@@ -61,7 +61,7 @@
   - _Depends: 3.1_
   - _Boundary: HMModule_
 
-- [ ] 4. Add network-free validation
+- [x] 4. Add network-free validation
 - [x] 4.1 Create the test harness scaffold
   - Add the test package structure and shared fixture helpers for local Git upstreams and temporary home/state roots.
   - Add helper behavior for building or locating the packaged command under test.
@@ -102,7 +102,7 @@
   - _Depends: 4.2, 4.3, 4.4_
   - _Boundary: TestHarness_
 
-- [ ] 5. Validate the complete feature
+- [x] 5. Validate the complete feature
   - Run formatting and the targeted test suite.
   - Evaluate the affected host configurations or flake checks that cover the new module.
   - Completed state: targeted validation passes and no fixture cache or clone state remains in the working tree.
