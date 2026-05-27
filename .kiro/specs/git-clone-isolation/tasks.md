@@ -8,7 +8,7 @@
   - _Requirements: 4.5_
   - _Boundary: CLI, ErrorReporter_
 
-- [ ] 1.2 Expose the command as a flake app and package contract check
+- [x] 1.2 Expose the command as a flake app and package contract check
   - Add a flake app so the command can be invoked through `nix run`.
   - Add a cheap package check that exercises help and version behavior without cache state.
   - Completed state: the app resolves to the packaged command and the help/version check passes in the flake checks.

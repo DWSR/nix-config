@@ -140,8 +140,13 @@
             config.allowUnfree = true;
             overlays = [ outputs.overlays.custom-packages ];
           };
+          gitCloneIsolation = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
         in
         {
+          git-clone-isolation = {
+            type = "app";
+            program = "${gitCloneIsolation}/bin/git-clone-isolation";
+          };
           bump-shopify-taps = {
             type = "app";
             program = "${import ./scripts/bump-shopify-taps.nix { inherit pkgs; }}/bin/bump-shopify-taps";
@@ -193,6 +198,7 @@
               outputs.overlays.custom-packages
             ];
           };
+          gitCloneIsolation = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
 
           opencodeTurnTimestampHosts = [
             "ShopifyLaptop"
@@ -348,6 +354,24 @@
               ''
                 printf '%s\n' "$hostReport" > $out
               '';
+
+          git-clone-isolation-package = pkgs.runCommand "git-clone-isolation-package" { } ''
+            export HOME=$(mktemp -d)
+            export XDG_CACHE_HOME="$HOME/.cache"
+            export XDG_CONFIG_HOME="$HOME/.config"
+            export XDG_DATA_HOME="$HOME/.local/share"
+            export XDG_STATE_HOME="$HOME/.local/state"
+
+            ${gitCloneIsolation}/bin/git-clone-isolation --help > help.txt
+            test -s help.txt
+
+            ${gitCloneIsolation}/bin/git-clone-isolation --version > version.txt
+            read -r version < version.txt
+            test "$version" = "git-clone-isolation 0.1.0"
+
+            test ! -e "$XDG_STATE_HOME/git-clone-isolation"
+            touch $out
+          '';
 
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end
