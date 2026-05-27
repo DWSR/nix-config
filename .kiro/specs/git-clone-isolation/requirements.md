@@ -27,7 +27,7 @@
 **Objective:** As an operator, I want each workspace to be a complete clone with its own Git metadata, so that Graphite state cannot leak across workspaces.
 
 #### Acceptance Criteria
-1. When the operator requests an isolated clone from a cached repository, the Git Clone Isolation Tool shall create a working clone at the requested destination or under the configured clone root.
+1. When the operator requests an isolated clone from a cached repository, the Git Clone Isolation Tool shall create a working clone from existing cache state at the requested destination or under the configured clone root.
 2. The Git Clone Isolation Tool shall default the clone root to `~/scratch`.
 3. The generated clone shall have its own `.git` directory that is not shared with the cache or with any other generated clone.
 4. The generated clone shall contain the objects it needs without relying on the cache after clone creation.
@@ -39,7 +39,7 @@
 #### Acceptance Criteria
 1. When the Git Clone Isolation Tool creates a working clone, the generated clone's `origin` remote shall point to the original upstream repository.
 2. When the Git Clone Isolation Tool creates a working clone from a local cache, the generated clone shall not leave `origin` pointing at the local cache.
-3. When the operator requests a base branch, the generated clone shall check out that branch when it is available from the upstream cache.
+3. When the operator omits a base branch, the generated clone shall use `main`; when the operator requests a base branch, the generated clone shall check out that branch when it is available from the upstream cache.
 4. The generated clone shall be usable with normal Git commands without requiring the cache path to remain present.
 5. If remote rewriting or branch checkout fails, the Git Clone Isolation Tool shall report the failing step and destination path.
 

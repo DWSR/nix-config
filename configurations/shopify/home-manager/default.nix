@@ -123,7 +123,7 @@ in
     config = {
       Label = "dev.dwsr.git-clone-isolation.globaldb-yugabyte-refresh";
       ProgramArguments = [
-        "${gitCloneIsolation.package}/bin/git-clone-isolation"
+        "${gitCloneIsolation.package}/bin/git-cache-clone"
         "refresh"
         "--repo"
         "https://github.com/Shopify/globaldb-yugabyte"

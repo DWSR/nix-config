@@ -28,13 +28,15 @@ function runClone(command, upstream, roots, options = {}) {
     'clone',
     '--repo',
     upstream.repo,
-    '--branch',
-    options.branch ?? upstream.branch,
     '--cache-root',
     roots.cacheRoot,
     '--clone-root',
     roots.cloneRoot,
   ];
+
+  if (options.branch) {
+    args.push('--branch', options.branch);
+  }
 
   if (options.dest) {
     args.push('--dest', options.dest);
@@ -44,6 +46,31 @@ function runClone(command, upstream, roots, options = {}) {
     env: commandEnv(roots),
     timeout: options.timeout ?? 120_000,
   });
+}
+
+function refreshCache(command, upstream, roots, options = {}) {
+  const args = [
+    'refresh',
+    '--repo',
+    upstream.repo,
+    '--cache-root',
+    roots.cacheRoot,
+  ];
+
+  if (options.branch) {
+    args.push('--branch', options.branch);
+  }
+
+  const result = execCommand(command, args, {
+    env: commandEnv(roots),
+    timeout: options.timeout ?? 120_000,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  return {
+    ...result,
+    cachePath: parseOutputPath(result.stdout, 'cache-path'),
+  };
 }
 
 function requireSuccessfulClone(command, upstream, roots, options = {}) {
@@ -70,7 +97,7 @@ function cacheHead(cachePath, branch = 'main') {
   return runGit(['--git-dir', cachePath, 'rev-parse', `refs/heads/${branch}`]);
 }
 
-test('clone behavior: missing cache is refreshed before clone creation', () => {
+test('clone behavior: missing cache fails without refreshing before clone creation', () => {
   const upstream = createLocalUpstream();
   const roots = createTempRoots();
   const dest = path.join(roots.cloneRoot, 'missing-cache-clone');
@@ -78,41 +105,41 @@ test('clone behavior: missing cache is refreshed before clone creation', () => {
   try {
     assert.equal(fs.existsSync(roots.cacheRoot), false);
 
-    const result = requireSuccessfulClone(commandUnderTest(), upstream, roots, { dest });
+    const result = runClone(commandUnderTest(), upstream, roots, { dest });
 
-    assert.equal(result.dest, dest);
-    assert.equal(fs.statSync(result.cachePath).isDirectory(), true);
-    assert.equal(cacheHead(result.cachePath, upstream.branch), upstream.head);
-    assert.equal(gitHead(dest), upstream.head);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /\[git-cache-clone: clone_failed\]/);
+    assert.match(result.stderr, /step=clone_from_cache/);
+    assert.equal(fs.existsSync(roots.cacheRoot), false);
+    assert.equal(fs.existsSync(dest), false);
   } finally {
     cleanupTempRoots(roots);
     cleanupTempRoots(upstream);
   }
 });
 
-test('clone behavior: stale cache is refreshed before clone creation', () => {
+test('clone behavior: stale cache is used as-is before clone creation', () => {
   const upstream = createLocalUpstream();
   const roots = createTempRoots();
 
   try {
     const command = commandUnderTest();
-    const first = requireSuccessfulClone(command, upstream, roots, {
-      dest: path.join(roots.cloneRoot, 'first-clone'),
-    });
-    assert.equal(cacheHead(first.cachePath, upstream.branch), upstream.head);
+    const cached = refreshCache(command, upstream, roots);
+    assert.equal(cacheHead(cached.cachePath, upstream.branch), upstream.head);
 
     const nextHead = createCommitOnBranch(upstream, upstream.branch, {
       'README.md': '# fixture upstream\n\nclone refresh update\n',
     }, { parent: upstream.head, message: 'advance before clone' });
 
-    const second = requireSuccessfulClone(command, upstream, roots, {
-      dest: path.join(roots.cloneRoot, 'second-clone'),
+    const clone = requireSuccessfulClone(command, upstream, roots, {
+      dest: path.join(roots.cloneRoot, 'stale-cache-clone'),
     });
 
-    assert.equal(second.cachePath, first.cachePath);
-    assert.equal(cacheHead(second.cachePath, upstream.branch), nextHead);
-    assert.equal(gitHead(second.dest), nextHead);
-    assert.equal(fs.readFileSync(path.join(second.dest, 'README.md'), 'utf8'), '# fixture upstream\n\nclone refresh update\n');
+    assert.equal(clone.cachePath, cached.cachePath);
+    assert.equal(cacheHead(clone.cachePath, upstream.branch), upstream.head);
+    assert.notEqual(cacheHead(clone.cachePath, upstream.branch), nextHead);
+    assert.equal(gitHead(clone.dest), upstream.head);
+    assert.equal(fs.readFileSync(path.join(clone.dest, 'README.md'), 'utf8'), '# fixture upstream\n');
   } finally {
     cleanupTempRoots(roots);
     cleanupTempRoots(upstream);
@@ -127,6 +154,8 @@ test('clone behavior: generated clone has upstream origin, requested branch, iso
     const releaseHead = createCommitOnBranch(upstream, 'release', {
       'release.txt': 'release branch content\n',
     }, { parent: upstream.head, message: 'release commit' });
+
+    refreshCache(commandUnderTest(), upstream, roots, { branch: 'release' });
 
     const result = requireSuccessfulClone(commandUnderTest(), upstream, roots, {
       branch: 'release',
@@ -162,7 +191,7 @@ test('clone behavior: non-empty destination is rejected before clone work begins
     const result = runClone(commandUnderTest(), upstream, roots, { dest });
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /\[git-clone-isolation: unsafe_destination\]/);
+    assert.match(result.stderr, /\[git-cache-clone: unsafe_destination\]/);
     assert.match(result.stderr, new RegExp(escapeRegExp(dest)));
     assert.equal(fs.existsSync(path.join(dest, '.git')), false);
     assert.equal(fs.existsSync(roots.cacheRoot), false);

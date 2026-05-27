@@ -140,12 +140,16 @@
             config.allowUnfree = true;
             overlays = [ outputs.overlays.custom-packages ];
           };
-          gitCloneIsolation = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
+          gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
         in
         {
+          git-cache-clone = {
+            type = "app";
+            program = "${gitCacheClone}/bin/git-cache-clone";
+          };
           git-clone-isolation = {
             type = "app";
-            program = "${gitCloneIsolation}/bin/git-clone-isolation";
+            program = "${gitCacheClone}/bin/git-cache-clone";
           };
           bump-shopify-taps = {
             type = "app";
@@ -198,7 +202,7 @@
               outputs.overlays.custom-packages
             ];
           };
-          gitCloneIsolation = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
+          gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
 
           opencodeTurnTimestampHosts = [
             "ShopifyLaptop"
@@ -281,7 +285,7 @@
               { };
         in
         nixvimTests
-        // {
+        // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 
           subagent-context-budget-tests =
@@ -355,26 +359,32 @@
                 printf '%s\n' "$hostReport" > $out
               '';
 
-          git-clone-isolation-package = pkgs.runCommand "git-clone-isolation-package" { } ''
+          git-cache-clone-package = pkgs.runCommand "git-cache-clone-package" { } ''
             export HOME=$(mktemp -d)
             export XDG_CACHE_HOME="$HOME/.cache"
             export XDG_CONFIG_HOME="$HOME/.config"
             export XDG_DATA_HOME="$HOME/.local/share"
             export XDG_STATE_HOME="$HOME/.local/state"
 
-            ${gitCloneIsolation}/bin/git-clone-isolation --help > help.txt
+            ${gitCacheClone}/bin/git-cache-clone --help > help.txt
             test -s help.txt
 
-            ${gitCloneIsolation}/bin/git-clone-isolation --version > version.txt
+            ${gitCacheClone}/bin/git-cache-clone --version > version.txt
             read -r version < version.txt
-            test "$version" = "git-clone-isolation 0.1.0"
+            test "$version" = "git-cache-clone 0.1.0"
+
+            PATH="${gitCacheClone}/bin:$PATH" ${pkgs.git}/bin/git cache-clone --version > git-version.txt
+            read -r git_version < git-version.txt
+            test "$git_version" = "git-cache-clone 0.1.0"
 
             test ! -e "$XDG_STATE_HOME/git-clone-isolation"
             touch $out
           '';
 
-          git-clone-isolation =
-            pkgs.runCommand "git-clone-isolation"
+          git-clone-isolation-package = git-cache-clone-package;
+
+          git-cache-clone =
+            pkgs.runCommand "git-cache-clone"
               {
                 nativeBuildInputs = [
                   pkgs.git
@@ -389,7 +399,7 @@
                 export XDG_DATA_HOME="$HOME/.local/share"
                 export XDG_STATE_HOME="$HOME/.local/state"
                 export NIX_CONFIG="experimental-features = nix-command flakes"
-                export GIT_CLONE_ISOLATION_BIN="${gitCloneIsolation}/bin/git-clone-isolation"
+                export GIT_CACHE_CLONE_BIN="${gitCacheClone}/bin/git-cache-clone"
 
                 cp -R ${./.} source
                 chmod -R u+w source
@@ -398,6 +408,8 @@
                 node --test tests/git-clone-isolation/
                 touch $out
               '';
+
+          git-clone-isolation = git-cache-clone;
 
           # Phase B operator validator builds + `--help` is non-empty
           # (rtk-install spec task 6.1). The script's full end-to-end

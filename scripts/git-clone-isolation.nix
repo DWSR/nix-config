@@ -5,7 +5,7 @@
 }:
 
 writeShellApplication {
-  name = "git-clone-isolation";
+  name = "git-cache-clone";
   runtimeInputs = [
     coreutils
     git
@@ -14,19 +14,19 @@ writeShellApplication {
         VERSION="0.1.0"
 
         fail() {
-          printf '[git-clone-isolation: %s] %s\n' "$1" "$2" >&2
+          printf '[git-cache-clone: %s] %s\n' "$1" "$2" >&2
           exit 1
         }
 
         usage() {
           cat <<'USAGE'
-    git-clone-isolation — create isolated Git clones from a local base-branch cache
+    git cache-clone — create isolated Git clones from a local base-branch cache
 
     USAGE:
-      git-clone-isolation refresh --repo <url> [--branch <name>] [--cache-root <path>]
-      git-clone-isolation clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
-      git-clone-isolation --help
-      git-clone-isolation --version
+      git cache-clone refresh --repo <url> [--branch <name>] [--cache-root <path>]
+      git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
+      git cache-clone --help
+      git cache-clone --version
 
     COMMANDS:
       refresh       Create or update the local bare cache for a repository.
@@ -42,7 +42,7 @@ writeShellApplication {
       --version     Print the command version and exit 0.
 
     FAILURE CONTRACT:
-      [git-clone-isolation: <label>] <detail>
+      [git-cache-clone: <label>] <detail>
 
       Labels currently emitted by the command:
         invalid_arguments
@@ -213,7 +213,6 @@ writeShellApplication {
           local dest_parent=""
 
           ensure_safe_destination "$dest" "$cache_root"
-          refresh_cache "$repo" "$branch" "$cache_root" "$cache_path"
 
           dest_parent="$(dirname "$dest")"
           if ! mkdir -p "$dest_parent"; then
@@ -285,7 +284,7 @@ writeShellApplication {
 
           cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
           refresh_cache "$repo" "$branch" "$cache_root" "$cache_path"
-          printf 'git-clone-isolation: refreshed cache repo=%s branch=%s cache-root=%s cache-path=%s\n' \
+          printf 'git-cache-clone: refreshed cache repo=%s branch=%s cache-root=%s cache-path=%s\n' \
             "$repo" "$branch" "$cache_root" "$cache_path"
         }
 
@@ -352,7 +351,7 @@ writeShellApplication {
           cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
           create_isolated_clone "$repo" "$branch" "$cache_root" "$cache_path" "$dest"
 
-          printf 'git-clone-isolation: cloned repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
+          printf 'git-cache-clone: cloned repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
             "$repo" "$branch" "$dest" "$cache_root" "$clone_root" "$cache_path"
         }
 
@@ -362,7 +361,7 @@ writeShellApplication {
             exit 0
             ;;
           --version)
-            printf 'git-clone-isolation %s\n' "$VERSION"
+            printf 'git-cache-clone %s\n' "$VERSION"
             exit 0
             ;;
           refresh)

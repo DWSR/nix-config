@@ -138,7 +138,7 @@ test('cache lifecycle: failed refresh preserves previous usable cache and emits 
     const result = refreshCache(command, upstream, roots);
 
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /\[git-clone-isolation: cache_fetch_failed\]/);
+    assert.match(result.stderr, /\[git-cache-clone: cache_fetch_failed\]/);
     assert.equal(cachedHead(cachePath), originalHead);
     assert.equal(runGit(['--git-dir', cachePath, 'fsck', '--no-progress']), '');
   } finally {
@@ -166,7 +166,7 @@ test('cache lifecycle: lock conflict emits cache_lock_failed and blocks concurre
       const result = refreshCache(command, upstream, roots);
 
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /\[git-clone-isolation: cache_lock_failed\]/);
+      assert.match(result.stderr, /\[git-cache-clone: cache_lock_failed\]/);
       assert.equal(cachedHead(cachePath), lockedHead);
       assert.notEqual(cachedHead(cachePath), nextHead);
     } finally {

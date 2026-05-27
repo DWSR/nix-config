@@ -10,7 +10,7 @@ let
   basePackage = pkgs.callPackage ../../scripts/git-clone-isolation.nix { };
 
   wrappedPackage = pkgs.writeShellApplication {
-    name = "git-clone-isolation";
+    name = "git-cache-clone";
     text = ''
       export GIT_CLONE_ISOLATION_CACHE_ROOT="${cfg.cacheRoot}"
       export GIT_CLONE_ISOLATION_CLONE_ROOT="${cfg.cloneRoot}"
@@ -21,13 +21,13 @@ let
 in
 {
   options.programs.git-clone-isolation = {
-    enable = lib.mkEnableOption "git-clone-isolation CLI wrapper";
+    enable = lib.mkEnableOption "git-cache-clone CLI wrapper";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = basePackage;
       description = ''
-        Base git-clone-isolation CLI package delegated to by the Home Manager wrapper.
+        Base git-cache-clone CLI package delegated to by the Home Manager wrapper.
       '';
     };
 
@@ -35,7 +35,7 @@ in
       type = lib.types.str;
       default = "${config.xdg.stateHome}/git-clone-isolation";
       description = ''
-        Cache state root exported to git-clone-isolation by the wrapper.
+        Cache state root exported to git-cache-clone by the wrapper.
       '';
     };
 
@@ -51,7 +51,7 @@ in
       type = lib.types.str;
       default = "main";
       description = ''
-        Default base branch exported to git-clone-isolation by the wrapper.
+        Default base branch exported to git-cache-clone by the wrapper.
       '';
     };
   };

@@ -41,14 +41,15 @@ test('temporary roots provide isolated home, state, cache, and clone paths', () 
 
 test('command helper locates an explicit packaged command override', () => {
   const roots = createTempRoots();
-  const command = `${roots.root}/bin/git-clone-isolation`;
+  const command = `${roots.root}/bin/git-cache-clone`;
 
   try {
     fs.mkdirSync(`${roots.root}/bin`, { recursive: true });
-    fs.writeFileSync(command, '#!/bin/sh\nprintf "%s\\n" "git-clone-isolation 0.0.0-test"\n', { mode: 0o755 });
+    fs.writeFileSync(command, '#!/bin/sh\nprintf "%s\\n" "git-cache-clone 0.0.0-test"\n', { mode: 0o755 });
 
     const previousOverride = process.env.GIT_CLONE_ISOLATION_BIN;
-    process.env.GIT_CLONE_ISOLATION_BIN = command;
+    const previousGitOverride = process.env.GIT_CACHE_CLONE_BIN;
+    process.env.GIT_CACHE_CLONE_BIN = command;
 
     let result;
     try {
@@ -61,9 +62,14 @@ test('command helper locates an explicit packaged command override', () => {
       } else {
         process.env.GIT_CLONE_ISOLATION_BIN = previousOverride;
       }
+      if (previousGitOverride === undefined) {
+        delete process.env.GIT_CACHE_CLONE_BIN;
+      } else {
+        process.env.GIT_CACHE_CLONE_BIN = previousGitOverride;
+      }
     }
 
-    assert.equal(result, 'git-clone-isolation 0.0.0-test');
+    assert.equal(result, 'git-cache-clone 0.0.0-test');
   } finally {
     cleanupTempRoots(roots);
   }

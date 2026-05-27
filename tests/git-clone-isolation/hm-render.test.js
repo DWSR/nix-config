@@ -18,7 +18,7 @@ function gitCloneIsolationHostRenderExpr() {
     let
       flake = builtins.getFlake (toString ${repoRoot});
       packageNames = packages: map (pkg: pkg.name or pkg.pname or "") packages;
-      hasWrapper = config: builtins.elem "git-clone-isolation" (packageNames config.home.packages);
+      hasWrapper = config: builtins.elem "git-cache-clone" (packageNames config.home.packages);
       summarize = host:
         let
           config = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
@@ -63,7 +63,7 @@ function disabledModuleRenderExpr() {
     in
     {
       enabled = config.programs.git-clone-isolation.enable;
-      packageInHomePackages = builtins.elem "git-clone-isolation" packageNames;
+      packageInHomePackages = builtins.elem "git-cache-clone" packageNames;
     }
   `;
 }
@@ -91,7 +91,7 @@ test('Home Manager host render enables git-clone-isolation with wrapper package 
 
   for (const [hostKey, host] of Object.entries(rendered)) {
     assert.equal(host.enabled, true, `${hostKey} enables programs.git-clone-isolation`);
-    assert.equal(host.packageInHomePackages, true, `${hostKey} installs git-clone-isolation wrapper`);
+    assert.equal(host.packageInHomePackages, true, `${hostKey} installs git-cache-clone wrapper`);
     assert.equal(host.cacheRoot, host.expectedCacheRoot, `${hostKey} cacheRoot derives from xdg.stateHome`);
     assert.equal(host.cloneRoot, host.expectedCloneRoot, `${hostKey} cloneRoot derives from home.homeDirectory`);
     assert.equal(host.defaultBranch, 'main', `${hostKey} default branch is main`);
@@ -121,5 +121,5 @@ test('Shopify host renders globaldb-yugabyte main-branch cache refresh agent', (
     '--cache-root',
     rendered.expectedCacheRoot,
   ]);
-  assert.match(rendered.programArguments[0], /git-clone-isolation\/bin\/git-clone-isolation$/);
+  assert.match(rendered.programArguments[0], /git-cache-clone\/bin\/git-cache-clone$/);
 });

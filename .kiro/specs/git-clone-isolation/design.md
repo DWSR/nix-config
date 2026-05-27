@@ -152,7 +152,7 @@ sequenceDiagram
     participant Clone
     participant Upstream
     Operator->>CLI: clone repo destination
-    CLI->>Cache: ensure bare cache fresh
+    CLI->>Cache: use existing bare cache
     CLI->>Clone: clone from cache with dissociation
     CLI->>Clone: set origin to upstream
     CLI->>Clone: checkout base branch
@@ -227,10 +227,10 @@ Responsibilities and constraints:
 Service contract:
 
 ```text
-git-clone-isolation refresh --repo <url> [--branch <name>] [--cache-root <path>]
-git-clone-isolation clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
-git-clone-isolation --help
-git-clone-isolation --version
+git cache-clone refresh --repo <url> [--branch <name>] [--cache-root <path>]
+git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
+git cache-clone --help
+git cache-clone --version
 ```
 
 #### ConfigResolver
@@ -283,6 +283,7 @@ State contract:
 Responsibilities and constraints:
 
 - Refuse non-empty destination directories.
+- Do not refresh cache state during clone creation.
 - Clone from the bare cache using non-local transport, reference acceleration, and dissociation.
 - Rewrite `origin` to the upstream URL after clone creation.
 - Checkout the requested base branch.
@@ -336,7 +337,7 @@ programs.git-clone-isolation = {
 };
 ```
 
-The module installs a wrapper named `git-clone-isolation` that exports defaults and delegates to the base CLI package.
+The module installs a wrapper named `git-cache-clone` that exports defaults and delegates to the base CLI package.
 
 ### Validation
 
@@ -371,7 +372,7 @@ Logical records used by the CLI:
 Errors use the stable label format:
 
 ```text
-[git-clone-isolation: <label>] <detail>
+[git-cache-clone: <label>] <detail>
 ```
 
 User-input errors stop before cache or clone mutation. Cache refresh errors preserve an existing usable cache. Clone errors report the destination and failing step; partial destinations are left for inspection unless the clone command failed before the directory was created.

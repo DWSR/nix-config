@@ -34,13 +34,13 @@
   - _Boundary: CacheManager_
 
 - [x] 2.3 Implement isolated clone creation
-  - Ensure the bare cache exists and is refreshed before clone creation begins.
+  - Use existing bare cache state without refreshing before clone creation begins.
   - Refuse non-empty or unsafe destinations before clone work begins.
   - Create a working clone from the bare cache with clone acceleration and no persistent cache dependency.
   - Rewrite `origin` to the original upstream repository and check out the requested base branch.
   - Report remote rewrite and checkout failures with `remote_rewrite_failed` or `checkout_failed`, including the failing step and destination path.
   - Preserve the boundary that the command does not run Graphite, create worktrees, edit Graphite metadata, modify zellij, or synchronize uncommitted work.
-  - Completed state: clone from a missing or stale cache refreshes first, the generated clone has its own `.git` directory, `origin` points to upstream, the requested branch is checked out, remote/checkout failure simulations report step and destination, and the clone remains usable after the cache is unavailable.
+  - Completed state: clone from a missing cache fails without refreshing, stale cache is used as-is, the generated clone has its own `.git` directory, `origin` points to upstream, the requested branch is checked out, remote/checkout failure simulations report step and destination, and the clone remains usable after the cache is unavailable.
   - _Requirements: 1.2, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 5.1, 5.2, 5.3, 5.4, 5.5_
   - _Depends: 2.1, 2.2_
   - _Boundary: CloneManager, ErrorReporter_

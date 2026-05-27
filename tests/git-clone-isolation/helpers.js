@@ -167,10 +167,13 @@ function buildCommandUnderTest() {
     },
   ).trim();
 
-  return path.join(outPath, 'bin', 'git-clone-isolation');
+  return path.join(outPath, 'bin', 'git-cache-clone');
 }
 
 function commandUnderTest(options = {}) {
+  if (process.env.GIT_CACHE_CLONE_BIN) {
+    return process.env.GIT_CACHE_CLONE_BIN;
+  }
   if (process.env.GIT_CLONE_ISOLATION_BIN) {
     return process.env.GIT_CLONE_ISOLATION_BIN;
   }
@@ -178,7 +181,7 @@ function commandUnderTest(options = {}) {
     return cachedCommandUnderTest;
   }
   if (options.build === false) {
-    return path.join(repoRoot, 'result/bin/git-clone-isolation');
+    return path.join(repoRoot, 'result/bin/git-cache-clone');
   }
   cachedCommandUnderTest = buildCommandUnderTest();
   return cachedCommandUnderTest;
