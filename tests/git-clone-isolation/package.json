@@ -1,0 +1,7 @@
+{
+  "name": "git-clone-isolation-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Test suite entry point for the git-clone-isolation spec. The main field lets node --test load this directory through run.js."
+}

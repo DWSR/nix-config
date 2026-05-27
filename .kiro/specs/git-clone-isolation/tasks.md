@@ -62,7 +62,7 @@
   - _Boundary: HMModule_
 
 - [ ] 4. Add network-free validation
-- [ ] 4.1 Create the test harness scaffold
+- [x] 4.1 Create the test harness scaffold
   - Add the test package structure and shared fixture helpers for local Git upstreams and temporary home/state roots.
   - Add helper behavior for building or locating the packaged command under test.
   - Completed state: `node --test tests/git-clone-isolation/` discovers the suite and the fixture helper can create a local repository with a main branch.
