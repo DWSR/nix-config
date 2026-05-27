@@ -6,6 +6,13 @@
     settings = {
       user.email = "brandon.mcnama@shopify.com";
 
+      credential."https://*.quick.shopify.io".helper = [
+        ""
+        "${config.home.homeDirectory}/.config/quick/quick-git-credential.sh"
+      ];
+
+      http."https://*.quick.shopify.io/".extraHeader = "X-Requested-With: XMLHttpRequest";
+
       maintenance = {
         enable = true;
         repositories = [ "${config.home.homeDirectory}/world/trees/root/src" ];
