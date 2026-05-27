@@ -48,6 +48,11 @@ writeShellApplication {
         invalid_arguments
         cache_fetch_failed
         cache_lock_failed
+        unsafe_destination
+        clone_failed
+        remote_rewrite_failed
+        checkout_failed
+        isolation_check_failed
     USAGE
         }
 
@@ -172,6 +177,70 @@ writeShellApplication {
           trap - EXIT INT TERM
         }
 
+        ensure_safe_destination() {
+          local dest="$1"
+          local cache_root="$2"
+
+          if [[ -z "$dest" || "$dest" == "/" ]]; then
+            fail "unsafe_destination" "destination is unsafe: $dest"
+          fi
+
+          case "$dest" in
+            "$cache_root"|"$cache_root"/*)
+              fail "unsafe_destination" "destination must not be inside cache root: dest=$dest cache-root=$cache_root"
+              ;;
+          esac
+
+          if [[ -L "$dest" ]]; then
+            fail "unsafe_destination" "destination must not be a symlink: $dest"
+          fi
+
+          if [[ -e "$dest" && ! -d "$dest" ]]; then
+            fail "unsafe_destination" "destination exists and is not a directory: $dest"
+          fi
+
+          if [[ -d "$dest" && -n "$(ls -A "$dest")" ]]; then
+            fail "unsafe_destination" "destination is not empty: $dest"
+          fi
+        }
+
+        create_isolated_clone() {
+          local repo="$1"
+          local branch="$2"
+          local cache_root="$3"
+          local cache_path="$4"
+          local dest="$5"
+          local dest_parent=""
+
+          ensure_safe_destination "$dest" "$cache_root"
+          refresh_cache "$repo" "$branch" "$cache_root" "$cache_path"
+
+          dest_parent="$(dirname "$dest")"
+          if ! mkdir -p "$dest_parent"; then
+            fail "clone_failed" "step=prepare_destination dest=$dest failed to create parent directory: $dest_parent"
+          fi
+
+          if ! git clone --no-local --single-branch --branch "$branch" --reference-if-able "$cache_path" --dissociate "$cache_path" "$dest" >/dev/null 2>&1; then
+            fail "clone_failed" "step=clone_from_cache dest=$dest cache=$cache_path branch=$branch"
+          fi
+
+          if [[ ! -d "$dest/.git" ]]; then
+            fail "isolation_check_failed" "step=verify_git_dir dest=$dest expected independent .git directory"
+          fi
+
+          if [[ -e "$dest/.git/objects/info/alternates" ]]; then
+            fail "isolation_check_failed" "step=verify_no_alternates dest=$dest alternates=$dest/.git/objects/info/alternates"
+          fi
+
+          if ! git -C "$dest" remote set-url origin "$repo" >/dev/null 2>&1; then
+            fail "remote_rewrite_failed" "step=remote_set_url dest=$dest origin=$repo"
+          fi
+
+          if ! git -C "$dest" checkout "$branch" >/dev/null 2>&1; then
+            fail "checkout_failed" "step=checkout dest=$dest branch=$branch"
+          fi
+        }
+
         route_refresh() {
           local repo=""
           local branch="''${GIT_CLONE_ISOLATION_DEFAULT_BRANCH:-main}"
@@ -281,8 +350,9 @@ writeShellApplication {
             dest="$clone_root/$slug"
           fi
           cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
+          create_isolated_clone "$repo" "$branch" "$cache_root" "$cache_path" "$dest"
 
-          printf 'git-clone-isolation: clone route accepted repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
+          printf 'git-clone-isolation: cloned repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
             "$repo" "$branch" "$dest" "$cache_root" "$clone_root" "$cache_path"
         }
 

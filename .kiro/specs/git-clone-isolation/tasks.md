@@ -33,7 +33,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
   - _Boundary: CacheManager_
 
-- [ ] 2.3 Implement isolated clone creation
+- [x] 2.3 Implement isolated clone creation
   - Ensure the bare cache exists and is refreshed before clone creation begins.
   - Refuse non-empty or unsafe destinations before clone work begins.
   - Create a working clone from the bare cache with clone acceleration and no persistent cache dependency.
