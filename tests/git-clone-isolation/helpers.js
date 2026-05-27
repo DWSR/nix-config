@@ -54,6 +54,19 @@ function execCommand(command, args, options = {}) {
   };
 }
 
+function nixEvalJson(expr, options = {}) {
+  return JSON.parse(childProcess.execFileSync(
+    'nix',
+    ['eval', '--json', '--impure', '--expr', expr],
+    {
+      cwd: options.cwd ?? repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: options.timeout ?? 120_000,
+    },
+  ));
+}
+
 function createCommitOnBranch(upstream, branch, files, options = {}) {
   const indexFile = path.join(upstream.root, `fixture-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}.index`);
 
@@ -183,6 +196,7 @@ module.exports = {
   createLocalUpstream,
   createTempRoots,
   execCommand,
+  nixEvalJson,
   repoRoot,
   runGit,
 };

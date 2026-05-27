@@ -86,7 +86,7 @@
   - _Depends: 2.1, 2.2, 2.3, 4.1_
   - _Boundary: TestHarness, CloneManager_
 
-- [ ] 4.4 Add Home Manager render tests
+- [x] 4.4 Add Home Manager render tests
   - Verify both host configurations render the package and default option values when enabled.
   - Verify disabling the module omits the package from `home.packages`.
   - Completed state: the Home Manager render test passes and proves module defaults for cache root, clone root, and base branch.
