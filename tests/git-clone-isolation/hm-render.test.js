@@ -68,6 +68,24 @@ function disabledModuleRenderExpr() {
   `;
 }
 
+function shopifyRefreshAgentExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      config = flake.darwinConfigurations."${HOSTS.shopify}".config.home-manager.users.brandonmcnama;
+      agent = config.launchd.agents.git-clone-isolation-globaldb-yugabyte-refresh;
+    in
+    {
+      enabled = agent.enable;
+      label = agent.config.Label;
+      programArguments = agent.config.ProgramArguments;
+      runAtLoad = agent.config.RunAtLoad;
+      startInterval = agent.config.StartInterval;
+      expectedCacheRoot = config.programs.git-clone-isolation.cacheRoot;
+    }
+  `;
+}
+
 test('Home Manager host render enables git-clone-isolation with wrapper package and default paths', () => {
   const rendered = nixEvalJson(gitCloneIsolationHostRenderExpr());
 
@@ -85,4 +103,23 @@ test('disabled Home Manager module omits git-clone-isolation wrapper package', (
 
   assert.equal(rendered.enabled, false);
   assert.equal(rendered.packageInHomePackages, false);
+});
+
+test('Shopify host renders globaldb-yugabyte main-branch cache refresh agent', () => {
+  const rendered = nixEvalJson(shopifyRefreshAgentExpr());
+
+  assert.equal(rendered.enabled, true);
+  assert.equal(rendered.label, 'dev.dwsr.git-clone-isolation.globaldb-yugabyte-refresh');
+  assert.equal(rendered.runAtLoad, true);
+  assert.equal(rendered.startInterval, 600);
+  assert.deepEqual(rendered.programArguments.slice(1), [
+    'refresh',
+    '--repo',
+    'https://github.com/Shopify/globaldb-yugabyte',
+    '--branch',
+    'main',
+    '--cache-root',
+    rendered.expectedCacheRoot,
+  ]);
+  assert.match(rendered.programArguments[0], /git-clone-isolation\/bin\/git-clone-isolation$/);
 });

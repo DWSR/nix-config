@@ -8,6 +8,7 @@ let
     pkgs.unstable.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
   inherit (config.home.mcp) readKeychainSecret;
+  gitCloneIsolation = config.programs.git-clone-isolation;
 in
 {
   imports = [
@@ -114,6 +115,27 @@ in
           command = "${pkgs.chrome-devtools-mcp}/bin/chrome-devtools-mcp";
         };
       };
+    };
+  };
+
+  launchd.agents.git-clone-isolation-globaldb-yugabyte-refresh = {
+    inherit (gitCloneIsolation) enable;
+    config = {
+      Label = "dev.dwsr.git-clone-isolation.globaldb-yugabyte-refresh";
+      ProgramArguments = [
+        "${gitCloneIsolation.package}/bin/git-clone-isolation"
+        "refresh"
+        "--repo"
+        "https://github.com/Shopify/globaldb-yugabyte"
+        "--branch"
+        "main"
+        "--cache-root"
+        gitCloneIsolation.cacheRoot
+      ];
+      RunAtLoad = true;
+      StartInterval = 600;
+      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/git-clone-isolation-globaldb-yugabyte-refresh.log";
+      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/git-clone-isolation-globaldb-yugabyte-refresh.error.log";
     };
   };
 
