@@ -285,6 +285,8 @@ Responsibilities and constraints:
 - Refuse non-empty destination directories.
 - Do not refresh cache state during clone creation.
 - Clone from the bare cache using non-local transport, reference acceleration, and dissociation.
+- Stage clone creation in a temporary directory and move it into place only after success.
+- Skip Git LFS smudge during clone and checkout; LFS object hydration remains an explicit operator action.
 - Rewrite `origin` to the upstream URL after clone creation.
 - Checkout the requested base branch.
 - Validate no persistent cache dependency remains.

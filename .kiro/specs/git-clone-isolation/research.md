@@ -183,6 +183,7 @@ Implement a CLI and expose it through `home.packages`, then add module options a
 ## Risks & Mitigations
 
 - Git alternates dependency — Always pair reference cloning with `--dissociate`; test by removing the cache and running Git commands in the clone.
+- Git LFS smudge failures — Skip LFS smudge during clone/checkout and leave LFS hydration to the operator.
 - Cache collision — Preserve forge and owner path in the cache identity.
 - Concurrent refresh — Use a cache-local lock directory and report actionable lock errors.
 - Scope creep into Graphite/zellij — Keep no-`gt`, no-worktree, no-zellij-change boundaries explicit in design and tasks.

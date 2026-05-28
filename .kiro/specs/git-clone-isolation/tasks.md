@@ -37,6 +37,7 @@
   - Use existing bare cache state without refreshing before clone creation begins.
   - Refuse non-empty or unsafe destinations before clone work begins.
   - Create a working clone from the bare cache with clone acceleration and no persistent cache dependency.
+  - Stage clone creation before installing the destination and skip Git LFS smudge during clone/checkout.
   - Rewrite `origin` to the original upstream repository and check out the requested base branch.
   - Report remote rewrite and checkout failures with `remote_rewrite_failed` or `checkout_failed`, including the failing step and destination path.
   - Preserve the boundary that the command does not run Graphite, create worktrees, edit Graphite metadata, modify zellij, or synchronize uncommitted work.

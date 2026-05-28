@@ -234,7 +234,16 @@ test('clone behavior: remote and checkout failure labels include failing step an
   const source = fs.readFileSync(path.join(repoRoot, 'scripts/git-clone-isolation.nix'), 'utf8');
 
   assert.match(source, /fail "remote_rewrite_failed" "step=remote_set_url dest=\$dest origin=\$repo"/);
-  assert.match(source, /fail "checkout_failed" "step=checkout dest=\$dest branch=\$branch"/);
+  assert.match(source, /fail "checkout_failed" "step=checkout dest=\$dest branch=\$branch detail=\$checkout_output"/);
+});
+
+test('clone behavior: source stages clone installation and skips Git LFS smudge', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'scripts/git-clone-isolation.nix'), 'utf8');
+
+  assert.match(source, /staging="\$\(mktemp -d "\$dest_parent\/\.git-cache-clone\.XXXXXXXX"\)"/);
+  assert.match(source, /GIT_LFS_SKIP_SMUDGE=1 git clone/);
+  assert.match(source, /GIT_LFS_SKIP_SMUDGE=1 git -C "\$staging" checkout/);
+  assert.match(source, /mv "\$staging" "\$dest"/);
 });
 
 test('clone behavior: source remains outside Graphite, worktree, zellij, and Graphite metadata ownership', () => {

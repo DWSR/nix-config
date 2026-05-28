@@ -252,6 +252,9 @@ writeShellApplication {
           local cache_path="$4"
           local dest="$5"
           local dest_parent=""
+          local staging=""
+          local clone_output=""
+          local checkout_output=""
 
           ensure_safe_destination "$dest" "$cache_root"
 
@@ -260,8 +263,34 @@ writeShellApplication {
             fail "clone_failed" "step=prepare_destination dest=$dest failed to create parent directory: $dest_parent"
           fi
 
-          if ! git clone --no-local --single-branch --branch "$branch" --reference-if-able "$cache_path" --dissociate "$cache_path" "$dest" >/dev/null 2>&1; then
-            fail "clone_failed" "step=clone_from_cache dest=$dest cache=$cache_path branch=$branch"
+          staging="$(mktemp -d "$dest_parent/.git-cache-clone.XXXXXXXX")" || fail "clone_failed" "step=prepare_staging dest=$dest failed to create staging directory"
+          rmdir "$staging"
+
+          if ! clone_output="$(GIT_LFS_SKIP_SMUDGE=1 git clone --no-local --single-branch --branch "$branch" --reference-if-able "$cache_path" --dissociate "$cache_path" "$staging" 2>&1)"; then
+            rm -rf "$staging"
+            fail "clone_failed" "step=clone_from_cache dest=$dest cache=$cache_path branch=$branch detail=$clone_output"
+          fi
+
+          if ! git -C "$staging" remote set-url origin "$repo" >/dev/null 2>&1; then
+            rm -rf "$staging"
+            fail "remote_rewrite_failed" "step=remote_set_url dest=$dest origin=$repo"
+          fi
+
+          if ! checkout_output="$(GIT_LFS_SKIP_SMUDGE=1 git -C "$staging" checkout "$branch" 2>&1)"; then
+            rm -rf "$staging"
+            fail "checkout_failed" "step=checkout dest=$dest branch=$branch detail=$checkout_output"
+          fi
+
+          if [[ -d "$dest" ]]; then
+            rmdir "$dest" || {
+              rm -rf "$staging"
+              fail "unsafe_destination" "destination became non-empty before install: $dest"
+            }
+          fi
+
+          if ! mv "$staging" "$dest"; then
+            rm -rf "$staging"
+            fail "clone_failed" "step=install_clone dest=$dest staging=$staging"
           fi
 
           if [[ ! -d "$dest/.git" ]]; then
@@ -270,14 +299,6 @@ writeShellApplication {
 
           if [[ -e "$dest/.git/objects/info/alternates" ]]; then
             fail "isolation_check_failed" "step=verify_no_alternates dest=$dest alternates=$dest/.git/objects/info/alternates"
-          fi
-
-          if ! git -C "$dest" remote set-url origin "$repo" >/dev/null 2>&1; then
-            fail "remote_rewrite_failed" "step=remote_set_url dest=$dest origin=$repo"
-          fi
-
-          if ! git -C "$dest" checkout "$branch" >/dev/null 2>&1; then
-            fail "checkout_failed" "step=checkout dest=$dest branch=$branch"
           fi
         }
 
