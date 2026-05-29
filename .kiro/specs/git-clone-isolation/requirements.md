@@ -6,8 +6,8 @@
 
 ## Boundary Context
 
-- **In scope**: Maintaining a reconstructable bare base-branch cache, creating isolated working clones, setting generated clone remotes to the original upstream, and installing/configuring the CLI through Nix/Home Manager.
-- **Out of scope**: Replacing Graphite, wrapping `gt`, repairing Graphite metadata, managing Git worktrees, changing `zellij-worktree`, mirroring every branch/tag, running background refresh daemons, or synchronizing uncommitted work between clones.
+- **In scope**: Maintaining a reconstructable bare base-branch cache, creating isolated working clones, hydrating Git LFS objects by default with a per-clone opt-out, setting generated clone remotes to the original upstream, and installing/configuring the CLI through Nix/Home Manager.
+- **Out of scope**: Replacing Graphite, wrapping `gt`, repairing Graphite metadata, managing Git worktrees, changing `zellij-worktree`, mirroring every branch/tag, running background refresh daemons, custom repair of missing Git LFS media, or synchronizing uncommitted work between clones.
 - **Adjacent expectations**: Existing Git configuration, hooks, `~/scratch`, and zellij workflows remain usable. Graphite state isolation is achieved by creating separate clones, not by changing Graphite behavior.
 
 ## Requirements
@@ -72,3 +72,15 @@
 3. The validation suite shall verify generated clone remote configuration points to the fixture upstream rather than the cache.
 4. The validation suite shall verify generated clones have independent `.git` metadata.
 5. The validation suite shall verify generated clones remain usable after the cache path is unavailable.
+6. The validation suite shall verify default Git LFS hydration with local fixture repositories.
+7. The validation suite shall verify the Git LFS hydration opt-out leaves pointer files in the generated clone.
+
+### Requirement 7: Git LFS hydration
+**Objective:** As an operator, I want generated clones to contain available Git LFS media by default, so that cached clone creation behaves like a normal hydrated working clone.
+
+#### Acceptance Criteria
+1. When a generated clone contains Git LFS pointer files and hydration is not disabled, the Git Clone Isolation Tool shall fetch available Git LFS media from the upstream repository before reporting success.
+2. When Git LFS hydration succeeds, the generated clone shall contain materialized Git LFS files instead of pointer files for fetched objects.
+3. When the operator disables Git LFS hydration for a clone request, the Git Clone Isolation Tool shall complete clone creation without requiring Git LFS media downloads.
+4. If default Git LFS hydration fails, the Git Clone Isolation Tool shall report the failing hydration step and destination path.
+5. The Git Clone Isolation Tool shall keep Git LFS hydration scoped to clone creation and shall not require Git LFS media to be stored in the bare cache.

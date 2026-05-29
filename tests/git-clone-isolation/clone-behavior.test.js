@@ -9,6 +9,7 @@ const {
   cleanupTempRoots,
   commandUnderTest,
   createCommitOnBranch,
+  createLocalLfsUpstream,
   createLocalUpstream,
   createTempRoots,
   execCommand,
@@ -40,6 +41,10 @@ function runClone(command, upstream, roots, options = {}) {
 
   if (options.dest) {
     args.push('--dest', options.dest);
+  }
+
+  if (options.noLfsHydration) {
+    args.push('--no-lfs-hydration');
   }
 
   return execCommand(command, args, {
@@ -208,6 +213,47 @@ test('clone behavior: generated clone has upstream origin, requested branch, iso
   }
 });
 
+test('clone behavior: default clone hydrates Git LFS media from upstream', () => {
+  const upstream = createLocalLfsUpstream();
+  const roots = createTempRoots();
+
+  try {
+    const command = commandUnderTest();
+    const refreshed = refreshCache(command, upstream, roots);
+    const result = requireSuccessfulClone(command, upstream, roots, {
+      dest: path.join(roots.cloneRoot, 'lfs-hydrated-clone'),
+    });
+
+    assert.equal(fs.readFileSync(path.join(result.dest, upstream.lfsPath), 'utf8'), upstream.lfsContent);
+    assert.match(runGit(['lfs', 'ls-files', '-l'], { cwd: result.dest }), new RegExp(`${escapeRegExp(upstream.lfsPath)}$`));
+    assert.equal(fs.existsSync(path.join(refreshed.cachePath, 'lfs', 'objects')), false);
+  } finally {
+    cleanupTempRoots(roots);
+    cleanupTempRoots(upstream);
+  }
+});
+
+test('clone behavior: --no-lfs-hydration leaves Git LFS pointer files', () => {
+  const upstream = createLocalLfsUpstream();
+  const roots = createTempRoots();
+
+  try {
+    const command = commandUnderTest();
+    refreshCache(command, upstream, roots);
+    const result = requireSuccessfulClone(command, upstream, roots, {
+      dest: path.join(roots.cloneRoot, 'lfs-pointer-clone'),
+      noLfsHydration: true,
+    });
+    const content = fs.readFileSync(path.join(result.dest, upstream.lfsPath), 'utf8');
+
+    assert.match(content, /^version https:\/\/git-lfs.github.com\/spec\/v1\n/);
+    assert.match(runGit(['lfs', 'ls-files', '-l'], { cwd: result.dest }), new RegExp(` - ${escapeRegExp(upstream.lfsPath)}$`));
+  } finally {
+    cleanupTempRoots(roots);
+    cleanupTempRoots(upstream);
+  }
+});
+
 test('clone behavior: non-empty destination is rejected before clone work begins', () => {
   const upstream = createLocalUpstream();
   const roots = createTempRoots();
@@ -237,12 +283,16 @@ test('clone behavior: remote and checkout failure labels include failing step an
   assert.match(source, /fail "checkout_failed" "step=checkout dest=\$dest branch=\$branch detail=\$checkout_output"/);
 });
 
-test('clone behavior: source stages clone installation and skips Git LFS smudge', () => {
+test('clone behavior: source stages clone installation and controls Git LFS hydration', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'scripts/git-clone-isolation.nix'), 'utf8');
 
   assert.match(source, /staging="\$\(mktemp -d "\$dest_parent\/\.git-cache-clone\.XXXXXXXX"\)"/);
   assert.match(source, /GIT_LFS_SKIP_SMUDGE=1 git clone/);
   assert.match(source, /GIT_LFS_SKIP_SMUDGE=1 git -C "\$staging" checkout/);
+  assert.match(source, /git -C "\$staging" lfs install --local --skip-repo/);
+  assert.match(source, /git -C "\$staging" lfs fetch origin "\$branch"/);
+  assert.match(source, /git -C "\$staging" lfs checkout/);
+  assert.match(source, /--no-lfs-hydration/);
   assert.match(source, /mv "\$staging" "\$dest"/);
 });
 

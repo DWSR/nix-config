@@ -140,6 +140,41 @@ function createLocalUpstream(options = {}) {
   return { ...roots, repo, branch, head: commit };
 }
 
+function createLocalLfsUpstream(options = {}) {
+  const roots = createTempRoots('git-clone-isolation-lfs-upstream-');
+  const emptyTemplate = path.join(roots.root, 'empty-template');
+  const source = path.join(roots.root, 'source');
+  const repo = path.join(roots.root, options.name ?? 'upstream.git');
+  const branch = options.branch ?? 'main';
+  const lfsPath = options.lfsPath ?? 'payload.bin';
+  const lfsContent = options.lfsContent ?? 'hydrated LFS content\n';
+
+  fs.mkdirSync(emptyTemplate, { recursive: true });
+  fs.mkdirSync(source, { recursive: true });
+  runGit(['-c', `init.templateDir=${emptyTemplate}`, 'init', '--bare', repo]);
+  runGit(['-c', `init.templateDir=${emptyTemplate}`, 'init', '-q', '-b', branch], { cwd: source });
+  runGit(['config', 'user.email', 'fixture@example.invalid'], { cwd: source });
+  runGit(['config', 'user.name', 'Fixture Author'], { cwd: source });
+  runGit(['lfs', 'install', '--local'], { cwd: source });
+  runGit(['lfs', 'track', path.basename(lfsPath)], { cwd: source });
+  fs.writeFileSync(path.join(source, lfsPath), lfsContent);
+  runGit(['add', '.gitattributes', lfsPath], { cwd: source });
+  runGit(['commit', '-m', options.message ?? 'fixture LFS commit'], { cwd: source });
+  const head = runGit(['rev-parse', 'HEAD'], { cwd: source });
+  runGit(['remote', 'add', 'origin', repo], { cwd: source });
+  runGit(['push', 'origin', `${branch}:${branch}`], { cwd: source });
+
+  return {
+    ...roots,
+    source,
+    repo,
+    branch,
+    head,
+    lfsPath,
+    lfsContent,
+  };
+}
+
 function nixPathLiteral(filePath) {
   if (!path.isAbsolute(filePath) || /[\s'"\\]/.test(filePath)) {
     throw new Error(`unsupported Nix path literal: ${filePath}`);
@@ -196,6 +231,7 @@ module.exports = {
   cleanupTempRoots,
   commandUnderTest,
   createCommitOnBranch,
+  createLocalLfsUpstream,
   createLocalUpstream,
   createTempRoots,
   execCommand,

@@ -2,6 +2,7 @@
   writeShellApplication,
   coreutils,
   git,
+  git-lfs,
 }:
 
 writeShellApplication {
@@ -9,6 +10,7 @@ writeShellApplication {
   runtimeInputs = [
     coreutils
     git
+    git-lfs
   ];
   text = ''
         VERSION="0.1.0"
@@ -24,7 +26,7 @@ writeShellApplication {
 
     USAGE:
       git cache-clone refresh --repo <url> [--branch <name>] [--cache-root <path>]
-      git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
+      git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>] [--no-lfs-hydration]
       git cache-clone --help
       git cache-clone --version
 
@@ -38,6 +40,8 @@ writeShellApplication {
       --cache-root  Cache state root. Defaults to XDG state.
       --dest        Destination path for clone.
       --clone-root  Root directory for generated clone destinations.
+      --no-lfs-hydration
+                    Skip explicit Git LFS fetch/checkout after clone creation.
       --help, -h    Print this help and exit 0.
       --version     Print the command version and exit 0.
 
@@ -52,6 +56,7 @@ writeShellApplication {
         clone_failed
         remote_rewrite_failed
         checkout_failed
+        lfs_hydration_failed
         isolation_check_failed
     USAGE
         }
@@ -251,10 +256,14 @@ writeShellApplication {
           local cache_root="$3"
           local cache_path="$4"
           local dest="$5"
+          local hydrate_lfs="$6"
           local dest_parent=""
           local staging=""
           local clone_output=""
           local checkout_output=""
+          local lfs_install_output=""
+          local lfs_fetch_output=""
+          local lfs_checkout_output=""
 
           ensure_safe_destination "$dest" "$cache_root"
 
@@ -279,6 +288,23 @@ writeShellApplication {
           if ! checkout_output="$(GIT_LFS_SKIP_SMUDGE=1 git -C "$staging" checkout "$branch" 2>&1)"; then
             rm -rf "$staging"
             fail "checkout_failed" "step=checkout dest=$dest branch=$branch detail=$checkout_output"
+          fi
+
+          if [[ "$hydrate_lfs" == 1 ]]; then
+            if ! lfs_install_output="$(git -C "$staging" lfs install --local --skip-repo 2>&1)"; then
+              rm -rf "$staging"
+              fail "lfs_hydration_failed" "step=lfs_install dest=$dest branch=$branch detail=$lfs_install_output"
+            fi
+
+            if ! lfs_fetch_output="$(git -C "$staging" lfs fetch origin "$branch" 2>&1)"; then
+              rm -rf "$staging"
+              fail "lfs_hydration_failed" "step=lfs_fetch dest=$dest branch=$branch detail=$lfs_fetch_output"
+            fi
+
+            if ! lfs_checkout_output="$(git -C "$staging" lfs checkout 2>&1)"; then
+              rm -rf "$staging"
+              fail "lfs_hydration_failed" "step=lfs_checkout dest=$dest branch=$branch detail=$lfs_checkout_output"
+            fi
           fi
 
           if [[ -d "$dest" ]]; then
@@ -358,6 +384,7 @@ writeShellApplication {
           local clone_root
           local cache_path=""
           local slug=""
+          local hydrate_lfs=1
 
           cache_root="$(default_cache_root)"
           clone_root="$(default_clone_root)"
@@ -389,6 +416,10 @@ writeShellApplication {
                 clone_root="$2"
                 shift 2
                 ;;
+              --no-lfs-hydration)
+                hydrate_lfs=0
+                shift
+                ;;
               --help|-h)
                 usage
                 exit 0
@@ -411,10 +442,10 @@ writeShellApplication {
             dest="$clone_root/$slug"
           fi
           cache_path="$(cache_identity "$repo" "$branch" "$cache_root")"
-          create_isolated_clone "$repo" "$branch" "$cache_root" "$cache_path" "$dest"
+          create_isolated_clone "$repo" "$branch" "$cache_root" "$cache_path" "$dest" "$hydrate_lfs"
 
-          printf 'git-cache-clone: cloned repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s\n' \
-            "$repo" "$branch" "$dest" "$cache_root" "$clone_root" "$cache_path"
+          printf 'git-cache-clone: cloned repo=%s branch=%s dest=%s cache-root=%s clone-root=%s cache-path=%s lfs-hydration=%s\n' \
+            "$repo" "$branch" "$dest" "$cache_root" "$clone_root" "$cache_path" "$hydrate_lfs"
         }
 
         case "''${1:-}" in

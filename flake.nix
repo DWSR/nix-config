@@ -388,6 +388,7 @@
               {
                 nativeBuildInputs = [
                   pkgs.git
+                  pkgs.git-lfs
                   pkgs.nix
                   pkgs.nodejs
                 ];

@@ -10,6 +10,7 @@ The design adds one CLI, one common Home Manager module, and fixture tests. It p
 
 - Create/update a bare, main-only repository cache under XDG state.
 - Create working clones under `~/scratch` by default with independent `.git` metadata.
+- Hydrate available Git LFS media by default while allowing per-clone opt-out.
 - Keep generated clone `origin` remotes pointed at the upstream repository.
 - Install and configure the tool declaratively on both hosts.
 - Validate behavior with local fixture remotes.
@@ -21,6 +22,7 @@ The design adds one CLI, one common Home Manager module, and fixture tests. It p
 - Manage Git worktrees or modify `zellij-worktree`.
 - Mirror all branches and tags.
 - Run background cache refresh daemons.
+- Repair missing Git LFS media upstream.
 - Synchronize uncommitted work between isolated clones.
 
 ## Boundary Commitments
@@ -30,6 +32,7 @@ The design adds one CLI, one common Home Manager module, and fixture tests. It p
 - `git-clone-isolation` CLI command surface and behavior.
 - Bare base-branch cache lifecycle.
 - Working clone creation from the cache.
+- Default Git LFS hydration during clone creation and its per-clone opt-out.
 - Remote rewrite and base-branch checkout behavior for generated clones.
 - Common Home Manager module defaults and package installation.
 - Network-free fixture tests and flake check wiring.
@@ -39,12 +42,13 @@ The design adds one CLI, one common Home Manager module, and fixture tests. It p
 - Graphite command execution or metadata recovery.
 - Existing Git configuration changes outside package installation.
 - Existing `zellij-worktree` behavior.
-- Full mirrors, tag synchronization, submodule recursion, and LFS materialization beyond normal Git behavior.
+- Full mirrors, tag synchronization, submodule recursion, and custom recovery for missing Git LFS media.
 - Automatic scheduling or daemonized refresh.
 
 ### Allowed Dependencies
 
 - Git CLI from Nixpkgs.
+- Git LFS CLI from Nixpkgs.
 - POSIX shell plus `coreutils` in the packaged CLI.
 - Home Manager module system.
 - Existing `~/scratch` convention.
@@ -56,6 +60,7 @@ The design adds one CLI, one common Home Manager module, and fixture tests. It p
 - Any change to cache path identity.
 - Any change from bare cache to full working-copy cache.
 - Any removal of `--dissociate` from clone creation.
+- Any change to default Git LFS hydration or its opt-out flag.
 - Any integration with Graphite, worktrees, or zellij.
 - Any change to Home Manager defaults or wrapper environment names.
 
@@ -92,6 +97,7 @@ Architecture integration:
 |-------|------------------|-----------------|-------|
 | CLI | Bash via `writeShellApplication` | Operator command | Matches local tool packaging pattern |
 | Git | Nixpkgs `git` | Cache and clone operations | Uses stable porcelain commands |
+| Git LFS | Nixpkgs `git-lfs` | Clone hydration | Runs after origin rewrite |
 | Configuration | Home Manager | Declarative defaults and install | Common module on both hosts |
 | Tests | Node `node:test` + local Git fixtures | Behavior validation | No network dependency |
 | Runtime state | `$XDG_STATE_HOME/git-clone-isolation` | Reconstructable cache root | Not authoritative data |
@@ -156,6 +162,8 @@ sequenceDiagram
     CLI->>Clone: clone from cache with dissociation
     CLI->>Clone: set origin to upstream
     CLI->>Clone: checkout base branch
+    CLI->>Upstream: fetch LFS media unless opted out
+    CLI->>Clone: checkout fetched LFS media
     Clone-->>Upstream: normal future git operations
     CLI-->>Operator: report clone path
 ```
@@ -195,18 +203,25 @@ sequenceDiagram
 | 6.3 | Remote verification | Tests | Fixture assertions | Isolated clone |
 | 6.4 | `.git` isolation verification | Tests | Fixture assertions | Isolated clone |
 | 6.5 | Cache removal verification | Tests | Fixture assertions | Isolated clone |
+| 6.6 | LFS hydration verification | Tests | Fixture assertions | Isolated clone |
+| 6.7 | LFS opt-out verification | Tests | Fixture assertions | Isolated clone |
+| 7.1 | Default LFS fetch | CloneManager | LFS hydration | Isolated clone |
+| 7.2 | Materialized LFS files | CloneManager, Tests | LFS checkout | Isolated clone |
+| 7.3 | LFS hydration opt-out | CLI, CloneManager | `--no-lfs-hydration` | Isolated clone |
+| 7.4 | LFS failure reporting | CloneManager, ErrorReporter | Error label | Isolated clone |
+| 7.5 | No LFS cache requirement | CacheManager, CloneManager | Cache invariant | Cache refresh, isolated clone |
 
 ## Components and Interfaces
 
 | Component | Domain | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------|--------|--------------|------------------|-----------|
-| CLI | Runtime | Parse commands and route operations | 1.1-6.5 | Git, ConfigResolver, CacheManager, CloneManager | Service |
+| CLI | Runtime | Parse commands and route operations | 1.1-7.5 | Git, ConfigResolver, CacheManager, CloneManager | Service |
 | ConfigResolver | Runtime | Resolve flags, env, and defaults | 1.4, 2.2, 4.2, 4.3 | HM wrapper | Service |
 | CacheManager | Runtime | Maintain bare base-branch cache | 1.1-1.6 | Git | Service, State |
-| CloneManager | Runtime | Create isolated clones and rewrite remotes | 2.1-3.5 | Git, CacheManager | Service |
-| ErrorReporter | Runtime | Emit stable failure labels | 1.6, 2.5, 3.5, 4.5 | CLI | Service |
+| CloneManager | Runtime | Create isolated clones, rewrite remotes, and hydrate LFS | 2.1-3.5, 7.1-7.5 | Git, Git LFS, CacheManager | Service |
+| ErrorReporter | Runtime | Emit stable failure labels | 1.6, 2.5, 3.5, 4.5, 7.4 | CLI | Service |
 | HMModule | Configuration | Install wrapper and defaults | 4.1-4.4, 5.4 | Home Manager | State |
-| TestHarness | Validation | Verify behavior with local repos | 6.1-6.5 | Node, Git, Nix | Batch |
+| TestHarness | Validation | Verify behavior with local repos | 6.1-6.7 | Node, Git, Git LFS, Nix | Batch |
 
 ### Runtime
 
@@ -220,7 +235,7 @@ sequenceDiagram
 Responsibilities and constraints:
 
 - Support `refresh --repo <url> [--branch <name>]`.
-- Support `clone --repo <url> [--dest <path>] [--branch <name>]`.
+- Support `clone --repo <url> [--dest <path>] [--branch <name>] [--no-lfs-hydration]`.
 - Parse `--help` and `--version` before state or network discovery.
 - Never call `gt`, `git worktree`, or zellij commands.
 
@@ -228,7 +243,7 @@ Service contract:
 
 ```text
 git cache-clone refresh --repo <url> [--branch <name>] [--cache-root <path>]
-git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>]
+git cache-clone clone --repo <url> [--dest <path>] [--branch <name>] [--cache-root <path>] [--clone-root <path>] [--no-lfs-hydration]
 git cache-clone --help
 git cache-clone --version
 ```
@@ -251,6 +266,7 @@ Default values:
 - Cache root: `${XDG_STATE_HOME:-$HOME/.local/state}/git-clone-isolation`.
 - Clone root: `$HOME/scratch`.
 - Base branch: `main`.
+- Git LFS hydration: enabled for clone creation unless `--no-lfs-hydration` is passed.
 
 #### CacheManager
 
@@ -278,7 +294,7 @@ State contract:
 | Field | Detail |
 |-------|--------|
 | Intent | Create a normal working clone from the local bare cache |
-| Requirements | 2.1-3.5, 5.1-5.5 |
+| Requirements | 2.1-3.5, 5.1-5.5, 7.1-7.5 |
 
 Responsibilities and constraints:
 
@@ -286,9 +302,10 @@ Responsibilities and constraints:
 - Do not refresh cache state during clone creation.
 - Clone from the bare cache using non-local transport, reference acceleration, and dissociation.
 - Stage clone creation in a temporary directory and move it into place only after success.
-- Skip Git LFS smudge during clone and checkout; LFS object hydration remains an explicit operator action.
 - Rewrite `origin` to the upstream URL after clone creation.
 - Checkout the requested base branch.
+- Skip Git LFS smudge during clone and checkout, then run explicit LFS hydration by default.
+- Support `--no-lfs-hydration` for repositories where LFS media is unavailable or unwanted.
 - Validate no persistent cache dependency remains.
 
 Implementation contract:
@@ -298,6 +315,7 @@ clone source: <cachePath>
 clone destination: <dest>
 post-clone origin: <upstreamUrl>
 post-clone branch: <branch>
+post-clone LFS hydration: enabled unless opted out
 ```
 
 #### ErrorReporter
@@ -316,6 +334,7 @@ Failure labels:
 - `clone_failed`
 - `remote_rewrite_failed`
 - `checkout_failed`
+- `lfs_hydration_failed`
 - `isolation_check_failed`
 
 ### Configuration
@@ -364,6 +383,7 @@ No persistent application database is introduced.
 Logical records used by the CLI:
 
 - `RepositoryInput`: upstream URL, branch, optional destination.
+- `CloneOptions`: destination, branch, and Git LFS hydration mode.
 - `ResolvedConfig`: cache root, clone root, default branch.
 - `CacheIdentity`: forge, owner path, repository name, cache path.
 - `CloneResult`: destination path, upstream URL, branch, cache path.
@@ -377,7 +397,7 @@ Errors use the stable label format:
 [git-cache-clone: <label>] <detail>
 ```
 
-User-input errors stop before cache or clone mutation. Cache refresh errors preserve an existing usable cache. Clone errors report the destination and failing step; partial destinations are left for inspection unless the clone command failed before the directory was created.
+User-input errors stop before cache or clone mutation. Cache refresh errors preserve an existing usable cache. Clone errors report the destination and failing step. LFS hydration errors occur before the staged clone is installed at the final destination.
 
 ## Testing Strategy
 
@@ -394,6 +414,8 @@ User-input errors stop before cache or clone mutation. Cache refresh errors pres
 - Generated clone has `origin` set to fixture upstream, not cache. Covers 3.1-3.3 and 6.3.
 - Generated clone has independent `.git` metadata and no persistent alternates dependency. Covers 2.3-2.4 and 6.4.
 - Generated clone remains usable after cache removal. Covers 3.4 and 6.5.
+- Generated clone hydrates local fixture Git LFS media by default. Covers 6.6 and 7.1-7.2.
+- Generated clone leaves Git LFS pointer files when `--no-lfs-hydration` is used. Covers 6.7 and 7.3.
 - Module render tests verify package installation and default values on both hosts. Covers 4.1-4.4.
 
 ### Package checks
@@ -406,9 +428,11 @@ User-input errors stop before cache or clone mutation. Cache refresh errors pres
 - The CLI treats upstream URLs and destination paths as untrusted input and passes them as quoted command arguments.
 - The tool does not execute Graphite commands or hooks beyond normal Git clone/fetch/checkout behavior.
 - Cache paths must be derived under the configured cache root; user-provided destinations must not overwrite non-empty directories.
+- Git LFS media is fetched only after `origin` is rewritten to the requested upstream.
 
 ## Performance & Scalability
 
 - Cache refresh fetches only the configured base branch and no tags by default.
 - Clone creation uses the local bare cache to reduce network transfer and then dissociates to keep clones independent.
+- Git LFS media transfer happens during clone creation by default and can be skipped per clone.
 - Full mirrors and background refresh are excluded to keep the tool simple and predictable.
