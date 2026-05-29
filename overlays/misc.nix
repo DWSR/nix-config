@@ -114,16 +114,16 @@ final: prev: {
 
   tokscale = final.rustPlatform.buildRustPackage rec {
     pname = "tokscale";
-    version = "2.0.24";
+    version = "3.0.0";
 
     src = final.fetchFromGitHub {
       owner = "junhoyeo";
       repo = "tokscale";
       tag = "v${version}";
-      hash = "sha256-bRBhJNVNhQZASJBH+KuQ8BUfbxwaXJM2uVzdp+yNheg=";
+      hash = "sha256-bgCQ00qO4KalrUPa92d65dRNf+DjgF+ZlRym7EFKobg=";
     };
 
-    cargoHash = "sha256-94uascld4gqfUGvYWZKj/kikc52+1NB93+5E7oSkg38=";
+    cargoHash = "sha256-McaxzhU2xEdEz9GQTFnUv1l68crBtVpoSlsdsrjuCvI=";
 
     # Only build the CLI binary from the Cargo workspace.
     cargoBuildFlags = [
