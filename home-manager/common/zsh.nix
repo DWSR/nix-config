@@ -122,6 +122,77 @@ in
         # savings vs. uncached: ~235ms warm.
         source ${cachedInits.zellij}
         source ${cachedInits.zoxide}
+
+        # Extend interactive zoxide selection with top-level ~/scratch
+        # project directories without adding a shell-startup subprocess.
+        function __zoxide_scratch_dirs() {
+          [[ -d "$HOME/scratch" ]] || return 0
+
+          \builtin local candidate
+          for candidate in "$HOME"/scratch/*(DN/); do
+            \builtin print -r -- "$candidate"
+          done
+        }
+
+        function __zoxide_candidates() {
+          \builtin local -A seen
+          \builtin local candidate
+
+          while IFS= read -r candidate; do
+            [[ -n "$candidate" ]] || continue
+            [[ -z "''${seen[$candidate]:-}" ]] || continue
+
+            seen[$candidate]=1
+            \builtin print -r -- "$candidate"
+          done < <(
+            \command zoxide query --list -- "$@" 2>/dev/null || \builtin true
+            __zoxide_scratch_dirs
+          )
+        }
+
+        function __zoxide_select() {
+          \builtin local query
+          \builtin local -a fzf_opts
+
+          query="''${(j: :)@}"
+          fzf_opts=(''${=:-''${_ZO_FZF_OPTS:-}})
+          __zoxide_candidates "$@" | \command fzf "''${fzf_opts[@]}" --query "$query"
+        }
+
+        function __zoxide_zi() {
+          __zoxide_doctor
+
+          \builtin local result
+          result="$(__zoxide_select "$@")" && [[ -n "$result" ]] && __zoxide_cd "$result"
+        }
+
+        if [[ -o zle ]]; then
+          function __zoxide_z_complete() {
+            # Only show completions when the cursor is at the end of the line.
+            [[ "''${#words[@]}" -eq "''${CURRENT}" ]] || return 0
+
+            if [[ "''${#words[@]}" -eq 2 ]]; then
+              # Show completions for local directories.
+              _cd -/
+
+            elif [[ "''${words[-1]}" == "" ]]; then
+              __zoxide_result="$(__zoxide_select ''${words[2,-1]})" || __zoxide_result=""
+
+              # Set a result to ensure completion doesn't re-run.
+              compadd -Q ""
+
+              # Bind '\e[0n' to helper function.
+              \builtin bindkey '\e[0n' '__zoxide_z_complete_helper'
+              # Sends query device status code, which results in a '\e[0n' being sent to console input.
+              \builtin printf '\e[5n'
+
+              # Report that the completion was successful, so that we don't fall back
+              # to another completion function.
+              return 0
+            fi
+          }
+        fi
+
         if [[ $options[zle] = on ]]; then
           source ${cachedInits.fzf}
         fi
