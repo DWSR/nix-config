@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Add deterministic grep-app MCP package support
-- [ ] 1.1 Package the upstream stdio server (P)
+- [x] 1.1 Package the upstream stdio server (P)
   - Add `pkgs.grep-app-mcp` to `overlays/mcp-servers.nix` from a pinned `ai-tools-all/grep_app_mcp` source with fixed npm dependencies.
   - Install a stable `grep-app-mcp` wrapper that starts the upstream stdio entrypoint.
   - Completed when `nix build` can build the package and the output contains `bin/grep-app-mcp`.

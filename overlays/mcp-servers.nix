@@ -551,6 +551,40 @@ in
     };
   };
 
+  # grep.app MCP server — TypeScript stdio server that provides code search
+  # across public GitHub repositories via the grep.app API. Pinned to the
+  # HEAD commit (2f9514) since the upstream has no release tags. The build
+  # runs `tsc` to compile src/ → dist/ and the wrapper points at
+  # dist/server-stdio.js, which is the stdio MCP entrypoint documented in
+  # the upstream README.
+  grep-app-mcp = final.buildNpmPackage {
+    pname = "grep-app-mcp";
+    version = "1.0.0";
+
+    src = final.fetchFromGitHub {
+      owner = "ai-tools-all";
+      repo = "grep_app_mcp";
+      rev = "2f9514295d5c9352576c425d7dc9303f0f365905";
+      hash = "sha256-RJfxo87rEeGNpNJi+2bGbQLiWBaJNmhSRFDYD8kYHhw=";
+    };
+
+    npmDepsHash = "sha256-j3OT7ksmeqVi+aZd30OIE2TwFzXcPNpdK5YjfW/4uik=";
+
+    nativeBuildInputs = [ final.makeWrapper ];
+
+    postInstall = ''
+      makeWrapper ${final.nodejs}/bin/node $out/bin/grep-app-mcp \
+        --add-flags "$out/lib/node_modules/grep_app_mcp/dist/server-stdio.js"
+    '';
+
+    meta = with final.lib; {
+      description = "MCP server for code search across public GitHub repositories via grep.app";
+      homepage = "https://github.com/ai-tools-all/grep_app_mcp";
+      license = licenses.isc;
+      mainProgram = "grep-app-mcp";
+    };
+  };
+
   fastmail-mcp = final.buildNpmPackage {
     pname = "fastmail-mcp";
     version = "1.8.2";
