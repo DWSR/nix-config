@@ -557,6 +557,14 @@ in
   # runs `tsc` to compile src/ → dist/ and the wrapper points at
   # dist/server-stdio.js, which is the stdio MCP entrypoint documented in
   # the upstream README.
+  #
+  # Runtime write behaviour: dist/core/logger.js unconditionally creates
+  # `logs/` relative to process.cwd() at module load time (before any tool
+  # call) and opens two DailyRotateFile transports there. Running from a
+  # read-only CWD (e.g. the Nix store or /) causes an immediate EACCES
+  # crash. The wrapper uses `--run 'cd "$HOME"'` so logs land in ~/logs/,
+  # which is always writable. The upstream has no --help/--version path;
+  # it starts the full stdio server immediately on invocation.
   grep-app-mcp = final.buildNpmPackage {
     pname = "grep-app-mcp";
     version = "1.0.0";
@@ -574,6 +582,7 @@ in
 
     postInstall = ''
       makeWrapper ${final.nodejs}/bin/node $out/bin/grep-app-mcp \
+        --run 'cd "$HOME"' \
         --add-flags "$out/lib/node_modules/grep_app_mcp/dist/server-stdio.js"
     '';
 

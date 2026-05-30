@@ -7,7 +7,7 @@
   - Completed when `nix build` can build the package and the output contains `bin/grep-app-mcp`.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
   - _Boundary: Package_
-- [ ] 1.2 Resolve upstream runtime write and startup behavior
+- [x] 1.2 Resolve upstream runtime write and startup behavior
   - Verify whether the stdio entrypoint writes logs or requires a writable working directory during startup.
   - Add wrapper environment or packaging adjustments only if needed to keep runtime writes out of the Nix store.
   - Completed when the package has a concrete non-network smoke path: either `--help`/`--version` exits cleanly, or the test records that upstream lacks such a path and verifies the executable plus wrapper target without starting a live external request.
@@ -63,3 +63,7 @@
   - _Requirements: 3.1, 3.2, 3.4, 5.2, 5.5_
   - _Boundary: Validation_
   - _Depends: 3.2_
+
+## Implementation Notes
+
+- Task 1.2: upstream `dist/core/logger.js` creates `logs/` under `process.cwd()` at module load and has no `--help`/`--version`; the package wrapper changes CWD to `$HOME` before starting stdio.
