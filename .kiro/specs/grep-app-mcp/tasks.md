@@ -55,7 +55,7 @@
   - _Requirements: 4.5, 5.3, 5.5_
   - _Boundary: Validation_
   - _Depends: 3.2_
-- [ ] 4.2 Add post-switch mcpproxy smoke guidance
+- [x] 4.2 Add post-switch mcpproxy smoke guidance
   - Add a concise operator smoke command or note in `tests/grep-app-mcp/README.md` for discovering grep.app tools through mcpproxy `retrieve_tools` after `darwin-rebuild switch` restarts mcpproxy.
   - Include the expected discovery result shape: grep.app tools are returned with `call_with: call_tool_read` and are invoked through `call_tool_read`.
   - Keep grep.app out of the mandatory opencode startup gate and avoid live grep.app search calls in automated checks.

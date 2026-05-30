@@ -27,3 +27,21 @@ Run the full repository check with:
 ```sh
 nix flake check --show-trace
 ```
+
+## Manual post-switch smoke
+
+After `darwin-rebuild switch` restarts mcpproxy, verify that the upstream is
+connected through the wrapper surface by discovering tools, not by calling a
+live grep.app search in automated checks:
+
+```text
+retrieve_tools(query: "grep app code search")
+```
+
+The result should include grep.app tool rows, for example a `grep-app:<tool>`
+name or `server: "grep-app"`, with `call_with: "call_tool_read"`. Invoke any
+read-only grep.app search or file-retrieval tool only through `call_tool_read`.
+
+Do not add grep.app to the mandatory opencode startup-gate checks. It remains
+an operator smoke target after mcpproxy activation, while flake checks avoid
+live grep.app, GitHub, and raw file requests.
