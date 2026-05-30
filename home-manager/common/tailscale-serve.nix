@@ -162,6 +162,27 @@ let
     ++ lib.optional (entry.listen.path != null) "--set-path=${entry.listen.path}"
     ++ [ (renderTarget entry) ];
   };
+
+  renderedCommands = if cfg.enable then lib.mapAttrsToList renderCommand cfg.entries else [ ];
+
+  hasRenderedCommands = renderedCommands != [ ];
+
+  activationScript = ''
+    if [[ ! -x ${lib.escapeShellArg cfg.cliPath} ]]; then
+      echo ${lib.escapeShellArg "Missing Tailscale CLI path: ${cfg.cliPath}"} >&2
+      exit 1
+    fi
+
+    export TAILSCALE_BE_CLI=1
+
+    ${lib.concatMapStringsSep "\n" (command: ''
+      verboseEcho ${lib.escapeShellArg "Applying Tailscale Serve entry: ${command.name}"}
+      if ! run ${lib.escapeShellArgs command.argv}; then
+        echo ${lib.escapeShellArg "Failed to apply Tailscale Serve entry: ${command.name}"} >&2
+        exit 1
+      fi
+    '') renderedCommands}
+  '';
 in
 {
   options.home.tailscaleServe = {
@@ -198,18 +219,23 @@ in
     };
   };
 
-  config = {
-    assertions = lib.mapAttrsToList (name: entry: {
-      assertion =
-        entry.listen.path == null
-        || builtins.elem entry.listen.protocol [
-          "http"
-          "https"
-        ];
-      message = "home.tailscaleServe.entries.${name}.listen.path is only supported for http and https listeners";
-    }) cfg.entries;
+  config = lib.mkMerge [
+    {
+      assertions = lib.mapAttrsToList (name: entry: {
+        assertion =
+          entry.listen.path == null
+          || builtins.elem entry.listen.protocol [
+            "http"
+            "https"
+          ];
+        message = "home.tailscaleServe.entries.${name}.listen.path is only supported for http and https listeners";
+      }) cfg.entries;
 
-    home.tailscaleServe._renderedCommands =
-      if cfg.enable then lib.mapAttrsToList renderCommand cfg.entries else [ ];
-  };
+      home.tailscaleServe._renderedCommands = renderedCommands;
+    }
+
+    (lib.mkIf hasRenderedCommands {
+      home.activation.tailscaleServe = lib.hm.dag.entryAfter [ "writeBoundary" ] activationScript;
+    })
+  ];
 }

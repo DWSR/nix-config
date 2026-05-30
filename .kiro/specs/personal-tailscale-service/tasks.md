@@ -26,7 +26,7 @@
   - Completed when declared entries render one command intent per entry and empty entries render none.
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 3.5, 3.6_
   - _Boundary: HM Module_
-- [ ] 2.4 Apply declared entries during Home Manager activation
+- [x] 2.4 Apply declared entries during Home Manager activation
   - Add activation behavior that runs after the Home Manager write boundary only when rendered commands exist.
   - Set the Tailscale app CLI environment, fail clearly when the CLI path is missing, and report the entry name when an apply command fails.
   - Do not prompt for auth, manage `tailscaled`, reset Serve state, or clear unmanaged entries.

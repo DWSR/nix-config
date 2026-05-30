@@ -27,9 +27,17 @@ function standaloneTailscaleServeExpr(extraModule) {
         ];
       };
     in
+    let
+      tailscaleServeActivation =
+        if hm.config.home.activation ? tailscaleServe then
+          hm.config.home.activation.tailscaleServe
+        else
+          null;
+    in
     {
       entries = hm.config.home.tailscaleServe.entries;
       renderedCommands = hm.config.home.tailscaleServe._renderedCommands;
+      activation = tailscaleServeActivation;
     }
   `;
 }
@@ -250,6 +258,54 @@ test('standalone Tailscale Serve module normalizes supported local proxy entries
   assert.equal(renderedArgv.some(arg => arg.startsWith('file:')), false);
   assert.equal(renderedArgv.some(arg => arg.startsWith('dir:')), false);
   assert.equal(renderedArgv.some(arg => arg.startsWith('text:')), false);
+});
+
+test('standalone Tailscale Serve module renders activation convergence for declared entries', () => {
+  const cliPath = '/opt/tailscale/bin/tailscale';
+  const rendered = nixEvalJson(standaloneTailscaleServeExpr(`{ ... }: {
+    home.tailscaleServe.enable = true;
+    home.tailscaleServe.cliPath = "${cliPath}";
+    home.tailscaleServe.entries = {
+      web = {
+        listen = {
+          protocol = "https";
+          port = 443;
+          path = "/app";
+        };
+        target = {
+          kind = "url";
+          url = "http://localhost:3000";
+        };
+      };
+
+      database = {
+        listen = {
+          protocol = "tcp";
+          port = 15432;
+        };
+        target = {
+          kind = "port";
+          port = 5432;
+        };
+      };
+    };
+  }`));
+
+  assert.deepEqual(rendered.activation.after, ['writeBoundary']);
+  assert.deepEqual(rendered.activation.before, []);
+
+  const activationScript = rendered.activation.data;
+  assert.match(activationScript, /TAILSCALE_BE_CLI=1/);
+  assert.match(activationScript, /Missing Tailscale CLI path: \/opt\/tailscale\/bin\/tailscale/);
+  assert.match(activationScript, /Failed to apply Tailscale Serve entry: database/);
+  assert.match(activationScript, /Failed to apply Tailscale Serve entry: web/);
+  assert.match(activationScript, /run .*serve .*--bg .*--yes .*'?--tcp=15432'?.*5432/);
+  assert.match(activationScript, /run .*serve .*--bg .*--yes .*'?--https=443'?.*'?--set-path=\/app'?.*http:\/\/localhost:3000/);
+  assert.doesNotMatch(activationScript, /tailscaled/);
+  assert.doesNotMatch(activationScript, /serve\s+reset/);
+  assert.doesNotMatch(activationScript, /funnel/i);
+  assert.doesNotMatch(activationScript, /\b(login|auth|authorize|authorization)\b/i);
+  assert.doesNotMatch(activationScript, /unmanaged|cleanup|clear/);
 });
 
 test('standalone Tailscale Serve module rejects unsupported exposure declarations', () => {
