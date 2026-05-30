@@ -60,7 +60,7 @@
   - Completed when invalid-declaration tests fail for the expected validation reason and the suite remains green.
   - _Requirements: 1.3, 4.3_
   - _Boundary: Render Tests_
-- [ ] 3.5 Add the flake check for the Tailscale Serve test suite
+- [x] 3.5 Add the flake check for the Tailscale Serve test suite
   - Add a dedicated flake check that runs the Tailscale Serve tests in a copied writable source with Nix flakes enabled.
   - Keep the check free of real Tailscale CLI calls.
   - Completed when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).personal-tailscale-service` runs the new suite.
