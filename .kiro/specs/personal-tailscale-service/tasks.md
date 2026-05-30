@@ -8,7 +8,7 @@
   - _Boundary: Render Tests_
 
 - [ ] 2. Home Manager module behavior
-- [ ] 2.1 Define the dormant Tailscale Serve option surface
+- [x] 2.1 Define the dormant Tailscale Serve option surface
   - Add the reusable Home Manager option namespace with disabled defaults, configurable CLI path, empty entries, and internal rendered command state.
   - Preserve a dormant state when the module is disabled or has no entries.
   - Completed when a standalone Home Manager evaluation can read the option namespace and shows no rendered commands for disabled and empty-entry states.
