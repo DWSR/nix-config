@@ -1,0 +1,65 @@
+# Implementation Plan
+
+- [ ] 1. Add deterministic grep-app MCP package support
+- [ ] 1.1 Package the upstream stdio server (P)
+  - Add `pkgs.grep-app-mcp` to `overlays/mcp-servers.nix` from a pinned `ai-tools-all/grep_app_mcp` source with fixed npm dependencies.
+  - Install a stable `grep-app-mcp` wrapper that starts the upstream stdio entrypoint.
+  - Completed when `nix build` can build the package and the output contains `bin/grep-app-mcp`.
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
+  - _Boundary: Package_
+- [ ] 1.2 Resolve upstream runtime write and startup behavior
+  - Verify whether the stdio entrypoint writes logs or requires a writable working directory during startup.
+  - Add wrapper environment or packaging adjustments only if needed to keep runtime writes out of the Nix store.
+  - Completed when the package has a concrete non-network smoke path: either `--help`/`--version` exits cleanly, or the test records that upstream lacks such a path and verifies the executable plus wrapper target without starting a live external request.
+  - _Requirements: 1.3, 4.2, 5.3, 5.5_
+  - _Boundary: Package_
+  - _Depends: 1.1_
+
+- [ ] 2. Register grep-app through mcpproxy host configs
+- [ ] 2.1 Add the personal host upstream entry (P)
+  - Add `home.mcp.extraServers.grep-app` in the personal Home Manager config using the packaged stdio command.
+  - Preserve existing personal upstream entries and do not add secrets, direct opencode MCP entries, or launchd services.
+  - Completed when the personal rendered mcpproxy config contains a stdio `grep-app` server pointing at `pkgs.grep-app-mcp`.
+  - _Requirements: 2.1, 2.3, 2.4, 2.5, 3.3, 3.4, 5.1, 5.2, 5.4_
+  - _Boundary: Host Registration_
+  - _Depends: 1.2_
+- [ ] 2.2 Add the Shopify host upstream entry (P)
+  - Add `home.mcp.extraServers.grep-app` in the Shopify Home Manager config using the packaged stdio command.
+  - Preserve all existing Shopify upstream entries and file-sourced env behavior.
+  - Completed when the Shopify rendered mcpproxy config contains a stdio `grep-app` server pointing at `pkgs.grep-app-mcp`.
+  - _Requirements: 2.2, 2.3, 2.4, 2.5, 3.3, 3.4, 5.1, 5.2, 5.4_
+  - _Boundary: Host Registration_
+  - _Depends: 1.2_
+
+- [ ] 3. Add render and package verification
+- [ ] 3.1 Create the grep-app MCP test suite
+  - Add `tests/grep-app-mcp/hm-render.test.js` with Nix eval helpers local to the suite.
+  - Assert package metadata/output shape, personal and Shopify rendered upstream entries, preservation of existing required upstream entries, and absence of direct opencode MCP entries.
+  - Completed when `node --test tests/grep-app-mcp/` runs without live grep.app or GitHub network calls; live `retrieve_tools` discovery remains covered by the post-switch smoke guidance task.
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3_
+  - _Boundary: Validation_
+  - _Depends: 1.2, 2.1, 2.2_
+- [ ] 3.2 Add the flake check
+  - Wire `checks.aarch64-darwin.grep-app-mcp` in `flake.nix` to run the new test suite in a copied writable source with Nix flakes enabled.
+  - Keep the check deterministic and free of live tool invocations.
+  - Completed when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).grep-app-mcp` passes.
+  - _Requirements: 4.1, 4.4, 4.5_
+  - _Boundary: Validation_
+  - _Depends: 3.1_
+
+- [ ] 4. Integration verification
+- [ ] 4.1 Verify full repository checks and operator notes
+  - Run the targeted grep-app check and `nix flake check --show-trace`.
+  - Document any upstream limitation that affects operator use in `tests/grep-app-mcp/README.md` if packaging or startup findings require it.
+  - Completed when the full check suite passes and any operator-facing limitation is captured in the grep-app MCP README.
+  - _Requirements: 4.5, 5.3, 5.5_
+  - _Boundary: Validation_
+  - _Depends: 3.2_
+- [ ] 4.2 Add post-switch mcpproxy smoke guidance
+  - Add a concise operator smoke command or note in `tests/grep-app-mcp/README.md` for discovering grep.app tools through mcpproxy `retrieve_tools` after `darwin-rebuild switch` restarts mcpproxy.
+  - Include the expected discovery result shape: grep.app tools are returned with `call_with: call_tool_read` and are invoked through `call_tool_read`.
+  - Keep grep.app out of the mandatory opencode startup gate and avoid live grep.app search calls in automated checks.
+  - Completed when the repo documents how to verify that `grep-app` is connected and discoverable through mcpproxy after activation.
+  - _Requirements: 3.1, 3.2, 3.4, 5.2, 5.5_
+  - _Boundary: Validation_
+  - _Depends: 3.2_
