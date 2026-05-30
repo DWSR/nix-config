@@ -14,7 +14,7 @@
   - Completed when a standalone Home Manager evaluation can read the option namespace and shows no rendered commands for disabled and empty-entry states.
   - _Requirements: 1.4, 1.5, 2.1, 2.2, 2.3_
   - _Boundary: HM Module_
-- [ ] 2.2 Add local proxy entry modeling and validation
+- [x] 2.2 Add local proxy entry modeling and validation
   - Support named entries with a Tailscale listener and a loopback local target.
   - Reject Funnel/public exposure shapes, file or directory targets, static text targets, non-local URLs, invalid ports, and incompatible path/protocol combinations during evaluation.
   - Completed when supported sample entries evaluate to normalized rendered state and invalid samples fail before activation.
