@@ -48,7 +48,7 @@
   - Completed when the dormant tests pass through `node --test tests/personal-tailscale-service/`.
   - _Requirements: 1.4, 2.1, 2.2, 2.3, 4.1, 4.4_
   - _Boundary: Render Tests_
-- [ ] 3.3 Add declared-entry render tests
+- [x] 3.3 Add declared-entry render tests
   - Add supported HTTP, HTTPS, TCP, and TLS-terminated TCP sample declarations.
   - Assert the rendered entries and command intent match the design contract, including configurable CLI path and noninteractive background Serve behavior.
   - Completed when declared-entry tests pass through the Tailscale Serve test suite.
