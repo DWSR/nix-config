@@ -1,0 +1,68 @@
+# Implementation Plan
+
+- [ ] 1. Add the Tailscale Serve render-test harness
+  - Add a local test helper for Nix evaluation and a smoke test that proves the helper can evaluate repository expressions without invoking host side effects.
+  - Keep helper behavior scoped to the new Tailscale Serve test suite.
+  - Completed when `node --test tests/personal-tailscale-service/` runs the helper smoke test successfully.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - _Boundary: Render Tests_
+
+- [ ] 2. Home Manager module behavior
+- [ ] 2.1 Define the dormant Tailscale Serve option surface
+  - Add the reusable Home Manager option namespace with disabled defaults, configurable CLI path, empty entries, and internal rendered command state.
+  - Preserve a dormant state when the module is disabled or has no entries.
+  - Completed when a standalone Home Manager evaluation can read the option namespace and shows no rendered commands for disabled and empty-entry states.
+  - _Requirements: 1.4, 1.5, 2.1, 2.2, 2.3_
+  - _Boundary: HM Module_
+- [ ] 2.2 Add local proxy entry modeling and validation
+  - Support named entries with a Tailscale listener and a loopback local target.
+  - Reject Funnel/public exposure shapes, file or directory targets, static text targets, non-local URLs, invalid ports, and incompatible path/protocol combinations during evaluation.
+  - Completed when supported sample entries evaluate to normalized rendered state and invalid samples fail before activation.
+  - _Requirements: 1.1, 1.2, 1.3_
+  - _Boundary: HM Module_
+- [ ] 2.3 Render Serve command intent for declared entries
+  - Convert each valid entry into testable command intent that includes the configured CLI path, background Serve mode, noninteractive confirmation, listener flags, and local target.
+  - Ensure rendered commands never include Funnel, reset, file, directory, static text, non-local target, or `tailscaled` behavior.
+  - Completed when declared entries render one command intent per entry and empty entries render none.
+  - _Requirements: 1.1, 1.2, 1.4, 1.5, 3.5, 3.6_
+  - _Boundary: HM Module_
+- [ ] 2.4 Apply declared entries during Home Manager activation
+  - Add activation behavior that runs after the Home Manager write boundary only when rendered commands exist.
+  - Set the Tailscale app CLI environment, fail clearly when the CLI path is missing, and report the entry name when an apply command fails.
+  - Do not prompt for auth, manage `tailscaled`, reset Serve state, or clear unmanaged entries.
+  - Completed when evaluated activation state contains the declared-entry convergence behavior, the missing-CLI-path message, and the failed-entry message, while dormant state has no activation behavior.
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+  - _Boundary: Activation Convergence_
+
+- [ ] 3. Repository integration and render verification
+- [ ] 3.1 Import the reusable module through the common Home Manager hub
+  - Wire the new module into the existing common Home Manager import path used by `Brandons-MacBook-Pro`.
+  - Leave personal host Serve entries empty in this spec.
+  - Verify the personal host does not gain Tailscale login, ACL, certificate, device authorization, or local service exposure behavior from this module.
+  - Completed when the personal host evaluation exposes the option namespace, renders no Serve commands, and contains no Tailscale auth or prerequisite-management command fragments from this feature.
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.4_
+  - _Boundary: Personal Host Readiness_
+- [ ] 3.2 Add dormant-state render tests
+  - Add assertions for disabled, enabled-empty, and personal-host dormant evaluations.
+  - Verify the tests inspect rendered state without invoking the Tailscale CLI.
+  - Completed when the dormant tests pass through `node --test tests/personal-tailscale-service/`.
+  - _Requirements: 1.4, 2.1, 2.2, 2.3, 4.1, 4.4_
+  - _Boundary: Render Tests_
+- [ ] 3.3 Add declared-entry render tests
+  - Add supported HTTP, HTTPS, TCP, and TLS-terminated TCP sample declarations.
+  - Assert the rendered entries and command intent match the design contract, including configurable CLI path and noninteractive background Serve behavior.
+  - Completed when declared-entry tests pass through the Tailscale Serve test suite.
+  - _Requirements: 1.1, 1.2, 1.5, 3.1, 4.2_
+  - _Boundary: Render Tests_
+- [ ] 3.4 Add invalid-declaration render tests
+  - Add evaluation-failure coverage for Funnel/public exposure shapes, file or directory targets, static text targets, non-local URLs, invalid ports, and incompatible path/protocol combinations.
+  - Assert each failure occurs before activation and includes the affected option or entry context.
+  - Completed when invalid-declaration tests fail for the expected validation reason and the suite remains green.
+  - _Requirements: 1.3, 4.3_
+  - _Boundary: Render Tests_
+- [ ] 3.5 Add the flake check for the Tailscale Serve test suite
+  - Add a dedicated flake check that runs the Tailscale Serve tests in a copied writable source with Nix flakes enabled.
+  - Keep the check free of real Tailscale CLI calls.
+  - Completed when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).personal-tailscale-service` runs the new suite.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - _Boundary: Render Tests_
