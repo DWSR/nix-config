@@ -48,7 +48,7 @@
   - _Depends: 3.1_
 
 - [ ] 4. Integration verification
-- [ ] 4.1 Verify full repository checks and operator notes
+- [x] 4.1 Verify full repository checks and operator notes
   - Run the targeted grep-app check and `nix flake check --show-trace`.
   - Document any upstream limitation that affects operator use in `tests/grep-app-mcp/README.md` if packaging or startup findings require it.
   - Completed when the full check suite passes and any operator-facing limitation is captured in the grep-app MCP README.
