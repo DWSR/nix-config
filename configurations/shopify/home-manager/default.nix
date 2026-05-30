@@ -78,6 +78,10 @@ in
           args = [ "mcp" ];
         };
 
+        grep-app = {
+          command = "${pkgs.grep-app-mcp}/bin/grep-app-mcp";
+        };
+
         buildkite = {
           command = "${pkgs.buildkite-mcp-server}/bin/buildkite-mcp-server";
           args = [

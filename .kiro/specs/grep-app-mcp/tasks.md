@@ -23,7 +23,7 @@
   - _Requirements: 2.1, 2.3, 2.4, 2.5, 3.3, 3.4, 5.1, 5.2, 5.4_
   - _Boundary: Host Registration_
   - _Depends: 1.2_
-- [ ] 2.2 Add the Shopify host upstream entry (P)
+- [x] 2.2 Add the Shopify host upstream entry (P)
   - Add `home.mcp.extraServers.grep-app` in the Shopify Home Manager config using the packaged stdio command.
   - Preserve all existing Shopify upstream entries and file-sourced env behavior.
   - Completed when the Shopify rendered mcpproxy config contains a stdio `grep-app` server pointing at `pkgs.grep-app-mcp`.
