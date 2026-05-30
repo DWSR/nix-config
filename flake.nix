@@ -342,6 +342,24 @@
                 touch $out
               '';
 
+          grep-app-mcp =
+            pkgs.runCommand "grep-app-mcp"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/grep-app-mcp/
+                touch $out
+              '';
+
           opencode-turn-timestamps-tests =
             pkgs.runCommand "opencode-turn-timestamps-tests"
               {
