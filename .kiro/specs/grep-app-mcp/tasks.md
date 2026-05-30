@@ -16,7 +16,7 @@
   - _Depends: 1.1_
 
 - [ ] 2. Register grep-app through mcpproxy host configs
-- [ ] 2.1 Add the personal host upstream entry (P)
+- [x] 2.1 Add the personal host upstream entry (P)
   - Add `home.mcp.extraServers.grep-app` in the personal Home Manager config using the packaged stdio command.
   - Preserve existing personal upstream entries and do not add secrets, direct opencode MCP entries, or launchd services.
   - Completed when the personal rendered mcpproxy config contains a stdio `grep-app` server pointing at `pkgs.grep-app-mcp`.

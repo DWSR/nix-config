@@ -84,6 +84,10 @@ in
           };
         };
 
+        grep-app = {
+          command = "${pkgs.grep-app-mcp}/bin/grep-app-mcp";
+        };
+
         beeper = {
           type = "http";
           url = "http://localhost:23373/v0/mcp";
