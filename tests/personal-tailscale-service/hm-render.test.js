@@ -91,6 +91,30 @@ function standaloneTailscaleServeDefaultsExpr() {
   `;
 }
 
+function personalHostTailscaleServeDormantExpr() {
+  return `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      config = flake.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama;
+      activationNames = builtins.attrNames config.home.activation;
+      tailscaleActivationNames = builtins.filter
+        (name:
+          (builtins.match ".*tailscale.*" name) != null
+          || (builtins.match ".*Tailscale.*" name) != null)
+        activationNames;
+      tailscaleActivationText = builtins.concatStringsSep "\n" (
+        map (name: config.home.activation.\${name}.data or "") tailscaleActivationNames
+      );
+    in
+    {
+      enable = config.home.tailscaleServe.enable;
+      entries = config.home.tailscaleServe.entries;
+      renderedCommands = config.home.tailscaleServe._renderedCommands;
+      inherit tailscaleActivationNames tailscaleActivationText;
+    }
+  `;
+}
+
 test('helper evaluates repository expressions without host side effects', () => {
   const rendered = nixEvalJson(`
     let
@@ -130,6 +154,23 @@ test('standalone Tailscale Serve module exposes dormant option namespace', () =>
   assert.deepEqual(rendered.enabledEmpty.entries, {});
   assert.deepEqual(rendered.enabledEmpty.renderedCommands, []);
   assert.deepEqual(rendered.enabledEmpty.tailscaleActivationNames, []);
+});
+
+test('personal host receives dormant Tailscale Serve namespace through common imports', () => {
+  const rendered = nixEvalJson(personalHostTailscaleServeDormantExpr());
+
+  assert.equal(rendered.enable, false);
+  assert.deepEqual(rendered.entries, {});
+  assert.deepEqual(rendered.renderedCommands, []);
+  assert.deepEqual(rendered.tailscaleActivationNames, []);
+
+  assert.doesNotMatch(rendered.tailscaleActivationText, /\bserve\b/i);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /--(http|https|tcp|tls-terminated-tcp)=/);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /localhost|127\.0\.0\.1/);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /\b(login|auth|authorize|authorization)\b/i);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /\bacl\b/i);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /\b(cert|certificate)\b/i);
+  assert.doesNotMatch(rendered.tailscaleActivationText, /\bdevice\b/i);
 });
 
 test('standalone Tailscale Serve module normalizes supported local proxy entries', () => {

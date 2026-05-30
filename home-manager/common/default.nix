@@ -25,6 +25,7 @@
     ./subagent-context-budget.nix
     ./ssh.nix
     ./starship.nix
+    ./tailscale-serve.nix
     ./zellij.nix
     ./zsh.nix
 

@@ -35,7 +35,7 @@
   - _Boundary: Activation Convergence_
 
 - [ ] 3. Repository integration and render verification
-- [ ] 3.1 Import the reusable module through the common Home Manager hub
+- [x] 3.1 Import the reusable module through the common Home Manager hub
   - Wire the new module into the existing common Home Manager import path used by `Brandons-MacBook-Pro`.
   - Leave personal host Serve entries empty in this spec.
   - Verify the personal host does not gain Tailscale login, ACL, certificate, device authorization, or local service exposure behavior from this module.
