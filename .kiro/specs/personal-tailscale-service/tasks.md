@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Add the Tailscale Serve render-test harness
+- [x] 1. Add the Tailscale Serve render-test harness
   - Add a local test helper for Nix evaluation and a smoke test that proves the helper can evaluate repository expressions without invoking host side effects.
   - Keep helper behavior scoped to the new Tailscale Serve test suite.
   - Completed when `node --test tests/personal-tailscale-service/` runs the helper smoke test successfully.

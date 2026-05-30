@@ -1,0 +1,7 @@
+{
+  "name": "personal-tailscale-service-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "hm-render.test.js",
+  "description": "Test suite entry point for the personal-tailscale-service spec. The main field lets node --test load this directory."
+}
