@@ -42,7 +42,7 @@
   - Completed when the personal host evaluation exposes the option namespace, renders no Serve commands, and contains no Tailscale auth or prerequisite-management command fragments from this feature.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 4.4_
   - _Boundary: Personal Host Readiness_
-- [ ] 3.2 Add dormant-state render tests
+- [x] 3.2 Add dormant-state render tests
   - Add assertions for disabled, enabled-empty, and personal-host dormant evaluations.
   - Verify the tests inspect rendered state without invoking the Tailscale CLI.
   - Completed when the dormant tests pass through `node --test tests/personal-tailscale-service/`.
