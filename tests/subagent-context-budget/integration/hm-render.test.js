@@ -12,6 +12,7 @@ const {
 } = require(path.join(__dirname, '../../../scripts/subagent-context-budget.js'));
 
 const repoRoot = path.resolve(__dirname, '../../..');
+const NIX_COMMAND_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
   shopify: 'ShopifyLaptop',
@@ -79,7 +80,7 @@ function nixEvalJson(expr) {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ));
 }
@@ -92,7 +93,7 @@ function nixEvalFlakeAttrJson(attr) {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ));
 }
@@ -105,7 +106,7 @@ function nixBuildExpr(expr) {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ).trim();
 }

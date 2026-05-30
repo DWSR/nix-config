@@ -8,6 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
+const NIX_COMMAND_TIMEOUT_MS = 600_000;
 
 let smokeBinary;
 let renderedMetadata;
@@ -45,7 +46,7 @@ function buildSmokeBinary() {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ).trim();
   smokeBinary = path.join(outPath, 'bin', 'rtk-opencode-smoke-test');
@@ -72,7 +73,7 @@ function getRenderedMetadata() {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ));
   return renderedMetadata;

@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
+const NIX_COMMAND_TIMEOUT_MS = 600_000;
 
 let cachedCommandUnderTest;
 
@@ -62,7 +63,7 @@ function nixEvalJson(expr, options = {}) {
       cwd: options.cwd ?? repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: options.timeout ?? 120_000,
+      timeout: options.timeout ?? NIX_COMMAND_TIMEOUT_MS,
     },
   ));
 }
@@ -198,7 +199,7 @@ function buildCommandUnderTest() {
       cwd: repoRoot,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 120_000,
+      timeout: NIX_COMMAND_TIMEOUT_MS,
     },
   ).trim();
 

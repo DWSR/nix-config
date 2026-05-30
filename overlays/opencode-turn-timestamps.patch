@@ -41,7 +41,25 @@ index 270c110..5c826f5 100644
  function UserMessage(props: {
    message: UserMessage
    parts: Part[]
-@@ -1329,6 +1338,13 @@ function UserMessage(props: {
+@@ -1311,48 +1320,55 @@ function UserMessage(props: {
+   const ctx = use()
+   const local = useLocal()
+   const text = createMemo(() => {
+     const texts = props.parts
+       .map((x) => {
+         if (x.type === "text" && !x.synthetic) {
+           return x.text
+         }
+         return null
+       })
+       .filter(Boolean)
+     return texts.join("\n\n")
+   })
+   const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
+   const { theme } = useTheme()
+   const [hover, setHover] = createSignal(false)
+   const queued = createMemo(() => props.pending && props.message.id > props.pending)
+   const color = createMemo(() => local.agent.color(props.message.agent))
    const queuedFg = createMemo(() => selectedForeground(theme, color()))
    const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
  
@@ -55,6 +73,30 @@ index 270c110..5c826f5 100644
    const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
  
    return (
+     <>
+       <Show when={text()}>
+         <box
+           id={props.message.id}
+           border={["left"]}
+           borderColor={color()}
+           customBorderChars={SplitBorder.customBorderChars}
+           marginTop={props.index === 0 ? 0 : 1}
+         >
+           <box
+             onMouseOver={() => {
+               setHover(true)
+             }}
+             onMouseOut={() => {
+               setHover(false)
+             }}
+             onMouseUp={props.onMouseUp}
+             paddingTop={1}
+             paddingBottom={1}
+             paddingLeft={2}
+             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
+             flexShrink={0}
+           >
+             <text fg={theme.text}>{text()}</text>
 @@ -1375,21 +1391,19 @@ function UserMessage(props: {
                  </For>
                </box>
