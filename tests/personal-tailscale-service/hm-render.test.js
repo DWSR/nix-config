@@ -350,69 +350,137 @@ test('standalone Tailscale Serve module renders activation convergence for decla
 });
 
 test('standalone Tailscale Serve module rejects unsupported exposure declarations', () => {
-  const invalidModules = {
-    'funnel/public exposure shape': `{ ... }: {
+  const invalidModules = [
+    {
+      name: 'funnel/public exposure shape',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.publicWeb = {
         public = true;
         listen = { protocol = "https"; port = 443; };
         target = { kind = "url"; url = "http://localhost:3000"; };
       };
     }`,
-    'file target kind': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.publicWeb\.public.*does not exist/s,
+    },
+    {
+      name: 'file target kind',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.fileServer = {
         listen = { protocol = "https"; port = 443; };
         target = { kind = "file"; path = "/tmp/index.html"; };
       };
     }`,
-    'directory target kind': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.fileServer\.target\.(kind|path).*(`kind'|not of type|does not exist)/s,
+    },
+    {
+      name: 'directory target kind',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.dirServer = {
         listen = { protocol = "https"; port = 443; };
         target = { kind = "directory"; path = "/tmp/site"; };
       };
     }`,
-    'static text target kind': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.dirServer\.target\.(kind|path).*(`kind'|not of type|does not exist)/s,
+    },
+    {
+      name: 'static text target kind',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.textServer = {
         listen = { protocol = "https"; port = 443; };
         target = { kind = "text"; text = "hello"; };
       };
     }`,
-    'non-local URL target': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.textServer\.target\.(kind|text).*(`kind'|not of type|does not exist)/s,
+    },
+    {
+      name: 'non-local URL target',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.remote = {
         listen = { protocol = "https"; port = 443; };
         target = { kind = "url"; url = "https://example.com:8443"; };
       };
     }`,
-    'listener port below range': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.remote\.target\.url.*local loopback proxy URL/s,
+    },
+    {
+      name: 'listener port below range',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.badPort = {
         listen = { protocol = "https"; port = 0; };
         target = { kind = "url"; url = "http://localhost:3000"; };
       };
     }`,
-    'target port above range': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.badPort\.listen\.port.*TCP port from 1 through 65535/s,
+    },
+    {
+      name: 'listener port above range',
+      extraModule: `{ ... }: {
+      home.tailscaleServe.entries.badPort = {
+        listen = { protocol = "https"; port = 65536; };
+        target = { kind = "url"; url = "http://localhost:3000"; };
+      };
+    }`,
+      expected: /home\.tailscaleServe\.entries\.badPort\.listen\.port.*TCP port from 1 through 65535/s,
+    },
+    {
+      name: 'target port below range',
+      extraModule: `{ ... }: {
+      home.tailscaleServe.entries.badTargetPort = {
+        listen = { protocol = "tcp"; port = 15432; };
+        target = { kind = "port"; port = 0; };
+      };
+    }`,
+      expected: /home\.tailscaleServe\.entries\.badTargetPort\.target\.port.*TCP port from 1 through 65535/s,
+    },
+    {
+      name: 'target port above range',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.badTargetPort = {
         listen = { protocol = "tcp"; port = 15432; };
         target = { kind = "port"; port = 65536; };
       };
     }`,
-    'TCP listener path': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.badTargetPort\.target\.port.*TCP port from 1 through 65535/s,
+    },
+    {
+      name: 'TCP listener path',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.tcpPath = {
         listen = { protocol = "tcp"; port = 15432; path = "/db"; };
         target = { kind = "port"; port = 5432; };
       };
     }`,
-    'URL target port above range': `{ ... }: {
+      expected: /home\.tailscaleServe\.entries\.tcpPath\.listen\.path.*only supported for http and https listeners/s,
+    },
+    {
+      name: 'TLS-terminated TCP listener path',
+      extraModule: `{ ... }: {
+      home.tailscaleServe.entries.tlsPath = {
+        listen = { protocol = "tls-terminated-tcp"; port = 9443; path = "/raw"; };
+        target = { kind = "url"; url = "tcp://localhost:9899"; };
+      };
+    }`,
+      expected: /home\.tailscaleServe\.entries\.tlsPath\.listen\.path.*only supported for http and https listeners/s,
+    },
+    {
+      name: 'URL target port above range',
+      extraModule: `{ ... }: {
       home.tailscaleServe.entries.badUrlPort = {
         listen = { protocol = "https"; port = 443; };
         target = { kind = "url"; url = "http://localhost:65536"; };
       };
     }`,
-  };
+      expected: /home\.tailscaleServe\.entries\.badUrlPort\.target\.url.*local loopback proxy URL/s,
+    },
+  ];
 
-  for (const [name, extraModule] of Object.entries(invalidModules)) {
-    assert.match(
-      nixEvalFailure(standaloneTailscaleServeExpr(extraModule)),
-      /error:/,
-      name,
-    );
+  for (const { name, extraModule, expected } of invalidModules) {
+    const error = nixEvalFailure(standaloneTailscaleServeExpr(extraModule));
+
+    assert.match(error, /error:/, name);
+    assert.match(error, expected, name);
+    assert.doesNotMatch(error, /Applying Tailscale Serve entry:/, name);
+    assert.doesNotMatch(error, /Missing Tailscale CLI path:/, name);
+    assert.doesNotMatch(error, /Failed to apply Tailscale Serve entry:/, name);
   }
 });

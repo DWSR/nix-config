@@ -54,7 +54,7 @@
   - Completed when declared-entry tests pass through the Tailscale Serve test suite.
   - _Requirements: 1.1, 1.2, 1.5, 3.1, 4.2_
   - _Boundary: Render Tests_
-- [ ] 3.4 Add invalid-declaration render tests
+- [x] 3.4 Add invalid-declaration render tests
   - Add evaluation-failure coverage for Funnel/public exposure shapes, file or directory targets, static text targets, non-local URLs, invalid ports, and incompatible path/protocol combinations.
   - Assert each failure occurs before activation and includes the affected option or entry context.
   - Completed when invalid-declaration tests fail for the expected validation reason and the suite remains green.
