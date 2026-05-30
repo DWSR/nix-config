@@ -20,7 +20,7 @@
   - Completed when supported sample entries evaluate to normalized rendered state and invalid samples fail before activation.
   - _Requirements: 1.1, 1.2, 1.3_
   - _Boundary: HM Module_
-- [ ] 2.3 Render Serve command intent for declared entries
+- [x] 2.3 Render Serve command intent for declared entries
   - Convert each valid entry into testable command intent that includes the configured CLI path, background Serve mode, noninteractive confirmation, listener flags, and local target.
   - Ensure rendered commands never include Funnel, reset, file, directory, static text, non-local target, or `tailscaled` behavior.
   - Completed when declared entries render one command intent per entry and empty entries render none.

@@ -2,6 +2,8 @@
 let
   inherit (lib) mkEnableOption mkOption types;
 
+  cfg = config.home.tailscaleServe;
+
   portPattern = "([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])";
   localProxyUrlPattern = "^(http|https|tcp|https\\+insecure)://(localhost|127\\.0\\.0\\.1)(:(${portPattern}))?(/.*)?$";
 
@@ -138,11 +140,27 @@ let
       argv = mkOption {
         type = types.listOf types.str;
         description = ''
-          Argument vector that a later activation step can pass to the
-          configured Tailscale CLI.
+          Argument vector, including the configured Tailscale CLI path, that a
+          later activation step can execute.
         '';
       };
     };
+  };
+
+  renderTarget =
+    entry: if entry.target.kind == "port" then toString entry.target.port else entry.target.url;
+
+  renderCommand = name: entry: {
+    inherit name;
+    argv = [
+      cfg.cliPath
+      "serve"
+      "--bg"
+      "--yes"
+      "--${entry.listen.protocol}=${toString entry.listen.port}"
+    ]
+    ++ lib.optional (entry.listen.path != null) "--set-path=${entry.listen.path}"
+    ++ [ (renderTarget entry) ];
   };
 in
 {
@@ -170,7 +188,6 @@ in
 
     _renderedCommands = mkOption {
       type = types.listOf (types.submodule renderedCommandOpts);
-      default = [ ];
       internal = true;
       readOnly = true;
       description = ''
@@ -181,13 +198,18 @@ in
     };
   };
 
-  config.assertions = lib.mapAttrsToList (name: entry: {
-    assertion =
-      entry.listen.path == null
-      || builtins.elem entry.listen.protocol [
-        "http"
-        "https"
-      ];
-    message = "home.tailscaleServe.entries.${name}.listen.path is only supported for http and https listeners";
-  }) config.home.tailscaleServe.entries;
+  config = {
+    assertions = lib.mapAttrsToList (name: entry: {
+      assertion =
+        entry.listen.path == null
+        || builtins.elem entry.listen.protocol [
+          "http"
+          "https"
+        ];
+      message = "home.tailscaleServe.entries.${name}.listen.path is only supported for http and https listeners";
+    }) cfg.entries;
+
+    home.tailscaleServe._renderedCommands =
+      if cfg.enable then lib.mapAttrsToList renderCommand cfg.entries else [ ];
+  };
 }

@@ -70,6 +70,12 @@ function standaloneTailscaleServeDefaultsExpr() {
     in
     {
       disabled = evalModule ({ ... }: { });
+      disabledDeclared = evalModule ({ ... }: {
+        home.tailscaleServe.entries.web = {
+          listen = { protocol = "https"; port = 443; };
+          target = { kind = "url"; url = "http://localhost:3000"; };
+        };
+      });
       enabledEmpty = evalModule ({ ... }: {
         home.tailscaleServe.enable = true;
       });
@@ -104,6 +110,10 @@ test('standalone Tailscale Serve module exposes dormant option namespace', () =>
   assert.deepEqual(rendered.disabled.renderedCommands, []);
   assert.deepEqual(rendered.disabled.tailscaleActivationNames, []);
 
+  assert.equal(rendered.disabledDeclared.enable, false);
+  assert.deepEqual(rendered.disabledDeclared.renderedCommands, []);
+  assert.deepEqual(rendered.disabledDeclared.tailscaleActivationNames, []);
+
   assert.equal(rendered.enabledEmpty.enable, true);
   assert.equal(
     rendered.enabledEmpty.cliPath,
@@ -115,8 +125,10 @@ test('standalone Tailscale Serve module exposes dormant option namespace', () =>
 });
 
 test('standalone Tailscale Serve module normalizes supported local proxy entries', () => {
+  const cliPath = '/opt/tailscale/bin/tailscale';
   const rendered = nixEvalJson(standaloneTailscaleServeExpr(`{ ... }: {
     home.tailscaleServe.enable = true;
+    home.tailscaleServe.cliPath = "${cliPath}";
     home.tailscaleServe.entries = {
       web = {
         listen = {
@@ -183,7 +195,61 @@ test('standalone Tailscale Serve module normalizes supported local proxy entries
       target: { kind: 'url', port: null, url: 'http://localhost:3000' },
     },
   });
-  assert.deepEqual(rendered.renderedCommands, []);
+  assert.deepEqual(rendered.renderedCommands, [
+    {
+      name: 'database',
+      argv: [
+        cliPath,
+        'serve',
+        '--bg',
+        '--yes',
+        '--tcp=15432',
+        '5432',
+      ],
+    },
+    {
+      name: 'metrics',
+      argv: [
+        cliPath,
+        'serve',
+        '--bg',
+        '--yes',
+        '--http=8080',
+        'https://127.0.0.1:8443',
+      ],
+    },
+    {
+      name: 'rawTcp',
+      argv: [
+        cliPath,
+        'serve',
+        '--bg',
+        '--yes',
+        '--tls-terminated-tcp=9443',
+        'tcp://localhost:9899',
+      ],
+    },
+    {
+      name: 'web',
+      argv: [
+        cliPath,
+        'serve',
+        '--bg',
+        '--yes',
+        '--https=443',
+        '--set-path=/app',
+        'http://localhost:3000',
+      ],
+    },
+  ]);
+
+  const renderedArgv = rendered.renderedCommands.flatMap(command => command.argv);
+  assert.equal(renderedArgv.includes('funnel'), false);
+  assert.equal(renderedArgv.includes('reset'), false);
+  assert.equal(renderedArgv.includes('tailscaled'), false);
+  assert.equal(renderedArgv.some(arg => arg.startsWith('file:')), false);
+  assert.equal(renderedArgv.some(arg => arg.startsWith('dir:')), false);
+  assert.equal(renderedArgv.some(arg => arg.startsWith('text:')), false);
 });
 
 test('standalone Tailscale Serve module rejects unsupported exposure declarations', () => {
