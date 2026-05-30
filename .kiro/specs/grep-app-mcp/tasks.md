@@ -32,7 +32,7 @@
   - _Depends: 1.2_
 
 - [ ] 3. Add render and package verification
-- [ ] 3.1 Create the grep-app MCP test suite
+- [x] 3.1 Create the grep-app MCP test suite
   - Add `tests/grep-app-mcp/hm-render.test.js` with Nix eval helpers local to the suite.
   - Assert package metadata/output shape, personal and Shopify rendered upstream entries, preservation of existing required upstream entries, and absence of direct opencode MCP entries.
   - Completed when `node --test tests/grep-app-mcp/` runs without live grep.app or GitHub network calls; live `retrieve_tools` discovery remains covered by the post-switch smoke guidance task.
