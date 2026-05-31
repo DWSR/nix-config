@@ -49,7 +49,7 @@
   - _Depends: 3.1_
 
 - [ ] 4. Integration verification and operator notes
-- [ ] 4.1 Verify repository checks and upstream limitations
+- [x] 4.1 Verify repository checks and upstream limitations
   - Run the targeted ast-grep check and `nix flake check --show-trace`.
   - Document any upstream limitation that affects operator use in `tests/ast-grep-mcp/README.md`.
   - Completed when the full check suite passes and limitations are captured.
