@@ -39,6 +39,17 @@ in
   # python313.withPackages interpreter that has all three runtime deps
   # (mcp, pydantic, pyyaml) pre-installed. The wrapper also prepends
   # pkgs.ast-grep to PATH so the server can invoke `sg` at runtime.
+  #
+  # Startup and configuration behavior (verified at 0.1.0 / commit 732c339):
+  #   - `ast-grep-mcp --help` exits 0 with argparse usage; no server starts.
+  #   - Default transport is stdio. No project path, secret, or writable CWD
+  #     is required at startup; the server starts cleanly from any CWD
+  #     (including read-only paths such as /nix/store) and exits on EOF.
+  #   - `--config PATH` and `AST_GREP_CONFIG=PATH` are optional. When set,
+  #     the path must exist at startup — the server exits 1 immediately if
+  #     the file is absent. Leave both unset for the default configuration.
+  #   - Search tools (`find_code`, `find_code_by_rule`) require an explicit
+  #     absolute `project_folder` argument; they are never invoked at startup.
   ast-grep-mcp =
     let
       python = final.python313.withPackages (

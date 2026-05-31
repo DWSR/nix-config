@@ -8,7 +8,7 @@
   - Completed when `nix build` can build the package and the output contains `bin/ast-grep-mcp` with expected metadata.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
   - _Boundary: Package_
-- [ ] 1.2 Verify startup and configuration behavior
+- [x] 1.2 Verify startup and configuration behavior
   - Verify `ast-grep-mcp --help` exits cleanly and no server startup requires a project path, secret, or writable CWD.
   - Document optional `--config` / `AST_GREP_CONFIG` behavior only if packaging exposes it cleanly.
   - Completed when the package has a finite non-search smoke path and any operator-facing limitation is captured.
@@ -72,3 +72,4 @@
 - Upstream defaults to stdio and `--help` exits through argparse before starting the MCP server.
 - The MCP search tools require explicit absolute `project_folder` values; tests must not run them against the user's repo.
 - Task 1.1: upstream `pyproject.toml` has no `[build-system]`; package uses a wrapper derivation with `python313.withPackages` and prepends `pkgs.ast-grep` to `PATH`.
+- Task 1.2: `ast-grep-mcp --help` is the finite smoke path; default stdio starts from read-only CWD with closed stdin, and nonexistent `--config` / `AST_GREP_CONFIG` paths exit 1 at startup.
