@@ -11,6 +11,26 @@ nix build .#checks.aarch64-darwin.ast-grep-mcp
 nix flake check --show-trace
 ```
 
+## Post-switch mcpproxy smoke check
+
+After `darwin-rebuild switch` restarts mcpproxy, verify that the upstream is
+discoverable through the mcpproxy tool-discovery wrapper:
+
+```text
+retrieve_tools(query: "ast grep structural search")
+```
+
+The expected result shape is one or more ast-grep tool rows, for example a
+`ast-grep:<tool>` name or `server: "ast-grep"`, plus a `call_with` value.
+Invoke each tool only through the matching mcpproxy wrapper named by
+`call_with`; read-only/search tools should go through `call_tool_read` when
+returned that way.
+
+File-search tools require an explicit absolute `project_folder` chosen by the
+operator for that invocation. Do not add ast-grep to the mandatory opencode
+startup gate / startup-gate checks, and do not automate repository searches as
+part of activation or validation.
+
 ## Operator-facing upstream limitations
 
 - `ast-grep-mcp --help` is the finite smoke path used by automated checks.

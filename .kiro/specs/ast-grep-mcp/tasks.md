@@ -56,7 +56,7 @@
   - _Requirements: 4.5, 5.3, 5.5_
   - _Boundary: Validation_
   - _Depends: 3.2_
-- [ ] 4.2 Add post-switch mcpproxy smoke guidance
+- [x] 4.2 Add post-switch mcpproxy smoke guidance
   - Add concise operator guidance in `tests/ast-grep-mcp/README.md` for discovering ast-grep tools through mcpproxy `retrieve_tools` after `darwin-rebuild switch` restarts mcpproxy.
   - Include the expected discovery shape: ast-grep tools are returned with a `call_with` value and invoked only through the matching mcpproxy wrapper.
   - Document that file-search tools require an explicit absolute `project_folder` chosen by the operator.
