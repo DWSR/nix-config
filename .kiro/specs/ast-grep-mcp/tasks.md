@@ -40,7 +40,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3_
   - _Boundary: Validation_
   - _Depends: 1.2, 2.1, 2.2_
-- [ ] 3.2 Add the flake check
+- [x] 3.2 Add the flake check
   - Wire `checks.aarch64-darwin.ast-grep-mcp` in `flake.nix` to run the new test suite in a copied writable source with Nix flakes enabled.
   - Keep the check deterministic and free of live tool invocations.
   - Completed when `nix build .#checks.aarch64-darwin.ast-grep-mcp` passes.
