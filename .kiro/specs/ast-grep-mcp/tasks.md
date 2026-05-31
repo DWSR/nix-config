@@ -33,7 +33,7 @@
   - _Depends: 1.2_
 
 - [ ] 3. Add render and package verification
-- [ ] 3.1 Create the ast-grep MCP test suite
+- [x] 3.1 Create the ast-grep MCP test suite
   - Add `tests/ast-grep-mcp/hm-render.test.js` with Nix eval helpers local to the suite.
   - Assert package metadata/output shape, `--help` smoke behavior, personal and Shopify rendered upstream entries, preservation of existing required upstreams, absence of direct opencode MCP entries, and absence of new required secrets.
   - Completed when `node --test tests/ast-grep-mcp/` runs without invoking ast-grep search tools against the repo.
