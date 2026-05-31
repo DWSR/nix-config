@@ -32,6 +32,59 @@ let
     };
 in
 {
+  # ast-grep MCP server — Python stdio server providing structural code search
+  # via the ast-grep CLI. Pinned to commit 732c339 (no release tags upstream).
+  # The upstream pyproject.toml has no [build-system] table, so we use a
+  # wrapper derivation: copy main.py into the store, then wrap it with a
+  # python313.withPackages interpreter that has all three runtime deps
+  # (mcp, pydantic, pyyaml) pre-installed. The wrapper also prepends
+  # pkgs.ast-grep to PATH so the server can invoke `sg` at runtime.
+  ast-grep-mcp =
+    let
+      python = final.python313.withPackages (
+        ps: with ps; [
+          mcp
+          pydantic
+          pyyaml
+        ]
+      );
+    in
+    final.stdenv.mkDerivation {
+      pname = "ast-grep-mcp";
+      version = "0.1.0";
+
+      src = final.fetchFromGitHub {
+        owner = "ast-grep";
+        repo = "ast-grep-mcp";
+        rev = "732c339c3812a44e9111e6c3aefec64894acd58f";
+        hash = "sha256-jsKJRr68MsYUy+3siEag+6WAMXHgGug5xkG0Mq3voas=";
+      };
+
+      dontBuild = true;
+      nativeBuildInputs = [ final.makeWrapper ];
+
+      installPhase = ''
+        runHook preInstall
+
+        mkdir -p $out/lib/ast-grep-mcp
+        cp main.py $out/lib/ast-grep-mcp/main.py
+
+        makeWrapper ${python}/bin/python $out/bin/ast-grep-mcp \
+          --add-flags "$out/lib/ast-grep-mcp/main.py" \
+          --prefix PATH : ${final.ast-grep}/bin
+
+        runHook postInstall
+      '';
+
+      meta = with final.lib; {
+        description = "MCP server for structural code search via ast-grep";
+        homepage = "https://github.com/ast-grep/ast-grep-mcp";
+        license = licenses.mit;
+        mainProgram = "ast-grep-mcp";
+        platforms = platforms.unix;
+      };
+    };
+
   # Cross-agent persistent memory for AI coding agents. Built from
   # JuliusBrussee/cavemem v0.2.1 source (a pnpm monorepo) with three
   # cherry-picked upstream patches applied to the TypeScript source
