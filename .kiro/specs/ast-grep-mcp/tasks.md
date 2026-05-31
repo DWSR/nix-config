@@ -17,7 +17,7 @@
   - _Depends: 1.1_
 
 - [ ] 2. Register ast-grep through mcpproxy host configs
-- [ ] 2.1 Add the personal host upstream entry (P)
+- [x] 2.1 Add the personal host upstream entry (P)
   - Add `home.mcp.extraServers.ast-grep` in the personal Home Manager config using the packaged stdio command.
   - Preserve existing personal upstream entries and do not add secrets, direct opencode MCP entries, or launchd services.
   - Completed when the personal rendered mcpproxy config contains a stdio `ast-grep` server pointing at `pkgs.ast-grep-mcp`.

@@ -88,6 +88,10 @@ in
           command = "${pkgs.grep-app-mcp}/bin/grep-app-mcp";
         };
 
+        ast-grep = {
+          command = "${pkgs.ast-grep-mcp}/bin/ast-grep-mcp";
+        };
+
         beeper = {
           type = "http";
           url = "http://localhost:23373/v0/mcp";
