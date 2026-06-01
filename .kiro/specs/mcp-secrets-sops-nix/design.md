@@ -425,7 +425,7 @@ sequenceDiagram
 | 3.1 | Bootstrap = one op read | secrets/README.md | documented one-line procedure | One-time bootstrap |
 | 3.2 | Subsequent switches need no 1P | sops-nix | local age key only | One-time bootstrap → steady-state |
 | 3.3 | Missing key fails informatively | sops-nix | sops-install-secrets prints "Cannot read age key" diagnostic | One-time bootstrap (failure) |
-| 3.4 | Third-host enrollment workflow | secrets/README.md | documented procedure: existing host adds recipient, runs `sops updatekeys`, commits | (operational) |
+| 3.4 | Third-host enrollment workflow | secrets/README.md | documented procedure: existing host adds recipient, runs `nix develop -c sops-nix-sudo updatekeys`, commits | (operational) |
 | 4.1 | Sync tool refreshes encrypted store | mcp-sync-from-1password | flake app `nix run .#mcp-sync-from-1password -- <host>` | On-demand sync |
 | 4.2 | Sync requires 1P auth | mcp-sync-from-1password | first `op read` fails fast with diagnostic | On-demand sync (failure) |
 | 4.3 | Missing 1P URI fails before partial write | mcp-sync-from-1password | gather phase before sops --encrypt; aborts on any URI failure | On-demand sync (failure) |

@@ -76,6 +76,17 @@ Two environmental preconditions apply to every operation below:
    after rotating `MCP_GITHUB_TOKEN`, make sure you are online and
    not behind a network that blocks `api.github.com`.
 
+Encrypted-store edits should use the devshell wrapper instead of raw
+`sops`:
+
+```sh
+nix develop -c sops-nix-sudo <sops-arguments>
+```
+
+The wrapper runs the pinned `sops` binary under `sudo` with
+`SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt`, so it can read the
+root-owned sops-nix age key and is not affected by sudo's PATH reset.
+
 ## Bootstrap
 
 First-time setup of a host. Repeat once per host. Requires
@@ -176,9 +187,14 @@ them via `nix shell nixpkgs#age -c …`.
    `age1placeholder...` value at the matching anchor (`&host_shopify`
    or `&host_personal`) in repo-root `.sops.yaml` with the public
    key emitted by step 1. Then re-encrypt the existing per-host
-   yaml against the new recipient with `sops updatekeys
-   secrets/mcp.<host>.yaml`. Commit the changes to `.sops.yaml`
-   AND the re-encrypted secrets file together.
+   yaml against the new recipient:
+
+   ```sh
+   nix develop -c sops-nix-sudo updatekeys secrets/mcp.<host>.yaml
+   ```
+
+   Commit the changes to `.sops.yaml` AND the re-encrypted secrets
+   file together.
 
 6. **Activate.** `sudo darwin-rebuild switch --flake .` will now
    succeed because sops-nix can decrypt `secrets/mcp.<host>.yaml`
@@ -221,12 +237,12 @@ has a working `/var/lib/sops-nix/key.txt`, and `op` access to the
    with one recipient), re-encrypt it to add the new recipient:
 
    ```sh
-   sops updatekeys secrets/mcp.<newname>.yaml
+   nix develop -c sops-nix-sudo updatekeys secrets/mcp.<newname>.yaml
    ```
 
-   `sops updatekeys` reads `.sops.yaml`, recomputes the recipients
-   for the file, and re-wraps the data key against them in place.
-   It does not change the underlying secret values.
+   `sops-nix-sudo updatekeys` reads `.sops.yaml`, recomputes the
+   recipients for the file, and re-wraps the data key against them in
+   place. It does not change the underlying secret values.
 
 5. Create the new host's encrypted file. Easiest path is via the
    `mcp-sync-from-1password` helper (Task 7.x) once the
@@ -335,11 +351,11 @@ by replacing the value in the encrypted store and re-activating.
    echo it into a shell history that will be uploaded anywhere,
    or paste it into chat — the next step is the only durable copy.
 
-2. **Edit the encrypted store.** `sops edit` decrypts in-place,
-   drops you into `$EDITOR`, and re-encrypts on save:
+2. **Edit the encrypted store.** `sops-nix-sudo edit` decrypts
+   in-place, drops you into `$EDITOR`, and re-encrypts on save:
 
    ```sh
-   sops edit secrets/mcp.<host>.yaml
+   nix develop -c sops-nix-sudo edit secrets/mcp.<host>.yaml
    ```
 
    Replace the existing `mcpproxy-api-key:` value with the
@@ -457,8 +473,9 @@ walk through "Adding a new host" above. Concretely:
 
 2. On the existing (still-enrolled) host: replace the recovering
    host's recipient in `.sops.yaml` with the NEW public key. Run
-   `sops updatekeys secrets/mcp.<host>.yaml` to re-encrypt the
-   per-host file against the new recipient. Commit and push.
+   `nix develop -c sops-nix-sudo updatekeys secrets/mcp.<host>.yaml`
+   to re-encrypt the per-host file against the new recipient. Commit
+   and push.
 
 3. On the recovering host: install the new private key (Bootstrap
    step 3), pull the repo, and `sudo darwin-rebuild switch

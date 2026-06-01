@@ -223,7 +223,7 @@
 
 - [x] 12. (P) Update operator-facing secrets documentation
   - Update `secrets/README.md` rotation docs to reference both keychain accounts (`mcpproxy` for MCP secrets, `nix-config-secrets` for sqlite-backup secrets)
-  - Document the new `mcpproxy-api-key` secret with generation instructions (`openssl rand -hex 32`) and the `sops edit secrets/mcp.<host>.yaml` workflow
+  - Document the new `mcpproxy-api-key` secret with generation instructions (`openssl rand -hex 32`) and the `nix develop -c sops-nix-sudo edit secrets/mcp.<host>.yaml` workflow
   - **Observable completion**: `grep mcp-hub secrets/README.md` returns zero non-historical matches; the new `mcpproxy-api-key` generation procedure is documented step-by-step
   - _Requirements: 13.3_
   - _Boundary: secrets/README.md_

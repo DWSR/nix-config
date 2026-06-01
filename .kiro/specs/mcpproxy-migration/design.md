@@ -1166,10 +1166,10 @@ flowchart TB
 
 ### Phase 1: Pre-activation
 
-Operator generates `openssl rand -hex 32`, runs
-`sops edit secrets/mcp.<host>.yaml`, adds the `mcpproxy-api-key`
-entry with the generated value. Builds the new generation locally
-(no switch) to validate the renderer.
+Operator generates `openssl rand -hex 32`, runs `nix develop -c
+sops-nix-sudo edit secrets/mcp.<host>.yaml`, adds the
+`mcpproxy-api-key` entry with the generated value. Builds the new
+generation locally (no switch) to validate the renderer.
 
 ### Phase 2: Activation
 

@@ -546,16 +546,21 @@
           preCommitCheck = self.checks.${system}.pre-commit-check;
           # The generated .pre-commit-config.yaml nix store path
           preCommitConfig = preCommitCheck.config.configFile;
+          sopsNixSudo = pkgs.writeShellApplication {
+            name = "sops-nix-sudo";
+            text = ''
+              exec /usr/bin/sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt ${pkgs.sops}/bin/sops "$@"
+            '';
+          };
         in
         {
           default = pkgs.mkShell {
             buildInputs = preCommitCheck.enabledPackages ++ [
-              # Available in-shell so operators can decrypt / edit
-              # secrets/*.yaml without needing sops on PATH globally.
-              # Decryption still requires the per-host age key at
-              # /var/lib/sops-nix/key.txt (root-owned; use sudo) — see
+              # Available in-shell so operators can decrypt/edit secrets/*.yaml
+              # with the root-owned sops-nix age key. The wrapper invokes the
+              # pinned sops binary under sudo with SOPS_AGE_KEY_FILE set; see
               # secrets/README.md for the operator runbook.
-              pkgs.sops
+              sopsNixSudo
             ];
 
             # Symlink .pre-commit-config.yaml for the global prek hook to find.

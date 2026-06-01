@@ -73,7 +73,7 @@ Default is `null`, the example is the NixOS-style path. **You must set it explic
 
 > When using `nix-darwin` save the `age` key to `$HOME/Library/Application Support/sops/age/keys.txt` or set a custom configuration directory.
 
-That guidance applies to *user-facing* sops CLI invocations (`sops -d`, `sops edit`), where `sops` itself searches that path on macOS via `os.UserConfigDir()`. Note: `~/.config/sops/age/keys.txt` is the Linux convention; on macOS sops will look at `~/Library/Application Support/sops/age/keys.txt` instead unless `SOPS_AGE_KEY_FILE` is set.
+That guidance applies to raw user-facing SOPS CLI invocations, where `sops` itself searches that path on macOS via `os.UserConfigDir()`. Note: `~/.config/sops/age/keys.txt` is the Linux convention; on macOS sops will look at `~/Library/Application Support/sops/age/keys.txt` instead unless `SOPS_AGE_KEY_FILE` is set. This repo routes operator decrypt/edit/updatekeys commands through the devshell `sops-nix-sudo` wrapper, which sets that variable to `/var/lib/sops-nix/key.txt` under sudo.
 
 **For the sops-nix nix-darwin activation script,** the path is whatever you set in `sops.age.keyFile` — sops-nix passes it explicitly via the manifest's `ageKeyFile`, which `sops-install-secrets` then reads and concatenates into a per-activation keyfile (see `pkgs/sops-install-secrets/main.go` — the "Import age keys" section). It does NOT auto-discover.
 

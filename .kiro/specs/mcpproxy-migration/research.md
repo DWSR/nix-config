@@ -517,8 +517,8 @@ from the gap analysis).
   manifest entry; operator must populate `mcpproxy-api-key` in
   SOPS before activation.
 - **Follow-up**: document the key generation procedure
-  (`openssl rand -hex 32` then `sops edit secrets/mcp.<host>.yaml`)
-  in `secrets/README.md` (R13).
+  (`openssl rand -hex 32` then `nix develop -c sops-nix-sudo edit
+  secrets/mcp.<host>.yaml`) in `secrets/README.md` (R13).
 
 ### Decision: Neutral keychain account name `nix-config-secrets`
 - **Context**: sqlite-backup secrets currently piggyback on the
