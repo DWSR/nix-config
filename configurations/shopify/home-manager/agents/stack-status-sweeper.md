@@ -40,7 +40,7 @@ Return a compact report with:
 - PR number, title, branch, head SHA, draft state, review decision, mergeability.
 - Actionable check statuses, explicitly excluding `Graphite Mergeability Check` from the actionable-CI calculation.
 - `PR Review Bot Comments Addressed` status:
-  - `missing` means green for stack-captain's final gate.
+  - `missing` means Binks has not produced required output yet and is not green for stack-captain's final gate.
   - present pending/failure/success must be reported exactly.
 - Copilot review status if visible.
 - Label list.

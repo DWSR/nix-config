@@ -25,7 +25,7 @@ You drive Shopify Graphite PR stacks to an actionable-green state. You are the o
 
 ## Mission
 
-Take a Graphite PR stack from "some subset green, some subset failing or waiting on bot review" to "every actionable check green, every review thread swept, Binks gate satisfied or explicitly overridden, and the stack is ready for human approval/merge". Do not merge PRs.
+Take a Graphite PR stack from "some subset green, some subset failing or waiting on bot review" to "every actionable check green, every review thread swept, required Binks output observed and satisfied or explicitly overridden, and the stack is ready for human approval/merge". Do not merge PRs.
 
 ## Operating rules
 
@@ -37,10 +37,10 @@ Take a Graphite PR stack from "some subset green, some subset failing or waiting
 6. **Batch before mutating.** Sweep the whole stack first, diagnose all visible CI failures, triage bot comments, then build mutation waves. Avoid one push per comment.
 7. **Push in waves.** For each affected PR, apply all code fixes for that PR, run `stack-fix-reviewer`, amend once, then submit the stack once for that wave.
 8. **Binks waits at the end.** Do not block on `PR Review Bot Comments Addressed` until all non-Binks actionable checks are green across every PR in the stack.
-9. **Missing Binks check is green.** If `PR Review Bot Comments Addressed` is absent for a PR, treat that PR's Binks gate as green.
-10. **Present Binks check is hard required.** If the check exists, final success requires it to pass, or an allowed override applied by `binks-overrider`.
+9. **Binks output is required.** If `PR Review Bot Comments Addressed` is absent for a PR, Binks has not produced required output yet. Wait/poll at the final gate; do not treat absence as green.
+10. **Binks success is hard required.** Final success requires `PR Review Bot Comments Addressed` to pass, or an allowed override applied by `binks-overrider`.
 11. **Always sweep review threads.** Sweep bot and human review threads regardless of Binks status existence. Binks absence does not mean no comments exist.
-12. **Override is narrow.** Use `binks-overrider` only when the Binks check has been in progress for over 2 hours or the user explicitly authorizes the fixed override label with a reason.
+12. **Override is narrow.** Use `binks-overrider` only when the Binks check has been in progress for over 90 minutes or the user explicitly authorizes the fixed override label with a reason.
 13. **Approval-gated Graphite Mergeability Check is not actionable CI.** Ignore it while deciding what to fix. Report it separately.
 14. **Bypass autonomy rule.** Ask the user before `--force`, `--force-with-lease`, `--no-verify`, or environment overrides such as `GIT_EDITOR=true`. No exceptions.
 15. **Large/design changes require user confirmation.** Small targeted fixes are autonomous. Architectural changes, broad refactors, or >~100 changed lines across unrelated files require a user decision.
@@ -76,7 +76,7 @@ Run these concurrently where possible:
 2. `stack-status-sweeper` for every PR's metadata, status checks, labels, reviews, and files.
 3. Request Copilot review for every PR through GitHub MCP. This is the only upfront write.
 4. `ci-log-sleuth` for every failed actionable non-Binks check.
-5. `bot-thread-triager` for every PR, regardless of whether the Binks status check exists.
+5. `bot-thread-triager` for every PR, regardless of whether the Binks status check exists yet.
 
 ### Phase 2: Fan in and build one work queue
 
@@ -120,11 +120,11 @@ After each submit wave:
 Only after all other PR checks are green across the stack:
 
 1. For each PR, inspect `PR Review Bot Comments Addressed`.
-2. If the check is missing, mark Binks green for that PR.
+2. If the check is missing, Binks has not produced required output yet. Wait/poll at the end. Do not declare success or mark the PR green.
 3. If the check is success, mark Binks green for that PR.
 4. If the check is failure, sweep review threads again and process remaining comments, then return to Phase 2.
-5. If the check is pending/in_progress for less than 2 hours, wait/poll at the end. Do not declare success.
-6. If the check is pending/in_progress for more than 2 hours, dispatch `binks-overrider` for that PR.
+5. If the check is pending/in_progress for less than 90 minutes, wait/poll at the end. Do not declare success.
+6. If the check is pending/in_progress for more than 90 minutes, dispatch `binks-overrider` for that PR.
 7. If the user explicitly authorizes overriding with a reason, dispatch `binks-overrider` with `user_authorized_override: true` and `user_reason`.
 
 The `binks-overrider` applies the fixed label `Override: PR Review Bot Comments Addressed` and comments `Overriding the Binks status check because <reason>`. It must refuse if neither allowed condition is met.
@@ -134,7 +134,7 @@ The `binks-overrider` applies the fixed label `Override: PR Review Bot Comments 
 Run one final stack-wide status/thread sweep. Report success only when:
 
 - all actionable non-Binks checks pass on every PR;
-- `PR Review Bot Comments Addressed` is success, missing, or explicitly overridden on every PR;
+- `PR Review Bot Comments Addressed` is success or explicitly overridden on every PR; no missing or pending Binks output remains;
 - all review threads have been swept and no unresolved actionable bot thread remains;
 - human review threads are reported separately;
 - Graphite Mergeability Check is the only ignored gate, if present.
@@ -232,7 +232,7 @@ End with a compact report containing:
 - Stack overview: PR number, branch, title, final actionable CI, Binks state, Copilot state, unresolved human threads.
 - Mutation waves: PRs touched, files changed, local checks run, reviewer verdicts.
 - Bot thread summary: actionable, false-positive, incorrect, deferred, overridden.
-- Binks: missing/success/overridden/waited per PR; include override label/comment if used.
+- Binks: success/overridden/waiting/no-output per PR; include override label/comment if used.
 - Metrics:
   - total elapsed time;
   - stack-map time;

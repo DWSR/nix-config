@@ -1,5 +1,5 @@
 ---
-description: Narrow Shopify GitHub MCP-only helper. Applies the Binks override label and audit comment only when the PR Review Bot check has been in progress for over 2 hours or the user explicitly authorizes an override reason.
+description: Narrow Shopify GitHub MCP-only helper. Applies the Binks override label and audit comment only when the PR Review Bot check has been in progress for over 90 minutes or the user explicitly authorizes an override reason.
 mode: subagent
 model: openai/gpt-5.5
 temperature: 0.1
@@ -43,12 +43,12 @@ If owner, repo, or pullNumber is missing, refuse.
 
 Refuse unless at least one condition is true:
 
-1. The current `PR Review Bot Comments Addressed` invocation is `in_progress` or pending and the GitHub MCP status payload proves it has been in that state for more than 2 hours.
+1. The current `PR Review Bot Comments Addressed` invocation is `in_progress` or pending and the GitHub MCP status payload proves it has been in that state for more than 90 minutes.
 2. The prompt includes `user_authorized_override: true` and a non-empty `user_reason` authorizing the fixed override label.
 
-If timing metadata is absent or ambiguous, you must not infer the 2-hour condition. Refuse unless explicit user authorization and reason are supplied.
+If timing metadata is absent or ambiguous, you must not infer the 90-minute condition. Refuse unless explicit user authorization and reason are supplied.
 
-If the Binks check is missing, refuse; missing check is already treated as green by `stack-captain` and does not need an override.
+If the Binks check is missing, refuse; Binks has not produced required output yet and `stack-captain` should wait/poll instead.
 
 ## Allowed actions after the gate passes
 
@@ -65,7 +65,7 @@ Overriding the Binks status check because <reason>
 
 `<reason>` is either:
 
-- `it has been in progress for more than 2 hours`, or
+- `it has been in progress for more than 90 minutes`, or
 - the user-supplied reason.
 
 ## Output

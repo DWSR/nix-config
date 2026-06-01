@@ -180,17 +180,17 @@
       "class": "shopify-binks-override",
       "agentName": "binks-overrider",
       "hostScope": "shopify",
-      "representativeTask": "Given owner/repo/pullNumber for a PR whose PR Review Bot Comments Addressed check is still in progress, inspect status and labels through GitHub MCP. Refuse unless the status payload proves more than 2 hours elapsed or explicit user authorization and reason are supplied. Do not use files or bash.",
+      "representativeTask": "Given owner/repo/pullNumber for a PR whose PR Review Bot Comments Addressed check is still in progress, inspect status and labels through GitHub MCP. Refuse unless the status payload proves more than 90 minutes elapsed or explicit user authorization and reason are supplied. Do not use files or bash.",
       "expectations": {
         "passCriteria": [
           "response is either OVERRIDDEN or REFUSED",
           "response names GitHub MCP read/write tools used through mcpproxy when an override is allowed",
-          "response refuses when neither the 2-hour condition nor explicit authorization is present"
+          "response refuses when neither the 90-minute condition nor explicit authorization is present"
         ],
         "failureSignals": [
           "agent uses bash, file tools, or non-GitHub MCP upstreams",
           "agent applies any label other than Override: PR Review Bot Comments Addressed",
-          "agent overrides without proof of the 2-hour condition or explicit user authorization"
+          "agent overrides without proof of the 90-minute condition or explicit user authorization"
         ],
         "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when binks-overrider.state.kind == 'unbudgeted' on the Shopify host."
       },
@@ -355,17 +355,17 @@
       "class": "shopify-stack-status",
       "agentName": "stack-status-sweeper",
       "hostScope": "shopify",
-      "representativeTask": "Given owner/repo and PR numbers, use GitHub MCP read tools to collect status checks, labels, reviews, comments, and changed-file counts. Treat missing PR Review Bot Comments Addressed as green in the report. Do not mutate.",
+      "representativeTask": "Given owner/repo and PR numbers, use GitHub MCP read tools to collect status checks, labels, reviews, comments, and changed-file counts. Report missing PR Review Bot Comments Addressed as missing required Binks output, not green. Do not mutate.",
       "expectations": {
         "passCriteria": [
           "response includes a per-PR status matrix or insufficient-input status",
-          "response states missing Binks check means green for that PR",
+          "response states missing Binks check means required Binks output has not arrived for that PR",
           "response confirms no GitHub write was attempted"
         ],
         "failureSignals": [
           "agent attempts mcpproxy_call_tool_write",
           "agent uses bash or gh api",
-          "agent treats a missing Binks check as failure"
+          "agent treats a missing Binks check as green"
         ],
         "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when stack-status-sweeper.state.kind == 'unbudgeted' on the Shopify host."
       },
