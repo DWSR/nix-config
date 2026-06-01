@@ -6,11 +6,11 @@ system prompts. Patched into the `opencode-pinned` Nix derivation via
 
 ## Source
 
-Upstream baseline pinned to `anomalyco/opencode` tag `v1.15.5`, matching
+Upstream baseline pinned to `anomalyco/opencode` tag `v1.15.13`, matching
 the `src` and `tag` of `opencode-pinned`. Original prompts:
 
 ```
-https://github.com/anomalyco/opencode/tree/v1.15.5/packages/opencode/src/session/prompt/
+https://github.com/anomalyco/opencode/tree/v1.15.13/packages/opencode/src/session/prompt/
 ```
 
 The selector in `packages/opencode/src/session/system.ts` maps

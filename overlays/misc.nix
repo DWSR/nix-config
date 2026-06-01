@@ -241,13 +241,13 @@ final: prev: {
   });
 
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "1.15.11";
+    version = "1.15.13";
 
     src = final.fetchFromGitHub {
       owner = "anomalyco";
       repo = "opencode";
-      tag = "v1.15.11";
-      hash = "sha256-SIRE+x1YCSAX1L89237RN9owJkC4hgCIy1Q93Iy9GzM=";
+      tag = "v1.15.13";
+      hash = "sha256-+zHwO5ZY8D2s1gZzxoYI7c8yWmQSduPwv4MoFruhhPA=";
     };
 
     # Turn timestamp rendering is patched into the pinned package at build
@@ -261,8 +261,8 @@ final: prev: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";
         repo = "opencode";
-        tag = "v1.15.11";
-        hash = "sha256-SIRE+x1YCSAX1L89237RN9owJkC4hgCIy1Q93Iy9GzM=";
+        tag = "v1.15.13";
+        hash = "sha256-+zHwO5ZY8D2s1gZzxoYI7c8yWmQSduPwv4MoFruhhPA=";
       };
 
       # opencode's build-time generate.ts imports prettier (a root-workspace
@@ -272,7 +272,7 @@ final: prev: {
       # install without filters so prettier lands in node_modules.
       #
       # First needed at the anomalyco fork's v1.14.20; still required at
-      # v1.15.11 (verified 2026-05-28). When bumping, retry without this
+      # v1.15.13 (verified 2026-05-31). When bumping, retry without this
       # override only if upstream has stopped pulling prettier into
       # generate.ts; otherwise leave it in place.
       buildPhase = ''
@@ -291,7 +291,7 @@ final: prev: {
         runHook postBuild
       '';
 
-      outputHash = "sha256-+yVmI768q58qaGSFWG2h0iRKo2WeFAh8MbFGDhQtM5w=";
+      outputHash = "sha256-859EV5Pg6VdRdImlNfyQatp4nkbUOPZQIkSZ4zpcZp0=";
     });
 
     # Caveman-lite compressions of the bundled model-specific system
