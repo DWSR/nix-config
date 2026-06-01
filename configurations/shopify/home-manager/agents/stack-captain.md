@@ -99,10 +99,10 @@ For each affected PR, bottom-up:
 2. Apply all code fixes for that PR in one local wave.
 3. Run any local verification that is targeted and affordable.
 4. Dispatch `stack-fix-reviewer` with the intended fix and diff context.
-5. If approved, stage intended files and amend through gt-mcp. Prefer `modify --all --no-edit` or staged `modify --no-edit` over message-replacement flows. Replace commit messages only when the fix requires it.
+5. If approved, stage intended files and amend through gt-mcp. Prefer `modify --all --no-edit` or staged `modify --no-edit` over message-replacement flows. Replace commit messages only when the fix requires it. A successful `modify` / `gt m` does not make the next submit require `--force`.
 6. Before submit, enforce cc-sdd boundaries if present.
 7. Submit through gt-mcp with `submit --no-interactive --stack` for a stack-wide wave.
-8. If Graphite requires force after remote divergence, verify diff-equivalence and ask the user before `--force`.
+8. If Graphite requires force after actual remote divergence, verify diff-equivalence and ask the user before `--force`.
 
 For non-code bot dispositions, prefer GitHub MCP for comments/labels. Use `gh api graphql` only for review-thread query/reply/resolve or reactions that MCP cannot perform.
 

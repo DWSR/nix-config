@@ -33,6 +33,10 @@ via `retrieve_tools` — invoking `gt create`, `gt modify`, `gt submit`,
 then `gt submit --no-interactive` succeeds WITHOUT `--force`. Metadata
 stays in lock-step with the remote; no SHA divergence.
 
+`gt modify` / `gt m` is part of this green path. A successful modify
+through gt-MCP amends through Graphite and does NOT by itself make the
+next submit require `--force`.
+
 `--force` is only relevant when the stack was manipulated OUTSIDE the
 gt MCP:
 
@@ -45,6 +49,7 @@ gt MCP:
 If reaching for `gt submit --force` on a stack only touched via the
 MCP, stop and re-read the error. Most likely B7 (verify
 diff-equivalence first) or B3 (try `gt sync`) — not real divergence.
+Do not treat `gt modify` / `gt m` as a force trigger.
 
 Pre-emptive rule: track every direct git invocation against a stack
 mentally. The moment you reach for `git rebase`, `git commit --amend`,
@@ -104,8 +109,9 @@ for the bash recovery.
 1. Try `gt <command>` as documented.
 2. If it errors, classify via the Pitfall index above. On a gt-MCP-only
    stack `gt submit --no-interactive` should succeed without `--force`;
-   if it doesn't, the stack left the green path (B2/B3/B7 most likely).
-   Load the `graphite-pitfalls` skill for the recovery.
+   `gt modify` / `gt m` does not change that. If submit still requires
+   force, classify the actual cause (B2/B3/B7 most likely). Load the
+   `graphite-pitfalls` skill for the recovery.
 3. Apply the documented recovery.
 4. If the recovery requires `--no-verify`, `--force`, `--force-with-lease`,
    or a git environment override like `GIT_EDITOR=true`, ASK THE USER

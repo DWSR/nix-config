@@ -21,6 +21,11 @@ stacks don't need `--force`), the Bypass autonomy rule (always ask before
 `--force` / `--no-verify` / `--force-with-lease` / `GIT_EDITOR=true`), and
 the pitfall index. This skill holds the full bash recoveries.
 
+Important: `gt modify` / `gt m` is a gt-MCP green-path operation. A
+successful modify does NOT by itself make a later submit require `--force`.
+Only classify a force recovery after actual remote divergence, metadata
+poisoning, or history rewrites outside gt.
+
 ## Bypass authorization — applies to every recovery below
 
 Any recovery below that uses `--force`, `--no-verify`,
@@ -78,6 +83,10 @@ Even with correct argv, hooks can reject for unrelated reasons:
   --no-edit` ran cleanly under identical conditions immediately
   afterward, so the trigger is gt-specific argv shape, not the commit
   content.
+
+Successful `gt modify` / `gt m` remains a Graphite-managed amend and does
+not require `gt submit --force`. Only the plain-git amend fallback below
+leaves the green path.
 
 **Recovery:**
 
@@ -491,8 +500,9 @@ re-splitting once green.
 1. Try `gt <command>` as documented.
 2. If it errors, classify (Category A / B / C above). On a gt-MCP-only
    stack `gt submit --no-interactive` should succeed without `--force`;
-   if it doesn't, the stack has left the green path (Category B2/B3/B7
-   most likely) and one of the documented recoveries applies.
+   `gt modify` / `gt m` does not change that. If submit still requires
+   force, classify the actual cause (Category B2/B3/B7 most likely) and
+   apply the matching recovery.
 3. Apply the documented recovery from the catalog.
 4. If the recovery requires `--no-verify`, `--force`, `--force-with-lease`,
    or a Git environment override like `GIT_EDITOR=true`, ASK THE USER
