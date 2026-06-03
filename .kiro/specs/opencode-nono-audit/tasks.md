@@ -32,7 +32,7 @@
   - _Depends: 1.1_
 
 - [ ] 2. Core: read-only usage audit and redaction
-- [ ] 2.1 Open data sources read-only and track source status
+- [x] 2.1 Open data sources read-only and track source status
   - Reuse the cost-report SQLite reader via the injected library path to open the OpenCode session DB read-only
   - Optionally open the cavemem `data.db` read-only as a secondary source, version-guarded
   - Map a reader open-failure or schema-drift error to an `incompatible` source and mark the report partial; never crash on drift
