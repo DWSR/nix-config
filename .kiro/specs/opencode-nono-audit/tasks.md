@@ -65,7 +65,7 @@
   - _Boundary: Compatibility Assessor_
   - _Depends: 2.2_
 
-- [ ] 3.2 Classify observed usage against grants
+- [x] 3.2 Classify observed usage against grants
   - Classify each observed capability as compatible, warning, blocker, or unknown; unmappable observations are unknown, never compatible
   - For blockers/warnings, record profile, observed usage, affected session context, and missing capability when available
   - Observable completion: classification over the fixtures includes at least one unknown and one blocker carrying a missing-capability value

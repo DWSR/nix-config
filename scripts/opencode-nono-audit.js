@@ -943,6 +943,314 @@ function ingestProfileGrants(profileName, opts) {
   return { assessment: 'available', grants };
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 3.2 (Requirements 2.2, 2.3, 2.4): the Compatibility Assessor's
+// CLASSIFICATION layer.
+//
+// `assess(audit, profiles, opts)` classifies each observed capability
+// (from runAudit's UsageAudit) against the resolved grants of each
+// selected profile into a Finding:
+//
+//   Finding = { profile, classification, capability,
+//               sessionContext?, missingCapability? }
+//   classification ∈ "compatible" | "warning" | "blocker" | "unknown"
+//
+// Invariants (mandatory):
+//   - UNMAPPABLE observation (no derivable sandbox capability class —
+//     e.g. an MCP tool exposing only a name/count, or an inference-only
+//     class like port/env) → `unknown`, NEVER `compatible` (R2.4).
+//   - Every observation maps to EXACTLY ONE classification (design
+//     postcondition); a multi-command bash record yields one finding per
+//     command, never zero.
+//   - For blockers/warnings: record `profile`, the observed `capability`
+//     (raw usage string), `sessionContext` when available, and
+//     `missingCapability` when available (R2.3).
+//   - If nono is unavailable for every profile → SKIP (no Findings, no
+//     fabricated compatible), distinct from classification. Reuses 3.1's
+//     ingest, so the live (absent-nono) host skips; classification is
+//     exercised in tests via INJECTED synthetic grants.
+//
+// Redaction is NOT applied here. `Finding.capability` carries the RAW
+// usage string; redaction is the single serialization-time pass in task
+// 5.1 (consistent with the raw capability strings from 2.2). Do NOT call
+// redact() in this layer.
+//
+// Findings are emitted in a STABLE, deterministic order (classification
+// rank, then profile, then capability) so later determinism assertions
+// (5.1 / 6.1) hold regardless of map/iteration nondeterminism.
+// ────────────────────────────────────────────────────────────────────
+
+/** Deterministic sort rank for classifications (most severe first). */
+const CLASSIFICATION_RANK = Object.freeze({
+  blocker: 0,
+  warning: 1,
+  unknown: 2,
+  compatible: 3,
+});
+
+/**
+ * The first whitespace-delimited token of a command is its program. Used
+ * to match an `external-command` usage against the program allow/deny
+ * grant (e.g. `npm install` → `npm`). Leading env-var assignments
+ * (`KEY=value cmd ...`) are skipped so the program, not the assignment,
+ * is matched. Returns null when no program token is derivable.
+ *
+ * @param {string} command
+ * @returns {string|null}
+ */
+function commandProgram(command) {
+  if (typeof command !== 'string') return null;
+  const tokens = command.trim().split(/\s+/).filter((t) => t.length > 0);
+  for (const tok of tokens) {
+    // `KEY=value` prefix assignments are not the program; skip them.
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) continue;
+    return tok;
+  }
+  return null;
+}
+
+/**
+ * Classify a single external-command program against the grant.
+ *
+ * - allowlist: program in `allow` ⇒ compatible; else ⇒ blocker
+ *   (missingCapability `external-command:<program>`).
+ * - denylist: program in `deny` ⇒ blocker; else ⇒ compatible.
+ * - any other / missing mode ⇒ unknown (the grant shape is unverified
+ *   upstream; an unrecognized mode is not assumed permissive — R2.4).
+ *
+ * @param {string} program
+ * @param {{ mode: string|null, allow: string[], deny: string[] }|undefined} grant
+ * @returns {{ classification: string, missingCapability?: string }}
+ */
+function classifyCommand(program, grant) {
+  if (!grant) {
+    // No external-command grant resolved → cannot confirm; unmappable to a
+    // known grant ⇒ unknown (never compatible).
+    return { classification: 'unknown' };
+  }
+  if (grant.mode === 'allowlist') {
+    if (grant.allow.includes(program)) return { classification: 'compatible' };
+    return { classification: 'blocker', missingCapability: `external-command:${program}` };
+  }
+  if (grant.mode === 'denylist') {
+    if (grant.deny.includes(program)) {
+      return { classification: 'blocker', missingCapability: `external-command:${program}` };
+    }
+    return { classification: 'compatible' };
+  }
+  return { classification: 'unknown' };
+}
+
+/**
+ * Classify a single value (a filesystem path or a network host/endpoint)
+ * against a prefix-matched allow/deny grant. `klass` names the capability
+ * class for the missingCapability string (`filesystem-path` /
+ * `network-endpoint`).
+ *
+ * - allowlist: a `allow` entry is a prefix of the value ⇒ compatible;
+ *   none matches ⇒ blocker. An entry that matches only as an EXACT value
+ *   (not a prefix segment) when others nearly match is treated normally —
+ *   no special-casing; prefix containment is the rule.
+ * - denylist: a `deny` entry is a prefix of the value (or `*` wildcard) ⇒
+ *   blocker; none matches ⇒ compatible.
+ * - any other / missing mode ⇒ unknown.
+ *
+ * @param {string} value
+ * @param {string} klass capability class label
+ * @param {{ mode: string|null, allow: string[], deny: string[] }|undefined} grant
+ * @returns {{ classification: string, missingCapability?: string }}
+ */
+function classifyAgainstList(value, klass, grant) {
+  if (!grant) return { classification: 'unknown' };
+  const matchesAny = (list) =>
+    list.some((entry) => entry === '*' || (typeof entry === 'string' && value.startsWith(entry)));
+
+  if (grant.mode === 'allowlist') {
+    if (matchesAny(grant.allow)) return { classification: 'compatible' };
+    return { classification: 'blocker', missingCapability: `${klass}:${value}` };
+  }
+  if (grant.mode === 'denylist') {
+    if (matchesAny(grant.deny)) {
+      return { classification: 'blocker', missingCapability: `${klass}:${value}` };
+    }
+    return { classification: 'compatible' };
+  }
+  return { classification: 'unknown' };
+}
+
+/**
+ * Classify one CapabilityRecord against the resolved grants, producing
+ * one or more Findings. Mapping rules:
+ *
+ * - Each derived `command` → an `external-command` finding keyed on its
+ *   program token, capability string `"<tool>:<command>"`.
+ * - Each derived `path` → a `filesystem-path` finding, capability string
+ *   `"<tool>:<path>"`.
+ * - Each derived `endpoint` → a `network-endpoint` finding, capability
+ *   string `"<tool>:<endpoint>"`.
+ * - A record with NO derived command/path/endpoint (no mappable class —
+ *   e.g. an MCP tool with only a name/count, or whose surface is the
+ *   inference-only port/env classes) → exactly one `unknown` finding,
+ *   capability string `"<tool>"`. UNMAPPABLE ⇒ unknown, never compatible
+ *   (R2.4).
+ *
+ * WARNING trigger (documented, deterministic): a record that DID derive a
+ * mappable class but whose extraction confidence is below `high` (i.e.
+ * `medium`/`low`) is downgraded from `compatible` to `warning` — the
+ * usage maps to a granted class but cannot be confirmed at high
+ * confidence. A `blocker` or `unknown` outcome is NOT softened to a
+ * warning (a low-confidence blocker is still actionable). This keeps the
+ * trigger a one-directional, deterministic compatible→warning demotion.
+ *
+ * @param {object} rec a CapabilityRecord
+ * @param {string} profile
+ * @param {object} grants normalized grants map
+ * @returns {object[]} Finding[]
+ */
+function classifyRecord(rec, profile, grants) {
+  const findings = [];
+  const lowConfidence = rec.confidence !== 'high';
+  const sessionContext = undefined; // best-effort/optional; not derived in this layer
+
+  const emit = (capability, outcome) => {
+    let classification = outcome.classification;
+    // compatible→warning demotion when confidence is not high.
+    if (classification === 'compatible' && lowConfidence) classification = 'warning';
+    /** @type {object} */
+    const finding = { profile, classification, capability };
+    if (typeof sessionContext === 'string') finding.sessionContext = sessionContext;
+    if (typeof outcome.missingCapability === 'string') {
+      finding.missingCapability = outcome.missingCapability;
+    }
+    findings.push(finding);
+  };
+
+  for (const command of rec.commands) {
+    const program = commandProgram(command);
+    if (program === null) {
+      // A command with no derivable program token is unmappable → unknown.
+      emit(`${rec.tool}:${command}`, { classification: 'unknown' });
+      continue;
+    }
+    const outcome = classifyCommand(program, grants['external-command']);
+    emit(`${rec.tool}:${command}`, outcome);
+  }
+
+  for (const p of rec.paths) {
+    const outcome = classifyAgainstList(p, 'filesystem-path', grants['filesystem-path']);
+    emit(`${rec.tool}:${p}`, outcome);
+  }
+
+  for (const endpoint of rec.endpoints) {
+    const outcome = classifyAgainstList(endpoint, 'network-endpoint', grants['network-endpoint']);
+    emit(`${rec.tool}:${endpoint}`, outcome);
+  }
+
+  // No mappable class derived for this record → exactly one unknown
+  // finding (UNMAPPABLE ⇒ unknown, never compatible — R2.4). Note: the
+  // inference-only port/env classes are never populated by 2.2, so a tool
+  // whose only surface is those falls here.
+  const mappable = rec.commands.length > 0 || rec.paths.length > 0 || rec.endpoints.length > 0;
+  if (!mappable) {
+    emit(`${rec.tool}`, { classification: 'unknown' });
+  }
+
+  return findings;
+}
+
+/**
+ * Stable, deterministic comparator for Findings: classification rank
+ * (blocker < warning < unknown < compatible), then profile, then
+ * capability string. Guarantees a reproducible ordering independent of
+ * record/profile iteration order.
+ *
+ * @param {object} a
+ * @param {object} b
+ * @returns {number}
+ */
+function compareFindings(a, b) {
+  const ra = CLASSIFICATION_RANK[a.classification] ?? 99;
+  const rb = CLASSIFICATION_RANK[b.classification] ?? 99;
+  if (ra !== rb) return ra - rb;
+  if (a.profile !== b.profile) return a.profile < b.profile ? -1 : 1;
+  if (a.capability !== b.capability) return a.capability < b.capability ? -1 : 1;
+  return 0;
+}
+
+/**
+ * assess — classify a UsageAudit's observed capabilities against the
+ * resolved grants of each selected profile (Task 3.2, Requirements 2.2,
+ * 2.3, 2.4). See the section header for the full contract.
+ *
+ * Grant resolution per profile reuses {@link ingestProfileGrants}'s
+ * injection seam: `opts.grantsByProfile[<profile>]` supplies grant JSON
+ * text directly (tests classify against the synthetic fixture WITHOUT
+ * nono); otherwise the live `nono profile show --json` shell-out runs
+ * (absent on this host → skip). `opts.nonoBin` overrides the binary.
+ *
+ * - At least one profile resolves grants → `{ ok: true, value: Finding[] }`
+ *   (deterministically ordered; one finding per observed capability,
+ *   exactly one classification each).
+ * - No profile resolves grants (nono unavailable / unparseable for all) →
+ *   `{ ok: true, value: { assessment: 'skipped', reason, findings: [] } }`.
+ *   The SKIP NEVER fabricates compatible findings (R2.4 false-compatible
+ *   avoidance) and is NOT the R1.5 hard failure.
+ *
+ * @param {object} audit a UsageAudit (runAudit().value)
+ * @param {string[]} profiles selected profile names
+ * @param {{ grantsByProfile?: Record<string,string>, nonoBin?: string }} [opts]
+ * @returns {{ ok: true, value: object[] }
+ *          | { ok: true, value: { assessment: 'skipped', reason: string, findings: [] } }
+ *          | { ok: false, error: object }}
+ */
+function assess(audit, profiles, opts) {
+  const options = opts || {};
+  if (!audit || typeof audit !== 'object' || !Array.isArray(audit.capabilities)) {
+    return { ok: false, error: { kind: 'invalid-audit', detail: 'assess requires a UsageAudit' } };
+  }
+  const profileList = Array.isArray(profiles) ? profiles.filter((p) => typeof p === 'string') : [];
+
+  /** @type {Array<{ profile: string, grants: object }>} */
+  const resolved = [];
+  const skipReasons = [];
+  const byProfile =
+    options.grantsByProfile && typeof options.grantsByProfile === 'object'
+      ? options.grantsByProfile
+      : {};
+
+  for (const profile of profileList) {
+    const ingestOpts = {};
+    if (typeof byProfile[profile] === 'string') ingestOpts.grantsJson = byProfile[profile];
+    if (typeof options.nonoBin === 'string') ingestOpts.nonoBin = options.nonoBin;
+
+    const ingest = ingestProfileGrants(profile, ingestOpts);
+    if (ingest.assessment === 'available') {
+      resolved.push({ profile, grants: ingest.grants });
+    } else {
+      skipReasons.push(ingest.reason);
+    }
+  }
+
+  // No profile resolved grants → SKIP (never fabricate compatible). This
+  // is the live (absent-nono) path and is distinct from the R1.5 hard
+  // failure: the audit itself succeeded; only the assessment is skipped.
+  if (resolved.length === 0) {
+    const reason = skipReasons.length > 0 ? skipReasons[0] : NONO_UNAVAILABLE_REASON;
+    return { ok: true, value: { assessment: 'skipped', reason, findings: [] } };
+  }
+
+  /** @type {object[]} */
+  const findings = [];
+  for (const { profile, grants } of resolved) {
+    for (const rec of audit.capabilities) {
+      findings.push(...classifyRecord(rec, profile, grants));
+    }
+  }
+
+  findings.sort(compareFindings);
+  return { ok: true, value: findings };
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -1003,4 +1311,7 @@ module.exports = {
   // Task 3.1: Compatibility Assessor grant ingest layer. Exported for
   // unit-test reach and for the eventual assess() (task 3.2) to consume.
   ingestProfileGrants,
+  // Task 3.2: Compatibility Assessor classification layer. Exported for
+  // unit-test reach and for the Reporter (task 5.x) to consume.
+  assess,
 };
