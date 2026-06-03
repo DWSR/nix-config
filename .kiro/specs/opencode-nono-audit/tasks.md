@@ -23,7 +23,7 @@
   - _Requirements: 1.1_
   - _Boundary: Packaging_
 
-- [ ] 1.3 Build read-only test fixtures
+- [x] 1.3 Build read-only test fixtures
   - Create a synthetic OpenCode session DB fixture with tool parts for bash, git, read, and webfetch (representative args)
   - Create a schema-drift session DB fixture (migration set outside the supported window)
   - Create a cavemem `data.db` fixture and a sandbox `metadata.json` fixture carrying a `profileVersion`
