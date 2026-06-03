@@ -92,7 +92,7 @@
   - _Depends: 4.1_
 
 - [ ] 5. Integration: reporting, freshness marker, and CLI wiring
-- [ ] 5.1 Emit deterministic redacted reports
+- [x] 5.1 Emit deterministic redacted reports
   - Serialize one stably-key-ordered report object to JSON and Markdown, all strings redaction-passed
   - Write reports 0600 under the XDG state directory with last-N retention; include schema version, host, profile version, and timestamp in the header
   - Observable completion: a run writes byte-stable JSON and Markdown at mode 0600 under the XDG state directory

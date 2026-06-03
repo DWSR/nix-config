@@ -48,6 +48,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const VERSION = '0.0.0';
@@ -1693,6 +1694,482 @@ function reconcileLedger(candidates, opts) {
   return { reconciled, undecided, errors };
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 5.1 (Requirements 2.5, 1.7, 1.4): the Reporter.
+//
+// emitReport(opts) assembles ONE stably-key-ordered report object from
+// the UsageAudit (runAudit), the assessment (assess), and the review
+// (rankToolUse + seedReplacementCandidates + reconcileLedger), passes
+// EVERY secret-bearing string through redact() during assembly (R1.7,
+// on by default), serializes to byte-stable JSON + a human-readable
+// Markdown rendering (R2.5), and writes both under
+//   `${XDG_STATE_HOME:-~/.local/state}/opencode-nono/reports/<ISO>.{json,md}`
+// at mode 0600 with last-N retention per extension (R1.4 location). The
+// header records schemaVersion (=1), host, profileVersion (read from
+// the sandbox-rendered metadata.json), and generatedAt.
+//
+// DETERMINISM (R2.5): the report object is built with a FIXED key
+// insertion order and all arrays are already deterministically sorted
+// upstream (capabilities by tool, findings by rank, ranked list by
+// score), so identical inputs produce byte-identical JSON.
+// `generatedAt` is INJECTABLE (an option) so a byte-stable test can fix
+// it; the serializer never calls `new Date()` unconditionally.
+//
+// REDACTION (R1.7): a single deep pass redacts every string in the
+// assembled object before serialization — commands, paths, endpoints,
+// capability/missingCapability strings, sessionContext, ledger
+// free-text, rationale, source detail, cavemem cwd, etc. The mask token
+// contains no secret-shaped substring so the pass is idempotent.
+//
+// Scope (5.1): assembly + redaction + JSON/MD serialization + 0600/XDG
+// retention write + header (incl. profileVersion read). The freshness
+// marker (last-report.json) is task 5.2 and the CLI subcommand wiring is
+// task 5.3 — neither is done here. The FileWriter in
+// opencode-cost-report.js HARDCODES the `opencode-cost-diagnosis` subdir
+// and so cannot be reused for the path; the writer below MIRRORS its
+// pattern (`_withUmask(0o077, ...)`, ISO filename stem with `:`→`-`,
+// recursive mkdir, per-extension last-N prune) under `opencode-nono/`.
+// ────────────────────────────────────────────────────────────────────
+
+/** report.schemaVersion (R2.5 / Data Contracts: additive evolution only). */
+const REPORT_SCHEMA_VERSION = 1;
+
+/** Default per-extension retention for the reports directory. */
+const REPORT_RETENTION_COUNT = 10;
+
+/** The graceful profileVersion default when metadata is absent/unreadable. */
+const PROFILE_VERSION_UNKNOWN = null;
+
+/**
+ * Resolve the reports directory base (state dir). Precedence:
+ *   1. explicit `stateDir` option (tests use this);
+ *   2. `XDG_STATE_HOME`;
+ *   3. `${HOME}/.local/state` (XDG basedir default).
+ *
+ * @param {string} [stateDirOverride]
+ * @returns {string}
+ */
+function resolveReportStateDir(stateDirOverride) {
+  if (typeof stateDirOverride === 'string' && stateDirOverride.length > 0) {
+    return stateDirOverride;
+  }
+  if (process.env.XDG_STATE_HOME && process.env.XDG_STATE_HOME.length > 0) {
+    return process.env.XDG_STATE_HOME;
+  }
+  return path.join(process.env.HOME || '', '.local', 'state');
+}
+
+/**
+ * Resolve the sandbox-rendered metadata path the Reporter reads the
+ * active `profileVersion` from. Precedence:
+ *   1. explicit `metadataPath` option (tests inject the fixture);
+ *   2. `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode-nono/metadata.json`.
+ *
+ * @param {string} [metadataPathOverride]
+ * @returns {string}
+ */
+function resolveMetadataPath(metadataPathOverride) {
+  if (typeof metadataPathOverride === 'string' && metadataPathOverride.length > 0) {
+    return metadataPathOverride;
+  }
+  const xdgConfig =
+    process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.length > 0
+      ? process.env.XDG_CONFIG_HOME
+      : path.join(process.env.HOME || '', '.config');
+  return path.join(xdgConfig, 'opencode', 'opencode-nono', 'metadata.json');
+}
+
+/**
+ * Read the active profile version from the sandbox-rendered
+ * `metadata.json` (`profileVersion` field). A small reusable helper
+ * (task 5.2 reuses it for the freshness marker). Returns
+ * {@link PROFILE_VERSION_UNKNOWN} when the file is absent / unreadable /
+ * malformed / lacks a string `profileVersion` — a graceful default,
+ * never a throw.
+ *
+ * @param {string} [metadataPathOverride]
+ * @returns {string|null}
+ */
+function readProfileVersion(metadataPathOverride) {
+  const metadataPath = resolveMetadataPath(metadataPathOverride);
+  let text;
+  try {
+    text = fs.readFileSync(metadataPath, 'utf8');
+  } catch {
+    return PROFILE_VERSION_UNKNOWN; // absent / unreadable → graceful default
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return PROFILE_VERSION_UNKNOWN; // malformed JSON → graceful default
+  }
+  if (parsed && typeof parsed === 'object' && typeof parsed.profileVersion === 'string') {
+    return parsed.profileVersion;
+  }
+  return PROFILE_VERSION_UNKNOWN;
+}
+
+/**
+ * Deep-redact every string in a JSON-ish value (object/array/string/
+ * primitive). Strings are passed through {@link redact}; objects and
+ * arrays are rebuilt with the SAME key insertion order (determinism is
+ * preserved — redaction does not reorder keys). Non-string primitives
+ * (numbers/booleans/null/undefined) pass through unchanged. This is the
+ * single serialization-time redaction pass (R1.7): the raw capability /
+ * finding / ledger strings extracted unredacted by tasks 2.2 / 3.2 / 4.x
+ * are masked HERE, on by default.
+ *
+ * @param {*} value
+ * @returns {*}
+ */
+function redactDeep(value) {
+  if (typeof value === 'string') return redact(value);
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v));
+  if (value && typeof value === 'object') {
+    /** @type {Record<string, *>} */
+    const out = {};
+    for (const key of Object.keys(value)) {
+      out[key] = redactDeep(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Assemble ONE stably-key-ordered report object from the audit, the
+ * assessment, and the review, redaction-passed (R1.7). The key
+ * insertion order below IS the determinism contract (R2.5); arrays are
+ * already deterministically sorted by their producers. `generatedAt` is
+ * the injected timestamp (never `new Date()` here).
+ *
+ * The assessment may be either a Finding[] (assess succeeded) or a skip
+ * envelope (`{ assessment: 'skipped', reason, findings: [] }`); both are
+ * surfaced verbatim (redaction-passed) under `assessment`.
+ *
+ * @param {{
+ *   audit: object,
+ *   assessment: object|object[],
+ *   review: { ranked: object[], candidates: object[], ledger: object },
+ *   generatedAt: string,
+ *   host: string,
+ *   profileVersion: string|null,
+ * }} parts
+ * @returns {object} the report object (header + audit + assessment + review)
+ */
+function assembleReport(parts) {
+  const { audit, assessment, review, generatedAt, host, profileVersion } = parts;
+  const rev = review || {};
+
+  // Fixed key insertion order → byte-stable JSON. Redact each section
+  // deeply as it is placed (every string field masked before
+  // serialization, R1.7).
+  const report = {
+    // ── header ──
+    schemaVersion: REPORT_SCHEMA_VERSION,
+    host: redact(typeof host === 'string' ? host : ''),
+    profileVersion: typeof profileVersion === 'string' ? profileVersion : null,
+    generatedAt: typeof generatedAt === 'string' ? generatedAt : '',
+    // ── body ──
+    audit: redactDeep(audit && typeof audit === 'object' ? audit : {}),
+    assessment: redactDeep(
+      assessment && typeof assessment === 'object'
+        ? assessment
+        : { assessment: 'skipped', reason: 'no assessment', findings: [] },
+    ),
+    review: {
+      ranked: redactDeep(Array.isArray(rev.ranked) ? rev.ranked : []),
+      candidates: redactDeep(Array.isArray(rev.candidates) ? rev.candidates : []),
+      ledger: redactDeep(
+        rev.ledger && typeof rev.ledger === 'object'
+          ? rev.ledger
+          : { reconciled: [], undecided: [], errors: [] },
+      ),
+    },
+  };
+  return report;
+}
+
+/**
+ * Serialize a report object to byte-stable JSON. The object is already
+ * built with a fixed key insertion order, so `JSON.stringify` with a
+ * fixed indent is deterministic. A trailing newline keeps the file
+ * POSIX-clean.
+ *
+ * @param {object} report
+ * @returns {string}
+ */
+function serializeReportJson(report) {
+  return `${JSON.stringify(report, null, 2)}\n`;
+}
+
+/** Render a list of capability records as Markdown bullet lines. */
+function renderCapabilitiesMd(capabilities) {
+  if (!Array.isArray(capabilities) || capabilities.length === 0) {
+    return '- (none observed)\n';
+  }
+  let out = '';
+  for (const cap of capabilities) {
+    const tool = cap && typeof cap.tool === 'string' ? cap.tool : '(unknown)';
+    const count = cap && typeof cap.count === 'number' ? cap.count : 0;
+    const conf = cap && typeof cap.confidence === 'string' ? cap.confidence : '?';
+    out += `- \`${tool}\` ×${count} (confidence: ${conf})\n`;
+    const commands = Array.isArray(cap && cap.commands) ? cap.commands : [];
+    for (const c of commands) out += `  - command: \`${c}\`\n`;
+    const paths = Array.isArray(cap && cap.paths) ? cap.paths : [];
+    for (const p of paths) out += `  - path: \`${p}\`\n`;
+    const endpoints = Array.isArray(cap && cap.endpoints) ? cap.endpoints : [];
+    for (const e of endpoints) out += `  - endpoint: \`${e}\`\n`;
+  }
+  return out;
+}
+
+/** Render the assessment (findings or skip envelope) as Markdown. */
+function renderAssessmentMd(assessment) {
+  if (assessment && !Array.isArray(assessment) && assessment.assessment === 'skipped') {
+    return `Assessment skipped: ${assessment.reason}\n`;
+  }
+  const findings = Array.isArray(assessment) ? assessment : [];
+  if (findings.length === 0) return '- (no findings)\n';
+  let out = '';
+  for (const f of findings) {
+    let line = `- **${f.classification}** [${f.profile}] \`${f.capability}\``;
+    if (typeof f.missingCapability === 'string') line += ` — missing: \`${f.missingCapability}\``;
+    if (typeof f.sessionContext === 'string') line += ` — context: ${f.sessionContext}`;
+    out += `${line}\n`;
+  }
+  return out;
+}
+
+/** Render the review (ranked + candidates + ledger) as Markdown. */
+function renderReviewMd(review) {
+  const rev = review || {};
+  const ranked = Array.isArray(rev.ranked) ? rev.ranked : [];
+  const candidates = Array.isArray(rev.candidates) ? rev.candidates : [];
+  const ledger = rev.ledger && typeof rev.ledger === 'object' ? rev.ledger : {};
+
+  let out = '### Ranked tool-use\n\n';
+  if (ranked.length === 0) {
+    out += '- (none)\n';
+  } else {
+    for (const r of ranked) {
+      out += `- #${r.rank} \`${r.tool}\` — count ${r.count}, riskScore ${r.riskScore}\n`;
+    }
+  }
+
+  out += '\n### Replacement candidates\n\n';
+  if (candidates.length === 0) {
+    out += '- (none)\n';
+  } else {
+    for (const c of candidates) {
+      const cand = typeof c.mcpCandidate === 'string' ? c.mcpCandidate : '(none)';
+      out += `- \`${c.tool}\` → ${cand}: ${c.rationale}\n`;
+    }
+  }
+
+  const undecided = Array.isArray(ledger.undecided) ? ledger.undecided : [];
+  out += '\n### Undecided candidates\n\n';
+  out += undecided.length === 0 ? '- (none)\n' : undecided.map((t) => `- \`${t}\`\n`).join('');
+
+  const errors = Array.isArray(ledger.errors) ? ledger.errors : [];
+  out += '\n### Ledger validation errors\n\n';
+  out += errors.length === 0 ? '- (none)\n' : errors.map((e) => `- ${e.message}\n`).join('');
+
+  return out;
+}
+
+/**
+ * Serialize a report object to a human-readable Markdown rendering of
+ * the SAME content (R2.5). Deterministic for a fixed report object (the
+ * report is already redaction-passed and stably ordered).
+ *
+ * @param {object} report an assembled report
+ * @returns {string}
+ */
+function serializeReportMarkdown(report) {
+  const audit = report.audit && typeof report.audit === 'object' ? report.audit : {};
+  const sources = Array.isArray(audit.sources) ? audit.sources : [];
+
+  let out = '# opencode-nono-audit report\n\n';
+  out += `- schemaVersion: ${report.schemaVersion}\n`;
+  out += `- host: ${report.host}\n`;
+  out += `- profileVersion: ${String(report.profileVersion)}\n`;
+  out += `- generatedAt: ${report.generatedAt}\n`;
+  out += `- partial: ${audit.partial === true}\n\n`;
+
+  out += '## Sources\n\n';
+  if (sources.length === 0) {
+    out += '- (none)\n';
+  } else {
+    for (const s of sources) {
+      let line = `- \`${s.source}\`: ${s.status}`;
+      if (typeof s.detail === 'string' && s.detail.length > 0) line += ` — ${s.detail}`;
+      out += `${line}\n`;
+    }
+  }
+
+  out += '\n## Capabilities\n\n';
+  out += renderCapabilitiesMd(audit.capabilities);
+
+  const unobservable = Array.isArray(audit.unobservableClasses) ? audit.unobservableClasses : [];
+  out += '\n## Unobservable classes\n\n';
+  out += unobservable.length === 0 ? '- (none)\n' : unobservable.map((c) => `- ${c}\n`).join('');
+
+  out += '\n## Assessment\n\n';
+  out += renderAssessmentMd(report.assessment);
+
+  out += '\n## Review\n\n';
+  out += renderReviewMd(report.review);
+
+  return out;
+}
+
+/**
+ * Filename-safe ISO 8601 stem for a timestamp string. `Date.toISOString`
+ * emits two colons (`HH:MM:SS`); replace them globally with `-` so the
+ * stem is safe on every supported filesystem. Mirrors FileWriter's
+ * `_filenameStem`. The input is the already-fixed `generatedAt` string.
+ *
+ * @param {string} generatedAt an ISO 8601 timestamp string
+ * @returns {string}
+ */
+function reportFilenameStem(generatedAt) {
+  return String(generatedAt).replace(/:/g, '-');
+}
+
+/**
+ * Run `fn` with the process umask set to `mask`, restoring the prior
+ * umask in a finally block. Mirrors FileWriter's `_withUmask`: setting
+ * 0o077 before writing means `fs.writeFileSync`'s default 0o666 mode is
+ * masked down to 0o600 (R1.4 file mode), and the operator's umask is not
+ * leaked past the write.
+ *
+ * @param {number} mask
+ * @param {() => void} fn
+ */
+function withUmask(mask, fn) {
+  const prior = process.umask(mask);
+  try {
+    fn();
+  } finally {
+    process.umask(prior);
+  }
+}
+
+/**
+ * Per-extension last-N retention prune of the reports directory. Mirrors
+ * FileWriter's `_prune`: split managed files by extension, sort by mtime
+ * descending, keep the first `retentionCount`, unlink the tail. Only
+ * `.json` / `.md` flat files are managed; anything else survives. Benign
+ * ENOENT races (stat / unlink) are skipped.
+ *
+ * @param {string} reportsDir
+ * @param {number} retentionCount
+ */
+function pruneReports(reportsDir, retentionCount) {
+  let entries;
+  try {
+    entries = fs.readdirSync(reportsDir, { withFileTypes: true });
+  } catch {
+    return; // dir vanished → nothing to prune
+  }
+  const byExt = { '.json': [], '.md': [] };
+  for (const ent of entries) {
+    if (!ent.isFile()) continue;
+    const ext = path.extname(ent.name).toLowerCase();
+    if (!(ext in byExt)) continue;
+    const full = path.join(reportsDir, ent.name);
+    let mtimeMs;
+    try {
+      mtimeMs = fs.statSync(full).mtimeMs;
+    } catch {
+      continue; // race: vanished between readdir and stat
+    }
+    byExt[ext].push({ full, mtimeMs });
+  }
+  for (const ext of Object.keys(byExt)) {
+    const list = byExt[ext];
+    if (list.length <= retentionCount) continue;
+    list.sort((a, b) => b.mtimeMs - a.mtimeMs); // newest first
+    for (const { full } of list.slice(retentionCount)) {
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        /* benign race / already-removed */
+      }
+    }
+  }
+}
+
+/**
+ * emitReport — assemble, redact, serialize, and write the audit report
+ * (Task 5.1, Requirements 2.5, 1.7, 1.4). See the section header for the
+ * full contract.
+ *
+ * Writes `<stateDir>/opencode-nono/reports/<ISO>.{json,md}` at mode 0600
+ * with per-extension last-N retention, and returns the assembled report
+ * object plus the serialized bytes and written paths.
+ *
+ * @param {{
+ *   audit: object,
+ *   assessment: object|object[],
+ *   review: { ranked: object[], candidates: object[], ledger: object },
+ *   generatedAt: string,           // INJECTABLE for byte-stable tests
+ *   host?: string,                 // defaults to os.hostname()
+ *   metadataPath?: string,         // injectable metadata.json path
+ *   stateDir?: string,             // overrides XDG_STATE_HOME for tests
+ *   retentionCount?: number,       // default REPORT_RETENTION_COUNT
+ * }} opts
+ * @returns {{ report: object, json: string, markdown: string, jsonPath: string, mdPath: string }}
+ */
+function emitReport(opts) {
+  const options = opts || {};
+  const generatedAt =
+    typeof options.generatedAt === 'string' && options.generatedAt.length > 0
+      ? options.generatedAt
+      : new Date().toISOString();
+  const host =
+    typeof options.host === 'string' && options.host.length > 0
+      ? options.host
+      : os.hostname();
+  const profileVersion = readProfileVersion(options.metadataPath);
+  const retentionCount =
+    Number.isInteger(options.retentionCount) && options.retentionCount >= 1
+      ? options.retentionCount
+      : REPORT_RETENTION_COUNT;
+
+  const report = assembleReport({
+    audit: options.audit,
+    assessment: options.assessment,
+    review: options.review,
+    generatedAt,
+    host,
+    profileVersion,
+  });
+
+  const json = serializeReportJson(report);
+  const markdown = serializeReportMarkdown(report);
+
+  const stateDir = resolveReportStateDir(options.stateDir);
+  const reportsDir = path.join(stateDir, 'opencode-nono', 'reports');
+  fs.mkdirSync(reportsDir, { recursive: true });
+
+  const stem = reportFilenameStem(generatedAt);
+  const jsonPath = path.join(reportsDir, `${stem}.json`);
+  const mdPath = path.join(reportsDir, `${stem}.md`);
+
+  // 0600 via umask: writeFileSync's default 0o666 masked by 0o077 → 0o600.
+  withUmask(0o077, () => {
+    fs.writeFileSync(jsonPath, json);
+    fs.writeFileSync(mdPath, markdown);
+  });
+
+  pruneReports(reportsDir, retentionCount);
+
+  return { report, json, markdown, jsonPath, mdPath };
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -1771,4 +2248,15 @@ module.exports = {
   reconcileLedger,
   defaultLedgerPath,
   LEDGER_REQUIRED_FIELDS,
+  // Task 5.1: the Reporter. emitReport is the public entry point; the
+  // assembly / serialization / metadata-read helpers are exported for
+  // unit-test reach and for task 5.2 (freshness marker reuses
+  // readProfileVersion) + task 5.3 (CLI wires emitReport).
+  emitReport,
+  assembleReport,
+  serializeReportJson,
+  serializeReportMarkdown,
+  readProfileVersion,
+  REPORT_SCHEMA_VERSION,
+  REPORT_RETENTION_COUNT,
 };
