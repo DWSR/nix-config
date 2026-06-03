@@ -137,8 +137,8 @@ in
   programs.opencode.settings = {
     model = "openai/gpt-5.5";
     agent.build = {
-      model = "openai/gpt-5.5";
-      variant = "xhigh";
+      model = "anthropic/claude-opus-4-8";
+      variant = "max";
     };
     enabled_providers = [
       "anthropic"
