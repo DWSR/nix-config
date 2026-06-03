@@ -1,0 +1,24 @@
+{
+  "assessorExpectation": {
+    "assessment": "skipped",
+    "reason": "nono unavailable",
+    "unknownGrantShape": true
+  },
+  "capturedAt": "2026-06-03",
+  "command": [
+    "nono",
+    "profile",
+    "show",
+    "opencode",
+    "--json"
+  ],
+  "exitCode": 127,
+  "fixtureKind": "nono-profile-show-opencode",
+  "host": {
+    "platform": "aarch64-darwin"
+  },
+  "nonoVersion": null,
+  "schemaVersion": 1,
+  "status": "unavailable",
+  "stderrClass": "command-not-found"
+}

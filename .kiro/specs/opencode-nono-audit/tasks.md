@@ -6,7 +6,7 @@
 > by `opencode-nono-sandbox` (out of boundary here).
 
 - [ ] 1. Foundation: verification spike, packaging, and test fixtures
-- [ ] 1.1 Verify nono 0.5.0 behavior and capture baseline fixtures (Phase 0 gate)
+- [x] 1.1 Verify nono 0.5.0 behavior and capture baseline fixtures (Phase 0 gate)
   - Run `nono profile show opencode --json` on-host and save the output as the assessor test fixture
   - Inspect a real OpenCode session DB to confirm which tool-arg fields (commands/paths/URLs) are derivable and at what confidence; decide the minimum-fidelity bar and which capability classes to treat as unobservable
   - Confirm the cavemem `data.db` schema/version and how lossy the compressed observation content is for capability extraction
@@ -137,3 +137,7 @@
   - Observable completion: `nix flake check` executes the audit test suite and the validate-check passes
   - _Requirements: 2.5_
   - _Depends: 1.2, 6.2_
+
+## Implementation Notes
+
+- 1.1: `nono` is unavailable on this host; the Phase 0 fixture records the skip path, OpenCode structured `part.data.state.input` is authoritative for command/path/URL extraction, and cavemem is low-confidence secondary context only.
