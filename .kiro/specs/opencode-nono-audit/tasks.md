@@ -123,7 +123,7 @@
   - _Requirements: 1.2, 1.7, 3.4, 3.5, 3.6_
   - _Depends: 2.2, 2.3, 4.2_
 
-- [ ] 6.2 Integration tests over fixtures
+- [x] 6.2 Integration tests over fixtures
   - Audit: partial on a missing source, nonzero on no source, read-only guarantee, and schema-drift degradation
   - Assess: classification including unknown, and the nono-absent skip path
   - Review: deterministic ranking and the git candidate
