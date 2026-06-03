@@ -122,6 +122,10 @@ in
             ];
           };
         };
+
+        git-mcp = {
+          command = "${pkgs.git-mcp-server}/bin/git-mcp-server";
+        };
       };
     };
   };

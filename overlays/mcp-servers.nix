@@ -658,6 +658,52 @@ in
     };
   };
 
+  # git-mcp-server — TypeScript stdio MCP server for Git operations.
+  # Pinned to the v2.15.1 npm tarball. The package already ships a
+  # pre-built `dist/index.js` (bundled by `bun build --target node`), so
+  # we skip the build step entirely. The bundle externalises `pino`,
+  # `pino-pretty`, and `cross-spawn`; those three runtime deps are
+  # provided via `importNpmLock` from the vendored lock in
+  # `overlays/git-mcp-server/`. The wrapper sets `MCP_TRANSPORT_TYPE=stdio`
+  # so the server never opens an HTTP listener (stdio-only, no
+  # unauthenticated HTTP surface). The wrapper prefixes nixpkgs git so
+  # runtime git behavior is not inherited from the host OS.
+  git-mcp-server = final.buildNpmPackage {
+    pname = "git-mcp-server";
+    version = "2.15.1";
+
+    src = final.fetchurl {
+      url = "https://registry.npmjs.org/@cyanheads/git-mcp-server/-/git-mcp-server-2.15.1.tgz";
+      hash = "sha512-IuBjTfFhyNCceNwfTWcda2SPiQaGqyo3fw2OVwXzRzPT+vKAybFH4ntZTbZt5VRlpdTIpVevUkmGC0ZY09roLQ==";
+    };
+
+    postPatch = ''
+      cp ${./git-mcp-server/package.json} package.json
+      cp ${./git-mcp-server/package-lock.json} package-lock.json
+    '';
+
+    npmDeps = final.importNpmLock { npmRoot = ./git-mcp-server; };
+    inherit (final.importNpmLock) npmConfigHook;
+    dontNpmBuild = true;
+
+    nativeBuildInputs = [ final.makeWrapper ];
+
+    postInstall = ''
+      makeWrapper ${final.nodejs}/bin/node $out/bin/git-mcp-server \
+        --set MCP_TRANSPORT_TYPE stdio \
+        --prefix PATH : ${final.lib.makeBinPath [ final.git ]} \
+        --add-flags "$out/lib/node_modules/@cyanheads/git-mcp-server/dist/index.js"
+    '';
+
+    meta = with final.lib; {
+      description = "MCP server for Git version control operations via stdio";
+      homepage = "https://github.com/cyanheads/git-mcp-server";
+      license = licenses.asl20;
+      mainProgram = "git-mcp-server";
+      platforms = platforms.unix;
+    };
+  };
+
   fastmail-mcp = final.buildNpmPackage {
     pname = "fastmail-mcp";
     version = "1.8.2";
