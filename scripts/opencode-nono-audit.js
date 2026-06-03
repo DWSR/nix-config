@@ -764,6 +764,185 @@ function redact(value) {
   return out;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 3.1 (Requirement 2.1): the Compatibility Assessor's grant INGEST
+// layer.
+//
+// `ingestProfileGrants(profileName, opts)` runs the READ-ONLY
+// `nono profile show <name> --json` shell-out and defensively parses the
+// resolved grants the eventual `assess()` (task 3.2) will consume. It
+// returns a discriminated result:
+//
+//   { assessment: 'available', grants: <normalized grants> }
+//   { assessment: 'skipped', reason: <string>, grants: null }
+//
+// Skip cases (NEVER crash, NEVER fabricate a false "available"):
+//   - nono absent (spawn ENOENT / exit 127 / command-not-found) →
+//     reason 'nono unavailable' (matches design's `assessment: skipped
+//     (nono unavailable)` wording).
+//   - nono present but unparseable / unexpected-shape JSON → DEFENSIVE
+//     skip with a descriptive reason (the `profile show --json` shape is
+//     UNVERIFIED upstream per Phase 0).
+//
+// This task delivers ONLY ingestion. CLASSIFICATION of usage against the
+// grants (compatible/warning/blocker/unknown Findings) is task 3.2 and
+// is intentionally NOT implemented here.
+//
+// The shell-out is strictly read-only: `profile show ... --json` is a
+// read, never a mutating nono subcommand. Arguments are passed as an
+// argv array to spawnSync (no shell, no string interpolation of the
+// profile name) so the profile name cannot inject shell syntax.
+// ────────────────────────────────────────────────────────────────────
+
+const { spawnSync } = require('node:child_process');
+
+/** The literal skip reason when nono cannot be invoked at all. */
+const NONO_UNAVAILABLE_REASON = 'nono unavailable';
+
+/**
+ * Obtain the raw `nono profile show <name> --json` stdout text, or a
+ * skip signal when nono is unavailable. A testability seam: when
+ * `opts.grantsJson` is supplied, it is returned verbatim WITHOUT any
+ * shell-out (tests feed the synthetic grants fixture this way, and the
+ * real absent-binary path is exercised by omitting it).
+ *
+ * - `opts.grantsJson` → `{ ok: true, text: <injected JSON> }`.
+ * - real shell-out succeeds (exit 0) → `{ ok: true, text: <stdout> }`.
+ * - nono absent (spawn error / ENOENT) or any non-zero exit (e.g. 127
+ *   command-not-found) → `{ ok: false }` (caller maps to the
+ *   'nono unavailable' skip).
+ *
+ * @param {string} profileName
+ * @param {{ grantsJson?: string, nonoBin?: string }} opts
+ * @returns {{ ok: true, text: string } | { ok: false }}
+ */
+function readProfileShowJson(profileName, opts) {
+  if (typeof opts.grantsJson === 'string') {
+    return { ok: true, text: opts.grantsJson };
+  }
+
+  const bin = typeof opts.nonoBin === 'string' && opts.nonoBin.length > 0 ? opts.nonoBin : 'nono';
+  // Read-only subcommand; argv array (no shell) so the profile name is a
+  // single literal argument and cannot inject shell syntax.
+  const result = spawnSync(bin, ['profile', 'show', String(profileName), '--json'], {
+    encoding: 'utf8',
+    // Never inherit a shell; spawnSync with shell:false is the default,
+    // stated here for intent. timeout guards a hung binary.
+    shell: false,
+    timeout: 15000,
+  });
+
+  // spawn-level failure (ENOENT for an absent binary, EACCES, timeout) →
+  // result.error is set; treat as unavailable.
+  if (result.error) {
+    return { ok: false };
+  }
+  // Non-zero exit (e.g. 127 command-not-found surfaced via a shell, or a
+  // nono error) → unavailable; do not parse partial output.
+  if (typeof result.status === 'number' && result.status !== 0) {
+    return { ok: false };
+  }
+  // A null status with no error is anomalous (e.g. killed by signal);
+  // treat conservatively as unavailable rather than parsing stdout.
+  if (result.status === null) {
+    return { ok: false };
+  }
+  return { ok: true, text: typeof result.stdout === 'string' ? result.stdout : '' };
+}
+
+/**
+ * Normalize one grant entry defensively. A grant value is expected to be
+ * an object carrying a `mode` plus an `allow`/`deny` string array. Any
+ * unexpected shape yields a conservative normalized form rather than a
+ * throw, so an unverified upstream shape never crashes the assessor and
+ * never silently widens permissions. Returns null when the entry is not
+ * even an object (so the caller can decide whether the overall payload
+ * is usable).
+ *
+ * @param {unknown} value
+ * @returns {{ mode: string|null, allow: string[], deny: string[] }|null}
+ */
+function normalizeGrant(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const mode = typeof value.mode === 'string' ? value.mode : null;
+  const allow = Array.isArray(value.allow)
+    ? value.allow.filter((v) => typeof v === 'string')
+    : [];
+  const deny = Array.isArray(value.deny) ? value.deny.filter((v) => typeof v === 'string') : [];
+  return { mode, allow, deny };
+}
+
+/**
+ * Defensively parse the `nono profile show --json` stdout into a
+ * normalized grants map. The shape is UNVERIFIED upstream (Phase 0), so:
+ *   - non-JSON text → null (caller skips).
+ *   - JSON that is not an object, or lacks a `grants` OBJECT → null
+ *     (caller skips; never fabricate an empty "available" payload).
+ *   - a `grants` object → a normalized map { <class>: {mode,allow,deny} }.
+ *     Entries whose value is not an object are dropped defensively; if
+ *     NO entry normalizes, the payload is treated as unusable (null).
+ *
+ * @param {string} text
+ * @returns {{ [capabilityClass: string]: { mode: string|null, allow: string[], deny: string[] } }|null}
+ */
+function parseGrants(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null; // malformed JSON → defensive skip
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const grantsObj = parsed.grants;
+  if (!grantsObj || typeof grantsObj !== 'object' || Array.isArray(grantsObj)) return null;
+
+  /** @type {Record<string, { mode: string|null, allow: string[], deny: string[] }>} */
+  const normalized = {};
+  let count = 0;
+  for (const key of Object.keys(grantsObj)) {
+    const g = normalizeGrant(grantsObj[key]);
+    if (g) {
+      normalized[key] = g;
+      count += 1;
+    }
+  }
+  // A grants object that yielded zero usable entries is an unexpected
+  // shape; skip rather than report an empty "available" payload that
+  // 3.2 could misread as "no grants, therefore nothing blocks".
+  if (count === 0) return null;
+  return normalized;
+}
+
+/**
+ * Ingest the resolved grants for one profile (Task 3.1, Requirement
+ * 2.1). See the section header for the full contract. NEVER throws on a
+ * bad shape or an absent binary, and NEVER fabricates an `available`
+ * result from an assumed/empty grant shape.
+ *
+ * @param {string} profileName
+ * @param {{ grantsJson?: string, nonoBin?: string }} [opts]
+ * @returns {{ assessment: 'available', grants: object }
+ *          | { assessment: 'skipped', reason: string, grants: null }}
+ */
+function ingestProfileGrants(profileName, opts) {
+  const options = opts || {};
+
+  const read = readProfileShowJson(profileName, options);
+  if (!read.ok) {
+    // nono is unavailable on this host (absent binary / non-zero exit).
+    return { assessment: 'skipped', reason: NONO_UNAVAILABLE_REASON, grants: null };
+  }
+
+  const grants = parseGrants(read.text);
+  if (grants === null) {
+    // Present but unparseable / unexpected shape → defensive skip; never
+    // a fabricated "available".
+    return { assessment: 'skipped', reason: 'nono unparseable grants', grants: null };
+  }
+
+  return { assessment: 'available', grants };
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -821,4 +1000,7 @@ module.exports = {
   // Task 2.3: secret redactor. Exported for unit-test reach and for the
   // Reporter (task 5.1) to apply at serialization time.
   redact,
+  // Task 3.1: Compatibility Assessor grant ingest layer. Exported for
+  // unit-test reach and for the eventual assess() (task 3.2) to consume.
+  ingestProfileGrants,
 };

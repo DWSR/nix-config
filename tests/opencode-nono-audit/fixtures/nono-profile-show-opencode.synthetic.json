@@ -1,0 +1,23 @@
+{
+  "_fixtureNote": "synthetic; nono profile show --json shape unverified upstream (Phase 0)",
+  "profile": "opencode",
+  "profileVersion": "0.0.0-synthetic",
+  "grants": {
+    "external-command": {
+      "mode": "allowlist",
+      "allow": ["git", "ls", "cat"]
+    },
+    "filesystem-path": {
+      "mode": "allowlist",
+      "allow": ["/Users", "/tmp"]
+    },
+    "network-endpoint": {
+      "mode": "denylist",
+      "deny": ["*"]
+    },
+    "port": {
+      "mode": "allowlist",
+      "allow": []
+    }
+  }
+}

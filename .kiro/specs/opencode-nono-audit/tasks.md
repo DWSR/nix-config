@@ -57,7 +57,7 @@
   - _Boundary: Redactor_
 
 - [ ] 3. Core: profile compatibility assessment
-- [ ] 3.1 (P) Ingest resolved profile grants
+- [x] 3.1 (P) Ingest resolved profile grants
   - Shell `nono profile show <name> --json` read-only and defensively parse the resolved grants
   - When nono is unavailable, emit an explicit "assessment skipped (nono unavailable)" status while the usage audit and review still produce output (distinct from the no-source hard failure)
   - Observable completion: grants parse from the profile-show fixture; with nono absent, the run still produces audit + review output plus a skipped-assessment status
@@ -141,3 +141,5 @@
 ## Implementation Notes
 
 - 1.1: `nono` is unavailable on this host; the Phase 0 fixture records the skip path, OpenCode structured `part.data.state.input` is authoritative for command/path/URL extraction, and cavemem is low-confidence secondary context only.
+- 2.2: `CapabilityRecord` typed contract has no `output` field (design prose mentions output, but the type is authoritative); capabilities are sorted by tool name for determinism; the structurally-unobservable classes are `["device","env-var","ipc","port","process-signal","unix-socket"]`.
+- 2.3: `redact()` masks ONLY the four design classes (URL creds, KEY=VALUE env, known token shapes, secret query params). A generic high-entropy-blob rule was rejected because it mangles legitimate paths/URLs/git-SHAs/nix-store-paths — do NOT reintroduce one when wiring redaction into serialization (5.1). A bare context-free opaque blob is intentionally NOT masked.
