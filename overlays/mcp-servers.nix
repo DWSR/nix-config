@@ -679,6 +679,42 @@ in
     };
   };
 
+  # mcp-server-time — pure-Python MCP server providing get_current_time and
+  # convert_time tools via IANA timezone names. Distributed as a py3-none-any
+  # wheel on PyPI; no native compilation required. Dependencies (mcp, pydantic,
+  # tzdata, tzlocal) are all available in python312Packages.
+  mcp-server-time = final.python312Packages.buildPythonApplication {
+    pname = "mcp-server-time";
+    version = "2026.1.26";
+    format = "wheel";
+
+    src = final.python312Packages.fetchPypi {
+      pname = "mcp_server_time";
+      version = "2026.1.26";
+      format = "wheel";
+      dist = "py3";
+      python = "py3";
+      abi = "none";
+      platform = "any";
+      hash = "sha256-f6fvfDzAiNMFOf895Cc2Mkrai5NTJW2i0RPYyXfsy9k=";
+    };
+
+    dependencies = with final.python312Packages; [
+      mcp
+      pydantic
+      tzdata
+      tzlocal
+    ];
+
+    meta = with final.lib; {
+      description = "MCP server providing time queries and timezone conversions";
+      homepage = "https://github.com/modelcontextprotocol/servers/tree/main/src/time";
+      license = licenses.mit;
+      mainProgram = "mcp-server-time";
+      platforms = platforms.unix;
+    };
+  };
+
   mcpproxy-go = final.buildGoModule {
     pname = "mcpproxy-go";
     version = "0.33.1";
