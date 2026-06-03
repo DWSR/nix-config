@@ -3,11 +3,11 @@
  * layer (opencode-nono-audit spec, Task 2.1, Requirements 1.1, 1.3, 1.4,
  * 1.5, 1.6).
  *
- * Task 2.1 owns ONLY the source-opening + SourceStatus + partial +
- * no-source-error layer of runAudit. Capability extraction (parsing tool
- * parts into CapabilityRecord[]) and unobservableClasses population are
- * task 2.2; for 2.1, runAudit returns capabilities: [] and
- * unobservableClasses: [] (documented 2.2 extension point, not a stub).
+ * This file owns the source-opening + SourceStatus + partial +
+ * no-source-error contract of runAudit. Capability extraction (parsing
+ * tool parts into CapabilityRecord[]) and unobservableClasses population
+ * are task 2.2 and are asserted in audit-capabilities.test.js; here we
+ * only require capabilities/unobservableClasses to be arrays.
  *
  * These tests live under tests/opencode-nono-audit/integration/ (NOT
  * inside fixtures/) because run.js's discoverTestFiles() recurses into
@@ -73,10 +73,12 @@ test('runAudit over the valid session fixture → ok source, partial=false', () 
   // No cavemem path configured and the only source is ok → not partial.
   assert.equal(audit.partial, false, 'no degraded source → partial must be false');
 
-  // 2.2 extension point: capabilities + unobservableClasses are empty
-  // arrays in 2.1, populated by the capability parser in task 2.2.
-  assert.deepEqual(audit.capabilities, []);
-  assert.deepEqual(audit.unobservableClasses, []);
+  // Task 2.2 populates capabilities + unobservableClasses. The
+  // source-opening contract this test guards only requires that both
+  // are arrays (capability extraction itself is asserted in
+  // audit-capabilities.test.js).
+  assert.ok(Array.isArray(audit.capabilities), 'capabilities must be an array');
+  assert.ok(Array.isArray(audit.unobservableClasses), 'unobservableClasses must be an array');
 });
 
 // ────────────────────────────────────────────────────────────────────

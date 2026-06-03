@@ -29,11 +29,20 @@
  * error Result (no UsageAudit / no assessment) when no source is
  * readable at all (R1.5).
  *
- * SCOPE: 2.1 owns ONLY source-opening + SourceStatus + partial +
- * no-source-error. CAPABILITY EXTRACTION (parsing tool parts into
- * CapabilityRecord[]) and unobservableClasses population are task 2.2;
- * see the documented extension point in buildAudit() where both are
- * returned as empty arrays for now (NOT a silent stub).
+ * ─────────────────────────────────────────────────────────────────
+ * Task 2.2 (Requirements 1.2, 1.3) adds the OBSERVED-CAPABILITY MODEL:
+ * while the session reader from 2.1 is open, iterate its tool parts
+ * (root session + sub-agent descendant sessions) into
+ * CapabilityRecord[]. Tool name + count + output are derived reliably
+ * (high confidence). command/path/URL are derived best-effort from
+ * STRUCTURED `state.input` keys only (high confidence); path-like or
+ * URL-like substrings buried in command strings are NOT promoted.
+ * ports/envVars are inference-only on the current DB shape, so their
+ * arrays stay empty and the class is disclosed in unobservableClasses.
+ * cavemem (R1.3) is a best-effort LOW-confidence secondary context
+ * source — it never fabricates high-confidence capabilities. Raw
+ * strings are extracted UNREDACTED here; redaction is applied at
+ * serialization (task 5.1).
  * ─────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -233,6 +242,234 @@ function isReportable(status) {
 }
 
 /**
+ * Capability classes that are NOT derivable from the current OpenCode
+ * session DB / cavemem shapes (Phase 0 source-fidelity decision,
+ * tests/opencode-nono-audit/fixtures/phase0-source-fidelity-decision.md).
+ * Disclosed in `UsageAudit.unobservableClasses` so the report states its
+ * coverage gaps explicitly rather than implying full coverage. Sorted
+ * and frozen for determinism (later 5.1/6.1 determinism assertions).
+ *
+ * @type {readonly string[]}
+ */
+const UNOBSERVABLE_CLASSES = Object.freeze([
+  'device',
+  'env-var',
+  'ipc',
+  'port',
+  'process-signal',
+  'unix-socket',
+]);
+
+/**
+ * Structured `state.input` keys that yield a HIGH-confidence
+ * filesystem-path. Only direct path keys count; path-like substrings
+ * inside command strings are low-confidence hints and are NOT promoted
+ * here (Phase 0 invariant: unmappable fields are omitted, not guessed).
+ *
+ * @type {readonly string[]}
+ */
+const STRUCTURED_PATH_KEYS = Object.freeze(['filePath', 'path']);
+
+/**
+ * Structured `state.input` keys that yield a HIGH-confidence
+ * network-endpoint. URL-like substrings inside command strings are
+ * low-confidence hints and are NOT promoted.
+ *
+ * @type {readonly string[]}
+ */
+const STRUCTURED_URL_KEYS = Object.freeze(['url']);
+
+/**
+ * Push `value` onto `arr` iff it is a non-empty string not already
+ * present. Keeps derived arrays free of duplicates and empty entries
+ * without reordering (insertion order preserved for determinism, since
+ * parts iterate in a deterministic time_created/id order).
+ *
+ * @param {string[]} arr
+ * @param {unknown} value
+ */
+function pushUniqueString(arr, value) {
+  if (typeof value === 'string' && value.length > 0 && !arr.includes(value)) {
+    arr.push(value);
+  }
+}
+
+/**
+ * Parse a part-row's `data` JSON defensively. Returns the parsed object
+ * or null for malformed JSON (the reader already synthesizes
+ * `part.type`, but we re-parse to read the tool name + state, mirroring
+ * the cost-report consumer pattern).
+ *
+ * @param {{ data: string }} part
+ * @returns {object|null}
+ */
+function parsePartData(part) {
+  try {
+    const parsed = JSON.parse(part.data);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Derive the high-confidence, structured fields of a single tool part
+ * into the accumulating CapabilityRecord `rec`. Only STRUCTURED
+ * `state.input` keys contribute; nothing is inferred from free text.
+ *
+ * - bash `state.input.command` → commands (external-command, high).
+ * - structured path keys (filePath, path) → paths (filesystem-path, high).
+ * - structured url keys (url) → endpoints (network-endpoint, high).
+ * - ports / envVars: inference-only → never populated (disclosed in
+ *   unobservableClasses instead).
+ *
+ * @param {{ commands: string[], paths: string[], endpoints: string[] }} rec
+ * @param {object} data parsed part.data
+ */
+function deriveStructuredFields(rec, data) {
+  const input =
+    data && data.state && data.state.input && typeof data.state.input === 'object'
+      ? data.state.input
+      : null;
+  if (!input) return;
+
+  // External command (bash and any tool exposing a structured `command`).
+  pushUniqueString(rec.commands, input.command);
+
+  // Filesystem paths from structured path keys only.
+  for (const key of STRUCTURED_PATH_KEYS) {
+    pushUniqueString(rec.paths, input[key]);
+  }
+
+  // Network endpoints from structured URL keys only.
+  for (const key of STRUCTURED_URL_KEYS) {
+    pushUniqueString(rec.endpoints, input[key]);
+  }
+}
+
+/**
+ * Iterate every tool part across the readable session source — the root
+ * sessions and their sub-agent descendant sessions — and fold them into
+ * one CapabilityRecord per tool name. The reader MUST be open; the
+ * caller owns closing it.
+ *
+ * Reliable derivations (high confidence): tool name (`data.tool ||
+ * data.name`) and count (number of tool parts for that tool).
+ * Best-effort structured derivations: command/path/URL via
+ * {@link deriveStructuredFields}. A record's confidence is `high` when
+ * it carries any structured derivation; `medium` when it has a name +
+ * count but no structured args (still reliably observed, but its
+ * capability surface could not be derived); records are tagged
+ * `opencode-sqlite` as their source.
+ *
+ * Records are returned sorted by tool name for deterministic output.
+ *
+ * @param {object} reader an open SqliteReader
+ * @returns {object[]} CapabilityRecord[]
+ */
+function extractCapabilities(reader) {
+  /** @type {Map<string, object>} */
+  const byTool = new Map();
+
+  const recordPart = (data) => {
+    const tool = data && (data.tool || data.name);
+    if (typeof tool !== 'string' || tool.length === 0) return;
+
+    let rec = byTool.get(tool);
+    if (!rec) {
+      rec = {
+        tool,
+        count: 0,
+        commands: [],
+        paths: [],
+        endpoints: [],
+        ports: [], // inference-only on the current DB shape → empty
+        envVars: [], // inference-only on the current DB shape → empty
+        confidence: 'high',
+        sources: ['opencode-sqlite'],
+      };
+      byTool.set(tool, rec);
+    }
+    rec.count += 1;
+    deriveStructuredFields(rec, data);
+  };
+
+  const collectParts = (sessionId) => {
+    for (const part of reader.partsOfSession(sessionId)) {
+      // Only tool parts carry a capability surface; skip text/etc.
+      if (part.type && part.type !== 'tool') continue;
+      const data = parsePartData(part);
+      if (!data) continue; // malformed JSON → skip defensively
+      if (!data.tool && !data.name) continue; // not a tool part
+      recordPart(data);
+    }
+  };
+
+  for (const root of reader.rootSessionsMatching({})) {
+    collectParts(root.id);
+    for (const desc of reader.descendantSessionsOf(root.id)) {
+      collectParts(desc.id);
+    }
+  }
+
+  // A record with a name + count but NO structured arguments was
+  // reliably observed, but its capability surface could not be derived
+  // from structured evidence. Downgrade its confidence to `medium` so
+  // the report does not overclaim high-confidence coverage for it.
+  for (const rec of byTool.values()) {
+    const hasStructured =
+      rec.commands.length > 0 || rec.paths.length > 0 || rec.endpoints.length > 0;
+    if (!hasStructured) rec.confidence = 'medium';
+  }
+
+  // Deterministic ordering: sort by tool name.
+  return [...byTool.values()].sort((a, b) => (a.tool < b.tool ? -1 : a.tool > b.tool ? 1 : 0));
+}
+
+/**
+ * Collect best-effort LOW-confidence context from the cavemem
+ * `data.db`, opened read-only (R1.3). cavemem content is prose
+ * prompt/response text, never structured tool calls (Phase 0), so it
+ * NEVER fabricates high-confidence capabilities. We surface a small,
+ * bounded set of session-context records (id + cwd) so the audit
+ * genuinely uses cavemem as an additional source when available without
+ * over-claiming. Each context entry is tagged `source: 'cavemem'`.
+ *
+ * Returns an empty array on any read failure — cavemem is best-effort
+ * and its degraded status is already recorded as a SourceStatus by
+ * {@link openCavememSource}.
+ *
+ * @param {string} cavememDbPath
+ * @returns {Array<{ source: 'cavemem', sessionId: string, cwd: string|null, confidence: 'low' }>}
+ */
+function collectCavememContext(cavememDbPath) {
+  const Database = require('better-sqlite3');
+  let db = null;
+  try {
+    db = new Database(cavememDbPath, { readonly: true, fileMustExist: true });
+    const rows = db
+      .prepare('SELECT id, cwd FROM sessions ORDER BY id ASC')
+      .all();
+    return rows.map((r) => ({
+      source: 'cavemem',
+      sessionId: String(r.id),
+      cwd: typeof r.cwd === 'string' ? r.cwd : null,
+      confidence: 'low',
+    }));
+  } catch {
+    return [];
+  } finally {
+    if (db) {
+      try {
+        db.close();
+      } catch {
+        /* best-effort handle release */
+      }
+    }
+  }
+}
+
+/**
  * @typedef {object} AuditOptions
  * @property {string} [sessionDbPath] Override the OpenCode session DB
  *   path. Defaults to {@link defaultSessionDbPath}.
@@ -275,23 +512,37 @@ function runAudit(opts) {
   const session = openSessionSource(sessionDbPath, lib);
   sources.push(session.status);
 
-  // The session reader is opened for the capability parser (task 2.2);
-  // task 2.1 has no capability work, so release it immediately to keep
-  // the audit strictly read-only with no lingering handle. Task 2.2
-  // will move the iteration before this close().
+  // Capability extraction (task 2.2, R1.2) runs WHILE the reader is open,
+  // then the handle is released. The audit stays strictly read-only
+  // (SqliteReader opened `{ readonly: true }`) with no lingering handle.
+  /** @type {object[]} */
+  let capabilities = [];
   if (session.reader) {
     try {
-      session.reader.close();
-    } catch {
-      /* best-effort handle release */
+      capabilities = extractCapabilities(session.reader);
+    } finally {
+      try {
+        session.reader.close();
+      } catch {
+        /* best-effort handle release */
+      }
     }
   }
 
   // Secondary source: cavemem data.db (R1.3), version-guarded and
   // optional. Only recorded when a path was configured; an unconfigured
   // optional source is not a degradation.
+  /** @type {Array<object>} */
+  let cavememContext = [];
   if (cavememConfigured) {
-    sources.push(openCavememSource(options.cavememDbPath));
+    const cavememStatus = openCavememSource(options.cavememDbPath);
+    sources.push(cavememStatus);
+    // R1.3: when cavemem is readable, use it as a best-effort LOW-confidence
+    // secondary context source. It never fabricates high-confidence
+    // capabilities (Phase 0); we record bounded session context only.
+    if (cavememStatus.status === 'ok') {
+      cavememContext = collectCavememContext(options.cavememDbPath);
+    }
   }
 
   // R1.5: no source readable at all → error Result, no UsageAudit, no
@@ -311,7 +562,7 @@ function runAudit(opts) {
     };
   }
 
-  return { ok: true, value: buildAudit(sources) };
+  return { ok: true, value: buildAudit(sources, capabilities, cavememContext) };
 }
 
 /**
@@ -320,26 +571,40 @@ function runAudit(opts) {
  * unconfigured optional source is simply absent from `sources` and so
  * does not count toward partiality (R1.4).
  *
- * 2.2 EXTENSION POINT: `capabilities` and `unobservableClasses` are
- * intentionally empty here. Task 2.1 owns only the source-opening
- * layer; the capability parser (task 2.2) iterates the readable session
- * source into CapabilityRecord[] and enumerates the capability classes
- * that could not be observed into `unobservableClasses`. Empty arrays
- * are the CORRECT 2.1 output, not a stub.
+ * Capability extraction (task 2.2, R1.2): `capabilities` is the
+ * CapabilityRecord[] derived from the readable session source by
+ * {@link extractCapabilities}, and `unobservableClasses` always
+ * discloses the structurally-unobservable capability classes
+ * ({@link UNOBSERVABLE_CLASSES}) so the report states its coverage gaps
+ * explicitly — even when `capabilities` is empty, an empty capability
+ * set must NOT imply full coverage. `cavememContext` carries any
+ * best-effort LOW-confidence cavemem session context (R1.3); it is
+ * omitted from the report when empty.
  *
  * @param {Array<{ source: string, status: string, detail?: string }>} sources
+ * @param {object[]} [capabilities] CapabilityRecord[] from the session source
+ * @param {object[]} [cavememContext] low-confidence cavemem context (R1.3)
  * @returns {object} UsageAudit
  */
-function buildAudit(sources) {
+function buildAudit(sources, capabilities, cavememContext) {
   const partial = sources.some((s) => s.status !== 'ok');
-  return {
+  /** @type {object} */
+  const audit = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     partial,
     sources,
-    capabilities: [], // populated by task 2.2 (capability parser)
-    unobservableClasses: [], // populated by task 2.2 (coverage-gap disclosure)
+    capabilities: Array.isArray(capabilities) ? capabilities : [],
+    // Always disclose coverage gaps; an empty capabilities array must
+    // never be read as "full coverage observed".
+    unobservableClasses: [...UNOBSERVABLE_CLASSES],
   };
+  // R1.3: surface cavemem-derived low-confidence context only when it
+  // genuinely contributed (omit the key entirely otherwise).
+  if (Array.isArray(cavememContext) && cavememContext.length > 0) {
+    audit.cavememContext = cavememContext;
+  }
+  return audit;
 }
 
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
@@ -393,4 +658,7 @@ module.exports = {
   runAudit,
   defaultSessionDbPath,
   SUPPORTED_CAVEMEM_SCHEMA_VERSION,
+  // Task 2.2: observed-capability model. Exported for unit-test reach.
+  extractCapabilities,
+  UNOBSERVABLE_CLASSES,
 };

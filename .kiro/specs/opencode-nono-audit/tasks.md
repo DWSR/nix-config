@@ -41,7 +41,7 @@
   - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.6_
   - _Boundary: Usage Audit CLI_
 
-- [ ] 2.2 Build the observed-capability model
+- [x] 2.2 Build the observed-capability model
   - Derive per-tool name, count, and output reliably; derive command/path/URL best-effort with confidence + source tags; treat sockets/ports/env as inference-only
   - Populate the unobservable-capability-class list when a class cannot be derived from the available sources
   - Observable completion: capability records over the fixture carry confidence/source tags, and a fixture lacking derivable args populates the unobservable-class list instead of empty coverage
