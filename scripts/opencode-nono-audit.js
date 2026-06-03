@@ -607,6 +607,163 @@ function buildAudit(sources, capabilities, cavememContext) {
   return audit;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 2.3 (Requirement 1.7): the secret redactor.
+//
+// `redact(value)` masks secrets in a single string across the four
+// design-specified classes (design.md:248): URL credentials, KEY=VALUE
+// env secrets, known token shapes (GitHub / OpenAI / AWS / Slack /
+// Google / Bearer), and token-bearing query parameters. It is:
+//   - defensive: non-string input is returned as-is (never throws);
+//   - idempotent: the mask token contains no secret-shaped substring,
+//     so redact(redact(s)) === redact(s);
+//   - conservative on ordinary text: PATH=/HOME=/--flag/clean-URL/file
+//     paths are NOT masked.
+//
+// 2.3 ONLY delivers and exports this function. Applying it to every
+// serialized command/path/endpoint/env string ("on by default") is the
+// Reporter's responsibility (task 5.1); nothing here wires redaction
+// into runAudit / buildAudit / serialization.
+//
+// All patterns are linear-time (anchored prefixes + bounded or simple
+// single-pass quantifiers, no nested unbounded quantifiers) to avoid
+// catastrophic backtracking (ReDoS).
+// ────────────────────────────────────────────────────────────────────
+
+/** The single, consistent mask token used for every redaction. */
+const REDACTION_MASK = '***';
+
+/**
+ * Substrings of secret-bearing env KEYs (case-insensitive). When the
+ * KEY on the left of `KEY=VALUE` contains any of these, the VALUE is
+ * masked while the KEY is preserved. Plain `KEY` is included so e.g.
+ * `API_KEY=` / `SECRET_KEY=` match, but a bare `PATH=` / `HOME=` /
+ * `FORMAT=` does not.
+ *
+ * @type {readonly string[]}
+ */
+const SECRET_KEY_SUBSTRINGS = Object.freeze([
+  'token',
+  'secret',
+  'password',
+  'passwd',
+  'pwd',
+  'apikey',
+  'api_key',
+  'access_key',
+  'access_token',
+  'auth',
+  'credential',
+  'bearer',
+  'key',
+]);
+
+/**
+ * Known high-confidence token SHAPES, anchored on stable prefixes and a
+ * minimum length so ordinary words are not over-masked. Each pattern is
+ * linear-time (a prefix followed by a single bounded/greedy character
+ * class, no nested quantifiers). Applied with the global flag.
+ *
+ * @type {readonly RegExp[]}
+ */
+const TOKEN_SHAPE_PATTERNS = Object.freeze([
+  // GitHub personal-access / OAuth / server / refresh tokens, and the
+  // newer fine-grained `github_pat_` form.
+  /\bghp_[A-Za-z0-9]{16,}\b/g,
+  /\bgho_[A-Za-z0-9]{16,}\b/g,
+  /\bghs_[A-Za-z0-9]{16,}\b/g,
+  /\bghr_[A-Za-z0-9]{16,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{16,}\b/g,
+  // OpenAI secret keys: `sk-` + a long body.
+  /\bsk-[A-Za-z0-9]{20,}\b/g,
+  // AWS access key IDs: AKIA/ASIA + exactly 16 uppercase-alnum chars.
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g,
+  // Slack tokens: xoxb-/xoxa-/xoxp-/xoxr-/xoxs- + body.
+  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  // Google API keys: `AIza` + 35 url-safe chars.
+  /\bAIza[A-Za-z0-9_-]{35}\b/g,
+]);
+
+/**
+ * Query-string parameter names whose VALUE is a secret. Matched
+ * case-insensitively as `?name=...` / `&name=...`, masking only the
+ * value up to the next `&`/`#`/end.
+ *
+ * @type {RegExp}
+ */
+const SECRET_QUERY_PARAM =
+  /([?&](?:api_key|apikey|access_token|access_key|token|auth|secret|password|key|bearer|credential)=)[^&#\s]+/gi;
+
+/**
+ * Mask the userinfo (`user:password@` or `user@`) of any URL with a
+ * scheme. We replace the whole userinfo run with the mask, preserving
+ * scheme + host + path. Linear-time: `[^/@\s]+` is a single run bounded
+ * by the literal `@`.
+ *
+ * @type {RegExp}
+ */
+const URL_USERINFO =
+  /([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi;
+
+/**
+ * `Bearer <token>` in an Authorization-style context: mask the token
+ * regardless of its shape (any non-space run after `Bearer `). The
+ * token-shape patterns above also catch known prefixes, but this
+ * guarantees opaque bearer tokens are masked too.
+ *
+ * @type {RegExp}
+ */
+const BEARER_TOKEN = /\bBearer\s+[^\s'"]+/g;
+
+/**
+ * `redact(value)` — mask secrets in a single string. Defensive on
+ * non-string input (returns it unchanged) and idempotent (the mask
+ * token contains no secret-shaped substring, and already-masked spans
+ * have nothing left to match). See the module section header for the
+ * full contract (Task 2.3, Requirement 1.7).
+ *
+ * @param {unknown} value
+ * @returns {*} the masked string, or `value` unchanged when not a string.
+ */
+function redact(value) {
+  // Defensive: only strings carry secrets here; anything else (null /
+  // undefined / number / object) is returned as-is, never throwing.
+  if (typeof value !== 'string') return value;
+  if (value.length === 0) return value;
+
+  let out = value;
+
+  // 1. URL userinfo credentials → scheme://***@host (mask user:pass).
+  out = out.replace(URL_USERINFO, `$1${REDACTION_MASK}@`);
+
+  // 2. Token-bearing query parameters → name=*** (preserve the name).
+  out = out.replace(SECRET_QUERY_PARAM, `$1${REDACTION_MASK}`);
+
+  // 3. KEY=VALUE env secrets → KEY=*** (preserve the key) when the key
+  //    looks secret-bearing. A single anchored pass over each
+  //    KEY=VALUE token; the value run is bounded by whitespace.
+  out = out.replace(
+    /(^|[\s'"])([A-Za-z_][A-Za-z0-9_]*)=([^\s'"]+)/g,
+    (match, lead, key, val) => {
+      const lower = key.toLowerCase();
+      const isSecretKey = SECRET_KEY_SUBSTRINGS.some((s) => lower.includes(s));
+      if (!isSecretKey) return match;
+      if (val === REDACTION_MASK) return match; // already masked (idempotent)
+      return `${lead}${key}=${REDACTION_MASK}`;
+    },
+  );
+
+  // 4. Bearer tokens (any opaque token after `Bearer `).
+  out = out.replace(BEARER_TOKEN, `Bearer ${REDACTION_MASK}`);
+
+  // 5. Known token shapes anywhere in the string.
+  for (const pattern of TOKEN_SHAPE_PATTERNS) {
+    out = out.replace(pattern, REDACTION_MASK);
+  }
+
+  return out;
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -661,4 +818,7 @@ module.exports = {
   // Task 2.2: observed-capability model. Exported for unit-test reach.
   extractCapabilities,
   UNOBSERVABLE_CLASSES,
+  // Task 2.3: secret redactor. Exported for unit-test reach and for the
+  // Reporter (task 5.1) to apply at serialization time.
+  redact,
 };

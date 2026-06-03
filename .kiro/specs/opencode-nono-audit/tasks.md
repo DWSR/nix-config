@@ -49,7 +49,7 @@
   - _Boundary: Usage Audit CLI_
   - _Depends: 2.1_
 
-- [ ] 2.3 (P) Implement the secret redactor
+- [x] 2.3 (P) Implement the secret redactor
   - Mask tokens, API keys, `KEY=VALUE` env values, and credentials embedded in URLs
   - Apply redaction to every command/path/endpoint/env string before serialization; on by default
   - Observable completion: a unit test feeds secret-bearing strings and asserts all are masked
