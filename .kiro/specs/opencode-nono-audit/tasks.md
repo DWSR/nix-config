@@ -132,7 +132,7 @@
   - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2_
   - _Depends: 5.3_
 
-- [ ] 6.3 Register flake checks for tests and CLI validation
+- [x] 6.3 Register flake checks for tests and CLI validation
   - Add a check that runs the node test suite in a sandbox build and a check that builds the CLI and runs `--help`/`--version`
   - Observable completion: `nix flake check` executes the audit test suite and the validate-check passes
   - _Requirements: 2.5_

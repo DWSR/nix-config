@@ -352,6 +352,28 @@
                 touch $out
               '';
 
+          opencode-nono-audit-tests =
+            pkgs.runCommand "opencode-nono-audit-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                # Resolve `require('better-sqlite3')` (and the SqliteReader
+                # reused from scripts/opencode-cost-report.js) against the
+                # vendored deps tree. The cost-report library is required
+                # via its relative path from the copied source, so only
+                # NODE_PATH is needed here.
+                export NODE_PATH=${pkgs.opencode-cost-diagnosis-deps}/lib/node_modules
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/opencode-nono-audit/
+                touch $out
+              '';
+
           grep-app-mcp =
             pkgs.runCommand "grep-app-mcp"
               {
@@ -499,6 +521,31 @@
               ${validate}/bin/rtk-opencode-validate --help > help.txt
               test -s help.txt
               ${validate}/bin/rtk-opencode-validate --version > /dev/null
+              touch $out
+            '';
+
+          # Builds the opencode-nono-audit CLI wrapper (Task 1.2) and
+          # exercises its `--help`/`--version` short-circuits. Proves the
+          # writeShellApplication body passes shellcheck and the wrapper
+          # resolves its NODE_PATH/library env without a switched host or
+          # live audit sources.
+          opencode-nono-audit-validate-check =
+            let
+              cli = pkgs.callPackage ./scripts/opencode-nono-audit.nix { };
+            in
+            pkgs.runCommand "opencode-nono-audit-validate-check" { } ''
+              export HOME=$(mktemp -d)
+              export XDG_CACHE_HOME="$HOME/.cache"
+              export XDG_CONFIG_HOME="$HOME/.config"
+              export XDG_DATA_HOME="$HOME/.local/share"
+              export XDG_STATE_HOME="$HOME/.local/state"
+
+              ${cli}/bin/opencode-nono-audit --help > help.txt
+              test -s help.txt
+
+              ${cli}/bin/opencode-nono-audit --version > version.txt
+              read -r version < version.txt
+              test "$version" = "0.0.0"
               touch $out
             '';
 
