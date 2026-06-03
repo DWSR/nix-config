@@ -117,7 +117,7 @@
   - _Depends: 5.1, 5.2_
 
 - [ ] 6. Validation: tests and flake checks
-- [ ] 6.1 Unit tests for redactor, capability model, ledger, and determinism
+- [x] 6.1 Unit tests for redactor, capability model, ledger, and determinism
   - Cover redaction masking, capability-model confidence/source + unobservable-class population, ledger required-field validation, and report determinism
   - Observable completion: `node --test` passes for these unit suites
   - _Requirements: 1.2, 1.7, 3.4, 3.5, 3.6_
