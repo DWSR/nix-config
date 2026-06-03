@@ -109,7 +109,7 @@
   - _Boundary: Reporter_
   - _Depends: 5.1_
 
-- [ ] 5.3 Wire CLI subcommands end-to-end
+- [x] 5.3 Wire CLI subcommands end-to-end
   - Replace the stub with `audit`, `assess`, `review`, and `all` subcommands, flag parsing, and exit codes
   - Observable completion: `nix run .#opencode-nono-audit -- all` runs over the fixtures and produces a report plus a freshness marker
   - _Requirements: 1.1, 2.5, 3.1_

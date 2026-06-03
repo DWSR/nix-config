@@ -2277,41 +2277,297 @@ function evaluateMarkerStaleness(marker, liveProfileVersion) {
   return { stale };
 }
 
-const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
+// ────────────────────────────────────────────────────────────────────
+// Task 5.3 (Requirements 1.1, 2.5, 3.1): the CLI subcommand dispatch.
+//
+// `main(argv)` parses `audit | assess | review | all` plus flags, wires
+// the existing engine/reporter/marker functions together, and returns a
+// process exit code. It adds NO new engine logic — it only composes
+// runAudit (2.1/2.2), assess (3.2), rankToolUse / seedReplacementCandidates
+// / reconcileLedger (4.x), emitReport (5.1), and writeFreshnessMarker
+// (5.2).
+//
+// What each subcommand emits (documented choice — every subcommand
+// writes the SAME combined report so the operator always sees the full
+// picture; the sections an irrelevant-to-the-subcommand section carries
+// are simply empty/skipped):
+//   - audit  : usage audit only. assess → skip envelope, review empty.
+//   - assess : audit + compatibility assessment (R2). review empty.
+//   - review : audit + tool-use ranking + candidates + ledger (R3).
+//              assess → skip envelope.
+//   - all    : the full pipeline (audit + assess + review) AND the
+//              cross-spec freshness marker (last-report.json). The
+//              marker is written ONLY by `all` — that is the task
+//              observable (R2.1 cross-spec contract).
+//
+// EXIT-CODE TABLE (documented):
+//   0  success (incl. schema-drift → partial report, NOT a hard fail;
+//      incl. assess skipped because nono is unavailable; incl.
+//      --help / --version).
+//   1  R1.5 hard failure: no audit source was readable → no report.
+//   2  usage error: unknown subcommand, missing subcommand, unknown
+//      flag, or a flag missing its value.
+//
+// Redaction stays ON by default (no disable flag) — emitReport applies
+// the single serialization-time redaction pass (R1.7); the report and
+// marker keep 0600 + XDG (R1.4) from their writers.
+// ────────────────────────────────────────────────────────────────────
+
+/** Documented exit codes (see the section header table). */
+const EXIT_OK = 0;
+const EXIT_NO_SOURCE = 1; // R1.5 hard failure
+const EXIT_USAGE = 2; // unknown/missing subcommand or bad flags
+
+/** The recognized subcommands. */
+const SUBCOMMANDS = Object.freeze(['audit', 'assess', 'review', 'all']);
+
+/** Flags that take a value argument. `--profile` is repeatable. */
+const VALUE_FLAGS = Object.freeze([
+  '--session-db',
+  '--cavemem-db',
+  '--metadata',
+  '--ledger',
+  '--state-dir',
+  '--profile',
+  '--nono-bin',
+  '--generated-at',
+  '--host',
+]);
+
+const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit / assess / review
 
 Usage:
-  opencode-nono-audit [options]
+  opencode-nono-audit <subcommand> [options]
+
+Subcommands:
+  audit    Read-only usage audit of historical OpenCode sessions.
+  assess   audit + compatibility assessment against managed profiles.
+  review   audit + tool-use ranking, MCP replacement candidates, ledger.
+  all      The full pipeline (audit + assess + review) and the
+           cross-spec freshness marker (last-report.json).
 
 Options:
-  -h, --help       Print this usage text and exit.
-  -v, --version    Print the version and exit.
+  --session-db <path>   OpenCode session DB (default: OPENCODE_DB_PATH / XDG).
+  --cavemem-db <path>   cavemem data.db (optional secondary source).
+  --metadata <path>     sandbox-rendered metadata.json (profileVersion source).
+  --profile <name>      Profile to assess (repeatable; assess/all).
+  --ledger <path>       Operator decisions ledger (review/all).
+  --state-dir <path>    Output/state dir (default: XDG_STATE_HOME / ~/.local/state).
+  --nono-bin <path>     Override the nono binary for assessment.
+  --generated-at <iso>  Override the report/marker timestamp (deterministic runs).
+  --host <name>         Override the recorded host.
+  -h, --help            Print this usage text and exit.
+  -v, --version         Print the version and exit.
+
+Exit codes:
+  0  success (schema-drift → partial report, still 0; assess skipped when
+     nono is unavailable, still 0; --help / --version).
+  1  no audit source readable (hard failure; no report produced).
+  2  usage error (unknown/missing subcommand, unknown flag, or a flag
+     missing its value).
 `;
 
 /**
- * CLI entry point.
+ * Parse argv into a subcommand + an options map. Returns a discriminated
+ * result so the dispatcher can map a parse error onto EXIT_USAGE.
+ *
+ * - `-h`/`--help` or `-v`/`--version` anywhere → a short-circuit signal.
+ * - the FIRST positional token is the subcommand; it MUST be recognized.
+ * - value flags consume the next token; a missing value is an error.
+ * - `--profile` accumulates into an array (repeatable).
+ * - any unrecognized token (an unknown `--flag` or a stray positional)
+ *   is an error.
+ *
+ * @param {string[]} argv
+ * @returns {{ kind: 'help' } | { kind: 'version' }
+ *          | { kind: 'error', message: string }
+ *          | { kind: 'ok', subcommand: string, opts: object, profiles: string[] }}
+ */
+function parseArgs(argv) {
+  const args = Array.isArray(argv) ? argv : [];
+
+  // Short-circuit flags take precedence anywhere on the line.
+  if (args.includes('-h') || args.includes('--help')) return { kind: 'help' };
+  if (args.includes('-v') || args.includes('--version')) return { kind: 'version' };
+
+  let subcommand = null;
+  const opts = {};
+  const profiles = [];
+
+  for (let i = 0; i < args.length; i += 1) {
+    const tok = args[i];
+    if (tok.startsWith('--') || tok.startsWith('-')) {
+      if (!VALUE_FLAGS.includes(tok)) {
+        return { kind: 'error', message: `unknown flag: ${tok}` };
+      }
+      const value = args[i + 1];
+      if (typeof value !== 'string' || value.length === 0) {
+        return { kind: 'error', message: `flag ${tok} requires a value` };
+      }
+      i += 1; // consume the value
+      switch (tok) {
+        case '--session-db':
+          opts.sessionDbPath = value;
+          break;
+        case '--cavemem-db':
+          opts.cavememDbPath = value;
+          break;
+        case '--metadata':
+          opts.metadataPath = value;
+          break;
+        case '--ledger':
+          opts.ledgerPath = value;
+          break;
+        case '--state-dir':
+          opts.stateDir = value;
+          break;
+        case '--profile':
+          profiles.push(value);
+          break;
+        case '--nono-bin':
+          opts.nonoBin = value;
+          break;
+        case '--generated-at':
+          opts.generatedAt = value;
+          break;
+        case '--host':
+          opts.host = value;
+          break;
+        default:
+          // VALUE_FLAGS membership is checked above; unreachable.
+          return { kind: 'error', message: `unhandled flag: ${tok}` };
+      }
+      continue;
+    }
+
+    // A positional token: the first is the subcommand; any extra is an error.
+    if (subcommand === null) {
+      subcommand = tok;
+      continue;
+    }
+    return { kind: 'error', message: `unexpected argument: ${tok}` };
+  }
+
+  if (subcommand === null) {
+    return { kind: 'error', message: 'no subcommand given' };
+  }
+  if (!SUBCOMMANDS.includes(subcommand)) {
+    return { kind: 'error', message: `unknown subcommand: ${subcommand}` };
+  }
+
+  return { kind: 'ok', subcommand, opts, profiles };
+}
+
+/**
+ * Build the review bundle (ranked + candidates + ledger reconciliation)
+ * for a UsageAudit, reading the operator ledger from the resolved path
+ * (or the XDG default when unset). Reused by `review` and `all`; `audit`
+ * and `assess` pass an EMPTY bundle.
+ *
+ * @param {object} audit a UsageAudit
+ * @param {{ ledgerPath?: string }} opts
+ * @returns {{ ranked: object[], candidates: object[], ledger: object }}
+ */
+function buildReviewBundle(audit, opts) {
+  const ranked = rankToolUse(audit);
+  const candidates = seedReplacementCandidates(audit);
+  const ledgerOpts = {};
+  if (typeof opts.ledgerPath === 'string') ledgerOpts.ledgerPath = opts.ledgerPath;
+  const ledger = reconcileLedger(candidates, ledgerOpts);
+  return { ranked, candidates, ledger };
+}
+
+/** An empty review bundle for subcommands that do not run the review. */
+function emptyReviewBundle() {
+  return { ranked: [], candidates: [], ledger: { reconciled: [], undecided: [], errors: [] } };
+}
+
+/**
+ * CLI entry point — parse argv, dispatch the subcommand, wire the engine
+ * + reporter (+ marker for `all`), and return a process exit code (Task
+ * 5.3, Requirements 1.1, 2.5, 3.1). See the section header for the
+ * subcommand semantics and exit-code table.
  *
  * @param {string[]} argv - Arguments after `node script.js` (i.e.
  *   `process.argv.slice(2)`).
- * @returns {number} Process exit code.
+ * @returns {number} Process exit code (see EXIT_* constants).
  */
 function main(argv) {
-  const args = Array.isArray(argv) ? argv : [];
+  const parsed = parseArgs(argv);
 
-  if (args.includes('-h') || args.includes('--help')) {
+  if (parsed.kind === 'help') {
     process.stdout.write(USAGE);
-    return 0;
+    return EXIT_OK;
   }
-
-  if (args.includes('-v') || args.includes('--version')) {
+  if (parsed.kind === 'version') {
     process.stdout.write(`${VERSION}\n`);
-    return 0;
+    return EXIT_OK;
+  }
+  if (parsed.kind === 'error') {
+    process.stderr.write(`opencode-nono-audit: ${parsed.message}\n\n`);
+    process.stderr.write(USAGE);
+    return EXIT_USAGE;
   }
 
-  // No business logic yet (scaffold). Print usage to stderr and signal
-  // "not implemented" so an accidental bare invocation is obvious
-  // rather than silently succeeding.
-  process.stderr.write(USAGE);
-  return 2;
+  const { subcommand, opts, profiles } = parsed;
+
+  // ── 1. Usage audit (every subcommand) ──
+  const auditOpts = {};
+  if (typeof opts.sessionDbPath === 'string') auditOpts.sessionDbPath = opts.sessionDbPath;
+  if (typeof opts.cavememDbPath === 'string') auditOpts.cavememDbPath = opts.cavememDbPath;
+
+  const auditResult = runAudit(auditOpts);
+  if (!auditResult.ok) {
+    // R1.5 hard failure: no source readable → no report, nonzero exit.
+    const detail = auditResult.error && auditResult.error.detail ? auditResult.error.detail : 'no readable audit source';
+    process.stderr.write(`opencode-nono-audit: ${detail}\n`);
+    return EXIT_NO_SOURCE;
+  }
+  const audit = auditResult.value;
+
+  // ── 2. Compatibility assessment (assess + all) ──
+  // Other subcommands carry a skip envelope so the report shape is
+  // stable. assess over an absent nono → skip (still exit 0).
+  let assessment = { assessment: 'skipped', reason: 'assessment not requested', findings: [] };
+  if (subcommand === 'assess' || subcommand === 'all') {
+    const assessOpts = {};
+    if (typeof opts.nonoBin === 'string') assessOpts.nonoBin = opts.nonoBin;
+    const assessRes = assess(audit, profiles, assessOpts);
+    // assess returns ok:true for both findings and the skip envelope; an
+    // invalid-audit (ok:false) cannot happen here (audit is a UsageAudit).
+    assessment = assessRes.ok ? assessRes.value : { assessment: 'skipped', reason: 'assessment unavailable', findings: [] };
+  }
+
+  // ── 3. Tool-use replacement review (review + all) ──
+  const review =
+    subcommand === 'review' || subcommand === 'all'
+      ? buildReviewBundle(audit, opts)
+      : emptyReviewBundle();
+
+  // ── 4. Emit the combined report (every subcommand). Redaction is on
+  //       by default inside emitReport; 0600 + XDG from its writer. ──
+  const emitOpts = { audit, assessment, review };
+  if (typeof opts.generatedAt === 'string') emitOpts.generatedAt = opts.generatedAt;
+  if (typeof opts.host === 'string') emitOpts.host = opts.host;
+  if (typeof opts.metadataPath === 'string') emitOpts.metadataPath = opts.metadataPath;
+  if (typeof opts.stateDir === 'string') emitOpts.stateDir = opts.stateDir;
+
+  const emitted = emitReport(emitOpts);
+  process.stdout.write(`report: ${emitted.jsonPath}\n`);
+  process.stdout.write(`report: ${emitted.mdPath}\n`);
+
+  // ── 5. Freshness marker (ONLY `all` — the task observable, R2.1). ──
+  if (subcommand === 'all') {
+    const markerOpts = {};
+    if (typeof opts.generatedAt === 'string') markerOpts.generatedAt = opts.generatedAt;
+    if (typeof opts.host === 'string') markerOpts.host = opts.host;
+    if (typeof opts.metadataPath === 'string') markerOpts.metadataPath = opts.metadataPath;
+    if (typeof opts.stateDir === 'string') markerOpts.stateDir = opts.stateDir;
+    const marker = writeFreshnessMarker(markerOpts);
+    process.stdout.write(`marker: ${marker.markerPath}\n`);
+  }
+
+  return EXIT_OK;
 }
 
 if (require.main === module) {
@@ -2374,4 +2630,12 @@ module.exports = {
   writeFreshnessMarker,
   evaluateMarkerStaleness,
   MARKER_SCHEMA_VERSION,
+  // Task 5.3: CLI subcommand dispatch. main is the public entry point
+  // (returns an exit code); parseArgs + the exit-code/subcommand
+  // constants are exported for unit-test reach.
+  parseArgs,
+  SUBCOMMANDS,
+  EXIT_OK,
+  EXIT_NO_SOURCE,
+  EXIT_USAGE,
 };
