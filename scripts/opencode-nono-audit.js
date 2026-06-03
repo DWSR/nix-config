@@ -2170,6 +2170,113 @@ function emitReport(opts) {
   return { report, json, markdown, jsonPath, mdPath };
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 5.2 (Requirement 2.1): the cross-spec freshness marker.
+//
+// `writeFreshnessMarker(opts)` reads the active `profileVersion` from
+// the sandbox-rendered `metadata.json` (via the existing
+// {@link readProfileVersion}, reused — not duplicated) and writes the
+// versioned marker
+//   `${XDG_STATE_HOME:-~/.local/state}/opencode-nono/last-report.json`
+//   = { markerSchemaVersion: 1, profileVersion, generatedAt, host }
+// at mode 0600 — a versioned cross-spec contract that
+// `opencode-nono-sandbox`'s strict-enforcement check reads
+// (design.md:338). The shape is owned JOINTLY with the sandbox spec and
+// is kept EXACTLY as specified.
+//
+// `evaluateMarkerStaleness(marker, liveProfileVersion)` evaluates a
+// marker against the live metadata's `profileVersion`: a marker whose
+// `profileVersion` differs from the live version is STALE (the sandbox
+// warns); a matching version is fresh.
+//
+// Scope (5.2): metadata read + marker write + staleness check ONLY. CLI
+// subcommand wiring (5.3) is NOT done here, and the report format (5.1)
+// is unchanged. The marker write mirrors the report writer's security
+// posture (`withUmask(0o077, ...)` → 0600, recursive mkdir under the
+// resolved `opencode-nono/` state dir).
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * markerSchemaVersion — the versioned cross-spec marker contract that
+ * `opencode-nono-sandbox`'s strict-enforcement check reads. Owned
+ * jointly across both specs; a bump is a revalidation trigger on both.
+ */
+const MARKER_SCHEMA_VERSION = 1;
+
+/**
+ * Write the cross-spec freshness marker (Task 5.2, Requirement 2.1).
+ * See the section header for the full contract.
+ *
+ * Reads `profileVersion` from the sandbox-rendered metadata via the
+ * reused {@link readProfileVersion} (graceful null when absent /
+ * unreadable / malformed), assembles the EXACT marker shape
+ * `{ markerSchemaVersion, profileVersion, generatedAt, host }`, and
+ * writes it to `<stateDir>/opencode-nono/last-report.json` at mode 0600.
+ *
+ * @param {{
+ *   stateDir?: string,        // overrides XDG_STATE_HOME for tests
+ *   metadataPath?: string,    // injectable metadata.json path (5.1 seam)
+ *   generatedAt?: string,     // INJECTABLE for deterministic tests
+ *   host?: string,            // INJECTABLE; defaults to os.hostname()
+ * }} [opts]
+ * @returns {{ marker: object, markerPath: string }}
+ */
+function writeFreshnessMarker(opts) {
+  const options = opts || {};
+  const generatedAt =
+    typeof options.generatedAt === 'string' && options.generatedAt.length > 0
+      ? options.generatedAt
+      : new Date().toISOString();
+  const host =
+    typeof options.host === 'string' && options.host.length > 0
+      ? options.host
+      : os.hostname();
+
+  // Reuse 5.1's metadata reader; graceful null on absent/unreadable.
+  const profileVersion = readProfileVersion(options.metadataPath);
+
+  // EXACT cross-spec shape, fixed key order. profileVersion is a string
+  // or null (PROFILE_VERSION_UNKNOWN).
+  const marker = {
+    markerSchemaVersion: MARKER_SCHEMA_VERSION,
+    profileVersion,
+    generatedAt,
+    host,
+  };
+
+  const stateDir = resolveReportStateDir(options.stateDir);
+  const markerDir = path.join(stateDir, 'opencode-nono');
+  fs.mkdirSync(markerDir, { recursive: true });
+  const markerPath = path.join(markerDir, 'last-report.json');
+
+  // 0600 via umask (consistency with the reports): writeFileSync's
+  // default 0o666 masked by 0o077 → 0o600.
+  withUmask(0o077, () => {
+    fs.writeFileSync(markerPath, `${JSON.stringify(marker, null, 2)}\n`);
+  });
+
+  return { marker, markerPath };
+}
+
+/**
+ * Evaluate a freshness marker against the live metadata's
+ * `profileVersion` (Task 5.2, Requirement 2.1). A marker whose
+ * `profileVersion` differs from `liveProfileVersion` is STALE; a
+ * matching version is fresh. A marker with a null/absent version can
+ * never match a real live version, so it is stale against any real
+ * version (and only "fresh" when the live version is also absent).
+ *
+ * @param {{ profileVersion?: string|null }} marker
+ * @param {string|null} liveProfileVersion the live metadata profileVersion
+ * @returns {{ stale: boolean }}
+ */
+function evaluateMarkerStaleness(marker, liveProfileVersion) {
+  const markerVersion =
+    marker && typeof marker === 'object' ? marker.profileVersion : undefined;
+  const stale = markerVersion !== liveProfileVersion;
+  return { stale };
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -2259,4 +2366,12 @@ module.exports = {
   readProfileVersion,
   REPORT_SCHEMA_VERSION,
   REPORT_RETENTION_COUNT,
+  // Task 5.2: the cross-spec freshness marker. writeFreshnessMarker
+  // writes the versioned last-report.json; evaluateMarkerStaleness is
+  // the staleness check. MARKER_SCHEMA_VERSION is the jointly-owned
+  // cross-spec contract version. Exported for unit-test reach and for
+  // task 5.3 (CLI wires the marker write alongside emitReport).
+  writeFreshnessMarker,
+  evaluateMarkerStaleness,
+  MARKER_SCHEMA_VERSION,
 };

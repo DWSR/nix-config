@@ -100,7 +100,7 @@
   - _Boundary: Reporter_
   - _Depends: 2.2, 2.3, 3.2, 4.2_
 
-- [ ] 5.2 Write the cross-spec freshness marker
+- [x] 5.2 Write the cross-spec freshness marker
   - Read the active `profileVersion` from the sandbox-rendered `metadata.json`
   - Write the versioned `last-report.json` marker `{ markerSchemaVersion, profileVersion, generatedAt, host }`
   - Observable completion: the marker is written with the version read from the metadata fixture, and a mismatched version is reported stale
