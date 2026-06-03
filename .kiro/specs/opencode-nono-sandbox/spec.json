@@ -1,0 +1,22 @@
+{
+  "feature_name": "opencode-nono-sandbox",
+  "created_at": "2026-06-02T22:37:22Z",
+  "updated_at": "2026-06-03T15:20:26Z",
+  "language": "en",
+  "phase": "design-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
