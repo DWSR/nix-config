@@ -185,6 +185,16 @@
               }
             }/bin/rtk-opencode-validate";
           };
+          # Read-only OpenCode tool-usage audit CLI (opencode-nono-audit
+          # spec). `pkgs` here carries the custom-packages overlay, which
+          # provides `opencode-cost-diagnosis-deps` (the NODE_PATH tree the
+          # wrapper resolves better-sqlite3 against) via callPackage
+          # auto-resolution — mirrors rtk-opencode-validate above and the
+          # HM module at home-manager/common/opencode-nono-audit.nix.
+          opencode-nono-audit = {
+            type = "app";
+            program = "${pkgs.callPackage ./scripts/opencode-nono-audit.nix { }}/bin/opencode-nono-audit";
+          };
         }
       );
 

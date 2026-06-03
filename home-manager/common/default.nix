@@ -18,6 +18,7 @@
     ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
+    ./opencode-nono-audit.nix
     ./opencode-rtk.nix
     ./opencode.nix
     ./session-compaction.nix
@@ -195,6 +196,7 @@
   programs.k9s.enable = true;
   programs.memory-sync.enable = true;
   programs.opencode-cost-diagnosis.enable = true;
+  programs.opencode-nono-audit.enable = true;
   programs.opencode-rtk.enable = true;
   programs.subagent-context-budget.enable = true;
   programs.session-compaction.enable = true;

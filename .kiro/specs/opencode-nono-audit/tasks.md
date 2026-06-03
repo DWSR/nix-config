@@ -14,7 +14,7 @@
   - Note: host/operator verification; if nono or a real session DB is unavailable, record the assumption and the unobservable-class fallback before proceeding
   - _Requirements: 1.2, 2.1_
 
-- [ ] 1.2 Scaffold the audit CLI package, runtime wrapper, and module wiring
+- [x] 1.2 Scaffold the audit CLI package, runtime wrapper, and module wiring
   - Add the `.nix` wrapper that runs the CLI on the existing vendored deps tree (NODE_PATH) and injects the cost-report library path env var
   - Add the thin Home Manager module (package option, install, peer assertion on the OpenCode program) and import/enable it on both hosts
   - Add a stub CLI entrypoint with `--help`/`--version` and a script-vs-module guard, plus the node test dispatcher
