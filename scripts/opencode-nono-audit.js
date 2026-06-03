@@ -1452,6 +1452,247 @@ function seedReplacementCandidates(audit) {
   });
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 4.2 (Requirements 3.4, 3.5, 3.6, 3.7): the Tool-Use Replacement
+// Review's decisions-ledger RECONCILE + VALIDATE layer.
+//
+// `reconcileLedger(candidates, opts)` reads an OPERATOR-MAINTAINED
+// decisions ledger and reconciles each seeded ReplacementCandidate (from
+// {@link seedReplacementCandidates}) to a `keep | replace | defer | none`
+// decision, validates the decision-conditional required fields, and
+// echoes undecided candidates:
+//
+//   reconcileLedger(candidates, opts) → {
+//     reconciled: Array<{ tool, decision, entry }>,  // decided candidates
+//     undecided:  string[],                          // tools w/ no entry (R3.4)
+//     errors:     Array<{ tool, field, message }>,   // missing required field
+//   }
+//
+// Validation (R3.5, R3.6):
+//   - "replace" MUST carry permissionReduction AND workflowChange (R3.5).
+//   - "keep"    MUST carry keepReason AND requiredCapability (R3.6).
+//   - "defer" / "none" carry no extra required fields.
+//   - a missing required field → a validation error NAMING the tool AND
+//     the missing field (the observable); ALL such errors are collected
+//     (validation does not stop at the first).
+//
+// Testability seam (mirrors the ingest seams above): `opts.ledger`
+// supplies the ledger object DIRECTLY, or `opts.ledgerPath` supplies a
+// ledger file PATH (so tests do not depend on $XDG_STATE_HOME). The
+// runtime default reads the XDG path. A MISSING ledger file → all
+// candidates `undecided`, NO error (the operator simply has not created
+// one yet).
+//
+// Advisory only (R3.7): this function READS the ledger and RETURNS
+// reconciled/validation data ONLY. It emits NO permission/MCP-registration
+// side effects and writes NOTHING (not even the ledger). The boundary is
+// enforced structurally — the code path performs only reads.
+//
+// Scope (4.2): ledger read + reconcile + validate + echo-undecided ONLY.
+// No reporting/serialization (5.x), no redaction, no acting on decisions.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Decision-conditional required fields (R3.5, R3.6). A ledger entry whose
+ * `decision` is a key here MUST carry every listed field with a non-empty
+ * string value; a missing/empty field is a validation error. `defer` and
+ * `none` are absent → no extra required fields.
+ *
+ * @type {Readonly<Record<string, readonly string[]>>}
+ */
+const LEDGER_REQUIRED_FIELDS = Object.freeze({
+  replace: Object.freeze(['permissionReduction', 'workflowChange']),
+  keep: Object.freeze(['keepReason', 'requiredCapability']),
+});
+
+/** The recognized ledger decisions (design "Decision" union). */
+const LEDGER_DECISIONS = Object.freeze(['keep', 'replace', 'defer', 'none']);
+
+/**
+ * Resolve the default decisions-ledger path when the caller supplies
+ * neither an inline ledger nor a path:
+ * `${XDG_STATE_HOME:-~/.local/state}/opencode-nono/review-decisions.json`
+ * (design "Logical Data Model"). The CLI only READS this path.
+ *
+ * @returns {string}
+ */
+function defaultLedgerPath() {
+  const xdgState =
+    process.env.XDG_STATE_HOME && process.env.XDG_STATE_HOME.length > 0
+      ? process.env.XDG_STATE_HOME
+      : path.join(process.env.HOME || '', '.local', 'state');
+  return path.join(xdgState, 'opencode-nono', 'review-decisions.json');
+}
+
+/**
+ * Load the operator-maintained ledger object from the injection seam or
+ * disk. Resolution order:
+ *   - `opts.ledger` (an object) → used verbatim (no disk read).
+ *   - `opts.ledgerPath` (a string) → read that file.
+ *   - otherwise → read {@link defaultLedgerPath}.
+ *
+ * A MISSING ledger file is NOT an error (R3.4 operator-not-yet-created):
+ * it resolves to a ledger with no entries so every candidate falls
+ * through to `undecided`. Malformed JSON / unexpected shape likewise
+ * yields an empty entry set defensively (never a throw) — the ledger is
+ * operator-owned and an audit must not crash on a hand-edited file.
+ *
+ * @param {{ ledger?: object, ledgerPath?: string }} opts
+ * @returns {{ entries: object[] }}
+ */
+function loadLedger(opts) {
+  if (opts.ledger && typeof opts.ledger === 'object' && !Array.isArray(opts.ledger)) {
+    const entries = Array.isArray(opts.ledger.entries) ? opts.ledger.entries : [];
+    return { entries };
+  }
+
+  const ledgerPath =
+    typeof opts.ledgerPath === 'string' && opts.ledgerPath.length > 0
+      ? opts.ledgerPath
+      : defaultLedgerPath();
+
+  // Missing file → no entries, no error (operator hasn't created one).
+  if (!fileExists(ledgerPath)) return { entries: [] };
+
+  let text;
+  try {
+    text = fs.readFileSync(ledgerPath, 'utf8');
+  } catch {
+    // Unreadable (e.g. permissions) → defensive empty set, never a throw.
+    return { entries: [] };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { entries: [] }; // malformed JSON → defensive empty set
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { entries: [] };
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  return { entries };
+}
+
+/**
+ * Index ledger entries by tool name, keeping the LAST entry for a tool
+ * when duplicates exist (deterministic, operator-edit-tolerant). Entries
+ * that are not objects, or lack a string `tool`, are dropped defensively.
+ *
+ * @param {object[]} entries
+ * @returns {Map<string, object>}
+ */
+function indexLedgerEntries(entries) {
+  /** @type {Map<string, object>} */
+  const byTool = new Map();
+  for (const entry of entries) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    if (typeof entry.tool !== 'string' || entry.tool.length === 0) continue;
+    byTool.set(entry.tool, entry);
+  }
+  return byTool;
+}
+
+/**
+ * Validate one ledger entry's decision-conditional required fields,
+ * pushing one `{ tool, field, message }` error per MISSING required
+ * field onto `errors`. The message NAMES both the tool and the missing
+ * field (the R3.5/R3.6 observable). An unrecognized decision yields a
+ * single `decision`-field error so a typo'd decision is surfaced rather
+ * than silently treated as field-free.
+ *
+ * @param {object} entry a ledger entry (tool + decision + fields)
+ * @param {Array<{ tool: string, field: string, message: string }>} errors
+ */
+function validateLedgerEntry(entry, errors) {
+  const tool = entry.tool;
+  const decision = entry.decision;
+
+  if (!LEDGER_DECISIONS.includes(decision)) {
+    errors.push({
+      tool,
+      field: 'decision',
+      message: `ledger entry for tool "${tool}" has an unrecognized decision "${String(decision)}" (expected one of ${LEDGER_DECISIONS.join(', ')})`,
+    });
+    return;
+  }
+
+  const required = LEDGER_REQUIRED_FIELDS[decision] || [];
+  for (const field of required) {
+    const value = entry[field];
+    const present = typeof value === 'string' && value.trim().length > 0;
+    if (!present) {
+      errors.push({
+        tool,
+        field,
+        message: `ledger entry for tool "${tool}" with decision "${decision}" is missing required field "${field}"`,
+      });
+    }
+  }
+}
+
+/**
+ * reconcileLedger — read the operator-maintained decisions ledger and
+ * reconcile the seeded replacement candidates against it (Task 4.2,
+ * Requirements 3.4, 3.5, 3.6, 3.7). See the section header for the full
+ * contract.
+ *
+ * Each candidate with a matching ledger entry is reconciled to its
+ * decision (R3.4) and its decision-conditional required fields validated
+ * (R3.5, R3.6); a missing required field yields a `{ tool, field,
+ * message }` error naming both (collected, never stop-on-first). A
+ * candidate with NO matching ledger entry is echoed in `undecided`
+ * (R3.4). The function is advisory only (R3.7): it reads and returns,
+ * mutating nothing.
+ *
+ * Output is deterministic: `reconciled` follows the input candidate
+ * order, `undecided` follows the input candidate order, and `errors`
+ * follow reconciled-entry order then required-field order.
+ *
+ * @param {Array<{ tool: string }>} candidates ReplacementCandidate[]
+ *   (from {@link seedReplacementCandidates}).
+ * @param {{ ledger?: object, ledgerPath?: string }} [opts]
+ * @returns {{
+ *   reconciled: Array<{ tool: string, decision: string, entry: object }>,
+ *   undecided: string[],
+ *   errors: Array<{ tool: string, field: string, message: string }>,
+ * }}
+ */
+function reconcileLedger(candidates, opts) {
+  const options = opts || {};
+  const candidateList = Array.isArray(candidates) ? candidates : [];
+
+  const { entries } = loadLedger(options);
+  const byTool = indexLedgerEntries(entries);
+
+  /** @type {Array<{ tool: string, decision: string, entry: object }>} */
+  const reconciled = [];
+  /** @type {string[]} */
+  const undecided = [];
+  /** @type {Array<{ tool: string, field: string, message: string }>} */
+  const errors = [];
+
+  for (const candidate of candidateList) {
+    const tool = candidate && typeof candidate.tool === 'string' ? candidate.tool : null;
+    if (tool === null) continue; // malformed candidate → skip defensively
+
+    const entry = byTool.get(tool);
+    if (!entry) {
+      // No ledger entry for this candidate → echo it as undecided (R3.4).
+      undecided.push(tool);
+      continue;
+    }
+
+    // Reconcile to the recorded decision (R3.4) and validate the
+    // decision-conditional required fields (R3.5, R3.6).
+    reconciled.push({ tool, decision: entry.decision, entry });
+    validateLedgerEntry(entry, errors);
+  }
+
+  // Advisory only (R3.7): purely-derived data is returned; nothing is
+  // written and no permission/MCP registration is touched.
+  return { reconciled, undecided, errors };
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -1524,4 +1765,10 @@ module.exports = {
   CAPABILITY_RISK,
   RISK_WEIGHTS,
   MCP_REPLACEMENT_MAP,
+  // Task 4.2: Tool-Use Replacement Review decisions-ledger reconcile +
+  // validate layer. Exported for unit-test reach and for the Reporter
+  // (task 5.x) to consume the reconciled/validation data.
+  reconcileLedger,
+  defaultLedgerPath,
+  LEDGER_REQUIRED_FIELDS,
 };

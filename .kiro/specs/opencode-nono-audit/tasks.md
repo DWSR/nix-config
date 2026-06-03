@@ -82,7 +82,7 @@
   - _Boundary: Tool-Use Replacement Review_
   - _Depends: 2.2_
 
-- [ ] 4.2 Reconcile the decisions ledger
+- [x] 4.2 Reconcile the decisions ledger
   - Read the operator-maintained decisions ledger and reconcile candidates as keep/replace/defer/none
   - Validate that replace entries document permission reduction + workflow change and keep entries document reason + required capability; echo undecided candidates
   - Never change OpenCode permissions or MCP registrations from this output
