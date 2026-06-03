@@ -1,0 +1,22 @@
+{
+  "feature_name": "opencode-nono-audit",
+  "created_at": "2026-06-03T12:49:10Z",
+  "updated_at": "2026-06-03T15:53:58Z",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}
