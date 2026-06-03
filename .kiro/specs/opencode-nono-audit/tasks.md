@@ -74,7 +74,7 @@
   - _Depends: 3.1_
 
 - [ ] 4. Core: common tool-use replacement review
-- [ ] 4.1 (P) Rank tool-use and seed replacement candidates
+- [x] 4.1 (P) Rank tool-use and seed replacement candidates
   - Rank by `count × capabilityRisk` using a static capability-risk map with a deterministic tie-break
   - Seed MCP-replacement candidates (git → Git MCP) and mark "no viable replacement" when none is known
   - Observable completion: a deterministic ranked list over the fixture surfaces the git → Git MCP candidate

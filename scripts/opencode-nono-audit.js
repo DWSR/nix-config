@@ -1251,6 +1251,207 @@ function assess(audit, profiles, opts) {
   return { ok: true, value: findings };
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Task 4.1 (Requirements 3.1, 3.2, 3.3): the Tool-Use Replacement
+// Review's RANK + SEED layer.
+//
+// `rankToolUse(audit)` ranks observed tool-use by
+//   riskScore = count × capabilityRisk
+// where capabilityRisk comes from a STATIC, documented map (below) and
+// is converted to a numeric weight via RISK_WEIGHTS (high=3 / medium=2 /
+// low=1). The list is sorted DETERMINISTICALLY: riskScore descending,
+// tie-break frequency (count) descending, then tool name ascending. A
+// contiguous 1-based `rank` is assigned after sorting.
+//
+// `seedReplacementCandidates(audit)` seeds MCP-replacement candidates
+// from a STATIC, EXTENSIBLE map (MCP_REPLACEMENT_MAP). `git → Git MCP`
+// is always seeded; a ranked tool/category with no known MCP candidate
+// is emitted with `mcpCandidate` undefined and a "no viable replacement"
+// rationale. The candidate list is emitted in the SAME deterministic
+// order as the ranked list.
+//
+// Git recognition (R3.2): git is recognized by COMMAND PATTERN — bash
+// commands whose program token (via commandProgram()) is `git` form a
+// `git` rankable/known category whose count = number of git commands
+// observed, so the static `git = high` risk applies and a git → Git MCP
+// candidate can be seeded. URLs/paths INSIDE the git command strings are
+// NOT promoted — only the program token matters.
+//
+// Scope: 4.1 produces the RANKED list + SEEDED candidates only. The
+// decisions ledger (operator keep/replace/defer/none reconciliation) is
+// task 4.2; reporting (5.x) and redaction are not here.
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * STATIC capability-risk map (R3.1). Maps a tool/category name to a
+ * qualitative risk level. `bash`/external-command and `git` are high;
+ * `webfetch` is medium; `read`/`glob`/`grep` are low. Any tool NOT in
+ * this map is treated as `medium` (see {@link capabilityRiskOf}).
+ * Extensible: add a tool → level entry to reclassify it.
+ *
+ * @type {Readonly<Record<string, 'high'|'medium'|'low'>>}
+ */
+const CAPABILITY_RISK = Object.freeze({
+  bash: 'high',
+  git: 'high',
+  webfetch: 'medium',
+  read: 'low',
+  glob: 'low',
+  grep: 'low',
+});
+
+/** The risk level assigned to a tool absent from {@link CAPABILITY_RISK}. */
+const DEFAULT_CAPABILITY_RISK = 'medium';
+
+/**
+ * Documented numeric weights for each risk level (R3.1). riskScore =
+ * count × RISK_WEIGHTS[capabilityRisk]. high > medium > low so a
+ * frequently-used high-risk tool ranks above a frequently-used low-risk
+ * one.
+ *
+ * @type {Readonly<Record<'high'|'medium'|'low', number>>}
+ */
+const RISK_WEIGHTS = Object.freeze({ high: 3, medium: 2, low: 1 });
+
+/**
+ * STATIC, EXTENSIBLE MCP-replacement seed map (R3.2, R3.3). Maps a
+ * tool/category name to a known MCP replacement. `git → git-mcp-server`
+ * is seeded (the repo ships a git-mcp-server). A tool/category absent
+ * from this map has no known replacement and is marked "no viable
+ * replacement" by {@link seedReplacementCandidates}.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+const MCP_REPLACEMENT_MAP = Object.freeze({
+  git: 'git-mcp-server',
+});
+
+/** The rationale text emitted when no known MCP replacement exists (R3.3). */
+const NO_VIABLE_REPLACEMENT = 'no viable replacement: no known MCP server for this tool';
+
+/**
+ * Resolve a tool/category name to its qualitative capability risk via
+ * the static map, defaulting unknown tools to medium (R3.1).
+ *
+ * @param {string} tool
+ * @returns {'high'|'medium'|'low'}
+ */
+function capabilityRiskOf(tool) {
+  return CAPABILITY_RISK[tool] || DEFAULT_CAPABILITY_RISK;
+}
+
+/**
+ * Fold a UsageAudit's CapabilityRecord[] into rankable categories keyed
+ * by tool name with a stable count. Each capability record contributes
+ * its `tool` with its observed `count`. Additionally, git usage is
+ * recognized by COMMAND PATTERN (R3.2): every command whose program
+ * token (via {@link commandProgram}) is `git` increments a derived `git`
+ * category, so git is ranked/seeded as its own known category. The
+ * underlying tool (e.g. `bash`) keeps its full observed count; the git
+ * category is an additive recognition, not a re-bucketing.
+ *
+ * @param {object} audit a UsageAudit (runAudit().value)
+ * @returns {Map<string, number>} category name → count
+ */
+function rankableCategories(audit) {
+  /** @type {Map<string, number>} */
+  const counts = new Map();
+  const add = (name, n) => {
+    if (typeof name !== 'string' || name.length === 0 || n <= 0) return;
+    counts.set(name, (counts.get(name) || 0) + n);
+  };
+
+  const capabilities = Array.isArray(audit && audit.capabilities) ? audit.capabilities : [];
+  for (const rec of capabilities) {
+    add(rec.tool, typeof rec.count === 'number' ? rec.count : 0);
+
+    // Recognize git by command program token (R3.2). Count the number of
+    // git commands observed for this record into the derived `git`
+    // category. URLs/paths inside the command strings are NOT promoted.
+    const commands = Array.isArray(rec.commands) ? rec.commands : [];
+    let gitCommands = 0;
+    for (const command of commands) {
+      if (commandProgram(command) === 'git') gitCommands += 1;
+    }
+    add('git', gitCommands);
+  }
+
+  return counts;
+}
+
+/**
+ * Deterministic comparator for rankable categories (R3.1): riskScore
+ * descending, then count descending, then tool name ascending. Fully
+ * deterministic for a fixed input.
+ *
+ * @param {{ tool: string, count: number, riskScore: number }} a
+ * @param {{ tool: string, count: number, riskScore: number }} b
+ * @returns {number}
+ */
+function compareRanked(a, b) {
+  if (a.riskScore !== b.riskScore) return b.riskScore - a.riskScore;
+  if (a.count !== b.count) return b.count - a.count;
+  if (a.tool !== b.tool) return a.tool < b.tool ? -1 : 1;
+  return 0;
+}
+
+/**
+ * rankToolUse — rank observed tool-use by `riskScore = count ×
+ * capabilityRisk` (Task 4.1, Requirement 3.1). See the section header
+ * for the full contract.
+ *
+ * Returns RankedToolUse[] = { tool, count, riskScore, rank }, sorted by
+ * riskScore desc with the documented tie-break (count desc, tool name
+ * asc) and contiguous 1-based ranks. Deterministic for a fixed audit.
+ *
+ * @param {object} audit a UsageAudit (runAudit().value)
+ * @returns {Array<{ tool: string, count: number, riskScore: number, rank: number }>}
+ */
+function rankToolUse(audit) {
+  const counts = rankableCategories(audit);
+
+  const ranked = [...counts.entries()].map(([tool, count]) => {
+    const risk = capabilityRiskOf(tool);
+    return { tool, count, riskScore: count * RISK_WEIGHTS[risk] };
+  });
+
+  ranked.sort(compareRanked);
+
+  // Assign contiguous 1-based ranks after sorting.
+  return ranked.map((entry, i) => ({ ...entry, rank: i + 1 }));
+}
+
+/**
+ * seedReplacementCandidates — seed MCP-replacement candidates over the
+ * ranked tool-use (Task 4.1, Requirements 3.2, 3.3). See the section
+ * header for the full contract.
+ *
+ * Emits one ReplacementCandidate per ranked category, in the SAME
+ * deterministic order as {@link rankToolUse}. A category present in
+ * {@link MCP_REPLACEMENT_MAP} carries its `mcpCandidate` + a rationale;
+ * a category with no known replacement omits `mcpCandidate` and carries
+ * the "no viable replacement" rationale. `git → git-mcp-server` is
+ * always seeded when git usage was observed.
+ *
+ * @param {object} audit a UsageAudit (runAudit().value)
+ * @returns {Array<{ tool: string, mcpCandidate?: string, rationale: string }>}
+ */
+function seedReplacementCandidates(audit) {
+  const ranked = rankToolUse(audit);
+
+  return ranked.map((entry) => {
+    const mcpCandidate = MCP_REPLACEMENT_MAP[entry.tool];
+    if (typeof mcpCandidate === 'string' && mcpCandidate.length > 0) {
+      return {
+        tool: entry.tool,
+        mcpCandidate,
+        rationale: `replace ${entry.tool} usage with the ${mcpCandidate} MCP server`,
+      };
+    }
+    return { tool: entry.tool, rationale: NO_VIABLE_REPLACEMENT };
+  });
+}
+
 const USAGE = `opencode-nono-audit — read-only OpenCode tool-usage audit
 
 Usage:
@@ -1314,4 +1515,13 @@ module.exports = {
   // Task 3.2: Compatibility Assessor classification layer. Exported for
   // unit-test reach and for the Reporter (task 5.x) to consume.
   assess,
+  // Task 4.1: Tool-Use Replacement Review rank + seed layer. Exported
+  // for unit-test reach and for the decisions ledger (task 4.2) +
+  // Reporter (task 5.x) to consume. The static maps are exported as
+  // documented constants so tests can assert against them.
+  rankToolUse,
+  seedReplacementCandidates,
+  CAPABILITY_RISK,
+  RISK_WEIGHTS,
+  MCP_REPLACEMENT_MAP,
 };
