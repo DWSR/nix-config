@@ -11,7 +11,9 @@ spec `opencode-nono-audit`. See `brief.md` for problem, approach, and scope.
 - **In scope**: OpenCode launch sandboxing under nono, repo-managed nono
   profiles, profile validation, rollout state controls + per-launch overrides,
   declarative credential/environment/network posture, coexistence with existing
-  OpenCode integrations, and personal/Shopify host defaults.
+  OpenCode integrations, personal/Shopify host defaults, and nono package
+  provisioning (latest upstream-published version with a repository-overlay
+  fallback).
 - **Out of scope**: historical OpenCode usage audit, profile compatibility
   assessment, and common tool-use MCP-replacement review (owned by
   `opencode-nono-audit`); nono upstream changes; OpenCode permission redesign;
@@ -85,3 +87,13 @@ spec `opencode-nono-audit`. See `brief.md` for problem, approach, and scope.
 3. The OpenCode nono integration shall provide an operator guide covering profile selection, noninteractive launch behavior, runtime overrides, and rollback.
 4. The OpenCode nono integration shall provide a smoke-test path that confirms OpenCode can start under the default managed profile.
 5. The OpenCode nono integration shall record enough local metadata to identify the active profile version, host default state, and effective launch state.
+
+### Requirement 7: nono package provisioning and version currency
+**Objective:** As an operator, I want the integration to track the latest upstream-published nono release, so that sandbox behavior and profile schema match current nono instead of a stale pinned version.
+
+#### Acceptance Criteria
+1. The OpenCode nono integration shall provision nono at the latest version published upstream by the nono project.
+2. If the configured nixpkgs does not provide that version, then the OpenCode nono integration shall supply nono through a repository overlay pinned to the latest upstream-published version.
+3. The OpenCode nono integration shall allow an operator to pin or override the provisioned nono version through declarative configuration.
+4. The OpenCode nono integration shall record the resolved nono version in the local metadata exposed to operators and checks.
+5. When the provisioned nono version changes, the OpenCode nono integration shall validate the generated profiles against that version's profile schema.

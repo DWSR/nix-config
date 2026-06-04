@@ -425,3 +425,236 @@ Triggered by `/kiro-validate-design` (GO with 3 issues) and operator decisions.
   static, health-check + token mint; the trade is a much smaller sandbox surface.
 - `/nix/store` exec grant under Seatbelt unverified — Phase 0 spike.
 - Env pass-through semantics unverified — Phase 0 spike; `allow_vars` fallback.
+
+---
+
+# Implementation Gap Re-Validation — 2026-06-04 (post-audit-implementation, R1–R6)
+
+## Why re-run
+Three deltas since the sections above:
+1. Requirements were renumbered to R1–R6 after the audit/assess/review split; the
+   original Requirement-to-Asset map (R1–R8) is stale.
+2. The sibling `opencode-nono-audit` is now fully implemented and validation-GO
+   (15 tasks). Its cross-spec contracts are concrete, not hypothetical, and its
+   packaging patterns are proven in-repo.
+3. Current-state re-check of `opencode.nix` and `nono` availability.
+
+## Verified current state (2026-06-04)
+- `nono` 0.5.0 is in nixpkgs unstable (Apache-2.0, always-further/nono), confirmed
+  via mcp-nixos. R1.1 package gap is resolved by adopting `pkgs.unstable.nono`
+  with a `package` pin option; no source build.
+- `opencode.nix` still has only the OLD seam: `home.opencode.{package,
+  wrapperCommands, lspPackages}` and `programs.opencode.package = symlinkJoin +
+  wrapProgram --suffix PATH --run <joined wrapperCommands>`. Preflight (Keychain
+  `/usr/bin/security -s mcpproxy`, curl `127.0.0.1:8080`, cavemem probe) runs
+  INSIDE that wrapped binary today. `launchd.agents.opencode-prewarm` already uses
+  the UNWRAPPED `home.opencode.package`. The design's launcher seam does not exist
+  yet.
+- The audit module `home-manager/common/opencode-nono-audit.nix` (thin:
+  mkEnableOption + read-only `package` + `home.packages` + peer assertion on
+  `programs.opencode.enable`), `scripts/opencode-nono-audit.{js,nix}`, and
+  `flake.nix` `checks.opencode-nono-audit-{tests,validate-check}` are the proven
+  templates this spec mirrors.
+
+## Requirement-to-Asset Map (current R1–R6)
+| Req | Existing assets (reusable) | Gap |
+|-----|----------------------------|-----|
+| R1 Declarative enablement | `opencode.nix` base+wrapper; `unstable.nono` 0.5.0; RTK/audit module templates | Missing: new module + `opencode.nix` launcher-seam refactor (preflight→nono→opencode inversion); effective-state export (mirror RTK env exports) |
+| R2 Profile catalog | nono `extends`/groups schema (design-phase §); `xdg.configFile` render; RTK metadata render | Missing: rendered `~/.config/nono/profiles/{opencode-managed,opencode-audit,opencode-review}.json`, host-specific labels, secret-free construction; profile-validation check |
+| R3 Rollout controls + overrides | RTK `OPENCODE_RTK` resolver; audit freshness marker + `evaluateMarkerStaleness` (now implemented) | Missing: `defaultState` (disabled/audit/enforced) + `OPENCODE_NONO`/`OPENCODE_NONO_PROFILE` resolver in the outer launcher; R3.5 freshness check reading the audit `last-report.json` |
+| R4 Creds/env/network posture | inverted-topology decision (preflight outside nono → env pass-through, D1); mcpproxy-no-auth-header evidence | Missing: per-profile env/network docs + actionable-error stop path when a profile blocks required access; Constraint: secret-free profiles |
+| R5 Coexistence | existing `wrapperCommands` (mcpproxy/cavemem/LSP); RTK state visibility; plugins | Constraint: preflight must move to the OUTER launcher without regressing mcpproxy/cavemem/LSP/plugins; surface RTK+nono states together; never weaken permissions/quarantine |
+| R6 Validation/smoke/guidance/metadata | RTK + audit smoke/validate/flake-check patterns; `nono profile validate/schema` | Missing: `opencode-nono-validate` + `opencode-nono-smoke-test` derivations, operator guide, and `metadata.json` render with canonical `profileVersion` |
+
+## Cross-spec contract the sandbox MUST satisfy (audit side already shipped)
+- Render `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode-nono/metadata.json`
+  carrying a canonical `profileVersion` (active managed profile's version). The
+  audit's `readProfileVersion` reads exactly this path/field.
+- R3.5 strict-enforcement check reads
+  `${XDG_STATE_HOME:-~/.local/state}/opencode-nono/last-report.json` =
+  `{markerSchemaVersion:1, profileVersion, generatedAt, host}` and warns (never
+  blocks) when absent / unreadable / unknown `markerSchemaVersion` /
+  `profileVersion ≠ metadata`. `markerSchemaVersion` + the metadata path are
+  revalidation triggers on both specs. The audit already exports
+  `evaluateMarkerStaleness(marker, liveVersion)` — R3.5 can reuse that semantic
+  rather than re-deriving it.
+- The `opencode-nono/` XDG namespace is now shared (audit writes reports+marker
+  under XDG_STATE; sandbox writes metadata under XDG_CONFIG). Keep ownership
+  explicit.
+
+## Design reconciliation needed before tasks (design.md is unapproved)
+The committed `design.md` predates two operator decisions recorded in the rework
+section + memory; reconcile before `/kiro-spec-tasks`:
+1. Topology INVERSION (preflight launcher → nono → opencode) supersedes any
+   `wrappedPackage`/`outerLauncher` (preflight-inside) seam naming. The seam is
+   `basePackage` + `preflightScript` + `lspPath` + `finalPackage`, with
+   `finalPackage` default = today's preflight-inside wrapper and `opencode-nono`
+   overriding it with the inverted launcher.
+2. Credentials D1 (env pass-through) supersedes the "extend SOPS bridge for nono
+   keystore" decision; no `env_credentials`/bridge change for v1.
+
+## Open HARD GATE: Phase 0 not actually executed for the sandbox
+The shared Phase 0 spike ran on this host with `nono` ABSENT (audit task 1.1
+recorded exit 127 / skip). The sandbox-critical verifications were therefore NOT
+performed and remain unknown:
+- `/nix/store` read+exec under macOS Seatbelt (does bare opencode run sandboxed?).
+- env pass-through vs `allow_vars` precedence for the launcher-exported env.
+- loopback `open_port 8080` to reach mcpproxy from inside the sandbox.
+- `nono profile show <name> --json` resolved-grant shape (also gates the audit's
+  live assessor).
+Install `unstable.nono` and run these before profile authoring; they can block or
+reshape R2/R4.
+
+## Options (re-affirm C)
+- A — extend `opencode.nix` directly: fastest, but bloats the central module and
+  couples sandbox to base launch. Risk Medium.
+- B — standalone `home-manager/common/opencode-nono.nix` only: clean, but still
+  needs an `opencode.nix` seam for the launcher. Risk Medium.
+- C (recommended) — hybrid: minimal `opencode.nix` seam refactor
+  (base/preflight/lsp/final) + a new `opencode-nono.nix` module (profiles, state
+  resolver, metadata, guide, smoke/validate, host defaults). Mirrors the proven
+  audit + RTK modules; supports phased disabled→audit→enforced. Risk Medium
+  (gated by Phase 0).
+
+## Effort / Risk
+- R1+R5 launcher-seam refactor + inversion: M, Risk High (touches the live launch
+  path; prewarm + plugins must not regress; Phase 0-dependent).
+- R2 profile rendering + validation: M, Risk Medium (schema known; on-host
+  `profile show --json` unverified).
+- R3 state resolver + freshness check: S–M, Risk Low (RTK resolver + audit marker
+  both exist).
+- R4 creds/network posture docs + stop paths: S, Risk Low under D1.
+- R6 smoke/validate/metadata/guide: M, Risk Low (audit + RTK templates).
+
+## Research items carried to design/tasks
+1. Execute Phase 0 on-host with `unstable.nono` installed (the four checks above)
+   — hard gate.
+2. Reconcile design.md with the topology inversion + D1 credentials before tasks.
+3. Confirm the inner-preflight set that must move to the outer launcher (mcpproxy
+   Keychain read, curl healthz, cavemem probe, Shopify `devx` mint, LSP PATH) and
+   the env each must export into the sandbox.
+4. Decide per-profile network posture (unrestricted vs `network_profile`/
+   `allow_domain`/`open_port`) once Phase 0 confirms loopback + provider reach.
+5. Confirm the shared `opencode-nono/` XDG namespace ownership + the exact
+   `profileVersion` string source.
+
+## Recommendation
+Proceed with Option C. Package and cross-spec contracts are now de-risked (nono
+available; audit shipped with concrete marker/metadata contract + reusable
+module/check/test templates). Remaining blockers: the on-host Phase 0
+verification (still open because nono was absent during the shared spike) and
+reconciling the unapproved design.md with the post-design topology-inversion and
+credential decisions. Do not author enforced-profile grants until Phase 0
+confirms Seatbelt `/nix/store` exec, env pass-through, and loopback behavior.
+
+---
+
+# Phase 0 On-Host Verification — 2026-06-04 (EXECUTED)
+
+The shared Phase 0 spike previously ran with `nono` absent (audit task 1.1, exit
+127). It was executed here against a real `nono` built from the flake's pinned
+`nixpkgs-unstable` (`nix build --inputs-from . nixpkgs-unstable#nono`). All
+commands ran read-only/non-destructive (introspection + trivial sandboxed
+`printenv`/`echo`/`curl healthz`). No host config was switched.
+
+## Headline finding: version reality (THREE numbers)
+- design.md/research/memory assume **0.5.0**.
+- The flake's pinned `nixpkgs-unstable` actually ships **0.43.1** (this is what
+  `pkgs.unstable.nono` resolves to today).
+- `nono` itself reports **0.61.1** as the latest upstream (update banner).
+The "0.5.0" assumption is wrong (0.43.1 > 0.33 > 0.5.0). All schema facts below
+are from **0.43.1**. Action: pin the version explicitly and re-verify the schema
+on whatever version is chosen; the nono.sh-docs schema in the sections above
+tracks latest, not 0.43.1.
+
+## Check 1 — `/nix/store` read+exec under Seatbelt: PASS
+- `nono run --silent --allow-cwd -- <nix-store-binary>` executed both `nono`
+  itself and a `coreutils` `echo` from `/nix/store` (rc=0, expected output).
+- The inverted topology (nono wraps the bare `/nix/store` opencode binary) is
+  viable on macOS; `/nix/store` read+exec is allowed by the default profile.
+- **New launch-contract requirement**: in NON-INTERACTIVE mode `nono run`
+  refuses CWD access unless `--allow-cwd` is passed — even with the `opencode`
+  profile's `workdir.access: ReadWrite`. The launcher must pass `--allow-cwd`
+  (else it fails closed with "CWD access requires --allow-cwd in non-interactive
+  mode"). Launch shape: `nono run --profile <eff> --allow-cwd -- opencode "$@"`.
+
+## Check 2 — env pass-through: PASS (for the D1 use case)
+- Default profile and `opencode` profile both pass benign custom vars through
+  (default-allow): `FOO`, and a provider-style `ANTHROPIC_BASE_URL` arrived
+  intact in the child. D1 (launcher exports env → nono passes it in) is viable.
+- **Anomaly / security follow-up**: `DYLD_INSERT_LIBRARIES=evil` was NOT silently
+  stripped — it reached the sandboxed exec and aborted the child via dyld
+  (rc=134). This deviates from the docs' "builtin blocklist strips
+  LD_PRELOAD/DYLD_*" claim on 0.43.1 (or is a SIP/hardened-runtime artifact).
+  Non-blocking for D1 (the launcher never exports `DYLD_*`/`LD_*`), but confirm
+  the env blocklist behavior on the pinned version before relying on it.
+
+## Check 3 — loopback `open_port 8080` to mcpproxy: PASS
+- mcpproxy is up (host `GET /healthz` = 200).
+- network OPEN (`opencode` profile, `block:false`) → loopback reached (200).
+- network BLOCKED (`--block-net`) + `--open-port 8080` → loopback reached (200).
+- network BLOCKED, no open-port → 000 (control: block genuinely blocks).
+- Enforced-profile seam confirmed: `network.block:true` + `open_port:[8080]`
+  grants mcpproxy loopback while denying other egress. Provider network still
+  needs `block:false` or `allow_domain` (separate R4 decision).
+
+## Check 4 — `nono profile show --json`: PASS (real shape captured)
+- 12 built-in profiles exist incl. `opencode` (`extends default`), `codex`,
+  `claude-code`, and a `claude-no-kc` ("without macOS keychain access") variant.
+- `profile show <name> --json` works. The "update available" banner / summary /
+  status print to **stderr**; stdout is clean JSON (verified: stdout-only first
+  line is `{`). Pair `--json` with `--silent` for machine output that stays clean
+  across nono versions.
+- **Audit-side note (corrected)**: the shipped audit parses `result.stdout` only,
+  so the stderr banner does NOT break its `JSON.parse` — there is NO parse bug
+  (an earlier `2>&1`-merged reading suggested one; that was wrong). `--silent` was
+  nonetheless added to the audit's `profile show` shell-out as cross-version
+  hardening (with a regression test pinning the argv).
+- **Resolved-grant schema (0.43.1) — the contract the audit assessor parses** —
+  does NOT match the audit's current synthetic fixture
+  (`external-command:{mode,allow}` etc.). Real top-level keys:
+  `name`, `description`, `extends[]`, `security{groups[], allowed_commands[],
+  signal_mode, process_info_mode, ipc_mode, capability_elevation,
+  wsl2_proxy_policy}`, `filesystem{allow[], read[], write[], allow_file[],
+  read_file[], write_file[]}`, `policy{exclude_groups, add_allow_*, add_deny_*,
+  override_deny}`, `network{block, network_profile, allow_domain[], credentials[],
+  open_port[], listen_port[], upstream_proxy, upstream_bypass[]}`,
+  `workdir{access}`, `rollback{exclude_patterns, exclude_globs}`.
+- Resolved `opencode` profile grants: `filesystem.allow` =
+  `$HOME/.opencode`, `$HOME/.config/opencode`, `$HOME/.cache/opencode`,
+  `$HOME/.local/share/opencode`, `$HOME/.local/share/opentui`,
+  `$HOME/.local/state/opencode`, `$TMPDIR`; `network.block:false` (no domain/port
+  limits); `workdir.access:ReadWrite`; `security.groups` includes
+  `deny_keychains_macos`, `deny_credentials`, `dangerous_commands*`,
+  `node_runtime`, `git_config`, `unlink_protection`. Confirms an enforced profile
+  blocks the macOS Keychain — the audit-first / inverted-topology justification.
+
+## Authoring schema (0.43.1) — diverges from research/design assumptions
+`nono profile schema` top-level fields: `$schema`, `extends`, `meta`, `security`,
+`filesystem`, `policy`, `network`, `env_credentials`, `secrets`, `environment`,
+`workdir`, `hooks`, `rollback`, `undo`, `open_urls`, `allow_launch_services`,
+`allow_gpu`, `allow_parent_of_protected`, `interactive`, `skipdirs`, `packs`,
+`brokered_commands`, `command_args`, `unsafe_macos_seatbelt_rules`.
+Key deltas from the earlier research sections:
+- `name`/`description` are NOT top-level — they live under `meta`
+  (`profile validate` rejected a top-level `name`).
+- Group selection is `security.groups[]` + `policy.exclude_groups[]` — NOT a
+  top-level `groups{include,exclude}`.
+- Hooks are `hooks` — NOT `session_hooks`.
+- New fields not previously noted: `secrets`, `undo`, `open_urls`,
+  `allow_launch_services`, `allow_gpu`, `allow_parent_of_protected`,
+  `interactive`, `brokered_commands`, `command_args`,
+  `unsafe_macos_seatbelt_rules`.
+- `nono profile validate <file>` gives precise field-level errors — directly
+  usable for R6.1 validation checks (wrap with the repo's `[validate-failure:
+  <label>]` pattern).
+
+## Phase 0 verdict
+HARD GATE PASSED for the inverted topology: `/nix/store` exec, env pass-through,
+and loopback `open_port` all work on macOS Seatbelt. Profile rendering and the
+audit assessor must target the **real 0.43.1 schema** (re-author against
+`meta`/`security.groups`/`hooks`; not the assumed `groups`/`session_hooks`). The
+audit `profile show` shell-out now passes `--silent` as cross-version hardening
+(its stdout parse was already safe — the banner is on stderr). Pin the nono
+version before authoring; the design's `0.5.0` is wrong (actual pin 0.43.1,
+latest 0.61.1).
