@@ -122,6 +122,7 @@
         "homebrew/homebrew-bundle" = inputs.homebrew-bundle;
         "deskflow/homebrew-tap" = inputs.homebrew-deskflow;
         "cyrusradfar/homebrew-unf" = inputs.homebrew-unf;
+        "darrylmorley/homebrew-whatcable" = inputs.homebrew-whatcable;
       };
     };
 
@@ -212,6 +213,7 @@
       "loopback"
       "obsidian"
       "unfudged"
+      "whatcable"
     ];
 
     # Add ability to used TouchID for sudo authentication

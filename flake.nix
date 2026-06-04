@@ -65,6 +65,11 @@
       flake = false;
     };
 
+    homebrew-whatcable = {
+      url = "github:darrylmorley/homebrew-whatcable";
+      flake = false;
+    };
+
     color-schemes = {
       url = "github:mbadolato/iTerm2-Color-Schemes";
       flake = false;

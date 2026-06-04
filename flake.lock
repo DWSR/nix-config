@@ -327,6 +327,22 @@
         "type": "github"
       }
     },
+    "homebrew-whatcable": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1780587839,
+        "narHash": "sha256-sfzj3GoRf/bVE0Frha3GEhmRZA3G0R97ibGzoeGRag0=",
+        "owner": "darrylmorley",
+        "repo": "homebrew-whatcable",
+        "rev": "c8955d7b9512bc9ffff6bb68754fd7ac55780212",
+        "type": "github"
+      },
+      "original": {
+        "owner": "darrylmorley",
+        "repo": "homebrew-whatcable",
+        "type": "github"
+      }
+    },
     "ixx": {
       "inputs": {
         "flake-utils": [
@@ -559,6 +575,7 @@
         "homebrew-core": "homebrew-core",
         "homebrew-deskflow": "homebrew-deskflow",
         "homebrew-unf": "homebrew-unf",
+        "homebrew-whatcable": "homebrew-whatcable",
         "nix-index-database": "nix-index-database",
         "nixneovimplugins": "nixneovimplugins",
         "nixpkgs": "nixpkgs",
