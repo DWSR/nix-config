@@ -82,6 +82,71 @@ final: prev: {
     ];
   };
 
+  # nono: capability-based sandbox for AI agents (always-further/nono, Apache-2.0).
+  # Published to crates.io as `nono-cli`; the binary is `nono`. Pinned to 0.61.1
+  # because nixpkgs-unstable only ships 0.43.1.
+  #
+  # Requires rustc ≥1.95 (workspace rust-version). Neither stable nixpkgs
+  # (1.91.1) nor unstable (1.94.1) satisfies this; we use fenix's toolchainOf
+  # to pull exactly 1.95.0 via makeRustPlatform, mirroring the pattern already
+  # used in overlays/zellij-plugins.nix.
+  #
+  # macOS build inputs:
+  #   - Security, CoreFoundation: keyring apple-native + security-framework
+  #   - cmake, perl: aws-lc-rs C build
+  #   - libiconv: transitive dep of several crates on darwin
+  nono =
+    let
+      fenixPkgs = inputs.fenix.packages.${final.stdenv.hostPlatform.system};
+      rustToolchain = fenixPkgs.toolchainOf {
+        channel = "1.95.0";
+        # sha256 of https://static.rust-lang.org/dist/channel-rust-1.95.0.toml
+        sha256 = "sha256-gh/xTkxKHL4eiRXzWv8KP7vfjSk61Iq48x47BEDFgfk=";
+      };
+      rustPlatform = final.makeRustPlatform {
+        inherit (rustToolchain) cargo rustc;
+      };
+    in
+    rustPlatform.buildRustPackage rec {
+      pname = "nono";
+      version = "0.61.1";
+
+      src = final.fetchFromGitHub {
+        owner = "always-further";
+        repo = "nono";
+        tag = "v${version}";
+        hash = "sha256-y5oMR5Vawf/1QUj3ACDdqAjKT+Q2gizRfKkal340EP8=";
+      };
+
+      cargoHash = "sha256-Oy/IqAK5ml1vu0eee+pF5pRjzk0Na/Fb04e1Mx0d924=";
+
+      # Build only the CLI binary from the Cargo workspace.
+      cargoBuildFlags = [
+        "-p"
+        "nono-cli"
+      ];
+
+      # Tests exercise network services, real keychain access, and
+      # Seatbelt/Landlock kernel features unavailable in the Nix sandbox.
+      doCheck = false;
+
+      nativeBuildInputs = [
+        final.cmake
+        final.perl
+        final.pkg-config
+      ];
+
+      buildInputs = [ final.libiconv ];
+
+      meta = {
+        description = "Capability-based sandbox for AI agents using Seatbelt (macOS) and Landlock (Linux)";
+        homepage = "https://github.com/always-further/nono";
+        license = final.lib.licenses.asl20;
+        mainProgram = "nono";
+        platforms = final.lib.platforms.unix;
+      };
+    };
+
   # RTK (Rust Token Killer) from rtk-ai/rtk. Built from source to avoid
   # upstream CI telemetry compile variables injected into official release
   # assets. crates.io name "rtk" resolves to an unrelated package; always
