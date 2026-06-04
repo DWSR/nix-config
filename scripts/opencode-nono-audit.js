@@ -824,8 +824,12 @@ function readProfileShowJson(profileName, opts) {
 
   const bin = typeof opts.nonoBin === 'string' && opts.nonoBin.length > 0 ? opts.nonoBin : 'nono';
   // Read-only subcommand; argv array (no shell) so the profile name is a
-  // single literal argument and cannot inject shell syntax.
-  const result = spawnSync(bin, ['profile', 'show', String(profileName), '--json'], {
+  // single literal argument and cannot inject shell syntax. `--silent`
+  // pairs with `--json` so nono emits machine-clean stdout: nono's
+  // "update available" banner / summary / status go to STDERR (verified
+  // on 0.43.1, so the stdout-only parse below is already safe), and
+  // --silent keeps stdout strictly the JSON payload across nono versions.
+  const result = spawnSync(bin, ['profile', 'show', String(profileName), '--json', '--silent'], {
     encoding: 'utf8',
     // Never inherit a shell; spawnSync with shell:false is the default,
     // stated here for intent. timeout guards a hung binary.
