@@ -207,6 +207,7 @@
     };
 
     homebrew.casks = [
+      "audio-hijack"
       "contexts"
       "deskflow"
       "ears"

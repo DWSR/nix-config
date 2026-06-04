@@ -61,7 +61,6 @@
       "balenaetcher"
       "homerow"
       "obs"
-      "audio-hijack"
     ];
   };
 }
