@@ -68,12 +68,12 @@ function disabledModuleRenderExpr() {
   `;
 }
 
-function shopifyRefreshAgentExpr() {
+function shopifyRefreshAgentExpr(agentAttr) {
   return `
     let
       flake = builtins.getFlake (toString ${repoRoot});
       config = flake.darwinConfigurations."${HOSTS.shopify}".config.home-manager.users.brandonmcnama;
-      agent = config.launchd.agents.git-clone-isolation-globaldb-yugabyte-refresh;
+      agent = config.launchd.agents.${agentAttr};
     in
     {
       enabled = agent.enable;
@@ -106,7 +106,7 @@ test('disabled Home Manager module omits git-clone-isolation wrapper package', (
 });
 
 test('Shopify host renders globaldb-yugabyte main-branch cache refresh agent', () => {
-  const rendered = nixEvalJson(shopifyRefreshAgentExpr());
+  const rendered = nixEvalJson(shopifyRefreshAgentExpr('git-clone-isolation-globaldb-yugabyte-refresh'));
 
   assert.equal(rendered.enabled, true);
   assert.equal(rendered.label, 'dev.dwsr.git-clone-isolation.globaldb-yugabyte-refresh');
@@ -116,6 +116,25 @@ test('Shopify host renders globaldb-yugabyte main-branch cache refresh agent', (
     'refresh',
     '--repo',
     'https://github.com/Shopify/globaldb-yugabyte',
+    '--branch',
+    'main',
+    '--cache-root',
+    rendered.expectedCacheRoot,
+  ]);
+  assert.match(rendered.programArguments[0], /git-cache-clone\/bin\/git-cache-clone$/);
+});
+
+test('Shopify host renders terraform-the-cloud main-branch cache refresh agent', () => {
+  const rendered = nixEvalJson(shopifyRefreshAgentExpr('git-clone-isolation-terraform-the-cloud-refresh'));
+
+  assert.equal(rendered.enabled, true);
+  assert.equal(rendered.label, 'dev.dwsr.git-clone-isolation.terraform-the-cloud-refresh');
+  assert.equal(rendered.runAtLoad, true);
+  assert.equal(rendered.startInterval, 600);
+  assert.deepEqual(rendered.programArguments.slice(1), [
+    'refresh',
+    '--repo',
+    'https://github.com/Shopify/terraform-the-cloud',
     '--branch',
     'main',
     '--cache-root',

@@ -151,5 +151,26 @@ in
     };
   };
 
+  launchd.agents.git-clone-isolation-terraform-the-cloud-refresh = {
+    inherit (gitCloneIsolation) enable;
+    config = {
+      Label = "dev.dwsr.git-clone-isolation.terraform-the-cloud-refresh";
+      ProgramArguments = [
+        "${gitCloneIsolation.package}/bin/git-cache-clone"
+        "refresh"
+        "--repo"
+        "https://github.com/Shopify/terraform-the-cloud"
+        "--branch"
+        "main"
+        "--cache-root"
+        gitCloneIsolation.cacheRoot
+      ];
+      RunAtLoad = true;
+      StartInterval = 600;
+      StandardOutPath = "${config.home.homeDirectory}/Library/Logs/git-clone-isolation-terraform-the-cloud-refresh.log";
+      StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/git-clone-isolation-terraform-the-cloud-refresh.error.log";
+    };
+  };
+
   nixvim-extra.shadowenv.enable = true;
 }
