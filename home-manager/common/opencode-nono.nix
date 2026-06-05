@@ -1,24 +1,53 @@
 /*
   home-manager/common/opencode-nono.nix — the `programs.opencode-nono`
-  Home Manager module (opencode-nono-sandbox spec, Task 3.1; Requirements
-  1.1, 3.1, 7.1, 7.2, 7.3).
+  Home Manager module (opencode-nono-sandbox spec, Tasks 3.1 + 3.2;
+  Requirements 1.1, 2.1, 2.2, 2.3, 2.5, 3.1, 4.1, 4.3, 4.5, 5.3, 7.1,
+  7.2, 7.3).
 
   Task 3.1 scope is the option surface, package selection with operator
-  override, rollout-state controls, and the peer assertion. The profile
-  catalog model + rendering (Task 3.2), rendered metadata, the outer
-  launcher, and the validate/smoke-test scripts are later tasks; this
-  module declares only what 3.1 owns and does not reference constructs
-  that do not exist yet.
+  override, rollout-state controls, and the peer assertion. Task 3.2 adds
+  the typed profile catalog model and the renderer that emits three base
+  profiles (`opencode-managed`, `opencode-audit`, `opencode-review`) as
+  JSON to `~/.config/nono/profiles/` via `xdg.configFile`. The rendered
+  metadata + operator guide (Task 3.3), the outer launcher, and the
+  validate/smoke-test scripts are later tasks; this module declares only
+  what 3.1 + 3.2 own and does not reference constructs that do not exist
+  yet.
 
   Design references: "Boundary Commitments → This Spec Owns", the
-  "Rollout Controls" and "Package Provision" component sections, and the
+  "Rollout Controls" and "Package Provision" component sections, the
   "State Resolver / Outer Launcher → State Management" states
-  (`disabled | audit | enforced`).
+  (`disabled | audit | enforced`), and the "Profile Catalog Renderer"
+  component (incl. the `NonoProfileModel` interface, per-profile deltas,
+  and Implementation Notes) plus "Data Models" (profile file paths).
 
   Peer dependency: asserts at HM-evaluation time that
   `programs.opencode.enable` is true on the same host (mirrors
   `opencode-rtk.nix` / `opencode-nono-audit.nix`). Without the managed
   OpenCode wrapper there is no OpenCode launch for nono to sandbox.
+
+  Profile catalog (Task 3.2): nono 0.61.1 has NO built-in `opencode`
+  profile (removed; only `default` + dev profiles remain), so each base
+  profile `extends ["default"]` and reconstructs the opencode grant set
+  empirically derived in Tasks 2.1/2.2:
+    - `groups.include = [node_runtime git_config nix_runtime
+      user_caches_macos]` — all four exist on 0.61.1; `nix_runtime`
+      supplies `/nix/store` exec coverage.
+    - `filesystem.allow` for the seven opencode data paths (rendered as
+      `$HOME`/`$TMPDIR` literals; nono expands them at runtime, confirmed
+      by Task 2.2's scratch profile and by `nono profile validate` on
+      0.61.1).
+  Per-profile deltas mirror the design's Profile Catalog Renderer.
+
+  Secret-free invariant (R2.5, R4.5): NO secret literals, NO
+  `env_credentials`, NO provider keys/tokens anywhere. `allow_vars` lists
+  environment variable NAMES only — the launcher exports the values at
+  runtime; values are never serialized. NO Keychain / `/usr/bin/security`
+  / `/usr/bin/curl` grants (D1 credential model).
+
+  `extends` form: empirically tested on 0.61.1 — both the bare string
+  `"default"` and the array `["default"]` pass `nono profile validate`.
+  This module uses the design's array form `["default"]`.
 */
 {
   pkgs,
@@ -28,6 +57,105 @@
 }:
 let
   cfg = config.programs.opencode-nono;
+
+  # The seven opencode data paths that the empirically-derived startup
+  # grant set (Task 2.2) requires under `filesystem.allow`. Rendered as
+  # `$HOME`/`$TMPDIR` literals (no absolute home-directory hardcoding);
+  # nono expands them at runtime.
+  opencodeDataPaths = [
+    "$HOME/.config/opencode"
+    "$HOME/.cache/opencode"
+    "$HOME/.local/share/opencode"
+    "$HOME/.local/state/opencode"
+    "$HOME/.opencode"
+    "$HOME/.local/share/opentui"
+    "$TMPDIR"
+  ];
+
+  # The four confirmed groups (Task 2.1) that all exist on nono 0.61.1.
+  opencodeGroups = [
+    "node_runtime"
+    "git_config"
+    "nix_runtime"
+    "user_caches_macos"
+  ];
+
+  # Environment variable NAMES (not values) the launcher exports and the
+  # managed/audit profiles admit via `allow_vars` (R4.1, R4.5). NAMES
+  # ONLY — values are exported at runtime by the launcher, never
+  # serialized into the profile. `OPENCODE_*` is a glob admitting all
+  # launcher-exported opencode env. Provider base-URL/token NAME vars
+  # (e.g. ANTHROPIC_BASE_URL, DEFAULT_PROXY_BASE) are listed so the
+  # launcher-exported values pass through; the values themselves are
+  # never embedded here.
+  launcherAllowVars = [
+    "PATH"
+    "HOME"
+    "TERM"
+    "LANG"
+    "LC_ALL"
+    "TMPDIR"
+    "SHELL"
+    "USER"
+    "OPENCODE_*"
+    "ANTHROPIC_BASE_URL"
+    "ANTHROPIC_AUTH_TOKEN"
+    "DEFAULT_PROXY_BASE"
+    "XDG_CONFIG_HOME"
+    "XDG_CACHE_HOME"
+    "XDG_DATA_HOME"
+    "XDG_STATE_HOME"
+  ];
+
+  # Render one profile model to the 0.61.1 authoring schema as a plain
+  # attrset, dropping empty optional sections so the emitted JSON stays
+  # minimal and secret-free. `extends` uses the design's array form
+  # (`["default"]`), validated on 0.61.1.
+  renderProfile =
+    p:
+    let
+      meta = {
+        inherit (p.meta) name version description;
+      }
+      // lib.optionalAttrs (p.meta.author != null) { inherit (p.meta) author; };
+
+      groups = {
+        inherit (p.groups) include;
+      }
+      // lib.optionalAttrs (p.groups.exclude != [ ]) { inherit (p.groups) exclude; };
+
+      filesystem =
+        lib.optionalAttrs (p.filesystem.allow != [ ]) { inherit (p.filesystem) allow; }
+        // lib.optionalAttrs (p.filesystem.read != [ ]) { inherit (p.filesystem) read; }
+        // lib.optionalAttrs (p.filesystem.write != [ ]) { inherit (p.filesystem) write; }
+        // lib.optionalAttrs (p.filesystem.deny != [ ]) { inherit (p.filesystem) deny; };
+
+      network = {
+        inherit (p.network) block;
+      }
+      // lib.optionalAttrs (p.network.networkProfile != null) {
+        network_profile = p.network.networkProfile;
+      }
+      // lib.optionalAttrs (p.network.allowDomain != [ ]) { allow_domain = p.network.allowDomain; }
+      // lib.optionalAttrs (p.network.openPort != [ ]) { open_port = p.network.openPort; }
+      // lib.optionalAttrs (p.network.listenPort != [ ]) { listen_port = p.network.listenPort; };
+
+      environment =
+        lib.optionalAttrs (p.environment.allowVars != [ ]) { allow_vars = p.environment.allowVars; }
+        // lib.optionalAttrs (p.environment.denyVars != [ ]) { deny_vars = p.environment.denyVars; };
+    in
+    {
+      inherit meta groups;
+      inherit (p) extends;
+      workdir = {
+        inherit (p.workdir) access;
+      };
+    }
+    // lib.optionalAttrs (filesystem != { }) { inherit filesystem; }
+    // lib.optionalAttrs (environment != { }) { inherit environment; }
+    // {
+      inherit network;
+    };
 in
 {
   options.programs.opencode-nono = {
@@ -103,10 +231,241 @@ in
         that defines this profile is rendered by a later task.
       '';
     };
+
+    profiles = lib.mkOption {
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            meta = {
+              name = lib.mkOption {
+                type = lib.types.str;
+                description = "Profile name (`meta.name`); must be unique.";
+              };
+              version = lib.mkOption {
+                type = lib.types.str;
+                default = "0.1.0";
+                description = "Profile version (`meta.version`, R2.2).";
+              };
+              description = lib.mkOption {
+                type = lib.types.str;
+                description = ''
+                  Profile description (`meta.description`). nono 0.61.1
+                  `meta` has no `intendedUse` field, so the intended-use
+                  statement is folded into this description (R2.2). Hosts
+                  may append a host-specific access label here (R2.3).
+
+                  Must contain no secret literals (R2.5, R4.5).
+                '';
+              };
+              author = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Optional profile author (`meta.author`).";
+              };
+            };
+
+            extends = lib.mkOption {
+              type = lib.types.listOf lib.types.str;
+              default = [ "default" ];
+              description = ''
+                Profiles this profile inherits (`extends`). Defaults to
+                `["default"]`: nono 0.61.1 removed the built-in `opencode`
+                profile, so the opencode grant set is reconstructed on top
+                of `default`. The array form validates on 0.61.1.
+              '';
+            };
+
+            groups = {
+              include = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Groups to include (`groups.include`).";
+              };
+              exclude = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Groups to exclude (`groups.exclude`).";
+              };
+            };
+
+            workdir.access = lib.mkOption {
+              type = lib.types.enum [
+                "none"
+                "read"
+                "write"
+                "readwrite"
+              ];
+              default = "read";
+              description = "Working-directory access (`workdir.access`).";
+            };
+
+            filesystem = {
+              allow = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Read/write filesystem allowances (`filesystem.allow`).";
+              };
+              read = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Read-only filesystem allowances (`filesystem.read`).";
+              };
+              write = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Write filesystem allowances (`filesystem.write`).";
+              };
+              deny = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Filesystem denials (`filesystem.deny`).";
+              };
+            };
+
+            network = {
+              block = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Block all network (`network.block`).";
+              };
+              networkProfile = lib.mkOption {
+                type = lib.types.nullOr lib.types.str;
+                default = null;
+                description = "Named network profile (`network.network_profile`).";
+              };
+              allowDomain = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Allowed domains (`network.allow_domain`).";
+              };
+              openPort = lib.mkOption {
+                type = lib.types.listOf lib.types.int;
+                default = [ ];
+                description = ''
+                  Outbound loopback ports the sandbox may reach
+                  (`network.open_port`). `8080` reaches mcpproxy on
+                  loopback.
+                '';
+              };
+              listenPort = lib.mkOption {
+                type = lib.types.listOf lib.types.int;
+                default = [ ];
+                description = "Ports the sandbox may listen on (`network.listen_port`).";
+              };
+            };
+
+            environment = {
+              allowVars = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = ''
+                  Environment variable NAMES admitted into the sandbox
+                  (`environment.allow_vars`, R4.1). NAMES ONLY — values
+                  are exported by the launcher at runtime and never
+                  serialized (R2.5, R4.5).
+                '';
+              };
+              denyVars = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Environment variable names denied (`environment.deny_vars`).";
+              };
+            };
+          };
+        }
+      );
+
+      default = { };
+      description = ''
+        Typed catalog of nono profiles (the design's `NonoProfileModel`).
+        Each entry is rendered to `~/.config/nono/profiles/<name>.json`
+        against the pinned nono version's authoring schema (0.61.1).
+
+        The `config` block below seeds the three base profiles
+        (`opencode-managed`, `opencode-audit`, `opencode-review`). Hosts
+        may add host-specific profiles or extend descriptions with
+        host-specific access labels (R2.3); host wiring is Task 6.3.
+
+        Invariants: secrets are never serialized; no Keychain,
+        `/usr/bin/security`, or `/usr/bin/curl` grants (R2.5, R4.5).
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
+
+    # Three base profiles seeded with the empirically-derived opencode
+    # grant set (Tasks 2.1/2.2) + the design's per-profile deltas. Hosts
+    # extend or override these via `programs.opencode-nono.profiles`
+    # (lib.mkDefault here so host config wins) (R2.1, R2.3).
+    programs.opencode-nono.profiles = {
+      # opencode-managed (enforced): readwrite workdir, mcpproxy
+      # loopback port, launcher env admitted. Provider
+      # allow_domain/network_profile tightening is POST-AUDIT; v1 leaves
+      # network permissive (R4.3 — posture documented in Task 3.3 guide).
+      ${cfg.managedProfile} = lib.mkDefault {
+        meta = {
+          name = cfg.managedProfile;
+          description =
+            "Enforced sandbox profile for managed OpenCode launches. "
+            + "Intended use: normal coding sessions under nono enforcement, "
+            + "reconstructing the opencode grant set on top of nono's default "
+            + "profile (no built-in opencode profile on 0.61.1).";
+        };
+        groups.include = opencodeGroups;
+        workdir.access = "readwrite";
+        filesystem.allow = opencodeDataPaths;
+        network.openPort = [ 8080 ];
+        environment.allowVars = launcherAllowVars;
+      };
+
+      # opencode-audit (compatibility-audit): permissive so opencode +
+      # plugins start cleanly and failures surface as real errors (R5.3),
+      # not silent disables. First state operators flip to.
+      ${cfg.auditProfile} = lib.mkDefault {
+        meta = {
+          name = cfg.auditProfile;
+          description =
+            "Compatibility-audit sandbox profile for managed OpenCode. "
+            + "Intended use: the first rollout state — permissive enough that "
+            + "OpenCode and its plugins start cleanly so any sandbox-induced "
+            + "failure surfaces as a real error rather than a silent no-op "
+            + "(R5.3). nono audit recording is on by default.";
+        };
+        groups.include = opencodeGroups;
+        workdir.access = "readwrite";
+        filesystem.allow = opencodeDataPaths;
+        network.block = false;
+        network.openPort = [ 8080 ];
+        environment.allowVars = launcherAllowVars;
+      };
+
+      # opencode-review (read-only): read workdir, no write grants.
+      ${cfg.reviewProfile} = lib.mkDefault {
+        meta = {
+          name = cfg.reviewProfile;
+          description =
+            "Read-only review sandbox profile for managed OpenCode. "
+            + "Intended use: inspecting a workspace under nono with no write "
+            + "access — workdir.access is read and there are no filesystem "
+            + "write grants.";
+        };
+        groups.include = opencodeGroups;
+        workdir.access = "read";
+        filesystem.read = opencodeDataPaths;
+        network.openPort = [ 8080 ];
+        environment.allowVars = launcherAllowVars;
+      };
+    };
+
+    # Render each profile to ~/.config/nono/profiles/<name>.json (R2.1).
+    # Paths are relative to ~/.config (xdg.configFile). builtins.toJSON
+    # mirrors the repo convention (subagent-context-budget.nix).
+    xdg.configFile = lib.mapAttrs' (
+      _: p:
+      lib.nameValuePair "nono/profiles/${p.meta.name}.json" { text = builtins.toJSON (renderProfile p); }
+    ) cfg.profiles;
 
     assertions = [
       {
