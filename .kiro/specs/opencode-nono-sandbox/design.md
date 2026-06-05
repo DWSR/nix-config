@@ -229,7 +229,7 @@ tests/opencode-nono/
 | 4.1 | document env pass/inject per profile | Profile Catalog Renderer, Guide | `environment.allow_vars` | Build |
 | 4.2 | support host-required credentials | Preflight Launcher, Host Profiles | preflight env export → pass-through | Launch |
 | 4.3 | document network posture | Profile Catalog Renderer, Guide | `network` model | Build |
-| 4.4 | blocked provider/MCP → actionable error | State Resolver, Profile Catalog Renderer | launch error | Launch |
+| 4.4 | blocked provider/MCP → actionable error | State Resolver, Profile Catalog Renderer | pre-launch `profile show --json` grant check | Launch |
 | 4.5 | secrets out of docs/profiles | Profile Catalog Renderer | secret-free model | Build |
 | 5.1 | preserve mcpproxy preflight | Preflight Launcher Seam | preflight runs outside nono | Launch |
 | 5.2 | preserve provider setup | Preflight Launcher Seam, Host Profiles | devx runs outside nono | Launch |
@@ -263,7 +263,9 @@ flowchart TD
     Fresh -->|yes| Warn[Warn about missing report continue]
     Fresh -->|no| Go[Continue]
     Warn --> Go
-    Go --> Export[Export OPENCODE_NONO_EFFECTIVE PROFILE USAGE_TAG]
+    Go --> Grant{Profile grants required mcpproxy and provider access}
+    Grant -->|no| BlockedErr[Print blocked-grant error naming grant exit 1]
+    Grant -->|yes| Export[Export OPENCODE_NONO_EFFECTIVE PROFILE USAGE_TAG]
     Export --> Exec[exec nono run profile eff allow-cwd -- bare opencode args]
 ```
 Gating notes: preflight runs first, host-side, and keeps its existing fail-fast
@@ -271,7 +273,10 @@ behavior (R5.1, R5.2). `disabled` bypasses nono; a requested sandbox with nono
 missing fails closed (R1.4). `--allow-cwd` is mandatory: Phase 0 showed
 non-interactive `nono run` refuses CWD access without it even when the profile
 grants `workdir.access`. The freshness check (R3.5) consults the
-`opencode-nono-audit` report and warns but does not block.
+`opencode-nono-audit` report and warns but does not block. The pre-launch grant
+check (R4.4) resolves `nono profile show <eff> --json --silent` and fails closed
+when the selected profile omits required mcpproxy-loopback or provider-network
+access, rather than launching a broken opencode.
 
 ## Components and Interfaces
 
@@ -324,8 +329,12 @@ interface OpencodeSeam {
 **Implementation Notes**
 - Sequencing: the seam refactor + the disabled-path equivalence gate is the
   FIRST task (it touches the live launch path on both hosts). The both-host
-  eval check must assert the disabled `finalPackage` is byte-identical to
-  today's `programs.opencode.package` before any launcher work proceeds.
+  eval check must assert the module-disabled `finalPackage` is byte-identical to
+  today's `programs.opencode.package` before any launcher work proceeds. Because
+  v1 ships the module ENABLED with `defaultState=disabled` (launcher active,
+  preflight relocated outside the wrapper), a second gate covers that path: the
+  launcher's disabled branch preserves the preflight set and suffixes `lspPath`
+  onto PATH (parity with today's `--suffix PATH`).
 - Integration: when opencode-nono is disabled, `finalPackage` default keeps
   preflight inside the wrapper (today's behavior). When enabled, opencode-nono
   overrides `finalPackage` with the inverted launcher.
@@ -343,12 +352,18 @@ interface OpencodeSeam {
 - Run `preflightScript` host-privileged (outside nono): mcpproxy/obsidian/
   cavemem probes (`/usr/bin/security`, `/usr/bin/curl`), Shopify `devx` token
   mint, LSP env, RTK resolver. Preserve its existing fail-fast exits.
-- `export PATH="<lspPath>:$PATH"` so spawned LSP servers resolve inside the
-  sandbox via inherited PATH.
+- `export PATH="$PATH:<lspPath>"` (suffix, matching today's `--suffix PATH`
+  wrapper so project-local / user-provided binaries still win) so spawned LSP
+  servers resolve inside the sandbox via inherited PATH.
 - Resolve `(defaultState, OPENCODE_NONO, OPENCODE_NONO_PROFILE)` →
   `(effectiveState, effectiveProfile, disableReason)`; export the env contract.
 - `disabled` → `exec basePackage/bin/opencode "$@"`. `audit`/`enforced` →
-  require `nono` on PATH (else fail closed, R1.4) →
+  require `nono` on PATH (else fail closed, R1.4) → pre-launch grant check
+  (R4.4): run `nono profile show <eff> --json --silent` and assert the resolved
+  grants admit the required access (loopback `open_port 8080` for mcpproxy, and
+  provider network via `network.block=false` or matching `allow_domain`); a
+  missing required grant exits 1 naming the grant rather than launching a broken
+  opencode →
   `exec nono run --profile <eff> --allow-cwd -- basePackage/bin/opencode "$@"`.
   `--allow-cwd` is required in non-interactive mode (Phase 0).
 - Invalid override → exit 1 listing accepted values (R3.3). For R3.5, read the
@@ -560,8 +575,10 @@ preserve the existing preflight fail-fast.
 - **Preflight (R5.1, 5.2)**: existing probe/`devx` failures abort before nono,
   unchanged.
 - **Launch (R1.4, 3.3, 4.4)**: nono missing while sandbox requested → exit 1
-  actionable; invalid override → exit 1 listing accepted values; required
-  provider/MCP access blocked by a profile → exit 1 rather than a broken launch.
+  actionable; invalid override → exit 1 listing accepted values; the pre-launch
+  `nono profile show --json` grant check finds required provider/mcpproxy access
+  blocked by the selected profile → exit 1 naming the grant rather than a broken
+  launch.
 - **Validation (R6.2, 7.5)**: `[validate-failure: <label>]` /
   `[smoke-test-failure: <label>]` with corrective action, including a profile
   that fails the pinned version's schema after a nono bump.
@@ -575,10 +592,17 @@ preserve the existing preflight fail-fast.
 ### Unit Tests
 - State resolver: each `OPENCODE_NONO` / `OPENCODE_NONO_PROFILE` input →
   expected `(effective, profile, disableReason)`, incl. invalid-override exit
-  and missing-nono fail-closed (1.2,1.4,1.5,3.2,3.3).
-- Disabled-path equivalence (gating, both hosts): with the feature disabled,
+  and missing-nono fail-closed (1.2,1.4,1.5,3.2,3.3). Grant-check branch: a
+  `profile show --json` fixture missing `open_port 8080` / provider network →
+  exit 1 naming the grant (4.4).
+- Disabled-path equivalence (gating, both hosts): with the module disabled,
   `finalPackage` is byte-identical to today's `programs.opencode.package` on
   ShopifyLaptop and Brandons-MacBook-Pro (1.3) — a host-eval check, run first.
+- Enabled-disabled launch path (gating, both hosts): with the module enabled and
+  `defaultState=disabled` (the v1 config), the launcher runs the preflight
+  host-side and `exec`s bare opencode with `lspPath` suffixed onto PATH; a
+  resolver/host-eval check asserts this path preserves the preflight set and LSP
+  PATH ordering rather than relying on the module-disabled fallback (1.3,5.1,5.3).
 
 ### Integration Tests
 - HM render (both hosts): module renders three profiles with meta/version/use,
@@ -598,6 +622,8 @@ preserve the existing preflight fail-fast.
   `--allow-cwd` (6.4) — proves the `extends default` grant reconstruction works.
 - Rollback: `OPENCODE_NONO=disabled opencode` starts without enforcement while
   host default is `enforced` (3.4).
+- Blocked-grant stop: a profile that omits `open_port 8080` / provider network
+  makes the launcher exit 1 naming the missing grant before exec (4.4).
 - Coexistence: under `opencode-audit`, mcpproxy preflight passes (outside nono)
   and opencode reaches mcpproxy over loopback; RTK and nono states both visible
   (5.1,5.4).
@@ -614,11 +640,11 @@ preserve the existing preflight fail-fast.
 - opencode-inside is granted only: workdir (via `--allow-cwd`), opencode data
   paths, `/nix/store` read+exec (via `nix_runtime`), loopback `open_port 8080`,
   and provider network. No Keychain, no secret-bearing files.
-- Env blocklist caveat (Phase 0): on 0.61.1, setting `DYLD_INSERT_LIBRARIES` was
+- Env blocklist caveat (Phase 0, 0.43.1): setting `DYLD_INSERT_LIBRARIES` was
   NOT stripped by nono and reached the child's dyld. The launcher only exports
   benign env (provider URLs/tokens, PATH, `OPENCODE_*`), never `DYLD_*`/`LD_*`,
-  so this does not affect the design; confirm nono's env blocklist before
-  relying on it as a control.
+  so this does not affect the design; confirm nono's env blocklist on 0.61.1
+  before relying on it as a control.
 - The feature does not weaken OpenCode permissions, MCP quarantine, or tool
   approval (R5.5) — it adds an orthogonal kernel-enforced layer.
 - Future option (deferred): nono `network.credentials` proxy injection (D2) so
@@ -627,11 +653,13 @@ preserve the existing preflight fail-fast.
 
 ## Migration Strategy
 Audit-first, staged by host `defaultState`; the audit/report steps are owned by
-`opencode-nono-audit`. Phase 0 verification is DONE (see below).
+`opencode-nono-audit`. Phase 0 runtime verification is done on 0.43.1; the
+0.61.1 runtime re-verification is a hard gate before the `audit` flip (see below).
 ```mermaid
 flowchart LR
-    Spike[Phase 0 verified nono 0.61.1 done] --> Disabled[v1 disabled both hosts]
-    Disabled --> AuditReady{opencode-nono-audit 0.61.1 ready}
+    Spike[Phase 0 runtime done on 0.43.1] --> Disabled[v1 disabled both hosts]
+    Disabled --> Reverify[Re-verify runtime on 0.61.1 hard gate]
+    Reverify --> AuditReady{opencode-nono-audit 0.61.1 ready}
     AuditReady -->|parser aligned to resolved show shape| AuditRun[Run opencode-nono-audit]
     AuditRun --> AuditState[Set defaultState audit]
     AuditState --> Tune[Tighten opencode-managed grants]
@@ -647,9 +675,13 @@ targets a different shape, so that fix (owned by the audit spec) gates the
 Rollback shapes: one launch (`OPENCODE_NONO=disabled`), host default
 (`defaultState`), full removal (`programs.opencode-nono.enable = false`).
 
-## Phase 0 (Executed 2026-06-04) & Remaining Verification
-On-host verification ran against the overlay's nono **0.61.1** (full results in
-`research.md`). HARD GATE PASSED:
+## Phase 0 Verification & Remaining Gates
+Runtime behavior was verified on nono **0.43.1** (the version the flake's pinned
+`nixpkgs-unstable` builds); profile/schema shape was verified by introspection on
+the overlay's **0.61.1** (full results in `research.md`). The runtime checks have
+NOT yet been re-run on 0.61.1.
+
+Verified on 0.43.1 (runtime — topology hard gate):
 - `/nix/store` read+exec works under macOS Seatbelt (default profile +
   `--allow-cwd`); the inverted topology is viable. Non-interactive `nono run`
   REQUIRES `--allow-cwd` (now in the launch contract).
@@ -657,8 +689,20 @@ On-host verification ran against the overlay's nono **0.61.1** (full results in
   the managed profile still lists the needed vars in `environment.allow_vars`.
 - Loopback `open_port [8080]` reaches mcpproxy while `--block-net` blocks other
   egress (control confirmed).
+
+Verified on 0.61.1 (introspection only):
 - nono 0.61.1 removed the built-in `opencode` profile → managed profiles
   `extends default` + groups + explicit `filesystem.allow` (design updated).
+  Authoring schema is top-level `groups{include,exclude}`; `meta` has no
+  `intendedUse`.
+
+HARD GATE before the `defaultState=audit` flip — re-run on 0.61.1, not 0.43.1
+(schema and behavior are version-coupled across the 18-minor-version gap):
+- Re-verify `/nix/store` read+exec under the 0.61.1 `default` profile, env
+  pass-through vs `allow_vars`, and loopback `open_port 8080`.
+- Confirm the group names the catalog relies on (`node_runtime`, `git_config`,
+  `nix_runtime`, `user_caches_macos`) exist on 0.61.1 and that `nix_runtime`
+  supplies `/nix/store`.
 
 Remaining (covered by implementation tasks, not blockers):
 - FIRST profile task: derive opencode's required grants empirically via `nono

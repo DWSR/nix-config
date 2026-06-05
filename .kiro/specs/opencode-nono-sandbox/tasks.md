@@ -1,0 +1,131 @@
+# Implementation Plan
+
+- [ ] 1. Preflight launcher seam + disabled-path equivalence gate (opencode.nix)
+- [ ] 1.1 Refactor opencode.nix to expose the launcher seam
+  - Expose read-only `basePackage` (unwrapped package), `preflightScript` (joined wrapperCommands), `lspPath` (makeBinPath lspPackages); add a `finalPackage` option defaulting to today's symlinkJoin+wrapProgram (preflight-inside) wrapper; set `programs.opencode.package = finalPackage`; keep the prewarm launchd agent on the unwrapped `basePackage`
+  - Observable: both darwin hosts evaluate and `opencode --version` works via the rebuilt wrapper resolving to the `finalPackage` default
+  - _Requirements: 1.2, 1.3, 5.1, 5.2_
+- [ ] 1.2 Disabled byte-identical equivalence gate + flake check
+  - Add a both-host host-eval check, registered in flake.nix so it runs under `nix flake check`, asserting the module-disabled `finalPackage` store path is byte-identical to today's `programs.opencode.package` on ShopifyLaptop and Brandons-MacBook-Pro
+  - Observable: the check is wired into flake.nix and passes on both hosts; deliberately perturbing the wrapper fails it
+  - _Requirements: 1.3_
+
+- [ ] 2. On-host nono 0.61.1 introspection + opencode grant derivation (build inputs)
+- [ ] 2.1 Capture the 0.61.1 group and resolved-show facts the build needs
+  - On macOS with the overlay nono 0.61.1: confirm the group names `node_runtime`, `git_config`, `nix_runtime`, `user_caches_macos` exist and `nix_runtime` supplies `/nix/store`; capture the resolved `nono profile show <name> --json --silent` key shape the grant check and the audit consume
+  - Observable: a recorded set of confirmed group names plus the resolved-show JSON key shape, used directly by the catalog and the grant check; STOP and return to design if a relied-on group is absent
+  - _Requirements: 2.1_
+  - _Boundary: on-host nono introspection_
+- [ ] 2.2 Empirically derive opencode's required grant set under nono 0.61.1
+  - Run the real opencode binary under nono 0.61.1 with denial-learning and `nono why`; record the discovered groups, filesystem.allow paths, network, and env opencode needs to start
+  - Observable: a recorded discovered grant set that is the authoritative input to the profile catalog
+  - _Depends: 2.1_
+  - _Requirements: 2.1_
+  - _Boundary: on-host nono introspection_
+
+- [ ] 3. opencode-nono module: options, profile catalog, metadata and guide
+- [ ] 3.1 Module options, package, rollout controls, peer assertion
+  - Define `programs.opencode-nono` with enable, package (default `pkgs.nono` 0.61.1 from the existing overlay, operator-overridable), `defaultState` (disabled/audit/enforced) plus profile-selection options, and an assertion requiring `programs.opencode.enable`
+  - Observable: options evaluate on both hosts; the peer assertion fails with a named message when `programs.opencode.enable` is false
+  - _Requirements: 1.1, 3.1, 7.1, 7.2, 7.3_
+- [ ] 3.2 Profile catalog renderer
+  - Render `opencode-managed`, `opencode-audit`, `opencode-review` JSON to `~/.config/nono/profiles` from the derived grant set: `extends ["default"]` + `groups.include` + `filesystem.allow` for opencode data paths + per-profile network/workdir/env deltas; `meta{name,version,description}` with intended-use folded into description; secret-free; host-label support in description
+  - Observable: three rendered profiles match the 0.61.1 schema and contain no secret literals and no keychain/security/curl grants
+  - _Depends: 2.2, 3.1_
+  - _Requirements: 2.1, 2.2, 2.3, 2.5, 4.1, 4.3, 4.5, 5.3_
+- [ ] 3.3 Metadata and operator guide renderer
+  - Render metadata.json (canonical `profileVersion` = active managed profile version, `nonoVersion` resolved from the package version, `defaultState`, profiles list, env contract) and a README covering profile selection, noninteractive launch, runtime overrides, rollback, and combined RTK+nono visibility
+  - Observable: metadata.json renders at the XDG config path the shipped audit's `readProfileVersion` consumes, `nonoVersion` reflects the resolved package version, and the guide renders all sections
+  - _Depends: 3.2_
+  - _Requirements: 5.4, 6.3, 6.5, 7.4_
+
+- [ ] 4. State resolver / outer launcher
+- [ ] 4.1 Launcher core: preflight relocation, state resolution, exec
+  - Build the `writeShellApplication` launcher: run `preflightScript` host-side, suffix `lspPath` onto PATH (parity with today's `--suffix PATH`), resolve `(defaultState, OPENCODE_NONO, OPENCODE_NONO_PROFILE)` to effective; disabled execs bare opencode; audit/enforced require nono (fail closed) then exec `nono run --profile <eff> --allow-cwd -- bare opencode`; export `OPENCODE_NONO_EFFECTIVE/PROFILE_EFFECTIVE/DISABLE_REASON/USAGE_TAG`; invalid override exits 1 listing accepted values
+  - Observable: each override input maps to the correct (effective, profile, reason) and the documented command shape execs per state
+  - _Depends: 1.1, 3.2_
+  - _Requirements: 1.2, 1.4, 1.5, 3.2, 3.3, 3.4, 5.4_
+- [ ] 4.2 Pre-launch profile grant check
+  - For audit/enforced, run `nono profile show <eff> --json --silent` and assert the resolved grants admit loopback `open_port 8080` and provider network (`block=false` or matching `allow_domain`) using the 2.1 resolved-show shape; a missing grant exits 1 naming the grant before exec
+  - Observable: a profile missing `open_port 8080` or provider network makes the launcher exit 1 naming the grant; a complete profile proceeds to exec
+  - _Depends: 2.1, 4.1_
+  - _Requirements: 4.4_
+- [ ] 4.3 Strict-enforcement freshness check
+  - Read the audit freshness marker `last-report.json`; when enforced is requested, warn (never block) on absent/unreadable/unknown `markerSchemaVersion` or `profileVersion` not matching metadata
+  - Observable: an enforced launch with a missing or stale marker warns and continues; a current marker is silent
+  - _Depends: 3.3, 4.1_
+  - _Requirements: 3.5_
+- [ ] 4.4 Wire launcher as finalPackage override
+  - In opencode-nono, override `home.opencode.finalPackage` with the launcher referencing `basePackage`/`preflightScript`/`lspPath`/`nono` by store path with no circular reference
+  - Observable: with the module enabled, `opencode` on PATH is the launcher; with it disabled the seam default wrapper is unchanged
+  - _Depends: 1.1, 4.1_
+  - _Requirements: 1.2_
+
+- [ ] 5. Validation and smoke-test scripts, flake wiring, pre-audit-flip runtime gate
+- [ ] 5.1 (P) Profile validation script
+  - `opencode-nono-validate`: `nono profile validate` each profile, schema conformance against the pinned 0.61.1 version, and a launch-contract assertion (resolver execs `nono run --allow-cwd` with the expected profile per state, preflight precedes nono, grant check present); emit `[validate-failure: <label>]` plus corrective action
+  - Observable: validate passes on the rendered profiles and emits a labeled failure on a deliberately broken profile
+  - _Depends: 3.2, 4.2_
+  - _Boundary: validate script_
+  - _Requirements: 2.4, 6.1, 6.2, 7.5_
+- [ ] 5.2 (P) Smoke-test script
+  - `opencode-nono-smoke-test`: host-run `nono run --profile opencode-managed --allow-cwd -- opencode --version`; emit `[smoke-test-failure: <label>]` on failure
+  - Observable: the smoke test starts opencode under `opencode-managed` and reports success, proving the extends-default grant reconstruction works
+  - _Depends: 3.2, 4.4_
+  - _Boundary: smoke-test script_
+  - _Requirements: 6.4_
+- [ ] 5.3 Flake validate-check and app wiring
+  - Add `checks.opencode-nono-validate-check` (builds validate and runs `--help`/`--version`) and `apps.opencode-nono-validate` to flake.nix; host-eval gates are owned by 1.2 and 7.4 and the node tests check by 7.1
+  - Observable: `nix flake check` runs the validate-check and it passes
+  - _Depends: 5.1, 1.2_
+  - _Requirements: 6.1, 7.5_
+- [ ] 5.4 (P) 0.61.1 runtime re-verification gate (pre-audit-flip)
+  - Host-run full runtime re-verification on 0.61.1 against the rendered profiles and launcher: `/nix/store` read+exec under the managed profile, launcher-env pass-through vs `allow_vars`, loopback `open_port 8080`. This gates an operator flipping `defaultState` to audit and does not block the v1-disabled build
+  - Observable: a recorded runtime PASS on 0.61.1 (or a labeled failure) explicitly gating the audit-state flip
+  - _Depends: 3.2, 4.4_
+  - _Boundary: on-host runtime verification_
+  - _Requirements: 1.2, 4.3, 7.5_
+
+- [ ] 6. Host integration: enable and host configs
+- [ ] 6.1 Import and enable the module
+  - Import `opencode-nono.nix` in `home-manager/common/default.nix` and set `programs.opencode-nono.enable = true` (v1)
+  - Observable: both hosts evaluate with the feature enabled and v1 `defaultState` disabled, and opencode still launches
+  - _Depends: 3.3, 4.4_
+  - _Requirements: 1.1, 3.1_
+- [ ] 6.2 (P) Personal host config
+  - Set `defaultState` disabled and profile selection in `configurations/personal/home-manager/opencode.nix`
+  - Observable: the personal host evaluates with `defaultState` disabled and the chosen profile mapping
+  - _Depends: 6.1_
+  - _Boundary: personal host config_
+  - _Requirements: 3.1_
+- [ ] 6.3 (P) Shopify host config
+  - Set `defaultState` disabled, host-specific profile additions/labels, and an optional nono usage tag in `configurations/shopify/home-manager/opencode.nix`; the devx mint stays in the preflight outside nono
+  - Observable: the Shopify host evaluates with `defaultState` disabled, a host-labeled profile, and the devx mint still running host-side
+  - _Depends: 6.1_
+  - _Boundary: shopify host config_
+  - _Requirements: 2.3, 4.2, 5.2_
+
+- [ ] 7. Tests and enabled-disabled equivalence gate
+- [ ] 7.1 HM render test harness, render assertions, tests flake check
+  - Create `run.js` (glob `node --test` dispatcher) and `hm-render.test.js` asserting both-host render: three profiles `extends ["default"]` with no keychain/security/curl grants, meta and version, metadata including `nonoVersion` reflecting an overridden package version, guide, packages, `finalPackage` override, peer assertion, and profile content (groups including `nix_runtime`, `open_port 8080`, `allow_vars`); assert the module makes no opencode permission or MCP-quarantine changes; register `checks.opencode-nono-tests` in flake.nix
+  - Observable: the hm-render test passes on both host evals and fails on a secret/keychain grant, a permission change, or a `nonoVersion` mismatch
+  - _Depends: 3.3, 4.4, 6.1_
+  - _Boundary: tests/opencode-nono_
+  - _Requirements: 2.1, 2.2, 2.3, 2.5, 4.1, 4.3, 4.5, 5.5, 6.3, 6.5, 7.3, 7.4_
+- [ ] 7.2 (P) Resolver test
+  - `resolver.test.js`: assert each `OPENCODE_NONO`/`OPENCODE_NONO_PROFILE` override maps to (effective, profile, reason), invalid-override exit, missing-nono fail-closed, grant-check missing-grant exit 1, and freshness-marker-absent warn
+  - Observable: the resolver test enumerates every state branch and passes
+  - _Depends: 7.1_
+  - _Boundary: tests/opencode-nono_
+  - _Requirements: 1.4, 1.5, 3.2, 3.3, 3.4, 3.5, 4.4_
+- [ ] 7.3 (P) Validate-label test
+  - `validate.test.js`: assert `[validate-failure: <label>]` labels on broken profiles
+  - Observable: the validate test passes asserting the labeled failure outputs
+  - _Depends: 7.1, 5.1_
+  - _Boundary: tests/opencode-nono_
+  - _Requirements: 6.2_
+- [ ] 7.4 Enabled-disabled launch-path equivalence gate + flake check
+  - Host-eval check registered in flake.nix: with the module enabled and `defaultState=disabled` (the v1 config), the launcher runs the preflight host-side and execs bare opencode with `lspPath` suffixed onto PATH; assert this path preserves the preflight set and LSP PATH suffix ordering rather than relying on the module-disabled fallback
+  - Observable: the check is wired into flake.nix and passes, proving the v1 launch path preserves preflight and LSP PATH suffix ordering
+  - _Depends: 4.1, 4.4, 6.1_
+  - _Requirements: 1.3, 5.1, 5.3_
