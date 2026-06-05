@@ -792,3 +792,110 @@ resolved-show shape is captured for task 4.2's parser (top-level `groups`, not
 `policy`/`security.groups`). The catalog (3.2) may author
 `groups.include = [node_runtime, git_config, nix_runtime, user_caches_macos]`
 with `extends ["default"]` as designed. No return-to-design needed.
+
+---
+
+# Task 2.2 — empirical opencode startup-grant derivation on 0.61.1 (EXECUTED 2026-06-05)
+
+Closes the design's "Derivation (do this FIRST…)" implementation note for the
+Profile Catalog Renderer: the catalog's startup grant set is derived
+EMPIRICALLY by running the real opencode binary under nono 0.61.1, not guessed.
+Scope is the STARTUP set only (`opencode --version` / `--help` — exercises
+binary/runtime/config startup WITHOUT a TUI session and WITHOUT any LLM/provider/
+network call). Full-session grant completeness is confirmed later by the task 5.2
+smoke test and tightened post-audit (per design). All commands ran read-only/
+non-destructive: a scratch profile under a `mktemp -d` temp dir (deleted after),
+no writes to `~/.config/nono/profiles`, no host config switch.
+
+## Build + binaries
+- nono: `nix build --no-link --print-out-paths .#darwinConfigurations.ShopifyLaptop.pkgs.nono`
+  → `/nix/store/b7pmiz6xaz3lgdq9k5l0ibvib2q8ybp0-nono-0.61.1` (cached). `nono --version` → `nono 0.61.1`.
+- opencode (unwrapped basePackage): `nix eval --raw .#darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama.home.opencode.basePackage.outPath`
+  → `/nix/store/834nmzwnfc1idad5xfzh9bks5v4hq5vg-opencode-1.15.13/bin/opencode`. Direct `--version` → `1.15.13`.
+
+## Scratch profile used (temp dir, validated)
+`extends ["default"]`, `groups.include = [node_runtime, git_config, nix_runtime,
+user_caches_macos]`, `workdir.access = "readwrite"`, `filesystem.allow` for the
+seven opencode data paths from design (`$HOME/.config/opencode`,
+`$HOME/.cache/opencode`, `$HOME/.local/share/opencode`,
+`$HOME/.local/state/opencode`, `$HOME/.opencode`, `$HOME/.local/share/opentui`,
+`$TMPDIR`). `nono profile validate` → `valid` ("All 22 group references valid" =
+18 default + 4 included).
+
+## Under-nono result (no iteration needed)
+Launch shape: `nono run --profile <scratch> --allow-cwd -- <opencode> --version`
+(and `--help`). Both succeeded on the FIRST run with the design starting-point
+set — no missing-grant iteration was required.
+
+| Workload | rc | Output |
+|----------|----|--------|
+| `opencode --version` | 0 | `1.15.13` |
+| `opencode --help`    | 0 | full usage text |
+
+`-v` confirmed Seatbelt applied successfully (`macOS Seatbelt sandbox available`
+→ `Seatbelt sandbox applied successfully`) before exec — i.e. the run genuinely
+exercises the sandbox, it is not a bypass.
+
+## Denials observed (non-fatal — NOT part of the required startup set)
+Both runs print a trailing `Sandbox denial: 5 paths blocked` block for the CWD
+*ancestor* path components (read):
+`/Users`, `/Users/brandonmcnama`, `/Users/brandonmcnama/src`,
+`/Users/brandonmcnama/src/github.com`, `/Users/brandonmcnama/src/github.com/DWSR`.
+These are stat-walks up the directory tree from CWD. They did NOT block startup
+(rc=0 in both cases). `nono why --path /Users/brandonmcnama/src --op read
+--profile <scratch>` → `DENIED / path_not_granted` (suggested fix `--read …`),
+confirming `--allow-cwd` grants only the CWD leaf (`…/DWSR/nix-config`), not its
+ancestors. Because startup completes cleanly, these ancestor reads are NOT added
+to the catalog's startup grant set; flagged here so the 5.2 smoke test and the
+catalog author know they are expected/benign for `--version`/`--help`. (If a
+full TUI session is later found to need an ancestor read, that is a 5.2/post-
+audit decision, not a startup grant.)
+
+Note: `$HOME/.opencode` does not exist on this host, so it does not appear in the
+resolved capability list; it remains a harmless forward-looking `filesystem.allow`
+entry (nono only materializes allow-entries whose path resolves).
+
+`nono why` cross-checks (against the scratch profile):
+- `/Users/brandonmcnama/.config/opencode` `readwrite` → ALLOWED, `granted_path`, source `profile`.
+- `/nix/store` `read` → ALLOWED, `granted_path`, source `group:nix_runtime`.
+
+## FINAL confirmed STARTUP grant set (0.61.1)
+This is the authoritative input to the profile catalog (task 3.2). It equals the
+design starting-point set with no additions required for startup.
+
+- **extends**: `["default"]`.
+- **groups.include**: `[node_runtime, git_config, nix_runtime, user_caches_macos]`.
+  Resolved contributions observed via `-v`:
+  - `nix_runtime` → `/nix/store` (read+exec), `/nix/var/nix/profiles`,
+    `~/.local/state/nix/profiles`, `~/.nix-defexpr`, `system-path`/
+    `user-environment` store dirs, `/private/etc/profiles/per-user`.
+  - `node_runtime` → `~/.nvm`, `~/.npm`, `~/.local/share/pnpm` (read).
+  - `git_config` → hm gitconfig store file, `~/.config/git/ignore` (read).
+  - `user_caches_macos` → `~/Library/Preferences` (r), `~/Library/Caches` (rw),
+    `~/Library/Logs` (rw).
+  - inherited `default` system groups (`system_read_macos`/`system_write_macos`/
+    `user_tools`/`homebrew_macos`) → `/bin`,`/usr/*`,`/System/Library`,`/Library`,
+    `/dev`,`/private/*`,`/nix`,`~/.local/bin`,`/opt/homebrew`, `/private/tmp` &
+    `/private/var/folders` (write), etc.
+- **workdir.access**: `readwrite`; launcher MUST pass `--allow-cwd` (non-interactive
+  `nono run` fails closed without it — Phase 0 launch-contract requirement).
+- **filesystem.allow** (the profile-sourced startup paths, all resolved `r+w`):
+  `$HOME/.config/opencode`, `$HOME/.cache/opencode`, `$HOME/.local/share/opencode`,
+  `$HOME/.local/state/opencode`, `$HOME/.local/share/opentui`, `$TMPDIR`
+  (plus `$HOME/.opencode`, unresolved on this host but retained).
+- **network**: NONE required for `--version`/`--help`. Inherited `default`
+  `block=false` left outbound open; startup made no observed network call. The
+  enforced profile's `open_port [8080]` (mcpproxy) + provider posture is a
+  session-time concern (R4), not startup.
+- **environment (env opencode reads at startup)**: no explicit `allow_vars`
+  needed under default-allow env pass-through (Phase 0 Check 2). opencode read
+  only inherited process env at startup (`HOME`, `PATH`, `TMPDIR`, `TERM`/`LANG`
+  locale, `XDG_*` for its data-path resolution); `--version`/`--help` triggered
+  no provider/`OPENCODE_*` credential reads. The managed profile's
+  `environment.allow_vars` list (PATH/HOME/TERM/LANG/`OPENCODE_*`/`DEFAULT_PROXY_BASE`)
+  is the SESSION-time admission set, confirmed by 5.2 — not a startup requirement.
+
+**Scope caveat**: STARTUP-only. A full opencode session (provider calls, mcpproxy
+loopback on 8080, plugin/LSP activity, git tooling) will exercise additional
+network and possibly filesystem grants; that completeness is the task 5.2 smoke
+test's job, after which the enforced profile is tightened post-audit (per design).
