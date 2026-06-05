@@ -658,3 +658,48 @@ audit `profile show` shell-out now passes `--silent` as cross-version hardening
 (its stdout parse was already safe — the banner is on stderr). Pin the nono
 version before authoring; the design's `0.5.0` is wrong (actual pin 0.43.1,
 latest 0.61.1).
+
+---
+
+# Design Regeneration — 0.61.1 Verification (2026-06-04)
+
+On-host introspection of the overlay's nono **0.61.1** (the R7 target), which
+differs materially from the 0.43.1 used in the Phase 0 section above. Built via
+the `custom-packages` overlay; all commands read-only.
+
+- **Built-in agent profiles REMOVED in 0.61.1.** It ships 9 built-ins: `default`
+  + language dev profiles (`go-dev`/`java-dev`/`node-dev`/`python-dev`/`rust-dev`)
+  + `linux-host-compat` + `openclaw` + `swival`. There is **no `opencode`,
+  `codex`, or `claude-code`** profile (`nono profile show opencode` → exit 1
+  "Profile not found"). The 0.43.1 `extends opencode` strategy is INVALID on
+  0.61.1.
+  - **Decision**: managed profiles `extends default` + `groups.include =
+    [node_runtime, git_config, nix_runtime, user_caches_macos]` + explicit
+    `filesystem.allow` for opencode data paths (`$HOME/.config/opencode`,
+    `.cache/opencode`, `.local/share/opencode`, `.local/state/opencode`,
+    `~/.opencode`, `~/.local/share/opentui`, `$TMPDIR`). The 0.43.1 built-in
+    opencode resolved grants (Phase 0 section) are the reconstruction reference.
+  - `nix_runtime` ("Nix package manager runtime paths") is the `/nix/store`
+    candidate. Phase 0 Check 1 already showed `/nix/store` read+exec works under
+    the **default** profile + `--allow-cwd`, so `extends default` retains it.
+- **Authoring schema (0.61.1)** top-level fields: `$schema`, `extends`, `meta`,
+  `security`, `groups`, `commands`, `filesystem`, `network`, `diagnostics`,
+  `linux`, `env_credentials`, `secrets`, `environment`, `workdir`, `hooks`,
+  `session_hooks`, `rollback`, `undo`, `open_urls`, `allow_launch_services`,
+  `allow_gpu`, `interactive`, `packs`, `command_args`,
+  `unsafe_macos_seatbelt_rules`. Group selection is the TOP-LEVEL
+  `groups{include,exclude}` (GroupsConfig) — matches the existing design model;
+  differs from 0.43.1's `security.groups`.
+- Section shapes: `ProfileMeta{name,version,description,author}` (**no
+  `intendedUse`** — R2.2 "intended use" folds into `description`);
+  `FilesystemConfig{allow,read,write,allow_file,read_file,write_file,deny,
+  bypass_protection,...}`; `NetworkConfig{block,network_profile,allow_domain,
+  open_port,listen_port,credentials,...}`; `WorkdirConfig{access}`.
+- **`profile show --json` (audit cross-spec)**: resolvable only for an EXISTING
+  profile; for the audit's assessor this must run against a RENDERED managed
+  profile under `~/.config/nono/profiles`, not a built-in `opencode`. The audit's
+  `parseGrants` re-verification (already tracked) targets a rendered managed
+  profile on 0.61.1.
+- **Version policy (R7)**: overlay pins 0.61.1 (commit 307e20f); the design
+  targets 0.61.1. A nono version bump is a profile-schema revalidation trigger
+  (R7.5).
