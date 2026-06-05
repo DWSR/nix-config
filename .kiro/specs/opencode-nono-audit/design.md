@@ -287,8 +287,35 @@ function assess(audit: UsageAudit, profiles: string[]): Result<Finding[], Assess
 - Postconditions: every observation maps to exactly one classification.
 
 **Implementation Notes**
-- `profile show --json` shape unverified upstream → defensive parse;
-  unparseable grant → `unknown`. False-compatible avoidance is mandatory.
+- `profile show --json` shape VERIFIED on nono 0.61.1 (Phase 0, see
+  `../opencode-nono-sandbox/research.md`): top-level `{ name, description,
+  extends, security, filesystem{allow,read,write,deny,...}, groups{include,
+  exclude}, network{block,allow_domain,open_port,listen_port,...},
+  workdir{access}, rollback }`. There is NO top-level `grants` object and NO
+  per-capability `{mode,allow,deny}` map (the original synthetic assumption was
+  wrong). Group-derived path grants are NOT expanded by `show` (only group NAMES
+  appear under `groups.include`), so concrete paths are known only from EXPLICIT
+  `filesystem.allow`/`read`/`write`/`deny`.
+- Classification against the real grant model (false-compatible AND
+  false-blocker avoidance, both mandatory):
+  - observed PATH: under explicit `filesystem.deny` prefix → `blocker`; under
+    explicit `filesystem.allow`/`read`/`write` prefix → `compatible`; otherwise
+    (possibly covered by an unexpanded group) → `unknown` (never compatible,
+    never blocker).
+  - observed ENDPOINT (host): `network.block=false` + empty `allow_domain` →
+    `compatible`; `allow_domain` non-empty → host ∈ list → `compatible`, else →
+    `blocker`; `network.block=true` + host ∉ `allow_domain` → `blocker`.
+  - observed COMMAND (bare program): nono grants govern filesystem/network, not
+    per-command allowlists → `unknown` (the command's fs/net access is assessed
+    via its derived paths/endpoints, not the command name).
+  - ports/envVars: inference-only → `unknown`.
+  - `missingCapability` on a blocker names class + value (e.g.
+    `filesystem-path:/etc/x`, `network-endpoint:api.example.com`).
+- Profiles assessed are the RENDERED managed profiles from
+  `opencode-nono-sandbox` (e.g. `opencode-managed`); nono 0.61.1 has no built-in
+  `opencode` profile. `groups.include` is recorded as context, not expanded; an
+  unparseable/unexpected payload → assessment `unknown`/skipped, never a
+  fabricated `compatible`.
 
 ### Tool-Use Replacement Review
 

@@ -1,0 +1,56 @@
+{
+  "name": "opencode-managed",
+  "description": "Hand-authored real-shape (nono 0.61.1 profile show --json) tightened managed profile for assessor branch coverage: explicit filesystem allow/deny, network block + allow_domain, group includes.",
+  "extends": [
+    "default"
+  ],
+  "security": {
+    "signal_mode": "isolated",
+    "capability_elevation": null
+  },
+  "filesystem": {
+    "allow": [
+      "$HOME/.config/opencode",
+      "$TMPDIR"
+    ],
+    "read": [
+      "/Users/test/project-nono"
+    ],
+    "write": [],
+    "allow_file": [],
+    "read_file": [],
+    "write_file": [],
+    "deny": [
+      "$HOME/.ssh"
+    ],
+    "bypass_protection": [],
+    "suppress_save_prompt": []
+  },
+  "groups": {
+    "include": [
+      "node_runtime"
+    ],
+    "exclude": []
+  },
+  "network": {
+    "block": true,
+    "network_profile": "restricted",
+    "allow_domain": [
+      "api.anthropic.com"
+    ],
+    "credentials": [],
+    "open_port": [
+      8080
+    ],
+    "listen_port": [],
+    "upstream_proxy": null,
+    "upstream_bypass": []
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "rollback": {
+    "exclude_patterns": [],
+    "exclude_globs": []
+  }
+}

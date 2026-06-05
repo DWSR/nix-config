@@ -67,3 +67,37 @@
 - `scripts/opencode-cost-report.js` (`SqliteReader`, `FileWriter`)
 - `scripts/subagent-context-budget.js` (deterministic report shape)
 - `home-manager/common/cavemem.nix`, `scripts/cavemem-import-vault.js` (cavemem `data.db`)
+
+---
+
+# Verified nono `profile show --json` shape — 2026-06-05 (from sandbox Phase 0)
+
+The original Assessor (tasks 3.1/3.2) parsed an UNVERIFIED synthetic shape
+`{ grants: { <class>: { mode, allow, deny } } }`. Phase 0 of `opencode-nono-sandbox`
+verified the REAL shape on nono **0.61.1** (also confirmed on 0.43.1):
+
+- Top-level keys: `name, description, extends, security, filesystem, groups,
+  network, workdir, rollback`. **No `grants` key.**
+- `filesystem{ allow[], read[], write[], allow_file[], read_file[], write_file[],
+  deny[], bypass_protection[], ... }` — PATH prefixes.
+- `network{ block, network_profile, allow_domain[], open_port[], listen_port[],
+  credentials[], ... }` — domains/ports/block.
+- `groups{ include[], exclude[] }` — named policy groups; **`show` does NOT
+  expand groups into concrete paths** (only names appear). Group-derived path
+  grants are therefore unknowable from `show` alone.
+- `security{ signal_mode, capability_elevation, ... }`; `workdir{ access }`.
+
+Consequences (drive tasks 3.3/3.4):
+- The shipped `parseGrants` reads `parsed.grants` → `null` against real output →
+  `assess` returns `skipped (nono unparseable grants)`. Safe (never fabricates
+  compatible) but INCOMPLETE.
+- Re-target parsing to the real shape; classify observed PATHS against explicit
+  `filesystem.allow/read/write/deny` (group-only paths → `unknown`), ENDPOINTS
+  against `network.block`/`allow_domain`, and COMMANDS/ports/env → `unknown`.
+  False-compatible AND false-blocker avoidance are both mandatory.
+- Real-capture fixture committed: `tests/opencode-nono-audit/fixtures/
+  nono-profile-show-node-dev-0.61.1.json` (built-in `node-dev`, shape-faithful;
+  the managed-profile capture replaces it at sandbox-integration time).
+- `--silent` is required for clean stdout and is already passed (commit dd6e241).
+- nono 0.61.1 removed the built-in `opencode`/`codex`/`claude-code` profiles;
+  the Assessor targets the RENDERED managed profiles, not a built-in `opencode`.

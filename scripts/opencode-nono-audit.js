@@ -804,7 +804,7 @@ const NONO_UNAVAILABLE_REASON = 'nono unavailable';
  * Obtain the raw `nono profile show <name> --json` stdout text, or a
  * skip signal when nono is unavailable. A testability seam: when
  * `opts.grantsJson` is supplied, it is returned verbatim WITHOUT any
- * shell-out (tests feed the synthetic grants fixture this way, and the
+ * shell-out (tests feed a real-shape grants fixture this way, and the
  * real absent-binary path is exercised by omitting it).
  *
  * - `opts.grantsJson` → `{ ok: true, text: <injected JSON> }`.
@@ -856,39 +856,56 @@ function readProfileShowJson(profileName, opts) {
 }
 
 /**
- * Normalize one grant entry defensively. A grant value is expected to be
- * an object carrying a `mode` plus an `allow`/`deny` string array. Any
- * unexpected shape yields a conservative normalized form rather than a
- * throw, so an unverified upstream shape never crashes the assessor and
- * never silently widens permissions. Returns null when the entry is not
- * even an object (so the caller can decide whether the overall payload
- * is usable).
+ * Filter an arbitrary value into a string array: returns the string
+ * members of an array, or [] for anything else. Used to normalize the
+ * real profile's filesystem/groups path-prefix and group-name arrays.
  *
  * @param {unknown} value
- * @returns {{ mode: string|null, allow: string[], deny: string[] }|null}
+ * @returns {string[]}
  */
-function normalizeGrant(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const mode = typeof value.mode === 'string' ? value.mode : null;
-  const allow = Array.isArray(value.allow)
-    ? value.allow.filter((v) => typeof v === 'string')
-    : [];
-  const deny = Array.isArray(value.deny) ? value.deny.filter((v) => typeof v === 'string') : [];
-  return { mode, allow, deny };
+function stringArray(value) {
+  return Array.isArray(value) ? value.filter((v) => typeof v === 'string') : [];
 }
 
 /**
- * Defensively parse the `nono profile show --json` stdout into a
- * normalized grants map. The shape is UNVERIFIED upstream (Phase 0), so:
- *   - non-JSON text → null (caller skips).
- *   - JSON that is not an object, or lacks a `grants` OBJECT → null
- *     (caller skips; never fabricate an empty "available" payload).
- *   - a `grants` object → a normalized map { <class>: {mode,allow,deny} }.
- *     Entries whose value is not an object are dropped defensively; if
- *     NO entry normalizes, the payload is treated as unusable (null).
+ * Filter an arbitrary value into a number array: returns the finite
+ * number members of an array, or [] for anything else. Used to normalize
+ * `network.open_port`.
+ *
+ * @param {unknown} value
+ * @returns {number[]}
+ */
+function numberArray(value) {
+  return Array.isArray(value) ? value.filter((v) => typeof v === 'number' && Number.isFinite(v)) : [];
+}
+
+/**
+ * Defensively parse the `nono profile show --json` stdout into the
+ * normalized {@link ResolvedGrants}. The shape is VERIFIED on nono
+ * 0.61.1 (Phase 0): top-level `{ name, description, extends, security,
+ * filesystem{allow,read,write,deny,...}, groups{include,exclude},
+ * network{block,allow_domain,open_port,...}, workdir, rollback }`. There
+ * is NO top-level `grants` object.
+ *
+ * Defensive rules (false-available avoidance):
+ *   - non-JSON / non-object text → null (caller skips).
+ *   - a parsed object carrying NONE of `filesystem` / `network` /
+ *     `groups` → null (caller skips; never fabricate an empty
+ *     "available" payload that classification could misread as "no
+ *     grants, therefore nothing blocks").
+ *   - missing sub-arrays default to []; `network.block` defaults to
+ *     `false` ONLY when the `network` object is present. When `network`
+ *     is absent entirely, the normalized `network` is null so endpoint
+ *     classification falls through to `unknown` rather than assuming an
+ *     open network.
+ *
+ * @typedef {object} ResolvedGrants
+ * @property {{ allow: string[], read: string[], write: string[], deny: string[] }} filesystem
+ * @property {{ block: boolean, allowDomain: string[], openPort: number[] }|null} network
+ * @property {{ include: string[], exclude: string[] }} groups
  *
  * @param {string} text
- * @returns {{ [capabilityClass: string]: { mode: string|null, allow: string[], deny: string[] } }|null}
+ * @returns {ResolvedGrants|null}
  */
 function parseGrants(text) {
   let parsed;
@@ -898,24 +915,47 @@ function parseGrants(text) {
     return null; // malformed JSON → defensive skip
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const grantsObj = parsed.grants;
-  if (!grantsObj || typeof grantsObj !== 'object' || Array.isArray(grantsObj)) return null;
 
-  /** @type {Record<string, { mode: string|null, allow: string[], deny: string[] }>} */
-  const normalized = {};
-  let count = 0;
-  for (const key of Object.keys(grantsObj)) {
-    const g = normalizeGrant(grantsObj[key]);
-    if (g) {
-      normalized[key] = g;
-      count += 1;
-    }
-  }
-  // A grants object that yielded zero usable entries is an unexpected
-  // shape; skip rather than report an empty "available" payload that
-  // 3.2 could misread as "no grants, therefore nothing blocks".
-  if (count === 0) return null;
-  return normalized;
+  const fsObj =
+    parsed.filesystem && typeof parsed.filesystem === 'object' && !Array.isArray(parsed.filesystem)
+      ? parsed.filesystem
+      : null;
+  const netObj =
+    parsed.network && typeof parsed.network === 'object' && !Array.isArray(parsed.network)
+      ? parsed.network
+      : null;
+  const grpObj =
+    parsed.groups && typeof parsed.groups === 'object' && !Array.isArray(parsed.groups)
+      ? parsed.groups
+      : null;
+
+  // NONE of the three grant-bearing sections present → unusable shape;
+  // skip rather than fabricate an "available" payload.
+  if (!fsObj && !netObj && !grpObj) return null;
+
+  const filesystem = {
+    allow: fsObj ? stringArray(fsObj.allow) : [],
+    read: fsObj ? stringArray(fsObj.read) : [],
+    write: fsObj ? stringArray(fsObj.write) : [],
+    deny: fsObj ? stringArray(fsObj.deny) : [],
+  };
+
+  // `network` is null when absent (→ endpoint classification → unknown).
+  // When present, `block` defaults conservatively to false.
+  const network = netObj
+    ? {
+        block: typeof netObj.block === 'boolean' ? netObj.block : false,
+        allowDomain: stringArray(netObj.allow_domain),
+        openPort: numberArray(netObj.open_port),
+      }
+    : null;
+
+  const groups = {
+    include: grpObj ? stringArray(grpObj.include) : [],
+    exclude: grpObj ? stringArray(grpObj.exclude) : [],
+  };
+
+  return { filesystem, network, groups };
 }
 
 /**
@@ -949,36 +989,55 @@ function ingestProfileGrants(profileName, opts) {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Task 3.2 (Requirements 2.2, 2.3, 2.4): the Compatibility Assessor's
-// CLASSIFICATION layer.
+// Task 3.4 (Requirements 2.2, 2.3, 2.4): the Compatibility Assessor's
+// CLASSIFICATION layer, re-targeted to the VERIFIED real nono grant
+// model (paths→filesystem, endpoints→network, commands/ports/env→unknown).
 //
 // `assess(audit, profiles, opts)` classifies each observed capability
 // (from runAudit's UsageAudit) against the resolved grants of each
-// selected profile into a Finding:
+// selected profile into one Finding PER OBSERVED VALUE:
 //
 //   Finding = { profile, classification, capability,
 //               sessionContext?, missingCapability? }
 //   classification ∈ "compatible" | "warning" | "blocker" | "unknown"
 //
-// Invariants (mandatory):
-//   - UNMAPPABLE observation (no derivable sandbox capability class —
-//     e.g. an MCP tool exposing only a name/count, or an inference-only
-//     class like port/env) → `unknown`, NEVER `compatible` (R2.4).
-//   - Every observation maps to EXACTLY ONE classification (design
-//     postcondition); a multi-command bash record yields one finding per
-//     command, never zero.
-//   - For blockers/warnings: record `profile`, the observed `capability`
-//     (raw usage string), `sessionContext` when available, and
-//     `missingCapability` when available (R2.3).
-//   - If nono is unavailable for every profile → SKIP (no Findings, no
-//     fabricated compatible), distinct from classification. Reuses 3.1's
-//     ingest, so the live (absent-nono) host skips; classification is
-//     exercised in tests via INJECTED synthetic grants.
+// Classification rules (false-compatible AND false-blocker avoidance):
+//   - PATH (each record.paths[]): under an explicit `filesystem.deny`
+//     prefix → `blocker` (missingCapability `filesystem-path:<path>`);
+//     else under an explicit `filesystem.allow`/`read`/`write` prefix →
+//     `compatible`; else → `unknown` (may be covered by an UNEXPANDED
+//     group — `show` does not expand groups into paths — so NEVER
+//     compatible and NEVER a false blocker).
+//   - ENDPOINT (each record.endpoints[], reduced to its host): network
+//     absent → `unknown`; `block===false` + empty allowDomain →
+//     `compatible`; allowDomain non-empty → host ∈ allowDomain →
+//     `compatible` else `blocker`; `block===true` → host ∈ allowDomain →
+//     `compatible` else `blocker`.
+//   - COMMAND (each record.commands[]): `unknown` (nono grants govern
+//     fs/net, not per-command allowlists; the command's fs/net access is
+//     assessed via its derived paths/endpoints).
+//   - ports / envVars, and any record with NO derivable
+//     path/endpoint/command → `unknown`.
+//   - Prefix match: a path `P` matches grant prefix `G` iff `P === G` or
+//     `P` startsWith `G + "/"`. `$HOME`/`${HOME}`/`$TMPDIR`/`${TMPDIR}`
+//     tokens in grant prefixes are EXPANDED (via process.env) before
+//     matching; a prefix still carrying an unexpandable `$VAR`
+//     contributes `unknown` (it does not match).
+//
+// Safety invariants (mandatory): UNMAPPABLE → `unknown`, NEVER
+// `compatible` (R2.4); never a false `blocker` for a group-coverable
+// path (→ `unknown`). Every observation → EXACTLY ONE classification.
+// `missingCapability` ONLY on blockers. Every Finding carries `profile`
+// + the observed `capability`.
+//
+// If nono is unavailable for every profile → SKIP (no Findings, no
+// fabricated compatible), distinct from classification. Reuses 3.3's
+// ingest, so the live (absent-nono) host skips; classification is
+// exercised in tests via INJECTED real-shape grants.
 //
 // Redaction is NOT applied here. `Finding.capability` carries the RAW
 // usage string; redaction is the single serialization-time pass in task
-// 5.1 (consistent with the raw capability strings from 2.2). Do NOT call
-// redact() in this layer.
+// 5.1. Do NOT call redact() in this layer.
 //
 // Findings are emitted in a STABLE, deterministic order (classification
 // rank, then profile, then capability) so later determinism assertions
@@ -1015,146 +1074,175 @@ function commandProgram(command) {
 }
 
 /**
- * Classify a single external-command program against the grant.
+ * Expand `$HOME`/`${HOME}`/`$TMPDIR`/`${TMPDIR}` tokens in a grant prefix
+ * via `process.env`. Returns the expanded prefix, or null when a token is
+ * present but its env var is unset (an unexpandable prefix must NOT
+ * match — it contributes `unknown`, never a false compatible/blocker).
+ * A prefix carrying any OTHER `$VAR` we do not recognize is likewise
+ * treated as unexpandable (null) so we never match a half-resolved path.
  *
- * - allowlist: program in `allow` ⇒ compatible; else ⇒ blocker
- *   (missingCapability `external-command:<program>`).
- * - denylist: program in `deny` ⇒ blocker; else ⇒ compatible.
- * - any other / missing mode ⇒ unknown (the grant shape is unverified
- *   upstream; an unrecognized mode is not assumed permissive — R2.4).
+ * @param {string} prefix
+ * @returns {string|null}
+ */
+function expandGrantPrefix(prefix) {
+  if (typeof prefix !== 'string' || prefix.length === 0) return null;
+  let out = prefix;
+  const subs = [
+    [/\$\{HOME\}|\$HOME/g, process.env.HOME],
+    [/\$\{TMPDIR\}|\$TMPDIR/g, process.env.TMPDIR],
+  ];
+  for (const [pattern, value] of subs) {
+    if (pattern.test(out)) {
+      if (typeof value !== 'string' || value.length === 0) return null; // unexpandable
+      out = out.replace(pattern, value);
+    }
+  }
+  // Any remaining `$VAR` token is unexpandable → do not match.
+  if (/\$\{?[A-Za-z_]/.test(out)) return null;
+  // Strip trailing slashes so the prefix-boundary match below is exact
+  // (e.g. macOS `$TMPDIR` expands with a trailing slash).
+  out = out.replace(/\/+$/, '');
+  if (out.length === 0) return null;
+  return out;
+}
+
+/**
+ * True iff observed path `value` is at or under grant prefix `G`: either
+ * `value === G` or `value` startsWith `G + "/"`. Grant prefixes are
+ * token-expanded first; an unexpandable prefix never matches.
  *
- * @param {string} program
- * @param {{ mode: string|null, allow: string[], deny: string[] }|undefined} grant
+ * @param {string} value an observed absolute path
+ * @param {string[]} prefixes grant path prefixes (possibly $HOME/$TMPDIR)
+ * @returns {boolean}
+ */
+function pathUnderAnyPrefix(value, prefixes) {
+  for (const raw of prefixes) {
+    const g = expandGrantPrefix(raw);
+    if (g === null) continue; // unexpandable → does not match
+    if (value === g || value.startsWith(`${g}/`)) return true;
+  }
+  return false;
+}
+
+/**
+ * Classify one observed filesystem PATH against the real filesystem
+ * grant model. Deny precedence: under an explicit `deny` prefix →
+ * blocker; else under an explicit `allow`/`read`/`write` prefix →
+ * compatible; else → unknown (possibly group-covered — `show` does not
+ * expand groups — so NEVER a false compatible or blocker).
+ *
+ * @param {string} value observed path
+ * @param {{ allow: string[], read: string[], write: string[], deny: string[] }} filesystem
  * @returns {{ classification: string, missingCapability?: string }}
  */
-function classifyCommand(program, grant) {
-  if (!grant) {
-    // No external-command grant resolved → cannot confirm; unmappable to a
-    // known grant ⇒ unknown (never compatible).
-    return { classification: 'unknown' };
+function classifyPath(value, filesystem) {
+  if (pathUnderAnyPrefix(value, filesystem.deny)) {
+    return { classification: 'blocker', missingCapability: `filesystem-path:${value}` };
   }
-  if (grant.mode === 'allowlist') {
-    if (grant.allow.includes(program)) return { classification: 'compatible' };
-    return { classification: 'blocker', missingCapability: `external-command:${program}` };
-  }
-  if (grant.mode === 'denylist') {
-    if (grant.deny.includes(program)) {
-      return { classification: 'blocker', missingCapability: `external-command:${program}` };
-    }
-    return { classification: 'compatible' };
-  }
+  const allowed =
+    pathUnderAnyPrefix(value, filesystem.allow) ||
+    pathUnderAnyPrefix(value, filesystem.read) ||
+    pathUnderAnyPrefix(value, filesystem.write);
+  if (allowed) return { classification: 'compatible' };
   return { classification: 'unknown' };
 }
 
 /**
- * Classify a single value (a filesystem path or a network host/endpoint)
- * against a prefix-matched allow/deny grant. `klass` names the capability
- * class for the missingCapability string (`filesystem-path` /
- * `network-endpoint`).
+ * Reduce an observed endpoint to its host. A URL (`scheme://host/...`)
+ * yields its hostname; a bare host string is returned as-is. Returns
+ * null when no host can be derived (→ the endpoint is unmappable).
  *
- * - allowlist: a `allow` entry is a prefix of the value ⇒ compatible;
- *   none matches ⇒ blocker. An entry that matches only as an EXACT value
- *   (not a prefix segment) when others nearly match is treated normally —
- *   no special-casing; prefix containment is the rule.
- * - denylist: a `deny` entry is a prefix of the value (or `*` wildcard) ⇒
- *   blocker; none matches ⇒ compatible.
- * - any other / missing mode ⇒ unknown.
- *
- * @param {string} value
- * @param {string} klass capability class label
- * @param {{ mode: string|null, allow: string[], deny: string[] }|undefined} grant
- * @returns {{ classification: string, missingCapability?: string }}
+ * @param {string} endpoint
+ * @returns {string|null}
  */
-function classifyAgainstList(value, klass, grant) {
-  if (!grant) return { classification: 'unknown' };
-  const matchesAny = (list) =>
-    list.some((entry) => entry === '*' || (typeof entry === 'string' && value.startsWith(entry)));
-
-  if (grant.mode === 'allowlist') {
-    if (matchesAny(grant.allow)) return { classification: 'compatible' };
-    return { classification: 'blocker', missingCapability: `${klass}:${value}` };
-  }
-  if (grant.mode === 'denylist') {
-    if (matchesAny(grant.deny)) {
-      return { classification: 'blocker', missingCapability: `${klass}:${value}` };
+function endpointHost(endpoint) {
+  if (typeof endpoint !== 'string' || endpoint.length === 0) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(endpoint)) {
+    try {
+      const u = new URL(endpoint);
+      return u.hostname.length > 0 ? u.hostname : null;
+    } catch {
+      return null; // malformed URL → unmappable
     }
-    return { classification: 'compatible' };
   }
-  return { classification: 'unknown' };
+  return endpoint;
 }
 
 /**
- * Classify one CapabilityRecord against the resolved grants, producing
- * one or more Findings. Mapping rules:
+ * Classify one observed network ENDPOINT (reduced to its host) against
+ * the real network grant model:
+ *   - network absent (null) → unknown.
+ *   - block===false + empty allowDomain → compatible (open network).
+ *   - allowDomain non-empty → host ∈ allowDomain → compatible, else
+ *     blocker.
+ *   - block===true → host ∈ allowDomain → compatible, else blocker.
  *
- * - Each derived `command` → an `external-command` finding keyed on its
- *   program token, capability string `"<tool>:<command>"`.
- * - Each derived `path` → a `filesystem-path` finding, capability string
- *   `"<tool>:<path>"`.
- * - Each derived `endpoint` → a `network-endpoint` finding, capability
- *   string `"<tool>:<endpoint>"`.
- * - A record with NO derived command/path/endpoint (no mappable class —
- *   e.g. an MCP tool with only a name/count, or whose surface is the
- *   inference-only port/env classes) → exactly one `unknown` finding,
- *   capability string `"<tool>"`. UNMAPPABLE ⇒ unknown, never compatible
- *   (R2.4).
+ * @param {string} endpoint observed endpoint (URL or host)
+ * @param {{ block: boolean, allowDomain: string[], openPort: number[] }|null} network
+ * @returns {{ classification: string, missingCapability?: string }}
+ */
+function classifyEndpoint(endpoint, network) {
+  if (!network) return { classification: 'unknown' };
+  const host = endpointHost(endpoint);
+  if (host === null) return { classification: 'unknown' };
+
+  const allowed = network.allowDomain.includes(host);
+  if (network.block === false && network.allowDomain.length === 0) {
+    return { classification: 'compatible' };
+  }
+  if (allowed) return { classification: 'compatible' };
+  return { classification: 'blocker', missingCapability: `network-endpoint:${host}` };
+}
+
+/**
+ * Classify one CapabilityRecord against the resolved {@link ResolvedGrants},
+ * producing one Finding PER OBSERVED VALUE:
  *
- * WARNING trigger (documented, deterministic): a record that DID derive a
- * mappable class but whose extraction confidence is below `high` (i.e.
- * `medium`/`low`) is downgraded from `compatible` to `warning` — the
- * usage maps to a granted class but cannot be confirmed at high
- * confidence. A `blocker` or `unknown` outcome is NOT softened to a
- * warning (a low-confidence blocker is still actionable). This keeps the
- * trigger a one-directional, deterministic compatible→warning demotion.
+ * - Each `command` → `unknown` (nono governs fs/net, not per-command
+ *   allowlists), capability string `"<tool>:<command>"`.
+ * - Each `path` → {@link classifyPath}, capability `"<tool>:<path>"`.
+ * - Each `endpoint` → {@link classifyEndpoint}, capability
+ *   `"<tool>:<endpoint>"`.
+ * - A record with NO command/path/endpoint (e.g. an MCP tool with only a
+ *   name/count, or a port/env-only surface) → exactly one `unknown`
+ *   finding, capability `"<tool>"`. UNMAPPABLE ⇒ unknown (R2.4).
+ *
+ * `missingCapability` is set ONLY on blockers.
  *
  * @param {object} rec a CapabilityRecord
  * @param {string} profile
- * @param {object} grants normalized grants map
+ * @param {ResolvedGrants} grants
  * @returns {object[]} Finding[]
  */
 function classifyRecord(rec, profile, grants) {
   const findings = [];
-  const lowConfidence = rec.confidence !== 'high';
-  const sessionContext = undefined; // best-effort/optional; not derived in this layer
 
   const emit = (capability, outcome) => {
-    let classification = outcome.classification;
-    // compatible→warning demotion when confidence is not high.
-    if (classification === 'compatible' && lowConfidence) classification = 'warning';
     /** @type {object} */
-    const finding = { profile, classification, capability };
-    if (typeof sessionContext === 'string') finding.sessionContext = sessionContext;
-    if (typeof outcome.missingCapability === 'string') {
+    const finding = { profile, classification: outcome.classification, capability };
+    if (outcome.classification === 'blocker' && typeof outcome.missingCapability === 'string') {
       finding.missingCapability = outcome.missingCapability;
     }
     findings.push(finding);
   };
 
   for (const command of rec.commands) {
-    const program = commandProgram(command);
-    if (program === null) {
-      // A command with no derivable program token is unmappable → unknown.
-      emit(`${rec.tool}:${command}`, { classification: 'unknown' });
-      continue;
-    }
-    const outcome = classifyCommand(program, grants['external-command']);
-    emit(`${rec.tool}:${command}`, outcome);
+    // Commands are not classified against per-command allowlists in the
+    // real grant model → unknown (their fs/net access is assessed via the
+    // record's derived paths/endpoints).
+    emit(`${rec.tool}:${command}`, { classification: 'unknown' });
   }
 
   for (const p of rec.paths) {
-    const outcome = classifyAgainstList(p, 'filesystem-path', grants['filesystem-path']);
-    emit(`${rec.tool}:${p}`, outcome);
+    emit(`${rec.tool}:${p}`, classifyPath(p, grants.filesystem));
   }
 
   for (const endpoint of rec.endpoints) {
-    const outcome = classifyAgainstList(endpoint, 'network-endpoint', grants['network-endpoint']);
-    emit(`${rec.tool}:${endpoint}`, outcome);
+    emit(`${rec.tool}:${endpoint}`, classifyEndpoint(endpoint, grants.network));
   }
 
-  // No mappable class derived for this record → exactly one unknown
-  // finding (UNMAPPABLE ⇒ unknown, never compatible — R2.4). Note: the
-  // inference-only port/env classes are never populated by 2.2, so a tool
-  // whose only surface is those falls here.
+  // No derivable path/endpoint/command (ports/env-only or name/count-only
+  // record) → exactly one unknown finding (UNMAPPABLE ⇒ unknown — R2.4).
   const mappable = rec.commands.length > 0 || rec.paths.length > 0 || rec.endpoints.length > 0;
   if (!mappable) {
     emit(`${rec.tool}`, { classification: 'unknown' });
@@ -1184,12 +1272,12 @@ function compareFindings(a, b) {
 
 /**
  * assess — classify a UsageAudit's observed capabilities against the
- * resolved grants of each selected profile (Task 3.2, Requirements 2.2,
+ * resolved grants of each selected profile (Task 3.4, Requirements 2.2,
  * 2.3, 2.4). See the section header for the full contract.
  *
  * Grant resolution per profile reuses {@link ingestProfileGrants}'s
  * injection seam: `opts.grantsByProfile[<profile>]` supplies grant JSON
- * text directly (tests classify against the synthetic fixture WITHOUT
+ * text directly (tests classify against a real-shape fixture WITHOUT
  * nono); otherwise the live `nono profile show --json` shell-out runs
  * (absent on this host → skip). `opts.nonoBin` overrides the binary.
  *

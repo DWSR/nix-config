@@ -73,6 +73,21 @@
   - _Boundary: Compatibility Assessor_
   - _Depends: 3.1_
 
+- [x] 3.3 Re-target grant ingestion to the verified nono resolved-profile shape
+  - Replace the synthetic `{grants:{class:{mode,allow,deny}}}` parser with one for the real `profile show --json` shape (top-level `filesystem`/`network`/`groups`/`workdir`/`security`); the shell-out already passes `--silent`
+  - Use the captured real fixture `nono-profile-show-node-dev-0.61.1.json` + a hand-authored real-shape managed-profile fixture for branch coverage; remove the obsolete `.synthetic.json`
+  - Observable completion: the real-shape fixtures parse into normalized grants (filesystem allow/read/write/deny, network block/allow_domain/open_port, groups.include); a payload lacking those → skipped, never a fabricated `available`
+  - _Requirements: 2.1_
+  - _Boundary: Compatibility Assessor_
+  - _Depends: 3.1, 3.2_
+
+- [x] 3.4 Rework classification against filesystem/network/group grants
+  - Map observed paths → `filesystem.allow`/`read`/`write`/`deny` (prefix); endpoints → `network.block`/`allow_domain`; commands, ports, env → `unknown`; group-only paths → `unknown` (avoid false compatible AND false blocker)
+  - Observable completion: classification over a real-shape fixture yields a compatible (explicit allow), a blocker (explicit deny or non-allowed domain) carrying `missingCapability`, and an unknown (group-only path / bare command), and never classifies an unmappable observation compatible
+  - _Requirements: 2.2, 2.3, 2.4_
+  - _Boundary: Compatibility Assessor_
+  - _Depends: 3.3_
+
 - [ ] 4. Core: common tool-use replacement review
 - [x] 4.1 (P) Rank tool-use and seed replacement candidates
   - Rank by `count × capabilityRisk` using a static capability-risk map with a deterministic tie-break
@@ -143,3 +158,4 @@
 - 1.1: `nono` is unavailable on this host; the Phase 0 fixture records the skip path, OpenCode structured `part.data.state.input` is authoritative for command/path/URL extraction, and cavemem is low-confidence secondary context only.
 - 2.2: `CapabilityRecord` typed contract has no `output` field (design prose mentions output, but the type is authoritative); capabilities are sorted by tool name for determinism; the structurally-unobservable classes are `["device","env-var","ipc","port","process-signal","unix-socket"]`.
 - 2.3: `redact()` masks ONLY the four design classes (URL creds, KEY=VALUE env, known token shapes, secret query params). A generic high-entropy-blob rule was rejected because it mangles legitimate paths/URLs/git-SHAs/nix-store-paths — do NOT reintroduce one when wiring redaction into serialization (5.1). A bare context-free opaque blob is intentionally NOT masked.
+- 3.1/3.2 SUPERSEDED by 3.3/3.4: the real `nono profile show --json` shape (verified on 0.61.1, Phase 0 in `../opencode-nono-sandbox/research.md`) has NO top-level `grants{class:{mode,allow,deny}}` map — it is `{filesystem{allow,read,write,deny},network{block,allow_domain,open_port},groups{include},workdir,security}`. Group-derived paths are NOT expanded by `show`. Re-target parseGrants + classification to paths→filesystem, endpoints→network, commands/ports/env→unknown, group-only paths→unknown. The shipped 3.1/3.2 code safely SKIPS against real output (no `grants` key → "unparseable grants"), so this is incomplete-not-wrong; `--silent` already added (commit dd6e241).

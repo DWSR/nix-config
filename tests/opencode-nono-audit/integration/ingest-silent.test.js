@@ -34,8 +34,10 @@ const { ingestProfileGrants } = require('../../../scripts/opencode-nono-audit.js
 //                          JSON, so the combined stdout is NOT valid JSON.
 function writeFakeNono(dir) {
   const bin = path.join(dir, 'nono');
+  // Real `nono profile show --json` shape (verified 0.61.1): top-level
+  // filesystem/network/groups, NO `grants` map.
   const json =
-    '{"grants":{"external-command":{"mode":"allowlist","allow":["git"]}}}';
+    '{"name":"opencode-managed","filesystem":{"allow":["/srv/app"],"read":[],"write":[],"deny":[]},"network":{"block":false,"allow_domain":[],"open_port":[]},"groups":{"include":["node_runtime"],"exclude":[]}}';
   const script = [
     '#!/usr/bin/env bash',
     'for a in "$@"; do',
@@ -56,13 +58,14 @@ test('ingestProfileGrants passes --silent so nono stdout is machine-clean JSON (
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nono-silent-'));
   try {
     const fakeNono = writeFakeNono(dir);
-    const result = ingestProfileGrants('opencode', { nonoBin: fakeNono });
+    const result = ingestProfileGrants('opencode-managed', { nonoBin: fakeNono });
     // With --silent passed, the fake emits ONLY JSON → parse succeeds →
     // 'available'. Without --silent (regression), the fake prepends a
     // banner line to stdout → JSON.parse fails → 'skipped'.
     assert.equal(result.assessment, 'available');
-    assert.ok(result.grants && result.grants['external-command']);
-    assert.deepEqual(result.grants['external-command'].allow, ['git']);
+    assert.ok(result.grants && result.grants.filesystem, 'real-shape filesystem section parsed');
+    assert.deepEqual(result.grants.filesystem.allow, ['/srv/app']);
+    assert.deepEqual(result.grants.groups.include, ['node_runtime']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

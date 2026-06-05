@@ -1,0 +1,63 @@
+{
+  "name": "node-dev",
+  "description": "Node.js SDK development profile with nvm, fnm, pnpm, and npm support",
+  "extends": [
+    "default"
+  ],
+  "security": {
+    "signal_mode": "isolated",
+    "capability_elevation": null
+  },
+  "filesystem": {
+    "allow": [],
+    "read": [],
+    "write": [],
+    "allow_file": [],
+    "read_file": [],
+    "write_file": [],
+    "deny": [],
+    "bypass_protection": [],
+    "suppress_save_prompt": []
+  },
+  "groups": {
+    "include": [
+      "deny_credentials",
+      "deny_keychains_macos",
+      "deny_keychains_linux",
+      "deny_browser_data_macos",
+      "deny_browser_data_linux",
+      "deny_macos_private",
+      "deny_shell_history",
+      "deny_shell_configs",
+      "system_read_macos",
+      "system_read_linux_core",
+      "system_write_macos",
+      "system_write_linux",
+      "user_tools",
+      "homebrew_macos",
+      "homebrew_linux",
+      "dangerous_commands",
+      "dangerous_commands_macos",
+      "dangerous_commands_linux",
+      "node_runtime"
+    ],
+    "exclude": []
+  },
+  "network": {
+    "block": false,
+    "network_profile": "developer",
+    "allow_domain": [],
+    "credentials": [],
+    "open_port": [],
+    "listen_port": [],
+    "upstream_proxy": null,
+    "upstream_bypass": []
+  },
+  "workdir": {
+    "access": "readwrite"
+  },
+  "rollback": {
+    "exclude_patterns": [],
+    "exclude_globs": []
+  }
+}

@@ -41,9 +41,11 @@ const {
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const SESSION_DB = path.join(FIXTURES_DIR, 'opencode-nono-session.db');
 const DRIFT_DB = path.join(FIXTURES_DIR, 'opencode-nono-drift.db');
-const SYNTHETIC_GRANTS = path.join(
+// Real-shape managed grants (task 3.3/3.4): the synthetic shape was
+// removed; the Reporter just needs a non-skipped assessment to render.
+const MANAGED_GRANTS = path.join(
   FIXTURES_DIR,
-  'nono-profile-show-opencode.synthetic.json',
+  'nono-profile-show-managed.realshape.json',
 );
 const METADATA_FIXTURE = path.join(FIXTURES_DIR, 'sandbox-metadata.json');
 
@@ -83,9 +85,9 @@ function buildReview(audit) {
 /** Assemble the standard inputs (audit/assessment/review) over a DB. */
 function buildInputs(dbPath) {
   const audit = runAudit({ sessionDbPath: dbPath }).value;
-  const grantsJson = fs.readFileSync(SYNTHETIC_GRANTS, 'utf8');
-  const assessment = assess(audit, ['opencode'], {
-    grantsByProfile: { opencode: grantsJson },
+  const grantsJson = fs.readFileSync(MANAGED_GRANTS, 'utf8');
+  const assessment = assess(audit, ['opencode-managed'], {
+    grantsByProfile: { 'opencode-managed': grantsJson },
   }).value;
   const review = buildReview(audit);
   return { audit, assessment, review };
