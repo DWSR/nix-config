@@ -11,6 +11,62 @@
       default = pkgs.opencode-pinned;
       description = "Base opencode package. Wrapped with the commands in `wrapperCommands` automatically.";
     };
+    basePackage = lib.mkOption {
+      type = lib.types.package;
+      readOnly = true;
+      internal = true;
+      default = config.home.opencode.package;
+      description = ''
+        Read-only alias for the UNWRAPPED opencode package (= `package`).
+        The launcher seam (`opencode-nono`) and the login prewarm launchd
+        agent reference this so they bypass the preflight/wrapper. Kept
+        equal to `home.opencode.package` so the flake's turn-timestamp
+        host check (flake.nix) keeps resolving the pinned base here.
+      '';
+    };
+    preflightScript = lib.mkOption {
+      type = lib.types.lines;
+      readOnly = true;
+      internal = true;
+      default = lib.concatStringsSep "\n" config.home.opencode.wrapperCommands;
+      description = ''
+        Read-only joined `wrapperCommands` block. Exposed so the
+        `opencode-nono` launcher can run the same preflight host-side
+        (outside the sandbox) instead of inside the wrapper's `--run`.
+      '';
+    };
+    lspPath = lib.mkOption {
+      type = lib.types.str;
+      readOnly = true;
+      internal = true;
+      default = lib.makeBinPath config.home.opencode.lspPackages;
+      description = ''
+        Read-only `makeBinPath` of `lspPackages`. The same PATH fragment
+        the wrapper suffixes today; exposed so the launcher can suffix it
+        onto PATH host-side with identical ordering.
+      '';
+    };
+    finalPackage = lib.mkOption {
+      type = lib.types.package;
+      default = pkgs.symlinkJoin {
+        name = "opencode-wrapped";
+        paths = [ config.home.opencode.package ];
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postBuild = ''
+          wrapProgram $out/bin/opencode \
+            --suffix PATH : ${config.home.opencode.lspPath} \
+            --run ${lib.escapeShellArg config.home.opencode.preflightScript}
+        '';
+      };
+      description = ''
+        The package wired into `programs.opencode.package`. Default is
+        today's preflight-INSIDE `symlinkJoin`+`wrapProgram` wrapper, so
+        with no override runtime behavior is unchanged. The `opencode-nono`
+        module overrides this with its outer preflight launcher. Default
+        depends only on `package`/`lspPath`/`preflightScript` — never on
+        itself — so there is no circular reference.
+      '';
+    };
     wrapperCommands = lib.mkOption {
       type = lib.types.listOf lib.types.lines;
       default = [ ];
@@ -196,16 +252,10 @@
 
     programs.opencode = {
       enable = true;
-      package = pkgs.symlinkJoin {
-        name = "opencode-wrapped";
-        paths = [ config.home.opencode.package ];
-        nativeBuildInputs = [ pkgs.makeWrapper ];
-        postBuild = ''
-          wrapProgram $out/bin/opencode \
-            --suffix PATH : ${lib.makeBinPath config.home.opencode.lspPackages} \
-            --run ${lib.escapeShellArg (lib.concatStringsSep "\n" config.home.opencode.wrapperCommands)}
-        '';
-      };
+      # Resolves to the launcher seam's `finalPackage`. Default is today's
+      # preflight-inside wrapper; `opencode-nono` overrides `finalPackage`
+      # with the outer launcher. See `home.opencode.finalPackage` above.
+      package = config.home.opencode.finalPackage;
       # AGENTS.md is composed from two vendored chunks:
       #   1. ./agents.md            — Obsidian memory system + commit conventions
       #   2. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
@@ -297,7 +347,7 @@
       config = {
         Label = "io.opencode.prewarm";
         ProgramArguments = [
-          "${config.home.opencode.package}/bin/opencode"
+          "${config.home.opencode.basePackage}/bin/opencode"
           "--version"
         ];
         RunAtLoad = true;

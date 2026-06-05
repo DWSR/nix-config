@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Preflight launcher seam + disabled-path equivalence gate (opencode.nix)
-- [ ] 1.1 Refactor opencode.nix to expose the launcher seam
+- [x] 1.1 Refactor opencode.nix to expose the launcher seam
   - Expose read-only `basePackage` (unwrapped package), `preflightScript` (joined wrapperCommands), `lspPath` (makeBinPath lspPackages); add a `finalPackage` option defaulting to today's symlinkJoin+wrapProgram (preflight-inside) wrapper; set `programs.opencode.package = finalPackage`; keep the prewarm launchd agent on the unwrapped `basePackage`
   - Observable: both darwin hosts evaluate and `opencode --version` works via the rebuilt wrapper resolving to the `finalPackage` default
   - _Requirements: 1.2, 1.3, 5.1, 5.2_
