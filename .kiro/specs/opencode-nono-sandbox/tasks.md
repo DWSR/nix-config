@@ -5,7 +5,7 @@
   - Expose read-only `basePackage` (unwrapped package), `preflightScript` (joined wrapperCommands), `lspPath` (makeBinPath lspPackages); add a `finalPackage` option defaulting to today's symlinkJoin+wrapProgram (preflight-inside) wrapper; set `programs.opencode.package = finalPackage`; keep the prewarm launchd agent on the unwrapped `basePackage`
   - Observable: both darwin hosts evaluate and `opencode --version` works via the rebuilt wrapper resolving to the `finalPackage` default
   - _Requirements: 1.2, 1.3, 5.1, 5.2_
-- [ ] 1.2 Disabled byte-identical equivalence gate + flake check
+- [x] 1.2 Disabled byte-identical equivalence gate + flake check
   - Add a both-host host-eval check, registered in flake.nix so it runs under `nix flake check`, asserting the module-disabled `finalPackage` store path is byte-identical to today's `programs.opencode.package` on ShopifyLaptop and Brandons-MacBook-Pro
   - Observable: the check is wired into flake.nix and passes on both hosts; deliberately perturbing the wrapper fails it
   - _Requirements: 1.3_
@@ -129,3 +129,8 @@
   - Observable: the check is wired into flake.nix and passes, proving the v1 launch path preserves preflight and LSP PATH suffix ordering
   - _Depends: 4.1, 4.4, 6.1_
   - _Requirements: 1.3, 5.1, 5.3_
+
+## Implementation Notes
+- 1.1: seam exposed on `home.opencode` as read-only `basePackage`/`preflightScript`/`lspPath` + overridable `finalPackage` (default = today's `opencode-wrapped` symlinkJoin). `programs.opencode.package = finalPackage`; prewarm uses `basePackage`. Both-host `programs.opencode.package.outPath` byte-identical before/after.
+- 1.2: `opencode-nono-disabled-equiv` check is lexically defined inside the `nixvimTests` let-binding in flake.nix (functional + top-level in `checks.aarch64-darwin`, but coupled). Tasks 5.3 / 7.1 / 7.4 add more flake checks — define `opencode-nono-*` checks in their own binding/scope (not nested in `nixvimTests`), and consider relocating this one then.
+- flake.nix host-eval checks mirror `opencodeTurnTimestampHostReport` (flake.nix:222-246): iterate `[ "ShopifyLaptop" "Brandons-MacBook-Pro" ]`, `assertMsg` over `builtins.unsafeDiscardStringContext "${pkg}"`; gate on `system == "aarch64-darwin"`. Node-test checks mirror `opencode-nono-audit-tests` (flake.nix:360-380): `runCommand` + `node --test tests/<dir>/`. Pre-commit hooks (nixfmt-rfc-style/statix/deadnix/no-hardcoded-/Users/) run on commit.

@@ -245,6 +245,40 @@
               "${hostName}: home.opencode.package=${actualPackagePath}; programs.opencode.package=${wrappedPackagePath}"
             ) opencodeTurnTimestampHosts;
 
+          # Disabled-path equivalence gate (opencode-nono-sandbox spec, task
+          # 1.2 / requirement 1.3; design "Preflight Launcher Seam →
+          # Implementation Notes" and "Testing Strategy → Unit Tests"
+          # disabled-path equivalence bullet). With the opencode-nono module
+          # absent/disabled, `programs.opencode.package` is exactly the seam's
+          # default wrapper. Assert the STRUCTURAL invariant rather than a
+          # version-specific store hash (which would break on an opencode
+          # bump): the wired package is a `symlinkJoin` named
+          # `opencode-wrapped` whose single wrapped path is the unwrapped
+          # `home.opencode.basePackage`, and `basePackage` resolves to
+          # `pkgs.opencode-pinned`. Perturbing the wrapper (rename, extra
+          # path, divergent base) fails the per-host assertMsg.
+          opencodeNonoDisabledEquivReport =
+            let
+              expectedBasePath = builtins.unsafeDiscardStringContext "${pkgs.opencode-pinned}";
+            in
+            pkgs.lib.concatMapStringsSep "\n" (
+              hostName:
+              let
+                hmConfig = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                finalPackage = hmConfig.programs.opencode.package;
+                finalName = finalPackage.name or "";
+                basePath = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.basePackage}";
+                wrappedPaths = map (pkg: builtins.unsafeDiscardStringContext "${pkg}") (finalPackage.paths or [ ]);
+              in
+              assert pkgs.lib.assertMsg (finalName == "opencode-wrapped")
+                "opencode-nono disabled-equiv name mismatch for ${hostName}: expected programs.opencode.package.name == \"opencode-wrapped\" (the canonical disabled wrapper), got \"${finalName}\"";
+              assert pkgs.lib.assertMsg (wrappedPaths == [ basePath ])
+                "opencode-nono disabled-equiv wrapped-paths mismatch for ${hostName}: expected programs.opencode.package.paths == [ home.opencode.basePackage (${basePath}) ], got [ ${pkgs.lib.concatStringsSep ", " wrappedPaths} ]";
+              assert pkgs.lib.assertMsg (basePath == expectedBasePath)
+                "opencode-nono disabled-equiv base mismatch for ${hostName}: expected home.opencode.basePackage to resolve to pkgs.opencode-pinned (${expectedBasePath}), got ${basePath}";
+              "${hostName}: programs.opencode.package=opencode-wrapped; paths=[ ${basePath} ]; basePackage==opencode-pinned"
+            ) opencodeTurnTimestampHosts;
+
           # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
           nixvimTests =
             if system == "aarch64-darwin" then
@@ -254,6 +288,19 @@
                 testDir = ./home-manager/nixvim/tests;
               in
               {
+                # Byte-identical disabled-path equivalence gate (both hosts).
+                # Forces the per-host assertions above; the build only
+                # succeeds when every host's disabled wrapper matches the
+                # canonical `opencode-wrapped` structure.
+                opencode-nono-disabled-equiv =
+                  pkgs.runCommand "opencode-nono-disabled-equiv"
+                    {
+                      hostReport = opencodeNonoDisabledEquivReport;
+                    }
+                    ''
+                      printf '%s\n' "$hostReport" > $out
+                    '';
+
                 # Tier 1: Smoke test — does nvim start without errors?
                 nixvim-smoke = hmConfig.programs.nixvim.build.test;
 
