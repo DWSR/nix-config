@@ -703,3 +703,92 @@ the `custom-packages` overlay; all commands read-only.
 - **Version policy (R7)**: overlay pins 0.61.1 (commit 307e20f); the design
   targets 0.61.1. A nono version bump is a profile-schema revalidation trigger
   (R7.5).
+
+---
+
+# Task 2.1 — on-host 0.61.1 group + resolved-show verification (EXECUTED 2026-06-05)
+
+Closes the design's "Phase 0 Verification & Remaining Gates" group-existence
+gate. The prior 0.61.1 section captured schema/profile-set facts but did NOT
+confirm the four catalog groups exist or capture the resolved-show key shape;
+this section adds both. All commands read-only/non-destructive (introspection +
+a scratch `profile validate` in a temp dir, deleted after). No host config
+switched.
+
+## Build + version
+- Build: `nix build --no-link --print-out-paths .#darwinConfigurations.ShopifyLaptop.pkgs.nono`
+  → `/nix/store/b7pmiz6xaz3lgdq9k5l0ibvib2q8ybp0-nono-0.61.1` (cached, instant).
+- `<store>/bin/nono --version` → `nono 0.61.1`. Confirmed.
+
+## Built-in profiles (no opencode, default present)
+`nono profile list --silent` → 9 built-ins: `default`, `go-dev`, `java-dev`,
+`linux-host-compat`, `node-dev`, `openclaw`, `python-dev`, `rust-dev`, `swival`.
+No `opencode`/`codex`/`claude-code` (`profile show opencode` → "Profile not
+found"). `default` exists. Confirms the `extends ["default"]` + reconstruct
+strategy is the only valid path on 0.61.1.
+
+## Group existence (the catalog's groups.include) — verified two ways
+0.61.1 exposes a first-class `nono profile groups` subcommand (24 groups total),
+so existence is confirmed directly, then cross-validated with a scratch profile.
+
+| Group | EXISTS | Verification |
+|-------|--------|--------------|
+| `node_runtime` | YES | `nono profile groups node_runtime --silent` |
+| `git_config` | YES | `nono profile groups git_config --silent` |
+| `nix_runtime` | YES | `nono profile groups nix_runtime --silent` |
+| `user_caches_macos` | YES | `nono profile groups user_caches_macos --silent` |
+
+`nix_runtime` `/nix/store` coverage: its `allow.read` list includes `/nix/store`
+(plus `/run/current-system/sw`, `/etc/profiles/per-user`, `/nix/var/nix/profiles`,
+`~/.nix-profile`, `~/.local/state/nix/{profile,profiles,defexpr}`,
+`~/.nix-defexpr`). So `extends default` + `groups.include = [nix_runtime, …]`
+grants `/nix/store` read, consistent with Phase 0 Check 1 (`/nix/store`
+read+exec under the default profile). CONFIRMED.
+
+Cross-validation (proves group-existence checks are real — the RED analogue for
+a verification task): a scratch profile `extends ["default"]` with
+`groups.include = [nix_runtime, node_runtime, git_config, user_caches_macos]`
+→ `nono profile validate` = `valid` ("All 22 group references valid" = 18
+default + 4 included). A scratch profile including
+`this_group_does_not_exist_xyz` → `invalid (1 error)`, rc=1,
+"Group 'this_group_does_not_exist_xyz' not found in policy.json". An absent
+group would have failed validation identically; all four passed.
+
+## Resolved `profile show default --json --silent` key shape (audit/4.2 contract)
+Banner/summary/status go to stderr; stdout is clean JSON (first stdout char is
+`{`). Pair `--json` with `--silent` for cross-version-stable machine output.
+
+Top-level keys (0.61.1): `name`, `description`, `extends[]`, `security{}`,
+`filesystem{}`, `groups{}`, `network{}`, `workdir{}`, `rollback{}`.
+
+NOTE — diverges from the 0.43.1 resolved shape recorded in the Phase 0 section:
+0.43.1 had `security{groups[],allowed_commands[],signal_mode,process_info_mode,
+ipc_mode,capability_elevation,wsl2_proxy_policy}` and a top-level `policy{}`;
+0.61.1 instead exposes group selection at top-level `groups{include[],exclude[]}`
+and slims `security` to `{signal_mode, capability_elevation}`. Task 4.2's
+grant-check parser MUST target the 0.61.1 keys below, not the 0.43.1 ones.
+
+Sub-shapes (resolved `default`):
+- `groups`: `{ include: [str], exclude: [str] }`. Resolved `default`
+  `groups.include` = the 18 default deny/system/dangerous groups
+  (`deny_credentials`, `deny_keychains_macos`, …, `dangerous_commands*`).
+- `network`: `{ block: bool, network_profile: str|null, allow_domain: [str],
+  credentials: [str], open_port: [int], listen_port: [int],
+  upstream_proxy: str|null, upstream_bypass: [str] }`. `default`:
+  `block=false`, all lists empty.
+- `filesystem`: `{ allow: [str], read: [str], write: [str], allow_file: [str],
+  read_file: [str], write_file: [str], deny: [str], bypass_protection: [str],
+  suppress_save_prompt: [str] }`. `default`: all empty (grants come via groups).
+- `workdir`: `{ access: str }` (`none`|`read`|`write`|`readwrite`). `default`:
+  `none`.
+- `security`: `{ signal_mode: str, capability_elevation: str|null }`. `default`:
+  `signal_mode="isolated"`, `capability_elevation=null`.
+- `rollback`: `{ exclude_patterns: [str], exclude_globs: [str] }`.
+
+## Verdict
+**GO.** All four catalog groups (`node_runtime`, `git_config`, `nix_runtime`,
+`user_caches_macos`) exist on 0.61.1; `nix_runtime` supplies `/nix/store`. The
+resolved-show shape is captured for task 4.2's parser (top-level `groups`, not
+`policy`/`security.groups`). The catalog (3.2) may author
+`groups.include = [node_runtime, git_config, nix_runtime, user_caches_macos]`
+with `extends ["default"]` as designed. No return-to-design needed.
