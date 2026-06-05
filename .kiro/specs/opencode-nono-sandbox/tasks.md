@@ -24,7 +24,7 @@
   - _Boundary: on-host nono introspection_
 
 - [ ] 3. opencode-nono module: options, profile catalog, metadata and guide
-- [ ] 3.1 Module options, package, rollout controls, peer assertion
+- [x] 3.1 Module options, package, rollout controls, peer assertion
   - Define `programs.opencode-nono` with enable, package (default `pkgs.nono` 0.61.1 from the existing overlay, operator-overridable), `defaultState` (disabled/audit/enforced) plus profile-selection options, and an assertion requiring `programs.opencode.enable`
   - Observable: options evaluate on both hosts; the peer assertion fails with a named message when `programs.opencode.enable` is false
   - _Requirements: 1.1, 3.1, 7.1, 7.2, 7.3_
