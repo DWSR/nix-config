@@ -306,6 +306,43 @@
               "${hostName}: programs.opencode.package=opencode-wrapped; paths=[ ${basePath} ]; basePackage==opencode-pinned"
             ) opencodeTurnTimestampHosts;
 
+          # Enabled-disabled launch-path equivalence gate (opencode-nono-sandbox
+          # spec, task 7.4; requirements 1.3, 5.1, 5.3; design "Testing Strategy
+          # → Enabled-disabled launch path"). Distinct from the 1.2 disabled-
+          # equiv gate above, which tests the module-DISABLED variant. THIS gate
+          # tests the LIVE ENABLED config (v1: module enabled, defaultState =
+          # disabled), where `programs.opencode.package` is the `opencode`
+          # LAUNCHER (a writeShellApplication, not a symlinkJoin). It asserts the
+          # launcher's embedded script preserves the v1 launch contract:
+          #   - runs the host preflight host-side (R5.1) — the launcher embeds
+          #     `home.opencode.preflightScript` (joined wrapperCommands); the
+          #     OPENCODE_EXPERIMENTAL_LSP_TOOL + mcpproxy markers are common to
+          #     both hosts and only originate from that embedded preflight.
+          #   - suffixes `lspPath` onto PATH with SUFFIX ordering
+          #     `export PATH="$PATH:<lspPath>"` (R5.3) — the PREFIX form
+          #     `export PATH="<lspPath>:$PATH"` MUST be absent so project-local
+          #     bins keep winning.
+          #   - references the bare pinned `${basePackage}/bin/opencode`
+          #     (the disabled-branch exec target; R1.3).
+          # A Nix-level assertMsg per host enforces the ENABLED topology (the
+          # package is named "opencode", not "opencode-wrapped"); the wrong
+          # topology fails at eval before the build runs.
+          opencodeNonoLaunchEquivHosts = map (
+            hostName:
+            let
+              hmConfig = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+              launcher = hmConfig.programs.opencode.package;
+              launcherName = launcher.name or "";
+            in
+            assert pkgs.lib.assertMsg (launcherName == "opencode")
+              "opencode-nono launch-equiv topology mismatch for ${hostName}: expected the ENABLED launcher programs.opencode.package.name == \"opencode\", got \"${launcherName}\". The v1 config must ship the opencode-nono module enabled with defaultState=disabled.";
+            {
+              inherit hostName launcher;
+              inherit (hmConfig.home.opencode) lspPath;
+              basePackage = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.basePackage}";
+            }
+          ) opencodeTurnTimestampHosts;
+
           # Nixvim tests (only available on aarch64-darwin where darwin configs exist)
           nixvimTests =
             if system == "aarch64-darwin" then
@@ -327,6 +364,51 @@
                     ''
                       printf '%s\n' "$hostReport" > $out
                     '';
+
+                # Enabled launch-path equivalence gate (task 7.4). Inspects each
+                # host's live ENABLED launcher script and asserts the v1 launch
+                # contract: preflight preserved (R5.1), LSP PATH suffix ordering
+                # (R5.3), and the bare-opencode disabled-branch exec target
+                # (R1.3). See `opencodeNonoLaunchEquivHosts` above for the
+                # per-host eval-time topology assertion.
+                opencode-nono-launch-equiv = pkgs.runCommand "opencode-nono-launch-equiv" { } (
+                  pkgs.lib.concatMapStringsSep "\n" (host: ''
+                    launcher_bin="${host.launcher}/bin/opencode"
+                    echo "checking ${host.hostName}: $launcher_bin"
+
+                    # R5.3: LSP PATH fragment is SUFFIXED (project-local bins win).
+                    if ! grep -qF 'export PATH="$PATH:${host.lspPath}"' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher missing LSP PATH suffix 'export PATH=\"\$PATH:${host.lspPath}\"' (R5.3)." >&2
+                      exit 1
+                    fi
+                    # R5.3: the PREFIX form must be ABSENT — prepending would
+                    # let pinned LSP bins shadow project-local ones.
+                    if grep -qF 'export PATH="${host.lspPath}:$PATH"' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher uses PREFIX PATH ordering 'export PATH=\"${host.lspPath}:\$PATH\"'; expected suffix (R5.3)." >&2
+                      exit 1
+                    fi
+
+                    # R1.3: the disabled branch execs the bare pinned opencode.
+                    if ! grep -qF '${host.basePackage}/bin/opencode' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher does not reference the bare disabled-branch exec target '${host.basePackage}/bin/opencode' (R1.3)." >&2
+                      exit 1
+                    fi
+
+                    # R5.1: host preflight is preserved (run host-side). These
+                    # two markers come only from the embedded preflightScript
+                    # (joined wrapperCommands) and are present on both hosts.
+                    if ! grep -qF 'OPENCODE_EXPERIMENTAL_LSP_TOOL' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher missing preflight marker OPENCODE_EXPERIMENTAL_LSP_TOOL (R5.1)." >&2
+                      exit 1
+                    fi
+                    if ! grep -qF 'mcpproxy' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher missing preflight marker 'mcpproxy' (R5.1)." >&2
+                      exit 1
+                    fi
+
+                    printf '%s: launch path preserves preflight + LSP PATH suffix ordering + bare disabled exec\n' "${host.hostName}" >> "$out"
+                  '') opencodeNonoLaunchEquivHosts
+                );
 
                 # Tier 1: Smoke test — does nvim start without errors?
                 nixvim-smoke = hmConfig.programs.nixvim.build.test;

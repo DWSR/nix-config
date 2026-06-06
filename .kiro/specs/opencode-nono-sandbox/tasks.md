@@ -124,7 +124,7 @@
   - _Depends: 7.1, 5.1_
   - _Boundary: tests/opencode-nono_
   - _Requirements: 6.2_
-- [ ] 7.4 Enabled-disabled launch-path equivalence gate + flake check
+- [x] 7.4 Enabled-disabled launch-path equivalence gate + flake check
   - Host-eval check registered in flake.nix: with the module enabled and `defaultState=disabled` (the v1 config), the launcher runs the preflight host-side and execs bare opencode with `lspPath` suffixed onto PATH; assert this path preserves the preflight set and LSP PATH suffix ordering rather than relying on the module-disabled fallback
   - Observable: the check is wired into flake.nix and passes, proving the v1 launch path preserves preflight and LSP PATH suffix ordering
   - _Depends: 4.1, 4.4, 6.1_
