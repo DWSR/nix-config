@@ -29,6 +29,7 @@
 */
 {
   writeShellApplication,
+  jq,
   basePackage,
   preflightScript,
   lspPath,
@@ -40,6 +41,7 @@
 
 writeShellApplication {
   name = "opencode";
+  runtimeInputs = [ jq ];
   text = ''
     # ----------------------------------------------------------------------
     # 1. Preflight, host-side (outside any sandbox).
@@ -158,12 +160,35 @@ writeShellApplication {
     fi
 
     # --- SEAM: task 4.2 (pre-launch grant check) -------------------------
-    # Before the audit/enforced exec, task 4.2 will resolve
-    #   nono profile show "$opencode_nono_profile_effective" --json --silent
-    # and assert the resolved grants admit the required access (loopback
-    # `open_port 8080` for mcpproxy and provider network access). A missing
-    # required grant must exit 1 naming the grant (R4.4) rather than launch a
-    # broken opencode. Do NOT implement here.
+    # Resolve the selected profile (audit/enforced only) and assert the grants
+    # admit the required access before exec (R4.4). `nono profile show` resolves
+    # an EXISTING rendered profile by name and emits clean JSON on stdout
+    # (--silent keeps the banner on stderr). A grant check that cannot read the
+    # profile fails closed rather than launching a broken opencode.
+    opencode_nono_profile_json="$("$opencode_nono_bin" profile show "$opencode_nono_profile_effective" --json --silent)" || {
+      echo "ERROR: failed to resolve nono profile '$opencode_nono_profile_effective' for the pre-launch grant check." >&2
+      echo "Refusing to launch OpenCode: cannot verify the selected profile grants required access (R4.4)." >&2
+      exit 1
+    }
+    if [ -z "$opencode_nono_profile_json" ] || ! printf '%s' "$opencode_nono_profile_json" | jq -e . >/dev/null 2>&1; then
+      echo "ERROR: nono profile '$opencode_nono_profile_effective' produced empty or unparseable JSON for the pre-launch grant check." >&2
+      echo "Refusing to launch OpenCode: cannot verify the selected profile grants required access (R4.4)." >&2
+      exit 1
+    fi
+
+    # mcpproxy loopback: network.open_port must include 8080.
+    if ! printf '%s' "$opencode_nono_profile_json" | jq -e '(.network.open_port // []) | index(8080) != null' >/dev/null; then
+      echo "ERROR: profile '$opencode_nono_profile_effective' is missing a required grant: network.open_port must include 8080 (mcpproxy loopback)." >&2
+      echo "Refusing to launch OpenCode in a broken state (R4.4)." >&2
+      exit 1
+    fi
+
+    # provider network: network.block=false OR a non-empty network.allow_domain.
+    if ! printf '%s' "$opencode_nono_profile_json" | jq -e '(.network.block == false) or (((.network.allow_domain // []) | length) > 0)' >/dev/null; then
+      echo "ERROR: profile '$opencode_nono_profile_effective' is missing a required grant: provider network is blocked — set network.block=false or add a network.allow_domain entry." >&2
+      echo "Refusing to launch OpenCode in a broken state (R4.4)." >&2
+      exit 1
+    fi
     # ---------------------------------------------------------------------
 
     # --- SEAM: task 4.3 (enforced freshness-marker check) ----------------
