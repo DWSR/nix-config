@@ -87,7 +87,7 @@
   - _Requirements: 1.2, 4.3, 7.5_
 
 - [ ] 6. Host integration: enable and host configs
-- [ ] 6.1 Import and enable the module
+- [x] 6.1 Import and enable the module
   - Import `opencode-nono.nix` in `home-manager/common/default.nix` and set `programs.opencode-nono.enable = true` (v1)
   - Observable: both hosts evaluate with the feature enabled and v1 `defaultState` disabled, and opencode still launches
   - _Depends: 3.3, 4.4_

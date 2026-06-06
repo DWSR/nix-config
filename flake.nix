@@ -241,30 +241,42 @@
               let
                 hmConfig = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
                 actualPackagePath = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.package}";
-                wrappedPackagePath = builtins.unsafeDiscardStringContext "${hmConfig.programs.opencode.package}";
-                wrappedInputs = map (pkg: builtins.unsafeDiscardStringContext "${pkg}") (
-                  hmConfig.programs.opencode.package.paths or [ ]
-                );
+                # Under the opencode-nono launcher topology,
+                # `programs.opencode.package` is the `opencode` launcher
+                # (a writeShellApplication), not a symlinkJoin — it has no
+                # `.paths`, and execs `${basePackage}/bin/opencode` by store
+                # path. So the pinned-opencode guarantee is verified via
+                # `home.opencode.basePackage` (the bare binary the launcher
+                # execs AND the disabled wrapper wraps), a topology-
+                # independent invariant that holds for both the launcher and
+                # the legacy symlinkJoin.
+                basePackagePath = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.basePackage}";
+                wiredPackageName = hmConfig.programs.opencode.package.name or "";
               in
               assert pkgs.lib.assertMsg (actualPackagePath == expectedPackagePath)
                 "opencode-turn-timestamps host package mismatch for ${hostName}: expected home.opencode.package to resolve to ${expectedPackagePath}, got ${actualPackagePath}";
-              assert pkgs.lib.assertMsg (builtins.elem expectedPackagePath wrappedInputs)
-                "opencode-turn-timestamps host wrapper mismatch for ${hostName}: expected programs.opencode.package to include ${expectedPackagePath}, got ${pkgs.lib.concatStringsSep ", " wrappedInputs}";
-              "${hostName}: home.opencode.package=${actualPackagePath}; programs.opencode.package=${wrappedPackagePath}"
+              assert pkgs.lib.assertMsg (basePackagePath == expectedPackagePath)
+                "opencode-turn-timestamps host base-package mismatch for ${hostName}: expected home.opencode.basePackage to resolve to ${expectedPackagePath}, got ${basePackagePath}";
+              "${hostName}: home.opencode.package=${actualPackagePath}; home.opencode.basePackage=${basePackagePath}; programs.opencode.package.name=${wiredPackageName}"
             ) opencodeTurnTimestampHosts;
 
           # Disabled-path equivalence gate (opencode-nono-sandbox spec, task
           # 1.2 / requirement 1.3; design "Preflight Launcher Seam →
           # Implementation Notes" and "Testing Strategy → Unit Tests"
-          # disabled-path equivalence bullet). With the opencode-nono module
-          # absent/disabled, `programs.opencode.package` is exactly the seam's
-          # default wrapper. Assert the STRUCTURAL invariant rather than a
-          # version-specific store hash (which would break on an opencode
-          # bump): the wired package is a `symlinkJoin` named
-          # `opencode-wrapped` whose single wrapped path is the unwrapped
-          # `home.opencode.basePackage`, and `basePackage` resolves to
-          # `pkgs.opencode-pinned`. Perturbing the wrapper (rename, extra
-          # path, divergent base) fails the per-host assertMsg.
+          # disabled-path equivalence bullet). The gate proves the seam
+          # DEFAULT (opencode-nono module DISABLED) is exactly today's
+          # `opencode-wrapped` wrapper. Since v1 now ships the module
+          # ENABLED (home-manager/common/default.nix), the live host config's
+          # `programs.opencode.package` is the launcher, not the wrapper — so
+          # the gate evaluates a module-DISABLED VARIANT via `extendModules`
+          # (`enable = mkForce false`) and asserts the structural invariant on
+          # that variant instead of the live config. Assert the STRUCTURAL
+          # invariant rather than a version-specific store hash (which would
+          # break on an opencode bump): the disabled-variant package is a
+          # `symlinkJoin` named `opencode-wrapped` whose single wrapped path
+          # is the unwrapped `home.opencode.basePackage`, and `basePackage`
+          # resolves to `pkgs.opencode-pinned`. Perturbing the wrapper
+          # (rename, extra path, divergent base) fails the per-host assertMsg.
           opencodeNonoDisabledEquivReport =
             let
               expectedBasePath = builtins.unsafeDiscardStringContext "${pkgs.opencode-pinned}";
@@ -272,7 +284,14 @@
             pkgs.lib.concatMapStringsSep "\n" (
               hostName:
               let
-                hmConfig = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                hmConfig =
+                  (self.darwinConfigurations.${hostName}.extendModules {
+                    modules = [
+                      {
+                        home-manager.users.brandonmcnama.programs.opencode-nono.enable = pkgs.lib.mkForce false;
+                      }
+                    ];
+                  }).config.home-manager.users.brandonmcnama;
                 finalPackage = hmConfig.programs.opencode.package;
                 finalName = finalPackage.name or "";
                 basePath = builtins.unsafeDiscardStringContext "${hmConfig.home.opencode.basePackage}";
