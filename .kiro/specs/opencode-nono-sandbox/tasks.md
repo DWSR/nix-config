@@ -74,7 +74,7 @@
   - _Depends: 3.2, 4.4_
   - _Boundary: smoke-test script_
   - _Requirements: 6.4_
-- [ ] 5.3 Flake validate-check and app wiring
+- [x] 5.3 Flake validate-check and app wiring
   - Add `checks.opencode-nono-validate-check` (builds validate and runs `--help`/`--version`) and `apps.opencode-nono-validate` to flake.nix; host-eval gates are owned by 1.2 and 7.4 and the node tests check by 7.1
   - Observable: `nix flake check` runs the validate-check and it passes
   - _Depends: 5.1, 1.2_

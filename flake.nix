@@ -200,6 +200,14 @@
             type = "app";
             program = "${pkgs.callPackage ./scripts/opencode-nono-audit.nix { }}/bin/opencode-nono-audit";
           };
+          # Profile-validation + launch-contract verifier (opencode-nono
+          # spec, Task 5.1). `pkgs.nono` is overlay-provided and auto-resolves
+          # into the script's `nono` callPackage param, so validation runs
+          # against the same pinned nono the host provisions (R7.5).
+          opencode-nono-validate = {
+            type = "app";
+            program = "${pkgs.callPackage ./scripts/opencode-nono-validate.nix { }}/bin/opencode-nono-validate";
+          };
         }
       );
 
@@ -598,6 +606,32 @@
               ${cli}/bin/opencode-nono-audit --version > version.txt
               read -r version < version.txt
               test "$version" = "0.0.0"
+              touch $out
+            '';
+
+          # Builds the opencode-nono-validate CLI (Task 5.1) and exercises
+          # its `--help`/`--version` short-circuits. Proves the
+          # writeShellApplication body passes shellcheck and the wrapper's
+          # help/version paths exit 0 without a switched host, rendered nono
+          # profiles, or a live launcher — both short-circuit before any
+          # profile/launcher discovery (R6.1, R7.5). The script writes usage
+          # and the version banner to stderr (mirroring its `fail()`
+          # diagnostic convention), so capture stderr to assert non-empty
+          # help output.
+          opencode-nono-validate-check =
+            let
+              validate = pkgs.callPackage ./scripts/opencode-nono-validate.nix { };
+            in
+            pkgs.runCommand "opencode-nono-validate-check" { } ''
+              export HOME=$(mktemp -d)
+              export XDG_CONFIG_HOME="$HOME/.config"
+              export XDG_CACHE_HOME="$HOME/.cache"
+              export XDG_DATA_HOME="$HOME/.local/share"
+              export XDG_STATE_HOME="$HOME/.local/state"
+
+              ${validate}/bin/opencode-nono-validate --help 2> help.txt
+              test -s help.txt
+              ${validate}/bin/opencode-nono-validate --version 2> /dev/null
               touch $out
             '';
 
