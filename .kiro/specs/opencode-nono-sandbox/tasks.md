@@ -50,7 +50,7 @@
   - Observable: a profile missing `open_port 8080` or provider network makes the launcher exit 1 naming the grant; a complete profile proceeds to exec
   - _Depends: 2.1, 4.1_
   - _Requirements: 4.4_
-- [ ] 4.3 Strict-enforcement freshness check
+- [x] 4.3 Strict-enforcement freshness check
   - Read the audit freshness marker `last-report.json`; when enforced is requested, warn (never block) on absent/unreadable/unknown `markerSchemaVersion` or `profileVersion` not matching metadata
   - Observable: an enforced launch with a missing or stale marker warns and continues; a current marker is silent
   - _Depends: 3.3, 4.1_

@@ -192,13 +192,46 @@ writeShellApplication {
     # ---------------------------------------------------------------------
 
     # --- SEAM: task 4.3 (enforced freshness-marker check) ----------------
-    # When "$opencode_nono_effective" = "enforced", task 4.3 will read the
-    # audit freshness marker
-    #   ''${XDG_STATE_HOME}/opencode-nono/last-report.json
-    # and, if it is absent / unreadable / has an unknown markerSchemaVersion /
-    # has a profileVersion differing from the active managed profile's
-    # profileVersion in metadata.json, WARN (not block) before enforcement
-    # proceeds (R3.5). Do NOT implement here.
+    # Best-effort strict-enforcement freshness check (R3.5). Runs ONLY when
+    # the effective state is `enforced`. It reads the audit freshness marker
+    #   ''${XDG_STATE_HOME:-$HOME/.local/state}/opencode-nono/last-report.json
+    # (cross-spec shape `{ markerSchemaVersion: 1, profileVersion, … }` written
+    # by opencode-nono-audit) and WARNS to stderr — never blocks — when the
+    # marker is absent/unreadable, has an unknown markerSchemaVersion (≠ 1), or
+    # its profileVersion is empty or does not match the live metadata
+    # profileVersion. A current marker is silent. Every jq read is guarded so a
+    # parse failure degrades to a warn and NEVER aborts the launch under
+    # `set -euo pipefail`.
+    if [ "$opencode_nono_effective" = "enforced" ]; then
+      opencode_nono_marker_path="''${XDG_STATE_HOME:-$HOME/.local/state}/opencode-nono/last-report.json"
+      opencode_nono_metadata_path="''${XDG_CONFIG_HOME:-$HOME/.config}/opencode/opencode-nono/metadata.json"
+
+      # Live profile version from metadata.json (best-effort; absent/unreadable
+      # /malformed → empty, which still only warns, never blocks).
+      opencode_nono_live_version=""
+      if [ -r "$opencode_nono_metadata_path" ]; then
+        opencode_nono_live_version="$(jq -r '.profileVersion // empty' "$opencode_nono_metadata_path" 2>/dev/null || true)"
+      fi
+
+      opencode_nono_fresh_warn=""
+      if [ ! -r "$opencode_nono_marker_path" ]; then
+        opencode_nono_fresh_warn="no compatibility report found at $opencode_nono_marker_path"
+      else
+        # markerSchemaVersion must parse and equal the known schema constant (1).
+        opencode_nono_marker_schema="$(jq -r '.markerSchemaVersion // empty' "$opencode_nono_marker_path" 2>/dev/null || true)"
+        opencode_nono_marker_version="$(jq -r '.profileVersion // empty' "$opencode_nono_marker_path" 2>/dev/null || true)"
+        if [ "$opencode_nono_marker_schema" != "1" ]; then
+          opencode_nono_fresh_warn="unreadable or unknown compatibility report schema at $opencode_nono_marker_path (expected markerSchemaVersion 1)"
+        elif [ -z "$opencode_nono_marker_version" ] || [ "$opencode_nono_marker_version" != "$opencode_nono_live_version" ]; then
+          opencode_nono_fresh_warn="stale compatibility report at $opencode_nono_marker_path (report profileVersion '$opencode_nono_marker_version' != active '$opencode_nono_live_version')"
+        fi
+      fi
+
+      if [ -n "$opencode_nono_fresh_warn" ]; then
+        echo "WARNING: opencode-nono strict enforcement: $opencode_nono_fresh_warn." >&2
+        echo "WARNING: opencode-nono strict enforcement: re-run the opencode-nono-audit compatibility report for the active profile version, then relaunch. Continuing." >&2
+      fi
+    fi
     # ---------------------------------------------------------------------
 
     # `--allow-cwd` is MANDATORY: non-interactive `nono run` refuses CWD access
