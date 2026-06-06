@@ -17,11 +17,6 @@ let
       "opencode_cli"
       "{env:OPENCODE_SESSION_ID}"
       rtkUsageTag
-      # nono sandbox usage attribution (R2.3). The opencode-nono launcher
-      # always exports OPENCODE_NONO_USAGE_TAG = "nono:<effective-state>"
-      # host-side in the preflight, so referencing the env directly is safe
-      # (no disabled-fallback guard needed, unlike rtkUsageTag).
-      "{env:OPENCODE_NONO_USAGE_TAG}"
     ];
   };
 
