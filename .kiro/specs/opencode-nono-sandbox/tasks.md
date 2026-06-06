@@ -118,7 +118,7 @@
   - _Depends: 7.1_
   - _Boundary: tests/opencode-nono_
   - _Requirements: 1.4, 1.5, 3.2, 3.3, 3.4, 3.5, 4.4_
-- [ ] 7.3 (P) Validate-label test
+- [x] 7.3 (P) Validate-label test
   - `validate.test.js`: assert `[validate-failure: <label>]` labels on broken profiles
   - Observable: the validate test passes asserting the labeled failure outputs
   - _Depends: 7.1, 5.1_
