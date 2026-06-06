@@ -106,7 +106,7 @@
   - _Requirements: 2.3, 4.2, 5.2_
 
 - [ ] 7. Tests and enabled-disabled equivalence gate
-- [ ] 7.1 HM render test harness, render assertions, tests flake check
+- [x] 7.1 HM render test harness, render assertions, tests flake check
   - Create `run.js` (glob `node --test` dispatcher) and `hm-render.test.js` asserting both-host render: three profiles `extends ["default"]` with no keychain/security/curl grants, meta and version, metadata including `nonoVersion` reflecting an overridden package version, guide, packages, `finalPackage` override, peer assertion, and profile content (groups including `nix_runtime`, `open_port 8080`, `allow_vars`); assert the module makes no opencode permission or MCP-quarantine changes; register `checks.opencode-nono-tests` in flake.nix
   - Observable: the hm-render test passes on both host evals and fails on a secret/keychain grant, a permission change, or a `nonoVersion` mismatch
   - _Depends: 3.3, 4.4, 6.1_

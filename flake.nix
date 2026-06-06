@@ -431,6 +431,24 @@
                 touch $out
               '';
 
+          opencode-nono-tests =
+            pkgs.runCommand "opencode-nono-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/opencode-nono/
+                touch $out
+              '';
+
           opencode-nono-audit-tests =
             pkgs.runCommand "opencode-nono-audit-tests"
               {

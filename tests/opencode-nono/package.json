@@ -1,0 +1,7 @@
+{
+  "name": "opencode-nono-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Test suite entry point for the opencode-nono-sandbox spec. The main field lets node --test load this directory through run.js, which walks for *.test.js files."
+}
