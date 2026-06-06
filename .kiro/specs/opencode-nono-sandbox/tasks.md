@@ -92,7 +92,7 @@
   - Observable: both hosts evaluate with the feature enabled and v1 `defaultState` disabled, and opencode still launches
   - _Depends: 3.3, 4.4_
   - _Requirements: 1.1, 3.1_
-- [ ] 6.2 (P) Personal host config
+- [x] 6.2 (P) Personal host config
   - Set `defaultState` disabled and profile selection in `configurations/personal/home-manager/opencode.nix`
   - Observable: the personal host evaluates with `defaultState` disabled and the chosen profile mapping
   - _Depends: 6.1_
