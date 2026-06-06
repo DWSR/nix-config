@@ -156,6 +156,142 @@ let
     // {
       inherit network;
     };
+
+  # XDG-relative path the rendered metadata is written to. The shipped
+  # sibling audit CLI (scripts/opencode-nono-audit.js `resolveMetadataPath`)
+  # reads it at `${XDG_CONFIG_HOME:-~/.config}/opencode/opencode-nono/
+  # metadata.json`; this path is relative to ~/.config (xdg.configFile).
+  metadataPath = "opencode/opencode-nono/metadata.json";
+  operatorGuidePath = "opencode/opencode-nono/README.md";
+
+  # The active managed profile's version is the single canonical
+  # `profileVersion` field the audit's `readProfileVersion` and the R3.5
+  # freshness check compare against; it MUST be a string. Read it from the
+  # rendered managed profile rather than hardcoding (default "0.1.0").
+  profileVersion = cfg.profiles.${cfg.managedProfile}.meta.version;
+
+  # Resolved nono version (R7.4), read from the provisioned package so an
+  # operator override of `programs.opencode-nono.package` flows through
+  # (Task 7.1 asserts this); do NOT hardcode "0.61.1".
+  nonoVersion = cfg.package.version;
+
+  # The `OPENCODE_NONO_*` env-var contract (R5.4, R6.5) per design's Env
+  # Contract table. NAMES ONLY — no secret values are ever serialized
+  # (R2.5, R4.5).
+  envContract = {
+    inputs = {
+      state = "OPENCODE_NONO";
+      profile = "OPENCODE_NONO_PROFILE";
+    };
+    outputs = {
+      effective = "OPENCODE_NONO_EFFECTIVE";
+      profileEffective = "OPENCODE_NONO_PROFILE_EFFECTIVE";
+      disableReason = "OPENCODE_NONO_DISABLE_REASON";
+      usageTag = "OPENCODE_NONO_USAGE_TAG";
+    };
+  };
+
+  # Local metadata identifying the active profile version, resolved nono
+  # version, host default state, rendered profiles, and the env contract
+  # (R6.5, R7.4). `profiles` is a deterministic, lexically-sorted list via
+  # lib.mapAttrsToList over the profile attrset. builtins.toJSON mirrors the
+  # repo convention (opencode-rtk.nix).
+  nonoMetadata = {
+    feature = "opencode-nono";
+    inherit profileVersion nonoVersion;
+    inherit (cfg) defaultState;
+    profiles = lib.mapAttrsToList (_: p: {
+      inherit (p.meta) name version;
+    }) cfg.profiles;
+    inherit envContract;
+  };
+
+  # Operator guide (R6.3, R5.4). Mirrors opencode-rtk.nix's `operatorGuide`
+  # multiline string; renders host defaults into a "Rendered host defaults"
+  # section. NO secret literals anywhere (R2.5, R4.5).
+  operatorGuide = ''
+    # OpenCode nono sandbox operator guide
+
+    This integration launches managed OpenCode under the `nono` sandbox. It
+    renders a profile catalog to `~/.config/nono/profiles/`, this metadata
+    and guide, and (in later tasks) an outer launcher that resolves the
+    sandbox state per launch.
+
+    ## Profile selection
+
+    Three base profiles are rendered, each reconstructing the opencode grant
+    set on top of nono's `default` profile (nono 0.61.1 has no built-in
+    `opencode` profile):
+
+    - `${cfg.managedProfile}` (enforced): the enforced profile selected when
+      the effective state is `enforced`. `workdir.access = readwrite`.
+    - `${cfg.auditProfile}` (compatibility-audit): the permissive first
+      rollout state, selected when the effective state is `audit`, so
+      OpenCode and its plugins start cleanly and any sandbox-induced failure
+      surfaces as a real error rather than a silent no-op.
+    - `${cfg.reviewProfile}` (read-only): a read-only review profile;
+      `workdir.access = read` with no filesystem write grants.
+
+    `OPENCODE_NONO` selects the state (`disabled | audit | enforced`), which
+    in turn selects the profile. `OPENCODE_NONO_PROFILE` overrides the
+    resolved profile name directly for one launch.
+
+    ## Noninteractive launch behavior
+
+    When the effective state is `audit` or `enforced`, the launcher execs:
+
+        nono run --profile <effective-profile> --allow-cwd -- opencode
+
+    `--allow-cwd` is required (Phase 0). The mcpproxy preflight runs host-side
+    OUTSIDE nono, before nono is entered, so its token mint and env exports
+    are not subject to the sandbox.
+
+    ## Runtime overrides
+
+    Override the host default for one launch without a rebuild:
+
+    - `OPENCODE_NONO=disabled` launches OpenCode without nono.
+    - `OPENCODE_NONO=audit` launches under `${cfg.auditProfile}`.
+    - `OPENCODE_NONO=enforced` launches under `${cfg.managedProfile}`.
+    - `OPENCODE_NONO_PROFILE=<name>` selects an explicit rendered profile by
+      name for one launch.
+
+    The launcher exports these effective-state values before OpenCode starts:
+
+    - `OPENCODE_NONO_EFFECTIVE`: `disabled | audit | enforced` after host
+      default and `OPENCODE_NONO` resolution.
+    - `OPENCODE_NONO_PROFILE_EFFECTIVE`: the resolved profile name (empty when
+      disabled).
+    - `OPENCODE_NONO_DISABLE_REASON`: reason text when the launcher disables
+      the sandbox, or empty.
+    - `OPENCODE_NONO_USAGE_TAG`: `nono:<effective-state>` for optional usage
+      attribution.
+
+    ## Rollback
+
+    Use the smallest rollback that matches the situation:
+
+    - For one launch, start OpenCode with `OPENCODE_NONO=disabled`.
+    - For a host default rollback, set
+      `programs.opencode-nono.defaultState = "disabled"` and rebuild the host.
+    - For full removal, set `programs.opencode-nono.enable = false` in
+      repository-managed configuration and rebuild the host.
+
+    ## Combined RTK + nono visibility
+
+    The RTK integration's `OPENCODE_RTK_*` exports happen in the SAME preflight
+    as the `OPENCODE_NONO_*` exports, so both effective states are observable
+    together in a single launch's environment (R5.4). Inspect both
+    `OPENCODE_NONO_EFFECTIVE` / `OPENCODE_NONO_PROFILE_EFFECTIVE` and
+    `OPENCODE_RTK_EFFECTIVE` to see the combined sandbox + RTK posture.
+
+    ## Rendered host defaults
+
+    - Host default state: `${cfg.defaultState}`
+    - Active managed profile version (`profileVersion`): `${profileVersion}`
+    - Resolved nono version (`nonoVersion`): `${nonoVersion}`
+    - Metadata path: `${metadataPath}`
+  '';
 in
 {
   options.programs.opencode-nono = {
@@ -462,10 +598,19 @@ in
     # Render each profile to ~/.config/nono/profiles/<name>.json (R2.1).
     # Paths are relative to ~/.config (xdg.configFile). builtins.toJSON
     # mirrors the repo convention (subagent-context-budget.nix).
-    xdg.configFile = lib.mapAttrs' (
-      _: p:
-      lib.nameValuePair "nono/profiles/${p.meta.name}.json" { text = builtins.toJSON (renderProfile p); }
-    ) cfg.profiles;
+    xdg.configFile =
+      lib.mapAttrs' (
+        _: p:
+        lib.nameValuePair "nono/profiles/${p.meta.name}.json" { text = builtins.toJSON (renderProfile p); }
+      ) cfg.profiles
+      // {
+        # Local metadata (R6.5, R7.4) consumed by the shipped sibling audit
+        # CLI at this exact XDG-relative path; builtins.toJSON per repo
+        # convention.
+        ${metadataPath}.text = builtins.toJSON nonoMetadata;
+        # Operator guide (R6.3, R5.4).
+        ${operatorGuidePath}.text = operatorGuide;
+      };
 
     assertions = [
       {

@@ -33,7 +33,7 @@
   - Observable: three rendered profiles match the 0.61.1 schema and contain no secret literals and no keychain/security/curl grants
   - _Depends: 2.2, 3.1_
   - _Requirements: 2.1, 2.2, 2.3, 2.5, 4.1, 4.3, 4.5, 5.3_
-- [ ] 3.3 Metadata and operator guide renderer
+- [x] 3.3 Metadata and operator guide renderer
   - Render metadata.json (canonical `profileVersion` = active managed profile version, `nonoVersion` resolved from the package version, `defaultState`, profiles list, env contract) and a README covering profile selection, noninteractive launch, runtime overrides, rollback, and combined RTK+nono visibility
   - Observable: metadata.json renders at the XDG config path the shipped audit's `readProfileVersion` consumes, `nonoVersion` reflects the resolved package version, and the guide renders all sections
   - _Depends: 3.2_
