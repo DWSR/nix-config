@@ -40,7 +40,7 @@
   - _Requirements: 5.4, 6.3, 6.5, 7.4_
 
 - [ ] 4. State resolver / outer launcher
-- [ ] 4.1 Launcher core: preflight relocation, state resolution, exec
+- [x] 4.1 Launcher core: preflight relocation, state resolution, exec
   - Build the `writeShellApplication` launcher: run `preflightScript` host-side, suffix `lspPath` onto PATH (parity with today's `--suffix PATH`), resolve `(defaultState, OPENCODE_NONO, OPENCODE_NONO_PROFILE)` to effective; disabled execs bare opencode; audit/enforced require nono (fail closed) then exec `nono run --profile <eff> --allow-cwd -- bare opencode`; export `OPENCODE_NONO_EFFECTIVE/PROFILE_EFFECTIVE/DISABLE_REASON/USAGE_TAG`; invalid override exits 1 listing accepted values
   - Observable: each override input maps to the correct (effective, profile, reason) and the documented command shape execs per state
   - _Depends: 1.1, 3.2_
