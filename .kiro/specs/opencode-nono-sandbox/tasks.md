@@ -112,7 +112,7 @@
   - _Depends: 3.3, 4.4, 6.1_
   - _Boundary: tests/opencode-nono_
   - _Requirements: 2.1, 2.2, 2.3, 2.5, 4.1, 4.3, 4.5, 5.5, 6.3, 6.5, 7.3, 7.4_
-- [ ] 7.2 (P) Resolver test
+- [x] 7.2 (P) Resolver test
   - `resolver.test.js`: assert each `OPENCODE_NONO`/`OPENCODE_NONO_PROFILE` override maps to (effective, profile, reason), invalid-override exit, missing-nono fail-closed, grant-check missing-grant exit 1, and freshness-marker-absent warn
   - Observable: the resolver test enumerates every state branch and passes
   - _Depends: 7.1_
