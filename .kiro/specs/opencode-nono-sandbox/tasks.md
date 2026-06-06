@@ -68,7 +68,7 @@
   - _Depends: 3.2, 4.2_
   - _Boundary: validate script_
   - _Requirements: 2.4, 6.1, 6.2, 7.5_
-- [ ] 5.2 (P) Smoke-test script
+- [x] 5.2 (P) Smoke-test script
   - `opencode-nono-smoke-test`: host-run `nono run --profile opencode-managed --allow-cwd -- opencode --version`; emit `[smoke-test-failure: <label>]` on failure
   - Observable: the smoke test starts opencode under `opencode-managed` and reports success, proving the extends-default grant reconstruction works
   - _Depends: 3.2, 4.4_
