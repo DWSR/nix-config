@@ -42,6 +42,16 @@
 writeShellApplication {
   name = "opencode";
   runtimeInputs = [ jq ];
+  # The embedded host `preflightScript` is the relocated-not-rewritten
+  # `home.opencode.wrapperCommands` block (design Out of Boundary: existing
+  # preflight snippets run outside nono, NOT rewritten). The Shopify host's
+  # devx snippet uses `export OPENCODE_SESSION_ID="$(uuidgen)"`, which trips
+  # shellcheck's SC2155 (declare-and-assign masks the return value). Excluding
+  # SC2155 admits that trusted host-authored preflight verbatim; the launcher's
+  # OWN logic uses plain `x="$(cmd)"` assignments (never `export`-with-
+  # substitution), so this exclusion does not weaken the launcher's own checks.
+  # `excludeShellChecks` is supported by nixpkgs 25.11's writeShellApplication.
+  excludeShellChecks = [ "SC2155" ];
   text = ''
     # ----------------------------------------------------------------------
     # 1. Preflight, host-side (outside any sandbox).

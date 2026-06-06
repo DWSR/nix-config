@@ -55,7 +55,7 @@
   - Observable: an enforced launch with a missing or stale marker warns and continues; a current marker is silent
   - _Depends: 3.3, 4.1_
   - _Requirements: 3.5_
-- [ ] 4.4 Wire launcher as finalPackage override
+- [x] 4.4 Wire launcher as finalPackage override
   - In opencode-nono, override `home.opencode.finalPackage` with the launcher referencing `basePackage`/`preflightScript`/`lspPath`/`nono` by store path with no circular reference
   - Observable: with the module enabled, `opencode` on PATH is the launcher; with it disabled the seam default wrapper is unchanged
   - _Depends: 1.1, 4.1_

@@ -531,6 +531,23 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
+    # Override the launcher seam (home-manager/common/opencode.nix) with the
+    # outer preflight launcher. When this module is disabled the seam keeps its
+    # `default` (the `opencode-wrapped` symlinkJoin that runs preflight INSIDE
+    # the wrapper); enabling it swaps in the launcher that runs preflight
+    # host-side and execs nono / bare opencode per the resolved state.
+    #
+    # No circular reference: the launcher depends only on the seam's read-only
+    # internals (`basePackage`/`preflightScript`/`lspPath`) plus this module's
+    # `cfg.package` (nono) and rollout-state options — NEVER on `finalPackage`
+    # itself. The seam's `default` (which builds the symlinkJoin) is lazy and
+    # goes unused once this override is set, so there is no eval-time recursion.
+    home.opencode.finalPackage = pkgs.callPackage ../../scripts/opencode-nono-launcher.nix {
+      inherit (config.home.opencode) basePackage preflightScript lspPath;
+      nono = cfg.package;
+      inherit (cfg) defaultState managedProfile auditProfile;
+    };
+
     # Three base profiles seeded with the empirically-derived opencode
     # grant set (Tasks 2.1/2.2) + the design's per-profile deltas. Hosts
     # extend or override these via `programs.opencode-nono.profiles`
