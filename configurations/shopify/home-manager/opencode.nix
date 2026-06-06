@@ -17,6 +17,11 @@ let
       "opencode_cli"
       "{env:OPENCODE_SESSION_ID}"
       rtkUsageTag
+      # nono sandbox usage attribution (R2.3). The opencode-nono launcher
+      # always exports OPENCODE_NONO_USAGE_TAG = "nono:<effective-state>"
+      # host-side in the preflight, so referencing the env directly is safe
+      # (no disabled-fallback guard needed, unlike rtkUsageTag).
+      "{env:OPENCODE_NONO_USAGE_TAG}"
     ];
   };
 
@@ -111,6 +116,35 @@ in
       export OPENCODE_SESSION_ID="$(uuidgen)"
     ''
   ];
+
+  # opencode-nono sandbox rollout posture for this host (R3.1). The module
+  # (home-manager/common/opencode-nono.nix) is enabled by the common
+  # default.nix; here we set the Shopify host's rollout intent.
+  programs.opencode-nono = {
+    # v1 ships `disabled`: the outer launcher
+    # (scripts/opencode-nono-launcher.nix) relocates the devx + mcpproxy
+    # preflight host-side OUTSIDE nono but execs bare opencode, so no host
+    # runs under the sandbox yet. Rollout to `audit` then `enforced` is
+    # post-v1. Explicit here (matches the module default) to document this
+    # host's rollout decision.
+    defaultState = "disabled";
+
+    # Host-specific profile labels (R2.3). Per-leaf mkDefault in the base
+    # module (home-manager/common/opencode-nono.nix) lets these override
+    # `meta.description` alone while every other base leaf (groups,
+    # filesystem, network, allow_vars, meta.name) is retained. The labels
+    # document this host's devx LLM-gateway credential ACCESS — env var
+    # NAMES only, never token values (R2.5/R4.5). OPENCODE_API_KEY and
+    # DEFAULT_PROXY_BASE are admitted to the sandbox via allow_vars (R4.2).
+    profiles.opencode-managed.meta.description =
+      "Enforced sandbox profile for managed OpenCode launches. "
+      + "Host: ShopifyLaptop — admits the devx LLM-gateway credentials "
+      + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) via allow_vars for provider access.";
+    profiles.opencode-audit.meta.description =
+      "Compatibility-audit sandbox profile for managed OpenCode. "
+      + "Host: ShopifyLaptop — devx LLM-gateway credential access "
+      + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
+  };
 
   programs.opencode.commands = {
     make-stack-green = ./commands/make-stack-green.md;

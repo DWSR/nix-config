@@ -550,65 +550,66 @@ in
 
     # Three base profiles seeded with the empirically-derived opencode
     # grant set (Tasks 2.1/2.2) + the design's per-profile deltas. Hosts
-    # extend or override these via `programs.opencode-nono.profiles`
-    # (lib.mkDefault here so host config wins) (R2.1, R2.3).
+    # extend or override these via `programs.opencode-nono.profiles`.
+    # Each leaf carries lib.mkDefault (per-leaf, NOT a whole-attrset
+    # default) so a host can override a single leaf — e.g.
+    # `meta.description` — while every un-restated leaf keeps its base
+    # value. A whole-attrset mkDefault would let any partial host override
+    # win the entire attrset and discard the rest (R2.1, R2.3).
     programs.opencode-nono.profiles = {
       # opencode-managed (enforced): readwrite workdir, mcpproxy
       # loopback port, launcher env admitted. Provider
       # allow_domain/network_profile tightening is POST-AUDIT; v1 leaves
       # network permissive (R4.3 — posture documented in Task 3.3 guide).
-      ${cfg.managedProfile} = lib.mkDefault {
-        meta = {
-          name = cfg.managedProfile;
-          description =
-            "Enforced sandbox profile for managed OpenCode launches. "
-            + "Intended use: normal coding sessions under nono enforcement, "
-            + "reconstructing the opencode grant set on top of nono's default "
-            + "profile (no built-in opencode profile on 0.61.1).";
-        };
-        groups.include = opencodeGroups;
-        workdir.access = "readwrite";
-        filesystem.allow = opencodeDataPaths;
-        network.openPort = [ 8080 ];
-        environment.allowVars = launcherAllowVars;
+      ${cfg.managedProfile} = {
+        meta.name = lib.mkDefault cfg.managedProfile;
+        meta.description = lib.mkDefault (
+          "Enforced sandbox profile for managed OpenCode launches. "
+          + "Intended use: normal coding sessions under nono enforcement, "
+          + "reconstructing the opencode grant set on top of nono's default "
+          + "profile (no built-in opencode profile on 0.61.1)."
+        );
+        groups.include = lib.mkDefault opencodeGroups;
+        workdir.access = lib.mkDefault "readwrite";
+        filesystem.allow = lib.mkDefault opencodeDataPaths;
+        network.openPort = lib.mkDefault [ 8080 ];
+        environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
       # opencode-audit (compatibility-audit): permissive so opencode +
       # plugins start cleanly and failures surface as real errors (R5.3),
       # not silent disables. First state operators flip to.
-      ${cfg.auditProfile} = lib.mkDefault {
-        meta = {
-          name = cfg.auditProfile;
-          description =
-            "Compatibility-audit sandbox profile for managed OpenCode. "
-            + "Intended use: the first rollout state — permissive enough that "
-            + "OpenCode and its plugins start cleanly so any sandbox-induced "
-            + "failure surfaces as a real error rather than a silent no-op "
-            + "(R5.3). nono audit recording is on by default.";
-        };
-        groups.include = opencodeGroups;
-        workdir.access = "readwrite";
-        filesystem.allow = opencodeDataPaths;
-        network.block = false;
-        network.openPort = [ 8080 ];
-        environment.allowVars = launcherAllowVars;
+      ${cfg.auditProfile} = {
+        meta.name = lib.mkDefault cfg.auditProfile;
+        meta.description = lib.mkDefault (
+          "Compatibility-audit sandbox profile for managed OpenCode. "
+          + "Intended use: the first rollout state — permissive enough that "
+          + "OpenCode and its plugins start cleanly so any sandbox-induced "
+          + "failure surfaces as a real error rather than a silent no-op "
+          + "(R5.3). nono audit recording is on by default."
+        );
+        groups.include = lib.mkDefault opencodeGroups;
+        workdir.access = lib.mkDefault "readwrite";
+        filesystem.allow = lib.mkDefault opencodeDataPaths;
+        network.block = lib.mkDefault false;
+        network.openPort = lib.mkDefault [ 8080 ];
+        environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
       # opencode-review (read-only): read workdir, no write grants.
-      ${cfg.reviewProfile} = lib.mkDefault {
-        meta = {
-          name = cfg.reviewProfile;
-          description =
-            "Read-only review sandbox profile for managed OpenCode. "
-            + "Intended use: inspecting a workspace under nono with no write "
-            + "access — workdir.access is read and there are no filesystem "
-            + "write grants.";
-        };
-        groups.include = opencodeGroups;
-        workdir.access = "read";
-        filesystem.read = opencodeDataPaths;
-        network.openPort = [ 8080 ];
-        environment.allowVars = launcherAllowVars;
+      ${cfg.reviewProfile} = {
+        meta.name = lib.mkDefault cfg.reviewProfile;
+        meta.description = lib.mkDefault (
+          "Read-only review sandbox profile for managed OpenCode. "
+          + "Intended use: inspecting a workspace under nono with no write "
+          + "access — workdir.access is read and there are no filesystem "
+          + "write grants."
+        );
+        groups.include = lib.mkDefault opencodeGroups;
+        workdir.access = lib.mkDefault "read";
+        filesystem.read = lib.mkDefault opencodeDataPaths;
+        network.openPort = lib.mkDefault [ 8080 ];
+        environment.allowVars = lib.mkDefault launcherAllowVars;
       };
     };
 
