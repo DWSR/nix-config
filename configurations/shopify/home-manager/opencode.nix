@@ -116,13 +116,17 @@ in
   # (home-manager/common/opencode-nono.nix) is enabled by the common
   # default.nix; here we set the Shopify host's rollout intent.
   programs.opencode-nono = {
-    # v1 ships `disabled`: the outer launcher
+    # Rollout state `audit`: the outer launcher
     # (scripts/opencode-nono-launcher.nix) relocates the devx + mcpproxy
-    # preflight host-side OUTSIDE nono but execs bare opencode, so no host
-    # runs under the sandbox yet. Rollout to `audit` then `enforced` is
-    # post-v1. Explicit here (matches the module default) to document this
-    # host's rollout decision.
-    defaultState = "disabled";
+    # preflight host-side OUTSIDE nono, then execs
+    # `nono run --profile opencode-audit --allow-cwd -- opencode`. The audit
+    # profile is permissive so OpenCode + plugins (and the devx-minted
+    # OPENCODE_API_KEY / DEFAULT_PROXY_BASE admitted via allow_vars) work
+    # cleanly and any sandbox-induced failure surfaces as a real error. The
+    # 0.61.1 runtime gate (task 5.4) is recorded PASS. Per-launch rollback:
+    # `OPENCODE_NONO=disabled opencode`; tighten to `enforced` after assessing
+    # compatibility.
+    defaultState = "audit";
 
     # Host-specific profile labels (R2.3). Per-leaf mkDefault in the base
     # module (home-manager/common/opencode-nono.nix) lets these override

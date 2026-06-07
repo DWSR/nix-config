@@ -279,7 +279,7 @@ test('rendered metadata.json has the expected shape (R6.5/R7.4)', () => {
     const metadata = JSON.parse(host.metadataText);
     assert.equal(typeof metadata.profileVersion, 'string');
     assert.ok(metadata.profileVersion.length > 0, `${hostKey} profileVersion non-empty`);
-    assert.equal(metadata.defaultState, 'disabled', `${hostKey} defaultState`);
+    assert.equal(metadata.defaultState, 'audit', `${hostKey} defaultState`);
     assert.ok(Array.isArray(metadata.profiles), `${hostKey} profiles is array`);
     assert.ok(metadata.profiles.length >= 3, `${hostKey} at least three profiles`);
     for (const p of metadata.profiles) {
