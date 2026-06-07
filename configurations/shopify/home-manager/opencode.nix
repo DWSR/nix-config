@@ -143,6 +143,26 @@ in
       "Compatibility-audit sandbox profile for managed OpenCode. "
       + "Host: ShopifyLaptop — devx LLM-gateway credential access "
       + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
+
+    # Extend (NOT replace) the audit profile's filesystem.allow with four
+    # Shopify-host-specific paths. The base leaf is `lib.mkDefault
+    # opencodeDataPaths` (home-manager/common/opencode-nono.nix), so a second
+    # `lib.mkDefault` here ties at the same override priority (1000) and the
+    # module system CONCATENATES the two lists. A plain (priority-100)
+    # definition — or mkForce / mkAfter — would instead WIN outright and drop
+    # the seven base opencode data-dir grants, breaking OpenCode's access to
+    # its own state. Paths are $HOME-relative literals (nono expands them at
+    # runtime, matching the base list):
+    #   - .local/state/tec/profiles/base/current : tec dev-env active profile
+    #   - .dev/userprofile, .dev/gem             : Shopify .dev toolchain dirs
+    #   - .config                                : XDG config root (supersets
+    #                                              the base .config/opencode)
+    profiles.opencode-audit.filesystem.allow = lib.mkDefault [
+      "$HOME/.local/state/tec/profiles/base/current"
+      "$HOME/.dev/userprofile"
+      "$HOME/.dev/gem"
+      "$HOME/.config"
+    ];
   };
 
   programs.opencode.commands = {
