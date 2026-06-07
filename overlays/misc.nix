@@ -306,13 +306,13 @@ final: prev: {
   });
 
   opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "1.15.13";
+    version = "1.16.2";
 
     src = final.fetchFromGitHub {
       owner = "anomalyco";
       repo = "opencode";
-      tag = "v1.15.13";
-      hash = "sha256-+zHwO5ZY8D2s1gZzxoYI7c8yWmQSduPwv4MoFruhhPA=";
+      tag = "v1.16.2";
+      hash = "sha256-IpTD4YCgGNtYlZ6EoyY+YLD81rIFR0D2A4W3uhWSSfo=";
     };
 
     # Turn timestamp rendering is patched into the pinned package at build
@@ -326,8 +326,8 @@ final: prev: {
       src = final.fetchFromGitHub {
         owner = "anomalyco";
         repo = "opencode";
-        tag = "v1.15.13";
-        hash = "sha256-+zHwO5ZY8D2s1gZzxoYI7c8yWmQSduPwv4MoFruhhPA=";
+        tag = "v1.16.2";
+        hash = "sha256-IpTD4YCgGNtYlZ6EoyY+YLD81rIFR0D2A4W3uhWSSfo=";
       };
 
       # opencode's build-time generate.ts imports prettier (a root-workspace
@@ -356,7 +356,7 @@ final: prev: {
         runHook postBuild
       '';
 
-      outputHash = "sha256-859EV5Pg6VdRdImlNfyQatp4nkbUOPZQIkSZ4zpcZp0=";
+      outputHash = "sha256-2xHTCH9pRUDNT36hOcmDQ6vR+zWqdWwwRho/xaiMah0=";
     });
 
     # Caveman-lite compressions of the bundled model-specific system
