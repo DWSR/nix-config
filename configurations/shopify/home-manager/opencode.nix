@@ -153,12 +153,13 @@ in
     # the seven base opencode data-dir grants, breaking OpenCode's access to
     # its own state. Paths are $HOME-relative literals (nono expands them at
     # runtime, matching the base list):
-    #   - .local/state/tec/profiles/base/current : tec dev-env active profile
+    #   - .local/state/tec                       : tec dev-env state (whole dir;
+    #                                              subsumes profiles/base/current)
     #   - .dev/userprofile, .dev/gem             : Shopify .dev toolchain dirs
     #   - .config                                : XDG config root (supersets
     #                                              the base .config/opencode)
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
-      "$HOME/.local/state/tec/profiles/base/current"
+      "$HOME/.local/state/tec"
       "$HOME/.dev/userprofile"
       "$HOME/.dev/gem"
       "$HOME/.config"
