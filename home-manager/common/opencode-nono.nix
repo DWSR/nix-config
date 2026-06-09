@@ -58,10 +58,21 @@
 let
   cfg = config.programs.opencode-nono;
 
-  # The seven opencode data paths that the empirically-derived startup
-  # grant set (Task 2.2) requires under `filesystem.allow`. Rendered as
-  # `$HOME`/`$TMPDIR` literals (no absolute home-directory hardcoding);
-  # nono expands them at runtime.
+  # The opencode data paths granted under `filesystem.allow` (managed +
+  # audit) and `filesystem.read` (review). The first seven are the
+  # empirically-derived startup grant set (Task 2.2). `$HOME/.local/share/
+  # cavemem` is cavemem's capture database directory: the opencode cavemem
+  # plugin (home-manager/common/opencode-plugins/cavemem.js) spawns
+  # `cavemem hook run <event>` INSIDE this sandbox, and that child writes
+  # the SQLite DB at `home.cavemem.dataDir` (default
+  # `$HOME/.local/share/cavemem`). Without this grant the write is
+  # Seatbelt-denied and the plugin swallows the error, silently dropping all
+  # ambient capture. The `$HOME`-relative literal tracks the cavemem dataDir
+  # default; update it if `home.cavemem.dataDir` is overridden. The
+  # CAVEMEM_DATA_DIR env that points the hook at this dir is exported by
+  # cavemem.nix's wrapperCommands and admitted via `launcherAllowVars` below.
+  # Rendered as `$HOME`/`$TMPDIR` literals (no absolute home-directory
+  # hardcoding); nono expands them at runtime.
   opencodeDataPaths = [
     "$HOME/.config/opencode"
     "$HOME/.cache/opencode"
@@ -69,6 +80,7 @@ let
     "$HOME/.local/state/opencode"
     "$HOME/.opencode"
     "$HOME/.local/share/opentui"
+    "$HOME/.local/share/cavemem"
     "$TMPDIR"
   ];
 
@@ -105,6 +117,13 @@ let
     "XDG_CACHE_HOME"
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
+    # cavemem capture: the opencode cavemem plugin's `cavemem hook run`
+    # child must inherit CAVEMEM_DATA_DIR (exported host-side by
+    # cavemem.nix's wrapperCommands) so it writes the same SQLite DB the
+    # mcpproxy-launched cavemem MCP server reads. nono 0.61.1 env is
+    # default-deny, so the NAME must be admitted here or it is stripped at
+    # the sandbox boundary.
+    "CAVEMEM_DATA_DIR"
   ];
 
   # Render one profile model to the 0.61.1 authoring schema as a plain

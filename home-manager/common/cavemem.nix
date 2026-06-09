@@ -491,6 +491,25 @@ in
       # and design.md L673). Use double quotes (with backslash-escaped
       # inner double quotes where needed) for runtime shell values.
       home.opencode.wrapperCommands = [
+        # Pin CAVEMEM_DATA_DIR for opencode and every process it spawns —
+        # notably the cavemem capture plugin's `cavemem hook run <event>`
+        # child (home-manager/common/opencode-plugins/cavemem.js). cavemem's
+        # resolveDataDir() (overlays/cavemem-data-dir-env.patch) honors
+        # CAVEMEM_DATA_DIR and otherwise falls back to the hardcoded
+        # `~/.cavemem`; without this export the hook captures into
+        # `~/.cavemem/data.db` while the mcpproxy-launched MCP server reads
+        # `cfg.dataDir` (set on the upstream entry below), so the write and
+        # read sides diverge and `cavemem search` never sees live sessions.
+        # Exporting the SAME `cfg.dataDir` keeps both on one database. Under
+        # the opencode-nono launcher this runs host-side OUTSIDE nono and
+        # reaches the sandboxed opencode via the profiles' allow_vars
+        # (CAVEMEM_DATA_DIR is listed in opencode-nono.nix launcherAllowVars);
+        # with nono disabled it sets opencode's env directly. The dataDir
+        # must also be granted in the nono profiles' filesystem.allow
+        # (opencodeDataPaths) or the hook's write is sandbox-denied.
+        ''
+          export CAVEMEM_DATA_DIR=${lib.escapeShellArg (toString cfg.dataDir)}
+        ''
         ''
           cavemem_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""
           if [ -z "$cavemem_api_key" ]; then
