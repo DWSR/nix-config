@@ -144,7 +144,7 @@ in
       + "Host: ShopifyLaptop — devx LLM-gateway credential access "
       + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
 
-    # Extend (NOT replace) the audit profile's filesystem.allow with seven
+    # Extend (NOT replace) the audit profile's filesystem.allow with eight
     # Shopify-host-specific paths. The base leaf is `lib.mkDefault
     # opencodeDataPaths` (home-manager/common/opencode-nono.nix), so a second
     # `lib.mkDefault` here ties at the same override priority (1000) and the
@@ -170,6 +170,11 @@ in
     #   - /opt/rubies                            : chruby-managed Ruby installs
     #                                              (absolute path; Shopify dev
     #                                              Ruby versions)
+    #   - .config/git                            : git config — already a subset
+    #                                              of the .config grant above;
+    #                                              listed explicitly for parity
+    #                                              with the enforced profile and
+    #                                              the personal host
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.local/state/tec"
       "$HOME/.dev/userprofile"
@@ -178,22 +183,47 @@ in
       "$HOME/src/github.com/yugabyte/yugabyte-db"
       "$HOME/.gem"
       "/opt/rubies"
+      "$HOME/.config/git"
     ];
 
-    # Mirror the YugabyteDB fork grant and the Ruby toolchain paths
-    # ($HOME/.gem, /opt/rubies) onto the enforced profile so all three survive
-    # the eventual `defaultState = "enforced"` tightening (this host is on
-    # `audit` today). Same concatenation contract as the audit block above:
-    # the base `opencode-managed.filesystem.allow` is `lib.mkDefault
-    # opencodeDataPaths`, so this second `lib.mkDefault` ties at priority 1000
-    # and the two lists CONCATENATE, preserving the seven base opencode
-    # data-dir grants. The audit-only paths (tec/.dev/.config) are deliberately
-    # NOT mirrored — only YB source and the Ruby toolchain were requested for
-    # the enforced profile.
+    # Deny ~/.config/gcloud on the audit profile. nono's deny list is checked
+    # before any allow/group/workdir grant and overrides it (guide: "denied
+    # paths are blocked regardless of platform"; on macOS nono emits Seatbelt
+    # deny rules that protect a denied child even when its parent is allowed).
+    # That precedence is what makes this effective despite the broad
+    # $HOME/.config allow above — gcloud config/credentials stay out of the
+    # sandbox. `filesystem.deny` has no base definition, so this is the sole
+    # leaf; lib.mkDefault keeps it an overridable host default (and would
+    # CONCATENATE if the base ever adds denies).
+    profiles.opencode-audit.filesystem.deny = lib.mkDefault [
+      "$HOME/.config/gcloud"
+    ];
+
+    # Mirror the YugabyteDB fork grant, the Ruby toolchain paths
+    # ($HOME/.gem, /opt/rubies), and the git config dir ($HOME/.config/git)
+    # onto the enforced profile so they all survive the eventual
+    # `defaultState = "enforced"` tightening (this host is on `audit` today).
+    # Same concatenation contract as the audit block above: the base
+    # `opencode-managed.filesystem.allow` is `lib.mkDefault opencodeDataPaths`,
+    # so this second `lib.mkDefault` ties at priority 1000 and the two lists
+    # CONCATENATE, preserving the seven base opencode data-dir grants. Unlike
+    # the audit profile, the enforced profile does NOT broadly allow
+    # $HOME/.config, so the .config/git grant is meaningful here (not a subset).
+    # The audit-only paths (tec/.dev/.config) are deliberately NOT mirrored.
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/src/github.com/yugabyte/yugabyte-db"
       "$HOME/.gem"
       "/opt/rubies"
+      "$HOME/.config/git"
+    ];
+
+    # Deny ~/.config/gcloud on the enforced profile too (see the audit deny
+    # above for the precedence rationale). Defense-in-depth: the enforced
+    # profile does not allow $HOME/.config broadly, but the deny guarantees
+    # gcloud stays inaccessible regardless of any group-granted or future
+    # allow.
+    profiles.opencode-managed.filesystem.deny = lib.mkDefault [
+      "$HOME/.config/gcloud"
     ];
   };
 
