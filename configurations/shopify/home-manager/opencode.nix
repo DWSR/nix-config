@@ -144,7 +144,7 @@ in
       + "Host: ShopifyLaptop — devx LLM-gateway credential access "
       + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
 
-    # Extend (NOT replace) the audit profile's filesystem.allow with eight
+    # Extend (NOT replace) the audit profile's filesystem.allow with nine
     # Shopify-host-specific paths. The base leaf is `lib.mkDefault
     # opencodeDataPaths` (home-manager/common/opencode-nono.nix), so a second
     # `lib.mkDefault` here ties at the same override priority (1000) and the
@@ -175,6 +175,13 @@ in
     #                                              listed explicitly for parity
     #                                              with the enforced profile and
     #                                              the personal host
+    #   - .cache                                 : XDG cache root — lets
+    #                                              sandboxed tooling (nix eval,
+    #                                              prek pre-commit hooks) write
+    #                                              their caches; the
+    #                                              user_caches_macos group
+    #                                              covers ~/Library/Caches, not
+    #                                              ~/.cache
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.local/state/tec"
       "$HOME/.dev/userprofile"
@@ -184,6 +191,7 @@ in
       "$HOME/.gem"
       "/opt/rubies"
       "$HOME/.config/git"
+      "$HOME/.cache"
     ];
 
     # Deny ~/.config/gcloud on the audit profile. nono's deny list is checked
@@ -200,21 +208,23 @@ in
     ];
 
     # Mirror the YugabyteDB fork grant, the Ruby toolchain paths
-    # ($HOME/.gem, /opt/rubies), and the git config dir ($HOME/.config/git)
-    # onto the enforced profile so they all survive the eventual
-    # `defaultState = "enforced"` tightening (this host is on `audit` today).
-    # Same concatenation contract as the audit block above: the base
-    # `opencode-managed.filesystem.allow` is `lib.mkDefault opencodeDataPaths`,
-    # so this second `lib.mkDefault` ties at priority 1000 and the two lists
-    # CONCATENATE, preserving the seven base opencode data-dir grants. Unlike
-    # the audit profile, the enforced profile does NOT broadly allow
-    # $HOME/.config, so the .config/git grant is meaningful here (not a subset).
-    # The audit-only paths (tec/.dev/.config) are deliberately NOT mirrored.
+    # ($HOME/.gem, /opt/rubies), the git config dir ($HOME/.config/git), and
+    # the XDG cache root ($HOME/.cache) onto the enforced profile so they all
+    # survive the eventual `defaultState = "enforced"` tightening (this host is
+    # on `audit` today). Same concatenation contract as the audit block above:
+    # the base `opencode-managed.filesystem.allow` is `lib.mkDefault
+    # opencodeDataPaths`, so this second `lib.mkDefault` ties at priority 1000
+    # and the two lists CONCATENATE, preserving the seven base opencode
+    # data-dir grants. Unlike the audit profile, the enforced profile does NOT
+    # broadly allow $HOME/.config, so the .config/git grant is meaningful here
+    # (not a subset). The audit-only paths (tec/.dev/.config) are deliberately
+    # NOT mirrored.
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/src/github.com/yugabyte/yugabyte-db"
       "$HOME/.gem"
       "/opt/rubies"
       "$HOME/.config/git"
+      "$HOME/.cache"
     ];
 
     # Deny ~/.config/gcloud on the enforced profile too (see the audit deny

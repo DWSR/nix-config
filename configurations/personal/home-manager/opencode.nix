@@ -45,18 +45,20 @@
     auditProfile = "opencode-audit";
     reviewProfile = "opencode-review";
 
-    # Allow git config and deny gcloud on the audit + enforced profiles
-    # (parity with the Shopify host). The base module sets each profile's
-    # `filesystem.allow = lib.mkDefault opencodeDataPaths` (the seven opencode
-    # data dirs), so a second `lib.mkDefault` here ties at priority 1000 and
-    # the module system CONCATENATES the lists — preserving the base grants
-    # rather than replacing them (a plain def / mkForce / mkAfter would drop
-    # them). nono expands the $HOME literal at runtime.
+    # Allow git config + the XDG cache root and deny gcloud on the audit +
+    # enforced profiles (parity with the Shopify host). The base module sets
+    # each profile's `filesystem.allow = lib.mkDefault opencodeDataPaths` (the
+    # seven opencode data dirs), so a second `lib.mkDefault` here ties at
+    # priority 1000 and the module system CONCATENATES the lists — preserving
+    # the base grants rather than replacing them (a plain def / mkForce /
+    # mkAfter would drop them). nono expands the $HOME literal at runtime.
     #
     # `.config/git` is a real grant here: unlike the Shopify audit profile,
     # neither personal profile allows $HOME/.config broadly, so only
     # .config/opencode (base) and .config/git (here) are reachable under
-    # .config.
+    # .config. `.cache` (XDG cache root) lets sandboxed tooling — nix eval,
+    # prek pre-commit hooks — write their caches; the user_caches_macos group
+    # covers ~/Library/Caches, not ~/.cache.
     #
     # The gcloud deny relies on nono's deny precedence: the deny list is
     # checked before any allow/group/workdir grant and blocks the path
@@ -64,9 +66,15 @@
     # an allowed parent). `filesystem.deny` has no base definition, so
     # lib.mkDefault just makes it an overridable host default. The review
     # profile is intentionally left untouched.
-    profiles.opencode-audit.filesystem.allow = lib.mkDefault [ "$HOME/.config/git" ];
+    profiles.opencode-audit.filesystem.allow = lib.mkDefault [
+      "$HOME/.config/git"
+      "$HOME/.cache"
+    ];
     profiles.opencode-audit.filesystem.deny = lib.mkDefault [ "$HOME/.config/gcloud" ];
-    profiles.opencode-managed.filesystem.allow = lib.mkDefault [ "$HOME/.config/git" ];
+    profiles.opencode-managed.filesystem.allow = lib.mkDefault [
+      "$HOME/.config/git"
+      "$HOME/.cache"
+    ];
     profiles.opencode-managed.filesystem.deny = lib.mkDefault [ "$HOME/.config/gcloud" ];
   };
 }
