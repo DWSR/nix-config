@@ -144,7 +144,7 @@ in
       + "Host: ShopifyLaptop — devx LLM-gateway credential access "
       + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
 
-    # Extend (NOT replace) the audit profile's filesystem.allow with four
+    # Extend (NOT replace) the audit profile's filesystem.allow with five
     # Shopify-host-specific paths. The base leaf is `lib.mkDefault
     # opencodeDataPaths` (home-manager/common/opencode-nono.nix), so a second
     # `lib.mkDefault` here ties at the same override priority (1000) and the
@@ -158,11 +158,30 @@ in
     #   - .dev/userprofile, .dev/gem             : Shopify .dev toolchain dirs
     #   - .config                                : XDG config root (supersets
     #                                              the base .config/opencode)
+    #   - src/github.com/yugabyte/yugabyte-db    : upstream YugabyteDB fork
+    #                                              checkout — read by the
+    #                                              yb-sleuth agent (and YB memory
+    #                                              citations) when it is not the
+    #                                              launch CWD.
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.local/state/tec"
       "$HOME/.dev/userprofile"
       "$HOME/.dev/gem"
       "$HOME/.config"
+      "$HOME/src/github.com/yugabyte/yugabyte-db"
+    ];
+
+    # Mirror ONLY the YugabyteDB fork grant onto the enforced profile so YB
+    # source access survives the eventual `defaultState = "enforced"`
+    # tightening (this host is on `audit` today). Same concatenation contract
+    # as the audit block above: the base `opencode-managed.filesystem.allow` is
+    # `lib.mkDefault opencodeDataPaths`, so this second `lib.mkDefault` ties at
+    # priority 1000 and the two lists CONCATENATE, preserving the seven base
+    # opencode data-dir grants. The audit-only paths (tec/.dev/.config) are
+    # deliberately NOT mirrored — only YB source access was requested for the
+    # enforced profile.
+    profiles.opencode-managed.filesystem.allow = lib.mkDefault [
+      "$HOME/src/github.com/yugabyte/yugabyte-db"
     ];
   };
 
