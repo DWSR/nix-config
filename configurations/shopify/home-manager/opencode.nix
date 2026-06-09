@@ -144,15 +144,16 @@ in
       + "Host: ShopifyLaptop — devx LLM-gateway credential access "
       + "(OPENCODE_API_KEY, DEFAULT_PROXY_BASE) admitted via allow_vars.";
 
-    # Extend (NOT replace) the audit profile's filesystem.allow with five
+    # Extend (NOT replace) the audit profile's filesystem.allow with seven
     # Shopify-host-specific paths. The base leaf is `lib.mkDefault
     # opencodeDataPaths` (home-manager/common/opencode-nono.nix), so a second
     # `lib.mkDefault` here ties at the same override priority (1000) and the
     # module system CONCATENATES the two lists. A plain (priority-100)
     # definition — or mkForce / mkAfter — would instead WIN outright and drop
     # the seven base opencode data-dir grants, breaking OpenCode's access to
-    # its own state. Paths are $HOME-relative literals (nono expands them at
-    # runtime, matching the base list):
+    # its own state. Paths are literals nono uses verbatim ($HOME/$TMPDIR
+    # expanded at runtime; absolute paths like /opt/rubies passed through
+    # unchanged):
     #   - .local/state/tec                       : tec dev-env state (whole dir;
     #                                              subsumes profiles/base/current)
     #   - .dev/userprofile, .dev/gem             : Shopify .dev toolchain dirs
@@ -163,25 +164,36 @@ in
     #                                              yb-sleuth agent (and YB memory
     #                                              citations) when it is not the
     #                                              launch CWD.
+    #   - .gem                                   : user RubyGems home (gem
+    #                                              install/exec under the Ruby
+    #                                              toolchain)
+    #   - /opt/rubies                            : chruby-managed Ruby installs
+    #                                              (absolute path; Shopify dev
+    #                                              Ruby versions)
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.local/state/tec"
       "$HOME/.dev/userprofile"
       "$HOME/.dev/gem"
       "$HOME/.config"
       "$HOME/src/github.com/yugabyte/yugabyte-db"
+      "$HOME/.gem"
+      "/opt/rubies"
     ];
 
-    # Mirror ONLY the YugabyteDB fork grant onto the enforced profile so YB
-    # source access survives the eventual `defaultState = "enforced"`
-    # tightening (this host is on `audit` today). Same concatenation contract
-    # as the audit block above: the base `opencode-managed.filesystem.allow` is
-    # `lib.mkDefault opencodeDataPaths`, so this second `lib.mkDefault` ties at
-    # priority 1000 and the two lists CONCATENATE, preserving the seven base
-    # opencode data-dir grants. The audit-only paths (tec/.dev/.config) are
-    # deliberately NOT mirrored — only YB source access was requested for the
-    # enforced profile.
+    # Mirror the YugabyteDB fork grant and the Ruby toolchain paths
+    # ($HOME/.gem, /opt/rubies) onto the enforced profile so all three survive
+    # the eventual `defaultState = "enforced"` tightening (this host is on
+    # `audit` today). Same concatenation contract as the audit block above:
+    # the base `opencode-managed.filesystem.allow` is `lib.mkDefault
+    # opencodeDataPaths`, so this second `lib.mkDefault` ties at priority 1000
+    # and the two lists CONCATENATE, preserving the seven base opencode
+    # data-dir grants. The audit-only paths (tec/.dev/.config) are deliberately
+    # NOT mirrored — only YB source and the Ruby toolchain were requested for
+    # the enforced profile.
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/src/github.com/yugabyte/yugabyte-db"
+      "$HOME/.gem"
+      "/opt/rubies"
     ];
   };
 
