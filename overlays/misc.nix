@@ -305,80 +305,99 @@ final: prev: {
     };
   });
 
-  opencode-pinned = final.unstable.opencode.overrideAttrs (old: {
-    version = "1.16.2";
-
-    src = final.fetchFromGitHub {
-      owner = "anomalyco";
-      repo = "opencode";
-      tag = "v1.16.2";
-      hash = "sha256-IpTD4YCgGNtYlZ6EoyY+YLD81rIFR0D2A4W3uhWSSfo=";
-    };
-
-    # Turn timestamp rendering is patched into the pinned package at build
-    # time. Operators need a host rebuild plus a fresh OpenCode process before
-    # this behavior appears; already-running processes keep the old package.
-    patches = (old.patches or [ ]) ++ [
-      ./opencode-turn-timestamps.patch
-    ];
-
-    node_modules = old.node_modules.overrideAttrs (_oldNm: {
-      src = final.fetchFromGitHub {
-        owner = "anomalyco";
-        repo = "opencode";
-        tag = "v1.16.2";
-        hash = "sha256-IpTD4YCgGNtYlZ6EoyY+YLD81rIFR0D2A4W3uhWSSfo=";
+  # OpenCode pinned to the anomalyco fork via that repo's own Nix packaging:
+  # the `opencode` flake input's packages.<system>.opencode, built from its
+  # nix/opencode.nix + nix/node_modules.nix. This replaces overriding nixpkgs'
+  # `opencode` derivation. Because the packaging is version-matched to the
+  # source, we no longer hand-maintain:
+  #   - the node_modules `outputHash` (the fork ships it per-platform in
+  #     nix/hashes.json; flake.lock pins the source), or
+  #   - the `--filter`-dropping node_modules buildPhase override. That existed
+  #     only to make the root-workspace `prettier` devDep land for the older
+  #     nixpkgs build machinery; by v1.16.2 the build-time prettier import was
+  #     removed and prettier moved into packages/opencode, so it is moot.
+  # v1.16.2's build script requires bun ^1.3.14, while this repo's current
+  # nixpkgs-unstable lock, latest checked nixpkgs-unstable (2026-06-08), and
+  # opencode's tagged upstream lock all expose bun 1.3.13. Keep upstream
+  # opencode's own Nix packaging, but replace only the build-time `bun` native
+  # input with a minimally-overridden 1.3.14 Bun binary package.
+  # Bumps: change the `opencode` input ref in flake.nix + `nix flake update
+  # opencode`; update/remove `opencodeBun` only if the new tag's build floor or
+  # nixpkgs Bun state changes.
+  #
+  # `version` is pinned to a clean "1.16.2" because the upstream packages
+  # output bakes a "+<rev>" suffix (node_modules.nix sets
+  # `${packageJson.version}+${rev}`); this keeps the derivation name and
+  # `opencode --version` identical to the previous override.
+  #
+  # The two local modifications below both run after the node_modules build,
+  # so neither invalidates the in-repo node_modules hash, and both survive
+  # configurePhase's node_modules copy (which overlays only node_modules dirs,
+  # not src).
+  opencode-pinned =
+    let
+      opencodeBunVersion = "1.3.14";
+      opencodeBunSources = {
+        "aarch64-darwin" = final.fetchurl {
+          url = "https://github.com/oven-sh/bun/releases/download/bun-v${opencodeBunVersion}/bun-darwin-aarch64.zip";
+          hash = "sha256-2LliIYKK1vl6x6wKt+lYcjQa92MAHogD6CZ2UsJlJiA=";
+        };
+        "x86_64-darwin" = final.fetchurl {
+          url = "https://github.com/oven-sh/bun/releases/download/bun-v${opencodeBunVersion}/bun-darwin-x64-baseline.zip";
+          hash = "sha256-PjWtb1OXGpg0v55nhuKt9ytfGSHMmpxf3gc9KXKUQHY=";
+        };
+        "aarch64-linux" = final.fetchurl {
+          url = "https://github.com/oven-sh/bun/releases/download/bun-v${opencodeBunVersion}/bun-linux-aarch64.zip";
+          hash = "sha256-on/7Y6gxA3WDbg1vZorhf6jY0YuIw3yCHGUzGXOhmjs=";
+        };
+        "x86_64-linux" = final.fetchurl {
+          url = "https://github.com/oven-sh/bun/releases/download/bun-v${opencodeBunVersion}/bun-linux-x64.zip";
+          hash = "sha256-lR7iruhV8IWVruxiJSJqKY0/6oOj3NZGXAnLzN9+hI8=";
+        };
       };
+      opencodeBun = final.unstable.bun.overrideAttrs (oldBun: {
+        version = opencodeBunVersion;
+        src =
+          opencodeBunSources.${final.stdenv.hostPlatform.system}
+            or (throw "Unsupported Bun/OpenCode system: ${final.stdenv.hostPlatform.system}");
+        passthru = (oldBun.passthru or { }) // {
+          sources = opencodeBunSources;
+        };
+      });
+      replaceBun = input: if (input.pname or null) == "bun" then opencodeBun else input;
+    in
+    inputs.opencode.packages.${final.stdenv.hostPlatform.system}.opencode.overrideAttrs (old: {
+      version = "1.16.2";
+      __intentionallyOverridingVersion = true;
 
-      # opencode's build-time generate.ts imports prettier (a root-workspace
-      # devDependency). The upstream nixpkgs node_modules buildPhase uses
-      # `--filter ./packages/{app,desktop,opencode}` which excludes the root
-      # workspace's deps, so prettier is missing. Override the buildPhase to
-      # install without filters so prettier lands in node_modules.
-      #
-      # First needed at the anomalyco fork's v1.14.20; still required at
-      # v1.15.13 (verified 2026-05-31). When bumping, retry without this
-      # override only if upstream has stopped pulling prettier into
-      # generate.ts; otherwise leave it in place.
-      buildPhase = ''
-        runHook preBuild
+      nativeBuildInputs = map replaceBun (old.nativeBuildInputs or [ ]);
 
-        bun install \
-          --cpu="*" \
-          --frozen-lockfile \
-          --ignore-scripts \
-          --no-progress \
-          --os="*"
+      # 1. Turn timestamp rendering. Operators need a host rebuild plus a fresh
+      #    OpenCode process before this behavior appears; already-running
+      #    processes keep the old package.
+      patches = (old.patches or [ ]) ++ [
+        ./opencode-turn-timestamps.patch
+      ];
 
-        bun --bun ./nix/scripts/canonicalize-node-modules.ts
-        bun --bun ./nix/scripts/normalize-bun-binaries.ts
-
-        runHook postBuild
+      # 2. Caveman-lite compressions of the bundled model-specific system
+      #    prompts (anthropic / beast / codex / default / gemini / gpt / kimi /
+      #    trinity). Replaces each .txt file Bun bundles in at build time via
+      #    `import PROMPT_X from "./prompt/X.txt"` in
+      #    packages/opencode/src/session/system.ts. Source baseline, compression
+      #    style, refresh procedure, and verification steps documented in
+      #    ./opencode-prompts/README.md. If upstream renames any of these files,
+      #    the `cp -f` below will fail loud at build time — that is the canary.
+      postPatch = (old.postPatch or "") + ''
+        cp -f ${./opencode-prompts/anthropic.txt} packages/opencode/src/session/prompt/anthropic.txt
+        cp -f ${./opencode-prompts/beast.txt}     packages/opencode/src/session/prompt/beast.txt
+        cp -f ${./opencode-prompts/codex.txt}     packages/opencode/src/session/prompt/codex.txt
+        cp -f ${./opencode-prompts/default.txt}   packages/opencode/src/session/prompt/default.txt
+        cp -f ${./opencode-prompts/gemini.txt}    packages/opencode/src/session/prompt/gemini.txt
+        cp -f ${./opencode-prompts/gpt.txt}       packages/opencode/src/session/prompt/gpt.txt
+        cp -f ${./opencode-prompts/kimi.txt}      packages/opencode/src/session/prompt/kimi.txt
+        cp -f ${./opencode-prompts/trinity.txt}   packages/opencode/src/session/prompt/trinity.txt
       '';
-
-      outputHash = "sha256-2xHTCH9pRUDNT36hOcmDQ6vR+zWqdWwwRho/xaiMah0=";
     });
-
-    # Caveman-lite compressions of the bundled model-specific system
-    # prompts (anthropic / beast / codex / default / gemini / gpt /
-    # kimi / trinity). Replaces each .txt file Bun bundles in at
-    # build time via `import PROMPT_X from "./prompt/X.txt"` in
-    # packages/opencode/src/session/system.ts. Source baseline,
-    # compression style, refresh procedure, and verification steps
-    # documented in ./opencode-prompts/README.md. If upstream renames
-    # any of these files, the `cp -f` below will fail loud at build
-    # time — that is the canary.
-    postPatch = (old.postPatch or "") + ''
-      cp -f ${./opencode-prompts/anthropic.txt} packages/opencode/src/session/prompt/anthropic.txt
-      cp -f ${./opencode-prompts/beast.txt}     packages/opencode/src/session/prompt/beast.txt
-      cp -f ${./opencode-prompts/codex.txt}     packages/opencode/src/session/prompt/codex.txt
-      cp -f ${./opencode-prompts/default.txt}   packages/opencode/src/session/prompt/default.txt
-      cp -f ${./opencode-prompts/gemini.txt}    packages/opencode/src/session/prompt/gemini.txt
-      cp -f ${./opencode-prompts/gpt.txt}       packages/opencode/src/session/prompt/gpt.txt
-      cp -f ${./opencode-prompts/kimi.txt}      packages/opencode/src/session/prompt/kimi.txt
-      cp -f ${./opencode-prompts/trinity.txt}   packages/opencode/src/session/prompt/trinity.txt
-    '';
-  });
 
   # cc-sdd: Kiro-style spec-driven development scaffolder (gotalab/cc-sdd, MIT).
   # Provides 17 `kiro-*` skills for OpenCode + project-local templates and

@@ -95,6 +95,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # OpenCode pinned to the anomalyco fork, consumed via that repo's own Nix
+    # packaging (its flake's `packages.<system>.opencode`). overlays/misc.nix
+    # layers the turn-timestamp patch, prompt-compression postPatch, and a
+    # build-only Bun override on top. Bumps: change the tag here, then `nix
+    # flake update opencode`.
+    opencode = {
+      url = "github:anomalyco/opencode/v1.16.2";
+    };
+
   };
 
   outputs =
