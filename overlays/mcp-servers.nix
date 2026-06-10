@@ -601,6 +601,28 @@ in
     };
   };
 
+  github-mcp-server = final.buildGoModule {
+    pname = "github-mcp-server";
+    version = "1.2.0";
+
+    src = final.fetchFromGitHub {
+      owner = "github";
+      repo = "github-mcp-server";
+      tag = "v1.2.0";
+      hash = "sha256-ZPDgs1mIYT1RtnqkuMgGssonrG1Psqa4z/FPvH1ysmE=";
+    };
+
+    vendorHash = "sha256-J1hC4hdEKLENXLJrsyV41TaJ9+2CuPz5KoIMm2mXvTE=";
+    subPackages = [ "cmd/github-mcp-server" ];
+
+    meta = with final.lib; {
+      description = "GitHub's official MCP server for interacting with GitHub APIs";
+      homepage = "https://github.com/github/github-mcp-server";
+      license = licenses.mit;
+      mainProgram = "github-mcp-server";
+    };
+  };
+
   slack-mcp-server = final.buildGoModule {
     pname = "slack-mcp-server";
     version = "1.2.3";
