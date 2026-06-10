@@ -62,7 +62,7 @@ Given a change the user wants (add a plugin, add an LSP, rebind a key, debug a p
 - **Sidebar**: edgy.nvim manages a left sidebar with three neo-tree panes: filesystem (60%), git_status (20%), buffers (20%). Toggle with `<leader>e`. Auto-hidden for `gitcommit` filetype.
 - **Git signs**: gitsigns.nvim with buffer-local `on_attach`. `]c`/`[c` hunk nav with diff-mode fallback. `<leader>gb` full blame float, `<leader>Vb` toggle inline blame, `ih` text object = select hunk.
 - **Git UI**: LazyGit at `<leader>gg`. `git-conflict.nvim` for conflict markers (`co`/`ct`/`cb`/`c0` + `]x`/`[x`).
-- **AI**: CodeCompanion uses the `claude_code` adapter via the `claude-agent-acp` binary, wired to OpenCode through ACP. MCPHub exposes MCP tools/resources/prompts; MCPHub status is shown in lualine.
+- **AI**: agentic.nvim (ACP-only chat UI) via the `opencode-acp` provider (spawns `opencode acp` over stdio). Packaged from a pinned GitHub commit with `buildVimPlugin`; set `nvimRequireCheck = "agentic"` so the require-check skips discovery mode, which fails on the plugin's co-located `*.test.lua` files. Chat bindings under `<leader>a` (`aa` toggle, `an` new, `ac` add context, `ar` restore). CodeCompanion and MCPHub were removed.
 - **Debug (DAP)**: Go, Python, Rust, C/C++. Bindings under `<leader>d` with sub-groups `<leader>dg`/`<leader>dp`/`<leader>dr`.
 - **Text objects/motion**: mini.surround (`sa`/`sd`/`sr` for add/delete/replace), treesitter-textobjects (`af`/`if`/`ac`/`ic`/`aa`/`ia` + `]m`/`]]`/`[m`/`[[`), trouble.nvim under `<leader>x` for structured diagnostics.
 - **Scroll**: neoscroll (C-u/C-d/C-b/C-f/zt/zz/zb smooth).
@@ -169,7 +169,8 @@ Test harness patterns: use `assertions = [{ assertion = bool; message = str; }]`
 - `memories/2026-04-14-nixvim-keybinding-catalog.md` — the full 133-binding catalog
 - `memories/2026-04-12-nixvim-testing-framework.md`, `nixvim-testing-integration.md`, `neovim-headless-lsp-testing.md` — test tiers
 - `memories/2026-04-12-nixvim-byte-compile-combine-plugins.md`, `nixvim-performance-byte-compilation-risks.md`, `nixvim-lazyload-architecture.md` — perf caveats
-- `memories/2026-04-12-codecompanion-opencode-acp.md`, `acp-codecompanion-avante-opencode-comparison.md` — AI stack
+- `memories/2026-06-09-buildvimplugin-require-check-test-files.md` — current AI stack (agentic.nvim) + the buildVimPlugin require-check gotcha
+- `memories/2026-04-12-codecompanion-opencode-acp.md`, `acp-codecompanion-avante-opencode-comparison.md` — prior AI stack (CodeCompanion, removed)
 - `memories/2026-04-12-navic-auto-attach-snake-case.md` — breadcrumbs quirk
 - `memories/2026-04-12-edgy-hide-for-gitcommit.md` — edgy filetype hide
 - `memories/2026-04-12-dap-rust-cpp-nixvim.md`, `nixvim-dap-debugging-plan.md` — DAP

@@ -14,11 +14,11 @@ in
     ./commands.nix
 
     ./plugins/actions-preview.nix
+    ./plugins/agentic.nix
     ./plugins/auto-save.nix
 
     ./plugins/blink-cmp.nix
     ./plugins/bufonly.nix
-    ./plugins/codecompanion.nix
     ./plugins/conform.nix
     ./plugins/dap.nix
     ./plugins/devdocs.nix
