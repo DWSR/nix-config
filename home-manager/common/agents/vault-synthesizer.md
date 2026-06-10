@@ -1,7 +1,8 @@
 ---
 description: Synthesize curated Obsidian memory notes from recent cavemem observations over a caller-supplied time range. Invoke with @vault-synthesizer <time-range> when the user says "synthesize my recent sessions" / "draft memories from cavemem" / "promote yesterday's work into vault memories". Drafts only — vault-curator handles dedup downstream.
 mode: subagent
-model: anthropic/claude-sonnet-4-5
+model: anthropic/claude-opus-4-8
+variant: max
 temperature: 0.2
 permission:
   edit: deny

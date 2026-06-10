@@ -1,7 +1,8 @@
 ---
 description: Read-only Shopify review-thread helper. Classifies bot review comments across PRs as actionable, stacked-PR false positive, incorrect, or deferred. Use from @stack-captain during fan-out bot triage.
 mode: subagent
-model: openai/gpt-5.5
+model: anthropic/claude-opus-4-8
+variant: max
 temperature: 0.1
 permission:
   read: allow
@@ -16,10 +17,6 @@ permission:
   mcpproxy_call_tool_read: allow
   mcpproxy_call_tool_write: deny
   mcpproxy_call_tool_destructive: deny
-options:
-  thinking:
-    type: adaptive
-    display: summarized
 ---
 
 # bot-thread-triager

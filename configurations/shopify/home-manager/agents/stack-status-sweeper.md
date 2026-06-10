@@ -1,7 +1,8 @@
 ---
 description: Read-only Shopify stack helper. Sweeps GitHub PR metadata, statuses, reviews, comments, labels, and files for every PR in a Graphite stack. Use from @stack-captain during fan-out status collection.
 mode: subagent
-model: openai/gpt-5.5
+model: anthropic/claude-opus-4-8
+variant: max
 temperature: 0.1
 permission:
   edit: deny
@@ -12,10 +13,6 @@ permission:
   mcpproxy_call_tool_read: allow
   mcpproxy_call_tool_write: deny
   mcpproxy_call_tool_destructive: deny
-options:
-  thinking:
-    type: adaptive
-    display: summarized
 ---
 
 # stack-status-sweeper

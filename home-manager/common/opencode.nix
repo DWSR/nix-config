@@ -293,14 +293,14 @@
       };
 
       settings = {
-        # Re-enable thinking output for Claude Opus 4.7, which omits it by default.
+        # Re-enable thinking output for Claude Opus 4.8, which omits it by default.
         # https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7#thinking-content-omitted-by-default
         #
         # opencode 1.4.7+ auto-generates the low/medium/high/xhigh/max variants
-        # with display=summarized for opus-4-7 through the Anthropic Messages API
+        # with display=summarized for Opus through the Anthropic Messages API
         # (anomalyco/opencode#22833 + #22873). We only need the base options
         # override here, which applies when no variant is selected.
-        provider.anthropic.models."claude-opus-4-7".options.thinking = {
+        provider.anthropic.models."claude-opus-4-8".options.thinking = {
           type = "adaptive";
           display = "summarized";
         };

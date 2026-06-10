@@ -1,7 +1,8 @@
 ---
 description: Answer "why does YugabyteDB do X" by reading the YB fork source. Traces call chains, flags, lock structure, and periodic tasks with file:line citations. Read-only. Writes a memory note on completion. Invoke with @yb-sleuth for any YB internals investigation.
 mode: subagent
-model: openai/gpt-5.5
+model: anthropic/claude-opus-4-8
+variant: max
 temperature: 0.1
 permission:
   edit: deny
@@ -24,10 +25,6 @@ permission:
     "git diff*": allow
     "git status*": allow
     "git rev-parse*": allow
-options:
-  thinking:
-    type: adaptive
-    display: summarized
 ---
 
 # yb-sleuth
