@@ -69,6 +69,9 @@
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.config/git"
       "$HOME/.cache"
+      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
+      # the default text encoding/locale; granted so nono does not deny the read.
+      "$HOME/.CFUserTextEncoding"
     ];
     profiles.opencode-audit.filesystem.deny = lib.mkDefault [
       "$HOME/.config/gcloud"
@@ -80,6 +83,9 @@
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/.config/git"
       "$HOME/.cache"
+      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
+      # the default text encoding/locale; granted so nono does not deny the read.
+      "$HOME/.CFUserTextEncoding"
     ];
     profiles.opencode-managed.filesystem.deny = lib.mkDefault [
       "$HOME/.config/gcloud"

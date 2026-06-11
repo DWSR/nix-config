@@ -192,6 +192,9 @@ in
       "/opt/rubies"
       "$HOME/.config/git"
       "$HOME/.cache"
+      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
+      # the default text encoding/locale; granted so nono does not deny the read.
+      "$HOME/.CFUserTextEncoding"
     ];
 
     # Deny ~/.config/gcloud on the audit profile. nono's deny list is checked
@@ -230,6 +233,9 @@ in
       "/opt/rubies"
       "$HOME/.config/git"
       "$HOME/.cache"
+      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
+      # the default text encoding/locale; granted so nono does not deny the read.
+      "$HOME/.CFUserTextEncoding"
     ];
 
     # Deny ~/.config/gcloud on the enforced profile too (see the audit deny
