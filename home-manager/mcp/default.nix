@@ -71,6 +71,13 @@ let
           // lib.optionalAttrs (serverCfg ? headers) { inherit (serverCfg) headers; }
         else
           { };
+      # Per-server tool-discovery override. Only emitted when the source
+      # entry sets `tool_discovery_interval`, so servers without one inherit
+      # the global default ("0s", disabled). Lets a dynamic upstream re-index
+      # on a cadence while the rest of the fleet stays quiet.
+      intervalFields = lib.optionalAttrs (serverCfg ? tool_discovery_interval) {
+        inherit (serverCfg) tool_discovery_interval;
+      };
     in
     {
       inherit name protocol;
@@ -78,7 +85,8 @@ let
       quarantined = false;
     }
     // stdioFields
-    // httpFields;
+    // httpFields
+    // intervalFields;
 
   # The base upstream MCP servers always present on every host (obsidian,
   # github, mcp-nixos, time). They flow through the same `renderServer`
@@ -121,6 +129,15 @@ let
     data_dir = "${config.home.homeDirectory}/.mcpproxy";
     routing_mode = "retrieve_tools";
     quarantine_enabled = false;
+    # Disable the periodic tools/list re-index sweep globally ("0s" =
+    # disabled). Tool changes are still picked up reactively via
+    # notifications/tools/list_changed and on (re)connect; the sweep is
+    # only a fallback for servers that don't advertise listChanged.
+    # Hosts that need the sweep for a specific upstream set a per-server
+    # override, which flows through renderServer's tool_discovery_interval
+    # passthrough (mcpproxy resolution order: per-server → global →
+    # built-in default).
+    tool_discovery_interval = "0s";
     api_key = readKeychainSecret "mcpproxy-api-key";
     require_mcp_auth = false;
     mcpServers = lib.mapAttrsToList renderServer mergedServers;
@@ -337,9 +354,11 @@ in
         `command`, `args`, and optional `env`; HTTP and
         streamable-HTTP servers set `type = "http"` or
         `type = "streamable-http"`, `url`, and optional `headers`.
-        The renderer translates this attrset into mcpproxy's
-        `mcpServers` array shape and appends `enabled = true` and
-        `quarantined = false` to every entry.
+        An optional `tool_discovery_interval` (duration string such as
+        `"1h"`, or `"0s"` to disable) overrides the global sweep cadence
+        for that server. The renderer translates this attrset into
+        mcpproxy's `mcpServers` array shape and appends `enabled = true`
+        and `quarantined = false` to every entry.
       '';
       example = {
         custom-server = {

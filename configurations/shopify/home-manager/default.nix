@@ -112,6 +112,10 @@ in
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
           headers.Authorization = "Bearer " + "\${env:TOOL_GATEWAY_TOKEN}";
+          # Re-index this upstream hourly, overriding the global "0s"
+          # (disabled) sweep. The gateway's tool set changes over time, so
+          # periodic re-discovery keeps the search index current.
+          tool_discovery_interval = "1h";
         };
 
         gcloud-mcp = {
