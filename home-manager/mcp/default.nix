@@ -80,11 +80,11 @@ let
     // stdioFields
     // httpFields;
 
-  # The four base upstream MCP servers always present on every host.
-  # They flow through the same `renderServer` translator as
-  # `home.mcp.extraServers` entries so the array-emission logic stays
-  # uniform. The `nixos` server in the legacy mcphub config is renamed
-  # to `mcp-nixos` here (R2.1).
+  # The base upstream MCP servers always present on every host (obsidian,
+  # github, mcp-nixos, time). They flow through the same `renderServer`
+  # translator as `home.mcp.extraServers` entries so the array-emission
+  # logic stays uniform. The `nixos` server in the legacy mcphub config is
+  # renamed to `mcp-nixos` here (R2.1).
   baseServers = {
     obsidian = {
       command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
@@ -103,6 +103,14 @@ let
     mcp-nixos = {
       command = "${pkgs.mcp-nixos}/bin/mcp-nixos";
       args = [ "--" ];
+    };
+
+    # Local time + IANA timezone conversion (get_current_time, convert_time).
+    # Promoted to a base server so every host's agents read time through MCP
+    # instead of shelling out to `date` (denied on the opencode-nono audit +
+    # enforced profiles). tzlocal autodetects the zone; no args needed.
+    time = {
+      command = "${pkgs.mcp-server-time}/bin/mcp-server-time";
     };
   };
 
@@ -471,6 +479,7 @@ in
       pkgs.github-mcp-server
       pkgs.mcp-nixos
       pkgs.mcp-obsidian
+      pkgs.mcp-server-time
       (pkgs.writeScriptBin "restart-mcpproxy" ''
         #!/bin/sh
         exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"

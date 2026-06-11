@@ -205,6 +205,11 @@ in
     # CONCATENATE if the base ever adds denies).
     profiles.opencode-audit.filesystem.deny = lib.mkDefault [
       "$HOME/.config/gcloud"
+      # Disallow the `date` command (agents read time via the `time` MCP
+      # server instead). /bin/date is macOS's only `date` — coreutils is not
+      # on the global PATH — so denying it blocks the command under nono's
+      # Seatbelt deny precedence (same as the gcloud deny above).
+      "/bin/date"
     ];
 
     # Mirror the YugabyteDB fork grant, the Ruby toolchain paths
@@ -234,6 +239,8 @@ in
     # allow.
     profiles.opencode-managed.filesystem.deny = lib.mkDefault [
       "$HOME/.config/gcloud"
+      # Disallow `date` on the enforced profile too (see the audit deny above).
+      "/bin/date"
     ];
   };
 

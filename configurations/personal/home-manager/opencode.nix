@@ -70,11 +70,20 @@
       "$HOME/.config/git"
       "$HOME/.cache"
     ];
-    profiles.opencode-audit.filesystem.deny = lib.mkDefault [ "$HOME/.config/gcloud" ];
+    profiles.opencode-audit.filesystem.deny = lib.mkDefault [
+      "$HOME/.config/gcloud"
+      # Disallow the `date` command (agents read time via the `time` MCP
+      # server). /bin/date is macOS's only `date` (no coreutils on PATH), so
+      # denying it blocks the command under nono's Seatbelt deny precedence.
+      "/bin/date"
+    ];
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/.config/git"
       "$HOME/.cache"
     ];
-    profiles.opencode-managed.filesystem.deny = lib.mkDefault [ "$HOME/.config/gcloud" ];
+    profiles.opencode-managed.filesystem.deny = lib.mkDefault [
+      "$HOME/.config/gcloud"
+      "/bin/date"
+    ];
   };
 }
