@@ -49,7 +49,7 @@
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
         ref = "main";
-        rev = "d0cf2de3d02be0f077c343f381f732b5330d36c9";
+        rev = "6a2a72c799c06a5f4d0431824cc0ddbc595208c2";
       };
     };
   };
