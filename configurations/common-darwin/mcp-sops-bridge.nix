@@ -80,6 +80,30 @@ let
 
   allKeychainSecretNames = builtins.attrNames hmMcp.keychainSecrets ++ bridgeOwnedKeychainSecrets;
 
+  # Optional Nix GitHub access-token wiring. When a host sets
+  # `home.mcp.nixAccessTokenSecret`, the named secret is materialized
+  # into `/etc/nix/nix.conf.d/github-access-token.conf` by the activation
+  # script (see below) and `!include`d from `nix.extraOptions`. The name
+  # MUST be a declared `keychainSecrets` key so sops decrypts it to
+  # `/run/secrets/<name>` (and the activation guard already covers it);
+  # fail the build early and loudly otherwise rather than producing a
+  # host whose activation aborts at the `/run/secrets` guard.
+  nixAccessTokenSecret =
+    let
+      name = hmMcp.nixAccessTokenSecret;
+    in
+    if name == null then
+      null
+    else if builtins.hasAttr name hmMcp.keychainSecrets then
+      name
+    else
+      throw ''
+        home.mcp.nixAccessTokenSecret = "${name}" must be a key of
+        home.mcp.keychainSecrets so the sops bridge decrypts it to
+        /run/secrets/${name}. Add it to keychainSecrets (with its
+        1Password URI) or set nixAccessTokenSecret to null.
+      '';
+
   # Manifest enumerating the secret slots this activation should sync.
   # Rendered into the Nix store at build time so any change to the
   # declared secret list re-renders the manifest path, keeping the
@@ -88,6 +112,9 @@ let
     builtins.toJSON {
       keychainSecrets = allKeychainSecretNames;
       ghAuthToken = hmMcp.ghAuthToken != null;
+      # null disables the nix-token leg; a string names the /run/secrets
+      # entry the activation script reads to render the nix.conf.d file.
+      inherit nixAccessTokenSecret;
     }
   );
 in
@@ -165,6 +192,19 @@ in
     # steady-state behaviour.
     system.activationScripts.postActivation.text = lib.mkOrder 9999 ''
       ${mcp-secrets-activate}/bin/mcp-secrets-activate ${username} ${manifest}
+    '';
+
+    # Make `nix` / `darwin-rebuild` read the activation-rendered GitHub
+    # access token. `!include` (with the leading bang) is the OPTIONAL
+    # form: nix.conf parsing silently skips the file when it does not yet
+    # exist, so a host evaluates cleanly on its very first switch (before
+    # the activation script — or the bootstrap helper — has written it).
+    # The token is never placed in `nix.settings.access-tokens`, which
+    # would serialize it into the world-readable Nix store; it only ever
+    # lives in the root-managed, user-readable nix.conf.d file. The path
+    # is absolute to match the file the activation script writes.
+    nix.extraOptions = lib.mkIf (nixAccessTokenSecret != null) ''
+      !include /etc/nix/nix.conf.d/github-access-token.conf
     '';
   };
 }

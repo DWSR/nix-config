@@ -23,6 +23,18 @@
 # round-trip entirely. Otherwise it runs `gh auth login --with-token`
 # and atomically updates the hash file.
 #
+# Nix GitHub access token (manifest `.nixAccessTokenSecret`): when the
+# manifest names a secret, the script renders
+# `/etc/nix/nix.conf.d/github-access-token.conf` containing
+# `access-tokens = github.com=<value>` from `/run/secrets/<name>`, so
+# `nix` / `darwin-rebuild` can authenticate `github:` flake-input and
+# tarball fetches. The named secret is also one of the keychainSecrets,
+# so it is already covered by the `/run/secrets` guard below. The file
+# is owned by the target USER at mode 0600: flake-input fetching runs in
+# the user's nix client during evaluation, while the root nix-daemon can
+# still read it via superuser. The bridge module `!include`s this file
+# from nix.conf; the token never enters `nix.settings` or the Nix store.
+#
 # Keychain layout (R5.4, R12.1): the script writes every secret name
 # under the mcpproxy-expected layout. Routing by name pattern:
 #   - names matching `sqlite-backup-*` → `-s nix-config-secrets -a <name>`
@@ -86,7 +98,8 @@ pkgs.writeShellApplication {
 
     Manifest schema:
       {"keychainSecrets": ["mcp-github-token", "sqlite-backup-*", ...],
-       "ghAuthToken": true|false}
+       "ghAuthToken": true|false,
+       "nixAccessTokenSecret": "mcp-github-token"|null}
 
     Keychain layout (written by this script):
       - sqlite-backup-*    -> -s nix-config-secrets -a <name>
@@ -99,6 +112,8 @@ pkgs.writeShellApplication {
       - Deletes legacy `-a mcp-hub` Keychain entries for every name in the registry
       - Removes new-layout Keychain entries for names dropped from keychainSecrets
       - Conditionally invokes gh auth login --with-token / gh auth logout
+      - When nixAccessTokenSecret is set, writes /etc/nix/nix.conf.d/github-access-token.conf
+        (owner <username>, mode 0600) from /run/secrets/<name>
       - Updates /var/lib/mcp-keychain-sync/installed-services (atomic)
       - Touches/removes /var/lib/mcp-keychain-sync/gh-token-installed
       - Writes /var/lib/mcp-keychain-sync/gh-token-hash on gh login
@@ -108,7 +123,7 @@ pkgs.writeShellApplication {
     Exit codes:
       0    success
       1    guard failure (missing /run/secrets/<name> or invalid manifest)
-      2    Keychain add/update/delete failure
+      2    Keychain add/update/delete or nix.conf.d write failure
       3    gh auth login/logout/status failure
       4    registry write failure
     USAGE
@@ -145,6 +160,11 @@ pkgs.writeShellApplication {
     esac
 
     mapfile -t SECRET_NAMES < <(jq -r '.keychainSecrets[]' "$MANIFEST_PATH")
+
+    # Optional nix-token slot. Empty string => not declared on this host.
+    # `// empty` collapses JSON null to the empty string so the guard and
+    # render block below can test with `[ -n ... ]`.
+    NIX_ACCESS_TOKEN_SECRET="$(jq -r '.nixAccessTokenSecret // empty' "$MANIFEST_PATH")"
 
     # Defensive guard: catch sops-nix ordering regressions before any
     # mutation. Naming the missing path makes the failure self-diagnosing.
@@ -254,6 +274,46 @@ pkgs.writeShellApplication {
       fi
       rm -f "$GH_FLAG" "$GH_HASH"
       printf 'mcp-secrets: gh logout\n' >&2
+    fi
+
+    # Nix GitHub access-token file. Independent of the Keychain/gh legs.
+    # Rendered only when the manifest names a secret; that name is also a
+    # guarded keychainSecrets entry, so /run/secrets/<name> is guaranteed
+    # present by the loop above. Written to a tempfile in the SAME dir,
+    # then `mv`'d into place (atomic rename within one filesystem), so a
+    # concurrent reader never sees a torn or partially-written token.
+    # Owner is the target USER at mode 0600: flake-input fetches run in
+    # the user's nix client; root (the daemon) reads via superuser.
+    if [ -n "$NIX_ACCESS_TOKEN_SECRET" ]; then
+      if [ ! -e "/run/secrets/$NIX_ACCESS_TOKEN_SECRET" ]; then
+        echo "mcp-secrets-activate: error: /run/secrets/$NIX_ACCESS_TOKEN_SECRET does not exist (manifest declares nixAccessTokenSecret)" >&2
+        exit 1
+      fi
+      nix_conf_d="/etc/nix/nix.conf.d"
+      nix_token_file="$nix_conf_d/github-access-token.conf"
+      if ! mkdir -p "$nix_conf_d"; then
+        echo "mcp-secrets-activate: error: failed to create $nix_conf_d" >&2
+        exit 2
+      fi
+      nix_token_value="$(cat "/run/secrets/$NIX_ACCESS_TOKEN_SECRET")"
+      nix_token_tmp="$(mktemp "$nix_conf_d/.github-access-token.XXXXXX")"
+      {
+        printf '%s\n' "# Managed by mcp-secrets-activate (nix-config sops bridge). Do not edit."
+        printf '%s\n' "# Rendered from sops secret '$NIX_ACCESS_TOKEN_SECRET' on each darwin-rebuild switch."
+        printf 'access-tokens = github.com=%s\n' "$nix_token_value"
+      } > "$nix_token_tmp"
+      chmod 0600 "$nix_token_tmp"
+      if ! chown "$USERNAME:staff" "$nix_token_tmp"; then
+        rm -f "$nix_token_tmp"
+        echo "mcp-secrets-activate: error: failed to chown $nix_token_file to $USERNAME" >&2
+        exit 2
+      fi
+      if ! mv "$nix_token_tmp" "$nix_token_file"; then
+        rm -f "$nix_token_tmp"
+        echo "mcp-secrets-activate: error: failed to install $nix_token_file" >&2
+        exit 2
+      fi
+      printf 'mcp-secrets: nix-access-token %s\n' "$nix_token_file" >&2
     fi
 
     # Cleanup phase. Runs AFTER the WRITE phase (ordering invariant

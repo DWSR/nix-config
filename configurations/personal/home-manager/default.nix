@@ -69,6 +69,13 @@ in
       # 1P item.
       ghAuthToken = "op://Private/GitHub/Tokens/Full Control";
 
+      # Expose the same GitHub PAT to Nix as `access-tokens = github.com=…`
+      # so `nix` / `darwin-rebuild` can fetch `github:` flake inputs and
+      # tarballs without rate-limiting/auth failures. Reuses the existing
+      # `mcp-github-token` secret; the sops bridge renders it into
+      # /etc/nix/nix.conf.d/github-access-token.conf at activation.
+      nixAccessTokenSecret = "mcp-github-token";
+
       extraServers = {
         kagi = {
           command = "${pkgs.kagimcp}/bin/kagimcp";

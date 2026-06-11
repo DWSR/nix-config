@@ -300,6 +300,28 @@ in
       '';
     };
 
+    nixAccessTokenSecret = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "mcp-github-token";
+      description = ''
+        Name of a `home.mcp.keychainSecrets` entry whose value is a
+        GitHub personal access token to expose to Nix as
+        `access-tokens = github.com=<token>`. When set, the
+        `mcp-sops-bridge` darwin module renders
+        `/etc/nix/nix.conf.d/github-access-token.conf` from the
+        decrypted secret at `darwin-rebuild switch` time and adds an
+        `!include` of that file to `nix.extraOptions`, so `nix` and
+        `darwin-rebuild` can authenticate `github:` flake-input and
+        tarball fetches. The named secret MUST already be declared in
+        `keychainSecrets` (so sops decrypts it to `/run/secrets/<name>`);
+        the bridge fails the build otherwise. `null` disables Nix token
+        wiring on the host. Reusing the MCP GitHub PAT
+        (`"mcp-github-token"`) avoids minting a second token; point this
+        at a distinct secret if Nix needs different scopes.
+      '';
+    };
+
     obsidianVaultPath = lib.mkOption {
       type = lib.types.str;
       description = "Absolute path to the Obsidian vault for agent memory and conversation logs";

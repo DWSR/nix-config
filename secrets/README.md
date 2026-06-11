@@ -44,6 +44,11 @@ variables before starting the daemon.
 the SOPS bridge keeps these in sync with `secrets/mcp.<host>.yaml`
 on every `darwin-rebuild switch`.
 
+One secret has a third consumer outside the Keychain:
+`mcp-github-token` is also exposed to Nix itself as
+`access-tokens = github.com=<token>`. See
+"Nix GitHub access token" below.
+
 ## Prerequisites — read this first
 
 Two environmental preconditions apply to every operation below:
@@ -488,6 +493,90 @@ requires re-creating every secret value from the upstream system
 anyone. This is a deliberate trade-off — see `requirements.md`
 section 9.5.
 
+## Nix GitHub access token
+
+`nix` and `darwin-rebuild` authenticate `github:` flake-input and
+tarball fetches with a token read from
+`/etc/nix/nix.conf.d/github-access-token.conf`:
+
+```conf
+access-tokens = github.com=<token>
+```
+
+This reuses the existing `mcp-github-token` secret (the same PAT MCP
+and `gh` already use), wired per host via
+`home.mcp.nixAccessTokenSecret = "mcp-github-token"`. The token is
+NEVER placed in `nix.settings.access-tokens`, which would serialize it
+into the world-readable Nix store; it lives only in the file below,
+which `nix.extraOptions` pulls in with an optional `!include`.
+
+### How it is maintained (steady state)
+
+On every `darwin-rebuild switch`, the SOPS bridge
+(`mcp-secrets-activate`) decrypts `mcp-github-token` to
+`/run/secrets/mcp-github-token` and rewrites
+`/etc/nix/nix.conf.d/github-access-token.conf` from it. The file is
+owned by your login user at mode `0600`: Nix reads `access-tokens` in
+the user's client process during flake-input evaluation, while the
+root `nix-daemon` can still read it via superuser. Rotation is
+automatic — rotating `mcp-github-token` (see "Rotating a secret")
+re-renders this file as a side effect; there is no separate step.
+
+### Bootstrap (no Nix required)
+
+The steady-state path needs Nix installed and the host's age key in
+place. On a fresh host you may need the token for Nix *before* either
+exists — e.g. so the first `darwin-rebuild switch` can fetch private
+`github:` inputs. Seed the file directly from 1Password with the
+standalone helper, which uses only `op` and base macOS tools (no nix,
+jq, or git):
+
+```sh
+./scripts/bootstrap-nix-github-token.sh <shopify|personal>
+```
+
+It writes the exact same file the bridge later manages, so the first
+post-bootstrap switch is a content no-op.
+
+The `!include` in `nix.conf` only becomes active once a configuration
+with `home.mcp.nixAccessTokenSecret` set has been activated. If the
+*very first* switch itself needs the private token (before that
+`!include` exists), pass it inline for that one invocation — this
+reads straight from 1Password, so the token is never written to shell
+history:
+
+```sh
+# shopify (use the personal URI / --flake path on the personal host)
+sudo env NIX_CONFIG="extra-access-tokens = github.com=$(op read --no-newline 'op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub')" \
+  darwin-rebuild switch --flake .
+```
+
+After that first switch, the file and its `!include` are both in
+place and every later `nix` / `darwin-rebuild` invocation reads the
+token automatically.
+
+### Verify
+
+```sh
+# File exists, owned by you, mode 0600:
+ls -l /etc/nix/nix.conf.d/github-access-token.conf
+
+# Nix is reading it. NOTE: `nix config show access-tokens` prints the
+# token value to the terminal; prefer just confirming the setting is
+# populated without echoing it:
+nix config show | grep -q '^access-tokens = .*github\.com=' && echo "access-tokens: set"
+```
+
+### Disable on a host
+
+Set `home.mcp.nixAccessTokenSecret = null` and switch; the `!include`
+is dropped from `nix.conf`. The activation script does not delete the
+now-unreferenced file, so remove it by hand:
+
+```sh
+sudo rm -f /etc/nix/nix.conf.d/github-access-token.conf
+```
+
 ## Out of scope
 
 The following secrets are deliberately NOT managed by this pipeline.
@@ -525,6 +614,8 @@ should get its own spec rather than expanding this pipeline.
 
 ## See also
 
+- `scripts/bootstrap-nix-github-token.sh` — no-Nix 1Password seeder
+  for the Nix GitHub access-token file.
 - Repo-root `.sops.yaml` — the recipient policy file.
 - `.kiro/specs/mcp-secrets-sops-nix/requirements.md` sections 3.4,
   9.1–9.5 — the underlying requirements this runbook satisfies.
