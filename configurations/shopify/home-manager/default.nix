@@ -133,10 +133,6 @@ in
         chrome-devtools = {
           command = "${pkgs.chrome-devtools-mcp}/bin/chrome-devtools-mcp";
         };
-
-        git-mcp = {
-          command = "${pkgs.git-mcp-server}/bin/git-mcp-server";
-        };
       };
     };
   };

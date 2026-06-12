@@ -120,6 +120,24 @@ let
     time = {
       command = "${pkgs.mcp-server-time}/bin/mcp-server-time";
     };
+
+    # git-mcp-server (cyanheads/git-mcp-server, security-reviewed — see
+    # memories/2026-06-02-git-mcp-server-security-review.md). Promoted to a
+    # base server so every host's agents perform git operations through MCP
+    # instead of shelling out to `git` (the opencode-nono sandbox denies the
+    # `git_config` group and ~/.config/git). The package wrapper
+    # (overlays/mcp-servers.nix) pins MCP_TRANSPORT_TYPE=stdio so the server
+    # never opens an HTTP listener. Here we pin the remaining posture:
+    #   - MCP_SESSION_MODE=stateless: no per-session state retained.
+    #   - STORAGE_PROVIDER_TYPE=in-memory: never write a `.storage` dir into
+    #     the working tree (the upstream default is the filesystem provider).
+    git-mcp = {
+      command = "${pkgs.git-mcp-server}/bin/git-mcp-server";
+      env = {
+        MCP_SESSION_MODE = "stateless";
+        STORAGE_PROVIDER_TYPE = "in-memory";
+      };
+    };
   };
 
   mergedServers = baseServers // cfg.extraServers;
@@ -521,6 +539,7 @@ in
       pkgs.mcp-nixos
       pkgs.mcp-obsidian
       pkgs.mcp-server-time
+      pkgs.git-mcp-server
       (pkgs.writeScriptBin "restart-mcpproxy" ''
         #!/bin/sh
         exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"
