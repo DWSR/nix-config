@@ -16,6 +16,11 @@
  *   4. grant-check-missing launcher with `profile show` + `nono run
  *                        --allow-cwd` but no `--json` grant check          R6.2
  *   5. launcher-missing  OPENCODE_NONO_VALIDATE_LAUNCHER → nonexistent path R6.2
+ *   6. profile-runtime-parse a single FILE in a directory-only filesystem key
+ *                        (allow/read/write) → `nono run --dry-run` aborts with
+ *                        "is not a directory" though `nono profile validate`
+ *                        passes (regression guard for the CFUserTextEncoding
+ *                        bug); the same file under read_file passes the gate
  *
  * Requirements: 6.2.
  * Design: "Validation & Operator Domain → Profile Validation"; "Error Handling
@@ -279,4 +284,68 @@ test('a nonexistent launcher path fails [validate-failure: launcher-missing] (R6
   });
   assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
   assert.match(result.stderr, /\[validate-failure: launcher-missing\]/);
+});
+
+// --- Case 6: a single FILE in filesystem.allow → profile-runtime-parse -----
+// Regression guard for the CFUserTextEncoding bug. `nono profile validate`
+// (Check 1) is schema-only and passes a file-in-allow profile, so this reaches
+// Check 1b's `nono run --dry-run`, which aborts with "is not a directory".
+// Two fixture requirements:
+//   - the probe file MUST exist on disk (nono only rejects a directory-only
+//     grant for a path that stats as a regular file; a nonexistent path
+//     dry-runs clean), and
+//   - `extends: []` (NOT the base "default") so the profile pulls no
+//     system_read_macos /nix grant — otherwise, inside this nix build
+//     sandbox, nono fails sandbox init on a /nix state-root overlap (the
+//     gate's tolerant skip) before it ever reaches the single-file check.
+test('a single file in filesystem.allow fails [validate-failure: profile-runtime-parse] (R6.2)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-nono-validate-fileinallow-'));
+  scratchDirs.push(dir);
+  const probeFile = path.join(dir, 'single-file');
+  fs.writeFileSync(probeFile, '');
+  fs.writeFileSync(
+    path.join(dir, 'opencode-managed.json'),
+    JSON.stringify({
+      meta: { name: 'opencode-managed', version: '0.1.0', description: 'x' },
+      extends: [],
+      filesystem: { allow: [probeFile] },
+    }),
+  );
+
+  const result = runValidate({
+    OPENCODE_NONO_VALIDATE_PROFILES_DIR: dir,
+    OPENCODE_NONO_VALIDATE_LAUNCHER: realLauncherPath(),
+  });
+  assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+  assert.match(result.stderr, /\[validate-failure: profile-runtime-parse\]/);
+});
+
+// --- Case 7: the SAME file under read_file passes the runtime-parse gate ---
+// Non-vacuity in the correct direction: the gate rejects a single file only
+// in a directory-only key, not in the proper single-file key. Same `extends:
+// []` minimal profile as Case 6 (so nono sandbox init succeeds here); the
+// one-profile catalog + the real launcher → schema, runtime-parse, and launch
+// contract all pass → [validate-ok].
+test('a single file under filesystem.read_file passes the runtime-parse gate with [validate-ok] (R6.2)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-nono-validate-fileok-'));
+  scratchDirs.push(dir);
+  const probeFile = path.join(dir, 'single-file');
+  fs.writeFileSync(probeFile, '');
+  fs.writeFileSync(
+    path.join(dir, 'opencode-managed.json'),
+    JSON.stringify({
+      meta: { name: 'opencode-managed', version: '0.1.0', description: 'x' },
+      extends: [],
+      filesystem: { read_file: [probeFile] },
+    }),
+  );
+
+  const result = runValidate({
+    OPENCODE_NONO_VALIDATE_PROFILES_DIR: dir,
+    OPENCODE_NONO_VALIDATE_LAUNCHER: realLauncherPath(),
+  });
+  const out = `${result.stderr}\n${result.stdout}`;
+  assert.equal(result.status, 0, out);
+  assert.match(out, /\[validate-ok\]/);
+  assert.doesNotMatch(out, /\[validate-failure:/);
 });

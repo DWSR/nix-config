@@ -192,8 +192,16 @@ in
       "/opt/rubies"
       "$HOME/.config/git"
       "$HOME/.cache"
-      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
-      # the default text encoding/locale; granted so nono does not deny the read.
+    ];
+
+    # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
+    # the default text encoding/locale. It is a single FILE, so it must be a
+    # read_file grant: nono's filesystem.allow/read/write are directory-only
+    # and reject a regular-file path at `nono run` parse time ("is not a
+    # directory"). Read-only is least privilege — CF only reads the file. (The
+    # broad $HOME/.config allow above does NOT cover it: the file lives in
+    # $HOME, not under .config.)
+    profiles.opencode-audit.filesystem.readFile = lib.mkDefault [
       "$HOME/.CFUserTextEncoding"
     ];
 
@@ -233,8 +241,11 @@ in
       "/opt/rubies"
       "$HOME/.config/git"
       "$HOME/.cache"
-      # macOS Core Foundation reads ~/.CFUserTextEncoding at startup to resolve
-      # the default text encoding/locale; granted so nono does not deny the read.
+    ];
+
+    # See the audit profile's readFile note above — single-file read grant for
+    # the CoreFoundation text-encoding file (directory-only allow rejects it).
+    profiles.opencode-managed.filesystem.readFile = lib.mkDefault [
       "$HOME/.CFUserTextEncoding"
     ];
 

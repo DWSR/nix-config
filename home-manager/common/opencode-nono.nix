@@ -147,6 +147,9 @@ let
         lib.optionalAttrs (p.filesystem.allow != [ ]) { inherit (p.filesystem) allow; }
         // lib.optionalAttrs (p.filesystem.read != [ ]) { inherit (p.filesystem) read; }
         // lib.optionalAttrs (p.filesystem.write != [ ]) { inherit (p.filesystem) write; }
+        // lib.optionalAttrs (p.filesystem.allowFile != [ ]) { allow_file = p.filesystem.allowFile; }
+        // lib.optionalAttrs (p.filesystem.readFile != [ ]) { read_file = p.filesystem.readFile; }
+        // lib.optionalAttrs (p.filesystem.writeFile != [ ]) { write_file = p.filesystem.writeFile; }
         // lib.optionalAttrs (p.filesystem.deny != [ ]) { inherit (p.filesystem) deny; };
 
       network = {
@@ -458,17 +461,48 @@ in
               allow = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
-                description = "Read/write filesystem allowances (`filesystem.allow`).";
+                description = ''
+                  Read/write DIRECTORY allowances (`filesystem.allow`,
+                  recursive). Directories only — nono rejects a single-file
+                  path here at `nono run` parse time ("is not a directory");
+                  use `allowFile` for a regular file.
+                '';
               };
               read = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
-                description = "Read-only filesystem allowances (`filesystem.read`).";
+                description = ''
+                  Read-only DIRECTORY allowances (`filesystem.read`,
+                  recursive). Directories only — use `readFile` for a regular
+                  file.
+                '';
               };
               write = lib.mkOption {
                 type = lib.types.listOf lib.types.str;
                 default = [ ];
-                description = "Write filesystem allowances (`filesystem.write`).";
+                description = ''
+                  Write-only DIRECTORY allowances (`filesystem.write`,
+                  recursive). Directories only — use `writeFile` for a regular
+                  file.
+                '';
+              };
+              allowFile = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = ''
+                  Single FILES with read+write access (`filesystem.allow_file`).
+                  Use this — not `allow` — for a path that is a regular file.
+                '';
+              };
+              readFile = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Single FILES with read-only access (`filesystem.read_file`).";
+              };
+              writeFile = lib.mkOption {
+                type = lib.types.listOf lib.types.str;
+                default = [ ];
+                description = "Single FILES with write-only access (`filesystem.write_file`).";
               };
               deny = lib.mkOption {
                 type = lib.types.listOf lib.types.str;

@@ -5,11 +5,24 @@
 
   A `writeShellApplication` named `opencode-nono-validate`. It validates the
   rendered nono profile catalog against the PINNED nono version's schema
-  (so a nono bump that breaks the schema is caught — R7.5) and asserts the
-  managed OpenCode launch contract (the resolver execs `nono run --allow-cwd`
-  with the expected profile per state, the preflight precedes the nono exec,
-  and the pre-launch grant check is present). Every failure emits
-  `[validate-failure: <label>] <detail>` with a corrective action (R6.2).
+  (so a nono bump that breaks the schema is caught — R7.5), parse-checks each
+  profile with `nono run --dry-run` (so a runtime-only grant error is caught
+  here rather than at launch), and asserts the managed OpenCode launch
+  contract (the resolver execs `nono run --allow-cwd` with the expected
+  profile per state, the preflight precedes the nono exec, and the pre-launch
+  grant check is present). Every failure emits `[validate-failure: <label>]
+  <detail>` with a corrective action (R6.2).
+
+  Why the dry-run gate: `nono profile validate` is SCHEMA-ONLY — it does not
+  stat filesystem paths, so a single FILE placed in a directory-only key
+  (`filesystem.allow`/`read`/`write` instead of `allow_file`/`read_file`/
+  `write_file`) validates clean yet aborts `nono run` with "<path> is not a
+  directory" once that file EXISTS on disk. `nono run --dry-run` resolves the
+  full sandbox spec WITHOUT executing, surfacing that class on a real host.
+  The gate fails only on that single-file signal; any other dry-run failure
+  (e.g. a sandbox that cannot initialize because $HOME/$TMPDIR live under
+  /nix in a build sandbox) is a non-fatal `[validate-skip: ...]`, so the gate
+  is host-effective without false-failing in constrained environments.
 
   Structural template: scripts/rtk-opencode-smoke-test.nix (the `fail()`
   idiom, `--help`/`--version` short-circuit, env-var inputs).
@@ -65,6 +78,7 @@ writeShellApplication {
 
     Checks:
       1. nono profile validate --strict on each rendered opencode-*.json
+      1b. nono run --dry-run on each profile (runtime grant/parse gate)
       2. nono profile schema is resolvable (validation is against the pinned nono)
       3. launch-contract assertion on the launcher script text
 
@@ -151,6 +165,43 @@ writeShellApplication {
             fail "profile-invalid" "$profile_file failed nono profile validate --strict: $(printf '%s' "$validate_out" | one_line); fix the profile schema/groups/inheritance"
           fi
           validated=$((validated + 1))
+        done
+
+        # ------------------------------------------------------------------
+        # Check 1b: `nono run --dry-run` each profile. `nono profile validate`
+        # (Check 1) is SCHEMA-ONLY and does NOT stat filesystem paths, so a
+        # single FILE in a directory-only key (filesystem.allow/read/write
+        # rather than allow_file/read_file/write_file) validates clean yet
+        # aborts `nono run` with "<path> is not a directory" once that file
+        # EXISTS. The dry-run resolves the full sandbox spec WITHOUT executing,
+        # so it catches that class on a real host (where the file is present)
+        # before it breaks an actual launch. Lean, side-effect-free flags:
+        #   -s            suppress the banner (errors still reach stderr)
+        #   --no-audit    no audit-log write (no writable audit dir needed)
+        #   --no-rollback no snapshot preflight
+        # No --allow-cwd: the parse gate needs no cwd grant and stays cwd-
+        # independent. stdin from /dev/null so nono never blocks on a prompt.
+        # `-- true` is the no-op program nono plans but never execs in dry-run.
+        #
+        # TOLERANCE: `nono run` must initialize a sandbox, which can fail for
+        # reasons unrelated to the profile's path types — notably inside a nix
+        # build sandbox whose $HOME/$TMPDIR live under /nix, where nono refuses
+        # to grant /nix (or a $TMPDIR that resolves under it) because it
+        # overlaps nono's own state root. We therefore FAIL only when the
+        # dry-run error carries the single-file signal ("is not a directory" /
+        # "--allow-file"); any other dry-run failure is reported as a
+        # non-fatal skip so the gate never emits a false [validate-failure]
+        # off-host. On a real host the sandbox initializes and the single-file
+        # check is enforced.
+        for profile_file in "''${profile_files[@]}"; do
+          if parse_out="$(nono run --dry-run -s --no-audit --no-rollback --profile "$profile_file" -- true </dev/null 2>&1)"; then
+            : # dry-run resolved the sandbox spec cleanly
+          elif printf '%s' "$parse_out" | grep -qiE 'is not a directory|--allow-file'; then
+            fail "profile-runtime-parse" "$profile_file failed nono run --dry-run: $(printf '%s' "$parse_out" | one_line); a single FILE in filesystem.allow/read/write must move to allow_file/read_file/write_file"
+          else
+            printf '[validate-skip: profile-runtime-parse] %s: nono dry-run could not initialize a sandbox here (%s); single-file gate enforced on host launches\n' \
+              "$profile_file" "$(printf '%s' "$parse_out" | one_line)" >&2
+          fi
         done
 
         # ------------------------------------------------------------------

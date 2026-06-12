@@ -261,6 +261,43 @@ test('opencode-managed profile content: groups, open_port, allow_vars (R4.1/R4.3
   }
 });
 
+// Regression guard for the CFUserTextEncoding bug: nono's filesystem.allow/
+// read/write are directory-only (recursive dir grants). A single FILE placed
+// there passes `nono profile validate` (schema-only) but aborts `nono run`
+// with "<path> is not a directory" once the file exists. ~/.CFUserTextEncoding
+// is a single macOS file, so it must be granted via a *_file key. This check
+// is hermetic (pure render inspection) — unlike a `nono run --dry-run` gate it
+// needs no sandbox init, so it holds in the flake-check build.
+test('CFUserTextEncoding is granted as a single file, never in a directory key (regression)', () => {
+  const rendered = getRender();
+  const CF = '.CFUserTextEncoding';
+  let grantedAsFile = false;
+
+  for (const [hostKey, host] of Object.entries(rendered)) {
+    for (const key of PROFILE_KEYS) {
+      const filesystem = JSON.parse(host.profileTexts[key]).filesystem || {};
+      for (const dirKey of ['allow', 'read', 'write']) {
+        for (const p of filesystem[dirKey] || []) {
+          assert.ok(
+            !p.includes(CF),
+            `${hostKey}/${key}: ${CF} must not be in directory-only filesystem.${dirKey} — use a *_file key`,
+          );
+        }
+      }
+      for (const fileKey of ['allow_file', 'read_file', 'write_file']) {
+        if ((filesystem[fileKey] || []).some((p) => p.includes(CF))) {
+          grantedAsFile = true;
+        }
+      }
+    }
+  }
+
+  // Non-vacuity: the catalog really does grant CF via a single-file key, so
+  // the directory-key assertions above are meaningfully exercised (and the
+  // CF startup read is not silently dropped).
+  assert.ok(grantedAsFile, `${CF} must be granted via a *_file key on at least one profile`);
+});
+
 test('Shopify host carries a host-specific label; personal does not (R2.3)', () => {
   const rendered = getRender();
 
