@@ -249,15 +249,39 @@ test('opencode-managed profile content: groups, open_port, allow_vars (R4.1/R4.3
 
   for (const [hostKey, host] of Object.entries(rendered)) {
     const managed = JSON.parse(host.profileTexts['opencode-managed']);
-    for (const group of ['node_runtime', 'git_config', 'nix_runtime', 'user_caches_macos']) {
+    for (const group of ['node_runtime', 'nix_runtime', 'user_caches_macos']) {
       assert.ok(managed.groups.include.includes(group), `${hostKey}/managed groups.include must contain ${group}`);
     }
+    // git_config is intentionally NOT included: git runs through the git-mcp
+    // base server, so the sandbox grants no direct git config access.
+    assert.ok(
+      !managed.groups.include.includes('git_config'),
+      `${hostKey}/managed groups.include must NOT contain git_config`,
+    );
     assert.ok(Array.isArray(managed.network.open_port));
     assert.ok(managed.network.open_port.includes(8080), `${hostKey}/managed open_port must contain 8080`);
     assert.ok(Array.isArray(managed.environment.allow_vars));
     assert.ok(managed.environment.allow_vars.length > 0, `${hostKey}/managed allow_vars non-empty`);
     assert.ok(managed.environment.allow_vars.includes('OPENCODE_*'), `${hostKey}/managed allow_vars must include OPENCODE_*`);
     assert.ok(managed.environment.allow_vars.includes('DEFAULT_PROXY_BASE'), `${hostKey}/managed allow_vars must include DEFAULT_PROXY_BASE`);
+  }
+});
+
+test('git access is denied on every profile: no git_config group, ~/.config/git denied', () => {
+  const rendered = getRender();
+
+  for (const [hostKey, host] of Object.entries(rendered)) {
+    for (const key of PROFILE_KEYS) {
+      const profile = JSON.parse(host.profileTexts[key]);
+      assert.ok(
+        !(profile.groups.include || []).includes('git_config'),
+        `${hostKey}/${key} groups.include must NOT contain git_config (git runs via git-mcp)`,
+      );
+      assert.ok(
+        ((profile.filesystem || {}).deny || []).includes('$HOME/.config/git'),
+        `${hostKey}/${key} filesystem.deny must contain $HOME/.config/git`,
+      );
+    }
   }
 });
 

@@ -30,9 +30,12 @@
   profile (removed; only `default` + dev profiles remain), so each base
   profile `extends ["default"]` and reconstructs the opencode grant set
   empirically derived in Tasks 2.1/2.2:
-    - `groups.include = [node_runtime git_config nix_runtime
-      user_caches_macos]` — all four exist on 0.61.1; `nix_runtime`
-      supplies `/nix/store` exec coverage.
+    - `groups.include = [node_runtime nix_runtime user_caches_macos]` —
+      all exist on 0.61.1; `nix_runtime` supplies `/nix/store` exec
+      coverage. `git_config` is deliberately NOT included: agents perform
+      git through the `git-mcp` base server (mcpproxy, outside the
+      sandbox), so direct git config access is denied here. Each profile
+      also denies `~/.config/git` via `filesystem.deny`.
     - `filesystem.allow` for the seven opencode data paths (rendered as
       `$HOME`/`$TMPDIR` literals; nono expands them at runtime, confirmed
       by Task 2.2's scratch profile and by `nono profile validate` on
@@ -84,12 +87,26 @@ let
     "$TMPDIR"
   ];
 
-  # The four confirmed groups (Task 2.1) that all exist on nono 0.61.1.
+  # The confirmed groups (Task 2.1) that all exist on nono 0.61.1.
+  # `git_config` is intentionally excluded: agents run git through the
+  # `git-mcp` base server (mcpproxy, outside the sandbox), so the sandbox
+  # grants no direct git config access. Paired with the `gitConfigDenyPaths`
+  # deny below for defense in depth.
   opencodeGroups = [
     "node_runtime"
-    "git_config"
     "nix_runtime"
     "user_caches_macos"
+  ];
+
+  # Filesystem paths denied on every profile so direct git config access is
+  # blocked even where a broad parent (e.g. the Shopify audit profile's
+  # `$HOME/.config` allow) would otherwise reach it. nono's deny list is
+  # checked before any allow/group/workdir grant (Seatbelt deny precedence on
+  # macOS), so this carves `~/.config/git` out regardless. git identity,
+  # signing, and `[include]` directives are served by the git-mcp server,
+  # which runs outside the sandbox with full git config.
+  gitConfigDenyPaths = [
+    "$HOME/.config/git"
   ];
 
   # Environment variable NAMES (not values) the launcher exports and the
@@ -625,6 +642,7 @@ in
         groups.include = lib.mkDefault opencodeGroups;
         workdir.access = lib.mkDefault "readwrite";
         filesystem.allow = lib.mkDefault opencodeDataPaths;
+        filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.openPort = lib.mkDefault [ 8080 ];
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
@@ -644,6 +662,7 @@ in
         groups.include = lib.mkDefault opencodeGroups;
         workdir.access = lib.mkDefault "readwrite";
         filesystem.allow = lib.mkDefault opencodeDataPaths;
+        filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.block = lib.mkDefault false;
         network.openPort = lib.mkDefault [ 8080 ];
         environment.allowVars = lib.mkDefault launcherAllowVars;
@@ -661,6 +680,7 @@ in
         groups.include = lib.mkDefault opencodeGroups;
         workdir.access = lib.mkDefault "read";
         filesystem.read = lib.mkDefault opencodeDataPaths;
+        filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.openPort = lib.mkDefault [ 8080 ];
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
