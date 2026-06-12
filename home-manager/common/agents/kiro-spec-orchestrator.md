@@ -17,6 +17,9 @@ permission:
   skill: allow
   bash:
     "*": ask
+    "ls *": allow
+    "echo *": allow
+    "wc *": allow
     "cc-sdd-init": allow
     "git status*": allow
     "git diff*": allow
