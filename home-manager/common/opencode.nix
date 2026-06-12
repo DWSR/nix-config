@@ -219,6 +219,21 @@
       ''
         export OPENCODE_DISABLE_LSP_DOWNLOAD=true
       ''
+      # Stop opencode auto-discovering Claude Code skills under ~/.claude/skills
+      # (a home read the nono sandbox denies; see
+      # memories/2026-06-02-opencode-nono-sandbox.md). The toggle drops `.claude`
+      # from skill auto-discovery for BOTH the global ~/.claude scan AND the
+      # project up-tree scan, so the project-local .claude/skills is re-added
+      # explicitly via `settings.skills.paths` below — that path is cwd-relative,
+      # resolving to $PROJECT_DIR/.claude/skills inside nono's --allow-cwd (no
+      # home read). The editor/IDE auto-connect's ~/.claude/ide poll has no
+      # opencode off-switch and is intentionally left to be sandbox-denied
+      # (harmless: the readdir is caught). Env name from opencode's
+      # effect/runtime-flags; reaches sandboxed opencode via the nono profiles'
+      # allow_vars "OPENCODE_*" glob (home-manager/common/opencode-nono.nix).
+      ''
+        export OPENCODE_DISABLE_CLAUDE_CODE_SKILLS=true
+      ''
     ];
 
     # LSP servers made available to opencode via PATH. Map of opencode LSP id
@@ -332,6 +347,18 @@
           "typescript-language-server"
           "--stdio"
         ];
+
+        # Re-add the project-local .claude/skills source dropped by
+        # OPENCODE_DISABLE_CLAUDE_CODE_SKILLS (exported in wrapperCommands
+        # above). A relative path is resolved against opencode's launch
+        # directory, so this is $CWD/.claude/skills — inside nono's
+        # --allow-cwd, so no ~/.claude read. Keeps project Claude Code skills
+        # working while the global ~/.claude/skills auto-scan stays disabled.
+        # Caveat: cwd-relative, so launching in a project SUBDIR resolves to
+        # <subdir>/.claude/skills (not the worktree root); projects without
+        # .claude/skills log a harmless "skill path not found" warn. Schema:
+        # skills.paths at https://opencode.ai/config.json
+        skills.paths = [ ".claude/skills" ];
       };
     };
 
