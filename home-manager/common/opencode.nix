@@ -139,6 +139,29 @@
         base;
 
     home.opencode.wrapperCommands = [
+      # Set opencode's working directory to the current git repo's top-level so
+      # the project root (and, under the nono launcher, the mandatory
+      # `--allow-cwd` grant) spans the whole repo regardless of which
+      # subdirectory opencode was launched from. Outside a git repo,
+      # `git rev-parse` fails and the existing cwd is kept unchanged. This runs
+      # FIRST, host-side, in BOTH wrapper paths: the default preflight-inside
+      # `wrapProgram --run` wrapper AND the opencode-nono launcher (which embeds
+      # this joined preflight at scripts/opencode-nono-launcher.nix before the
+      # `nono run --allow-cwd` exec), so it covers bare opencode and the
+      # audit/enforced nono launches alike. Side effect: `settings.skills.paths`
+      # `[ ".claude/skills" ]` below is cwd-relative, so it now resolves to the
+      # repo-root `.claude/skills` instead of `<subdir>/.claude/skills`.
+      #
+      # git is referenced by store path (cf. `${pkgs.jq}/bin/jq` in the mcpproxy
+      # probe) so it resolves regardless of PATH. `cd … || true` keeps the cd
+      # non-fatal and satisfies shellcheck (SC2164) in the launcher's
+      # writeShellApplication.
+      ''
+        opencode_git_root=$(${pkgs.git}/bin/git rev-parse --show-toplevel 2>/dev/null) || opencode_git_root=""
+        if [ -n "$opencode_git_root" ] && [ -d "$opencode_git_root" ]; then
+          cd "$opencode_git_root" || true
+        fi
+      ''
       # mcpproxy preflight: verify the orchestrator itself is up and the
       # obsidian upstream is connected before opencode starts. Replaces
       # the pre-migration mcp-orchestrator health probe

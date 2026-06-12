@@ -415,6 +415,14 @@
                       exit 1
                     fi
 
+                    # git-root cwd: the embedded preflight cds to the current
+                    # repo top-level so the project root (and nono's --allow-cwd
+                    # grant) spans the whole repo regardless of launch subdir.
+                    if ! grep -qF 'rev-parse --show-toplevel' "$launcher_bin"; then
+                      echo "FAIL ${host.hostName}: launcher missing the git-root cwd 'git rev-parse --show-toplevel'." >&2
+                      exit 1
+                    fi
+
                     printf '%s: launch path preserves preflight + LSP PATH suffix ordering + bare disabled exec\n' "${host.hostName}" >> "$out"
                   '') opencodeNonoLaunchEquivHosts
                 );
