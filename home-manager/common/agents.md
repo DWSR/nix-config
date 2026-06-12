@@ -303,6 +303,26 @@ Always include:
 - 2-5 topical tags describing the subject matter
 
 
+# Version control: prefer the git MCP over the `git` CLI
+
+For git operations, use the `git-mcp` server (a base MCP upstream on every
+host) through the discover-then-invoke idiom — `retrieve_tools(query: "git
+status")`, `retrieve_tools(query: "git commit")`, etc., then `call_tool_read`
+/ `call_tool_write` against the returned `git-mcp:<tool>` — rather than
+shelling out to the `git` CLI via bash.
+
+- The opencode sandbox denies the `git_config` group and `~/.config/git`, so
+  config-dependent bash `git` (commit identity, GPG/SSH signing, `~/.gitconfig`
+  `[include]` directives) fails inside the sandbox. `git-mcp` runs OUTSIDE the
+  sandbox as a child of mcpproxy, with full git config — it is the working path
+  for commits and any config-dependent operation.
+- Set the working directory first with git-mcp's `git_set_working_dir` tool;
+  no `GIT_BASE_DIR` is configured, so the server has no default repository.
+- Where Graphite (`gt`, via the `gt-mcp` server) is used for stacked PRs, gt
+  remains the tool for that workflow and is likewise unaffected (it too runs
+  outside the sandbox). Use `git-mcp` for plain, non-stacked git work.
+
+
 # Commit messages
 
 When writing a git or Graphite commit message:
