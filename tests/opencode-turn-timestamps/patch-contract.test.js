@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const patchPath = path.join(repoRoot, 'overlays/opencode-turn-timestamps.patch');
-const allowedTarget = 'packages/opencode/src/cli/cmd/tui/routes/session/index.tsx';
+const allowedTarget = 'packages/tui/src/routes/session/index.tsx';
 
 const forbiddenTargets = [
   {

@@ -101,7 +101,7 @@
     # build-only Bun override on top. Bumps: change the tag here, then `nix
     # flake update opencode`.
     opencode = {
-      url = "github:anomalyco/opencode/v1.16.2";
+      url = "github:anomalyco/opencode/v1.17.4";
     };
 
   };

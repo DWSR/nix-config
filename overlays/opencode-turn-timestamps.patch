@@ -1,8 +1,15 @@
-diff --git a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
-index 270c110..5c826f5 100644
---- a/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
-+++ b/packages/opencode/src/cli/cmd/tui/routes/session/index.tsx
-@@ -93,6 +93,8 @@ import { PathFormatterProvider, usePathFormatter } from "../../context/path-form
+diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
+index 922272f..f4ca454 100644
+--- a/packages/tui/src/routes/session/index.tsx
++++ b/packages/tui/src/routes/session/index.tsx
+@@ -77,20 +77,22 @@ import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode
+ import { getScrollAcceleration } from "../../util/scroll"
+ import { collapseToolOutput } from "../../util/collapse-tool-output"
+ import { usePluginRuntime } from "../../plugin/runtime"
+ import { DialogRetryAction } from "../../component/dialog-retry-action"
+ import { getRevertDiffFiles } from "../../util/revert-diff"
+ import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useOpencodeKeymap } from "../../keymap"
+ import { PathFormatterProvider, usePathFormatter } from "../../context/path-format"
  
  addDefaultParsers(parsers.parsers)
  
@@ -11,7 +18,21 @@ index 270c110..5c826f5 100644
  const GO_UPSELL_FREE_TIER_LAST_SEEN_AT = "go_upsell_last_seen_at"
  const GO_UPSELL_FREE_TIER_DONT_SHOW = "go_upsell_dont_show"
  const GO_UPSELL_ACCOUNT_RATE_LIMIT_LAST_SEEN_AT = "go_upsell_account_rate_limit_last_seen_at"
-@@ -218,7 +220,7 @@ export function Session() {
+ const GO_UPSELL_ACCOUNT_RATE_LIMIT_DONT_SHOW = "go_upsell_account_rate_limit_dont_show"
+ const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
+ const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
+ 
+ type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
+ 
+ function goUpsellKeys(action: RetryAction) {
+@@ -245,21 +247,21 @@ export function Session() {
+     return messages().findLast((x) => x.role === "assistant")
+   })
+ 
+   const dimensions = useTerminalDimensions()
+   const [sidebar, setSidebar] = kv.signal<"auto" | "hide">("sidebar", "auto")
+   const [sidebarOpen, setSidebarOpen] = createSignal(false)
+   const [conceal, setConceal] = createSignal(true)
    const thinking = useThinkingMode()
    const thinkingMode = thinking.mode
    const showThinking = createMemo(() => true)
@@ -20,7 +41,21 @@ index 270c110..5c826f5 100644
    const [showDetails, setShowDetails] = kv.signal("tool_details_visibility", true)
    const [showAssistantMetadata, _setShowAssistantMetadata] = kv.signal("assistant_metadata_visibility", true)
    const [showScrollbar, setShowScrollbar] = kv.signal("scrollbar_visible", false)
-@@ -676,6 +678,7 @@ export function Session() {
+   const [diffWrapMode] = kv.signal<"word" | "none">("diff_wrap_mode", "word")
+   const [_animationsEnabled, _setAnimationsEnabled] = kv.signal("animations_enabled", true)
+   const [showGenericToolOutput, setShowGenericToolOutput] = kv.signal("generic_tool_output_visibility", false)
+ 
+   const wide = createMemo(() => dimensions().width > 120)
+   const sidebarVisible = createMemo(() => {
+     if (session()?.parentID) return false
+@@ -682,20 +684,21 @@ export function Session() {
+       category: "Session",
+       run: () => {
+         setConceal((prev) => !prev)
+         dialog.clear()
+       },
+     },
+     {
        title: showTimestamps() ? "Hide timestamps" : "Show timestamps",
        value: "session.toggle.timestamps",
        category: "Session",
@@ -28,7 +63,21 @@ index 270c110..5c826f5 100644
        slash: {
          name: "timestamps",
          aliases: ["toggle-timestamps"],
-@@ -1301,6 +1304,12 @@ const MIME_BADGE: Record<string, string> = {
+       },
+       run: () => {
+         setTimestamps((prev) => (prev === "show" ? "hide" : "show"))
+         dialog.clear()
+       },
+     },
+     {
+@@ -1351,20 +1354,26 @@ export function Session() {
+ const MIME_BADGE: Record<string, string> = {
+   "text/plain": "txt",
+   "image/png": "img",
+   "image/jpeg": "img",
+   "image/gif": "img",
+   "image/webp": "img",
+   "application/pdf": "pdf",
    "application/x-directory": "dir",
  }
  
@@ -41,18 +90,14 @@ index 270c110..5c826f5 100644
  function UserMessage(props: {
    message: UserMessage
    parts: Part[]
-@@ -1311,48 +1320,55 @@ function UserMessage(props: {
+   onMouseUp: () => void
+   index: number
+   pending?: string
+ }) {
    const ctx = use()
    const local = useLocal()
    const text = createMemo(() => {
-     const texts = props.parts
-       .map((x) => {
-         if (x.type === "text" && !x.synthetic) {
-           return x.text
-         }
-         return null
-       })
-       .filter(Boolean)
+@@ -1379,20 +1388,27 @@ function UserMessage(props: {
      return texts.join("\n\n")
    })
    const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
@@ -80,24 +125,14 @@ index 270c110..5c826f5 100644
            border={["left"]}
            borderColor={color()}
            customBorderChars={SplitBorder.customBorderChars}
-           marginTop={props.index === 0 ? 0 : 1}
-         >
-           <box
-             onMouseOver={() => {
-               setHover(true)
-             }}
-             onMouseOut={() => {
-               setHover(false)
-             }}
-             onMouseUp={props.onMouseUp}
-             paddingTop={1}
-             paddingBottom={1}
-             paddingLeft={2}
-             backgroundColor={hover() ? theme.backgroundElement : theme.backgroundPanel}
-             flexShrink={0}
-           >
-             <text fg={theme.text}>{text()}</text>
-@@ -1375,21 +1391,19 @@ function UserMessage(props: {
+@@ -1425,35 +1441,33 @@ function UserMessage(props: {
+                     return (
+                       <text fg={theme.text}>
+                         <span style={{ bg: bg(), fg: theme.background }}> {MIME_BADGE[file.mime] ?? file.mime} </span>
+                         <span style={{ bg: theme.backgroundElement, fg: theme.textMuted }}> {file.filename} </span>
+                       </text>
+                     )
+                   }}
                  </For>
                </box>
              </Show>
@@ -129,7 +164,21 @@ index 270c110..5c826f5 100644
              </Show>
            </box>
          </box>
-@@ -1415,6 +1429,13 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+       </Show>
+       <Show when={compaction()}>
+         <box
+           marginTop={1}
+           border={["top"]}
+           title=" Compaction "
+           titleAlignment="center"
+@@ -1465,20 +1479,27 @@ function UserMessage(props: {
+ }
+ 
+ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
+   const ctx = use()
+   const local = useLocal()
+   const { theme } = useTheme()
+   const sync = useSync()
    const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
    const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
  
@@ -143,7 +192,21 @@ index 270c110..5c826f5 100644
    const final = createMemo(() => {
      return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
    })
-@@ -1469,7 +1490,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+ 
+   const duration = createMemo(() => {
+     if (!final()) return 0
+     if (!props.message.time.completed) return 0
+     const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
+     if (!user || !user.time) return 0
+     return props.message.time.completed - user.time.created
+@@ -1533,35 +1554,38 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+           paddingLeft={2}
+           marginTop={1}
+           backgroundColor={theme.backgroundPanel}
+           customBorderChars={SplitBorder.customBorderChars}
+           borderColor={theme.error}
+         >
+           <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
          </box>
        </Show>
        <Switch>
@@ -152,7 +215,14 @@ index 270c110..5c826f5 100644
            <box paddingLeft={3}>
              <text marginTop={1}>
                <span
-@@ -1484,6 +1505,9 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+                 style={{
+                   fg:
+                     props.message.error?.name === "MessageAbortedError"
+                       ? theme.textMuted
+                       : local.agent.color(props.message.agent),
+                 }}
+               >
+                 ▣{" "}
                </span>{" "}
                <span style={{ fg: theme.text }}>{Locale.titlecase(props.message.mode)}</span>
                <span style={{ fg: theme.textMuted }}> · {model()}</span>
@@ -162,3 +232,10 @@ index 270c110..5c826f5 100644
                <Show when={duration()}>
                  <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
                </Show>
+               <Show when={props.message.error?.name === "MessageAbortedError"}>
+                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
+               </Show>
+             </text>
+           </box>
+         </Match>
+       </Switch>
