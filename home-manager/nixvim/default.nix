@@ -1,6 +1,7 @@
 {
   inputs,
   config,
+  pkgs,
   ...
 }:
 let
@@ -61,6 +62,13 @@ in
 
   programs.nixvim = {
     enable = true;
+    # Reuse the host's pkgs instance (allowUnfree + overlays, via
+    # useGlobalPkgs) rather than letting Nixvim import its own
+    # default-config Nixpkgs from the `inputs.nixvim.inputs.nixpkgs.follows`
+    # source. Required since nixpkgs 26.05 marks the `cmp-calc` blink.compat
+    # source unfree and Nixvim's own import has no allowUnfree; the host pkgs
+    # already sets it. Also silences Nixvim's follows-source mismatch warning.
+    nixpkgs.pkgs = pkgs;
     defaultEditor = true;
     # Skip building nixvim's options-reference man-page. The `manDocsPackage`
     # build path triggers a `pkgs.nixosOptionsDoc` invocation that walks every

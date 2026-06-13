@@ -58,7 +58,11 @@
     "${inputs.home-manager}/modules/programs/jqp.nix"
     "${inputs.home-manager}/modules/programs/jujutsu.nix"
     "${inputs.home-manager}/modules/programs/k9s.nix"
-    "${inputs.home-manager}/modules/programs/man.nix"
+    "${inputs.home-manager}/modules/programs/man"
+    # nixvim's HM wrapper asserts `!config.programs.neovim.enable`, which
+    # requires the neovim module to be present. Minimal mode does not load
+    # it by default; import it (disabled) so the assertion can evaluate.
+    "${inputs.home-manager}/modules/programs/neovim"
     "${inputs.home-manager}/modules/programs/nix-index.nix"
     "${inputs.home-manager}/modules/programs/nix-your-shell.nix"
     "${inputs.home-manager}/modules/programs/opencode.nix"
