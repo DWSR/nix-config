@@ -452,7 +452,7 @@
                         pkgs.nixd
                         pkgs.lua-language-server
                         pkgs.bash-language-server
-                        pkgs.nixfmt-rfc-style
+                        pkgs.nixfmt
                         pkgs.shfmt
                         pkgs.stylua
                       ];

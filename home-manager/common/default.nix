@@ -98,7 +98,7 @@
       apple-sdk
       atuin
       # Universal formatters for conform.nvim (devshell tools take priority)
-      nixfmt-rfc-style
+      nixfmt
       shfmt
       stylua
       cloc

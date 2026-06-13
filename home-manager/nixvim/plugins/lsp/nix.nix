@@ -1,6 +1,6 @@
 { pkgs, ... }:
 {
-  programs.nixvim.extraPackages = [ pkgs.nixfmt-rfc-style ];
+  programs.nixvim.extraPackages = [ pkgs.nixfmt ];
 
   programs.nixvim.plugins.lsp.servers.nixd = {
     enable = true;

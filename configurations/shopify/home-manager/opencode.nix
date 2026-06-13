@@ -39,7 +39,7 @@ in
 
   # Override the common AGENTS.md (home-manager/common/agents.md) with a
   # concatenated version that adds Shopify-host-specific Graphite guidance.
-  # The common module declares programs.opencode.rules, so mkForce is
+  # The common module declares programs.opencode.context, so mkForce is
   # required to replace rather than collide. The rendered file is the
   # two common chunks (memory + cc-sdd preamble) plus the Shopify-only
   # Graphite addendum, separated by blank lines. The upstream
@@ -57,10 +57,10 @@ in
   # memories/2026-04-30-graphite-pitfalls.md for the deeper
   # investigative reference (new failure modes not yet in the skill).
   #
-  # The home-manager opencode module's `rules` option is `lines`-typed
+  # The home-manager opencode module's `context` option is `lines`-typed
   # (null | string), not a path or derivation. Pass the concatenated
   # string directly rather than via pkgs.writeText.
-  programs.opencode.rules = lib.mkForce (
+  programs.opencode.context = lib.mkForce (
     lib.concatStringsSep "\n\n" [
       (builtins.readFile ../../../home-manager/common/agents.md)
       (builtins.readFile ../../../home-manager/common/agents-cc-sdd.md)

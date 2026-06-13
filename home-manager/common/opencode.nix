@@ -307,7 +307,7 @@
       # memories/2026-05-20-agents-md-compression.md for the rationale.
       # Hosts that need to layer on more guidance (e.g. Shopify's Graphite
       # addendum) override this with lib.mkForce, prepending the same chunks.
-      rules = lib.concatStringsSep "\n\n" [
+      context = lib.concatStringsSep "\n\n" [
         (builtins.readFile ./agents.md)
         (builtins.readFile ./agents-cc-sdd.md)
       ];

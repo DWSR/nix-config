@@ -5,17 +5,17 @@ _: {
 
     extraConfig = ''IdentityAgent "~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock"'';
 
-    matchBlocks."*" = {
-      forwardAgent = false;
-      addKeysToAgent = "no";
-      controlMaster = "auto";
-      controlPath = "~/.ssh/master-%r@%n:%p";
-      controlPersist = "no";
-      hashKnownHosts = false;
-      userKnownHostsFile = "~/.ssh/known_hosts";
-      serverAliveInterval = 0;
-      serverAliveCountMax = 3;
-      compression = true;
+    settings."*" = {
+      ForwardAgent = false;
+      AddKeysToAgent = "no";
+      ControlMaster = "auto";
+      ControlPath = "~/.ssh/master-%r@%n:%p";
+      ControlPersist = "no";
+      HashKnownHosts = false;
+      UserKnownHostsFile = "~/.ssh/known_hosts";
+      ServerAliveInterval = 0;
+      ServerAliveCountMax = 3;
+      Compression = true;
     };
   };
 }

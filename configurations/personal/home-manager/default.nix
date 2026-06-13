@@ -136,23 +136,21 @@ in
   programs.ssh = {
     includes = [ "~/.orbstack/ssh/config" ];
 
-    matchBlocks = {
+    settings = {
       "192.168.1.1" = {
-        user = "root";
-        identitiesOnly = true;
-        identityFile = "~/.ssh/unifi.pub";
-        setEnv.TERM = "xterm-256color";
+        User = "root";
+        IdentitiesOnly = true;
+        IdentityFile = "~/.ssh/unifi.pub";
+        SetEnv.TERM = "xterm-256color";
 
-        extraOptions = {
-          "PasswordAuthentication" = "no";
-          "HostKeyAlgorithms" = "+ssh-rsa";
-        };
+        PasswordAuthentication = "no";
+        HostKeyAlgorithms = "+ssh-rsa";
       };
 
       "192.168.1.69" = {
-        user = "root";
-        setEnv.TERM = "xterm-256color";
-        extraOptions.PasswordAuthentication = "yes";
+        User = "root";
+        SetEnv.TERM = "xterm-256color";
+        PasswordAuthentication = "yes";
       };
     };
   };
