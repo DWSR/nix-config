@@ -330,8 +330,8 @@ final: prev: {
   # `${packageJson.version}+${rev}`); this keeps the derivation name and
   # `opencode --version` identical to the previous override.
   #
-  # The two local modifications below both run after the node_modules build,
-  # so neither invalidates the in-repo node_modules hash, and both survive
+  # The three local modifications below all run after the node_modules build,
+  # so none invalidates the in-repo node_modules hash, and all survive
   # configurePhase's node_modules copy (which overlays only node_modules dirs,
   # not src).
   opencode-pinned =
@@ -375,8 +375,17 @@ final: prev: {
       # 1. Turn timestamp rendering. Operators need a host rebuild plus a fresh
       #    OpenCode process before this behavior appears; already-running
       #    processes keep the old package.
+      # 3. Git root-detection early-exit. Upstream Git.find (packages/core/src/
+      #    git.ts) walks the FSUtil `up` helper from the cwd to the filesystem
+      #    root, collecting every ancestor .git, then keeps only the nearest
+      #    (matches[0]). The patch adds an opt-in `limit` to `up`
+      #    (packages/core/src/fs-util.ts) and passes `limit: 1` from Git.find,
+      #    so the walk stops at the first .git. Behavior-preserving; avoids
+      #    stat-ing every parent dir up to / on each project resolve. Other
+      #    `up` callers (config/skill discovery) omit `limit` and are unchanged.
       patches = (old.patches or [ ]) ++ [
         ./opencode-turn-timestamps.patch
+        ./opencode-git-find-early-exit.patch
       ];
 
       # 2. Caveman-lite compressions of the bundled model-specific system
