@@ -75,11 +75,6 @@ in
           headers.Authorization = "Bearer " + readKeychainSecret "mcp-infra-central-token";
         };
 
-        fellow-mcp = {
-          type = "streamable-http";
-          url = "https://fellow.app/mcp";
-        };
-
         gt-mcp = {
           command = "${pkgs.unstable.graphite-cli}/bin/gt";
           args = [ "mcp" ];
