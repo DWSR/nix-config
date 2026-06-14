@@ -6,15 +6,16 @@
       enable = false;
       package = null;
       packageFallback = true;
-      autostart = false;
     };
 
     jinja_lsp = {
       enable = true;
       package = pkgs.jinja-lsp;
-      autostart = false;
     };
   };
+
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers.jinja_lsp.activate = false;
 
   programs.nixvim.extraPlugins = [
     (pkgs.vimUtils.buildVimPlugin {

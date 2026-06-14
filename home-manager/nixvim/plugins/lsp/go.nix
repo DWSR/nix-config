@@ -3,13 +3,11 @@
   programs.nixvim.plugins.lsp.servers = {
     gopls = {
       enable = true;
-      autostart = false;
       packageFallback = true;
     };
 
     golangci_lint_ls = {
       enable = true;
-      autostart = false;
       packageFallback = true;
 
       settings = {
@@ -24,6 +22,12 @@
         };
       };
     };
+  };
+
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers = {
+    gopls.activate = false;
+    golangci_lint_ls.activate = false;
   };
 
   programs.nixvim.extraPackages = [ pkgs.unstable.golangci-lint ];

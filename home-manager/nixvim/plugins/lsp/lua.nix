@@ -1,7 +1,6 @@
 _: {
   programs.nixvim.plugins.lsp.servers.lua_ls = {
     enable = true;
-    autostart = false;
 
     settings.Lua = {
       runtime.version = "LuaJIT";
@@ -13,4 +12,7 @@ _: {
       telemetry.enable = false;
     };
   };
+
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers.lua_ls.activate = false;
 }

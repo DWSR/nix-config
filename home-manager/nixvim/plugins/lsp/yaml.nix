@@ -3,7 +3,6 @@ _: {
 
   programs.nixvim.plugins.lsp.servers.yamlls = {
     enable = true;
-    autostart = false;
 
     settings = {
       hover = true;
@@ -13,4 +12,7 @@ _: {
       # Do NOT add manual schemaStore config here — it causes duplicate schemas.
     };
   };
+
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers.yamlls.activate = false;
 }

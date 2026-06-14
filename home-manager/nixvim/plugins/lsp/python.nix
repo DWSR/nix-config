@@ -1,13 +1,12 @@
 _: {
   programs.nixvim.plugins.lsp.servers = {
-    ruff = {
-      enable = true;
-      autostart = false;
-    };
+    ruff.enable = true;
+    pyright.enable = true;
+  };
 
-    pyright = {
-      enable = true;
-      autostart = false;
-    };
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers = {
+    ruff.activate = false;
+    pyright.activate = false;
   };
 }

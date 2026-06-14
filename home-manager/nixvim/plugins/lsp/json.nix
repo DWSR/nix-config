@@ -1,18 +1,20 @@
 _: {
   programs.nixvim.plugins.lsp.servers = {
-    jqls = {
-      enable = true;
-      autostart = false;
-    };
+    jqls.enable = true;
 
     jsonls = {
       enable = true;
-      autostart = false;
 
       settings.json = {
         schemas.__raw = "require('schemastore').json.schemas()";
         validate.enable = true;
       };
     };
+  };
+
+  # Deferred: started by direnv.nvim once the project toolchain is on PATH.
+  programs.nixvim.lsp.servers = {
+    jqls.activate = false;
+    jsonls.activate = false;
   };
 }

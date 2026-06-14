@@ -1,4 +1,31 @@
-{ pkgs, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  ...
+}:
+let
+  # Servers configured with `activate = false` (in plugins/lsp/*.nix) are NOT
+  # enabled by nixvim at startup. direnv.nvim enables them from the callback
+  # below, once direnv has loaded the project's devshell toolchain onto PATH —
+  # so packageFallback servers (gopls, golangci_lint_ls, …) resolve the
+  # project-pinned binary instead of nixvim's fallback. nixd has no
+  # `activate = false`, so it keeps autostarting everywhere (no devshell dep).
+  #
+  # Read from the resolved `lsp.servers` (read-only): the `activate` markers
+  # live in the per-language files, so this list stays in sync automatically.
+  deferredServers = lib.filter (
+    name:
+    let
+      server = config.programs.nixvim.lsp.servers.${name};
+    in
+    (server.enable or false) && ((server.activate or true) == false)
+  ) (builtins.attrNames config.programs.nixvim.lsp.servers);
+
+  # Lua array literal: { "bashls", "gopls", … } (single line, no interpolation
+  # indentation hazards).
+  deferredServersLua = lib.concatMapStringsSep ", " (name: ''"${name}"'') deferredServers;
+in
 {
   programs.nixvim = {
     extraPlugins = [
@@ -18,11 +45,15 @@
       require("direnv-nvim").setup({
         async = true,
         on_direnv_finished = function()
-          -- nixvim (>= 26.05) drives LSP via Neovim's native vim.lsp.enable()
-          -- API; nvim-lspconfig's ":LspStart" command is no longer registered.
-          -- Servers are already enabled at startup, so re-fire FileType for any
-          -- loaded, normal buffer that has no client yet to let them attach now
-          -- that direnv has loaded the project toolchain onto PATH.
+          -- Enable the deferred LSP servers (activate = false) now that direnv
+          -- has loaded the project toolchain onto PATH. nixvim 26.05 drives LSP
+          -- via the native vim.lsp.enable() API; there is no :LspStart command.
+          for _, name in ipairs({ ${deferredServersLua} }) do
+            vim.lsp.enable(name)
+          end
+          -- Attach to buffers opened before direnv finished: vim.lsp.enable
+          -- registers the FileType autocmd, so re-firing it starts the servers
+          -- on already-open, client-less buffers.
           for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
             if
               vim.api.nvim_buf_is_loaded(bufnr)
