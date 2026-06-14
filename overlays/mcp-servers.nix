@@ -155,8 +155,9 @@ in
       ./cavemem-data-dir-env.patch
     ];
 
-    pnpmDeps = final.pnpm_9.fetchDeps {
+    pnpmDeps = final.fetchPnpmDeps {
       inherit (finalAttrs) pname version src;
+      pnpm = final.pnpm_9;
       fetcherVersion = 3;
       hash = "sha256-xVdck9jTZPm3gf3kZ/KZI4bO0jkTfhZP5j41MlNAvlA=";
     };
@@ -164,7 +165,7 @@ in
     nativeBuildInputs = [
       final.nodejs
       final.pnpm_9
-      final.pnpm_9.configHook
+      final.pnpmConfigHook
       final.makeWrapper
       final.python3
     ]
