@@ -54,7 +54,10 @@ final: prev: {
           platform = "any";
           hash = "sha256-8/FGaQgEHRF3cLf5O+4SCX4RTdUYxN2jVBPfeFVGeZo=";
         };
-        dependencies = with pyFinal; [ requests ];
+        dependencies = with pyFinal; [
+          requests
+          typing-extensions
+        ];
       };
     };
   };
