@@ -430,6 +430,45 @@
                 # Tier 1: Smoke test — does nvim start without errors?
                 nixvim-smoke = hmConfig.programs.nixvim.build.test;
 
+                # Nix-level regression guard for the nvim-treesitter-textobjects
+                # main-branch migration. A runtime keymap-existence test is not
+                # viable here — this config's `programs.nixvim.keymaps` do not
+                # register under `nvim --headless` — so assert at eval time that
+                # the textobject keymaps are declared in `programs.nixvim.keymaps`
+                # on both hosts. A regression to the inert
+                # `plugins.treesitter-textobjects.settings.{select,move}` form
+                # drops these entries (they land on a different option) and fails
+                # this check.
+                nixvim-textobjects-keymaps =
+                  let
+                    expectedKeys = [
+                      "af"
+                      "if"
+                      "ac"
+                      "ic"
+                      "aa"
+                      "ia"
+                      "]m"
+                      "]]"
+                      "[m"
+                      "[["
+                    ];
+                    checkHost =
+                      hostName:
+                      let
+                        keymaps =
+                          self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama.programs.nixvim.keymaps;
+                        missing = builtins.filter (key: !(builtins.any (k: (k.key or null) == key) keymaps)) expectedKeys;
+                      in
+                      pkgs.lib.assertMsg (missing == [ ])
+                        "treesitter-textobjects keymaps missing from programs.nixvim.keymaps on ${hostName}: ${pkgs.lib.concatStringsSep " " missing}. The main-branch keymap API regressed (likely back to the inert plugins.treesitter-textobjects.settings.{select,move} form).";
+                  in
+                  assert checkHost "ShopifyLaptop";
+                  assert checkHost "Brandons-MacBook-Pro";
+                  pkgs.runCommand "nixvim-textobjects-keymaps" { } ''
+                    printf 'treesitter-textobjects keymaps declared on both hosts\n' > $out
+                  '';
+
                 # Tier 2: Config assertions — plugins, keybindings, settings, LSP config
                 nixvim-config =
                   pkgs.runCommand "nixvim-config"
