@@ -206,6 +206,34 @@ in
           source ${cachedInits.atuin}
         fi
       '')
+      (lib.mkOrder 700 ''
+        # opencode TUI teardown workaround (anomalyco/opencode#32336, #28358).
+        # opencode's TUI exits without fully restoring the terminal: it leaves
+        # mouse tracking, bracketed paste, and the alternate screen enabled, and
+        # never drains its terminal-query replies — notably the cursor-position
+        # report (ESC[8;1R, the answer to opencode's own ESC[6n). Inside zellij
+        # that reply races past opencode's read loop into zsh, whose ZLE consumes
+        # the ESC[ CSI introducer and self-inserts the trailing "8;1R" onto the
+        # next prompt (the stray characters seen after quitting). This wrapper
+        # runs after opencode exits to (1) re-disable the modes opencode forgot
+        # and (2) drain any pending query replies so they never reach the prompt.
+        #
+        # `command opencode` keeps the foreground process named "opencode" so the
+        # zellij autolock trigger (home-manager/common/zellij.nix) still fires.
+        # Guarded on a tty so a non-interactive `opencode run` in a pipe is left
+        # untouched. Remove once the upstream teardown bug is fixed and
+        # opencode-pinned (overlays/misc.nix) is bumped past it.
+        function opencode() {
+          command opencode "$@"
+          local _oc_status=$?
+          if [[ -t 0 && -t 1 ]]; then
+            printf '\e[?1049l\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?2004l\e[?1004l\e[?25h'
+            local _oc_flush
+            while read -t 0.1 -k 1 -s _oc_flush 2>/dev/null; do : ; done
+          fi
+          return $_oc_status
+        }
+      '')
       (lib.mkOrder 9999 ''
         if [[ -n "$ZSH_XTRACE" ]]; then
           unsetopt xtrace
