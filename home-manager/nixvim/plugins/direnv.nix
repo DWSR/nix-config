@@ -18,7 +18,20 @@
       require("direnv-nvim").setup({
         async = true,
         on_direnv_finished = function()
-          vim.cmd("LspStart")
+          -- nixvim (>= 26.05) drives LSP via Neovim's native vim.lsp.enable()
+          -- API; nvim-lspconfig's ":LspStart" command is no longer registered.
+          -- Servers are already enabled at startup, so re-fire FileType for any
+          -- loaded, normal buffer that has no client yet to let them attach now
+          -- that direnv has loaded the project toolchain onto PATH.
+          for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+            if
+              vim.api.nvim_buf_is_loaded(bufnr)
+              and vim.bo[bufnr].buftype == ""
+              and next(vim.lsp.get_clients({ bufnr = bufnr })) == nil
+            then
+              vim.api.nvim_exec_autocmds("FileType", { buffer = bufnr })
+            end
+          end
         end
       })
     '';
