@@ -50,19 +50,19 @@
   - _Requirements: 5.2, 5.4, 5.5_
   - _Boundary: Semantic Validation Check_
 
-- [ ] 6. Build the Home Manager keybinding module
-- [ ] 6.1 Define the keybinding options schema
+- [x] 6. Build the Home Manager keybinding module
+- [x] 6.1 Define the keybinding options schema
   - Expose an enable switch plus options for the keybinding set (modifiers, key, description, and a one-of action), a free-form extra-Lua escape hatch, and a reload toggle.
   - Observable: evaluating the module accepts a representative configuration including a ⌃⌘⇧F12 inline-Lua binding and rejects an unknown modifier via the option type.
   - _Requirements: 3.1, 3.9_
   - _Boundary: Hammerspoon HM Module_
-- [ ] 6.2 Deliver the syntax-gated config under XDG and point Hammerspoon at it
+- [x] 6.2 Deliver the syntax-gated config under XDG and point Hammerspoon at it
   - Deliver the syntax-gated config to `$XDG_CONFIG_HOME/hammerspoon/init.lua`, set the Hammerspoon config-file user default to that absolute path, and create nothing under `~/.hammerspoon`.
   - Observable: evaluating the module with a binding yields an XDG config file sourced from the syntax gate, a config-file default equal to the XDG path, and no `~/.hammerspoon` entry.
   - _Depends: 4_
   - _Requirements: 3.4, 6.1, 6.2, 6.3_
   - _Boundary: Hammerspoon HM Module_
-- [ ] 6.3 Launch Hammerspoon at login and document the Accessibility grant
+- [x] 6.3 Launch Hammerspoon at login and document the Accessibility grant
   - Install a login agent that starts the installed app at the stable applications path, and document the one-time manual Accessibility grant in the option description (the generated config also prompts for it).
   - Observable: evaluating the module yields a login agent set to run at load targeting the installed app, and the option documentation states the one-time Accessibility grant requirement.
   - _Requirements: 1.7, 2.1, 2.2, 2.3_
@@ -117,3 +117,6 @@
 - Task 3.1/3.2: generator `overlays/hammerspoon/gen-emmylua.lua` is self-contained (vendored rxi/json.lua decode, MIT; needs only the `lua` interpreter; does NOT mkdir its out-dir). `hammerspoonHsAnnotations` (overlays/misc.nix) = `runCommand` that `mkdir -p $out` then runs the generator over `${final.hammerspoon}/Applications/Hammerspoon.app/Contents/Resources/docs.json` → 140 `hs.*.lua` files, version-tracking by construction. Proven (3.1 + 3.2 reviews) to drive LuaLS member-checking: valid `hs.*` → exit 0; `hs.bogusModule.foo` → exit 1 `undefined-field`.
 - CRITICAL (caught in 3.2 review): `gen-emmylua.lua` MUST be git-tracked. Nix only includes tracked files on a CLEAN-tree eval (CI / `nix flake check` / fresh clone); an untracked generator makes `${./hammerspoon/gen-emmylua.lua}` resolve to nothing and breaks both `hammerspoonHsAnnotations` and the Task 5 semantic check. (Committed in the Task 3 commit.)
 - Task 5 gate: LuaLS 3.18.1 surfaces `undefined-field`/`undefined-global` via stdout + NON-ZERO exit but writes NO `check.json` to `--logpath`. Key the gate on the EXIT CODE (treat "check.json absent" as the no-diagnostics/pass case).
+- Task 5: `mkSemanticCheck` (semantic-check.nix) signature is `{ pkgs, lib, ... }: cfg:` referencing `pkgs.hammerspoonHsAnnotations` for `workspace.library`; the design's nominal `hammerspoon` arg is vestigial (tolerated by `...`). Full rendered config passes (renderer's own `hs.*` symbols all covered); `hs.bogusModule.foo` fails.
+- Task 6 (6.1/6.2/6.3): HM module `home-manager/common/hammerspoon-keybindings/default.nix` = `options.home.hammerspoon` + `config = mkIf cfg.enable { xdg.configFile."hammerspoon/init.lua".source = import ./checked-config.nix {inherit pkgs lib;} cfg-subset; targets.darwin.defaults."org.hammerspoon.Hammerspoon".MJConfigFile = "${config.xdg.configHome}/hammerspoon/init.lua"; launchd.agents.hammerspoon = { RunAtLoad; KeepAlive=false; ProgramArguments = ["/Applications/Nix Apps/Hammerspoon.app/Contents/MacOS/Hammerspoon"]; }; }`. `enable` mkEnableOption description documents the one-time Accessibility grant.
+- Task 8.4 GOTCHA: `mods` is `types.listOf (types.enum ...)` whose ELEMENT type-check is LAZY — `builtins.length`/spine-forcing does NOT trigger an invalid-modifier rejection. Eval assertions that test bad-mod rejection MUST deep-force the `.mods` values (`map (b: b.mods)`, `builtins.deepSeq`, or eval the value as JSON). `launchd.agents` IS available in standalone `homeManagerConfiguration` on darwin (eval host-free).
