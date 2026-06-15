@@ -614,6 +614,24 @@
                     touch "$out"
                   '';
 
+              # Live mic-mute semantic check — design "Components and Interfaces →
+              # Verification → #### Verification" `hammerspoon-mic-mute-semantic`
+              # bullet. Feeds the LIVE ShopifyLaptop `home.hammerspoon` cfg (now
+              # carrying the ⌃⌘⇧F12 binding + the mic-mute.lua extraConfig) through
+              # the framework's real `mkSemanticCheck` gate. Building it proves the
+              # mic-mute Lua references only existing `hs` symbols (Req 6.1);
+              # aarch64-gated and host-free, with no Hammerspoon install, run, or
+              # Accessibility grant (Req 6.3). The framework checks above are
+              # unchanged.
+              hammerspoon-mic-mute-semantic = mkSemanticCheck {
+                inherit
+                  (self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama.home.hammerspoon)
+                  keybindings
+                  extraConfig
+                  reloadOnConfigChange
+                  ;
+              };
+
               # Host-wiring eval assertions (both hosts) — Task 8.4; design
               # "#### Verification" host-wiring bullet + Testing Strategy →
               # Build/Integration host-wiring list. Pure eval over each darwin

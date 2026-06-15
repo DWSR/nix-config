@@ -33,7 +33,7 @@
   - _Boundary: Ears Teardown_
 
 - [ ] 4. Verification flake checks
-- [ ] 4.1 Semantic check over the live mic-mute config
+- [x] 4.1 Semantic check over the live mic-mute config
   - Add `hammerspoon-mic-mute-semantic` inside the existing aarch64-gated `hammerspoonChecks` block, building `mkSemanticCheck` over a host's live `home.hammerspoon` cfg (real Lua, no fixture copy); do not modify the framework's existing checks.
   - Observable completion: `nix build .#checks.aarch64-darwin.hammerspoon-mic-mute-semantic` succeeds; substituting a nonexistent `hs` symbol fails it.
   - _Requirements: 6.1, 6.3_
