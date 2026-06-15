@@ -101,8 +101,7 @@ for the bash recovery.
 - **C3** — force-pushing the bottom of an N-PR stack invalidates approvals on all upstack PRs
 - **C4** — open-source repos: don't use gt (use plain git + `gh pr create`)
 - **C5** — `gt submit --no-interactive` always creates PRs as drafts (no override flag)
-- **C6** — the `github:pull_request_review_write` tool (invoked via mcpproxy's `retrieve_tools` + `call_tool_write` idiom) has NO `resolve_thread` method; use `gh api graphql` instead
-- **C7** — CI-fix cycles on stacked PRs are amplified-cost (~20 force-pushes per 5-cycle 4-PR debug session)
+- **C6** — CI-fix cycles on stacked PRs are amplified-cost (~20 force-pushes per 5-cycle 4-PR debug session)
 
 ## Workflow rules summary
 

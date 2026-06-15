@@ -25,7 +25,7 @@ You classify bot review comments for `stack-captain`. You are read-only.
 
 ## Inputs
 
-Expect owner, repo, PR numbers in stack order, and any known unresolved-thread data. If thread-resolution state is not available through GitHub MCP, report `thread_state_unknown` and tell `stack-captain` which GraphQL lookup is needed.
+Expect owner, repo, PR numbers in stack order, and any known unresolved-thread data. Thread-resolution state comes from GitHub MCP `pull_request_read` (`get_review_comments`), which returns each thread's `id` (`PRRT_...`) and `is_resolved` flag.
 
 ## Tool rules
 
@@ -53,5 +53,5 @@ Return per PR:
 - Author, file path, line if available, and classification.
 - Minimal fix plan or draft reply text.
 - Whether code mutation is needed.
-- Whether `stack-captain` must use `gh api graphql` fallback for thread reply/resolve.
+- Whether each thread needs a reply, resolution, or both (actioned by `stack-captain` via GitHub MCP).
 - Metrics: bot comments inspected, actionable count, false-positive count, deferred count.

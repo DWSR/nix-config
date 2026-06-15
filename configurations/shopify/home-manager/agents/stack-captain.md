@@ -28,7 +28,7 @@ Take a Graphite PR stack from "some subset green, some subset failing or waiting
 
 1. **MCP first.** Use mcpproxy's discover-then-invoke idiom for Graphite, GitHub, and Buildkite. Prefer gt-mcp for Graphite, GitHub MCP for PR state/mutations, and Buildkite MCP for logs. Do not use shell `gt`, `git`, or `gh` for normal stack operations when an MCP path exists.
 2. **gt-mcp schema is array-based.** `gt-mcp:run_gt_cmd` takes upstream args shaped like `{ args: ["state"], cwd: "/abs/path", why: "map stack" }`. Do not use legacy `{ command: "gt state" }`.
-3. **Documented GraphQL fallback.** GitHub MCP does not expose every review-thread operation. `gh api graphql` is allowed for review-thread query/reply/resolve and reaction gaps only. Everything else should go through MCP.
+3. **Review threads go through GitHub MCP.** Query, reply to, and resolve review threads natively: `pull_request_read` (`get_review_comments`) for thread IDs and resolved state, `add_reply_to_pull_request_comment` for replies, and `pull_request_review_write` (`resolve_thread` / `unresolve_thread`) to resolve. `gh api` is allowed only for emoji reactions, which MCP does not expose.
 4. **Single writer.** Helper subagents are read-only except `binks-overrider`. You apply edits, labels, comments, `gt modify`, and submits.
 5. **Process mutations bottom-up.** Lower PR fixes restack into upper PRs. Do not mutate an upper PR before its lower dependencies are clean unless the change is purely a non-code reply/label.
 6. **Batch before mutating.** Sweep the whole stack first, diagnose all visible CI failures, triage bot comments, then build mutation waves. Avoid one push per comment.
@@ -101,7 +101,7 @@ For each affected PR, bottom-up:
 7. Submit through gt-mcp with `submit --no-interactive --stack` for a stack-wide wave.
 8. If Graphite requires force after actual remote divergence, verify diff-equivalence and ask the user before `--force`.
 
-For non-code bot dispositions, prefer GitHub MCP for comments/labels. Use `gh api graphql` only for review-thread query/reply/resolve or reactions that MCP cannot perform.
+For non-code bot dispositions, use GitHub MCP for comments, labels, replies, and thread resolution. Use `gh api` only for emoji reactions, which MCP cannot perform.
 
 ### Phase 4: Re-sweep after each wave
 
@@ -142,8 +142,8 @@ Run one final stack-wide status/thread sweep. Report success only when:
 |---|---|
 | Actionable small fix | Batch with other fixes for that PR, review, amend, submit. |
 | Actionable large/design | Ask the user with 2-3 options. |
-| Stacked-PR false positive | Reply with stack context, resolve via GraphQL fallback if MCP cannot. |
-| Incorrect/not applicable | Prefer GitHub MCP for comment; use `gh api` reaction only if MCP lacks reactions. Resolve via GraphQL fallback if needed. |
+| Stacked-PR false positive | Reply with stack context, resolve via GitHub MCP `resolve_thread`. |
+| Incorrect/not applicable | Reply via GitHub MCP; add an emoji reaction via `gh api` if warranted; resolve via GitHub MCP `resolve_thread`. |
 | Deferred by user policy | Reply with the user-approved deferral reason, resolve if appropriate. |
 
 Keep replies short. Do not argue with bots.
@@ -197,21 +197,15 @@ Use Buildkite MCP for:
 - tail logs;
 - retrying only when the workflow calls for retry and the user has not prohibited it.
 
-### Review-thread GraphQL fallback
+### Review threads
 
-Use `gh api graphql` when MCP cannot query/reply/resolve review threads. The GitHub MCP `pull_request_review_write` tool does not provide `resolve_thread`.
+Query, reply to, and resolve review threads through GitHub MCP — no `gh api graphql` needed:
 
-Resolve pattern:
+- **Thread IDs + resolved state:** `pull_request_read` with `method: "get_review_comments"` returns `review_threads`, each with `id` (`PRRT_...`), `is_resolved`, `is_outdated`, and nested comments carrying a numeric `databaseId`.
+- **Reply:** `add_reply_to_pull_request_comment` with `owner`, `repo`, `pullNumber`, `commentId` (the numeric `databaseId`), and `body`.
+- **Resolve:** `pull_request_review_write` with `method: "resolve_thread"` and `threadId: "PRRT_..."` (owner/repo/pullNumber are ignored for this method). `unresolve_thread` reverses it; resolving an already-resolved thread is a no-op.
 
-```bash
-gh api graphql -f query='mutation($threadId: ID!) {
-  resolveReviewThread(input: {threadId: $threadId}) {
-    thread { isResolved }
-  }
-}' -f threadId="$THREAD_ID"
-```
-
-Thread IDs come from a GraphQL `reviewThreads` query on `repository.pullRequest`.
+`gh api` remains only for emoji reactions on review comments, which MCP does not expose.
 
 ## Shopify-specific gotchas
 
@@ -251,4 +245,4 @@ Do not claim the stack is green unless the final verification criteria are met.
 - `memories/2026-04-14-binks-bot-comment-resolution.md` — how the gated Binks check clears.
 - `memories/2026-04-11-binks-stacked-pr-false-positives.md` — stacked-PR false-positive pattern.
 - `memories/2026-04-14-buildkite-trigger-vs-downstream.md` — GitHub status plumbing.
-- `memories/2026-04-22-github-review-thread-reply-resolve.md` — GraphQL thread reply/resolve patterns.
+- `memories/2026-04-17-github-resolve-review-thread-via-graphql.md` — native GitHub MCP get/reply/resolve review-thread patterns.

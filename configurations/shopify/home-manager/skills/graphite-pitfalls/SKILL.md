@@ -417,50 +417,7 @@ Drafts are also a useful affordance: they let the user inspect the
 diff and PR description before reviewers are notified. Default to
 leaving as draft unless the user asks otherwise.
 
-### C6. `pull_request_review_write` does NOT have a `resolve_thread` method
-
-The GitHub MCP `pull_request_review_write` tool (invoked via mcpproxy's
-`retrieve_tools` + `call_tool_write` idiom) supports only `method` values
-`create`, `submit_pending`, and `delete_pending`. There is NO
-`resolve_thread` method. Older runbooks claimed it exists; they're wrong.
-
-**Recovery (no flags / no auth needed beyond gh):**
-
-Find the threadId from a comment's `databaseId` (returned by
-`pull_request_read get_review_comments`):
-
-```bash
-gh api graphql -f query='
-query($owner: String!, $repo: String!, $pr: Int!) {
-  repository(owner: $owner, name: $repo) {
-    pullRequest(number: $pr) {
-      reviewThreads(first: 50) {
-        nodes {
-          id isResolved isOutdated
-          comments(first: 1) {
-            nodes { databaseId author { login } path }
-          }
-        }
-      }
-    }
-  }
-}' -F owner=<org> -F repo=<repo> -F pr=<num>
-```
-
-Match by `databaseId` to find the right `id` (PRRT_…), then resolve:
-
-```bash
-gh api graphql -f query='
-mutation($threadId: ID!) {
-  resolveReviewThread(input: {threadId: $threadId}) {
-    thread { id isResolved }
-  }
-}' -F threadId=PRRT_xxxxxxxxxxxxxxxxxxx
-```
-
-**Confirmed 2026-05-04 globaldb-yugabyte PR 5897.**
-
-### C7. CI-fix cycles on stacked PRs are amplified-cost
+### C6. CI-fix cycles on stacked PRs are amplified-cost
 
 Every CI-failure-fix cycle on a stacked PR is far more expensive than
 on a single PR:
