@@ -25,7 +25,7 @@
   - _Boundary: Mic Mute HM Module_
   - _Depends: 1_
 
-- [ ] 3. (P) Remove Ears
+- [x] 3. (P) Remove Ears
   - Drop the `ears` cask from the darwin Homebrew cask list, delete the `ears.nix` activation-script shortcut blob, and remove its import.
   - Observable completion: each host config evaluates with no `ears` entry in `homebrew.casks` and no `ears.nix` import, and the file no longer exists; on the next switch Homebrew cleanup uninstalls the Ears app.
   - Commit together with task 2 so mic-mute is never absent after a host switch (5.4); separate files/boundary from tasks 1-2, no functional dependency.

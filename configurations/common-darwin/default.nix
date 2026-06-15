@@ -13,7 +13,6 @@
     inputs.homebrew.darwinModules.nix-homebrew
 
     ./1password.nix
-    ./ears.nix
     ./slack.nix
     ./sqlite-backup-verify.nix
   ];
@@ -210,7 +209,6 @@
       "audio-hijack"
       "contexts"
       "deskflow"
-      "ears"
       "loopback"
       "obsidian"
       "unfudged"
