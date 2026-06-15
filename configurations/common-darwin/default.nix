@@ -97,6 +97,8 @@
         "nix-darwin".source = config.nix-config.repoPath;
       };
 
+    environment.systemPackages = [ pkgs.hammerspoon ];
+
     users.users.${username}.home = "/Users/${username}";
 
     home-manager = {

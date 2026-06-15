@@ -15,6 +15,7 @@
     ./git.nix
     ./git-hooks.nix
     ./git-clone-isolation.nix
+    ./hammerspoon-keybindings
     ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
@@ -157,6 +158,9 @@
       _ZO_FZF_OPTS = "--popup";
     };
   };
+
+  # Hammerspoon keybindings: enabled binding-free; consumers declare bindings.
+  home.hammerspoon.enable = true;
 
   programs.cc-sdd.enable = true;
   programs.git-clone-isolation.enable = true;

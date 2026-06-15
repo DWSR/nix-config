@@ -68,14 +68,14 @@
   - _Requirements: 1.7, 2.1, 2.2, 2.3_
   - _Boundary: Hammerspoon HM Module_
 
-- [ ] 7. Integration: install and enable on both hosts
-- [ ] 7.1 Install Hammerspoon on both hosts
+- [x] 7. Integration: install and enable on both hosts
+- [x] 7.1 Install Hammerspoon on both hosts
   - Add the packaged app to the shared system package set so both hosts install it and nix-darwin copies it to the stable applications location (launcher-visible, replaced in place on version bumps).
   - Observable: evaluating both host configurations shows the Hammerspoon package in the system package set.
   - _Depends: 1_
   - _Requirements: 1.2, 1.3, 1.4, 1.6_
   - _Boundary: Darwin Install_
-- [ ] 7.2 Enable the keybinding module on both hosts
+- [x] 7.2 Enable the keybinding module on both hosts
   - Import and enable the module in the shared Home Manager configuration with an empty keybinding set so the framework ships configured but binding-free.
   - Observable: evaluating both host Home Manager configurations shows the module enabled, the XDG config delivered, the config-file default set, and the login agent present.
   - _Depends: 6.2, 6.3_
@@ -120,3 +120,5 @@
 - Task 5: `mkSemanticCheck` (semantic-check.nix) signature is `{ pkgs, lib, ... }: cfg:` referencing `pkgs.hammerspoonHsAnnotations` for `workspace.library`; the design's nominal `hammerspoon` arg is vestigial (tolerated by `...`). Full rendered config passes (renderer's own `hs.*` symbols all covered); `hs.bogusModule.foo` fails.
 - Task 6 (6.1/6.2/6.3): HM module `home-manager/common/hammerspoon-keybindings/default.nix` = `options.home.hammerspoon` + `config = mkIf cfg.enable { xdg.configFile."hammerspoon/init.lua".source = import ./checked-config.nix {inherit pkgs lib;} cfg-subset; targets.darwin.defaults."org.hammerspoon.Hammerspoon".MJConfigFile = "${config.xdg.configHome}/hammerspoon/init.lua"; launchd.agents.hammerspoon = { RunAtLoad; KeepAlive=false; ProgramArguments = ["/Applications/Nix Apps/Hammerspoon.app/Contents/MacOS/Hammerspoon"]; }; }`. `enable` mkEnableOption description documents the one-time Accessibility grant.
 - Task 8.4 GOTCHA: `mods` is `types.listOf (types.enum ...)` whose ELEMENT type-check is LAZY — `builtins.length`/spine-forcing does NOT trigger an invalid-modifier rejection. Eval assertions that test bad-mod rejection MUST deep-force the `.mods` values (`map (b: b.mods)`, `builtins.deepSeq`, or eval the value as JSON). `launchd.agents` IS available in standalone `homeManagerConfiguration` on darwin (eval host-free).
+- Task 7 (7.1/7.2): `environment.systemPackages = [ pkgs.hammerspoon ];` in `configurations/common-darwin/default.nix` (repo's FIRST systemPackages use); `./hammerspoon-keybindings` import + `home.hammerspoon.enable = true;` (empty keybindings) in `home-manager/common/default.nix`. Both hosts (`ShopifyLaptop`, `Brandons-MacBook-Pro`), user `brandonmcnama`. Verified: both hosts enable=true, hasXdg=true, MJConfigFile=`/Users/brandonmcnama/.config/hammerspoon/init.lua`, agent RunAtLoad=true, nKeybindings=0; delivered header-only config builds + `luac -p` clean.
+- Task 8 LINT GATE: the repo's actual statix gate is `statix check --config .statix.toml` (per flake.nix pre-commit). The default `statix check` (no `--config`) emits a pre-existing `repeated_keys` (W20) false positive on the `programs.*` cluster in `home-manager/common/default.nix`, which `.statix.toml` disables. Use `--config .statix.toml` when linting.
