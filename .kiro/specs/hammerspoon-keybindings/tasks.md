@@ -8,15 +8,15 @@
   - _Requirements: 1.1, 1.5, 1.8_
   - _Boundary: Hammerspoon Package_
 
-- [ ] 2. Build the pure keybinding renderer
-- [ ] 2.1 (P) Render a declarative keybinding set into Hammerspoon Lua
+- [x] 2. Build the pure keybinding renderer
+- [x] 2.1 (P) Render a declarative keybinding set into Hammerspoon Lua
   - Turn a keybinding set (each binding = modifiers + key + exactly one action) into Lua that binds each hotkey globally and runs its action, mapping the three action types (AppleScript, command-line, inline Lua) to their Lua forms with safe string escaping.
   - Emit a config header that disables Sparkle auto-update and prompts for Accessibility, append any free-form extra Lua, and register a reload watcher keyed on the live config directory.
   - Observable: evaluating the renderer with a representative set (including a ⌃⌘⇧F12 inline-Lua binding) yields Lua containing the hotkey bind, the mapped action call, the header lines, and the reload watcher; an empty set yields a valid header-only config with no binds.
   - Independent of Tasks 1 and 3.1.
   - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
   - _Boundary: Lua Renderer_
-- [ ] 2.2 Reject invalid keybinding sets at evaluation time
+- [x] 2.2 Reject invalid keybinding sets at evaluation time
   - Fail evaluation with an identifying message when two bindings share a hotkey, when a binding has zero or more than one action, or when a binding omits its key or uses an unsupported modifier or key.
   - Observable: evaluating each malformed set aborts with an error naming the offending binding/hotkey; a valid set evaluates cleanly.
   - _Requirements: 3.7, 3.8, 3.9_
@@ -112,3 +112,5 @@
 - Task 1: `stdenvNoCC.mkDerivation` unpacking a single-`.app` zip needs `sourceRoot = "."`, else stdenv `cd`s into `Hammerspoon.app` and the verbatim `cp -R Hammerspoon.app $out/Applications/` fails. `dontFixup`/`dontStrip` keep the Developer-ID signature + notarization intact (verified via `codesign --verify`). Use the SRI hash form (`sha256-EbsckPr1Qn83x71P5+q5d0rkPh1csCDFswiNrDKEnvo=`) to match repo convention. The built bundle (`pkgs.hammerspoon`) exposes `Contents/Resources/docs.json` (consumed by Task 3.2) and `Contents/MacOS/Hammerspoon` (the launchd-agent target for Task 6.3).
 - Build/eval any custom package via: `nix build --impure --expr 'let f = builtins.getFlake (toString /Users/brandonmcnama/src/github.com/DWSR/nix-config); pkgs = import f.inputs.nixpkgs { system = builtins.currentSystem; overlays = [ f.outputs.overlays.unstable-packages f.outputs.overlays.custom-packages ]; }; in pkgs.<attr>'`.
 - Commits are SSH-signed via 1Password (`op-ssh-sign`); git-mcp commits succeed only if the 1Password prompt is approved within the MCP request window. Bash `git commit` cannot sign inside the sandbox.
+- Task 2.1/2.2: renderer is `home-manager/common/hammerspoon-keybindings/render.nix` = `{ lib }: cfg: string`; consumed by Tasks 4/5 gates and Task 8.2 tests as `import ./render.nix { inherit lib; }`. Validation (`throw`s for 3.7/3.8/3.9) lives in the renderer (host-free `nix eval` surfaces failures); hotkey identity = `sort(mods) ++ [toLower key]`.
+- Task 4 ALERT (flagged during 2.1): in `nixpkgs#lua5_4` (Lua 5.4.7) the parser binary is named **`luac`**, NOT `luac5.4` as design.md/the validation memory assume. Task 4's syntax gate must invoke `luac -p` (or verify the exact binary name shipped by the flake-pinned nixpkgs `pkgs.lua5_4`). `pkgs.lua5_4` is the right package; the binary name is the gotcha.
