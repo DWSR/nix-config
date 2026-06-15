@@ -43,7 +43,7 @@
   - _Requirements: 3.4, 5.1, 5.3, 5.5_
   - _Boundary: Config Syntax Gate_
 
-- [ ] 5. Add the hermetic semantic validation check
+- [x] 5. Add the hermetic semantic validation check
   - Build a check that renders a config, writes a language-server configuration pointing at the generated `hs` annotations (Lua 5.4 runtime, third-party fetching disabled, undefined field/global = error), and runs the language server in check mode fully offline with redirected home/cache/log/meta paths; fail on any diagnostic.
   - Observable: building the check on a valid config succeeds; building it on a config that references a nonexistent `hs` symbol fails with an undefined-field/global diagnostic; it runs with no network and no running Hammerspoon.
   - _Depends: 2.1, 3.2_
