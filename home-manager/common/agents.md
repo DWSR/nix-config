@@ -316,8 +316,16 @@ shelling out to the `git` CLI via bash.
   `[include]` directives) fails inside the sandbox. `git-mcp` runs OUTSIDE the
   sandbox as a child of mcpproxy, with full git config — it is the working path
   for commits and any config-dependent operation.
-- Set the working directory first with git-mcp's `git_set_working_dir` tool;
-  no `GIT_BASE_DIR` is configured, so the server has no default repository.
+- Pass an explicit absolute `path: "/abs/repo"` on EVERY git-mcp call
+  (`git_status`, `git_add`, `git_commit`, `git_diff`, ...) rather than
+  setting a session working directory. `git_set_working_dir` sets a SINGLE
+  working dir on the git-mcp server, which is one child of the shared
+  mcpproxy daemon — that dir is global across ALL concurrent opencode
+  sessions, so another session can silently repoint it mid-task. No
+  `GIT_BASE_DIR` default is configured, so there is no fallback repo anyway.
+- A `git_commit` "File not found" for a file you know exists, or a
+  `git_status` reporting a branch you never checked out, signals a hijacked
+  session working dir — re-issue the call with an explicit `path`.
 - Where Graphite (`gt`, via the `gt-mcp` server) is used for stacked PRs, gt
   remains the tool for that workflow and is likewise unaffected (it too runs
   outside the sandbox). Use `git-mcp` for plain, non-stacked git work.
@@ -341,3 +349,27 @@ When writing a git or Graphite commit message:
 
 Applies equally to plain `git commit` and to `gt create` / `gt modify` on
 Graphite stacks.
+
+
+# Time and dates: use the `time` MCP, not shell `date`
+
+For the current time, today's date, or timezone conversions, use the
+`time` MCP server (a base upstream on every host) through the
+discover-then-invoke idiom — `retrieve_tools(query: "get current time")`,
+then `call_tool_read` against the returned `time:<tool>`. Both tools are
+read-only. Do NOT shell out to `date`.
+
+- **Current date / time:** `time:get_current_time` with
+  `args: { timezone: "<IANA name>" }` (local default: `America/Toronto`).
+  Use this whenever you need today's date or the wall-clock time — e.g.
+  the `{date}` in a `memories/{date}-{slug}.md` path or a memory's
+  `date:` / `sessions:` frontmatter. Do not guess the date or derive it
+  from unrelated artifacts (commit timestamps, file mtimes, the training
+  cutoff).
+- **Timezone conversion:** `time:convert_time` with
+  `args: { source_timezone: "<IANA>", time: "HH:MM", target_timezone: "<IANA>" }`
+  (24-hour clock, IANA zone names).
+- The opencode sandbox denies `/bin/date` (macOS's only `date`; no
+  coreutils on PATH), so bash `date` fails inside the sandbox. The `time`
+  MCP runs OUTSIDE the sandbox as a child of mcpproxy — it is the working
+  path for any clock or date read.
