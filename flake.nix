@@ -510,8 +510,173 @@
               }
             else
               { };
+
+          # Hammerspoon checks, gated to aarch64-darwin (the darwin app bundle
+          # is built there, mirroring nixvimTests). Established as its own
+          # binding so later verification tasks extend it with the renderer,
+          # semantic, and host-wiring checks. The package check builds the
+          # signed bundle and asserts the launchable binary + docs.json exist,
+          # with no host switch or Accessibility grant (Req 4.1, 4.4).
+          hammerspoonChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") (
+            let
+              hsFixtures = import ./tests/hammerspoon-keybindings/fixtures.nix;
+              mkSemanticCheck = import ./home-manager/common/hammerspoon-keybindings/semantic-check.nix {
+                inherit pkgs;
+                inherit (pkgs) lib;
+              };
+              # The negative check re-runs the SAME lua-language-server gate as
+              # mkSemanticCheck on the bogus fixture. semantic-check.nix keeps its
+              # `.luarc.json` internal, so the keys are mirrored here: annotations
+              # as workspace.library, `hs` deliberately NOT a declared global (so
+              # member-checking stays on), undefined-field/global forced to Error,
+              # checkThirdParty=false to stay offline.
+              bogusInit = pkgs.writeText "hammerspoon-init-bogus.lua" (
+                import ./home-manager/common/hammerspoon-keybindings/render.nix {
+                  inherit (pkgs) lib;
+                } hsFixtures.bogus
+              );
+              negativeLuarc = pkgs.writeText "hammerspoon-luarc-negative.json" (
+                builtins.toJSON {
+                  runtime.version = "Lua 5.4";
+                  workspace = {
+                    library = [ "${pkgs.hammerspoonHsAnnotations}" ];
+                    checkThirdParty = false;
+                  };
+                  diagnostics.severity = {
+                    "undefined-field" = "Error";
+                    "undefined-global" = "Error";
+                  };
+                }
+              );
+            in
+            {
+              hammerspoon-package = pkgs.runCommand "hammerspoon-package" { } ''
+                test -x ${pkgs.hammerspoon}/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon
+                test -f ${pkgs.hammerspoon}/Applications/Hammerspoon.app/Contents/Resources/docs.json
+                touch $out
+              '';
+
+              # Positive (5.2): build the REAL mkSemanticCheck on a valid
+              # representative fixture. `nix flake check` building this derivation
+              # IS the proof that a valid rendered config passes the LuaLS
+              # member-checking gate. Hermetic + aarch64-gated (5.5); no host or
+              # Accessibility grant (4.4).
+              hammerspoon-config-semantic = mkSemanticCheck hsFixtures.validMulti;
+
+              # Negative (5.4): a check that PASSES only when the bogus fixture is
+              # REJECTED. A failing build cannot be a passing check, and recursive
+              # nix is unavailable in the flake-check sandbox, so this re-runs the
+              # gate's `lua-language-server --check` on the bogus fixture's rendered
+              # config and asserts a non-zero exit naming the nonexistent symbol
+              # (`undefined-field` 'bogusModule'). Offline + host-free (5.5/4.4).
+              hammerspoon-config-semantic-rejects-bogus =
+                pkgs.runCommand "hammerspoon-config-semantic-rejects-bogus"
+                  {
+                    nativeBuildInputs = [ pkgs.lua-language-server ];
+                  }
+                  ''
+                    set -eu
+
+                    # Redirect every writable path LuaLS touches into build-temp:
+                    # the store install dir is read-only. mktemp honours $TMPDIR,
+                    # so no /tmp literal is used (mirrors semantic-check.nix).
+                    export HOME="$(mktemp -d)"
+                    export XDG_CACHE_HOME="$(mktemp -d)"
+
+                    work="$(mktemp -d)"
+                    mkdir -p "$work/ws" "$work/log" "$work/meta"
+                    cp ${bogusInit} "$work/ws/init.lua"
+                    cp ${negativeLuarc} "$work/ws/.luarc.json"
+
+                    # Same invocation the gate uses; capture its exit + output
+                    # instead of letting a non-zero exit abort the build.
+                    status=0
+                    diagnostics="$(lua-language-server --check "$work/ws" \
+                      --configpath "$work/ws/.luarc.json" \
+                      --logpath "$work/log" \
+                      --metapath "$work/meta" \
+                      --checklevel=Error 2>&1)" || status=$?
+
+                    printf '%s\n' "$diagnostics"
+
+                    if [ "$status" -eq 0 ]; then
+                      echo "NEGATIVE semantic check FAILED: lua-language-server accepted the nonexistent hs symbol (exit 0); the bogus fixture was NOT rejected." >&2
+                      exit 1
+                    fi
+
+                    if ! printf '%s' "$diagnostics" | grep -qF 'bogusModule'; then
+                      echo "NEGATIVE semantic check FAILED: bogus fixture rejected (exit $status) but the diagnostic did not name 'bogusModule':" >&2
+                      printf '%s\n' "$diagnostics" >&2
+                      exit 1
+                    fi
+
+                    echo "NEGATIVE semantic check PASSED: nonexistent hs symbol rejected (exit $status; undefined-field naming bogusModule)."
+                    touch "$out"
+                  '';
+
+              # Host-wiring eval assertions (both hosts) — Task 8.4; design
+              # "#### Verification" host-wiring bullet + Testing Strategy →
+              # Build/Integration host-wiring list. Pure eval over each darwin
+              # host config plus a trivial runCommand, so no host switch or
+              # Accessibility grant is needed (Req 4.4). The per-host report is
+              # produced only by forcing five assertions, each naming the host
+              # and the failing property:
+              #   1.2     environment.systemPackages contains the hammerspoon pkg.
+              #   3.4/6.1 xdg.configFile."hammerspoon/init.lua".source is the
+              #           syntax-gate derivation (named "hammerspoon-init.lua" by
+              #           checked-config.nix), not a raw `.text`.
+              #   6.2     the MJConfigFile default equals the XDG init.lua path.
+              #   6.3     no home.file entry under ~/.hammerspoon.
+              #   1.7     the login launchd agent is enabled with RunAtLoad.
+              hammerspoon-host-wiring =
+                let
+                  hosts = [
+                    "ShopifyLaptop"
+                    "Brandons-MacBook-Pro"
+                  ];
+                  checkHost =
+                    hostName:
+                    let
+                      sys = self.darwinConfigurations.${hostName}.config;
+                      hm = sys.home-manager.users.brandonmcnama;
+                      hasPackage = builtins.any (
+                        p:
+                        (p.pname or p.name or "") == "hammerspoon" || builtins.match "hammerspoon.*" (p.name or "") != null
+                      ) sys.environment.systemPackages;
+                      initSource = hm.xdg.configFile."hammerspoon/init.lua".source;
+                      sourceName = initSource.name or "";
+                      mjConfigFile = hm.targets.darwin.defaults."org.hammerspoon.Hammerspoon".MJConfigFile;
+                      expectedMjConfigFile = "${hm.xdg.configHome}/hammerspoon/init.lua";
+                      dotHammerspoonFiles = builtins.filter (n: builtins.match "\\.hammerspoon($|/.*)" n != null) (
+                        builtins.attrNames hm.home.file
+                      );
+                      agent = hm.launchd.agents.hammerspoon;
+                      agentRunsAtLoad = agent.enable && agent.config.RunAtLoad;
+                    in
+                    assert pkgs.lib.assertMsg hasPackage
+                      "hammerspoon host-wiring: environment.systemPackages on ${hostName} does not contain the hammerspoon package (Req 1.2).";
+                    assert pkgs.lib.assertMsg (sourceName == "hammerspoon-init.lua")
+                      "hammerspoon host-wiring: xdg.configFile.\"hammerspoon/init.lua\".source on ${hostName} is not the syntax-gate output (expected derivation name \"hammerspoon-init.lua\", got \"${sourceName}\") (Req 3.4/6.1).";
+                    assert pkgs.lib.assertMsg (mjConfigFile == expectedMjConfigFile)
+                      "hammerspoon host-wiring: MJConfigFile default on ${hostName} is \"${mjConfigFile}\", expected \"${expectedMjConfigFile}\" (Req 6.2).";
+                    assert pkgs.lib.assertMsg (dotHammerspoonFiles == [ ])
+                      "hammerspoon host-wiring: ${hostName} declares home.file under ~/.hammerspoon: [ ${pkgs.lib.concatStringsSep " " dotHammerspoonFiles} ] (Req 6.3).";
+                    assert pkgs.lib.assertMsg agentRunsAtLoad
+                      "hammerspoon host-wiring: launchd.agents.hammerspoon on ${hostName} must be enabled with RunAtLoad=true (Req 1.7).";
+                    "${hostName}: systemPackages has hammerspoon=${pkgs.lib.boolToString hasPackage}; init.lua source=${sourceName}; MJConfigFile=${mjConfigFile}; ~/.hammerspoon home.file entries=${toString (builtins.length dotHammerspoonFiles)}; launchd agent enable=${pkgs.lib.boolToString agent.enable} RunAtLoad=${pkgs.lib.boolToString agent.config.RunAtLoad}";
+                in
+                pkgs.runCommand "hammerspoon-host-wiring"
+                  {
+                    hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hosts;
+                  }
+                  ''
+                    printf '%s\n' "$hostReport" > $out
+                  '';
+            }
+          );
         in
         nixvimTests
+        // hammerspoonChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 
@@ -660,6 +825,33 @@
                 chmod -R u+w source
                 cd source
                 node --test tests/git-mcp/
+                touch $out
+              '';
+
+          # Renderer + syntax-gate verification for hammerspoon-keybindings
+          # (Task 8.2). System-agnostic — pure `nix eval` of render.nix over
+          # fixtures.nix plus `luac -p` (the exact gate checked-config.nix
+          # runs), so it needs no Hammerspoon bundle or host (Req 4.4) and lives
+          # here rather than the aarch64-gated `hammerspoonChecks`. The node
+          # tests assert render content per action type (4.2), eval-abort on
+          # malformed sets (4.3), and luac accept/reject on valid/broken Lua
+          # (5.1/5.3). `pkgs.lua5_4` supplies the `luac` parser binary.
+          hammerspoon-keybindings =
+            pkgs.runCommand "hammerspoon-keybindings"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                  pkgs.lua5_4
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/hammerspoon-keybindings/
                 touch $out
               '';
 

@@ -82,26 +82,26 @@
   - _Requirements: 1.2, 6.1, 6.2, 6.3_
   - _Boundary: host Home Manager_
 
-- [ ] 8. Validation: flake checks and tests
-- [ ] 8.1 Package build check
+- [x] 8. Validation: flake checks and tests
+- [x] 8.1 Package build check
   - Add a flake check that builds the Hammerspoon package and asserts the launchable binary exists in the bundle.
   - Observable: the package check builds and passes on the supported darwin system without a host switch or Accessibility.
   - _Depends: 1_
   - _Requirements: 4.1, 4.4_
   - _Boundary: Verification_
-- [ ] 8.2 Renderer and syntax-gate tests
+- [x] 8.2 Renderer and syntax-gate tests
   - Add tests asserting the rendered config content for representative bindings and each action type, asserting that malformed binding sets abort evaluation, and asserting that the syntax gate fails on a config containing a Lua syntax error.
   - Observable: the check passes, demonstrating render-content assertions, evaluation-failure assertions for duplicate/incomplete/invalid bindings, and a syntax-gate build failure on bad Lua, with no host needed.
   - _Depends: 2.1, 2.2, 4_
   - _Requirements: 4.2, 4.3, 4.4, 5.1, 5.3_
   - _Boundary: Verification_
-- [ ] 8.3 Semantic validation flake check
+- [x] 8.3 Semantic validation flake check
   - Wire the semantic check as a flake check over a valid fixture and a fixture referencing a nonexistent `hs` symbol, gated to the darwin system and run hermetically; the bad fixture must fail the check.
   - Observable: `nix flake check` runs the semantic check; it passes on the valid fixture, a negative test confirms the nonexistent-symbol fixture fails the build, and it runs offline with no host.
   - _Depends: 5_
   - _Requirements: 5.2, 5.4, 5.5, 4.4_
   - _Boundary: Verification_
-- [ ] 8.4 Host-wiring assertions
+- [x] 8.4 Host-wiring assertions
   - Add evaluation-time assertions over both host configurations: the Hammerspoon package is in the system package set; the XDG config is sourced from the syntax gate; the config-file default equals the XDG path; nothing is created under `~/.hammerspoon`; the login agent runs at load.
   - Observable: the host-wiring check passes for both hosts without a host switch or Accessibility grant.
   - _Depends: 7.1, 7.2_
@@ -121,4 +121,5 @@
 - Task 6 (6.1/6.2/6.3): HM module `home-manager/common/hammerspoon-keybindings/default.nix` = `options.home.hammerspoon` + `config = mkIf cfg.enable { xdg.configFile."hammerspoon/init.lua".source = import ./checked-config.nix {inherit pkgs lib;} cfg-subset; targets.darwin.defaults."org.hammerspoon.Hammerspoon".MJConfigFile = "${config.xdg.configHome}/hammerspoon/init.lua"; launchd.agents.hammerspoon = { RunAtLoad; KeepAlive=false; ProgramArguments = ["/Applications/Nix Apps/Hammerspoon.app/Contents/MacOS/Hammerspoon"]; }; }`. `enable` mkEnableOption description documents the one-time Accessibility grant.
 - Task 8.4 GOTCHA: `mods` is `types.listOf (types.enum ...)` whose ELEMENT type-check is LAZY — `builtins.length`/spine-forcing does NOT trigger an invalid-modifier rejection. Eval assertions that test bad-mod rejection MUST deep-force the `.mods` values (`map (b: b.mods)`, `builtins.deepSeq`, or eval the value as JSON). `launchd.agents` IS available in standalone `homeManagerConfiguration` on darwin (eval host-free).
 - Task 7 (7.1/7.2): `environment.systemPackages = [ pkgs.hammerspoon ];` in `configurations/common-darwin/default.nix` (repo's FIRST systemPackages use); `./hammerspoon-keybindings` import + `home.hammerspoon.enable = true;` (empty keybindings) in `home-manager/common/default.nix`. Both hosts (`ShopifyLaptop`, `Brandons-MacBook-Pro`), user `brandonmcnama`. Verified: both hosts enable=true, hasXdg=true, MJConfigFile=`/Users/brandonmcnama/.config/hammerspoon/init.lua`, agent RunAtLoad=true, nKeybindings=0; delivered header-only config builds + `luac -p` clean.
-- Task 8 LINT GATE: the repo's actual statix gate is `statix check --config .statix.toml` (per flake.nix pre-commit). The default `statix check` (no `--config`) emits a pre-existing `repeated_keys` (W20) false positive on the `programs.*` cluster in `home-manager/common/default.nix`, which `.statix.toml` disables. Use `--config .statix.toml` when linting.
+- Task 8 LINT GATE: the repo's actual statix gate is `statix check --config .statix.toml` (per flake.nix pre-commit). The default `statix check` (no `--config`) emits a pre-existing `repeated_keys` (W20) false positive on the `programs.*` cluster in `home-manager/common/default.nix`, which `.statix.toml` disables. Use `--config .statix.toml` when linting. NOTE: `.statix.toml` disables ONLY W20; `bool_comparison` (W04) IS enforced — use `cond && x` not `x == true`, and `inherit (pkgs) lib;` not `lib = pkgs.lib;`.
+- Task 8 checks: all hammerspoon checks are aarch64-gated in a `hammerspoonChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") { ... }` let-binding merged `nixvimTests // hammerspoonChecks // rec { ... }`, EXCEPT `hammerspoon-keybindings` (8.2 renderer/syntax node tests) which is system-agnostic in the `rec {}` block. Flake-check sandbox has NO build daemon → recursive `nix build` inside a check does NOT work; test build-failures by running the underlying binary (`luac -p` for 8.2, `lua-language-server --check` for 8.3's negative) and asserting non-zero, or (positive) by making the real gated derivation the check value. `node --test tests/<dir>/` needs an `index.js` entry point under the repo's pinned node. Checks: `hammerspoon-package`, `hammerspoon-keybindings`, `hammerspoon-config-semantic`, `hammerspoon-config-semantic-rejects-bogus`, `hammerspoon-host-wiring`.
