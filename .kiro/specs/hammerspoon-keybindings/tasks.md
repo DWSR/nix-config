@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. (P) Package the signed Hammerspoon release as a Nix-installable app bundle
+- [x] 1. (P) Package the signed Hammerspoon release as a Nix-installable app bundle
   - Fetch the pinned signed release archive by URL + sha256, then unpack and install the `.app` bundle verbatim (no resign or strip) so its Developer-ID signature and notarization stay intact.
   - Expose it as a buildable package attribute in the overlay so other layers can reference it.
   - Observable: building the package yields an app bundle containing a launchable `Hammerspoon` binary; a wrong or missing hash fails the build with an error naming the package.
@@ -107,3 +107,8 @@
   - _Depends: 7.1, 7.2_
   - _Requirements: 1.2, 1.7, 3.4, 4.4, 6.1, 6.2, 6.3_
   - _Boundary: Verification_
+
+## Implementation Notes
+- Task 1: `stdenvNoCC.mkDerivation` unpacking a single-`.app` zip needs `sourceRoot = "."`, else stdenv `cd`s into `Hammerspoon.app` and the verbatim `cp -R Hammerspoon.app $out/Applications/` fails. `dontFixup`/`dontStrip` keep the Developer-ID signature + notarization intact (verified via `codesign --verify`). Use the SRI hash form (`sha256-EbsckPr1Qn83x71P5+q5d0rkPh1csCDFswiNrDKEnvo=`) to match repo convention. The built bundle (`pkgs.hammerspoon`) exposes `Contents/Resources/docs.json` (consumed by Task 3.2) and `Contents/MacOS/Hammerspoon` (the launchd-agent target for Task 6.3).
+- Build/eval any custom package via: `nix build --impure --expr 'let f = builtins.getFlake (toString /Users/brandonmcnama/src/github.com/DWSR/nix-config); pkgs = import f.inputs.nixpkgs { system = builtins.currentSystem; overlays = [ f.outputs.overlays.unstable-packages f.outputs.overlays.custom-packages ]; }; in pkgs.<attr>'`.
+- Commits are SSH-signed via 1Password (`op-ssh-sign`); git-mcp commits succeed only if the 1Password prompt is approved within the MCP request window. Bash `git commit` cannot sign inside the sandbox.

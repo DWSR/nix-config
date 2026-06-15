@@ -39,6 +39,56 @@ final: prev: {
     '';
   };
 
+  # Hammerspoon: macOS desktop automation tool. Not in nixpkgs, so self-packaged
+  # from the pinned, signed, notarized upstream release. The `.app` bundle is
+  # installed verbatim (no resign, no strip) so its Developer-ID signature and
+  # notarization stay intact for macOS TCC/Gatekeeper — that is what keeps the
+  # one-time Accessibility grant stable across rebuilds.
+  #
+  # fetchurl + unzip is deliberate over fetchzip: it keeps the known, stable zip
+  # sha256 and copies the faithful signed bytes. The release zip has
+  # `Hammerspoon.app/` at its root, so `sourceRoot = "."` keeps the unpack root
+  # as the working dir for the verbatim copy. `dontConfigure`/`dontBuild`/
+  # `dontFixup`/`dontStrip` ensure no phase ever alters the bundle's bytes.
+  # Bumps: update `version` + `src.url`, set `hash = final.lib.fakeHash`, rebuild,
+  # and paste the reported `got:` SRI hash back.
+  hammerspoon = final.stdenvNoCC.mkDerivation {
+    pname = "hammerspoon";
+    version = "1.1.1";
+
+    src = final.fetchurl {
+      url = "https://github.com/Hammerspoon/hammerspoon/releases/download/1.1.1/Hammerspoon-1.1.1.zip";
+      hash = "sha256-EbsckPr1Qn83x71P5+q5d0rkPh1csCDFswiNrDKEnvo=";
+    };
+
+    nativeBuildInputs = [ final.unzip ];
+
+    sourceRoot = ".";
+
+    # Install the signed bundle verbatim; never alter its bytes so the
+    # Developer-ID signature and notarization survive intact.
+    dontConfigure = true;
+    dontBuild = true;
+    dontFixup = true;
+    dontStrip = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      mkdir -p "$out/Applications"
+      cp -R Hammerspoon.app "$out/Applications/"
+
+      runHook postInstall
+    '';
+
+    meta = {
+      description = "Staggeringly powerful macOS desktop automation tool";
+      homepage = "https://www.hammerspoon.org/";
+      license = final.lib.licenses.mit;
+      platforms = final.lib.platforms.darwin;
+    };
+  };
+
   python312 = prev.python312.override {
     packageOverrides = pyFinal: _pyPrev: {
       kagiapi = pyFinal.buildPythonPackage rec {
