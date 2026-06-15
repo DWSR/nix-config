@@ -89,6 +89,32 @@ final: prev: {
     };
   };
 
+  # hammerspoonHsAnnotations: a directory of `hs.*` LuaCATS type-definition
+  # files generated from the pinned Hammerspoon bundle's machine-readable API
+  # description (`Contents/Resources/docs.json`). The standalone EmmyLua.spoon
+  # port at `overlays/hammerspoon/gen-emmylua.lua` (plain lua5.4, zero rocks)
+  # reads that docs.json and emits one `---@class hs.<module>` file per module.
+  #
+  # The output tracks the pinned Hammerspoon version by construction: it is
+  # derived solely from `final.hammerspoon`'s docs.json, so a version bump
+  # regenerates the annotations automatically (the derivation re-evaluates when
+  # the bundle changes). The semantic validation flake check (a later task)
+  # consumes this directory as the LuaLS `workspace.library`.
+  #
+  # The generator does NOT create its output directory, so the build script
+  # `mkdir -p $out` first, then passes `$out` as the generator's out-dir arg.
+  hammerspoonHsAnnotations =
+    final.runCommand "hammerspoon-hs-annotations"
+      {
+        nativeBuildInputs = [ final.lua5_4 ];
+      }
+      ''
+        mkdir -p "$out"
+        lua ${./hammerspoon/gen-emmylua.lua} \
+          "${final.hammerspoon}/Applications/Hammerspoon.app/Contents/Resources/docs.json" \
+          "$out"
+      '';
+
   python312 = prev.python312.override {
     packageOverrides = pyFinal: _pyPrev: {
       kagiapi = pyFinal.buildPythonPackage rec {

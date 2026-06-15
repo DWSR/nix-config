@@ -22,14 +22,14 @@
   - _Requirements: 3.7, 3.8, 3.9_
   - _Boundary: Lua Renderer_
 
-- [ ] 3. Generate Hammerspoon API annotations for semantic checking
-- [ ] 3.1 (P) Port the EmmyLua annotation generator to standalone Lua
+- [x] 3. Generate Hammerspoon API annotations for semantic checking
+- [x] 3.1 (P) Port the EmmyLua annotation generator to standalone Lua
   - Reimplement the upstream EmmyLua.spoon generator as a plain Lua script that reads a Hammerspoon `docs.json` and emits one LuaCATS `---@class hs.<module>` file per module, with no dependency on a running Hammerspoon.
   - Observable: running the generator against a `docs.json` fixture emits LuaCATS files declaring `hs` and at least one `hs.<module>` class.
   - Independent of Tasks 1 and 2.
   - _Requirements: 5.2, 5.4_
   - _Boundary: Hammerspoon Annotations_
-- [ ] 3.2 Produce the annotation set from the pinned bundle
+- [x] 3.2 Produce the annotation set from the pinned bundle
   - Add a build artifact that runs the generator over the packaged bundle's `docs.json`, yielding a directory of `hs` LuaCATS annotations that tracks the pinned Hammerspoon version.
   - Observable: building the annotation artifact yields a directory of `hs.*` annotation files derived from the packaged bundle.
   - _Depends: 1, 3.1_
@@ -114,3 +114,6 @@
 - Commits are SSH-signed via 1Password (`op-ssh-sign`); git-mcp commits succeed only if the 1Password prompt is approved within the MCP request window. Bash `git commit` cannot sign inside the sandbox.
 - Task 2.1/2.2: renderer is `home-manager/common/hammerspoon-keybindings/render.nix` = `{ lib }: cfg: string`; consumed by Tasks 4/5 gates and Task 8.2 tests as `import ./render.nix { inherit lib; }`. Validation (`throw`s for 3.7/3.8/3.9) lives in the renderer (host-free `nix eval` surfaces failures); hotkey identity = `sort(mods) ++ [toLower key]`.
 - Task 4 ALERT (flagged during 2.1): in `nixpkgs#lua5_4` (Lua 5.4.7) the parser binary is named **`luac`**, NOT `luac5.4` as design.md/the validation memory assume. Task 4's syntax gate must invoke `luac -p` (or verify the exact binary name shipped by the flake-pinned nixpkgs `pkgs.lua5_4`). `pkgs.lua5_4` is the right package; the binary name is the gotcha.
+- Task 3.1/3.2: generator `overlays/hammerspoon/gen-emmylua.lua` is self-contained (vendored rxi/json.lua decode, MIT; needs only the `lua` interpreter; does NOT mkdir its out-dir). `hammerspoonHsAnnotations` (overlays/misc.nix) = `runCommand` that `mkdir -p $out` then runs the generator over `${final.hammerspoon}/Applications/Hammerspoon.app/Contents/Resources/docs.json` → 140 `hs.*.lua` files, version-tracking by construction. Proven (3.1 + 3.2 reviews) to drive LuaLS member-checking: valid `hs.*` → exit 0; `hs.bogusModule.foo` → exit 1 `undefined-field`.
+- CRITICAL (caught in 3.2 review): `gen-emmylua.lua` MUST be git-tracked. Nix only includes tracked files on a CLEAN-tree eval (CI / `nix flake check` / fresh clone); an untracked generator makes `${./hammerspoon/gen-emmylua.lua}` resolve to nothing and breaks both `hammerspoonHsAnnotations` and the Task 5 semantic check. (Committed in the Task 3 commit.)
+- Task 5 gate: LuaLS 3.18.1 surfaces `undefined-field`/`undefined-global` via stdout + NON-ZERO exit but writes NO `check.json` to `--logpath`. Key the gate on the EXIT CODE (treat "check.json absent" as the no-diagnostics/pass case).
