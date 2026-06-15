@@ -188,6 +188,13 @@ first. Matches the chosen Approach 1 and the `home.mcp` precedent.
   `RunAtLoad = true`.
 - **Rejected**: `hs.autoLaunch(true)` (imperative, non-declarative); `mac-app-util`
   (TCC). Cross-layer path coupling is recorded as a Revalidation Trigger.
+- **Revised (operator, post-implementation)**: switched to a PER-USER install via
+  home-manager `home.packages` (bundle linked into `~/Applications/Home Manager Apps`);
+  the launchd agent targets the package's store-path binary. `environment.systemPackages`
+  + the nix-darwin Nix Apps copy are no longer used. Accepts the documented TCC tradeoff
+  (Accessibility re-grant on a version bump; weaker Spotlight) from
+  `memories/2026-06-14-hammerspoon-nix-darwin-packaging.md`, which had ranked the Nix Apps
+  path BEST for TCC stability. R1.3/1.4/1.6 updated accordingly.
 
 ### Decision: auto-reload via in-config pathwatcher (R-1)
 - **Selected**: the rendered `init.lua` starts `hs.pathwatcher` on `~/.hammerspoon/`
@@ -208,9 +215,10 @@ first. Matches the chosen Approach 1 and the `home.mcp` precedent.
   `stylua --check`. No `luacheck` (it would false-flag the global `hs`).
 
 ## Risks & Mitigations
-- nix-darwin activation hang #1757 on the Nix Apps path (R-7) — operational,
-  intermittent; ensure App Management / Full Disk Access granted; not
-  design-resolvable.
+- (SUPERSEDED — applied to the rejected `systemPackages` → Nix Apps install; the
+  per-user `home.packages` install does not use the Nix Apps copy, so this is N/A)
+  nix-darwin activation hang #1757 on the Nix Apps path (R-7); App Management / Full
+  Disk Access prompts on first rebuild.
 - TCC re-grant on occasional version bumps — accept; stable path + signing
   identity minimize it.
 - Lua escaping correctness for arbitrary payloads — covered by unit tests on

@@ -69,12 +69,12 @@
   - _Boundary: Hammerspoon HM Module_
 
 - [x] 7. Integration: install and enable on both hosts
-- [x] 7.1 Install Hammerspoon on both hosts
-  - Add the packaged app to the shared system package set so both hosts install it and nix-darwin copies it to the stable applications location (launcher-visible, replaced in place on version bumps).
-  - Observable: evaluating both host configurations shows the Hammerspoon package in the system package set.
+- [x] 7.1 Install Hammerspoon for the user on both hosts
+  - Install the packaged app for the operator's user via the Home Manager module's `home.packages` so both hosts install it and home-manager links it into the per-user Applications folder (launcher-visible from Finder; reinstalled on version bumps). nix-darwin `environment.systemPackages` is not used.
+  - Observable: evaluating both host configurations shows the Hammerspoon package in the user's `home.packages`.
   - _Depends: 1_
   - _Requirements: 1.2, 1.3, 1.4, 1.6_
-  - _Boundary: Darwin Install_
+  - _Boundary: Hammerspoon HM Module_
 - [x] 7.2 Enable the keybinding module on both hosts
   - Import and enable the module in the shared Home Manager configuration with an empty keybinding set so the framework ships configured but binding-free.
   - Observable: evaluating both host Home Manager configurations shows the module enabled, the XDG config delivered, the config-file default set, and the login agent present.
@@ -102,7 +102,7 @@
   - _Requirements: 5.2, 5.4, 5.5, 4.4_
   - _Boundary: Verification_
 - [x] 8.4 Host-wiring assertions
-  - Add evaluation-time assertions over both host configurations: the Hammerspoon package is in the system package set; the XDG config is sourced from the syntax gate; the config-file default equals the XDG path; nothing is created under `~/.hammerspoon`; the login agent runs at load.
+  - Add evaluation-time assertions over both host configurations: the Hammerspoon package is in the user's `home.packages`; the XDG config is sourced from the syntax gate; the config-file default equals the XDG path; nothing is created under `~/.hammerspoon`; the login agent runs at load targeting the per-user store-path binary.
   - Observable: the host-wiring check passes for both hosts without a host switch or Accessibility grant.
   - _Depends: 7.1, 7.2_
   - _Requirements: 1.2, 1.7, 3.4, 4.4, 6.1, 6.2, 6.3_
@@ -122,4 +122,5 @@
 - Task 8.4 GOTCHA: `mods` is `types.listOf (types.enum ...)` whose ELEMENT type-check is LAZY — `builtins.length`/spine-forcing does NOT trigger an invalid-modifier rejection. Eval assertions that test bad-mod rejection MUST deep-force the `.mods` values (`map (b: b.mods)`, `builtins.deepSeq`, or eval the value as JSON). `launchd.agents` IS available in standalone `homeManagerConfiguration` on darwin (eval host-free).
 - Task 7 (7.1/7.2): `environment.systemPackages = [ pkgs.hammerspoon ];` in `configurations/common-darwin/default.nix` (repo's FIRST systemPackages use); `./hammerspoon-keybindings` import + `home.hammerspoon.enable = true;` (empty keybindings) in `home-manager/common/default.nix`. Both hosts (`ShopifyLaptop`, `Brandons-MacBook-Pro`), user `brandonmcnama`. Verified: both hosts enable=true, hasXdg=true, MJConfigFile=`/Users/brandonmcnama/.config/hammerspoon/init.lua`, agent RunAtLoad=true, nKeybindings=0; delivered header-only config builds + `luac -p` clean.
 - Task 8 LINT GATE: the repo's actual statix gate is `statix check --config .statix.toml` (per flake.nix pre-commit). The default `statix check` (no `--config`) emits a pre-existing `repeated_keys` (W20) false positive on the `programs.*` cluster in `home-manager/common/default.nix`, which `.statix.toml` disables. Use `--config .statix.toml` when linting. NOTE: `.statix.toml` disables ONLY W20; `bool_comparison` (W04) IS enforced — use `cond && x` not `x == true`, and `inherit (pkgs) lib;` not `lib = pkgs.lib;`.
+- POST-IMPLEMENTATION CHANGE (operator): Hammerspoon install moved from nix-darwin `environment.systemPackages` (Task 7.1 original) to PER-USER home-manager `home.packages` inside the `home.hammerspoon` module; the launchd agent now targets `${pkgs.hammerspoon}/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon` (store path) instead of `/Applications/Nix Apps/...`. `configurations/common-darwin/default.nix` no longer adds the package. Accepted tradeoff: Accessibility re-grant on a version bump + weaker Spotlight (per `memories/2026-06-14-hammerspoon-nix-darwin-packaging.md`). Spec reconciled (R1.1-1.6, design "User Install", brief, research). Host-wiring check (8.4) now asserts `home.packages` + the store-path launchd target. home-manager's `targets.darwin.linkApps` provides the `~/Applications/Home Manager Apps` linking.
 - Task 8 checks: all hammerspoon checks are aarch64-gated in a `hammerspoonChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") { ... }` let-binding merged `nixvimTests // hammerspoonChecks // rec { ... }`, EXCEPT `hammerspoon-keybindings` (8.2 renderer/syntax node tests) which is system-agnostic in the `rec {}` block. Flake-check sandbox has NO build daemon → recursive `nix build` inside a check does NOT work; test build-failures by running the underlying binary (`luac -p` for 8.2, `lua-language-server --check` for 8.3's negative) and asserting non-zero, or (positive) by making the real gated derivation the check value. `node --test tests/<dir>/` needs an `index.js` entry point under the repo's pinned node. Checks: `hammerspoon-package`, `hammerspoon-keybindings`, `hammerspoon-config-semantic`, `hammerspoon-config-semantic-rejects-bogus`, `hammerspoon-host-wiring`.

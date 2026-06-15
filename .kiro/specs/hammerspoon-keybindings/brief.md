@@ -24,11 +24,12 @@ framework is app-agnostic: it knows nothing about microphones or Ears.
 Approach 1, a split of install and config:
 - Package the signed Hammerspoon `.app` (release ~1.1.1) as a Nix derivation in
   `overlays/` via `stdenvNoCC.mkDerivation` + `pkgs.fetchzip { stripRoot = false; }`.
-- Install it through nix-darwin `environment.systemPackages`, relying on
-  nix-darwin's copy into the fixed `/Applications/Nix Apps/Hammerspoon.app` path
-  so the Accessibility (TCC) grant stays stable across rebuilds.
-- Expose a Home Manager module whose options describe keybindings, and render
-  `~/.hammerspoon/init.lua` as a read-only `home.file` store symlink.
+- Install it for the user through home-manager `home.packages` (linked into
+  `~/Applications/Home Manager Apps`); nix-darwin's system `environment.systemPackages`
+  / Nix Apps copy is intentionally not used. Tradeoff: TCC resolves to the store
+  path, so the Accessibility grant is re-granted on a version bump.
+- Expose a Home Manager module whose options describe keybindings, and deliver
+  the syntax-validated config under `$XDG_CONFIG_HOME/hammerspoon/init.lua`.
 - Action types stay generic: an AppleScript to run, a command-line invocation,
   and an inline-Lua / system escape hatch, so any system API can be invoked by a
   binding without the framework knowing about it.
@@ -52,8 +53,8 @@ binding and the Ears removal moved to `ears-hammerspoon-migration`. See
 
 ## Boundary Candidates
 - `.app` packaging: overlay derivation, version pin, fetchzip hash.
-- System install surface: nix-darwin `environment.systemPackages` + Nix Apps
-  copy + launch-at-login.
+- Install surface: home-manager `home.packages` (per-user; superseded the
+  discovery-time nix-darwin `environment.systemPackages` candidate) + launch-at-login.
 - Keybinding options schema + Lua code generation (the HM module).
 - Generic action-type contract: AppleScript / CLI / inline-Lua-or-system.
 - Verification: package-build + config-render flake checks.
@@ -67,8 +68,8 @@ binding and the Ears removal moved to `ears-hammerspoon-migration`. See
 - Declaratively granting Accessibility/TCC.
 
 ## Upstream / Downstream
-- **Upstream**: nix-darwin `environment.systemPackages` + the Nix Apps copy;
-  home-manager `home.file`; the `overlays/` custom-package pattern; both
+- **Upstream**: home-manager `home.packages` + per-user app linking; home-manager
+  `xdg.configFile`/`launchd.agents`; the `overlays/` custom-package pattern; both
   `darwinConfigurations` hosts.
 - **Downstream**: `ears-hammerspoon-migration` is the first consumer (binds the
   mic toggle via the action-type contract); future keybindings reuse the schema.
@@ -89,8 +90,8 @@ binding and the Ears removal moved to `ears-hammerspoon-migration`. See
   (read at launch), so the config lives under `$XDG_CONFIG_HOME/hammerspoon/init.lua`
   with nothing left in `~/.hammerspoon`. A read-only store symlink is fine.
 - A one-time manual Accessibility grant is unavoidable.
-- Watch-items (non-blocking): intermittent nix-darwin activation hang on the Nix
-  Apps copy (nix-darwin #1757); first-rebuild App Management / Full Disk Access
-  prompt if rebuilding over SSH. Verify the TCC grant persists empirically on the
-  first Hammerspoon version bump.
+- Watch-items (non-blocking): home-manager per-user app-linking failures surface in
+  activation output. Verify the Accessibility (TCC) grant persists empirically on the
+  first Hammerspoon version bump — TCC keys on the version-specific store path, so it
+  re-grants on a bump.
 - Packaging + viability detail: `memories/2026-06-14-hammerspoon-nix-darwin-packaging.md`.

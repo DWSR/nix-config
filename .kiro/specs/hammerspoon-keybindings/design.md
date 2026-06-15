@@ -7,13 +7,13 @@ keybindings into `$XDG_CONFIG_HOME/hammerspoon/init.lua`, gated by derivation-ti
 validity checks.
 **Users**: The operator declares `home.hammerspoon.keybindings` in Nix; the
 downstream `ears-hammerspoon-migration` spec is the first consumer.
-**Impact**: Adds the repo's first Nix-packaged macOS `.app`, its first
-`environment.systemPackages` GUI install, and a new Home Manager module whose
-delivered config is syntax-validated at build time and semantically validated in CI.
+**Impact**: Adds the repo's first Nix-packaged macOS `.app` (self-packaged from a
+signed release), installed per-user via home-manager `home.packages`, and a new Home
+Manager module whose delivered config is syntax-validated at build time and semantically validated in CI.
 
 ### Goals
-- A reproducible `pkgs.hammerspoon` `.app` derivation installed at a stable,
-  TCC-friendly path on both hosts.
+- A reproducible `pkgs.hammerspoon` `.app` derivation installed per-user via
+  `home.packages` on both hosts (TCC keys on the store path; re-grant on a version bump).
 - A declarative, diff-reviewable keybinding schema with three action types
   (AppleScript, command-line, inline Lua) plus a general `extraConfig` escape hatch.
 - Configuration stored under `$XDG_CONFIG_HOME` with nothing left in `~/.hammerspoon`.
@@ -38,7 +38,7 @@ delivered config is syntax-validated at build time and semantically validated in
 - The `hammerspoon` overlay derivation (fetch, unpack, install the signed bundle).
 - The `hs` LuaCATS annotation derivation generated from the pinned bundle's
   `docs.json`.
-- The nix-darwin install via `environment.systemPackages` on both hosts.
+- The per-user install via home-manager `home.packages` on both hosts.
 - The `home.hammerspoon` Home Manager module: the options schema, the pure Lua
   renderer, eval-time binding validation, the derivation-time **syntax** gate on the
   delivered config, the config delivered under `$XDG_CONFIG_HOME/hammerspoon/init.lua`,
@@ -57,8 +57,8 @@ delivered config is syntax-validated at build time and semantically validated in
 - Runtime/behavioral verification on a host (the checks are static).
 
 ### Allowed Dependencies
-- nix-darwin `environment.systemPackages` and its `/Applications/Nix Apps` copy
-  (`system.activationScripts.applications`, default behavior, not overridden).
+- home-manager `home.packages` and its per-user darwin app linking into
+  `~/Applications/Home Manager Apps` (`targets.darwin.linkApps`, default behavior).
 - home-manager `xdg.configFile`, `targets.darwin.defaults`, `launchd.agents`,
   `assertions`.
 - nixpkgs `lib`, `stdenvNoCC`, `pkgs.fetchurl`, `pkgs.unzip`, `pkgs.lua5_4`
@@ -76,8 +76,8 @@ delivered config is syntax-validated at build time and semantically validated in
 - A change to the config location (`$XDG_CONFIG_HOME/hammerspoon`), the
   `MJConfigFile` default, or the auto-reload mechanism → consumers relying on the
   config path or reload behavior must re-check.
-- A change to the install path convention (`/Applications/Nix Apps/Hammerspoon.app`)
-  used by the launchd agent → revalidate launch-at-login and TCC.
+- A change to the install mechanism (home-manager `home.packages`) or the launchd
+  agent's store-path target → revalidate launch-at-login and TCC.
 - A Hammerspoon version bump: re-pin the package hash, regenerate annotations, and
   confirm the `docs.json` schema and `MJConfigFile` behavior are unchanged.
 
@@ -85,8 +85,9 @@ delivered config is syntax-validated at build time and semantically validated in
 
 ### Existing Architecture Analysis
 - GUI apps today are Homebrew casks (`configurations/common-darwin/default.nix:209`).
-  This feature introduces the first `.app`-via-Nix package and the first
-  `environment.systemPackages` use; nix-darwin's Nix Apps copy is untouched.
+  This feature introduces the first `.app`-via-Nix package, installed per-user via
+  home-manager `home.packages` (linked into `~/Applications/Home Manager Apps`);
+  nix-darwin `environment.systemPackages` / the Nix Apps copy are not used.
 - The Home Manager module mirrors the options→rendered-config→launchd pattern of
   `home-manager/mcp/default.nix`, which already renders config via `xdg.configFile`.
 - `lua-language-server` is already a repo build input (`flake.nix:492`, nixvim
@@ -101,7 +102,7 @@ delivery (switch) path; the **semantic** check is a CI-only flake check. Depende
 direction (left imports never point right):
 
 `render (pure) → syntax-gate → module → host config`;
-`package → annotations → semantic-check (Verification)`; `package → systemPackages`.
+`package → annotations → semantic-check (Verification)`; `package → home.packages (user install)`.
 
 ```mermaid
 graph TB
@@ -110,8 +111,8 @@ graph TB
     Annot[hs annotations from docs json]
   end
   subgraph DarwinLayer
-    SysPkgs[environment systemPackages]
-    NixApps[Applications Nix Apps copy]
+    SysPkgs[home packages user install]
+    NixApps[Home Manager Apps link]
   end
   subgraph HMModule
     Render[render pure function]
@@ -155,14 +156,14 @@ check tracks the installed version.
 |-------|------------------|-----------------|-------|
 | App / Runtime | Hammerspoon 1.1.1 (bundled Lua 5.4.7) | Executes bindings; loads `init.lua` | Self-packaged signed bundle, MIT, min macOS 13 |
 | Packaging | `stdenvNoCC` + `pkgs.fetchurl` + `pkgs.unzip` | Fetch + unpack `.app` | Known zip sha256; `dontFixup`/`dontStrip` to keep signature |
-| Install | nix-darwin `environment.systemPackages` + Nix Apps copy | Stable `/Applications/Nix Apps/Hammerspoon.app` | TCC path stability |
+| Install | home-manager `home.packages` + per-user app linking | `~/Applications/Home Manager Apps/Hammerspoon.app` (per-user) | TCC keys on the store path |
 | Config generation | Nix `render.nix` (pure) | Options → `init.lua` string | Imported by gates + tests |
 | Syntax gate (delivery) | `pkgs.lua5_4` `luac5.4 -p` | Reject invalid Lua; blocks `switch` + CI | Matches bundled Lua 5.4; exits non-zero on parse error |
 | Semantic check (CI) | `pkgs.lua-language-server --check` + `hs` annotations | Reject nonexistent `hs` symbols; blocks `nix flake check` only | Hermetic/offline |
 | Annotation generation | `lua5.4` port of `EmmyLua.spoon` over bundle `docs.json` | Produce `hs` LuaCATS defs | Version-tracking; MIT |
 | Config delivery | home-manager `xdg.configFile."hammerspoon/init.lua".source` | Syntax-validated store file under `$XDG_CONFIG_HOME` | Source is the syntax gate's output |
 | Config location | `MJConfigFile` default → `$XDG_CONFIG_HOME/hammerspoon/init.lua` | Relocate config off `~/.hammerspoon` | Read by Hammerspoon at launch |
-| Launch | home-manager `launchd.agents` | Login auto-start | `RunAtLoad`; targets the Nix Apps binary |
+| Launch | home-manager `launchd.agents` | Login auto-start | `RunAtLoad`; targets the per-user store-path binary |
 | Verification | `nix eval` + the gates + nodejs runner | Build/render/failure/validity checks | No host or Accessibility needed |
 
 ## File Structure Plan
@@ -189,8 +190,9 @@ tests/hammerspoon-keybindings/
 ### Modified
 - `overlays/misc.nix` — add `hammerspoon` (package) and `hammerspoonHsAnnotations`
   (LuaCATS dir from `docs.json`), both via the `custom-packages` overlay.
-- `configurations/common-darwin/default.nix` — add
-  `environment.systemPackages = [ pkgs.hammerspoon ];` (both hosts).
+- `home-manager/common/hammerspoon-keybindings/default.nix` also installs the app
+  per-user via `home.packages = [ pkgs.hammerspoon ];` (both hosts, via the shared
+  HM config); `configurations/common-darwin/default.nix` is not modified.
 - `home-manager/common/default.nix` — add `./hammerspoon-keybindings` to `imports`
   and set `home.hammerspoon.enable = true;` (empty `keybindings`).
 - `flake.nix` — add `hammerspoon-package`, `hammerspoon-keybindings` (renderer +
@@ -227,11 +229,11 @@ sequenceDiagram
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1.1 | Install from pinned signed artifact, no Homebrew | Package | `fetchurl` pinned sha256 | - |
-| 1.2 | Both hosts | Darwin Install, HM Module | `environment.systemPackages`, common imports | - |
-| 1.3 | Stable path across rebuilds | Darwin Install | Nix Apps copy | - |
-| 1.4 | Launcher-visible | Darwin Install | Nix Apps copy | - |
-| 1.5 | TCC persists across rebuild | Package, Darwin Install | Signed bundle, stable path | - |
-| 1.6 | In-place version update | Darwin Install | Nix Apps rsync replace | - |
+| 1.2 | Both hosts (per-user) | User Install, HM Module | `home.packages`, common imports | - |
+| 1.3 | Per-user Applications location | User Install | home-manager app linking | - |
+| 1.4 | Launcher-visible (per-user) | User Install | `~/Applications/Home Manager Apps` link | - |
+| 1.5 | TCC persists across rebuild (same version) | Package, User Install | Signed bundle, stable store path | - |
+| 1.6 | Version update reinstalls per-user | User Install | home.packages retarget | - |
 | 1.7 | Launch at login | HM Module | `launchd.agents.hammerspoon` | - |
 | 1.8 | Fetch/integrity failure is loud | Package | `fetchurl` hash mismatch | - |
 | 2.1 | Inert until Accessibility granted | HM Module (runtime) | `hs.hotkey` (macOS TCC) | - |
@@ -265,7 +267,7 @@ sequenceDiagram
 |-----------|-------|--------|--------------|--------------------------|-----------|
 | Hammerspoon Package | Packaging | Fetch + install signed `.app` | 1.1, 1.5, 1.8, 4.1 | fetchurl, unzip (P0) | Batch |
 | Hammerspoon Annotations | Packaging | Generate `hs` LuaCATS defs from bundle | 5.2, 5.4 | Package (P0), lua5_4 (P0) | Batch |
-| Darwin Install | nix-darwin | Place app at stable path on both hosts | 1.2, 1.3, 1.4, 1.6 | Package (P0), Nix Apps copy (P0) | State |
+| User Install | home-manager | Install app per-user on both hosts | 1.2, 1.3, 1.4, 1.6 | Package (P0), home.packages (P0) | State |
 | Lua Renderer | HM (pure) | Options → init.lua string; validate bindings | 3.1-3.9, 2.2 | lib (P0) | Service |
 | Config Syntax Gate | HM (build) | Render + Lua syntax check → delivered file | 3.4, 5.1, 5.3, 5.5 | Renderer (P0), lua5_4 (P0) | Batch |
 | Semantic Validation Check | Verification (build) | Render + hermetic LuaLS vs `hs` annotations | 5.2, 5.4, 5.5 | Renderer (P0), Annotations (P0), lua-language-server (P0) | Batch |
@@ -290,7 +292,7 @@ sequenceDiagram
 - `meta.license = lib.licenses.mit`, `meta.platforms = lib.platforms.darwin`.
 
 **Contracts**: Batch
-- Trigger: referenced by `environment.systemPackages`, the annotations derivation,
+- Trigger: referenced by `home.packages` (the HM module), the annotations derivation,
   and the package check.
 - Input/validation: pinned URL + sha256; mismatch fails the build (1.8).
 - Output: `$out/Applications/Hammerspoon.app` (intact signature; contains
@@ -329,29 +331,33 @@ sequenceDiagram
   (top-level `hs.mod.fn` existence is reliable) while avoiding full type-mismatch
   diagnostics that would be noisier.
 
-#### Darwin Install
+#### User Install
 | Field | Detail |
 |-------|--------|
-| Intent | Install Hammerspoon on both hosts at a stable, launcher-visible path |
+| Intent | Install Hammerspoon per-user on both hosts, launchable from the per-user Applications folder |
 | Requirements | 1.2, 1.3, 1.4, 1.6 |
 
 **Responsibilities & Constraints**
-- Add `environment.systemPackages = [ pkgs.hammerspoon ]` in the shared
-  `configurations/common-darwin/default.nix` config block (both hosts import it).
-- Rely on nix-darwin copying the bundle to `/Applications/Nix Apps/Hammerspoon.app`
-  (read-only, signature-preserving rsync). Do not override
-  `system.activationScripts.applications`.
+- Install via home-manager `home.packages = [ pkgs.hammerspoon ]` inside the
+  `home.hammerspoon` module, so enabling the module installs + configures + launches;
+  reaches both hosts through the shared Home Manager config.
+- Rely on home-manager's per-user darwin app linking (the bundle is linked into
+  `~/Applications/Home Manager Apps/Hammerspoon.app`). Do NOT use nix-darwin
+  `environment.systemPackages` or override the system Nix Apps copy.
 
 **Contracts**: State
-- State model: app present at the fixed path; rsync replaces contents in place on
-  version bumps (1.6) while path + signing identity stay constant (1.3, 1.5).
-- Consistency: install is unconditional on both hosts; independent of the HM
-  module `enable`.
+- State model: the app is present in the per-user profile and linked into
+  `~/Applications/Home Manager Apps`; on a version bump the link retargets to the new
+  store path (1.6). TCC resolves to the store path, so an unchanged version preserves
+  the grant (1.5) while a version bump may require re-approval (1.6).
+- Consistency: install is tied to the HM module `enable` (the module owns install +
+  config + launch); both hosts enable it.
 
 **Implementation Notes**
-- Risks: activation requires App Management (and Full Disk Access over SSH); open
-  nix-darwin regression #1757 can intermittently hang the Nix Apps step
-  (operational, not design-resolvable).
+- Tradeoff (operator-accepted): a per-user install gives up the fixed-path TCC
+  stability of the nix-darwin Nix Apps copy — the Accessibility grant is re-granted on
+  a version bump, and Spotlight/Launchpad indexing of the linked bundle is weaker. See
+  `memories/2026-06-14-hammerspoon-nix-darwin-packaging.md`.
 
 ### Home Manager
 
@@ -502,8 +508,8 @@ Action → Lua mapping (renderer output per binding):
   (alternative: nix-darwin `system.defaults.CustomUserPreferences`). The value is an
   absolute path derived from `config.xdg.configHome` (no literal `/Users/`).
 - `launchd.agents.hammerspoon` with `RunAtLoad = true`, `ProgramArguments =
-  [ "/Applications/Nix Apps/Hammerspoon.app/Contents/MacOS/Hammerspoon" ]` (1.7),
-  `KeepAlive = false`.
+  [ "${pkgs.hammerspoon}/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" ]`
+  (the per-user install's store-path binary) (1.7), `KeepAlive = false`.
 - Document the one-time Accessibility grant in the option description and the
   generated init.lua header; `hs.accessibilityState(true)` prompts on launch (2.2).
 
@@ -517,8 +523,9 @@ Action → Lua mapping (renderer output per binding):
   empty `keybindings` list. The `MJConfigFile` default must be in place before
   Hammerspoon next launches (HM activation writes it and the config before the login
   agent runs).
-- Risks: cross-layer path coupling to `/Applications/Nix Apps/...` (Revalidation
-  Trigger); the reload watcher relies on `hs.configdir` resolving to the XDG dir;
+- Risks: store-path coupling — the launchd agent targets `${pkgs.hammerspoon}/...`,
+  so a version bump retargets it and may require an Accessibility re-grant
+  (Revalidation Trigger); the reload watcher relies on `hs.configdir` resolving to the XDG dir;
   `targets.darwin.defaults` is the chosen default-writer (swap to
   `CustomUserPreferences` if it proves unreliable under nix-darwin HM).
 
@@ -543,8 +550,8 @@ Action → Lua mapping (renderer output per binding):
 - Host-wiring eval assertions (both hosts): `xdg.configFile."hammerspoon/init.lua"`
   source is the syntax-gated derivation (6.1); the `MJConfigFile` default resolves to
   `${config.xdg.configHome}/hammerspoon/init.lua` (6.2); no `home.file` entry under
-  `~/.hammerspoon` (6.3); the launchd agent exists with `RunAtLoad` (1.7);
-  `environment.systemPackages` contains `hammerspoon` (1.2).
+  `~/.hammerspoon` (6.3); the launchd agent exists with `RunAtLoad` (1.7) and targets
+  the per-user store-path binary; `home.packages` contains `hammerspoon` (1.2).
 
 ## Data Models
 
@@ -568,8 +575,8 @@ Action → Lua mapping (renderer output per binding):
 - **CI-only semantic (blocks `nix flake check`)**: the Semantic Validation Check
   fails `nix flake check` on a nonexistent `hs` symbol (LuaLS, 5.4) with the
   diagnostic's location; it does NOT block `darwin-rebuild switch`.
-- **Activation-time**: nix-darwin Nix Apps copy requires App Management / Full Disk
-  Access; failure surfaces in activation output (operational).
+- **Activation-time**: home-manager links the app into `~/Applications/Home Manager
+  Apps` during activation; failure surfaces in activation output (operational).
 - **Runtime**: without the Accessibility grant, hotkeys are inert (2.1) and
   `hs.accessibilityState(true)` prompts (2.2); once granted they activate (2.3).
 
@@ -601,7 +608,7 @@ Action → Lua mapping (renderer output per binding):
 
 ### Build / Integration Tests
 - `pkgs.hammerspoon` builds and produces the signed bundle binary (4.1).
-- Host-wiring eval assertions (both hosts): `environment.systemPackages` contains
+- Host-wiring eval assertions (both hosts): `home.packages` contains
   `hammerspoon` (1.2); `xdg.configFile."hammerspoon/init.lua"` source is the
   syntax-gated derivation (3.4, 6.1); the `MJConfigFile` default equals
   `${config.xdg.configHome}/hammerspoon/init.lua` (6.2); no `home.file` under
@@ -609,7 +616,8 @@ Action → Lua mapping (renderer output per binding):
 - All checks run without a host switch or Accessibility (4.4, 5.5).
 
 ### Manual Smoke (operator, out of automated scope)
-- First switch: App Management prompt; Hammerspoon launches at login, reads
+- First switch: home-manager links Hammerspoon into `~/Applications/Home Manager Apps`;
+  Hammerspoon launches at login, reads
   `MJConfigFile`, and loads from `$XDG_CONFIG_HOME/hammerspoon`; granting
   Accessibility activates a test binding; editing keybindings + switch auto-reloads;
   `~/.hammerspoon` is absent.

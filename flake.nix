@@ -621,7 +621,7 @@
               # Accessibility grant is needed (Req 4.4). The per-host report is
               # produced only by forcing five assertions, each naming the host
               # and the failing property:
-              #   1.2     environment.systemPackages contains the hammerspoon pkg.
+              #   1.2     home.packages contains the hammerspoon pkg (per-user install).
               #   3.4/6.1 xdg.configFile."hammerspoon/init.lua".source is the
               #           syntax-gate derivation (named "hammerspoon-init.lua" by
               #           checked-config.nix), not a raw `.text`.
@@ -642,7 +642,7 @@
                       hasPackage = builtins.any (
                         p:
                         (p.pname or p.name or "") == "hammerspoon" || builtins.match "hammerspoon.*" (p.name or "") != null
-                      ) sys.environment.systemPackages;
+                      ) hm.home.packages;
                       initSource = hm.xdg.configFile."hammerspoon/init.lua".source;
                       sourceName = initSource.name or "";
                       mjConfigFile = hm.targets.darwin.defaults."org.hammerspoon.Hammerspoon".MJConfigFile;
@@ -652,9 +652,15 @@
                       );
                       agent = hm.launchd.agents.hammerspoon;
                       agentRunsAtLoad = agent.enable && agent.config.RunAtLoad;
+                      agentTarget = builtins.head agent.config.ProgramArguments;
+                      # Per-user install: no /Applications/Nix Apps path, so the
+                      # agent must target the package's store-path binary.
+                      agentTargetsStorePackage =
+                        pkgs.lib.hasPrefix "${builtins.storeDir}/" agentTarget
+                        && pkgs.lib.hasSuffix "/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon" agentTarget;
                     in
                     assert pkgs.lib.assertMsg hasPackage
-                      "hammerspoon host-wiring: environment.systemPackages on ${hostName} does not contain the hammerspoon package (Req 1.2).";
+                      "hammerspoon host-wiring: home.packages on ${hostName} does not contain the hammerspoon package (Req 1.2).";
                     assert pkgs.lib.assertMsg (sourceName == "hammerspoon-init.lua")
                       "hammerspoon host-wiring: xdg.configFile.\"hammerspoon/init.lua\".source on ${hostName} is not the syntax-gate output (expected derivation name \"hammerspoon-init.lua\", got \"${sourceName}\") (Req 3.4/6.1).";
                     assert pkgs.lib.assertMsg (mjConfigFile == expectedMjConfigFile)
@@ -663,7 +669,9 @@
                       "hammerspoon host-wiring: ${hostName} declares home.file under ~/.hammerspoon: [ ${pkgs.lib.concatStringsSep " " dotHammerspoonFiles} ] (Req 6.3).";
                     assert pkgs.lib.assertMsg agentRunsAtLoad
                       "hammerspoon host-wiring: launchd.agents.hammerspoon on ${hostName} must be enabled with RunAtLoad=true (Req 1.7).";
-                    "${hostName}: systemPackages has hammerspoon=${pkgs.lib.boolToString hasPackage}; init.lua source=${sourceName}; MJConfigFile=${mjConfigFile}; ~/.hammerspoon home.file entries=${toString (builtins.length dotHammerspoonFiles)}; launchd agent enable=${pkgs.lib.boolToString agent.enable} RunAtLoad=${pkgs.lib.boolToString agent.config.RunAtLoad}";
+                    assert pkgs.lib.assertMsg agentTargetsStorePackage
+                      "hammerspoon host-wiring: launchd.agents.hammerspoon on ${hostName} must target the per-user store-path Hammerspoon binary, got \"${agentTarget}\" (Req 1.7).";
+                    "${hostName}: home.packages has hammerspoon=${pkgs.lib.boolToString hasPackage}; init.lua source=${sourceName}; MJConfigFile=${mjConfigFile}; ~/.hammerspoon home.file entries=${toString (builtins.length dotHammerspoonFiles)}; launchd agent enable=${pkgs.lib.boolToString agent.enable} RunAtLoad=${pkgs.lib.boolToString agent.config.RunAtLoad} target=${agentTarget}";
                 in
                 pkgs.runCommand "hammerspoon-host-wiring"
                   {

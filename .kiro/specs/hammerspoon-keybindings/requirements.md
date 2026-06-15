@@ -27,24 +27,25 @@ spec. Full problem, approach, and boundary detail are in
   Accessibility grant; Spotlight/Dock indexing helpers such as `mac-app-util`;
   runtime or behavioral verification of the rendered config on a host (the
   validity checks are static, at derivation time).
-- **Adjacent expectations**: relies on nix-darwin providing a stable
-  installed-application location and on Home Manager managing the per-user config
-  file; requires a one-time manual Accessibility grant before any binding
-  functions; `ears-hammerspoon-migration` is the downstream consumer of the
-  action-type contract; orthogonal to the cost-reduction `roadmap.md`.
+- **Adjacent expectations**: relies on home-manager providing the per-user
+  application install (linked into `~/Applications/Home Manager Apps`) and managing
+  the per-user config file; requires a one-time manual Accessibility grant before any
+  binding functions (re-granted on a Hammerspoon version bump); `ears-hammerspoon-migration`
+  is the downstream consumer of the action-type contract; orthogonal to the
+  cost-reduction `roadmap.md`.
 
 ## Requirements
 
-### Requirement 1: Declarative Hammerspoon installation without Homebrew
-**Objective:** As the operator of both nix-darwin hosts, I want Hammerspoon installed declaratively from a pinned release, so that the app is reproducible and its Accessibility grant stays stable across rebuilds.
+### Requirement 1: Declarative per-user Hammerspoon installation without Homebrew
+**Objective:** As the operator, I want Hammerspoon installed declaratively for my user from a pinned release, so that the app is reproducible without Homebrew.
 
 #### Acceptance Criteria
-1. The nix-darwin configuration shall install Hammerspoon from a pinned, signed upstream release artifact without using Homebrew.
-2. The nix-darwin configuration shall install Hammerspoon on both `ShopifyLaptop` and `Brandons-MacBook-Pro`.
-3. When `darwin-rebuild switch` completes, the nix-darwin configuration shall place Hammerspoon at a stable application location that does not change between rebuilds.
-4. When Hammerspoon is installed, the nix-darwin configuration shall make it launchable from the macOS application launcher (Finder, Spotlight, and Launchpad) like a normally installed application.
-5. While the pinned Hammerspoon version is unchanged across a rebuild, the nix-darwin configuration shall preserve the previously granted macOS Accessibility permission without requiring operator re-approval.
-6. When a newer Hammerspoon version is pinned and applied, the nix-darwin configuration shall replace the installed application in place at the same stable location.
+1. The operator's Home Manager configuration shall install Hammerspoon from a pinned, signed upstream release artifact (a Nix package) without using Homebrew.
+2. The operator's Home Manager configuration shall install Hammerspoon for the operator's user on both `ShopifyLaptop` and `Brandons-MacBook-Pro`.
+3. When `darwin-rebuild switch` completes, the operator's Home Manager configuration shall make Hammerspoon available in the per-user Applications location (`~/Applications/Home Manager Apps`).
+4. When Hammerspoon is installed, the operator's Home Manager configuration shall link it into the per-user Applications folder so it is launchable from Finder; Spotlight and Launchpad visibility of the linked bundle is best-effort.
+5. While the pinned Hammerspoon version is unchanged across a rebuild, the operator's Home Manager configuration shall preserve the previously granted macOS Accessibility permission without requiring operator re-approval.
+6. When a newer Hammerspoon version is pinned and applied, the operator's Home Manager configuration shall install the new version for the user; the macOS Accessibility permission may require one-time re-approval because the per-user install resolves to a version-specific store path.
 7. When the operator logs in, Hammerspoon shall start automatically so that the declared keybindings are active without the operator manually launching it.
 8. If the pinned release artifact cannot be fetched or fails integrity verification, then the build shall fail with an error identifying the Hammerspoon package, and shall not install a partial or unverified application.
 

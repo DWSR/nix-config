@@ -2,11 +2,12 @@
 # schema plus the enabled-config delivery.
 #
 # `render.nix` consumes the schema as `cfg = { keybindings, extraConfig,
-# reloadOnConfigChange }`. When enabled, this module delivers the syntax-gated
+# reloadOnConfigChange }`. When enabled, this module installs Hammerspoon for
+# the user (`home.packages`), delivers the syntax-gated
 # `xdg.configFile."hammerspoon/init.lua"` under XDG, sets the `MJConfigFile`
 # user default to that path, and installs a login `launchd.agents` agent that
-# starts Hammerspoon (Req 1.7). The one-time manual Accessibility grant is
-# documented on the `enable` option.
+# starts Hammerspoon from its store path (Req 1.7). The one-time manual
+# Accessibility grant is documented on the `enable` option.
 #
 # Binding allowlist/arity validation (duplicate hotkeys, exactly-one action,
 # key allowlist) lives in `render.nix`, not here. The schema only rejects
@@ -25,6 +26,14 @@ let
     ;
 
   cfg = config.home.hammerspoon;
+
+  # Hammerspoon is installed for the USER (home.packages), not the system.
+  # home-manager links the bundle into ~/Applications/Home Manager Apps; the
+  # launchd agent below targets this same package's store-path binary. TCC
+  # resolves to the store path, so the Accessibility grant must be re-approved
+  # on a version bump (the operator-accepted tradeoff vs the system Nix Apps
+  # copy).
+  hammerspoonPackage = pkgs.hammerspoon;
 
   # A binding's single action: exactly one of the three fields is non-null
   # for valid input. The one-of arity (Requirement 3.8 / 2.2) is enforced by
@@ -118,6 +127,14 @@ in
   # Hammerspoon at it, and start it at login. The one-time manual Accessibility
   # grant is documented on the `enable` option.
   config = lib.mkIf cfg.enable {
+    # Install Hammerspoon for the user (not the system): home-manager links the
+    # bundle into ~/Applications/Home Manager Apps. nix-darwin's system Nix Apps
+    # copy is intentionally NOT used. Tradeoff (operator-accepted): TCC resolves
+    # to the store path, so the Accessibility grant must be re-granted on a
+    # Hammerspoon version bump, and Spotlight indexing of the symlinked bundle is
+    # weaker than a real /Applications install (Req 1.2-1.6).
+    home.packages = [ hammerspoonPackage ];
+
     # Deliver the syntax-gated init.lua under XDG (Req 3.4 readable, 6.1 under
     # XDG). The `source` IS the syntax gate's `$out`, so an invalid render fails
     # the build rather than delivering a broken config.
@@ -135,16 +152,17 @@ in
     # there; the MJConfigFile default also relocates hs.configdir/Spoons.
 
     # Start Hammerspoon at login so the declared bindings are active without a
-    # manual launch (Req 1.7). Target the STABLE nix-darwin Nix Apps copy at
-    # `/Applications/Nix Apps/Hammerspoon.app`, not the per-build store path, so
-    # the agent survives version bumps and preserves the TCC grant. `KeepAlive
-    # = false`: start once at load, do not respawn on quit. Until the one-time
+    # manual launch (Req 1.7). The per-user install has no fixed /Applications
+    # path, so target the package's store-path binary directly. `KeepAlive =
+    # false`: start once at load, do not respawn on quit. Until the one-time
     # Accessibility grant (documented on `enable`), the launched process is
     # inert and `hs.accessibilityState(true)` prompts for it (Req 2.1-2.3).
     launchd.agents.hammerspoon = {
       enable = true;
       config = {
-        ProgramArguments = [ "/Applications/Nix Apps/Hammerspoon.app/Contents/MacOS/Hammerspoon" ];
+        ProgramArguments = [
+          "${hammerspoonPackage}/Applications/Hammerspoon.app/Contents/MacOS/Hammerspoon"
+        ];
         RunAtLoad = true;
         KeepAlive = false;
       };
