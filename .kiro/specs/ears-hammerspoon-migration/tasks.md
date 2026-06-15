@@ -40,7 +40,7 @@
   - _Boundary: Verification_
   - _Depends: 2_
 
-- [ ] 4.2 Wiring and teardown assertions
+- [x] 4.2 Wiring and teardown assertions
   - Add `hammerspoon-mic-mute-wiring`: per-host (`ShopifyLaptop`, `Brandons-MacBook-Pro`) eval assertions that the ⌃⌘⇧F12 lua binding is present and that `ears` is absent from `homebrew.casks`, mirroring the framework's host-wiring assert pattern.
   - Observable completion: `nix build .#checks.aarch64-darwin.hammerspoon-mic-mute-wiring` succeeds for both hosts; an injected missing binding or a residual `ears` cask makes it fail at eval.
   - _Requirements: 6.2, 6.3, 5.1, 5.4_

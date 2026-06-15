@@ -698,6 +698,63 @@
                   ''
                     printf '%s\n' "$hostReport" > $out
                   '';
+
+              # Mic-mute wiring + teardown eval assertions (both hosts) — Task
+              # 4.2; design "#### Verification" `hammerspoon-mic-mute-wiring`
+              # bullet. Pure eval over each darwin host config plus a trivial
+              # runCommand, so no host switch or Accessibility grant is needed
+              # (Req 6.3). Forcing the per-host report forces two assertions,
+              # each naming the host and the failing property:
+              #   6.2/5.4 exactly one ⌃⌘⇧F12 keybinding (mod set
+              #           {cmd,ctrl,shift}, key "F12") whose action.lua is
+              #           non-null and calls micMuteToggle.
+              #   5.1/5.4 the "ears" cask is absent from homebrew.casks. A
+              #           successful host-config eval also proves the ears.nix
+              #           import was removed (Req 5.2). The framework checks and
+              #           hammerspoon-mic-mute-semantic are unchanged.
+              hammerspoon-mic-mute-wiring =
+                let
+                  hosts = [
+                    "ShopifyLaptop"
+                    "Brandons-MacBook-Pro"
+                  ];
+                  checkHost =
+                    hostName:
+                    let
+                      sys = self.darwinConfigurations.${hostName}.config;
+                      hm = sys.home-manager.users.brandonmcnama;
+                      # Order-insensitive modifier set: sort both sides so
+                      # [ "ctrl" "cmd" "shift" ] matches {cmd,ctrl,shift}.
+                      expectedModSet = pkgs.lib.sort (x: y: x < y) [
+                        "cmd"
+                        "ctrl"
+                        "shift"
+                      ];
+                      isMicBinding =
+                        b:
+                        pkgs.lib.sort (x: y: x < y) b.mods == expectedModSet
+                        && b.key == "F12"
+                        && b.action.lua != null
+                        && pkgs.lib.hasInfix "micMuteToggle" b.action.lua;
+                      micBindings = builtins.filter isMicBinding hm.home.hammerspoon.keybindings;
+                      micBindingCount = builtins.length micBindings;
+                      micBindingExactlyOne = micBindingCount == 1;
+                      earsPresent = builtins.elem "ears" sys.homebrew.casks;
+                      earsAbsent = !earsPresent;
+                    in
+                    assert pkgs.lib.assertMsg micBindingExactlyOne
+                      "hammerspoon mic-mute wiring: ${hostName} must declare exactly one Cmd+Ctrl+Shift+F12 lua binding calling micMuteToggle, found ${toString micBindingCount} (Req 6.2/5.4).";
+                    assert pkgs.lib.assertMsg earsAbsent
+                      "hammerspoon mic-mute wiring: ${hostName} still lists the \"ears\" cask in homebrew.casks (Req 5.1/5.4).";
+                    "${hostName}: mic-mute Cmd+Ctrl+Shift+F12 lua bindings=${toString micBindingCount}; ears cask present=${pkgs.lib.boolToString earsPresent}";
+                in
+                pkgs.runCommand "hammerspoon-mic-mute-wiring"
+                  {
+                    hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hosts;
+                  }
+                  ''
+                    printf '%s\n' "$hostReport" > $out
+                  '';
             }
           );
         in
