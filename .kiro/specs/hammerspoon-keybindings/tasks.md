@@ -36,7 +36,7 @@
   - _Requirements: 5.2, 5.4_
   - _Boundary: Hammerspoon Annotations_
 
-- [ ] 4. Gate the delivered config on Lua syntax
+- [x] 4. Gate the delivered config on Lua syntax
   - Wrap the renderer in a build step that writes the generated config and runs a Lua 5.4 parse check (using the Lua toolchain as a build input), emitting the validated config file as its output; this step runs on every rebuild.
   - Observable: building the gate on a valid config yields a non-empty config file; building it on a config whose extra Lua contains a syntax error fails the build with the parser's error.
   - _Depends: 2.1_
