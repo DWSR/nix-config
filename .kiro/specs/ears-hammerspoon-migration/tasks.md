@@ -17,7 +17,7 @@
   - _Requirements: 1.1, 1.2, 2.1, 2.2, 2.3, 3.1, 3.2, 3.3, 4.1, 4.2_
   - _Boundary: Mic Mute Lua_
 
-- [ ] 2. Declare the ⌃⌘⇧F12 binding and wire the module
+- [x] 2. Declare the ⌃⌘⇧F12 binding and wire the module
   - Create the Home Manager module that sets `home.hammerspoon.keybindings` to a single binding (mods ctrl+cmd+shift, key F12, an inline-Lua action invoking the toggle) and delivers the Lua via `home.hammerspoon.extraConfig`.
   - Import the module into the shared common Home Manager config so the binding reaches both hosts.
   - Observable completion: evaluating each host config shows exactly one `home.hammerspoon` keybinding with mods {ctrl,cmd,shift}, key F12, and a non-null lua action, and the live `hammerspoon/init.lua` rebuilds through the framework syntax gate without error.

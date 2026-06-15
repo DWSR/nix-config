@@ -16,6 +16,7 @@
     ./git-hooks.nix
     ./git-clone-isolation.nix
     ./hammerspoon-keybindings
+    ./hammerspoon-mic-mute
     ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
