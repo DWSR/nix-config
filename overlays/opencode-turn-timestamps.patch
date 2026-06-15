@@ -1,8 +1,18 @@
 diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
-index 922272f..f4ca454 100644
+index 1a1eb0f..b924758 100644
 --- a/packages/tui/src/routes/session/index.tsx
 +++ b/packages/tui/src/routes/session/index.tsx
-@@ -77,20 +77,22 @@ import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode
+@@ -67,40 +67,42 @@ import { normalizePath } from "../../util/path"
+ import { PermissionPrompt } from "./permission"
+ import { QuestionPrompt } from "./question"
+ import { DialogExportOptions } from "../../ui/dialog-export-options"
+ import * as Model from "../../util/model"
+ import { formatTranscript } from "../../util/transcript"
+ import { sessionEpilogue } from "../../util/presentation"
+ import { setPreLayoutSiblingMargin } from "../../util/layout"
+ import { useTuiConfig } from "../../config"
+ import { useClipboard } from "../../context/clipboard"
+ import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
  import { getScrollAcceleration } from "../../util/scroll"
  import { collapseToolOutput } from "../../util/collapse-tool-output"
  import { usePluginRuntime } from "../../plugin/runtime"
@@ -25,7 +35,27 @@ index 922272f..f4ca454 100644
  type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
  
  function goUpsellKeys(action: RetryAction) {
-@@ -245,21 +247,21 @@ export function Session() {
+   if (!action) return
+   if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
+   if (action.reason === "free_tier_limit") {
+     return {
+       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
+       dontShow: GO_UPSELL_FREE_TIER_DONT_SHOW,
+     }
+   }
+   if (action.reason === "account_rate_limit") {
+     return {
+@@ -235,41 +237,41 @@ export function Session() {
+   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
+   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
+ 
+   const pending = createMemo(() => {
+     const completed = messages().findLast((x) => x.role === "assistant" && x.time.completed)?.id
+     return messages().findLast((x) => x.role === "assistant" && !x.time.completed && (!completed || x.id > completed))
+       ?.id
+   })
+ 
+   const lastAssistant = createMemo(() => {
      return messages().findLast((x) => x.role === "assistant")
    })
  
@@ -48,7 +78,27 @@ index 922272f..f4ca454 100644
    const wide = createMemo(() => dimensions().width > 120)
    const sidebarVisible = createMemo(() => {
      if (session()?.parentID) return false
-@@ -682,20 +684,21 @@ export function Session() {
+     if (sidebarOpen()) return true
+     if (sidebar() === "auto" && wide()) return true
+     return false
+   })
+   const showTimestamps = createMemo(() => timestamps() === "show")
+   const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
+   const providers = createMemo(() => Model.index(sync.data.provider))
+ 
+   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
+   const toast = useToast()
+@@ -672,40 +674,41 @@ export function Session() {
+           const isVisible = sidebarVisible()
+           setSidebar(() => (isVisible ? "hide" : "auto"))
+           setSidebarOpen(!isVisible)
+         })
+         dialog.clear()
+       },
+     },
+     {
+       title: conceal() ? "Disable code concealment" : "Enable code concealment",
+       value: "session.toggle.conceal",
        category: "Session",
        run: () => {
          setConceal((prev) => !prev)
@@ -70,7 +120,27 @@ index 922272f..f4ca454 100644
        },
      },
      {
-@@ -1351,20 +1354,26 @@ export function Session() {
+       title: (() => {
+         const next = nextThinkingMode(thinkingMode())
+         if (next === "hide") return "Collapse thinking"
+         return "Expand thinking"
+       })(),
+       value: "session.toggle.thinking",
+       category: "Session",
+       slash: {
+         name: "thinking",
+         aliases: ["toggle-thinking"],
+@@ -1341,68 +1344,81 @@ export function Session() {
+                 </box>
+               </Match>
+             </Switch>
+           </Show>
+         </box>
+       </context.Provider>
+     </PathFormatterProvider>
+   )
+ }
+ 
  const MIME_BADGE: Record<string, string> = {
    "text/plain": "txt",
    "image/png": "img",
@@ -97,7 +167,14 @@ index 922272f..f4ca454 100644
    const ctx = use()
    const local = useLocal()
    const text = createMemo(() => {
-@@ -1379,20 +1388,27 @@ function UserMessage(props: {
+     const texts = props.parts
+       .map((x) => {
+         if (x.type === "text" && !x.synthetic) {
+           return x.text
+         }
+         return null
+       })
+       .filter(Boolean)
      return texts.join("\n\n")
    })
    const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
@@ -125,7 +202,27 @@ index 922272f..f4ca454 100644
            border={["left"]}
            borderColor={color()}
            customBorderChars={SplitBorder.customBorderChars}
-@@ -1425,35 +1441,33 @@ function UserMessage(props: {
+           marginTop={props.index === 0 ? 0 : 1}
+         >
+           <box
+             onMouseOver={() => {
+               setHover(true)
+             }}
+             onMouseOut={() => {
+               setHover(false)
+             }}
+             onMouseUp={props.onMouseUp}
+@@ -1415,80 +1431,85 @@ function UserMessage(props: {
+             <text fg={theme.text}>{text()}</text>
+             <Show when={files().length}>
+               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
+                 <For each={files()}>
+                   {(file) => {
+                     const bg = createMemo(() => {
+                       if (file.mime.startsWith("image/")) return theme.accent
+                       if (file.mime === "application/pdf") return theme.primary
+                       return theme.secondary
+                     })
                      return (
                        <text fg={theme.text}>
                          <span style={{ bg: bg(), fg: theme.background }}> {MIME_BADGE[file.mime] ?? file.mime} </span>
@@ -171,7 +268,11 @@ index 922272f..f4ca454 100644
            border={["top"]}
            title=" Compaction "
            titleAlignment="center"
-@@ -1465,20 +1479,27 @@ function UserMessage(props: {
+           borderColor={theme.borderActive}
+         />
+       </Show>
+     </>
+   )
  }
  
  function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
@@ -199,7 +300,27 @@ index 922272f..f4ca454 100644
      const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
      if (!user || !user.time) return 0
      return props.message.time.completed - user.time.created
-@@ -1533,35 +1554,38 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+   })
+ 
+   const childShortcut = useCommandShortcut("session.child.first")
+   const backgroundShortcut = useCommandShortcut("session.background")
+ 
+   return (
+     <>
+       <For each={props.parts}>
+         {(part, index) => {
+           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
+@@ -1524,55 +1545,58 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
+             </Show>
+           </text>
+         </box>
+       </Show>
+       <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
+         <box
+           id={`assistant-error-${props.message.id}`}
+           border={["left"]}
+           paddingTop={1}
+           paddingBottom={1}
            paddingLeft={2}
            marginTop={1}
            backgroundColor={theme.backgroundPanel}
@@ -212,7 +333,7 @@ index 922272f..f4ca454 100644
        <Switch>
 -        <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
 +        <Match when={props.last || final() || timestamp() || props.message.error?.name === "MessageAbortedError"}>
-           <box paddingLeft={3}>
+           <box id={`assistant-summary-${props.message.id}`} paddingLeft={3}>
              <text marginTop={1}>
                <span
                  style={{
@@ -239,3 +360,13 @@ index 922272f..f4ca454 100644
            </box>
          </Match>
        </Switch>
+     </>
+   )
+ }
+ 
+ const PART_MAPPING = {
+   text: TextPart,
+   tool: ToolPart,
+   reasoning: ReasoningPart,
+ }
+ 
