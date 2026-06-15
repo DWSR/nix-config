@@ -1,0 +1,109 @@
+# Implementation Plan
+
+- [ ] 1. (P) Package the signed Hammerspoon release as a Nix-installable app bundle
+  - Fetch the pinned signed release archive by URL + sha256, then unpack and install the `.app` bundle verbatim (no resign or strip) so its Developer-ID signature and notarization stay intact.
+  - Expose it as a buildable package attribute in the overlay so other layers can reference it.
+  - Observable: building the package yields an app bundle containing a launchable `Hammerspoon` binary; a wrong or missing hash fails the build with an error naming the package.
+  - Runs concurrently with Tasks 2.1 and 3.1 (separate boundary and files).
+  - _Requirements: 1.1, 1.5, 1.8_
+  - _Boundary: Hammerspoon Package_
+
+- [ ] 2. Build the pure keybinding renderer
+- [ ] 2.1 (P) Render a declarative keybinding set into Hammerspoon Lua
+  - Turn a keybinding set (each binding = modifiers + key + exactly one action) into Lua that binds each hotkey globally and runs its action, mapping the three action types (AppleScript, command-line, inline Lua) to their Lua forms with safe string escaping.
+  - Emit a config header that disables Sparkle auto-update and prompts for Accessibility, append any free-form extra Lua, and register a reload watcher keyed on the live config directory.
+  - Observable: evaluating the renderer with a representative set (including a ⌃⌘⇧F12 inline-Lua binding) yields Lua containing the hotkey bind, the mapped action call, the header lines, and the reload watcher; an empty set yields a valid header-only config with no binds.
+  - Independent of Tasks 1 and 3.1.
+  - _Requirements: 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+  - _Boundary: Lua Renderer_
+- [ ] 2.2 Reject invalid keybinding sets at evaluation time
+  - Fail evaluation with an identifying message when two bindings share a hotkey, when a binding has zero or more than one action, or when a binding omits its key or uses an unsupported modifier or key.
+  - Observable: evaluating each malformed set aborts with an error naming the offending binding/hotkey; a valid set evaluates cleanly.
+  - _Requirements: 3.7, 3.8, 3.9_
+  - _Boundary: Lua Renderer_
+
+- [ ] 3. Generate Hammerspoon API annotations for semantic checking
+- [ ] 3.1 (P) Port the EmmyLua annotation generator to standalone Lua
+  - Reimplement the upstream EmmyLua.spoon generator as a plain Lua script that reads a Hammerspoon `docs.json` and emits one LuaCATS `---@class hs.<module>` file per module, with no dependency on a running Hammerspoon.
+  - Observable: running the generator against a `docs.json` fixture emits LuaCATS files declaring `hs` and at least one `hs.<module>` class.
+  - Independent of Tasks 1 and 2.
+  - _Requirements: 5.2, 5.4_
+  - _Boundary: Hammerspoon Annotations_
+- [ ] 3.2 Produce the annotation set from the pinned bundle
+  - Add a build artifact that runs the generator over the packaged bundle's `docs.json`, yielding a directory of `hs` LuaCATS annotations that tracks the pinned Hammerspoon version.
+  - Observable: building the annotation artifact yields a directory of `hs.*` annotation files derived from the packaged bundle.
+  - _Depends: 1, 3.1_
+  - _Requirements: 5.2, 5.4_
+  - _Boundary: Hammerspoon Annotations_
+
+- [ ] 4. Gate the delivered config on Lua syntax
+  - Wrap the renderer in a build step that writes the generated config and runs a Lua 5.4 parse check (using the Lua toolchain as a build input), emitting the validated config file as its output; this step runs on every rebuild.
+  - Observable: building the gate on a valid config yields a non-empty config file; building it on a config whose extra Lua contains a syntax error fails the build with the parser's error.
+  - _Depends: 2.1_
+  - _Requirements: 3.4, 5.1, 5.3, 5.5_
+  - _Boundary: Config Syntax Gate_
+
+- [ ] 5. Add the hermetic semantic validation check
+  - Build a check that renders a config, writes a language-server configuration pointing at the generated `hs` annotations (Lua 5.4 runtime, third-party fetching disabled, undefined field/global = error), and runs the language server in check mode fully offline with redirected home/cache/log/meta paths; fail on any diagnostic.
+  - Observable: building the check on a valid config succeeds; building it on a config that references a nonexistent `hs` symbol fails with an undefined-field/global diagnostic; it runs with no network and no running Hammerspoon.
+  - _Depends: 2.1, 3.2_
+  - _Requirements: 5.2, 5.4, 5.5_
+  - _Boundary: Semantic Validation Check_
+
+- [ ] 6. Build the Home Manager keybinding module
+- [ ] 6.1 Define the keybinding options schema
+  - Expose an enable switch plus options for the keybinding set (modifiers, key, description, and a one-of action), a free-form extra-Lua escape hatch, and a reload toggle.
+  - Observable: evaluating the module accepts a representative configuration including a ⌃⌘⇧F12 inline-Lua binding and rejects an unknown modifier via the option type.
+  - _Requirements: 3.1, 3.9_
+  - _Boundary: Hammerspoon HM Module_
+- [ ] 6.2 Deliver the syntax-gated config under XDG and point Hammerspoon at it
+  - Deliver the syntax-gated config to `$XDG_CONFIG_HOME/hammerspoon/init.lua`, set the Hammerspoon config-file user default to that absolute path, and create nothing under `~/.hammerspoon`.
+  - Observable: evaluating the module with a binding yields an XDG config file sourced from the syntax gate, a config-file default equal to the XDG path, and no `~/.hammerspoon` entry.
+  - _Depends: 4_
+  - _Requirements: 3.4, 6.1, 6.2, 6.3_
+  - _Boundary: Hammerspoon HM Module_
+- [ ] 6.3 Launch Hammerspoon at login and document the Accessibility grant
+  - Install a login agent that starts the installed app at the stable applications path, and document the one-time manual Accessibility grant in the option description (the generated config also prompts for it).
+  - Observable: evaluating the module yields a login agent set to run at load targeting the installed app, and the option documentation states the one-time Accessibility grant requirement.
+  - _Requirements: 1.7, 2.1, 2.2, 2.3_
+  - _Boundary: Hammerspoon HM Module_
+
+- [ ] 7. Integration: install and enable on both hosts
+- [ ] 7.1 Install Hammerspoon on both hosts
+  - Add the packaged app to the shared system package set so both hosts install it and nix-darwin copies it to the stable applications location (launcher-visible, replaced in place on version bumps).
+  - Observable: evaluating both host configurations shows the Hammerspoon package in the system package set.
+  - _Depends: 1_
+  - _Requirements: 1.2, 1.3, 1.4, 1.6_
+  - _Boundary: Darwin Install_
+- [ ] 7.2 Enable the keybinding module on both hosts
+  - Import and enable the module in the shared Home Manager configuration with an empty keybinding set so the framework ships configured but binding-free.
+  - Observable: evaluating both host Home Manager configurations shows the module enabled, the XDG config delivered, the config-file default set, and the login agent present.
+  - _Depends: 6.2, 6.3_
+  - _Requirements: 1.2, 6.1, 6.2, 6.3_
+  - _Boundary: host Home Manager_
+
+- [ ] 8. Validation: flake checks and tests
+- [ ] 8.1 Package build check
+  - Add a flake check that builds the Hammerspoon package and asserts the launchable binary exists in the bundle.
+  - Observable: the package check builds and passes on the supported darwin system without a host switch or Accessibility.
+  - _Depends: 1_
+  - _Requirements: 4.1, 4.4_
+  - _Boundary: Verification_
+- [ ] 8.2 Renderer and syntax-gate tests
+  - Add tests asserting the rendered config content for representative bindings and each action type, asserting that malformed binding sets abort evaluation, and asserting that the syntax gate fails on a config containing a Lua syntax error.
+  - Observable: the check passes, demonstrating render-content assertions, evaluation-failure assertions for duplicate/incomplete/invalid bindings, and a syntax-gate build failure on bad Lua, with no host needed.
+  - _Depends: 2.1, 2.2, 4_
+  - _Requirements: 4.2, 4.3, 4.4, 5.1, 5.3_
+  - _Boundary: Verification_
+- [ ] 8.3 Semantic validation flake check
+  - Wire the semantic check as a flake check over a valid fixture and a fixture referencing a nonexistent `hs` symbol, gated to the darwin system and run hermetically; the bad fixture must fail the check.
+  - Observable: `nix flake check` runs the semantic check; it passes on the valid fixture, a negative test confirms the nonexistent-symbol fixture fails the build, and it runs offline with no host.
+  - _Depends: 5_
+  - _Requirements: 5.2, 5.4, 5.5, 4.4_
+  - _Boundary: Verification_
+- [ ] 8.4 Host-wiring assertions
+  - Add evaluation-time assertions over both host configurations: the Hammerspoon package is in the system package set; the XDG config is sourced from the syntax gate; the config-file default equals the XDG path; nothing is created under `~/.hammerspoon`; the login agent runs at load.
+  - Observable: the host-wiring check passes for both hosts without a host switch or Accessibility grant.
+  - _Depends: 7.1, 7.2_
+  - _Requirements: 1.2, 1.7, 3.4, 4.4, 6.1, 6.2, 6.3_
+  - _Boundary: Verification_
