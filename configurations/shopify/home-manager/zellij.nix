@@ -11,7 +11,7 @@ in
 {
   # Shopify-host zellij default layout: 3 tabs for daily workflow.
   #
-  #   stats      – tokscale on the left, mcpproxy tui and caffeinate on the right
+  #   stats      – tokscale on the left, mcpproxy tui on the right
   #   nix-config – top: opencode, bottom: shell, cwd: nix-config repo
   #   gdb-yb     – top: opencode, bottom: shell, cwd: globaldb-yugabyte repo
   #
@@ -33,15 +33,9 @@ in
           pane name="tokscale" {
             command "tokscale"
           }
-          pane split_direction="horizontal" {
-            pane name="mcpproxy tui" {
-              command "mcpproxy"
-              args "tui"
-            }
-            pane name="caffeinate -dimsu" {
-              command "caffeinate"
-              args "-dimsu"
-            }
+          pane name="mcpproxy tui" {
+            command "mcpproxy"
+            args "tui"
           }
         }
       }

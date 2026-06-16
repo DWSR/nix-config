@@ -52,7 +52,6 @@
     };
 
     casks = [
-      "domzilla-caffeine"
       "ungoogled-chromium"
       "moom"
       "orbstack"

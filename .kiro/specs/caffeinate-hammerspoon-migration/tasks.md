@@ -19,14 +19,14 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 2.4, 3.1, 3.2, 3.3, 4.1, 4.2, 5.1, 5.2, 5.3, 5.4, 5.5_
   - _Boundary: Caffeinate Lua_
 
-- [ ] 2. Declare the consumer Home Manager module and wire it
+- [x] 2. Declare the consumer Home Manager module and wire it
   - Create the Home Manager module that delivers the caffeinate Lua via `home.hammerspoon.extraConfig` and sets no keybindings (menu-bar only).
   - Import the module into the shared common Home Manager config so the toggle reaches both hosts.
   - Observable completion: evaluating each host config shows the caffeinate sentinel present in the rendered `home.hammerspoon` config, and the live `hammerspoon/init.lua` rebuilds through the framework syntax gate without error.
   - _Requirements: 6.4_
   - _Boundary: Caffeinate HM Module_
 
-- [ ] 3. (P) Remove the legacy caffeinate mechanisms
+- [x] 3. (P) Remove the legacy caffeinate mechanisms
   - Remove the `domzilla-caffeine` cask from the personal host's Homebrew cask list.
   - Remove the `caffeinate -dimsu` pane from the Shopify zellij stats-tab layout (and its layout-comment mention), keeping the `mcpproxy tui` pane.
   - Observable completion: the personal host config evaluates with no `domzilla-caffeine` in `homebrew.casks`; the Shopify rendered zellij default layout contains no `caffeinate` command pane; on the next switch, Homebrew cleanup uninstalls the Caffeine app.

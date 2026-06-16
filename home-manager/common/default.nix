@@ -15,6 +15,7 @@
     ./git.nix
     ./git-hooks.nix
     ./git-clone-isolation.nix
+    ./hammerspoon-caffeinate
     ./hammerspoon-keybindings
     ./hammerspoon-mic-mute
     ./launchd-activation.nix
