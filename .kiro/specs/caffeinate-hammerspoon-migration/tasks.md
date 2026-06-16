@@ -7,7 +7,7 @@
 > shared common config. No new build infrastructure is introduced. Sibling
 > precedent: `hammerspoon-mic-mute`.
 
-- [ ] 1. Author the caffeinate Hammerspoon Lua runtime
+- [x] 1. Author the caffeinate Hammerspoon Lua runtime
   - Maintain a persistent menu-bar item whose single click toggles caffeinate between enabled and disabled, with no dropdown menu.
   - On enable, assert the `displayIdle` + `systemIdle` + `system` sleep types; on disable, clear all three.
   - Indicate the current state with two visually-distinct menu-bar indicators (plus a tooltip), repainting on every state change.
@@ -48,3 +48,6 @@
   - _Requirements: 7.2, 7.3, 6.1, 6.2_
   - _Boundary: Verification_
   - _Depends: 2, 3_
+
+## Implementation Notes
+- Task 1: The object-handle premise is incomplete as previously documented. The generated `hs.menubar.new` annotation has an empty body and no `---@return`, so `lua-language-server` infers the handle as `nil` (not "untyped"). EVERY method call on an `hs.menubar` handle — including `:setClickCallback`, not just `:setTitle`/`:setTooltip` — must sit behind a non-nil guard (`if not h then return end` or `if h then ... end`) or it fails `undefined-field`. Rule: hold the handle as a plain `local` AND nil-guard every method call on it. mic-mute.lua only ever calls handle methods inside its `updateMenubar` guard, so it never exercised an unguarded call.
