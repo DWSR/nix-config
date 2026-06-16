@@ -632,6 +632,19 @@
                   ;
               };
 
+              # Isolated caffeinate semantic check — design "#### Verification"
+              # `hammerspoon-caffeinate-semantic` bullet. Feeds an ISOLATED caffeinate
+              # cfg (empty keybindings, extraConfig = the caffeinate.lua) through the
+              # framework's real `mkSemanticCheck`. Building it proves the caffeinate
+              # Lua references only existing `hs.*` symbols (Req 7.1). Isolated input
+              # keeps ownership independent of the mic-mute consumer. aarch64-gated,
+              # host-free (Req 7.4); the framework + mic-mute checks are unchanged.
+              hammerspoon-caffeinate-semantic = mkSemanticCheck {
+                keybindings = [ ];
+                extraConfig = builtins.readFile ./home-manager/common/hammerspoon-caffeinate/caffeinate.lua;
+                reloadOnConfigChange = true;
+              };
+
               # Host-wiring eval assertions (both hosts) — Task 8.4; design
               # "#### Verification" host-wiring bullet + Testing Strategy →
               # Build/Integration host-wiring list. Pure eval over each darwin

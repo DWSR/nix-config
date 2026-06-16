@@ -35,7 +35,7 @@
   - _Boundary: Caffeinate Teardown_
 
 - [ ] 4. Verification flake checks
-- [ ] 4.1 Semantic check over the caffeinate config
+- [x] 4.1 Semantic check over the caffeinate config
   - Add `hammerspoon-caffeinate-semantic` inside the existing aarch64-gated `hammerspoonChecks` block, building `mkSemanticCheck` over an isolated caffeinate cfg (empty keybindings, `extraConfig` = the caffeinate Lua); do not modify the framework's or mic-mute's existing checks.
   - Observable completion: `nix build .#checks.aarch64-darwin.hammerspoon-caffeinate-semantic` succeeds; substituting a nonexistent `hs` symbol fails it.
   - _Requirements: 7.1, 7.4_
