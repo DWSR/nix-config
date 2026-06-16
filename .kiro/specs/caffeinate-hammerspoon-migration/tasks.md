@@ -34,7 +34,7 @@
   - _Requirements: 6.1, 6.2, 6.3, 6.4_
   - _Boundary: Caffeinate Teardown_
 
-- [ ] 4. Verification flake checks
+- [x] 4. Verification flake checks
 - [x] 4.1 Semantic check over the caffeinate config
   - Add `hammerspoon-caffeinate-semantic` inside the existing aarch64-gated `hammerspoonChecks` block, building `mkSemanticCheck` over an isolated caffeinate cfg (empty keybindings, `extraConfig` = the caffeinate Lua); do not modify the framework's or mic-mute's existing checks.
   - Observable completion: `nix build .#checks.aarch64-darwin.hammerspoon-caffeinate-semantic` succeeds; substituting a nonexistent `hs` symbol fails it.
@@ -42,7 +42,7 @@
   - _Boundary: Verification_
   - _Depends: 1_
 
-- [ ] 4.2 Wiring and removal assertions
+- [x] 4.2 Wiring and removal assertions
   - Add `hammerspoon-caffeinate-wiring`: per-host (`ShopifyLaptop`, `Brandons-MacBook-Pro`) eval assertions that the caffeinate sentinel is present in each host's rendered config, that `domzilla-caffeine` is absent from the personal host's `homebrew.casks`, and that the Shopify rendered zellij layout has no `caffeinate` command pane.
   - Observable completion: `nix build .#checks.aarch64-darwin.hammerspoon-caffeinate-wiring` succeeds for both hosts; an injected missing sentinel, a residual cask, or a residual pane makes it fail at eval.
   - _Requirements: 7.2, 7.3, 6.1, 6.2_

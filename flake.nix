@@ -768,6 +768,63 @@
                   ''
                     printf '%s\n' "$hostReport" > $out
                   '';
+
+              # Caffeinate wiring + teardown eval assertions (both hosts) — Task
+              # 4.2; design "#### Verification" `hammerspoon-caffeinate-wiring`
+              # bullet. Pure eval over each darwin host config plus a trivial
+              # runCommand, so no host switch or Accessibility grant is needed
+              # (Req 7.4). Forcing the per-host report forces, per host: the
+              # caffeinate sentinel is present in the rendered home.hammerspoon
+              # config (via render.nix) (Req 7.2), and the "domzilla-caffeine"
+              # cask is absent from homebrew.casks (Req 6.1/7.3) — asserting on
+              # both hosts is the robust, uniform mirror of the mic-mute check.
+              # Plus, Shopify-only, the rendered zellij default layout carries no
+              # `command "caffeinate"` pane (Req 6.2/7.3). The framework, mic-mute,
+              # and hammerspoon-caffeinate-semantic checks are unchanged.
+              hammerspoon-caffeinate-wiring =
+                let
+                  hosts = [
+                    "ShopifyLaptop"
+                    "Brandons-MacBook-Pro"
+                  ];
+                  sentinel = "-- hammerspoon-caffeinate: menu-bar toggle";
+                  renderHs = import ./home-manager/common/hammerspoon-keybindings/render.nix {
+                    inherit (pkgs) lib;
+                  };
+                  checkHost =
+                    hostName:
+                    let
+                      sys = self.darwinConfigurations.${hostName}.config;
+                      hm = sys.home-manager.users.brandonmcnama;
+                      rendered = renderHs {
+                        inherit (hm.home.hammerspoon) keybindings extraConfig reloadOnConfigChange;
+                      };
+                      sentinelPresent = pkgs.lib.hasInfix sentinel rendered;
+                      caffeineCaskPresent = builtins.elem "domzilla-caffeine" sys.homebrew.casks;
+                    in
+                    assert pkgs.lib.assertMsg sentinelPresent
+                      "hammerspoon caffeinate wiring: ${hostName} rendered home.hammerspoon config is missing the caffeinate sentinel '${sentinel}' (Req 7.2).";
+                    assert pkgs.lib.assertMsg (!caffeineCaskPresent)
+                      "hammerspoon caffeinate wiring: ${hostName} still lists the \"domzilla-caffeine\" cask in homebrew.casks (Req 6.1/7.3).";
+                    "${hostName}: caffeinate sentinel present=${pkgs.lib.boolToString sentinelPresent}; domzilla-caffeine cask present=${pkgs.lib.boolToString caffeineCaskPresent}";
+
+                  # Shopify-only: the overridden zellij default layout lives on
+                  # ShopifyLaptop; assert no `command "caffeinate"` pane remains.
+                  shopifyLayout =
+                    self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama.xdg.configFile."zellij/layouts/default.kdl".text;
+                  zellijCaffeinatePresent = pkgs.lib.hasInfix ''command "caffeinate"'' shopifyLayout;
+                in
+                assert pkgs.lib.assertMsg (!zellijCaffeinatePresent)
+                  "hammerspoon caffeinate wiring: ShopifyLaptop rendered zellij default layout still contains a 'command \"caffeinate\"' pane (Req 6.2/7.3).";
+                pkgs.runCommand "hammerspoon-caffeinate-wiring"
+                  {
+                    hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hosts;
+                    zellijReport = "ShopifyLaptop: zellij caffeinate pane present=${pkgs.lib.boolToString zellijCaffeinatePresent}";
+                  }
+                  ''
+                    printf '%s\n' "$hostReport" > $out
+                    printf '%s\n' "$zellijReport" >> $out
+                  '';
             }
           );
         in
