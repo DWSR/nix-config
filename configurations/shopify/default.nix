@@ -67,8 +67,8 @@
     casks = [
       "fellow"
       "google-drive"
+      "homerow"
       "rectangle"
-      "shortcat"
       "podman-desktop"
     ];
   };
