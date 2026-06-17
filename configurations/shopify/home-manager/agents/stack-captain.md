@@ -12,6 +12,8 @@ permission:
     "*": allow
     "git": deny
     "git *": deny
+    "gt": deny
+    "gt *": deny
   task: allow
   mcpproxy_retrieve_tools: allow
   mcpproxy_call_tool_read: allow

@@ -9,7 +9,8 @@ description: >
   empty commits detected after restack, stale trunk entries in
   `.graphite_repo_config`, or any other gt metadata/state hygiene anomaly.
   Catalogues Category A (hook interception), B (metadata/state), and C
-  (workflow/mental-model) failure modes with verified bash recoveries.
+  (workflow/mental-model) failure modes with verified recoveries. Bash
+  `gt` and `git` are denied — recoveries run through gt-mcp / git-mcp.
   Historical session anchors preserved per recovery for traceability.
 ---
 
@@ -19,12 +20,43 @@ Operational recovery reference for gt failures. Top-level AGENTS.md keeps
 the decision matrix (when to use gt), the Green-path rule (gt-MCP-only
 stacks don't need `--force`), the Bypass autonomy rule (always ask before
 `--force` / `--no-verify` / `--force-with-lease` / `GIT_EDITOR=true`), and
-the pitfall index. This skill holds the full bash recoveries.
+the pitfall index. This skill holds the full recovery catalog. Bash `gt`
+and `git` are denied; run every recovery through gt-mcp / git-mcp per the
+"Execute every recovery through gt-mcp / git-mcp" section below.
 
 Important: `gt modify` / `gt m` is a gt-MCP green-path operation. A
 successful modify does NOT by itself make a later submit require `--force`.
 Only classify a force recovery after actual remote divergence, metadata
 poisoning, or history rewrites outside gt.
+
+## Execute every recovery through gt-mcp / git-mcp
+
+Bash `gt` and `git` are denied globally (`home-manager/common/opencode.nix`,
+`permission.bash`) to force the MCP path. The shell blocks below are written
+as `gt …` / `git …` for readability and 1:1 argument mapping — they are the
+argument list to hand to the MCP, NOT bash to run:
+
+- **`gt <sub> …` → `gt-mcp:run_gt_cmd`.** Discover with
+  `retrieve_tools(query: "gt run gt command")`, then invoke with
+  `args: ["<sub>", "…"]`, `cwd: "/abs/repo"`, `why: "…"`. Read-only
+  subcommands (`state`, `log`, `status`) via `call_tool_read`; mutations
+  (`track`, `sync`, `untrack`, `restack`, `submit`) via `call_tool_write`.
+- **`git <sub> …` → git-mcp.** Discover with
+  `retrieve_tools(query: "git <sub>")` and invoke the returned
+  `git-mcp:<tool>` with an explicit absolute `path:` (`git_checkout`,
+  `git_commit`, `git_reset`, `git_diff`, `git_log`, `git_fetch`, …).
+- **Non-git/gt bash is unaffected.** `cat`, `python3`, `gh`, `diff`, and the
+  Read/Edit file tools run normally — e.g. B6 edits `.graphite_repo_config`
+  with Read + Edit, B3's `python3` cache dump runs as-is. For a
+  `diff <(git diff …) <(git diff …)` equivalence check, pull both diffs via
+  git-mcp and compare them.
+
+Some recoveries have NO MCP equivalent: `git rebase --continue`,
+`git rebase --onto`, any `--no-verify`, env overrides like `GIT_EDITOR=true`,
+and gt operations that need an interactive prompt answered (`gt repo init`).
+Do not attempt them in bash — the deny blocks them outright. STOP and surface
+the exact command to the user via the `question` tool; they run it manually or
+temporarily lift the deny. This overlaps the Bypass authorization rule below.
 
 ## Bypass authorization — applies to every recovery below
 
@@ -454,7 +486,9 @@ re-splitting once green.
 
 ## Workflow rules summary
 
-1. Try `gt <command>` as documented.
+1. Try the `gt <command>` via `gt-mcp:run_gt_cmd` as documented (bash `gt`
+   and `git` are denied — see "Execute every recovery through gt-mcp /
+   git-mcp" above; translate each `gt`/`git` block to its MCP call).
 2. If it errors, classify (Category A / B / C above). On a gt-MCP-only
    stack `gt submit --no-interactive` should succeed without `--force`;
    `gt modify` / `gt m` does not change that. If submit still requires

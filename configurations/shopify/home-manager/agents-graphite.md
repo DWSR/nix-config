@@ -6,7 +6,10 @@
 `{ args: ["<subcommand>", "<flag>"], cwd: "/abs/repo", why: "reason" }`)
 is the preferred tool for stacked PRs in internal Shopify repos.
 Wraps git; has known failure modes around strict commit/rebase hooks,
-shared worktree metadata, and state drift.
+shared worktree metadata, and state drift. Bash `gt` and `git` are denied:
+run gt via `gt-mcp:run_gt_cmd`, plain git via git-mcp. Recoveries with no
+MCP equivalent (`git rebase --continue`, `--no-verify`, `GIT_EDITOR=true`,
+interactive `gt repo init`) get surfaced to the user, not run in bash.
 
 Full recovery catalog lives in the `graphite-pitfalls` skill. Load it
 ONLY on an actual gt failure (triggers in Pitfall index below). For
@@ -76,7 +79,7 @@ recovery the catalog prescribes.
 ## Pitfall index
 
 Classify the gt failure here, then load the `graphite-pitfalls` skill
-for the bash recovery.
+for the recovery (run through gt-mcp / git-mcp).
 
 **Category A — hooks intercept gt's internal git invocations:**
 
@@ -105,7 +108,7 @@ for the bash recovery.
 
 ## Workflow rules summary
 
-1. Try `gt <command>` as documented.
+1. Try the `gt <command>` via `gt-mcp:run_gt_cmd` as documented.
 2. If it errors, classify via the Pitfall index above. On a gt-MCP-only
    stack `gt submit --no-interactive` should succeed without `--force`;
    `gt modify` / `gt m` does not change that. If submit still requires

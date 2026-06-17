@@ -23,6 +23,8 @@ permission:
     "cc-sdd-init": allow
     "git": deny
     "git *": deny
+    "gt": deny
+    "gt *": deny
 ---
 
 # kiro-spec-orchestrator

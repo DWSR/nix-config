@@ -296,9 +296,10 @@ in
     ];
     share = "disabled";
     autoupdate = false;
-    # bash `git` is denied globally in home-manager/common/opencode.nix
-    # (git-mcp-first). That `permission.bash` sub-key deep-merges in here and
-    # wins for bash commands despite the top-level "*" allow below.
+    # bash `git` and `gt` (Graphite) are denied globally in
+    # home-manager/common/opencode.nix (git-mcp-first / gt-via-gt-mcp). That
+    # `permission.bash` sub-key deep-merges in here and wins for bash commands
+    # despite the top-level "*" allow below.
     permission = {
       "*" = "allow";
       "doom_loop" = "allow";

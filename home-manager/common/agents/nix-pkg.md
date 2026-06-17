@@ -18,6 +18,8 @@ permission:
     "wc *": allow
     "git": deny
     "git *": deny
+    "gt": deny
+    "gt *": deny
     "nix build*": allow
     "nix eval*": allow
     "nix fmt*": allow

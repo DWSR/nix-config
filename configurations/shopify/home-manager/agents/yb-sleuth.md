@@ -21,6 +21,8 @@ permission:
     "cat *": ask
     "git": deny
     "git *": deny
+    "gt": deny
+    "gt *": deny
 ---
 
 # yb-sleuth

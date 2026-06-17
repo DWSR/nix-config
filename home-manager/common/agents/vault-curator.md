@@ -17,6 +17,8 @@ permission:
     "wc *": allow
     "head *": allow
     "tail *": allow
+    "gt": deny
+    "gt *": deny
 ---
 
 # vault-curator
