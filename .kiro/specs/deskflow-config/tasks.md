@@ -25,7 +25,7 @@
   - _Boundary: Deskflow renderer_
 
 - [ ] 2. Options module and read-only delivery
-- [ ] 2.1 Define the options schema
+- [x] 2.1 Define the options schema
   - Expose the enable toggle (default off) and the role selector constrained to client or server, plus shared settings (computer name, port, TLS enablement and fingerprint checking, certificate path, key size constrained to 2048 or 4096, logging, GUI behavior), client settings (remote host, scroll inversion, scroll scale, language sync), and server settings (screens, links, aliases, options).
   - Default TLS enablement and fingerprint checking on; the role and key-size enums reject invalid values at evaluation.
   - Observable: evaluating the options shows the documented defaults (module disabled, TLS on); supplying a key size other than 2048/4096 or a role other than client/server is rejected at evaluation.
