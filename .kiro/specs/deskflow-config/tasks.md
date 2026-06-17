@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Deskflow renderer (settings, server layout, trust)
-- [ ] 1.1 Render the curated settings content
+- [x] 1.1 Render the curated settings content
   - Emit grouped `[section]` INI text with a QSettings-safe value stringifier: string values double-quoted (so a comma-separated remote host is read as one string), integers/booleans/floats bare.
   - Map the role to client or server mode and emit the curated keys: network port, TLS enablement and peer-fingerprint checking, certificate path, key size, logging level/destination, GUI behavior, the client remote host, scroll inversion/scale, and language sync, and the server external-config keys.
   - Omit any managed value that is unset (no empty `key=` lines); omit the computer name when unset (so the hostname is used); omit the certificate path when unset.
