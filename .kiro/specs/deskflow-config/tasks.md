@@ -10,7 +10,7 @@
   - _Requirements: 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.2, 3.3, 3.4, 4.1, 4.2, 8.1, 8.2, 8.6_
   - _Boundary: Deskflow renderer_
 
-- [ ] 1.2 Render the external server screen layout
+- [x] 1.2 Render the external server screen layout
   - Emit the textual server config with screens, links, aliases, and global options sections, rendering screens before links and aliases so every name is defined before use.
   - Abort evaluation with a clear message when the server role declares no screens, or when any link or alias references a screen that is not defined.
   - Observable: a server fixture renders ordered screen and link blocks containing each declared screen and link; a fixture whose link references an unknown screen aborts evaluation naming that screen.
@@ -72,6 +72,9 @@
   - _Requirements: 6.1, 6.3, 7.1_
   - _Depends: 3.2_
   - _Boundary: flake checks_
+
+## Implementation Notes
+- 1.2: Req 4.5 alias validation is key-only. `server.aliases : attrsOf (listOf str)` models `{ screenKey = [ newAltNames ]; }`; only the KEY references a screen (the values are new alternate names, by definition not existing screens). The design Error-Handling table phrase "alias key/value" (design.md ~L366) is a secondary-doc imprecision vs requirements.md Req 4.5 ("a link or alias references a screen that is not defined") and the design's own aliases grammar/schema; reviewer confirmed key-only is correct. If design.md is ever revised, tighten "key/value" to "key".
 
 ## Deferred (intentional)
 - Declaring a live sops-nix certificate secret for a specific host is deferred: no host enables managed TLS yet (ShopifyLaptop leaves the certificate path and trusted fingerprints unset, like the remote host). Requirement 8 is satisfied as a capability — the certificate-path option, key size, trust rendering, and their validation are built (tasks 1.1, 1.3, 2.1, 2.2) and verified by fixtures (task 4.1). When a host adopts a managed cert, the operator declares the system-level secret and sets the path/fingerprints per the design's host-wiring notes.

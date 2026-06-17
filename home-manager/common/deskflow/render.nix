@@ -141,6 +141,115 @@ let
 
   settings = lib.concatStringsSep "\n\n" sectionBlocks + "\n";
 
+  # serverConfig: the external screen-layout file in Deskflow's textual
+  # server-config grammar (classic Synergy format) -- `section: <name>` blocks
+  # each terminated by `end`. Screens render before aliases and links so every
+  # screen name is defined before a link/alias references it (design.md
+  # "Server layout text"). Non-null only for the server role.
+  serverScreenNames = map (screen: screen.name) cfg.server.screens;
+
+  # Per-screen option lines (indented two tabs), emitted only when set: the
+  # half-duplex toggles and modifier remaps from the screen submodule. `or`
+  # keeps the renderer total for a screen carrying only a name (e.g. fixtures).
+  screenOptionLines =
+    screen:
+    let
+      halfDuplex = screen.halfDuplex or { };
+    in
+    (lib.optional (halfDuplex.CapsLock or false) "\t\thalfDuplexCapsLock = true")
+    ++ (lib.optional (halfDuplex.NumLock or false) "\t\thalfDuplexNumLock = true")
+    ++ (lib.optional (halfDuplex.ScrollLock or false) "\t\thalfDuplexScrollLock = true")
+    ++ (lib.mapAttrsToList (from: to: "\t\t${from} = ${to}") (screen.modifierRemap or { }));
+
+  # `section: screens` -- each screen as an indented `name:` line plus its
+  # option lines. Always present (the server role requires at least one screen).
+  screensSection = [
+    "section: screens"
+  ]
+  ++ lib.concatMap (screen: [ "\t${screen.name}:" ] ++ screenOptionLines screen) cfg.server.screens
+  ++ [ "end" ];
+
+  # `section: aliases` -- maps a defined screen (the key) to its alternate
+  # names; emitted only when at least one alias is declared. The alias values
+  # are new alternate names, not screens, so they are not validated as screens.
+  aliasesSection = lib.optionals (cfg.server.aliases != { }) (
+    [ "section: aliases" ]
+    ++ lib.concatLists (
+      lib.mapAttrsToList (
+        screen: aliases: [ "\t${screen}:" ] ++ map (alias: "\t\t${alias}") aliases
+      ) cfg.server.aliases
+    )
+    ++ [ "end" ]
+  );
+
+  # `section: links` -- adjacency edges grouped by source screen, ordered by
+  # screen declaration order for deterministic output. Each edge renders as
+  # `<direction>[(range)] = <to>[(range)]`; ranges are optional `(a,b)` spans.
+  renderRange = range: if range == null then "" else "(${range})";
+  linkLine =
+    link: "\t\t${link.direction}${renderRange link.fromRange} = ${link.to}${renderRange link.toRange}";
+  linksSection = [
+    "section: links"
+  ]
+  ++ lib.concatMap (
+    screenName:
+    let
+      outbound = lib.filter (link: link.from == screenName) cfg.server.links;
+    in
+    lib.optionals (outbound != [ ]) ([ "\t${screenName}:" ] ++ map linkLine outbound)
+  ) serverScreenNames
+  ++ [ "end" ];
+
+  # `section: options` -- global server options as `name = value` lines;
+  # emitted only when at least one option is declared.
+  optionsSection = lib.optionals (cfg.server.options != { }) (
+    [ "section: options" ]
+    ++ lib.mapAttrsToList (key: value: "\t${key} = ${value}") cfg.server.options
+    ++ [ "end" ]
+  );
+
+  serverLayout =
+    lib.concatStringsSep "\n" (screensSection ++ aliasesSection ++ linksSection ++ optionsSection)
+    + "\n";
+
+  # A server role must define at least one screen (design.md "Error Handling",
+  # Req 4.4). Names the layout option so the abort message is actionable.
+  screensOk =
+    lib.assertMsg (cfg.server.screens != [ ])
+      "home.deskflow.server.screens must define at least one screen when home.deskflow.role is \"server\".";
+
+  # Every link endpoint and alias key must name a defined screen (Req 4.5). The
+  # message is forced only when refsOk fails (danglingRefs non-empty), so
+  # `builtins.head` is safe.
+  screenRefs =
+    lib.concatMap (link: [
+      {
+        source = "links";
+        name = link.from;
+      }
+      {
+        source = "links";
+        name = link.to;
+      }
+    ]) cfg.server.links
+    ++ map (screen: {
+      source = "aliases";
+      name = screen;
+    }) (builtins.attrNames cfg.server.aliases);
+  danglingRefs = lib.filter (ref: !(builtins.elem ref.name serverScreenNames)) screenRefs;
+  refsOk = lib.assertMsg (danglingRefs == [ ]) (
+    let
+      first = builtins.head danglingRefs;
+    in
+    "home.deskflow.server.${first.source} references undefined screen \"${first.name}\"; define it in home.deskflow.server.screens or correct the reference."
+  );
+
+  # Postcondition: serverConfig is non-null iff role == "server". The asserts
+  # gate the rendered text (screens first so an empty-screens server names the
+  # layout option rather than a dangling reference).
+  serverConfig =
+    if cfg.role != "server" then null else lib.seq screensOk (lib.seq refsOk serverLayout);
+
   # Structural validation lives in the renderer (not the options schema) so a
   # malformed snapshot is rejected by `nix eval`/a flake check without a host
   # switch (design.md "Error Handling": `enable && role == null`). An enabled
@@ -150,9 +259,8 @@ let
   ) "home.deskflow.role must be set to \"client\" or \"server\" when home.deskflow.enable is true.";
 in
 lib.seq roleOk {
-  inherit settings;
-  # serverConfig and trustText are implemented by tasks 1.2 / 1.3; the keys are
-  # present here so the contract shape is stable.
-  serverConfig = null;
+  inherit settings serverConfig;
+  # trustText is implemented by task 1.3; the key is present here so the
+  # contract shape stays stable for callers.
   trustText = null;
 }
