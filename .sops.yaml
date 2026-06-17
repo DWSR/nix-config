@@ -31,3 +31,7 @@ creation_rules:
     key_groups:
       - age:
           - *host_personal
+  - path_regex: secrets/deskflow-cert\.personal\.yaml$
+    key_groups:
+      - age:
+          - *host_personal
