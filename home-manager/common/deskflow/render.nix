@@ -6,11 +6,10 @@
 # Imported by deskflow/default.nix and the flake renderer checks as
 #   `import ./render.nix { inherit lib; }`, then applied to `cfg`.
 #
-# Scope: task 1.1 fully implements `settings` -- the QSettings IniFormat text
-# delivered to `~/Library/Deskflow/Deskflow.conf`. `serverConfig` (the external
-# server layout) and `trustText` (the trusted-peer file) are placeholders
-# returned as null here; tasks 1.2 and 1.3 implement them. All three keys are
-# present so the returned contract shape stays stable for callers.
+# Scope: renders all three outputs -- `settings` (the QSettings IniFormat text
+# delivered to `~/Library/Deskflow/Deskflow.conf`), `serverConfig` (the external
+# server layout, non-null only for the server role), and `trustText` (the
+# trusted-peer file content, non-null only when fingerprints are provided).
 #
 # Value rendering (QSettings IniFormat compatibility): string values are
 # double-quoted -- an unquoted comma is parsed by QSettings as a QStringList,
@@ -250,6 +249,54 @@ let
   serverConfig =
     if cfg.role != "server" then null else lib.seq screensOk (lib.seq refsOk serverLayout);
 
+  # Trusted-peer fingerprints (Req 8.3-8.5). Each entry is normalized -- colons
+  # stripped, lowercased -- then a 64-hex value renders `v2:sha256:<hex>` and a
+  # 40-hex value renders `v2:sha1:<hex>`, one line per peer. Fingerprints are
+  # public hashes (no secret material). The renderer builds only the trust-file
+  # CONTENT; deskflow/default.nix (task 2.2) picks trusted-servers vs
+  # trusted-clients by role.
+  hexDigits = lib.stringToCharacters "0123456789abcdef";
+  normalizeFingerprint = fp: builtins.replaceStrings [ ":" ] [ "" ] (lib.toLower fp);
+  renderFingerprint =
+    fp:
+    let
+      norm = normalizeFingerprint fp;
+      algo = if builtins.stringLength norm == 64 then "sha256" else "sha1";
+    in
+    "v2:${algo}:${norm}";
+
+  # A normalized entry must be exactly 64 hex (sha256) or 40 hex (sha1) chars,
+  # where hex is [0-9a-f] after lowercasing (Req 8.4). Collect the offending
+  # ORIGINAL entries so the abort names what the operator typed; the message is
+  # forced only when the list is non-empty, so `builtins.head` is safe.
+  invalidFingerprints = lib.filter (
+    fp:
+    let
+      norm = normalizeFingerprint fp;
+      len = builtins.stringLength norm;
+    in
+    !(
+      (len == 64 || len == 40) && lib.all (ch: builtins.elem ch hexDigits) (lib.stringToCharacters norm)
+    )
+  ) cfg.tls.trustedFingerprints;
+  fingerprintsOk = lib.assertMsg (invalidFingerprints == [ ]) (
+    let
+      first = builtins.head invalidFingerprints;
+    in
+    "home.deskflow.tls.trustedFingerprints entry \"${first}\" is not a valid SHA-256 (64 hex) or SHA-1 (40 hex) fingerprint."
+  );
+
+  # Postcondition: trustText is non-null iff trustedFingerprints != []. An empty
+  # list leaves the trust file unmanaged (Req 8.5); a non-empty list is gated by
+  # the validity assert (forced via lib.seq, mirroring serverConfig).
+  trustText =
+    if cfg.tls.trustedFingerprints == [ ] then
+      null
+    else
+      lib.seq fingerprintsOk (
+        lib.concatStringsSep "\n" (map renderFingerprint cfg.tls.trustedFingerprints) + "\n"
+      );
+
   # Structural validation lives in the renderer (not the options schema) so a
   # malformed snapshot is rejected by `nix eval`/a flake check without a host
   # switch (design.md "Error Handling": `enable && role == null`). An enabled
@@ -259,8 +306,5 @@ let
   ) "home.deskflow.role must be set to \"client\" or \"server\" when home.deskflow.enable is true.";
 in
 lib.seq roleOk {
-  inherit settings serverConfig;
-  # trustText is implemented by task 1.3; the key is present here so the
-  # contract shape stays stable for callers.
-  trustText = null;
+  inherit settings serverConfig trustText;
 }

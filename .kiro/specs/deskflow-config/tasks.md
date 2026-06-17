@@ -17,7 +17,7 @@
   - _Requirements: 4.3, 4.4, 4.5_
   - _Boundary: Deskflow renderer_
 
-- [ ] 1.3 Render the trusted-peer fingerprint list
+- [x] 1.3 Render the trusted-peer fingerprint list
   - Normalize each provided fingerprint (strip separators, lowercase) and emit one `v2:sha256:<hex>` line per peer; accept a SHA-1 (40 hex) value as `v2:sha1:<hex>`.
   - Abort evaluation identifying any entry that is not valid 64-hex or 40-hex; produce no trust output when the list is empty.
   - Observable: a fingerprint fixture renders the expected `v2:sha256:` lines; an invalid-length entry aborts evaluation; an empty list produces no trust text.
