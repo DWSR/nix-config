@@ -14,7 +14,8 @@ permission:
     "rg *": allow
     "grep *": allow
     "find *": allow
-    "git *": allow
+    "git": deny
+    "git *": deny
     "nix *": allow
     "nvim --headless *": allow
 ---

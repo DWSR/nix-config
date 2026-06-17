@@ -16,7 +16,8 @@ permission:
     "find *": allow
     "file *": allow
     "wc *": allow
-    "git *": allow
+    "git": deny
+    "git *": deny
     "nix build*": allow
     "nix eval*": allow
     "nix fmt*": allow

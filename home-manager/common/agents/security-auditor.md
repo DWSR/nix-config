@@ -19,13 +19,8 @@ permission:
     "head *": allow
     "tail *": allow
     "cat *": ask
-    "git log*": allow
-    "git blame*": allow
-    "git show*": allow
-    "git diff*": allow
-    "git status*": allow
-    "git rev-parse*": allow
-    "git clone *": allow
+    "git": deny
+    "git *": deny
     "cd /tmp/security-review/*": allow
     "mkdir -p /tmp/security-review/*": allow
 ---

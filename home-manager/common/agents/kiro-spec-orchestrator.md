@@ -21,9 +21,8 @@ permission:
     "echo *": allow
     "wc *": allow
     "cc-sdd-init": allow
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
+    "git": deny
+    "git *": deny
 ---
 
 # kiro-spec-orchestrator

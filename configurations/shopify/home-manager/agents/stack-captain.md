@@ -8,7 +8,10 @@ permission:
   edit: allow
   write: allow
   webfetch: allow
-  bash: allow
+  bash:
+    "*": allow
+    "git": deny
+    "git *": deny
   task: allow
   mcpproxy_retrieve_tools: allow
   mcpproxy_call_tool_read: allow

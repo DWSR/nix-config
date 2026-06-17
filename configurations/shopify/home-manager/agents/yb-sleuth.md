@@ -19,12 +19,8 @@ permission:
     "head *": allow
     "tail *": allow
     "cat *": ask
-    "git log*": allow
-    "git blame*": allow
-    "git show*": allow
-    "git diff*": allow
-    "git status*": allow
-    "git rev-parse*": allow
+    "git": deny
+    "git *": deny
 ---
 
 # yb-sleuth

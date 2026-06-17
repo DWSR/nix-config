@@ -382,6 +382,33 @@
         # .claude/skills log a harmless "skill path not found" warn. Schema:
         # skills.paths at https://opencode.ai/config.json
         skills.paths = [ ".claude/skills" ];
+
+        # Globally disallow the `git` CLI in the bash tool. Agents must use the
+        # git-mcp base server (via mcpproxy, OUTSIDE the sandbox) for every
+        # version-control operation: git-mcp carries the full git config
+        # (commit identity, signing, ~/.gitconfig includes) that the nono
+        # sandbox denies to bash `git`, and it is not a bash command so this
+        # deny never touches it. AGENTS.md already states the git-mcp-first
+        # rule as a preference; this makes it enforceable rather than advisory.
+        #
+        # Pattern semantics (https://opencode.ai/docs/permissions): bash rules
+        # match the parsed command, last-match-wins. Nix serialises attrs keys
+        # lexicographically, so the catch-all "*" (ASCII 0x2A) always sorts
+        # before "git"/"git *" and stays the FIRST (broadest) rule. "git"
+        # blocks bare `git`; "git *" blocks every subcommand (git status,
+        # git add, git commit, …). `gt` (Graphite) is a different binary and is
+        # unaffected, so the Shopify stacked-PR workflow keeps working — its
+        # `git add` staging step routes through git-mcp's git_add instead.
+        #
+        # Merges with each host's permission block (e.g. the Shopify host's
+        # `permission."*" = "allow"`): `bash` is an explicit per-tool key, so
+        # opencode uses this object for bash commands while the host's
+        # top-level "*" still governs the other tools.
+        permission.bash = {
+          "*" = "allow";
+          "git" = "deny";
+          "git *" = "deny";
+        };
       };
     };
 
