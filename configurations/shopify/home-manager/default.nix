@@ -16,6 +16,7 @@ in
     ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
 
+    ./deskflow.nix
     ./dev.nix
     ./git.nix
     ./opencode.nix

@@ -49,7 +49,7 @@
   - _Requirements: 1.1_
   - _Boundary: common home-manager module set_
 
-- [ ] 3.2 Enable the client role on ShopifyLaptop
+- [x] 3.2 Enable the client role on ShopifyLaptop
   - Add a ShopifyLaptop home-manager entry that enables the module in the client role and register that entry in the host's home-manager import set so it takes effect.
   - Leave the remote host, certificate path, and trusted fingerprints unset as TODO placeholders; keep the other host disabled unless it opts in.
   - Observable: ShopifyLaptop evaluates with the module enabled in client mode and the TODO placeholder present; the other host stays disabled; both host configurations evaluate without error.
