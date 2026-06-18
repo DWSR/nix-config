@@ -58,7 +58,7 @@
   - _Boundary: ShopifyLaptop host wiring_
 
 - [ ] 4. Verification checks
-- [ ] 4.1 (P) Add the renderer check
+- [x] 4.1 (P) Add the renderer check
   - Add a build check that exercises the renderer with client, server, trusted-fingerprint, and invalid-fingerprint fixtures.
   - Assert the client output has client mode and a quoted remote host; the server output has the expected ordered screens and links; the trust output has the expected `v2:sha256:` lines; no curated key renders empty; an invalid-fingerprint fixture fails the build.
   - Observable: the renderer check builds green on the valid fixtures and fails when a fixture is corrupted (empty curated value or malformed fingerprint).

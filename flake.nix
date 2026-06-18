@@ -827,9 +827,164 @@
                   '';
             }
           );
+
+          # Deskflow renderer checks (deskflow-config spec, task 4.1; design
+          # "#### flake.nix checks (aarch64-darwin)" deskflow-render bullet +
+          # "## Testing Strategy"). aarch64-gated optionalAttrs let-binding so
+          # task 4.2 can add deskflow-host-wiring to the same attrset. Imports
+          # the PURE renderer with fully-resolved fixtures and forces the
+          # rendered text via Nix-level assertMsg gating a trivial runCommand
+          # (mirroring the hammerspoon checks), so the asserts fire in CI
+          # without a host switch (design "Error Handling": checks force .text).
+          deskflowChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") (
+            let
+              inherit (pkgs) lib;
+              renderDeskflow = import ./home-manager/common/deskflow/render.nix {
+                inherit (pkgs) lib;
+              };
+
+              # Fully-resolved base client snapshot: every field render.nix
+              # reads, so the derived fixtures override only what they exercise.
+              # externalConfigFile is a neutral placeholder path (not a real
+              # host path) to satisfy the no-hardcoded-/Users pre-commit hook.
+              clientFix = {
+                enable = true;
+                role = "client";
+                computerName = null;
+                port = 24800;
+                tls = {
+                  enable = true;
+                  checkFingerprints = true;
+                  certificateFile = null;
+                  keySize = 2048;
+                  trustedFingerprints = [ ];
+                };
+                log = {
+                  level = "INFO";
+                  toFile = false;
+                  file = null;
+                };
+                gui = {
+                  startCoreWithGui = true;
+                  closeToTray = true;
+                  autoHide = false;
+                };
+                client = {
+                  remoteHost = "myserver";
+                  invertScroll = {
+                    x = false;
+                    y = false;
+                  };
+                  scrollScale = {
+                    x = 1.0;
+                    y = 1.0;
+                  };
+                  languageSync = true;
+                };
+                server = {
+                  externalConfigFile = "/home/x/Library/Deskflow/deskflow-server.conf";
+                  screens = [ ];
+                  aliases = { };
+                  links = [ ];
+                  options = { };
+                };
+              };
+
+              # Server fixture: two ordered screens plus one rightward link, so
+              # the layout exercises ordered `section: screens`/`section: links`.
+              serverFix = clientFix // {
+                role = "server";
+                server = clientFix.server // {
+                  screens = [
+                    { name = "deskhub"; }
+                    { name = "laptop"; }
+                  ];
+                  links = [
+                    {
+                      from = "deskhub";
+                      direction = "right";
+                      to = "laptop";
+                      fromRange = null;
+                      toRange = null;
+                    }
+                  ];
+                };
+              };
+
+              # Personal-host cert SHA-256 (public hash; 64 lowercase hex).
+              trustedFp = "4a9f1514fc4bf5af3dec2f62b272fa84188e4d6554c53146a98fe761d7cf2701";
+              trustedFpFix = clientFix // {
+                tls = clientFix.tls // {
+                  trustedFingerprints = [ trustedFp ];
+                };
+              };
+              # Malformed fingerprint (not 64-hex/40-hex): render must abort.
+              invalidFpFix = clientFix // {
+                tls = clientFix.tls // {
+                  trustedFingerprints = [ "nothex" ];
+                };
+              };
+
+              clientSettings = (renderDeskflow clientFix).settings;
+              serverLayout = (renderDeskflow serverFix).serverConfig;
+              trustOut = (renderDeskflow trustedFpFix).trustText;
+
+              # Empty-value guard (Req 7.3): a curated key rendered with no value
+              # is a run of non-`=` chars followed by a trailing `=` and nothing
+              # else (`key=`). `coreMode=1`, section headers, and blank lines do
+              # not match; the filtered list must be empty.
+              emptyValueLines = lib.filter (line: builtins.match "[^=]*=" line != null) (
+                lib.splitString "\n" clientSettings
+              );
+
+              # An invalid fingerprint must abort evaluation (Req 7.4, 8.4). The
+              # renderer's assertMsg/throw is caught by tryEval; force trustText
+              # to WHNF with seq so the throw actually fires.
+              invalidEval = builtins.tryEval (builtins.seq (renderDeskflow invalidFpFix).trustText null);
+
+              # Forcing this string forces the assert chain (it is passed to the
+              # derivation env below), so any regression fails the build.
+              report =
+                assert lib.assertMsg (lib.hasInfix "coreMode=1" clientSettings)
+                  "deskflow-render: client settings must contain coreMode=1 (client mode, Req 7.1).";
+                assert lib.assertMsg (lib.hasInfix ''remoteHost="myserver"'' clientSettings)
+                  ''deskflow-render: client settings must contain a quoted remoteHost="myserver" (design deskflow-render bullet).'';
+                assert lib.assertMsg (lib.hasInfix "section: screens" serverLayout)
+                  "deskflow-render: server layout must contain 'section: screens' (Req 7.2).";
+                assert lib.assertMsg (lib.hasInfix "deskhub" serverLayout)
+                  "deskflow-render: server layout must name the 'deskhub' screen (Req 7.2).";
+                assert lib.assertMsg (lib.hasInfix "laptop" serverLayout)
+                  "deskflow-render: server layout must name the 'laptop' screen (Req 7.2).";
+                assert lib.assertMsg (lib.hasInfix "section: links" serverLayout)
+                  "deskflow-render: server layout must contain 'section: links' (Req 7.2).";
+                assert lib.assertMsg (lib.hasInfix "right = laptop" serverLayout)
+                  "deskflow-render: server layout must contain the rendered link 'right = laptop' (Req 7.2).";
+                assert lib.assertMsg (emptyValueLines == [ ])
+                  "deskflow-render: client settings contains empty-valued key line(s) [ ${lib.concatStringsSep ", " emptyValueLines} ] (Req 7.3).";
+                assert lib.assertMsg (lib.hasInfix "v2:sha256:${trustedFp}" trustOut)
+                  "deskflow-render: trust text must contain the 'v2:sha256:${trustedFp}' line (Req 7.4, 8.3).";
+                assert lib.assertMsg (
+                  !invalidEval.success
+                ) "deskflow-render: invalid fingerprint fixture should fail evaluation but did not (Req 7.4, 8.4).";
+                ''
+                  deskflow-render fixtures asserted:
+                    client : coreMode=1 + quoted remoteHost
+                    server : ordered section: screens (deskhub, laptop) + section: links (right = laptop)
+                    guard  : no empty-valued curated key lines
+                    trust  : v2:sha256:<hex> line present
+                    invalid: malformed fingerprint fixture fails evaluation
+                '';
+            in
+            {
+              deskflow-render = pkgs.runCommand "deskflow-render" { inherit report; } ''
+                printf '%s\n' "$report" > $out
+              '';
+            }
+          );
         in
         nixvimTests
         // hammerspoonChecks
+        // deskflowChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 
