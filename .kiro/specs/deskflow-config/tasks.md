@@ -32,7 +32,7 @@
   - _Requirements: 1.1, 1.2, 2.5, 3.4, 8.2_
   - _Boundary: Deskflow module_
 
-- [ ] 2.2 Deliver rendered files read-only and reference the certificate by path
+- [x] 2.2 Deliver rendered files read-only and reference the certificate by path
   - When enabled, install the rendered settings content at Deskflow's user settings location read-only; for the server role also install the external layout file; when trusted peers are provided, install the role-appropriate trust file read-only.
   - Define the external-config path once and use it for both the rendered external-config setting and the layout file's delivery location (kept lock-step).
   - Set the certificate setting to the provided path only; never copy certificate or key material into the store; leave the settings directory otherwise writable for Deskflow's runtime files.
