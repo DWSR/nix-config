@@ -1029,9 +1029,11 @@
                       in
                       assert lib.assertMsg (lib.hasInfix "coreMode=1" settings)
                         "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=1 (client mode, Req 7.1).";
+                      assert lib.assertMsg (lib.hasInfix ''remoteHost="Brandons-MacBook-Pro.local"'' settings)
+                        "deskflow host-wiring: ${hostName} Deskflow.conf must set client/remoteHost to the server \"Brandons-MacBook-Pro.local\" (Req 3.2).";
                       assert lib.assertMsg (lib.hasInfix "v2:sha256:${personalFingerprint}" trustText)
                         "deskflow host-wiring: ${hostName} trusted-servers must pin v2:sha256:${personalFingerprint} (Req 8.3).";
-                      "${hostName}: enable=true role=\"client\"; coreMode=1, tlsEnabled=true, port=24800; trusted-servers pins server fingerprint"
+                      "${hostName}: enable=true role=\"client\"; coreMode=1, tlsEnabled=true, port=24800, remoteHost set; trusted-servers pins server fingerprint"
                     else
                       let
                         layout = hm.home.file."Library/Deskflow/deskflow-server.conf".text;

@@ -5,23 +5,22 @@ _: {
   # the client role for this host. It connects to the Brandons-MacBook-Pro
   # Deskflow server and trusts that server's cert by fingerprint.
   #
-  # Two fields are still intentionally left UNSET as TODO placeholders; the host
-  # evaluates with them unset:
-  #
-  #   * client.remoteHost          -- the operator fills this with the Deskflow
-  #       server's address (the Brandons-MacBook-Pro host on the network) so the
-  #       client knows where to connect. While unset, the module omits the
-  #       remote-host key and renders a `; TODO: set home.deskflow.client.remoteHost`
-  #       line in Deskflow.conf, so the client will not connect until it is set.
-  #   * tls.certificateFile        -- left unset, so this client self-generates
-  #       its own TLS cert. The server keeps interactive trust for clients, so a
-  #       managed client cert is not required for the first connection.
-  #
-  # See .kiro/specs/deskflow-config/design.md "Host wiring" for the managed-TLS
-  # adoption steps.
+  # tls.certificateFile is intentionally left UNSET, so this client
+  # self-generates its own TLS cert and the server keeps interactive trust for it
+  # on the first connection. To adopt a managed client identity instead, run
+  #     bash scripts/deskflow-generate-cert.sh shopify
+  # ON this host, then declare the sops secret and set tls.certificateFile here,
+  # and add this host's printed fingerprint to the personal server's
+  # home.deskflow.tls.trustedFingerprints. See
+  # .kiro/specs/deskflow-config/design.md "Host wiring".
   home.deskflow = {
     enable = true;
     role = "client";
+
+    # The Deskflow server to connect to: the Brandons-MacBook-Pro host, reached by
+    # its mDNS/Bonjour name on the local network. Rendered as the client/remoteHost
+    # key in Deskflow.conf.
+    client.remoteHost = "Brandons-MacBook-Pro.local";
 
     # Trust the Brandons-MacBook-Pro server's TLS identity by fingerprint, so the
     # first TLS connection needs no interactive approval. This is the SHA-256 of
