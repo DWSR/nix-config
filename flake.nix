@@ -981,59 +981,77 @@
               '';
 
               # Host-wiring eval assertions (both hosts) — deskflow-config spec
-              # task 4.2; design "#### flake.nix checks (aarch64-darwin)"
-              # deskflow-host-wiring bullet. Pure eval over each darwin host
-              # config plus a trivial runCommand, so no host switch is needed; it
-              # shares the aarch64 gate above (it reads self.darwinConfigurations).
-              # Forcing the per-host report forces, per host, assertions each
-              # naming the host and the failing property:
-              #   6.1/7.1 ShopifyLaptop: home.deskflow enabled in the client role
-              #           and the rendered Deskflow.conf carries coreMode=1 plus
-              #           the curated keys tlsEnabled=true and port=24800.
-              #   6.3     Brandons-MacBook-Pro: home.deskflow disabled (so it
-              #           renders no Deskflow.conf, which is therefore not asserted
-              #           on). The deskflow-render check above is unchanged.
+              # task 4.2 plus the personal-host server adoption. Pure eval over
+              # each darwin host config plus a trivial runCommand; shares the
+              # aarch64 gate above (it reads self.darwinConfigurations). Forcing
+              # the per-host report forces, per host, assertions each naming the
+              # host and the failing property:
+              #   ShopifyLaptop (client): home.deskflow enabled in the client role;
+              #     Deskflow.conf carries coreMode=1 + the curated keys
+              #     tlsEnabled=true and port=24800; the trusted-servers file pins
+              #     the personal host's server cert fingerprint (Req 6.1/7.1/8.3).
+              #   Brandons-MacBook-Pro (server): home.deskflow enabled in the
+              #     server role; Deskflow.conf carries coreMode=2 + tlsEnabled=true,
+              #     port=24800, keySize=4096 and a pinned certificate path; the
+              #     rendered deskflow-server.conf defines both screens and the
+              #     right link (Req 6.1/7.1/8.1/8.2/4.3). No other host enables
+              #     Deskflow (Req 6.3). The deskflow-render check above is unchanged.
               deskflow-host-wiring =
                 let
-                  hosts = [
-                    "ShopifyLaptop"
-                    "Brandons-MacBook-Pro"
-                  ];
-                  # ShopifyLaptop is the only host wired to enable Deskflow; every
-                  # other host must leave the module disabled (Req 6.3).
-                  enabledHosts = [ "ShopifyLaptop" ];
+                  # The personal host's Deskflow server cert fingerprint, which the
+                  # ShopifyLaptop client must trust (mirrors the value wired in
+                  # configurations/shopify/home-manager/deskflow.nix).
+                  personalFingerprint = "4a9f1514fc4bf5af3dec2f62b272fa84188e4d6554c53146a98fe761d7cf2701";
+                  # Expected role per host. Both hosts now enable Deskflow:
+                  # ShopifyLaptop as the client, Brandons-MacBook-Pro as the server.
+                  expectedRoles = {
+                    ShopifyLaptop = "client";
+                    "Brandons-MacBook-Pro" = "server";
+                  };
                   checkHost =
-                    hostName:
+                    hostName: expectedRole:
                     let
                       hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
                       cfg = hm.home.deskflow;
+                      settings = hm.home.file."Library/Deskflow/Deskflow.conf".text;
                     in
-                    if builtins.elem hostName enabledHosts then
+                    assert lib.assertMsg cfg.enable
+                      "deskflow host-wiring: ${hostName} must have home.deskflow.enable=true (Req 6.1).";
+                    assert lib.assertMsg (cfg.role == expectedRole)
+                      "deskflow host-wiring: ${hostName} home.deskflow.role must be \"${expectedRole}\", got \"${toString cfg.role}\" (Req 6.1).";
+                    assert lib.assertMsg (lib.hasInfix "tlsEnabled=true" settings)
+                      "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain tlsEnabled=true (Req 7.1).";
+                    assert lib.assertMsg (lib.hasInfix "port=24800" settings)
+                      "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain port=24800 (Req 7.1).";
+                    if expectedRole == "client" then
                       let
-                        settings = hm.home.file."Library/Deskflow/Deskflow.conf".text;
-                        hasCoreMode = lib.hasInfix "coreMode=1" settings;
-                        hasTls = lib.hasInfix "tlsEnabled=true" settings;
-                        hasPort = lib.hasInfix "port=24800" settings;
+                        trustText = hm.home.file."Library/Deskflow/tls/trusted-servers".text;
                       in
-                      assert lib.assertMsg cfg.enable
-                        "deskflow host-wiring: ${hostName} must have home.deskflow.enable=true (Req 6.1).";
-                      assert lib.assertMsg (cfg.role == "client")
-                        "deskflow host-wiring: ${hostName} home.deskflow.role must be \"client\", got \"${toString cfg.role}\" (Req 6.1).";
-                      assert lib.assertMsg hasCoreMode
-                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain coreMode=1 (client mode, Req 7.1).";
-                      assert lib.assertMsg hasTls
-                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain the curated key tlsEnabled=true (Req 7.1).";
-                      assert lib.assertMsg hasPort
-                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain the curated key port=24800 (Req 7.1).";
-                      "${hostName}: enable=${lib.boolToString cfg.enable} role=\"${toString cfg.role}\"; Deskflow.conf coreMode=1=${lib.boolToString hasCoreMode} tlsEnabled=true=${lib.boolToString hasTls} port=24800=${lib.boolToString hasPort}"
+                      assert lib.assertMsg (lib.hasInfix "coreMode=1" settings)
+                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=1 (client mode, Req 7.1).";
+                      assert lib.assertMsg (lib.hasInfix "v2:sha256:${personalFingerprint}" trustText)
+                        "deskflow host-wiring: ${hostName} trusted-servers must pin v2:sha256:${personalFingerprint} (Req 8.3).";
+                      "${hostName}: enable=true role=\"client\"; coreMode=1, tlsEnabled=true, port=24800; trusted-servers pins server fingerprint"
                     else
-                      assert lib.assertMsg (!cfg.enable)
-                        "deskflow host-wiring: ${hostName} must have home.deskflow.enable=false unless it explicitly opts in (Req 6.3).";
-                      "${hostName}: enable=${lib.boolToString cfg.enable} (disabled; no Deskflow.conf rendered)";
+                      let
+                        layout = hm.home.file."Library/Deskflow/deskflow-server.conf".text;
+                      in
+                      assert lib.assertMsg (lib.hasInfix "coreMode=2" settings)
+                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=2 (server mode, Req 7.1).";
+                      assert lib.assertMsg (lib.hasInfix "keySize=4096" settings)
+                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain keySize=4096 (Req 8.2).";
+                      assert lib.assertMsg (lib.hasInfix "certificate=" settings)
+                        "deskflow host-wiring: ${hostName} Deskflow.conf must pin a certificate path (Req 8.1).";
+                      assert lib.assertMsg (
+                        lib.hasInfix "Brandons-MacBook-Pro.local" layout && lib.hasInfix "ShopifyLaptop.local" layout
+                      ) "deskflow host-wiring: ${hostName} deskflow-server.conf must define both screens (Req 4.3).";
+                      assert lib.assertMsg (lib.hasInfix "right = ShopifyLaptop.local" layout)
+                        "deskflow host-wiring: ${hostName} deskflow-server.conf must contain the 'right = ShopifyLaptop.local' link (Req 4.3).";
+                      "${hostName}: enable=true role=\"server\"; coreMode=2, tlsEnabled=true, port=24800, keySize=4096, cert pinned; server layout screens+link present";
                 in
                 pkgs.runCommand "deskflow-host-wiring"
                   {
-                    hostReport = lib.concatMapStringsSep "\n" checkHost hosts;
+                    hostReport = lib.concatStringsSep "\n" (lib.mapAttrsToList checkHost expectedRoles);
                   }
                   ''
                     printf '%s\n' "$hostReport" > $out

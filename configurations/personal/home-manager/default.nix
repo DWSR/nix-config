@@ -18,6 +18,7 @@ in
     ../../../home-manager/common
     ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
+    ./deskflow.nix
     ./git.nix
     ./opencode.nix
     ./sqlite-backup.nix
