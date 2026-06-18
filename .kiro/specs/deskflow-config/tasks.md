@@ -66,7 +66,7 @@
   - _Depends: 1.1, 1.2, 1.3_
   - _Boundary: flake checks_
 
-- [ ] 4.2 Add the host-wiring check
+- [x] 4.2 Add the host-wiring check
   - Add a build check that evaluates both hosts and asserts ShopifyLaptop has the module enabled in client mode with the expected curated keys present, and the other host disabled.
   - Observable: the host-wiring check builds green for the current wiring and fails if ShopifyLaptop's role or enablement regresses.
   - _Requirements: 6.1, 6.3, 7.1_

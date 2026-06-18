@@ -979,6 +979,65 @@
               deskflow-render = pkgs.runCommand "deskflow-render" { inherit report; } ''
                 printf '%s\n' "$report" > $out
               '';
+
+              # Host-wiring eval assertions (both hosts) — deskflow-config spec
+              # task 4.2; design "#### flake.nix checks (aarch64-darwin)"
+              # deskflow-host-wiring bullet. Pure eval over each darwin host
+              # config plus a trivial runCommand, so no host switch is needed; it
+              # shares the aarch64 gate above (it reads self.darwinConfigurations).
+              # Forcing the per-host report forces, per host, assertions each
+              # naming the host and the failing property:
+              #   6.1/7.1 ShopifyLaptop: home.deskflow enabled in the client role
+              #           and the rendered Deskflow.conf carries coreMode=1 plus
+              #           the curated keys tlsEnabled=true and port=24800.
+              #   6.3     Brandons-MacBook-Pro: home.deskflow disabled (so it
+              #           renders no Deskflow.conf, which is therefore not asserted
+              #           on). The deskflow-render check above is unchanged.
+              deskflow-host-wiring =
+                let
+                  hosts = [
+                    "ShopifyLaptop"
+                    "Brandons-MacBook-Pro"
+                  ];
+                  # ShopifyLaptop is the only host wired to enable Deskflow; every
+                  # other host must leave the module disabled (Req 6.3).
+                  enabledHosts = [ "ShopifyLaptop" ];
+                  checkHost =
+                    hostName:
+                    let
+                      hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                      cfg = hm.home.deskflow;
+                    in
+                    if builtins.elem hostName enabledHosts then
+                      let
+                        settings = hm.home.file."Library/Deskflow/Deskflow.conf".text;
+                        hasCoreMode = lib.hasInfix "coreMode=1" settings;
+                        hasTls = lib.hasInfix "tlsEnabled=true" settings;
+                        hasPort = lib.hasInfix "port=24800" settings;
+                      in
+                      assert lib.assertMsg cfg.enable
+                        "deskflow host-wiring: ${hostName} must have home.deskflow.enable=true (Req 6.1).";
+                      assert lib.assertMsg (cfg.role == "client")
+                        "deskflow host-wiring: ${hostName} home.deskflow.role must be \"client\", got \"${toString cfg.role}\" (Req 6.1).";
+                      assert lib.assertMsg hasCoreMode
+                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain coreMode=1 (client mode, Req 7.1).";
+                      assert lib.assertMsg hasTls
+                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain the curated key tlsEnabled=true (Req 7.1).";
+                      assert lib.assertMsg hasPort
+                        "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain the curated key port=24800 (Req 7.1).";
+                      "${hostName}: enable=${lib.boolToString cfg.enable} role=\"${toString cfg.role}\"; Deskflow.conf coreMode=1=${lib.boolToString hasCoreMode} tlsEnabled=true=${lib.boolToString hasTls} port=24800=${lib.boolToString hasPort}"
+                    else
+                      assert lib.assertMsg (!cfg.enable)
+                        "deskflow host-wiring: ${hostName} must have home.deskflow.enable=false unless it explicitly opts in (Req 6.3).";
+                      "${hostName}: enable=${lib.boolToString cfg.enable} (disabled; no Deskflow.conf rendered)";
+                in
+                pkgs.runCommand "deskflow-host-wiring"
+                  {
+                    hostReport = lib.concatMapStringsSep "\n" checkHost hosts;
+                  }
+                  ''
+                    printf '%s\n' "$hostReport" > $out
+                  '';
             }
           );
         in
