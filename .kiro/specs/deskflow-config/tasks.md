@@ -42,7 +42,7 @@
   - _Boundary: Deskflow module_
 
 - [ ] 3. Module registration and host enablement
-- [ ] 3.1 Register the module for both hosts
+- [x] 3.1 Register the module for both hosts
   - Add the Deskflow module to the shared home-manager module set so its options exist on both hosts, disabled by default.
   - Ordering: the renderer and module files (tasks 1 and 2) must exist before this import resolves.
   - Observable: both host configurations evaluate with the Deskflow options present and the module disabled.

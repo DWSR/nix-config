@@ -10,6 +10,7 @@
 
     ./atuin.nix
     ./cc-sdd.nix
+    ./deskflow
     ./gh-cli.nix
     ./ghostty.nix
     ./git.nix
