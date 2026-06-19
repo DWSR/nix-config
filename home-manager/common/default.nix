@@ -16,6 +16,7 @@
     ./git.nix
     ./git-hooks.nix
     ./git-clone-isolation.nix
+    ./hammerspoon-brightness-ac
     ./hammerspoon-caffeinate
     ./hammerspoon-keybindings
     ./hammerspoon-mic-mute
@@ -164,6 +165,8 @@
 
   # Hammerspoon keybindings: enabled binding-free; consumers declare bindings.
   home.hammerspoon.enable = true;
+  # Maximize the built-in display brightness when switching to AC power.
+  home.hammerspoon.maximizeBrightnessOnAc.enable = true;
 
   programs.cc-sdd.enable = true;
   programs.git-clone-isolation.enable = true;

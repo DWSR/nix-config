@@ -645,6 +645,20 @@
                 reloadOnConfigChange = true;
               };
 
+              # Isolated brightness-on-AC semantic check — mirrors
+              # `hammerspoon-caffeinate-semantic`. Feeds an ISOLATED cfg (empty
+              # keybindings, extraConfig = the brightness-ac.lua) through the
+              # framework's real `mkSemanticCheck`. Building it proves the
+              # brightness-ac Lua references only existing `hs.*` symbols
+              # (hs.battery.powerSource, hs.battery.watcher.new, hs.brightness.set),
+              # independent of whether any host enables the consumer. aarch64-gated,
+              # host-free; the framework + other consumer checks are unchanged.
+              hammerspoon-brightness-ac-semantic = mkSemanticCheck {
+                keybindings = [ ];
+                extraConfig = builtins.readFile ./home-manager/common/hammerspoon-brightness-ac/brightness-ac.lua;
+                reloadOnConfigChange = true;
+              };
+
               # Host-wiring eval assertions (both hosts) — Task 8.4; design
               # "#### Verification" host-wiring bullet + Testing Strategy →
               # Build/Integration host-wiring list. Pure eval over each darwin
