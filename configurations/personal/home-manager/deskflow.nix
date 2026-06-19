@@ -13,9 +13,9 @@
   # (secrets/deskflow-cert.personal.yaml), declared as the system secret
   # "deskflow-cert" in ../../default.nix and decrypted to an owner-only path. It
   # is referenced by path only -- the private key never enters the Nix store.
-  # Client fingerprints are NOT pre-seeded here, so the server keeps Deskflow's
-  # interactive first-connection trust for clients; ShopifyLaptop trusts THIS
-  # host's fingerprint via its own home.deskflow.tls.trustedFingerprints.
+  # ShopifyLaptop trusts THIS host's fingerprint via its own trustedFingerprints,
+  # and this host pre-trusts ShopifyLaptop's fingerprint below, so the TLS
+  # connection is mutually pre-seeded (no interactive approval needed).
   home.deskflow = {
     enable = true;
     role = "server";
@@ -23,6 +23,15 @@
     tls = {
       certificateFile = osConfig.sops.secrets."deskflow-cert".path;
       keySize = 4096;
+
+      # Trust the ShopifyLaptop client's TLS identity by fingerprint, so the
+      # server accepts it with no interactive approval. This is the SHA-256 of
+      # the sops-managed cert on ShopifyLaptop (secrets/deskflow-cert.shopify.yaml);
+      # rotating that cert invalidates this value. Rendered read-only to
+      # ~/Library/Deskflow/tls/trusted-clients (a server verifies clients).
+      trustedFingerprints = [
+        "f3296755f00be642cda4cc062c01f5ccaa3dc4ceb9fc16389bddc02b5a589749"
+      ];
     };
 
     server = {

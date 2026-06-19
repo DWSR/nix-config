@@ -20,6 +20,19 @@
     # blocks `nix build` here without adding safety, since activation
     # would catch the same problem.
     validateSopsFiles = false; # TODO: remove once Task 4.4 produces the real encrypted yaml
+
+    # Deskflow client TLS identity (cert + private key, PEM). Decrypted to an
+    # owner-only path under /run/secrets and referenced by path from this host's
+    # home.deskflow.tls.certificateFile -- the key never enters the Nix store.
+    # sops-nix's HM module is broken on darwin, so the secret is declared at the
+    # system level here. See secrets/deskflow-cert.shopify.yaml and
+    # home-manager/deskflow.nix.
+    secrets."deskflow-cert" = {
+      sopsFile = ../../secrets/deskflow-cert.shopify.yaml;
+      format = "binary";
+      owner = username;
+      mode = "0400";
+    };
   };
 
   nix = {
