@@ -11,7 +11,8 @@
   #
   # TLS identity: the 4096-bit self-signed cert lives in sops
   # (secrets/deskflow-cert.personal.yaml), declared as the system secret
-  # "deskflow-cert" in ../../default.nix and decrypted to an owner-only path. It
+  # "deskflow-cert" in ../../default.nix (format = "yaml"; key = "data") and
+  # decrypted to an owner-only path. It
   # is referenced by path only -- the private key never enters the Nix store.
   # ShopifyLaptop trusts THIS host's fingerprint via its own trustedFingerprints,
   # and this host pre-trusts ShopifyLaptop's fingerprint below, so the TLS

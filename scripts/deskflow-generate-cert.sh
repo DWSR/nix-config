@@ -159,6 +159,11 @@ fi
 # "no matching creation rules found", so the file must be at its real location.
 # Write the plaintext PEM there, encrypt it to a temp envelope, then move that
 # back over it. The trap above guards the brief plaintext window.
+#
+# `--output-type yaml` makes a YAML envelope with the PEM under a single `data`
+# key. The consumer reads it with sops-nix `format = "yaml"; key = "data";` (NOT
+# `format = "binary"`, whose sops binary store expects a JSON envelope and would
+# fail to parse this YAML).
 mkdir -p "$(dirname "$secret_path")"
 [ -e "$secret_path" ] && { secret_backup="$tmp/secret.bak"; cp "$secret_path" "$secret_backup"; }
 install -m 600 "$tmp/deskflow.pem" "$secret_path"
@@ -200,7 +205,11 @@ home-manager module is broken on darwin:
   # configurations/${HOST_ROLE}/default.nix  (nix-darwin system module)
   sops.secrets."deskflow-cert" = {
     sopsFile = ../../${SECRET_REL};
-    format   = "binary";
+    # The PEM is the 'data' key of a sops YAML envelope (see --output-type yaml
+    # below). Read it as YAML and extract that key. Do NOT use format="binary":
+    # sops-nix's binary store expects a JSON envelope and fails to parse the YAML.
+    format   = "yaml";
+    key      = "data";
     owner    = username;   # so the user-run Deskflow process can read it
     mode     = "0400";
   };

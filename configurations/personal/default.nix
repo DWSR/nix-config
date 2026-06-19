@@ -33,7 +33,14 @@
     # and home-manager/deskflow.nix.
     secrets."deskflow-cert" = {
       sopsFile = ../../secrets/deskflow-cert.personal.yaml;
-      format = "binary";
+      # The cert PEM is stored as the `data` key of a sops YAML envelope (the
+      # generator uses `sops --input-type binary --output-type yaml`). Decrypt it
+      # as YAML and extract that key. NOTE: do NOT use `format = "binary"` here --
+      # sops-nix's binary path uses sops's binary store, which expects a JSON
+      # envelope and fails on the YAML one ("cannot parse json ... invalid
+      # character 'd'" from the leading `data:`).
+      format = "yaml";
+      key = "data";
       owner = username;
       mode = "0400";
     };
