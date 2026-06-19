@@ -10,6 +10,7 @@
   home.deskflow = {
     enable = true;
     role = "client";
+    computerName = "ShopifyLaptop.local";
 
     # The Deskflow server to connect to: the Brandons-MacBook-Pro host, reached by
     # its mDNS/Bonjour name on the local network. Rendered as the client/remoteHost

@@ -20,6 +20,7 @@
   home.deskflow = {
     enable = true;
     role = "server";
+    computerName = "Brandons-MacBook-Pro.local";
 
     tls = {
       certificateFile = osConfig.sops.secrets."deskflow-cert".path;
