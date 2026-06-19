@@ -35,3 +35,7 @@ creation_rules:
     key_groups:
       - age:
           - *host_personal
+  - path_regex: secrets/deskflow-cert\.shopify\.yaml$
+    key_groups:
+      - age:
+          - *host_shopify
