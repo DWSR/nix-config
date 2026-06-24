@@ -30,6 +30,17 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Requirements: 1.3, 1.4, 1.5, 1.6, 2.2, 5.1, 5.2_
   - _Boundary: configurations/common-darwin/stylix.nix, home-manager/common/stylix.nix_
   - _Depends: 1.1_
+  - _Blocked: Stylix `autoload.nix` imports HM target modules for all ~95
+    programs; under `home-manager.minimal = true` the un-imported targets
+    reference undeclared `programs.<name>` options and `mkIf false` still trips
+    the module-system unmatched-definition check, so `config.lib.stylix.colors`
+    cannot resolve in HM (fails on `programs.alacritty`). The design's stated
+    fallback (`import inputs.stylix.homeModules.stylix`) re-runs the same
+    autoload and does not help. Awaiting human decision between fix Option A
+    (`home-manager.minimal = false`) and Option B
+    (`home-manager.users.<user>._module.check = lib.mkForce false`); design.md
+    "Allowed Dependencies" / "Integration gate step 2" need revision. See
+    Implementation Notes._
 
 - [ ] 2. Core: low-risk CLI targets
 - [ ] 2.1 Migrate bat to its Stylix target
@@ -166,3 +177,47 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
     within the documented slot mapping.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 2.1, 2.4_
   - _Depends: 1.1, 1.2, 2.1, 2.2, 3.1, 4.1, 4.2, 5.1, 5.2, 6.1, 7.1, 8.1, 9.1, 10.1_
+
+## Implementation Notes
+
+- **Validation gate (this environment)**: the full Shopify *system* build
+  (`darwinConfigurations.ShopifyLaptop.system`) cannot run in the opencode
+  sandbox — it fetches the private `Shopify/homebrew-private.git` tap and git
+  is denied. Per-step gate used here: `nix flake check` + personal-host system
+  build (`darwinConfigurations.Brandons-MacBook-Pro.system`) + Shopify HM
+  closure (`...ShopifyLaptop...home.activationPackage`). The user runs
+  `nix build --no-link .#darwinConfigurations.ShopifyLaptop.system` outside the
+  sandbox to confirm the Shopify system. New untracked `.nix` files are
+  invisible to `nix flake check`/`nix build .#`; validate the working tree with
+  `builtins.getFlake (toString /abs/repo)`.
+- **Task 1.2 BLOCKED — Stylix vs `home-manager.minimal = true` (verified
+  2026-06-23)**: Stylix's `stylix/autoload.nix` `readDir`-imports an HM target
+  module for ALL ~95 programs in its `modules/` dir; each emits
+  `config = lib.mkIf (stylix.enable && cfg.enable) { programs.<name>… }`. Under
+  `minimal = true` only the ~30-40 explicitly-imported `programs.*` modules are
+  declared, so targets for un-imported programs (alacritty, …) reference
+  undeclared options. A `mkIf false` definition of an undeclared option STILL
+  trips the module system's unmatched-definition check (standard nixpkgs
+  behavior, not a 26.05 regression), so any HM-scope eval (incl.
+  `config.lib.stylix.colors`) fails on `programs.alacritty`. `autoEnable=false`
+  only flips each target's default `enable`, not whether it is imported. There
+  is no Stylix option to limit which targets autoload, and
+  `homeManagerIntegration.module` is `internal`/`readOnly`. The design's
+  step-2 fallback (`import inputs.stylix.homeModules.stylix`) re-runs the same
+  autoload → identical failure.
+  - Two fixes verified to make `config.lib.stylix.colors` resolve on both hosts
+    and a sample target (`stylix.targets.bat`) render `base16-stylix`:
+    - **Option A**: `home-manager.minimal = false` in
+      `configurations/common-darwin/default.nix` (declares all HM program
+      modules; Stylix's `mkIf false` defs become no-ops). `warnings == []` and
+      failed assertions `== []` confirmed. Reverses the repo's deliberate
+      minimal-mode posture; the ~40 explicit program imports become redundant
+      (harmless; dedup by store-path key).
+    - **Option B**: `home-manager.users.<user>._module.check = lib.mkForce false`
+      (set from `home-manager/common/stylix.nix`, header `{ lib, ... }:`;
+      `mkForce` needed because HM's pkgsModule sets `_module.check = true`).
+      Preserves minimal mode; disables the option-existence (typo) check for
+      that HM user.
+  - Both require revising design.md "Allowed Dependencies" and Migration
+    Strategy "Integration gate step 2". Decision is human-owned (architecture
+    boundary). Once chosen, retry 1.2 and the rest of the plan is unaffected.
