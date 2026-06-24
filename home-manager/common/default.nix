@@ -159,7 +159,6 @@
       DO_NOT_TRACK = "1";
       OBJC_DISABLE_INITIALIZE_FORK_SAFETY = "YES";
       KUBECTL_EXTERNAL_DIFF = "dyff between --omit-header --set-exit-code";
-      FZF_DEFAULT_OPTS = "--popup";
       _ZO_FZF_OPTS = "--popup";
     };
   };
@@ -205,7 +204,13 @@
     hidden = true;
   };
 
-  programs.fzf.enable = true;
+  # `--popup` is kept here (not in home.sessionVariables) so the Stylix fzf
+  # target's colors merge into FZF_DEFAULT_OPTS (defaultOptions ++ "--color …")
+  # rather than colliding with a manual home.sessionVariables.FZF_DEFAULT_OPTS.
+  programs.fzf = {
+    enable = true;
+    defaultOptions = [ "--popup" ];
+  };
   programs.jq.enable = true;
   programs.jqp.enable = true;
   programs.k9s.enable = true;

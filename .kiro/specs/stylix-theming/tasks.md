@@ -43,7 +43,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/stylix.nix, home-manager/common/default.nix_
   - _Depends: 1.2_
 
-- [ ] 2.2 Enable the fzf and k9s targets
+- [x] 2.2 Enable the fzf and k9s targets
   - Enable `stylix.targets.fzf` and `stylix.targets.k9s`.
   - Observable: fzf colors and the k9s skin are Stylix-provided and both hosts
     build.
@@ -171,6 +171,19 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
 
 ## Implementation Notes
 
+- **Target enables that COLLIDE with manual settings need build-time gating,
+  not just eval**: the Stylix fzf target (task 2.2) populates
+  `programs.fzf.colors`, which makes the HM fzf module emit
+  `home.sessionVariables.FZF_DEFAULT_OPTS` itself
+  (`defaultOptions ++ ["--color …"]`). The repo set
+  `home.sessionVariables.FZF_DEFAULT_OPTS = "--popup"` directly → conflicting
+  definition. `nix flake check` and HM-option eval PASS, but the host
+  `system.build`/`home.activationPackage` FAIL. Fix: move the manual value into
+  `programs.fzf.defaultOptions = [ "--popup" ]` so the module merges it
+  (`"--popup --color …"`). Lesson: always run the host BUILD gate (not just
+  eval) after enabling a target whose program already has manual config; check
+  for other manual `home.sessionVariables.*`/program settings a target also
+  writes (e.g. starship palette, opencode tui, zellij theme).
 - **Validation gate (this environment)**: the full Shopify *system* build
   (`darwinConfigurations.ShopifyLaptop.system`) cannot run in the opencode
   sandbox — it fetches the private `Shopify/homebrew-private.git` tap and git

@@ -40,4 +40,6 @@
 
   # Stylix target enables (per-program).
   stylix.targets.bat.enable = true;
+  stylix.targets.fzf.enable = true;
+  stylix.targets.k9s.enable = true;
 }
