@@ -123,7 +123,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/stylix.nix, configurations/shopify/home-manager/opencode.nix_
 
 - [ ] 8. Fonts consolidation
-- [ ] 8.1 Move font ownership to Stylix and retire ad-hoc font wiring
+- [x] 8.1 Move font ownership to Stylix and retire ad-hoc font wiring
   - Enable the Stylix `font-packages` target so `stylix.fonts.packages`
     installs fonts via `fonts.packages`; remove the manual
     `fonts.packages` list; confirm `nerd-fonts.monaspace` resolves

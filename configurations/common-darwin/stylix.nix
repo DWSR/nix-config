@@ -19,5 +19,10 @@
     # Terminal font size. Ghostty's Stylix target multiplies this by 4/3 on
     # darwin, so 11 -> ~14.67 (slightly larger than the previous manual 14.0).
     fonts.sizes.terminal = 11;
+
+    # Install the fonts backing `stylix.fonts.*` via nix-darwin's
+    # `fonts.packages`. This replaces the manual `fonts.packages` list in
+    # `default.nix`; Stylix now owns provisioning of the Monaspace nerd font.
+    targets.font-packages.enable = true;
   };
 }

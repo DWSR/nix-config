@@ -3,7 +3,6 @@
   outputs,
   config,
   lib,
-  pkgs,
   username,
   ...
 }:
@@ -105,11 +104,6 @@
       useGlobalPkgs = true;
       extraSpecialArgs = { inherit inputs outputs username; };
     };
-
-    fonts.packages = with pkgs; [
-      nerd-fonts.monaspace
-      monaspace
-    ];
 
     nix-homebrew = {
       enable = true;
