@@ -135,7 +135,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: configurations/common-darwin/stylix.nix, configurations/common-darwin/default.nix_
 
 - [ ] 9. Non-target: delta
-- [ ] 9.1 Derive the delta git colors from the Stylix palette
+- [x] 9.1 Derive the delta git colors from the Stylix palette
   - Rewrite `programs.delta.options` colors to `config.lib.stylix.colors`
     values per the slot mapping, snapping the off-palette `#067a00` to base0B;
     keep all non-color delta options.

@@ -1,4 +1,4 @@
-_: {
+{ config, ... }: {
   programs.git = {
     enable = true;
 
@@ -45,7 +45,7 @@ _: {
         file-style = "omit";
         hunk-header-decoration-style = "blue box";
         hunk-header-file-style = "red";
-        hunk-header-line-number-style = "#067a00";
+        hunk-header-line-number-style = config.lib.stylix.colors.withHashtag.base0B;
         hunk-header-style = "file line-number syntax";
       };
     };
