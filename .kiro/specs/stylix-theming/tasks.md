@@ -61,7 +61,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/stylix.nix, home-manager/common/ghostty.nix_
 
 - [ ] 4. Core: Nixvim
-- [ ] 4.1 Migrate Nixvim to its Stylix target
+- [x] 4.1 Migrate Nixvim to its Stylix target
   - Enable `stylix.targets.nixvim` with `plugin = "base16-nvim"` and
     `transparentBackground.main = true`; remove the manual `colorschemes.nord`
     block.

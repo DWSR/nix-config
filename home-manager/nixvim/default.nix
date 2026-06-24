@@ -83,18 +83,6 @@ in
     vimAlias = true;
     vimdiffAlias = true;
 
-    colorschemes = {
-      nord = {
-        enable = true;
-
-        settings = {
-          disable_background = true;
-          borders = true;
-          italic = true;
-        };
-      };
-    };
-
     highlightOverride = {
       EdgyWinSeparator = {
         fg = "#000000";

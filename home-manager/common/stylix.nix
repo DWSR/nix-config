@@ -43,4 +43,13 @@
   stylix.targets.fzf.enable = true;
   stylix.targets.k9s.enable = true;
   stylix.targets.ghostty.enable = true;
+
+  # `base16-nvim` + `transparentBackground.main` reproduce the previous
+  # `colorschemes.nord` `disable_background = true` transparent look without
+  # pulling in the mini.nvim suite (design "Target enables"; research.md).
+  stylix.targets.nixvim = {
+    enable = true;
+    plugin = "base16-nvim";
+    transparentBackground.main = true;
+  };
 }
