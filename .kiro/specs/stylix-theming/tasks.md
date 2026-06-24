@@ -101,7 +101,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Depends: 5.1_
 
 - [ ] 6. Core: Starship
-- [ ] 6.1 Migrate Starship to the base16 palette and rewrite style references
+- [x] 6.1 Migrate Starship to the base16 palette and rewrite style references
   - Enable `stylix.targets.starship`; remove the local `nord` palette and
     `palette = "nord"`; rewrite every `nord*` token in the format string and
     per-module styles to the Stylix base16 palette color names.
@@ -224,4 +224,16 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
       that HM user.
   - Both require revising design.md "Allowed Dependencies" and Migration
     Strategy "Integration gate step 2". Decision is human-owned (architecture
-    boundary). Once chosen, retry 1.2 and the rest of the plan is unaffected.
+    boundary).   Once chosen, retry 1.2 and the rest of the plan is unaffected.
+- **Color-token rewrites in files with Nerd Font glyphs must be surgical, not
+  full-file rewrites (task 6.1, verified 2026-06-24)**: `starship.nix` embeds
+  many BMP Private-Use-Area (U+E000–U+F8FF) Nerd Font icons in `[<glyph>](style)`
+  format strings and `symbols`/`substitutions`. A full-file rewrite (Write tool
+  / retyping) silently DROPS those PUA codepoints while leaving astral-plane
+  (U+F0000+) glyphs intact — `nix` treats them as opaque strings so all builds
+  stay green and MASK the regression; only an independent diff/codepoint review
+  catches it. Fix pattern: do color-token substitution as ordered ASCII-only
+  `replaceAll`s (two-digit `nordNN` before single-digit `nordN` to avoid prefix
+  overlap), never emitting glyph bytes; if already corrupted, restore the file
+  to HEAD (path-scoped `git checkout HEAD -- <file>`, NOT a whole-tree reset)
+  and re-apply. Applies to any remaining task touching a glyph-bearing module.

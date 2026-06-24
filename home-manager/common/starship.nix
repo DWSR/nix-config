@@ -3,18 +3,18 @@ let
   defaultLangOpts = s: {
     symbol = s;
     format = "[ $symbol ($version) ]($style)";
-    style = "bg:nord1 fg:nord4";
+    style = "bg:base01 fg:base04";
   };
 
   defaultToolOpts = s: {
     symbol = s;
     format = "[ $symbol ($version) ]($style)";
-    style = "bg:nord3 fg:nord4";
+    style = "bg:base03 fg:base04";
   };
 
-  firstBlockSep = "[](bg:nord1 fg:nord0)";
-  secondBlockSep = "[](bg:nord3 fg:nord1)";
-  endSep = "[](nord0 fg:nord1)";
+  firstBlockSep = "[](bg:base01 fg:base00)";
+  secondBlockSep = "[](bg:base03 fg:base01)";
+  endSep = "[](base00 fg:base01)";
 
 in
 {
@@ -26,7 +26,7 @@ in
 
       format = lib.concatStrings [
         # Left element
-        "[](fg:nord0)"
+        "[](fg:base00)"
         "$directory"
         firstBlockSep
         "$git_branch"
@@ -36,7 +36,7 @@ in
         "$fill"
 
         # Center element
-        "[](fg:nord0)"
+        "[](fg:base00)"
         "$time"
         firstBlockSep
         "$c"
@@ -77,7 +77,7 @@ in
         "$fill"
 
         # Right element
-        "[](fg:nord0)"
+        "[](fg:base00)"
         "$nix_shell"
         "$direnv"
         "$cmd_duration"
@@ -88,20 +88,6 @@ in
         "$character"
       ];
 
-      # theming
-      palette = "nord";
-
-      palettes.nord = {
-        nord0 = "#2E3440";
-        nord1 = "#3B4252";
-        nord2 = "#434C5E";
-        nord3 = "#4C566A";
-        nord4 = "#D8DEE9";
-        nord11 = "#BF616A";
-        nord13 = "#EBCB8B";
-        nord14 = "#A2BE8A";
-      };
-
       # general
       scan_timeout = 50;
       command_timeout = 1000;
@@ -110,19 +96,19 @@ in
       time = {
         disabled = false;
         format = "[ $time ]($style)";
-        style = "bg:nord0 fg:nord13";
+        style = "bg:base00 fg:base0A";
       };
 
       character = {
-        success_symbol = "[](bold nord14)";
-        error_symbol = "[](bold nord11)";
-        vimcmd_symbol = "[](bold nord13)";
+        success_symbol = "[](bold base0B)";
+        error_symbol = "[](bold base08)";
+        vimcmd_symbol = "[](bold base0A)";
       };
 
       username = {
         disabled = false;
-        style_root = "bg:nord0 fg:nord11";
-        style_user = "bg:nord0 fg:nord4";
+        style_root = "bg:base00 fg:base08";
+        style_user = "bg:base00 fg:base04";
         format = "[$user]($style)";
         show_always = true;
       };
@@ -133,13 +119,13 @@ in
         ssh_symbol = " ";
         trim_at = ".";
         format = "[$hostname$ssh_symbol]($style)";
-        style = "bg:nord0 fg:nord4";
+        style = "bg:base00 fg:base04";
       };
 
       os = {
         disabled = false;
         format = "[ $symbol ]($style)";
-        style = "bg:nord0 fg:nord4";
+        style = "bg:base00 fg:base04";
 
         symbols = {
           Alpaquita = " ";
@@ -188,10 +174,10 @@ in
         truncation_length = 3;
         truncate_to_repo = true;
         format = "[ $path ]($style)[$read_only]($read_only_style)";
-        style = "bg:nord0 fg:nord4";
+        style = "bg:base00 fg:base04";
         disabled = false;
         read_only = " 󰌾 ";
-        read_only_style = "bg:nord0 fg:nord11";
+        read_only_style = "bg:base00 fg:base08";
         truncation_symbol = "/";
 
         substitutions = {
@@ -211,30 +197,30 @@ in
       status = {
         format = "[ $symbol ]($style)";
         style = "bold";
-        symbol = "[](bg:nord0 fg:nord11)";
-        success_symbol = "[](bg:nord0 fg:nord14)";
-        not_executable_symbol = "[🛇](bg:nord0 fg:nord11)";
-        not_found_symbol = "[󰍉](bg:nord0 fg:nord11)";
-        sigint_symbol = "[](bg:nord0 fg:nord13)";
-        signal_symbol = "[](bg:nord0 fg:nord11)";
+        symbol = "[](bg:base00 fg:base08)";
+        success_symbol = "[](bg:base00 fg:base0B)";
+        not_executable_symbol = "[🛇](bg:base00 fg:base08)";
+        not_found_symbol = "[󰍉](bg:base00 fg:base08)";
+        sigint_symbol = "[](bg:base00 fg:base0A)";
+        signal_symbol = "[](bg:base00 fg:base08)";
         disabled = false;
       };
 
       fill = {
         symbol = "─";
-        style = "fg:nord3";
+        style = "fg:base03";
       };
 
       cmd_duration = {
         min_time = 0;
         format = "[ $duration]($style)";
-        style = "bg:nord1 fg:nord13";
+        style = "bg:base01 fg:base0A";
       };
 
       direnv = {
         disabled = false;
         format = "[ $symbol $loaded/$allowed ]($style)";
-        style = "bg:nord3 fg:nord4";
+        style = "bg:base03 fg:base04";
         symbol = " ";
         allowed_msg = "a";
         not_allowed_msg = "n";
@@ -246,19 +232,19 @@ in
       # git
       git_branch = {
         symbol = "";
-        style = "bg:nord1 fg:nord13";
+        style = "bg:base01 fg:base0A";
         format = "[ $symbol $branch ]($style)";
       };
 
       git_status = {
-        style = "bg:nord1 fg:nord13";
+        style = "bg:base01 fg:base0A";
         format = "[$all_status$ahead_behind]($style)";
       };
 
       git_metrics = {
         disabled = false;
-        added_style = "bg:nord1 fg:nord14";
-        deleted_style = "bg:nord1 fg:nord11";
+        added_style = "bg:base01 fg:base0B";
+        deleted_style = "bg:base01 fg:base08";
         format = "[+$added ]($added_style)[-$deleted ]($deleted_style)";
       };
 
@@ -285,7 +271,7 @@ in
       python = {
         symbol = "";
         python_binary = "python3";
-        style = "bg:nord3 fg:nord4";
+        style = "bg:base03 fg:base04";
         format = "[ $symbol ($version) (($virtualenv)) ]($style)";
       };
 
