@@ -71,7 +71,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Requirements: 3.1, 3.4, 2.1, 7.5_
   - _Boundary: home-manager/common/stylix.nix, home-manager/nixvim/default.nix_
 
-- [ ] 4.2 Derive the Edgy highlight overrides from the Stylix palette
+- [x] 4.2 Derive the Edgy highlight overrides from the Stylix palette
   - Rewrite `highlightOverride.EdgyWinBar` and `EdgyWinSeparator` to
     `config.lib.stylix.colors` values per the documented slot mapping
     (separator fg → base00).

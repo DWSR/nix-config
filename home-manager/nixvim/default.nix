@@ -85,11 +85,11 @@ in
 
     highlightOverride = {
       EdgyWinSeparator = {
-        fg = "#000000";
+        fg = config.lib.stylix.colors.withHashtag.base00;
       };
       EdgyWinBar = {
-        fg = "#88C0D0";
-        bg = "#3B4252";
+        fg = config.lib.stylix.colors.withHashtag.base0C;
+        bg = config.lib.stylix.colors.withHashtag.base01;
         bold = true;
       };
     };
