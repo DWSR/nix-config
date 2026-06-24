@@ -11,6 +11,7 @@
   imports = [
     inputs.home-manager.darwinModules.home-manager
     inputs.homebrew.darwinModules.nix-homebrew
+    inputs.stylix.darwinModules.stylix
 
     ./1password.nix
     ./slack.nix
