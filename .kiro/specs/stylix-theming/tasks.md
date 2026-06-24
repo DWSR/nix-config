@@ -51,7 +51,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/stylix.nix_
 
 - [ ] 3. Core: Ghostty
-- [ ] 3.1 Migrate Ghostty to its Stylix target
+- [x] 3.1 Migrate Ghostty to its Stylix target
   - Enable `stylix.targets.ghostty`; remove the two copied Nord theme-file
     entries and the manual `theme`, `font-family`, and `font-size` settings;
     keep keybinds, font styles, and font-feature settings.

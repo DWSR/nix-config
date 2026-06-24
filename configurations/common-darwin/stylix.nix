@@ -15,5 +15,9 @@
       package = pkgs.nerd-fonts.monaspace;
       name = "MonaspiceNe Nerd Font Mono";
     };
+
+    # Terminal font size. Ghostty's Stylix target multiplies this by 4/3 on
+    # darwin, so 11 -> ~14.67 (slightly larger than the previous manual 14.0).
+    fonts.sizes.terminal = 11;
   };
 }

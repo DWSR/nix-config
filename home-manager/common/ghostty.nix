@@ -1,18 +1,5 @@
-{ inputs, pkgs, ... }:
+{ pkgs, ... }:
 {
-
-  xdg.configFile = {
-    "ghostty/themes/nord" = {
-      enable = true;
-      source = inputs.color-schemes + "/ghostty/Nord";
-    };
-
-    "ghostty/themes/nord-wave" = {
-      enable = true;
-      source = inputs.color-schemes + "/ghostty/Nord Wave";
-    };
-  };
-
   programs.ghostty = {
     enable = true;
     package = if pkgs.stdenv.isDarwin then pkgs.ghostty-bin else pkgs.ghostty;
@@ -20,13 +7,10 @@
     installVimSyntax = true;
 
     settings = {
-      theme = "nord-wave";
-      font-family = "MonaspiceNe Nerd Font Mono";
       font-style = "Medium";
       font-style-bold = "Bold";
       font-style-italic = "MediumItalic";
       font-style-bold-italic = "BoldItalic";
-      font-size = "14.0";
       font-feature = "+liga, +dlig, +calt, +ss01, +ss02, +ss03, +ss04, +ss05, +ss06, +ss07, +ss08";
       window-decoration = "none";
       macos-option-as-alt = true;

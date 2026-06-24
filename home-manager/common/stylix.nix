@@ -42,4 +42,5 @@
   stylix.targets.bat.enable = true;
   stylix.targets.fzf.enable = true;
   stylix.targets.k9s.enable = true;
+  stylix.targets.ghostty.enable = true;
 }
