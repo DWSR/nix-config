@@ -16,31 +16,22 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Requirements: 1.1, 1.2_
   - _Boundary: flake.nix, configurations/common-darwin/default.nix_
 
-- [ ] 1.2 Configure the Stylix core and verify Home Manager integration
+- [x] 1.2 Configure the Stylix core and verify Home Manager integration
   - Set `stylix.enable = true`, `stylix.autoEnable = false`,
     `stylix.polarity = "dark"`, `stylix.base16Scheme` to the Nord scheme, and
     `stylix.fonts.monospace` to the Monaspace Nerd Font package and name.
   - Verify `config.lib.stylix.colors` and `stylix.targets.*` resolve in Home
-    Manager scope; if darwin auto-import does not fire under minimal mode,
-    import `inputs.stylix.homeModules.stylix` explicitly and set the same core
-    there. This integration decision is made once here.
+    Manager scope. Stylix's autoload imports targets for all ~95 programs, which
+    breaks under `home-manager.minimal = true`; set
+    `home-manager.users.<user>._module.check = lib.mkForce false` (from
+    `home-manager/common/stylix.nix`) to sink the inert undeclared-option defs.
+    This integration decision is made once here.
   - Observable: both hosts build; a trivial HM reference to
     `config.lib.stylix.colors` evaluates; no program appearance changes yet
     because no target is enabled.
   - _Requirements: 1.3, 1.4, 1.5, 1.6, 2.2, 5.1, 5.2_
-  - _Boundary: configurations/common-darwin/stylix.nix, home-manager/common/stylix.nix_
+  - _Boundary: configurations/common-darwin/stylix.nix, home-manager/common/stylix.nix, configurations/common-darwin/default.nix (import), home-manager/common/default.nix (import)_
   - _Depends: 1.1_
-  - _Blocked: Stylix `autoload.nix` imports HM target modules for all ~95
-    programs; under `home-manager.minimal = true` the un-imported targets
-    reference undeclared `programs.<name>` options and `mkIf false` still trips
-    the module-system unmatched-definition check, so `config.lib.stylix.colors`
-    cannot resolve in HM (fails on `programs.alacritty`). The design's stated
-    fallback (`import inputs.stylix.homeModules.stylix`) re-runs the same
-    autoload and does not help. Awaiting human decision between fix Option A
-    (`home-manager.minimal = false`) and Option B
-    (`home-manager.users.<user>._module.check = lib.mkForce false`); design.md
-    "Allowed Dependencies" / "Integration gate step 2" need revision. See
-    Implementation Notes._
 
 - [ ] 2. Core: low-risk CLI targets
 - [ ] 2.1 Migrate bat to its Stylix target

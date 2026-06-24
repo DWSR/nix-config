@@ -16,6 +16,7 @@
     ./1password.nix
     ./slack.nix
     ./sqlite-backup-verify.nix
+    ./stylix.nix
   ];
 
   options.nix-config.repoPath = lib.mkOption {

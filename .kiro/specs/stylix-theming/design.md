@@ -46,7 +46,11 @@ The migration is like-for-like: the resolved look stays Nord and Monaspace.
 - `pkgs.base16-schemes` (Nord) and `pkgs.nerd-fonts.monaspace`.
 - Existing Home Manager program modules already imported in minimal mode.
 - Stylix's darwin→Home Manager integration to expose `stylix.targets.*` and
-  `config.lib.stylix.colors` in HM scope.
+  `config.lib.stylix.colors` in HM scope. This integration autoloads HM target
+  modules for all ~95 Stylix programs; under `home-manager.minimal = true` the
+  un-imported targets reference undeclared `programs.<name>` options, so the HM
+  user sets `_module.check = lib.mkForce false` to sink those inert definitions
+  (see Migration Strategy "Integration gate").
 
 ### Revalidation Triggers
 - Stylix release line or target option-shape changes (e.g. a target renames
@@ -245,10 +249,11 @@ documented, intentional shade shift (satisfies 2.4, 4.5):
 - Integration: relies on Stylix's darwin→HM integration to propagate
   enable/scheme/fonts/autoEnable to both HM instances and expose
   `config.lib.stylix.colors`.
-- Risks: if HM auto-import does not fire in minimal mode, fall back to importing
-  `inputs.stylix.homeModules.stylix` in `home-manager/common/default.nix` and
-  setting the same `stylix` core there. Detected by a build error that
-  `stylix.targets.*` / `config.lib.stylix.colors` are undefined in HM.
+- Risks: Stylix's HM integration autoloads all ~95 target modules; under
+  `minimal = true` evaluation fails on undeclared `programs.<name>` options
+  until the HM user sets `_module.check = lib.mkForce false` (see Migration
+  Strategy "Integration gate"). Importing `inputs.stylix.homeModules.stylix`
+  does not help — it re-runs the same autoload.
 
 ### Home Manager targets
 
@@ -264,6 +269,9 @@ documented, intentional shade shift (satisfies 2.4, 4.5):
 - Set `stylix.targets.nixvim.plugin = "base16-nvim"` and
   `stylix.targets.nixvim.transparentBackground.main = true` to reproduce the
   current `disable_background` look without pulling the mini.nvim suite.
+- Set `_module.check = lib.mkForce false` for the HM user so Stylix's autoloaded
+  targets for programs not imported under `minimal = true` are sunk rather than
+  erroring (see Migration Strategy "Integration gate").
 - Hold the canonical slot-mapping comment for non-target conversions.
 
 **Implementation Notes**
@@ -356,12 +364,16 @@ graph LR
 
 - Each node is independently buildable; a step that breaks a build or the
   nixvim suite is fixed within that step before the next (7.5).
-- **Integration gate (step 2)**: before any target step, verify that
-  `config.lib.stylix.colors` and `stylix.targets.*` resolve in HM scope. If
-  Stylix's darwin→HM auto-import does not fire under `minimal = true`, import
-  `inputs.stylix.homeModules.stylix` explicitly in
-  `home-manager/common/default.nix` and set the core `stylix` there. This
-  decision is made once at step 2 and unblocks steps 3–10.
+- **Integration gate (step 2)**: Stylix's darwin→HM auto-import fires under
+  `minimal = true`, but its autoload imports HM target modules for all ~95
+  Stylix programs, and the targets for programs not imported in minimal mode
+  reference undeclared `programs.<name>` options. A `mkIf false` definition of
+  an undeclared option still trips the module system's unmatched-definition
+  check, so `config.lib.stylix.colors` cannot resolve in HM until those defs
+  are sunk. Resolution: set `home-manager.users.<user>._module.check =
+  lib.mkForce false` from `home-manager/common/stylix.nix`. Importing
+  `inputs.stylix.homeModules.stylix` does not help — it re-runs the same
+  autoload. This decision is made once at step 2 and unblocks steps 3–10.
 - **Fonts gate (step 9)**: confirm `nerd-fonts.monaspace` resolves
   "MonaspiceNe Nerd Font Mono", and decide explicitly whether the non-nerd
   `monaspace` package is still required before removing it from the manual
