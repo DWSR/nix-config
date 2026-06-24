@@ -37,4 +37,7 @@
   # modules ARE imported) apply normally. mkForce overrides HM pkgsModule's
   # `_module.check = true`. See design.md Migration Strategy "Integration gate".
   _module.check = lib.mkForce false;
+
+  # Stylix target enables (per-program).
+  stylix.targets.bat.enable = true;
 }

@@ -34,7 +34,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Depends: 1.1_
 
 - [ ] 2. Core: low-risk CLI targets
-- [ ] 2.1 Migrate bat to its Stylix target
+- [x] 2.1 Migrate bat to its Stylix target
   - Enable `stylix.targets.bat`; remove the manual `theme = "Nord"` while
     keeping the `style` setting.
   - Observable: bat resolves the Stylix `base16-stylix` theme, `style` is
