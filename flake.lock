@@ -85,22 +85,6 @@
         "type": "github"
       }
     },
-    "color-schemes": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1780934534,
-        "narHash": "sha256-Z/NrIsrHXwCgFCQS/mct7kSqkq8nCjHhswXhXCDOu8k=",
-        "owner": "mbadolato",
-        "repo": "iTerm2-Color-Schemes",
-        "rev": "8c84dd1a859f36ec8601b082bd97b4ec888f0f4d",
-        "type": "github"
-      },
-      "original": {
-        "owner": "mbadolato",
-        "repo": "iTerm2-Color-Schemes",
-        "type": "github"
-      }
-    },
     "darwin": {
       "inputs": {
         "nixpkgs": [
@@ -691,7 +675,6 @@
     },
     "root": {
       "inputs": {
-        "color-schemes": "color-schemes",
         "darwin": "darwin",
         "fenix": "fenix",
         "git-hooks": "git-hooks",

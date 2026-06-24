@@ -145,7 +145,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/git.nix_
 
 - [ ] 10. Cleanup
-- [ ] 10.1 Remove the color-schemes input and remaining dead theming
+- [x] 10.1 Remove the color-schemes input and remaining dead theming
   - Remove the `color-schemes` flake input and confirm no module references
     it; remove any leftover theme files, palette definitions, or per-program
     color settings that Stylix now provides.

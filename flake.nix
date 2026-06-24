@@ -75,11 +75,6 @@
       flake = false;
     };
 
-    color-schemes = {
-      url = "github:mbadolato/iTerm2-Color-Schemes";
-      flake = false;
-    };
-
     git-issue-tracker = {
       url = "github:nnunley/git-issue-tracker";
       flake = false;
