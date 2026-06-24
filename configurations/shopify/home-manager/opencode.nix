@@ -29,13 +29,13 @@ let
   };
 in
 {
-  xdg.configFile."opencode/tui.json" = {
-    enable = true;
-    text = builtins.toJSON {
-      theme = "nord";
-      scroll_acceleration.enabled = true;
-    };
-  };
+  # The Stylix opencode target (enabled in home-manager/common/stylix.nix)
+  # now owns the TUI theme: it sets programs.opencode.tui.theme = "stylix"
+  # plus themes.stylix and renders opencode/tui.json itself. The previous raw
+  # xdg.configFile."opencode/tui.json" write would collide with that
+  # HM-generated file, so it is removed. The host's scroll_acceleration
+  # setting is preserved by moving it into the structured option.
+  programs.opencode.tui.scroll_acceleration.enabled = true;
 
   # Override the common AGENTS.md (home-manager/common/agents.md) with a
   # concatenated version that adds Shopify-host-specific Graphite guidance.

@@ -111,7 +111,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: home-manager/common/stylix.nix, home-manager/common/starship.nix_
 
 - [ ] 7. Core: OpenCode
-- [ ] 7.1 Enable the OpenCode target and reconcile the Shopify TUI config
+- [x] 7.1 Enable the OpenCode target and reconcile the Shopify TUI config
   - Enable `stylix.targets.opencode`; remove the raw
     `xdg.configFile."opencode/tui.json"` on the Shopify host and set
     `programs.opencode.tui.scroll_acceleration.enabled = true` so the

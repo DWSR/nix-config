@@ -45,6 +45,7 @@
   stylix.targets.ghostty.enable = true;
   stylix.targets.zellij.enable = true;
   stylix.targets.starship.enable = true;
+  stylix.targets.opencode.enable = true;
 
   # `base16-nvim` + `transparentBackground.main` reproduce the previous
   # `colorschemes.nord` `disable_background = true` transparent look without
