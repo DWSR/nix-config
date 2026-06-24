@@ -85,7 +85,7 @@ in
 
     highlightOverride = {
       EdgyWinSeparator = {
-        fg = config.lib.stylix.colors.withHashtag.base00;
+        fg = config.lib.stylix.colors.withHashtag.base03;
       };
       EdgyWinBar = {
         fg = config.lib.stylix.colors.withHashtag.base0C;
