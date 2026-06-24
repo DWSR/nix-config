@@ -156,7 +156,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Boundary: flake.nix, home-manager/common/ghostty.nix_
 
 - [ ] 11. Validation
-- [ ] 11.1 Verify the full migration across both hosts
+- [x] 11.1 Verify the full migration across both hosts
   - Run `nix flake check`; build both `darwinConfigurations` (personal and
     shopify); confirm the Nixvim flake-check suite is green; scan migrated
     modules for any remaining `nord`-named palette/theme references and any
