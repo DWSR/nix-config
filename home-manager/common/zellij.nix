@@ -16,6 +16,11 @@ let
   arrow = builtins.fromJSON "\"\\ue0b0\"";
   arrowLeft = builtins.fromJSON "\"\\ue0b2\"";
 
+  # base16 palette (Nord via stylix), `#`-prefixed lowercase hex. Used to
+  # derive the zjstatus status-bar colors from the active theme instead of
+  # hardcoding Nord hex.
+  colors = config.lib.stylix.colors.withHashtag;
+
   # Default zjstatus status-bar pane KDL fragment. Hosts that override
   # the zellij default layout can reference
   # `config.home.zellij.statusBarPane` to keep the bar in sync without
@@ -24,23 +29,23 @@ let
   defaultStatusBarPane = ''
     pane size=1 borderless=true {
       plugin location="file:~/.local/share/zellij/plugins/zjstatus.wasm" {
-        format_left  "{mode}#[bg=#3B4252,fg=#4C566A]${arrow}{tabs}#[bg=default,fg=#3B4252]${arrow}"
-        format_right "#[bg=default,fg=#3B4252]${arrowLeft}#[bg=#3B4252,fg=#D8DEE9] {datetime} "
+        format_left  "{mode}#[bg=${colors.base01},fg=${colors.base03}]${arrow}{tabs}#[bg=default,fg=${colors.base01}]${arrow}"
+        format_right "#[bg=default,fg=${colors.base01}]${arrowLeft}#[bg=${colors.base01},fg=${colors.base04}] {datetime} "
         format_center ""
         format_space ""
         format_hide_on_overlength "true"
         format_precedence "lrc"
 
-        mode_normal  "#[bg=#4C566A,fg=#A3BE8C,bold] NORMAL "
-        mode_locked  "#[bg=#4C566A,fg=#BF616A,bold] LOCKED "
+        mode_normal  "#[bg=${colors.base03},fg=${colors.base0B},bold] NORMAL "
+        mode_locked  "#[bg=${colors.base03},fg=${colors.base08},bold] LOCKED "
         mode_default_to_mode "normal"
 
-        tab_normal           "#[fg=#616E88,bg=#3B4252] {name}"
-        tab_active           "#[fg=#88C0D0,bg=#3B4252,bold] {name}"
-        tab_normal_fullscreen "#[fg=#616E88,bg=#3B4252] {name} []"
-        tab_active_fullscreen "#[fg=#88C0D0,bg=#3B4252,bold] {name} []"
-        tab_normal_sync      "#[fg=#616E88,bg=#3B4252] {name} <>"
-        tab_active_sync      "#[fg=#88C0D0,bg=#3B4252,bold] {name} <>"
+        tab_normal           "#[fg=${colors.base03},bg=${colors.base01}] {name}"
+        tab_active           "#[fg=${colors.base0C},bg=${colors.base01},bold] {name}"
+        tab_normal_fullscreen "#[fg=${colors.base03},bg=${colors.base01}] {name} []"
+        tab_active_fullscreen "#[fg=${colors.base0C},bg=${colors.base01},bold] {name} []"
+        tab_normal_sync      "#[fg=${colors.base03},bg=${colors.base01}] {name} <>"
+        tab_active_sync      "#[fg=${colors.base0C},bg=${colors.base01},bold] {name} <>"
 
         datetime        "{format}"
         datetime_format "%a %d %b %H:%M"

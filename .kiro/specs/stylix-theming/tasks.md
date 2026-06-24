@@ -90,7 +90,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Requirements: 3.1, 3.5_
   - _Boundary: home-manager/common/stylix.nix, home-manager/common/zellij.nix_
 
-- [ ] 5.2 Derive the zjstatus status-bar colors from the palette
+- [x] 5.2 Derive the zjstatus status-bar colors from the palette
   - Replace the hardcoded zjstatus KDL hex with `let` bindings bound to
     `config.lib.stylix.colors.withHashtag` per the slot mapping, snapping the
     off-palette `#616E88` to base03.
