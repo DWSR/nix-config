@@ -136,7 +136,7 @@ in
 
       settings = {
         pane_frames = false;
-        theme = "nord";
+        theme = "stylix";
         default_mode = "normal";
         copy_command = "pbcopy";
         show_startup_tips = false;

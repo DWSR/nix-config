@@ -82,7 +82,7 @@ host builds before the next begins (7.1, 7.4). No tasks are parallel-safe.
   - _Depends: 4.1_
 
 - [ ] 5. Core: Zellij
-- [ ] 5.1 Enable the Zellij target and select the Stylix theme
+- [x] 5.1 Enable the Zellij target and select the Stylix theme
   - Enable `stylix.targets.zellij` and set
     `programs.zellij.settings.theme = "stylix"` (replacing `"nord"`).
   - Observable: Zellij's built-in UI (tabs, frames) uses the Stylix theme and
