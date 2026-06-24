@@ -141,7 +141,11 @@ in
 
       settings = {
         pane_frames = false;
-        theme = "stylix";
+        # The Stylix zellij target writes ~/.config/zellij/themes/stylix.kdl
+        # whose inner theme block is named `default` (not `stylix`). Zellij
+        # registers themes by their inner block name, so the active theme must
+        # be "default" to apply the Stylix Nord palette.
+        theme = "default";
         default_mode = "normal";
         copy_command = "pbcopy";
         show_startup_tips = false;
