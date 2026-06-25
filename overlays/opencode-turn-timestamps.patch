@@ -1,25 +1,14 @@
 diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes/session/index.tsx
-index 1a1eb0f..b924758 100644
 --- a/packages/tui/src/routes/session/index.tsx
 +++ b/packages/tui/src/routes/session/index.tsx
-@@ -67,40 +67,42 @@ import { normalizePath } from "../../util/path"
- import { PermissionPrompt } from "./permission"
- import { QuestionPrompt } from "./question"
- import { DialogExportOptions } from "../../ui/dialog-export-options"
- import * as Model from "../../util/model"
- import { formatTranscript } from "../../util/transcript"
- import { sessionEpilogue } from "../../util/presentation"
- import { setPreLayoutSiblingMargin } from "../../util/layout"
- import { useTuiConfig } from "../../config"
- import { useClipboard } from "../../context/clipboard"
- import { nextThinkingMode, reasoningSummary, useThinkingMode, type ThinkingMode } from "../../context/thinking"
- import { getScrollAcceleration } from "../../util/scroll"
+@@ -78,20 +78,22 @@
  import { collapseToolOutput } from "../../util/collapse-tool-output"
  import { usePluginRuntime } from "../../plugin/runtime"
  import { DialogRetryAction } from "../../component/dialog-retry-action"
  import { getRevertDiffFiles } from "../../util/revert-diff"
  import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut, useOpencodeKeymap } from "../../keymap"
- import { PathFormatterProvider, usePathFormatter } from "../../context/path-format"
+ import { usePathFormatter } from "../../context/path-format"
+ import { LocationProvider } from "../../context/location"
  
  addDefaultParsers(parsers.parsers)
  
@@ -32,30 +21,10 @@ index 1a1eb0f..b924758 100644
  const GO_UPSELL_WINDOW = 86_400_000 // 24 hrs
  const GO_UPSELL_PROVIDERS = new Set(["opencode", "opencode-go"])
  
+ export const alwaysSeparate = new WeakSet<BoxRenderable>()
+ 
  type RetryAction = Extract<SessionStatus, { type: "retry" }>["action"]
- 
- function goUpsellKeys(action: RetryAction) {
-   if (!action) return
-   if (!GO_UPSELL_PROVIDERS.has(action.provider)) return
-   if (action.reason === "free_tier_limit") {
-     return {
-       lastSeenAt: GO_UPSELL_FREE_TIER_LAST_SEEN_AT,
-       dontShow: GO_UPSELL_FREE_TIER_DONT_SHOW,
-     }
-   }
-   if (action.reason === "account_rate_limit") {
-     return {
-@@ -235,41 +237,41 @@ export function Session() {
-   const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
-   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
- 
-   const pending = createMemo(() => {
-     const completed = messages().findLast((x) => x.role === "assistant" && x.time.completed)?.id
-     return messages().findLast((x) => x.role === "assistant" && !x.time.completed && (!completed || x.id > completed))
-       ?.id
-   })
- 
-   const lastAssistant = createMemo(() => {
+@@ -245,21 +247,21 @@
      return messages().findLast((x) => x.role === "assistant")
    })
  
@@ -78,27 +47,7 @@ index 1a1eb0f..b924758 100644
    const wide = createMemo(() => dimensions().width > 120)
    const sidebarVisible = createMemo(() => {
      if (session()?.parentID) return false
-     if (sidebarOpen()) return true
-     if (sidebar() === "auto" && wide()) return true
-     return false
-   })
-   const showTimestamps = createMemo(() => timestamps() === "show")
-   const contentWidth = createMemo(() => dimensions().width - (sidebarVisible() ? 42 : 0) - 4)
-   const providers = createMemo(() => Model.index(sync.data.provider))
- 
-   const scrollAcceleration = createMemo(() => getScrollAcceleration(tuiConfig))
-   const toast = useToast()
-@@ -672,40 +674,41 @@ export function Session() {
-           const isVisible = sidebarVisible()
-           setSidebar(() => (isVisible ? "hide" : "auto"))
-           setSidebarOpen(!isVisible)
-         })
-         dialog.clear()
-       },
-     },
-     {
-       title: conceal() ? "Disable code concealment" : "Enable code concealment",
-       value: "session.toggle.conceal",
+@@ -682,20 +684,21 @@
        category: "Session",
        run: () => {
          setConceal((prev) => !prev)
@@ -120,35 +69,15 @@ index 1a1eb0f..b924758 100644
        },
      },
      {
-       title: (() => {
-         const next = nextThinkingMode(thinkingMode())
-         if (next === "hide") return "Collapse thinking"
-         return "Expand thinking"
-       })(),
-       value: "session.toggle.thinking",
-       category: "Session",
-       slash: {
-         name: "thinking",
-         aliases: ["toggle-thinking"],
-@@ -1341,68 +1344,81 @@ export function Session() {
+@@ -1340,20 +1343,26 @@
                  </box>
                </Match>
              </Switch>
            </Show>
          </box>
        </context.Provider>
-     </PathFormatterProvider>
+     </LocationProvider>
    )
- }
- 
- const MIME_BADGE: Record<string, string> = {
-   "text/plain": "txt",
-   "image/png": "img",
-   "image/jpeg": "img",
-   "image/gif": "img",
-   "image/webp": "img",
-   "application/pdf": "pdf",
-   "application/x-directory": "dir",
  }
  
 +function formatCreatedTime(message: { time?: { created?: number } }) {
@@ -167,13 +96,7 @@ index 1a1eb0f..b924758 100644
    const ctx = use()
    const local = useLocal()
    const text = createMemo(() => {
-     const texts = props.parts
-       .map((x) => {
-         if (x.type === "text" && !x.synthetic) {
-           return x.text
-         }
-         return null
-       })
+@@ -1367,20 +1376,27 @@
        .filter(Boolean)
      return texts.join("\n\n")
    })
@@ -184,14 +107,14 @@ index 1a1eb0f..b924758 100644
    const color = createMemo(() => local.agent.color(props.message.agent))
    const queuedFg = createMemo(() => selectedForeground(theme, color()))
    const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
- 
++
 +  const timestamp = createMemo(() => {
 +    if (props.message.role === "user") {
 +      return ctx.showTimestamps() ? formatCreatedTime(props.message) : undefined
 +    }
 +    return undefined
 +  })
-+
+ 
    const compaction = createMemo(() => props.parts.find((x) => x.type === "compaction"))
  
    return (
@@ -199,33 +122,12 @@ index 1a1eb0f..b924758 100644
        <Show when={text()}>
          <box
            id={props.message.id}
+           ref={(el: BoxRenderable) => alwaysSeparate.add(el)}
            border={["left"]}
-           borderColor={color()}
-           customBorderChars={SplitBorder.customBorderChars}
-           marginTop={props.index === 0 ? 0 : 1}
-         >
-           <box
-             onMouseOver={() => {
-               setHover(true)
-             }}
-             onMouseOut={() => {
-               setHover(false)
-             }}
-             onMouseUp={props.onMouseUp}
-@@ -1415,80 +1431,85 @@ function UserMessage(props: {
-             <text fg={theme.text}>{text()}</text>
-             <Show when={files().length}>
-               <box flexDirection="row" paddingBottom={metadataVisible() ? 1 : 0} paddingTop={1} gap={1} flexWrap="wrap">
-                 <For each={files()}>
-                   {(file) => {
-                     const bg = createMemo(() => {
-                       if (file.mime.startsWith("image/")) return theme.accent
-                       if (file.mime === "application/pdf") return theme.primary
-                       return theme.secondary
-                     })
-                     return (
-                       <text fg={theme.text}>
-                         <span style={{ bg: bg(), fg: theme.background }}> {MIME_BADGE[file.mime] ?? file.mime} </span>
+@@ -1413,35 +1429,33 @@
+                         <span style={{ bg: theme.secondary, fg: theme.background }}>
+                           {directory ? " Directory " : " File "}
+                         </span>
                          <span style={{ bg: theme.backgroundElement, fg: theme.textMuted }}> {file.filename} </span>
                        </text>
                      )
@@ -268,11 +170,7 @@ index 1a1eb0f..b924758 100644
            border={["top"]}
            title=" Compaction "
            titleAlignment="center"
-           borderColor={theme.borderActive}
-         />
-       </Show>
-     </>
-   )
+@@ -1453,20 +1467,27 @@
  }
  
  function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; last: boolean }) {
@@ -300,40 +198,20 @@ index 1a1eb0f..b924758 100644
      const user = messages().find((x) => x.role === "user" && x.id === props.message.parentID)
      if (!user || !user.time) return 0
      return props.message.time.completed - user.time.created
-   })
- 
-   const childShortcut = useCommandShortcut("session.child.first")
-   const backgroundShortcut = useCommandShortcut("session.background")
- 
-   return (
-     <>
-       <For each={props.parts}>
-         {(part, index) => {
-           const component = createMemo(() => PART_MAPPING[part.type as keyof typeof PART_MAPPING])
-@@ -1524,55 +1545,58 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
-             </Show>
-           </text>
-         </box>
-       </Show>
-       <Show when={props.message.error && props.message.error.name !== "MessageAbortedError"}>
-         <box
-           id={`assistant-error-${props.message.id}`}
-           border={["left"]}
-           paddingTop={1}
-           paddingBottom={1}
+@@ -1525,35 +1546,38 @@
            paddingLeft={2}
            marginTop={1}
            backgroundColor={theme.backgroundPanel}
            customBorderChars={SplitBorder.customBorderChars}
            borderColor={theme.error}
          >
-           <text fg={theme.textMuted}>{props.message.error?.data.message}</text>
+           <text fg={theme.textMuted}>{errorMessage(props.message.error)}</text>
          </box>
        </Show>
        <Switch>
 -        <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
 +        <Match when={props.last || final() || timestamp() || props.message.error?.name === "MessageAbortedError"}>
-           <box id={`assistant-summary-${props.message.id}`} paddingLeft={3}>
+           <box ref={(el: BoxRenderable) => alwaysSeparate.add(el)} paddingLeft={3}>
              <text marginTop={1}>
                <span
                  style={{
@@ -360,13 +238,3 @@ index 1a1eb0f..b924758 100644
            </box>
          </Match>
        </Switch>
-     </>
-   )
- }
- 
- const PART_MAPPING = {
-   text: TextPart,
-   tool: ToolPart,
-   reasoning: ReasoningPart,
- }
- 
