@@ -133,7 +133,16 @@
         cleanup = "zap";
       };
 
-      taps = builtins.attrNames config.nix-homebrew.taps;
+      # Homebrew 6.0 enables HOMEBREW_REQUIRE_TAP_TRUST by default, so every
+      # non-official tap must be explicitly trusted or `brew bundle` refuses to
+      # load its formulae/casks and aborts activation. Mark all declared taps
+      # trusted (a no-op for the official homebrew/* taps) so the Brewfile
+      # carries `trusted: true`; this also persists through `cleanup = "zap"`,
+      # which resets the trust file to the Brewfile's declared trust.
+      taps = lib.mapAttrsToList (name: _: {
+        inherit name;
+        trusted = true;
+      }) config.nix-homebrew.taps;
     };
 
     system = {
