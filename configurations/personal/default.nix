@@ -46,7 +46,33 @@
     };
   };
 
-  nix.package = pkgs.lixPackageSets.latest.lix;
+  # No recent Lix is cached on cache.nixos.org for aarch64-darwin (both 2.94
+  # and 2.95 narinfos 404), so this host always builds Lix from source and runs
+  # its build-time test suites. Two suites need facilities the macOS Nix build
+  # sandbox lacks, so we trim them:
+  #
+  #   * check (unit): libstore's `FileTransfer.*` tests spin up a local HTTP
+  #     server on the IPv6 loopback (`http://[::1]:PORT`). That does not work in
+  #     the sandbox, and `exceptionAbortsRead` has no timeout, so the read
+  #     blocks until the UBSan trap (`-fsanitize-undefined-trap-on-error`, a
+  #     `brk` on aarch64) kills the build with SIGTRAP after ~19 min. Upstream
+  #     already disables three of these on darwin (the `NOT_ON_DARWIN` macro in
+  #     tests/unit/libstore/filetransfer.cc) but left the rest active; skip the
+  #     whole networked group via gtest's env filter. The remaining unit tests
+  #     (~2s, environment-independent) still run.
+  #
+  #   * installcheck (functional): fetchurl, nar-access,
+  #     mtls-substituter-ssl-client-cert, and functional2 hang to the 300s meson
+  #     timeout (they need a fully networked daemon / local servers). meson has
+  #     no clean per-test deselect for these, so the functional suite is off.
+  #
+  # See lix issues fj#564 (IPv6 loopback) and fj#364.
+  nix.package = pkgs.lixPackageSets.latest.lix.overrideAttrs (old: {
+    preCheck = (old.preCheck or "") + ''
+      export GTEST_FILTER='-FileTransfer.*'
+    '';
+    doInstallCheck = false;
+  });
 
   home-manager.users.${username} = import ./home-manager;
 
