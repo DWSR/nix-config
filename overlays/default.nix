@@ -37,6 +37,27 @@ in
     unstable = import inputs.nixpkgs-unstable {
       inherit (final.stdenv.hostPlatform) system;
       config.allowUnfree = true;
+      overlays = [
+        # nixpkgs-unstable's graphite-cli 1.8.6 fails to build on
+        # aarch64-darwin, and because it is `unfree` Hydra never caches it, so
+        # the failure only surfaces on a local build. Two upstream bugs:
+        #   1. postInstall generates shell completions by running
+        #      `gt completion`/`gt fish`, but the vercel/pkg `gt` binary exits
+        #      non-zero with empty output when run offline (HOME=/homeless-shelter)
+        #      in the Nix sandbox, so installShellCompletion aborts on the
+        #      resulting zero-size file.
+        #   2. the Darwin fixupPhase runs `strip`, which shifts the vercel/pkg
+        #      virtual-filesystem byte offsets and corrupts the binary
+        #      ("Pkg: Error reading from file."); upstream only sets `dontFixup`
+        #      on Linux (dontFixup = isLinux).
+        # gt-mcp only needs `gt` on PATH, so drop the completions and skip fixup.
+        (_ufinal: uprev: {
+          graphite-cli = uprev.graphite-cli.overrideAttrs (_: {
+            dontFixup = true;
+            postInstall = "";
+          });
+        })
+      ];
     };
   };
 
