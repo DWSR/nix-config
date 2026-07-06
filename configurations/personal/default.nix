@@ -99,7 +99,6 @@
 
     casks = [
       "ungoogled-chromium"
-      "moom"
       "orbstack"
       "oversight"
       "orion"

@@ -215,6 +215,7 @@
       "contexts"
       "deskflow"
       "loopback"
+      "moom"
       "obsidian"
       "unfudged"
       "whatcable"
