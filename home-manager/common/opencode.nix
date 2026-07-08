@@ -343,6 +343,13 @@
           display = "summarized";
         };
 
+        # Disable opencode's filesystem snapshot tracking. With snapshots
+        # off, opencode no longer records per-message filesystem snapshots,
+        # so undo/revert will not restore file changes — version control is
+        # the sole rollback path. Schema: `snapshot` at
+        # https://opencode.ai/config.json ("Defaults to true").
+        snapshot = false;
+
         # Disable opencode's built-in `title` and `summary` agents. Both
         # are hidden internal agents that run extra LLM calls (title on
         # every new session, summary on every compaction). We don't rely
