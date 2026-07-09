@@ -46,6 +46,7 @@
       };
 
       "features" = {
+        "git.maintenance.adaptive-scheduling" = false;
         "precheck" = false;
         "new-process-manager" = true;
         "nix.dev-packages" = true;
