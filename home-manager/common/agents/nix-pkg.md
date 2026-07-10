@@ -1,8 +1,8 @@
 ---
 description: Add or update a tool in the nix-config overlay. Picks the right builder (buildRustPackage / buildGoModule / buildNpmPackage / symlinkJoin wrapper), drives hash discovery with lib.fakeHash, wires into home.packages, verifies the build. Invoke with @nix-pkg or delegate when the user says "add X to my nix config" / "package <tool> for me" / "update the overlay for <pkg>".
 mode: subagent
-model: anthropic/claude-opus-4-8
-variant: max
+model: openai/gpt-5.6
+variant: xhigh
 temperature: 0.1
 permission:
   edit: allow

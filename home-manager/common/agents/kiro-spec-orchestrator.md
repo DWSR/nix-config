@@ -1,8 +1,8 @@
 ---
 description: Orchestrate Kiro/cc-sdd spec generation from problem description through approved task list without implementing tasks. Runs discovery, init, requirements, research/gap validation, design, design validation, pre-task ambiguity review, and task generation. Invoke with @kiro-spec-orchestrator for non-trivial spec-driven planning work.
 mode: all
-model: anthropic/claude-opus-4-8
-variant: max
+model: openai/gpt-5.6
+variant: xhigh
 temperature: 0.1
 permission:
   read: allow

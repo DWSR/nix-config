@@ -1,8 +1,8 @@
 ---
 description: Source-code security review of a third-party repository or tool. Produces a severity-ranked, structured report with CVSS-style classification. Inline-cite every finding. Read-only. Invoke with @security-auditor or delegate when the user says "audit this repo" / "review the security of X".
 mode: subagent
-model: anthropic/claude-opus-4-8
-variant: max
+model: openai/gpt-5.6
+variant: xhigh
 temperature: 0.1
 permission:
   edit: deny

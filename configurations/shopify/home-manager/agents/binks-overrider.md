@@ -1,8 +1,8 @@
 ---
 description: Narrow Shopify GitHub MCP-only helper. Applies the Binks override label and audit comment only when the PR Review Bot check has been in progress for over 90 minutes or the user explicitly authorizes an override reason.
 mode: subagent
-model: anthropic/claude-opus-4-8
-variant: max
+model: openai/gpt-5.6
+variant: xhigh
 temperature: 0.1
 permission:
   "*": deny

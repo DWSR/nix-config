@@ -1,8 +1,8 @@
 ---
 description: Read-only Shopify Graphite preflight helper. Checks stack shape, gt metadata risk, stale trunk/main, remote divergence, and linked-worktree hazards before @stack-captain mutates a stack.
 mode: subagent
-model: anthropic/claude-opus-4-8
-variant: max
+model: openai/gpt-5.6
+variant: xhigh
 temperature: 0.1
 permission:
   edit: deny

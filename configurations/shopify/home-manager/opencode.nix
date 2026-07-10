@@ -280,10 +280,10 @@ in
   };
 
   programs.opencode.settings = {
-    model = "anthropic/claude-opus-4-8";
+    model = "openai/gpt-5.6";
     agent.build = {
-      model = "anthropic/claude-opus-4-8";
-      variant = "max";
+      model = "openai/gpt-5.6";
+      variant = "xhigh";
     };
     enabled_providers = [
       "anthropic"
