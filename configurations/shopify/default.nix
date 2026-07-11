@@ -64,12 +64,12 @@
       "Shopify/homebrew-shopify" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-shopify.git";
         ref = "master";
-        rev = "161060cf3afd979d1164ba4b3d3affc2fa84375a";
+        rev = "6d0efe3ee2875eafc448dfaa4c2691410856cb4e";
       };
       "Shopify/homebrew-private" = builtins.fetchGit {
         url = "https://github.com/Shopify/homebrew-private.git";
         ref = "main";
-        rev = "d0cf2de3d02be0f077c343f381f732b5330d36c9";
+        rev = "0ecb10b0ef8a6d698ecf25c8a14efc6b211bc73b";
       };
     };
   };
