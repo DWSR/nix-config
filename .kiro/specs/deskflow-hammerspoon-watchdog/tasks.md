@@ -77,7 +77,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6, 3.1, 3.2, 3.3, 3.4, 4.4, 5.2, 5.3_
   - _Boundary: Runtime Shell_
 
-- [ ] 3.2 Launch, surface, and activate the Deskflow GUI
+- [x] 3.2 Launch, surface, and activate the Deskflow GUI
   - Validate the exact cask path and bundle ID, save prior focus, and launch an absent GUI through LaunchServices.
   - Surface a hidden GUI through its duplicate-instance path, reacquire one expected-path instance, and poll frontmost state with the approved interval and timeout.
   - Re-observe after launch and stop before menu work if GUI autostart already restored the core.
@@ -179,3 +179,4 @@
 - Runtime adapters must use `Model.advanceRecovery` for ordered `activating` -> `selecting` -> `verifying` transitions instead of mutating model state.
 - Wake grace and retry/cooldown eligibility are separate model deadlines; runtime scheduling must not collapse one into the other.
 - Epoch-stale runtime callbacks may release retained handles only; they must not emit model or external effects.
+- Post-activation work must reacquire the same expected-path GUI PID; saved application handles cannot authorize menu or verification effects.

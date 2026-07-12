@@ -218,10 +218,11 @@ function FakeHs.new(options)
 		return true
 	end
 
-	function fake:runningTasks()
+	function fake:runningTasks(path)
+		assert(path == nil or type(path) == "string", "task path filter must be a string or nil")
 		local tasks = {}
 		for _, task in ipairs(self._tasks) do
-			if task._running then
+			if task._running and (path == nil or task._path == path) then
 				table.insert(tasks, task)
 			end
 		end
@@ -515,7 +516,8 @@ function FakeHs.new(options)
 			bundleID = bundleID,
 			result = result,
 		})
-		if result and configured.application and configured.application._running then
+		if result and configured.application then
+			configured.application._running = true
 			fake._frontmostApplication = configured.application
 		end
 		return result

@@ -68,6 +68,10 @@ local task = hs.task.new("/nix/store/snapshot", function(exitCode, stdout, stder
 end, { "--fixture" })
 assert(task:start() == task and task:isRunning(), "task start must return a running handle")
 assert(#fake:runningTasks() == 1 and fake:runningTasks()[1] == task, "running tasks must be inspectable")
+assert(
+	#fake:runningTasks("/nix/store/snapshot") == 1 and #fake:runningTasks("/nix/store/other") == 0,
+	"running tasks must support exact-path filtering"
+)
 assert(taskResult == nil, "task callback must wait for explicit completion")
 assert(fake:completeTask(task, 0, "snapshot\n", "") == true)
 assert(taskResult[1] == 0 and taskResult[2] == "snapshot\n" and taskResult[3] == "")
@@ -129,6 +133,17 @@ assert(hs.application.frontmostApplication() == deskflow and deskflow:isFrontmos
 editor:activate()
 assert(hs.application.frontmostApplication() == editor, "activation must make focus restoration observable")
 
+local launched = fake:addApplication({
+	bundleID = "com.example.launched",
+	path = "/Applications/Launched.app",
+	pid = 30,
+	running = false,
+})
+fake:setLaunchResult("com.example.launched", true, launched)
+assert(hs.application.launchOrFocusByBundleID("com.example.launched") == true)
+assert(launched:isRunning() and launched:isFrontmost(), "successful LaunchServices launch must start and focus its app")
+editor:activate()
+
 local lifecycleEvents = {}
 local watcher = hs.caffeinate.watcher
 	.new(function(event)
@@ -156,8 +171,8 @@ assert(#fake:effectsOf("menu.callback") == 1)
 assert(#fake:effectsOf("menu.request") == 1)
 assert(#fake:effectsOf("lifecycle.callback") == 2)
 assert(#fake:effectsOf("lifecycle.event") == 3)
-assert(#fake:effectsOf("application.launch") == 1)
-assert(#fake:effectsOf("application.activate") == 2)
+assert(#fake:effectsOf("application.launch") == 2)
+assert(#fake:effectsOf("application.activate") == 3)
 assert(#fake:effectsOf("menu.select") == 1)
 assert(#fake:effectsOf("alert.show") == 1)
 assert(#callbackOrder == 7 and callbackOrder[4] == "task" and callbackOrder[5] == "menu")
