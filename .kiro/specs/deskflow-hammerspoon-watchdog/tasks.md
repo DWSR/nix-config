@@ -35,7 +35,7 @@
   - _Boundary: Verification_
 
 - [ ] 2. Implement the pure watchdog model
-- [ ] 2.1 Parse snapshots and classify GUI/core ownership
+- [x] 2.1 Parse snapshots and classify GUI/core ownership
   - Decode and validate snapshots without assuming paths contain no spaces.
   - Classify the one expected-path GUI and exact role-matched child core as healthy, valid zero-core states as absent, malformed snapshots as errors, and every ownership/path/cardinality conflict as ambiguous.
   - Completion is observable when model tests pass for both roles and all absent, error, and ambiguity fixtures without recovery decisions for unsafe states.
