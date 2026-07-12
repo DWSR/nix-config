@@ -27,7 +27,7 @@
   - _Requirements: 6.3, 7.1, 7.2, 7.3_
   - _Boundary: Verification_
 
-- [ ] 1.4 Build the deterministic fake Hammerspoon harness
+- [x] 1.4 Build the deterministic fake Hammerspoon harness
   - Provide controllable timers, tasks, applications, menus, lifecycle events, alerts, and focus state.
   - Record every asynchronous callback and external effect without running a GUI or process.
   - Completion is observable when a smoke test can advance time, complete a task, fire lifecycle events, and inspect recorded effects deterministically.
