@@ -122,9 +122,66 @@ deskflow:getMenuItems(function(items)
 	table.insert(callbackOrder, "menu")
 end)
 assert(menuItems == nil and fake:pendingMenuCount() == 1, "menu callback must remain explicitly controllable")
+local pendingMenuRequests = fake:pendingMenuRequests()
+assert(#pendingMenuRequests == 1 and pendingMenuRequests[1].pid == deskflow:pid())
+assert(type(pendingMenuRequests[1].handle) == "number", "pending menu requests expose stable handles")
 assert(fake:completeNextMenu() == true)
 assert(menuItems[1].AXTitle == "File" and fake:pendingMenuCount() == 0)
+assert(#fake:pendingMenuRequests() == 0, "completed menus leave no pending request")
 assert(deskflow:selectMenuItem({ "File", "Start" }) == true)
+
+local callbackFake = FakeHs.new()
+local callbackApplication = callbackFake:addApplication({
+	bundleID = "com.example.callbacks",
+	path = "/Applications/Callbacks.app",
+	pid = 24,
+	menuItems = { { AXTitle = "File" } },
+})
+local callbackCount = 0
+callbackApplication:getMenuItems(function()
+	callbackCount = callbackCount + 1
+end)
+local callbackHandle = callbackFake:pendingMenuRequests()[1].handle
+assert(callbackFake:completeNextMenu(), "first retained menu callback")
+assert(callbackFake:repeatMenuCallback(callbackHandle), "repeated retained menu callback")
+assert(callbackCount == 2, "retained menu callback must be repeatable under test control")
+local selectionHookCount = 0
+callbackFake:setNextMenuSelectionHook(callbackApplication, function()
+	selectionHookCount = selectionHookCount + 1
+end)
+callbackApplication:selectMenuItem({ "File", "Start" })
+callbackApplication:selectMenuItem({ "File", "Start" })
+assert(selectionHookCount == 1, "menu selection hook must run at most once")
+local repeatedTaskCallbackCount = 0
+local repeatedTask = callbackFake.hs.task.new("/nix/store/repeated-task", function()
+	repeatedTaskCallbackCount = repeatedTaskCallbackCount + 1
+end)
+repeatedTask:start()
+assert(callbackFake:completeTask(repeatedTask, 0, "", ""), "first retained task callback")
+assert(callbackFake:repeatTaskCallback(repeatedTask, 0, "", ""), "repeated retained task callback")
+assert(repeatedTaskCallbackCount == 2, "retained task callback must be repeatable under test control")
+
+local exceptionFake = FakeHs.new()
+local exceptionApplication = exceptionFake:addApplication({
+	bundleID = "com.example.exceptions",
+	path = "/Applications/Exceptions.app",
+	pid = 25,
+})
+exceptionFake:setMenuRequestError(exceptionApplication, "menu request failed")
+local requested = pcall(function()
+	exceptionApplication:getMenuItems(function() end)
+end)
+assert(not requested and exceptionFake:pendingMenuCount() == 0, "menu request errors must not retain callbacks")
+exceptionFake:setMenuSelectionError(exceptionApplication, "menu selection failed")
+local selected = pcall(function()
+	exceptionApplication:selectMenuItem({ "File", "Start" })
+end)
+assert(not selected, "menu selection errors must remain observable")
+exceptionFake:setActivationError(exceptionApplication, "activation failed")
+local activated = pcall(function()
+	exceptionApplication:activate()
+end)
+assert(not activated, "activation errors must remain observable")
 
 fake:setLaunchResult("org.deskflow.deskflow", true)
 assert(hs.application.launchOrFocusByBundleID("org.deskflow.deskflow") == true)

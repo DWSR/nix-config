@@ -33,6 +33,7 @@ function FakeHs.new(options)
 		_bundleInfo = {},
 		_bundleInfoPaths = {},
 		_launchResults = {},
+		_menuRequests = {},
 		_pendingMenus = {},
 		_watchers = {},
 		effects = {},
@@ -218,6 +219,21 @@ function FakeHs.new(options)
 		return true
 	end
 
+	function fake:repeatTaskCallback(task, exitCode, stdout, stderr)
+		if task == nil or task._callback == nil then
+			return false
+		end
+		self:_record("task.callback", {
+			exitCode = exitCode,
+			handle = task._handle,
+			repeated = true,
+			stderr = stderr,
+			stdout = stdout,
+		})
+		task._callback(exitCode, stdout, stderr)
+		return true
+	end
+
 	function fake:runningTasks(path)
 		assert(path == nil or type(path) == "string", "task path filter must be a string or nil")
 		local tasks = {}
@@ -262,6 +278,9 @@ function FakeHs.new(options)
 			bundleID = self._bundleID,
 			pid = self._pid,
 		})
+		if self._activationError ~= nil then
+			error(self._activationError)
+		end
 		if not self._running or not self._activationResult then
 			return false
 		end
@@ -271,11 +290,15 @@ function FakeHs.new(options)
 
 	function applicationMethods:getMenuItems(callback)
 		assert(type(callback) == "function", "menu callback must be a function")
+		if self._menuRequestError ~= nil then
+			error(self._menuRequestError)
+		end
 		local request = {
 			app = self,
 			callback = callback,
 			handle = nextHandle(),
 		}
+		table.insert(fake._menuRequests, request)
 		table.insert(fake._pendingMenus, request)
 		fake:_record("menu.request", {
 			handle = request.handle,
@@ -288,6 +311,14 @@ function FakeHs.new(options)
 			path = path,
 			pid = self._pid,
 		})
+		if self._menuSelectionError ~= nil then
+			error(self._menuSelectionError)
+		end
+		local selectionHook = self._nextMenuSelectionHook
+		self._nextMenuSelectionHook = nil
+		if selectionHook ~= nil then
+			selectionHook()
+		end
 		return self._running and self._menuSelectionResult
 	end
 
@@ -299,9 +330,12 @@ function FakeHs.new(options)
 
 		local application = setmetatable({
 			_handle = nextHandle(),
+			_activationError = spec.activationError,
 			_activationResult = spec.activationResult ~= false,
 			_bundleID = spec.bundleID,
 			_menuItems = copy(spec.menuItems or {}),
+			_menuRequestError = spec.menuRequestError,
+			_menuSelectionError = spec.menuSelectionError,
 			_menuSelectionResult = spec.menuSelectionResult ~= false,
 			_name = spec.name,
 			_path = spec.path,
@@ -332,8 +366,28 @@ function FakeHs.new(options)
 		application._activationResult = result
 	end
 
+	function fake:setActivationError(application, message)
+		assert(message == nil or type(message) == "string", "activation error must be a string or nil")
+		application._activationError = message
+	end
+
 	function fake:setMenuItems(application, items)
 		application._menuItems = copy(items)
+	end
+
+	function fake:setMenuRequestError(application, message)
+		assert(message == nil or type(message) == "string", "menu request error must be a string or nil")
+		application._menuRequestError = message
+	end
+
+	function fake:setMenuSelectionError(application, message)
+		assert(message == nil or type(message) == "string", "menu selection error must be a string or nil")
+		application._menuSelectionError = message
+	end
+
+	function fake:setNextMenuSelectionHook(application, hook)
+		assert(hook == nil or type(hook) == "function", "menu selection hook must be a function or nil")
+		application._nextMenuSelectionHook = hook
 	end
 
 	function fake:setMenuSelectionResult(application, result)
@@ -342,6 +396,17 @@ function FakeHs.new(options)
 
 	function fake:pendingMenuCount()
 		return #self._pendingMenus
+	end
+
+	function fake:pendingMenuRequests()
+		local requests = {}
+		for _, request in ipairs(self._pendingMenus) do
+			table.insert(requests, {
+				handle = request.handle,
+				pid = request.app._pid,
+			})
+		end
+		return requests
 	end
 
 	function fake:completeNextMenu(items)
@@ -358,6 +423,24 @@ function FakeHs.new(options)
 		})
 		request.callback(menuItems)
 		return true
+	end
+
+	function fake:repeatMenuCallback(handle, items)
+		assert(type(handle) == "number", "menu callback handle must be a number")
+		for _, request in ipairs(self._menuRequests) do
+			if request.handle == handle then
+				local menuItems = copy(items or request.app._menuItems)
+				self:_record("menu.callback", {
+					handle = request.handle,
+					items = menuItems,
+					pid = request.app._pid,
+					repeated = true,
+				})
+				request.callback(menuItems)
+				return true
+			end
+		end
+		return false
 	end
 
 	function fake:setBundleInfo(path, info)

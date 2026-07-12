@@ -6,6 +6,8 @@ local guiExecutablePath = bundlePath .. "/Contents/MacOS/Deskflow"
 local activationPollInterval = 0.25
 local activationTimeout = 10
 local pollInterval = 5
+local verificationInterval = 1
+local verificationTimeout = 15
 
 local policy = {
 	absenceThreshold = 2,
@@ -38,9 +40,21 @@ function Runtime.start(model, role, snapshotCommand)
 	local pollTimer
 	local pollTimerRunning = false
 	local recoveryContext
+	local lastActivationResult
+	local lastPriorFocus
+	local lastRecoveryApplication
+	local lastRecoveryDecisions = {}
+	local lastRecoveryResult
+	local pendingFocus
 	local sleeping = false
 	local stopped = false
 	local beginRecovery
+	local finishRecovery
+	local requestStartAction
+
+	local function callSafely(method, ...)
+		return pcall(method, ...)
+	end
 
 	local function releaseDelayedTimer(timer)
 		if timer ~= nil then
@@ -56,6 +70,63 @@ function Runtime.start(model, role, snapshotCommand)
 		end
 	end
 
+	local function stopRecoveryTimers(context)
+		if context == nil then
+			return
+		end
+		releaseDelayedTimer(context.verificationPollTimer)
+		releaseDelayedTimer(context.verificationDeadlineTimer)
+		context.verificationPollTimer = nil
+		context.verificationDeadlineTimer = nil
+	end
+
+	local function restoreFocus(context)
+		if context.focusRestorationAttempted then
+			return context.focusRestored
+		end
+		context.focusRestorationAttempted = true
+
+		local application = context.priorFocus
+		if application == nil then
+			context.focusRestored = true
+			return true
+		end
+		local runningCallSucceeded, running = callSafely(application.isRunning, application)
+		if not runningCallSucceeded then
+			context.focusRestored = false
+			context.focusRetryable = true
+			return false
+		end
+		if not running then
+			context.focusRestored = true
+			return true
+		end
+
+		context.focusRetryable = true
+		local activationCallSucceeded, activated = callSafely(application.activate, application)
+		context.focusRestored = activationCallSucceeded and activated == true
+		return context.focusRestored
+	end
+
+	finishRecovery = function(context, result)
+		if context ~= recoveryContext or context.epoch ~= epoch or sleeping or stopped or context.finished then
+			return
+		end
+
+		context.finished = true
+		context.menuPending = false
+		stopRecoveryTimers(context)
+		local nextState, decisions = model.recoveryResult(state, result, currentTime())
+		state = nextState
+		lastRecoveryResult = {
+			kind = result.kind,
+			reason = result.reason,
+		}
+		lastRecoveryDecisions = decisions
+		restoreFocus(context)
+		recoveryContext = nil
+	end
+
 	local function completeActivation(context, result, application)
 		if
 			context ~= recoveryContext
@@ -67,20 +138,29 @@ function Runtime.start(model, role, snapshotCommand)
 			return
 		end
 
-		if result.kind == "ready" then
+		local completedResult = result
+		if completedResult.kind == "ready" then
 			local nextState = model.advanceRecovery(state, "selecting", currentTime())
 			if nextState == state then
-				context.activationResult = {
+				completedResult = {
 					kind = "failed",
 					reason = "activation-transition",
 				}
-				return
+			else
+				state = nextState
 			end
-			state = nextState
 		end
 
 		context.application = application
-		context.activationResult = result
+		context.applicationPID = application ~= nil and application:pid() or nil
+		context.activationResult = completedResult
+		lastActivationResult = completedResult
+		lastRecoveryApplication = application
+		if completedResult.kind == "ready" then
+			requestStartAction(context)
+		else
+			finishRecovery(context, completedResult)
+		end
 	end
 
 	local function observe(observation, callbackEpoch)
@@ -131,11 +211,16 @@ function Runtime.start(model, role, snapshotCommand)
 			return false
 		end
 		local callbackEpoch = epoch
+		local callbackConsumed = false
 		local task
 		task = hs.task.new(snapshotCommand, function(exitCode, stdout)
 			if activeTask == task then
 				activeTask = nil
 			end
+			if callbackConsumed then
+				return
+			end
+			callbackConsumed = true
 			if callbackEpoch ~= epoch or sleeping or stopped then
 				return
 			end
@@ -149,6 +234,7 @@ function Runtime.start(model, role, snapshotCommand)
 				activeTask = nil
 			end
 			if callbackEpoch == epoch and not sleeping and not stopped then
+				callbackConsumed = true
 				callback({ kind = "error", reason = "snapshot-command" }, callbackEpoch)
 			end
 			return false
@@ -243,6 +329,143 @@ function Runtime.start(model, role, snapshotCommand)
 		end
 	end
 
+	local function reacquireRecoveryApplication(context)
+		local application, failure = reacquireApplication()
+		if failure ~= nil then
+			return nil, failure
+		end
+		if application == nil then
+			return nil, { kind = "unavailable", reason = "gui-disappeared" }
+		end
+		if application:pid() ~= context.applicationPID then
+			return nil, { kind = "ambiguous", reason = "gui-instance-changed" }
+		end
+		return application, nil
+	end
+
+	local function requestVerificationSnapshot(context)
+		if context ~= recoveryContext or context.epoch ~= epoch or sleeping or stopped then
+			return
+		end
+
+		requestSnapshot(function(observation, callbackEpoch)
+			if context ~= recoveryContext or context.epoch ~= callbackEpoch then
+				return
+			end
+
+			local reacquired, _, failure = callSafely(reacquireRecoveryApplication, context)
+			if not reacquired then
+				finishRecovery(context, { kind = "failed", reason = "gui-inventory" })
+				return
+			end
+			if failure ~= nil then
+				finishRecovery(context, failure)
+				return
+			end
+			if observation.kind == "healthy" then
+				finishRecovery(context, { kind = "recovered", reason = observation.reason })
+			elseif observation.kind == "ambiguous" then
+				finishRecovery(context, { kind = "ambiguous", reason = observation.reason })
+			elseif observation.kind == "error" then
+				finishRecovery(context, { kind = "failed", reason = observation.reason })
+			end
+		end)
+	end
+
+	local function startVerification(context)
+		requestVerificationSnapshot(context)
+		if context ~= recoveryContext then
+			return
+		end
+
+		local pollTimer = hs.timer.new(verificationInterval, function()
+			requestVerificationSnapshot(context)
+		end)
+		context.verificationPollTimer = pollTimer
+		delayedTimers[pollTimer] = true
+		pollTimer:start()
+
+		local deadlineTimer
+		deadlineTimer = hs.timer.doAfter(verificationTimeout, function()
+			releaseDelayedTimer(deadlineTimer)
+			context.verificationDeadlineTimer = nil
+			finishRecovery(context, { kind = "failed", reason = "core-verification-timeout" })
+		end)
+		context.verificationDeadlineTimer = deadlineTimer
+		delayedTimers[deadlineTimer] = true
+	end
+
+	requestStartAction = function(context)
+		local reacquired, application, failure = callSafely(reacquireRecoveryApplication, context)
+		if not reacquired then
+			finishRecovery(context, { kind = "failed", reason = "gui-inventory" })
+			return
+		end
+		if failure ~= nil then
+			finishRecovery(context, failure)
+			return
+		end
+		local frontmostCallSucceeded, frontmost = callSafely(application.isFrontmost, application)
+		if not frontmostCallSucceeded or not frontmost then
+			finishRecovery(context, { kind = "failed", reason = "gui-not-frontmost" })
+			return
+		end
+
+		local function handleMenuItems(menuItems)
+			if not context.menuPending then
+				return
+			end
+			context.menuPending = false
+			if context ~= recoveryContext or context.epoch ~= epoch or sleeping or stopped then
+				return
+			end
+
+			local currentReacquired, currentApplication, currentFailure =
+				callSafely(reacquireRecoveryApplication, context)
+			if not currentReacquired then
+				finishRecovery(context, { kind = "failed", reason = "gui-inventory" })
+				return
+			end
+			if currentFailure ~= nil then
+				finishRecovery(context, currentFailure)
+				return
+			end
+			local currentFrontmostCallSucceeded, currentFrontmost =
+				callSafely(currentApplication.isFrontmost, currentApplication)
+			if not currentFrontmostCallSucceeded or not currentFrontmost then
+				finishRecovery(context, { kind = "failed", reason = "gui-not-frontmost" })
+				return
+			end
+
+			local path, menuError = model.findStartAction(menuItems, "S")
+			if path == nil then
+				finishRecovery(context, { kind = "unavailable", reason = menuError })
+				return
+			end
+			local selectionCallSucceeded, selected =
+				callSafely(currentApplication.selectMenuItem, currentApplication, path)
+			if not selectionCallSucceeded or not selected then
+				finishRecovery(context, { kind = "failed", reason = "menu-selection" })
+				return
+			end
+
+			local nextState = model.advanceRecovery(state, "verifying", currentTime())
+			if nextState == state then
+				finishRecovery(context, { kind = "failed", reason = "selection-transition" })
+				return
+			end
+			state = nextState
+			startVerification(context)
+		end
+
+		context.menuPending = true
+		local requestCallSucceeded = callSafely(application.getMenuItems, application, handleMenuItems)
+		if not requestCallSucceeded and context.menuPending then
+			context.menuPending = false
+			finishRecovery(context, { kind = "failed", reason = "menu-enumeration" })
+		end
+	end
+
 	local function waitForFrontmost(context)
 		local deadline = currentTime() + activationTimeout
 		local timer
@@ -320,6 +543,11 @@ function Runtime.start(model, role, snapshotCommand)
 			priorFocus = hs.application.frontmostApplication(),
 		}
 		recoveryContext = context
+		lastActivationResult = nil
+		lastPriorFocus = context.priorFocus
+		lastRecoveryApplication = nil
+		lastRecoveryDecisions = {}
+		lastRecoveryResult = nil
 
 		local bundleInfo = hs.application.infoForBundlePath(bundlePath)
 		if
@@ -362,10 +590,20 @@ function Runtime.start(model, role, snapshotCommand)
 				return
 			end
 
-			local nextState = model.lifecycle(state, "sleep", currentTime())
+			local nextState, decisions = model.lifecycle(state, "sleep", currentTime())
 			state = nextState
 			if recoveryContext ~= nil and recoveryContext.epoch == epoch then
-				recoveryContext.activationResult = { kind = "aborted", reason = "sleep" }
+				local context = recoveryContext
+				context.activationResult = { kind = "aborted", reason = "sleep" }
+				lastActivationResult = context.activationResult
+				lastRecoveryResult = { kind = "aborted", reason = "sleep" }
+				lastRecoveryDecisions = decisions
+				context.menuPending = false
+				stopRecoveryTimers(context)
+				if not restoreFocus(context) and context.focusRetryable then
+					pendingFocus = context.priorFocus
+				end
+				recoveryContext = nil
 			end
 			sleeping = true
 			if pollTimerRunning then
@@ -376,6 +614,13 @@ function Runtime.start(model, role, snapshotCommand)
 			epoch = epoch + 1
 		elseif event == hs.caffeinate.watcher.systemDidWake and sleeping then
 			epoch = epoch + 1
+			if pendingFocus ~= nil then
+				local runningCallSucceeded, running = callSafely(pendingFocus.isRunning, pendingFocus)
+				if runningCallSucceeded and running then
+					callSafely(pendingFocus.activate, pendingFocus)
+				end
+				pendingFocus = nil
+			end
 			local nextState = model.lifecycle(state, "wake", currentTime())
 			state = nextState
 			sleeping = false
@@ -389,6 +634,9 @@ function Runtime.start(model, role, snapshotCommand)
 			return
 		end
 
+		if recoveryContext ~= nil then
+			finishRecovery(recoveryContext, { kind = "failed", reason = "stopped" })
+		end
 		stopped = true
 		epoch = epoch + 1
 		if pollTimerRunning then
@@ -408,38 +656,64 @@ function Runtime.start(model, role, snapshotCommand)
 			delayedTimerCount = delayedTimerCount + 1
 		end
 
-		local activationResult
-		local priorFocusPID
-		local recoveryApplicationPID
+		local activationResult = lastActivationResult
+		local menuPending = false
+		local priorFocus = lastPriorFocus
+		local recoveryApplication = lastRecoveryApplication
 		if recoveryContext ~= nil then
 			if recoveryContext.activationResult ~= nil then
-				activationResult = {
-					kind = recoveryContext.activationResult.kind,
-					reason = recoveryContext.activationResult.reason,
-				}
+				activationResult = recoveryContext.activationResult
 			end
 			if recoveryContext.priorFocus ~= nil then
-				priorFocusPID = recoveryContext.priorFocus:pid()
+				priorFocus = recoveryContext.priorFocus
 			end
 			if recoveryContext.application ~= nil then
-				recoveryApplicationPID = recoveryContext.application:pid()
+				recoveryApplication = recoveryContext.application
 			end
+			menuPending = recoveryContext.menuPending == true
+		end
+
+		local activationResultCopy
+		if activationResult ~= nil then
+			activationResultCopy = {
+				kind = activationResult.kind,
+				reason = activationResult.reason,
+			}
+		end
+		local recoveryResultCopy
+		if lastRecoveryResult ~= nil then
+			recoveryResultCopy = {
+				kind = lastRecoveryResult.kind,
+				reason = lastRecoveryResult.reason,
+			}
+		end
+		local recoveryDecisions = {}
+		for _, decision in ipairs(lastRecoveryDecisions) do
+			local decisionCopy = {}
+			for key, value in pairs(decision) do
+				decisionCopy[key] = value
+			end
+			table.insert(recoveryDecisions, decisionCopy)
 		end
 
 		return {
-			activationResult = activationResult,
+			activationResult = activationResultCopy,
 			absenceCount = state.absenceCount,
 			delayedTimerCount = delayedTimerCount,
 			epoch = epoch,
 			graceUntil = state.graceUntil,
 			lastTimestamp = state.lastTimestamp,
 			lifecycleWatcherRunning = lifecycleWatcherRunning,
+			menuPending = menuPending,
 			observationInFlight = activeTask ~= nil,
+			pendingFocusPID = pendingFocus ~= nil and pendingFocus:pid() or nil,
 			persistentAlertKey = state.persistentAlertKey,
 			phase = state.phase,
 			pollTimerRunning = pollTimerRunning,
-			priorFocusPID = priorFocusPID,
-			recoveryApplicationPID = recoveryApplicationPID,
+			priorFocusPID = priorFocus ~= nil and priorFocus:pid() or nil,
+			recoveryApplicationPID = recoveryApplication ~= nil and recoveryApplication:pid() or nil,
+			recoveryDecisions = recoveryDecisions,
+			recoveryResult = recoveryResultCopy,
 			sleeping = sleeping,
 			stopped = stopped,
 		}

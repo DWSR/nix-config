@@ -86,7 +86,7 @@
   - _Requirements: 4.2, 4.3, 4.4, 5.2, 5.3_
   - _Boundary: Runtime Shell_
 
-- [ ] 3.3 Select the start action, verify recovery, and restore focus
+- [x] 3.3 Select the start action, verify recovery, and restore focus
   - Enumerate menus asynchronously only after activation and select only the model-approved localized path.
   - Verify one exact GUI-owned core in the declared role before completing recovery.
   - Restore prior focus on success, menu/verification failure, activation timeout, and sleep abort; retry one pending restoration before wake grace.
@@ -180,3 +180,4 @@
 - Wake grace and retry/cooldown eligibility are separate model deadlines; runtime scheduling must not collapse one into the other.
 - Epoch-stale runtime callbacks may release retained handles only; they must not emit model or external effects.
 - Post-activation work must reacquire the same expected-path GUI PID; saved application handles cannot authorize menu or verification effects.
+- Async callbacks must be consumed before effects; thrown, repeated, or reentrant callbacks must not duplicate selection, model results, or focus restoration.
