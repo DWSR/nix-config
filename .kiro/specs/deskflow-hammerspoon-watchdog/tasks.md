@@ -20,7 +20,7 @@
   - _Requirements: 2.1, 2.3, 2.4, 7.3_
   - _Boundary: Snapshot Helper_
 
-- [ ] 1.3 Add deterministic process and menu fixtures
+- [x] 1.3 Add deterministic process and menu fixtures
   - Add client/server snapshots plus absent, orphan, wrong-path, wrong-role, duplicate-GUI, and duplicate-core variants.
   - Add localized menu trees with one enabled Command-S start action plus disabled-only and zero/multiple candidate variants.
   - Completion is observable when plain Lua loads every fixture and each fixture names its intended classification or menu outcome.
