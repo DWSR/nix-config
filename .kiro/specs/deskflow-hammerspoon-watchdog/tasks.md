@@ -51,7 +51,7 @@
   - _Requirements: 4.1, 4.3, 5.2, 7.2, 7.7_
   - _Boundary: Pure Model_
 
-- [ ] 2.3 Implement grace, debounce, single-flight, and sleep/wake transitions
+- [x] 2.3 Implement grace, debounce, single-flight, and sleep/wake transitions
   - Implement startup/wake grace, two-observation absence debounce, healthy reset, and single-flight recovery phases.
   - Treat intentional stops as absence, ignore peer/connection state, and reset absence evidence after wake.
   - Transition an active recovery to an aborted state on sleep and emit focus-restoration work for the runtime shell.
@@ -176,3 +176,4 @@
 ## Implementation Notes
 
 - Hammerspoon menu trees include anonymous dense wrappers under `AXChildren[1]`; traverse them without adding localized path segments.
+- Runtime adapters must use `Model.advanceRecovery` for ordered `activating` -> `selecting` -> `verifying` transitions instead of mutating model state.

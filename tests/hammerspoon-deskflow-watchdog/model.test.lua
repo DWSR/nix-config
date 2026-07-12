@@ -19,6 +19,10 @@ assert(type(model) == "table", "model.lua must return a module table")
 assert(type(model.parseSnapshot) == "function", "model.lua must export parseSnapshot")
 assert(type(model.classify) == "function", "model.lua must export classify")
 assert(type(model.findStartAction) == "function", "model.lua must export findStartAction")
+assert(type(model.new) == "function", "model.lua must export new")
+assert(type(model.observe) == "function", "model.lua must export observe")
+assert(type(model.advanceRecovery) == "function", "model.lua must export advanceRecovery")
+assert(type(model.lifecycle) == "function", "model.lua must export lifecycle")
 
 local fixtureChunk, fixtureLoadError = loadfile(fixturePath, "t", {})
 assert(fixtureChunk, fixtureLoadError)
@@ -75,6 +79,26 @@ local function startLeaf(title, shortcut)
 		AXMenuItemCmdChar = shortcut or "S",
 		AXMenuItemCmdModifiers = { "cmd" },
 	}
+end
+
+local function policy(overrides)
+	local value = {
+		absenceThreshold = 2,
+		startupGrace = 15,
+		wakeGrace = 15,
+	}
+	for key, override in pairs(overrides or {}) do
+		value[key] = override
+	end
+	return value
+end
+
+local function assertDecisionKinds(decisions, expectedKinds, context)
+	assert(type(decisions) == "table", context .. " must return decisions")
+	assertEqual(#decisions, #expectedKinds, context .. " decision count")
+	for index, expectedKind in ipairs(expectedKinds) do
+		assertEqual(decisions[index].kind, expectedKind, context .. " decision " .. index)
+	end
 end
 
 local function assertParseError(snapshot, context)
@@ -514,6 +538,255 @@ test("findStartAction rejects collection-wrapper cycles and aliases", function()
 		wrappedMenu("Fichier", { sharedLeaf }),
 		wrappedMenu("Fenster", { sharedLeaf }),
 	}, "aliased wrapped item")
+end)
+
+test("new starts login grace with an isolated validated policy", function()
+	local inputPolicy = policy({ retryDelays = { 5, 15 } })
+	local state, stateError = model.new(inputPolicy, 100)
+	assert(state, stateError)
+	assertEqual(state.phase, "grace", "initial phase")
+	assertEqual(state.graceUntil, 115, "startup grace deadline")
+	assertEqual(state.absenceCount, 0, "initial absence evidence")
+	assertEqual(state.lastTimestamp, 100, "initial timestamp")
+	assert(state.policy ~= inputPolicy, "state must isolate its policy from caller mutation")
+	assert(state.policy.retryDelays ~= inputPolicy.retryDelays, "state must deep-copy nested policy values")
+	local successor = model.observe(state, { kind = "healthy" }, 101)
+	assert(successor.policy ~= state.policy, "successor must not share its predecessor policy")
+	assert(successor.policy.retryDelays ~= state.policy.retryDelays, "successor must isolate nested policy values")
+	inputPolicy.retryDelays[1] = 99
+	state.policy.retryDelays[1] = 88
+	assertEqual(successor.policy.retryDelays[1], 5, "successor nested policy snapshot")
+	successor.policy.retryDelays[2] = 77
+	assertEqual(state.policy.retryDelays[2], 15, "predecessor nested policy snapshot")
+	inputPolicy.absenceThreshold = 9
+	assertEqual(state.policy.absenceThreshold, 2, "copied absence threshold")
+
+	local invalidCases = {
+		{ name = "missing policy", value = nil, now = 0 },
+		{ name = "missing threshold", value = { startupGrace = 15, wakeGrace = 15 }, now = 0 },
+		{ name = "zero threshold", value = policy({ absenceThreshold = 0 }), now = 0 },
+		{ name = "fractional threshold", value = policy({ absenceThreshold = 1.5 }), now = 0 },
+		{ name = "negative startup grace", value = policy({ startupGrace = -1 }), now = 0 },
+		{ name = "infinite wake grace", value = policy({ wakeGrace = math.huge }), now = 0 },
+		{ name = "negative timestamp", value = policy(), now = -1 },
+		{ name = "non-number timestamp", value = policy(), now = "now" },
+	}
+	for _, invalid in ipairs(invalidCases) do
+		local invalidState, invalidError = model.new(invalid.value, invalid.now)
+		assert(invalidState == nil, invalid.name .. " must fail closed")
+		assert(type(invalidError) == "string" and invalidError ~= "", invalid.name .. " must explain rejection")
+	end
+end)
+
+test("startup grace ignores absence before requiring two post-grace observations", function()
+	local initial = assert(model.new(policy(), 100))
+	local duringGrace, duringDecisions = model.observe(initial, { kind = "absent" }, 114)
+	assertEqual(duringGrace.phase, "grace", "pre-deadline phase")
+	assertEqual(duringGrace.absenceCount, 0, "pre-deadline absence evidence")
+	assertDecisionKinds(duringDecisions, {}, "pre-deadline observation")
+	assertEqual(initial.lastTimestamp, 100, "observe must not mutate its input state")
+
+	local firstMiss, firstDecisions = model.observe(duringGrace, { kind = "absent" }, 115)
+	assertEqual(firstMiss.phase, "observing", "phase after startup grace")
+	assertEqual(firstMiss.absenceCount, 1, "first post-grace absence")
+	assertDecisionKinds(firstDecisions, {}, "first post-grace absence")
+
+	local recovering, recoveryDecisions = model.observe(firstMiss, { kind = "absent" }, 120)
+	assertEqual(recovering.phase, "activating", "recovery admission phase")
+	assertEqual(recovering.absenceCount, 0, "consumed absence evidence")
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "second post-grace absence")
+
+	local thresholdThree = assert(model.new(policy({ absenceThreshold = 3, startupGrace = 0 }), 200))
+	local thresholdThreeFirst, thresholdThreeFirstDecisions = model.observe(thresholdThree, { kind = "absent" }, 200)
+	local thresholdThreeSecond, thresholdThreeSecondDecisions =
+		model.observe(thresholdThreeFirst, { kind = "absent" }, 205)
+	local thresholdThreeRecovery, thresholdThreeRecoveryDecisions =
+		model.observe(thresholdThreeSecond, { kind = "absent" }, 210)
+	assertDecisionKinds(thresholdThreeFirstDecisions, {}, "custom threshold first absence")
+	assertDecisionKinds(thresholdThreeSecondDecisions, {}, "custom threshold second absence")
+	assertDecisionKinds(thresholdThreeRecoveryDecisions, { "recover" }, "custom threshold third absence")
+	assertEqual(thresholdThreeRecovery.phase, "activating", "custom threshold recovery phase")
+end)
+
+test("healthy observations reset consecutive absence evidence without using connection state", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+	assertEqual(firstMiss.absenceCount, 1, "first absence")
+
+	local healthy, healthyDecisions = model.observe(firstMiss, {
+		kind = "healthy",
+		peerReachable = false,
+		connectionState = "disconnected",
+	}, 1)
+	assertEqual(healthy.phase, "observing", "healthy phase")
+	assertEqual(healthy.absenceCount, 0, "healthy reset")
+	assertDecisionKinds(healthyDecisions, {}, "healthy observation")
+
+	local nextMiss, nextDecisions = model.observe(healthy, { kind = "absent" }, 2)
+	assertEqual(nextMiss.absenceCount, 1, "fresh absence sequence")
+	assertDecisionKinds(nextDecisions, {}, "fresh first absence")
+end)
+
+test("intentional stop is recoverable absence and peer metadata cannot suppress it", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local firstMiss = model.observe(initial, {
+		kind = "absent",
+		reason = "operator-stopped",
+		peerReachable = true,
+		connectionState = "connected",
+	}, 0)
+	local recovering, decisions = model.observe(firstMiss, {
+		kind = "absent",
+		reason = "operator-stopped",
+		peerReachable = true,
+		connectionState = "connected",
+	}, 5)
+
+	assertEqual(recovering.phase, "activating", "intentional-stop recovery phase")
+	assertDecisionKinds(decisions, { "recover" }, "intentional-stop recovery")
+end)
+
+test("ambiguous and error observations break absence sequences without recovery", function()
+	for _, unsafeKind in ipairs({ "ambiguous", "error" }) do
+		local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+		local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+		local unsafe, unsafeDecisions = model.observe(firstMiss, { kind = unsafeKind }, 1)
+		assertEqual(unsafe.absenceCount, 0, unsafeKind .. " reset")
+		assertDecisionKinds(unsafeDecisions, {}, unsafeKind .. " observation")
+
+		local nextMiss, nextDecisions = model.observe(unsafe, { kind = "absent" }, 2)
+		assertEqual(nextMiss.phase, "observing", unsafeKind .. " fresh sequence phase")
+		assertEqual(nextMiss.absenceCount, 1, unsafeKind .. " fresh sequence evidence")
+		assertDecisionKinds(nextDecisions, {}, unsafeKind .. " fresh first absence")
+	end
+end)
+
+test("overlapping polls cannot start a second recovery in any active phase", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+	local activating = model.observe(firstMiss, { kind = "absent" }, 5)
+	local selecting = model.advanceRecovery(activating, "selecting", 6)
+	local verifying = model.advanceRecovery(selecting, "verifying", 7)
+
+	for _, active in ipairs({ activating, selecting, verifying }) do
+		local afterPoll, decisions = model.observe(active, { kind = "absent" }, 10)
+		assertEqual(afterPoll.phase, active.phase, active.phase .. " overlap phase")
+		assertDecisionKinds(decisions, {}, active.phase .. " overlap")
+	end
+end)
+
+test("advanceRecovery owns ordered activating to selecting to verifying progression", function()
+	local initial = assert(model.new(policy({ startupGrace = 0, retryDelays = { 5, 15 } }), 0))
+	local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+	local activating = model.observe(firstMiss, { kind = "absent" }, 5)
+
+	local selecting, selectingDecisions = model.advanceRecovery(activating, "selecting", 6)
+	assertEqual(selecting.phase, "selecting", "selecting progression")
+	assertEqual(selecting.lastTimestamp, 6, "selecting timestamp")
+	assert(selecting.policy ~= activating.policy, "selecting must isolate predecessor policy")
+	assert(selecting.policy.retryDelays ~= activating.policy.retryDelays, "selecting must deep-copy policy")
+	assertDecisionKinds(selectingDecisions, {}, "selecting progression")
+
+	local verifying, verifyingDecisions = model.advanceRecovery(selecting, "verifying", 7)
+	assertEqual(verifying.phase, "verifying", "verifying progression")
+	assertEqual(verifying.lastTimestamp, 7, "verifying timestamp")
+	assertDecisionKinds(verifyingDecisions, {}, "verifying progression")
+
+	local invalidTransitions = {
+		{ name = "skip selecting", state = activating, phase = "verifying", now = 6 },
+		{ name = "repeat activating", state = activating, phase = "activating", now = 6 },
+		{ name = "reverse selecting", state = selecting, phase = "activating", now = 7 },
+		{ name = "reverse verifying", state = verifying, phase = "selecting", now = 8 },
+		{ name = "unknown phase", state = selecting, phase = "finished", now = 7 },
+		{ name = "stale transition", state = activating, phase = "selecting", now = 4 },
+		{ name = "outside recovery", state = initial, phase = "selecting", now = 1 },
+	}
+	for _, invalid in ipairs(invalidTransitions) do
+		local unchanged, decisions = model.advanceRecovery(invalid.state, invalid.phase, invalid.now)
+		assert(unchanged == invalid.state, invalid.name .. " must preserve state")
+		assertDecisionKinds(decisions, {}, invalid.name)
+	end
+end)
+
+test("sleep aborts every active recovery phase and requests focus restoration", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+	local activating = model.observe(firstMiss, { kind = "absent" }, 5)
+	local selecting = model.advanceRecovery(activating, "selecting", 6)
+	local verifying = model.advanceRecovery(selecting, "verifying", 7)
+
+	for _, active in ipairs({ activating, selecting, verifying }) do
+		local sleeping, decisions = model.lifecycle(active, "sleep", 10)
+		assertEqual(sleeping.phase, "sleeping", active.phase .. " sleep phase")
+		assertEqual(sleeping.recoveryPhase, "aborted", active.phase .. " aborted recovery")
+		assertEqual(sleeping.interruptedRecoveryPhase, active.phase, active.phase .. " interruption source")
+		assertEqual(sleeping.absenceCount, 0, active.phase .. " cleared absence evidence")
+		assertDecisionKinds(decisions, { "abort-recovery", "restore-focus" }, active.phase .. " sleep")
+	end
+
+	local observing = assert(model.new(policy({ startupGrace = 0 }), 20))
+	observing = model.observe(observing, { kind = "healthy" }, 20)
+	local sleeping, decisions = model.lifecycle(observing, "sleep", 21)
+	assertEqual(sleeping.phase, "sleeping", "idle sleep phase")
+	assert(sleeping.recoveryPhase == nil, "idle sleep must not invent an aborted recovery")
+	assertDecisionKinds(decisions, {}, "idle sleep")
+
+	local sleepingAfterPoll, sleepingPollDecisions = model.observe(sleeping, { kind = "absent" }, 22)
+	assertEqual(sleepingAfterPoll.phase, "sleeping", "sleeping observation phase")
+	assertEqual(sleepingAfterPoll.absenceCount, 0, "sleeping observation evidence")
+	assertDecisionKinds(sleepingPollDecisions, {}, "sleeping observation")
+end)
+
+test("wake clears prior evidence and starts a fresh wake grace period", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local firstMiss = model.observe(initial, { kind = "absent" }, 0)
+	local recovering = model.observe(firstMiss, { kind = "absent" }, 5)
+	local sleeping = model.lifecycle(recovering, "sleep", 12)
+	assertEqual(sleeping.recoveryPhase, "aborted", "pre-wake aborted recovery")
+	local staleWake, staleWakeDecisions = model.lifecycle(sleeping, "wake", 11)
+	assert(staleWake == sleeping, "stale wake must preserve sleeping state")
+	assertEqual(staleWake.lastTimestamp, 12, "stale wake timestamp")
+	assert(staleWake.graceUntil == nil, "stale wake must not create grace")
+	assertDecisionKinds(staleWakeDecisions, {}, "stale wake")
+	local waking, wakeDecisions = model.lifecycle(sleeping, "wake", 20)
+	assertEqual(waking.phase, "grace", "wake phase")
+	assertEqual(waking.graceUntil, 35, "wake grace deadline")
+	assertEqual(waking.absenceCount, 0, "wake absence reset")
+	assert(waking.recoveryPhase == nil, "wake must clear recovery state")
+	assert(waking.interruptedRecoveryPhase == nil, "wake must clear interruption state")
+	assertDecisionKinds(wakeDecisions, {}, "wake")
+
+	local duringGrace, duringDecisions = model.observe(waking, { kind = "absent" }, 34)
+	assertEqual(duringGrace.absenceCount, 0, "wake-grace absence evidence")
+	assertDecisionKinds(duringDecisions, {}, "wake-grace observation")
+
+	local firstPostWake = model.observe(duringGrace, { kind = "absent" }, 35)
+	assertEqual(firstPostWake.phase, "observing", "post-wake observing phase")
+	assertEqual(firstPostWake.absenceCount, 1, "first post-wake absence")
+	local postWakeRecovery, recoveryDecisions = model.observe(firstPostWake, { kind = "absent" }, 40)
+	assertEqual(postWakeRecovery.phase, "activating", "post-wake recovery phase")
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "post-wake recovery")
+end)
+
+test("non-monotonic timestamps and malformed events fail closed", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 10))
+	local observing = model.observe(initial, { kind = "healthy" }, 10)
+
+	local staleObservation, staleDecisions = model.observe(observing, { kind = "absent" }, 9)
+	assert(staleObservation == observing, "stale observation must preserve state")
+	assertDecisionKinds(staleDecisions, {}, "stale observation")
+
+	local invalidObservation, invalidDecisions = model.observe(observing, { kind = "unknown" }, 11)
+	assert(invalidObservation == observing, "invalid observation must preserve state")
+	assertDecisionKinds(invalidDecisions, {}, "invalid observation")
+
+	local staleLifecycle, staleLifecycleDecisions = model.lifecycle(observing, "sleep", 9)
+	assert(staleLifecycle == observing, "stale lifecycle event must preserve state")
+	assertDecisionKinds(staleLifecycleDecisions, {}, "stale lifecycle event")
+
+	local invalidLifecycle, invalidLifecycleDecisions = model.lifecycle(observing, "restart", 11)
+	assert(invalidLifecycle == observing, "invalid lifecycle event must preserve state")
+	assertDecisionKinds(invalidLifecycleDecisions, {}, "invalid lifecycle event")
 end)
 
 print("Deskflow watchdog model tests passed (" .. testCount .. " cases)")

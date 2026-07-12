@@ -386,4 +386,254 @@ function Model.findStartAction(menuTree, shortcut)
 	return nil, "multiple start actions"
 end
 
+local activeRecoveryPhases = {
+	activating = true,
+	selecting = true,
+	verifying = true,
+}
+
+local observationKinds = {
+	healthy = true,
+	absent = true,
+	ambiguous = true,
+	error = true,
+}
+
+local function isFiniteNonnegativeNumber(value)
+	return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge and value >= 0
+end
+
+local function validatePolicy(policy)
+	if type(policy) ~= "table" then
+		return "policy must be a table"
+	end
+	if
+		type(policy.absenceThreshold) ~= "number"
+		or math.type(policy.absenceThreshold) ~= "integer"
+		or policy.absenceThreshold < 1
+	then
+		return "absence threshold must be a positive integer"
+	end
+	if not isFiniteNonnegativeNumber(policy.startupGrace) then
+		return "startup grace must be a finite non-negative number"
+	end
+	if not isFiniteNonnegativeNumber(policy.wakeGrace) then
+		return "wake grace must be a finite non-negative number"
+	end
+	return nil
+end
+
+local function deepCopy(value, seen)
+	if type(value) ~= "table" then
+		return value
+	end
+	seen = seen or {}
+	if seen[value] ~= nil then
+		return seen[value]
+	end
+
+	local copy = {}
+	seen[value] = copy
+	for key, item in pairs(value) do
+		copy[deepCopy(key, seen)] = deepCopy(item, seen)
+	end
+	return copy
+end
+
+local function graceDeadline(now, duration)
+	local deadline = now + duration
+	if not isFiniteNonnegativeNumber(deadline) then
+		return nil
+	end
+	return deadline
+end
+
+local function isValidState(state)
+	if type(state) ~= "table" or validatePolicy(state.policy) ~= nil then
+		return false
+	end
+	if not isFiniteNonnegativeNumber(state.lastTimestamp) then
+		return false
+	end
+	if
+		type(state.absenceCount) ~= "number"
+		or math.type(state.absenceCount) ~= "integer"
+		or state.absenceCount < 0
+		or state.absenceCount >= state.policy.absenceThreshold
+	then
+		return false
+	end
+
+	local phase = state.phase
+	if phase ~= "grace" and phase ~= "observing" and phase ~= "sleeping" and not activeRecoveryPhases[phase] then
+		return false
+	end
+	if phase == "grace" then
+		if
+			not isFiniteNonnegativeNumber(state.graceUntil)
+			or state.graceUntil < state.lastTimestamp
+			or state.absenceCount ~= 0
+		then
+			return false
+		end
+	elseif state.graceUntil ~= nil then
+		return false
+	end
+	if (phase == "sleeping" or activeRecoveryPhases[phase]) and state.absenceCount ~= 0 then
+		return false
+	end
+
+	if state.recoveryPhase == nil and state.interruptedRecoveryPhase == nil then
+		return true
+	end
+	return phase == "sleeping"
+		and state.recoveryPhase == "aborted"
+		and activeRecoveryPhases[state.interruptedRecoveryPhase] == true
+end
+
+function Model.new(policy, now)
+	local policyError = validatePolicy(policy)
+	if policyError ~= nil then
+		return nil, policyError
+	end
+	if not isFiniteNonnegativeNumber(now) then
+		return nil, "timestamp must be a finite non-negative number"
+	end
+
+	local deadline = graceDeadline(now, policy.startupGrace)
+	if deadline == nil then
+		return nil, "startup grace deadline is invalid"
+	end
+
+	return {
+		phase = "grace",
+		policy = deepCopy(policy),
+		graceUntil = deadline,
+		absenceCount = 0,
+		lastTimestamp = now,
+	}
+end
+
+function Model.observe(state, observed, now)
+	if
+		not isValidState(state)
+		or type(observed) ~= "table"
+		or not observationKinds[observed.kind]
+		or not isFiniteNonnegativeNumber(now)
+		or now < state.lastTimestamp
+	then
+		return state, {}
+	end
+
+	local nextState = deepCopy(state)
+	nextState.lastTimestamp = now
+	if nextState.phase == "sleeping" or activeRecoveryPhases[nextState.phase] then
+		return nextState, {}
+	end
+
+	if nextState.phase == "grace" then
+		if now < nextState.graceUntil then
+			nextState.absenceCount = 0
+			return nextState, {}
+		end
+		nextState.phase = "observing"
+		nextState.graceUntil = nil
+		nextState.absenceCount = 0
+	end
+
+	if observed.kind == "healthy" then
+		nextState.absenceCount = 0
+		return nextState, {}
+	end
+	if observed.kind == "ambiguous" or observed.kind == "error" then
+		nextState.absenceCount = 0
+		return nextState, {}
+	end
+
+	nextState.absenceCount = nextState.absenceCount + 1
+	if nextState.absenceCount < nextState.policy.absenceThreshold then
+		return nextState, {}
+	end
+
+	nextState.phase = "activating"
+	nextState.absenceCount = 0
+	return nextState, {
+		{ kind = "recover", phase = "activating" },
+	}
+end
+
+local recoveryTransitions = {
+	activating = "selecting",
+	selecting = "verifying",
+}
+
+-- Runtime reports completed GUI activation and menu selection through this pure phase transition.
+function Model.advanceRecovery(state, nextPhase, now)
+	if
+		not isValidState(state)
+		or not isFiniteNonnegativeNumber(now)
+		or now < state.lastTimestamp
+		or recoveryTransitions[state.phase] ~= nextPhase
+	then
+		return state, {}
+	end
+
+	local nextState = deepCopy(state)
+	nextState.phase = nextPhase
+	nextState.lastTimestamp = now
+	return nextState, {}
+end
+
+function Model.lifecycle(state, event, now)
+	if not isValidState(state) or (event ~= "sleep" and event ~= "wake") then
+		return state, {}
+	end
+	if not isFiniteNonnegativeNumber(now) or now < state.lastTimestamp then
+		return state, {}
+	end
+
+	if event == "wake" then
+		if state.phase ~= "sleeping" then
+			return state, {}
+		end
+		local deadline = graceDeadline(now, state.policy.wakeGrace)
+		if deadline == nil then
+			return state, {}
+		end
+
+		local nextState = deepCopy(state)
+		nextState.phase = "grace"
+		nextState.graceUntil = deadline
+		nextState.absenceCount = 0
+		nextState.lastTimestamp = now
+		nextState.recoveryPhase = nil
+		nextState.interruptedRecoveryPhase = nil
+		return nextState, {}
+	end
+
+	local nextState = deepCopy(state)
+	nextState.lastTimestamp = now
+	if nextState.phase == "sleeping" then
+		return nextState, {}
+	end
+
+	local interruptedRecoveryPhase = activeRecoveryPhases[nextState.phase] and nextState.phase or nil
+	nextState.phase = "sleeping"
+	nextState.graceUntil = nil
+	nextState.absenceCount = 0
+	if interruptedRecoveryPhase == nil then
+		nextState.recoveryPhase = nil
+		nextState.interruptedRecoveryPhase = nil
+		return nextState, {}
+	end
+
+	nextState.recoveryPhase = "aborted"
+	nextState.interruptedRecoveryPhase = interruptedRecoveryPhase
+	return nextState,
+		{
+			{ kind = "abort-recovery", phase = interruptedRecoveryPhase },
+			{ kind = "restore-focus" },
+		}
+end
+
 return Model
