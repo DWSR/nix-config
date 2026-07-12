@@ -392,6 +392,11 @@ local activeRecoveryPhases = {
 	verifying = true,
 }
 
+local waitingPhases = {
+	backoff = true,
+	cooldown = true,
+}
+
 local observationKinds = {
 	healthy = true,
 	absent = true,
@@ -419,6 +424,24 @@ local function validatePolicy(policy)
 	end
 	if not isFiniteNonnegativeNumber(policy.wakeGrace) then
 		return "wake grace must be a finite non-negative number"
+	end
+	if not isInteger(policy.attemptLimit) or policy.attemptLimit < 1 then
+		return "attempt limit must be a positive integer"
+	end
+	if not isFiniteNonnegativeNumber(policy.recoveryWindow) or policy.recoveryWindow == 0 then
+		return "recovery window must be a finite positive number"
+	end
+	local retryDelayCount = denseArrayLength(policy.retryDelays)
+	if retryDelayCount ~= policy.attemptLimit - 1 then
+		return "retry delays must contain one delay before each remaining attempt"
+	end
+	for _, delay in ipairs(policy.retryDelays) do
+		if not isFiniteNonnegativeNumber(delay) then
+			return "retry delays must be finite non-negative numbers"
+		end
+	end
+	if not isFiniteNonnegativeNumber(policy.cooldown) or policy.cooldown == 0 then
+		return "cooldown must be a finite positive number"
 	end
 	return nil
 end
@@ -463,9 +486,47 @@ local function isValidState(state)
 	then
 		return false
 	end
+	local attemptCount = denseArrayLength(state.attemptHistory)
+	if attemptCount == nil or attemptCount > state.policy.attemptLimit then
+		return false
+	end
+	local previousAttempt = -1
+	for _, attemptAt in ipairs(state.attemptHistory) do
+		if
+			not isFiniteNonnegativeNumber(attemptAt)
+			or attemptAt < previousAttempt
+			or attemptAt > state.lastTimestamp
+		then
+			return false
+		end
+		previousAttempt = attemptAt
+	end
+	if type(state.alertKeys) ~= "table" then
+		return false
+	end
+	for key, present in pairs(state.alertKeys) do
+		if type(key) ~= "string" or key == "" or present ~= true then
+			return false
+		end
+	end
+	if state.persistentAlertKey ~= nil then
+		if
+			type(state.persistentAlertKey) ~= "string"
+			or state.persistentAlertKey == ""
+			or state.alertKeys[state.persistentAlertKey] ~= true
+		then
+			return false
+		end
+	end
 
 	local phase = state.phase
-	if phase ~= "grace" and phase ~= "observing" and phase ~= "sleeping" and not activeRecoveryPhases[phase] then
+	if
+		phase ~= "grace"
+		and phase ~= "observing"
+		and phase ~= "sleeping"
+		and not activeRecoveryPhases[phase]
+		and not waitingPhases[phase]
+	then
 		return false
 	end
 	if phase == "grace" then
@@ -480,6 +541,60 @@ local function isValidState(state)
 		return false
 	end
 	if (phase == "sleeping" or activeRecoveryPhases[phase]) and state.absenceCount ~= 0 then
+		return false
+	end
+	if phase == "backoff" then
+		if
+			not isFiniteNonnegativeNumber(state.retryAt)
+			or state.retryAt < state.lastTimestamp
+			or state.cooldownUntil ~= nil
+		then
+			return false
+		end
+	elseif phase == "cooldown" then
+		if
+			not isFiniteNonnegativeNumber(state.cooldownUntil)
+			or state.cooldownUntil < state.lastTimestamp
+			or state.retryAt ~= nil
+			or attemptCount < state.policy.attemptLimit
+		then
+			return false
+		end
+	elseif phase == "grace" then
+		if state.retryAt ~= nil and state.cooldownUntil ~= nil then
+			return false
+		end
+		if state.retryAt ~= nil and not isFiniteNonnegativeNumber(state.retryAt) then
+			return false
+		end
+		if state.cooldownUntil ~= nil then
+			if not isFiniteNonnegativeNumber(state.cooldownUntil) or attemptCount < state.policy.attemptLimit then
+				return false
+			end
+		end
+	elseif phase == "sleeping" then
+		if state.retryAt ~= nil and state.cooldownUntil ~= nil then
+			return false
+		end
+		if state.retryAt ~= nil then
+			if not isFiniteNonnegativeNumber(state.retryAt) or attemptCount >= state.policy.attemptLimit then
+				return false
+			end
+		end
+		if state.cooldownUntil ~= nil then
+			if not isFiniteNonnegativeNumber(state.cooldownUntil) or attemptCount < state.policy.attemptLimit then
+				return false
+			end
+		end
+	elseif state.retryAt ~= nil or state.cooldownUntil ~= nil then
+		return false
+	end
+	if
+		phase ~= "cooldown"
+		and phase ~= "sleeping"
+		and not (phase == "grace" and state.cooldownUntil ~= nil)
+		and attemptCount >= state.policy.attemptLimit
+	then
 		return false
 	end
 
@@ -510,8 +625,67 @@ function Model.new(policy, now)
 		policy = deepCopy(policy),
 		graceUntil = deadline,
 		absenceCount = 0,
+		attemptHistory = {},
+		alertKeys = {},
 		lastTimestamp = now,
 	}
+end
+
+local function clearPersistentAlert(state)
+	if state.persistentAlertKey ~= nil then
+		state.alertKeys[state.persistentAlertKey] = nil
+		state.persistentAlertKey = nil
+	end
+end
+
+local function emitAlertOnce(state, decisions, key, reason, details)
+	if state.alertKeys[key] then
+		return
+	end
+
+	state.alertKeys[key] = true
+	local decision = {
+		kind = "alert",
+		key = key,
+		reason = reason,
+	}
+	for detail, value in pairs(details or {}) do
+		decision[detail] = value
+	end
+	table.insert(decisions, decision)
+end
+
+local function recordPersistentAlert(state, decisions, kind, reason)
+	if type(reason) ~= "string" or reason == "" then
+		reason = kind
+	end
+	local key = kind .. ":" .. reason
+	if state.persistentAlertKey ~= key then
+		clearPersistentAlert(state)
+		state.persistentAlertKey = key
+	end
+	emitAlertOnce(state, decisions, key, reason)
+end
+
+local function clearRecoveryState(state)
+	state.absenceCount = 0
+	state.attemptHistory = {}
+	state.retryAt = nil
+	state.cooldownUntil = nil
+	state.alertKeys = {}
+	state.persistentAlertKey = nil
+end
+
+local function advanceEligibility(state, now)
+	if state.phase == "backoff" and now >= state.retryAt then
+		state.phase = "observing"
+		state.retryAt = nil
+	elseif state.phase == "cooldown" and now >= state.cooldownUntil then
+		state.phase = "observing"
+		state.cooldownUntil = nil
+		state.attemptHistory = {}
+		state.alertKeys["recovery:cooldown"] = nil
+	end
 end
 
 function Model.observe(state, observed, now)
@@ -533,19 +707,39 @@ function Model.observe(state, observed, now)
 
 	if nextState.phase == "grace" then
 		if now < nextState.graceUntil then
-			nextState.absenceCount = 0
+			if observed.kind == "healthy" then
+				clearRecoveryState(nextState)
+			else
+				nextState.absenceCount = 0
+			end
 			return nextState, {}
 		end
-		nextState.phase = "observing"
+		if nextState.retryAt ~= nil then
+			nextState.phase = "backoff"
+		elseif nextState.cooldownUntil ~= nil then
+			nextState.phase = "cooldown"
+		else
+			nextState.phase = "observing"
+		end
 		nextState.graceUntil = nil
 		nextState.absenceCount = 0
 	end
 
+	advanceEligibility(nextState, now)
 	if observed.kind == "healthy" then
-		nextState.absenceCount = 0
+		if waitingPhases[nextState.phase] then
+			nextState.phase = "observing"
+		end
+		clearRecoveryState(nextState)
 		return nextState, {}
 	end
 	if observed.kind == "ambiguous" or observed.kind == "error" then
+		nextState.absenceCount = 0
+		local decisions = {}
+		recordPersistentAlert(nextState, decisions, observed.kind, observed.reason)
+		return nextState, decisions
+	end
+	if waitingPhases[nextState.phase] then
 		nextState.absenceCount = 0
 		return nextState, {}
 	end
@@ -584,6 +778,88 @@ function Model.advanceRecovery(state, nextPhase, now)
 	return nextState, {}
 end
 
+local recoveryResultKinds = {
+	recovered = true,
+	unavailable = true,
+	failed = true,
+	ambiguous = true,
+}
+
+local function retainedAttempts(state, now)
+	local cutoff = now - state.policy.recoveryWindow
+	local attempts = {}
+	for _, attemptAt in ipairs(state.attemptHistory) do
+		if attemptAt >= cutoff then
+			table.insert(attempts, attemptAt)
+		end
+	end
+	table.insert(attempts, now)
+	return attempts
+end
+
+function Model.recoveryResult(state, result, now)
+	if
+		not isValidState(state)
+		or not activeRecoveryPhases[state.phase]
+		or type(result) ~= "table"
+		or not recoveryResultKinds[result.kind]
+		or not isFiniteNonnegativeNumber(now)
+		or now < state.lastTimestamp
+	then
+		return state, {}
+	end
+
+	local nextState = deepCopy(state)
+	nextState.lastTimestamp = now
+	if result.kind == "recovered" then
+		nextState.phase = "observing"
+		clearRecoveryState(nextState)
+		return nextState, {}
+	end
+
+	local decisions = {}
+	local reason = result.reason
+	if type(reason) ~= "string" or reason == "" then
+		reason = result.kind
+	end
+	if result.kind == "unavailable" or result.kind == "ambiguous" then
+		recordPersistentAlert(nextState, decisions, result.kind, reason)
+	else
+		clearPersistentAlert(nextState)
+	end
+
+	nextState.absenceCount = 0
+	nextState.attemptHistory = retainedAttempts(nextState, now)
+	if #nextState.attemptHistory >= nextState.policy.attemptLimit then
+		local cooldownUntil = graceDeadline(now, nextState.policy.cooldown)
+		if cooldownUntil == nil then
+			return state, {}
+		end
+		nextState.phase = "cooldown"
+		nextState.retryAt = nil
+		nextState.cooldownUntil = cooldownUntil
+		emitAlertOnce(nextState, decisions, "recovery:cooldown", reason, {
+			cooldownUntil = cooldownUntil,
+		})
+		return nextState, decisions
+	end
+
+	local delay = nextState.policy.retryDelays[#nextState.attemptHistory]
+	local retryAt = graceDeadline(now, delay)
+	if retryAt == nil then
+		return state, {}
+	end
+	nextState.phase = "backoff"
+	nextState.retryAt = retryAt
+	nextState.cooldownUntil = nil
+	table.insert(decisions, {
+		kind = "retry-after",
+		delay = delay,
+		retryAt = retryAt,
+	})
+	return nextState, decisions
+end
+
 function Model.lifecycle(state, event, now)
 	if not isValidState(state) or (event ~= "sleep" and event ~= "wake") then
 		return state, {}
@@ -600,7 +876,6 @@ function Model.lifecycle(state, event, now)
 		if deadline == nil then
 			return state, {}
 		end
-
 		local nextState = deepCopy(state)
 		nextState.phase = "grace"
 		nextState.graceUntil = deadline
@@ -608,6 +883,14 @@ function Model.lifecycle(state, event, now)
 		nextState.lastTimestamp = now
 		nextState.recoveryPhase = nil
 		nextState.interruptedRecoveryPhase = nil
+		if nextState.retryAt ~= nil and nextState.retryAt <= now then
+			nextState.retryAt = nil
+		end
+		if nextState.cooldownUntil ~= nil and nextState.cooldownUntil <= now then
+			nextState.attemptHistory = {}
+			nextState.alertKeys["recovery:cooldown"] = nil
+			nextState.cooldownUntil = nil
+		end
 		return nextState, {}
 	end
 

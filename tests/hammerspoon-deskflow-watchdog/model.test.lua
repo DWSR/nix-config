@@ -22,6 +22,7 @@ assert(type(model.findStartAction) == "function", "model.lua must export findSta
 assert(type(model.new) == "function", "model.lua must export new")
 assert(type(model.observe) == "function", "model.lua must export observe")
 assert(type(model.advanceRecovery) == "function", "model.lua must export advanceRecovery")
+assert(type(model.recoveryResult) == "function", "model.lua must export recoveryResult")
 assert(type(model.lifecycle) == "function", "model.lua must export lifecycle")
 
 local fixtureChunk, fixtureLoadError = loadfile(fixturePath, "t", {})
@@ -86,6 +87,10 @@ local function policy(overrides)
 		absenceThreshold = 2,
 		startupGrace = 15,
 		wakeGrace = 15,
+		attemptLimit = 3,
+		recoveryWindow = 300,
+		retryDelays = { 5, 15 },
+		cooldown = 300,
 	}
 	for key, override in pairs(overrides or {}) do
 		value[key] = override
@@ -99,6 +104,41 @@ local function assertDecisionKinds(decisions, expectedKinds, context)
 	for index, expectedKind in ipairs(expectedKinds) do
 		assertEqual(decisions[index].kind, expectedKind, context .. " decision " .. index)
 	end
+end
+
+local function assertExactDecision(actual, expected, context)
+	assert(type(actual) == "table", context .. " must return a decision")
+	local actualCount = 0
+	for key, value in pairs(actual) do
+		actualCount = actualCount + 1
+		assertEqual(value, expected[key], context .. " field " .. tostring(key))
+	end
+	local expectedCount = 0
+	for key, value in pairs(expected) do
+		expectedCount = expectedCount + 1
+		assertEqual(actual[key], value, context .. " field " .. tostring(key))
+	end
+	assertEqual(actualCount, expectedCount, context .. " field count")
+end
+
+local function startRecovery(state, firstAbsenceAt, secondAbsenceAt)
+	local firstMiss, firstDecisions = model.observe(state, { kind = "absent" }, firstAbsenceAt)
+	assertDecisionKinds(firstDecisions, {}, "first recovery absence")
+	local recovering, recoveryDecisions = model.observe(firstMiss, { kind = "absent" }, secondAbsenceAt)
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "recovery admission")
+	assertEqual(recovering.phase, "activating", "recovery admission phase")
+	return recovering
+end
+
+local function enterCooldown()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local firstBackoff = model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	local secondFirst = model.observe(firstBackoff, { kind = "absent" }, 11)
+	local secondRecovery = model.observe(secondFirst, { kind = "absent" }, 16)
+	local secondBackoff = model.recoveryResult(secondRecovery, { kind = "failed", reason = "verification-timeout" }, 17)
+	local thirdFirst = model.observe(secondBackoff, { kind = "absent" }, 32)
+	local thirdRecovery = model.observe(thirdFirst, { kind = "absent" }, 37)
+	return model.recoveryResult(thirdRecovery, { kind = "failed", reason = "verification-timeout" }, 38)
 end
 
 local function assertParseError(snapshot, context)
@@ -541,7 +581,7 @@ test("findStartAction rejects collection-wrapper cycles and aliases", function()
 end)
 
 test("new starts login grace with an isolated validated policy", function()
-	local inputPolicy = policy({ retryDelays = { 5, 15 } })
+	local inputPolicy = policy()
 	local state, stateError = model.new(inputPolicy, 100)
 	assert(state, stateError)
 	assertEqual(state.phase, "grace", "initial phase")
@@ -568,6 +608,13 @@ test("new starts login grace with an isolated validated policy", function()
 		{ name = "fractional threshold", value = policy({ absenceThreshold = 1.5 }), now = 0 },
 		{ name = "negative startup grace", value = policy({ startupGrace = -1 }), now = 0 },
 		{ name = "infinite wake grace", value = policy({ wakeGrace = math.huge }), now = 0 },
+		{ name = "missing attempt limit", value = policy({ attemptLimit = false }), now = 0 },
+		{ name = "fractional attempt limit", value = policy({ attemptLimit = 2.5 }), now = 0 },
+		{ name = "zero recovery window", value = policy({ recoveryWindow = 0 }), now = 0 },
+		{ name = "short retry delays", value = policy({ retryDelays = { 5 } }), now = 0 },
+		{ name = "extra retry delay", value = policy({ retryDelays = { 5, 15, 30 } }), now = 0 },
+		{ name = "negative retry delay", value = policy({ retryDelays = { 5, -15 } }), now = 0 },
+		{ name = "zero cooldown", value = policy({ cooldown = 0 }), now = 0 },
 		{ name = "negative timestamp", value = policy(), now = -1 },
 		{ name = "non-number timestamp", value = policy(), now = "now" },
 	}
@@ -576,6 +623,336 @@ test("new starts login grace with an isolated validated policy", function()
 		assert(invalidState == nil, invalid.name .. " must fail closed")
 		assert(type(invalidError) == "string" and invalidError ~= "", invalid.name .. " must explain rejection")
 	end
+end)
+
+test("recovered result clears failed attempts and restores a fresh absence sequence", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local backingOff, failedDecisions =
+		model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	assertDecisionKinds(failedDecisions, { "retry-after" }, "first failed attempt")
+
+	local retryFirst = model.observe(backingOff, { kind = "absent" }, 11)
+	local retrying = model.observe(retryFirst, { kind = "absent" }, 16)
+	local recovered, recoveredDecisions = model.recoveryResult(retrying, { kind = "recovered" }, 17)
+	assertEqual(recovered.phase, "observing", "recovered phase")
+	assertEqual(recovered.absenceCount, 0, "recovered absence evidence")
+	assertEqual(#recovered.attemptHistory, 0, "recovered attempt history")
+	assert(recovered.retryAt == nil, "recovered result must clear retry eligibility")
+	assert(recovered.cooldownUntil == nil, "recovered result must clear cooldown")
+	assert(next(recovered.alertKeys) == nil, "recovered result must clear stale alert keys")
+	assertDecisionKinds(recoveredDecisions, {}, "recovered result")
+
+	local freshMiss, freshMissDecisions = model.observe(recovered, { kind = "absent" }, 18)
+	assertEqual(freshMiss.absenceCount, 1, "post-recovery first absence")
+	assertDecisionKinds(freshMissDecisions, {}, "post-recovery first absence")
+end)
+
+test("failed attempts use exact approved retry delays before one cooldown alert", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local firstBackoff, firstDecisions =
+		model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	assertEqual(firstBackoff.phase, "backoff", "first failure phase")
+	assertEqual(firstBackoff.retryAt, 11, "first retry deadline")
+	assertExactDecision(firstDecisions[1], {
+		kind = "retry-after",
+		delay = 5,
+		retryAt = 11,
+	}, "first retry decision")
+
+	local tooEarly, tooEarlyDecisions = model.observe(firstBackoff, { kind = "absent" }, 10)
+	assertEqual(tooEarly.phase, "backoff", "pre-backoff phase")
+	assertEqual(tooEarly.absenceCount, 0, "pre-backoff absence evidence")
+	assertDecisionKinds(tooEarlyDecisions, {}, "pre-backoff observation")
+	local retryFirst = model.observe(tooEarly, { kind = "absent" }, 11)
+	local retrying = model.observe(retryFirst, { kind = "absent" }, 16)
+	local secondBackoff, secondDecisions =
+		model.recoveryResult(retrying, { kind = "failed", reason = "verification-timeout" }, 17)
+	assertEqual(secondBackoff.retryAt, 32, "second retry deadline")
+	assertExactDecision(secondDecisions[1], {
+		kind = "retry-after",
+		delay = 15,
+		retryAt = 32,
+	}, "second retry decision")
+
+	local secondTooEarly = model.observe(secondBackoff, { kind = "absent" }, 31)
+	assertEqual(secondTooEarly.phase, "backoff", "second pre-backoff phase")
+	local thirdFirst = model.observe(secondTooEarly, { kind = "absent" }, 32)
+	local thirdRecovery = model.observe(thirdFirst, { kind = "absent" }, 37)
+	local cooldown, cooldownDecisions =
+		model.recoveryResult(thirdRecovery, { kind = "failed", reason = "verification-timeout" }, 38)
+	assertEqual(cooldown.phase, "cooldown", "third failure phase")
+	assertEqual(cooldown.cooldownUntil, 338, "cooldown deadline")
+	assertEqual(#cooldown.attemptHistory, 3, "bounded episode attempt count")
+	assertDecisionKinds(cooldownDecisions, { "alert" }, "cooldown entry")
+	assertExactDecision(cooldownDecisions[1], {
+		kind = "alert",
+		key = "recovery:cooldown",
+		reason = "verification-timeout",
+		cooldownUntil = 338,
+	}, "cooldown alert decision")
+end)
+
+test("cooldown expiry with continued absence starts a new bounded episode", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local firstBackoff = model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	local secondRecoveryFirst = model.observe(firstBackoff, { kind = "absent" }, 11)
+	local secondRecovery = model.observe(secondRecoveryFirst, { kind = "absent" }, 16)
+	local secondBackoff = model.recoveryResult(secondRecovery, { kind = "failed", reason = "verification-timeout" }, 17)
+	local thirdRecoveryFirst = model.observe(secondBackoff, { kind = "absent" }, 32)
+	local thirdRecovery = model.observe(thirdRecoveryFirst, { kind = "absent" }, 37)
+	local cooldown = model.recoveryResult(thirdRecovery, { kind = "failed", reason = "verification-timeout" }, 38)
+
+	local beforeExpiry, beforeExpiryDecisions = model.observe(cooldown, { kind = "absent" }, 337)
+	assertEqual(beforeExpiry.phase, "cooldown", "pre-expiry cooldown phase")
+	assertDecisionKinds(beforeExpiryDecisions, {}, "pre-expiry cooldown")
+	local newEpisodeFirst, expiryDecisions = model.observe(beforeExpiry, { kind = "absent" }, 338)
+	assertEqual(newEpisodeFirst.phase, "observing", "cooldown expiry phase")
+	assertEqual(newEpisodeFirst.absenceCount, 1, "new episode first absence")
+	assertEqual(#newEpisodeFirst.attemptHistory, 0, "expired episode history")
+	assert(newEpisodeFirst.cooldownUntil == nil, "expired cooldown deadline")
+	assert(newEpisodeFirst.alertKeys["recovery:cooldown"] == nil, "expired cooldown alert key")
+	assertDecisionKinds(expiryDecisions, {}, "cooldown expiry")
+
+	local newEpisodeRecovery, recoveryDecisions = model.observe(newEpisodeFirst, { kind = "absent" }, 343)
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "new episode recovery")
+	local newEpisodeBackoff, retryDecisions =
+		model.recoveryResult(newEpisodeRecovery, { kind = "failed", reason = "verification-timeout" }, 344)
+	assertEqual(#newEpisodeBackoff.attemptHistory, 1, "new episode first failure")
+	assertExactDecision(retryDecisions[1], {
+		kind = "retry-after",
+		delay = 5,
+		retryAt = 349,
+	}, "new episode retry decision")
+end)
+
+test("wake grace remains separate from sleeping backoff when health clears retry state", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local backoff = model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	local sleeping, sleepDecisions = model.lifecycle(backoff, "sleep", 7)
+	assertEqual(sleeping.phase, "sleeping", "backoff sleep phase")
+	assertEqual(sleeping.retryAt, 11, "sleeping retry deadline")
+	assertDecisionKinds(sleepDecisions, {}, "backoff sleep")
+
+	local waking, wakeDecisions = model.lifecycle(sleeping, "wake", 8)
+	assertEqual(waking.phase, "grace", "backoff wake phase")
+	assertEqual(waking.graceUntil, 23, "independent backoff wake grace")
+	assertEqual(waking.retryAt, 11, "backoff eligibility retained during wake grace")
+	assertDecisionKinds(wakeDecisions, {}, "backoff wake")
+
+	local healthy, healthyDecisions = model.observe(waking, { kind = "healthy" }, 9)
+	assertEqual(healthy.phase, "grace", "healthy before wake grace phase")
+	assertEqual(healthy.graceUntil, 23, "healthy preserves genuine wake grace")
+	assert(healthy.retryAt == nil, "healthy clears sleeping backoff eligibility")
+	assertEqual(#healthy.attemptHistory, 0, "healthy clears backoff attempt history")
+	assertDecisionKinds(healthyDecisions, {}, "healthy before backoff wake grace")
+
+	local beforeGrace, beforeGraceDecisions = model.observe(healthy, { kind = "absent" }, 22)
+	assertEqual(beforeGrace.phase, "grace", "backoff pre-grace absence phase")
+	assertEqual(beforeGrace.absenceCount, 0, "backoff pre-grace absence evidence")
+	assertDecisionKinds(beforeGraceDecisions, {}, "backoff pre-grace absence")
+	local firstMiss = model.observe(beforeGrace, { kind = "absent" }, 23)
+	local retrying, retryDecisions = model.observe(firstMiss, { kind = "absent" }, 28)
+	assertEqual(retrying.phase, "activating", "healthy-reset backoff recovery phase")
+	assertDecisionKinds(retryDecisions, { "recover" }, "healthy-reset backoff recovery")
+end)
+
+test("wake grace dominates a sleeping backoff that expires during grace", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local backoff = model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+	local sleeping = model.lifecycle(backoff, "sleep", 7)
+	local waking = model.lifecycle(sleeping, "wake", 8)
+
+	local beforeGrace, beforeGraceDecisions = model.observe(waking, { kind = "absent" }, 22)
+	assertEqual(beforeGrace.phase, "grace", "expired-backoff pre-grace phase")
+	assertEqual(beforeGrace.retryAt, 11, "expired backoff retained until grace transition")
+	assertEqual(beforeGrace.absenceCount, 0, "expired-backoff pre-grace evidence")
+	assertDecisionKinds(beforeGraceDecisions, {}, "expired-backoff pre-grace absence")
+
+	local firstMiss, firstMissDecisions = model.observe(beforeGrace, { kind = "absent" }, 23)
+	assertEqual(firstMiss.phase, "observing", "expired backoff post-grace phase")
+	assert(firstMiss.retryAt == nil, "expired backoff clears at grace transition")
+	assertEqual(firstMiss.absenceCount, 1, "expired backoff first post-grace absence")
+	assertEqual(#firstMiss.attemptHistory, 1, "expired backoff retains rolling attempt history")
+	assertDecisionKinds(firstMissDecisions, {}, "expired backoff first post-grace absence")
+	local retrying, retryDecisions = model.observe(firstMiss, { kind = "absent" }, 28)
+	assertEqual(retrying.phase, "activating", "expired backoff recovery phase")
+	assertDecisionKinds(retryDecisions, { "recover" }, "expired backoff recovery")
+end)
+
+test("health before wake grace clears inherited cooldown without shortening wake grace", function()
+	local cooldown = enterCooldown()
+	assertEqual(cooldown.cooldownUntil, 338, "pre-sleep cooldown deadline")
+	local sleeping = model.lifecycle(cooldown, "sleep", 39)
+	local waking = model.lifecycle(sleeping, "wake", 40)
+	assertEqual(waking.graceUntil, 55, "independent cooldown wake grace")
+	assertEqual(waking.cooldownUntil, 338, "cooldown retained during wake grace")
+
+	local healthy, healthyDecisions = model.observe(waking, { kind = "healthy" }, 41)
+	assertEqual(healthy.phase, "grace", "pre-grace cooldown health phase")
+	assertEqual(healthy.graceUntil, 55, "pre-grace health preserves wake grace")
+	assert(healthy.cooldownUntil == nil, "pre-grace health clears cooldown")
+	assertEqual(#healthy.attemptHistory, 0, "pre-grace health clears cooldown attempts")
+	assert(healthy.alertKeys["recovery:cooldown"] == nil, "pre-grace health clears cooldown alert key")
+	assertDecisionKinds(healthyDecisions, {}, "pre-grace cooldown health")
+
+	local beforeGrace = model.observe(healthy, { kind = "absent" }, 54)
+	assertEqual(beforeGrace.phase, "grace", "healthy cooldown pre-grace absence phase")
+	assertEqual(beforeGrace.absenceCount, 0, "healthy cooldown pre-grace absence evidence")
+	local firstMiss = model.observe(beforeGrace, { kind = "absent" }, 55)
+	local recovering, recoveryDecisions = model.observe(firstMiss, { kind = "absent" }, 60)
+	assertEqual(recovering.phase, "activating", "pre-grace health recovery phase")
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "pre-grace health recovery")
+end)
+
+test("health after wake grace clears inherited cooldown immediately", function()
+	local sleeping = model.lifecycle(enterCooldown(), "sleep", 39)
+	local waking = model.lifecycle(sleeping, "wake", 40)
+	local beforeGrace = model.observe(waking, { kind = "absent" }, 54)
+	local waiting, waitingDecisions = model.observe(beforeGrace, { kind = "absent" }, 55)
+	assertEqual(waiting.phase, "cooldown", "post-grace inherited cooldown phase")
+	assertEqual(waiting.cooldownUntil, 338, "post-grace inherited cooldown deadline")
+	assertEqual(waiting.absenceCount, 0, "post-grace inherited cooldown evidence")
+	assertDecisionKinds(waitingDecisions, {}, "post-grace inherited cooldown")
+
+	local healthy, healthyDecisions = model.observe(waiting, { kind = "healthy" }, 56)
+	assertEqual(healthy.phase, "observing", "post-grace cooldown health phase")
+	assert(healthy.cooldownUntil == nil, "post-grace health clears cooldown")
+	assertEqual(#healthy.attemptHistory, 0, "post-grace health clears cooldown attempts")
+	assertDecisionKinds(healthyDecisions, {}, "post-grace cooldown health")
+	local firstMiss = model.observe(healthy, { kind = "absent" }, 57)
+	local recovering, recoveryDecisions = model.observe(firstMiss, { kind = "absent" }, 62)
+	assertEqual(recovering.phase, "activating", "post-grace health recovery phase")
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "post-grace health recovery")
+end)
+
+test("inherited cooldown expires independently after wake grace", function()
+	local sleeping = model.lifecycle(enterCooldown(), "sleep", 39)
+	local waking = model.lifecycle(sleeping, "wake", 40)
+	local beforeGrace = model.observe(waking, { kind = "absent" }, 54)
+	local waiting = model.observe(beforeGrace, { kind = "absent" }, 55)
+	local beforeExpiry, beforeExpiryDecisions = model.observe(waiting, { kind = "absent" }, 337)
+	assertEqual(beforeExpiry.phase, "cooldown", "inherited pre-expiry cooldown phase")
+	assertDecisionKinds(beforeExpiryDecisions, {}, "inherited pre-expiry cooldown")
+
+	local firstMiss, expiryDecisions = model.observe(beforeExpiry, { kind = "absent" }, 338)
+	assertEqual(firstMiss.phase, "observing", "inherited cooldown expiry phase")
+	assertEqual(firstMiss.absenceCount, 1, "inherited cooldown expiry evidence")
+	assertEqual(#firstMiss.attemptHistory, 0, "inherited cooldown expired attempts")
+	assert(firstMiss.cooldownUntil == nil, "inherited cooldown expired deadline")
+	assert(firstMiss.alertKeys["recovery:cooldown"] == nil, "inherited cooldown expired alert key")
+	assertDecisionKinds(expiryDecisions, {}, "inherited cooldown expiry")
+	local recovering, recoveryDecisions = model.observe(firstMiss, { kind = "absent" }, 343)
+	assertEqual(recovering.phase, "activating", "inherited cooldown expiry recovery phase")
+	assertDecisionKinds(recoveryDecisions, { "recover" }, "inherited cooldown expiry recovery")
+end)
+
+test("rolling attempt window retains its exact edge and expires older attempts", function()
+	local function secondBackoff()
+		local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+		local firstBackoff = model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 6)
+		local secondFirst = model.observe(firstBackoff, { kind = "absent" }, 11)
+		local secondRecovery = model.observe(secondFirst, { kind = "absent" }, 16)
+		return model.recoveryResult(secondRecovery, { kind = "failed", reason = "verification-timeout" }, 17)
+	end
+
+	local edgeThirdFirst = model.observe(secondBackoff(), { kind = "absent" }, 300)
+	local edgeThirdRecovery = model.observe(edgeThirdFirst, { kind = "absent" }, 305)
+	local edgeCooldown, edgeDecisions =
+		model.recoveryResult(edgeThirdRecovery, { kind = "failed", reason = "verification-timeout" }, 306)
+	assertEqual(edgeCooldown.phase, "cooldown", "exact-window-edge phase")
+	assertEqual(edgeCooldown.attemptHistory[1], 6, "exact-window-edge retained attempt")
+	assertDecisionKinds(edgeDecisions, { "alert" }, "exact-window-edge cooldown")
+
+	local expiredThirdFirst = model.observe(secondBackoff(), { kind = "absent" }, 301)
+	local expiredThirdRecovery = model.observe(expiredThirdFirst, { kind = "absent" }, 306)
+	local expiredBackoff, expiredDecisions =
+		model.recoveryResult(expiredThirdRecovery, { kind = "failed", reason = "verification-timeout" }, 307)
+	assertEqual(expiredBackoff.phase, "backoff", "expired-window phase")
+	assertEqual(#expiredBackoff.attemptHistory, 2, "expired-window attempt count")
+	assertEqual(expiredBackoff.attemptHistory[1], 17, "expired-window oldest attempt")
+	assertExactDecision(expiredDecisions[1], {
+		kind = "retry-after",
+		delay = 15,
+		retryAt = 322,
+	}, "expired-window retry decision")
+end)
+
+test("persistent reason alerts deduplicate by exact key until reason changes or health returns", function()
+	local initial = assert(model.new(policy({ startupGrace = 0 }), 0))
+	local ambiguous, ambiguousDecisions = model.observe(initial, { kind = "ambiguous", reason = "core-parent" }, 0)
+	assertDecisionKinds(ambiguousDecisions, { "alert" }, "first ambiguous reason")
+	assertExactDecision(ambiguousDecisions[1], {
+		kind = "alert",
+		key = "ambiguous:core-parent",
+		reason = "core-parent",
+	}, "ambiguous alert")
+
+	local persistent, persistentDecisions = model.observe(ambiguous, { kind = "ambiguous", reason = "core-parent" }, 1)
+	assertDecisionKinds(persistentDecisions, {}, "persistent ambiguous reason")
+	local changed, changedDecisions = model.observe(persistent, { kind = "error", reason = "snapshot-failed" }, 2)
+	assertDecisionKinds(changedDecisions, { "alert" }, "changed error reason")
+	assertExactDecision(changedDecisions[1], {
+		kind = "alert",
+		key = "error:snapshot-failed",
+		reason = "snapshot-failed",
+	}, "changed error alert")
+	assert(changed.alertKeys["ambiguous:core-parent"] == nil, "changed reason must discard stale key")
+
+	local prerequisite, prerequisiteDecisions =
+		model.observe(changed, { kind = "error", reason = "accessibility-denied" }, 3)
+	assertDecisionKinds(prerequisiteDecisions, { "alert" }, "prerequisite reason")
+	assertExactDecision(prerequisiteDecisions[1], {
+		kind = "alert",
+		key = "error:accessibility-denied",
+		reason = "accessibility-denied",
+	}, "prerequisite alert")
+	local repeatedPrerequisite, repeatedPrerequisiteDecisions =
+		model.observe(prerequisite, { kind = "error", reason = "accessibility-denied" }, 4)
+	assertDecisionKinds(repeatedPrerequisiteDecisions, {}, "persistent prerequisite reason")
+
+	local healthy, healthyDecisions = model.observe(repeatedPrerequisite, { kind = "healthy" }, 5)
+	assert(next(healthy.alertKeys) == nil, "healthy observation must clear stale alert keys")
+	assert(healthy.persistentAlertKey == nil, "healthy observation must clear persistent alert key")
+	assertDecisionKinds(healthyDecisions, {}, "healthy alert reset")
+	local recurring, recurringDecisions = model.observe(healthy, { kind = "error", reason = "accessibility-denied" }, 6)
+	assertDecisionKinds(recurringDecisions, { "alert" }, "reason after healthy reset")
+	assertExactDecision(recurringDecisions[1], {
+		kind = "alert",
+		key = "error:accessibility-denied",
+		reason = "accessibility-denied",
+	}, "reason after healthy alert")
+end)
+
+test("recovery-result reason alerts once while healthy clears cooldown and retry state", function()
+	local recovering = startRecovery(assert(model.new(policy({ startupGrace = 0 }), 0)), 0, 5)
+	local firstBackoff, firstDecisions =
+		model.recoveryResult(recovering, { kind = "unavailable", reason = "start-action-unavailable" }, 6)
+	assertDecisionKinds(firstDecisions, { "alert", "retry-after" }, "first unavailable result")
+	assertExactDecision(firstDecisions[1], {
+		kind = "alert",
+		key = "unavailable:start-action-unavailable",
+		reason = "start-action-unavailable",
+	}, "unavailable alert")
+
+	local secondFirst = model.observe(firstBackoff, { kind = "absent" }, 11)
+	local secondRecovery = model.observe(secondFirst, { kind = "absent" }, 16)
+	local secondBackoff, secondDecisions =
+		model.recoveryResult(secondRecovery, { kind = "unavailable", reason = "start-action-unavailable" }, 17)
+	assertDecisionKinds(secondDecisions, { "retry-after" }, "repeated unavailable result")
+	local thirdFirst = model.observe(secondBackoff, { kind = "absent" }, 32)
+	local thirdRecovery = model.observe(thirdFirst, { kind = "absent" }, 37)
+	local cooldown, cooldownDecisions =
+		model.recoveryResult(thirdRecovery, { kind = "unavailable", reason = "start-action-unavailable" }, 38)
+	assertDecisionKinds(cooldownDecisions, { "alert" }, "unavailable cooldown result")
+	assertEqual(cooldownDecisions[1].key, "recovery:cooldown", "unavailable cooldown alert key")
+
+	local healthy, healthyDecisions = model.observe(cooldown, { kind = "healthy" }, 39)
+	assertEqual(healthy.phase, "observing", "healthy cooldown reset phase")
+	assertEqual(#healthy.attemptHistory, 0, "healthy attempt reset")
+	assert(healthy.cooldownUntil == nil, "healthy cooldown reset")
+	assert(healthy.retryAt == nil, "healthy retry reset")
+	assert(next(healthy.alertKeys) == nil, "healthy recovery alert reset")
+	assertDecisionKinds(healthyDecisions, {}, "healthy recovery reset")
 end)
 
 test("startup grace ignores absence before requiring two post-grace observations", function()
@@ -652,7 +1029,12 @@ test("ambiguous and error observations break absence sequences without recovery"
 		local firstMiss = model.observe(initial, { kind = "absent" }, 0)
 		local unsafe, unsafeDecisions = model.observe(firstMiss, { kind = unsafeKind }, 1)
 		assertEqual(unsafe.absenceCount, 0, unsafeKind .. " reset")
-		assertDecisionKinds(unsafeDecisions, {}, unsafeKind .. " observation")
+		assertDecisionKinds(unsafeDecisions, { "alert" }, unsafeKind .. " observation")
+		assertExactDecision(unsafeDecisions[1], {
+			kind = "alert",
+			key = unsafeKind .. ":" .. unsafeKind,
+			reason = unsafeKind,
+		}, unsafeKind .. " alert")
 
 		local nextMiss, nextDecisions = model.observe(unsafe, { kind = "absent" }, 2)
 		assertEqual(nextMiss.phase, "observing", unsafeKind .. " fresh sequence phase")
@@ -787,6 +1169,17 @@ test("non-monotonic timestamps and malformed events fail closed", function()
 	local invalidLifecycle, invalidLifecycleDecisions = model.lifecycle(observing, "restart", 11)
 	assert(invalidLifecycle == observing, "invalid lifecycle event must preserve state")
 	assertDecisionKinds(invalidLifecycleDecisions, {}, "invalid lifecycle event")
+
+	local firstMiss = model.observe(observing, { kind = "absent" }, 11)
+	local recovering = model.observe(firstMiss, { kind = "absent" }, 16)
+	local staleResult, staleResultDecisions =
+		model.recoveryResult(recovering, { kind = "failed", reason = "verification-timeout" }, 15)
+	assert(staleResult == recovering, "stale recovery result must preserve state")
+	assertDecisionKinds(staleResultDecisions, {}, "stale recovery result")
+
+	local invalidResult, invalidResultDecisions = model.recoveryResult(recovering, { kind = "unknown" }, 17)
+	assert(invalidResult == recovering, "invalid recovery result must preserve state")
+	assertDecisionKinds(invalidResultDecisions, {}, "invalid recovery result")
 end)
 
 print("Deskflow watchdog model tests passed (" .. testCount .. " cases)")

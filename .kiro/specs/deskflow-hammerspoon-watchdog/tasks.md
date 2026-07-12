@@ -60,7 +60,7 @@
   - _Requirements: 2.2, 2.5, 2.6, 3.1, 3.2, 3.3, 3.4, 4.4, 7.2_
   - _Boundary: Pure Model_
 
-- [ ] 2.4 Implement retry, cooldown, and alert-key policy
+- [x] 2.4 Implement retry, cooldown, and alert-key policy
   - Implement the rolling attempt window, approved retry delays, attempt limit, cooldown restart, and persistent-reason alert deduplication.
   - Clear retry/cooldown and stale alert keys after a healthy observation.
   - Completion is observable when deterministic tests pass for successful recovery, repeated failures, cooldown re-entry, rolling-window expiry, and alert reset.
@@ -177,3 +177,4 @@
 
 - Hammerspoon menu trees include anonymous dense wrappers under `AXChildren[1]`; traverse them without adding localized path segments.
 - Runtime adapters must use `Model.advanceRecovery` for ordered `activating` -> `selecting` -> `verifying` transitions instead of mutating model state.
+- Wake grace and retry/cooldown eligibility are separate model deadlines; runtime scheduling must not collapse one into the other.
