@@ -218,6 +218,16 @@ function FakeHs.new(options)
 		return true
 	end
 
+	function fake:runningTasks()
+		local tasks = {}
+		for _, task in ipairs(self._tasks) do
+			if task._running then
+				table.insert(tasks, task)
+			end
+		end
+		return tasks
+	end
+
 	local applicationMethods = {}
 	applicationMethods.__index = applicationMethods
 

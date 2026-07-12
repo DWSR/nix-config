@@ -68,7 +68,7 @@
   - _Boundary: Pure Model_
 
 - [ ] 3. Implement the Hammerspoon runtime shell
-- [ ] 3.1 Connect asynchronous observation and lifecycle control
+- [x] 3.1 Connect asynchronous observation and lifecycle control
   - Retain poll, delayed, lifecycle-watcher, and task handles; invoke only the rendered snapshot-helper command.
   - Collect all matching GUI PID/path records, prevent overlapping observations, and pass complete inventories to the model.
   - Suspend on sleep, invalidate callback epochs, and ignore stale callbacks after epoch changes or reload.
@@ -178,3 +178,4 @@
 - Hammerspoon menu trees include anonymous dense wrappers under `AXChildren[1]`; traverse them without adding localized path segments.
 - Runtime adapters must use `Model.advanceRecovery` for ordered `activating` -> `selecting` -> `verifying` transitions instead of mutating model state.
 - Wake grace and retry/cooldown eligibility are separate model deadlines; runtime scheduling must not collapse one into the other.
+- Epoch-stale runtime callbacks may release retained handles only; they must not emit model or external effects.

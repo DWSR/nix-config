@@ -67,10 +67,12 @@ local task = hs.task.new("/nix/store/snapshot", function(exitCode, stdout, stder
 	table.insert(callbackOrder, "task")
 end, { "--fixture" })
 assert(task:start() == task and task:isRunning(), "task start must return a running handle")
+assert(#fake:runningTasks() == 1 and fake:runningTasks()[1] == task, "running tasks must be inspectable")
 assert(taskResult == nil, "task callback must wait for explicit completion")
 assert(fake:completeTask(task, 0, "snapshot\n", "") == true)
 assert(taskResult[1] == 0 and taskResult[2] == "snapshot\n" and taskResult[3] == "")
 assert(taskResult.at == 108 and not task:isRunning(), "task completion must use deterministic harness time")
+assert(#fake:runningTasks() == 0, "completed tasks must leave the running set")
 
 local terminatedCallbackRan = false
 local terminatedTask = hs.task.new("/nix/store/surface-gui", function()
