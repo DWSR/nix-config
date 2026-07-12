@@ -18,6 +18,7 @@ local model = modelChunk()
 assert(type(model) == "table", "model.lua must return a module table")
 assert(type(model.parseSnapshot) == "function", "model.lua must export parseSnapshot")
 assert(type(model.classify) == "function", "model.lua must export classify")
+assert(type(model.findStartAction) == "function", "model.lua must export findStartAction")
 
 local fixtureChunk, fixtureLoadError = loadfile(fixturePath, "t", {})
 assert(fixtureChunk, fixtureLoadError)
@@ -35,6 +36,45 @@ end
 
 local function assertEqual(actual, expected, context)
 	assert(actual == expected, context .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual))
+end
+
+local function assertPath(actual, expectedPath, context)
+	assert(type(actual) == "table", context .. " must return a path")
+	assertEqual(#actual, #expectedPath, context .. " path depth")
+	for index, expectedTitle in ipairs(expectedPath) do
+		assertEqual(actual[index], expectedTitle, context .. " title " .. index)
+	end
+end
+
+local function assertMenuError(menuTree, context)
+	local path, menuError = model.findStartAction(menuTree, "S")
+	assert(path == nil, context .. " must not return a path")
+	assert(type(menuError) == "string" and menuError ~= "", context .. " must return an error")
+end
+
+local function assertMalformedMenuError(menuTree, context)
+	local returned, path, menuError = pcall(model.findStartAction, menuTree, "S")
+	assert(returned, context .. " must return an error instead of throwing")
+	assert(path == nil, context .. " must not return a path")
+	assertEqual(menuError, "invalid menu tree", context .. " error")
+end
+
+local function wrappedMenu(title, items)
+	return {
+		AXRole = "AXMenuBarItem",
+		AXTitle = title,
+		AXChildren = { items },
+	}
+end
+
+local function startLeaf(title, shortcut)
+	return {
+		AXRole = "AXMenuItem",
+		AXTitle = title,
+		AXEnabled = true,
+		AXMenuItemCmdChar = shortcut or "S",
+		AXMenuItemCmdModifiers = { "cmd" },
+	}
 end
 
 local function assertParseError(snapshot, context)
@@ -213,6 +253,267 @@ test("classify maps malformed model inputs to error without decisions", function
 		assertEqual(observation.kind, "error", malformed[1])
 		assertNoRecovery(observation, malformed[1])
 	end
+end)
+
+test("findStartAction derives server and localized client menu paths", function()
+	for _, fixtureName in ipairs({ "serverStart", "clientStartLocalized" }) do
+		local fixture = fixtures.menus[fixtureName]
+		local path, menuError = model.findStartAction(fixture.tree, "S")
+		assert(path, fixtureName .. ": " .. tostring(menuError))
+		assertPath(path, fixture.expectedPath, fixtureName)
+	end
+end)
+
+test("findStartAction rejects unavailable and ambiguous fixture trees", function()
+	for _, fixtureName in ipairs({ "disabledOnly", "zeroCandidates", "multipleCandidates" }) do
+		assertMenuError(fixtures.menus[fixtureName].tree, fixtureName)
+	end
+end)
+
+test("findStartAction counts only enabled matching leaves", function()
+	local tree = {
+		{
+			AXTitle = "Fichier",
+			AXChildren = {
+				{
+					AXTitle = "Indisponible",
+					AXEnabled = false,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+				{
+					AXTitle = "Demarrer",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+			},
+		},
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path, tostring(menuError))
+	assertPath(path, { "Fichier", "Demarrer" }, "enabled leaf")
+end)
+
+test("findStartAction requires the exact Command modifier set", function()
+	local tree = {
+		{
+			AXTitle = "Actions",
+			AXChildren = {
+				{
+					AXTitle = "Commande puis Majuscule",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd", "shift" },
+				},
+				{
+					AXTitle = "Majuscule puis Commande",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "shift", "cmd" },
+				},
+				{
+					AXTitle = "Commande dupliquee",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd", "cmd" },
+				},
+				{
+					AXTitle = "Demarrer",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "s",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+			},
+		},
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path, tostring(menuError))
+	assertPath(path, { "Actions", "Demarrer" }, "exact modifiers")
+end)
+
+test("findStartAction ignores matching parents and preserves the full hierarchy", function()
+	local tree = {
+		{
+			AXTitle = "Outils",
+			AXEnabled = true,
+			AXMenuItemCmdChar = "S",
+			AXMenuItemCmdModifiers = { "cmd" },
+			AXChildren = {
+				{
+					AXTitle = "Controle",
+					AXChildren = {
+						{
+							AXTitle = "Relancer",
+							AXEnabled = true,
+							AXMenuItemCmdChar = "S",
+							AXMenuItemCmdModifiers = { "cmd" },
+						},
+					},
+				},
+			},
+		},
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path, tostring(menuError))
+	assertPath(path, { "Outils", "Controle", "Relancer" }, "nested leaf")
+end)
+
+test("findStartAction rejects an untitled ancestor instead of returning an incomplete path", function()
+	assertMalformedMenuError({
+		{
+			AXChildren = {
+				{
+					AXTitle = "Demarrer",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+			},
+		},
+	}, "untitled ancestor")
+	assertMalformedMenuError({
+		{
+			AXTitle = "",
+			AXChildren = {
+				{
+					AXTitle = "Demarrer",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+			},
+		},
+	}, "empty-title ancestor")
+end)
+
+test("findStartAction rejects sparse root and child arrays", function()
+	local validLeaf = {
+		AXTitle = "Demarrer",
+		AXEnabled = true,
+		AXMenuItemCmdChar = "S",
+		AXMenuItemCmdModifiers = { "cmd" },
+	}
+	local sparseRoot = { [1] = validLeaf, [3] = validLeaf }
+	local sparseChildren = { [1] = validLeaf, [3] = { AXTitle = "Quitter" } }
+
+	assertMalformedMenuError(sparseRoot, "sparse root")
+	assertMalformedMenuError({ { AXTitle = "Fichier", AXChildren = sparseChildren } }, "sparse children")
+end)
+
+test("findStartAction rejects cyclic menu nesting without throwing", function()
+	local cyclicItem = { AXTitle = "Boucle" }
+	cyclicItem.AXChildren = { cyclicItem }
+	local first = { AXTitle = "Premier" }
+	local second = { AXTitle = "Deuxieme" }
+	first.AXChildren = { second }
+	second.AXChildren = { first }
+
+	assertMalformedMenuError({ cyclicItem }, "self-referential nesting")
+	assertMalformedMenuError({ first }, "cyclic nesting")
+end)
+
+test("findStartAction rejects malformed menu nodes and child collections", function()
+	local validLeaf = {
+		AXTitle = "Demarrer",
+		AXEnabled = true,
+		AXMenuItemCmdChar = "S",
+		AXMenuItemCmdModifiers = { "cmd" },
+	}
+	local malformedTrees = {
+		{ name = "non-table tree", tree = "invalid" },
+		{ name = "non-array root", tree = { menu = { AXTitle = "Fichier" } } },
+		{ name = "non-table node", tree = { "Fichier" } },
+		{ name = "malformed node after candidate", tree = { validLeaf, "invalid" } },
+		{ name = "non-array children", tree = { { AXTitle = "Fichier", AXChildren = { menu = {} } } } },
+		{ name = "non-table children", tree = { { AXTitle = "Fichier", AXChildren = "invalid" } } },
+	}
+
+	for _, malformed in ipairs(malformedTrees) do
+		assertMalformedMenuError(malformed.tree, malformed.name)
+	end
+end)
+
+test("findStartAction tolerates an untitled separator outside the selected path", function()
+	local tree = {
+		{
+			AXTitle = "Fichier",
+			AXChildren = {
+				{ AXTitle = "", AXEnabled = false },
+				{
+					AXTitle = "Demarrer",
+					AXEnabled = true,
+					AXMenuItemCmdChar = "S",
+					AXMenuItemCmdModifiers = { "cmd" },
+				},
+			},
+		},
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path, tostring(menuError))
+	assertPath(path, { "Fichier", "Demarrer" }, "separator sibling")
+end)
+
+test("findStartAction traverses the production AXMenu collection wrapper transparently", function()
+	local tree = {
+		wrappedMenu("Fichier", {
+			{ AXRole = "AXMenuItem", AXTitle = "", AXEnabled = false },
+			startLeaf("Se connecter", "s"),
+		}),
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path, tostring(menuError))
+	assertPath(path, { "Fichier", "Se connecter" }, "production wrapper")
+end)
+
+test("findStartAction rejects multiple candidates discovered through collection wrappers", function()
+	local tree = {
+		wrappedMenu("Datei", { startLeaf("Starten") }),
+		wrappedMenu("Fenster", { startLeaf("Seitenleiste", "s") }),
+	}
+
+	local path, menuError = model.findStartAction(tree, "S")
+	assert(path == nil, "wrapped ambiguity must not return a path")
+	assertEqual(menuError, "multiple start actions", "wrapped ambiguity error")
+end)
+
+test("findStartAction rejects malformed anonymous collection wrappers", function()
+	local sparse = { [1] = startLeaf("Demarrer"), [3] = { AXTitle = "Quitter" } }
+	local mixed = { startLeaf("Demarrer") }
+	mixed.AXTitle = "not collection-only"
+	local malformedAncestor = { AXChildren = { startLeaf("Demarrer") } }
+	local malformedWrappers = {
+		{ name = "empty wrapper", tree = { wrappedMenu("Fichier", {}) } },
+		{ name = "sparse wrapper", tree = { wrappedMenu("Fichier", sparse) } },
+		{ name = "mixed wrapper", tree = { wrappedMenu("Fichier", mixed) } },
+		{ name = "untitled node inside wrapper", tree = { wrappedMenu("Fichier", { malformedAncestor }) } },
+	}
+
+	for _, malformed in ipairs(malformedWrappers) do
+		assertMalformedMenuError(malformed.tree, malformed.name)
+	end
+end)
+
+test("findStartAction rejects collection-wrapper cycles and aliases", function()
+	local cyclic = {}
+	cyclic[1] = cyclic
+	local sharedWrapper = { startLeaf("Demarrer") }
+	local sharedLeaf = startLeaf("Demarrer")
+
+	assertMalformedMenuError({ wrappedMenu("Fichier", cyclic) }, "cyclic wrapper")
+	assertMalformedMenuError({
+		wrappedMenu("Fichier", sharedWrapper),
+		wrappedMenu("Fenster", sharedWrapper),
+	}, "aliased wrapper")
+	assertMalformedMenuError({
+		wrappedMenu("Fichier", { sharedLeaf }),
+		wrappedMenu("Fenster", { sharedLeaf }),
+	}, "aliased wrapped item")
 end)
 
 print("Deskflow watchdog model tests passed (" .. testCount .. " cases)")

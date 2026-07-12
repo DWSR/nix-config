@@ -43,7 +43,7 @@
   - _Requirements: 2.1, 2.3, 2.4, 7.3_
   - _Boundary: Pure Model_
 
-- [ ] 2.2 Select the localized GUI start action safely
+- [x] 2.2 Select the localized GUI start action safely
   - Traverse the menu tree and return a localized path only when exactly one enabled leaf has a case-insensitive `S` shortcut and exactly the Command modifier.
   - Reject zero, disabled-only, and multiple candidates without a fallback selection.
   - Completion is observable when selector tests pass for server, client/localized, unavailable, and ambiguous fixtures.
@@ -172,3 +172,7 @@
   - _Depends: 5.1, 5.2, 5.3, 5.4_
   - _Requirements: 2.5, 4.1, 4.3, 4.5, 4.6, 4.7, 5.2, 5.3, 7.6, 7.7_
   - _Boundary: Verification_
+
+## Implementation Notes
+
+- Hammerspoon menu trees include anonymous dense wrappers under `AXChildren[1]`; traverse them without adding localized path segments.
