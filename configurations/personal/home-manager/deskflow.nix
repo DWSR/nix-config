@@ -59,7 +59,7 @@
       # Values are strings (the schema is attrsOf str); the renderer emits them
       # bare. Order here is cosmetic -- the renderer sorts keys alphabetically.
       options = {
-        heartbeat = "1500";
+        heartbeat = "1000";
         protocol = "barrier";
         relativeMouseMoves = "false";
         win32KeepForeground = "false";
