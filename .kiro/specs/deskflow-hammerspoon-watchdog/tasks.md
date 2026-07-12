@@ -5,7 +5,7 @@
 > before running that task.
 
 - [ ] 1. Establish process-snapshot and test foundations
-- [ ] 1.1 Build and package the kernel-backed process inventory
+- [x] 1.1 Build and package the kernel-backed process inventory
   - Implement a Darwin helper that enumerates current-user processes whose kernel name is exactly `deskflow-core` and reports PID, parent PID, and kernel-derived executable path.
   - Skip only candidates that disappear during enumeration, fail without partial output on other inspection errors, sort by PID, and return successful empty output for no matches.
   - Package the helper as the immutable command consumed by later configuration.
