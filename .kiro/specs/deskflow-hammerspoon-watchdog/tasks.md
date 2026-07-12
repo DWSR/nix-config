@@ -13,7 +13,7 @@
   - _Requirements: 2.1, 2.3, 2.4_
   - _Boundary: Snapshot Helper_
 
-- [ ] 1.2 Complete role extraction, encoding, and helper tests
+- [x] 1.2 Complete role extraction, encoding, and helper tests
   - Read argv through `KERN_PROCARGS2`, extract the first positional role, and emit the approved percent-encoded tab-separated contract.
   - Cover encoding, argv parsing, sorting, disappearance handling, and no-partial-output errors with C tests.
   - Completion is observable when helper tests pass and every emitted record decodes to PID, parent PID, absolute path, and role.

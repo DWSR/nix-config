@@ -9,6 +9,7 @@ stdenv.mkDerivation {
   version = "0.1.0";
 
   src = ./process-snapshot.c;
+  testSrc = ../../../tests/hammerspoon-deskflow-watchdog/process-snapshot.test.c;
   dontUnpack = true;
   strictDeps = true;
 
@@ -18,6 +19,18 @@ stdenv.mkDerivation {
     $CC -std=c17 -Wall -Wextra -Werror -O2 "$src" -o deskflow-process-snapshot -lproc
 
     runHook postBuild
+  '';
+
+  doCheck = true;
+  checkPhase = ''
+    runHook preCheck
+
+    $CC -std=c17 -Wall -Wextra -Werror -O2 \
+      -DPROCESS_SNAPSHOT_SOURCE="\"$src\"" \
+      "$testSrc" -o process-snapshot-tests -lproc
+    ./process-snapshot-tests
+
+    runHook postCheck
   '';
 
   installPhase = ''

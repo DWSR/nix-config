@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/proc_info.h>
+#include <sys/sysctl.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -17,13 +18,198 @@ struct process_record {
   pid_t pid;
   uint32_t ppid;
   char *path;
+  char *role;
 };
 
 static void free_records(struct process_record *records, size_t count) {
   for (size_t i = 0; i < count; ++i) {
     free(records[i].path);
+    free(records[i].role);
   }
   free(records);
+}
+
+static int encode_field(const char *input, char **output) {
+  size_t encoded_size = 0;
+  for (const unsigned char *cursor = (const unsigned char *)input;
+       *cursor != '\0'; ++cursor) {
+    size_t width = *cursor == '%' || *cursor == '\t' || *cursor == '\r' ||
+                           *cursor == '\n'
+                       ? 3
+                       : 1;
+    if (encoded_size > SIZE_MAX - width) {
+      fputs("encoded process field is too large\n", stderr);
+      return -1;
+    }
+    encoded_size += width;
+  }
+  if (encoded_size == SIZE_MAX) {
+    fputs("encoded process field is too large\n", stderr);
+    return -1;
+  }
+
+  char *encoded = malloc(encoded_size + 1);
+  if (encoded == NULL) {
+    fprintf(stderr, "allocating encoded process field failed: %s\n",
+            strerror(errno));
+    return -1;
+  }
+
+  char *destination = encoded;
+  for (const unsigned char *cursor = (const unsigned char *)input;
+       *cursor != '\0'; ++cursor) {
+    const char *escape = NULL;
+    switch (*cursor) {
+    case '%':
+      escape = "%25";
+      break;
+    case '\t':
+      escape = "%09";
+      break;
+    case '\r':
+      escape = "%0D";
+      break;
+    case '\n':
+      escape = "%0A";
+      break;
+    default:
+      *destination++ = (char)*cursor;
+      break;
+    }
+    if (escape != NULL) {
+      memcpy(destination, escape, 3);
+      destination += 3;
+    }
+  }
+  *destination = '\0';
+  *output = encoded;
+  return 0;
+}
+
+static int copy_argument(const unsigned char *argument, size_t length,
+                         char **output) {
+  if (length == SIZE_MAX) {
+    fputs("process argument is too large\n", stderr);
+    return -1;
+  }
+  char *copy = malloc(length + 1);
+  if (copy == NULL) {
+    fprintf(stderr, "copying process argument failed: %s\n", strerror(errno));
+    return -1;
+  }
+  memcpy(copy, argument, length);
+  copy[length] = '\0';
+  *output = copy;
+  return 0;
+}
+
+static int extract_role(const unsigned char *arguments, size_t size,
+                        char **role) {
+  if (size < sizeof(int)) {
+    fputs("KERN_PROCARGS2 returned incomplete argument data\n", stderr);
+    return -1;
+  }
+
+  int argument_count = 0;
+  memcpy(&argument_count, arguments, sizeof(argument_count));
+  if (argument_count < 0) {
+    fputs("KERN_PROCARGS2 returned an invalid argument count\n", stderr);
+    return -1;
+  }
+
+  const unsigned char *cursor = arguments + sizeof(argument_count);
+  const unsigned char *end = arguments + size;
+  const unsigned char *executable_end = memchr(cursor, '\0', (size_t)(end - cursor));
+  if (executable_end == NULL) {
+    fputs("KERN_PROCARGS2 returned an unterminated executable path\n", stderr);
+    return -1;
+  }
+  cursor = executable_end + 1;
+  while (cursor < end && *cursor == '\0') {
+    ++cursor;
+  }
+
+  bool options_ended = false;
+  for (int i = 0; i < argument_count; ++i) {
+    if (cursor >= end) {
+      fputs("KERN_PROCARGS2 returned incomplete argv data\n", stderr);
+      return -1;
+    }
+    const unsigned char *argument_end =
+        memchr(cursor, '\0', (size_t)(end - cursor));
+    if (argument_end == NULL) {
+      fputs("KERN_PROCARGS2 returned an unterminated argument\n", stderr);
+      return -1;
+    }
+
+    size_t length = (size_t)(argument_end - cursor);
+    if (i > 0) {
+      if (!options_ended && length == 2 && cursor[0] == '-' &&
+          cursor[1] == '-') {
+        options_ended = true;
+      } else if (options_ended || length == 0 || cursor[0] != '-' ||
+                 (length == 1 && cursor[0] == '-')) {
+        return copy_argument(cursor, length, role);
+      }
+    }
+    cursor = argument_end + 1;
+  }
+
+  return copy_argument((const unsigned char *)"", 0, role);
+}
+
+static int read_process_role(pid_t pid, char **role) {
+  int name[] = {CTL_KERN, KERN_PROCARGS2, pid};
+  size_t size = 0;
+  errno = 0;
+  if (sysctl(name, 3, NULL, &size, NULL, 0) != 0) {
+    int error = errno;
+    if (error == ESRCH) {
+      return 0;
+    }
+    fprintf(stderr, "KERN_PROCARGS2 size query failed for PID %jd: %s\n",
+            (intmax_t)pid, strerror(error));
+    return -1;
+  }
+  if (size < sizeof(int)) {
+    fprintf(stderr, "KERN_PROCARGS2 returned invalid data for PID %jd\n",
+            (intmax_t)pid);
+    return -1;
+  }
+
+  unsigned char *arguments = malloc(size);
+  if (arguments == NULL) {
+    fprintf(stderr, "allocating arguments for PID %jd failed: %s\n",
+            (intmax_t)pid, strerror(errno));
+    return -1;
+  }
+
+  size_t returned_size = size;
+  errno = 0;
+  if (sysctl(name, 3, arguments, &returned_size, NULL, 0) != 0) {
+    int error = errno;
+    free(arguments);
+    if (error == ESRCH) {
+      return 0;
+    }
+    fprintf(stderr, "KERN_PROCARGS2 failed for PID %jd: %s\n", (intmax_t)pid,
+            strerror(error));
+    return -1;
+  }
+  if (returned_size > size) {
+    free(arguments);
+    fprintf(stderr, "KERN_PROCARGS2 overflowed its buffer for PID %jd\n",
+            (intmax_t)pid);
+    return -1;
+  }
+
+  int result = extract_role(arguments, returned_size, role);
+  free(arguments);
+  if (result != 0) {
+    fprintf(stderr, "parsing arguments failed for PID %jd\n", (intmax_t)pid);
+    return -1;
+  }
+  return 1;
 }
 
 static int compare_records(const void *left, const void *right) {
@@ -142,20 +328,33 @@ static int inspect_process(pid_t pid, uid_t uid,
     return -1;
   }
 
-  char *path_copy = strdup(path);
-  if (path_copy == NULL) {
-    fprintf(stderr, "copying path for PID %jd failed: %s\n", (intmax_t)pid,
-            strerror(errno));
+  char *role = NULL;
+  int role_result = read_process_role(pid, &role);
+  if (role_result <= 0) {
+    free(role);
+    return role_result;
+  }
+
+  char *encoded_path = NULL;
+  char *encoded_role = NULL;
+  if (encode_field(path, &encoded_path) != 0 ||
+      encode_field(role, &encoded_role) != 0) {
+    free(role);
+    free(encoded_path);
+    free(encoded_role);
+    fprintf(stderr, "encoding fields failed for PID %jd\n", (intmax_t)pid);
     return -1;
   }
+  free(role);
 
   record->pid = pid;
   record->ppid = info.pbi_ppid;
-  record->path = path_copy;
+  record->path = encoded_path;
+  record->role = encoded_role;
   return 1;
 }
 
-int main(void) {
+static int snapshot_processes(FILE *output) {
   uid_t uid = getuid();
   pid_t *pids = NULL;
   size_t pid_count = 0;
@@ -192,20 +391,25 @@ int main(void) {
     qsort(records, record_count, sizeof(*records), compare_records);
   }
   for (size_t i = 0; i < record_count; ++i) {
-    if (printf("%jd\t%" PRIu32 "\t%s\n", (intmax_t)records[i].pid,
-               records[i].ppid, records[i].path) < 0) {
+    if (fprintf(output, "%jd\t%" PRIu32 "\t%s\t%s\n",
+                (intmax_t)records[i].pid, records[i].ppid, records[i].path,
+                records[i].role) < 0) {
       fprintf(stderr, "writing process snapshot failed: %s\n", strerror(errno));
       free_records(records, record_count);
-      return EXIT_FAILURE;
+      return -1;
     }
   }
 
-  if (fflush(stdout) != 0) {
+  if (fflush(output) != 0) {
     fprintf(stderr, "writing process snapshot failed: %s\n", strerror(errno));
     free_records(records, record_count);
-    return EXIT_FAILURE;
+    return -1;
   }
 
   free_records(records, record_count);
-  return EXIT_SUCCESS;
+  return 0;
+}
+
+int main(void) {
+  return snapshot_processes(stdout) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
