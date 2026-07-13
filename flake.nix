@@ -527,6 +527,41 @@
               deskflowProcessSnapshot =
                 pkgs.callPackage ./home-manager/common/hammerspoon-deskflow-watchdog/process-snapshot.nix
                   { };
+              deskflowWatchdogRenderTest = import ./tests/hammerspoon-deskflow-watchdog/render.test.nix {
+                inherit pkgs;
+              };
+              deskflowWatchdogModuleTest = import ./tests/hammerspoon-deskflow-watchdog/module.test.nix {
+                inherit pkgs;
+                inherit (inputs) home-manager;
+              };
+              renderDeskflowWatchdog = import ./home-manager/common/hammerspoon-deskflow-watchdog/render.nix {
+                trustedSnapshotHelper = deskflowProcessSnapshot;
+              };
+              deskflowWatchdogServerContribution = renderDeskflowWatchdog {
+                role = "server";
+                snapshotCommand = "${deskflowProcessSnapshot}/bin/deskflow-process-snapshot";
+              };
+              deskflowWatchdogSemanticConfig = {
+                keybindings = [ ];
+                extraConfig = deskflowWatchdogServerContribution;
+                reloadOnConfigChange = true;
+              };
+              deskflowWatchdogSemantic = mkSemanticCheck deskflowWatchdogSemanticConfig;
+              deskflowWatchdogBogusApi = "deskflowWatchdogBogusApi";
+              deskflowWatchdogBogusInit = pkgs.writeText "hammerspoon-deskflow-watchdog-bogus.lua" (
+                import ./home-manager/common/hammerspoon-keybindings/render.nix
+                  {
+                    inherit (pkgs) lib;
+                  }
+                  (
+                    deskflowWatchdogSemanticConfig
+                    // {
+                      extraConfig = deskflowWatchdogServerContribution + ''
+                        hs.${deskflowWatchdogBogusApi}.start()
+                      '';
+                    }
+                  )
+              );
               # The negative check re-runs the SAME lua-language-server gate as
               # mkSemanticCheck on the bogus fixture. semantic-check.nix keeps its
               # `.luarc.json` internal, so the keys are mirrored here: annotations
@@ -571,6 +606,61 @@
                     lua ${./.}/tests/hammerspoon-deskflow-watchdog/model.test.lua
                     lua ${./.}/tests/hammerspoon-deskflow-watchdog/fake-hs.test.lua
                     lua ${./.}/tests/hammerspoon-deskflow-watchdog/runtime.test.lua
+                    touch "$out"
+                  '';
+
+              hammerspoon-deskflow-watchdog-render =
+                pkgs.runCommand "hammerspoon-deskflow-watchdog-render"
+                  {
+                    moduleTest = deskflowWatchdogModuleTest;
+                    renderTest = deskflowWatchdogRenderTest;
+                  }
+                  ''
+                    test -e "$moduleTest"
+                    test -e "$renderTest"
+                    touch "$out"
+                  '';
+
+              hammerspoon-deskflow-watchdog-semantic =
+                pkgs.runCommand "hammerspoon-deskflow-watchdog-semantic"
+                  {
+                    nativeBuildInputs = [ pkgs.lua-language-server ];
+                    positiveSemantic = deskflowWatchdogSemantic;
+                  }
+                  ''
+                    set -eu
+
+                    test -e "$positiveSemantic"
+
+                    export HOME="$(mktemp -d)"
+                    export XDG_CACHE_HOME="$(mktemp -d)"
+
+                    work="$(mktemp -d)"
+                    mkdir -p "$work/ws" "$work/log" "$work/meta"
+                    cp ${deskflowWatchdogBogusInit} "$work/ws/init.lua"
+                    cp ${negativeLuarc} "$work/ws/.luarc.json"
+
+                    status=0
+                    diagnostics="$(lua-language-server --check "$work/ws" \
+                      --configpath "$work/ws/.luarc.json" \
+                      --logpath "$work/log" \
+                      --metapath "$work/meta" \
+                      --checklevel=Error 2>&1)" || status=$?
+
+                    printf '%s\n' "$diagnostics"
+
+                    if [ "$status" -eq 0 ]; then
+                      echo "Deskflow watchdog semantic negative check FAILED: lua-language-server accepted hs.${deskflowWatchdogBogusApi}." >&2
+                      exit 1
+                    fi
+
+                    if ! printf '%s' "$diagnostics" | grep -qF 'Undefined field `${deskflowWatchdogBogusApi}`.' \
+                      || ! printf '%s' "$diagnostics" | grep -qF '(undefined-field)'; then
+                      echo "Deskflow watchdog semantic negative check FAILED: expected undefined-field diagnostic for '${deskflowWatchdogBogusApi}':" >&2
+                      printf '%s\n' "$diagnostics" >&2
+                      exit 1
+                    fi
+
                     touch "$out"
                   '';
 

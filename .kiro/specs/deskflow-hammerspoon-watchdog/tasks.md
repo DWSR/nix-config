@@ -146,7 +146,7 @@
   - _Requirements: 7.2, 7.3, 7.7_
   - _Boundary: Verification_
 
-- [ ] 5.3 Register render, prerequisite, syntax, and semantic checks
+- [x] 5.3 Register render, prerequisite, syntax, and semantic checks
   - Add client/server/disabled render assertions and enabled-with-missing-prerequisite evaluation failures.
   - Run the existing Hammerspoon syntax and semantic gate over an isolated server contribution.
   - Completion is observable when targeted render/semantic derivations succeed and an injected nonexistent Hammerspoon API is rejected.
