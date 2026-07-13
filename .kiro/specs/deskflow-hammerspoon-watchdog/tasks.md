@@ -154,7 +154,7 @@
   - _Requirements: 1.1, 1.3, 1.4, 1.6, 7.1, 7.4_
   - _Boundary: Verification_
 
-- [ ] 5.4 Add both-host rollout assertions
+- [x] 5.4 Add both-host rollout assertions
   - Assert one personal server-role watchdog contribution with an immutable helper path and no Shopify watchdog sentinel.
   - Confirm the disabled Shopify client retains compatibility with explicit future enablement.
   - Completion is observable when the host-wiring check reports both hosts' enablement, inherited role, and rendered contribution state.
@@ -182,3 +182,4 @@
 - Post-activation work must reacquire the same expected-path GUI PID; saved application handles cannot authorize menu or verification effects.
 - Async callbacks must be consumed before effects; thrown, repeated, or reentrant callbacks must not duplicate selection, model results, or focus restoration.
 - Nix equality ignores string context while `builtins.toJSON` preserves it; canonicalize validated role enums before serialization and lexically pin the helper dependency.
+- Partition Home Manager definitions by source before disabled-baseline comparison; validate the owned source canonically and reuse the production predicate for adversarial fixtures.

@@ -947,6 +947,409 @@
                     printf '%s\n' "$hostReport" > $out
                     printf '%s\n' "$zellijReport" >> $out
                   '';
+
+              hammerspoon-deskflow-watchdog-wiring =
+                let
+                  sentinel = "-- deskflow-hammerspoon-watchdog:render-v1";
+                  expectedSnapshotCommand = "${deskflowProcessSnapshot}/bin/deskflow-process-snapshot";
+                  expectedSnapshotCommandText = builtins.unsafeDiscardStringContext expectedSnapshotCommand;
+                  expectedSnapshotContext = builtins.getContext expectedSnapshotCommand;
+                  expectedSnapshotContextPaths = builtins.attrNames expectedSnapshotContext;
+                  watchdogDefinitionSource = builtins.unsafeDiscardStringContext "${self.outPath}/home-manager/common/hammerspoon-deskflow-watchdog";
+                  count = needle: text: builtins.length (pkgs.lib.splitString needle text) - 1;
+                  canonicalRole =
+                    role:
+                    if role == "client" then
+                      "client"
+                    else if role == "server" then
+                      "server"
+                    else
+                      throw "hammerspoon Deskflow watchdog wiring: inherited Deskflow role must be client or server";
+                  inspectContribution =
+                    {
+                      contribution,
+                      definitions,
+                      enabled,
+                      role,
+                    }:
+                    let
+                      expectedContributionCount = if enabled then 1 else 0;
+                      canonicalContribution = renderDeskflowWatchdog {
+                        inherit role;
+                        snapshotCommand = expectedSnapshotCommand;
+                      };
+                      canonicalContributionText = builtins.unsafeDiscardStringContext canonicalContribution;
+                      contributionText = builtins.unsafeDiscardStringContext contribution;
+                      contributionContext = builtins.getContext contribution;
+                      isWatchdogDefinition =
+                        definition: builtins.isString definition.file && definition.file == watchdogDefinitionSource;
+                      isCanonicalDefinition =
+                        definition:
+                        builtins.isString definition.value
+                        && builtins.unsafeDiscardStringContext definition.value == canonicalContributionText
+                        && builtins.getContext definition.value == expectedSnapshotContext;
+                      definitionHasSnapshotContext =
+                        definition:
+                        builtins.isString definition.value
+                        && pkgs.lib.any (
+                          path: builtins.hasAttr path (builtins.getContext definition.value)
+                        ) expectedSnapshotContextPaths;
+                      watchdogDefinitions = builtins.filter isWatchdogDefinition definitions;
+                      otherSourceDefinitions = builtins.filter (
+                        definition: !(isWatchdogDefinition definition)
+                      ) definitions;
+                      canonicalDefinitions = builtins.filter isCanonicalDefinition watchdogDefinitions;
+                      watchdogDefinitionCount = builtins.length watchdogDefinitions;
+                      canonicalDefinitionCount = builtins.length canonicalDefinitions;
+                      otherSourceDefinitionSignatures = map (definition: {
+                        inherit (definition) file;
+                        text = builtins.unsafeDiscardStringContext definition.value;
+                        context = builtins.getContext definition.value;
+                      }) otherSourceDefinitions;
+                      snapshotContextDefinitionCount = builtins.length (
+                        builtins.filter definitionHasSnapshotContext watchdogDefinitions
+                      );
+                      canonicalContributionCount = count canonicalContributionText contributionText;
+                      sentinelCount = count sentinel contributionText;
+                      snapshotContextMatches =
+                        if enabled then
+                          contributionContext == expectedSnapshotContext
+                        else
+                          pkgs.lib.all (path: !(builtins.hasAttr path contributionContext)) expectedSnapshotContextPaths;
+                    in
+                    {
+                      inherit
+                        canonicalContributionCount
+                        canonicalDefinitionCount
+                        expectedContributionCount
+                        otherSourceDefinitionSignatures
+                        sentinelCount
+                        snapshotContextDefinitionCount
+                        snapshotContextMatches
+                        watchdogDefinitionCount
+                        ;
+                      valid =
+                        watchdogDefinitionCount == expectedContributionCount
+                        && canonicalDefinitionCount == watchdogDefinitionCount
+                        && canonicalContributionCount == expectedContributionCount
+                        && sentinelCount == expectedContributionCount
+                        && snapshotContextDefinitionCount == expectedContributionCount
+                        && snapshotContextMatches;
+                    };
+                  contributionInspectionModule =
+                    { lib, options, ... }:
+                    {
+                      options.home.hammerspoon.deskflowWatchdogWiringDefinitions = lib.mkOption {
+                        type = lib.types.anything;
+                        internal = true;
+                        readOnly = true;
+                      };
+                      config.home.hammerspoon.deskflowWatchdogWiringDefinitions =
+                        options.home.hammerspoon.extraConfig.definitionsWithLocations;
+                    };
+                  inspectedHost =
+                    hostName: modules:
+                    (self.darwinConfigurations.${hostName}.extendModules {
+                      modules = modules ++ [
+                        {
+                          home-manager.sharedModules = [ contributionInspectionModule ];
+                        }
+                      ];
+                    }).config.home-manager.users.brandonmcnama;
+                  validateConfig =
+                    {
+                      baselineHm,
+                      hm,
+                      expectedEnabled,
+                      expectedRole,
+                    }:
+                    let
+                      watchdog = hm.home.hammerspoon.deskflowWatchdog;
+                      role = canonicalRole hm.home.deskflow.role;
+                      contribution = hm.home.hammerspoon.extraConfig;
+                      inspection = inspectContribution {
+                        inherit contribution role;
+                        definitions = hm.home.hammerspoon.deskflowWatchdogWiringDefinitions;
+                        enabled = expectedEnabled;
+                      };
+                      baselineInspection = inspectContribution {
+                        contribution = baselineHm.home.hammerspoon.extraConfig;
+                        definitions = baselineHm.home.hammerspoon.deskflowWatchdogWiringDefinitions;
+                        enabled = false;
+                        inherit role;
+                      };
+                      otherSourceDefinitionsMatch =
+                        inspection.otherSourceDefinitionSignatures == baselineInspection.otherSourceDefinitionSignatures;
+                    in
+                    {
+                      inherit
+                        baselineInspection
+                        inspection
+                        otherSourceDefinitionsMatch
+                        role
+                        watchdog
+                        ;
+                      deskflowEnabled = hm.home.deskflow.enable;
+                      enableMatches = watchdog.enable == expectedEnabled;
+                      roleMatches = role == expectedRole;
+                      valid =
+                        watchdog.enable == expectedEnabled
+                        && hm.home.deskflow.enable
+                        && role == expectedRole
+                        && inspection.valid
+                        && baselineInspection.valid
+                        && otherSourceDefinitionsMatch;
+                    };
+                  checkConfig =
+                    {
+                      baselineHm,
+                      label,
+                      hm,
+                      expectedEnabled,
+                      expectedRole,
+                    }:
+                    let
+                      validation = validateConfig {
+                        inherit
+                          baselineHm
+                          expectedEnabled
+                          expectedRole
+                          hm
+                          ;
+                      };
+                      inherit (validation) inspection;
+                    in
+                    assert pkgs.lib.assertMsg validation.valid
+                      "hammerspoon Deskflow watchdog wiring: ${label} failed host validation: enable matches=${pkgs.lib.boolToString validation.enableMatches}; Deskflow enabled=${pkgs.lib.boolToString validation.deskflowEnabled}; role matches=${pkgs.lib.boolToString validation.roleMatches}; watchdog-source definitions=${toString inspection.watchdogDefinitionCount}/${toString inspection.expectedContributionCount}; canonical watchdog-source definitions=${toString inspection.canonicalDefinitionCount}; canonical chunks=${toString inspection.canonicalContributionCount}; sentinels=${toString inspection.sentinelCount}; helper-context definitions=${toString inspection.snapshotContextDefinitionCount}; helper context matches=${pkgs.lib.boolToString inspection.snapshotContextMatches}; disabled baseline valid=${pkgs.lib.boolToString validation.baselineInspection.valid}; other-source definitions match disabled baseline=${pkgs.lib.boolToString validation.otherSourceDefinitionsMatch} (requirements 6.1, 6.2, 6.3, 6.4, 7.5).";
+                    "${label}: watchdog enable=${pkgs.lib.boolToString validation.watchdog.enable}; Deskflow enable=${pkgs.lib.boolToString validation.deskflowEnabled}; inherited role=${builtins.toJSON validation.role}; watchdog-source definitions=${toString inspection.watchdogDefinitionCount}; canonical watchdog-source definitions=${toString inspection.canonicalDefinitionCount}; canonical chunks=${toString inspection.canonicalContributionCount}; sentinels=${toString inspection.sentinelCount}; helper-context definitions=${toString inspection.snapshotContextDefinitionCount}; disabled baseline valid=${pkgs.lib.boolToString validation.baselineInspection.valid}; other-source definitions match disabled baseline=${pkgs.lib.boolToString validation.otherSourceDefinitionsMatch}; helper path=${expectedSnapshotCommandText}";
+
+                  personal = inspectedHost "Brandons-MacBook-Pro" [ ];
+                  personalWithoutWatchdog = inspectedHost "Brandons-MacBook-Pro" [
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
+                    }
+                  ];
+                  shopify = inspectedHost "ShopifyLaptop" [ ];
+                  futureShopify = inspectedHost "ShopifyLaptop" [
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = true;
+                    }
+                  ];
+                  personalCheck = checkConfig {
+                    baselineHm = personalWithoutWatchdog;
+                    label = "Brandons-MacBook-Pro";
+                    hm = personal;
+                    expectedEnabled = true;
+                    expectedRole = "server";
+                  };
+                  shopifyCheck = checkConfig {
+                    baselineHm = shopify;
+                    label = "ShopifyLaptop";
+                    hm = shopify;
+                    expectedEnabled = false;
+                    expectedRole = "client";
+                  };
+                  futureShopifyCheck = checkConfig {
+                    baselineHm = shopify;
+                    label = "ShopifyLaptop future-enabled variant";
+                    hm = futureShopify;
+                    expectedEnabled = true;
+                    expectedRole = "client";
+                  };
+                  hostReport = pkgs.lib.concatStringsSep "\n" [
+                    personalCheck
+                    shopifyCheck
+                    futureShopifyCheck
+                  ];
+
+                  sourceForgedContributionModule = {
+                    _file = watchdogDefinitionSource;
+                    home.hammerspoon.extraConfig = ''
+                      -- forged unconditional watchdog-source contribution
+                    '';
+                  };
+                  sourceForgedHost =
+                    hostName: modules:
+                    inspectedHost hostName (
+                      [
+                        {
+                          home-manager.sharedModules = [ sourceForgedContributionModule ];
+                        }
+                      ]
+                      ++ modules
+                    );
+                  sourceForgedPersonal = sourceForgedHost "Brandons-MacBook-Pro" [ ];
+                  sourceForgedPersonalWithoutWatchdog = sourceForgedHost "Brandons-MacBook-Pro" [
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
+                    }
+                  ];
+                  sourceForgedShopify = sourceForgedHost "ShopifyLaptop" [ ];
+                  sourceForgedFutureShopify = sourceForgedHost "ShopifyLaptop" [
+                    {
+                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = true;
+                    }
+                  ];
+                  rejectedConfig =
+                    args:
+                    assert pkgs.lib.assertMsg (
+                      !(builtins.tryEval (builtins.deepSeq (checkConfig args) true)).success
+                    ) "hammerspoon Deskflow watchdog wiring source-forged host was accepted: ${args.label}";
+                    args.label;
+                  sourceForgedReport = pkgs.lib.concatStringsSep ", " [
+                    (rejectedConfig {
+                      baselineHm = sourceForgedPersonalWithoutWatchdog;
+                      label = "source-forged Brandons-MacBook-Pro";
+                      hm = sourceForgedPersonal;
+                      expectedEnabled = true;
+                      expectedRole = "server";
+                    })
+                    (rejectedConfig {
+                      baselineHm = sourceForgedShopify;
+                      label = "source-forged ShopifyLaptop";
+                      hm = sourceForgedShopify;
+                      expectedEnabled = false;
+                      expectedRole = "client";
+                    })
+                    (rejectedConfig {
+                      baselineHm = sourceForgedShopify;
+                      label = "source-forged ShopifyLaptop future-enabled variant";
+                      hm = sourceForgedFutureShopify;
+                      expectedEnabled = true;
+                      expectedRole = "client";
+                    })
+                  ];
+
+                  emptySnapshotContext = builtins.substring 0 0 expectedSnapshotCommand;
+                  canonicalServerContribution = renderDeskflowWatchdog {
+                    role = "server";
+                    snapshotCommand = expectedSnapshotCommand;
+                  };
+                  canonicalServerText = builtins.unsafeDiscardStringContext canonicalServerContribution;
+                  trustedDefinition = value: {
+                    file = watchdogDefinitionSource;
+                    inherit value;
+                  };
+                  inspectServerFixture =
+                    contribution: definitions:
+                    inspectContribution {
+                      inherit contribution definitions;
+                      enabled = true;
+                      role = "server";
+                    };
+                  rejectedFixture =
+                    label: inspection:
+                    assert pkgs.lib.assertMsg (
+                      !inspection.valid
+                    ) "hammerspoon Deskflow watchdog wiring adversarial fixture was accepted: ${label}";
+                    label;
+                  commentedScattered = ''
+                    ${sentinel}
+                    -- local role = "server"
+                    -- local snapshotCommand = ${builtins.toJSON expectedSnapshotCommandText}
+                  ''
+                  + emptySnapshotContext;
+                  detachedContextContribution = canonicalServerText + emptySnapshotContext;
+                  conflictingRole = ''
+                    local role = "client"
+                  '';
+                  duplicateHelper = ''
+                    local snapshotCommand = "/nix/store/00000000000000000000000000000000-forged/bin/deskflow-process-snapshot"
+                  '';
+                  multipleLocalDeclaration = ''
+                    local role, snapshotCommand = "client", "/tmp/forged-helper"
+                  '';
+                  commentSeparatedDeclarations = ''
+                    local role -- comment before assignment
+                    = "client"
+                    local snapshotCommand -- another comment before assignment
+                    = "/tmp/forged-helper"
+                  '';
+                  forgedHelperContribution =
+                    builtins.replaceStrings
+                      [ expectedSnapshotCommandText ]
+                      [ "/nix/store/00000000000000000000000000000000-forged/bin/deskflow-process-snapshot" ]
+                      canonicalServerText
+                    + emptySnapshotContext;
+                  duplicateSentinel = "\n${sentinel}\n";
+                  canonicalServerInspection = inspectServerFixture canonicalServerContribution [
+                    (trustedDefinition canonicalServerContribution)
+                  ];
+                  duplicateRoleInspection = inspectServerFixture (canonicalServerContribution + conflictingRole) [
+                    (trustedDefinition canonicalServerContribution)
+                    (trustedDefinition conflictingRole)
+                  ];
+                  duplicateHelperInspection = inspectServerFixture (canonicalServerContribution + duplicateHelper) [
+                    (trustedDefinition canonicalServerContribution)
+                    (trustedDefinition duplicateHelper)
+                  ];
+                  multipleLocalInspection =
+                    inspectServerFixture (canonicalServerContribution + multipleLocalDeclaration)
+                      [
+                        (trustedDefinition canonicalServerContribution)
+                        (trustedDefinition multipleLocalDeclaration)
+                      ];
+                  commentSeparatedInspection =
+                    inspectServerFixture (canonicalServerContribution + commentSeparatedDeclarations)
+                      [
+                        (trustedDefinition canonicalServerContribution)
+                        (trustedDefinition commentSeparatedDeclarations)
+                      ];
+                  adversarialReport =
+                    assert pkgs.lib.assertMsg canonicalServerInspection.valid
+                      "hammerspoon Deskflow watchdog wiring rejected the canonical adversarial baseline";
+                    pkgs.lib.concatStringsSep ", " [
+                      (rejectedFixture "commented/scattered markers" (
+                        inspectServerFixture commentedScattered [ (trustedDefinition commentedScattered) ]
+                      ))
+                      (rejectedFixture "helper context detached from canonical chunk" (
+                        inspectServerFixture detachedContextContribution [
+                          (trustedDefinition canonicalServerText)
+                          (trustedDefinition emptySnapshotContext)
+                        ]
+                      ))
+                      (rejectedFixture "duplicate/conflicting role declaration" duplicateRoleInspection)
+                      (rejectedFixture "duplicate/forged helper declaration" duplicateHelperInspection)
+                      (rejectedFixture "multiple local declaration" multipleLocalInspection)
+                      (rejectedFixture "comment-separated declarations" commentSeparatedInspection)
+                      (rejectedFixture "forged helper in rendered chunk" (
+                        inspectServerFixture forgedHelperContribution [
+                          (trustedDefinition forgedHelperContribution)
+                        ]
+                      ))
+                      (rejectedFixture "contextless helper in canonical text" (
+                        inspectServerFixture canonicalServerText [ (trustedDefinition canonicalServerText) ]
+                      ))
+                      (rejectedFixture "duplicate sentinel" (
+                        inspectServerFixture (canonicalServerContribution + duplicateSentinel) [
+                          (trustedDefinition canonicalServerContribution)
+                          (trustedDefinition duplicateSentinel)
+                        ]
+                      ))
+                      (rejectedFixture "duplicate canonical chunk" (
+                        inspectServerFixture (canonicalServerContribution + canonicalServerContribution) [
+                          (trustedDefinition canonicalServerContribution)
+                          (trustedDefinition canonicalServerContribution)
+                        ]
+                      ))
+                    ];
+                in
+                pkgs.runCommand "hammerspoon-deskflow-watchdog-wiring"
+                  {
+                    inherit
+                      adversarialReport
+                      hostReport
+                      sourceForgedReport
+                      ;
+                    snapshotHelper = deskflowProcessSnapshot;
+                  }
+                  ''
+                    set -eu
+                    test -x "$snapshotHelper/bin/deskflow-process-snapshot"
+                    printf '%s\n' "$hostReport" > "$out"
+                    printf 'canonical fixture accepted; adversarial fixtures rejected: %s\n' "$adversarialReport" >> "$out"
+                    printf 'actual host predicate rejected source-forged hosts: %s\n' "$sourceForgedReport" >> "$out"
+                  '';
             }
           );
 
