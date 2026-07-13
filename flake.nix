@@ -524,6 +524,9 @@
                 inherit pkgs;
                 inherit (pkgs) lib;
               };
+              deskflowProcessSnapshot =
+                pkgs.callPackage ./home-manager/common/hammerspoon-deskflow-watchdog/process-snapshot.nix
+                  { };
               # The negative check re-runs the SAME lua-language-server gate as
               # mkSemanticCheck on the bogus fixture. semantic-check.nix keeps its
               # `.luarc.json` internal, so the keys are mirrored here: annotations
@@ -555,6 +558,19 @@
                 test -f ${pkgs.hammerspoon}/Applications/Hammerspoon.app/Contents/Resources/docs.json
                 touch $out
               '';
+
+              hammerspoon-deskflow-watchdog-tests =
+                pkgs.runCommand "hammerspoon-deskflow-watchdog-tests"
+                  {
+                    nativeBuildInputs = [ pkgs.lua5_4 ];
+                    processSnapshot = deskflowProcessSnapshot;
+                  }
+                  ''
+                    test -x "$processSnapshot/bin/deskflow-process-snapshot"
+                    lua ${./.}/tests/hammerspoon-deskflow-watchdog/fixtures.test.lua
+                    lua ${./.}/tests/hammerspoon-deskflow-watchdog/model.test.lua
+                    touch "$out"
+                  '';
 
               # Positive (5.2): build the REAL mkSemanticCheck on a valid
               # representative fixture. `nix flake check` building this derivation

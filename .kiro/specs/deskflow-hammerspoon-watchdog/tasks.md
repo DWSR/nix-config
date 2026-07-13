@@ -132,7 +132,7 @@
   - _Boundary: Host Integration, Watchdog Module_
 
 - [ ] 5. Validate build, wiring, and runtime behavior
-- [ ] 5.1 Register helper and pure-model checks
+- [x] 5.1 Register helper and pure-model checks
   - Run the C helper tests and plain-Lua snapshot, classifier, menu-selector, lifecycle, and retry suites in the feature check.
   - Completion is observable when the targeted helper/model derivation succeeds and injected malformed/ambiguous fixtures fail only their expected assertions.
   - _Depends: 1.2, 2.4_
