@@ -105,7 +105,7 @@
   - _Boundary: Runtime Shell_
 
 - [ ] 4. Integrate configuration and host rollout
-- [ ] 4.1 Render the scoped role-aware Lua contribution
+- [x] 4.1 Render the scoped role-aware Lua contribution
   - Inject the validated Deskflow role and immutable snapshot-helper path into one local scope containing standalone model/runtime modules and one runtime start call.
   - Keep serialization limited to the role enum and Nix store path.
   - Completion is observable when isolated client/server renders are valid Lua and differ only by role.
@@ -181,3 +181,4 @@
 - Epoch-stale runtime callbacks may release retained handles only; they must not emit model or external effects.
 - Post-activation work must reacquire the same expected-path GUI PID; saved application handles cannot authorize menu or verification effects.
 - Async callbacks must be consumed before effects; thrown, repeated, or reentrant callbacks must not duplicate selection, model results, or focus restoration.
+- Nix equality ignores string context while `builtins.toJSON` preserves it; canonicalize validated role enums before serialization and lexically pin the helper dependency.
