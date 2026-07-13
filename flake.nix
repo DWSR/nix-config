@@ -569,6 +569,8 @@
                     test -x "$processSnapshot/bin/deskflow-process-snapshot"
                     lua ${./.}/tests/hammerspoon-deskflow-watchdog/fixtures.test.lua
                     lua ${./.}/tests/hammerspoon-deskflow-watchdog/model.test.lua
+                    lua ${./.}/tests/hammerspoon-deskflow-watchdog/fake-hs.test.lua
+                    lua ${./.}/tests/hammerspoon-deskflow-watchdog/runtime.test.lua
                     touch "$out"
                   '';
 

@@ -139,7 +139,7 @@
   - _Requirements: 7.1, 7.2, 7.3_
   - _Boundary: Verification_
 
-- [ ] 5.2 Register runtime-shell checks
+- [x] 5.2 Register runtime-shell checks
   - Run fake-Hammerspoon suites for observation, activation, menu selection, verification, focus restoration, interrupted recovery, alerts, and prohibited-effect absence.
   - Completion is observable when the runtime derivation succeeds without a running GUI, Accessibility grants, or host process mutation.
   - _Depends: 1.4, 3.4_
