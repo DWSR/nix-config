@@ -328,6 +328,11 @@ final: prev: {
     postPatch = ''
       substituteInPlace Cargo.toml \
         --replace-fail ', "vendored_curl"' ""
+
+      # Zellij 0.44 traps plugins that grow beyond its hardcoded 16 MiB
+      # WASMI limit. zjstatus reaches that limit in long-running sessions.
+      substituteInPlace zellij-server/src/plugins/plugin_loader.rs \
+        --replace-fail '.memory_size(16 * 1024 * 1024)' '.memory_size(64 * 1024 * 1024)'
     '';
 
     cargoHash = "sha256-D3nZBXoGNf5z85iT7Xhj9Xwwwam/5m3X5hLPVoCzSPM=";
