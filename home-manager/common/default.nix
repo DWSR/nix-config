@@ -18,6 +18,7 @@
     ./git-clone-isolation.nix
     ./hammerspoon-brightness-ac
     ./hammerspoon-caffeinate
+    ./hammerspoon-deskflow-watchdog
     ./hammerspoon-keybindings
     ./hammerspoon-mic-mute
     ./launchd-activation.nix

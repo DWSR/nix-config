@@ -122,7 +122,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 5.8_
   - _Boundary: Watchdog Module_
 
-- [ ] 4.3 Wire the module and personal-only rollout
+- [x] 4.3 Wire the module and personal-only rollout
   - Import the optional feature through the shared Home Manager module set.
   - Enable it beside the personal server and leave the Shopify client disabled by default.
   - Preserve both host role declarations and existing Deskflow/Hammerspoon renderers.

@@ -17,6 +17,8 @@
   # ShopifyLaptop trusts THIS host's fingerprint via its own trustedFingerprints,
   # and this host pre-trusts ShopifyLaptop's fingerprint below, so the TLS
   # connection is mutually pre-seeded (no interactive approval needed).
+  home.hammerspoon.deskflowWatchdog.enable = true;
+
   home.deskflow = {
     enable = true;
     role = "server";
