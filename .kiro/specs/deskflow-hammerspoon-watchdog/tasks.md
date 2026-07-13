@@ -172,6 +172,7 @@
   - _Depends: 5.1, 5.2, 5.3, 5.4_
   - _Requirements: 2.5, 4.1, 4.3, 4.5, 4.6, 4.7, 5.2, 5.3, 7.6, 7.7_
   - _Boundary: Verification_
+  - _Blocked: The personal server drill requires `Brandons-MacBook-Pro`, but this session is running on `ShopifyLaptop`, where the watchdog is intentionally disabled._
 
 ## Implementation Notes
 
@@ -183,3 +184,4 @@
 - Async callbacks must be consumed before effects; thrown, repeated, or reentrant callbacks must not duplicate selection, model results, or focus restoration.
 - Nix equality ignores string context while `builtins.toJSON` preserves it; canonicalize validated role enums before serialization and lexically pin the helper dependency.
 - Partition Home Manager definitions by source before disabled-baseline comparison; validate the owned source canonically and reuse the production predicate for adversarial fixtures.
+- Run the operator drill only on `Brandons-MacBook-Pro` after confirming the deployed watchdog sentinel and helper path; Shopify's disabled state is a hard safety gate.
