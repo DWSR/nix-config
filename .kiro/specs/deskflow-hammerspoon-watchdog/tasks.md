@@ -113,7 +113,7 @@
   - _Requirements: 1.5, 1.6, 6.3, 7.1, 7.4_
   - _Boundary: Renderer_
 
-- [ ] 4.2 Define and connect the optional watchdog module
+- [x] 4.2 Define and connect the optional watchdog module
   - Expose one disabled-by-default flag, document both Accessibility grants, and assert enabled Hammerspoon, enabled Deskflow, and a valid shared role.
   - Reference the existing snapshot-helper package, pass its path and the shared role to the renderer, and expose no role or command override.
   - Contribute no watchdog Lua while disabled.
