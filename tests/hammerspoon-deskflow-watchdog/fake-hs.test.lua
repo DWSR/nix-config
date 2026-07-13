@@ -26,6 +26,7 @@ local allowedHsKeys = {
 	alert = true,
 	application = true,
 	caffeinate = true,
+	printf = true,
 	task = true,
 	timer = true,
 }
@@ -39,6 +40,8 @@ end
 assert(hs.accessibilityState() == false)
 fake:setAccessibilityState(true)
 assert(hs.accessibilityState() == true)
+hs.printf("%s", "Deskflow watchdog log")
+assert(fake:effectsOf("console.log")[1].message == "Deskflow watchdog log")
 
 local repeatingTimer = hs.timer.doEvery(2, function()
 	table.insert(callbackOrder, "repeat@" .. fake:time())
@@ -218,6 +221,18 @@ assert(#lifecycleEvents == 2, "stopped lifecycle watcher must not receive events
 local alertID = hs.alert.show("Deskflow recovery unavailable")
 assert(alertID == "alert-1", "alerts must return deterministic handles")
 
+local reportingExceptionFake = FakeHs.new({
+	accessibilityError = "accessibility failed",
+	alertError = "alert failed",
+	logError = "log failed",
+})
+assert(not pcall(reportingExceptionFake.hs.accessibilityState), "accessibility errors must remain observable")
+assert(not pcall(reportingExceptionFake.hs.alert.show, "message"), "alert errors must remain observable")
+assert(not pcall(reportingExceptionFake.hs.printf, "%s", "message"), "log errors must remain observable")
+assert(#reportingExceptionFake:effectsOf("accessibility.check") == 1)
+assert(#reportingExceptionFake:effectsOf("alert.show") == 1)
+assert(#reportingExceptionFake:effectsOf("console.log") == 1)
+
 local timerCallbacks = fake:effectsOf("timer.callback")
 assert(#timerCallbacks == 3)
 assert(timerCallbacks[1].at == 102 and timerCallbacks[2].at == 104 and timerCallbacks[3].at == 104)
@@ -232,6 +247,7 @@ assert(#fake:effectsOf("application.launch") == 2)
 assert(#fake:effectsOf("application.activate") == 3)
 assert(#fake:effectsOf("menu.select") == 1)
 assert(#fake:effectsOf("alert.show") == 1)
+assert(#fake:effectsOf("console.log") == 1)
 assert(#callbackOrder == 7 and callbackOrder[4] == "task" and callbackOrder[5] == "menu")
 assert(callbackOrder[6] == "lifecycle:systemWillSleep" and callbackOrder[7] == "lifecycle:systemDidWake")
 

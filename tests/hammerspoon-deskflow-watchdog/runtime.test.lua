@@ -114,6 +114,17 @@ local function assertNoRecoveryEffects(fake, context)
 	end
 end
 
+local function assertReports(fake, expected, context)
+	local alerts = fake:effectsOf("alert.show")
+	local logs = fake:effectsOf("console.log")
+	assertEqual(#alerts, #expected, context .. " alert count")
+	assertEqual(#logs, #expected, context .. " log count")
+	for index, report in ipairs(expected) do
+		assertEqual(alerts[index].message, report, context .. " alert " .. index)
+		assertEqual(logs[index].message, report, context .. " log " .. index)
+	end
+end
+
 local function advanceAndComplete(fake, stdout, exitCode, stderr)
 	fake:advance(5)
 	completeObservation(fake, exitCode, stdout, stderr)
@@ -312,6 +323,178 @@ test("maps helper exit and parse failures to inventory errors without recovery",
 	end
 end)
 
+test("reports persistent observation failures once per stable reason", function()
+	local fake = FakeHs.new()
+	addDeskflow(fake, 4850)
+	addDeskflow(fake, 4851)
+	local controller = newRuntime(fake)
+	for _ = 1, 4 do
+		advanceAndComplete(fake, fixtures.process.duplicateGui.snapshot)
+	end
+	advanceAndComplete(fake, "not-a-snapshot\n")
+	advanceAndComplete(fake, "not-a-snapshot\n")
+
+	assertReports(fake, {
+		"Deskflow watchdog [ambiguous:gui-cardinality]: Multiple Deskflow GUI instances prevent safe recovery.",
+		"Deskflow watchdog [error:snapshot-parse]: The Deskflow process inventory returned invalid data.",
+	}, "persistent observation failures")
+	assertNoRecoveryEffects(fake, "persistent observation failures")
+	controller:stop()
+end)
+
+test("maps every runtime failure category to a stable report", function()
+	local cases = {
+		{
+			key = "unavailable:bundle-identity",
+			reason = "bundle-identity",
+			message = "The Deskflow application identity could not be verified.",
+		},
+		{
+			key = "error:snapshot-command",
+			reason = "snapshot-command",
+			message = "The Deskflow process inventory helper failed.",
+		},
+		{
+			key = "recovery:cooldown",
+			reason = "gui-activation-timeout",
+			message = "Deskflow recovery failed repeatedly: the Deskflow GUI did not become active. Recovery is paused for 300 seconds.",
+		},
+		{
+			key = "unavailable:start action unavailable",
+			reason = "start action unavailable",
+			message = "No enabled Deskflow start action was available.",
+		},
+		{
+			key = "recovery:cooldown",
+			reason = "menu-selection",
+			message = "Deskflow recovery failed repeatedly: the Deskflow start action could not be selected. Recovery is paused for 300 seconds.",
+		},
+		{
+			key = "recovery:cooldown",
+			reason = "core-verification-timeout",
+			message = "Deskflow recovery failed repeatedly: the expected Deskflow core did not appear. Recovery is paused for 300 seconds.",
+		},
+		{
+			key = "ambiguous:core-parent",
+			reason = "core-parent",
+			message = "The Deskflow core is not owned by the expected GUI process.",
+		},
+	}
+
+	for index, case in ipairs(cases) do
+		local fake = FakeHs.new()
+		addDeskflow(fake, 4900 + index)
+		local reportingModel = {}
+		for key, value in pairs(model) do
+			reportingModel[key] = value
+		end
+		function reportingModel.observe(currentState, observation, now)
+			local nextState = model.observe(currentState, observation, now)
+			return nextState, {
+				{ kind = "alert", key = case.key, reason = case.reason },
+			}
+		end
+
+		local controller = newRuntime(fake, reportingModel)
+		advanceAndComplete(fake, healthySnapshot(4900 + index, "server"))
+		assertReports(fake, { "Deskflow watchdog [" .. case.key .. "]: " .. case.message }, case.reason)
+		assertNoRecoveryEffects(fake, case.reason)
+		controller:stop()
+	end
+end)
+
+test("suppresses inaccessible recovery through model backoff and cooldown", function()
+	local fake = FakeHs.new({ accessibilityState = false })
+	local controller = newRuntime(fake)
+	triggerRecovery(fake)
+
+	local firstFailure = controller:inspect()
+	assertEqual(firstFailure.phase, "backoff", "Accessibility first failure phase")
+	assertEqual(firstFailure.retryAt, 25, "Accessibility first retry deadline")
+	assertEqual(#fake:effectsOf("accessibility.check"), 1, "Accessibility first check count")
+	assertReports(fake, {
+		"Deskflow watchdog [unavailable:accessibility-permission]: Hammerspoon Accessibility permission is required to recover Deskflow.",
+	}, "Accessibility first failure")
+	assertNoRecoveryEffects(fake, "Accessibility first failure")
+
+	for _ = 1, 6 do
+		advanceAndComplete(fake, "")
+	end
+	local cooldown = controller:inspect()
+	assertEqual(cooldown.phase, "cooldown", "Accessibility cooldown phase")
+	assertEqual(cooldown.cooldownUntil, 350, "Accessibility cooldown deadline")
+	assertEqual(#fake:effectsOf("accessibility.check"), 3, "Accessibility bounded attempt count")
+	assertReports(fake, {
+		"Deskflow watchdog [unavailable:accessibility-permission]: Hammerspoon Accessibility permission is required to recover Deskflow.",
+		"Deskflow watchdog [recovery:cooldown]: Deskflow recovery failed repeatedly: Hammerspoon Accessibility permission is required to recover Deskflow. Recovery is paused for 300 seconds.",
+	}, "Accessibility cooldown")
+	assertNoRecoveryEffects(fake, "Accessibility cooldown")
+
+	for _ = 1, 59 do
+		advanceAndComplete(fake, "")
+	end
+	assertEqual(#fake:effectsOf("accessibility.check"), 3, "Accessibility checks during cooldown")
+	advanceAndComplete(fake, "")
+	assertEqual(controller:inspect().phase, "observing", "Accessibility cooldown expiry phase")
+	assertNoRecoveryEffects(fake, "Accessibility cooldown expiry")
+	configureDeskflowBundle(fake)
+	addDeskflow(fake, 4970)
+	fake:setAccessibilityState(true)
+	advanceAndComplete(fake, "")
+	assertEqual(#fake:effectsOf("accessibility.check"), 4, "Accessibility new episode check count")
+	assertEqual(controller:inspect().phase, "activating", "Accessibility new episode phase")
+	assertEqual(#fake:runningTasks(guiExecutablePath), 1, "Accessibility new episode surface count")
+	assertNoProhibitedEffects(fake, "Accessibility new episode")
+	controller:stop()
+end)
+
+test("schedules non-aligned retry eligibility at the model deadline", function()
+	local fake = FakeHs.new()
+	local controller, deskflow = beginMenuRecovery(fake, "server", fixtures.menus.serverStart, 4950, 4960)
+	fake:setMenuSelectionResult(deskflow, false)
+	fake:advance(0.1)
+	assert(fake:completeNextMenu(), "non-aligned failed selection callback")
+	assertEqual(controller:inspect().retryAt, 25.1, "non-aligned retry deadline")
+
+	fake:advance(4.9)
+	completeObservation(fake, 0, "", "")
+	assertEqual(controller:inspect().phase, "backoff", "pre-deadline backoff phase")
+	fake:advance(0.09)
+	assertEqual(#fake:runningTasks(snapshotCommand), 0, "pre-deadline eligibility snapshot count")
+	fake:advance(0.01)
+	assertEqual(#fake:runningTasks(snapshotCommand), 1, "deadline eligibility snapshot count")
+	completeObservation(fake, 0, "", "")
+	assertEqual(controller:inspect().absenceCount, 1, "deadline absence evidence")
+	fake:advance(4.9)
+	completeObservation(fake, 0, "", "")
+	assertEqual(#fake:effectsOf("accessibility.check"), 2, "eligible recovery check count")
+	assertEqual(#fake:runningTasks(guiExecutablePath), 1, "eligible recovery surface count")
+	assertNoProhibitedEffects(fake, "non-aligned retry")
+	controller:stop()
+end)
+
+test("contains Accessibility and reporting API exceptions without stranding model state", function()
+	local fake = FakeHs.new({
+		accessibilityError = "Accessibility API failed",
+		alertError = "alert API failed",
+		logError = "log API failed",
+	})
+	local controller = newRuntime(fake)
+	triggerRecovery(fake)
+
+	local inspection = controller:inspect()
+	assertEqual(inspection.phase, "backoff", "reporting exception model phase")
+	assertEqual(inspection.retryAt, 25, "reporting exception retry deadline")
+	assertEqual(#fake:effectsOf("accessibility.check"), 1, "reporting exception Accessibility count")
+	assertEqual(#fake:effectsOf("alert.show"), 1, "reporting exception alert attempt count")
+	assertEqual(#fake:effectsOf("console.log"), 1, "reporting exception log attempt count")
+	assertNoRecoveryEffects(fake, "reporting exceptions")
+	fake:advance(5)
+	completeObservation(fake, 0, "", "")
+	assertEqual(controller:inspect().absenceCount, 1, "reporting exception deadline evidence")
+	controller:stop()
+end)
+
 test("suspends polling across sleep and starts fresh wake grace evidence", function()
 	local fake = FakeHs.new()
 	addDeskflow(fake, 4300)
@@ -487,7 +670,7 @@ test("records activation timeout after ten seconds and restores prior focus", fu
 	local inspection = controller:inspect()
 	assertEqual(inspection.phase, "backoff", "activation timeout model phase")
 	assertEqual(inspection.priorFocusPID, previous:pid(), "activation timeout prior focus")
-	assertEqual(inspection.delayedTimerCount, 0, "activation timeout timer count")
+	assertEqual(inspection.delayedTimerCount, 1, "activation timeout eligibility timer count")
 	assert(previous:isFrontmost(), "activation timeout must restore prior focus")
 	assertNoMenuOrDirectActivation(fake, "activation timeout")
 	controller:stop()
@@ -933,7 +1116,7 @@ test("verification times out after fifteen seconds and restores prior focus", fu
 	assertEqual(inspection.recoveryResult.kind, "failed", "verification timeout result kind")
 	assertEqual(inspection.recoveryResult.reason, "core-verification-timeout", "verification timeout reason")
 	assert(previous:isFrontmost(), "verification timeout prior focus restoration")
-	assertEqual(inspection.delayedTimerCount, 0, "verification timeout timer count")
+	assertEqual(inspection.delayedTimerCount, 1, "verification timeout eligibility timer count")
 	assertNoProhibitedEffects(fake, "verification timeout")
 	controller:stop()
 end)

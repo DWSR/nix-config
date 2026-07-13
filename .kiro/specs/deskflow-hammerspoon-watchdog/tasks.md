@@ -96,7 +96,7 @@
   - _Requirements: 4.1, 4.3, 4.4, 4.5, 4.6, 4.7, 5.2, 7.2, 7.3, 7.7_
   - _Boundary: Runtime Shell_
 
-- [ ] 3.4 Add fail-closed reporting and bounded retry orchestration
+- [x] 3.4 Add fail-closed reporting and bounded retry orchestration
   - Suppress recovery and report once when Hammerspoon Accessibility is unavailable.
   - Map bundle, helper, activation, menu, selection, verification, and ambiguity failures to stable alert reasons while honoring model backoff/cooldown decisions.
   - Completion is observable when persistent failures alert once per reason, cooldown suppresses effects, and recovery resumes only after model eligibility returns.

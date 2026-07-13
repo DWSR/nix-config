@@ -23,7 +23,10 @@ function FakeHs.new(options)
 
 	local fake = {
 		_now = options.now or 0,
+		_accessibilityError = options.accessibilityError,
 		_accessibilityState = options.accessibilityState ~= false,
+		_alertError = options.alertError,
+		_logError = options.logError,
 		_nextHandle = 0,
 		_nextAlert = 0,
 		_sequence = 0,
@@ -503,6 +506,21 @@ function FakeHs.new(options)
 		self._accessibilityState = state
 	end
 
+	function fake:setAccessibilityError(message)
+		assert(message == nil or type(message) == "string", "accessibility error must be a string or nil")
+		self._accessibilityError = message
+	end
+
+	function fake:setAlertError(message)
+		assert(message == nil or type(message) == "string", "alert error must be a string or nil")
+		self._alertError = message
+	end
+
+	function fake:setLogError(message)
+		assert(message == nil or type(message) == "string", "log error must be a string or nil")
+		self._logError = message
+	end
+
 	local hs = {
 		alert = {},
 		application = {},
@@ -512,10 +530,30 @@ function FakeHs.new(options)
 	}
 
 	function hs.accessibilityState(shouldPrompt)
+		fake:_record("accessibility.check", { shouldPrompt = shouldPrompt })
 		if shouldPrompt then
 			fake:_record("accessibility.prompt")
 		end
+		if fake._accessibilityError ~= nil then
+			error(fake._accessibilityError)
+		end
 		return fake._accessibilityState
+	end
+
+	function hs.printf(format, ...)
+		local arguments = { ... }
+		local message = format
+		if format == "%s" and #arguments == 1 then
+			message = arguments[1]
+		end
+		fake:_record("console.log", {
+			arguments = arguments,
+			format = format,
+			message = message,
+		})
+		if fake._logError ~= nil then
+			error(fake._logError)
+		end
 	end
 
 	function hs.timer.new(interval, callback)
@@ -631,6 +669,9 @@ function FakeHs.new(options)
 			seconds = seconds,
 			style = style,
 		})
+		if fake._alertError ~= nil then
+			error(fake._alertError)
+		end
 		return alertID
 	end
 
