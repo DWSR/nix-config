@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { setTimeout: delay } = require('node:timers/promises');
@@ -10,6 +11,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const {
   buildScript,
   createScriptFixture,
+  repoRoot,
   runScript,
 } = require('./helpers');
 
@@ -20,6 +22,310 @@ const HASH_D = '33333333333333333333333333333333';
 const CACHE_ENDPOINT = 'https://cache.example.test:8443';
 const CACHE_NAME = 'darwin';
 const TOKEN_VALUE = 'poisoned-runtime-token-value';
+const BOOTSTRAP_HOSTNAME = 'Brandons-MacBook-Pro.local';
+const LOGIN_USER = 'bootstrap-test-user';
+
+let identityMaterials;
+let opensslExecutable;
+
+function getOpenSSLExecutable() {
+  if (opensslExecutable !== undefined) {
+    return opensslExecutable;
+  }
+
+  const expr = `
+    let
+      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+      pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+    in
+      pkgs.openssl.bin
+  `;
+  const outPath = childProcess.execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '--impure', '--expr', expr],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 600_000,
+    },
+  ).trim();
+  opensslExecutable = path.join(outPath, 'bin', 'openssl');
+  return opensslExecutable;
+}
+
+function runOpenSSL(args, cwd) {
+  return childProcess.execFileSync(getOpenSSLExecutable(), args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 120_000,
+  });
+}
+
+function generateRsaKey(root, name) {
+  const key = path.join(root, `${name}.key.pem`);
+  runOpenSSL([
+    'genpkey',
+    '-algorithm', 'RSA',
+    '-pkeyopt', 'rsa_keygen_bits:2048',
+    '-out', key,
+  ], root);
+  return key;
+}
+
+function readDerElement(der, offset) {
+  const tag = der[offset];
+  const firstLength = der[offset + 1];
+  let contentOffset = offset + 2;
+  let length = firstLength;
+  if ((firstLength & 0x80) !== 0) {
+    const lengthBytes = firstLength & 0x7f;
+    length = 0;
+    for (let index = 0; index < lengthBytes; index += 1) {
+      length = (length * 256) + der[contentOffset + index];
+    }
+    contentOffset += lengthBytes;
+  }
+  return { contentOffset, end: contentOffset + length, tag };
+}
+
+function corruptRsaPrivateExponent(root, source, name) {
+  const traditional = path.join(root, `${name}.source.pem`);
+  const destination = path.join(root, `${name}.key.pem`);
+  runOpenSSL(['rsa', '-in', source, '-traditional', '-out', traditional], root);
+  const der = Buffer.from(
+    fs.readFileSync(traditional, 'utf8').split('\n').filter(line => !line.startsWith('-----')).join(''),
+    'base64',
+  );
+  const sequence = readDerElement(der, 0);
+  assert.equal(sequence.tag, 0x30);
+  let offset = sequence.contentOffset;
+  let privateExponent;
+  for (let index = 0; index <= 3; index += 1) {
+    const integer = readDerElement(der, offset);
+    assert.equal(integer.tag, 0x02);
+    if (index === 3) {
+      privateExponent = integer;
+    }
+    offset = integer.end;
+  }
+  der[privateExponent.end - 1] ^= 1;
+  const base64 = der.toString('base64').match(/.{1,64}/g).join('\n');
+  fs.writeFileSync(destination, `-----BEGIN RSA PRIVATE KEY-----\n${base64}\n-----END RSA PRIVATE KEY-----\n`, {
+    mode: 0o600,
+  });
+  return destination;
+}
+
+function generateRsaPssKeypair(root, name) {
+  const privateKey = path.join(root, `${name}.key.pem`);
+  const publicKey = path.join(root, `${name}.public.pem`);
+  runOpenSSL([
+    'genpkey',
+    '-algorithm', 'RSA-PSS',
+    '-pkeyopt', 'rsa_keygen_bits:2048',
+    '-pkeyopt', 'rsa_pss_keygen_md:sha256',
+    '-pkeyopt', 'rsa_pss_keygen_mgf1_md:sha256',
+    '-pkeyopt', 'rsa_pss_keygen_saltlen:32',
+    '-out', privateKey,
+  ], root);
+  runOpenSSL(['pkey', '-in', privateKey, '-pubout', '-out', publicKey], root);
+  return { privateKey, publicKey };
+}
+
+function generateCa(root, name) {
+  const key = generateRsaKey(root, name);
+  const certificate = path.join(root, `${name}.certificate.pem`);
+  runOpenSSL([
+    'req', '-new', '-x509',
+    '-key', key,
+    '-out', certificate,
+    '-days', '2',
+    '-sha256',
+    '-subj', `/CN=${name}`,
+    '-addext', 'basicConstraints=critical,CA:TRUE',
+    '-addext', 'keyUsage=critical,keyCertSign,cRLSign',
+  ], root);
+  return { certificate, key };
+}
+
+function generateLeaf(root, name, ca, options = {}) {
+  const key = options.key ?? generateRsaKey(root, name);
+  const request = path.join(root, `${name}.request.pem`);
+  const certificate = path.join(root, `${name}.certificate.pem`);
+  const extensions = path.join(root, `${name}.extensions.cnf`);
+  const extensionLines = [
+    'basicConstraints=critical,CA:FALSE',
+    'keyUsage=critical,digitalSignature,keyEncipherment',
+  ];
+  if (options.san !== null) {
+    extensionLines.push(`subjectAltName=DNS:${options.san ?? BOOTSTRAP_HOSTNAME}`);
+  }
+  if (options.usage !== null) {
+    extensionLines.push(`extendedKeyUsage=${options.usage ?? 'serverAuth'}`);
+  }
+  fs.writeFileSync(extensions, `${extensionLines.join('\n')}\n`);
+  runOpenSSL([
+    'req', '-new',
+    '-key', key,
+    '-out', request,
+    '-subj', `/CN=${options.commonName ?? BOOTSTRAP_HOSTNAME}`,
+  ], root);
+  runOpenSSL([
+    'x509', '-req',
+    '-in', request,
+    '-CA', ca.certificate,
+    '-CAkey', ca.key,
+    '-set_serial', options.serial ?? '1',
+    '-out', certificate,
+    '-days', '2',
+    '-sha256',
+    '-extfile', extensions,
+  ], root);
+  return { certificate, key };
+}
+
+function getIdentityMaterials() {
+  if (identityMaterials !== undefined) {
+    return identityMaterials;
+  }
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'local-binary-cache-test-identity-'));
+  const ca = generateCa(root, 'test-only-ca');
+  const otherCa = generateCa(root, 'test-only-other-ca');
+  const validLeaf = generateLeaf(root, 'test-only-valid-leaf', ca);
+  const noSanLeaf = generateLeaf(root, 'test-only-no-san-leaf', ca, { san: null, serial: '2' });
+  const wrongSanLeaf = generateLeaf(root, 'test-only-wrong-san-leaf', ca, {
+    san: `not-${BOOTSTRAP_HOSTNAME}`,
+    serial: '3',
+  });
+  const noServerAuthLeaf = generateLeaf(root, 'test-only-client-leaf', ca, {
+    usage: 'clientAuth',
+    serial: '4',
+  });
+  const wrongCaLeaf = generateLeaf(root, 'test-only-wrong-ca-leaf', otherCa, { serial: '5' });
+  const otherTlsKey = generateRsaKey(root, 'test-only-other-tls');
+  const invalidTlsKey = corruptRsaPrivateExponent(root, validLeaf.key, 'test-only-invalid-tls');
+  const jwtPrivate = generateRsaKey(root, 'test-only-jwt');
+  const jwtPublic = path.join(root, 'test-only-jwt.public.pem');
+  runOpenSSL(['pkey', '-in', jwtPrivate, '-pubout', '-out', jwtPublic], root);
+  const otherJwtPrivate = generateRsaKey(root, 'test-only-other-jwt');
+  const jwtPss = generateRsaPssKeypair(root, 'test-only-jwt-pss');
+
+  identityMaterials = {
+    ca: ca.certificate,
+    invalidTlsKey,
+    jwtPrivate,
+    jwtPssPrivate: jwtPss.privateKey,
+    jwtPssPublic: jwtPss.publicKey,
+    jwtPublic,
+    noSanLeaf: noSanLeaf.certificate,
+    noServerAuthLeaf: noServerAuthLeaf.certificate,
+    otherJwtPrivate,
+    otherTlsKey,
+    root,
+    tlsCertificate: validLeaf.certificate,
+    tlsKey: validLeaf.key,
+    wrongCaLeaf: wrongCaLeaf.certificate,
+    wrongSanLeaf: wrongSanLeaf.certificate,
+  };
+  return identityMaterials;
+}
+
+test.after(() => {
+  if (identityMaterials !== undefined) {
+    fs.rmSync(identityMaterials.root, { force: true, recursive: true });
+  }
+});
+
+function createBootstrapFixture(t, options = {}) {
+  const materials = getIdentityMaterials();
+  const fixture = createScriptFixture({
+    executables: {
+      stat: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        if (
+          args.length !== 4
+          || args[0] !== '--dereference'
+          || args[1] !== '--format=%U:%a'
+          || args[2] !== '--'
+        ) {
+          process.stderr.write('unexpected stat arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+        const file = args[3];
+        const owners = JSON.parse(process.env.STAT_OWNERS);
+        const mode = (fs.statSync(file).mode & 0o777).toString(8).padStart(4, '0');
+        process.stdout.write((owners[file] ?? 'fixture-public-owner') + ':' + mode + '\\n');
+      `,
+    },
+    statePaths: {
+      ca: 'public/ca.pem',
+      jwtPrivate: 'secrets/jwt-private.pem',
+      jwtPublic: 'public/jwt-public.pem',
+      tlsCertificate: 'public/server.pem',
+      tlsKey: 'secrets/server-key.pem',
+    },
+  });
+  t.after(fixture.cleanup);
+
+  const sources = {
+    ca: options.ca === undefined ? materials.ca : options.ca,
+    jwtPrivate: options.jwtPrivate === undefined ? materials.jwtPrivate : options.jwtPrivate,
+    jwtPublic: options.jwtPublic === undefined ? materials.jwtPublic : options.jwtPublic,
+    tlsCertificate: options.tlsCertificate === undefined
+      ? materials.tlsCertificate
+      : options.tlsCertificate,
+    tlsKey: options.tlsKey === undefined ? materials.tlsKey : options.tlsKey,
+  };
+  for (const [name, source] of Object.entries(sources)) {
+    if (source !== null) {
+      fs.copyFileSync(source, fixture.statePaths[name]);
+    }
+  }
+  for (const name of ['ca', 'jwtPublic', 'tlsCertificate']) {
+    if (sources[name] !== null) {
+      fs.chmodSync(fixture.statePaths[name], options[`${name}Mode`] ?? 0o644);
+    }
+  }
+  for (const name of ['jwtPrivate', 'tlsKey']) {
+    if (sources[name] !== null) {
+      fs.chmodSync(fixture.statePaths[name], options[`${name}Mode`] ?? 0o400);
+    }
+  }
+
+  const owners = {
+    [fixture.statePaths.ca]: 'fixture-public-owner',
+    [fixture.statePaths.jwtPrivate]: options.jwtPrivateOwner ?? 'root',
+    [fixture.statePaths.jwtPublic]: 'fixture-public-owner',
+    [fixture.statePaths.tlsCertificate]: 'fixture-public-owner',
+    [fixture.statePaths.tlsKey]: options.tlsKeyOwner ?? LOGIN_USER,
+  };
+  const executable = buildScript('scripts/local-binary-cache-bootstrap.nix', {
+    caCertificate: fixture.statePaths.ca,
+    jwtPrivateKey: fixture.statePaths.jwtPrivate,
+    jwtPublicKey: fixture.statePaths.jwtPublic,
+    loginUser: LOGIN_USER,
+    opensslExecutable: getOpenSSLExecutable(),
+    statExecutable: fixture.executables.stat,
+    tlsCertificate: fixture.statePaths.tlsCertificate,
+    tlsKeyFile: fixture.statePaths.tlsKey,
+  });
+  return { executable, fixture, materials, owners };
+}
+
+function runBootstrap(bootstrap, extraEnv = {}) {
+  return runScript(bootstrap.executable, [], {
+    fixture: bootstrap.fixture,
+    env: {
+      STAT_OWNERS: JSON.stringify(bootstrap.owners),
+      ...extraEnv,
+    },
+  });
+}
 
 function createEnqueueFixture(t) {
   const fixture = createScriptFixture({
@@ -290,6 +596,279 @@ test('script harness injects executable and state paths inside an isolated fixtu
     assert.equal(path.isAbsolute(injectedPath), true);
     assert.equal(path.relative(fixture.root, injectedPath).startsWith('..'), false);
     assert.equal(injectedPath.startsWith('/nix/store/'), false);
+  }
+});
+
+test('bootstrap preflight validates identity and reports metadata without private contents', t => {
+  const bootstrap = createBootstrapFixture(t);
+
+  const result = runBootstrap(bootstrap);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(fs.readdirSync(bootstrap.fixture.tmp), []);
+  assert.equal(result.stdout, [
+    `ca-certificate path=${bootstrap.fixture.statePaths.ca} owner=fixture-public-owner mode=0644`,
+    `tls-certificate path=${bootstrap.fixture.statePaths.tlsCertificate} owner=fixture-public-owner mode=0644`,
+    `tls-private-key path=${bootstrap.fixture.statePaths.tlsKey} owner=${LOGIN_USER} mode=0400`,
+    `jwt-public-key path=${bootstrap.fixture.statePaths.jwtPublic} owner=fixture-public-owner mode=0644`,
+    `jwt-private-key path=${bootstrap.fixture.statePaths.jwtPrivate} owner=root mode=0400`,
+    '',
+  ].join('\n'));
+
+  const privateMaterial = [
+    fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8'),
+    fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8'),
+  ];
+  for (const secret of privateMaterial) {
+    assert.equal(result.stdout.includes(secret), false);
+    assert.equal(result.stderr.includes(secret), false);
+    assert.equal(fs.readFileSync(bootstrap.executable, 'utf8').includes(secret), false);
+  }
+});
+
+test('bootstrap preflight validates runtime private-key symlink targets', t => {
+  const bootstrap = createBootstrapFixture(t);
+  for (const field of ['tlsKey', 'jwtPrivate']) {
+    const runtimePath = bootstrap.fixture.statePaths[field];
+    const target = `${runtimePath}.target`;
+    fs.renameSync(runtimePath, target);
+    fs.symlinkSync(target, runtimePath);
+  }
+
+  const result = runBootstrap(bootstrap);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(`path=${bootstrap.fixture.statePaths.tlsKey}`));
+  assert.ok(result.stdout.includes(`path=${bootstrap.fixture.statePaths.jwtPrivate}`));
+});
+
+test('bootstrap preflight rejects missing or inexact TLS SANs', async t => {
+  const cases = [
+    ['missing SAN', bootstrap => bootstrap.materials.noSanLeaf],
+    ['inexact SAN', bootstrap => bootstrap.materials.wrongSanLeaf],
+  ];
+
+  for (const [name, selectCertificate] of cases) {
+    await t.test(name, child => {
+      const bootstrap = createBootstrapFixture(child);
+      fs.copyFileSync(selectCertificate(bootstrap), bootstrap.fixture.statePaths.tlsCertificate);
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(bootstrap.fixture.statePaths.tlsCertificate));
+      assert.ok(result.stderr.includes(`DNS:${BOOTSTRAP_HOSTNAME}`));
+    });
+  }
+});
+
+test('bootstrap preflight requires serverAuth and CA verification for the TLS leaf', async t => {
+  const cases = [
+    ['missing serverAuth', bootstrap => bootstrap.materials.noServerAuthLeaf, /serverAuth/],
+    ['leaf signed by another CA', bootstrap => bootstrap.materials.wrongCaLeaf, /CA|verify/],
+  ];
+
+  for (const [name, selectCertificate, diagnostic] of cases) {
+    await t.test(name, child => {
+      const bootstrap = createBootstrapFixture(child);
+      fs.copyFileSync(selectCertificate(bootstrap), bootstrap.fixture.statePaths.tlsCertificate);
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(bootstrap.fixture.statePaths.tlsCertificate));
+      assert.match(result.stderr, diagnostic);
+    });
+  }
+});
+
+test('bootstrap preflight rejects mismatched TLS and RS256 keypairs', async t => {
+  const cases = [
+    {
+      name: 'TLS keypair',
+      privatePath: bootstrap => bootstrap.fixture.statePaths.tlsKey,
+      publicPath: bootstrap => bootstrap.fixture.statePaths.tlsCertificate,
+      replace: bootstrap => bootstrap.materials.otherTlsKey,
+    },
+    {
+      name: 'RS256 keypair',
+      privatePath: bootstrap => bootstrap.fixture.statePaths.jwtPrivate,
+      publicPath: bootstrap => bootstrap.fixture.statePaths.jwtPublic,
+      replace: bootstrap => bootstrap.materials.otherJwtPrivate,
+    },
+  ];
+
+  for (const keypair of cases) {
+    await t.test(keypair.name, child => {
+      const bootstrap = createBootstrapFixture(child);
+      const privatePath = keypair.privatePath(bootstrap);
+      fs.chmodSync(privatePath, 0o600);
+      fs.copyFileSync(keypair.replace(bootstrap), privatePath);
+      fs.chmodSync(privatePath, 0o400);
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(privatePath));
+      assert.ok(result.stderr.includes(keypair.publicPath(bootstrap)));
+      assert.match(result.stderr, /do not match/);
+    });
+  }
+});
+
+test('bootstrap preflight rejects a matching TLS key with inconsistent private parameters', t => {
+  const bootstrap = createBootstrapFixture(t, { tlsKey: getIdentityMaterials().invalidTlsKey });
+  const certificatePublic = runOpenSSL([
+    'x509', '-in', bootstrap.fixture.statePaths.tlsCertificate, '-pubkey', '-noout',
+  ], bootstrap.fixture.root);
+  const privatePublic = runOpenSSL([
+    'pkey', '-in', bootstrap.fixture.statePaths.tlsKey, '-pubout',
+  ], bootstrap.fixture.root);
+  const consistency = childProcess.spawnSync(getOpenSSLExecutable(), [
+    'pkey', '-in', bootstrap.fixture.statePaths.tlsKey, '-check', '-noout',
+  ], { encoding: 'utf8' });
+  assert.equal(certificatePublic, privatePublic);
+  assert.notEqual(consistency.status, 0, 'test fixture must fail OpenSSL private-key consistency checking');
+
+  const result = runBootstrap(bootstrap);
+
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stderr.includes(bootstrap.fixture.statePaths.tlsKey));
+  assert.match(result.stderr, /internal consistency/);
+  assert.equal(result.stdout.includes(fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8')), false);
+  assert.equal(result.stderr.includes(fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8')), false);
+});
+
+test('bootstrap preflight rejects RSA-PSS-restricted JWT keys as non-RS256', t => {
+  const materials = getIdentityMaterials();
+  const bootstrap = createBootstrapFixture(t, {
+    jwtPrivate: materials.jwtPssPrivate,
+    jwtPublic: materials.jwtPssPublic,
+  });
+  const consistency = childProcess.spawnSync(getOpenSSLExecutable(), [
+    'pkey', '-in', bootstrap.fixture.statePaths.jwtPrivate, '-check', '-noout',
+  ], { encoding: 'utf8' });
+  assert.equal(consistency.status, 0, consistency.stderr);
+
+  const result = runBootstrap(bootstrap);
+
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stderr.includes(bootstrap.fixture.statePaths.jwtPublic));
+  assert.ok(result.stderr.includes(bootstrap.fixture.statePaths.jwtPrivate));
+  assert.match(result.stderr, /RS256.*PKCS#1 v1\.5/);
+  assert.deepEqual(fs.readdirSync(bootstrap.fixture.tmp), []);
+  assert.equal(result.stdout.includes(fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8')), false);
+  assert.equal(result.stderr.includes(fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8')), false);
+});
+
+test('bootstrap preflight enforces private-key ownership and exact 0400 modes', async t => {
+  const cases = [
+    {
+      name: 'TLS key mode',
+      options: { tlsKeyMode: 0o600 },
+      path: bootstrap => bootstrap.fixture.statePaths.tlsKey,
+      diagnostic: /0400/,
+    },
+    {
+      name: 'TLS key owner',
+      options: { tlsKeyOwner: 'root' },
+      path: bootstrap => bootstrap.fixture.statePaths.tlsKey,
+      diagnostic: new RegExp(LOGIN_USER),
+    },
+    {
+      name: 'JWT key mode',
+      options: { jwtPrivateMode: 0o440 },
+      path: bootstrap => bootstrap.fixture.statePaths.jwtPrivate,
+      diagnostic: /0400/,
+    },
+    {
+      name: 'JWT key owner',
+      options: { jwtPrivateOwner: LOGIN_USER },
+      path: bootstrap => bootstrap.fixture.statePaths.jwtPrivate,
+      diagnostic: /root/,
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const bootstrap = createBootstrapFixture(child, fixtureCase.options);
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(fixtureCase.path(bootstrap)));
+      assert.match(result.stderr, fixtureCase.diagnostic);
+    });
+  }
+});
+
+test('bootstrap preflight rejects absent public artifacts with path-specific diagnostics', async t => {
+  const cases = [
+    ['CA certificate', 'ca'],
+    ['TLS certificate', 'tlsCertificate'],
+    ['JWT public key', 'jwtPublic'],
+  ];
+
+  for (const [name, field] of cases) {
+    await t.test(name, child => {
+      const bootstrap = createBootstrapFixture(child, { [field]: null });
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(bootstrap.fixture.statePaths[field]));
+      assert.match(result.stderr, /missing|unavailable/);
+    });
+  }
+});
+
+test('bootstrap preflight rejects absent private artifacts with path-specific diagnostics', async t => {
+  for (const field of ['tlsKey', 'jwtPrivate']) {
+    await t.test(field, child => {
+      const bootstrap = createBootstrapFixture(child, { [field]: null });
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(bootstrap.fixture.statePaths[field]));
+      assert.match(result.stderr, /missing|unavailable/);
+    });
+  }
+});
+
+test('bootstrap preflight rejects unreadable or malformed artifacts', async t => {
+  const cases = [
+    { field: 'ca', mode: 0o000, diagnostic: /readable/ },
+    { field: 'tlsCertificate', mode: 0o000, diagnostic: /readable/ },
+    { field: 'jwtPublic', mode: 0o000, diagnostic: /readable/ },
+    { field: 'ca', malformed: true, diagnostic: /CA certificate/ },
+    { field: 'tlsCertificate', malformed: true, diagnostic: /TLS certificate/ },
+    { field: 'tlsKey', malformed: true, diagnostic: /TLS private key/ },
+    { field: 'jwtPublic', malformed: true, diagnostic: /RS256 public key/ },
+    { field: 'jwtPrivate', malformed: true, diagnostic: /RS256 private key/ },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(`${fixtureCase.field} ${fixtureCase.malformed ? 'malformed' : 'unreadable'}`, child => {
+      const bootstrap = createBootstrapFixture(child);
+      const artifactPath = bootstrap.fixture.statePaths[fixtureCase.field];
+      if (fixtureCase.malformed) {
+        fs.chmodSync(artifactPath, 0o600);
+        fs.writeFileSync(artifactPath, 'unmistakably-test-only-invalid-cryptographic-material\n');
+        if (['tlsKey', 'jwtPrivate'].includes(fixtureCase.field)) {
+          fs.chmodSync(artifactPath, 0o400);
+        }
+      } else {
+        fs.chmodSync(artifactPath, fixtureCase.mode);
+      }
+
+      const result = runBootstrap(bootstrap);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(artifactPath));
+      assert.match(result.stderr, fixtureCase.diagnostic);
+    });
   }
 });
 

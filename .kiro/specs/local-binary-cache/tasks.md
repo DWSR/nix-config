@@ -42,7 +42,7 @@
   - _Requirements: 2.3, 2.4, 2.5, 4.2, 4.3, 4.4, 4.6, 6.2_
   - _Boundary: Publisher Job_
 
-- [ ] 2.3 Implement bootstrap identity preflight validation
+- [x] 2.3 Implement bootstrap identity preflight validation
   - Validate externally generated CA/leaf and RS256 keypairs, including the exact mDNS SAN and matching public/private material.
   - Report expected ownership and permissions without generating a CA or persisting plaintext private material.
   - Done when fixtures reject missing SANs, mismatched pairs, unsafe permissions, and absent public artifacts.
@@ -219,3 +219,4 @@
 - Task 1.1 runtime paths need pure lexical rejection of noncanonical and case-insensitive Nix store aliases; the cache endpoint is the exact origin `https://Brandons-MacBook-Pro.local:8443`.
 - Task 1.1's human-directed follow-up removed the remaining Statix W8 warning; focused, formatting, and full flake checks pass.
 - Task 2.2 publisher locking must distinguish live ownership from stale PID state; `INT` and `TERM` handlers must exit after cleanup so publication cannot continue without the singleton lock.
+- Task 2.3 keypair validation must check private-key consistency and prove RS256 PKCS#1 v1.5 signing; public-key equality alone accepts corrupted or RSA-PSS-restricted keys.
