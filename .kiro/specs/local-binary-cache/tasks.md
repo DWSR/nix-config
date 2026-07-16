@@ -33,7 +33,7 @@
   - _Requirements: 2.1, 2.2, 2.5, 2.6, 2.7, 5.7_
   - _Boundary: Enqueue Hook_
 
-- [ ] 2.2 Implement the serialized publisher
+- [x] 2.2 Implement the serialized publisher
   - Scan valid pending roots in stable order under a singleton lock and push one target with one upload job.
   - Remove a root only after successful upload or confirmed presence; retain it and stop the batch on failure.
   - Read authentication through a runtime token-file path and emit path-specific, secret-free logs.
@@ -218,3 +218,4 @@
 
 - Task 1.1 runtime paths need pure lexical rejection of noncanonical and case-insensitive Nix store aliases; the cache endpoint is the exact origin `https://Brandons-MacBook-Pro.local:8443`.
 - Task 1.1's human-directed follow-up removed the remaining Statix W8 warning; focused, formatting, and full flake checks pass.
+- Task 2.2 publisher locking must distinguish live ownership from stale PID state; `INT` and `TERM` handlers must exit after cleanup so publication cannot continue without the singleton lock.
