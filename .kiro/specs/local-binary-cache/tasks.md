@@ -50,7 +50,7 @@
   - _Requirements: 1.3, 4.4, 4.6_
   - _Boundary: Bootstrap Tool_
 
-- [ ] 2.4 Implement cache bootstrap and token operations
+- [x] 2.4 Implement cache bootstrap and token operations
   - Create the public `darwin` cache with priority 30 and official/community public-upstream filters.
   - Capture the cache signing public key and issue distinct one-year, push-only, cache-scoped host tokens.
   - Refuse cache auto-creation in ready mode or when a live/configured signing key differs.
@@ -220,3 +220,4 @@
 - Task 1.1's human-directed follow-up removed the remaining Statix W8 warning; focused, formatting, and full flake checks pass.
 - Task 2.2 publisher locking must distinguish live ownership from stale PID state; `INT` and `TERM` handlers must exit after cleanup so publication cannot continue without the singleton lock.
 - Task 2.3 keypair validation must check private-key consistency and prove RS256 PKCS#1 v1.5 signing; public-key equality alone accepts corrupted or RSA-PSS-restricted keys.
+- Task 2.4 bootstrap and ready-mode cache-key validation must use the same canonical 32-byte Base64 grammar as the typed module, including final padding-bit restrictions.

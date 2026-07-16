@@ -21,12 +21,49 @@ const HASH_C = '22222222222222222222222222222222';
 const HASH_D = '33333333333333333333333333333333';
 const CACHE_ENDPOINT = 'https://cache.example.test:8443';
 const CACHE_NAME = 'darwin';
+const CACHE_PUBLIC_KEY = 'darwin:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
+const NONCANONICAL_CACHE_PUBLIC_KEY = `darwin:${'A'.repeat(42)}B=`;
+const UPSTREAM_CACHE_KEYS = [
+  'cache.nixos.org-1',
+  'nix-community.cachix.org-1',
+];
 const TOKEN_VALUE = 'poisoned-runtime-token-value';
+const PERSONAL_TOKEN_VALUE = 'poisoned-personal-host-token-value';
+const SHOPIFY_TOKEN_VALUE = 'poisoned-shopify-host-token-value';
+const IDENTICAL_TOKEN_VALUE = 'poisoned-identical-host-token-value';
 const BOOTSTRAP_HOSTNAME = 'Brandons-MacBook-Pro.local';
 const LOGIN_USER = 'bootstrap-test-user';
 
 let identityMaterials;
+let jqExecutable;
 let opensslExecutable;
+
+function getJqExecutable() {
+  if (jqExecutable !== undefined) {
+    return jqExecutable;
+  }
+
+  const expr = `
+    let
+      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+      pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+    in
+      pkgs.jq.bin
+  `;
+  const outPath = childProcess.execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '--impure', '--expr', expr],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 600_000,
+    },
+  ).trim();
+  jqExecutable = path.join(outPath, 'bin', 'jq');
+  return jqExecutable;
+}
 
 function getOpenSSLExecutable() {
   if (opensslExecutable !== undefined) {
@@ -244,6 +281,115 @@ function createBootstrapFixture(t, options = {}) {
   const materials = getIdentityMaterials();
   const fixture = createScriptFixture({
     executables: {
+      attic: `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const args = process.argv.slice(2);
+        const configPath = path.join(process.env.XDG_CONFIG_HOME, 'attic', 'config.toml');
+        const config = fs.readFileSync(configPath, 'utf8');
+        fs.appendFileSync(process.env.ATTIC_BOOTSTRAP_LOG, JSON.stringify({ args, config }) + '\\n');
+
+        const expected = [
+          'cache', 'create', '--public', '--priority', '30',
+          '--upstream-cache-key-name', 'cache.nixos.org-1',
+          '--upstream-cache-key-name', 'nix-community.cachix.org-1',
+          'local:darwin',
+        ];
+        if (JSON.stringify(args) !== JSON.stringify(expected)) {
+          process.stderr.write('unexpected attic arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+        const state = process.env.ATTIC_CREATED_STATE === undefined
+          ? {
+              public_key: process.env.CACHE_PUBLIC_KEY,
+              is_public: true,
+              priority: 30,
+              upstream_cache_key_names: [
+                'cache.nixos.org-1',
+                'nix-community.cachix.org-1',
+              ],
+            }
+          : JSON.parse(process.env.ATTIC_CREATED_STATE);
+        fs.writeFileSync(process.env.CACHE_STATE, JSON.stringify(state));
+      `,
+      atticadm: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        if (args.length < 4 || args[0] !== '-f' || args[2] !== 'make-token') {
+          process.stderr.write('unexpected atticadm arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+        const configPath = args[1];
+        const config = fs.readFileSync(configPath, 'utf8');
+        const expectedSecret = fs.readFileSync(process.env.JWT_PRIVATE_PATH).toString('base64');
+        const configMode = (fs.statSync(configPath).mode & 0o777).toString(8).padStart(4, '0');
+        const configHasExpectedSecret = config.includes(
+          'token-rs256-secret-base64 = "' + expectedSecret + '"',
+        );
+        fs.appendFileSync(process.env.ATTIC_ADMIN_LOG, JSON.stringify({
+          args,
+          configHasExpectedSecret,
+          configMode,
+        }) + '\\n');
+        if (!configHasExpectedSecret || configMode !== '0600') {
+          process.stderr.write('invalid atticadm runtime config\\n');
+          process.exit(65);
+        }
+
+        const subjectIndex = args.indexOf('--sub');
+        const subject = subjectIndex === -1 ? '' : args[subjectIndex + 1];
+        const tokens = {
+          'local-binary-cache-bootstrap': 'poisoned-bootstrap-operator-token-value',
+          'Brandons-MacBook-Pro': process.env.PERSONAL_TOKEN_VALUE,
+          ShopifyLaptop: process.env.SHOPIFY_TOKEN_VALUE,
+        };
+        if (!(subject in tokens)) {
+          process.stderr.write('unexpected token subject: ' + subject + '\\n');
+          process.exit(66);
+        }
+        if (process.env.ATTIC_ADMIN_FAIL_SUBJECT === subject) {
+          process.stderr.write('stub token issuance failed for ' + subject + '\\n');
+          process.exit(23);
+        }
+        if (process.env.ATTIC_ADMIN_EMPTY_SUBJECT === subject) {
+          process.exit(0);
+        }
+        const token = process.env.ATTIC_ADMIN_IDENTICAL_HOST_TOKENS === '1'
+          && ['Brandons-MacBook-Pro', 'ShopifyLaptop'].includes(subject)
+          ? process.env.IDENTICAL_TOKEN_VALUE
+          : tokens[subject];
+        process.stdout.write(token + '\\n');
+      `,
+      curl: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.CURL_LOG, JSON.stringify(args) + '\\n');
+        if (
+          args.length !== 8
+          || args[0] !== '--silent'
+          || args[1] !== '--show-error'
+          || args[2] !== '--output'
+          || args[4] !== '--write-out'
+          || args[5] !== '%{http_code}'
+          || args[6] !== '--'
+          || args[7] !== process.env.CACHE_QUERY_URL
+          || args.some(arg => /authorization/i.test(arg))
+        ) {
+          process.stderr.write('unexpected curl arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+        const output = args[3];
+        if (process.env.CURL_FORCED_STATUS !== undefined) {
+          fs.writeFileSync(output, '{}');
+          process.stdout.write(process.env.CURL_FORCED_STATUS);
+        } else if (fs.existsSync(process.env.CACHE_STATE)) {
+          fs.copyFileSync(process.env.CACHE_STATE, output);
+          process.stdout.write('200');
+        } else {
+          fs.writeFileSync(output, '{"error":"NoSuchCache"}');
+          process.stdout.write('404');
+        }
+      `,
       stat: `
         const fs = require('node:fs');
         const args = process.argv.slice(2);
@@ -264,8 +410,16 @@ function createBootstrapFixture(t, options = {}) {
     },
     statePaths: {
       ca: 'public/ca.pem',
+      cachePublicKeyOutput: 'outputs/cache-public-key.txt',
+      cacheState: 'state/cache.json',
+      configuredCachePublicKey: 'public/configured-cache-public-key.txt',
+      atticAdminLog: 'state/atticadm.log',
+      atticBootstrapLog: 'state/attic.log',
+      curlLog: 'state/curl.log',
       jwtPrivate: 'secrets/jwt-private.pem',
       jwtPublic: 'public/jwt-public.pem',
+      personalTokenOutput: 'outputs/personal-token',
+      shopifyTokenOutput: 'outputs/shopify-token',
       tlsCertificate: 'public/server.pem',
       tlsKey: 'secrets/server-key.pem',
     },
@@ -286,6 +440,15 @@ function createBootstrapFixture(t, options = {}) {
       fs.copyFileSync(source, fixture.statePaths[name]);
     }
   }
+  if (options.cacheState !== undefined) {
+    fs.writeFileSync(fixture.statePaths.cacheState, JSON.stringify(options.cacheState));
+  }
+  if (options.configuredCachePublicKeyFile !== undefined) {
+    fs.writeFileSync(
+      fixture.statePaths.configuredCachePublicKey,
+      `${options.configuredCachePublicKeyFile}\n`,
+    );
+  }
   for (const name of ['ca', 'jwtPublic', 'tlsCertificate']) {
     if (sources[name] !== null) {
       fs.chmodSync(fixture.statePaths[name], options[`${name}Mode`] ?? 0o644);
@@ -305,11 +468,24 @@ function createBootstrapFixture(t, options = {}) {
     [fixture.statePaths.tlsKey]: options.tlsKeyOwner ?? LOGIN_USER,
   };
   const executable = buildScript('scripts/local-binary-cache-bootstrap.nix', {
+    atticAdminExecutable: fixture.executables.atticadm,
+    atticClientExecutable: fixture.executables.attic,
     caCertificate: fixture.statePaths.ca,
+    cacheName: CACHE_NAME,
+    cachePublicKeyOutput: fixture.statePaths.cachePublicKeyOutput,
+    configuredCachePublicKey: options.configuredCachePublicKeyValue ?? '',
+    configuredCachePublicKeyFile: options.configuredCachePublicKeyFile === undefined
+      ? ''
+      : fixture.statePaths.configuredCachePublicKey,
+    curlExecutable: fixture.executables.curl,
+    endpoint: CACHE_ENDPOINT,
     jwtPrivateKey: fixture.statePaths.jwtPrivate,
     jwtPublicKey: fixture.statePaths.jwtPublic,
+    jqExecutable: getJqExecutable(),
     loginUser: LOGIN_USER,
     opensslExecutable: getOpenSSLExecutable(),
+    personalTokenOutput: fixture.statePaths.personalTokenOutput,
+    shopifyTokenOutput: fixture.statePaths.shopifyTokenOutput,
     statExecutable: fixture.executables.stat,
     tlsCertificate: fixture.statePaths.tlsCertificate,
     tlsKeyFile: fixture.statePaths.tlsKey,
@@ -317,14 +493,52 @@ function createBootstrapFixture(t, options = {}) {
   return { executable, fixture, materials, owners };
 }
 
-function runBootstrap(bootstrap, extraEnv = {}) {
-  return runScript(bootstrap.executable, [], {
+function runBootstrap(bootstrap, args = [], extraEnv = {}) {
+  return runScript(bootstrap.executable, args, {
     fixture: bootstrap.fixture,
     env: {
       STAT_OWNERS: JSON.stringify(bootstrap.owners),
+      ATTIC_ADMIN_LOG: bootstrap.fixture.statePaths.atticAdminLog,
+      ATTIC_BOOTSTRAP_LOG: bootstrap.fixture.statePaths.atticBootstrapLog,
+      CACHE_PUBLIC_KEY,
+      CACHE_QUERY_URL: `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
+      CACHE_STATE: bootstrap.fixture.statePaths.cacheState,
+      CURL_LOG: bootstrap.fixture.statePaths.curlLog,
+      IDENTICAL_TOKEN_VALUE,
+      JWT_PRIVATE_PATH: bootstrap.fixture.statePaths.jwtPrivate,
+      PERSONAL_TOKEN_VALUE,
+      SHOPIFY_TOKEN_VALUE,
       ...extraEnv,
     },
   });
+}
+
+function readJsonLines(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+  return fs.readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+}
+
+function validCacheState(overrides = {}) {
+  return {
+    public_key: CACHE_PUBLIC_KEY,
+    is_public: true,
+    priority: 30,
+    upstream_cache_key_names: UPSTREAM_CACHE_KEYS,
+    ...overrides,
+  };
+}
+
+function assertNoBootstrapOutputs(bootstrap) {
+  for (const output of [
+    bootstrap.fixture.statePaths.cachePublicKeyOutput,
+    bootstrap.fixture.statePaths.personalTokenOutput,
+    bootstrap.fixture.statePaths.shopifyTokenOutput,
+  ]) {
+    assert.equal(fs.existsSync(output), false, `unexpected bootstrap output: ${output}`);
+  }
+  assert.deepEqual(fs.readdirSync(bootstrap.fixture.tmp), []);
 }
 
 function createEnqueueFixture(t) {
@@ -625,6 +839,9 @@ test('bootstrap preflight validates identity and reports metadata without privat
     assert.equal(result.stderr.includes(secret), false);
     assert.equal(fs.readFileSync(bootstrap.executable, 'utf8').includes(secret), false);
   }
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.curlLog), []);
 });
 
 test('bootstrap preflight validates runtime private-key symlink targets', t => {
@@ -868,6 +1085,365 @@ test('bootstrap preflight rejects unreadable or malformed artifacts', async t =>
       assert.notEqual(result.status, 0);
       assert.ok(result.stderr.includes(artifactPath));
       assert.match(result.stderr, fixtureCase.diagnostic);
+    });
+  }
+});
+
+test('explicit bootstrap creates and verifies darwin, captures its key, and writes scoped host tokens', t => {
+  const bootstrap = createBootstrapFixture(t);
+
+  const result = runBootstrap(bootstrap, ['bootstrap']);
+
+  assert.equal(result.status, 0, result.stderr);
+  const atticInvocations = readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog);
+  assert.deepEqual(atticInvocations.map(invocation => invocation.args), [[
+    'cache', 'create', '--public', '--priority', '30',
+    '--upstream-cache-key-name', 'cache.nixos.org-1',
+    '--upstream-cache-key-name', 'nix-community.cachix.org-1',
+    'local:darwin',
+  ]]);
+  assert.match(atticInvocations[0].config, /default-server = "local"/);
+  assert.match(atticInvocations[0].config, new RegExp(`endpoint = "${CACHE_ENDPOINT}"`));
+  assert.match(atticInvocations[0].config, /token-file = "[^"]+"/);
+
+  const curlInvocations = readJsonLines(bootstrap.fixture.statePaths.curlLog);
+  assert.equal(curlInvocations.length, 2);
+  assert.deepEqual(curlInvocations.map(args => args.at(-1)), [
+    `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
+    `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
+  ]);
+  assert.equal(curlInvocations.flat().some(arg => /authorization/i.test(arg)), false);
+
+  const adminInvocations = readJsonLines(bootstrap.fixture.statePaths.atticAdminLog);
+  assert.deepEqual(adminInvocations.map(invocation => [
+    invocation.args[0],
+    '<runtime-config>',
+    ...invocation.args.slice(2),
+  ]), [
+    [
+      '-f', '<runtime-config>', 'make-token',
+      '--sub', 'local-binary-cache-bootstrap',
+      '--validity', '5m',
+      '--create-cache', CACHE_NAME,
+    ],
+    [
+      '-f', '<runtime-config>', 'make-token',
+      '--sub', 'Brandons-MacBook-Pro',
+      '--validity', '1y',
+      '--push', CACHE_NAME,
+    ],
+    [
+      '-f', '<runtime-config>', 'make-token',
+      '--sub', 'ShopifyLaptop',
+      '--validity', '1y',
+      '--push', CACHE_NAME,
+    ],
+  ]);
+  assert.equal(adminInvocations.every(invocation => invocation.configMode === '0600'), true);
+  assert.equal(adminInvocations.every(invocation => invocation.configHasExpectedSecret), true);
+
+  assert.equal(
+    fs.readFileSync(bootstrap.fixture.statePaths.cachePublicKeyOutput, 'utf8'),
+    `${CACHE_PUBLIC_KEY}\n`,
+  );
+  assert.equal(
+    fs.readFileSync(bootstrap.fixture.statePaths.personalTokenOutput, 'utf8'),
+    `${PERSONAL_TOKEN_VALUE}\n`,
+  );
+  assert.equal(
+    fs.readFileSync(bootstrap.fixture.statePaths.shopifyTokenOutput, 'utf8'),
+    `${SHOPIFY_TOKEN_VALUE}\n`,
+  );
+  assert.equal(fs.statSync(bootstrap.fixture.statePaths.personalTokenOutput).mode & 0o777, 0o400);
+  assert.equal(fs.statSync(bootstrap.fixture.statePaths.shopifyTokenOutput).mode & 0o777, 0o400);
+
+  const privateKey = fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8');
+  const observable = [
+    result.stdout,
+    result.stderr,
+    JSON.stringify(atticInvocations),
+    JSON.stringify(adminInvocations),
+    JSON.stringify(curlInvocations),
+    fs.readFileSync(bootstrap.executable, 'utf8'),
+  ].join('\n');
+  for (const secret of [privateKey, PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
+    assert.equal(observable.includes(secret), false);
+  }
+});
+
+test('bootstrap reuses a matching live cache without creating or replacing its identity', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState(),
+    configuredCachePublicKeyValue: CACHE_PUBLIC_KEY,
+  });
+
+  const result = runBootstrap(bootstrap, ['bootstrap']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+  assert.equal(readJsonLines(bootstrap.fixture.statePaths.curlLog).length, 1);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['Brandons-MacBook-Pro', 'ShopifyLaptop'],
+  );
+  assert.equal(
+    fs.readFileSync(bootstrap.fixture.statePaths.cachePublicKeyOutput, 'utf8'),
+    `${CACHE_PUBLIC_KEY}\n`,
+  );
+});
+
+test('ready verifies anonymous cache state and configured key without mutating bootstrap outputs', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState(),
+    configuredCachePublicKeyFile: CACHE_PUBLIC_KEY,
+  });
+
+  const result = runBootstrap(bootstrap, ['ready']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assert.equal(readJsonLines(bootstrap.fixture.statePaths.curlLog).length, 1);
+  for (const output of [
+    bootstrap.fixture.statePaths.cachePublicKeyOutput,
+    bootstrap.fixture.statePaths.personalTokenOutput,
+    bootstrap.fixture.statePaths.shopifyTokenOutput,
+  ]) {
+    assert.equal(fs.existsSync(output), false);
+  }
+});
+
+test('cache identity guards refuse missing or mismatched state without creating or issuing tokens', async t => {
+  const cases = [
+    {
+      name: 'ready cache missing',
+      operation: 'ready',
+      options: { configuredCachePublicKeyValue: CACHE_PUBLIC_KEY },
+    },
+    {
+      name: 'anonymous access denied for a non-public cache',
+      operation: 'bootstrap',
+      options: {},
+      env: { CURL_FORCED_STATUS: '403' },
+    },
+    {
+      name: 'bootstrap cache missing after identity was configured',
+      operation: 'bootstrap',
+      options: { configuredCachePublicKeyValue: CACHE_PUBLIC_KEY },
+    },
+    {
+      name: 'bootstrap live key mismatch',
+      operation: 'bootstrap',
+      options: {
+        cacheState: validCacheState({ public_key: `darwin:${'A'.repeat(43)}=` }),
+        configuredCachePublicKeyValue: CACHE_PUBLIC_KEY,
+      },
+    },
+    {
+      name: 'ready live key mismatch',
+      operation: 'ready',
+      options: {
+        cacheState: validCacheState({ public_key: `darwin:${'A'.repeat(43)}=` }),
+        configuredCachePublicKeyFile: CACHE_PUBLIC_KEY,
+      },
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const bootstrap = createBootstrapFixture(child, fixtureCase.options);
+
+      const result = runBootstrap(bootstrap, [fixtureCase.operation], fixtureCase.env);
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /cache|identity|key|ready/i);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+      for (const output of [
+        bootstrap.fixture.statePaths.cachePublicKeyOutput,
+        bootstrap.fixture.statePaths.personalTokenOutput,
+        bootstrap.fixture.statePaths.shopifyTokenOutput,
+      ]) {
+        assert.equal(fs.existsSync(output), false);
+      }
+    });
+  }
+});
+
+test('bootstrap fails closed when anonymous observed state differs from the cache contract', async t => {
+  const cases = [
+    ['private cache', validCacheState({ is_public: false })],
+    ['wrong priority', validCacheState({ priority: 41 })],
+    ['missing upstream filter', validCacheState({ upstream_cache_key_names: [UPSTREAM_CACHE_KEYS[0]] })],
+    ['extra upstream filter', validCacheState({
+      upstream_cache_key_names: [...UPSTREAM_CACHE_KEYS, 'unapproved.example-1'],
+    })],
+    ['missing public key', validCacheState({ public_key: '' })],
+  ];
+
+  for (const [name, createdState] of cases) {
+    await t.test(name, child => {
+      const bootstrap = createBootstrapFixture(child);
+
+      const result = runBootstrap(bootstrap, ['bootstrap'], {
+        ATTIC_CREATED_STATE: JSON.stringify(createdState),
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /cache.*state|public|priority|upstream|key/i);
+      assert.equal(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog).length, 1);
+      assert.deepEqual(
+        readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+          invocation.args[invocation.args.indexOf('--sub') + 1]
+        )),
+        ['local-binary-cache-bootstrap'],
+      );
+      for (const output of [
+        bootstrap.fixture.statePaths.cachePublicKeyOutput,
+        bootstrap.fixture.statePaths.personalTokenOutput,
+        bootstrap.fixture.statePaths.shopifyTokenOutput,
+      ]) {
+        assert.equal(fs.existsSync(output), false);
+      }
+    });
+  }
+});
+
+test('bootstrap rejects a malformed nonempty live signing key before capture or token issuance', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState({ public_key: 'darwin:not-canonical-but-nonempty' }),
+  });
+
+  const result = runBootstrap(bootstrap, ['bootstrap']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /live cache signing public key.*canonical/i);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assertNoBootstrapOutputs(bootstrap);
+});
+
+test('bootstrap rejects a live signing key with noncanonical Base64 padding before token issuance', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState({ public_key: NONCANONICAL_CACHE_PUBLIC_KEY }),
+  });
+
+  const result = runBootstrap(bootstrap, ['bootstrap']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /live cache signing public key.*canonical/i);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assertNoBootstrapOutputs(bootstrap);
+});
+
+test('bootstrap rejects a configured signing key with noncanonical Base64 padding before token issuance', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState({ public_key: NONCANONICAL_CACHE_PUBLIC_KEY }),
+    configuredCachePublicKeyValue: NONCANONICAL_CACHE_PUBLIC_KEY,
+  });
+
+  const result = runBootstrap(bootstrap, ['bootstrap']);
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /configured cache signing public key.*canonical/i);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assertNoBootstrapOutputs(bootstrap);
+});
+
+test('bootstrap reports each host token issuance failure without partial outputs', async t => {
+  const cases = [
+    ['Brandons-MacBook-Pro', ['Brandons-MacBook-Pro']],
+    ['ShopifyLaptop', ['Brandons-MacBook-Pro', 'ShopifyLaptop']],
+  ];
+
+  for (const [subject, expectedSubjects] of cases) {
+    await t.test(subject, child => {
+      const bootstrap = createBootstrapFixture(child, { cacheState: validCacheState() });
+
+      const result = runBootstrap(bootstrap, ['bootstrap'], {
+        ATTIC_ADMIN_FAIL_SUBJECT: subject,
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`failed to issue token for subject ${subject}`));
+      assert.deepEqual(
+        readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+          invocation.args[invocation.args.indexOf('--sub') + 1]
+        )),
+        expectedSubjects,
+      );
+      assertNoBootstrapOutputs(bootstrap);
+      for (const secret of [PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
+        assert.equal(result.stdout.includes(secret), false);
+        assert.equal(result.stderr.includes(secret), false);
+      }
+    });
+  }
+});
+
+test('bootstrap rejects empty token output for either host without partial outputs', async t => {
+  for (const subject of ['Brandons-MacBook-Pro', 'ShopifyLaptop']) {
+    await t.test(subject, child => {
+      const bootstrap = createBootstrapFixture(child, { cacheState: validCacheState() });
+
+      const result = runBootstrap(bootstrap, ['bootstrap'], {
+        ATTIC_ADMIN_EMPTY_SUBJECT: subject,
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, new RegExp(`empty token for subject ${subject}`));
+      assertNoBootstrapOutputs(bootstrap);
+    });
+  }
+});
+
+test('bootstrap rejects identical host credentials without exposing or writing them', t => {
+  const bootstrap = createBootstrapFixture(t, { cacheState: validCacheState() });
+
+  const result = runBootstrap(bootstrap, ['bootstrap'], {
+    ATTIC_ADMIN_IDENTICAL_HOST_TOKENS: '1',
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /identical credentials for distinct host subjects/);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['Brandons-MacBook-Pro', 'ShopifyLaptop'],
+  );
+  assertNoBootstrapOutputs(bootstrap);
+  const observable = [
+    result.stdout,
+    result.stderr,
+    fs.readFileSync(bootstrap.executable, 'utf8'),
+    fs.readFileSync(bootstrap.fixture.statePaths.atticAdminLog, 'utf8'),
+  ].join('\n');
+  assert.equal(observable.includes(IDENTICAL_TOKEN_VALUE), false);
+});
+
+test('bootstrap refuses existing output files before cache or token mutation', async t => {
+  const cases = [
+    ['cache key', 'cachePublicKeyOutput', 0o644],
+    ['personal token', 'personalTokenOutput', 0o400],
+    ['Shopify token', 'shopifyTokenOutput', 0o400],
+  ];
+
+  for (const [name, field, mode] of cases) {
+    await t.test(name, child => {
+      const bootstrap = createBootstrapFixture(child);
+      fs.writeFileSync(bootstrap.fixture.statePaths[field], 'existing-output-sentinel\n', { mode });
+
+      const result = runBootstrap(bootstrap, ['bootstrap']);
+
+      assert.notEqual(result.status, 0);
+      assert.ok(result.stderr.includes(bootstrap.fixture.statePaths[field]));
+      assert.equal(fs.readFileSync(bootstrap.fixture.statePaths[field], 'utf8'), 'existing-output-sentinel\n');
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.curlLog), []);
     });
   }
 });
