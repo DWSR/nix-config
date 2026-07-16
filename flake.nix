@@ -1628,6 +1628,46 @@
                 touch $out
               '';
 
+          local-binary-cache-render =
+            pkgs.runCommand "local-binary-cache-render"
+              {
+                nativeBuildInputs = [
+                  pkgs.bash
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+                moduleTest = import ./tests/local-binary-cache/module.test.nix { inherit pkgs; };
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                test -e "$moduleTest"
+                bash tests/local-binary-cache/module-errors.test.sh
+                node --test tests/local-binary-cache/system-render.test.js
+                touch $out
+              '';
+
+          local-binary-cache-publisher =
+            pkgs.runCommand "local-binary-cache-publisher"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/local-binary-cache/publisher.test.js
+                touch $out
+              '';
+
           rtk-opencode-tests =
             pkgs.runCommand "rtk-opencode-tests"
               {

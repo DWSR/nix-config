@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Establish the declarative foundation and test harness
+- [x] 1. Establish the declarative foundation and test harness
 - [x] 1.1 Define the core typed cache configuration contract
   - Cover disabled, bootstrap, server, publisher, and consumer capabilities with explicit endpoint, trust, package, secret-path, and state-path inputs.
   - Enforce valid host role combinations, ready-mode public trust, distributed-build exclusion, and paired runtime prerequisites.
@@ -16,7 +16,7 @@
   - _Requirements: 5.1, 5.2, 5.5, 5.6, 7.5_
   - _Boundary: Cache Module, Retention Policy_
 
-- [ ] 1.3 Add isolated render and script test harnesses
+- [x] 1.3 Add isolated render and script test harnesses
   - Provide nix-darwin fixture evaluation plus injectable executable and state paths for script tests.
   - Register separate render and publisher checks in the flake without adding a package input.
   - Done when both empty fixture suites execute hermetically through the flake check entry points.
