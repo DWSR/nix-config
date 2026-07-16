@@ -1,8 +1,45 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (lib) mkEnableOption mkOption types;
 
   cfg = config.services.localBinaryCache;
+
+  tomlFormat = pkgs.formats.toml { };
+  jwtPublicKeyPlaceholder = "LOCAL_BINARY_CACHE_RS256_PUBLIC_KEY_BASE64";
+  atticConfigTemplate = tomlFormat.generate "attic-server-template.toml" {
+    listen = cfg.server.listenAddress;
+    allowed-hosts = [ (lib.removePrefix "https://" cfg.endpoint) ];
+    api-endpoint = "${cfg.endpoint}/";
+    substituter-endpoint = "${cfg.endpoint}/";
+
+    database.url = "sqlite://${cfg.server.stateDirectory}/attic.db?mode=rwc";
+    storage = {
+      type = "local";
+      path = "${cfg.server.stateDirectory}/storage";
+    };
+    chunking = {
+      nar-size-threshold = 65536;
+      min-size = 16384;
+      avg-size = 65536;
+      max-size = 262144;
+    };
+    compression.type = "zstd";
+    garbage-collection = {
+      interval = cfg.server.gcInterval;
+      default-retention-period = "${toString cfg.server.retentionDays} days";
+    };
+    jwt.signing.token-rs256-pubkey-base64 = jwtPublicKeyPlaceholder;
+  };
+  atticConfig = pkgs.runCommand "attic-server.toml" { nativeBuildInputs = [ pkgs.coreutils ]; } ''
+    public_key_base64="$(base64 --wrap=0 < ${cfg.server.jwtPublicKey})"
+    substitute ${atticConfigTemplate} "$out" \
+      --replace-fail ${lib.escapeShellArg jwtPublicKeyPlaceholder} "$public_key_base64"
+  '';
 
   absolutePathType = types.addCheck types.str (lib.hasPrefix "/") // {
     description = "absolute path";
@@ -25,6 +62,11 @@ let
     )
     // {
       description = "absolute runtime path without Nix store context";
+    };
+  serverStateDirectoryType =
+    types.addCheck runtimePathType (path: builtins.match "/[^[:space:][:cntrl:]?#%]+" path != null)
+    // {
+      description = "non-root runtime path without whitespace, control characters, or URI-reserved ?, #, and % characters";
     };
   endpointType = types.enum [ "https://Brandons-MacBook-Pro.local:8443" ];
   cachePublicKeyType =
@@ -118,7 +160,7 @@ let
       };
 
       stateDirectory = mkOption {
-        type = types.nullOr runtimePathType;
+        type = types.nullOr serverStateDirectoryType;
         default = null;
         description = "Runtime directory containing Attic database and object state.";
       };
@@ -151,6 +193,13 @@ let
         type = types.nullOr runtimePathType;
         default = null;
         description = "Runtime path to the TLS leaf private key.";
+      };
+
+      configFile = mkOption {
+        type = types.nullOr types.path;
+        default = if cfg.server.enable then atticConfig else null;
+        readOnly = true;
+        description = "Secret-free Attic server configuration consumed by the cache daemon.";
       };
     };
   };

@@ -38,6 +38,12 @@ check_rejected store-repeated-separator services.localBinaryCache.publisher.toke
 check_rejected store-trailing-separator services.localBinaryCache.publisher.tokenFile
 check_rejected store-case-variant services.localBinaryCache.publisher.tokenFile
 check_rejected contextual-store services.localBinaryCache.publisher.tokenFile
+check_rejected server-state-root services.localBinaryCache.server.stateDirectory
+check_rejected server-state-whitespace services.localBinaryCache.server.stateDirectory
+check_rejected server-state-control services.localBinaryCache.server.stateDirectory
+check_rejected server-state-query services.localBinaryCache.server.stateDirectory
+check_rejected server-state-fragment services.localBinaryCache.server.stateDirectory
+check_rejected server-state-percent services.localBinaryCache.server.stateDirectory
 check_rejected key-not-base64 services.localBinaryCache.cachePublicKey
 check_rejected key-bad-padding services.localBinaryCache.cachePublicKey
 check_rejected key-noncanonical services.localBinaryCache.cachePublicKey

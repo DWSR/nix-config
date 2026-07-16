@@ -68,7 +68,7 @@
   - _Boundary: Status Tool_
 
 - [ ] 3. Add the personal cache runtime
-- [ ] 3.1 Render the secret-free Attic server configuration
+- [x] 3.1 Render the secret-free Attic server configuration
   - Set canonical allowed, API, and substituter endpoints for the LAN TLS origin.
   - Configure loopback listening, SQLite/local storage, RS256 public verification, and 30-day/12-hour retention.
   - Represent the public cache contract without embedding runtime secrets or auto-creating cache identity.
@@ -222,3 +222,4 @@
 - Task 2.3 keypair validation must check private-key consistency and prove RS256 PKCS#1 v1.5 signing; public-key equality alone accepts corrupted or RSA-PSS-restricted keys.
 - Task 2.4 bootstrap and ready-mode cache-key validation must use the same canonical 32-byte Base64 grammar as the typed module, including final padding-bit restrictions.
 - Task 2.5 read-only probes must disable ambient tool configuration before arguments and suppress parser/helper stderr; otherwise local config or poisoned diagnostics can violate TLS, mutation, and redaction guarantees.
+- Task 3.1 Attic state directories need stricter validation than generic runtime paths because whitespace, controls, and URI-reserved characters make SQLite and storage URLs ambiguous.

@@ -65,6 +65,32 @@ let
       module.services.localBinaryCache.publisher.tokenFile = contextualStorePath;
       select = config: config.publisher.tokenFile;
     };
+    server-state-root = {
+      module.services.localBinaryCache.server.stateDirectory = "/";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-whitespace = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache/attic state";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-control = {
+      module.services.localBinaryCache.server.stateDirectory =
+        builtins.fromJSON ''"/var/db/local-binary-cache/attic\u0001state"'';
+      select = config: config.server.stateDirectory;
+    };
+    server-state-query = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache/attic?mode=ro";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-fragment = {
+      module.services.localBinaryCache.server.stateDirectory =
+        "/var/db/local-binary-cache/attic#fragment";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-percent = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache/%61ttic";
+      select = config: config.server.stateDirectory;
+    };
     key-not-base64 = {
       module.services.localBinaryCache.cachePublicKey = "darwin:not-base64";
       select = config: config.cachePublicKey;

@@ -5,6 +5,7 @@ let
   modulePath = ../../configurations/common-darwin/local-binary-cache.nix;
   jwtPublicKey = ./fixtures/jwt-public.pem;
   tlsCertificate = ./fixtures/tls-certificate.pem;
+  atticServerPackage = pkgs.unstable.attic-server;
   runtimePackage = pkgs.hello;
   contextualStorePath = "${tlsCertificate}";
   contextlessStorePath = builtins.unsafeDiscardStringContext contextualStorePath;
@@ -45,7 +46,7 @@ let
 
   serverConfig = {
     enable = true;
-    package = runtimePackage;
+    package = atticServerPackage;
     proxyPackage = runtimePackage;
     stateDirectory = "/var/db/local-binary-cache/attic";
     inherit jwtPublicKey tlsCertificate;
@@ -217,6 +218,7 @@ assert lib.all (
 ) requiredOptionNames;
 assert disabled.config.services.localBinaryCache.enable == false;
 assert failedAssertions disabled == [ ];
+assert disabled.config.services.localBinaryCache.server.configFile == null;
 assert bootstrap.config.services.localBinaryCache.bootstrapMode;
 assert bootstrap.config.services.localBinaryCache.server.enable;
 assert !bootstrap.config.services.localBinaryCache.publisher.enable;
@@ -245,6 +247,7 @@ assert rejected storeBackedStateDirectory.config.services.localBinaryCache.publi
 assert lib.all runtimePathAccepted [
   "/"
   "/run/secrets/local-binary-cache-token"
+  "/run/secrets/local binary cache token?version=1#current%25"
   "/var/db/local-binary-cache/publisher"
   "/nix/storehouse/local-binary-cache-token"
 ];
@@ -292,5 +295,8 @@ pkgs.runCommand "local-binary-cache-module-test"
   ''
     openssl pkey -pubin -in ${jwtPublicKey} -noout
     openssl x509 -in ${tlsCertificate} -noout
+    ${atticServerPackage}/bin/atticd \
+      --config ${readyPersonal.config.services.localBinaryCache.server.configFile} \
+      --mode check-config
     touch "$out"
   ''
