@@ -123,6 +123,18 @@ let
         description = "Runtime directory containing Attic database and object state.";
       };
 
+      retentionDays = mkOption {
+        type = types.enum [ 30 ];
+        default = 30;
+        description = "Number of unused days before cache artifacts become eligible for collection.";
+      };
+
+      gcInterval = mkOption {
+        type = types.enum [ "12 hours" ];
+        default = "12 hours";
+        description = "Interval between cache garbage-collection runs.";
+      };
+
       jwtPublicKey = mkOption {
         type = types.nullOr types.path;
         default = null;
@@ -139,6 +151,22 @@ let
         type = types.nullOr runtimePathType;
         default = null;
         description = "Runtime path to the TLS leaf private key.";
+      };
+    };
+  };
+
+  gcPolicyOptions = {
+    options = {
+      minFree = mkOption {
+        type = types.nullOr types.ints.unsigned;
+        default = null;
+        description = "Free-byte threshold that triggers Nix store pressure garbage collection.";
+      };
+
+      maxFree = mkOption {
+        type = types.nullOr types.ints.unsigned;
+        default = null;
+        description = "Free-byte target for Nix store pressure garbage collection.";
       };
     };
   };
@@ -204,6 +232,12 @@ in
       type = types.submodule serverOptions;
       default = { };
       description = "Personal-host Attic and TLS endpoint contract.";
+    };
+
+    gcPolicy = mkOption {
+      type = types.submodule gcPolicyOptions;
+      default = { };
+      description = "Optional Nix store pressure garbage-collection policy.";
     };
   };
 
@@ -307,6 +341,17 @@ in
     {
       assertion = !cfg.server.enable || cfg.server.tlsKeyFile != null;
       message = "services.localBinaryCache.server.tlsKeyFile is required when server.enable is true.";
+    }
+    {
+      assertion = (cfg.gcPolicy.minFree == null) == (cfg.gcPolicy.maxFree == null);
+      message = "services.localBinaryCache.gcPolicy.minFree and gcPolicy.maxFree must be set together.";
+    }
+    {
+      assertion =
+        cfg.gcPolicy.minFree == null
+        || cfg.gcPolicy.maxFree == null
+        || (cfg.gcPolicy.minFree > 0 && cfg.gcPolicy.maxFree > cfg.gcPolicy.minFree);
+      message = "services.localBinaryCache.gcPolicy requires maxFree > minFree > 0 when configured.";
     }
   ];
 }

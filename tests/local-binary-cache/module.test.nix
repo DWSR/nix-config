@@ -121,6 +121,42 @@ let
   noncanonicalCachePublicKey = mkReady "shopify" {
     services.localBinaryCache.cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Ft=";
   };
+  alternateRetentionDays = mkReady "personal" {
+    services.localBinaryCache.server.retentionDays = 31;
+  };
+  alternateGcInterval = mkReady "personal" {
+    services.localBinaryCache.server.gcInterval = "24 hours";
+  };
+  orderedPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy = {
+      minFree = 10 * 1024 * 1024 * 1024;
+      maxFree = 20 * 1024 * 1024 * 1024;
+    };
+  };
+  minOnlyPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy.minFree = 10 * 1024 * 1024 * 1024;
+  };
+  maxOnlyPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy.maxFree = 20 * 1024 * 1024 * 1024;
+  };
+  zeroTriggerPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy = {
+      minFree = 0;
+      maxFree = 20 * 1024 * 1024 * 1024;
+    };
+  };
+  zeroTargetPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy = {
+      minFree = 10 * 1024 * 1024 * 1024;
+      maxFree = 0;
+    };
+  };
+  reversedPressure = mkReady "personal" {
+    services.localBinaryCache.gcPolicy = {
+      minFree = 20 * 1024 * 1024 * 1024;
+      maxFree = 10 * 1024 * 1024 * 1024;
+    };
+  };
   missingRuntimePrerequisites = mkReady "personal" {
     services.localBinaryCache = {
       publisher = {
@@ -147,6 +183,7 @@ let
     "consumer"
     "enable"
     "endpoint"
+    "gcPolicy"
     "hostRole"
     "publisher"
     "server"
@@ -172,6 +209,8 @@ let
   runtimePathTypeDescription = publisherSubOptions.tokenFile.type.description;
   cachePublicKeyTypeDescription =
     disabled.options.services.localBinaryCache.cachePublicKey.type.description;
+  pressurePairMessage = "services.localBinaryCache.gcPolicy.minFree and gcPolicy.maxFree must be set together.";
+  pressureOrderMessage = "services.localBinaryCache.gcPolicy requires maxFree > minFree > 0 when configured.";
 in
 assert lib.all (
   name: builtins.hasAttr name disabled.options.services.localBinaryCache
@@ -212,8 +251,28 @@ assert lib.all runtimePathAccepted [
 assert rejected malformedCachePublicKey.config.services.localBinaryCache.cachePublicKey;
 assert rejected malformedPaddedCachePublicKey.config.services.localBinaryCache.cachePublicKey;
 assert rejected noncanonicalCachePublicKey.config.services.localBinaryCache.cachePublicKey;
+assert rejected alternateRetentionDays.config.services.localBinaryCache.server.retentionDays;
+assert rejected alternateGcInterval.config.services.localBinaryCache.server.gcInterval;
 assert lib.hasInfix "without Nix store context" runtimePathTypeDescription;
 assert lib.hasInfix "32-byte base64-encoded Ed25519" cachePublicKeyTypeDescription;
+assert readyPersonal.config.services.localBinaryCache.server.retentionDays == 30;
+assert readyPersonal.config.services.localBinaryCache.server.gcInterval == "12 hours";
+assert
+  readyPersonal.config.services.localBinaryCache.gcPolicy == {
+    minFree = null;
+    maxFree = null;
+  };
+assert
+  orderedPressure.config.services.localBinaryCache.gcPolicy == {
+    minFree = 10 * 1024 * 1024 * 1024;
+    maxFree = 20 * 1024 * 1024 * 1024;
+  };
+assert failedAssertions orderedPressure == [ ];
+assert failureMessages minOnlyPressure == [ pressurePairMessage ];
+assert failureMessages maxOnlyPressure == [ pressurePairMessage ];
+assert failureMessages zeroTriggerPressure == [ pressureOrderMessage ];
+assert failureMessages zeroTargetPressure == [ pressureOrderMessage ];
+assert failureMessages reversedPressure == [ pressureOrderMessage ];
 assert
   failureMessages missingRuntimePrerequisites == [
     "services.localBinaryCache.publisher.package is required when publisher.enable is true."

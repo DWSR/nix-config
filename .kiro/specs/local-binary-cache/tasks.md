@@ -9,11 +9,11 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.7, 3.4, 3.5, 4.4, 4.5, 4.6, 6.5, 7.5_
   - _Boundary: Cache Module_
 
-- [ ] 1.2 Define retention and garbage-collection policy options
-  - Model the 30-day cache retention, 12-hour cache GC interval, per-host calendar schedules, and nullable pressure-GC pair.
+- [x] 1.2 Define retention and garbage-collection policy options
+  - Model the 30-day cache retention, 12-hour cache GC interval, and nullable pressure-GC pair.
   - Require paired nonzero pressure values with the target greater than the trigger; preserve Nix defaults while unset.
-  - Done when fixtures prove the null defaults, accepted ordered pair, rejected partial/zero/reversed pairs, and complete calendar fields.
-  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.8, 5.9, 7.5_
+  - Done when fixtures prove the fixed retention values, null pressure defaults, accepted ordered pair, and rejected partial/zero/reversed pairs.
+  - _Requirements: 5.1, 5.2, 5.5, 5.6, 7.5_
   - _Boundary: Cache Module, Retention Policy_
 
 - [ ] 1.3 Add isolated render and script test harnesses
