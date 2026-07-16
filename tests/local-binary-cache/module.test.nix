@@ -30,6 +30,21 @@ let
           type = lib.types.bool;
           default = false;
         };
+
+        system.primaryUser = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+        };
+
+        system.activationScripts.launchd.text = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
+        launchd.daemons = lib.mkOption {
+          type = lib.types.attrsOf lib.types.anything;
+          default = { };
+        };
       };
     };
 
@@ -61,6 +76,7 @@ let
   };
 
   readyModule = hostRole: {
+    system.primaryUser = "cache-operator";
     services.localBinaryCache = {
       enable = true;
       inherit hostRole;
@@ -81,6 +97,7 @@ let
 
   disabled = mkConfiguration { };
   bootstrap = mkConfiguration {
+    system.primaryUser = "cache-operator";
     services.localBinaryCache = {
       enable = true;
       hostRole = "personal";
@@ -174,6 +191,9 @@ let
         tlsKeyFile = null;
       };
     };
+  };
+  missingPrimaryUser = mkReady "personal" {
+    system.primaryUser = null;
   };
 
   requiredOptionNames = [
@@ -287,6 +307,10 @@ assert
     "services.localBinaryCache.server.jwtPublicKey is required when server.enable is true."
     "services.localBinaryCache.server.tlsCertificate is required when server.enable is true."
     "services.localBinaryCache.server.tlsKeyFile is required when server.enable is true."
+  ];
+assert
+  failureMessages missingPrimaryUser == [
+    "services.localBinaryCache.server.enable requires system.primaryUser."
   ];
 pkgs.runCommand "local-binary-cache-module-test"
   {

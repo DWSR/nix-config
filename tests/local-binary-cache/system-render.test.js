@@ -16,6 +16,12 @@ const poisonedSecrets = {
 };
 const unsafeServerStateDirectories = [
   ['root', '/'],
+  ['database-root', '/var/db'],
+  ['namespace-parent', '/var/db/local-binary-cache'],
+  ['state-descendant', '/var/db/local-binary-cache/attic/storage'],
+  ['log-namespace', '/var/log/local-binary-cache'],
+  ['attic-log-directory', '/var/log/local-binary-cache/attic'],
+  ['system-directory', '/etc'],
   ['whitespace', '/var/db/local-binary-cache/attic state'],
   ['control', `/var/db/local-binary-cache/attic${String.fromCharCode(1)}state`],
   ['query', '/var/db/local-binary-cache/attic?mode=ro'],
@@ -44,11 +50,187 @@ test('render harness evaluates an isolated nix-darwin fixture', () => {
   });
 });
 
+test('disabled fixture renders no Attic launchd job or directory activation', () => {
+  const rendered = evalDarwinFixture(
+    `{ ... }: {
+      system.primaryUser = "cache-operator";
+    }`,
+    `{
+      hasSystemDaemon = config.launchd.daemons ? local-binary-cache-attic;
+      hasLoginAgent = config.launchd.agents ? local-binary-cache-attic;
+      hasUserAgent = config.launchd.user.agents ? local-binary-cache-attic;
+      activation = config.system.activationScripts.launchd.text;
+    }`,
+  );
+
+  assert.equal(rendered.hasSystemDaemon, false);
+  assert.equal(rendered.hasLoginAgent, false);
+  assert.equal(rendered.hasUserAgent, false);
+  assert.equal(rendered.activation.includes('local-binary-cache: preparing Attic runtime directories'), false);
+});
+
+test('server renders a pre-login Attic daemon with failure restart state', () => {
+  const tlsKeyFile = `/run/secrets/${poisonedSecrets.tlsPrivateKey}-${poisonedSecrets.jwtPrivateKey}`;
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }: {
+      system.primaryUser = "cache-operator";
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "personal";
+        bootstrapMode = true;
+        server = {
+          enable = true;
+          package = pkgs.hello;
+          proxyPackage = pkgs.hello;
+          stateDirectory = "/var/db/local-binary-cache/attic";
+          jwtPublicKey = ${jwtPublicKey};
+          tlsCertificate = ${tlsCertificate};
+          tlsKeyFile = ${JSON.stringify(tlsKeyFile)};
+        };
+      };
+    }`,
+    `let
+      hasSystemDaemon = config.launchd.daemons ? local-binary-cache-attic;
+      daemon = if hasSystemDaemon then config.launchd.daemons.local-binary-cache-attic else null;
+      service = if daemon == null then { } else daemon.serviceConfig;
+      plistPath = "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-attic.plist";
+    in {
+      inherit hasSystemDaemon;
+      hasLoginAgent = config.launchd.agents ? local-binary-cache-attic;
+      hasUserAgent = config.launchd.user.agents ? local-binary-cache-attic;
+      label = service.Label or null;
+      programArguments = service.ProgramArguments or null;
+      runAtLoad = service.RunAtLoad or null;
+      keepAliveSuccessfulExit =
+        if service ? KeepAlive && builtins.isAttrs service.KeepAlive
+        then service.KeepAlive.SuccessfulExit
+        else null;
+      throttleInterval = service.ThrottleInterval or null;
+      userName = service.UserName or null;
+      workingDirectory = service.WorkingDirectory or null;
+      standardOutPath = service.StandardOutPath or null;
+      standardErrorPath = service.StandardErrorPath or null;
+      expectedExecutable = "${'${config.services.localBinaryCache.server.package}'}/bin/atticd";
+      configFile = toString config.services.localBinaryCache.server.configFile;
+      activation = config.system.activationScripts.launchd.text;
+      plist = if hasSystemDaemon then builtins.readFile plistPath else null;
+    }`,
+  );
+
+  assert.equal(rendered.hasSystemDaemon, true);
+  assert.equal(rendered.hasLoginAgent, false);
+  assert.equal(rendered.hasUserAgent, false);
+  assert.equal(rendered.label, 'org.nixos.local-binary-cache-attic');
+  assert.deepEqual(rendered.programArguments, [
+    rendered.expectedExecutable,
+    '-f',
+    rendered.configFile,
+    '--mode',
+    'monolithic',
+  ]);
+  assert.equal(path.isAbsolute(rendered.programArguments[0]), true);
+  assert.equal(path.isAbsolute(rendered.programArguments[2]), true);
+  assert.equal(rendered.runAtLoad, true);
+  assert.equal(rendered.keepAliveSuccessfulExit, false);
+  assert.equal(rendered.throttleInterval, 10);
+  assert.equal(rendered.userName, 'cache-operator');
+  assert.equal(rendered.workingDirectory, '/var/db/local-binary-cache/attic');
+  assert.equal(rendered.standardOutPath, '/var/log/local-binary-cache/attic/stdout.log');
+  assert.equal(rendered.standardErrorPath, '/var/log/local-binary-cache/attic/stderr.log');
+  const stateDirectory = rendered.workingDirectory;
+  const logDirectory = path.dirname(rendered.standardOutPath);
+  assert.equal(
+    stateDirectory === logDirectory
+      || stateDirectory.startsWith(`${logDirectory}${path.sep}`)
+      || logDirectory.startsWith(`${stateDirectory}${path.sep}`),
+    false,
+  );
+
+  assert.match(rendered.plist, /<key>RunAtLoad<\/key>\s*<true\/>/);
+  assert.match(
+    rendered.plist,
+    /<key>KeepAlive<\/key>\s*<dict>\s*<key>SuccessfulExit<\/key>\s*<false\/>\s*<\/dict>/,
+  );
+  assert.match(rendered.plist, /<key>ThrottleInterval<\/key>\s*<integer>10<\/integer>/);
+
+  assert.match(rendered.activation, /local-binary-cache: preparing Attic runtime directories/);
+  assert.match(rendered.activation, /refusing attacker-controlled symlink path component/);
+  assert.ok(
+    rendered.activation.indexOf('if [[ -L "$target" ]]')
+      < rendered.activation.indexOf('/usr/bin/install -d -o "$owner"'),
+  );
+  assert.match(rendered.activation, /prepare_owned_directory "\$attic_state_directory" "\$attic_user" staff 0700/);
+  assert.match(rendered.activation, /prepare_owned_directory "\$attic_log_directory" root wheel 0755/);
+  assert.match(rendered.activation, /prepare_owned_directory "\$attic_log_directory" "\$attic_user" staff 0750/);
+  assert.match(rendered.activation, /prepare_log_file "\$attic_stdout_log" "\$attic_user" staff 0640/);
+  assert.match(rendered.activation, /prepare_log_file "\$attic_stderr_log" "\$attic_user" staff 0640/);
+
+  const directorySetupIndex = rendered.activation.indexOf(
+    'local-binary-cache: preparing Attic runtime directories',
+  );
+  const launchdSetupIndex = rendered.activation.indexOf('setting up launchd services');
+  const lockedLogDirectoryIndex = rendered.activation.indexOf(
+    'prepare_owned_directory "$attic_log_directory" root wheel 0755',
+  );
+  const stdoutSetupIndex = rendered.activation.indexOf(
+    'prepare_log_file "$attic_stdout_log" "$attic_user" staff 0640',
+  );
+  const ownedLogDirectoryIndex = rendered.activation.indexOf(
+    'prepare_owned_directory "$attic_log_directory" "$attic_user" staff 0750',
+  );
+  assert.ok(directorySetupIndex >= 0 && directorySetupIndex < launchdSetupIndex);
+  assert.ok(
+    lockedLogDirectoryIndex < stdoutSetupIndex
+      && stdoutSetupIndex < ownedLogDirectoryIndex,
+  );
+
+  for (const renderedText of [rendered.activation, rendered.plist]) {
+    for (const secretValue of Object.values(poisonedSecrets)) {
+      assert.equal(renderedText.includes(secretValue), false);
+    }
+  }
+});
+
+test('canonical server state directory is shell-escaped in activation', () => {
+  const stateDirectory = '/var/db/local-binary-cache/attic';
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }: {
+      system.primaryUser = "cache-operator";
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "personal";
+        bootstrapMode = true;
+        server = {
+          enable = true;
+          package = pkgs.hello;
+          proxyPackage = pkgs.hello;
+          stateDirectory = ${JSON.stringify(stateDirectory)};
+          jwtPublicKey = ${jwtPublicKey};
+          tlsCertificate = ${tlsCertificate};
+          tlsKeyFile = "/run/secrets/local-binary-cache-tls-key";
+        };
+      };
+    }`,
+    `{
+      activation = config.system.activationScripts.launchd.text;
+      workingDirectory =
+        config.launchd.daemons.local-binary-cache-attic.serviceConfig.WorkingDirectory;
+    }`,
+  );
+
+  assert.equal(rendered.workingDirectory, stateDirectory);
+  assert.match(
+    rendered.activation,
+    /^attic_state_directory=\/var\/db\/local-binary-cache\/attic$/m,
+  );
+});
+
 test('server renders the pinned secret-free Attic configuration contract', () => {
   const tlsKeyFile = `/run/secrets/${poisonedSecrets.tlsPrivateKey}-${poisonedSecrets.jwtPrivateKey}`;
   const tokenFile = `/run/secrets/${poisonedSecrets.pushToken}`;
   const rendered = evalDarwinFixture(
     `{ pkgs, ... }: {
+      system.primaryUser = "cache-operator";
       services.localBinaryCache = {
         enable = true;
         hostRole = "personal";
@@ -148,7 +330,7 @@ test('server renders the pinned secret-free Attic configuration contract', () =>
   }
 });
 
-test('server rejects state directories that make storage paths or SQLite URLs ambiguous', async t => {
+test('server rejects noncanonical, overlapping, or URI-ambiguous state directories', async t => {
   for (const [name, stateDirectory] of unsafeServerStateDirectories) {
     await t.test(name, () => {
       const nixStateDirectory = JSON.stringify(JSON.stringify(stateDirectory));

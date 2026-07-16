@@ -28,6 +28,21 @@ let
           type = lib.types.bool;
           default = false;
         };
+
+        system.primaryUser = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+        };
+
+        system.activationScripts.launchd.text = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
+        launchd.daemons = lib.mkOption {
+          type = lib.types.attrsOf lib.types.anything;
+          default = { };
+        };
       };
     };
 
@@ -67,6 +82,30 @@ let
     };
     server-state-root = {
       module.services.localBinaryCache.server.stateDirectory = "/";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-database-root = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-namespace-parent = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-descendant = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache/attic/storage";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-log-namespace = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/log/local-binary-cache";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-log-directory = {
+      module.services.localBinaryCache.server.stateDirectory = "/var/log/local-binary-cache/attic";
+      select = config: config.server.stateDirectory;
+    };
+    server-state-system-directory = {
+      module.services.localBinaryCache.server.stateDirectory = "/etc";
       select = config: config.server.stateDirectory;
     };
     server-state-whitespace = {

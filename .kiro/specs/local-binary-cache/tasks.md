@@ -77,7 +77,7 @@
   - _Requirements: 1.2, 1.4, 1.5, 4.1, 4.4, 5.1, 5.2, 7.4_
   - _Boundary: Attic Service_
 
-- [ ] 3.2 Add Attic state ownership and launchd supervision
+- [x] 3.2 Add Attic state ownership and launchd supervision
   - Create login-user-owned state/log directories and a pre-login system daemon with absolute arguments.
   - Apply `RunAtLoad`, restart/throttle behavior, and operator-readable logs.
   - Done when the rendered daemon starts independently of login and failure fixtures expose restart/readiness state.
@@ -223,3 +223,4 @@
 - Task 2.4 bootstrap and ready-mode cache-key validation must use the same canonical 32-byte Base64 grammar as the typed module, including final padding-bit restrictions.
 - Task 2.5 read-only probes must disable ambient tool configuration before arguments and suppress parser/helper stderr; otherwise local config or poisoned diagnostics can violate TLS, mutation, and redaction guarantees.
 - Task 3.1 Attic state directories need stricter validation than generic runtime paths because whitespace, controls, and URI-reserved characters make SQLite and storage URLs ambiguous.
+- Task 3.2 ownership-changing activation must constrain Attic state to its dedicated canonical directory and reject symlinks; configurable system-directory targets can otherwise cause root to retarget broad macOS paths.

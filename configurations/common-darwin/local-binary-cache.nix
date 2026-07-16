@@ -9,6 +9,13 @@ let
 
   cfg = config.services.localBinaryCache;
 
+  atticDaemonLabel = "org.nixos.local-binary-cache-attic";
+  atticStateDirectory = "/var/db/local-binary-cache/attic";
+  atticLogDirectory = "/var/log/local-binary-cache/attic";
+  atticStandardOutPath = "${atticLogDirectory}/stdout.log";
+  atticStandardErrorPath = "${atticLogDirectory}/stderr.log";
+  loginUser = if config.system.primaryUser == null then "" else config.system.primaryUser;
+
   tomlFormat = pkgs.formats.toml { };
   jwtPublicKeyPlaceholder = "LOCAL_BINARY_CACHE_RS256_PUBLIC_KEY_BASE64";
   atticConfigTemplate = tomlFormat.generate "attic-server-template.toml" {
@@ -63,11 +70,19 @@ let
     // {
       description = "absolute runtime path without Nix store context";
     };
-  serverStateDirectoryType =
+  uriSafeServerStateDirectoryType =
     types.addCheck runtimePathType (path: builtins.match "/[^[:space:][:cntrl:]?#%]+" path != null)
     // {
       description = "non-root runtime path without whitespace, control characters, or URI-reserved ?, #, and % characters";
     };
+  serverStateDirectoryType =
+    types.addCheck uriSafeServerStateDirectoryType (path: path == atticStateDirectory)
+    // {
+      description = "exact canonical Attic state path ${atticStateDirectory}";
+    };
+  pathsOverlap =
+    first: second:
+    first == second || lib.hasPrefix "${first}/" second || lib.hasPrefix "${second}/" first;
   endpointType = types.enum [ "https://Brandons-MacBook-Pro.local:8443" ];
   cachePublicKeyType =
     types.addCheck types.str (
@@ -368,6 +383,10 @@ in
       message = "services.localBinaryCache.publisher.stateDirectory is required when publisher.enable is true.";
     }
     {
+      assertion = !cfg.server.enable || config.system.primaryUser != null;
+      message = "services.localBinaryCache.server.enable requires system.primaryUser.";
+    }
+    {
       assertion = !cfg.server.enable || cfg.server.package != null;
       message = "services.localBinaryCache.server.package is required when server.enable is true.";
     }
@@ -378,6 +397,13 @@ in
     {
       assertion = !cfg.server.enable || cfg.server.stateDirectory != null;
       message = "services.localBinaryCache.server.stateDirectory is required when server.enable is true.";
+    }
+    {
+      assertion =
+        !cfg.server.enable
+        || cfg.server.stateDirectory == null
+        || !pathsOverlap cfg.server.stateDirectory atticLogDirectory;
+      message = "services.localBinaryCache.server.stateDirectory must not overlap the Attic log directory.";
     }
     {
       assertion = !cfg.server.enable || cfg.server.jwtPublicKey != null;
@@ -403,4 +429,111 @@ in
       message = "services.localBinaryCache.gcPolicy requires maxFree > minFree > 0 when configured.";
     }
   ];
+
+  config.system.activationScripts.launchd.text = lib.mkIf cfg.server.enable (
+    lib.mkBefore ''
+      echo "local-binary-cache: preparing Attic runtime directories" >&2
+
+      attic_user=${lib.escapeShellArg loginUser}
+      attic_state_directory=${lib.escapeShellArg cfg.server.stateDirectory}
+      attic_log_directory=${lib.escapeShellArg atticLogDirectory}
+      attic_stdout_log=${lib.escapeShellArg atticStandardOutPath}
+      attic_stderr_log=${lib.escapeShellArg atticStandardErrorPath}
+
+      fail_attic_path() {
+        printf 'local-binary-cache: %s: %s\n' "$1" "$2" >&2
+        exit 1
+      }
+
+      prepare_trusted_parents() {
+        local target="$1"
+        local parent="''${target%/*}"
+        local current=""
+        local component link_owner parent_owner parent_mode
+        local -a components
+
+        IFS='/' read -r -a components <<< "''${parent#/}"
+        for component in "''${components[@]}"; do
+          current="$current/$component"
+          if [[ -L "$current" ]]; then
+            link_owner="$(/usr/bin/stat -f '%Su' "$current")"
+            if [[ "$link_owner" != root ]]; then
+              fail_attic_path "refusing attacker-controlled symlink path component" "$current"
+            fi
+          elif [[ -e "$current" && ! -d "$current" ]]; then
+            fail_attic_path "runtime path component is not a directory" "$current"
+          elif [[ ! -e "$current" ]]; then
+            /usr/bin/install -d -o root -g wheel -m 0755 "$current"
+          fi
+
+          parent_owner="$(/usr/bin/stat -L -f '%Su' "$current")"
+          parent_mode="$(/usr/bin/stat -L -f '%OLp' "$current")"
+          if [[ "$parent_owner" != root ]] || (( (8#$parent_mode & 0022) != 0 )); then
+            fail_attic_path "refusing attacker-controlled parent directory" "$current"
+          fi
+        done
+      }
+
+      prepare_owned_directory() {
+        local target="$1"
+        local owner="$2"
+        local group="$3"
+        local mode="$4"
+
+        prepare_trusted_parents "$target"
+        if [[ -L "$target" ]]; then
+          fail_attic_path "refusing attacker-controlled symlink path component" "$target"
+        fi
+        if [[ -e "$target" && ! -d "$target" ]]; then
+          fail_attic_path "runtime path is not a directory" "$target"
+        fi
+        /usr/bin/install -d -o "$owner" -g "$group" -m "$mode" "$target"
+      }
+
+      prepare_log_file() {
+        local target="$1"
+        local owner="$2"
+        local group="$3"
+        local mode="$4"
+
+        if [[ -L "$target" ]]; then
+          fail_attic_path "refusing attacker-controlled log symlink" "$target"
+        fi
+        if [[ -e "$target" && ! -f "$target" ]]; then
+          fail_attic_path "log path is not a regular file" "$target"
+        fi
+        if [[ ! -e "$target" ]]; then
+          /usr/bin/touch "$target"
+        fi
+        /usr/sbin/chown "$owner:$group" "$target"
+        /bin/chmod "$mode" "$target"
+      }
+
+      prepare_owned_directory "$attic_state_directory" "$attic_user" staff 0700
+      prepare_owned_directory "$attic_log_directory" root wheel 0755
+      prepare_log_file "$attic_stdout_log" "$attic_user" staff 0640
+      prepare_log_file "$attic_stderr_log" "$attic_user" staff 0640
+      prepare_owned_directory "$attic_log_directory" "$attic_user" staff 0750
+    ''
+  );
+
+  config.launchd.daemons.local-binary-cache-attic = lib.mkIf cfg.server.enable {
+    serviceConfig = {
+      Label = atticDaemonLabel;
+      ProgramArguments = [
+        (lib.getExe' cfg.server.package "atticd")
+        "-f"
+        (toString cfg.server.configFile)
+        "--mode"
+        "monolithic"
+      ];
+      RunAtLoad = true;
+      KeepAlive.SuccessfulExit = false;
+      ThrottleInterval = 10;
+      UserName = loginUser;
+      WorkingDirectory = cfg.server.stateDirectory;
+      StandardOutPath = atticStandardOutPath;
+      StandardErrorPath = atticStandardErrorPath;
+    };
+  };
 }
