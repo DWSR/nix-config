@@ -50,6 +50,8 @@ check_rejected server-state-control services.localBinaryCache.server.stateDirect
 check_rejected server-state-query services.localBinaryCache.server.stateDirectory
 check_rejected server-state-fragment services.localBinaryCache.server.stateDirectory
 check_rejected server-state-percent services.localBinaryCache.server.stateDirectory
+check_rejected tls-key-caddyfile-injection services.localBinaryCache.server.tlsKeyFile
+check_rejected tls-key-backslash services.localBinaryCache.server.tlsKeyFile
 check_rejected key-not-base64 services.localBinaryCache.cachePublicKey
 check_rejected key-bad-padding services.localBinaryCache.cachePublicKey
 check_rejected key-noncanonical services.localBinaryCache.cachePublicKey

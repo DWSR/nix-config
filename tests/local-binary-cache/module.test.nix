@@ -6,6 +6,7 @@ let
   jwtPublicKey = ./fixtures/jwt-public.pem;
   tlsCertificate = ./fixtures/tls-certificate.pem;
   atticServerPackage = pkgs.unstable.attic-server;
+  caddyPackage = pkgs.unstable.caddy;
   runtimePackage = pkgs.hello;
   contextualStorePath = "${tlsCertificate}";
   contextlessStorePath = builtins.unsafeDiscardStringContext contextualStorePath;
@@ -62,7 +63,7 @@ let
   serverConfig = {
     enable = true;
     package = atticServerPackage;
-    proxyPackage = runtimePackage;
+    proxyPackage = caddyPackage;
     stateDirectory = "/var/db/local-binary-cache/attic";
     inherit jwtPublicKey tlsCertificate;
     tlsKeyFile = "/run/secrets/local-binary-cache-tls-key";
@@ -280,6 +281,9 @@ assert lib.hasInfix "without Nix store context" runtimePathTypeDescription;
 assert lib.hasInfix "32-byte base64-encoded Ed25519" cachePublicKeyTypeDescription;
 assert readyPersonal.config.services.localBinaryCache.server.retentionDays == 30;
 assert readyPersonal.config.services.localBinaryCache.server.gcInterval == "12 hours";
+assert caddyPackage.version == "2.11.4";
+assert readyPersonal.config.services.localBinaryCache.server.proxyConfigFile != null;
+assert readyPersonal.config.services.localBinaryCache.server.proxyWrapper != null;
 assert
   readyPersonal.config.services.localBinaryCache.gcPolicy == {
     minFree = null;
@@ -317,10 +321,41 @@ pkgs.runCommand "local-binary-cache-module-test"
     nativeBuildInputs = [ pkgs.openssl ];
   }
   ''
+    export HOME="$TMPDIR/home"
+    export XDG_CONFIG_HOME="$TMPDIR/config"
+    export XDG_DATA_HOME="$TMPDIR/data"
+    mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
+
     openssl pkey -pubin -in ${jwtPublicKey} -noout
     openssl x509 -in ${tlsCertificate} -noout
     ${atticServerPackage}/bin/atticd \
       --config ${readyPersonal.config.services.localBinaryCache.server.configFile} \
       --mode check-config
+
+    ${caddyPackage}/bin/caddy adapt \
+      --config ${readyPersonal.config.services.localBinaryCache.server.proxyConfigFile} \
+      --adapter caddyfile \
+      --pretty > "$TMPDIR/caddy-adapted.json"
+
+    openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+      -subj /CN=Brandons-MacBook-Pro.local \
+      -keyout "$TMPDIR/tls-key.pem" \
+      -out "$TMPDIR/tls-certificate.pem"
+    found_tls_directive=false
+    while IFS= read -r line; do
+      if [[ "$line" == *"tls "* ]]; then
+        printf '\ttls "%s" "%s"\n' "$TMPDIR/tls-certificate.pem" "$TMPDIR/tls-key.pem"
+        found_tls_directive=true
+      else
+        printf '%s\n' "$line"
+      fi
+    done < ${readyPersonal.config.services.localBinaryCache.server.proxyConfigFile} \
+      > "$TMPDIR/Caddyfile"
+    test "$found_tls_directive" = true
+    ${caddyPackage}/bin/caddy adapt \
+      --config "$TMPDIR/Caddyfile" \
+      --adapter caddyfile \
+      --validate > "$TMPDIR/caddy-validated.json"
+
     touch "$out"
   ''

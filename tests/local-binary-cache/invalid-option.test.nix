@@ -130,6 +130,15 @@ let
       module.services.localBinaryCache.server.stateDirectory = "/var/db/local-binary-cache/%61ttic";
       select = config: config.server.stateDirectory;
     };
+    tls-key-caddyfile-injection = {
+      module.services.localBinaryCache.server.tlsKeyFile =
+        builtins.fromJSON ''"/run/secrets/key\n}\n:9000 {"'';
+      select = config: config.server.tlsKeyFile;
+    };
+    tls-key-backslash = {
+      module.services.localBinaryCache.server.tlsKeyFile = "/run/secrets/local\\binary-cache-key";
+      select = config: config.server.tlsKeyFile;
+    };
     key-not-base64 = {
       module.services.localBinaryCache.cachePublicKey = "darwin:not-base64";
       select = config: config.cachePublicKey;

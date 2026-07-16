@@ -85,7 +85,7 @@
   - _Requirements: 1.1, 4.6, 6.1, 6.2, 6.3_
   - _Boundary: Attic Service_
 
-- [ ] 3.3 Add the LAN TLS proxy service
+- [x] 3.3 Add the LAN TLS proxy service
   - Render explicit TLS on port 8443 with the required hostname, leaf/key paths, loopback upstream, and restricted protocols.
   - Add key preflight, login-user ownership, throttled restart, and secret-free logs.
   - Done when the adapted proxy configuration validates and a missing-key fixture produces the expected diagnostic/retry state.
@@ -224,3 +224,4 @@
 - Task 2.5 read-only probes must disable ambient tool configuration before arguments and suppress parser/helper stderr; otherwise local config or poisoned diagnostics can violate TLS, mutation, and redaction guarantees.
 - Task 3.1 Attic state directories need stricter validation than generic runtime paths because whitespace, controls, and URI-reserved characters make SQLite and storage URLs ambiguous.
 - Task 3.2 ownership-changing activation must constrain Attic state to its dedicated canonical directory and reject symlinks; configurable system-directory targets can otherwise cause root to retarget broad macOS paths.
+- Task 3.3 every dynamic Caddyfile token must be quoted or rejected before rendering; an accepted newline-bearing runtime path can inject additional plaintext listeners even when canonical fixtures validate.

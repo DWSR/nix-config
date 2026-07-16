@@ -10,10 +10,14 @@ let
   cfg = config.services.localBinaryCache;
 
   atticDaemonLabel = "org.nixos.local-binary-cache-attic";
+  caddyDaemonLabel = "org.nixos.local-binary-cache-caddy";
   atticStateDirectory = "/var/db/local-binary-cache/attic";
   atticLogDirectory = "/var/log/local-binary-cache/attic";
   atticStandardOutPath = "${atticLogDirectory}/stdout.log";
   atticStandardErrorPath = "${atticLogDirectory}/stderr.log";
+  caddyLogDirectory = "/var/log/local-binary-cache/caddy";
+  caddyStandardOutPath = "${caddyLogDirectory}/stdout.log";
+  caddyStandardErrorPath = "${caddyLogDirectory}/stderr.log";
   loginUser = if config.system.primaryUser == null then "" else config.system.primaryUser;
 
   tomlFormat = pkgs.formats.toml { };
@@ -47,6 +51,63 @@ let
     substitute ${atticConfigTemplate} "$out" \
       --replace-fail ${lib.escapeShellArg jwtPublicKeyPlaceholder} "$public_key_base64"
   '';
+  # Caddy 2.11.4 decodes escaped quotes but preserves JSON newline and
+  # backslash escapes, so tlsKeyFile is restricted to proven round-trip input.
+  caddyfileToken = value: builtins.toJSON value;
+  proxyUpstream = "http://${cfg.server.listenAddress}";
+  proxyConfig = pkgs.writeText "local-binary-cache-Caddyfile" (
+    lib.concatStrings [
+      "{\n"
+      "\tadmin off\n"
+      "\tpersist_config off\n"
+      "\tauto_https off\n"
+      "\tservers {\n"
+      "\t\tprotocols h1 h2\n"
+      "\t}\n"
+      "}\n"
+      "\n"
+      "${caddyfileToken cfg.endpoint} {\n"
+      "\ttls ${caddyfileToken cfg.server.tlsCertificate} ${caddyfileToken cfg.server.tlsKeyFile}\n"
+      "\treverse_proxy ${caddyfileToken proxyUpstream}\n"
+      "}\n"
+    ]
+  );
+  proxyWrapper = pkgs.writeShellScriptBin "local-binary-cache-caddy" ''
+    fail() {
+      printf 'local-binary-cache-caddy: %s\n' "$1" >&2
+      exit 1
+    }
+
+    tls_certificate=${lib.escapeShellArg (toString cfg.server.tlsCertificate)}
+    tls_key=${lib.escapeShellArg cfg.server.tlsKeyFile}
+
+    if [[ ! -e "$tls_certificate" ]]; then
+      fail "TLS certificate is missing: $tls_certificate"
+    fi
+    if [[ ! -f "$tls_certificate" ]]; then
+      fail "TLS certificate is not a regular file: $tls_certificate"
+    fi
+    if [[ ! -r "$tls_certificate" ]]; then
+      fail "TLS certificate is unreadable: $tls_certificate"
+    fi
+
+    if [[ -L "$tls_key" ]]; then
+      fail "refusing unsafe TLS private key symlink: $tls_key"
+    fi
+    if [[ ! -e "$tls_key" ]]; then
+      fail "TLS private key is missing: $tls_key"
+    fi
+    if [[ ! -f "$tls_key" ]]; then
+      fail "TLS private key is not a regular file: $tls_key"
+    fi
+    if [[ ! -r "$tls_key" ]]; then
+      fail "TLS private key is unreadable: $tls_key"
+    fi
+
+    exec ${lib.getExe' cfg.server.proxyPackage "caddy"} run \
+      --config ${proxyConfig} \
+      --adapter caddyfile
+  '';
 
   absolutePathType = types.addCheck types.str (lib.hasPrefix "/") // {
     description = "absolute path";
@@ -69,6 +130,11 @@ let
     )
     // {
       description = "absolute runtime path without Nix store context";
+    };
+  caddyTlsKeyPathType =
+    types.addCheck runtimePathType (path: builtins.match "/[ /A-Za-z0-9._+,:=@%~\"'()-]+" path != null)
+    // {
+      description = "Caddyfile-serializable absolute runtime path using safe ASCII characters";
     };
   uriSafeServerStateDirectoryType =
     types.addCheck runtimePathType (path: builtins.match "/[^[:space:][:cntrl:]?#%]+" path != null)
@@ -205,7 +271,7 @@ let
       };
 
       tlsKeyFile = mkOption {
-        type = types.nullOr runtimePathType;
+        type = types.nullOr caddyTlsKeyPathType;
         default = null;
         description = "Runtime path to the TLS leaf private key.";
       };
@@ -215,6 +281,20 @@ let
         default = if cfg.server.enable then atticConfig else null;
         readOnly = true;
         description = "Secret-free Attic server configuration consumed by the cache daemon.";
+      };
+
+      proxyConfigFile = mkOption {
+        type = types.nullOr types.path;
+        default = if cfg.server.enable then proxyConfig else null;
+        readOnly = true;
+        description = "Explicit Caddy LAN TLS reverse-proxy configuration.";
+      };
+
+      proxyWrapper = mkOption {
+        type = types.nullOr types.package;
+        default = if cfg.server.enable then proxyWrapper else null;
+        readOnly = true;
+        description = "Caddy launcher with runtime TLS path preflight.";
       };
     };
   };
@@ -439,6 +519,9 @@ in
       attic_log_directory=${lib.escapeShellArg atticLogDirectory}
       attic_stdout_log=${lib.escapeShellArg atticStandardOutPath}
       attic_stderr_log=${lib.escapeShellArg atticStandardErrorPath}
+      caddy_log_directory=${lib.escapeShellArg caddyLogDirectory}
+      caddy_stdout_log=${lib.escapeShellArg caddyStandardOutPath}
+      caddy_stderr_log=${lib.escapeShellArg caddyStandardErrorPath}
 
       fail_attic_path() {
         printf 'local-binary-cache: %s: %s\n' "$1" "$2" >&2
@@ -514,6 +597,12 @@ in
       prepare_log_file "$attic_stdout_log" "$attic_user" staff 0640
       prepare_log_file "$attic_stderr_log" "$attic_user" staff 0640
       prepare_owned_directory "$attic_log_directory" "$attic_user" staff 0750
+
+      echo "local-binary-cache: preparing Caddy log directory" >&2
+      prepare_owned_directory "$caddy_log_directory" root wheel 0755
+      prepare_log_file "$caddy_stdout_log" "$attic_user" staff 0640
+      prepare_log_file "$caddy_stderr_log" "$attic_user" staff 0640
+      prepare_owned_directory "$caddy_log_directory" "$attic_user" staff 0750
     ''
   );
 
@@ -534,6 +623,19 @@ in
       WorkingDirectory = cfg.server.stateDirectory;
       StandardOutPath = atticStandardOutPath;
       StandardErrorPath = atticStandardErrorPath;
+    };
+  };
+
+  config.launchd.daemons.local-binary-cache-caddy = lib.mkIf cfg.server.enable {
+    serviceConfig = {
+      Label = caddyDaemonLabel;
+      ProgramArguments = [ (lib.getExe cfg.server.proxyWrapper) ];
+      RunAtLoad = true;
+      KeepAlive.SuccessfulExit = false;
+      ThrottleInterval = 10;
+      UserName = loginUser;
+      StandardOutPath = caddyStandardOutPath;
+      StandardErrorPath = caddyStandardErrorPath;
     };
   };
 }
