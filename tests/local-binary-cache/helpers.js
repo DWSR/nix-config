@@ -9,6 +9,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 const modulePath = path.join(repoRoot, 'configurations/common-darwin/local-binary-cache.nix');
 const NIX_EVAL_TIMEOUT_MS = 120_000;
 const NIX_EVAL_MAX_BUFFER = 64 * 1024 * 1024;
+const NIX_BUILD_TIMEOUT_MS = 600_000;
 
 function nixEvalJson(expr, options = {}) {
   return JSON.parse(childProcess.execFileSync(
@@ -107,6 +108,59 @@ function createScriptFixture(options = {}) {
   };
 }
 
+function nixPathLiteral(filePath) {
+  if (!path.isAbsolute(filePath) || /[\s'"\\$]/.test(filePath)) {
+    throw new Error(`unsupported Nix path literal: ${filePath}`);
+  }
+  return filePath;
+}
+
+function nixValueLiteral(value) {
+  if (typeof value === 'boolean') {
+    return String(value);
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`unsupported injected Nix value: ${typeof value}`);
+  }
+  return JSON.stringify(value).replaceAll('${', '\\${');
+}
+
+function buildScript(relativePath, injected = {}, options = {}) {
+  const scriptPath = fixturePath(repoRoot, 'script path', relativePath);
+  const injectedSource = Object.entries(injected).map(([name, value]) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+      throw new Error(`invalid injected Nix argument name: ${name}`);
+    }
+    return `${name} = ${nixValueLiteral(value)};`;
+  }).join('\n');
+  const expr = `
+    let
+      flake = builtins.getFlake ${nixValueLiteral(repoRoot)};
+      pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+    in
+      pkgs.callPackage ${nixPathLiteral(scriptPath)} {
+        ${injectedSource}
+      }
+  `;
+  const outPath = childProcess.execFileSync(
+    options.nixExecutable ?? 'nix',
+    ['build', '--no-link', '--print-out-paths', '--impure', '--expr', expr],
+    {
+      cwd: options.cwd ?? repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ...(options.env ?? {}),
+      },
+      maxBuffer: NIX_EVAL_MAX_BUFFER,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: options.timeout ?? NIX_BUILD_TIMEOUT_MS,
+    },
+  ).trim();
+  const executableName = options.executableName ?? path.basename(relativePath, '.nix');
+  return path.join(outPath, 'bin', executableName);
+}
+
 function runScript(executable, args = [], options = {}) {
   if (!options.fixture) {
     throw new Error('runScript requires an isolated fixture');
@@ -142,6 +196,7 @@ function runScript(executable, args = [], options = {}) {
 }
 
 module.exports = {
+  buildScript,
   createScriptFixture,
   darwinFixtureExpr,
   evalDarwinFixture,

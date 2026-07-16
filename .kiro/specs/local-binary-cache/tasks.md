@@ -24,7 +24,7 @@
   - _Boundary: Render Tests, Publisher Tests_
 
 - [ ] 2. Build publication and operator workflows
-- [ ] 2.1 Implement the non-blocking enqueue hook
+- [x] 2.1 Implement the non-blocking enqueue hook
   - Parse all `OUT_PATHS` with glob expansion disabled and reject non-store paths.
   - Create one deterministic indirect root per output and coalesce duplicate enqueue attempts atomically.
   - Fail only when local queue/root state cannot be recorded; perform no DNS, TLS, or cache operation.
