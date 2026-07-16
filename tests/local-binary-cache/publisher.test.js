@@ -33,6 +33,15 @@ const SHOPIFY_TOKEN_VALUE = 'poisoned-shopify-host-token-value';
 const IDENTICAL_TOKEN_VALUE = 'poisoned-identical-host-token-value';
 const BOOTSTRAP_HOSTNAME = 'Brandons-MacBook-Pro.local';
 const LOGIN_USER = 'bootstrap-test-user';
+const STATUS_ENDPOINT = `https://${BOOTSTRAP_HOSTNAME}:8443`;
+const STATUS_CACHE_URL = `${STATUS_ENDPOINT}/${CACHE_NAME}/attic-cache-info`;
+const STATUS_TOKEN_VALUE = 'poisoned-status-token-value';
+const STATUS_PRIVATE_KEY_VALUE = 'poisoned-status-private-key-value';
+const STATUS_UPSTREAM_SUBSTITUTERS = [
+  'https://cache.nixos.org/',
+  'https://nix-community.cachix.org',
+  's3://shopify-nix-cache?endpoint=https://storage.googleapis.com&profile=shopify-nix-cache-reader',
+];
 
 let identityMaterials;
 let jqExecutable;
@@ -769,6 +778,493 @@ function holdingEnvironment(fixture, output) {
     ATTIC_RELEASE_FILE: fixture.statePaths.release,
   });
 }
+
+function createStatusFixture(t, options = {}) {
+  const fixture = createScriptFixture({
+    executables: {
+      curl: `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.STATUS_CURL_LOG, JSON.stringify(args) + '\\n');
+        const curlConfig = path.join(process.env.HOME, '.curlrc');
+        if (fs.existsSync(curlConfig) && args[0] !== '--disable') {
+          fs.writeFileSync(process.env.STATUS_AMBIENT_OUTPUT, 'ambient curl output\\n');
+          fs.writeFileSync(process.env.STATUS_AMBIENT_TRACE, fs.readFileSync(curlConfig));
+          fs.writeFileSync(process.env.STATUS_CACHE_STATE, 'mutated by ambient curl config\\n');
+        }
+        if (
+          args.length !== 9
+          || args[0] !== '--disable'
+          || args[1] !== '--cacert'
+          || args[2] !== process.env.STATUS_CA
+          || args[3] !== '--silent'
+          || args[4] !== '--show-error'
+          || args[5] !== '--write-out'
+          || args[6] !== '\\n%{http_code}'
+          || args[7] !== '--'
+          || args[8] !== process.env.STATUS_CACHE_URL
+          || args.some(arg => /authorization|token/i.test(arg))
+        ) {
+          process.stderr.write('unexpected status curl arguments\\n');
+          process.exit(64);
+        }
+        if (process.env.STATUS_CURL_STDERR) {
+          process.stderr.write(process.env.STATUS_CURL_STDERR);
+        }
+        if (process.env.STATUS_CURL_FAIL === '1') {
+          process.exit(35);
+        }
+        process.stdout.write(
+          process.env.STATUS_CACHE_RESPONSE + '\\n' + process.env.STATUS_HTTP_STATUS,
+        );
+      `,
+      date: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.STATUS_DATE_LOG, JSON.stringify(args) + '\\n');
+        if (args.length !== 1 || args[0] !== '+%s') {
+          process.stderr.write('unexpected status date arguments\\n');
+          process.exit(64);
+        }
+        if (process.env.STATUS_DATE_STDERR) {
+          process.stderr.write(process.env.STATUS_DATE_STDERR);
+        }
+        process.stdout.write(process.env.STATUS_NOW_EPOCH + '\\n');
+      `,
+      nix: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.STATUS_NIX_LOG, JSON.stringify(args) + '\\n');
+        if (args.length !== 3 || args[0] !== 'config' || args[1] !== 'show') {
+          process.stderr.write('unexpected status nix arguments\\n');
+          process.exit(64);
+        }
+        if (process.env.STATUS_NIX_STDERR) {
+          process.stderr.write(process.env.STATUS_NIX_STDERR);
+        }
+        if (process.env.STATUS_NIX_FAIL_SETTING === args[2]) {
+          process.exit(23);
+        }
+        if (args[2] === 'post-build-hook') {
+          process.stdout.write(process.env.STATUS_EFFECTIVE_HOOK + '\\n');
+        } else if (args[2] === 'substituters') {
+          process.stdout.write(process.env.STATUS_EFFECTIVE_SUBSTITUTERS + '\\n');
+        } else {
+          process.stderr.write('unexpected status setting\\n');
+          process.exit(65);
+        }
+      `,
+      readlink: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.STATUS_READLINK_LOG, JSON.stringify(args) + '\\n');
+        if (args.length !== 2 || args[0] !== '--') {
+          process.stderr.write('unexpected status readlink arguments\\n');
+          process.exit(64);
+        }
+        if (process.env.STATUS_READLINK_STDERR) {
+          process.stderr.write(process.env.STATUS_READLINK_STDERR);
+        }
+        process.stdout.write(fs.readlinkSync(args[1]) + '\\n');
+      `,
+      stat: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.STATUS_STAT_LOG, JSON.stringify(args) + '\\n');
+        if (args.length !== 3 || args[0] !== '--format=%Y' || args[1] !== '--') {
+          process.stderr.write('unexpected status stat arguments\\n');
+          process.exit(64);
+        }
+        if (process.env.STATUS_STAT_STDERR) {
+          process.stderr.write(process.env.STATUS_STAT_STDERR);
+        }
+        const mtimes = JSON.parse(process.env.STATUS_STAT_MTIMES);
+        if (!(args[2] in mtimes)) {
+          process.exit(24);
+        }
+        process.stdout.write(String(mtimes[args[2]]) + '\\n');
+      `,
+    },
+    statePaths: {
+      ambientOutput: 'state/ambient-curl-output',
+      ambientTrace: 'state/ambient-curl-trace',
+      ca: 'public/ca.pem',
+      cacheState: 'state/cache-state.json',
+      curlConfig: 'home/.curlrc',
+      curlLog: 'logs/curl.log',
+      dateLog: 'logs/date.log',
+      expectedHook: 'config/local-binary-cache-post-build-hook',
+      nixLog: 'logs/nix.log',
+      pending: 'state/pending',
+      privateKey: 'secrets/server-key.pem',
+      readlinkLog: 'logs/readlink.log',
+      statLog: 'logs/stat.log',
+      store: 'store',
+      token: 'secrets/push-token',
+    },
+  });
+  t.after(fixture.cleanup);
+
+  fs.writeFileSync(fixture.statePaths.ca, 'fixture-only-public-ca-certificate\n');
+  fs.writeFileSync(fixture.statePaths.cacheState, JSON.stringify(validCacheState()));
+  fs.writeFileSync(fixture.statePaths.privateKey, STATUS_PRIVATE_KEY_VALUE, { mode: 0o400 });
+  fs.writeFileSync(fixture.statePaths.token, STATUS_TOKEN_VALUE, { mode: 0o400 });
+
+  const expectedSubstituters = options.expectedSubstituters ?? [
+    ...STATUS_UPSTREAM_SUBSTITUTERS,
+    STATUS_CACHE_URL.replace('/attic-cache-info', ''),
+  ].join(' ');
+  const executable = buildScript('scripts/local-binary-cache-status.nix', {
+    caCertificate: fixture.statePaths.ca,
+    cacheName: CACHE_NAME,
+    configuredCachePublicKey: CACHE_PUBLIC_KEY,
+    curlExecutable: fixture.executables.curl,
+    dateExecutable: fixture.executables.date,
+    endpoint: STATUS_ENDPOINT,
+    expectedPostBuildHook: fixture.statePaths.expectedHook,
+    expectedSubstituters,
+    jqExecutable: getJqExecutable(),
+    nixExecutable: fixture.executables.nix,
+    pendingDirectory: fixture.statePaths.pending,
+    readlinkExecutable: fixture.executables.readlink,
+    statExecutable: fixture.executables.stat,
+    storeDirectory: fixture.statePaths.store,
+  });
+
+  return { executable, expectedSubstituters, fixture };
+}
+
+function statusEnvironment(status, extra = {}) {
+  return {
+    STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState()),
+    STATUS_CACHE_URL,
+    STATUS_CA: status.fixture.statePaths.ca,
+    STATUS_AMBIENT_OUTPUT: status.fixture.statePaths.ambientOutput,
+    STATUS_AMBIENT_TRACE: status.fixture.statePaths.ambientTrace,
+    STATUS_CACHE_STATE: status.fixture.statePaths.cacheState,
+    STATUS_CURL_LOG: status.fixture.statePaths.curlLog,
+    STATUS_DATE_LOG: status.fixture.statePaths.dateLog,
+    STATUS_EFFECTIVE_HOOK: status.fixture.statePaths.expectedHook,
+    STATUS_EFFECTIVE_SUBSTITUTERS: status.expectedSubstituters,
+    STATUS_HTTP_STATUS: '200',
+    STATUS_NIX_LOG: status.fixture.statePaths.nixLog,
+    STATUS_NOW_EPOCH: '1000',
+    STATUS_READLINK_LOG: status.fixture.statePaths.readlinkLog,
+    STATUS_STAT_LOG: status.fixture.statePaths.statLog,
+    STATUS_STAT_MTIMES: '{}',
+    ...extra,
+  };
+}
+
+function runStatus(status, extraEnv = {}) {
+  return runScript(status.executable, [], {
+    fixture: status.fixture,
+    env: statusEnvironment(status, extraEnv),
+  });
+}
+
+function statusOutputLines(result) {
+  return result.stdout.trim().split('\n');
+}
+
+function assertStatusReadOnly(status, expectedRoots) {
+  assert.deepEqual(fs.readdirSync(status.fixture.statePaths.pending), expectedRoots);
+  for (const root of expectedRoots) {
+    assert.equal(fs.lstatSync(path.join(status.fixture.statePaths.pending, root)).isSymbolicLink(), true);
+  }
+}
+
+test('status reports healthy endpoint, identity, effective config, and pending age', t => {
+  const status = createStatusFixture(t);
+  const first = createPendingRoot(status.fixture, HASH_A, 'first-status-output');
+  const second = createPendingRoot(status.fixture, HASH_B, 'second-status-output');
+
+  const result = runStatus(status, {
+    STATUS_STAT_MTIMES: JSON.stringify({
+      [first.root]: 900,
+      [second.root]: 820,
+    }),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(statusOutputLines(result), [
+    'tls-health=healthy',
+    'cache-health=healthy',
+    'configured-live-key-match=true',
+    `effective-post-build-hook=${status.fixture.statePaths.expectedHook}`,
+    'post-build-hook-match=true',
+    ...status.expectedSubstituters.split(' ').map(value => `effective-substituter=${value.includes('?') ? `${value.split('?')[0]}?<redacted>` : value}`),
+    'substituters-match=true',
+    'queue-count=2',
+    'oldest-pending-age-seconds=180',
+    'broken-root=none',
+    'status=healthy',
+  ]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.curlLog), [[
+    '--disable', '--cacert', status.fixture.statePaths.ca,
+    '--silent', '--show-error', '--write-out', '\n%{http_code}',
+    '--', STATUS_CACHE_URL,
+  ]]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.nixLog), [
+    ['config', 'show', 'post-build-hook'],
+    ['config', 'show', 'substituters'],
+  ]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.dateLog), [['+%s']]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.statLog), [
+    ['--format=%Y', '--', first.root],
+    ['--format=%Y', '--', second.root],
+  ]);
+  assertStatusReadOnly(status, [HASH_A, HASH_B]);
+});
+
+test('status disables ambient curl configuration before probing the cache', t => {
+  const status = createStatusFixture(t);
+  const curlConfig = [
+    'insecure',
+    `user = "operator:${STATUS_TOKEN_VALUE}"`,
+    'request = "DELETE"',
+    `output = "${status.fixture.statePaths.ambientOutput}"`,
+    `trace-ascii = "${status.fixture.statePaths.ambientTrace}"`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(status.fixture.statePaths.curlConfig, curlConfig);
+  const unchangedFiles = new Map([
+    status.fixture.statePaths.ca,
+    status.fixture.statePaths.cacheState,
+    status.fixture.statePaths.curlConfig,
+    status.fixture.statePaths.privateKey,
+    status.fixture.statePaths.token,
+  ].map(file => [file, fs.readFileSync(file)]));
+
+  const result = runStatus(status);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.curlLog), [[
+    '--disable', '--cacert', status.fixture.statePaths.ca,
+    '--silent', '--show-error', '--write-out', '\n%{http_code}',
+    '--', STATUS_CACHE_URL,
+  ]]);
+  assert.equal(fs.existsSync(status.fixture.statePaths.ambientOutput), false);
+  assert.equal(fs.existsSync(status.fixture.statePaths.ambientTrace), false);
+  for (const [file, contents] of unchangedFiles) {
+    assert.deepEqual(fs.readFileSync(file), contents);
+  }
+  assert.equal(fs.existsSync(status.fixture.statePaths.pending), false);
+});
+
+test('status defines an absent queue as empty with no pending age', t => {
+  const status = createStatusFixture(t);
+
+  const result = runStatus(status);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(statusOutputLines(result).includes('queue-count=0'));
+  assert.ok(statusOutputLines(result).includes('oldest-pending-age-seconds=none'));
+  assert.ok(statusOutputLines(result).includes('broken-root=none'));
+  assert.equal(fs.existsSync(status.fixture.statePaths.pending), false);
+});
+
+test('status distinguishes TLS transport failure from an unhealthy cache response', async t => {
+  const cases = [
+    {
+      name: 'TLS transport failure',
+      env: { STATUS_CURL_FAIL: '1' },
+      expected: ['tls-health=unhealthy', 'cache-health=unhealthy'],
+    },
+    {
+      name: 'HTTP cache failure after successful TLS',
+      env: { STATUS_HTTP_STATUS: '503' },
+      expected: ['tls-health=healthy', 'cache-health=unhealthy'],
+    },
+    {
+      name: 'non-public cache state',
+      env: { STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState({ is_public: false })) },
+      expected: ['tls-health=healthy', 'cache-health=unhealthy'],
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const status = createStatusFixture(child);
+
+      const result = runStatus(status, fixtureCase.env);
+
+      assert.notEqual(result.status, 0);
+      for (const line of fixtureCase.expected) {
+        assert.ok(statusOutputLines(result).includes(line));
+      }
+      assert.ok(statusOutputLines(result).includes('configured-live-key-match=unavailable'));
+      assert.ok(statusOutputLines(result).includes('status=unhealthy'));
+      assert.ok(statusOutputLines(result).includes('post-build-hook-match=true'));
+      assert.ok(statusOutputLines(result).includes('queue-count=0'));
+    });
+  }
+});
+
+test('status rejects mismatched and noncanonical live cache identities', async t => {
+  const cases = [
+    ['mismatch', `darwin:${'A'.repeat(43)}=`, 'configured-live-key-match=false'],
+    ['noncanonical live key', NONCANONICAL_CACHE_PUBLIC_KEY, 'configured-live-key-match=unavailable'],
+  ];
+
+  for (const [name, liveKey, expectedLine] of cases) {
+    await t.test(name, child => {
+      const status = createStatusFixture(child);
+
+      const result = runStatus(status, {
+        STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState({ public_key: liveKey })),
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.ok(statusOutputLines(result).includes(expectedLine));
+      assert.ok(statusOutputLines(result).includes('status=unhealthy'));
+    });
+  }
+});
+
+test('status detects effective hook and substituter drift without dumping full Nix config', async t => {
+  const cases = [
+    {
+      name: 'hook drift',
+      env: { STATUS_EFFECTIVE_HOOK: '/fixture/unexpected-hook' },
+      expected: [
+        'effective-post-build-hook=/fixture/unexpected-hook',
+        'post-build-hook-match=false',
+        'substituters-match=true',
+      ],
+    },
+    {
+      name: 'local substituter absent',
+      env: { STATUS_EFFECTIVE_SUBSTITUTERS: STATUS_UPSTREAM_SUBSTITUTERS.join(' ') },
+      expected: [
+        'post-build-hook-match=true',
+        'substituters-match=false',
+      ],
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const status = createStatusFixture(child);
+
+      const result = runStatus(status, fixtureCase.env);
+
+      assert.notEqual(result.status, 0);
+      for (const line of fixtureCase.expected) {
+        assert.ok(statusOutputLines(result).includes(line));
+      }
+      assert.deepEqual(readJsonLines(status.fixture.statePaths.nixLog), [
+        ['config', 'show', 'post-build-hook'],
+        ['config', 'show', 'substituters'],
+      ]);
+      assert.ok(statusOutputLines(result).includes('status=unhealthy'));
+    });
+  }
+});
+
+test('status reports every invalid root in lexical order and ages only publishable entries', t => {
+  const status = createStatusFixture(t);
+  fs.mkdirSync(status.fixture.statePaths.pending, { recursive: true });
+  const notSymlink = path.join(status.fixture.statePaths.pending, HASH_A);
+  fs.writeFileSync(notSymlink, 'invalid queue entry');
+  const broken = createPendingRoot(status.fixture, HASH_B, 'broken-status-output', { broken: true });
+  const valid = createPendingRoot(status.fixture, HASH_C, 'valid-status-output');
+  const mismatched = createPendingRoot(status.fixture, HASH_D, 'mismatched-status-output');
+  fs.rmSync(mismatched.root);
+  fs.symlinkSync(valid.output, mismatched.root);
+
+  const result = runStatus(status, {
+    STATUS_STAT_MTIMES: JSON.stringify({ [valid.root]: 875 }),
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(statusOutputLines(result).filter(line => line.startsWith('broken-root=')), [
+    `broken-root=${notSymlink} reason=not-a-symlink`,
+    `broken-root=${broken.root} reason=broken-symlink`,
+    `broken-root=${mismatched.root} reason=root-name-does-not-match-target`,
+  ]);
+  assert.ok(statusOutputLines(result).includes('queue-count=1'));
+  assert.ok(statusOutputLines(result).includes('oldest-pending-age-seconds=125'));
+  assert.ok(statusOutputLines(result).includes('status=unhealthy'));
+  assert.equal(fs.readFileSync(notSymlink, 'utf8'), 'invalid queue entry');
+  assert.equal(fs.lstatSync(broken.root).isSymbolicLink(), true);
+  assert.equal(fs.lstatSync(valid.root).isSymbolicLink(), true);
+  assert.equal(fs.lstatSync(mismatched.root).isSymbolicLink(), true);
+});
+
+test('status redacts poisoned values from output, executable, temporary files, and logs', t => {
+  const status = createStatusFixture(t);
+  const credentialedSubstituter = `https://operator:${STATUS_TOKEN_VALUE}@cache.example.test/path?token=${STATUS_TOKEN_VALUE}`;
+  const valid = createPendingRoot(status.fixture, HASH_A, 'valid-poison-status-output');
+  const broken = createPendingRoot(status.fixture, HASH_B, 'broken-poison-status-output', { broken: true });
+  const outsideTarget = path.join(status.fixture.root, 'outside-store-output');
+  const malformed = path.join(status.fixture.statePaths.pending, HASH_C);
+  fs.mkdirSync(outsideTarget);
+  fs.symlinkSync(outsideTarget, malformed);
+  const unchangedFiles = new Map([
+    status.fixture.statePaths.ca,
+    status.fixture.statePaths.cacheState,
+    status.fixture.statePaths.privateKey,
+    status.fixture.statePaths.token,
+  ].map(file => [file, fs.readFileSync(file)]));
+  const unchangedRoots = new Map([valid.root, broken.root, malformed].map(
+    root => [root, fs.readlinkSync(root)],
+  ));
+
+  const result = runStatus(status, {
+    STATUS_CACHE_RESPONSE: `{"public_key":"${STATUS_PRIVATE_KEY_VALUE}"`,
+    STATUS_CURL_STDERR: STATUS_TOKEN_VALUE,
+    STATUS_DATE_STDERR: STATUS_PRIVATE_KEY_VALUE,
+    STATUS_EFFECTIVE_SUBSTITUTERS: `${status.expectedSubstituters} ${credentialedSubstituter}`,
+    STATUS_NIX_STDERR: STATUS_PRIVATE_KEY_VALUE,
+    STATUS_READLINK_STDERR: STATUS_TOKEN_VALUE,
+    STATUS_STAT_MTIMES: JSON.stringify({ [valid.root]: 900 }),
+    STATUS_STAT_STDERR: STATUS_PRIVATE_KEY_VALUE,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.ok(statusOutputLines(result).includes('effective-substituter=https://<redacted>@cache.example.test/path?<redacted>'));
+  assert.ok(statusOutputLines(result).includes('queue-count=1'));
+  assert.ok(statusOutputLines(result).includes('oldest-pending-age-seconds=100'));
+  assert.ok(statusOutputLines(result).includes(`broken-root=${broken.root} reason=broken-symlink`));
+  assert.ok(statusOutputLines(result).includes(`broken-root=${malformed} reason=target-outside-store`));
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.dateLog), [['+%s']]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.readlinkLog), [
+    ['--', valid.root],
+    ['--', malformed],
+  ]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.statLog), [
+    ['--format=%Y', '--', valid.root],
+  ]);
+  const observable = [
+    result.stdout,
+    result.stderr,
+    fs.readFileSync(status.executable, 'utf8'),
+    ...[
+      status.fixture.statePaths.curlLog,
+      status.fixture.statePaths.dateLog,
+      status.fixture.statePaths.nixLog,
+      status.fixture.statePaths.readlinkLog,
+      status.fixture.statePaths.statLog,
+    ].filter(fs.existsSync).map(file => fs.readFileSync(file, 'utf8')),
+  ].join('\n');
+  for (const secret of [STATUS_TOKEN_VALUE, STATUS_PRIVATE_KEY_VALUE]) {
+    assert.equal(observable.includes(secret), false);
+  }
+  assert.deepEqual(fs.readdirSync(status.fixture.tmp), []);
+  for (const [file, contents] of unchangedFiles) {
+    assert.deepEqual(fs.readFileSync(file), contents);
+  }
+  for (const [root, target] of unchangedRoots) {
+    assert.equal(fs.readlinkSync(root), target);
+  }
+  assertStatusReadOnly(status, [HASH_A, HASH_B, HASH_C]);
+  assert.equal(fs.lstatSync(outsideTarget).isDirectory(), true);
+});
 
 test('script harness injects executable and state paths inside an isolated fixture', t => {
   const fixture = createScriptFixture({

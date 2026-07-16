@@ -23,7 +23,7 @@
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
   - _Boundary: Render Tests, Publisher Tests_
 
-- [ ] 2. Build publication and operator workflows
+- [x] 2. Build publication and operator workflows
 - [x] 2.1 Implement the non-blocking enqueue hook
   - Parse all `OUT_PATHS` with glob expansion disabled and reject non-store paths.
   - Create one deterministic indirect root per output and coalesce duplicate enqueue attempts atomically.
@@ -59,7 +59,7 @@
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 6.5_
   - _Boundary: Bootstrap Tool_
 
-- [ ] 2.5 Implement redacted status diagnostics
+- [x] 2.5 Implement redacted status diagnostics
   - Report TLS and cache health, configured/live cache-key equality, effective hooks/substituters, queue count/age, and broken roots.
   - Keep token and private-key contents out of output and logs.
   - Done when fixtures detect each healthy/unhealthy state and poisoned secrets never appear.
@@ -221,3 +221,4 @@
 - Task 2.2 publisher locking must distinguish live ownership from stale PID state; `INT` and `TERM` handlers must exit after cleanup so publication cannot continue without the singleton lock.
 - Task 2.3 keypair validation must check private-key consistency and prove RS256 PKCS#1 v1.5 signing; public-key equality alone accepts corrupted or RSA-PSS-restricted keys.
 - Task 2.4 bootstrap and ready-mode cache-key validation must use the same canonical 32-byte Base64 grammar as the typed module, including final padding-bit restrictions.
+- Task 2.5 read-only probes must disable ambient tool configuration before arguments and suppress parser/helper stderr; otherwise local config or poisoned diagnostics can violate TLS, mutation, and redaction guarantees.
