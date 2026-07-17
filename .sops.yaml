@@ -1,4 +1,4 @@
-# sops recipient rules for the per-host MCP secrets store.
+# sops recipient rules for per-host encrypted secret stores.
 #
 # Each per-host age keypair is generated independently with `age-keygen`,
 # the private key stashed in 1Password (vault-scoped to the host's owner),
@@ -23,6 +23,14 @@ keys:
   - &host_personal age158am3rk8z2msgnx08e03f9x2dumgqqj3rfhkdj7fcffp5g99tfsstagvlp
 
 creation_rules:
+  - path_regex: secrets/local-binary-cache\.personal\.yaml$
+    key_groups:
+      - age:
+          - *host_personal
+  - path_regex: secrets/local-binary-cache\.shopify\.yaml$
+    key_groups:
+      - age:
+          - *host_shopify
   - path_regex: secrets/mcp\.shopify\.yaml$
     key_groups:
       - age:

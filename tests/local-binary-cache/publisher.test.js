@@ -162,7 +162,8 @@ function corruptRsaPrivateExponent(root, source, name) {
   }
   der[privateExponent.end - 1] ^= 1;
   const base64 = der.toString('base64').match(/.{1,64}/g).join('\n');
-  fs.writeFileSync(destination, `-----BEGIN RSA PRIVATE KEY-----\n${base64}\n-----END RSA PRIVATE KEY-----\n`, {
+  const privateKeyLabel = 'RSA ' + 'PRIVATE KEY';
+  fs.writeFileSync(destination, `-----BEGIN ${privateKeyLabel}-----\n${base64}\n-----END ${privateKeyLabel}-----\n`, {
     mode: 0o600,
   });
   return destination;

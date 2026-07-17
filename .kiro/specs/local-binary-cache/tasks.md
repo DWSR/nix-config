@@ -131,7 +131,7 @@
   - _Boundary: Retention Policy_
 
 - [ ] 5. Complete staged host integration
-- [ ] 5.1 Provision prerequisite public and encrypted identities
+- [x] 5.1 Provision prerequisite public and encrypted identities
   - Generate the offline CA/leaf and RS256 pairs outside the bootstrap tool, then validate them through the preflight command.
   - Commit only public CA, leaf, and JWT verifier artifacts; SOPS-encrypt TLS/JWT private material with specified owners and `0400` modes.
   - Add per-host SOPS creation rules and prove no plaintext private material remains.
@@ -227,3 +227,4 @@
 - Task 3.3 every dynamic Caddyfile token must be quoted or rejected before rendering; an accepted newline-bearing runtime path can inject additional plaintext listeners even when canonical fixtures validate.
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
+- Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.

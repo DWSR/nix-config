@@ -92,6 +92,88 @@ The wrapper runs the pinned `sops` binary under `sudo` with
 `SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt`, so it can read the
 root-owned sops-nix age key and is not affected by sudo's PATH reset.
 
+## Local binary cache identity lifecycle
+
+The cache uses a separate encrypted file because its runtime identities do
+not come from 1Password. The stable Task 5.1 contract is:
+
+| SOPS key | Consumer | Runtime owner | Runtime mode |
+| --- | --- | --- | --- |
+| `local-binary-cache-tls-key` | Caddy | login user | `0400` |
+| `local-binary-cache-jwt-private-key` | bootstrap operator | root | `0400` |
+
+Task 5.2 owns the matching `sops.secrets` declarations and runtime paths.
+Task 5.1 creates only `secrets/local-binary-cache.personal.yaml`; the
+Shopify creation rule is reserved for the push token added by Task 5.3.
+The offline CA key is never placed in SOPS or this repository.
+
+### Generation
+
+Generate all plaintext in a mode-`0700` temporary directory outside the
+checkout with `umask 077`. Use the repository-pinned tools in an ephemeral
+shell:
+
+```sh
+nix shell --inputs-from . nixpkgs#openssl nixpkgs#sops nixpkgs#jq
+```
+
+Issue the server leaf from the offline CA with only
+`DNS:Brandons-MacBook-Pro.local`, `CA:FALSE`, and `serverAuth`. Generate a
+separate RSA keypair for RS256 and derive its public verifier. Before
+encryption, run `local-binary-cache-bootstrap preflight`, `openssl verify`,
+the X.509 extension checks, and both public/private pair checks. The
+preflight requires the TLS key to be owned by the login user and the JWT key
+to be root-owned, both at `0400`; a non-root cryptographic fixture must keep
+those ownership assertions separate rather than weakening the command.
+
+Build the plaintext mapping without placing PEM bodies in command arguments
+or shell history. For example, `jq --rawfile` can read both key files into a
+JSON mapping in the temporary directory. Encrypt it with the public personal
+age recipient and the exact destination rule:
+
+```sh
+sops --config .sops.yaml \
+  --filename-override secrets/local-binary-cache.personal.yaml \
+  --input-type json --output-type yaml --encrypt private-identities.json \
+  > local-binary-cache.personal.yaml
+sops filestatus local-binary-cache.personal.yaml
+```
+
+Move only the encrypted YAML and the three public artifacts into the
+checkout. Remove the plaintext mapping, leaf/JWT private keys, CSR, serial,
+and working files. Return the CA private key to offline storage or destroy it
+after recording that loss makes future leaf renewal a CA rotation.
+
+### Bootstrap ordering
+
+1. Validate the generated CA, leaf, and RS256 pair before deleting plaintext.
+2. Commit `ca.pem`, `server.pem`, `jwt-public.pem`, the personal encrypted
+   identity file, and both host-specific creation rules.
+3. Complete Task 5.2 so sops-nix installs the personal identities with the
+   owner/mode contract above, then activate bootstrap mode.
+4. Complete Task 5.3 only after Attic and Caddy are healthy. That task creates
+   `darwin`, captures `cache-public-key.txt`, and encrypts both push tokens.
+
+Do not invent `cache-public-key.txt` or either host push token during Stage 0.
+
+### Rotation ordering
+
+Enter bootstrap mode before rotating the CA, leaf, or JWT identity. Generate
+and preflight replacement pairs, update public artifacts and SOPS ciphertext
+together, activate the personal host, then use Task 5.3's bootstrap flow to
+issue replacement push tokens for a JWT rotation. A leaf-only renewal does
+not rotate the JWT or Attic cache signing identity. A CA rotation updates the
+trusted CA and leaf as one change before either host resumes consumption.
+
+### Recovery ordering
+
+If the encrypted leaf or JWT key cannot be decrypted, remain in bootstrap
+mode and rotate the affected identity; do not recreate cache state
+automatically. If the offline CA key is lost, generate a new CA and leaf,
+deploy the new public trust bundle, and verify both hosts before ready mode.
+If the host age key is lost, recover or re-enrol it using "Recovery from lost
+key" below before attempting to decrypt the cache identities.
+
 ## Bootstrap
 
 First-time setup of a host. Repeat once per host. Requires

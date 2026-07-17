@@ -1635,6 +1635,8 @@
                   pkgs.bash
                   pkgs.nix
                   pkgs.nodejs
+                  pkgs.openssl
+                  pkgs.sops
                 ];
                 moduleTest = import ./tests/local-binary-cache/module.test.nix { inherit pkgs; };
               }
@@ -1646,7 +1648,9 @@
                 cd source
                 test -e "$moduleTest"
                 bash tests/local-binary-cache/module-errors.test.sh
-                node --test tests/local-binary-cache/system-render.test.js
+                node --test \
+                  tests/local-binary-cache/identity-artifacts.test.js \
+                  tests/local-binary-cache/system-render.test.js
                 touch $out
               '';
 
