@@ -89,10 +89,10 @@ let
     // intervalFields;
 
   # The base upstream MCP servers always present on every host (obsidian,
-  # github, mcp-nixos, time). They flow through the same `renderServer`
-  # translator as `home.mcp.extraServers` entries so the array-emission
-  # logic stays uniform. The `nixos` server in the legacy mcphub config is
-  # renamed to `mcp-nixos` here (R2.1).
+  # github, mcp-nixos, time, instances-mcp). They flow through the same
+  # `renderServer` translator as `home.mcp.extraServers` entries so the
+  # array-emission logic stays uniform. The `nixos` server in the legacy
+  # mcphub config is renamed to `mcp-nixos` here (R2.1).
   baseServers = {
     obsidian = {
       command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
@@ -119,6 +119,11 @@ let
     # enforced profiles). tzlocal autodetects the zone; no args needed.
     time = {
       command = "${pkgs.mcp-server-time}/bin/mcp-server-time";
+    };
+
+    instances-mcp = {
+      type = "streamable-http";
+      url = "https://instances-mcp.vantage.sh/mcp";
     };
 
     # git-mcp-server (cyanheads/git-mcp-server, security-reviewed — see
