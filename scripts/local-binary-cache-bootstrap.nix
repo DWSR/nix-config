@@ -448,7 +448,7 @@ writeShellApplication {
               200)
                 verify_cache_state
                 ;;
-              404)
+              401|404)
                 if [[ "$operation" == ready ]]; then
                   fail "darwin cache is missing; ready mode never creates cache identity"
                 fi

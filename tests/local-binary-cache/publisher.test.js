@@ -34,6 +34,7 @@ const TOKEN_VALUE = 'poisoned-runtime-token-value';
 const PERSONAL_TOKEN_VALUE = 'poisoned-personal-host-token-value';
 const SHOPIFY_TOKEN_VALUE = 'poisoned-shopify-host-token-value';
 const IDENTICAL_TOKEN_VALUE = 'poisoned-identical-host-token-value';
+const OPERATOR_TOKEN_VALUE = 'poisoned-bootstrap-operator-token-value';
 const BOOTSTRAP_HOSTNAME = 'Brandons-MacBook-Pro.local';
 const LOGIN_USER = 'bootstrap-test-user';
 const STATUS_ENDPOINT = `https://${BOOTSTRAP_HOSTNAME}:8443`;
@@ -312,6 +313,10 @@ function createBootstrapFixture(t, options = {}) {
           process.stderr.write('unexpected attic arguments: ' + JSON.stringify(args) + '\\n');
           process.exit(64);
         }
+        if (process.env.ATTIC_CREATE_FAIL_STATUS !== undefined) {
+          process.stderr.write((process.env.ATTIC_CREATE_FAIL_MESSAGE ?? 'stub cache create failed') + '\\n');
+          process.exit(Number(process.env.ATTIC_CREATE_FAIL_STATUS));
+        }
         const state = process.env.ATTIC_CREATED_STATE === undefined
           ? {
               public_key: process.env.CACHE_PUBLIC_KEY,
@@ -352,7 +357,7 @@ function createBootstrapFixture(t, options = {}) {
         const subjectIndex = args.indexOf('--sub');
         const subject = subjectIndex === -1 ? '' : args[subjectIndex + 1];
         const tokens = {
-          'local-binary-cache-bootstrap': 'poisoned-bootstrap-operator-token-value',
+          'local-binary-cache-bootstrap': process.env.OPERATOR_TOKEN_VALUE,
           'Brandons-MacBook-Pro': process.env.PERSONAL_TOKEN_VALUE,
           ShopifyLaptop: process.env.SHOPIFY_TOKEN_VALUE,
         };
@@ -376,6 +381,9 @@ function createBootstrapFixture(t, options = {}) {
       curl: `
         const fs = require('node:fs');
         const args = process.argv.slice(2);
+        const prior = fs.existsSync(process.env.CURL_LOG)
+          ? fs.readFileSync(process.env.CURL_LOG, 'utf8').trim().split('\\n').filter(Boolean)
+          : [];
         fs.appendFileSync(process.env.CURL_LOG, JSON.stringify(args) + '\\n');
         if (
           args.length !== 8
@@ -392,9 +400,19 @@ function createBootstrapFixture(t, options = {}) {
           process.exit(64);
         }
         const output = args[3];
-        if (process.env.CURL_FORCED_STATUS !== undefined) {
-          fs.writeFileSync(output, '{}');
-          process.stdout.write(process.env.CURL_FORCED_STATUS);
+        const statusSequence = process.env.CURL_STATUS_SEQUENCE === undefined
+          ? []
+          : JSON.parse(process.env.CURL_STATUS_SEQUENCE);
+        const forcedStatus = prior.length < statusSequence.length
+          ? statusSequence[prior.length]
+          : process.env.CURL_FORCED_STATUS;
+        if (forcedStatus !== undefined) {
+          if (forcedStatus === '200' && fs.existsSync(process.env.CACHE_STATE)) {
+            fs.copyFileSync(process.env.CACHE_STATE, output);
+          } else {
+            fs.writeFileSync(output, '{"error":"Unauthorized"}');
+          }
+          process.stdout.write(forcedStatus);
         } else if (fs.existsSync(process.env.CACHE_STATE)) {
           fs.copyFileSync(process.env.CACHE_STATE, output);
           process.stdout.write('200');
@@ -519,6 +537,7 @@ function runBootstrap(bootstrap, args = [], extraEnv = {}) {
       CURL_LOG: bootstrap.fixture.statePaths.curlLog,
       IDENTICAL_TOKEN_VALUE,
       JWT_PRIVATE_PATH: bootstrap.fixture.statePaths.jwtPrivate,
+      OPERATOR_TOKEN_VALUE,
       PERSONAL_TOKEN_VALUE,
       SHOPIFY_TOKEN_VALUE,
       ...extraEnv,
@@ -552,6 +571,30 @@ function assertNoBootstrapOutputs(bootstrap) {
     assert.equal(fs.existsSync(output), false, `unexpected bootstrap output: ${output}`);
   }
   assert.deepEqual(fs.readdirSync(bootstrap.fixture.tmp), []);
+}
+
+function assertBootstrapObservabilityRedacted(bootstrap, result) {
+  const logContents = [
+    bootstrap.fixture.statePaths.atticAdminLog,
+    bootstrap.fixture.statePaths.atticBootstrapLog,
+    bootstrap.fixture.statePaths.curlLog,
+  ].filter(file => fs.existsSync(file)).map(file => fs.readFileSync(file, 'utf8'));
+  const observable = [
+    result.stdout,
+    result.stderr,
+    fs.readFileSync(bootstrap.executable, 'utf8'),
+    ...logContents,
+  ].join('\n');
+  const secrets = [
+    OPERATOR_TOKEN_VALUE,
+    PERSONAL_TOKEN_VALUE,
+    SHOPIFY_TOKEN_VALUE,
+    fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8'),
+    fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8'),
+  ];
+  for (const secret of secrets) {
+    assert.equal(observable.includes(secret), false);
+  }
 }
 
 function createEnqueueFixture(t) {
@@ -1810,7 +1853,7 @@ test('bootstrap preflight rejects unreadable or malformed artifacts', async t =>
   }
 });
 
-test('explicit bootstrap creates and verifies darwin, captures its key, and writes scoped host tokens', t => {
+test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its key, and writes scoped host tokens', t => {
   const bootstrap = createBootstrapFixture(t);
 
   const result = runBootstrap(bootstrap, ['bootstrap']);
@@ -1890,6 +1933,142 @@ test('explicit bootstrap creates and verifies darwin, captures its key, and writ
   for (const secret of [privateKey, PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
     assert.equal(observable.includes(secret), false);
   }
+});
+
+test('bootstrap treats an initial anonymous 401 as an ambiguous create candidate and verifies public state', t => {
+  const bootstrap = createBootstrapFixture(t);
+
+  const result = runBootstrap(bootstrap, ['bootstrap'], {
+    CURL_STATUS_SEQUENCE: JSON.stringify(['401']),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readJsonLines(bootstrap.fixture.statePaths.curlLog).length, 2);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog).map(invocation => invocation.args),
+    [[
+      'cache', 'create', '--public', '--priority', '30',
+      '--upstream-cache-key-name', 'cache.nixos.org-1',
+      '--upstream-cache-key-name', 'nix-community.cachix.org-1',
+      'local:darwin',
+    ]],
+  );
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['local-binary-cache-bootstrap', 'Brandons-MacBook-Pro', 'ShopifyLaptop'],
+  );
+  assert.equal(
+    fs.readFileSync(bootstrap.fixture.statePaths.cachePublicKeyOutput, 'utf8'),
+    `${CACHE_PUBLIC_KEY}\n`,
+  );
+  assertBootstrapObservabilityRedacted(bootstrap, result);
+});
+
+test('bootstrap 401 create conflict preserves a private cache and leaves all outputs absent', t => {
+  const privateState = validCacheState({ is_public: false });
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: privateState,
+  });
+  const originalState = fs.readFileSync(bootstrap.fixture.statePaths.cacheState);
+
+  const result = runBootstrap(bootstrap, ['bootstrap'], {
+    ATTIC_CREATE_FAIL_MESSAGE: 'CacheAlreadyExists',
+    ATTIC_CREATE_FAIL_STATUS: '17',
+    CURL_STATUS_SEQUENCE: JSON.stringify(['401']),
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /failed to create public darwin cache/);
+  assert.deepEqual(fs.readFileSync(bootstrap.fixture.statePaths.cacheState), originalState);
+  const atticInvocations = readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog);
+  assert.equal(atticInvocations.length, 1);
+  assert.deepEqual(atticInvocations[0].args.slice(0, 2), ['cache', 'create']);
+  assert.equal(atticInvocations[0].args.some(arg => /configure|destroy|delete/i.test(arg)), false);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['local-binary-cache-bootstrap'],
+  );
+  assertNoBootstrapOutputs(bootstrap);
+  assertBootstrapObservabilityRedacted(bootstrap, result);
+});
+
+test('bootstrap 401 create authentication failure leaves all outputs absent', t => {
+  const bootstrap = createBootstrapFixture(t);
+
+  const result = runBootstrap(bootstrap, ['bootstrap'], {
+    ATTIC_CREATE_FAIL_MESSAGE: 'Unauthorized',
+    ATTIC_CREATE_FAIL_STATUS: '18',
+    CURL_STATUS_SEQUENCE: JSON.stringify(['401']),
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /failed to create public darwin cache/);
+  assert.equal(fs.existsSync(bootstrap.fixture.statePaths.cacheState), false);
+  assert.equal(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog).length, 1);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['local-binary-cache-bootstrap'],
+  );
+  assertNoBootstrapOutputs(bootstrap);
+  assertBootstrapObservabilityRedacted(bootstrap, result);
+});
+
+test('ready and configured-identity bootstrap reject anonymous 401 without create', async t => {
+  const cases = [
+    {
+      name: 'ready',
+      operation: 'ready',
+      options: { configuredCachePublicKeyValue: CACHE_PUBLIC_KEY },
+    },
+    {
+      name: 'configured identity bootstrap',
+      operation: 'bootstrap',
+      options: { configuredCachePublicKeyValue: CACHE_PUBLIC_KEY },
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const bootstrap = createBootstrapFixture(child, fixtureCase.options);
+
+      const result = runBootstrap(bootstrap, [fixtureCase.operation], {
+        CURL_STATUS_SEQUENCE: JSON.stringify(['401']),
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /HTTP 401|ready|configured|identity/i);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+      assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+      assertNoBootstrapOutputs(bootstrap);
+      assertBootstrapObservabilityRedacted(bootstrap, result);
+    });
+  }
+});
+
+test('bootstrap rejects post-create anonymous 401 before token or trust outputs are committed', t => {
+  const bootstrap = createBootstrapFixture(t);
+
+  const result = runBootstrap(bootstrap, ['bootstrap'], {
+    CURL_STATUS_SEQUENCE: JSON.stringify(['401', '401']),
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /not anonymously visible after creation \(HTTP 401\)/);
+  assert.equal(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog).length, 1);
+  assert.deepEqual(
+    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
+      invocation.args[invocation.args.indexOf('--sub') + 1]
+    )),
+    ['local-binary-cache-bootstrap'],
+  );
+  assertNoBootstrapOutputs(bootstrap);
+  assertBootstrapObservabilityRedacted(bootstrap, result);
 });
 
 test('bootstrap reuses a matching live cache without creating or replacing its identity', t => {
