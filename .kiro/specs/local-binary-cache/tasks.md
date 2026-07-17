@@ -140,7 +140,7 @@
   - _Requirements: 1.3, 4.4, 4.6, 7.4_
   - _Boundary: Public Trust Bundle, SOPS Wiring_
 
-- [ ] 5.2 Wire the personal host in bootstrap mode
+- [x] 5.2 Wire the personal host in bootstrap mode
   - Enable server/proxy only and declare system SOPS paths/ownership for the TLS leaf key and operator JWT private key.
   - Keep consumer and publisher disabled until cache identity and tokens are captured.
   - Done when the personal host evaluates in bootstrap mode and both services can resolve their public/key paths.

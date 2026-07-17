@@ -6,6 +6,8 @@
   ...
 }:
 let
+  cacheBootstrapDirectory = "/var/db/local-binary-cache/bootstrap";
+  cacheSecretsFile = ../../secrets/local-binary-cache.personal.yaml;
   pressure = config.services.localBinaryCache.gcPolicy;
 in
 {
@@ -48,6 +50,47 @@ in
       key = "data";
       owner = username;
       mode = "0400";
+    };
+
+    secrets."local-binary-cache-tls-key" = {
+      sopsFile = cacheSecretsFile;
+      key = "local-binary-cache-tls-key";
+      owner = username;
+      mode = "0400";
+    };
+
+    secrets."local-binary-cache-jwt-private-key" = {
+      sopsFile = cacheSecretsFile;
+      key = "local-binary-cache-jwt-private-key";
+      owner = "root";
+      mode = "0400";
+    };
+  };
+
+  services.localBinaryCache = {
+    enable = true;
+    hostRole = "personal";
+    bootstrapMode = true;
+    caCertificate = ../../certificates/local-binary-cache/ca.pem;
+
+    consumer.enable = false;
+    publisher.enable = false;
+
+    bootstrap = {
+      jwtPrivateKey = config.sops.secrets."local-binary-cache-jwt-private-key".path;
+      cachePublicKeyOutput = "${cacheBootstrapDirectory}/cache-public-key.txt";
+      personalTokenOutput = "${cacheBootstrapDirectory}/personal-token";
+      shopifyTokenOutput = "${cacheBootstrapDirectory}/shopify-token";
+    };
+
+    server = {
+      enable = true;
+      package = pkgs.unstable.attic-server;
+      proxyPackage = pkgs.unstable.caddy;
+      stateDirectory = "/var/db/local-binary-cache/attic";
+      jwtPublicKey = ../../certificates/local-binary-cache/jwt-public.pem;
+      tlsCertificate = ../../certificates/local-binary-cache/server.pem;
+      tlsKeyFile = config.sops.secrets."local-binary-cache-tls-key".path;
     };
   };
 

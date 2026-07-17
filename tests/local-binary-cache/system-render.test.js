@@ -305,6 +305,254 @@ test('live hosts render exact seven-day GC and distinct weekly optimisation sche
   }
 });
 
+test('live personal host renders server-only bootstrap wiring from declared identities', () => {
+  const rendered = evalLiveHost(
+    'Brandons-MacBook-Pro',
+    `let
+      cache = config.services.localBinaryCache;
+      server = cache.server;
+      hasAtticDaemon = config.launchd.daemons ? local-binary-cache-attic;
+      hasCaddyDaemon = config.launchd.daemons ? local-binary-cache-caddy;
+      atticService = if hasAtticDaemon
+        then config.launchd.daemons.local-binary-cache-attic.serviceConfig
+        else { };
+      caddyService = if hasCaddyDaemon
+        then config.launchd.daemons.local-binary-cache-caddy.serviceConfig
+        else { };
+      renderSecret = name:
+        if builtins.hasAttr name config.sops.secrets then
+          let secret = builtins.getAttr name config.sops.secrets;
+          in {
+            present = true;
+            key = secret.key;
+            mode = secret.mode;
+            owner = secret.owner;
+            path = secret.path;
+            sopsFile = toString secret.sopsFile;
+          }
+        else {
+          present = false;
+          key = null;
+          mode = null;
+          owner = null;
+          path = null;
+          sopsFile = null;
+        };
+      readNullable = file: if file == null then "" else builtins.readFile file;
+      caddyWrapperExecutable = if server.proxyWrapper == null
+        then null
+        else "${'${server.proxyWrapper}'}/bin/local-binary-cache-caddy";
+      localDaemons = builtins.filter
+        (name: builtins.match "local-binary-cache-.*" name != null)
+        (builtins.attrNames config.launchd.daemons);
+    in {
+      cacheState = {
+        enable = cache.enable;
+        hostRole = cache.hostRole;
+        bootstrapMode = cache.bootstrapMode;
+        server = server.enable;
+        consumer = cache.consumer.enable;
+        publisher = cache.publisher.enable;
+        cachePublicKey = cache.cachePublicKey;
+      };
+      publicPaths = {
+        ca = if cache.caCertificate == null then null else toString cache.caCertificate;
+        jwtVerifier = if server.jwtPublicKey == null then null else toString server.jwtPublicKey;
+        tlsCertificate = if server.tlsCertificate == null then null else toString server.tlsCertificate;
+      };
+      expectedPaths = {
+        ca = toString flake.outPath + "/certificates/local-binary-cache/ca.pem";
+        jwtVerifier = toString flake.outPath + "/certificates/local-binary-cache/jwt-public.pem";
+        tlsCertificate = toString flake.outPath + "/certificates/local-binary-cache/server.pem";
+        sopsFile = toString flake.outPath + "/secrets/local-binary-cache.personal.yaml";
+      };
+      runtimePaths = {
+        jwtPrivateKey = cache.bootstrap.jwtPrivateKey;
+        tlsKey = server.tlsKeyFile;
+        cachePublicKeyOutput = cache.bootstrap.cachePublicKeyOutput;
+        personalTokenOutput = cache.bootstrap.personalTokenOutput;
+        shopifyTokenOutput = cache.bootstrap.shopifyTokenOutput;
+        serverState = server.stateDirectory;
+      };
+      secrets = {
+        tls = renderSecret "local-binary-cache-tls-key";
+        jwt = renderSecret "local-binary-cache-jwt-private-key";
+      };
+      publisherSurfaces = {
+        enqueuePackage = if cache.publisher.enqueuePackage == null
+          then null
+          else toString cache.publisher.enqueuePackage;
+        postBuildHookPackage = if cache.publisher.postBuildHookPackage == null
+          then null
+          else toString cache.publisher.postBuildHookPackage;
+        tokenFile = cache.publisher.tokenFile;
+        stateDirectory = cache.publisher.stateDirectory;
+      };
+      consumerSurfaces = {
+        certificateFiles = map toString config.security.pki.certificateFiles;
+        nixSettings = builtins.toJSON config.nix.settings;
+      };
+      services = {
+        inherit hasAtticDaemon hasCaddyDaemon localDaemons caddyWrapperExecutable;
+        atticArguments = atticService.ProgramArguments or null;
+        atticUser = atticService.UserName or null;
+        caddyArguments = caddyService.ProgramArguments or null;
+        caddyUser = caddyService.UserName or null;
+        atticConfigFile = if server.configFile == null then null else toString server.configFile;
+        proxyConfigFile = if server.proxyConfigFile == null then null else toString server.proxyConfigFile;
+      };
+      artifacts = {
+        atticConfig = readNullable server.configFile;
+        proxyConfig = readNullable server.proxyConfigFile;
+        caddyWrapper = readNullable caddyWrapperExecutable;
+        bootstrap = readNullable cache.bootstrap.command;
+        readiness = readNullable cache.readiness.command;
+        atticPlist = if hasAtticDaemon then builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-attic.plist"
+          else "";
+        caddyPlist = if hasCaddyDaemon then builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-caddy.plist"
+          else "";
+      };
+    }`,
+  );
+
+  assert.deepEqual(rendered.cacheState, {
+    bootstrapMode: true,
+    cachePublicKey: null,
+    consumer: false,
+    enable: true,
+    hostRole: 'personal',
+    publisher: false,
+    server: true,
+  });
+  assert.deepEqual(rendered.publicPaths, {
+    ca: rendered.expectedPaths.ca,
+    jwtVerifier: rendered.expectedPaths.jwtVerifier,
+    tlsCertificate: rendered.expectedPaths.tlsCertificate,
+  });
+  assert.deepEqual(rendered.runtimePaths, {
+    cachePublicKeyOutput: '/var/db/local-binary-cache/bootstrap/cache-public-key.txt',
+    jwtPrivateKey: '/run/secrets/local-binary-cache-jwt-private-key',
+    personalTokenOutput: '/var/db/local-binary-cache/bootstrap/personal-token',
+    serverState: '/var/db/local-binary-cache/attic',
+    shopifyTokenOutput: '/var/db/local-binary-cache/bootstrap/shopify-token',
+    tlsKey: '/run/secrets/local-binary-cache-tls-key',
+  });
+  assert.deepEqual(rendered.secrets, {
+    jwt: {
+      key: 'local-binary-cache-jwt-private-key',
+      mode: '0400',
+      owner: 'root',
+      path: rendered.runtimePaths.jwtPrivateKey,
+      present: true,
+      sopsFile: rendered.expectedPaths.sopsFile,
+    },
+    tls: {
+      key: 'local-binary-cache-tls-key',
+      mode: '0400',
+      owner: 'brandonmcnama',
+      path: rendered.runtimePaths.tlsKey,
+      present: true,
+      sopsFile: rendered.expectedPaths.sopsFile,
+    },
+  });
+
+  assert.deepEqual(rendered.services.localDaemons, [
+    'local-binary-cache-attic',
+    'local-binary-cache-caddy',
+  ]);
+  assert.equal(rendered.services.hasAtticDaemon, true);
+  assert.equal(rendered.services.hasCaddyDaemon, true);
+  assert.equal(rendered.services.atticUser, 'brandonmcnama');
+  assert.equal(rendered.services.caddyUser, 'brandonmcnama');
+  assert.deepEqual(rendered.services.atticArguments, [
+    rendered.services.atticArguments[0],
+    '-f',
+    rendered.services.atticConfigFile,
+    '--mode',
+    'monolithic',
+  ]);
+  assert.match(rendered.services.atticArguments[0], /\/bin\/atticd$/);
+  assert.deepEqual(rendered.services.caddyArguments, [rendered.services.caddyWrapperExecutable]);
+
+  const jwtVerifierBase64 = fs.readFileSync(
+    path.join(repoRoot, 'certificates/local-binary-cache/jwt-public.pem'),
+  ).toString('base64');
+  const tlsDirective = rendered.artifacts.proxyConfig.match(
+    /^\ttls ("(?:[^"\\]|\\.)*") ("(?:[^"\\]|\\.)*")$/m,
+  );
+  assert.notEqual(tlsDirective, null);
+  const proxyTlsCertificate = JSON.parse(tlsDirective[1]);
+  const proxyTlsKey = JSON.parse(tlsDirective[2]);
+  assert.ok(rendered.artifacts.atticConfig.includes(jwtVerifierBase64));
+  assert.deepEqual(
+    fs.readFileSync(proxyTlsCertificate),
+    fs.readFileSync(rendered.publicPaths.tlsCertificate),
+  );
+  assert.equal(proxyTlsKey, rendered.runtimePaths.tlsKey);
+  const wrapperTlsCertificate = shellAssignment(rendered.artifacts.caddyWrapper, 'tls_certificate')
+    .slice('tls_certificate='.length);
+  assert.deepEqual(
+    fs.readFileSync(wrapperTlsCertificate),
+    fs.readFileSync(rendered.publicPaths.tlsCertificate),
+  );
+  assert.equal(
+    shellAssignment(rendered.artifacts.caddyWrapper, 'tls_key'),
+    `tls_key=${rendered.runtimePaths.tlsKey}`,
+  );
+  assert.ok(rendered.artifacts.caddyWrapper.includes(rendered.services.proxyConfigFile));
+  for (const [assignment, publicPath] of [
+    ['ca_certificate', rendered.publicPaths.ca],
+    ['jwt_public_key', rendered.publicPaths.jwtVerifier],
+    ['tls_certificate', rendered.publicPaths.tlsCertificate],
+  ]) {
+    const assignmentPattern = new RegExp(`^[ \\t]*${assignment}=(.*)$`, 'm');
+    const matchedAssignment = rendered.artifacts.bootstrap.match(assignmentPattern);
+    assert.notEqual(matchedAssignment, null, `missing ${assignment} assignment`);
+    const materializedPath = matchedAssignment[1];
+    assert.deepEqual(fs.readFileSync(materializedPath), fs.readFileSync(publicPath));
+  }
+  for (const declaredPath of [
+    rendered.runtimePaths.jwtPrivateKey,
+    rendered.runtimePaths.tlsKey,
+    rendered.runtimePaths.cachePublicKeyOutput,
+    rendered.runtimePaths.personalTokenOutput,
+    rendered.runtimePaths.shopifyTokenOutput,
+  ]) {
+    assert.ok(rendered.artifacts.bootstrap.includes(declaredPath));
+  }
+
+  assert.deepEqual(rendered.publisherSurfaces, {
+    enqueuePackage: null,
+    postBuildHookPackage: null,
+    stateDirectory: null,
+    tokenFile: null,
+  });
+  assert.equal(rendered.consumerSurfaces.certificateFiles.includes(rendered.publicPaths.ca), false);
+  assert.equal(rendered.consumerSurfaces.nixSettings.includes('/local-binary-cache'), false);
+  assert.equal(rendered.consumerSurfaces.nixSettings.includes('post-build-hook'), false);
+  const privateKeyMarkers = [
+    ['-----BEGIN', 'PRIVATE KEY-----'].join(' '),
+    ['-----BEGIN RSA', 'PRIVATE KEY-----'].join(' '),
+  ];
+  for (const artifact of Object.values(rendered.artifacts)) {
+    for (const marker of privateKeyMarkers) {
+      assert.equal(artifact.includes(marker), false);
+    }
+    assert.equal(artifact.includes('ENC[AES256_GCM'), false);
+  }
+  for (const artifact of [
+    rendered.artifacts.atticConfig,
+    rendered.artifacts.readiness,
+    rendered.artifacts.atticPlist,
+    rendered.artifacts.caddyPlist,
+  ]) {
+    assert.equal(artifact.includes(rendered.runtimePaths.jwtPrivateKey), false);
+    assert.equal(artifact.includes(rendered.runtimePaths.tlsKey), false);
+  }
+});
+
 test('validated pressure values apply only to the personal host', () => {
   const minFree = 10 * 1024 * 1024 * 1024;
   const maxFree = 20 * 1024 * 1024 * 1024;
