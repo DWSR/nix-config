@@ -103,7 +103,7 @@
   - _Boundary: Cache Module, Attic Service, TLS Proxy_
 
 - [ ] 4. Integrate Nix daemon consumption, hooks, and retention
-- [ ] 4.1 Install the final post-build wrapper safely
+- [x] 4.1 Install the final post-build wrapper safely
   - Render the wrapper after includes and invoke enqueue exactly once before any explicitly chained hooks.
   - Inspect Shopify's external include in an isolated temporary `NIX_CONF_DIR` before daemon reload.
   - Accept no hook, chain a declared hook once, reject every undeclared hook, and require distributed builds disabled.

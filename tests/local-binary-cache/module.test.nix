@@ -37,12 +37,22 @@ let
           default = pkgs.nix;
         };
 
+        nix.extraOptions = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
         system.primaryUser = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
         };
 
         system.activationScripts.launchd.text = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
+        system.activationScripts.checks.text = lib.mkOption {
           type = lib.types.lines;
           default = "";
         };
@@ -147,6 +157,23 @@ let
   };
   distributedPublisher = mkReady "shopify" {
     nix.distributedBuilds = true;
+  };
+  duplicateChainedHooks = mkReady "shopify" {
+    services.localBinaryCache.publisher.chainedHooks = [
+      "/usr/local/bin/existing-post-build-hook"
+      "/usr/local/bin/existing-post-build-hook"
+    ];
+  };
+  contextualStoreChainedHook = mkReady "shopify" {
+    services.localBinaryCache.publisher.chainedHooks = [ (lib.getExe runtimePackage) ];
+  };
+  contextlessStoreChainedHook = mkReady "shopify" {
+    services.localBinaryCache.publisher.chainedHooks = [
+      (builtins.unsafeDiscardStringContext (lib.getExe runtimePackage))
+    ];
+  };
+  injectedExternalHookInclude = mkReady "shopify" {
+    services.localBinaryCache.publisher.externalHookInclude = "/tmp/local-binary-cache-fixture/etc/nix/nix.conf.d/shopify.conf";
   };
   storeBackedTokenFile = mkReady "shopify" {
     services.localBinaryCache.publisher.tokenFile = contextualStorePath;
@@ -310,6 +337,32 @@ assert
   failureMessages distributedPublisher == [
     "services.localBinaryCache.publisher.enable requires nix.distributedBuilds = false."
   ];
+assert
+  failureMessages duplicateChainedHooks == [
+    "services.localBinaryCache.publisher.chainedHooks must not contain duplicate paths."
+  ];
+assert failedAssertions contextualStoreChainedHook == [ ];
+assert rejected (
+  builtins.head contextlessStoreChainedHook.config.services.localBinaryCache.publisher.chainedHooks
+);
+assert failedAssertions injectedExternalHookInclude == [ ];
+assert readyPersonal.config.services.localBinaryCache.publisher.enqueuePackage != null;
+assert readyPersonal.config.services.localBinaryCache.publisher.postBuildHookPackage != null;
+assert readyPersonal.config.services.localBinaryCache.publisher.externalHookInclude == null;
+assert
+  readyPersonal.config.services.localBinaryCache.publisher.externalHookPreflightPackage == null;
+assert lib.hasInfix "post-build-hook = " readyPersonal.config.nix.extraOptions;
+assert readyShopify.config.services.localBinaryCache.publisher.enqueuePackage != null;
+assert readyShopify.config.services.localBinaryCache.publisher.postBuildHookPackage != null;
+assert
+  readyShopify.config.services.localBinaryCache.publisher.externalHookInclude
+  == "/etc/nix/nix.conf.d/shopify.conf";
+assert readyShopify.config.services.localBinaryCache.publisher.externalHookPreflightPackage != null;
+assert lib.hasInfix "local-binary-cache: checking external post-build hook"
+  readyShopify.config.system.activationScripts.checks.text;
+assert bootstrap.config.services.localBinaryCache.publisher.enqueuePackage == null;
+assert bootstrap.config.services.localBinaryCache.publisher.postBuildHookPackage == null;
+assert bootstrap.config.services.localBinaryCache.publisher.externalHookPreflightPackage == null;
 assert builtins.getContext contextualStorePath != { };
 assert builtins.getContext contextlessStorePath == { };
 assert rejected storeBackedTokenFile.config.services.localBinaryCache.publisher.tokenFile;

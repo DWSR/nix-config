@@ -8,7 +8,7 @@ check_rejected() {
   local option_path="$2"
   local expression diagnostics diagnostic_path
 
-  diagnostic_path="option \`${option_path}'"
+  diagnostic_path="option \`${option_path}"
 
   expression="let
     flake = builtins.getFlake (toString ${repo_root});
@@ -62,3 +62,9 @@ check_rejected endpoint-whitespace services.localBinaryCache.endpoint
 check_rejected endpoint-cache-path services.localBinaryCache.endpoint
 check_rejected endpoint-trailing-slash services.localBinaryCache.endpoint
 check_rejected endpoint-alternate-host services.localBinaryCache.endpoint
+check_rejected chained-hook-relative services.localBinaryCache.publisher.chainedHooks
+check_rejected publisher-state-root services.localBinaryCache.publisher.stateDirectory
+check_rejected chained-hook-injection services.localBinaryCache.publisher.chainedHooks
+check_rejected chained-hook-contextless-store services.localBinaryCache.publisher.chainedHooks
+check_rejected external-hook-include-injection services.localBinaryCache.publisher.externalHookInclude
+check_rejected external-hook-include-wrong-shape services.localBinaryCache.publisher.externalHookInclude

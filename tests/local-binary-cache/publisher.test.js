@@ -11,6 +11,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const {
   buildScript,
   createScriptFixture,
+  evalDarwinFixture,
   repoRoot,
   runScript,
 } = require('./helpers');
@@ -19,6 +20,7 @@ const HASH_A = '0123456789abcdfghijklmnpqrsvwxyz';
 const HASH_B = '11111111111111111111111111111111';
 const HASH_C = '22222222222222222222222222222222';
 const HASH_D = '33333333333333333333333333333333';
+const NIX_STORE_DIRECTORY = '/nix/store';
 const CACHE_ENDPOINT = 'https://cache.example.test:8443';
 const CACHE_NAME = 'darwin';
 const CACHE_PUBLIC_KEY = 'darwin:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
@@ -596,6 +598,86 @@ function createEnqueueFixture(t) {
     storeDirectory: fixture.statePaths.store,
   });
   return { executable, fixture };
+}
+
+function createPostBuildWrapperFixture(t) {
+  const fixture = createScriptFixture({
+    executables: {
+      firstHook: `
+        const fs = require('node:fs');
+        fs.appendFileSync(
+          process.env.HOOK_LOG,
+          ['first', process.env.DRV_PATH, process.env.OUT_PATHS].join('\\t') + '\\n',
+        );
+        if (process.env.FIRST_HOOK_FAIL_STATUS) {
+          process.exit(Number(process.env.FIRST_HOOK_FAIL_STATUS));
+        }
+      `,
+      secondHook: `
+        const fs = require('node:fs');
+        fs.appendFileSync(
+          process.env.HOOK_LOG,
+          ['second', process.env.DRV_PATH, process.env.OUT_PATHS].join('\\t') + '\\n',
+        );
+      `,
+    },
+    statePaths: {
+      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      hookLog: 'state/hook.log',
+      publisher: 'state/publisher',
+    },
+  });
+  t.after(fixture.cleanup);
+  const chainedHooks = [fixture.executables.firstHook, fixture.executables.secondHook]
+    .map(JSON.stringify)
+    .join(' ');
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }:
+    let
+      nixStoreStub = pkgs.writeShellScriptBin "nix-store" ''
+        printf 'enqueue\\t%s\\t%s\\n' "$DRV_PATH" "$OUT_PATHS" >> "$HOOK_LOG"
+        if [[ -n "$ENQUEUE_FAIL_STATUS" ]]; then
+          exit "$ENQUEUE_FAIL_STATUS"
+        fi
+      '';
+      nixPackage = pkgs.symlinkJoin {
+        name = "nix-${'${pkgs.nix.version}'}";
+        inherit (pkgs.nix) version;
+        paths = [ pkgs.nix ];
+        postBuild = ''
+          ln -sfn ${'${nixStoreStub}'}/bin/nix-store "$out/bin/nix-store"
+        '';
+      };
+    in {
+      nix.package = nixPackage;
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "shopify";
+        bootstrapMode = false;
+        cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
+        caCertificate = ${path.join(__dirname, 'fixtures/tls-certificate.pem')};
+        consumer.enable = true;
+        publisher = {
+          enable = true;
+          package = pkgs.hello;
+          tokenFile = "/run/secrets/local-binary-cache-token";
+          stateDirectory = ${JSON.stringify(fixture.statePaths.publisher)};
+          chainedHooks = [ ${chainedHooks} ];
+          externalHookInclude = ${JSON.stringify(fixture.statePaths.externalInclude)};
+        };
+      };
+    }`,
+    `let
+      publisher = config.services.localBinaryCache.publisher;
+      wrapperExecutable = "${'${publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook";
+    in {
+      inherit wrapperExecutable;
+      wrapperText = builtins.readFile wrapperExecutable;
+      enqueuePackage = toString publisher.enqueuePackage;
+    }`,
+  );
+
+  return { fixture, rendered };
 }
 
 function enqueueEnvironment(fixture, outPaths, extra = {}) {
@@ -2182,6 +2264,80 @@ test('enqueue hook reports a path-specific root creation failure', t => {
     ['--add-root', root, '--realise', output],
   ]);
   assert.equal(fs.existsSync(root), false);
+});
+
+test('post-build wrapper invokes the real enqueue once before declared hooks with unchanged environment', t => {
+  const { fixture, rendered } = createPostBuildWrapperFixture(t);
+  const output = `${NIX_STORE_DIRECTORY}/${HASH_A}-wrapper-output`;
+  const drvPath = `${NIX_STORE_DIRECTORY}/${HASH_B}-wrapper.drv`;
+  const result = runScript(rendered.wrapperExecutable, [], {
+    fixture,
+    env: {
+      DRV_PATH: drvPath,
+      HOOK_LOG: fixture.statePaths.hookLog,
+      OUT_PATHS: output,
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(fs.readFileSync(fixture.statePaths.hookLog, 'utf8').trimEnd().split('\n').map(
+    line => line.split('\t'),
+  ), [
+    ['enqueue', drvPath, output],
+    ['first', drvPath, output],
+    ['second', drvPath, output],
+  ]);
+  assert.equal(
+    rendered.wrapperText.split(`${rendered.enqueuePackage}/bin/local-binary-cache-enqueue`).length - 1,
+    1,
+  );
+  assert.ok(rendered.wrapperText.indexOf('/bin/local-binary-cache-enqueue')
+    < rendered.wrapperText.indexOf(fixture.executables.firstHook));
+  assert.ok(rendered.wrapperText.indexOf(fixture.executables.firstHook)
+    < rendered.wrapperText.indexOf(fixture.executables.secondHook));
+});
+
+test('post-build wrapper makes enqueue failure fatal before chained hooks', t => {
+  const { fixture, rendered } = createPostBuildWrapperFixture(t);
+  const output = `${NIX_STORE_DIRECTORY}/${HASH_A}-enqueue-failure-output`;
+  const result = runScript(rendered.wrapperExecutable, [], {
+    fixture,
+    env: {
+      DRV_PATH: `${NIX_STORE_DIRECTORY}/${HASH_B}-enqueue-failure.drv`,
+      ENQUEUE_FAIL_STATUS: '23',
+      HOOK_LOG: fixture.statePaths.hookLog,
+      OUT_PATHS: output,
+    },
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(
+    fs.readFileSync(fixture.statePaths.hookLog, 'utf8').trimEnd().split('\n').map(line => line.split('\t')),
+    [['enqueue', `${NIX_STORE_DIRECTORY}/${HASH_B}-enqueue-failure.drv`, output]],
+  );
+});
+
+test('post-build wrapper propagates chained-hook failure without invoking later hooks', t => {
+  const { fixture, rendered } = createPostBuildWrapperFixture(t);
+  const output = `${NIX_STORE_DIRECTORY}/${HASH_A}-chain-failure-output`;
+  const drvPath = `${NIX_STORE_DIRECTORY}/${HASH_B}-chain-failure.drv`;
+  const result = runScript(rendered.wrapperExecutable, [], {
+    fixture,
+    env: {
+      DRV_PATH: drvPath,
+      FIRST_HOOK_FAIL_STATUS: '31',
+      HOOK_LOG: fixture.statePaths.hookLog,
+      OUT_PATHS: output,
+    },
+  });
+
+  assert.equal(result.status, 31);
+  assert.deepEqual(fs.readFileSync(fixture.statePaths.hookLog, 'utf8').trimEnd().split('\n').map(
+    line => line.split('\t'),
+  ), [
+    ['enqueue', drvPath, output],
+    ['first', drvPath, output],
+  ]);
 });
 
 test('publisher pushes valid roots in lexical order and removes each successful root', t => {

@@ -34,12 +34,22 @@ let
           default = pkgs.nix;
         };
 
+        nix.extraOptions = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
         system.primaryUser = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
         };
 
         system.activationScripts.launchd.text = lib.mkOption {
+          type = lib.types.lines;
+          default = "";
+        };
+
+        system.activationScripts.checks.text = lib.mkOption {
           type = lib.types.lines;
           default = "";
         };
@@ -188,6 +198,35 @@ let
     endpoint-alternate-host = {
       module.services.localBinaryCache.endpoint = "https://alternate.local:8443";
       select = config: config.endpoint;
+    };
+    chained-hook-relative = {
+      module.services.localBinaryCache.publisher.chainedHooks = [ "bin/post-build-hook" ];
+      select = config: builtins.head config.publisher.chainedHooks;
+    };
+    publisher-state-root = {
+      module.services.localBinaryCache.publisher.stateDirectory = "/";
+      select = config: config.publisher.stateDirectory;
+    };
+    chained-hook-injection = {
+      module.services.localBinaryCache.publisher.chainedHooks = [
+        (builtins.fromJSON ''"/usr/local/bin/hook\npost-build-hook = /tmp/injected"'')
+      ];
+      select = config: builtins.head config.publisher.chainedHooks;
+    };
+    chained-hook-contextless-store = {
+      module.services.localBinaryCache.publisher.chainedHooks = [
+        (builtins.unsafeDiscardStringContext "${pkgs.hello}/bin/hello")
+      ];
+      select = config: builtins.head config.publisher.chainedHooks;
+    };
+    external-hook-include-injection = {
+      module.services.localBinaryCache.publisher.externalHookInclude =
+        builtins.fromJSON ''"/tmp/etc/nix/nix.conf.d/shopify.conf\npost-build-hook = /tmp/injected"'';
+      select = config: config.publisher.externalHookInclude;
+    };
+    external-hook-include-wrong-shape = {
+      module.services.localBinaryCache.publisher.externalHookInclude = "/tmp/shopify.conf";
+      select = config: config.publisher.externalHookInclude;
     };
   };
 

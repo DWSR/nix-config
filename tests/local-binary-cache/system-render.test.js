@@ -34,6 +34,38 @@ const unsafeServerStateDirectories = [
   ['percent', '/var/db/local-binary-cache/%61ttic'],
 ];
 
+function readyShopifyPublisherModule(options = {}) {
+  const chainedHooks = (options.chainedHooks ?? []).map(JSON.stringify).join(' ');
+  const externalHookInclude = options.externalHookInclude === undefined
+    ? ''
+    : `externalHookInclude = ${JSON.stringify(options.externalHookInclude)};`;
+
+  return `{ lib, pkgs, ... }: {
+    system.stateVersion = 7;
+    nix.checkConfig = false;
+    services.localBinaryCache = {
+      enable = true;
+      hostRole = "shopify";
+      bootstrapMode = false;
+      cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
+      caCertificate = ${tlsCertificate};
+      consumer.enable = true;
+      publisher = {
+        enable = true;
+        package = pkgs.hello;
+        tokenFile = "/run/secrets/local-binary-cache-token";
+        stateDirectory = "/var/db/local-binary-cache/publisher";
+        chainedHooks = [ ${chainedHooks} ];
+        ${externalHookInclude}
+      };
+    };
+    nix.extraOptions = lib.mkOrder 5000 ''
+      !include /etc/nix/nix.conf.d/shopify.conf
+      keep-outputs = true
+    '';
+  }`;
+}
+
 function renderCaddyFixture(tlsKeyFile) {
   return evalDarwinFixture(
     `{ pkgs, ... }: {
@@ -201,6 +233,15 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
       bootstrapPackage = toString cache.bootstrap.package;
       readinessCommand = cache.readiness.command;
       readinessPackage = toString cache.readiness.package;
+      enqueuePackage = if cache.publisher.enqueuePackage == null
+        then null
+        else toString cache.publisher.enqueuePackage;
+      postBuildHookPackage = if cache.publisher.postBuildHookPackage == null
+        then null
+        else toString cache.publisher.postBuildHookPackage;
+      externalHookPreflightPackage = if cache.publisher.externalHookPreflightPackage == null
+        then null
+        else toString cache.publisher.externalHookPreflightPackage;
       bootstrapText = builtins.readFile cache.bootstrap.command;
       readinessText = builtins.readFile cache.readiness.command;
       installedOperatorPackages = builtins.filter
@@ -227,6 +268,9 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
   ]);
   assert.equal(rendered.bootstrapCommand, `${rendered.bootstrapPackage}/bin/local-binary-cache-bootstrap`);
   assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
+  assert.equal(rendered.enqueuePackage, null);
+  assert.equal(rendered.postBuildHookPackage, null);
+  assert.equal(rendered.externalHookPreflightPackage, null);
   assert.equal(rendered.installedOperatorPackages.length, 2);
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.bootstrapKey));
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.cacheKeyOutput));
@@ -324,6 +368,13 @@ test('ready mode wires exact declared trust and identity into the module-generat
       readinessDerivationText = builtins.readFile cache.readiness.package.drvPath;
       readinessPackage = toString cache.readiness.package;
       readinessText = builtins.readFile cache.readiness.command;
+      externalHookInclude = cache.publisher.externalHookInclude;
+      externalHookPreflightPackage = if cache.publisher.externalHookPreflightPackage == null
+        then null
+        else toString cache.publisher.externalHookPreflightPackage;
+      postBuildHookPackage = if cache.publisher.postBuildHookPackage == null
+        then null
+        else toString cache.publisher.postBuildHookPackage;
     }`,
   );
 
@@ -351,6 +402,9 @@ test('ready mode wires exact declared trust and identity into the module-generat
   assert.equal(rendered.configuredCachePublicKey, configuredCachePublicKey);
   assert.equal(rendered.configuredCacheName, configuredCacheName);
   assert.equal(rendered.configuredCaCertificate.endsWith('/ready-wiring-ca.pem'), true);
+  assert.equal(rendered.externalHookInclude, null);
+  assert.equal(rendered.externalHookPreflightPackage, null);
+  assert.notEqual(rendered.postBuildHookPackage, null);
   const readinessArtifacts = [rendered.readinessText, rendered.readinessDerivationText];
   for (const [name, secretPath] of [
     ['publisher token', fixture.statePaths.publisherToken],
@@ -366,6 +420,200 @@ test('ready mode wires exact declared trust and identity into the module-generat
       assert.equal(artifact.includes(secretValue), false, `${name} value leaked into readiness package`);
     }
   }
+});
+
+test('publisher renders one final post-build hook after every external include and checks it before activation', () => {
+  const rendered = evalDarwinFixture(
+    readyShopifyPublisherModule(),
+    `let
+      cache = config.services.localBinaryCache;
+    in {
+      nixConfText = builtins.readFile config.environment.etc."nix/nix.conf".source;
+      activation = config.system.activationScripts.script.text;
+      externalHookInclude = cache.publisher.externalHookInclude;
+      externalHookPreflightPackage = toString cache.publisher.externalHookPreflightPackage;
+      postBuildHookPackage = toString cache.publisher.postBuildHookPackage;
+    }`,
+    { env: { NIX_CONFIG: 'experimental-features = nix-command flakes' } },
+  );
+
+  const hookLines = rendered.nixConfText.match(/^post-build-hook = .*$/gm) ?? [];
+  const effectiveLines = rendered.nixConfText.split('\n').filter(line => (
+    line.trim() !== '' && !line.startsWith('#')
+  ));
+  const includeIndex = rendered.nixConfText.indexOf(
+    '!include /etc/nix/nix.conf.d/shopify.conf',
+  );
+  const hookIndex = rendered.nixConfText.indexOf(hookLines[0]);
+  const preflightIndex = rendered.activation.indexOf(
+    `${rendered.externalHookPreflightPackage}/bin/local-binary-cache-external-hook-preflight`,
+  );
+  const etcIndex = rendered.activation.indexOf('setting up /etc...');
+  const daemonReloadIndex = rendered.activation.indexOf('reloading nix-daemon...');
+
+  assert.equal(rendered.externalHookInclude, '/etc/nix/nix.conf.d/shopify.conf');
+  assert.equal(hookLines.length, 1);
+  assert.equal(
+    hookLines[0],
+    `post-build-hook = ${rendered.postBuildHookPackage}/bin/local-binary-cache-post-build-hook`,
+  );
+  assert.ok(includeIndex >= 0 && includeIndex < hookIndex);
+  assert.equal(effectiveLines.at(-1), hookLines[0]);
+  assert.ok(preflightIndex >= 0 && preflightIndex < etcIndex);
+  assert.ok(preflightIndex < daemonReloadIndex);
+});
+
+test('external hook preflight isolates config and accepts empty or declared hooks only', t => {
+  const poison = 'poisoned-external-nix-config-secret-value';
+  const inheritedPoison = 'poisoned-inherited-nix-config-marker';
+  const fixture = createScriptFixture({
+    executables: {
+      declaredHook: 'process.exit(0);',
+      undeclaredHook: 'process.exit(0);',
+    },
+    statePaths: {
+      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      nixConfigHomeConfig: 'poison/nix-config-home/nix.conf',
+      nixUserConfig: 'poison/nix-user.conf',
+      poisonPluginSentinel: 'poison/poison-plugin-marker/.fixture',
+      xdgConfig: 'poison/xdg/nix/nix.conf',
+    },
+  });
+  t.after(fixture.cleanup);
+  const userConfig = path.join(fixture.home, '.config', 'nix', 'nix.conf');
+  const poisonPluginDirectory = path.dirname(fixture.statePaths.poisonPluginSentinel);
+  const inheritedPoisonConfig = [
+    `post-build-hook = ${fixture.executables.undeclaredHook}`,
+    `plugin-files = ${poisonPluginDirectory}`,
+    `netrc-file = ${path.join(fixture.root, inheritedPoison)}`,
+    '',
+  ].join('\n');
+  for (const configPath of [
+    userConfig,
+    fixture.statePaths.nixConfigHomeConfig,
+    fixture.statePaths.nixUserConfig,
+    fixture.statePaths.xdgConfig,
+  ]) {
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, inheritedPoisonConfig);
+  }
+  fs.mkdirSync(poisonPluginDirectory, { recursive: true });
+  const inheritedConfigEnvironment = {
+    HOME: fixture.home,
+    NIX_CONFIG: inheritedPoisonConfig,
+    NIX_CONFIG_HOME: path.dirname(fixture.statePaths.nixConfigHomeConfig),
+    NIX_USER_CONF_FILES: fixture.statePaths.nixUserConfig,
+    XDG_CONFIG_HOME: path.dirname(path.dirname(fixture.statePaths.xdgConfig)),
+  };
+
+  const rendered = evalDarwinFixture(
+    readyShopifyPublisherModule({
+      chainedHooks: [fixture.executables.declaredHook],
+      externalHookInclude: fixture.statePaths.externalInclude,
+    }),
+    `let
+      publisher = config.services.localBinaryCache.publisher;
+    in {
+      preflightExecutable = "${'${publisher.externalHookPreflightPackage}'}/bin/local-binary-cache-external-hook-preflight";
+      preflightText = builtins.readFile
+        "${'${publisher.externalHookPreflightPackage}'}/bin/local-binary-cache-external-hook-preflight";
+      nixVersion = config.nix.package.version;
+    }`,
+  );
+  const runPreflight = (env = inheritedConfigEnvironment) => runScript(rendered.preflightExecutable, [], {
+    fixture,
+    env,
+  });
+  const runCase = (contents, env) => {
+    if (contents === null) {
+      fs.rmSync(fixture.statePaths.externalInclude, { force: true });
+    } else {
+      fs.writeFileSync(fixture.statePaths.externalInclude, contents);
+    }
+    const before = fs.existsSync(fixture.statePaths.externalInclude)
+      ? fs.readFileSync(fixture.statePaths.externalInclude)
+      : null;
+    const result = runPreflight(env);
+    const after = fs.existsSync(fixture.statePaths.externalInclude)
+      ? fs.readFileSync(fixture.statePaths.externalInclude)
+      : null;
+    assert.deepEqual(after, before);
+    return result;
+  };
+  const assertNoInheritedPoison = result => {
+    const observable = `${result.stdout}\n${result.stderr}`;
+    assert.equal(observable.includes(inheritedPoison), false);
+    assert.equal(observable.includes(fixture.executables.undeclaredHook), false);
+    assert.equal(observable.includes(poisonPluginDirectory), false);
+  };
+
+  const noHook = runCase('sandbox = false\n');
+  assert.equal(noHook.status, 0, noHook.stderr);
+  assertNoInheritedPoison(noHook);
+
+  const declared = runCase(`post-build-hook = ${fixture.executables.declaredHook}\n`);
+  assert.equal(declared.status, 0, declared.stderr);
+  assertNoInheritedPoison(declared);
+
+  for (const [name, env] of [
+    ['NIX_USER_CONF_FILES', { NIX_USER_CONF_FILES: fixture.statePaths.nixUserConfig }],
+    ['NIX_CONFIG_HOME', { NIX_CONFIG_HOME: path.dirname(fixture.statePaths.nixConfigHomeConfig) }],
+    ['XDG_CONFIG_HOME', { XDG_CONFIG_HOME: path.dirname(path.dirname(fixture.statePaths.xdgConfig)) }],
+    ['HOME', { HOME: fixture.home }],
+  ]) {
+    const isolated = runCase('sandbox = false\n', env);
+    assert.equal(isolated.status, 0, `${name}: ${isolated.stderr}`);
+    assertNoInheritedPoison(isolated);
+  }
+
+  const undeclared = runCase(`post-build-hook = ${fixture.executables.undeclaredHook}\n`);
+  assert.notEqual(undeclared.status, 0);
+  assert.ok(undeclared.stderr.includes(fixture.statePaths.externalInclude));
+  assert.ok(undeclared.stderr.includes(fixture.executables.undeclaredHook));
+
+  const missing = runCase(null);
+  assert.notEqual(missing.status, 0);
+  assert.ok(missing.stderr.includes(fixture.statePaths.externalInclude));
+
+  const malformed = runCase(`post-build-hook ${poison}\n`);
+  assert.notEqual(malformed.status, 0);
+  assert.ok(malformed.stderr.includes(fixture.statePaths.externalInclude));
+
+  fs.chmodSync(fixture.executables.declaredHook, 0o600);
+  const nonExecutable = runCase('sandbox = false\n');
+  assert.notEqual(nonExecutable.status, 0);
+  assert.ok(nonExecutable.stderr.includes(fixture.executables.declaredHook));
+
+  for (const result of [noHook, declared, undeclared, missing, malformed, nonExecutable]) {
+    assert.equal(`${result.stdout}\n${result.stderr}`.includes(poison), false);
+  }
+  assert.ok(rendered.preflightText.includes(fixture.statePaths.externalInclude));
+  assert.match(rendered.nixVersion, /^2\.34\./);
+  for (const poisonValue of [
+    inheritedPoison,
+    userConfig,
+    fixture.statePaths.nixConfigHomeConfig,
+    fixture.statePaths.nixUserConfig,
+    fixture.statePaths.xdgConfig,
+    poisonPluginDirectory,
+  ]) {
+    assert.equal(rendered.preflightText.includes(poisonValue), false);
+  }
+});
+
+test('publisher rejects duplicate chained hooks before rendering the wrapper', () => {
+  const hook = '/usr/local/bin/existing-post-build-hook';
+
+  assert.throws(
+    () => evalDarwinFixture(
+      readyShopifyPublisherModule({ chainedHooks: [hook, hook] }),
+      'config.system.build.toplevel',
+    ),
+    error => {
+      assert.match(error.stderr, /publisher\.chainedHooks must not contain duplicate paths/);
+      return true;
+    },
+  );
 });
 
 test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', () => {
