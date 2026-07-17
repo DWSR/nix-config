@@ -75,6 +75,12 @@ function adaptCaddyConfig(rendered) {
   ));
 }
 
+function shellAssignment(script, name) {
+  const matches = script.split('\n').filter(line => line.startsWith(`${name}=`));
+  assert.equal(matches.length, 1, `expected exactly one ${name} assignment`);
+  return matches[0];
+}
+
 test('render harness evaluates an isolated nix-darwin fixture', () => {
   const rendered = evalDarwinFixture(
     `{ ... }: {
@@ -124,6 +130,242 @@ test('disabled fixture renders no Attic launchd job or directory activation', ()
   assert.equal(rendered.proxyWrapper, null);
   assert.equal(rendered.activation.includes('local-binary-cache: preparing Attic runtime directories'), false);
   assert.equal(rendered.activation.includes('local-binary-cache: preparing Caddy log directory'), false);
+});
+
+test('bootstrap renders only Attic, TLS, and operator commands without evaluating live state', t => {
+  const fixture = createScriptFixture({
+    statePaths: {
+      bootstrapKey: 'secrets/bootstrap-jwt-key',
+      cacheKeyOutput: 'outputs/cache-public-key.txt',
+      personalTokenOutput: 'outputs/personal-token',
+      publisherState: 'state/publisher',
+      publisherToken: 'secrets/publisher-token',
+      shopifyTokenOutput: 'outputs/shopify-token',
+      tlsKey: 'secrets/tls-key',
+    },
+  });
+  t.after(fixture.cleanup);
+  for (const secretPath of [
+    fixture.statePaths.bootstrapKey,
+    fixture.statePaths.publisherToken,
+    fixture.statePaths.tlsKey,
+  ]) {
+    fs.writeFileSync(secretPath, poisonedSecrets.jwtPrivateKey, { mode: 0o400 });
+  }
+  const originalSecrets = new Map([
+    fixture.statePaths.bootstrapKey,
+    fixture.statePaths.publisherToken,
+    fixture.statePaths.tlsKey,
+  ].map(file => [file, fs.readFileSync(file)]));
+
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }: {
+      system.primaryUser = "cache-operator";
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "personal";
+        bootstrapMode = true;
+        caCertificate = ${tlsCertificate};
+        publisher = {
+          enable = false;
+          package = pkgs.attic-client;
+          tokenFile = ${JSON.stringify(fixture.statePaths.publisherToken)};
+          stateDirectory = ${JSON.stringify(fixture.statePaths.publisherState)};
+        };
+        bootstrap = {
+          clientPackage = pkgs.attic-client;
+          jwtPrivateKey = ${JSON.stringify(fixture.statePaths.bootstrapKey)};
+          cachePublicKeyOutput = ${JSON.stringify(fixture.statePaths.cacheKeyOutput)};
+          personalTokenOutput = ${JSON.stringify(fixture.statePaths.personalTokenOutput)};
+          shopifyTokenOutput = ${JSON.stringify(fixture.statePaths.shopifyTokenOutput)};
+        };
+        server = {
+          enable = true;
+          package = pkgs.attic-server;
+          proxyPackage = pkgs.caddy;
+          stateDirectory = "/var/db/local-binary-cache/attic";
+          jwtPublicKey = ${jwtPublicKey};
+          tlsCertificate = ${tlsCertificate};
+          tlsKeyFile = ${JSON.stringify(fixture.statePaths.tlsKey)};
+        };
+      };
+    }`,
+    `let
+      cache = config.services.localBinaryCache;
+      localDaemons = builtins.filter
+        (name: builtins.match "local-binary-cache-.*" name != null)
+        (builtins.attrNames config.launchd.daemons);
+    in {
+      inherit localDaemons;
+      bootstrapCommand = cache.bootstrap.command;
+      bootstrapPackage = toString cache.bootstrap.package;
+      readinessCommand = cache.readiness.command;
+      readinessPackage = toString cache.readiness.package;
+      bootstrapText = builtins.readFile cache.bootstrap.command;
+      readinessText = builtins.readFile cache.readiness.command;
+      installedOperatorPackages = builtins.filter
+        (package: package == cache.bootstrap.package || package == cache.readiness.package)
+        config.environment.systemPackages;
+      activation = config.system.activationScripts.launchd.text;
+      nixSettings = builtins.toJSON config.nix.settings;
+      atticPlist = builtins.readFile
+        "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-attic.plist";
+      caddyPlist = builtins.readFile
+        "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-caddy.plist";
+    }`,
+    {
+      env: {
+        LOCAL_BINARY_CACHE_LIVE_KEY: poisonedSecrets.jwtPrivateKey,
+        LOCAL_BINARY_CACHE_NETWORK_POISON: poisonedSecrets.pushToken,
+      },
+    },
+  );
+
+  assert.deepEqual(rendered.localDaemons, [
+    'local-binary-cache-attic',
+    'local-binary-cache-caddy',
+  ]);
+  assert.equal(rendered.bootstrapCommand, `${rendered.bootstrapPackage}/bin/local-binary-cache-bootstrap`);
+  assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
+  assert.equal(rendered.installedOperatorPackages.length, 2);
+  assert.ok(rendered.bootstrapText.includes(fixture.statePaths.bootstrapKey));
+  assert.ok(rendered.bootstrapText.includes(fixture.statePaths.cacheKeyOutput));
+  assert.ok(rendered.readinessText.includes('status=not-ready'));
+  assert.equal(rendered.nixSettings.includes('Brandons-MacBook-Pro.local:8443/darwin'), false);
+  assert.equal(rendered.nixSettings.includes('post-build-hook'), false);
+  for (const artifact of [rendered.activation, rendered.atticPlist, rendered.caddyPlist]) {
+    assert.equal(artifact.includes('local-binary-cache-bootstrap'), false);
+    assert.equal(artifact.includes('local-binary-cache-status'), false);
+    assert.equal(artifact.includes(fixture.statePaths.publisherToken), false);
+    assert.equal(artifact.includes(fixture.statePaths.publisherState), false);
+  }
+  for (const secret of Object.values(poisonedSecrets)) {
+    assert.equal(rendered.bootstrapText.includes(secret), false);
+    assert.equal(rendered.readinessText.includes(secret), false);
+  }
+  for (const [file, contents] of originalSecrets) {
+    assert.deepEqual(fs.readFileSync(file), contents);
+  }
+  for (const output of [
+    fixture.statePaths.cacheKeyOutput,
+    fixture.statePaths.personalTokenOutput,
+    fixture.statePaths.shopifyTokenOutput,
+  ]) {
+    assert.equal(fs.existsSync(output), false);
+  }
+});
+
+test('ready mode wires exact declared trust and identity into the module-generated readiness command', t => {
+  const fixture = createScriptFixture({
+    statePaths: {
+      caCertificate: 'public/ready-wiring-ca.pem',
+      jwtPrivateKey: 'secrets/ready-wiring-jwt-private-key',
+      publisherState: 'state/ready-wiring-publisher',
+      publisherToken: 'secrets/ready-wiring-publisher-token',
+      tlsPrivateKey: 'secrets/ready-wiring-tls-private-key',
+    },
+  });
+  t.after(fixture.cleanup);
+
+  const configuredCachePublicKey = `darwin:${Buffer.alloc(32, 0x5a).toString('base64')}`;
+  const configuredEndpoint = 'https://Brandons-MacBook-Pro.local:8443';
+  const configuredCacheName = 'darwin';
+  const secretValues = {
+    jwtPrivateKey: 'ready-wiring-jwt-private-poison-55f94c',
+    publisherToken: 'ready-wiring-publisher-token-poison-a5cf13',
+    tlsPrivateKey: 'ready-wiring-tls-private-poison-f398b2',
+  };
+  fs.writeFileSync(
+    fixture.statePaths.caCertificate,
+    'ready-wiring-public-ca-marker-14bd2e\n',
+  );
+  for (const [name, value] of Object.entries(secretValues)) {
+    fs.writeFileSync(fixture.statePaths[name], `${value}\n`, { mode: 0o400 });
+  }
+
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }: {
+      system.primaryUser = "cache-operator";
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "personal";
+        bootstrapMode = false;
+        endpoint = ${JSON.stringify(configuredEndpoint)};
+        cacheName = ${JSON.stringify(configuredCacheName)};
+        cachePublicKey = ${JSON.stringify(configuredCachePublicKey)};
+        caCertificate = ${fixture.statePaths.caCertificate};
+        consumer.enable = true;
+        publisher = {
+          enable = true;
+          package = pkgs.attic-client;
+          tokenFile = ${JSON.stringify(fixture.statePaths.publisherToken)};
+          stateDirectory = ${JSON.stringify(fixture.statePaths.publisherState)};
+        };
+        bootstrap.jwtPrivateKey = ${JSON.stringify(fixture.statePaths.jwtPrivateKey)};
+        server = {
+          enable = true;
+          package = pkgs.attic-server;
+          proxyPackage = pkgs.caddy;
+          stateDirectory = "/var/db/local-binary-cache/attic";
+          jwtPublicKey = ${jwtPublicKey};
+          tlsCertificate = ${tlsCertificate};
+          tlsKeyFile = ${JSON.stringify(fixture.statePaths.tlsPrivateKey)};
+        };
+      };
+    }`,
+    `let
+      cache = config.services.localBinaryCache;
+    in {
+      configuredCaCertificate = toString cache.caCertificate;
+      configuredCacheName = cache.cacheName;
+      configuredCachePublicKey = cache.cachePublicKey;
+      configuredEndpoint = cache.endpoint;
+      readinessCommand = cache.readiness.command;
+      readinessDerivationText = builtins.readFile cache.readiness.package.drvPath;
+      readinessPackage = toString cache.readiness.package;
+      readinessText = builtins.readFile cache.readiness.command;
+    }`,
+  );
+
+  assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
+  assert.equal(
+    shellAssignment(rendered.readinessText, 'ca_certificate'),
+    `ca_certificate=${rendered.configuredCaCertificate}`,
+  );
+  assert.equal(
+    shellAssignment(rendered.readinessText, 'endpoint'),
+    `endpoint=${configuredEndpoint}`,
+  );
+  assert.equal(
+    shellAssignment(rendered.readinessText, 'configured_cache_public_key'),
+    `configured_cache_public_key='${configuredCachePublicKey}'`,
+  );
+  assert.equal(
+    shellAssignment(rendered.readinessText, 'cache_name'),
+    `cache_name=${configuredCacheName}`,
+  );
+  assert.equal(shellAssignment(rendered.readinessText, 'bootstrap_mode'), 'bootstrap_mode=0');
+  assert.equal(shellAssignment(rendered.readinessText, 'readiness_only'), 'readiness_only=1');
+
+  assert.equal(rendered.configuredEndpoint, configuredEndpoint);
+  assert.equal(rendered.configuredCachePublicKey, configuredCachePublicKey);
+  assert.equal(rendered.configuredCacheName, configuredCacheName);
+  assert.equal(rendered.configuredCaCertificate.endsWith('/ready-wiring-ca.pem'), true);
+  const readinessArtifacts = [rendered.readinessText, rendered.readinessDerivationText];
+  for (const [name, secretPath] of [
+    ['publisher token', fixture.statePaths.publisherToken],
+    ['TLS private key', fixture.statePaths.tlsPrivateKey],
+    ['JWT private key', fixture.statePaths.jwtPrivateKey],
+  ]) {
+    for (const artifact of readinessArtifacts) {
+      assert.equal(artifact.includes(secretPath), false, `${name} path leaked into readiness package`);
+    }
+  }
+  for (const [name, secretValue] of Object.entries(secretValues)) {
+    for (const artifact of readinessArtifacts) {
+      assert.equal(artifact.includes(secretValue), false, `${name} value leaked into readiness package`);
+    }
+  }
 });
 
 test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', () => {

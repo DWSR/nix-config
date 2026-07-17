@@ -16,6 +16,8 @@
   readlinkExecutable,
   statExecutable,
   storeDirectory,
+  bootstrapMode ? false,
+  readinessOnly ? false,
 }:
 
 writeShellApplication {
@@ -62,6 +64,7 @@ writeShellApplication {
     ca_certificate=${lib.escapeShellArg caCertificate}
     cache_name=${lib.escapeShellArg cacheName}
     configured_cache_public_key=${lib.escapeShellArg configuredCachePublicKey}
+    bootstrap_mode=${if bootstrapMode then "1" else "0"}
     curl=${lib.escapeShellArg curlExecutable}
     date=${lib.escapeShellArg dateExecutable}
     endpoint=${lib.escapeShellArg endpoint}
@@ -70,9 +73,16 @@ writeShellApplication {
     jq=${lib.escapeShellArg jqExecutable}
     nix=${lib.escapeShellArg nixExecutable}
     pending_directory=${lib.escapeShellArg pendingDirectory}
+    readiness_only=${if readinessOnly then "1" else "0"}
     readlink=${lib.escapeShellArg readlinkExecutable}
     stat=${lib.escapeShellArg statExecutable}
     store_directory=${lib.escapeShellArg storeDirectory}
+
+    if (( bootstrap_mode == 1 && readiness_only == 1 )); then
+      printf 'mode=bootstrap\n'
+      printf 'status=not-ready\n'
+      exit 1
+    fi
 
     healthy=1
     tls_health=unhealthy
@@ -142,6 +152,19 @@ writeShellApplication {
     if [[ "$tls_health" != healthy || "$cache_health" != healthy \
       || "$configured_live_key_match" != true ]]; then
       healthy=0
+    fi
+
+    if (( readiness_only == 1 )); then
+      printf 'mode=ready\n'
+      printf 'tls-health=%s\n' "$tls_health"
+      printf 'cache-health=%s\n' "$cache_health"
+      printf 'configured-live-key-match=%s\n' "$configured_live_key_match"
+      if (( healthy == 1 )); then
+        printf 'status=ready\n'
+        exit 0
+      fi
+      printf 'status=not-ready\n'
+      exit 1
     fi
 
     if [[ "$nix" == /* && -x "$nix" ]]; then

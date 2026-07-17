@@ -67,7 +67,7 @@
   - _Requirements: 3.3, 3.4, 3.5, 3.6, 6.2, 6.3, 6.4, 6.5_
   - _Boundary: Status Tool_
 
-- [ ] 3. Add the personal cache runtime
+- [x] 3. Add the personal cache runtime
 - [x] 3.1 Render the secret-free Attic server configuration
   - Set canonical allowed, API, and substituter endpoints for the LAN TLS origin.
   - Configure loopback listening, SQLite/local storage, RS256 public verification, and 30-day/12-hour retention.
@@ -93,7 +93,7 @@
   - _Requirements: 1.3, 4.4, 4.6, 6.1, 6.3_
   - _Boundary: TLS Proxy_
 
-- [ ] 3.4 Integrate bootstrap declaration gating and runtime readiness
+- [x] 3.4 Integrate bootstrap declaration gating and runtime readiness
   - Keep static evaluation limited to declared artifacts and option invariants; compare the live cache key only at runtime.
   - Render Attic/TLS in bootstrap mode while suppressing consumer and publisher capabilities.
   - Block ready status on TLS, endpoint, or live/configured key mismatch without recreating identity.
@@ -225,3 +225,4 @@
 - Task 3.1 Attic state directories need stricter validation than generic runtime paths because whitespace, controls, and URI-reserved characters make SQLite and storage URLs ambiguous.
 - Task 3.2 ownership-changing activation must constrain Attic state to its dedicated canonical directory and reject symlinks; configurable system-directory targets can otherwise cause root to retarget broad macOS paths.
 - Task 3.3 every dynamic Caddyfile token must be quoted or rejected before rendering; an accepted newline-bearing runtime path can inject additional plaintext listeners even when canonical fixtures validate.
+- Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.

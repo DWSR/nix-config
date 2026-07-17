@@ -32,6 +32,11 @@ let
           default = false;
         };
 
+        nix.package = lib.mkOption {
+          type = lib.types.package;
+          default = pkgs.nix;
+        };
+
         system.primaryUser = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
@@ -45,6 +50,11 @@ let
         launchd.daemons = lib.mkOption {
           type = lib.types.attrsOf lib.types.anything;
           default = { };
+        };
+
+        environment.systemPackages = lib.mkOption {
+          type = lib.types.listOf lib.types.package;
+          default = [ ];
         };
       };
     };
@@ -105,6 +115,22 @@ let
       bootstrapMode = true;
       endpoint = "https://Brandons-MacBook-Pro.local:8443";
       cacheName = "darwin";
+      caCertificate = tlsCertificate;
+      bootstrap = {
+        jwtPrivateKey = "/run/secrets/local-binary-cache-jwt-private-key";
+        cachePublicKeyOutput = "/var/db/local-binary-cache/bootstrap/cache-public-key.txt";
+        personalTokenOutput = "/var/db/local-binary-cache/bootstrap/personal-token";
+        shopifyTokenOutput = "/var/db/local-binary-cache/bootstrap/shopify-token";
+      };
+      server = serverConfig;
+    };
+  };
+  missingBootstrapDeclarations = mkConfiguration {
+    system.primaryUser = "cache-operator";
+    services.localBinaryCache = {
+      enable = true;
+      hostRole = "personal";
+      bootstrapMode = true;
       server = serverConfig;
     };
   };
@@ -198,6 +224,7 @@ let
   };
 
   requiredOptionNames = [
+    "bootstrap"
     "bootstrapMode"
     "cacheName"
     "cachePublicKey"
@@ -208,6 +235,7 @@ let
     "gcPolicy"
     "hostRole"
     "publisher"
+    "readiness"
     "server"
   ];
   cacheAssertionPrefix = "services.localBinaryCache.";
@@ -244,7 +272,29 @@ assert bootstrap.config.services.localBinaryCache.bootstrapMode;
 assert bootstrap.config.services.localBinaryCache.server.enable;
 assert !bootstrap.config.services.localBinaryCache.publisher.enable;
 assert !bootstrap.config.services.localBinaryCache.consumer.enable;
+assert bootstrap.config.services.localBinaryCache.bootstrap.package != null;
+assert bootstrap.config.services.localBinaryCache.bootstrap.command != null;
+assert bootstrap.config.services.localBinaryCache.readiness.package != null;
+assert bootstrap.config.services.localBinaryCache.readiness.command != null;
+assert lib.hasSuffix "/bin/local-binary-cache-bootstrap"
+  bootstrap.config.services.localBinaryCache.bootstrap.command;
+assert lib.hasSuffix "/bin/local-binary-cache-status"
+  bootstrap.config.services.localBinaryCache.readiness.command;
+assert lib.elem bootstrap.config.services.localBinaryCache.bootstrap.package
+  bootstrap.config.environment.systemPackages;
+assert lib.elem bootstrap.config.services.localBinaryCache.readiness.package
+  bootstrap.config.environment.systemPackages;
 assert failedAssertions bootstrap == [ ];
+assert
+  failureMessages missingBootstrapDeclarations == [
+    "services.localBinaryCache.caCertificate is required in bootstrap mode."
+    "services.localBinaryCache.bootstrap.jwtPrivateKey is required in bootstrap mode."
+    "services.localBinaryCache.bootstrap.cachePublicKeyOutput is required in bootstrap mode."
+    "services.localBinaryCache.bootstrap.personalTokenOutput is required in bootstrap mode."
+    "services.localBinaryCache.bootstrap.shopifyTokenOutput is required in bootstrap mode."
+  ];
+assert readyPersonal.config.services.localBinaryCache.readiness.package != null;
+assert readyShopify.config.services.localBinaryCache.readiness.package != null;
 assert failedAssertions readyPersonal == [ ];
 assert failedAssertions readyShopify == [ ];
 assert

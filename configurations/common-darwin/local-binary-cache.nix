@@ -158,6 +158,61 @@ let
       description = "Nix cache public key with a 32-byte base64-encoded Ed25519 payload";
     };
 
+  bootstrapInputsDeclared =
+    cfg.server.package != null
+    && cfg.caCertificate != null
+    && cfg.bootstrap.jwtPrivateKey != null
+    && cfg.bootstrap.cachePublicKeyOutput != null
+    && cfg.bootstrap.personalTokenOutput != null
+    && cfg.bootstrap.shopifyTokenOutput != null
+    && cfg.server.jwtPublicKey != null
+    && cfg.server.tlsCertificate != null
+    && cfg.server.tlsKeyFile != null;
+  bootstrapPackage =
+    if cfg.server.enable && bootstrapInputsDeclared then
+      pkgs.callPackage ../../scripts/local-binary-cache-bootstrap.nix {
+        atticAdminExecutable = lib.getExe' cfg.server.package "atticadm";
+        atticClientExecutable = lib.getExe' cfg.bootstrap.clientPackage "attic";
+        caCertificate = toString cfg.caCertificate;
+        inherit (cfg) cacheName endpoint;
+        inherit (cfg.bootstrap)
+          cachePublicKeyOutput
+          jwtPrivateKey
+          personalTokenOutput
+          shopifyTokenOutput
+          ;
+        configuredCachePublicKey = if cfg.cachePublicKey == null then "" else cfg.cachePublicKey;
+        curlExecutable = lib.getExe pkgs.curl;
+        jqExecutable = lib.getExe pkgs.jq;
+        jwtPublicKey = toString cfg.server.jwtPublicKey;
+        inherit loginUser;
+        tlsCertificate = toString cfg.server.tlsCertificate;
+        inherit (cfg.server) tlsKeyFile;
+      }
+    else
+      null;
+  readinessPackage =
+    if cfg.enable then
+      pkgs.callPackage ../../scripts/local-binary-cache-status.nix {
+        caCertificate = if cfg.caCertificate == null then "" else toString cfg.caCertificate;
+        inherit (cfg) bootstrapMode cacheName endpoint;
+        configuredCachePublicKey = if cfg.cachePublicKey == null then "" else cfg.cachePublicKey;
+        curlExecutable = lib.getExe pkgs.curl;
+        dateExecutable = lib.getExe' pkgs.coreutils "date";
+        expectedPostBuildHook = "";
+        expectedSubstituters = "";
+        jqExecutable = lib.getExe pkgs.jq;
+        nixExecutable = lib.getExe config.nix.package;
+        pendingDirectory =
+          if cfg.publisher.stateDirectory == null then "" else "${cfg.publisher.stateDirectory}/pending";
+        readlinkExecutable = lib.getExe' pkgs.coreutils "readlink";
+        readinessOnly = true;
+        statExecutable = lib.getExe' pkgs.coreutils "stat";
+        storeDirectory = builtins.storeDir;
+      }
+    else
+      null;
+
   publisherOptions = {
     options = {
       enable = mkEnableOption "asynchronous publication to the local binary cache";
@@ -360,6 +415,76 @@ in
       description = "Committed LAN certificate authority used by cache consumers.";
     };
 
+    bootstrap = {
+      clientPackage = mkOption {
+        type = types.package;
+        default = if pkgs ? unstable then pkgs.unstable.attic-client else pkgs.attic-client;
+        description = "Attic client package used only by explicit cache bootstrap operations.";
+      };
+
+      jwtPrivateKey = mkOption {
+        type = types.nullOr runtimePathType;
+        default = null;
+        description = "Runtime path to the operator-only RS256 private key used by explicit bootstrap operations.";
+      };
+
+      cachePublicKeyOutput = mkOption {
+        type = types.nullOr runtimePathType;
+        default = null;
+        description = "Runtime output path for the public cache signing key captured during bootstrap.";
+      };
+
+      personalTokenOutput = mkOption {
+        type = types.nullOr runtimePathType;
+        default = null;
+        description = "Runtime output path for the personal host's bootstrap publication token.";
+      };
+
+      shopifyTokenOutput = mkOption {
+        type = types.nullOr runtimePathType;
+        default = null;
+        description = "Runtime output path for the Shopify host's bootstrap publication token.";
+      };
+
+      package = mkOption {
+        type = types.nullOr types.package;
+        default = bootstrapPackage;
+        readOnly = true;
+        description = "Explicit identity preflight and cache bootstrap operations package.";
+      };
+
+      command = mkOption {
+        type = types.nullOr types.str;
+        default =
+          if cfg.bootstrap.package == null then
+            null
+          else
+            "${cfg.bootstrap.package}/bin/local-binary-cache-bootstrap";
+        readOnly = true;
+        description = "Stable command path for explicit identity preflight and cache bootstrap operations.";
+      };
+    };
+
+    readiness = {
+      package = mkOption {
+        type = types.nullOr types.package;
+        default = readinessPackage;
+        readOnly = true;
+        description = "Read-only TLS, anonymous cache, and signing identity readiness package.";
+      };
+
+      command = mkOption {
+        type = types.nullOr types.str;
+        default =
+          if cfg.readiness.package == null then
+            null
+          else
+            "${cfg.readiness.package}/bin/local-binary-cache-status";
+        readOnly = true;
+        description = "Stable operator-invokable command path for cache runtime readiness.";
+      };
+    };
+
     publisher = mkOption {
       type = types.submodule publisherOptions;
       default = { };
@@ -421,6 +546,26 @@ in
     {
       assertion = !cfg.bootstrapMode || !cfg.consumer.enable;
       message = "services.localBinaryCache.consumer.enable must be false in bootstrap mode.";
+    }
+    {
+      assertion = !cfg.bootstrapMode || cfg.caCertificate != null;
+      message = "services.localBinaryCache.caCertificate is required in bootstrap mode.";
+    }
+    {
+      assertion = !cfg.bootstrapMode || cfg.bootstrap.jwtPrivateKey != null;
+      message = "services.localBinaryCache.bootstrap.jwtPrivateKey is required in bootstrap mode.";
+    }
+    {
+      assertion = !cfg.bootstrapMode || cfg.bootstrap.cachePublicKeyOutput != null;
+      message = "services.localBinaryCache.bootstrap.cachePublicKeyOutput is required in bootstrap mode.";
+    }
+    {
+      assertion = !cfg.bootstrapMode || cfg.bootstrap.personalTokenOutput != null;
+      message = "services.localBinaryCache.bootstrap.personalTokenOutput is required in bootstrap mode.";
+    }
+    {
+      assertion = !cfg.bootstrapMode || cfg.bootstrap.shopifyTokenOutput != null;
+      message = "services.localBinaryCache.bootstrap.shopifyTokenOutput is required in bootstrap mode.";
     }
     {
       assertion = !cfg.server.enable || cfg.hostRole == "personal";
@@ -509,6 +654,10 @@ in
       message = "services.localBinaryCache.gcPolicy requires maxFree > minFree > 0 when configured.";
     }
   ];
+
+  config.environment.systemPackages = lib.optionals cfg.enable (
+    [ cfg.readiness.package ] ++ lib.optional (cfg.bootstrap.package != null) cfg.bootstrap.package
+  );
 
   config.system.activationScripts.launchd.text = lib.mkIf cfg.server.enable (
     lib.mkBefore ''

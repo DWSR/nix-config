@@ -22,6 +22,7 @@ const HASH_D = '33333333333333333333333333333333';
 const CACHE_ENDPOINT = 'https://cache.example.test:8443';
 const CACHE_NAME = 'darwin';
 const CACHE_PUBLIC_KEY = 'darwin:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
+const OTHER_CACHE_PUBLIC_KEY = `darwin:${'A'.repeat(43)}=`;
 const NONCANONICAL_CACHE_PUBLIC_KEY = `darwin:${'A'.repeat(42)}B=`;
 const UPSTREAM_CACHE_KEYS = [
   'cache.nixos.org-1',
@@ -916,9 +917,10 @@ function createStatusFixture(t, options = {}) {
     STATUS_CACHE_URL.replace('/attic-cache-info', ''),
   ].join(' ');
   const executable = buildScript('scripts/local-binary-cache-status.nix', {
+    bootstrapMode: options.bootstrapMode ?? false,
     caCertificate: fixture.statePaths.ca,
     cacheName: CACHE_NAME,
-    configuredCachePublicKey: CACHE_PUBLIC_KEY,
+    configuredCachePublicKey: options.configuredCachePublicKey ?? CACHE_PUBLIC_KEY,
     curlExecutable: fixture.executables.curl,
     dateExecutable: fixture.executables.date,
     endpoint: STATUS_ENDPOINT,
@@ -927,6 +929,7 @@ function createStatusFixture(t, options = {}) {
     jqExecutable: getJqExecutable(),
     nixExecutable: fixture.executables.nix,
     pendingDirectory: fixture.statePaths.pending,
+    readinessOnly: options.readinessOnly ?? false,
     readlinkExecutable: fixture.executables.readlink,
     statExecutable: fixture.executables.stat,
     storeDirectory: fixture.statePaths.store,
@@ -974,6 +977,145 @@ function assertStatusReadOnly(status, expectedRoots) {
     assert.equal(fs.lstatSync(path.join(status.fixture.statePaths.pending, root)).isSymbolicLink(), true);
   }
 }
+
+test('bootstrap readiness is non-ready without probing or mutating runtime state', t => {
+  const status = createStatusFixture(t, {
+    bootstrapMode: true,
+    configuredCachePublicKey: '',
+    readinessOnly: true,
+  });
+  const pending = createPendingRoot(status.fixture, HASH_A, 'bootstrap-pending-output');
+  const unchangedFiles = new Map([
+    status.fixture.statePaths.ca,
+    status.fixture.statePaths.cacheState,
+    status.fixture.statePaths.privateKey,
+    status.fixture.statePaths.token,
+  ].map(file => [file, fs.readFileSync(file)]));
+
+  const result = runStatus(status, {
+    STATUS_CACHE_RESPONSE: STATUS_PRIVATE_KEY_VALUE,
+    STATUS_CURL_STDERR: STATUS_TOKEN_VALUE,
+    STATUS_DATE_STDERR: STATUS_PRIVATE_KEY_VALUE,
+    STATUS_NIX_STDERR: STATUS_TOKEN_VALUE,
+    STATUS_READLINK_STDERR: STATUS_PRIVATE_KEY_VALUE,
+    STATUS_STAT_STDERR: STATUS_TOKEN_VALUE,
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(statusOutputLines(result), [
+    'mode=bootstrap',
+    'status=not-ready',
+  ]);
+  for (const log of [
+    status.fixture.statePaths.curlLog,
+    status.fixture.statePaths.dateLog,
+    status.fixture.statePaths.nixLog,
+    status.fixture.statePaths.readlinkLog,
+    status.fixture.statePaths.statLog,
+  ]) {
+    assert.equal(fs.existsSync(log), false, `unexpected bootstrap readiness probe: ${log}`);
+  }
+  for (const [file, contents] of unchangedFiles) {
+    assert.deepEqual(fs.readFileSync(file), contents);
+  }
+  assert.equal(fs.readlinkSync(pending.root), pending.output);
+  assert.equal(`${result.stdout}\n${result.stderr}`.includes(STATUS_PRIVATE_KEY_VALUE), false);
+  assert.equal(`${result.stdout}\n${result.stderr}`.includes(STATUS_TOKEN_VALUE), false);
+});
+
+test('core readiness succeeds without requiring Task 4 hook or substituter configuration', t => {
+  const status = createStatusFixture(t, { readinessOnly: true });
+  const result = runStatus(status, {
+    STATUS_EFFECTIVE_HOOK: '/not-yet-owned/task-4-hook',
+    STATUS_EFFECTIVE_SUBSTITUTERS: STATUS_UPSTREAM_SUBSTITUTERS.join(' '),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.deepEqual(statusOutputLines(result), [
+    'mode=ready',
+    'tls-health=healthy',
+    'cache-health=healthy',
+    'configured-live-key-match=true',
+    'status=ready',
+  ]);
+  assert.deepEqual(readJsonLines(status.fixture.statePaths.curlLog), [[
+    '--disable', '--cacert', status.fixture.statePaths.ca,
+    '--silent', '--show-error', '--write-out', '\n%{http_code}',
+    '--', STATUS_CACHE_URL,
+  ]]);
+  assert.equal(fs.existsSync(status.fixture.statePaths.nixLog), false);
+  assert.equal(fs.existsSync(status.fixture.statePaths.pending), false);
+});
+
+test('core readiness blocks TLS, cache visibility, and signing identity failures', async t => {
+  const cases = [
+    {
+      name: 'TLS failure',
+      env: { STATUS_CURL_FAIL: '1' },
+      expected: ['tls-health=unhealthy', 'cache-health=unhealthy', 'configured-live-key-match=unavailable'],
+    },
+    {
+      name: 'cache absence',
+      env: { STATUS_HTTP_STATUS: '404', STATUS_CACHE_RESPONSE: '{"error":"NoSuchCache"}' },
+      expected: ['tls-health=healthy', 'cache-health=unhealthy', 'configured-live-key-match=unavailable'],
+    },
+    {
+      name: 'private cache',
+      env: { STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState({ is_public: false })) },
+      expected: ['tls-health=healthy', 'cache-health=unhealthy', 'configured-live-key-match=unavailable'],
+    },
+    {
+      name: 'live key mismatch',
+      env: { STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState({ public_key: OTHER_CACHE_PUBLIC_KEY })) },
+      expected: ['tls-health=healthy', 'cache-health=healthy', 'configured-live-key-match=false'],
+    },
+    {
+      name: 'noncanonical live key',
+      env: { STATUS_CACHE_RESPONSE: JSON.stringify(validCacheState({ public_key: NONCANONICAL_CACHE_PUBLIC_KEY })) },
+      expected: ['tls-health=healthy', 'cache-health=unhealthy', 'configured-live-key-match=unavailable'],
+    },
+    {
+      name: 'configured key mismatch',
+      options: { configuredCachePublicKey: OTHER_CACHE_PUBLIC_KEY },
+      expected: ['tls-health=healthy', 'cache-health=healthy', 'configured-live-key-match=false'],
+    },
+    {
+      name: 'noncanonical configured key',
+      options: { configuredCachePublicKey: NONCANONICAL_CACHE_PUBLIC_KEY },
+      expected: ['tls-health=healthy', 'cache-health=healthy', 'configured-live-key-match=unavailable'],
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const status = createStatusFixture(child, {
+        readinessOnly: true,
+        ...fixtureCase.options,
+      });
+      const mutationSentinel = Buffer.from('must-not-change\n');
+      fs.writeFileSync(status.fixture.statePaths.cacheState, mutationSentinel);
+
+      const result = runStatus(status, {
+        STATUS_CURL_STDERR: STATUS_TOKEN_VALUE,
+        ...fixtureCase.env,
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stderr, '');
+      assert.ok(statusOutputLines(result).includes('mode=ready'));
+      for (const line of fixtureCase.expected) {
+        assert.ok(statusOutputLines(result).includes(line), `${fixtureCase.name}: missing ${line}`);
+      }
+      assert.ok(statusOutputLines(result).includes('status=not-ready'));
+      assert.deepEqual(fs.readFileSync(status.fixture.statePaths.cacheState), mutationSentinel);
+      assert.equal(fs.existsSync(status.fixture.statePaths.nixLog), false);
+      assert.equal(fs.existsSync(status.fixture.statePaths.pending), false);
+      assert.equal(`${result.stdout}\n${result.stderr}`.includes(STATUS_TOKEN_VALUE), false);
+    });
+  }
+});
 
 test('status reports healthy endpoint, identity, effective config, and pending age', t => {
   const status = createStatusFixture(t);

@@ -29,6 +29,11 @@ let
           default = false;
         };
 
+        nix.package = lib.mkOption {
+          type = lib.types.package;
+          default = pkgs.nix;
+        };
+
         system.primaryUser = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
@@ -42,6 +47,11 @@ let
         launchd.daemons = lib.mkOption {
           type = lib.types.attrsOf lib.types.anything;
           default = { };
+        };
+
+        environment.systemPackages = lib.mkOption {
+          type = lib.types.listOf lib.types.package;
+          default = [ ];
         };
       };
     };
