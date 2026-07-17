@@ -14,6 +14,9 @@ const {
 
 const jwtPublicKey = path.join(__dirname, 'fixtures/jwt-public.pem');
 const tlsCertificate = path.join(__dirname, 'fixtures/tls-certificate.pem');
+const cachePublicKey = 'darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=';
+const localSubstituter = 'https://Brandons-MacBook-Pro.local:8443/darwin';
+const combinedCaBundle = '/etc/ssl/certs/ca-certificates.crt';
 const poisonedSecrets = {
   jwtPrivateKey: 'poisoned-jwt-private-key-value',
   pushToken: 'poisoned-push-token-value',
@@ -66,6 +69,63 @@ function readyShopifyPublisherModule(options = {}) {
   }`;
 }
 
+function readyConsumerModule(hostRole, options = {}) {
+  const existingSubstituter = `https://${hostRole}-existing.example`;
+  const existingExtraSubstituter = `https://${hostRole}-extra.example`;
+  const existingCacheKey = `${hostRole}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=`;
+  const configuredCachePublicKey = options.cachePublicKey ?? cachePublicKey;
+  const configuredCaCertificate = options.caCertificate ?? tlsCertificate;
+  const configuredTlsCertificate = options.tlsCertificate ?? tlsCertificate;
+  const externalHookInclude = options.externalHookInclude === undefined
+    ? ''
+    : `externalHookInclude = ${JSON.stringify(options.externalHookInclude)};`;
+  const server = hostRole === 'personal'
+    ? `server = {
+        enable = true;
+        package = pkgs.hello;
+        proxyPackage = pkgs.hello;
+        stateDirectory = "/var/db/local-binary-cache/attic";
+        jwtPublicKey = ${jwtPublicKey};
+        tlsCertificate = ${configuredTlsCertificate};
+        tlsKeyFile = "/run/secrets/local-binary-cache-tls-key";
+      };`
+    : '';
+  const managedInclude = hostRole === 'shopify'
+    ? `nix.extraOptions = lib.mkOrder 5000 ''
+        !include ${options.externalHookInclude ?? '/etc/nix/nix.conf.d/shopify.conf'}
+        keep-outputs = true
+      '';`
+    : '';
+
+  return `{ lib, pkgs, ... }: {
+    system.stateVersion = 7;
+    system.primaryUser = "cache-operator";
+    nix.checkConfig = false;
+    nix.settings = {
+      substituters = [ ${JSON.stringify(existingSubstituter)} ];
+      extra-substituters = [ ${JSON.stringify(existingExtraSubstituter)} ];
+      extra-trusted-public-keys = [ ${JSON.stringify(existingCacheKey)} ];
+    };
+    services.localBinaryCache = {
+      enable = true;
+      hostRole = ${JSON.stringify(hostRole)};
+      bootstrapMode = false;
+      cachePublicKey = ${JSON.stringify(configuredCachePublicKey)};
+      caCertificate = ${configuredCaCertificate};
+      consumer.enable = true;
+      publisher = {
+        enable = true;
+        package = pkgs.hello;
+        tokenFile = "/run/secrets/local-binary-cache-token";
+        stateDirectory = "/var/db/local-binary-cache/publisher";
+        ${externalHookInclude}
+      };
+      ${server}
+    };
+    ${managedInclude}
+  }`;
+}
+
 function renderCaddyFixture(tlsKeyFile) {
   return evalDarwinFixture(
     `{ pkgs, ... }: {
@@ -111,6 +171,19 @@ function shellAssignment(script, name) {
   const matches = script.split('\n').filter(line => line.startsWith(`${name}=`));
   assert.equal(matches.length, 1, `expected exactly one ${name} assignment`);
   return matches[0];
+}
+
+function runNix(nixExecutable, args, fixture, options = {}) {
+  return runScript(
+    nixExecutable,
+    ['--extra-experimental-features', 'nix-command', ...args],
+    {
+      fixture,
+      env: options.env,
+      input: options.input,
+      timeout: options.timeout,
+    },
+  );
 }
 
 test('render harness evaluates an isolated nix-darwin fixture', () => {
@@ -231,6 +304,8 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
       inherit localDaemons;
       bootstrapCommand = cache.bootstrap.command;
       bootstrapPackage = toString cache.bootstrap.package;
+      configuredCaCertificate = toString cache.caCertificate;
+      certificateFiles = map toString config.security.pki.certificateFiles;
       readinessCommand = cache.readiness.command;
       readinessPackage = toString cache.readiness.package;
       enqueuePackage = if cache.publisher.enqueuePackage == null
@@ -275,7 +350,9 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.bootstrapKey));
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.cacheKeyOutput));
   assert.ok(rendered.readinessText.includes('status=not-ready'));
+  assert.equal(rendered.certificateFiles.includes(rendered.configuredCaCertificate), false);
   assert.equal(rendered.nixSettings.includes('Brandons-MacBook-Pro.local:8443/darwin'), false);
+  assert.equal(rendered.nixSettings.includes(cachePublicKey), false);
   assert.equal(rendered.nixSettings.includes('post-build-hook'), false);
   for (const artifact of [rendered.activation, rendered.atticPlist, rendered.caddyPlist]) {
     assert.equal(artifact.includes('local-binary-cache-bootstrap'), false);
@@ -422,6 +499,480 @@ test('ready mode wires exact declared trust and identity into the module-generat
   }
 });
 
+for (const hostRole of ['personal', 'shopify']) {
+  test(`${hostRole} consumer appends trusted local cache settings without replacing existing caches`, () => {
+    const existingSubstituter = `https://${hostRole}-existing.example`;
+    const existingExtraSubstituter = `https://${hostRole}-extra.example`;
+    const existingCacheKey = `${hostRole}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=`;
+    const rendered = evalDarwinFixture(
+      readyConsumerModule(hostRole),
+      `let
+        cache = config.services.localBinaryCache;
+      in {
+        priority = cache.consumer.priority;
+        certificateFiles = map toString config.security.pki.certificateFiles;
+        nixSettings = config.nix.settings;
+        nixConfText = builtins.readFile config.environment.etc."nix/nix.conf".source;
+      }`,
+    );
+
+    assert.equal(rendered.priority, 30);
+    assert.deepEqual(new Set(rendered.nixSettings.substituters), new Set([
+      existingSubstituter,
+      'https://cache.nixos.org/',
+    ]));
+    assert.deepEqual(new Set(rendered.nixSettings['extra-substituters']), new Set([
+      existingExtraSubstituter,
+      localSubstituter,
+    ]));
+    assert.deepEqual(new Set(rendered.nixSettings['extra-trusted-public-keys']), new Set([
+      existingCacheKey,
+      cachePublicKey,
+    ]));
+    assert.equal(rendered.nixSettings.fallback, true);
+    assert.equal(rendered.nixSettings['narinfo-cache-negative-ttl'], 60);
+    assert.equal(rendered.nixSettings['require-sigs'], true);
+    assert.equal(rendered.nixSettings['ssl-cert-file'], combinedCaBundle);
+    assert.equal(rendered.certificateFiles.includes(combinedCaBundle), false);
+    assert.deepEqual(new Set(rendered.certificateFiles.map(file => path.basename(file))), new Set([
+      'ca-bundle.crt',
+      'tls-certificate.pem',
+    ]));
+
+    assert.match(rendered.nixConfText, /^fallback = true$/m);
+    assert.match(rendered.nixConfText, /^narinfo-cache-negative-ttl = 60$/m);
+    assert.match(rendered.nixConfText, /^require-sigs = true$/m);
+    assert.match(
+      rendered.nixConfText,
+      /^ssl-cert-file = \/etc\/ssl\/certs\/ca-certificates\.crt$/m,
+    );
+    assert.ok(rendered.nixConfText.includes(localSubstituter));
+    assert.ok(rendered.nixConfText.includes(existingExtraSubstituter));
+    assert.ok(rendered.nixConfText.includes(cachePublicKey));
+    assert.ok(rendered.nixConfText.includes(existingCacheKey));
+    assert.equal(rendered.nixConfText.includes('local-binary-cache-token'), false);
+
+    const managedInclude = '!include /etc/nix/nix.conf.d/shopify.conf';
+    assert.equal(
+      rendered.nixConfText.split('\n').filter(line => line === managedInclude).length,
+      hostRole === 'shopify' ? 1 : 0,
+    );
+  });
+}
+
+test('Shopify consumer settings remain effective after the unchanged managed include', t => {
+  const fixture = createScriptFixture({
+    statePaths: {
+      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      nixConf: 'nix-conf/nix.conf',
+    },
+  });
+  t.after(fixture.cleanup);
+  const managedSubstituter = 'https://shopify-managed.example';
+  const managedCacheKey = 'shopify-managed:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
+  const managedConfig = [
+    `substituters = ${managedSubstituter}`,
+    `trusted-public-keys = ${managedCacheKey}`,
+    'ssl-cert-file = /etc/ssl/certs/shopify-managed.pem',
+    'fallback = false',
+    'narinfo-cache-negative-ttl = 3600',
+    'require-sigs = false',
+    '',
+  ].join('\n');
+  fs.writeFileSync(fixture.statePaths.externalInclude, managedConfig);
+  const originalManagedConfig = fs.readFileSync(fixture.statePaths.externalInclude);
+
+  const rendered = evalDarwinFixture(
+    readyConsumerModule('shopify', {
+      externalHookInclude: fixture.statePaths.externalInclude,
+    }),
+    `let
+      settings = config.nix.settings;
+    in {
+      declarativeSubstituters =
+        (settings.substituters or [ ]) ++ (settings.extra-substituters or [ ]);
+      declarativeTrustedPublicKeys =
+        (settings.trusted-public-keys or [ ])
+        ++ (settings.extra-trusted-public-keys or [ ]);
+      nixConfText = builtins.readFile config.environment.etc."nix/nix.conf".source;
+      nixExecutable = "${'${config.nix.package}'}/bin/nix";
+      nixVersion = config.nix.package.version;
+    }`,
+  );
+  fs.writeFileSync(fixture.statePaths.nixConf, rendered.nixConfText);
+  const show = setting => {
+    const result = runScript(
+      rendered.nixExecutable,
+      ['--extra-experimental-features', 'nix-command', 'config', 'show', setting],
+      {
+        fixture,
+        env: {
+          NIX_CONFIG: '',
+          NIX_CONF_DIR: path.dirname(fixture.statePaths.nixConf),
+          XDG_CONFIG_HOME: path.join(fixture.root, 'xdg-config'),
+        },
+      },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+
+  assert.match(rendered.nixVersion, /^2\.34\./);
+  assert.deepEqual(
+    new Set(show('substituters').split(/\s+/)),
+    new Set([managedSubstituter, ...rendered.declarativeSubstituters]),
+  );
+  assert.deepEqual(
+    new Set(show('trusted-public-keys').split(/\s+/)),
+    new Set([managedCacheKey, ...rendered.declarativeTrustedPublicKeys]),
+  );
+  assert.equal(show('ssl-cert-file'), combinedCaBundle);
+  assert.equal(show('fallback'), 'true');
+  assert.equal(show('narinfo-cache-negative-ttl'), '60');
+  assert.equal(show('require-sigs'), 'true');
+  assert.deepEqual(fs.readFileSync(fixture.statePaths.externalInclude), originalManagedConfig);
+});
+
+for (const [name, cacheName] of [
+  ['alternate identity', 'alternate'],
+  ['nix.conf injection', 'darwin\nfallback = false'],
+]) {
+  test(`cache name rejects ${name} with an option diagnostic`, () => {
+    assert.throws(
+      () => evalDarwinFixture(
+        `{ ... }: {
+          services.localBinaryCache.cacheName = ${JSON.stringify(cacheName)};
+        }`,
+        'config.services.localBinaryCache.cacheName',
+      ),
+      error => {
+        assert.match(error.stderr, /option `services\.localBinaryCache\.cacheName'/);
+        return true;
+      },
+    );
+  });
+}
+
+for (const hostRole of ['personal', 'shopify']) {
+  test(`effective ${hostRole} trust accepts the declared signer and rejects an undeclared signer`, t => {
+    const fixture = createScriptFixture({
+      statePaths: {
+        emptyNixConf: 'empty-nix-conf/nix.conf',
+        externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+        nixConf: 'effective-nix-conf/nix.conf',
+        rightSecretKey: 'keys/right-secret-key',
+        wrongSecretKey: 'keys/wrong-secret-key',
+      },
+    });
+    t.after(fixture.cleanup);
+    fs.writeFileSync(fixture.statePaths.emptyNixConf, 'experimental-features = nix-command\n');
+    const isolatedConfigEnv = {
+      NIX_CONFIG: '',
+      NIX_CONF_DIR: path.dirname(fixture.statePaths.emptyNixConf),
+      XDG_CONFIG_HOME: path.join(fixture.root, 'xdg-config'),
+    };
+    const tools = evalDarwinFixture(
+      '{ ... }: { }',
+      `{
+        nixExecutable = "${'${config.nix.package}'}/bin/nix";
+        nixVersion = config.nix.package.version;
+      }`,
+    );
+    const generateKey = (name, secretKeyFile) => {
+      const generated = runNix(
+        tools.nixExecutable,
+        ['key', 'generate-secret', '--key-name', name],
+        fixture,
+        { env: isolatedConfigEnv },
+      );
+      assert.equal(generated.status, 0, generated.stderr);
+      fs.writeFileSync(secretKeyFile, generated.stdout, { mode: 0o600 });
+      const converted = runNix(
+        tools.nixExecutable,
+        ['key', 'convert-secret-to-public'],
+        fixture,
+        { env: isolatedConfigEnv, input: generated.stdout },
+      );
+      assert.equal(converted.status, 0, converted.stderr);
+      return converted.stdout.trim();
+    };
+    const rightPublicKey = generateKey('declared-cache', fixture.statePaths.rightSecretKey);
+    const wrongPublicKey = generateKey('undeclared-cache', fixture.statePaths.wrongSecretKey);
+    const managedCacheKey = 'shopify-managed:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
+    if (hostRole === 'shopify') {
+      fs.writeFileSync(fixture.statePaths.externalInclude, [
+        `trusted-public-keys = ${managedCacheKey}`,
+        'require-sigs = false',
+        '',
+      ].join('\n'));
+    }
+
+    const rendered = evalDarwinFixture(
+      readyConsumerModule(hostRole, {
+        cachePublicKey: rightPublicKey,
+        ...(hostRole === 'shopify' ? {
+          externalHookInclude: fixture.statePaths.externalInclude,
+        } : {}),
+      }),
+      `let
+        signatureFixture = fixture.pkgs.runCommand "local-binary-cache-signature-fixture" { } ''
+          printf 'signature fixture\n' > "$out"
+        '';
+      in {
+        configuredCaCertificate = toString config.services.localBinaryCache.caCertificate;
+        nixConfText = builtins.readFile config.environment.etc."nix/nix.conf".source;
+        sourceFixtureText = builtins.readFile signatureFixture;
+        sourceStorePath = toString signatureFixture;
+        nixExecutable = "${'${config.nix.package}'}/bin/nix";
+        nixVersion = config.nix.package.version;
+      }`,
+    );
+    assert.match(rendered.nixVersion, /^2\.34\./);
+    assert.equal(rendered.sourceFixtureText, 'signature fixture\n');
+    fs.writeFileSync(fixture.statePaths.nixConf, rendered.nixConfText);
+    const effectiveConfigEnv = {
+      ...isolatedConfigEnv,
+      NIX_CONF_DIR: path.dirname(fixture.statePaths.nixConf),
+    };
+    const effectiveTrustedKeys = runNix(
+      rendered.nixExecutable,
+      ['config', 'show', 'trusted-public-keys'],
+      fixture,
+      { env: effectiveConfigEnv },
+    );
+    assert.equal(effectiveTrustedKeys.status, 0, effectiveTrustedKeys.stderr);
+    const trustedKeySet = new Set(effectiveTrustedKeys.stdout.trim().split(/\s+/));
+    assert.equal(trustedKeySet.has(rightPublicKey), true);
+    assert.equal(trustedKeySet.has(wrongPublicKey), false);
+    const createCache = (name, secretKeyFile) => {
+      const cacheDirectory = path.join(fixture.root, 'caches', name);
+      fs.mkdirSync(cacheDirectory, { recursive: true });
+      const copied = runNix(
+        rendered.nixExecutable,
+        [
+          'copy', '--no-recursive',
+          '--to', `file://${cacheDirectory}?secret-key=${secretKeyFile}`,
+          rendered.sourceStorePath,
+        ],
+        fixture,
+        { env: isolatedConfigEnv, timeout: 120_000 },
+      );
+      assert.equal(copied.status, 0, copied.stderr);
+      return cacheDirectory;
+    };
+    const canonicalFixtureRoot = fs.realpathSync(fixture.root);
+    const copyFromCache = (cacheDirectory, storeName) => runNix(
+      rendered.nixExecutable,
+      [
+        'copy', '--no-recursive',
+        '--from', `file://${cacheDirectory}`,
+        '--to', path.join(canonicalFixtureRoot, 'stores', storeName),
+        rendered.sourceStorePath,
+      ],
+      fixture,
+      { env: effectiveConfigEnv, timeout: 120_000 },
+    );
+
+    const rightCache = createCache('right', fixture.statePaths.rightSecretKey);
+    const accepted = copyFromCache(rightCache, 'right');
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    const wrongCache = createCache('wrong', fixture.statePaths.wrongSecretKey);
+    const rejected = copyFromCache(wrongCache, 'wrong');
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /lacks a signature by a trusted key/i);
+    assert.equal(rendered.nixConfText.includes(wrongPublicKey), false);
+  });
+}
+
+for (const hostRole of ['personal', 'shopify']) {
+  test(`effective ${hostRole} TLS trust validates the SAN leaf and rejects the wrong issuer`, t => {
+    const fixture = createScriptFixture({
+      statePaths: {
+        combinedBundle: 'certificates/combined-ca-bundle.pem',
+        externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+        leafExtensions: 'certificates/leaf-extensions.cnf',
+        nixConf: 'effective-nix-conf/nix.conf',
+        trustedCa: 'certificates/trusted-ca.pem',
+        trustedCaKey: 'certificates/trusted-ca-key.pem',
+        trustedLeaf: 'certificates/trusted-leaf.pem',
+        trustedLeafCsr: 'certificates/trusted-leaf.csr',
+        trustedLeafKey: 'certificates/trusted-leaf-key.pem',
+        wrongCa: 'certificates/wrong-ca.pem',
+        wrongCaKey: 'certificates/wrong-ca-key.pem',
+        wrongLeaf: 'certificates/wrong-leaf.pem',
+        wrongLeafCsr: 'certificates/wrong-leaf.csr',
+        wrongLeafKey: 'certificates/wrong-leaf-key.pem',
+      },
+    });
+    t.after(fixture.cleanup);
+    const expectedHostname = 'Brandons-MacBook-Pro.local';
+    const tools = evalDarwinFixture(
+      '{ ... }: { }',
+      `{
+        nixExecutable = "${'${config.nix.package}'}/bin/nix";
+        opensslExecutable = "${'${fixture.pkgs.openssl}'}/bin/openssl";
+      }`,
+    );
+    const runOpenSSL = args => runScript(tools.opensslExecutable, args, { fixture });
+    fs.writeFileSync(fixture.statePaths.leafExtensions, [
+      'basicConstraints = critical,CA:FALSE',
+      'keyUsage = critical,digitalSignature,keyEncipherment',
+      'extendedKeyUsage = serverAuth',
+      `subjectAltName = DNS:${expectedHostname}`,
+      '',
+    ].join('\n'));
+    const generateChain = (name, caCertificate, caKey, leafCertificate, leafCsr, leafKey) => {
+      const ca = runOpenSSL([
+        'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-sha256',
+        '-subj', `/CN=${name} CA`,
+        '-addext', 'basicConstraints=critical,CA:TRUE',
+        '-addext', 'keyUsage=critical,keyCertSign,cRLSign',
+        '-keyout', caKey,
+        '-out', caCertificate,
+      ]);
+      assert.equal(ca.status, 0, ca.stderr);
+      const csr = runOpenSSL([
+        'req', '-newkey', 'rsa:2048', '-nodes', '-sha256',
+        '-subj', `/CN=${expectedHostname}`,
+        '-keyout', leafKey,
+        '-out', leafCsr,
+      ]);
+      assert.equal(csr.status, 0, csr.stderr);
+      const leaf = runOpenSSL([
+        'x509', '-req', '-days', '1', '-sha256',
+        '-in', leafCsr,
+        '-CA', caCertificate,
+        '-CAkey', caKey,
+        '-CAcreateserial',
+        '-extfile', fixture.statePaths.leafExtensions,
+        '-out', leafCertificate,
+      ]);
+      assert.equal(leaf.status, 0, leaf.stderr);
+    };
+    generateChain(
+      'trusted',
+      fixture.statePaths.trustedCa,
+      fixture.statePaths.trustedCaKey,
+      fixture.statePaths.trustedLeaf,
+      fixture.statePaths.trustedLeafCsr,
+      fixture.statePaths.trustedLeafKey,
+    );
+    generateChain(
+      'wrong',
+      fixture.statePaths.wrongCa,
+      fixture.statePaths.wrongCaKey,
+      fixture.statePaths.wrongLeaf,
+      fixture.statePaths.wrongLeafCsr,
+      fixture.statePaths.wrongLeafKey,
+    );
+    if (hostRole === 'shopify') {
+      fs.writeFileSync(
+        fixture.statePaths.externalInclude,
+        'ssl-cert-file = /etc/ssl/certs/shopify-managed.pem\n',
+      );
+    }
+
+    const rendered = evalDarwinFixture(
+      readyConsumerModule(hostRole, {
+        caCertificate: fixture.statePaths.trustedCa,
+        tlsCertificate: fixture.statePaths.trustedLeaf,
+        ...(hostRole === 'shopify' ? {
+          externalHookInclude: fixture.statePaths.externalInclude,
+        } : {}),
+      }),
+      `let
+        cache = config.services.localBinaryCache;
+        combinedBundle = config.environment.etc."ssl/certs/ca-certificates.crt".source;
+      in {
+        certificateFiles = map toString config.security.pki.certificateFiles;
+        combinedBundleText = builtins.readFile combinedBundle;
+        configuredCaCertificate = toString cache.caCertificate;
+        configuredTlsCertificate =
+          if cache.server.tlsCertificate == null then null else toString cache.server.tlsCertificate;
+        nixConfText = builtins.readFile config.environment.etc."nix/nix.conf".source;
+        nixExecutable = "${'${config.nix.package}'}/bin/nix";
+      }`,
+    );
+    fs.writeFileSync(fixture.statePaths.combinedBundle, rendered.combinedBundleText);
+    fs.writeFileSync(fixture.statePaths.nixConf, rendered.nixConfText);
+
+    const caDetails = runOpenSSL([
+      'x509', '-in', fixture.statePaths.trustedCa, '-noout', '-text',
+    ]);
+    assert.equal(caDetails.status, 0, caDetails.stderr);
+    assert.match(caDetails.stdout, /CA:TRUE/);
+    const leafDetails = runOpenSSL([
+      'x509', '-in', fixture.statePaths.trustedLeaf, '-noout', '-text',
+    ]);
+    assert.equal(leafDetails.status, 0, leafDetails.stderr);
+    assert.match(leafDetails.stdout, /CA:FALSE/);
+    assert.ok(leafDetails.stdout.includes(`DNS:${expectedHostname}`));
+    assert.match(leafDetails.stdout, /TLS Web Server Authentication/);
+
+    assert.ok(rendered.certificateFiles.includes(rendered.configuredCaCertificate));
+    assert.equal(
+      rendered.certificateFiles.some(file => path.basename(file) === 'trusted-leaf.pem'),
+      false,
+    );
+    if (hostRole === 'personal') {
+      assert.equal(path.basename(rendered.configuredTlsCertificate), 'trusted-leaf.pem');
+    } else {
+      assert.equal(rendered.configuredTlsCertificate, null);
+    }
+    assert.equal(rendered.combinedBundleText.includes('PRIVATE KEY'), false);
+    for (const privateKeyPath of [
+      fixture.statePaths.trustedCaKey,
+      fixture.statePaths.trustedLeafKey,
+      fixture.statePaths.wrongCaKey,
+      fixture.statePaths.wrongLeafKey,
+    ]) {
+      assert.equal(rendered.nixConfText.includes(privateKeyPath), false);
+    }
+
+    const trusted = runOpenSSL([
+      'verify',
+      '-CAfile', fixture.statePaths.combinedBundle,
+      '-verify_hostname', expectedHostname,
+      fixture.statePaths.trustedLeaf,
+    ]);
+    assert.equal(trusted.status, 0, trusted.stderr);
+    const wrongControl = runOpenSSL([
+      'verify',
+      '-CAfile', fixture.statePaths.wrongCa,
+      '-verify_hostname', expectedHostname,
+      fixture.statePaths.wrongLeaf,
+    ]);
+    assert.equal(wrongControl.status, 0, wrongControl.stderr);
+    const rejected = runOpenSSL([
+      'verify',
+      '-CAfile', fixture.statePaths.combinedBundle,
+      '-verify_hostname', expectedHostname,
+      fixture.statePaths.wrongLeaf,
+    ]);
+    assert.notEqual(rejected.status, 0);
+    assert.match(
+      `${rejected.stdout}\n${rejected.stderr}`,
+      /unable to get local issuer certificate|unable to verify the first certificate/i,
+    );
+
+    const effectiveSslCertFile = runNix(
+      tools.nixExecutable,
+      ['config', 'show', 'ssl-cert-file'],
+      fixture,
+      {
+        env: {
+          NIX_CONFIG: '',
+          NIX_CONF_DIR: path.dirname(fixture.statePaths.nixConf),
+          XDG_CONFIG_HOME: path.join(fixture.root, 'xdg-config'),
+        },
+      },
+    );
+    assert.equal(effectiveSslCertFile.status, 0, effectiveSslCertFile.stderr);
+    assert.equal(effectiveSslCertFile.stdout.trim(), combinedCaBundle);
+  });
+}
+
 test('publisher renders one final post-build hook after every external include and checks it before activation', () => {
   const rendered = evalDarwinFixture(
     readyShopifyPublisherModule(),
@@ -551,6 +1102,17 @@ test('external hook preflight isolates config and accepts empty or declared hook
   assert.equal(noHook.status, 0, noHook.stderr);
   assertNoInheritedPoison(noHook);
 
+  const managedConsumerSettings = runCase([
+    'substituters = https://shopify-managed.example',
+    'trusted-public-keys = shopify-managed:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=',
+    'ssl-cert-file = /etc/ssl/certs/shopify-managed.pem',
+    'fallback = false',
+    'narinfo-cache-negative-ttl = 3600',
+    '',
+  ].join('\n'));
+  assert.equal(managedConsumerSettings.status, 0, managedConsumerSettings.stderr);
+  assertNoInheritedPoison(managedConsumerSettings);
+
   const declared = runCase(`post-build-hook = ${fixture.executables.declaredHook}\n`);
   assert.equal(declared.status, 0, declared.stderr);
   assertNoInheritedPoison(declared);
@@ -584,7 +1146,15 @@ test('external hook preflight isolates config and accepts empty or declared hook
   assert.notEqual(nonExecutable.status, 0);
   assert.ok(nonExecutable.stderr.includes(fixture.executables.declaredHook));
 
-  for (const result of [noHook, declared, undeclared, missing, malformed, nonExecutable]) {
+  for (const result of [
+    noHook,
+    managedConsumerSettings,
+    declared,
+    undeclared,
+    missing,
+    malformed,
+    nonExecutable,
+  ]) {
     assert.equal(`${result.stdout}\n${result.stderr}`.includes(poison), false);
   }
   assert.ok(rendered.preflightText.includes(fixture.statePaths.externalInclude));

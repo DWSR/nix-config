@@ -10,6 +10,9 @@ let
   runtimePackage = pkgs.hello;
   contextualStorePath = "${tlsCertificate}";
   contextlessStorePath = builtins.unsafeDiscardStringContext contextualStorePath;
+  cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
+  localSubstituter = "https://Brandons-MacBook-Pro.local:8443/darwin";
+  combinedCaBundle = "/etc/ssl/certs/ca-certificates.crt";
 
   prerequisiteOptions =
     { lib, ... }:
@@ -40,6 +43,48 @@ let
         nix.extraOptions = lib.mkOption {
           type = lib.types.lines;
           default = "";
+        };
+
+        nix.settings = {
+          substituters = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+          };
+
+          extra-substituters = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+          };
+
+          extra-trusted-public-keys = lib.mkOption {
+            type = lib.types.listOf lib.types.str;
+            default = [ ];
+          };
+
+          fallback = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+          };
+
+          narinfo-cache-negative-ttl = lib.mkOption {
+            type = lib.types.ints.unsigned;
+            default = 3600;
+          };
+
+          require-sigs = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+          };
+
+          ssl-cert-file = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+          };
+        };
+
+        security.pki.certificateFiles = lib.mkOption {
+          type = lib.types.listOf lib.types.path;
+          default = [ ];
         };
 
         system.primaryUser = lib.mkOption {
@@ -96,22 +141,34 @@ let
     stateDirectory = "/var/db/local-binary-cache/publisher";
   };
 
-  readyModule = hostRole: {
-    system.primaryUser = "cache-operator";
-    services.localBinaryCache = {
-      enable = true;
-      inherit hostRole;
-      endpoint = "https://Brandons-MacBook-Pro.local:8443";
-      cacheName = "darwin";
-      cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
-      caCertificate = tlsCertificate;
-      publisher = publisherConfig;
-      consumer.enable = true;
-    }
-    // lib.optionalAttrs (hostRole == "personal") {
-      server = serverConfig;
+  readyModule =
+    hostRole:
+    let
+      existingSubstituter = "https://${hostRole}-existing.example";
+      existingExtraSubstituter = "https://${hostRole}-extra.example";
+      existingCacheKey = "${hostRole}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+    in
+    {
+      system.primaryUser = "cache-operator";
+      nix.settings = {
+        substituters = [ existingSubstituter ];
+        extra-substituters = [ existingExtraSubstituter ];
+        extra-trusted-public-keys = [ existingCacheKey ];
+      };
+      services.localBinaryCache = {
+        enable = true;
+        inherit hostRole;
+        endpoint = "https://Brandons-MacBook-Pro.local:8443";
+        cacheName = "darwin";
+        inherit cachePublicKey;
+        caCertificate = tlsCertificate;
+        publisher = publisherConfig;
+        consumer.enable = true;
+      }
+      // lib.optionalAttrs (hostRole == "personal") {
+        server = serverConfig;
+      };
     };
-  };
 
   mkReady =
     hostRole: overrides: mkConfiguration (lib.recursiveUpdate (readyModule hostRole) overrides);
@@ -324,6 +381,33 @@ assert readyPersonal.config.services.localBinaryCache.readiness.package != null;
 assert readyShopify.config.services.localBinaryCache.readiness.package != null;
 assert failedAssertions readyPersonal == [ ];
 assert failedAssertions readyShopify == [ ];
+assert readyPersonal.config.services.localBinaryCache.consumer.priority == 30;
+assert readyShopify.config.services.localBinaryCache.consumer.priority == 30;
+assert lib.all
+  (
+    configuration:
+    let
+      role = configuration.config.services.localBinaryCache.hostRole;
+      settings = configuration.config.nix.settings;
+    in
+    settings.substituters == [ "https://${role}-existing.example" ]
+    && lib.elem "https://${role}-extra.example" settings.extra-substituters
+    && lib.elem localSubstituter settings.extra-substituters
+    && builtins.length settings.extra-substituters == 2
+    && lib.elem "${role}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" settings.extra-trusted-public-keys
+    && lib.elem cachePublicKey settings.extra-trusted-public-keys
+    && builtins.length settings.extra-trusted-public-keys == 2
+    && settings.fallback
+    && settings.narinfo-cache-negative-ttl == 60
+    && settings.require-sigs
+    && settings.ssl-cert-file == combinedCaBundle
+    && lib.elem tlsCertificate configuration.config.security.pki.certificateFiles
+    && builtins.length configuration.config.security.pki.certificateFiles == 1
+  )
+  [
+    readyPersonal
+    readyShopify
+  ];
 assert
   failureMessages missingTrust == [
     "services.localBinaryCache.cachePublicKey is required in ready mode."
@@ -363,6 +447,13 @@ assert lib.hasInfix "local-binary-cache: checking external post-build hook"
 assert bootstrap.config.services.localBinaryCache.publisher.enqueuePackage == null;
 assert bootstrap.config.services.localBinaryCache.publisher.postBuildHookPackage == null;
 assert bootstrap.config.services.localBinaryCache.publisher.externalHookPreflightPackage == null;
+assert bootstrap.config.security.pki.certificateFiles == [ ];
+assert bootstrap.config.nix.settings.extra-substituters == [ ];
+assert bootstrap.config.nix.settings.extra-trusted-public-keys == [ ];
+assert bootstrap.config.nix.settings.ssl-cert-file == null;
+assert !bootstrap.config.nix.settings.fallback;
+assert bootstrap.config.nix.settings.narinfo-cache-negative-ttl == 3600;
+assert !bootstrap.config.nix.settings.require-sigs;
 assert builtins.getContext contextualStorePath != { };
 assert builtins.getContext contextlessStorePath == { };
 assert rejected storeBackedTokenFile.config.services.localBinaryCache.publisher.tokenFile;

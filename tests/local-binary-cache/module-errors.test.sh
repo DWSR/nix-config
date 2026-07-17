@@ -55,6 +55,8 @@ check_rejected tls-key-backslash services.localBinaryCache.server.tlsKeyFile
 check_rejected key-not-base64 services.localBinaryCache.cachePublicKey
 check_rejected key-bad-padding services.localBinaryCache.cachePublicKey
 check_rejected key-noncanonical services.localBinaryCache.cachePublicKey
+check_rejected cache-name-alternate services.localBinaryCache.cacheName
+check_rejected cache-name-injection services.localBinaryCache.cacheName
 check_rejected endpoint-fragment services.localBinaryCache.endpoint
 check_rejected endpoint-query services.localBinaryCache.endpoint
 check_rejected endpoint-userinfo services.localBinaryCache.endpoint

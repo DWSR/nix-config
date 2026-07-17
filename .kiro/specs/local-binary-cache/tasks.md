@@ -112,7 +112,7 @@
   - _Requirements: 2.1, 2.6, 2.7, 7.2, 7.5_
   - _Boundary: Cache Module, Enqueue Hook_
 
-- [ ] 4.2 Configure shared TLS trust and both-host cache consumption
+- [x] 4.2 Configure shared TLS trust and both-host cache consumption
   - Append the private CA to the combined public bundle and point each Nix daemon at that bundle.
   - Append the endpoint/signing key, preserve each host's existing substituters, enable fallback, set priority 30, and use a 60-second negative TTL.
   - Keep Shopify's managed include unchanged and subject only its hook value to the conflict contract.
@@ -226,3 +226,4 @@
 - Task 3.2 ownership-changing activation must constrain Attic state to its dedicated canonical directory and reject symlinks; configurable system-directory targets can otherwise cause root to retarget broad macOS paths.
 - Task 3.3 every dynamic Caddyfile token must be quoted or rejected before rendering; an accepted newline-bearing runtime path can inject additional plaintext listeners even when canonical fixtures validate.
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
+- Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.

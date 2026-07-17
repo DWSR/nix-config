@@ -39,6 +39,16 @@ let
           default = "";
         };
 
+        nix.settings = lib.mkOption {
+          type = lib.types.attrsOf lib.types.anything;
+          default = { };
+        };
+
+        security.pki.certificateFiles = lib.mkOption {
+          type = lib.types.listOf lib.types.path;
+          default = [ ];
+        };
+
         system.primaryUser = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
@@ -170,6 +180,14 @@ let
     key-noncanonical = {
       module.services.localBinaryCache.cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Ft=";
       select = config: config.cachePublicKey;
+    };
+    cache-name-alternate = {
+      module.services.localBinaryCache.cacheName = "alternate";
+      select = config: config.cacheName;
+    };
+    cache-name-injection = {
+      module.services.localBinaryCache.cacheName = builtins.fromJSON ''"darwin\nfallback = false"'';
+      select = config: config.cacheName;
     };
     endpoint-fragment = {
       module.services.localBinaryCache.endpoint = "https://Brandons-MacBook-Pro.local:8443#fragment";

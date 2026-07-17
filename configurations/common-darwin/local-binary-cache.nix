@@ -193,6 +193,22 @@ let
     // {
       description = "Nix cache public key with a 32-byte base64-encoded Ed25519 payload";
     };
+  localSubstituter = "${cfg.endpoint}/${cfg.cacheName}";
+  declarativeSubstituters = lib.unique (
+    (config.nix.settings.substituters or [ ]) ++ (config.nix.settings.extra-substituters or [ ])
+  );
+  declarativeTrustedPublicKeys = lib.unique (
+    (config.nix.settings.trusted-public-keys or [ ])
+    ++ (config.nix.settings.extra-trusted-public-keys or [ ])
+  );
+  consumerNixExtraOptions = ''
+    extra-substituters = ${lib.concatStringsSep " " declarativeSubstituters}
+    extra-trusted-public-keys = ${lib.concatStringsSep " " declarativeTrustedPublicKeys}
+    fallback = true
+    narinfo-cache-negative-ttl = ${toString cfg.consumer.negativeTtlSeconds}
+    require-sigs = true
+    ssl-cert-file = /etc/ssl/certs/ca-certificates.crt
+  '';
 
   bootstrapInputsDeclared =
     cfg.server.package != null
@@ -565,7 +581,7 @@ in
     };
 
     cacheName = mkOption {
-      type = types.nonEmptyStr;
+      type = types.enum [ "darwin" ];
       default = "darwin";
       description = "Existing Attic cache identity; the module never creates it automatically.";
     };
@@ -842,11 +858,29 @@ in
     [ cfg.readiness.package ] ++ lib.optional (cfg.bootstrap.package != null) cfg.bootstrap.package
   );
 
-  config.nix.extraOptions = lib.mkIf (cfg.publisher.postBuildHookPackage != null) (
-    lib.mkOrder 9999 ''
-      post-build-hook = ${lib.getExe cfg.publisher.postBuildHookPackage}
-    ''
-  );
+  config.security.pki.certificateFiles = lib.mkIf (cfg.consumer.enable && cfg.caCertificate != null) [
+    cfg.caCertificate
+  ];
+
+  config.nix.settings = lib.mkIf cfg.consumer.enable {
+    extra-substituters = [ localSubstituter ];
+    extra-trusted-public-keys = lib.optional (cfg.cachePublicKey != null) cfg.cachePublicKey;
+    fallback = true;
+    narinfo-cache-negative-ttl = cfg.consumer.negativeTtlSeconds;
+    require-sigs = true;
+    ssl-cert-file = "/etc/ssl/certs/ca-certificates.crt";
+  };
+
+  config.nix.extraOptions = lib.mkMerge [
+    (lib.mkIf (cfg.consumer.enable && cfg.hostRole == "shopify") (
+      lib.mkOrder 9998 consumerNixExtraOptions
+    ))
+    (lib.mkIf (cfg.publisher.postBuildHookPackage != null) (
+      lib.mkOrder 9999 ''
+        post-build-hook = ${lib.getExe cfg.publisher.postBuildHookPackage}
+      ''
+    ))
+  ];
 
   config.system.activationScripts.checks.text =
     lib.mkIf (cfg.publisher.externalHookPreflightPackage != null)
