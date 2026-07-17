@@ -9,6 +9,8 @@ const test = require('node:test');
 const {
   createScriptFixture,
   evalDarwinFixture,
+  nixEvalJson,
+  repoRoot,
   runScript,
 } = require('./helpers');
 
@@ -186,6 +188,52 @@ function runNix(nixExecutable, args, fixture, options = {}) {
   );
 }
 
+function evalLiveHost(hostName, resultSource, moduleSource = null) {
+  const host = moduleSource === null
+    ? 'base'
+    : `base.extendModules { modules = [ (${moduleSource}) ]; }`;
+
+  return nixEvalJson(`
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      base = flake.darwinConfigurations.${JSON.stringify(hostName)};
+      host = ${host};
+      config = host.config;
+    in
+      ${resultSource}
+  `);
+}
+
+function evalLiveRetentionPolicy(hostName, moduleSource = null) {
+  return evalLiveHost(
+    hostName,
+    `let
+      calendarEntries = interval:
+        if builtins.isList interval then interval else [ interval ];
+    in {
+      gc = {
+        automatic = config.nix.gc.automatic;
+        interval = calendarEntries
+          config.launchd.daemons.nix-gc.serviceConfig.StartCalendarInterval;
+        options = config.nix.gc.options;
+      };
+      optimise = {
+        automatic = config.nix.optimise.automatic;
+        interval = calendarEntries
+          config.launchd.daemons.nix-optimise.serviceConfig.StartCalendarInterval;
+      };
+      cachePressure = config.services.localBinaryCache.gcPolicy;
+      nixPressure = {
+        hasMinFree = builtins.hasAttr "min-free" config.nix.settings;
+        hasMaxFree = builtins.hasAttr "max-free" config.nix.settings;
+        minFree = config.nix.settings."min-free" or null;
+        maxFree = config.nix.settings."max-free" or null;
+      };
+    }`,
+    moduleSource,
+  );
+}
+
 test('render harness evaluates an isolated nix-darwin fixture', () => {
   const rendered = evalDarwinFixture(
     `{ ... }: {
@@ -206,6 +254,126 @@ test('render harness evaluates an isolated nix-darwin fixture', () => {
     hostName: 'local-binary-cache-fixture',
   });
 });
+
+test('live hosts render exact seven-day GC and distinct weekly optimisation schedules', () => {
+  const personal = evalLiveRetentionPolicy('Brandons-MacBook-Pro');
+  const shopify = evalLiveRetentionPolicy('ShopifyLaptop');
+  const daily0315 = [{
+    Day: null,
+    Hour: 3,
+    Minute: 15,
+    Month: null,
+    Weekday: null,
+  }];
+  const sunday0315 = [{
+    Day: null,
+    Hour: 3,
+    Minute: 15,
+    Month: null,
+    Weekday: 0,
+  }];
+  const sunday0415 = [{
+    Day: null,
+    Hour: 4,
+    Minute: 15,
+    Month: null,
+    Weekday: 0,
+  }];
+
+  assert.equal(personal.gc.automatic, true);
+  assert.equal(shopify.gc.automatic, true);
+  assert.equal(personal.gc.options, '--delete-older-than 7d');
+  assert.equal(shopify.gc.options, '--delete-older-than 7d');
+  assert.deepEqual(personal.gc.interval, daily0315);
+  assert.deepEqual(shopify.gc.interval, sunday0315);
+  assert.equal(personal.optimise.automatic, true);
+  assert.equal(shopify.optimise.automatic, true);
+  assert.deepEqual(personal.optimise.interval, sunday0415);
+  assert.deepEqual(shopify.optimise.interval, sunday0415);
+
+  for (const rendered of [personal, shopify]) {
+    assert.deepEqual(rendered.cachePressure, {
+      maxFree: null,
+      minFree: null,
+    });
+    assert.deepEqual(rendered.nixPressure, {
+      hasMaxFree: false,
+      hasMinFree: false,
+      maxFree: null,
+      minFree: null,
+    });
+  }
+});
+
+test('validated pressure values apply only to the personal host', () => {
+  const minFree = 10 * 1024 * 1024 * 1024;
+  const maxFree = 20 * 1024 * 1024 * 1024;
+  const pressureModule = `{ ... }: {
+    services.localBinaryCache.gcPolicy = {
+      minFree = ${minFree};
+      maxFree = ${maxFree};
+    };
+  }`;
+  const personal = evalLiveRetentionPolicy('Brandons-MacBook-Pro', pressureModule);
+  const shopify = evalLiveRetentionPolicy('ShopifyLaptop', pressureModule);
+
+  assert.deepEqual(personal.nixPressure, {
+    hasMaxFree: true,
+    hasMinFree: true,
+    maxFree,
+    minFree,
+  });
+  assert.deepEqual(shopify.nixPressure, {
+    hasMaxFree: false,
+    hasMinFree: false,
+    maxFree: null,
+    minFree: null,
+  });
+});
+
+for (const [name, pressure, diagnostic] of [
+  [
+    'minimum only',
+    'minFree = 10737418240;',
+    /gcPolicy\.minFree and gcPolicy\.maxFree must be set together/,
+  ],
+  [
+    'maximum only',
+    'maxFree = 21474836480;',
+    /gcPolicy\.minFree and gcPolicy\.maxFree must be set together/,
+  ],
+  [
+    'zero minimum',
+    'minFree = 0; maxFree = 21474836480;',
+    /gcPolicy requires maxFree > minFree > 0 when configured/,
+  ],
+  [
+    'zero maximum',
+    'minFree = 10737418240; maxFree = 0;',
+    /gcPolicy requires maxFree > minFree > 0 when configured/,
+  ],
+  [
+    'reversed pair',
+    'minFree = 21474836480; maxFree = 10737418240;',
+    /gcPolicy requires maxFree > minFree > 0 when configured/,
+  ],
+]) {
+  test(`live personal host rejects ${name} pressure values`, () => {
+    assert.throws(
+      () => evalLiveHost(
+        'Brandons-MacBook-Pro',
+        'builtins.deepSeq config.system.build.toplevel true',
+        `{ ... }: {
+          services.localBinaryCache.gcPolicy = { ${pressure} };
+        }`,
+      ),
+      error => {
+        assert.match(String(error.stderr), diagnostic);
+        return true;
+      },
+    );
+  });
+}
 
 test('disabled fixture renders no Attic launchd job or directory activation', () => {
   const rendered = evalDarwinFixture(

@@ -1,8 +1,13 @@
 {
+  config,
+  lib,
   pkgs,
   username,
   ...
 }:
+let
+  pressure = config.services.localBinaryCache.gcPolicy;
+in
 {
   imports = [
     ../common-darwin
@@ -73,6 +78,16 @@
     '';
     doInstallCheck = false;
   });
+
+  nix.gc.interval = {
+    Hour = 3;
+    Minute = 15;
+  };
+
+  nix.settings = lib.mkIf (pressure.minFree != null && pressure.maxFree != null) {
+    min-free = pressure.minFree;
+    max-free = pressure.maxFree;
+  };
 
   home-manager.users.${username} = import ./home-manager;
 

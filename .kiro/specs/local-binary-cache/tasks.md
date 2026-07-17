@@ -102,7 +102,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1, 6.3, 6.4, 6.5_
   - _Boundary: Cache Module, Attic Service, TLS Proxy_
 
-- [ ] 4. Integrate Nix daemon consumption, hooks, and retention
+- [x] 4. Integrate Nix daemon consumption, hooks, and retention
 - [x] 4.1 Install the final post-build wrapper safely
   - Render the wrapper after includes and invoke enqueue exactly once before any explicitly chained hooks.
   - Inspect Shopify's external include in an isolated temporary `NIX_CONF_DIR` before daemon reload.
@@ -121,7 +121,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 6.4, 7.1, 7.2_
   - _Boundary: Cache Module, Consumer Config_
 
-- [ ] 4.3 Render host garbage-collection and optimization policy
+- [x] 4.3 Render host garbage-collection and optimization policy
   - Set personal daily and Shopify weekly seven-day GC with complete calendar fields.
   - Set both optimizers to a distinct weekly time and leave personal pressure values unset by default.
   - Apply validated pressure values only when both are configured.

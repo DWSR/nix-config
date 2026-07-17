@@ -47,6 +47,8 @@
         automatic = true;
         interval = {
           Weekday = 0;
+          Hour = 4;
+          Minute = 15;
         };
       };
 
@@ -74,6 +76,11 @@
 
       gc = {
         automatic = lib.mkDefault true;
+        interval = lib.mkDefault {
+          Weekday = 0;
+          Hour = 3;
+          Minute = 15;
+        };
         options = lib.mkDefault "--delete-older-than 7d";
       };
     };
