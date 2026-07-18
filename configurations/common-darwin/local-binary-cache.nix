@@ -473,8 +473,8 @@ let
       };
 
       listenAddress = mkOption {
-        type = types.enum [ "127.0.0.1:8080" ];
-        default = "127.0.0.1:8080";
+        type = types.enum [ "127.0.0.1:18080" ];
+        default = "127.0.0.1:18080";
         description = "Loopback-only Attic listen address.";
       };
 

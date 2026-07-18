@@ -311,6 +311,10 @@ test('live personal host renders server-only bootstrap wiring from declared iden
     `let
       cache = config.services.localBinaryCache;
       server = cache.server;
+      homeManager = config.home-manager.users.brandonmcnama;
+      mcpProxyConfig = builtins.fromJSON
+        (builtins.unsafeDiscardStringContext
+          homeManager.xdg.configFile."mcpproxy/mcp_config.json".text);
       hasAtticDaemon = config.launchd.daemons ? local-binary-cache-attic;
       hasCaddyDaemon = config.launchd.daemons ? local-binary-cache-caddy;
       atticService = if hasAtticDaemon
@@ -358,6 +362,11 @@ test('live personal host renders server-only bootstrap wiring from declared iden
         expectedBootstrapClientPackage = toString host.pkgs.unstable.attic-client;
         bootstrapClientPatches = map toString (cache.bootstrap.clientPackage.patches or [ ]);
         serverPatches = map toString (server.package.patches or [ ]);
+      };
+      listenerContracts = {
+        attic = server.listenAddress;
+        mcpProxy = mcpProxyConfig.listen;
+        mcpProxyPort = homeManager.home.mcp.listenPort;
       };
       publicPaths = {
         ca = if cache.caCertificate == null then null else toString cache.caCertificate;
@@ -435,6 +444,15 @@ test('live personal host renders server-only bootstrap wiring from declared iden
     server: true,
   });
   assert.equal(rendered.cacheState.bootstrapClientPatches.length, 1);
+  assert.deepEqual(rendered.listenerContracts, {
+    attic: '127.0.0.1:18080',
+    mcpProxy: '127.0.0.1:8080',
+    mcpProxyPort: 8080,
+  });
+  assert.notEqual(
+    Number(rendered.listenerContracts.attic.split(':').at(-1)),
+    rendered.listenerContracts.mcpProxyPort,
+  );
   assert.equal(
     path.basename(rendered.cacheState.bootstrapClientPatches[0]),
     'attic-client-ca-cert.patch',
@@ -1694,7 +1712,7 @@ test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', (
   assert.match(renderedTlsCertificate, /^\/nix\/store\/[a-z0-9]+-tls-certificate\.pem$/);
   assert.equal(JSON.parse(tlsDirective[2]), tlsKeyFile);
   assert.ok(rendered.proxyConfigText.includes(
-    `reverse_proxy ${JSON.stringify('http://127.0.0.1:8080')}`,
+    `reverse_proxy ${JSON.stringify('http://127.0.0.1:18080')}`,
   ));
   assert.doesNotMatch(rendered.proxyConfigText, /tls internal|acme|http_port|https_port/);
 
@@ -1721,7 +1739,7 @@ test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', (
   assert.deepEqual(caddyServer.automatic_https, { disable: true });
   assert.deepEqual(caddyServer.routes[0].match, [{ host: ['brandons-macbook-pro.local'] }]);
   assert.equal(reverseProxy.handler, 'reverse_proxy');
-  assert.deepEqual(reverseProxy.upstreams, [{ dial: '127.0.0.1:8080' }]);
+  assert.deepEqual(reverseProxy.upstreams, [{ dial: '127.0.0.1:18080' }]);
   assert.deepEqual(adapted.apps.tls.certificates.load_files, [{
     certificate: renderedTlsCertificate,
     key: tlsKeyFile,
@@ -2130,7 +2148,7 @@ test('server renders the pinned secret-free Attic configuration contract', () =>
         'token-rs256-pubkey-base64': fs.readFileSync(jwtPublicKey).toString('base64'),
       },
     },
-    listen: '127.0.0.1:8080',
+    listen: '127.0.0.1:18080',
     storage: {
       path: '/var/db/local-binary-cache/attic/storage',
       type: 'local',
