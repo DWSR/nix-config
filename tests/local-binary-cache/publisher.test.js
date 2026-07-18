@@ -46,6 +46,13 @@ const STATUS_UPSTREAM_SUBSTITUTERS = [
   'https://nix-community.cachix.org',
   's3://shopify-nix-cache?endpoint=https://storage.googleapis.com&profile=shopify-nix-cache-reader',
 ];
+const ATTIC_CLIENT_EXECUTABLE = process.env.ATTIC_CLIENT_EXECUTABLE;
+const ATTIC_CLIENT_SOURCE = process.env.ATTIC_CLIENT_SOURCE;
+const ATTIC_CLIENT_PATCH = path.join(repoRoot, 'overlays/patches/attic-client-ca-cert.patch');
+const COMMITTED_CA_CERTIFICATE = path.join(
+  repoRoot,
+  'certificates/local-binary-cache/ca.pem',
+);
 
 let identityMaterials;
 let jqExecutable;
@@ -301,7 +308,16 @@ function createBootstrapFixture(t, options = {}) {
         const args = process.argv.slice(2);
         const configPath = path.join(process.env.XDG_CONFIG_HOME, 'attic', 'config.toml');
         const config = fs.readFileSync(configPath, 'utf8');
-        fs.appendFileSync(process.env.ATTIC_BOOTSTRAP_LOG, JSON.stringify({ args, config }) + '\\n');
+        fs.appendFileSync(process.env.ATTIC_BOOTSTRAP_LOG, JSON.stringify({
+          args,
+          caCert: process.env.ATTIC_CA_CERT,
+          config,
+        }) + '\\n');
+
+        if (process.env.ATTIC_CA_CERT !== process.env.CA_CERTIFICATE) {
+          process.stderr.write('unexpected ATTIC_CA_CERT: ' + process.env.ATTIC_CA_CERT + '\\n');
+          process.exit(63);
+        }
 
         const expected = [
           'cache', 'create', '--public', '--priority', '30',
@@ -572,6 +588,109 @@ function readJsonLines(filePath) {
   return fs.readFileSync(filePath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
 }
 
+function createRealAtticClientFixture(t) {
+  assert.ok(ATTIC_CLIENT_EXECUTABLE, 'canonical check must expose ATTIC_CLIENT_EXECUTABLE');
+  assert.ok(ATTIC_CLIENT_SOURCE, 'canonical check must expose ATTIC_CLIENT_SOURCE');
+  const fixture = createScriptFixture({
+    statePaths: {
+      config: 'xdg/attic/config.toml',
+      invalidCa: 'public/invalid-ca.pem',
+      missingCa: 'public/missing-ca.pem',
+      token: 'secrets/token',
+    },
+  });
+  t.after(fixture.cleanup);
+  fs.writeFileSync(fixture.statePaths.token, TOKEN_VALUE, { mode: 0o400 });
+  fs.writeFileSync(fixture.statePaths.invalidCa, 'not a PEM certificate\n', { mode: 0o644 });
+  fs.writeFileSync(fixture.statePaths.config, [
+    '[servers.local]',
+    'endpoint = "https://127.0.0.1:1"',
+    `token-file = ${JSON.stringify(fixture.statePaths.token)}`,
+    '',
+  ].join('\n'));
+  return fixture;
+}
+
+function runRealAtticClient(fixture, caCertificate) {
+  return runScript(ATTIC_CLIENT_EXECUTABLE, ['cache', 'info', 'local:darwin'], {
+    fixture,
+    env: {
+      XDG_CONFIG_HOME: path.dirname(path.dirname(fixture.statePaths.config)),
+      ...(caCertificate === undefined ? {} : { ATTIC_CA_CERT: caCertificate }),
+    },
+  });
+}
+
+function assertAtticReachedConnection(result) {
+  assert.notEqual(result.status, 0);
+  assert.match(`${result.stdout}\n${result.stderr}`, /error sending request|tcp connect|Connection refused/i);
+  assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /custom CA certificate/i);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+test('patched Attic client merges only an explicit process-scoped custom CA and fails closed', t => {
+  const fixture = createRealAtticClientFixture(t);
+
+  const unset = runRealAtticClient(fixture);
+  assertAtticReachedConnection(unset);
+
+  const missing = runRealAtticClient(fixture, fixture.statePaths.missingCa);
+  assert.notEqual(missing.status, 0);
+  assert.ok(missing.stderr.includes(
+    `Failed to read custom CA certificate from ${fixture.statePaths.missingCa}`,
+  ));
+  assert.doesNotMatch(missing.stderr, /error sending request|tcp connect|Connection refused/i);
+
+  const invalid = runRealAtticClient(fixture, fixture.statePaths.invalidCa);
+  assert.notEqual(invalid.status, 0);
+  assert.match(
+    invalid.stderr,
+    new RegExp(`Failed to (parse custom CA certificate|build Attic HTTP client with custom CA certificate) from ${escapeRegExp(fixture.statePaths.invalidCa)}`),
+  );
+  assert.doesNotMatch(invalid.stderr, /error sending request|tcp connect|Connection refused/i);
+
+  const valid = runRealAtticClient(fixture, COMMITTED_CA_CERTIFICATE);
+  assertAtticReachedConnection(valid);
+
+  const upstreamApiSource = fs.readFileSync(
+    path.join(ATTIC_CLIENT_SOURCE, 'client/src/api/mod.rs'),
+    'utf8',
+  );
+  const patchSource = fs.readFileSync(ATTIC_CLIENT_PATCH, 'utf8');
+  const securitySurface = [
+    upstreamApiSource,
+    patchSource,
+    fs.readFileSync(path.join(repoRoot, 'scripts/local-binary-cache-bootstrap.nix'), 'utf8'),
+    fs.readFileSync(path.join(repoRoot, 'scripts/local-binary-cache-publish.nix'), 'utf8'),
+  ].join('\n');
+  assert.match(patchSource, /ATTIC_CA_CERT/);
+  assert.match(patchSource, /Certificate::from_pem/);
+  assert.match(patchSource, /tls_certs_merge/);
+  assert.doesNotMatch(
+    securitySurface,
+    /danger_accept_invalid_(?:certs|hostnames)|tls_certs_only|tls_built_in_root_certs\s*\(\s*false\s*\)|--insecure|\/usr\/bin\/security|add-trusted-cert|add-certificates/,
+  );
+
+  const report = JSON.stringify({ invalid, missing, unset, valid });
+  const binary = fs.readFileSync(ATTIC_CLIENT_EXECUTABLE);
+  const caContents = fs.readFileSync(COMMITTED_CA_CERTIFICATE, 'utf8');
+  for (const privateValue of [
+    TOKEN_VALUE,
+    OPERATOR_TOKEN_VALUE,
+    PERSONAL_TOKEN_VALUE,
+    SHOPIFY_TOKEN_VALUE,
+    STATUS_PRIVATE_KEY_VALUE,
+    caContents,
+  ]) {
+    assert.equal(binary.includes(Buffer.from(privateValue)), false);
+    assert.equal(securitySurface.includes(privateValue), false);
+    assert.equal(report.includes(privateValue), false);
+  }
+});
+
 function validCacheState(overrides = {}) {
   return {
     public_key: CACHE_PUBLIC_KEY,
@@ -606,6 +725,7 @@ function assertBootstrapObservabilityRedacted(bootstrap, result) {
     ...logContents,
   ].join('\n');
   const secrets = [
+    fs.readFileSync(bootstrap.fixture.statePaths.ca, 'utf8'),
     OPERATOR_TOKEN_VALUE,
     PERSONAL_TOKEN_VALUE,
     SHOPIFY_TOKEN_VALUE,
@@ -822,7 +942,16 @@ function createPublisherFixture(t, options = {}) {
         const prior = fs.existsSync(process.env.ATTIC_LOG)
           ? fs.readFileSync(process.env.ATTIC_LOG, 'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse)
           : [];
-        fs.appendFileSync(process.env.ATTIC_LOG, JSON.stringify({ args, config }) + '\\n');
+        fs.appendFileSync(process.env.ATTIC_LOG, JSON.stringify({
+          args,
+          caCert: process.env.ATTIC_CA_CERT,
+          config,
+        }) + '\\n');
+
+        if (process.env.ATTIC_CA_CERT !== process.env.CA_CERTIFICATE) {
+          process.stderr.write('unexpected ATTIC_CA_CERT: ' + process.env.ATTIC_CA_CERT + '\\n');
+          process.exit(63);
+        }
 
         if (args.length !== 5 || args[0] !== 'push' || args[1] !== '-j' || args[2] !== '1') {
           process.stderr.write('unexpected attic arguments: ' + JSON.stringify(args) + '\\n');
@@ -881,6 +1010,7 @@ function createPublisherFixture(t, options = {}) {
       `,
     },
     statePaths: {
+      ca: 'public/ca.pem',
       log: 'state/attic.log',
       pending: 'state/pending',
       publisher: 'state/publisher',
@@ -895,9 +1025,14 @@ function createPublisherFixture(t, options = {}) {
   if (options.withToken !== false) {
     fs.writeFileSync(fixture.statePaths.token, TOKEN_VALUE, { mode: 0o400 });
   }
+  if (options.withCa !== false) {
+    fs.copyFileSync(getIdentityMaterials().ca, fixture.statePaths.ca);
+    fs.chmodSync(fixture.statePaths.ca, 0o644);
+  }
 
   const executable = buildScript('scripts/local-binary-cache-publish.nix', {
     atticExecutable: fixture.executables.attic,
+    caCertificate: options.caCertificate ?? fixture.statePaths.ca,
     cacheName: CACHE_NAME,
     endpoint: CACHE_ENDPOINT,
     pendingDirectory: fixture.statePaths.pending,
@@ -912,6 +1047,7 @@ function createPublisherFixture(t, options = {}) {
 function publisherEnvironment(fixture, extra = {}) {
   return {
     ATTIC_LOG: fixture.statePaths.log,
+    CA_CERTIFICATE: fixture.statePaths.ca,
     ...extra,
   };
 }
@@ -1939,6 +2075,7 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
   assert.match(atticInvocations[0].config, /default-server = "local"/);
   assert.match(atticInvocations[0].config, new RegExp(`endpoint = "${CACHE_ENDPOINT}"`));
   assert.match(atticInvocations[0].config, /token-file = "[^"]+"/);
+  assert.equal(atticInvocations[0].caCert, bootstrap.fixture.statePaths.ca);
 
   const curlInvocations = assertBootstrapCurlInvocations(bootstrap, 2);
   assert.deepEqual(curlInvocations.map(args => args.at(-1)), [
@@ -1999,7 +2136,12 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
     JSON.stringify(curlInvocations),
     fs.readFileSync(bootstrap.executable, 'utf8'),
   ].join('\n');
-  for (const secret of [privateKey, PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
+  for (const secret of [
+    fs.readFileSync(bootstrap.fixture.statePaths.ca, 'utf8'),
+    privateKey,
+    PERSONAL_TOKEN_VALUE,
+    SHOPIFY_TOKEN_VALUE,
+  ]) {
     assert.equal(observable.includes(secret), false);
   }
 });
@@ -2652,18 +2794,21 @@ test('publisher pushes valid roots in lexical order and removes each successful 
   assert.equal(fs.existsSync(second.root), false);
 
   const invocations = readAtticInvocations(fixture);
+  assert.equal(invocations.every(invocation => invocation.caCert === fixture.statePaths.ca), true);
   assert.equal(invocations[0].config, [
     '[servers.local]',
     `endpoint = "${CACHE_ENDPOINT}"`,
     `token-file = "${fixture.statePaths.token}"`,
     '',
   ].join('\n'));
-  assert.equal([
+  const observable = [
     result.stdout,
     result.stderr,
     JSON.stringify(invocations),
     fs.readFileSync(executable, 'utf8'),
-  ].join('\n').includes(TOKEN_VALUE), false);
+  ].join('\n');
+  assert.equal(observable.includes(TOKEN_VALUE), false);
+  assert.equal(observable.includes(fs.readFileSync(fixture.statePaths.ca, 'utf8')), false);
 });
 
 test('publisher removes a root when Attic confirms it is already present', t => {
@@ -2829,4 +2974,51 @@ test('publisher reports a missing runtime token path without mutating the queue'
   assert.ok(result.stderr.includes(fixture.statePaths.token));
   assert.deepEqual(readAtticInvocations(fixture), []);
   assert.equal(fs.lstatSync(pending.root).isSymbolicLink(), true);
+});
+
+test('publisher validates the custom CA path before invoking Attic', async t => {
+  const cases = [
+    {
+      name: 'relative path',
+      options: { caCertificate: 'relative-ca.pem', withCa: false },
+      mutate: () => {},
+      diagnostic: /custom CA certificate path must be absolute: relative-ca\.pem/,
+    },
+    {
+      name: 'missing path',
+      options: { withCa: false },
+      mutate: () => {},
+      diagnostic: /custom CA certificate is missing or unavailable:/,
+    },
+    {
+      name: 'non-regular path',
+      options: { withCa: false },
+      mutate: fixture => fs.mkdirSync(fixture.statePaths.ca),
+      diagnostic: /custom CA certificate is not a regular file:/,
+    },
+    {
+      name: 'unreadable path',
+      options: {},
+      mutate: fixture => fs.chmodSync(fixture.statePaths.ca, 0o000),
+      diagnostic: /custom CA certificate is unreadable:/,
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, child => {
+      const { executable, fixture } = createPublisherFixture(child, fixtureCase.options);
+      fixtureCase.mutate(fixture);
+      const pending = createPendingRoot(fixture, HASH_A, 'invalid-ca-output');
+
+      const result = runScript(executable, [], {
+        fixture,
+        env: publisherEnvironment(fixture),
+      });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, fixtureCase.diagnostic);
+      assert.deepEqual(readAtticInvocations(fixture), []);
+      assert.equal(fs.lstatSync(pending.root).isSymbolicLink(), true);
+    });
+  }
 });

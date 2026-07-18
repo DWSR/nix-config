@@ -1,0 +1,73 @@
+diff --git a/client/src/api/mod.rs b/client/src/api/mod.rs
+index 921030c..e324faa 100644
+--- a/client/src/api/mod.rs
++++ b/client/src/api/mod.rs
+@@ -1,7 +1,8 @@
+ use std::error::Error as StdError;
+ use std::fmt;
++use std::path::PathBuf;
+ 
+-use anyhow::Result;
++use anyhow::{Context, Result};
+ use bytes::Bytes;
+ use const_format::formatcp;
+ use displaydoc::Display;
+@@ -62,7 +64,7 @@ pub enum ApiError {
+ 
+ impl ApiClient {
+     pub fn from_server_config(config: ServerConfig) -> Result<Self> {
+-        let client = build_http_client(config.token()?.as_deref());
++        let client = build_http_client(config.token()?.as_deref())?;
+ 
+         Ok(Self {
+             endpoint: Url::parse(&config.endpoint)?,
+@@ -232,7 +234,7 @@ impl fmt::Display for StructuredApiError {
+     }
+ }
+ 
+-fn build_http_client(token: Option<&str>) -> HttpClient {
++fn build_http_client(token: Option<&str>) -> Result<HttpClient> {
+     let mut headers = HeaderMap::new();
+ 
+     headers.insert(USER_AGENT, HeaderValue::from_str(ATTIC_USER_AGENT).unwrap());
+@@ -242,8 +244,36 @@ fn build_http_client(token: Option<&str>) -> HttpClient {
+         headers.insert(AUTHORIZATION, auth_header);
+     }
+ 
+-    reqwest::Client::builder()
+-        .default_headers(headers)
+-        .build()
+-        .unwrap()
++    let custom_ca_path = std::env::var_os("ATTIC_CA_CERT").map(PathBuf::from);
++    let mut builder = reqwest::Client::builder().default_headers(headers);
++
++    if let Some(path) = custom_ca_path.as_ref() {
++        let pem = std::fs::read(path).with_context(|| {
++            format!(
++                "Failed to read custom CA certificate from {}",
++                path.display()
++            )
++        })?;
++        let certificates = reqwest::Certificate::from_pem_bundle(&pem).with_context(|| {
++            format!(
++                "Failed to parse custom CA certificate from {}",
++                path.display()
++            )
++        })?;
++        if certificates.is_empty() {
++            anyhow::bail!(
++                "Failed to parse custom CA certificate from {}",
++                path.display()
++            );
++        }
++        builder = builder.tls_certs_merge(certificates);
++    }
++
++    builder.build().with_context(|| match custom_ca_path {
++        Some(path) => format!(
++            "Failed to build Attic HTTP client with custom CA certificate from {}",
++            path.display()
++        ),
++        None => "Failed to build Attic HTTP client".to_owned(),
++    })
+ }

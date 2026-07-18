@@ -4,6 +4,7 @@
   writeTextDir,
   coreutils,
   atticExecutable,
+  caCertificate,
   cacheName,
   endpoint,
   pendingDirectory,
@@ -39,6 +40,7 @@ writeShellApplication {
     }
 
     attic=${lib.escapeShellArg atticExecutable}
+    ca_certificate=${lib.escapeShellArg caCertificate}
     cache_name=${lib.escapeShellArg cacheName}
     pending_directory=${lib.escapeShellArg pendingDirectory}
     shlock=${lib.escapeShellArg shlockExecutable}
@@ -59,6 +61,18 @@ writeShellApplication {
     fi
     if [[ "$shlock" != /* ]]; then
       fail "invalid shlock executable path: $shlock"
+    fi
+    if [[ "$ca_certificate" != /* ]]; then
+      fail "custom CA certificate path must be absolute: $ca_certificate"
+    fi
+    if [[ ! -e "$ca_certificate" ]]; then
+      fail "custom CA certificate is missing or unavailable: $ca_certificate"
+    fi
+    if [[ ! -f "$ca_certificate" ]]; then
+      fail "custom CA certificate is not a regular file: $ca_certificate"
+    fi
+    if [[ ! -r "$ca_certificate" ]]; then
+      fail "custom CA certificate is unreadable: $ca_certificate"
     fi
     for directory in "$pending_directory" "$state_directory" "$store_directory"; do
       if [[ "$directory" != /* || "$directory" == / || "$directory" == */ ]]; then
@@ -138,7 +152,7 @@ writeShellApplication {
         continue
       fi
 
-      if "$attic" push -j 1 "local:$cache_name" "$target"; then
+      if ATTIC_CA_CERT="$ca_certificate" "$attic" push -j 1 "local:$cache_name" "$target"; then
         if ! rm -f -- "$root"; then
           fail "published $target but failed to remove pending root $root"
         fi

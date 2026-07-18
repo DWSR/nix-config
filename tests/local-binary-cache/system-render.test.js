@@ -354,6 +354,10 @@ test('live personal host renders server-only bootstrap wiring from declared iden
         consumer = cache.consumer.enable;
         publisher = cache.publisher.enable;
         cachePublicKey = cache.cachePublicKey;
+        bootstrapClientPackage = toString cache.bootstrap.clientPackage;
+        expectedBootstrapClientPackage = toString host.pkgs.unstable.attic-client;
+        bootstrapClientPatches = map toString (cache.bootstrap.clientPackage.patches or [ ]);
+        serverPatches = map toString (server.package.patches or [ ]);
       };
       publicPaths = {
         ca = if cache.caCertificate == null then null else toString cache.caCertificate;
@@ -418,14 +422,29 @@ test('live personal host renders server-only bootstrap wiring from declared iden
   );
 
   assert.deepEqual(rendered.cacheState, {
+    bootstrapClientPackage: rendered.cacheState.expectedBootstrapClientPackage,
+    bootstrapClientPatches: [rendered.cacheState.bootstrapClientPatches[0]],
     bootstrapMode: true,
     cachePublicKey: null,
     consumer: false,
     enable: true,
+    expectedBootstrapClientPackage: rendered.cacheState.expectedBootstrapClientPackage,
     hostRole: 'personal',
     publisher: false,
+    serverPatches: [],
     server: true,
   });
+  assert.equal(rendered.cacheState.bootstrapClientPatches.length, 1);
+  assert.equal(
+    path.basename(rendered.cacheState.bootstrapClientPatches[0]),
+    'attic-client-ca-cert.patch',
+  );
+  assert.equal(
+    rendered.artifacts.bootstrap.includes(
+      `${rendered.cacheState.expectedBootstrapClientPackage}/bin/attic`,
+    ),
+    true,
+  );
   assert.deepEqual(rendered.publicPaths, {
     ca: rendered.expectedPaths.ca,
     jwtVerifier: rendered.expectedPaths.jwtVerifier,

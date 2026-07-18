@@ -38,6 +38,15 @@ in
       inherit (final.stdenv.hostPlatform) system;
       config.allowUnfree = true;
       overlays = [
+        (_ufinal: uprev: {
+          attic-client = uprev.attic-client.overrideAttrs (old: {
+            patches = (old.patches or [ ]) ++ [ ./patches/attic-client-ca-cert.patch ];
+          });
+          attic-server = uprev.attic-server.override {
+            inherit (uprev) attic-client;
+          };
+        })
+
         # nixpkgs-unstable's graphite-cli 1.8.6 fails to build on
         # aarch64-darwin, and because it is `unfree` Hydra never caches it, so
         # the failure only surfaces on a local build. Two upstream bugs:

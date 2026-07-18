@@ -1657,6 +1657,8 @@
           local-binary-cache-publisher =
             pkgs.runCommand "local-binary-cache-publisher"
               {
+                ATTIC_CLIENT_EXECUTABLE = pkgs.lib.getExe pkgs.unstable.attic-client;
+                ATTIC_CLIENT_SOURCE = pkgs.unstable.attic-client.src;
                 nativeBuildInputs = [
                   pkgs.nix
                   pkgs.nodejs

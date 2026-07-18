@@ -471,7 +471,8 @@ writeShellApplication {
     token-file = "$operator_token"
     EOF
                 chmod 0600 "$client_config_home/attic/config.toml"
-                if ! XDG_CONFIG_HOME="$client_config_home" "$attic_client" cache create \
+                if ! ATTIC_CA_CERT="$ca_certificate" XDG_CONFIG_HOME="$client_config_home" \
+                  "$attic_client" cache create \
                   --public --priority 30 \
                   --upstream-cache-key-name cache.nixos.org-1 \
                   --upstream-cache-key-name nix-community.cachix.org-1 \
