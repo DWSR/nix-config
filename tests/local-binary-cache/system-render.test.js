@@ -2125,7 +2125,7 @@ test('server renders the pinned secret-free Attic configuration contract', () =>
   assert.match(rendered.configFile, /-attic-server\.toml$/);
   assert.equal(rendered.stateDirectory, '/var/db/local-binary-cache/attic');
   assert.deepEqual(rendered.settings, {
-    'allowed-hosts': ['Brandons-MacBook-Pro.local:8443'],
+    'allowed-hosts': ['brandons-macbook-pro.local:8443'],
     'api-endpoint': 'https://Brandons-MacBook-Pro.local:8443/',
     chunking: {
       'avg-size': 65536,

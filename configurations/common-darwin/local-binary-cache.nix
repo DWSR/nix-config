@@ -24,7 +24,7 @@ let
   jwtPublicKeyPlaceholder = "LOCAL_BINARY_CACHE_RS256_PUBLIC_KEY_BASE64";
   atticConfigTemplate = tomlFormat.generate "attic-server-template.toml" {
     listen = cfg.server.listenAddress;
-    allowed-hosts = [ (lib.removePrefix "https://" cfg.endpoint) ];
+    allowed-hosts = [ (lib.toLower (lib.removePrefix "https://" cfg.endpoint)) ];
     api-endpoint = "${cfg.endpoint}/";
     substituter-endpoint = "${cfg.endpoint}/";
 
