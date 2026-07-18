@@ -380,26 +380,40 @@ function createBootstrapFixture(t, options = {}) {
       `,
       curl: `
         const fs = require('node:fs');
+        const path = require('node:path');
         const args = process.argv.slice(2);
         const prior = fs.existsSync(process.env.CURL_LOG)
           ? fs.readFileSync(process.env.CURL_LOG, 'utf8').trim().split('\\n').filter(Boolean)
           : [];
         fs.appendFileSync(process.env.CURL_LOG, JSON.stringify(args) + '\\n');
+        const curlConfig = path.join(process.env.HOME, '.curlrc');
+        if (fs.existsSync(curlConfig) && args[0] !== '--disable') {
+          fs.writeFileSync(process.env.CURL_AMBIENT_OUTPUT, 'ambient curl output\\n');
+          fs.writeFileSync(process.env.CURL_AMBIENT_TRACE, fs.readFileSync(curlConfig));
+          fs.writeFileSync(process.env.CACHE_STATE, 'mutated by ambient curl config\\n');
+        }
         if (
-          args.length !== 8
-          || args[0] !== '--silent'
-          || args[1] !== '--show-error'
-          || args[2] !== '--output'
-          || args[4] !== '--write-out'
-          || args[5] !== '%{http_code}'
-          || args[6] !== '--'
-          || args[7] !== process.env.CACHE_QUERY_URL
+          args.length !== 11
+          || args[0] !== '--disable'
+          || args[1] !== '--cacert'
+          || args[2] !== process.env.CA_CERTIFICATE
+          || args[3] !== '--silent'
+          || args[4] !== '--show-error'
+          || args[5] !== '--output'
+          || path.basename(args[6]) !== 'cache-state.json'
+          || !path.dirname(args[6]).startsWith(
+            path.join(process.env.TMPDIR, 'local-binary-cache-bootstrap.'),
+          )
+          || args[7] !== '--write-out'
+          || args[8] !== '%{http_code}'
+          || args[9] !== '--'
+          || args[10] !== process.env.CACHE_QUERY_URL
           || args.some(arg => /authorization/i.test(arg))
         ) {
           process.stderr.write('unexpected curl arguments: ' + JSON.stringify(args) + '\\n');
           process.exit(64);
         }
-        const output = args[3];
+        const output = args[6];
         const statusSequence = process.env.CURL_STATUS_SEQUENCE === undefined
           ? []
           : JSON.parse(process.env.CURL_STATUS_SEQUENCE);
@@ -440,12 +454,15 @@ function createBootstrapFixture(t, options = {}) {
       `,
     },
     statePaths: {
+      ambientOutput: 'state/ambient-curl-output',
+      ambientTrace: 'state/ambient-curl-trace',
       ca: 'public/ca.pem',
       cachePublicKeyOutput: 'outputs/cache-public-key.txt',
       cacheState: 'state/cache.json',
       configuredCachePublicKey: 'public/configured-cache-public-key.txt',
       atticAdminLog: 'state/atticadm.log',
       atticBootstrapLog: 'state/attic.log',
+      curlConfig: 'home/.curlrc',
       curlLog: 'state/curl.log',
       jwtPrivate: 'secrets/jwt-private.pem',
       jwtPublic: 'public/jwt-public.pem',
@@ -534,6 +551,9 @@ function runBootstrap(bootstrap, args = [], extraEnv = {}) {
       CACHE_PUBLIC_KEY,
       CACHE_QUERY_URL: `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
       CACHE_STATE: bootstrap.fixture.statePaths.cacheState,
+      CA_CERTIFICATE: bootstrap.fixture.statePaths.ca,
+      CURL_AMBIENT_OUTPUT: bootstrap.fixture.statePaths.ambientOutput,
+      CURL_AMBIENT_TRACE: bootstrap.fixture.statePaths.ambientTrace,
       CURL_LOG: bootstrap.fixture.statePaths.curlLog,
       IDENTICAL_TOKEN_VALUE,
       JWT_PRIVATE_PATH: bootstrap.fixture.statePaths.jwtPrivate,
@@ -595,6 +615,56 @@ function assertBootstrapObservabilityRedacted(bootstrap, result) {
   for (const secret of secrets) {
     assert.equal(observable.includes(secret), false);
   }
+}
+
+function assertBootstrapCurlInvocations(bootstrap, expectedCount) {
+  const invocations = readJsonLines(bootstrap.fixture.statePaths.curlLog);
+  assert.equal(invocations.length, expectedCount);
+  const forbiddenArgs = new Set([
+    '--data',
+    '--data-binary',
+    '--form',
+    '--header',
+    '--insecure',
+    '--request',
+    '--trace',
+    '--trace-ascii',
+    '--upload-file',
+    '--user',
+  ]);
+  const secrets = [
+    OPERATOR_TOKEN_VALUE,
+    PERSONAL_TOKEN_VALUE,
+    SHOPIFY_TOKEN_VALUE,
+    fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8'),
+    fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8'),
+  ];
+  for (const args of invocations) {
+    assert.deepEqual(args.slice(0, 6), [
+      '--disable',
+      '--cacert',
+      bootstrap.fixture.statePaths.ca,
+      '--silent',
+      '--show-error',
+      '--output',
+    ]);
+    assert.equal(path.basename(args[6]), 'cache-state.json');
+    assert.ok(path.dirname(args[6]).startsWith(
+      path.join(bootstrap.fixture.tmp, 'local-binary-cache-bootstrap.'),
+    ));
+    assert.deepEqual(args.slice(7), [
+      '--write-out',
+      '%{http_code}',
+      '--',
+      `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
+    ]);
+    assert.equal(args.some(arg => forbiddenArgs.has(arg.toLowerCase())), false);
+    assert.equal(args.some(arg => /authorization/i.test(arg)), false);
+    for (const secret of secrets) {
+      assert.equal(args.some(arg => arg.includes(secret)), false);
+    }
+  }
+  return invocations;
 }
 
 function createEnqueueFixture(t) {
@@ -1870,8 +1940,7 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
   assert.match(atticInvocations[0].config, new RegExp(`endpoint = "${CACHE_ENDPOINT}"`));
   assert.match(atticInvocations[0].config, /token-file = "[^"]+"/);
 
-  const curlInvocations = readJsonLines(bootstrap.fixture.statePaths.curlLog);
-  assert.equal(curlInvocations.length, 2);
+  const curlInvocations = assertBootstrapCurlInvocations(bootstrap, 2);
   assert.deepEqual(curlInvocations.map(args => args.at(-1)), [
     `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
     `${CACHE_ENDPOINT}/_api/v1/cache-config/${CACHE_NAME}`,
@@ -1933,6 +2002,50 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
   for (const secret of [privateKey, PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
     assert.equal(observable.includes(secret), false);
   }
+});
+
+test('bootstrap cache probes use the declared CA and ignore malicious ambient curl configuration', t => {
+  const bootstrap = createBootstrapFixture(t, {
+    cacheState: validCacheState(),
+    configuredCachePublicKeyValue: CACHE_PUBLIC_KEY,
+  });
+  const curlConfig = [
+    'insecure',
+    `user = "operator:${OPERATOR_TOKEN_VALUE}"`,
+    `header = "Authorization: Bearer ${PERSONAL_TOKEN_VALUE}"`,
+    'request = "DELETE"',
+    `output = "${bootstrap.fixture.statePaths.ambientOutput}"`,
+    `trace-ascii = "${bootstrap.fixture.statePaths.ambientTrace}"`,
+    '',
+  ].join('\n');
+  fs.writeFileSync(bootstrap.fixture.statePaths.curlConfig, curlConfig);
+  const unchangedFiles = new Map([
+    bootstrap.fixture.statePaths.ca,
+    bootstrap.fixture.statePaths.cacheState,
+    bootstrap.fixture.statePaths.curlConfig,
+    bootstrap.fixture.statePaths.jwtPrivate,
+    bootstrap.fixture.statePaths.tlsKey,
+  ].map(file => [file, fs.readFileSync(file)]));
+
+  const result = runBootstrap(bootstrap, ['ready']);
+
+  assert.equal(result.status, 0, result.stderr);
+  assertBootstrapCurlInvocations(bootstrap, 1);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticBootstrapLog), []);
+  assert.deepEqual(readJsonLines(bootstrap.fixture.statePaths.atticAdminLog), []);
+  assert.equal(fs.existsSync(bootstrap.fixture.statePaths.ambientOutput), false);
+  assert.equal(fs.existsSync(bootstrap.fixture.statePaths.ambientTrace), false);
+  for (const [file, contents] of unchangedFiles) {
+    assert.deepEqual(fs.readFileSync(file), contents);
+  }
+  assertNoBootstrapOutputs(bootstrap);
+  assertBootstrapObservabilityRedacted(bootstrap, result);
+  assert.equal(
+    fs.readFileSync(bootstrap.executable, 'utf8').includes(
+      fs.readFileSync(bootstrap.fixture.statePaths.ca, 'utf8'),
+    ),
+    false,
+  );
 });
 
 test('bootstrap treats an initial anonymous 401 as an ambiguous create candidate and verifies public state', t => {

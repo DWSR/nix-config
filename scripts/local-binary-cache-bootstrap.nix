@@ -153,7 +153,8 @@ writeShellApplication {
 
         query_cache() {
           if ! cache_http_status="$(
-            "$curl" --silent --show-error --output "$cache_state" \
+            "$curl" --disable --cacert "$ca_certificate" \
+              --silent --show-error --output "$cache_state" \
               --write-out '%{http_code}' -- "$cache_query_url"
           )"; then
             fail "anonymous cache query failed: $cache_query_url"
