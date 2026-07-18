@@ -156,6 +156,7 @@
   - _Depends: 2.4, 5.2_
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 6.5_
   - _Boundary: Bootstrap Tool, Public Trust Bundle_
+  - _Blocked: commit `646e450` resolves the Attic client LAN-CA failure, but an operator must deliver and activate it on `Brandons-MacBook-Pro` before the live bootstrap retry. The "status passes" criterion also needs human clarification because bootstrap mode intentionally reports not-ready._
 
 - [ ] 5.4 (P) Enable personal consumer and publisher ready mode
   - Declare the root-owned personal token secret and activate local cache consumption, queue/log state, and the final hook.
@@ -228,3 +229,5 @@
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
 - Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.
+- Task 5.3 must run on Brandons-MacBook-Pro after Task 5.2 activation; bootstrap-mode status is intentionally not-ready, so the task's "status passes" criterion needs clarification or reassignment to ready mode.
+- Task 5.3 live bootstrap exposed three Task 2.4 gaps: anonymous missing caches return 401, curl needs the declared CA, and Attic's Rustls client needs process-scoped CA merging; commits `97ab16c`, `bd57d55`, and `646e450` fix them, but the latest fix still needs personal-host delivery and activation before retry.
