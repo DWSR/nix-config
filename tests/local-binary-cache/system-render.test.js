@@ -17,6 +17,7 @@ const {
 const jwtPublicKey = path.join(__dirname, 'fixtures/jwt-public.pem');
 const tlsCertificate = path.join(__dirname, 'fixtures/tls-certificate.pem');
 const cachePublicKey = 'darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=';
+const canonicalCacheAuthority = 'brandons-macbook-pro.local:8443';
 const localSubstituter = 'https://Brandons-MacBook-Pro.local:8443/darwin';
 const combinedCaBundle = '/etc/ssl/certs/ca-certificates.crt';
 const poisonedSecrets = {
@@ -1711,9 +1712,11 @@ test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', (
   const renderedTlsCertificate = JSON.parse(tlsDirective[1]);
   assert.match(renderedTlsCertificate, /^\/nix\/store\/[a-z0-9]+-tls-certificate\.pem$/);
   assert.equal(JSON.parse(tlsDirective[2]), tlsKeyFile);
-  assert.ok(rendered.proxyConfigText.includes(
-    `reverse_proxy ${JSON.stringify('http://127.0.0.1:18080')}`,
-  ));
+  assert.ok(rendered.proxyConfigText.includes([
+    `\treverse_proxy ${JSON.stringify('http://127.0.0.1:18080')} {`,
+    `\t\theader_up Host ${JSON.stringify(canonicalCacheAuthority)}`,
+    '\t}',
+  ].join('\n')));
   assert.doesNotMatch(rendered.proxyConfigText, /tls internal|acme|http_port|https_port/);
 
   const adapted = JSON.parse(childProcess.execFileSync(
@@ -1740,6 +1743,13 @@ test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', (
   assert.deepEqual(caddyServer.routes[0].match, [{ host: ['brandons-macbook-pro.local'] }]);
   assert.equal(reverseProxy.handler, 'reverse_proxy');
   assert.deepEqual(reverseProxy.upstreams, [{ dial: '127.0.0.1:18080' }]);
+  assert.deepEqual(reverseProxy.headers, {
+    request: {
+      set: {
+        Host: [canonicalCacheAuthority],
+      },
+    },
+  });
   assert.deepEqual(adapted.apps.tls.certificates.load_files, [{
     certificate: renderedTlsCertificate,
     key: tlsKeyFile,

@@ -19,12 +19,13 @@ let
   caddyStandardOutPath = "${caddyLogDirectory}/stdout.log";
   caddyStandardErrorPath = "${caddyLogDirectory}/stderr.log";
   loginUser = if config.system.primaryUser == null then "" else config.system.primaryUser;
+  canonicalAuthority = lib.toLower (lib.removePrefix "https://" cfg.endpoint);
 
   tomlFormat = pkgs.formats.toml { };
   jwtPublicKeyPlaceholder = "LOCAL_BINARY_CACHE_RS256_PUBLIC_KEY_BASE64";
   atticConfigTemplate = tomlFormat.generate "attic-server-template.toml" {
     listen = cfg.server.listenAddress;
-    allowed-hosts = [ (lib.toLower (lib.removePrefix "https://" cfg.endpoint)) ];
+    allowed-hosts = [ canonicalAuthority ];
     api-endpoint = "${cfg.endpoint}/";
     substituter-endpoint = "${cfg.endpoint}/";
 
@@ -68,7 +69,9 @@ let
       "\n"
       "${caddyfileToken cfg.endpoint} {\n"
       "\ttls ${caddyfileToken cfg.server.tlsCertificate} ${caddyfileToken cfg.server.tlsKeyFile}\n"
-      "\treverse_proxy ${caddyfileToken proxyUpstream}\n"
+      "\treverse_proxy ${caddyfileToken proxyUpstream} {\n"
+      "\t\theader_up Host ${caddyfileToken canonicalAuthority}\n"
+      "\t}\n"
       "}\n"
     ]
   );
