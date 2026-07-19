@@ -152,7 +152,7 @@
   - Create `darwin` only after the bootstrap runtime is healthy.
   - Verify anonymous visibility, priority 30, official/community filters, and configured/live cache-key equality.
   - Issue distinct host subjects with push-only `darwin` scope and one-year validity; SOPS-encrypt both tokens and commit the public cache key.
-  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; ready-mode status is verified by Task 5.5.
+  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; live ready-mode status is verified by Task 6.5.
   - _Depends: 2.4, 5.2_
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 6.5_
   - _Boundary: Bootstrap Tool, Public Trust Bundle_
@@ -167,10 +167,10 @@
   - _Requirements: 2.2, 2.3, 2.4, 2.5, 4.2, 4.3, 4.4, 4.6, 5.7, 6.2, 7.1, 7.2, 7.4, 7.5_
   - _Boundary: Cache Module, Publisher Job, Render Tests_
 
-- [ ] 5.5 Enable personal consumer and publisher ready mode
-  - Declare the root-owned personal token secret and activate local cache consumption, queue/log state, and the final hook.
+- [x] 5.5 Enable personal consumer and publisher ready mode
+  - Declare the root-owned personal token secret and configure local cache consumption, queue/log state, and the final hook.
   - Keep Attic/Caddy state owned by the login user and pressure thresholds unset.
-  - Done when the personal configuration evaluates ready and a local build creates then drains one pending root.
+  - Done when the personal configuration evaluates ready with the exact token path, consumer/publisher settings, root publisher daemon, final hook, ownership contracts, and null pressure thresholds.
   - _Depends: 5.3, 5.4_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.2, 4.3, 4.4, 6.2, 7.1_
   - _Boundary: Personal Host Integration_
@@ -201,9 +201,10 @@
   - _Boundary: Publisher Tests_
 
 - [ ] 6.3 Validate reuse in both producer orders
-  - Build and publish a unique output on personal, collect its producer store path, and substitute it on Shopify.
-  - Build and publish a different output on Shopify, collect its producer store path, and substitute it on personal.
-  - Done when both second-host consumers obtain signed cache copies without recompilation.
+  - After committed ready configurations are active, pause the personal publisher, build a unique output, observe its deterministic pending root, resume publication, and verify logged root removal.
+  - Make the personal producer output unreachable, collect its local store path, and substitute the signed cache copy on Shopify without recompilation.
+  - Repeat the paused-publisher root observation, logged drain, producer-store collection, and signed substitution flow with Shopify as producer and personal as consumer.
+  - Done when both producer orders prove pending-root creation, successful logged drain, producer-store collection, and signed second-host substitution without recompilation.
   - _Depends: 6.1, 6.2_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 5.1, 5.2, 5.3, 5.4, 5.7_
   - _Boundary: Full Feature Integration_
@@ -238,9 +239,10 @@
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
 - Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.
-- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing ready-mode status belongs to Task 5.5.
+- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing live ready-mode status belongs to Task 6.5.
 - Task 5.3 live bootstrap exposed six integration gaps: anonymous missing caches return 401, curl needs the declared CA, Attic's Rustls client needs process-scoped CA merging, Attic cannot share MCPProxy's loopback port 8080, Attic's exact Host check requires a lowercase allowlist for reqwest, and Caddy must normalize every upstream Host to that authority; commits `97ab16c`, `bd57d55`, `646e450`, `e6c953b`, `564f68c`, and `8d2e798` fix them and were activated before the successful checkpoint.
 - Task 5.4 is the independently reviewable shared Cache Module/Publisher Job prerequisite; Task 2.2 owns worker behavior, while Task 5.4 owns package injection, root queue/log activation, and the publisher LaunchDaemon.
 - Task 5.4 uses a dedicated cross-role render suite so the shared runtime can be reviewed and committed without pulling personal or Shopify ready-mode wiring into its boundary.
 - Task 5.5's Caddy HTTP 502 came from stale launchd penalty state after the old 8080 crash loop; bootout/bootstrap re-registration restored persistent Attic on 18080 and CA-verified HTTP 200 through Caddy.
-- Task 5.5 repository checks pass on ShopifyLaptop, but the ready configuration and required queue-drain smoke must be verified from Brandons-MacBook-Pro before review.
+- Task 5.5 ends at static personal ready-mode evaluation so its reviewed configuration can be committed and delivered independently of runtime validation.
+- Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.5 owns live ready-status on both hosts.

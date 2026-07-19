@@ -17,8 +17,15 @@ const {
 const jwtPublicKey = path.join(__dirname, 'fixtures/jwt-public.pem');
 const tlsCertificate = path.join(__dirname, 'fixtures/tls-certificate.pem');
 const cachePublicKey = 'darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=';
+const personalCachePublicKey = fs.readFileSync(
+  path.join(repoRoot, 'certificates/local-binary-cache/cache-public-key.txt'),
+  'utf8',
+).trim();
 const canonicalCacheAuthority = 'brandons-macbook-pro.local:8443';
+const communityCacheKey = 'nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=';
+const communitySubstituter = 'https://nix-community.cachix.org';
 const localSubstituter = 'https://Brandons-MacBook-Pro.local:8443/darwin';
+const publicSubstituter = 'https://cache.nixos.org/';
 const combinedCaBundle = '/etc/ssl/certs/ca-certificates.crt';
 const poisonedSecrets = {
   jwtPrivateKey: 'poisoned-jwt-private-key-value',
@@ -306,7 +313,7 @@ test('live hosts render exact seven-day GC and distinct weekly optimisation sche
   }
 });
 
-test('live personal host renders server-only bootstrap wiring from declared identities', () => {
+test('live personal host renders consumer and root publisher ready mode', () => {
   const rendered = evalLiveHost(
     'Brandons-MacBook-Pro',
     `let
@@ -318,11 +325,15 @@ test('live personal host renders server-only bootstrap wiring from declared iden
           homeManager.xdg.configFile."mcpproxy/mcp_config.json".text);
       hasAtticDaemon = config.launchd.daemons ? local-binary-cache-attic;
       hasCaddyDaemon = config.launchd.daemons ? local-binary-cache-caddy;
+      hasPublisherDaemon = config.launchd.daemons ? local-binary-cache-publisher;
       atticService = if hasAtticDaemon
         then config.launchd.daemons.local-binary-cache-attic.serviceConfig
         else { };
       caddyService = if hasCaddyDaemon
         then config.launchd.daemons.local-binary-cache-caddy.serviceConfig
+        else { };
+      publisherService = if hasPublisherDaemon
+        then config.launchd.daemons.local-binary-cache-publisher.serviceConfig
         else { };
       renderSecret = name:
         if builtins.hasAttr name config.sops.secrets then
@@ -362,6 +373,9 @@ test('live personal host renders server-only bootstrap wiring from declared iden
         bootstrapClientPackage = toString cache.bootstrap.clientPackage;
         expectedBootstrapClientPackage = toString host.pkgs.unstable.attic-client;
         bootstrapClientPatches = map toString (cache.bootstrap.clientPackage.patches or [ ]);
+        publisherClientPackage = toString cache.publisher.package;
+        expectedPublisherClientPackage = toString host.pkgs.unstable.attic-client;
+        publisherClientPatches = map toString (cache.publisher.package.patches or [ ]);
         serverPatches = map toString (server.package.patches or [ ]);
       };
       listenerContracts = {
@@ -387,10 +401,13 @@ test('live personal host renders server-only bootstrap wiring from declared iden
         personalTokenOutput = cache.bootstrap.personalTokenOutput;
         shopifyTokenOutput = cache.bootstrap.shopifyTokenOutput;
         serverState = server.stateDirectory;
+        publisherState = cache.publisher.stateDirectory;
+        publisherToken = cache.publisher.tokenFile;
       };
       secrets = {
         tls = renderSecret "local-binary-cache-tls-key";
         jwt = renderSecret "local-binary-cache-jwt-private-key";
+        publisher = renderSecret "local-binary-cache-personal-token";
       };
       publisherSurfaces = {
         enqueuePackage = if cache.publisher.enqueuePackage == null
@@ -404,28 +421,53 @@ test('live personal host renders server-only bootstrap wiring from declared iden
       };
       consumerSurfaces = {
         certificateFiles = map toString config.security.pki.certificateFiles;
+        settings = config.nix.settings;
         nixSettings = builtins.toJSON config.nix.settings;
       };
       services = {
-        inherit hasAtticDaemon hasCaddyDaemon localDaemons caddyWrapperExecutable;
+        inherit
+          hasAtticDaemon
+          hasCaddyDaemon
+          hasPublisherDaemon
+          localDaemons
+          caddyWrapperExecutable
+          ;
         atticArguments = atticService.ProgramArguments or null;
         atticUser = atticService.UserName or null;
         caddyArguments = caddyService.ProgramArguments or null;
         caddyUser = caddyService.UserName or null;
+        publisherArguments = publisherService.ProgramArguments or null;
+        publisherUser = publisherService.UserName or null;
+        publisherRunAtLoad = publisherService.RunAtLoad or null;
+        publisherStartInterval = publisherService.StartInterval or null;
+        publisherWorkingDirectory = publisherService.WorkingDirectory or null;
+        publisherStandardOutPath = publisherService.StandardOutPath or null;
+        publisherStandardErrorPath = publisherService.StandardErrorPath or null;
         atticConfigFile = if server.configFile == null then null else toString server.configFile;
         proxyConfigFile = if server.proxyConfigFile == null then null else toString server.proxyConfigFile;
       };
       artifacts = {
+        activation = config.system.activationScripts.launchd.text;
         atticConfig = readNullable server.configFile;
         proxyConfig = readNullable server.proxyConfigFile;
         caddyWrapper = readNullable caddyWrapperExecutable;
         bootstrap = readNullable cache.bootstrap.command;
         readiness = readNullable cache.readiness.command;
+        nixConfig = builtins.readFile config.environment.etc."nix/nix.conf".source;
+        postBuildHook = readNullable
+          (if cache.publisher.postBuildHookPackage == null then null else
+            "${'${cache.publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook");
+        publisher = if publisherService ? ProgramArguments
+          then builtins.readFile (builtins.head publisherService.ProgramArguments)
+          else "";
         atticPlist = if hasAtticDaemon then builtins.readFile
           "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-attic.plist"
           else "";
         caddyPlist = if hasCaddyDaemon then builtins.readFile
           "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-caddy.plist"
+          else "";
+        publisherPlist = if hasPublisherDaemon then builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-publisher.plist"
           else "";
       };
     }`,
@@ -434,17 +476,21 @@ test('live personal host renders server-only bootstrap wiring from declared iden
   assert.deepEqual(rendered.cacheState, {
     bootstrapClientPackage: rendered.cacheState.expectedBootstrapClientPackage,
     bootstrapClientPatches: [rendered.cacheState.bootstrapClientPatches[0]],
-    bootstrapMode: true,
-    cachePublicKey: null,
-    consumer: false,
+    bootstrapMode: false,
+    cachePublicKey: personalCachePublicKey,
+    consumer: true,
     enable: true,
     expectedBootstrapClientPackage: rendered.cacheState.expectedBootstrapClientPackage,
+    expectedPublisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
     hostRole: 'personal',
-    publisher: false,
+    publisher: true,
+    publisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
+    publisherClientPatches: [rendered.cacheState.publisherClientPatches[0]],
     serverPatches: [],
     server: true,
   });
   assert.equal(rendered.cacheState.bootstrapClientPatches.length, 1);
+  assert.equal(rendered.cacheState.publisherClientPatches.length, 1);
   assert.deepEqual(rendered.listenerContracts, {
     attic: '127.0.0.1:18080',
     mcpProxy: '127.0.0.1:8080',
@@ -456,6 +502,10 @@ test('live personal host renders server-only bootstrap wiring from declared iden
   );
   assert.equal(
     path.basename(rendered.cacheState.bootstrapClientPatches[0]),
+    'attic-client-ca-cert.patch',
+  );
+  assert.equal(
+    path.basename(rendered.cacheState.publisherClientPatches[0]),
     'attic-client-ca-cert.patch',
   );
   assert.equal(
@@ -473,6 +523,8 @@ test('live personal host renders server-only bootstrap wiring from declared iden
     cachePublicKeyOutput: '/var/db/local-binary-cache/bootstrap/cache-public-key.txt',
     jwtPrivateKey: '/run/secrets/local-binary-cache-jwt-private-key',
     personalTokenOutput: '/var/db/local-binary-cache/bootstrap/personal-token',
+    publisherState: '/var/db/local-binary-cache/publisher',
+    publisherToken: '/run/secrets/local-binary-cache-personal-token',
     serverState: '/var/db/local-binary-cache/attic',
     shopifyTokenOutput: '/var/db/local-binary-cache/bootstrap/shopify-token',
     tlsKey: '/run/secrets/local-binary-cache-tls-key',
@@ -483,6 +535,14 @@ test('live personal host renders server-only bootstrap wiring from declared iden
       mode: '0400',
       owner: 'root',
       path: rendered.runtimePaths.jwtPrivateKey,
+      present: true,
+      sopsFile: rendered.expectedPaths.sopsFile,
+    },
+    publisher: {
+      key: 'local-binary-cache-personal-token',
+      mode: '0400',
+      owner: 'root',
+      path: rendered.runtimePaths.publisherToken,
       present: true,
       sopsFile: rendered.expectedPaths.sopsFile,
     },
@@ -499,9 +559,11 @@ test('live personal host renders server-only bootstrap wiring from declared iden
   assert.deepEqual(rendered.services.localDaemons, [
     'local-binary-cache-attic',
     'local-binary-cache-caddy',
+    'local-binary-cache-publisher',
   ]);
   assert.equal(rendered.services.hasAtticDaemon, true);
   assert.equal(rendered.services.hasCaddyDaemon, true);
+  assert.equal(rendered.services.hasPublisherDaemon, true);
   assert.equal(rendered.services.atticUser, 'brandonmcnama');
   assert.equal(rendered.services.caddyUser, 'brandonmcnama');
   assert.deepEqual(rendered.services.atticArguments, [
@@ -513,6 +575,20 @@ test('live personal host renders server-only bootstrap wiring from declared iden
   ]);
   assert.match(rendered.services.atticArguments[0], /\/bin\/atticd$/);
   assert.deepEqual(rendered.services.caddyArguments, [rendered.services.caddyWrapperExecutable]);
+  assert.deepEqual(rendered.services.publisherArguments, [rendered.services.publisherArguments[0]]);
+  assert.match(rendered.services.publisherArguments[0], /\/bin\/local-binary-cache-publish$/);
+  assert.equal(rendered.services.publisherUser, 'root');
+  assert.equal(rendered.services.publisherRunAtLoad, true);
+  assert.equal(rendered.services.publisherStartInterval, 60);
+  assert.equal(rendered.services.publisherWorkingDirectory, rendered.runtimePaths.publisherState);
+  assert.equal(
+    rendered.services.publisherStandardOutPath,
+    '/var/log/local-binary-cache/publisher/stdout.log',
+  );
+  assert.equal(
+    rendered.services.publisherStandardErrorPath,
+    '/var/log/local-binary-cache/publisher/stderr.log',
+  );
 
   const jwtVerifierBase64 = fs.readFileSync(
     path.join(repoRoot, 'certificates/local-binary-cache/jwt-public.pem'),
@@ -561,15 +637,61 @@ test('live personal host renders server-only bootstrap wiring from declared iden
     assert.ok(rendered.artifacts.bootstrap.includes(declaredPath));
   }
 
-  assert.deepEqual(rendered.publisherSurfaces, {
-    enqueuePackage: null,
-    postBuildHookPackage: null,
-    stateDirectory: null,
-    tokenFile: null,
-  });
-  assert.equal(rendered.consumerSurfaces.certificateFiles.includes(rendered.publicPaths.ca), false);
-  assert.equal(rendered.consumerSurfaces.nixSettings.includes('/local-binary-cache'), false);
-  assert.equal(rendered.consumerSurfaces.nixSettings.includes('post-build-hook'), false);
+  assert.notEqual(rendered.publisherSurfaces.enqueuePackage, null);
+  assert.notEqual(rendered.publisherSurfaces.postBuildHookPackage, null);
+  assert.equal(rendered.publisherSurfaces.stateDirectory, rendered.runtimePaths.publisherState);
+  assert.equal(rendered.publisherSurfaces.tokenFile, rendered.runtimePaths.publisherToken);
+  assert.equal(rendered.consumerSurfaces.certificateFiles.includes(rendered.publicPaths.ca), true);
+  assert.equal(rendered.consumerSurfaces.settings.substituters.includes(publicSubstituter), true);
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-substituters'].includes(communitySubstituter),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-substituters'].includes(localSubstituter),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-trusted-public-keys'].includes(communityCacheKey),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-trusted-public-keys'].includes(personalCachePublicKey),
+    true,
+  );
+  assert.equal(rendered.consumerSurfaces.settings.fallback, true);
+  assert.equal(rendered.consumerSurfaces.settings['narinfo-cache-negative-ttl'], 60);
+  assert.equal(rendered.consumerSurfaces.settings['require-sigs'], true);
+  assert.equal(rendered.consumerSurfaces.settings['ssl-cert-file'], combinedCaBundle);
+  assert.equal(rendered.consumerSurfaces.nixSettings.includes(localSubstituter), true);
+  assert.equal(rendered.consumerSurfaces.nixSettings.includes(personalCachePublicKey), true);
+  const hookLines = rendered.artifacts.nixConfig.match(/^post-build-hook = .*$/gm) ?? [];
+  assert.deepEqual(hookLines, [
+    `post-build-hook = ${rendered.publisherSurfaces.postBuildHookPackage}/bin/local-binary-cache-post-build-hook`,
+  ]);
+  assert.equal(
+    rendered.artifacts.postBuildHook.includes(
+      `${rendered.publisherSurfaces.enqueuePackage}/bin/local-binary-cache-enqueue`,
+    ),
+    true,
+  );
+  assert.equal(rendered.artifacts.publisher.includes(rendered.runtimePaths.publisherToken), true);
+  for (const ownershipContract of [
+    'prepare_owned_directory "$attic_state_directory" "$attic_user" staff 0700',
+    'prepare_log_file "$attic_stdout_log" "$attic_user" staff 0640',
+    'prepare_log_file "$attic_stderr_log" "$attic_user" staff 0640',
+    'prepare_owned_directory "$attic_log_directory" "$attic_user" staff 0750',
+    'prepare_log_file "$caddy_stdout_log" "$attic_user" staff 0640',
+    'prepare_log_file "$caddy_stderr_log" "$attic_user" staff 0640',
+    'prepare_owned_directory "$caddy_log_directory" "$attic_user" staff 0750',
+    'prepare_owned_directory "$publisher_state_directory" root wheel 0700',
+    'prepare_owned_directory "$publisher_pending_directory" root wheel 0700',
+    'prepare_log_file "$publisher_stdout_log" root wheel 0640',
+    'prepare_log_file "$publisher_stderr_log" root wheel 0640',
+    'prepare_owned_directory "$publisher_log_directory" root wheel 0750',
+  ]) {
+    assert.equal(rendered.artifacts.activation.includes(ownershipContract), true);
+  }
   const privateKeyMarkers = [
     ['-----BEGIN', 'PRIVATE KEY-----'].join(' '),
     ['-----BEGIN RSA', 'PRIVATE KEY-----'].join(' '),

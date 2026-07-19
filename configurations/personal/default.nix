@@ -7,6 +7,9 @@
 }:
 let
   cacheBootstrapDirectory = "/var/db/local-binary-cache/bootstrap";
+  cachePublicKey = lib.removeSuffix "\n" (
+    builtins.readFile ../../certificates/local-binary-cache/cache-public-key.txt
+  );
   cacheSecretsFile = ../../secrets/local-binary-cache.personal.yaml;
   pressure = config.services.localBinaryCache.gcPolicy;
 in
@@ -65,16 +68,29 @@ in
       owner = "root";
       mode = "0400";
     };
+
+    secrets."local-binary-cache-personal-token" = {
+      sopsFile = cacheSecretsFile;
+      key = "local-binary-cache-personal-token";
+      owner = "root";
+      mode = "0400";
+    };
   };
 
   services.localBinaryCache = {
     enable = true;
     hostRole = "personal";
-    bootstrapMode = true;
+    bootstrapMode = false;
+    inherit cachePublicKey;
     caCertificate = ../../certificates/local-binary-cache/ca.pem;
 
-    consumer.enable = false;
-    publisher.enable = false;
+    consumer.enable = true;
+    publisher = {
+      enable = true;
+      package = pkgs.unstable.attic-client;
+      tokenFile = config.sops.secrets."local-binary-cache-personal-token".path;
+      stateDirectory = "/var/db/local-binary-cache/publisher";
+    };
 
     bootstrap = {
       jwtPrivateKey = config.sops.secrets."local-binary-cache-jwt-private-key".path;
