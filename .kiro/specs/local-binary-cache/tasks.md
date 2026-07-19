@@ -152,24 +152,34 @@
   - Create `darwin` only after the bootstrap runtime is healthy.
   - Verify anonymous visibility, priority 30, official/community filters, and configured/live cache-key equality.
   - Issue distinct host subjects with push-only `darwin` scope and one-year validity; SOPS-encrypt both tokens and commit the public cache key.
-  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; ready-mode status is verified by Task 5.4.
+  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; ready-mode status is verified by Task 5.5.
   - _Depends: 2.4, 5.2_
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 6.5_
   - _Boundary: Bootstrap Tool, Public Trust Bundle_
 
-- [ ] 5.4 (P) Enable personal consumer and publisher ready mode
+- [x] 5.4 Establish shared publisher runtime integration
+  - Build the configured publisher executable from the declared client, endpoint, cache, CA, runtime token path, and pending/state paths without embedding token values.
+  - Prepare root-owned state, pending-root, and log paths through the existing symlink-safe activation contract independently of the cache server role.
+  - Render a root system daemon with one absolute executable, `RunAtLoad`, the declared 60-second interval, working directory, and separate operator-readable logs.
+  - Add an isolated shared publisher-runtime render suite so this task can be reviewed and committed independently of either host-ready task; bootstrap and disabled fixtures shall render no publisher daemon.
+  - Done when publisher-enabled personal-role and Shopify-role fixtures render the same shared runtime contract, poisoned secret values remain absent, and focused render/publisher checks pass from a committed baseline.
+  - _Depends: 1.1, 1.3, 2.2, 3.2, 4.1_
+  - _Requirements: 2.2, 2.3, 2.4, 2.5, 4.2, 4.3, 4.4, 4.6, 5.7, 6.2, 7.1, 7.2, 7.4, 7.5_
+  - _Boundary: Cache Module, Publisher Job, Render Tests_
+
+- [ ] 5.5 Enable personal consumer and publisher ready mode
   - Declare the root-owned personal token secret and activate local cache consumption, queue/log state, and the final hook.
   - Keep Attic/Caddy state owned by the login user and pressure thresholds unset.
   - Done when the personal configuration evaluates ready and a local build creates then drains one pending root.
-  - _Depends: 5.3_
+  - _Depends: 5.3, 5.4_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.2, 4.3, 4.4, 6.2, 7.1_
   - _Boundary: Personal Host Integration_
 
-- [ ] 5.5 (P) Enable Shopify consumer and publisher ready mode
+- [ ] 5.6 Enable Shopify consumer and publisher ready mode
   - Declare the root-owned Shopify token secret and activate trusted local consumption, queue/log state, and the checked final hook.
   - Preserve the managed include and all existing substituters.
   - Done when the Shopify configuration evaluates ready with the scoped token path and unchanged include.
-  - _Depends: 5.3_
+  - _Depends: 5.3, 5.4_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.2, 4.3, 4.4, 6.4, 7.2_
   - _Boundary: Shopify Host Integration_
 
@@ -178,7 +188,7 @@
   - Assert both host roles, endpoint, trust, secret paths, service contracts, retention, and schedules.
   - Include poisoned-secret non-vacuity fixtures and required-field failures.
   - Done when both `darwinConfigurations` and all render/security fixtures pass.
-  - _Depends: 5.4, 5.5_
+  - _Depends: 5.5, 5.6_
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
   - _Boundary: Render Tests_
 
@@ -186,7 +196,7 @@
   - Exercise enqueue, duplicate coalescing, local failure, remote outage, retained root, retry, and success cleanup through stubs.
   - Prove local durable-state failure blocks the realization while remote cache failure does not affect completed builds.
   - Done when every publication transition and failure contract passes in one integration suite.
-  - _Depends: 4.1, 5.4, 5.5_
+  - _Depends: 4.1, 5.4, 5.5, 5.6_
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 6.2, 7.3_
   - _Boundary: Publisher Tests_
 
@@ -228,6 +238,9 @@
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
 - Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.
-- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing ready-mode status belongs to Task 5.4.
+- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing ready-mode status belongs to Task 5.5.
 - Task 5.3 live bootstrap exposed six integration gaps: anonymous missing caches return 401, curl needs the declared CA, Attic's Rustls client needs process-scoped CA merging, Attic cannot share MCPProxy's loopback port 8080, Attic's exact Host check requires a lowercase allowlist for reqwest, and Caddy must normalize every upstream Host to that authority; commits `97ab16c`, `bd57d55`, `646e450`, `e6c953b`, `564f68c`, and `8d2e798` fix them and were activated before the successful checkpoint.
-- Task 5.4 must diagnose the current Caddy HTTP 502 before claiming ready-mode runtime health; Task 5.3's prior anonymous HTTP 200 bootstrap evidence remains valid.
+- Task 5.4 is the independently reviewable shared Cache Module/Publisher Job prerequisite; Task 2.2 owns worker behavior, while Task 5.4 owns package injection, root queue/log activation, and the publisher LaunchDaemon.
+- Task 5.4 uses a dedicated cross-role render suite so the shared runtime can be reviewed and committed without pulling personal or Shopify ready-mode wiring into its boundary.
+- Task 5.5's Caddy HTTP 502 came from stale launchd penalty state after the old 8080 crash loop; bootout/bootstrap re-registration restored persistent Attic on 18080 and CA-verified HTTP 200 through Caddy.
+- Task 5.5 repository checks pass on ShopifyLaptop, but the ready configuration and required queue-drain smoke must be verified from Brandons-MacBook-Pro before review.

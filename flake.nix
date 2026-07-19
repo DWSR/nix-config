@@ -1650,6 +1650,7 @@
                 bash tests/local-binary-cache/module-errors.test.sh
                 node --test \
                   tests/local-binary-cache/identity-artifacts.test.js \
+                  tests/local-binary-cache/publisher-runtime-render.test.js \
                   tests/local-binary-cache/system-render.test.js
                 touch $out
               '';
