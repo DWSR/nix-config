@@ -148,15 +148,14 @@
   - _Requirements: 1.1, 4.4, 4.6, 6.1, 6.5, 7.1, 7.4_
   - _Boundary: Personal Host Integration_
 
-- [ ] 5.3 Complete the cache bootstrap checkpoint
+- [x] 5.3 Complete the cache bootstrap checkpoint
   - Create `darwin` only after the bootstrap runtime is healthy.
   - Verify anonymous visibility, priority 30, official/community filters, and configured/live cache-key equality.
   - Issue distinct host subjects with push-only `darwin` scope and one-year validity; SOPS-encrypt both tokens and commit the public cache key.
-  - Done when status passes and all private material is encrypted-only with correct ownership.
+  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; ready-mode status is verified by Task 5.4.
   - _Depends: 2.4, 5.2_
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 6.5_
   - _Boundary: Bootstrap Tool, Public Trust Bundle_
-  - _Blocked: commits `646e450`, `e6c953b`, `564f68c`, and `8d2e798` resolve the Attic client LAN-CA failure, MCPProxy port collision, and caller-dependent Host casing, but an operator must deliver and activate them on `Brandons-MacBook-Pro` before the live bootstrap retry. The "status passes" criterion also needs human clarification because bootstrap mode intentionally reports not-ready._
 
 - [ ] 5.4 (P) Enable personal consumer and publisher ready mode
   - Declare the root-owned personal token secret and activate local cache consumption, queue/log state, and the final hook.
@@ -229,5 +228,6 @@
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
 - Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.
-- Task 5.3 must run on Brandons-MacBook-Pro after Task 5.2 activation; bootstrap-mode status is intentionally not-ready, so the task's "status passes" criterion needs clarification or reassignment to ready mode.
-- Task 5.3 live bootstrap exposed six integration gaps: anonymous missing caches return 401, curl needs the declared CA, Attic's Rustls client needs process-scoped CA merging, Attic cannot share MCPProxy's loopback port 8080, Attic's exact Host check requires a lowercase allowlist for reqwest, and Caddy must normalize every upstream Host to that authority; commits `97ab16c`, `bd57d55`, `646e450`, `e6c953b`, `564f68c`, and `8d2e798` fix them, but the latest fix still needs personal-host delivery and activation before retry.
+- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing ready-mode status belongs to Task 5.4.
+- Task 5.3 live bootstrap exposed six integration gaps: anonymous missing caches return 401, curl needs the declared CA, Attic's Rustls client needs process-scoped CA merging, Attic cannot share MCPProxy's loopback port 8080, Attic's exact Host check requires a lowercase allowlist for reqwest, and Caddy must normalize every upstream Host to that authority; commits `97ab16c`, `bd57d55`, `646e450`, `e6c953b`, `564f68c`, and `8d2e798` fix them and were activated before the successful checkpoint.
+- Task 5.4 must diagnose the current Caddy HTTP 502 before claiming ready-mode runtime health; Task 5.3's prior anonymous HTTP 200 bootstrap evidence remains valid.

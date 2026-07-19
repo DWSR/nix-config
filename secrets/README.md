@@ -94,18 +94,20 @@ root-owned sops-nix age key and is not affected by sudo's PATH reset.
 
 ## Local binary cache identity lifecycle
 
-The cache uses a separate encrypted file because its runtime identities do
-not come from 1Password. The stable Task 5.1 contract is:
+The cache uses separate per-host encrypted files because its runtime
+identities do not come from 1Password. The stable Stage 2 contract is:
 
 | SOPS key | Consumer | Runtime owner | Runtime mode |
 | --- | --- | --- | --- |
 | `local-binary-cache-tls-key` | Caddy | login user | `0400` |
 | `local-binary-cache-jwt-private-key` | bootstrap operator | root | `0400` |
+| `local-binary-cache-personal-token` | personal publisher | root | `0400` |
+| `local-binary-cache-shopify-token` | Shopify publisher | root | `0400` |
 
-Task 5.2 owns the matching `sops.secrets` declarations and runtime paths.
-Task 5.1 creates only `secrets/local-binary-cache.personal.yaml`; the
-Shopify creation rule is reserved for the push token added by Task 5.3.
-The offline CA key is never placed in SOPS or this repository.
+Task 5.2 owns the TLS/JWT `sops.secrets` declarations and runtime paths.
+Tasks 5.4 and 5.5 own the host token `sops.secrets` declarations and ready mode;
+Task 5.3 only commits the encrypted token artifacts. The offline CA key is
+never placed in SOPS or this repository.
 
 ### Generation
 
@@ -132,10 +134,10 @@ JSON mapping in the temporary directory. Encrypt it with the public personal
 age recipient and the exact destination rule:
 
 ```sh
-sops --config .sops.yaml \
+sops --config .sops.yaml encrypt \
   --filename-override secrets/local-binary-cache.personal.yaml \
-  --input-type json --output-type yaml --encrypt private-identities.json \
-  > local-binary-cache.personal.yaml
+  --input-type json --output-type yaml \
+  --output local-binary-cache.personal.yaml private-identities.json
 sops filestatus local-binary-cache.personal.yaml
 ```
 
@@ -155,6 +157,15 @@ after recording that loss makes future leaf renewal a CA rotation.
    `darwin`, captures `cache-public-key.txt`, and encrypts both push tokens.
 
 Do not invent `cache-public-key.txt` or either host push token during Stage 0.
+
+### Stage 2 artifact lifecycle
+
+The bootstrap tool's generated output files are transient. Only the verified
+`cache-public-key.txt` and the two encrypted host files are durable; plaintext
+token outputs are removed after artifact and render verification succeeds.
+Each encrypted host file remains isolated to its intended age recipient.
+Future identity or token rotation follows the explicit bootstrap ordering above
+before either host returns to ready mode.
 
 ### Rotation ordering
 

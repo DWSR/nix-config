@@ -9,7 +9,9 @@ const test = require('node:test');
 const { repoRoot } = require('./helpers');
 
 const hostname = 'Brandons-MacBook-Pro.local';
+const liveCachePublicKey = 'darwin:obrEophonKhvx/fOUDJciChVVl+MtjjhpBcN9ab/ZsQ=';
 const privatePemHeader = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+const plaintextJwt = /\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
 const certificateDirectory = path.join(repoRoot, 'certificates/local-binary-cache');
 const caCertificate = path.join(certificateDirectory, 'ca.pem');
 const serverCertificate = path.join(certificateDirectory, 'server.pem');
@@ -75,6 +77,61 @@ function assertExactCreationRules(policy) {
     hostRecipients.get('host_shopify'),
     'personal and Shopify recipients must remain distinct',
   );
+}
+
+function assertCanonicalCachePublicKey(value) {
+  const match = value.match(/^darwin:([A-Za-z0-9+/]{43}=)\n$/);
+  assert.notEqual(match, null, 'cache key must be one canonical darwin base64 line');
+  const decoded = Buffer.from(match[1], 'base64');
+  assert.equal(decoded.length, 32, 'cache key must encode exactly 32 bytes');
+  assert.equal(decoded.toString('base64'), match[1], 'cache key base64 must be canonical');
+}
+
+function assertEncryptedSecretStore(file, expectedKeys, expectedRecipient) {
+  assert.equal(fs.existsSync(file), true, `missing encrypted secret store: ${file}`);
+  const encrypted = fs.readFileSync(file, 'utf8');
+  const topLevelEntries = encrypted.split('\n')
+    .filter(line => line !== '' && !/^\s/.test(line))
+    .map(line => {
+      const match = line.match(/^([a-z][a-z0-9-]*):\s*(.*)$/);
+      assert.notEqual(match, null, `${path.basename(file)} has an invalid top-level entry`);
+      return [match[1], match[2]];
+    });
+  assert.deepEqual(
+    topLevelEntries.filter(([key]) => key === 'sops'),
+    [['sops', '']],
+    `${path.basename(file)} must contain exactly one SOPS metadata block`,
+  );
+  const secretEntries = topLevelEntries.filter(([key]) => key !== 'sops');
+  assert.deepEqual(
+    secretEntries.map(([key]) => key).sort(),
+    [...expectedKeys].sort(),
+    `${path.basename(file)} must contain exactly its intended secret keys`,
+  );
+  for (const [key, value] of secretEntries) {
+    assert.match(value, /^ENC\[AES256_GCM,[^\n]+\]$/, `${key} must be SOPS ciphertext`);
+  }
+
+  const wrappingMethods = [
+    'age',
+    'azure_kv',
+    'gcp_kms',
+    'hc_vault',
+    'key_groups',
+    'kms',
+    'pgp',
+  ].filter(method => new RegExp(`^    ${method}:`, 'm').test(encrypted));
+  assert.deepEqual(wrappingMethods, ['age'], `${path.basename(file)} must use only age`);
+  assert.deepEqual(
+    [...encrypted.matchAll(/^\s+recipient: (age1[a-z0-9]+)$/gm)].map(match => match[1]),
+    [expectedRecipient],
+    `${path.basename(file)} must have exactly its host recipient`,
+  );
+  assert.doesNotMatch(encrypted, privatePemHeader);
+  assert.doesNotMatch(encrypted, plaintextJwt);
+
+  const status = JSON.parse(run('sops', ['filestatus', file]));
+  assert.equal(status.encrypted, true);
 }
 
 function certificateExtensionValues(details, extensionName) {
@@ -146,18 +203,20 @@ function repositoryFiles(directory) {
   return files;
 }
 
-test('committed public identity bundle has the exact Stage 0 contract', () => {
-  for (const artifact of [caCertificate, serverCertificate, jwtPublicKey]) {
+test('committed public identity bundle has the exact Stage 2 contract', () => {
+  for (const artifact of [caCertificate, serverCertificate, jwtPublicKey, cachePublicKey]) {
     assert.equal(fs.existsSync(artifact), true, `missing public identity: ${artifact}`);
   }
-  assert.equal(fs.existsSync(cachePublicKey), false, 'cache identity belongs to Task 5.3');
 
   const caText = fs.readFileSync(caCertificate, 'utf8');
   const serverText = fs.readFileSync(serverCertificate, 'utf8');
   const jwtText = fs.readFileSync(jwtPublicKey, 'utf8');
+  const cacheKeyText = fs.readFileSync(cachePublicKey, 'utf8');
   assert.equal((caText.match(/-----BEGIN CERTIFICATE-----/g) ?? []).length, 1);
   assert.equal((serverText.match(/-----BEGIN CERTIFICATE-----/g) ?? []).length, 1);
   assert.match(jwtText, /^-----BEGIN PUBLIC KEY-----$/m);
+  assertCanonicalCachePublicKey(cacheKeyText);
+  assert.equal(cacheKeyText, `${liveCachePublicKey}\n`, 'committed cache key must equal the live API key');
 
   const caDetails = run('openssl', ['x509', '-in', caCertificate, '-noout', '-text']);
   assert.match(caDetails, /Basic Constraints: critical\s+CA:TRUE/);
@@ -253,32 +312,22 @@ test('cache identity creation rules reject duplicate or malformed relevant rules
   )));
 });
 
-test('personal runtime identities are SOPS ciphertext with one personal recipient', () => {
-  assert.equal(fs.existsSync(personalSecrets), true, 'missing encrypted personal identity store');
-  assert.equal(fs.existsSync(shopifySecrets), false, 'Shopify token store belongs to Task 5.3');
-
-  const encrypted = fs.readFileSync(personalSecrets, 'utf8');
+test('Stage 2 runtime identities are exact host-isolated SOPS ciphertext', () => {
   const policy = fs.readFileSync(path.join(repoRoot, '.sops.yaml'), 'utf8');
   const personalRecipient = policy.match(/^\s+- &host_personal (age1[a-z0-9]+)$/m)?.[1];
+  const shopifyRecipient = policy.match(/^\s+- &host_shopify\s+(age1[a-z0-9]+)$/m)?.[1];
   assert.notEqual(personalRecipient, undefined, 'personal age recipient is missing');
-  const topLevelEntries = new Map(
-    [...encrypted.matchAll(/^([a-z][a-z0-9-]*):\s*(.*)$/gm)].map(match => [match[1], match[2]]),
-  );
-  assert.deepEqual(
-    [...topLevelEntries.keys()].filter(key => key !== 'sops').sort(),
-    ['local-binary-cache-jwt-private-key', 'local-binary-cache-tls-key'],
-  );
-  for (const key of ['local-binary-cache-jwt-private-key', 'local-binary-cache-tls-key']) {
-    assert.match(topLevelEntries.get(key), /^ENC\[AES256_GCM,/);
-  }
-  assert.deepEqual(
-    [...encrypted.matchAll(/^\s+recipient: (age1[a-z0-9]+)$/gm)].map(match => match[1]),
-    [personalRecipient],
-  );
-  assert.equal(privatePemHeader.test(encrypted), false);
+  assert.notEqual(shopifyRecipient, undefined, 'Shopify age recipient is missing');
+  assert.notEqual(personalRecipient, shopifyRecipient, 'host recipients must remain distinct');
 
-  const status = JSON.parse(run('sops', ['filestatus', personalSecrets]));
-  assert.equal(status.encrypted, true);
+  assertEncryptedSecretStore(personalSecrets, [
+    'local-binary-cache-jwt-private-key',
+    'local-binary-cache-personal-token',
+    'local-binary-cache-tls-key',
+  ], personalRecipient);
+  assertEncryptedSecretStore(shopifySecrets, [
+    'local-binary-cache-shopify-token',
+  ], shopifyRecipient);
 });
 
 test('runbook fixes the secret names, consumers, ownership, and mode before host wiring', () => {
@@ -288,9 +337,16 @@ test('runbook fixes the secret names, consumers, ownership, and mode before host
 
   const generation = runbook.indexOf('### Generation', section);
   const bootstrap = runbook.indexOf('### Bootstrap ordering', section);
+  const artifactLifecycle = runbook.indexOf('### Stage 2 artifact lifecycle', section);
   const rotation = runbook.indexOf('### Rotation ordering', section);
   const recovery = runbook.indexOf('### Recovery ordering', section);
-  assert.ok(section < generation && generation < bootstrap && bootstrap < rotation && rotation < recovery);
+  assert.ok(
+    section < generation
+      && generation < bootstrap
+      && bootstrap < artifactLifecycle
+      && artifactLifecycle < rotation
+      && rotation < recovery,
+  );
 
   assert.match(
     runbook,
@@ -300,7 +356,17 @@ test('runbook fixes the secret names, consumers, ownership, and mode before host
     runbook,
     /`local-binary-cache-jwt-private-key`[^\n]*root[^\n]*`0400`/,
   );
+  assert.match(runbook, /`local-binary-cache-personal-token`[^\n]*root[^\n]*`0400`/);
+  assert.match(runbook, /`local-binary-cache-shopify-token`[^\n]*root[^\n]*`0400`/);
   assert.match(runbook, /Task 5\.2[^\n]*`sops\.secrets`/);
+  assert.match(runbook, /Tasks 5\.4 and 5\.5[^\n]*token `sops\.secrets`[^\n]*ready mode/);
+
+  const lifecycle = runbook.slice(artifactLifecycle, rotation);
+  assert.match(lifecycle, /generated output files are transient/);
+  assert.match(lifecycle, /Only the verified\s+`cache-public-key\.txt` and the two encrypted host files are durable/);
+  assert.match(lifecycle, /plaintext\s+token outputs are removed after artifact and render verification succeeds/);
+  assert.match(lifecycle, /encrypted host file remains isolated to its intended age recipient/);
+  assert.match(lifecycle, /rotation follows the explicit bootstrap ordering/);
 });
 
 test('repository contains no plaintext private PEM artifact', () => {
