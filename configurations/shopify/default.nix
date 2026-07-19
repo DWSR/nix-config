@@ -1,4 +1,16 @@
-{ username, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  username,
+  ...
+}:
+let
+  cachePublicKey = lib.removeSuffix "\n" (
+    builtins.readFile ../../certificates/local-binary-cache/cache-public-key.txt
+  );
+  cacheSecretsFile = ../../secrets/local-binary-cache.shopify.yaml;
+in
 {
   imports = [
     ../common-darwin
@@ -39,6 +51,29 @@
       key = "data";
       owner = username;
       mode = "0400";
+    };
+
+    secrets."local-binary-cache-shopify-token" = {
+      sopsFile = cacheSecretsFile;
+      key = "local-binary-cache-shopify-token";
+      owner = "root";
+      mode = "0400";
+    };
+  };
+
+  services.localBinaryCache = {
+    enable = true;
+    hostRole = "shopify";
+    bootstrapMode = false;
+    inherit cachePublicKey;
+    caCertificate = ../../certificates/local-binary-cache/ca.pem;
+
+    consumer.enable = true;
+    publisher = {
+      enable = true;
+      package = pkgs.unstable.attic-client;
+      tokenFile = config.sops.secrets."local-binary-cache-shopify-token".path;
+      stateDirectory = "/var/db/local-binary-cache/publisher";
     };
   };
 

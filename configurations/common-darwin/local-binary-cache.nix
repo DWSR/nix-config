@@ -921,17 +921,18 @@ in
     lib.mkIf (cfg.server.enable || cfg.publisher.enable)
       (
         lib.mkBefore ''
-          attic_user=${lib.escapeShellArg loginUser}
-          attic_state_directory=${
-            lib.escapeShellArg (if cfg.server.stateDirectory == null then "" else cfg.server.stateDirectory)
-          }
-          attic_log_directory=${lib.escapeShellArg atticLogDirectory}
-          attic_stdout_log=${lib.escapeShellArg atticStandardOutPath}
-          attic_stderr_log=${lib.escapeShellArg atticStandardErrorPath}
-          caddy_log_directory=${lib.escapeShellArg caddyLogDirectory}
-          caddy_stdout_log=${lib.escapeShellArg caddyStandardOutPath}
-          caddy_stderr_log=${lib.escapeShellArg caddyStandardErrorPath}
-          publisher_state_directory=${
+          ${lib.optionalString cfg.server.enable ''
+            attic_user=${lib.escapeShellArg loginUser}
+            attic_state_directory=${
+              lib.escapeShellArg (if cfg.server.stateDirectory == null then "" else cfg.server.stateDirectory)
+            }
+            attic_log_directory=${lib.escapeShellArg atticLogDirectory}
+            attic_stdout_log=${lib.escapeShellArg atticStandardOutPath}
+            attic_stderr_log=${lib.escapeShellArg atticStandardErrorPath}
+            caddy_log_directory=${lib.escapeShellArg caddyLogDirectory}
+            caddy_stdout_log=${lib.escapeShellArg caddyStandardOutPath}
+            caddy_stderr_log=${lib.escapeShellArg caddyStandardErrorPath}
+          ''}publisher_state_directory=${
             lib.escapeShellArg (
               if !cfg.publisher.enable || cfg.publisher.stateDirectory == null then
                 ""

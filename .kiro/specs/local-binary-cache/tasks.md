@@ -175,7 +175,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.2, 4.3, 4.4, 6.2, 7.1_
   - _Boundary: Personal Host Integration_
 
-- [ ] 5.6 Enable Shopify consumer and publisher ready mode
+- [x] 5.6 Enable Shopify consumer and publisher ready mode
   - Declare the root-owned Shopify token secret and activate trusted local consumption, queue/log state, and the checked final hook.
   - Preserve the managed include and all existing substituters.
   - Done when the Shopify configuration evaluates ready with the scoped token path and unchanged include.
@@ -246,3 +246,4 @@
 - Task 5.5's Caddy HTTP 502 came from stale launchd penalty state after the old 8080 crash loop; bootout/bootstrap re-registration restored persistent Attic on 18080 and CA-verified HTTP 200 through Caddy.
 - Task 5.5 ends at static personal ready-mode evaluation so its reviewed configuration can be committed and delivered independently of runtime validation.
 - Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.5 owns live ready-status on both hosts.
+- Task 5.6 publisher-only activation must omit server-role variables at the shared module source; host-local no-op references hide boundary defects and alter generated activation scripts.

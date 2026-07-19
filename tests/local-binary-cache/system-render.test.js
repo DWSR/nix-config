@@ -713,6 +713,248 @@ test('live personal host renders consumer and root publisher ready mode', () => 
   }
 });
 
+test('live Shopify host renders consumer and root publisher ready mode', () => {
+  const rendered = evalLiveHost(
+    'ShopifyLaptop',
+    `let
+      cache = config.services.localBinaryCache;
+      hasAtticDaemon = config.launchd.daemons ? local-binary-cache-attic;
+      hasCaddyDaemon = config.launchd.daemons ? local-binary-cache-caddy;
+      hasPublisherDaemon = config.launchd.daemons ? local-binary-cache-publisher;
+      publisherService = if hasPublisherDaemon
+        then config.launchd.daemons.local-binary-cache-publisher.serviceConfig
+        else { };
+      renderSecret = name:
+        if builtins.hasAttr name config.sops.secrets then
+          let secret = builtins.getAttr name config.sops.secrets;
+          in {
+            present = true;
+            key = secret.key;
+            mode = secret.mode;
+            owner = secret.owner;
+            path = secret.path;
+            sopsFile = toString secret.sopsFile;
+          }
+        else {
+          present = false;
+          key = null;
+          mode = null;
+          owner = null;
+          path = null;
+          sopsFile = null;
+        };
+      readNullable = file: if file == null then "" else builtins.readFile file;
+    in {
+      cacheState = {
+        enable = cache.enable;
+        hostRole = cache.hostRole;
+        bootstrapMode = cache.bootstrapMode;
+        server = cache.server.enable;
+        consumer = cache.consumer.enable;
+        publisher = cache.publisher.enable;
+        cachePublicKey = cache.cachePublicKey;
+        priority = cache.consumer.priority;
+        publisherClientPackage = if cache.publisher.package == null
+          then null
+          else toString cache.publisher.package;
+        expectedPublisherClientPackage = toString host.pkgs.unstable.attic-client;
+        publisherClientPatches = if cache.publisher.package == null
+          then [ ]
+          else map toString (cache.publisher.package.patches or [ ]);
+        externalHookInclude = cache.publisher.externalHookInclude;
+        chainedHooks = cache.publisher.chainedHooks;
+      };
+      publicPaths = {
+        ca = if cache.caCertificate == null then null else toString cache.caCertificate;
+      };
+      expectedPaths = {
+        ca = toString flake.outPath + "/certificates/local-binary-cache/ca.pem";
+        sopsFile = toString flake.outPath + "/secrets/local-binary-cache.shopify.yaml";
+      };
+      runtimePaths = {
+        publisherState = cache.publisher.stateDirectory;
+        publisherToken = cache.publisher.tokenFile;
+      };
+      secret = renderSecret "local-binary-cache-shopify-token";
+      publisherSurfaces = {
+        enqueuePackage = if cache.publisher.enqueuePackage == null
+          then null
+          else toString cache.publisher.enqueuePackage;
+        postBuildHookPackage = if cache.publisher.postBuildHookPackage == null
+          then null
+          else toString cache.publisher.postBuildHookPackage;
+        externalHookPreflightPackage = if cache.publisher.externalHookPreflightPackage == null
+          then null
+          else toString cache.publisher.externalHookPreflightPackage;
+      };
+      consumerSurfaces = {
+        certificateFiles = map toString config.security.pki.certificateFiles;
+        settings = config.nix.settings;
+      };
+      services = {
+        inherit hasAtticDaemon hasCaddyDaemon hasPublisherDaemon;
+        publisherArguments = publisherService.ProgramArguments or null;
+        publisherUser = publisherService.UserName or null;
+        publisherRunAtLoad = publisherService.RunAtLoad or null;
+        publisherStartInterval = publisherService.StartInterval or null;
+        publisherWorkingDirectory = publisherService.WorkingDirectory or null;
+        publisherStandardOutPath = publisherService.StandardOutPath or null;
+        publisherStandardErrorPath = publisherService.StandardErrorPath or null;
+      };
+      artifacts = {
+        checksActivation = config.system.activationScripts.checks.text;
+        launchdActivation = config.system.activationScripts.launchd.text;
+        nixConfig = builtins.readFile config.environment.etc."nix/nix.conf".source;
+        postBuildHook = readNullable
+          (if cache.publisher.postBuildHookPackage == null then null else
+            "${'${cache.publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook");
+        publisher = if publisherService ? ProgramArguments
+          then builtins.readFile (builtins.head publisherService.ProgramArguments)
+          else "";
+        publisherPlist = if hasPublisherDaemon then builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-publisher.plist"
+          else "";
+      };
+    }`,
+  );
+
+  assert.deepEqual(rendered.cacheState, {
+    bootstrapMode: false,
+    cachePublicKey: personalCachePublicKey,
+    chainedHooks: [],
+    consumer: true,
+    enable: true,
+    expectedPublisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
+    externalHookInclude: '/etc/nix/nix.conf.d/shopify.conf',
+    hostRole: 'shopify',
+    priority: 30,
+    publisher: true,
+    publisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
+    publisherClientPatches: [rendered.cacheState.publisherClientPatches[0]],
+    server: false,
+  });
+  assert.equal(rendered.cacheState.publisherClientPatches.length, 1);
+  assert.equal(
+    path.basename(rendered.cacheState.publisherClientPatches[0]),
+    'attic-client-ca-cert.patch',
+  );
+  assert.deepEqual(rendered.publicPaths, { ca: rendered.expectedPaths.ca });
+  assert.deepEqual(rendered.runtimePaths, {
+    publisherState: '/var/db/local-binary-cache/publisher',
+    publisherToken: '/run/secrets/local-binary-cache-shopify-token',
+  });
+  assert.deepEqual(rendered.secret, {
+    key: 'local-binary-cache-shopify-token',
+    mode: '0400',
+    owner: 'root',
+    path: rendered.runtimePaths.publisherToken,
+    present: true,
+    sopsFile: rendered.expectedPaths.sopsFile,
+  });
+
+  assert.equal(rendered.services.hasAtticDaemon, false);
+  assert.equal(rendered.services.hasCaddyDaemon, false);
+  assert.equal(rendered.services.hasPublisherDaemon, true);
+  assert.deepEqual(rendered.services.publisherArguments, [rendered.services.publisherArguments[0]]);
+  assert.match(rendered.services.publisherArguments[0], /\/bin\/local-binary-cache-publish$/);
+  assert.equal(rendered.services.publisherUser, 'root');
+  assert.equal(rendered.services.publisherRunAtLoad, true);
+  assert.equal(rendered.services.publisherStartInterval, 60);
+  assert.equal(rendered.services.publisherWorkingDirectory, rendered.runtimePaths.publisherState);
+  assert.equal(
+    rendered.services.publisherStandardOutPath,
+    '/var/log/local-binary-cache/publisher/stdout.log',
+  );
+  assert.equal(
+    rendered.services.publisherStandardErrorPath,
+    '/var/log/local-binary-cache/publisher/stderr.log',
+  );
+
+  assert.notEqual(rendered.publisherSurfaces.enqueuePackage, null);
+  assert.notEqual(rendered.publisherSurfaces.postBuildHookPackage, null);
+  assert.notEqual(rendered.publisherSurfaces.externalHookPreflightPackage, null);
+  assert.equal(rendered.consumerSurfaces.certificateFiles.includes(rendered.publicPaths.ca), true);
+  assert.equal(rendered.consumerSurfaces.settings.substituters.includes(publicSubstituter), true);
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-substituters'].includes(communitySubstituter),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-substituters'].includes(localSubstituter),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-trusted-public-keys'].includes(communityCacheKey),
+    true,
+  );
+  assert.equal(
+    rendered.consumerSurfaces.settings['extra-trusted-public-keys'].includes(personalCachePublicKey),
+    true,
+  );
+  assert.equal(rendered.consumerSurfaces.settings.fallback, true);
+  assert.equal(rendered.consumerSurfaces.settings['narinfo-cache-negative-ttl'], 60);
+  assert.equal(rendered.consumerSurfaces.settings['require-sigs'], true);
+  assert.equal(rendered.consumerSurfaces.settings['ssl-cert-file'], combinedCaBundle);
+
+  const includeLine = '!include nix.conf.d/shopify.conf';
+  const includeLines = rendered.artifacts.nixConfig.split('\n').filter(line => line === includeLine);
+  const finalSubstituterLine = rendered.artifacts.nixConfig
+    .split('\n')
+    .findLast(line => line.startsWith('extra-substituters = '));
+  const finalTrustedKeyLine = rendered.artifacts.nixConfig
+    .split('\n')
+    .findLast(line => line.startsWith('extra-trusted-public-keys = '));
+  const hookLines = rendered.artifacts.nixConfig.match(/^post-build-hook = .*$/gm) ?? [];
+  assert.deepEqual(includeLines, [includeLine]);
+  assert.notEqual(finalSubstituterLine, undefined);
+  assert.notEqual(finalTrustedKeyLine, undefined);
+  assert.deepEqual(new Set(finalSubstituterLine.split(' = ')[1].split(/\s+/)), new Set([
+    publicSubstituter,
+    communitySubstituter,
+    localSubstituter,
+  ]));
+  assert.equal(finalTrustedKeyLine.includes(communityCacheKey), true);
+  assert.equal(finalTrustedKeyLine.includes(personalCachePublicKey), true);
+  assert.deepEqual(hookLines, [
+    `post-build-hook = ${rendered.publisherSurfaces.postBuildHookPackage}/bin/local-binary-cache-post-build-hook`,
+  ]);
+  assert.ok(rendered.artifacts.nixConfig.indexOf(includeLine)
+    < rendered.artifacts.nixConfig.lastIndexOf(finalSubstituterLine));
+  assert.ok(rendered.artifacts.nixConfig.lastIndexOf(finalSubstituterLine)
+    < rendered.artifacts.nixConfig.indexOf(hookLines[0]));
+
+  const enqueueExecutable = `${rendered.publisherSurfaces.enqueuePackage}/bin/local-binary-cache-enqueue`;
+  assert.equal(rendered.artifacts.postBuildHook.split(enqueueExecutable).length - 1, 1);
+  assert.equal(rendered.artifacts.publisher.includes(rendered.runtimePaths.publisherToken), true);
+  const preflightExecutable = `${rendered.publisherSurfaces.externalHookPreflightPackage}/bin/local-binary-cache-external-hook-preflight`;
+  assert.equal(rendered.artifacts.checksActivation.includes(preflightExecutable), true);
+  for (const ownershipContract of [
+    'prepare_owned_directory "$publisher_state_directory" root wheel 0700',
+    'prepare_owned_directory "$publisher_pending_directory" root wheel 0700',
+    'prepare_log_file "$publisher_stdout_log" root wheel 0640',
+    'prepare_log_file "$publisher_stderr_log" root wheel 0640',
+    'prepare_owned_directory "$publisher_log_directory" root wheel 0750',
+  ]) {
+    assert.equal(rendered.artifacts.launchdActivation.includes(ownershipContract), true);
+  }
+  for (const serverVariable of [
+    'attic_user',
+    'attic_state_directory',
+    'attic_log_directory',
+    'attic_stdout_log',
+    'attic_stderr_log',
+    'caddy_log_directory',
+    'caddy_stdout_log',
+    'caddy_stderr_log',
+  ]) {
+    assert.equal(rendered.artifacts.launchdActivation.includes(`${serverVariable}=`), false);
+    assert.equal(rendered.artifacts.launchdActivation.includes(`$${serverVariable}`), false);
+  }
+  for (const artifact of Object.values(rendered.artifacts)) {
+    assert.equal(artifact.includes('ENC[AES256_GCM'), false);
+  }
+});
+
 test('validated pressure values apply only to the personal host', () => {
   const minFree = 10 * 1024 * 1024 * 1024;
   const maxFree = 20 * 1024 * 1024 * 1024;
