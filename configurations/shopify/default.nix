@@ -77,6 +77,9 @@ in
     };
   };
 
+  # Keep this path present so tec does not replace it with generated configuration.
+  environment.etc."nix/nix.custom.conf".text = "";
+
   nix = {
     enable = true;
 
