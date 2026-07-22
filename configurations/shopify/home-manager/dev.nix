@@ -4,6 +4,29 @@
   pkgs,
   ...
 }:
+let
+  devxWrapper = pkgs.writeShellApplication {
+    name = "devx";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      if [[ "''${1-}" == "shame" ]]; then
+        exec /usr/bin/open "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      fi
+
+      self="$(realpath "$0")"
+      IFS=: read -ra pathEntries <<< "$PATH"
+      for directory in "''${pathEntries[@]}"; do
+        candidate="''${directory:-.}/devx"
+        if [[ -x "$candidate" ]] && [[ "$(realpath "$candidate")" != "$self" ]]; then
+          exec "$candidate" "$@"
+        fi
+      done
+
+      printf 'devx: real executable not found in PATH\n' >&2
+      exit 127
+    '';
+  };
+in
 {
   home.sessionVariables = {
     DEV_NO_AUTO_UPDATE = "1";
@@ -16,9 +39,10 @@
     # via home.sessionPath below. Order is preserved: home.sessionPath
     # runs in .zshenv (before .zshrc), so by the time the order-550
     # initContent block runs in .zshrc, brew paths are already prepended.
-    # tec init in initContent then prepends tec paths in front of brew —
-    # tec ends up first, brew second, matching homebrew_path_order.rb's
-    # required ordering (verified at /opt/dev/lib/dev/tasks/prereq/
+    # tec init in initContent then prepends tec paths in front of brew.
+    # The devx wrapper is restored to the front afterward, while tec remains
+    # ahead of brew as required by homebrew_path_order.rb (verified at
+    # /opt/dev/lib/dev/tasks/prereq/
     # homebrew_path_order.rb).
     HOMEBREW_PREFIX = "/opt/homebrew";
     HOMEBREW_CELLAR = "/opt/homebrew/Cellar";
@@ -27,6 +51,7 @@
   };
 
   home.sessionPath = [
+    "${devxWrapper}/bin"
     "/opt/homebrew/bin"
     "/opt/homebrew/sbin"
   ];
@@ -93,6 +118,7 @@
       # the staleness notification is useless. Sed strips that one line
       # before eval-ing the rest of tec init.
       ''[[ -x ${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init ]] && eval "$(${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/init zsh | ${pkgs.gnused}/bin/sed '/^tec tools shell-hook/d')"''
+      ''export PATH="${devxWrapper}/bin:$PATH"''
     ]
   );
 }
