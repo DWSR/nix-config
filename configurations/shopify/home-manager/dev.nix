@@ -5,13 +5,78 @@
   ...
 }:
 let
+  shameTrackLocator = pkgs.writeText "devx-shame-track-locator.applescript" ''
+    tell application "System Events"
+      tell process "Music"
+        set frontmost to true
+        set contentArea to scroll area 2 of splitter group 1 of window "Music"
+        repeat with trackList in (every UI element of list 1 of contentArea)
+          try
+            repeat with trackRow in (every UI element of trackList)
+              try
+                repeat with trackLabel in (every static text of trackRow)
+                  if (value of trackLabel) is "Never Gonna Give You Up (2022 Remaster)" then
+                    set rowPosition to position of trackRow
+                    set rowSize to size of trackRow
+                    return (((item 1 of rowPosition) + (item 1 of rowSize) / 2) as text) & "," & ¬
+                      (((item 2 of rowPosition) + (item 2 of rowSize) / 2) as text)
+                  end if
+                end repeat
+              end try
+            end repeat
+          end try
+        end repeat
+        return "NOT_FOUND"
+      end tell
+    end tell
+  '';
+
+  shameTrackDoubleClick = pkgs.writeText "devx-shame-track-double-click.js" ''
+    function run(argv) {
+      ObjC.import("CoreGraphics");
+      var point = $.CGPointMake(Number(argv[0]), Number(argv[1]));
+      for (var click = 1; click <= 2; click++) {
+        var down = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseDown, point, $.kCGMouseButtonLeft);
+        var up = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseUp, point, $.kCGMouseButtonLeft);
+        $.CGEventSetIntegerValueField(down, 1, click);
+        $.CGEventSetIntegerValueField(up, 1, click);
+        $.CGEventPost($.kCGHIDEventTap, down);
+        delay(0.05);
+        $.CGEventPost($.kCGHIDEventTap, up);
+        delay(0.05);
+      }
+    }
+  '';
+
   devxWrapper = pkgs.writeShellApplication {
     name = "devx";
     runtimeInputs = [ pkgs.coreutils ];
     text = ''
       if [[ "''${1-}" == "shame" ]]; then
         /usr/bin/osascript -e 'set volume output volume 100'
-        /usr/bin/open "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        /usr/bin/open -a /System/Applications/Music.app \
+          "https://music.apple.com/ca/album/never-gonna-give-you-up-2022-remaster/1624945511?i=1624945512"
+
+        coordinates=""
+        for _ in {1..15}; do
+          if coordinates="$(/usr/bin/osascript ${shameTrackLocator} 2>/dev/null)" \
+            && [[ "$coordinates" != "NOT_FOUND" ]]; then
+            break
+          fi
+          coordinates=""
+          sleep 1
+        done
+
+        if [[ -z "$coordinates" ]]; then
+          printf 'devx shame: Apple Music track did not load\n' >&2
+          exit 1
+        fi
+
+        IFS=, read -r x y <<< "$coordinates"
+        # Music's custom track rows ignore AXPress, so send a real double-click.
+        /usr/bin/osascript -l JavaScript ${shameTrackDoubleClick} "$x" "$y"
+
+        sleep 1
         exec /usr/bin/osascript \
           -e 'tell application "System Events" to keystroke "q" using {control down, command down}'
       fi
