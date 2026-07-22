@@ -10,7 +10,10 @@ let
     runtimeInputs = [ pkgs.coreutils ];
     text = ''
       if [[ "''${1-}" == "shame" ]]; then
-        exec /usr/bin/open "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        /usr/bin/osascript -e 'set volume output volume 100'
+        /usr/bin/open "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        exec /usr/bin/osascript \
+          -e 'tell application "System Events" to keystroke "q" using {control down, command down}'
       fi
 
       self="$(realpath "$0")"
