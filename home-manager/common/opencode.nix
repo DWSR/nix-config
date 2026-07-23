@@ -173,11 +173,12 @@
       # Probe sequence:
       #   1. Read mcpproxy's API key from the macOS Keychain via
       #      `security find-generic-password -s mcpproxy -a
-      #      mcpproxy-api-key -w`. The keychain entry is provisioned by
-      #      the SOPS bridge during home-manager activation. A missing
-      #      key fails with a specific stderr message BEFORE attempting
-      #      curl so an operator distinguishes a keychain problem from
-      #      a connectivity problem.
+      #      mcpproxy-api-key -w`, bounded so a locked Keychain cannot hang
+      #      OpenCode before the TUI appears. The keychain entry is provisioned
+      #      by the SOPS bridge during home-manager activation. An unavailable
+      #      key fails with a specific stderr message BEFORE attempting curl so
+      #      an operator distinguishes a keychain problem from a connectivity
+      #      problem.
       #   2. `GET http://127.0.0.1:8080/healthz` (no auth) — mcpproxy
       #      liveness probe (R8.1). Failure exits 1 naming "mcpproxy"
       #      as the failing component.
@@ -205,9 +206,9 @@
       # and design.md L711-713). Use double quotes (with backslash-
       # escaped inner double quotes where needed) for runtime shell values.
       ''
-        mcpproxy_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || mcpproxy_api_key=""
+        mcpproxy_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || mcpproxy_api_key=""
         if [ -z "$mcpproxy_api_key" ]; then
-          echo "ERROR: mcpproxy unreachable: mcpproxy API key missing from macOS Keychain (service=mcpproxy, account=mcpproxy-api-key)." >&2
+          echo "ERROR: mcpproxy unreachable: mcpproxy API key unavailable from macOS Keychain (missing, denied, or lookup timed out after 5 seconds; service=mcpproxy, account=mcpproxy-api-key)." >&2
           echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
           exit 1
         fi

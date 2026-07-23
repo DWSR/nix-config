@@ -460,11 +460,12 @@ in
       # Probe sequence:
       #   1. Read mcpproxy's API key from the macOS Keychain via
       #      `security find-generic-password -s mcpproxy -a
-      #      mcpproxy-api-key -w`. The keychain entry is provisioned
+      #      mcpproxy-api-key -w`, bounded so a locked Keychain cannot hang
+      #      OpenCode before the TUI appears. The keychain entry is provisioned
       #      by task 2 of the mcpproxy-migration spec. If the entry is
-      #      missing the probe fails with a specific stderr message
-      #      BEFORE attempting curl, so an operator sees the keychain
-      #      problem distinctly from a connectivity problem.
+      #      unavailable the probe fails with a specific stderr message BEFORE
+      #      attempting curl, so an operator sees the keychain problem
+      #      distinctly from a connectivity problem.
       #   2. `GET http://127.0.0.1:8080/healthz` (no auth) — re-probes
       #      mcpproxy liveness defensively even though the
       #      opencode.nix snippet has already done this; the cost is
@@ -511,9 +512,9 @@ in
           export CAVEMEM_DATA_DIR=${lib.escapeShellArg (toString cfg.dataDir)}
         ''
         ''
-          cavemem_api_key=$(/usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""
+          cavemem_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""
           if [ -z "$cavemem_api_key" ]; then
-            echo "ERROR: cavemem MCP server not reachable via mcpproxy: mcpproxy API key missing from macOS Keychain (service=mcpproxy, account=mcpproxy-api-key)." >&2
+            echo "ERROR: cavemem MCP server not reachable via mcpproxy: mcpproxy API key unavailable from macOS Keychain (missing, denied, or lookup timed out after 5 seconds; service=mcpproxy, account=mcpproxy-api-key)." >&2
             echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
             exit 1
           fi
