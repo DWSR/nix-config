@@ -81,17 +81,9 @@ let
           -e 'tell application "System Events" to keystroke "q" using {control down, command down}'
       fi
 
-      self="$(realpath "$0")"
-      IFS=: read -ra pathEntries <<< "$PATH"
-      for directory in "''${pathEntries[@]}"; do
-        candidate="''${directory:-.}/devx"
-        if [[ -x "$candidate" ]] && [[ "$(realpath "$candidate")" != "$self" ]]; then
-          exec "$candidate" "$@"
-        fi
-      done
-
-      printf 'devx: real executable not found in PATH\n' >&2
-      exit 127
+      # PATH can retain shims from older Home Manager generations, causing
+      # different versions of this wrapper to exec each other forever.
+      exec "${config.home.homeDirectory}/.local/state/tec/toolchain/base_profile/share/dev/bin/user/devx" "$@"
     '';
   };
 in
