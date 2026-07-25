@@ -69,14 +69,19 @@ in
     ]
   );
 
-  # Shopify-only graphite-pitfalls skill — full Category A/B/C bash
-  # recovery catalogue for gt failures. Loads only on an explicit gt
-  # error per the skill's narrow trigger description (see SKILL.md).
-  # Co-installed alongside the cc-sdd kiro-* skills under
-  # ~/.config/opencode/skills/ per the pattern documented in
+  # Shopify-only skills, co-installed alongside the cc-sdd kiro-* skills
+  # under ~/.config/opencode/skills/ per the pattern documented in
   # home-manager/common/cc-sdd.nix lines 64-68.
   xdg.configFile."opencode/skills/graphite-pitfalls" = {
     source = ./skills/graphite-pitfalls;
+  };
+
+  xdg.configFile."opencode/skills/create-yb-fix-pr" = {
+    source = ./skills/create-yb-fix-pr;
+  };
+
+  xdg.configFile."opencode/skills/validate-yb-issue" = {
+    source = ./skills/validate-yb-issue;
   };
 
   # Apply the vendored caveman-lite output style to every common subagent
@@ -265,7 +270,7 @@ in
     upgrade-environment = ./commands/upgrade-environment.md;
   };
 
-  # stack-captain and yb-sleuth are wrapped via the shared
+  # Shopify-specific agents are wrapped via the shared
   # `home.opencode.agentWithCaveman` helper from
   # home-manager/common/opencode.nix so they inherit the same caveman-lite
   # snippet (or skip it) in lock-step with the common subagents whenever
@@ -279,6 +284,9 @@ in
     stack-fix-reviewer = config.home.opencode.agentWithCaveman ./agents/stack-fix-reviewer.md;
     binks-overrider = config.home.opencode.agentWithCaveman ./agents/binks-overrider.md;
     yb-sleuth = config.home.opencode.agentWithCaveman ./agents/yb-sleuth.md;
+    yb-fix-pr-author = config.home.opencode.agentWithCaveman ./agents/yb-fix-pr-author.md;
+    yb-issue-oneshot = config.home.opencode.agentWithCaveman ./agents/yb-issue-oneshot.md;
+    yb-issue-validator = config.home.opencode.agentWithCaveman ./agents/yb-issue-validator.md;
   };
 
   programs.opencode.settings = {
