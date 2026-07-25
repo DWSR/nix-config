@@ -115,6 +115,39 @@ final: prev: {
           "$out"
       '';
 
+  imagesnap = final.stdenvNoCC.mkDerivation rec {
+    pname = "imagesnap";
+    version = "0.3.0";
+
+    src = final.fetchurl {
+      url = "https://github.com/rharder/imagesnap/releases/download/v${version}/imagesnap-v${version}";
+      hash = "sha256-LAFTG2b+QbYygr8lURfi4dOQ0Daq07vax/v0bMzJ82g=";
+    };
+
+    dontUnpack = true;
+    dontConfigure = true;
+    dontBuild = true;
+    # Preserve upstream's universal binary, ad-hoc signature, and camera
+    # entitlement. The binary links only macOS system frameworks and runtimes.
+    dontFixup = true;
+
+    installPhase = ''
+      runHook preInstall
+
+      install -Dm755 "$src" "$out/bin/imagesnap"
+
+      runHook postInstall
+    '';
+
+    meta = {
+      description = "Command-line tool for capturing images from video devices";
+      homepage = "https://github.com/rharder/imagesnap";
+      license = final.lib.licenses.publicDomain;
+      mainProgram = "imagesnap";
+      platforms = final.lib.platforms.darwin;
+    };
+  };
+
   python312 = prev.python312.override {
     packageOverrides = pyFinal: _pyPrev: {
       kagiapi = pyFinal.buildPythonPackage rec {

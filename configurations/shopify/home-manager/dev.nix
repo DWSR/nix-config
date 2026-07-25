@@ -50,7 +50,10 @@ let
 
   devxWrapper = pkgs.writeShellApplication {
     name = "devx";
-    runtimeInputs = [ pkgs.coreutils ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.imagesnap
+    ];
     text = ''
       if [[ "''${1-}" == "shame" ]]; then
         /usr/bin/osascript -e 'set volume output volume 100'
@@ -76,7 +79,12 @@ let
         # Music's custom track rows ignore AXPress, so send a real double-click.
         /usr/bin/osascript -l JavaScript ${shameTrackDoubleClick} "$x" "$y"
 
-        sleep 1
+        photoDirectory="${config.home.homeDirectory}/Pictures/devx-shame"
+        mkdir -p "$photoDirectory"
+        photoPath="$photoDirectory/$(date +%Y%m%d-%H%M%S).jpg"
+        imagesnap -q "$photoPath"
+        printf 'devx shame: saved webcam photo to %s\n' "$photoPath" >&2
+
         exec /usr/bin/osascript \
           -e 'tell application "System Events" to keystroke "q" using {control down, command down}'
       fi
