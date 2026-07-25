@@ -784,19 +784,24 @@ in
     };
   };
 
-  mcpproxy-go = final.buildGoModule {
+  mcpproxy-go = final.buildGoModule rec {
     pname = "mcpproxy-go";
-    version = "0.33.1";
+    version = "0.52.1";
 
     src = final.fetchFromGitHub {
       owner = "smart-mcp-proxy";
       repo = "mcpproxy-go";
-      tag = "v0.33.1";
-      hash = "sha256-QjkDlpURQGkGmjCY/Bqev4TSldChSovJPLSKW5zRPpA=";
+      tag = "v${version}";
+      hash = "sha256-OlPKitX8Fj8rpMJ6PaZ3km68gBPP9aOoIzaz8xRxW0o=";
     };
 
-    vendorHash = "sha256-VEQookLyn9ix0CY/4VYqHFa6UTrOQS8PfruUkf5bA7k=";
+    vendorHash = "sha256-ZwtSgPPPiOG+22809NogB0eXhgoc+CpmtbIxiGYUfss=";
     subPackages = [ "cmd/mcpproxy" ];
+    tags = [ "nogui" ];
+    ldflags = [
+      "-X main.version=v${version}"
+      "-X github.com/smart-mcp-proxy/mcpproxy-go/internal/httpapi.buildVersion=v${version}"
+    ];
 
     env.CGO_ENABLED = 0;
     doCheck = false;
