@@ -1067,6 +1067,261 @@ function readAtticInvocations(fixture) {
   return readInvocations(fixture);
 }
 
+function createPublicationFlowFixture(t) {
+  const fixture = createScriptFixture({
+    executables: {
+      attic: `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const args = process.argv.slice(2);
+        const target = args.at(-1);
+        const configPath = path.join(process.env.XDG_CONFIG_HOME, 'attic', 'config.toml');
+        const config = fs.readFileSync(configPath, 'utf8');
+        fs.appendFileSync(process.env.ATTIC_LOG, JSON.stringify({
+          args,
+          caCert: process.env.ATTIC_CA_CERT,
+          config,
+        }) + '\\n');
+
+        if (
+          args.length !== 5
+          || args[0] !== 'push'
+          || args[1] !== '-j'
+          || args[2] !== '1'
+          || process.env.ATTIC_CA_CERT !== process.env.CA_CERTIFICATE
+        ) {
+          process.stderr.write('unexpected Attic invocation for ' + target + '\\n');
+          process.exit(64);
+        }
+        if (process.env.ATTIC_REMOTE_OUTAGE === '1') {
+          process.stderr.write('stub remote outage for ' + target + '\\n');
+          process.exit(23);
+        }
+      `,
+      chainedHook: `
+        const fs = require('node:fs');
+        fs.appendFileSync(process.env.HOOK_LOG, JSON.stringify({
+          drvPath: process.env.DRV_PATH,
+          outPaths: process.env.OUT_PATHS,
+        }) + '\\n');
+      `,
+      nixStore: `
+        const fs = require('node:fs');
+        const path = require('node:path');
+        const args = process.argv.slice(2);
+        fs.appendFileSync(process.env.NIX_STORE_LOG, JSON.stringify(args) + '\\n');
+        if (args.length !== 4 || args[0] !== '--add-root' || args[2] !== '--realise') {
+          process.stderr.write('unexpected nix-store arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+
+        const root = args[1];
+        const output = args[3];
+        if (process.env.NIX_STORE_FAIL_FOR === output) {
+          process.stderr.write('stub root creation failed for ' + output + '\\n');
+          process.exit(23);
+        }
+        if (!fs.existsSync(path.dirname(root))) {
+          process.stderr.write('pending directory was not created before nix-store invocation\\n');
+          process.exit(65);
+        }
+
+        const temporaryRoot = root + '.tmp.' + process.pid;
+        fs.rmSync(temporaryRoot, { force: true });
+        fs.symlinkSync(output, temporaryRoot);
+        fs.renameSync(temporaryRoot, root);
+      `,
+      shlock: `
+        const fs = require('node:fs');
+        const args = process.argv.slice(2);
+        if (args.length !== 4 || args[0] !== '-p' || args[2] !== '-f') {
+          process.stderr.write('unexpected shlock arguments: ' + JSON.stringify(args) + '\\n');
+          process.exit(64);
+        }
+        try {
+          const descriptor = fs.openSync(args[3], 'wx', 0o600);
+          fs.writeFileSync(descriptor, args[1] + '\\n');
+          fs.closeSync(descriptor);
+        } catch (error) {
+          if (error.code === 'EEXIST') process.exit(1);
+          throw error;
+        }
+      `,
+    },
+    statePaths: {
+      binaryCache: 'state/substitution-cache',
+      ca: 'public/ca.pem',
+      consumerStore: 'state/substitution-store',
+      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      hookLog: 'state/hook.log',
+      log: 'state/attic.log',
+      nixConf: 'etc/nix-fixture',
+      nixStoreLog: 'state/nix-store.log',
+      pending: 'state/publisher/pending',
+      publisher: 'state/publisher',
+      token: 'secrets/push-token',
+    },
+  });
+  t.after(() => {
+    const chmod = childProcess.spawnSync('/bin/chmod', ['-R', 'u+w', fixture.root], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(chmod.status, 0, chmod.stderr);
+    fs.rmSync(fixture.root, { force: true, recursive: true });
+  });
+  fs.writeFileSync(fixture.statePaths.ca, 'fixture-only-public-ca-certificate\n');
+  fs.writeFileSync(fixture.statePaths.externalInclude, '# fixture external Nix config\n');
+  fs.mkdirSync(fixture.statePaths.nixConf);
+  fs.writeFileSync(path.join(fixture.statePaths.nixConf, 'nix.conf'), [
+    'experimental-features = nix-command flakes',
+    'substituters =',
+    'extra-substituters =',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(fixture.statePaths.token, TOKEN_VALUE, { mode: 0o400 });
+
+  const rendered = evalDarwinFixture(
+    `{ pkgs, ... }:
+    let
+      nixStoreStub = pkgs.runCommand "nix-store-publication-flow-stub" { } ''
+        mkdir -p "$out/bin"
+        ln -s ${JSON.stringify(fixture.executables.nixStore)} "$out/bin/nix-store"
+      '';
+      nixPackage = pkgs.symlinkJoin {
+        name = "nix-${'${pkgs.nix.version}'}";
+        inherit (pkgs.nix) version;
+        paths = [ pkgs.nix ];
+        postBuild = ''
+          ln -sfn ${'${nixStoreStub}'}/bin/nix-store "$out/bin/nix-store"
+        '';
+      };
+    in {
+      nix.package = nixPackage;
+      services.localBinaryCache = {
+        enable = true;
+        hostRole = "shopify";
+        bootstrapMode = false;
+        cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
+        caCertificate = ${path.join(__dirname, 'fixtures/tls-certificate.pem')};
+        consumer.enable = true;
+        publisher = {
+          enable = true;
+          package = pkgs.hello;
+          tokenFile = ${JSON.stringify(fixture.statePaths.token)};
+          stateDirectory = ${JSON.stringify(fixture.statePaths.publisher)};
+          chainedHooks = [ ${JSON.stringify(fixture.executables.chainedHook)} ];
+          externalHookInclude = ${JSON.stringify(fixture.statePaths.externalInclude)};
+        };
+      };
+    }`,
+    `let
+      publisher = config.services.localBinaryCache.publisher;
+    in {
+      enqueuePackage = toString publisher.enqueuePackage;
+      enqueueText = builtins.readFile "${'${publisher.enqueuePackage}'}/bin/local-binary-cache-enqueue";
+      postBuildHookExecutable = "${'${publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook";
+      postBuildHookText = builtins.readFile "${'${publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook";
+    }`,
+  );
+  const output = rendered.enqueuePackage;
+  const storeHash = path.basename(output).slice(0, 32);
+  assert.match(storeHash, /^[0-9abcdfghijklmnpqrsvwxyz]{32}$/);
+  const root = path.join(fixture.statePaths.pending, storeHash);
+  const publisherExecutable = buildScript('scripts/local-binary-cache-publish.nix', {
+    atticExecutable: fixture.executables.attic,
+    caCertificate: fixture.statePaths.ca,
+    cacheName: CACHE_NAME,
+    endpoint: CACHE_ENDPOINT,
+    pendingDirectory: fixture.statePaths.pending,
+    shlockExecutable: fixture.executables.shlock,
+    stateDirectory: fixture.statePaths.publisher,
+    storeDirectory: NIX_STORE_DIRECTORY,
+    tokenFile: fixture.statePaths.token,
+  });
+
+  return {
+    fixture,
+    output,
+    postBuildHookExecutable: rendered.postBuildHookExecutable,
+    publisherExecutable,
+    root,
+  };
+}
+
+function runFixtureNix(fixture, args, extraEnv = {}) {
+  const result = childProcess.spawnSync('nix', args, {
+    cwd: fixture.root,
+    encoding: 'utf8',
+    env: {
+      HOME: fixture.home,
+      LANG: 'C',
+      LC_ALL: 'C',
+      NIX_CONF_DIR: fixture.statePaths.nixConf,
+      NIX_USER_CONF_FILES: '/dev/null',
+      PATH: process.env.PATH,
+      TMPDIR: fixture.tmp,
+      ...extraEnv,
+    },
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 600_000,
+  });
+  if (result.error) {
+    throw result.error;
+  }
+  return {
+    signal: result.signal,
+    status: result.status,
+    stderr: String(result.stderr ?? ''),
+    stdout: String(result.stdout ?? ''),
+  };
+}
+
+function substituteFromFixtureCache(flow) {
+  const { fixture, output, postBuildHookExecutable } = flow;
+  const cacheUrl = `file://${fixture.statePaths.binaryCache}`;
+  const consumerStoreRoot = path.join(
+    fs.realpathSync(path.dirname(fixture.statePaths.consumerStore)),
+    path.basename(fixture.statePaths.consumerStore),
+  );
+  const consumerStore = `local?root=${consumerStoreRoot}&trusted=true&require-sigs=false`;
+  const physicalOutput = path.join(consumerStoreRoot, output.slice(1));
+  const outputExistedBefore = fs.existsSync(physicalOutput);
+  const cache = runFixtureNix(fixture, [
+    'copy',
+    '--offline',
+    '--from', 'daemon',
+    '--to', cacheUrl,
+    output,
+  ]);
+  const realization = runFixtureNix(fixture, [
+    'build',
+    '--store', consumerStore,
+    '--no-link',
+    '--print-out-paths',
+    '--refresh',
+    '--option', 'builders', '',
+    '--option', 'extra-substituters', '',
+    '--option', 'fallback', 'false',
+    '--option', 'max-jobs', '0',
+    '--option', 'post-build-hook', postBuildHookExecutable,
+    '--option', 'require-sigs', 'false',
+    '--option', 'substituters', cacheUrl,
+    output,
+  ], {
+    HOOK_LOG: fixture.statePaths.hookLog,
+    NIX_STORE_LOG: fixture.statePaths.nixStoreLog,
+  });
+
+  return {
+    cache,
+    outputExistedBefore,
+    physicalOutput,
+    realization,
+  };
+}
+
 function spawnPublisher(executable, fixture, env = {}) {
   const output = { stderr: '', stdout: '' };
   const child = childProcess.spawn(executable, [], {
@@ -3021,4 +3276,109 @@ test('publisher validates the custom CA path before invoking Attic', async t => 
       assert.equal(fs.lstatSync(pending.root).isSymbolicLink(), true);
     });
   }
+});
+
+test('generated hook and publisher preserve the complete publication state flow', t => {
+  const flow = createPublicationFlowFixture(t);
+  const {
+    fixture,
+    output,
+    postBuildHookExecutable,
+    publisherExecutable,
+    root,
+  } = flow;
+  const hookEnvironment = extra => ({
+    DRV_PATH: `${NIX_STORE_DIRECTORY}/${HASH_D}-publication-flow.drv`,
+    HOOK_LOG: fixture.statePaths.hookLog,
+    NIX_STORE_LOG: fixture.statePaths.nixStoreLog,
+    OUT_PATHS: output,
+    ...extra,
+  });
+
+  const substitution = substituteFromFixtureCache(flow);
+  assert.equal(substitution.cache.status, 0, substitution.cache.stderr);
+  assert.equal(substitution.realization.status, 0, substitution.realization.stderr);
+  assert.equal(substitution.realization.stdout.trim(), output);
+  assert.match(
+    substitution.realization.stderr,
+    new RegExp(`copying path '${escapeRegExp(output)}' from 'file://`),
+  );
+  assert.doesNotMatch(substitution.realization.stderr, /will be built/);
+  assert.equal(substitution.outputExistedBefore, false);
+  assert.equal(fs.existsSync(substitution.physicalOutput), true);
+  assert.equal(fs.existsSync(fixture.statePaths.hookLog), false);
+  assert.equal(fs.existsSync(fixture.statePaths.nixStoreLog), false);
+  assert.equal(fs.existsSync(fixture.statePaths.pending), false);
+  assert.deepEqual(readAtticInvocations(fixture), []);
+
+  const localFailure = runScript(postBuildHookExecutable, [], {
+    fixture,
+    env: hookEnvironment({ NIX_STORE_FAIL_FOR: output }),
+  });
+  assert.notEqual(localFailure.status, 0);
+  assert.ok(localFailure.stderr.includes(output));
+  assert.ok(localFailure.stderr.includes(root));
+  assert.equal(fs.existsSync(root), false);
+  assert.equal(fs.existsSync(fixture.statePaths.hookLog), false);
+  assert.deepEqual(readAtticInvocations(fixture), []);
+
+  const enqueue = runScript(postBuildHookExecutable, [], {
+    fixture,
+    env: hookEnvironment({ OUT_PATHS: `${output} ${output}` }),
+  });
+  const duplicateEnqueue = runScript(postBuildHookExecutable, [], {
+    fixture,
+    env: hookEnvironment(),
+  });
+  assert.equal(enqueue.status, 0, enqueue.stderr);
+  assert.equal(duplicateEnqueue.status, 0, duplicateEnqueue.stderr);
+  assert.deepEqual(fs.readdirSync(fixture.statePaths.pending), [path.basename(root)]);
+  assert.equal(fs.lstatSync(root).isSymbolicLink(), true);
+  assert.equal(fs.readlinkSync(root), output);
+  assert.deepEqual(readJsonLines(fixture.statePaths.nixStoreLog).map(args => args.at(-1)), [
+    output,
+    output,
+    output,
+  ]);
+  assert.equal(readJsonLines(fixture.statePaths.hookLog).length, 2);
+  assert.deepEqual(readAtticInvocations(fixture), []);
+
+  const remoteOutage = runScript(publisherExecutable, [], {
+    fixture,
+    env: publisherEnvironment(fixture, { ATTIC_REMOTE_OUTAGE: '1' }),
+  });
+  assert.notEqual(remoteOutage.status, 0);
+  assert.ok(remoteOutage.stderr.includes(output));
+  assert.ok(remoteOutage.stderr.includes(root));
+  assert.equal(remoteOutage.stderr.includes(TOKEN_VALUE), false);
+  assert.equal(fs.lstatSync(root).isSymbolicLink(), true);
+  assert.deepEqual(readAtticInvocations(fixture).map(invocation => invocation.args.at(-1)), [output]);
+
+  const retry = runScript(publisherExecutable, [], {
+    fixture,
+    env: publisherEnvironment(fixture),
+  });
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(fs.existsSync(root), false);
+  assert.deepEqual(readAtticInvocations(fixture).map(invocation => invocation.args.at(-1)), [
+    output,
+    output,
+  ]);
+
+  const observable = [
+    localFailure.stdout,
+    localFailure.stderr,
+    enqueue.stdout,
+    enqueue.stderr,
+    duplicateEnqueue.stdout,
+    duplicateEnqueue.stderr,
+    remoteOutage.stdout,
+    remoteOutage.stderr,
+    retry.stdout,
+    retry.stderr,
+    fs.readFileSync(fixture.statePaths.log, 'utf8'),
+    fs.readFileSync(postBuildHookExecutable, 'utf8'),
+    fs.readFileSync(publisherExecutable, 'utf8'),
+  ].join('\n');
+  assert.equal(observable.includes(TOKEN_VALUE), false);
 });

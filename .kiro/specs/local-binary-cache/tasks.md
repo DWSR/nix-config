@@ -192,7 +192,7 @@
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
   - _Boundary: Render Tests_
 
-- [ ] 6.2 Validate the complete hook-to-publisher state flow
+- [x] 6.2 Validate the complete hook-to-publisher state flow
   - Exercise enqueue, duplicate coalescing, local failure, remote outage, retained root, retry, and success cleanup through stubs.
   - Prove local durable-state failure blocks the realization while remote cache failure does not affect completed builds.
   - Done when every publication transition and failure contract passes in one integration suite.
@@ -247,3 +247,4 @@
 - Task 5.5 ends at static personal ready-mode evaluation so its reviewed configuration can be committed and delivered independently of runtime validation.
 - Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.5 owns live ready-status on both hosts.
 - Task 5.6 publisher-only activation must omit server-role variables at the shared module source; host-local no-op references hide boundary defects and alter generated activation scripts.
+- Task 6.2 substituted-output coverage needs distinct isolated Nix stores, an offline `file://` cache, disabled builders/fallback, and the generated hook; an idle publisher queue is tautological.
