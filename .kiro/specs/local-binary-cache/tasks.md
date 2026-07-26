@@ -208,6 +208,7 @@
   - _Depends: 6.1, 6.2_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 5.1, 5.2, 5.3, 5.4, 5.7_
   - _Boundary: Full Feature Integration_
+  - _Blocked: Task 6.3 requires privileged control of both hosts; this sandbox has neither root access nor a control plane to the personal host, whose cache endpoint is unavailable._
 
 - [ ] 6.4 Validate cache outage fallback and recovery
   - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation.
