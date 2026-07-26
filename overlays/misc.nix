@@ -194,8 +194,8 @@ final: prev: {
     ];
   };
 
-  # nono: capability-based sandbox for AI agents (always-further/nono, Apache-2.0).
-  # Published to crates.io as `nono-cli`; the binary is `nono`. Pinned to 0.61.1
+  # nono: capability-based sandbox for AI agents (nolabs-ai/nono, Apache-2.0).
+  # Published to crates.io as `nono-cli`; the binary is `nono`. Pinned to 0.69.0
   # because nixpkgs-unstable only ships 0.43.1.
   #
   # Requires rustc ≥1.95 (workspace rust-version). Neither stable nixpkgs
@@ -221,16 +221,16 @@ final: prev: {
     in
     rustPlatform.buildRustPackage rec {
       pname = "nono";
-      version = "0.61.1";
+      version = "0.69.0";
 
       src = final.fetchFromGitHub {
-        owner = "always-further";
+        owner = "nolabs-ai";
         repo = "nono";
         tag = "v${version}";
-        hash = "sha256-y5oMR5Vawf/1QUj3ACDdqAjKT+Q2gizRfKkal340EP8=";
+        hash = "sha256-1mGgjAirmwUl8UK8qK1ztHA4PD5IkNPqiOrwagLhJLU=";
       };
 
-      cargoHash = "sha256-Oy/IqAK5ml1vu0eee+pF5pRjzk0Na/Fb04e1Mx0d924=";
+      cargoHash = "sha256-2jg4fvbMjGRwPJODl1AKaEhPfjNwJr05IFbDqzr/PpU=";
 
       # Build only the CLI binary from the Cargo workspace.
       cargoBuildFlags = [
@@ -252,7 +252,7 @@ final: prev: {
 
       meta = {
         description = "Capability-based sandbox for AI agents using Seatbelt (macOS) and Landlock (Linux)";
-        homepage = "https://github.com/always-further/nono";
+        homepage = "https://github.com/nolabs-ai/nono";
         license = final.lib.licenses.asl20;
         mainProgram = "nono";
         platforms = final.lib.platforms.unix;
