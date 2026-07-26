@@ -332,6 +332,10 @@
       };
 
       settings = {
+        # Permit subagent orchestration chains on both hosts. The upstream
+        # default of 1 prevents subagents from launching other subagents.
+        subagent_depth = 10;
+
         # Re-enable thinking output for Claude Opus 4.8, which omits it by default.
         # https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-7#thinking-content-omitted-by-default
         #
