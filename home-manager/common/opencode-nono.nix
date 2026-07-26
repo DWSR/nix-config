@@ -279,11 +279,13 @@ let
 
     When the effective state is `audit` or `enforced`, the launcher execs:
 
-        nono run --profile <effective-profile> --allow-cwd -- opencode
+        NONO_NO_SAVE_PROMPT=1 nono run --profile <effective-profile> --allow-cwd -- opencode
 
     `--allow-cwd` is required (Phase 0). The mcpproxy preflight runs host-side
     OUTSIDE nono, before nono is entered, so its token mint and env exports
-    are not subject to the sandbox.
+    are not subject to the sandbox. `NONO_NO_SAVE_PROMPT=1` prevents nono from
+    opening its profile-save selector after OpenCode exits; diagnostics and
+    audit recording remain enabled.
 
     ## Runtime overrides
 

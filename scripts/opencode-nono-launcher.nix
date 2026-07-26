@@ -246,6 +246,10 @@ writeShellApplication {
 
     # `--allow-cwd` is MANDATORY: non-interactive `nono run` refuses CWD access
     # without it even when the profile grants workdir access (Phase 0 finding).
+    # nono 0.69.0 otherwise opens an interactive profile-save selector after
+    # opencode exits when it observed denied paths. Keep managed launches fully
+    # noninteractive without suppressing nono's diagnostics or audit trail.
+    export NONO_NO_SAVE_PROMPT=1
     exec "$opencode_nono_bin" run --profile "$opencode_nono_profile_effective" --allow-cwd -- "${basePackage}/bin/opencode" "$@"
   '';
 }

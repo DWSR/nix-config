@@ -66,7 +66,7 @@ function nonoStubExpr(grantJson) {
       exit 0
     fi
     if [ "''\${1}" = "run" ]; then
-      printf "NONO args=%s\\n" "''\${*}"
+      printf "NONO args=%s no-save-prompt=%s\\n" "''\${*}" "''\${NONO_NO_SAVE_PROMPT:-}"
       exit 0
     fi
     printf "NONO unexpected args=%s\\n" "''\${*}" >&2
@@ -143,13 +143,13 @@ function launcherBin(variant) {
 }
 
 // Run a built stub launcher with a controlled env. `env` is merged over a
-// CLEANED process.env: OPENCODE_NONO* and XDG_* keys are stripped first so an
-// ambient launcher var or the flake-check sandbox's XDG dirs cannot leak into
-// a scenario that means to leave them unset.
+// CLEANED process.env: OPENCODE_NONO*, NONO_NO_SAVE_PROMPT, and XDG_* keys are
+// stripped first so an ambient launcher var or the flake-check sandbox's XDG
+// dirs cannot leak into a scenario that means to leave them unset.
 function runLauncher(variant, env = {}) {
   const cleaned = { ...process.env };
   for (const key of Object.keys(cleaned)) {
-    if (key.startsWith('OPENCODE_NONO') || key.startsWith('XDG_')) {
+    if (key.startsWith('OPENCODE_NONO') || key.startsWith('XDG_') || key === 'NONO_NO_SAVE_PROMPT') {
       delete cleaned[key];
     }
   }
@@ -183,9 +183,10 @@ test('OPENCODE_NONO=disabled resolves the override reason, not host-default (R3.
 test('OPENCODE_NONO=audit execs nono run with the audit default profile (R3.2)', () => {
   const result = runLauncher('okComplete', { OPENCODE_NONO: 'audit' });
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-  // The launcher exports the contract on the env it execs `nono` with, but the
-  // stub nono only echoes its argv — so assert the exec SHAPE here.
+  // The stub nono echoes its argv and no-save-prompt env, making both parts of
+  // the noninteractive launch contract observable.
   assert.match(result.stdout, /NONO args=run --profile opencode-audit --allow-cwd -- .*opencode arg1 arg2/);
+  assert.match(result.stdout, /no-save-prompt=1/);
   assert.doesNotMatch(result.stdout, /OPENCODE eff=/); // bare opencode never ran
 });
 
