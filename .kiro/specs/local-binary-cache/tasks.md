@@ -184,7 +184,7 @@
   - _Boundary: Shopify Host Integration_
 
 - [ ] 6. Validate end-to-end integration and recovery
-- [ ] 6.1 Complete live-host render and secret-safety coverage
+- [x] 6.1 Complete live-host render and secret-safety coverage
   - Assert both host roles, endpoint, trust, secret paths, service contracts, retention, and schedules.
   - Include poisoned-secret non-vacuity fixtures and required-field failures.
   - Done when both `darwinConfigurations` and all render/security fixtures pass.

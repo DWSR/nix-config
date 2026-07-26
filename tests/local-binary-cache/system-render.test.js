@@ -242,6 +242,109 @@ function evalLiveRetentionPolicy(hostName, moduleSource = null) {
   );
 }
 
+function assertRequiredLiveHostFields(hostRole, contract) {
+  const expectedTokenFile = hostRole === 'personal'
+    ? '/run/secrets/local-binary-cache-personal-token'
+    : '/run/secrets/local-binary-cache-shopify-token';
+
+  assert.equal(contract.hostRole, hostRole, `${hostRole}: required host role`);
+  assert.equal(
+    contract.endpoint,
+    'https://Brandons-MacBook-Pro.local:8443',
+    `${hostRole}: required cache endpoint`,
+  );
+  assert.equal(
+    contract.cachePublicKey,
+    personalCachePublicKey,
+    `${hostRole}: required cache signing key`,
+  );
+  assert.equal(
+    contract.caCertificate,
+    contract.expectedCaCertificate,
+    `${hostRole}: required cache CA trust path`,
+  );
+  assert.equal(contract.cacheName, 'darwin', `${hostRole}: required publication cache scope`);
+  assert.equal(
+    contract.publisher.tokenFile,
+    expectedTokenFile,
+    `${hostRole}: required publisher token path`,
+  );
+  assert.equal(
+    contract.publisher.stateDirectory,
+    '/var/db/local-binary-cache/publisher',
+    `${hostRole}: required publisher state path`,
+  );
+
+  if (hostRole === 'personal') {
+    assert.equal(contract.server.enable, true, 'personal: required cache server role');
+    assert.equal(contract.server.retentionDays, 30, 'personal: required Attic retention');
+    assert.equal(contract.server.gcInterval, '12 hours', 'personal: required Attic GC interval');
+    assert.equal(
+      contract.server.tlsKeyFile,
+      '/run/secrets/local-binary-cache-tls-key',
+      'personal: required TLS key path',
+    );
+    assert.equal(
+      contract.jwtPrivateKey,
+      '/run/secrets/local-binary-cache-jwt-private-key',
+      'personal: required JWT private key path',
+    );
+  } else {
+    assert.equal(contract.server.enable, false, 'shopify: cache server role must remain disabled');
+  }
+}
+
+function evalRequiredLiveHostContract(hostName, moduleSource = null) {
+  return evalLiveHost(
+    hostName,
+    `let
+      cache = config.services.localBinaryCache;
+    in {
+      hostRole = cache.hostRole;
+      endpoint = cache.endpoint;
+      cacheName = cache.cacheName;
+      cachePublicKey = cache.cachePublicKey;
+      caCertificate = if cache.caCertificate == null then null else toString cache.caCertificate;
+      expectedCaCertificate = toString flake.outPath + "/certificates/local-binary-cache/ca.pem";
+      publisher = {
+        tokenFile = cache.publisher.tokenFile;
+        stateDirectory = cache.publisher.stateDirectory;
+      };
+      server = {
+        enable = cache.server.enable;
+        retentionDays = cache.server.retentionDays;
+        gcInterval = cache.server.gcInterval;
+        tlsKeyFile = cache.server.tlsKeyFile;
+      };
+      jwtPrivateKey = cache.bootstrap.jwtPrivateKey;
+    }`,
+    moduleSource,
+  );
+}
+
+function assertLiveHostMutationRejected(
+  hostRole,
+  hostName,
+  field,
+  moduleSource,
+  diagnostic,
+) {
+  assert.throws(
+    () => assertRequiredLiveHostFields(
+      hostRole,
+      evalRequiredLiveHostContract(hostName, moduleSource),
+    ),
+    error => {
+      assert.match(
+        `${error.message}\n${error.stderr ?? ''}`,
+        diagnostic,
+        `${hostName} ${field} mutation failed without the required diagnostic`,
+      );
+      return true;
+    },
+  );
+}
+
 test('render harness evaluates an isolated nix-darwin fixture', () => {
   const rendered = evalDarwinFixture(
     `{ ... }: {
@@ -311,6 +414,90 @@ test('live hosts render exact seven-day GC and distinct weekly optimisation sche
       minFree: null,
     });
   }
+});
+
+test('live-host required fields fail closed through Nix module mutations', () => {
+  const contracts = {
+    personal: evalRequiredLiveHostContract('Brandons-MacBook-Pro'),
+    shopify: evalRequiredLiveHostContract('ShopifyLaptop'),
+  };
+
+  assertRequiredLiveHostFields('personal', contracts.personal);
+  assertRequiredLiveHostFields('shopify', contracts.shopify);
+
+  const sharedMutations = [
+    {
+      field: 'endpoint',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.endpoint = lib.mkForce "https://alternate.local:8443";
+      }`,
+      diagnostic: /option `services\.localBinaryCache\.endpoint'/,
+    },
+    {
+      field: 'cache signing key',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.cachePublicKey = lib.mkForce ${JSON.stringify(cachePublicKey)};
+      }`,
+      diagnostic: role => new RegExp(`${role}: required cache signing key`),
+    },
+    {
+      field: 'CA trust path',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.caCertificate = lib.mkForce ${tlsCertificate};
+      }`,
+      diagnostic: role => new RegExp(`${role}: required cache CA trust path`),
+    },
+    {
+      field: 'publication cache scope',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.cacheName = lib.mkForce "alternate";
+      }`,
+      diagnostic: /option `services\.localBinaryCache\.cacheName'/,
+    },
+    {
+      field: 'publisher token path',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.publisher.tokenFile =
+          lib.mkForce "/run/secrets/local-binary-cache-mutated-token";
+      }`,
+      diagnostic: role => new RegExp(`${role}: required publisher token path`),
+    },
+    {
+      field: 'publisher state path',
+      moduleSource: `{ lib, ... }: {
+        services.localBinaryCache.publisher.stateDirectory =
+          lib.mkForce "/var/db/local-binary-cache/mutated-publisher";
+      }`,
+      diagnostic: role => new RegExp(`${role}: required publisher state path`),
+    },
+  ];
+
+  for (const [role, hostName] of [
+    ['personal', 'Brandons-MacBook-Pro'],
+    ['shopify', 'ShopifyLaptop'],
+  ]) {
+    for (const mutation of sharedMutations) {
+      assertLiveHostMutationRejected(
+        role,
+        hostName,
+        mutation.field,
+        mutation.moduleSource,
+        typeof mutation.diagnostic === 'function'
+          ? mutation.diagnostic(role)
+          : mutation.diagnostic,
+      );
+    }
+  }
+
+  assertLiveHostMutationRejected(
+    'personal',
+    'Brandons-MacBook-Pro',
+    'Attic retention',
+    `{ lib, ... }: {
+      services.localBinaryCache.server.retentionDays = lib.mkForce 31;
+    }`,
+    /option `services\.localBinaryCache\.server\.retentionDays'/,
+  );
 });
 
 test('live personal host renders consumer and root publisher ready mode', () => {
@@ -1220,6 +1407,11 @@ test('ready mode wires exact declared trust and identity into the module-generat
   );
   for (const [name, value] of Object.entries(secretValues)) {
     fs.writeFileSync(fixture.statePaths[name], `${value}\n`, { mode: 0o400 });
+    assert.equal(
+      fs.readFileSync(fixture.statePaths[name], 'utf8'),
+      `${value}\n`,
+      `${name} poison must be present in the fixture input`,
+    );
   }
 
   const rendered = evalDarwinFixture(
@@ -1254,6 +1446,10 @@ test('ready mode wires exact declared trust and identity into the module-generat
     }`,
     `let
       cache = config.services.localBinaryCache;
+      server = cache.server;
+      publisherService = config.launchd.daemons.local-binary-cache-publisher.serviceConfig;
+      caddyWrapper = "${'${server.proxyWrapper}'}/bin/local-binary-cache-caddy";
+      postBuildHook = "${'${cache.publisher.postBuildHookPackage}'}/bin/local-binary-cache-post-build-hook";
     in {
       configuredCaCertificate = toString cache.caCertificate;
       configuredCacheName = cache.cacheName;
@@ -1270,6 +1466,23 @@ test('ready mode wires exact declared trust and identity into the module-generat
       postBuildHookPackage = if cache.publisher.postBuildHookPackage == null
         then null
         else toString cache.publisher.postBuildHookPackage;
+      secretSafeArtifacts = {
+        activation = config.system.activationScripts.launchd.text;
+        atticConfig = builtins.readFile server.configFile;
+        atticPlist = builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-attic.plist";
+        caddyConfig = builtins.readFile server.proxyConfigFile;
+        caddyPlist = builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-caddy.plist";
+        caddyWrapper = builtins.readFile caddyWrapper;
+        nixConfig = builtins.readFile config.environment.etc."nix/nix.conf".source;
+        postBuildHook = builtins.readFile postBuildHook;
+        publisher = builtins.readFile (builtins.head publisherService.ProgramArguments);
+        publisherPlist = builtins.readFile
+          "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-publisher.plist";
+        readiness = builtins.readFile cache.readiness.command;
+        readinessDerivation = builtins.readFile cache.readiness.package.drvPath;
+      };
     }`,
   );
 
@@ -1300,6 +1513,20 @@ test('ready mode wires exact declared trust and identity into the module-generat
   assert.equal(rendered.externalHookInclude, null);
   assert.equal(rendered.externalHookPreflightPackage, null);
   assert.notEqual(rendered.postBuildHookPackage, null);
+  assert.deepEqual(Object.keys(rendered.secretSafeArtifacts).sort(), [
+    'activation',
+    'atticConfig',
+    'atticPlist',
+    'caddyConfig',
+    'caddyPlist',
+    'caddyWrapper',
+    'nixConfig',
+    'postBuildHook',
+    'publisher',
+    'publisherPlist',
+    'readiness',
+    'readinessDerivation',
+  ]);
   const readinessArtifacts = [rendered.readinessText, rendered.readinessDerivationText];
   for (const [name, secretPath] of [
     ['publisher token', fixture.statePaths.publisherToken],
@@ -1311,8 +1538,12 @@ test('ready mode wires exact declared trust and identity into the module-generat
     }
   }
   for (const [name, secretValue] of Object.entries(secretValues)) {
-    for (const artifact of readinessArtifacts) {
-      assert.equal(artifact.includes(secretValue), false, `${name} value leaked into readiness package`);
+    for (const [artifactName, artifact] of Object.entries(rendered.secretSafeArtifacts)) {
+      assert.equal(
+        artifact.includes(secretValue),
+        false,
+        `${name} value leaked into ${artifactName}`,
+      );
     }
   }
 });
