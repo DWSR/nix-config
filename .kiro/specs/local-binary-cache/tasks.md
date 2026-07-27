@@ -200,7 +200,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 6.2, 7.3_
   - _Boundary: Publisher Tests_
 
-- [ ] 6.3 Validate reuse in both producer orders
+- [x] 6.3 Validate reuse in both producer orders
   - After committed ready configurations are active, pause the personal publisher, build a unique output, observe its deterministic pending root, resume publication, and verify logged root removal.
   - Make the personal producer output unreachable, collect its local store path, and substitute the signed cache copy on Shopify without recompilation.
   - Repeat the paused-publisher root observation, logged drain, producer-store collection, and signed substitution flow with Shopify as producer and personal as consumer.
@@ -208,7 +208,6 @@
   - _Depends: 6.1, 6.2_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 5.1, 5.2, 5.3, 5.4, 5.7_
   - _Boundary: Full Feature Integration_
-  - _Blocked: Task 6.3 requires privileged control of both hosts; this sandbox has neither root access nor a control plane to the personal host, whose cache endpoint is unavailable._
 
 - [ ] 6.4 Validate cache outage fallback and recovery
   - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation.
@@ -249,3 +248,5 @@
 - Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.5 owns live ready-status on both hosts.
 - Task 5.6 publisher-only activation must omit server-role variables at the shared module source; host-local no-op references hide boundary defects and alter generated activation scripts.
 - Task 6.2 substituted-output coverage needs distinct isolated Nix stores, an offline `file://` cache, disabled builders/fallback, and the generated hook; an idle publisher queue is tautological.
+- Task 6.3 live validation must start with an empty pending queue; an older failed root blocks later roots by design because the publisher stops at the first failure.
+- Task 6.3 exposed TEC mutation of a store-backed `nix.custom.conf` sentinel; commit `e350668` installs a regular root-owned sentinel outside the store, after which the repaired queue drained and both signed producer orders substituted without rebuild.
