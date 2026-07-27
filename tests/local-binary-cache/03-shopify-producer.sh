@@ -99,8 +99,12 @@ sudo /usr/bin/grep -F \
   --cacert "$repo_root/certificates/local-binary-cache/ca.pem" \
   "$endpoint/$root_id.narinfo" >/dev/null
 
-# Delete only the UUID-named producer output after publication succeeds.
-sudo nix-store --delete "$output"
+# The first scan can remove the dangling auto GC root while still considering
+# its target live. Retry the same exact-path deletion after that stale root is
+# gone; any other live root still makes the second attempt fail closed.
+if ! sudo nix-store --delete "$output"; then
+  sudo nix-store --delete "$output"
+fi
 [[ ! -e "$output" ]] || fail "producer output remains in the local store: $output"
 
 printf 'OUT=%s\nNONCE=%s\n' "$output" "$nonce"
