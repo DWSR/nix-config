@@ -52,6 +52,11 @@ esac
 publisher_loaded || fail "publisher launchd job is not loaded"
 sudo test -d "$pending_directory" \
   || fail "pending directory is unavailable: $pending_directory"
+existing_pending="$(
+  sudo /usr/bin/find "$pending_directory" -mindepth 1 -maxdepth 1 -print -quit
+)"
+[[ -z "$existing_pending" ]] \
+  || fail "pending queue is not empty before smoke: $existing_pending"
 
 trap cleanup EXIT
 trap 'exit 129' HUP

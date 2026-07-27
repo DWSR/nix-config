@@ -978,6 +978,13 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
         certificateFiles = map toString config.security.pki.certificateFiles;
         settings = config.nix.settings;
       };
+      tecSentinel = {
+        managedStoreTargets = map (
+          name:
+          let entry = builtins.getAttr name config.environment.etc;
+          in entry.target or name
+        ) (builtins.attrNames config.environment.etc);
+      };
       services = {
         inherit hasAtticDaemon hasCaddyDaemon hasPublisherDaemon;
         publisherArguments = publisherService.ProgramArguments or null;
@@ -990,6 +997,7 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
       };
       artifacts = {
         checksActivation = config.system.activationScripts.checks.text;
+        etcActivation = config.system.activationScripts.etc.text;
         launchdActivation = config.system.activationScripts.launchd.text;
         nixConfig = builtins.readFile config.environment.etc."nix/nix.conf".source;
         postBuildHook = readNullable
@@ -1082,6 +1090,50 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
   assert.equal(rendered.consumerSurfaces.settings['narinfo-cache-negative-ttl'], 60);
   assert.equal(rendered.consumerSurfaces.settings['require-sigs'], true);
   assert.equal(rendered.consumerSurfaces.settings['ssl-cert-file'], combinedCaBundle);
+
+  assert.equal(rendered.tecSentinel.managedStoreTargets.includes('nix/nix.custom.conf'), false);
+  const sentinelMarkers = [
+    'set -eu',
+    'tec_nix_custom_conf=/etc/nix/nix.custom.conf',
+    'tec_nix_custom_tmp="$tec_nix_custom_conf.nix-darwin.$$"',
+    'rm -f -- "$tec_nix_custom_tmp"\' EXIT',
+    "trap 'exit 129' HUP",
+    "trap 'exit 130' INT",
+    "trap 'exit 143' TERM",
+    '-o root -g wheel -m 0644 /dev/null "$tec_nix_custom_tmp"',
+    '-fT -- "$tec_nix_custom_tmp" "$tec_nix_custom_conf"',
+  ];
+  for (const marker of sentinelMarkers) {
+    assert.equal(rendered.artifacts.etcActivation.includes(marker), true);
+  }
+  const sentinelPositions = sentinelMarkers.map(marker => (
+    rendered.artifacts.etcActivation.indexOf(marker)
+  ));
+  assert.deepEqual(sentinelPositions, sentinelPositions.toSorted((left, right) => left - right));
+  const exitTrapPosition = rendered.artifacts.etcActivation.indexOf(
+    'rm -f -- "$tec_nix_custom_tmp"\' EXIT',
+  );
+  const termTrapPosition = rendered.artifacts.etcActivation.indexOf("trap 'exit 143' TERM");
+  const installPosition = rendered.artifacts.etcActivation.indexOf(
+    '-o root -g wheel -m 0644 /dev/null "$tec_nix_custom_tmp"',
+  );
+  const preinstallRemovePosition = rendered.artifacts.etcActivation.indexOf(
+    'rm -f -- "$tec_nix_custom_tmp"',
+    termTrapPosition,
+  );
+  assert.ok(exitTrapPosition < termTrapPosition);
+  assert.ok(termTrapPosition < preinstallRemovePosition);
+  assert.ok(preinstallRemovePosition < installPosition);
+  assert.equal(
+    rendered.artifacts.etcActivation.includes(
+      'tec_nix_custom_tmp="$tec_nix_custom_conf"',
+    ),
+    false,
+  );
+  assert.equal(
+    rendered.artifacts.etcActivation.includes('/dev/null "$tec_nix_custom_conf"'),
+    false,
+  );
 
   const includeLine = '!include nix.conf.d/shopify.conf';
   const includeLines = rendered.artifacts.nixConfig.split('\n').filter(line => line === includeLine);
