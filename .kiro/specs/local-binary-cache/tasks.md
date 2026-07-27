@@ -152,7 +152,7 @@
   - Create `darwin` only after the bootstrap runtime is healthy.
   - Verify anonymous visibility, priority 30, official/community filters, and configured/live cache-key equality.
   - Issue distinct host subjects with push-only `darwin` scope and one-year validity; SOPS-encrypt both tokens and commit the public cache key.
-  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; live ready-mode status is verified by Task 6.5.
+  - Done when bootstrap/API evidence passes and all private material is encrypted-only with correct ownership; live ready-mode status is verified by Task 6.6.
   - _Depends: 2.4, 5.2_
   - _Requirements: 1.2, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.3, 6.5_
   - _Boundary: Bootstrap Tool, Public Trust Bundle_
@@ -209,19 +209,29 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 5.1, 5.2, 5.3, 5.4, 5.7_
   - _Boundary: Full Feature Integration_
 
-- [ ] 6.4 Validate cache outage fallback and recovery
-  - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation.
-  - Verify pending roots survive the outage, then restart services and confirm the publisher drains them.
-  - Done when captured command evidence shows uninterrupted fallback and successful recovery.
+- [ ] 6.4 Establish a safe outage publisher harness
+  - Invoke the exact deployed publisher executable as root from the launchd-declared working directory with a validated, sanitized launchd-equivalent environment.
+  - Acquire non-interactive privilege before endpoint mutation and reject every later operation that would prompt.
+  - Kill and reap the isolated publisher process group on success, failure, HUP, INT, TERM, timeout, and output overflow.
+  - Bound each invocation to 180 seconds and 64 KiB of exclusive root-owned evidence without trusting the persistent publisher log.
+  - Done when behavioral probes prove no orphan process, ambient-environment leakage, interactive prompt, replay, unbounded output, or incomplete cleanup.
   - _Depends: 6.3_
+  - _Requirements: 2.3, 2.4, 6.1, 6.2, 7.3_
+  - _Boundary: Publisher Tests, Full Feature Integration_
+
+- [ ] 6.5 Validate cache outage fallback and recovery
+  - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation.
+  - Verify pending roots survive the outage through the approved harness, then restart services and confirm the publisher drains them.
+  - Done when captured command evidence shows uninterrupted fallback and successful recovery.
+  - _Depends: 6.4_
   - _Requirements: 2.2, 2.3, 2.4, 3.2, 3.3, 5.7, 6.1, 6.2, 6.3, 6.4_
   - _Boundary: Full Feature Integration_
 
-- [ ] 6.5 Validate network, trust, and service state
+- [ ] 6.6 Validate network, trust, and service state
   - Verify mDNS resolution, certificate SAN, configured/live cache key, launchd restart, and effective host hook/substituters.
   - Verify one-year token claims/scopes and absence of plaintext credentials in rendered artifacts or logs.
   - Done when status and host commands report healthy state on both hosts with no secret exposure.
-  - _Depends: 6.4_
+  - _Depends: 6.5_
   - _Requirements: 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.1, 6.2, 6.3, 6.4, 6.5, 7.1, 7.2, 7.3, 7.4, 7.5_
   - _Boundary: Full Feature Integration_
 
@@ -239,14 +249,16 @@
 - Task 3.4 runtime fixture injection does not prove module wiring; render tests must inspect the generated readiness executable for exact CA, endpoint, and key inputs plus secret-path exclusion.
 - Task 4.2 Shopify's external include can replace declarative cache lists, so post-include overrides must re-append the complete evaluated substituter/key sets and trust tests must use distinct identities on both host roles.
 - Task 5.1 identity tests must assert complete SAN/EKU and RSA algorithm contracts plus every SOPS recipient form; checking only expected entries can miss added identities or recipients.
-- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing live ready-mode status belongs to Task 6.5.
+- Task 5.3 completes on bootstrap/API and encrypted-artifact evidence; bootstrap-mode status is intentionally not-ready, and passing live ready-mode status belongs to Task 6.6.
 - Task 5.3 live bootstrap exposed six integration gaps: anonymous missing caches return 401, curl needs the declared CA, Attic's Rustls client needs process-scoped CA merging, Attic cannot share MCPProxy's loopback port 8080, Attic's exact Host check requires a lowercase allowlist for reqwest, and Caddy must normalize every upstream Host to that authority; commits `97ab16c`, `bd57d55`, `646e450`, `e6c953b`, `564f68c`, and `8d2e798` fix them and were activated before the successful checkpoint.
 - Task 5.4 is the independently reviewable shared Cache Module/Publisher Job prerequisite; Task 2.2 owns worker behavior, while Task 5.4 owns package injection, root queue/log activation, and the publisher LaunchDaemon.
 - Task 5.4 uses a dedicated cross-role render suite so the shared runtime can be reviewed and committed without pulling personal or Shopify ready-mode wiring into its boundary.
 - Task 5.5's Caddy HTTP 502 came from stale launchd penalty state after the old 8080 crash loop; bootout/bootstrap re-registration restored persistent Attic on 18080 and CA-verified HTTP 200 through Caddy.
 - Task 5.5 ends at static personal ready-mode evaluation so its reviewed configuration can be committed and delivered independently of runtime validation.
-- Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.5 owns live ready-status on both hosts.
+- Task 6.3 owns deterministic pending-root observation, logged publication drain, producer-store collection, and signed cross-host reuse for both producer orders; Task 6.6 owns live ready-status on both hosts.
 - Task 5.6 publisher-only activation must omit server-role variables at the shared module source; host-local no-op references hide boundary defects and alter generated activation scripts.
 - Task 6.2 substituted-output coverage needs distinct isolated Nix stores, an offline `file://` cache, disabled builders/fallback, and the generated hook; an idle publisher queue is tautological.
 - Task 6.3 live validation must start with an empty pending queue; an older failed root blocks later roots by design because the publisher stops at the first failure.
 - Task 6.3 exposed TEC mutation of a store-backed `nix.custom.conf` sentinel; commit `e350668` installs a regular root-owned sentinel outside the store, after which the repaired queue drained and both signed producer orders substituted without rebuild.
+- Task 6.4 owns the bounded launchd-equivalent publisher harness; Task 6.5 consumes it for live outage evidence, and Task 6.6 owns final ready-state validation.
+- Persistent publisher logs cannot prove append continuity under same-inode truncate/regrow; outage evidence must come from a bounded per-invocation capture with complete process cleanup.

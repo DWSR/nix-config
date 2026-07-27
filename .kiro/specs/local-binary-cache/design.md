@@ -355,6 +355,7 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 | Cache public-key mismatch | Readiness blocked; publisher/consumer disabled by operator rollback | Upstream/local paths remain. |
 | Undeclared external post-build hook | Activation fails with conflicting source | Existing daemon remains unchanged. |
 | Cache database loss | Stop ready rollout; discard orphan storage; explicit rebootstrap | Upstream/local paths remain. |
+| Outage harness interruption, bound overrun, or privilege loss | Kill and reap the isolated publisher group, restore launchd/Caddy, and reject the evidence | None; the pending root remains. |
 
 ### Monitoring
 
@@ -376,12 +377,15 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 - Stub Attic to verify one-at-a-time order, root removal on success/already-present, retention on failure, and batch stop/retry.
 - Verify invalid/broken roots are logged and retained or quarantined according to the component contract.
 - Verify status output detects key mismatch, endpoint failure, effective-hook drift, and pending age.
+- Verify the outage harness invokes the exact deployed publisher from its declared working directory with a sanitized launchd-equivalent environment.
+- Verify non-interactive privilege preflight and process-group cleanup on success, failure, HUP, INT, TERM, timeout, and output overflow.
+- Bound each synchronous publisher invocation to 180 seconds and 64 KiB of exclusive root-owned evidence.
 
 ### Integration and manual smoke
 
 - Build a unique fixture on personal, verify publication, GC the local store path, and substitute it on Shopify.
 - Repeat with Shopify as producer and personal cache as receiver; verify no synchronous build delay during a simulated outage.
-- Stop Attic/Caddy and verify Shopify falls back to upstream/local build.
+- Stop only Caddy, verify Shopify completes a local fallback build, retains its pending root, then use the approved outage harness to prove failure and post-restore drain.
 - Verify the certificate SAN, mDNS hostname, cache key, launchd restart, and effective Shopify Nix config on both hosts.
 
 ## Security Considerations
