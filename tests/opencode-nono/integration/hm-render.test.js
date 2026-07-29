@@ -267,6 +267,27 @@ test('opencode-managed profile content: groups, open_port, allow_vars (R4.1/R4.3
   }
 });
 
+test('~/.local/logs has profile-appropriate sandbox access', () => {
+  const rendered = getRender();
+  const logsPath = '$HOME/.local/logs';
+
+  for (const [hostKey, host] of Object.entries(rendered)) {
+    for (const key of ['opencode-managed', 'opencode-audit']) {
+      const profile = JSON.parse(host.profileTexts[key]);
+      assert.ok(
+        profile.filesystem.allow.includes(logsPath),
+        `${hostKey}/${key} filesystem.allow must contain ${logsPath}`,
+      );
+    }
+
+    const review = JSON.parse(host.profileTexts['opencode-review']);
+    assert.ok(
+      review.filesystem.read.includes(logsPath),
+      `${hostKey}/opencode-review filesystem.read must contain ${logsPath}`,
+    );
+  }
+});
+
 test('git access is denied on every profile: no git_config group, ~/.config/git denied', () => {
   const rendered = getRender();
 

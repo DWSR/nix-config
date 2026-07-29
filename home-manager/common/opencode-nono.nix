@@ -61,10 +61,10 @@
 let
   cfg = config.programs.opencode-nono;
 
-  # The opencode data paths granted under `filesystem.allow` (managed +
-  # audit) and `filesystem.read` (review). The first seven are the
+  # The runtime paths granted under `filesystem.allow` (managed + audit) and
+  # `filesystem.read` (review). The OpenCode paths and `$TMPDIR` are the
   # empirically-derived startup grant set (Task 2.2). `$HOME/.local/share/
-  # cavemem` is cavemem's capture database directory: the opencode cavemem
+  # cavemem` is cavemem's capture database directory: the OpenCode cavemem
   # plugin (home-manager/common/opencode-plugins/cavemem.js) spawns
   # `cavemem hook run <event>` INSIDE this sandbox, and that child writes
   # the SQLite DB at `home.cavemem.dataDir` (default
@@ -84,6 +84,7 @@ let
     "$HOME/.opencode"
     "$HOME/.local/share/opentui"
     "$HOME/.local/share/cavemem"
+    "$HOME/.local/logs"
     "$TMPDIR"
   ];
 
