@@ -43,9 +43,10 @@ let
   # upstreams below, built in the same attrset shape) to the array
   # entry mcpproxy expects. The attribute name becomes the `name`
   # field. The source `type` attribute (absent | "stdio" | "http" |
-  # "streamable-http") becomes the explicit `protocol`. `enabled` and
-  # `quarantined` are always set explicitly so the rendered config
-  # cannot be misread; mcpproxy's per-server defaults are bypassed.
+  # "streamable-http") becomes the explicit `protocol`. HTTP entries may
+  # also carry `headers` and `oauth`. `enabled` and `quarantined` are always
+  # set explicitly so the rendered config cannot be misread; mcpproxy's
+  # per-server defaults are bypassed.
   protocolOf = serverCfg: serverCfg.type or "stdio";
 
   renderServer =
@@ -69,6 +70,7 @@ let
             inherit (serverCfg) url;
           }
           // lib.optionalAttrs (serverCfg ? headers) { inherit (serverCfg) headers; }
+          // lib.optionalAttrs (serverCfg ? oauth) { inherit (serverCfg) oauth; }
         else
           { };
       # Per-server tool-discovery override. Only emitted when the source
@@ -376,7 +378,8 @@ in
         server `name` in the rendered array). Stdio servers use
         `command`, `args`, and optional `env`; HTTP and
         streamable-HTTP servers set `type = "http"` or
-        `type = "streamable-http"`, `url`, and optional `headers`.
+        `type = "streamable-http"`, `url`, and optional `headers` or
+        `oauth` configuration.
         An optional `tool_discovery_interval` (duration string such as
         `"1h"`, or `"0s"` to disable) overrides the global sweep cadence
         for that server. The renderer translates this attrset into

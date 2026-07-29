@@ -104,6 +104,13 @@ in
           headers.Authorization = "Bearer " + readKeychainSecret "mcp-explainify-token";
         };
 
+        fellow = {
+          type = "http";
+          url = "https://fellow.app/mcp";
+          # An empty object enables OAuth with Dynamic Client Registration.
+          oauth = { };
+        };
+
         tool-gateway = {
           type = "http";
           url = "https://tool-gateway.shopify.io/mcp";
