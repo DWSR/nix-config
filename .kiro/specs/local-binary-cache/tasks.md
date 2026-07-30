@@ -130,7 +130,7 @@
   - _Requirements: 5.3, 5.4, 5.5, 5.6, 5.8, 5.9, 7.1, 7.2, 7.5_
   - _Boundary: Retention Policy_
 
-- [ ] 5. Complete staged host integration
+- [x] 5. Complete staged host integration
 - [x] 5.1 Provision prerequisite public and encrypted identities
   - Generate the offline CA/leaf and RS256 pairs outside the bootstrap tool, then validate them through the preflight command.
   - Commit only public CA, leaf, and JWT verifier artifacts; SOPS-encrypt TLS/JWT private material with specified owners and `0400` modes.
@@ -209,22 +209,25 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 5.1, 5.2, 5.3, 5.4, 5.7_
   - _Boundary: Full Feature Integration_
 
-- [ ] 6.4 Establish a safe outage publisher harness
+- [x] 6.4 Establish bounded outage evidence and manual service recovery
   - Invoke the exact deployed publisher executable as root from the launchd-declared working directory with a validated, sanitized launchd-equivalent environment.
-  - Acquire non-interactive privilege before endpoint mutation and reject every later operation that would prompt.
-  - Kill and reap the isolated publisher process group on success, failure, HUP, INT, TERM, timeout, and output overflow.
-  - Bound each invocation to 180 seconds and 64 KiB of exclusive root-owned evidence without trusting the persistent publisher log.
-  - Done when behavioral probes prove no orphan process, ambient-environment leakage, interactive prompt, replay, unbounded output, or incomplete cleanup.
+  - Acquire non-interactive privilege before service mutation; emit the exact fixed `--recover` invocation before each Caddy or publisher `bootout`.
+  - Add idempotent Caddy and publisher recovery modes that accept no caller-selected service data, bootstrap only their declared plist when needed, and confirm applicable health.
+  - Restore services explicitly on uninterrupted paths; remove Bash EXIT/HUP/INT/TERM service-restoration ownership so signal or early-exit paths require manual recovery.
+  - Keep bounded publisher-process cleanup automatic on success, failure, HUP, INT, TERM, timeout, and overflow, with a 180-second and 64-KiB exclusive root-owned evidence limit.
+  - Replace automatic service-restoration race probes with recovery-guidance, recovery-idempotency, unrecovered-retry, and bounded process-cleanup coverage.
+  - Done when focused behavior checks prove fixed recovery guidance precedes mutation, retries fail until health is restored, no publisher process survives, and evidence cannot be replayed or exceed its bounds.
   - _Depends: 6.3_
-  - _Requirements: 2.3, 2.4, 6.1, 6.2, 7.3_
+  - _Requirements: 2.3, 2.4, 6.2, 6.6, 6.7, 6.8, 6.9, 7.3, 7.6_
   - _Boundary: Publisher Tests, Full Feature Integration_
 
 - [ ] 6.5 Validate cache outage fallback and recovery
-  - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation.
-  - Verify pending roots survive the outage through the approved harness, then restart services and confirm the publisher drains them.
-  - Done when captured command evidence shows uninterrupted fallback and successful recovery.
+  - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation while pending roots remain protected.
+  - Exercise the printed personal Caddy and Shopify publisher recovery modes against stopped and already-loaded jobs, and verify preflight rejects each unrecovered state.
+  - Complete the normal recovery handoff and confirm the bounded publisher drains the retained root after endpoint health returns.
+  - Done when captured host evidence shows fallback, manual recovery, idempotent loaded-state recovery, retry gating, and successful queue drain.
   - _Depends: 6.4_
-  - _Requirements: 2.2, 2.3, 2.4, 3.2, 3.3, 5.7, 6.1, 6.2, 6.3, 6.4_
+  - _Requirements: 2.2, 2.3, 2.4, 3.2, 3.3, 5.7, 6.1, 6.2, 6.3, 6.6, 6.7, 6.8, 7.6_
   - _Boundary: Full Feature Integration_
 
 - [ ] 6.6 Validate network, trust, and service state
@@ -262,3 +265,5 @@
 - Task 6.3 exposed TEC mutation of a store-backed `nix.custom.conf` sentinel; commit `e350668` installs a regular root-owned sentinel outside the store, after which the repaired queue drained and both signed producer orders substituted without rebuild.
 - Task 6.4 owns the bounded launchd-equivalent publisher harness; Task 6.5 consumes it for live outage evidence, and Task 6.6 owns final ready-state validation.
 - Persistent publisher logs cannot prove append continuity under same-inode truncate/regrow; outage evidence must come from a bounded per-invocation capture with complete process cleanup.
+- Task 6.4 uses manual launchd recovery after signal or early exit: normal paths restore explicitly, fixed `--recover` modes are printed before mutation, and retries remain blocked until service health is confirmed.
+- Manual launchd recovery does not weaken `outage-log-io.pl`; bounded publisher invocations still terminate and reap their process group on signal, timeout, overflow, and command failure.

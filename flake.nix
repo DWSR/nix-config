@@ -1629,8 +1629,16 @@
               '';
 
           local-binary-cache-render =
+            let
+              publisherValidatorFixture = pkgs.writeShellScriptBin "local-binary-cache-publish" ''
+                exit 0
+              '';
+            in
             pkgs.runCommand "local-binary-cache-render"
               {
+                ATTIC_CLIENT_EXECUTABLE = pkgs.lib.getExe pkgs.unstable.attic-client;
+                ATTIC_CLIENT_SOURCE = pkgs.unstable.attic-client.src;
+                PUBLISHER_VALIDATOR_EXECUTABLE = pkgs.lib.getExe publisherValidatorFixture;
                 nativeBuildInputs = [
                   pkgs.bash
                   pkgs.nix
@@ -1650,6 +1658,11 @@
                 bash tests/local-binary-cache/module-errors.test.sh
                 node --test \
                   tests/local-binary-cache/identity-artifacts.test.js \
+                  tests/local-binary-cache/outage-evidence.test.js \
+                  tests/local-binary-cache/outage-publisher-control.test.js \
+                  tests/local-binary-cache/outage-restore.test.js \
+                  tests/local-binary-cache/outage-runner.test.js \
+                  tests/local-binary-cache/outage-smoke.test.js \
                   tests/local-binary-cache/publisher-runtime-render.test.js \
                   tests/local-binary-cache/system-render.test.js
                 touch $out

@@ -79,6 +79,10 @@ The `local-binary-cache` feature shares locally produced Nix outputs between the
 3. When the cache server is healthy, the Personal Cache Service shall provide an operator-verifiable health result.
 4. If cache state is lost, both hosts shall remain able to use upstream substitutes and local builds.
 5. If required cache identity has not been bootstrapped, the Personal Cache Service shall not advertise an unsigned cache as ready.
+6. When a controlled outage procedure reaches its recovery step without interruption, the Outage Verification shall restore the stopped service and verify its health.
+7. If a controlled outage procedure is interrupted while a service is stopped, the Outage Verification shall report that manual service recovery is required.
+8. While a service remains stopped after an interrupted outage procedure, the Outage Verification shall reject a new outage run.
+9. If a bounded publisher invocation is interrupted, the Outage Verification shall terminate and reap that invocation before returning control to the operator.
 
 ### Requirement 7: Declarative verification
 **Objective:** As the repository maintainer, I want cache behavior checked from both host configurations, so that trust, fallback, publication, and GC policy do not drift silently.
@@ -89,3 +93,4 @@ The `local-binary-cache` feature shares locally produced Nix outputs between the
 3. When publication fixtures contain duplicate or failed entries, repository checks shall verify idempotent retention and retry behavior.
 4. When rendered service definitions are inspected, repository checks shall verify that secret values are absent.
 5. If either host's required cache endpoint, trust key, retention policy, or publication scope is missing, repository checks shall fail.
+6. When repository checks exercise controlled outage interruption, they shall verify manual recovery guidance and rejection of retries until service health is restored.

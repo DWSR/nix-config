@@ -28,6 +28,7 @@ The feature adds a signed LAN binary cache on `Brandons-MacBook-Pro`, asynchrono
 - Both-host local-cache preference/fallback and Shopify effective-hook conflict detection.
 - Attic retention plus host-specific GC/optimization schedules and optional personal disk-pressure thresholds.
 - Render, script-behavior, host-wiring, and manual smoke verification.
+- Explicit recovery and retry gating when a controlled outage run exits before its normal recovery step.
 
 ### Out of Boundary
 
@@ -35,6 +36,7 @@ The feature adds a signed LAN binary cache on `Brandons-MacBook-Pro`, asynchrono
 - Other post-build-hook behavior beyond explicitly declared chaining.
 - CA issuance/rotation automation, cache backup, quota enforcement, or cache-content recovery.
 - Changes to Tailscale, SSH, build machines, or upstream cache ownership.
+- Automatic launchd service restoration after an interrupted controlled-outage run.
 
 ### Allowed Dependencies
 
@@ -50,6 +52,7 @@ The feature adds a signed LAN binary cache on `Brandons-MacBook-Pro`, asynchrono
 - Endpoint hostname/port, CA, leaf certificate, or cache signing identity rotation.
 - A distributed builder or another post-build hook being introduced.
 - Shopify's external include defining cache, trust, TLS, or post-build-hook values.
+- Controlled-outage recovery commands, fixed launchd labels/plists, or preflight health gates changing.
 
 ## Architecture
 
@@ -87,11 +90,13 @@ Dependency direction: public trust data → module options → rendered configs/
 
 Key decisions:
 
-- `atticd` listens only on `127.0.0.1:8080`; Caddy serves `https://Brandons-MacBook-Pro.local:8443` using explicit certificates.
+- `atticd` listens only on `127.0.0.1:18080`; Caddy serves `https://Brandons-MacBook-Pro.local:8443` using explicit certificates.
 - Caddy and Attic run as the existing login user through system daemons; publishers run as root to manage GC roots.
 - The login user owns Attic state and Attic/Caddy logs. Root owns pending roots, publisher logs, host tokens, and the operator-only JWT private key; the login user owns the TLS leaf key with mode `0400`.
 - The server verifies RS256 publication tokens with a committed public key. The private token-signing key is operator-only.
 - Bootstrap mode exposes Attic/TLS but disables publisher and consumer capabilities until trust artifacts and SOPS tokens exist.
+- Controlled-outage scripts restore services explicitly on uninterrupted paths. An interrupted path requires an operator-invoked, idempotent recovery mode before preflight permits another run.
+- The bounded publisher runner retains automatic process-group cleanup; manual recovery applies only to the stopped launchd service.
 
 ### Technology Stack
 
@@ -126,7 +131,16 @@ certificates/local-binary-cache/
 tests/local-binary-cache/
 ├── helpers.js                      # Isolated nix-darwin fixture helpers
 ├── system-render.test.js           # Module, host, trust, schedule, and secret checks
-└── publisher.test.js               # Queue, duplicate, success, and retry behavior
+├── publisher.test.js               # Queue, duplicate, success, and retry behavior
+├── 05-shopify-outage-preflight.sh  # Full-run health and unrecovered-service retry gate
+├── 06-personal-endpoint-outage.sh  # Caddy outage flow and idempotent recovery mode
+├── 07-shopify-outage-producer.sh   # Publisher outage flow and idempotent recovery mode
+├── 08-shopify-outage-recovery.sh   # Normal recovery and retained-root proof
+├── outage-log-io.pl                # Bounded publisher process-group and evidence runner
+├── outage-publisher-control.sh     # Fixed publisher contract, stop, restore, and recovery helpers
+├── outage-evidence.test.js         # Recovery guidance, retry gate, and evidence tests
+├── outage-restore.test.js          # Caddy normal/manual recovery contract tests
+└── outage-smoke.test.js            # Cross-script boundary and safety checks
 ```
 
 ### Modified Files
@@ -184,6 +198,20 @@ stateDiagram-v2
 
 Ready mode requires the configured cache public key to match live `attic-cache-info`. Database loss never auto-creates a replacement cache.
 
+### Controlled outage recovery
+
+```mermaid
+stateDiagram-v2
+  [*] --> Ready
+  Ready --> ServiceStopped: Outage starts
+  ServiceStopped --> Restored: Normal recovery step
+  ServiceStopped --> ManualRecoveryRequired: Run interrupted
+  ManualRecoveryRequired --> Restored: Operator recovery
+  Restored --> Ready: Health confirmed
+```
+
+Recovery guidance is emitted before service mutation. The normal path restores explicitly; an interrupted path makes no automatic-restoration claim and cannot be retried until the fixed recovery mode confirms the service is loaded and healthy.
+
 ## Requirements Traceability
 
 | Requirements | Summary | Components | Contracts / Flows |
@@ -193,8 +221,9 @@ Ready mode requires the configured cache public key to match live `attic-cache-i
 | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 | Both-host preference, trust, fallback, freshness | Consumer Config, TLS Trust, Status Tool | Nix daemon contract |
 | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | Anonymous pull and scoped secret publication | Attic Service, SOPS Wiring, Bootstrap Tool | Token and secret contracts |
 | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 | Cache retention and host GC/optimize policy | Retention Policy, Pending Roots | GC state contract |
-| 6.1, 6.2, 6.3, 6.4, 6.5 | Restart, logs, health, recovery | Launchd Services, Status Tool | Readiness flow |
-| 7.1, 7.2, 7.3, 7.4, 7.5 | Declarative and behavior checks | Render Tests, Publisher Tests | Fixture contracts |
+| 6.1, 6.2, 6.3, 6.4, 6.5 | Restart, logs, health, identity recovery | Launchd Services, Status Tool | Readiness flow |
+| 6.6, 6.7, 6.8, 6.9 | Controlled-outage normal recovery, manual interruption recovery, retry gating, bounded process cleanup | Outage Verification, Publisher Job | Controlled outage recovery |
+| 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Declarative and behavior checks | Render Tests, Publisher Tests, Outage Verification | Fixture contracts |
 
 ## Components and Interfaces
 
@@ -208,6 +237,7 @@ Ready mode requires the configured cache public key to match live `attic-cache-i
 | Consumer Config | Integration | Configure both-host trust, preference, freshness, fallback | 3, 4 | Nix daemon, PKI | State |
 | Bootstrap Tool | Operations | Create/verify cache identity and host tokens explicitly | 1, 4, 6 | atticadm, SOPS workflow | Batch, State |
 | Status Tool | Operations | Report endpoint, identity, hook, and queue state | 3, 6 | curl, Nix config | Batch |
+| Outage Verification | Operations | Prove fallback/recovery while separating bounded process cleanup from manual service recovery | 6.6, 6.7, 6.8, 6.9, 7.6 | launchd, Status Tool, Publisher Job | Batch, State |
 | Retention Policy | Operations | Coordinate Attic GC, host GC, pressure, optimization | 5 | nix-darwin, Attic | State |
 
 ### Declarative configuration
@@ -296,7 +326,7 @@ Invariants:
 
 **Service Contract**
 
-- Attic: loopback `127.0.0.1:8080`, SQLite `?mode=rwc`, local zstd/chunk storage, 12-hour GC, 30-day global retention, RS256 public verification.
+- Attic: loopback `127.0.0.1:18080`, SQLite `?mode=rwc`, local zstd/chunk storage, 12-hour GC, 30-day global retention, RS256 public verification.
 - Attic endpoint contract: `allowed-hosts = ["Brandons-MacBook-Pro.local:8443"]`, `api-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`, and `substituter-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`.
 - Cache: name `darwin`, public pull, push permission required, priority 30, official/community upstream filters.
 - Shopify-private substitutions do not invoke the post-build hook. Outputs locally rebuilt while that external cache is unavailable may be retained because its cache identity remains out of boundary.
@@ -310,6 +340,25 @@ Invariants:
 - On both hosts, append the private CA through `security.pki.certificateFiles` and set `nix.settings.ssl-cert-file = "/etc/ssl/certs/ca-certificates.crt"` to preserve normal public CA trust.
 - Set fallback true and negative narinfo TTL to 60 seconds. Do not change global connect timeouts initially.
 - Preserve each host's existing substituters. On Shopify, inspect the external include before daemon reload through a temporary `NIX_CONF_DIR`: no hook is accepted, a value listed in `chainedHooks` is chained once, and any other hook aborts activation. The status tool also verifies effective post-reload hook/substituter configuration.
+
+### Controlled outage verification
+
+#### Outage Verification
+
+| Field | Detail |
+|---|---|
+| Intent | Prove fallback and recovery without claiming automatic launchd restoration after interruption. |
+| Requirements | 6.6, 6.7, 6.8, 6.9, 7.6 |
+
+**Recovery Contract**
+
+- Preflight requires the fixed Caddy and publisher jobs to be loaded and the cache state required by the selected phase to be healthy.
+- Before each `bootout`, the phase prints the exact host-local recovery-mode invocation for the fixed service target: `06-personal-endpoint-outage.sh --recover` for Caddy and `07-shopify-outage-producer.sh --recover` for the Shopify publisher.
+- Uninterrupted phases call their existing restore helper at the defined recovery step and require `launchctl print` plus the applicable status probe before success.
+- Bash EXIT/HUP/INT/TERM traps do not own service restoration. A signal or early exit before the recovery step leaves the service for manual recovery.
+- The personal endpoint and Shopify publisher phase scripts accept only the literal `--recover` mode without run identifiers or caller-selected service data. Each mode succeeds when the job is already loaded, otherwise bootstraps only its declared plist with non-interactive privilege, confirms the job, and verifies applicable health.
+- A new outage attempt fails preflight while a required job remains unloaded or unhealthy.
+- `outage-log-io.pl` independently terminates and reaps the bounded publisher process group on signal, timeout, overflow, and command failure. It does not own Caddy or publisher launchd restoration.
 
 ### Retention policy
 
@@ -355,11 +404,12 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 | Cache public-key mismatch | Readiness blocked; publisher/consumer disabled by operator rollback | Upstream/local paths remain. |
 | Undeclared external post-build hook | Activation fails with conflicting source | Existing daemon remains unchanged. |
 | Cache database loss | Stop ready rollout; discard orphan storage; explicit rebootstrap | Upstream/local paths remain. |
-| Outage harness interruption, bound overrun, or privilege loss | Kill and reap the isolated publisher group, restore launchd/Caddy, and reject the evidence | None; the pending root remains. |
+| Outage harness signal or early exit before recovery | Reject the evidence and require the printed manual recovery mode before retry | None; the pending root remains. |
+| Publisher invocation interruption, timeout, or overflow | Kill and reap the isolated publisher group and reject the evidence | None; launchd service recovery follows the enclosing phase contract. |
 
 ### Monitoring
 
-`local-binary-cache-status` reports TLS/cache health, live/configured key match, effective hook, queue count, oldest pending age, and broken roots. Logs live under `/var/log/local-binary-cache/`; no secret or token is logged.
+`local-binary-cache-status` reports TLS/cache health, live/configured key match, effective hook, queue count, oldest pending age, and broken roots. Recovery modes report the target job and confirmed state without reading secret contents. Logs live under `/var/log/local-binary-cache/`; no secret or token is logged.
 
 ## Testing Strategy
 
@@ -378,14 +428,19 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 - Verify invalid/broken roots are logged and retained or quarantined according to the component contract.
 - Verify status output detects key mismatch, endpoint failure, effective-hook drift, and pending age.
 - Verify the outage harness invokes the exact deployed publisher from its declared working directory with a sanitized launchd-equivalent environment.
-- Verify non-interactive privilege preflight and process-group cleanup on success, failure, HUP, INT, TERM, timeout, and output overflow.
+- Verify non-interactive privilege preflight and publisher process-group cleanup on success, failure, HUP, INT, TERM, timeout, and output overflow.
 - Bound each synchronous publisher invocation to 180 seconds and 64 KiB of exclusive root-owned evidence.
+- Verify each service stop emits its fixed recovery-mode command before mutation.
+- Verify recovery modes are idempotent, reject invalid host/service state, confirm loaded health, and use only fixed labels/plists with non-interactive privilege.
+- Verify preflight rejects a retry while Caddy or the publisher remains unrecovered.
+- Verify service-restoration signal traps are absent from the outage phases.
 
 ### Integration and manual smoke
 
 - Build a unique fixture on personal, verify publication, GC the local store path, and substitute it on Shopify.
 - Repeat with Shopify as producer and personal cache as receiver; verify no synchronous build delay during a simulated outage.
 - Stop only Caddy, verify Shopify completes a local fallback build, retains its pending root, then use the approved outage harness to prove failure and post-restore drain.
+- Verify the printed personal and Shopify recovery modes restore an intentionally stopped job and permit preflight only after health confirmation.
 - Verify the certificate SAN, mDNS hostname, cache key, launchd restart, and effective Shopify Nix config on both hosts.
 
 ## Security Considerations
@@ -397,6 +452,7 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 - The CA private key remains offline. Only the TLS leaf key is decrypted on the server.
 - SOPS ownership is explicit: TLS leaf key to the login user at `0400`; JWT private key and both push tokens to root at `0400`.
 - SQLite contains the cache signing private key. Cache loss requires trust rotation; automatic recreation is forbidden.
+- Recovery modes accept no caller-selected label, plist, executable, or working directory; each target is fixed by the host-specific outage phase.
 
 ## Performance and Capacity
 

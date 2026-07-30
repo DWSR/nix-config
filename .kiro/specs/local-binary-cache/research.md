@@ -200,3 +200,63 @@ Create a typed root module for contracts and launchd wiring, focused queue/boots
 - Shopify hook conflict detection must inspect the external include in isolation before the generated final hook masks it. A temporary `NIX_CONF_DIR` provides an executable check.
 - Upstream filtering is limited to configured public cache identities. Shopify-private substitutions bypass the hook, while private-cache identity/configuration remains externally owned.
 - Both hosts consume the cache in ready mode. This is required for Shopify-first builds to be reusable by personal after its store copy is absent.
+
+---
+
+## Manual Outage Recovery Gap Update
+
+### Analysis Summary
+
+- Normal-path Caddy and publisher restoration already exists and verifies the launchd job after bootstrap.
+- Automatic service restoration from Bash signal traps conflicts with Requirements 6.7 and 6.8 and has an unclosable pre-command race on Bash 3.2.
+- The Perl publisher runner already owns bounded process-group termination, so Requirement 6.9 does not require service-lifecycle supervision.
+- Missing work is limited to explicit manual recovery guidance, an idempotent recovery entry point, retry gating, and replacement tests.
+- Effort S, risk Low: the change removes signal-lifecycle complexity and extends existing launchd checks.
+
+### Requirement-to-Asset Map
+
+| Requirement | Existing asset | Gap |
+|---|---|---|
+| 6.6 normal recovery | `restore_endpoint`, `restore_publisher`, and `finish_publisher_control` | Existing behavior needs retained tests after signal traps are removed. |
+| 6.7 interrupted recovery | Fixed labels/plists and `sudo -n` preflight | Missing operator-visible recovery action before each service stop. |
+| 6.8 retry rejection | Phase 05 publisher check and phase 06 Caddy health preflight | Missing explicit interrupted-state coverage for both services. |
+| 6.9 bounded invocation cleanup | `outage-log-io.pl run` process-group cleanup | Existing signal, timeout, and overflow probes remain applicable. |
+| 7.6 declarative verification | Node render/behavior suite | Current overlapping-signal auto-restore tests assert the superseded contract. |
+
+### Current Constraints
+
+- Bash 3.2 cannot atomically claim cleanup ownership before the first interruptible trap command.
+- Manual recovery concerns only the launchd publisher or Caddy job. Publisher subprocess cleanup remains automatic and bounded.
+- Recovery must be idempotent: an already-loaded job succeeds, an unloaded job bootstraps from its fixed plist, and success requires `launchctl print` confirmation.
+- Recovery guidance must be emitted before `bootout`; an interrupted shell cannot be relied on to print diagnostics afterward.
+- A new outage attempt must fail before mutation while either required job is unloaded or unhealthy.
+
+### Implementation Options
+
+#### Option A: Recovery modes in existing phase scripts
+
+Add fixed `--recover` modes to the personal endpoint and Shopify publisher workflows and print those commands before mutation.
+
+- Pros: few files; recovery stays beside the owning workflow.
+- Cons: two recovery interfaces and duplicated launchd validation.
+
+#### Option B: Dedicated recovery helper
+
+Add one host-aware helper with fixed Caddy/publisher targets, idempotent bootstrap, and health confirmation; phases print the exact helper invocation before mutation.
+
+- Pros: one audited recovery contract; direct isolated tests.
+- Cons: one additional operator script and dispatch boundary.
+
+#### Option C: Automatic lifecycle supervisor
+
+Move service stop, signal handling, restoration, and final exit into a signal-masking supervisor.
+
+- Pros: automatic restoration under overlapping signals.
+- Cons: materially larger state machine; unnecessary under the selected manual-recovery requirement.
+
+### Design Carry-Forward
+
+- Choose one explicit idempotent recovery interface and define its output and failure contract.
+- Remove Bash EXIT/HUP/INT/TERM service-restoration ownership without weakening `outage-log-io.pl` process-group cleanup.
+- Replace first-signal and overlapping-service-restoration probes with recovery-guidance, idempotency, health-gate, and unrecovered-retry tests.
+- Keep normal completion restoration and the existing one-time outage handoffs unchanged.
