@@ -45,7 +45,7 @@ endpoint_health() {
   require_status_line "$output" "tls-health=healthy" || return
   require_status_line "$output" "cache-health=healthy" || return
   require_status_line "$output" "configured-live-key-match=true" || return
-  require_status_line "$output" "status=healthy" || return
+  require_status_line "$output" "status=ready" || return
   printf '%s\n' "$output"
 }
 
@@ -106,8 +106,8 @@ sudo -n -v || fail "non-interactive sudo credential is unavailable"
 initial_status="$(endpoint_health)" \
   || fail "local binary cache is not healthy before controlled outage"
 printf '%s\n' "$initial_status"
-require_status_line "$initial_status" "status=healthy" \
-  || fail "status output is missing before outage: status=healthy"
+require_status_line "$initial_status" "status=ready" \
+  || fail "status output is missing before outage: status=ready"
 sudo -n test -d "$pending_directory" \
   || fail "pending directory is unavailable: $pending_directory"
 existing_pending="$(
@@ -172,8 +172,8 @@ require_status_line "$ready_status" "cache-health=healthy" \
   || fail "status output is missing after recovery: cache-health=healthy"
 require_status_line "$ready_status" "configured-live-key-match=true" \
   || fail "status output is missing after recovery: configured-live-key-match=true"
-require_status_line "$ready_status" "status=healthy" \
-  || fail "status output is missing after recovery: status=healthy"
+require_status_line "$ready_status" "status=ready" \
+  || fail "status output is missing after recovery: status=ready"
 job_loaded "$attic_label" || fail "Attic is not loaded after Caddy recovery"
 job_loaded "$caddy_label" || fail "Caddy is not loaded after recovery"
 

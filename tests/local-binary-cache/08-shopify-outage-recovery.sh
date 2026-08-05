@@ -151,7 +151,7 @@ printf '%s\n' "$ready_status"
 require_status_line "$ready_status" "tls-health=healthy"
 require_status_line "$ready_status" "cache-health=healthy"
 require_status_line "$ready_status" "configured-live-key-match=true"
-require_status_line "$ready_status" "status=healthy"
+require_status_line "$ready_status" "status=ready"
 
 success_capture="$publisher_state_directory/task-6.4-$run_id-$challenge_id-success.capture"
 success_prefix="published $output from pending root $pending_root"

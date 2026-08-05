@@ -83,7 +83,7 @@ status_exit=0
 outage_status_output="$("$status_command")" || status_exit=$?
 (( status_exit != 0 )) || fail "status unexpectedly reports a healthy cache during outage"
 printf '%s\n' "$outage_status_output"
-/usr/bin/grep -Fqx -- "status=unhealthy" <<< "$outage_status_output" \
+/usr/bin/grep -Fqx -- "status=not-ready" <<< "$outage_status_output" \
   || fail "status did not report the controlled endpoint outage"
 
 endpoint_status=0

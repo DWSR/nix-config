@@ -27,7 +27,7 @@ check_required_services() {
   local output
 
   output="$("$status_command")" || return
-  /usr/bin/grep -Fqx -- "status=healthy" <<< "$output" || return 1
+  /usr/bin/grep -Fqx -- "status=ready" <<< "$output" || return 1
   launchctl print "system/$publisher_label" >/dev/null 2>&1 || return
   printf '%s\n' "$output"
 }
@@ -70,7 +70,7 @@ sudo -n -v || fail "non-interactive sudo credential is unavailable"
 status_output="$(check_required_services)" \
   || fail "cache endpoint or publisher is not healthy before outage preflight"
 printf '%s\n' "$status_output"
-require_status_line "$status_output" "status=healthy"
+require_status_line "$status_output" "status=ready"
 verify_consumer_config
 
 sudo -n test -d "$pending_directory" \

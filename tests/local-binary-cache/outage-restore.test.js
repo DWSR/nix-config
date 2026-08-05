@@ -18,6 +18,14 @@ const personalSource = fs.readFileSync(
   path.join(scriptDirectory, '06-personal-endpoint-outage.sh'),
   'utf8',
 );
+const producerSource = fs.readFileSync(
+  path.join(scriptDirectory, '07-shopify-outage-producer.sh'),
+  'utf8',
+);
+const recoverySource = fs.readFileSync(
+  path.join(scriptDirectory, '08-shopify-outage-recovery.sh'),
+  'utf8',
+);
 const controlSource = fs.readFileSync(
   path.join(scriptDirectory, 'outage-publisher-control.sh'),
   'utf8',
@@ -32,6 +40,29 @@ function extractFunction(source, name, nextName) {
   return source.slice(start, end);
 }
 
+function extractBlock(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+
+  assert.notEqual(start, -1, `missing Bash block start: ${startMarker}`);
+  assert.notEqual(end, -1, `missing Bash block end: ${endMarker}`);
+  return source.slice(start, end).trim();
+}
+
+function mutateSource(source, pattern, replacement, description) {
+  const mutant = source.replace(pattern, replacement);
+  assert.notEqual(mutant, source, `mutation target is missing: ${description}`);
+  return mutant;
+}
+
+function assertMutationRejected(assertion, description) {
+  assert.throws(
+    assertion,
+    { code: 'ERR_ASSERTION' },
+    `behavioral test accepted mutation: ${description}`,
+  );
+}
+
 function runBash(body, options = {}) {
   const result = childProcess.spawnSync('/bin/bash', ['-c', body], {
     encoding: 'utf8',
@@ -43,6 +74,96 @@ function runBash(body, options = {}) {
     throw result.error;
   }
   return result;
+}
+
+function phase07StatusGate() {
+  return extractBlock(producerSource, 'status_exit=0', '\nendpoint_status=0');
+}
+
+function runPhase07StatusGate(gate, statusExit, statusOutput) {
+  return runBash(`
+set -euo pipefail
+status_command=status_probe
+status_probe() {
+  printf '%s\n' "$STATUS_OUTPUT"
+  return "$STATUS_EXIT"
+}
+fail() {
+  printf 'fixture: %s\n' "$1" >&2
+  exit 1
+}
+${gate}
+`, {
+    env: {
+      STATUS_EXIT: String(statusExit),
+      STATUS_OUTPUT: statusOutput,
+    },
+  });
+}
+
+function assertPhase07StatusGate(gate) {
+  const outage = runPhase07StatusGate(gate, 7, 'status=not-ready');
+  assert.equal(outage.status, 0, outage.stderr);
+  assert.equal(outage.stdout, 'status=not-ready\n');
+
+  const zeroExit = runPhase07StatusGate(gate, 0, 'status=not-ready');
+  assert.notEqual(zeroExit.status, 0, 'zero-exit readiness command bypassed outage failure gate');
+
+  const wrongSentinel = runPhase07StatusGate(gate, 7, 'status=unhealthy');
+  assert.notEqual(wrongSentinel.status, 0, 'legacy outage sentinel bypassed readiness vocabulary gate');
+}
+
+function phase08StatusChecker() {
+  return extractBlock(recoverySource, 'require_status_line() {', '\n\n# shellcheck');
+}
+
+function phase08StatusGates() {
+  return extractBlock(
+    recoverySource,
+    'require_status_line "$ready_status" "tls-health=healthy"',
+    '\nsuccess_capture=',
+  );
+}
+
+function runPhase08StatusGates(checker, gates, readinessOutput) {
+  return runBash(`
+set -euo pipefail
+fail() {
+  printf 'fixture: %s\n' "$1" >&2
+  exit 1
+}
+${checker}
+ready_status="$READINESS_OUTPUT"
+${gates}
+`, { env: { READINESS_OUTPUT: readinessOutput } });
+}
+
+function assertPhase08StatusGates(checker, gates) {
+  const fields = [
+    ['TLS health', 'tls-health=healthy', 'tls-health=unhealthy'],
+    ['cache health', 'cache-health=healthy', 'cache-health=unhealthy'],
+    ['cache key match', 'configured-live-key-match=true', 'configured-live-key-match=false'],
+    ['ready status', 'status=ready', 'status=not-ready'],
+  ];
+  const healthy = ['mode=ready', ...fields.map(([, line]) => line)];
+  const accepted = runPhase08StatusGates(checker, gates, healthy.join('\n'));
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  for (const [name, line, wrong] of fields) {
+    const missing = runPhase08StatusGates(
+      checker,
+      gates,
+      healthy.filter(candidate => candidate !== line).join('\n'),
+    );
+    assert.notEqual(missing.status, 0, `missing ${name} bypassed recovery gate`);
+
+    const mutated = runPhase08StatusGates(
+      checker,
+      gates,
+      healthy.map(candidate => candidate === line ? wrong : candidate).join('\n'),
+    );
+    assert.notEqual(mutated.status, 0, `wrong ${name} bypassed recovery gate`);
+  }
 }
 
 function caddyRecoverySeam() {
@@ -75,10 +196,11 @@ launchctl() {
 status_probe() {
   (( healthy == 1 )) || return 1
   printf '%s\n' \
+    mode=ready \
     tls-health=healthy \
     cache-health=healthy \
     configured-live-key-match=true \
-    status=healthy
+    status=ready
 }
 sudo() {
   printf '%s\n' "$*" >> "$SUDO_CALLS"
@@ -112,7 +234,7 @@ printf 'loaded=%d\n' "$loaded"
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /loaded=1/);
   assert.equal(fs.existsSync(sudoCalls), false, 'loaded recovery must not bootstrap');
-  assert.equal((result.stdout.match(/status=healthy/g) ?? []).length, 2);
+  assert.equal((result.stdout.match(/status=ready/g) ?? []).length, 2);
 });
 
 test('Caddy recovery bootstraps only its fixed plist and then confirms health', t => {
@@ -158,7 +280,7 @@ healthy=0
 loaded=0
 status_probe() {
   (( healthy == 1 )) || return 1
-  printf 'status=healthy\n'
+  printf 'mode=ready\nstatus=ready\n'
 }
 launchctl() {
   [[ "$1" == print && "$2" == "system/$publisher_label" ]] || return 99
@@ -178,6 +300,89 @@ printf 'unhealthy=%d unloaded=%d restored=%d\n' "$unhealthy" "$unloaded" "$resto
 
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /unhealthy=[1-9][0-9]* unloaded=[1-9][0-9]* restored=0/);
+});
+
+test('phase 07 behavior requires nonzero readiness-only outage status', () => {
+  const gate = phase07StatusGate();
+  const bypassedFailureBranch = mutateSource(
+    gate,
+    '(( status_exit != 0 )) || fail "status unexpectedly reports a healthy cache during outage"',
+    ':',
+    'phase 07 nonzero status branch',
+  );
+  const legacySentinel = mutateSource(
+    gate,
+    '"status=not-ready"',
+    '"status=unhealthy"',
+    'phase 07 readiness sentinel',
+  );
+
+  assertPhase07StatusGate(gate);
+  assertMutationRejected(
+    () => assertPhase07StatusGate(bypassedFailureBranch),
+    'phase 07 nonzero status branch',
+  );
+  assertMutationRejected(
+    () => assertPhase07StatusGate(legacySentinel),
+    'phase 07 readiness sentinel',
+  );
+});
+
+test('phase 08 behavior requires every healthy readiness field', () => {
+  const checker = phase08StatusChecker();
+  const gates = phase08StatusGates();
+  const unconditionalChecker = mutateSource(
+    checker,
+    /  \/usr\/bin\/grep -Fqx -- "\$expected" <<< "\$output" \\\n+    \|\| fail "status output is missing after recovery: \$expected"/,
+    '  return 0',
+    'phase 08 status checker',
+  );
+
+  assertPhase08StatusGates(checker, gates);
+  assertMutationRejected(
+    () => assertPhase08StatusGates(unconditionalChecker, gates),
+    'phase 08 unconditional status checker',
+  );
+
+  for (const gate of [
+    'require_status_line "$ready_status" "tls-health=healthy"',
+    'require_status_line "$ready_status" "cache-health=healthy"',
+    'require_status_line "$ready_status" "configured-live-key-match=true"',
+    'require_status_line "$ready_status" "status=ready"',
+  ]) {
+    const disabledGate = mutateSource(gates, gate, ':', `disabled ${gate}`);
+    assertMutationRejected(
+      () => assertPhase08StatusGates(checker, disabledGate),
+      `disabled ${gate}`,
+    );
+  }
+});
+
+test('outage phases use only the installed readiness status vocabulary', () => {
+  assert.match(
+    preflightSource,
+    /grep -Fqx -- "status=ready" <<< "\$output"/,
+  );
+  assert.match(
+    personalSource,
+    /require_status_line "\$output" "status=ready" \|\| return/,
+  );
+  assert.match(
+    producerSource,
+    /grep -Fqx -- "status=not-ready" <<< "\$outage_status_output"/,
+  );
+  assert.match(
+    recoverySource,
+    /require_status_line "\$ready_status" "status=ready"/,
+  );
+
+  const combined = [
+    preflightSource,
+    personalSource,
+    producerSource,
+    recoverySource,
+  ].join('\n');
+  assert.doesNotMatch(combined, /status=(?:healthy|unhealthy)/);
 });
 
 test('personal outage prints fixed recovery guidance before mutation and restores only explicitly', () => {
