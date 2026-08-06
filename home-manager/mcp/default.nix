@@ -110,10 +110,10 @@ let
       env.GITHUB_PERSONAL_ACCESS_TOKEN = githubToken;
     };
 
-    mcp-nixos = {
-      command = "${pkgs.mcp-nixos}/bin/mcp-nixos";
-      args = [ "--" ];
-    };
+    # mcp-nixos = {
+    #   command = "${pkgs.mcp-nixos}/bin/mcp-nixos";
+    #   args = [ "--" ];
+    # };
 
     # Local time + IANA timezone conversion (get_current_time, convert_time).
     # Promoted to a base server so every host's agents read time through MCP
@@ -544,7 +544,7 @@ in
     home.packages = [
       pkgs.mcpproxy-go
       pkgs.github-mcp-server
-      pkgs.mcp-nixos
+      # pkgs.mcp-nixos
       pkgs.mcp-obsidian
       pkgs.mcp-server-time
       pkgs.git-mcp-server

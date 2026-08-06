@@ -196,7 +196,7 @@
 
   programs.direnv = {
     enable = true;
-    mise.enable = true;
+    mise.enable = false;
     nix-direnv.enable = true;
   };
 
