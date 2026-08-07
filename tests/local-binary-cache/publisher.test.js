@@ -553,6 +553,7 @@ function createBootstrapFixture(t, options = {}) {
     statExecutable: fixture.executables.stat,
     tlsCertificate: fixture.statePaths.tlsCertificate,
     tlsKeyFile: fixture.statePaths.tlsKey,
+    tokenValiditySeconds: '31557600',
   });
   return { executable, fixture, materials, owners };
 }
@@ -1748,6 +1749,35 @@ test('status reports healthy endpoint, identity, effective config, and pending a
   assertStatusReadOnly(status, [HASH_A, HASH_B]);
 });
 
+test('status tolerates additional externally owned substituters', t => {
+  const status = createStatusFixture(t);
+  const externalSubstituter = 'https://externally-owned.example/cache';
+  const result = runStatus(status, {
+    STATUS_EFFECTIVE_SUBSTITUTERS: `${status.expectedSubstituters} ${externalSubstituter}`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(statusOutputLines(result).includes('substituters-match=true'));
+  assert.ok(statusOutputLines(result).includes(`effective-substituter=${externalSubstituter}`));
+  assert.ok(statusOutputLines(result).includes('status=healthy'));
+});
+
+test('status rejects absence of every declared substituter', async t => {
+  const status = createStatusFixture(t);
+  const requiredSubstituters = status.expectedSubstituters.split(' ');
+
+  for (const missing of requiredSubstituters) {
+    await t.test(missing, () => {
+      const effective = requiredSubstituters.filter(value => value !== missing).join(' ');
+      const result = runStatus(status, { STATUS_EFFECTIVE_SUBSTITUTERS: effective });
+
+      assert.notEqual(result.status, 0);
+      assert.ok(statusOutputLines(result).includes('substituters-match=false'));
+      assert.ok(statusOutputLines(result).includes('status=unhealthy'));
+    });
+  }
+});
+
 test('status disables ambient curl configuration before probing the cache', t => {
   const status = createStatusFixture(t);
   const curlConfig = [
@@ -2354,13 +2384,13 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
     [
       '-f', '<runtime-config>', 'make-token',
       '--sub', 'Brandons-MacBook-Pro',
-      '--validity', '1y',
+      '--validity', '31557600s',
       '--push', CACHE_NAME,
     ],
     [
       '-f', '<runtime-config>', 'make-token',
       '--sub', 'ShopifyLaptop',
-      '--validity', '1y',
+      '--validity', '31557600s',
       '--push', CACHE_NAME,
     ],
   ]);

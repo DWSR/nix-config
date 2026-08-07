@@ -8,7 +8,7 @@ The `local-binary-cache` feature shares locally produced Nix outputs between the
 
 - **In scope**: A signed LAN-TLS binary cache on `Brandons-MacBook-Pro`, asynchronous publication and consumption from both hosts, upstream fallback, cache retention, personal-host Nix GC tuning, secret delivery, and verification.
 - **Out of scope**: Remote builds, public internet or Tailscale exposure, PostgreSQL or high availability, cross-architecture artifacts, durable cache backup, and retaining outputs already available from configured public upstream caches.
-- **Adjacent expectations**: LAN/mDNS connectivity, per-host SOPS decryption, and existing upstream substituters remain available. Shopify-managed Nix configuration remains externally owned.
+- **Adjacent expectations**: LAN/mDNS connectivity, per-host SOPS decryption, and existing upstream substituters remain available. Shopify's Nix installation is vanilla upstream under nix-darwin ownership; the Shopify-managed `nix.conf.d/shopify.conf` include remains externally owned.
 
 ## Requirements
 

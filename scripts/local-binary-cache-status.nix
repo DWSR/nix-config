@@ -17,11 +17,12 @@
   statExecutable,
   storeDirectory,
   bootstrapMode ? false,
+  name ? "local-binary-cache-status",
   readinessOnly ? false,
 }:
 
 writeShellApplication {
-  name = "local-binary-cache-status";
+  inherit name;
   runtimeInputs = [ coreutils ];
   text = ''
     export LC_ALL=C
@@ -178,9 +179,22 @@ writeShellApplication {
       if effective_substituters="$($nix config show substituters 2>/dev/null)" \
         && [[ "$effective_substituters" != *$'\n'* && "$effective_substituters" != *$'\r'* ]]; then
         effective_substituters_available=1
-        if [[ "$effective_substituters" == "$expected_substituters" ]]; then
-          substituters_match=true
-        fi
+        substituters_match=true
+        read -r -a expected_substituter_values <<< "$expected_substituters"
+        read -r -a effective_substituter_values <<< "$effective_substituters"
+        for expected_substituter in "''${expected_substituter_values[@]}"; do
+          expected_substituter_found=0
+          for effective_substituter in "''${effective_substituter_values[@]}"; do
+            if [[ "$effective_substituter" == "$expected_substituter" ]]; then
+              expected_substituter_found=1
+              break
+            fi
+          done
+          if (( expected_substituter_found == 0 )); then
+            substituters_match=false
+            break
+          fi
+        done
       fi
     fi
     if [[ "$hook_match" != true || "$substituters_match" != true ]]; then

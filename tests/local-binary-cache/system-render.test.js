@@ -274,6 +274,11 @@ function assertRequiredLiveHostFields(hostRole, contract) {
     '/var/db/local-binary-cache/publisher',
     `${hostRole}: required publisher state path`,
   );
+  assert.equal(
+    contract.publisher.tokenValidity,
+    31557600,
+    `${hostRole}: required one-year publisher token validity`,
+  );
 
   if (hostRole === 'personal') {
     assert.equal(contract.server.enable, true, 'personal: required cache server role');
@@ -309,6 +314,7 @@ function evalRequiredLiveHostContract(hostName, moduleSource = null) {
       publisher = {
         tokenFile = cache.publisher.tokenFile;
         stateDirectory = cache.publisher.stateDirectory;
+        tokenValidity = cache.publisher.tokenValidity;
       };
       server = {
         enable = cache.server.enable;
@@ -933,6 +939,7 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
       readNullable = file: if file == null then "" else builtins.readFile file;
     in {
       cacheState = {
+        nixEnabled = config.nix.enable;
         enable = cache.enable;
         hostRole = cache.hostRole;
         bootstrapMode = cache.bootstrapMode;
@@ -978,13 +985,6 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
         certificateFiles = map toString config.security.pki.certificateFiles;
         settings = config.nix.settings;
       };
-      tecSentinel = {
-        managedStoreTargets = map (
-          name:
-          let entry = builtins.getAttr name config.environment.etc;
-          in entry.target or name
-        ) (builtins.attrNames config.environment.etc);
-      };
       services = {
         inherit hasAtticDaemon hasCaddyDaemon hasPublisherDaemon;
         publisherArguments = publisherService.ProgramArguments or null;
@@ -1022,6 +1022,7 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
     expectedPublisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
     externalHookInclude: '/etc/nix/nix.conf.d/shopify.conf',
     hostRole: 'shopify',
+    nixEnabled: true,
     priority: 30,
     publisher: true,
     publisherClientPackage: rendered.cacheState.expectedPublisherClientPackage,
@@ -1091,49 +1092,8 @@ test('live Shopify host renders consumer and root publisher ready mode', () => {
   assert.equal(rendered.consumerSurfaces.settings['require-sigs'], true);
   assert.equal(rendered.consumerSurfaces.settings['ssl-cert-file'], combinedCaBundle);
 
-  assert.equal(rendered.tecSentinel.managedStoreTargets.includes('nix/nix.custom.conf'), false);
-  const sentinelMarkers = [
-    'set -eu',
-    'tec_nix_custom_conf=/etc/nix/nix.custom.conf',
-    'tec_nix_custom_tmp="$tec_nix_custom_conf.nix-darwin.$$"',
-    'rm -f -- "$tec_nix_custom_tmp"\' EXIT',
-    "trap 'exit 129' HUP",
-    "trap 'exit 130' INT",
-    "trap 'exit 143' TERM",
-    '-o root -g wheel -m 0644 /dev/null "$tec_nix_custom_tmp"',
-    '-fT -- "$tec_nix_custom_tmp" "$tec_nix_custom_conf"',
-  ];
-  for (const marker of sentinelMarkers) {
-    assert.equal(rendered.artifacts.etcActivation.includes(marker), true);
-  }
-  const sentinelPositions = sentinelMarkers.map(marker => (
-    rendered.artifacts.etcActivation.indexOf(marker)
-  ));
-  assert.deepEqual(sentinelPositions, sentinelPositions.toSorted((left, right) => left - right));
-  const exitTrapPosition = rendered.artifacts.etcActivation.indexOf(
-    'rm -f -- "$tec_nix_custom_tmp"\' EXIT',
-  );
-  const termTrapPosition = rendered.artifacts.etcActivation.indexOf("trap 'exit 143' TERM");
-  const installPosition = rendered.artifacts.etcActivation.indexOf(
-    '-o root -g wheel -m 0644 /dev/null "$tec_nix_custom_tmp"',
-  );
-  const preinstallRemovePosition = rendered.artifacts.etcActivation.indexOf(
-    'rm -f -- "$tec_nix_custom_tmp"',
-    termTrapPosition,
-  );
-  assert.ok(exitTrapPosition < termTrapPosition);
-  assert.ok(termTrapPosition < preinstallRemovePosition);
-  assert.ok(preinstallRemovePosition < installPosition);
-  assert.equal(
-    rendered.artifacts.etcActivation.includes(
-      'tec_nix_custom_tmp="$tec_nix_custom_conf"',
-    ),
-    false,
-  );
-  assert.equal(
-    rendered.artifacts.etcActivation.includes('/dev/null "$tec_nix_custom_conf"'),
-    false,
-  );
+  assert.equal(rendered.artifacts.etcActivation.includes('/etc/nix/nix.custom.conf'), false);
+  assert.equal(rendered.artifacts.etcActivation.includes('tec_nix_'), false);
 
   const includeLine = '!include nix.conf.d/shopify.conf';
   const includeLines = rendered.artifacts.nixConfig.split('\n').filter(line => line === includeLine);
@@ -1361,10 +1321,13 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
       inherit localDaemons;
       bootstrapCommand = cache.bootstrap.command;
       bootstrapPackage = toString cache.bootstrap.package;
+      tokenValidity = cache.publisher.tokenValidity;
       configuredCaCertificate = toString cache.caCertificate;
       certificateFiles = map toString config.security.pki.certificateFiles;
       readinessCommand = cache.readiness.command;
       readinessPackage = toString cache.readiness.package;
+      diagnosticsCommand = cache.diagnostics.command;
+      diagnosticsPackage = toString cache.diagnostics.package;
       enqueuePackage = if cache.publisher.enqueuePackage == null
         then null
         else toString cache.publisher.enqueuePackage;
@@ -1377,7 +1340,10 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
       bootstrapText = builtins.readFile cache.bootstrap.command;
       readinessText = builtins.readFile cache.readiness.command;
       installedOperatorPackages = builtins.filter
-        (package: package == cache.bootstrap.package || package == cache.readiness.package)
+        (package:
+          package == cache.bootstrap.package
+          || package == cache.readiness.package
+          || package == cache.diagnostics.package)
         config.environment.systemPackages;
       activation = config.system.activationScripts.launchd.text;
       nixSettings = builtins.toJSON config.nix.settings;
@@ -1399,11 +1365,24 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
     'local-binary-cache-caddy',
   ]);
   assert.equal(rendered.bootstrapCommand, `${rendered.bootstrapPackage}/bin/local-binary-cache-bootstrap`);
+  assert.equal(rendered.tokenValidity, 31557600);
+  assert.match(
+    rendered.bootstrapText,
+    /generate_token Brandons-MacBook-Pro '?31557600s'? --push/,
+  );
+  assert.match(
+    rendered.bootstrapText,
+    /generate_token ShopifyLaptop '?31557600s'? --push/,
+  );
   assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
+  assert.equal(
+    rendered.diagnosticsCommand,
+    `${rendered.diagnosticsPackage}/bin/local-binary-cache-diagnostics`,
+  );
   assert.equal(rendered.enqueuePackage, null);
   assert.equal(rendered.postBuildHookPackage, null);
   assert.equal(rendered.externalHookPreflightPackage, null);
-  assert.equal(rendered.installedOperatorPackages.length, 2);
+  assert.equal(rendered.installedOperatorPackages.length, 3);
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.bootstrapKey));
   assert.ok(rendered.bootstrapText.includes(fixture.statePaths.cacheKeyOutput));
   assert.ok(rendered.readinessText.includes('status=not-ready'));
@@ -1511,6 +1490,16 @@ test('ready mode wires exact declared trust and identity into the module-generat
       readinessDerivationText = builtins.readFile cache.readiness.package.drvPath;
       readinessPackage = toString cache.readiness.package;
       readinessText = builtins.readFile cache.readiness.command;
+      diagnosticsCommand = cache.diagnostics.command;
+      diagnosticsDerivationText = builtins.readFile cache.diagnostics.package.drvPath;
+      diagnosticsPackage = toString cache.diagnostics.package;
+      diagnosticsText = builtins.readFile cache.diagnostics.command;
+      declaredSubstituters = fixture.pkgs.lib.unique (
+        (config.nix.settings.substituters or [ ])
+        ++ (config.nix.settings.extra-substituters or [ ])
+      );
+      expectedPendingDirectory = "${'${cache.publisher.stateDirectory}'}/pending";
+      expectedStoreDirectory = builtins.storeDir;
       externalHookInclude = cache.publisher.externalHookInclude;
       externalHookPreflightPackage = if cache.publisher.externalHookPreflightPackage == null
         then null
@@ -1532,6 +1521,8 @@ test('ready mode wires exact declared trust and identity into the module-generat
         publisher = builtins.readFile (builtins.head publisherService.ProgramArguments);
         publisherPlist = builtins.readFile
           "${'${config.system.build.launchd}'}/Library/LaunchDaemons/org.nixos.local-binary-cache-publisher.plist";
+        diagnostics = builtins.readFile cache.diagnostics.command;
+        diagnosticsDerivation = builtins.readFile cache.diagnostics.package.drvPath;
         readiness = builtins.readFile cache.readiness.command;
         readinessDerivation = builtins.readFile cache.readiness.package.drvPath;
       };
@@ -1539,6 +1530,10 @@ test('ready mode wires exact declared trust and identity into the module-generat
   );
 
   assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
+  assert.equal(
+    rendered.diagnosticsCommand,
+    `${rendered.diagnosticsPackage}/bin/local-binary-cache-diagnostics`,
+  );
   assert.equal(
     shellAssignment(rendered.readinessText, 'ca_certificate'),
     `ca_certificate=${rendered.configuredCaCertificate}`,
@@ -1557,6 +1552,23 @@ test('ready mode wires exact declared trust and identity into the module-generat
   );
   assert.equal(shellAssignment(rendered.readinessText, 'bootstrap_mode'), 'bootstrap_mode=0');
   assert.equal(shellAssignment(rendered.readinessText, 'readiness_only'), 'readiness_only=1');
+  assert.equal(shellAssignment(rendered.diagnosticsText, 'readiness_only'), 'readiness_only=0');
+  assert.equal(
+    shellAssignment(rendered.diagnosticsText, 'expected_hook'),
+    `expected_hook=${rendered.postBuildHookPackage}/bin/local-binary-cache-post-build-hook`,
+  );
+  assert.equal(
+    shellAssignment(rendered.diagnosticsText, 'expected_substituters'),
+    `expected_substituters='${rendered.declaredSubstituters.join(' ')}'`,
+  );
+  assert.equal(
+    shellAssignment(rendered.diagnosticsText, 'pending_directory'),
+    `pending_directory=${rendered.expectedPendingDirectory}`,
+  );
+  assert.equal(
+    shellAssignment(rendered.diagnosticsText, 'store_directory'),
+    `store_directory=${rendered.expectedStoreDirectory}`,
+  );
 
   assert.equal(rendered.configuredEndpoint, configuredEndpoint);
   assert.equal(rendered.configuredCachePublicKey, configuredCachePublicKey);
@@ -1572,6 +1584,8 @@ test('ready mode wires exact declared trust and identity into the module-generat
     'caddyConfig',
     'caddyPlist',
     'caddyWrapper',
+    'diagnostics',
+    'diagnosticsDerivation',
     'nixConfig',
     'postBuildHook',
     'publisher',
@@ -1579,7 +1593,12 @@ test('ready mode wires exact declared trust and identity into the module-generat
     'readiness',
     'readinessDerivation',
   ]);
-  const readinessArtifacts = [rendered.readinessText, rendered.readinessDerivationText];
+  const readinessArtifacts = [
+    rendered.readinessText,
+    rendered.readinessDerivationText,
+    rendered.diagnosticsText,
+    rendered.diagnosticsDerivationText,
+  ];
   for (const [name, secretPath] of [
     ['publisher token', fixture.statePaths.publisherToken],
     ['TLS private key', fixture.statePaths.tlsPrivateKey],

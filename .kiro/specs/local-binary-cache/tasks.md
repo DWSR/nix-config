@@ -65,7 +65,7 @@
   - Done when fixtures detect each healthy/unhealthy state and poisoned secrets never appear.
   - _Depends: 1.1, 1.3_
   - _Requirements: 3.3, 3.4, 3.5, 3.6, 6.2, 6.3, 6.4, 6.5_
-  - _Boundary: Status Tool_
+  - _Boundary: Diagnostics Tool_
 
 - [x] 3. Add the personal cache runtime
 - [x] 3.1 Render the secret-free Attic server configuration
@@ -183,7 +183,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.2, 4.3, 4.4, 6.4, 7.2_
   - _Boundary: Shopify Host Integration_
 
-- [ ] 6. Validate end-to-end integration and recovery
+- [x] 6. Validate end-to-end integration and recovery
 - [x] 6.1 Complete live-host render and secret-safety coverage
   - Assert both host roles, endpoint, trust, secret paths, service contracts, retention, and schedules.
   - Include poisoned-secret non-vacuity fixtures and required-field failures.
@@ -221,7 +221,7 @@
   - _Requirements: 2.3, 2.4, 6.2, 6.6, 6.7, 6.8, 6.9, 7.3, 7.6_
   - _Boundary: Publisher Tests, Full Feature Integration_
 
-- [ ] 6.5 Validate cache outage fallback and recovery
+- [x] 6.5 Validate cache outage fallback and recovery
   - Stop the cache endpoint and verify consumers continue through existing substituters or local compilation while pending roots remain protected.
   - Exercise the printed personal Caddy and Shopify publisher recovery modes against stopped and already-loaded jobs, and verify preflight rejects each unrecovered state.
   - Complete the normal recovery handoff and confirm the bounded publisher drains the retained root after endpoint health returns.
@@ -230,7 +230,7 @@
   - _Requirements: 2.2, 2.3, 2.4, 3.2, 3.3, 5.7, 6.1, 6.2, 6.3, 6.6, 6.7, 6.8, 7.6_
   - _Boundary: Full Feature Integration_
 
-- [ ] 6.6 Validate network, trust, and service state
+- [x] 6.6 Validate network, trust, and service state
   - Verify mDNS resolution, certificate SAN, configured/live cache key, launchd restart, and effective host hook/substituters.
   - Verify one-year token claims/scopes and absence of plaintext credentials in rendered artifacts or logs.
   - Done when status and host commands report healthy state on both hosts with no secret exposure.
@@ -262,8 +262,15 @@
 - Task 5.6 publisher-only activation must omit server-role variables at the shared module source; host-local no-op references hide boundary defects and alter generated activation scripts.
 - Task 6.2 substituted-output coverage needs distinct isolated Nix stores, an offline `file://` cache, disabled builders/fallback, and the generated hook; an idle publisher queue is tautological.
 - Task 6.3 live validation must start with an empty pending queue; an older failed root blocks later roots by design because the publisher stops at the first failure.
-- Task 6.3 exposed TEC mutation of a store-backed `nix.custom.conf` sentinel; commit `e350668` installs a regular root-owned sentinel outside the store, after which the repaired queue drained and both signed producer orders substituted without rebuild.
+- Task 6.3 exposed TEC mutation of a store-backed `nix.custom.conf` sentinel; commit `e350668` temporarily moved it outside the store, after which the repaired queue drained and both signed producer orders substituted without rebuild.
 - Task 6.4 owns the bounded launchd-equivalent publisher harness; Task 6.5 consumes it for live outage evidence, and Task 6.6 owns final ready-state validation.
 - Persistent publisher logs cannot prove append continuity under same-inode truncate/regrow; outage evidence must come from a bounded per-invocation capture with complete process cleanup.
 - Task 6.4 uses manual launchd recovery after signal or early exit: normal paths restore explicitly, fixed `--recover` modes are printed before mutation, and retries remain blocked until service health is confirmed.
 - Manual launchd recovery does not weaken `outage-log-io.pl`; bounded publisher invocations still terminate and reap their process group on signal, timeout, overflow, and command failure.
+- Task 6.5 live validation must run from approved local sessions on both hosts where `sudo -n -v` succeeds; sandboxed Shopify execution and an unreachable personal endpoint cannot supply the required evidence.
+- A Task 6.5 diagnostic exposed inherited credential values in raw output; rotate those credentials before retry and keep future diagnostics environment-sanitized.
+- Task 6.5 originally proved `/run/current-system/etc/nix/nix.conf` contained the cache hook while Determinate/TEC-owned `/etc/nix/nix.conf` did not; Shopify then migrated to vanilla upstream Nix under nix-darwin ownership.
+- After the migration, live `/etc/nix/nix.conf` is the nix-darwin output and exposes the expected cache hook, trust, local substituter, and fallback. Remove the obsolete TEC `nix.custom.conf` sentinel before retrying Task 6.5 from approved local sessions.
+- Task 6.5 completed run `shopify-outage-fdb82b85-b1f8-453b-b639-d3053fc83129`: the normal handoff consumed its one-time ticket, restored ready TLS/cache/key status, published the retained output with exit 0, and emptied the queue. Separate stopped/already-loaded recovery checks proved both fixed recovery modes idempotent and phase 05 rejected unrecovered Caddy and publisher jobs.
+- Task 6.6 live evidence showed ready TLS/cache/key state, effective local and upstream substituters, generated hooks, and loaded services on both hosts. Distinct token claims have the expected subjects, only `darwin` push permission, an exact 31,557,600-second validity, and no token matches in rendered artifacts or logs.
+- Final integration validation made the 31,557,600-second Attic year authoritative and installed full `local-binary-cache-diagnostics` alongside outage-safe readiness status; diagnostics require every declared substituter while tolerating externally owned additions.

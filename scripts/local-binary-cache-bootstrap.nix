@@ -21,6 +21,7 @@
   loginUser,
   personalTokenOutput,
   shopifyTokenOutput,
+  tokenValiditySeconds,
   cmpExecutable ? lib.getExe' diffutils "cmp",
   opensslExecutable ? lib.getExe openssl,
   statExecutable ? lib.getExe' coreutils "stat",
@@ -501,8 +502,8 @@ writeShellApplication {
             fi
             personal_token="$work_directory/Brandons-MacBook-Pro.token"
             shopify_token="$work_directory/ShopifyLaptop.token"
-            generate_token Brandons-MacBook-Pro 1y --push "$personal_token"
-            generate_token ShopifyLaptop 1y --push "$shopify_token"
+            generate_token Brandons-MacBook-Pro ${lib.escapeShellArg "${toString tokenValiditySeconds}s"} --push "$personal_token"
+            generate_token ShopifyLaptop ${lib.escapeShellArg "${toString tokenValiditySeconds}s"} --push "$shopify_token"
             if "$cmp" -s -- "$personal_token" "$shopify_token"; then
               fail "token issuer returned identical credentials for distinct host subjects"
             fi

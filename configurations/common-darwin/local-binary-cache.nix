@@ -247,6 +247,7 @@ let
         inherit loginUser;
         tlsCertificate = toString cfg.server.tlsCertificate;
         inherit (cfg.server) tlsKeyFile;
+        tokenValiditySeconds = cfg.publisher.tokenValidity;
       }
     else
       null;
@@ -266,6 +267,29 @@ let
           if cfg.publisher.stateDirectory == null then "" else "${cfg.publisher.stateDirectory}/pending";
         readlinkExecutable = lib.getExe' pkgs.coreutils "readlink";
         readinessOnly = true;
+        statExecutable = lib.getExe' pkgs.coreutils "stat";
+        storeDirectory = builtins.storeDir;
+      }
+    else
+      null;
+  diagnosticsPackage =
+    if cfg.enable then
+      pkgs.callPackage ../../scripts/local-binary-cache-status.nix {
+        caCertificate = if cfg.caCertificate == null then "" else toString cfg.caCertificate;
+        inherit (cfg) bootstrapMode cacheName endpoint;
+        configuredCachePublicKey = if cfg.cachePublicKey == null then "" else cfg.cachePublicKey;
+        curlExecutable = lib.getExe pkgs.curl;
+        dateExecutable = lib.getExe' pkgs.coreutils "date";
+        expectedPostBuildHook =
+          if postBuildHookPackage == null then "" else lib.getExe postBuildHookPackage;
+        expectedSubstituters = lib.concatStringsSep " " declarativeSubstituters;
+        jqExecutable = lib.getExe pkgs.jq;
+        name = "local-binary-cache-diagnostics";
+        nixExecutable = lib.getExe config.nix.package;
+        pendingDirectory =
+          if cfg.publisher.stateDirectory == null then "" else "${cfg.publisher.stateDirectory}/pending";
+        readlinkExecutable = lib.getExe' pkgs.coreutils "readlink";
+        readinessOnly = false;
         statExecutable = lib.getExe' pkgs.coreutils "stat";
         storeDirectory = builtins.storeDir;
       }
@@ -418,9 +442,9 @@ let
       };
 
       tokenValidity = mkOption {
-        type = types.enum [ 31536000 ];
-        default = 31536000;
-        description = "Validity of issued publication tokens in seconds.";
+        type = types.enum [ 31557600 ];
+        default = 31557600;
+        description = "Attic one-year validity of issued publication tokens in seconds.";
       };
 
       intervalSeconds = mkOption {
@@ -694,6 +718,26 @@ in
       };
     };
 
+    diagnostics = {
+      package = mkOption {
+        type = types.nullOr types.package;
+        default = diagnosticsPackage;
+        readOnly = true;
+        description = "Full read-only cache, effective Nix configuration, and publisher queue diagnostics package.";
+      };
+
+      command = mkOption {
+        type = types.nullOr types.str;
+        default =
+          if cfg.diagnostics.package == null then
+            null
+          else
+            "${cfg.diagnostics.package}/bin/local-binary-cache-diagnostics";
+        readOnly = true;
+        description = "Stable operator-invokable command path for full cache diagnostics.";
+      };
+    };
+
     publisher = mkOption {
       type = types.submodule publisherOptions;
       default = { };
@@ -881,7 +925,11 @@ in
   ];
 
   config.environment.systemPackages = lib.optionals cfg.enable (
-    [ cfg.readiness.package ] ++ lib.optional (cfg.bootstrap.package != null) cfg.bootstrap.package
+    [
+      cfg.readiness.package
+      cfg.diagnostics.package
+    ]
+    ++ lib.optional (cfg.bootstrap.package != null) cfg.bootstrap.package
   );
 
   config.security.pki.certificateFiles = lib.mkIf (cfg.consumer.enable && cfg.caCertificate != null) [

@@ -77,28 +77,6 @@ in
     };
   };
 
-  # TEC creates this file when it is absent. Keep the sentinel mutable and
-  # outside the Nix store so a TEC write cannot corrupt a store object.
-  system.activationScripts.etc.text = lib.mkAfter ''
-    (
-      set -eu
-      tec_nix_custom_conf=/etc/nix/nix.custom.conf
-      tec_nix_custom_tmp="$tec_nix_custom_conf.nix-darwin.$$"
-
-      trap '${pkgs.coreutils}/bin/rm -f -- "$tec_nix_custom_tmp"' EXIT
-      trap 'exit 129' HUP
-      trap 'exit 130' INT
-      trap 'exit 143' TERM
-
-      ${pkgs.coreutils}/bin/rm -f -- "$tec_nix_custom_tmp"
-      ${pkgs.coreutils}/bin/install -o root -g wheel -m 0644 /dev/null "$tec_nix_custom_tmp"
-      if ! ${pkgs.coreutils}/bin/mv -fT -- "$tec_nix_custom_tmp" "$tec_nix_custom_conf"; then
-        printf 'failed to install TEC Nix configuration sentinel: %s\n' "$tec_nix_custom_conf" >&2
-        exit 1
-      fi
-    )
-  '';
-
   nix = {
     enable = true;
 

@@ -42,7 +42,7 @@ The feature adds a signed LAN binary cache on `Brandons-MacBook-Pro`, asynchrono
 
 - Existing `pkgs.unstable`, nix-darwin Nix/PKI/launchd modules, SOPS system secrets, and Node/Nix test harnesses.
 - Attic client/server and Caddy packages pinned through the existing `nixpkgs-unstable` lock.
-- Nix 2.34 on Shopify and Lix 2.95 on personal, including `post-build-hook` and indirect GC roots.
+- Vanilla upstream Nix 2.34 on Shopify under nix-darwin ownership and Lix 2.95 on personal, including `post-build-hook` and indirect GC roots.
 - mDNS resolution for `Brandons-MacBook-Pro.local` and existing public/community/Shopify substituters.
 
 ### Revalidation Triggers
@@ -63,7 +63,7 @@ The feature adds a signed LAN binary cache on `Brandons-MacBook-Pro`, asynchrono
 - System SOPS secrets already decrypt to path-only runtime files.
 - Existing long-running jobs are user agents; this feature introduces root/system launchd jobs.
 - Current GC/optimize calendar intervals omit time fields and therefore run every matching minute.
-- The personal host uses Lix; Shopify uses Nix and includes an externally managed config fragment.
+- The personal host uses Lix; Shopify uses vanilla upstream Nix under nix-darwin ownership and includes an externally managed config fragment.
 
 ### Architecture Pattern & Boundary Map
 
@@ -97,6 +97,7 @@ Key decisions:
 - Bootstrap mode exposes Attic/TLS but disables publisher and consumer capabilities until trust artifacts and SOPS tokens exist.
 - Controlled-outage scripts restore services explicitly on uninterrupted paths. An interrupted path requires an operator-invoked, idempotent recovery mode before preflight permits another run.
 - The bounded publisher runner retains automatic process-group cleanup; manual recovery applies only to the stopped launchd service.
+- nix-darwin owns Shopify's upstream Nix daemon and top-level configuration with `nix.enable = true`; the Shopify-managed include remains external and read-only to this feature.
 
 ### Technology Stack
 
@@ -116,13 +117,12 @@ Key decisions:
 
 ```text
 configurations/common-darwin/
-├── local-binary-cache.nix          # Typed system module and rendered service contracts
-└── local-binary-cache-trust.nix    # Public endpoint, CA, JWT verifier, cache signing key
+└── local-binary-cache.nix          # Typed module, public trust, and rendered service contracts
 scripts/
 ├── local-binary-cache-enqueue.nix  # OUT_PATHS to deterministic indirect roots
 ├── local-binary-cache-publish.nix  # Serialized root scan, push, retry, cleanup
 ├── local-binary-cache-bootstrap.nix# Operator-only create/token/key workflow
-└── local-binary-cache-status.nix   # Endpoint, identity, hook, and queue diagnostics
+└── local-binary-cache-status.nix   # Readiness status and full diagnostics commands
 certificates/local-binary-cache/
 ├── ca.pem                          # Public LAN CA certificate
 ├── server.pem                      # Public server leaf/chain certificate
@@ -218,10 +218,10 @@ Recovery guidance is emitted before service mutation. The normal path restores e
 |---|---|---|---|
 | 1.1, 1.2, 1.3, 1.4, 1.5 | Personal signed TLS cache and independent retention | Cache Module, Attic Service, TLS Proxy | Service state, bootstrap flow |
 | 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7 | Durable non-blocking publication | Enqueue Hook, Pending Roots, Publisher Job | Publication sequence |
-| 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 | Both-host preference, trust, fallback, freshness | Consumer Config, TLS Trust, Status Tool | Nix daemon contract |
+| 3.1, 3.2, 3.3, 3.4, 3.5, 3.6 | Both-host preference, trust, fallback, freshness | Consumer Config, TLS Trust, Diagnostics Tool | Nix daemon contract |
 | 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 | Anonymous pull and scoped secret publication | Attic Service, SOPS Wiring, Bootstrap Tool | Token and secret contracts |
 | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 | Cache retention and host GC/optimize policy | Retention Policy, Pending Roots | GC state contract |
-| 6.1, 6.2, 6.3, 6.4, 6.5 | Restart, logs, health, identity recovery | Launchd Services, Status Tool | Readiness flow |
+| 6.1, 6.2, 6.3, 6.4, 6.5 | Restart, logs, health, identity recovery | Launchd Services, Readiness Status, Diagnostics Tool | Readiness flow |
 | 6.6, 6.7, 6.8, 6.9 | Controlled-outage normal recovery, manual interruption recovery, retry gating, bounded process cleanup | Outage Verification, Publisher Job | Controlled outage recovery |
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Declarative and behavior checks | Render Tests, Publisher Tests, Outage Verification | Fixture contracts |
 
@@ -236,8 +236,9 @@ Recovery guidance is emitted before service mutation. The normal path restores e
 | Publisher Job | Batch | Push pending outputs serially and retry safely | 2, 4, 6 | Attic client, token file | Batch, State |
 | Consumer Config | Integration | Configure both-host trust, preference, freshness, fallback | 3, 4 | Nix daemon, PKI | State |
 | Bootstrap Tool | Operations | Create/verify cache identity and host tokens explicitly | 1, 4, 6 | atticadm, SOPS workflow | Batch, State |
-| Status Tool | Operations | Report endpoint, identity, hook, and queue state | 3, 6 | curl, Nix config | Batch |
-| Outage Verification | Operations | Prove fallback/recovery while separating bounded process cleanup from manual service recovery | 6.6, 6.7, 6.8, 6.9, 7.6 | launchd, Status Tool, Publisher Job | Batch, State |
+| Readiness Status | Operations | Report endpoint and signing-identity readiness for outage phases | 3, 6 | curl | Batch |
+| Diagnostics Tool | Operations | Report endpoint, identity, effective Nix config, and queue state | 3, 6 | curl, Nix config | Batch |
+| Outage Verification | Operations | Prove fallback/recovery while separating bounded process cleanup from manual service recovery | 6.6, 6.7, 6.8, 6.9, 7.6 | launchd, Readiness Status, Publisher Job | Batch, State |
 | Retention Policy | Operations | Coordinate Attic GC, host GC, pressure, optimization | 5 | nix-darwin, Attic | State |
 
 ### Declarative configuration
@@ -273,7 +274,7 @@ Invariants:
 - Consumer/publisher enablement requires `bootstrapMode = false`, a non-null cache key, and all public trust paths.
 - Publisher enablement requires distributed builds disabled and one explicit final hook wrapper.
 - `priority = 30`, `negativeTtlSeconds = 60`, `retentionDays = 30`, and the endpoint port is `8443`.
-- Publisher token validity is one year. Disk-pressure values default to null; setting either requires both, with nonzero `minFree` and `maxFree > minFree`.
+- Publisher token validity is Attic's one-year duration of 31,557,600 seconds. Disk-pressure values default to null; setting either requires both, with nonzero `minFree` and `maxFree > minFree`.
 - A pre-reload activation check evaluates Shopify's included file as an isolated `nix.conf` under a temporary `NIX_CONF_DIR`. Empty hook state is accepted; a value in `chainedHooks` is chained once; every other value aborts before daemon reload.
 
 **Implementation Notes**
@@ -327,7 +328,7 @@ Invariants:
 **Service Contract**
 
 - Attic: loopback `127.0.0.1:18080`, SQLite `?mode=rwc`, local zstd/chunk storage, 12-hour GC, 30-day global retention, RS256 public verification.
-- Attic endpoint contract: `allowed-hosts = ["Brandons-MacBook-Pro.local:8443"]`, `api-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`, and `substituter-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`.
+- Attic endpoint contract: `allowed-hosts = ["brandons-macbook-pro.local:8443"]`, `api-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`, and `substituter-endpoint = "https://Brandons-MacBook-Pro.local:8443/"`.
 - Cache: name `darwin`, public pull, push permission required, priority 30, official/community upstream filters.
 - Shopify-private substitutions do not invoke the post-build hook. Outputs locally rebuilt while that external cache is unavailable may be retained because its cache identity remains out of boundary.
 - Caddy: HTTPS `:8443`, exact hostname/SAN, explicit leaf/key, HTTP/1.1 and HTTP/2, no admin API, automatic HTTPS, or HTTP/3.
@@ -339,7 +340,8 @@ Invariants:
 - On both hosts, append `https://Brandons-MacBook-Pro.local:8443/darwin` and the Attic public key.
 - On both hosts, append the private CA through `security.pki.certificateFiles` and set `nix.settings.ssl-cert-file = "/etc/ssl/certs/ca-certificates.crt"` to preserve normal public CA trust.
 - Set fallback true and negative narinfo TTL to 60 seconds. Do not change global connect timeouts initially.
-- Preserve each host's existing substituters. On Shopify, inspect the external include before daemon reload through a temporary `NIX_CONF_DIR`: no hook is accepted, a value listed in `chainedHooks` is chained once, and any other hook aborts activation. The status tool also verifies effective post-reload hook/substituter configuration.
+- Preserve each host's existing substituters. On Shopify, inspect the external include before daemon reload through a temporary `NIX_CONF_DIR`: no hook is accepted, a value listed in `chainedHooks` is chained once, and any other hook aborts activation. The diagnostics tool also verifies effective post-reload hook/substituter configuration.
+- Keep Shopify's vanilla upstream Nix under nix-darwin ownership; do not add installer-specific configuration sentinels.
 
 ### Controlled outage verification
 
@@ -409,7 +411,7 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 
 ### Monitoring
 
-`local-binary-cache-status` reports TLS/cache health, live/configured key match, effective hook, queue count, oldest pending age, and broken roots. Recovery modes report the target job and confirmed state without reading secret contents. Logs live under `/var/log/local-binary-cache/`; no secret or token is logged.
+`local-binary-cache-status` provides the readiness-only contract consumed by outage phases. `local-binary-cache-diagnostics` reports TLS/cache health, live/configured key match, effective hook/substituters, queue count, oldest pending age, and broken roots. Recovery modes report the target job and confirmed state without reading secret contents. Logs live under `/var/log/local-binary-cache/`; no secret or token is logged.
 
 ## Testing Strategy
 
@@ -426,7 +428,7 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 - Stub root creation to verify multi-output parsing, deterministic IDs, duplicate coalescing, and local failure exit.
 - Stub Attic to verify one-at-a-time order, root removal on success/already-present, retention on failure, and batch stop/retry.
 - Verify invalid/broken roots are logged and retained or quarantined according to the component contract.
-- Verify status output detects key mismatch, endpoint failure, effective-hook drift, and pending age.
+- Verify diagnostics output detects key mismatch, endpoint failure, effective-hook drift, and pending age.
 - Verify the outage harness invokes the exact deployed publisher from its declared working directory with a sanitized launchd-equivalent environment.
 - Verify non-interactive privilege preflight and publisher process-group cleanup on success, failure, HUP, INT, TERM, timeout, and output overflow.
 - Bound each synchronous publisher invocation to 180 seconds and 64 KiB of exclusive root-owned evidence.
@@ -459,12 +461,12 @@ Invariants: one root per store hash; target must exist; the link remains unchang
 - Enqueue cost is bounded to local root operations and performs no cache lookup.
 - Publication is deliberately serialized for SQLite stability; throughput is secondary to build isolation for two hosts.
 - Configured public-upstream filtering prevents duplicate retention of those cache artifacts.
-- Attic has no byte quota. The status command surfaces queue pressure; 30-day retention and daily personal GC are the initial controls. Pressure thresholds can be enabled later without changing the module contract.
+- Attic has no byte quota. The diagnostics command surfaces queue pressure; 30-day retention and daily personal GC are the initial controls. Pressure thresholds can be enabled later without changing the module contract.
 
 ## Migration Strategy
 
 - **Stage 0 — prerequisite identity**: generate the offline LAN CA/leaf and RS256 JWT keypairs; commit public artifacts; SOPS-encrypt the TLS leaf key and operator-only JWT private key before enabling services.
-- **Stage 1 — bootstrap runtime**: deploy Attic/Caddy plus bootstrap/status tools with `bootstrapMode = true`; launch wrappers tolerate SOPS boot ordering through secret preflight and throttled retry.
+- **Stage 1 — bootstrap runtime**: deploy Attic/Caddy plus bootstrap, readiness, and diagnostics tools with `bootstrapMode = true`; launch wrappers tolerate SOPS boot ordering through secret preflight and throttled retry.
 - **Stage 2 — cache identity**: create `darwin`, capture its Nix public key, issue per-host push tokens, and import those tokens into root-owned SOPS secrets.
 - **Stage 3 — personal ready**: enable personal consumer/publisher, verify queue/push/substitution/GC and live key.
 - **Stage 4 — Shopify ready**: enable consumer/publisher, verify effective external include, fallback, and cross-host substitution.

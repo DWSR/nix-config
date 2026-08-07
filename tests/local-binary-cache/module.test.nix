@@ -314,6 +314,7 @@ let
     "cachePublicKey"
     "caCertificate"
     "consumer"
+    "diagnostics"
     "enable"
     "endpoint"
     "gcPolicy"
@@ -360,13 +361,19 @@ assert bootstrap.config.services.localBinaryCache.bootstrap.package != null;
 assert bootstrap.config.services.localBinaryCache.bootstrap.command != null;
 assert bootstrap.config.services.localBinaryCache.readiness.package != null;
 assert bootstrap.config.services.localBinaryCache.readiness.command != null;
+assert bootstrap.config.services.localBinaryCache.diagnostics.package != null;
+assert bootstrap.config.services.localBinaryCache.diagnostics.command != null;
 assert lib.hasSuffix "/bin/local-binary-cache-bootstrap"
   bootstrap.config.services.localBinaryCache.bootstrap.command;
 assert lib.hasSuffix "/bin/local-binary-cache-status"
   bootstrap.config.services.localBinaryCache.readiness.command;
+assert lib.hasSuffix "/bin/local-binary-cache-diagnostics"
+  bootstrap.config.services.localBinaryCache.diagnostics.command;
 assert lib.elem bootstrap.config.services.localBinaryCache.bootstrap.package
   bootstrap.config.environment.systemPackages;
 assert lib.elem bootstrap.config.services.localBinaryCache.readiness.package
+  bootstrap.config.environment.systemPackages;
+assert lib.elem bootstrap.config.services.localBinaryCache.diagnostics.package
   bootstrap.config.environment.systemPackages;
 assert failedAssertions bootstrap == [ ];
 assert
@@ -379,10 +386,14 @@ assert
   ];
 assert readyPersonal.config.services.localBinaryCache.readiness.package != null;
 assert readyShopify.config.services.localBinaryCache.readiness.package != null;
+assert readyPersonal.config.services.localBinaryCache.diagnostics.package != null;
+assert readyShopify.config.services.localBinaryCache.diagnostics.package != null;
 assert failedAssertions readyPersonal == [ ];
 assert failedAssertions readyShopify == [ ];
 assert readyPersonal.config.services.localBinaryCache.consumer.priority == 30;
 assert readyShopify.config.services.localBinaryCache.consumer.priority == 30;
+assert readyPersonal.config.services.localBinaryCache.publisher.tokenValidity == 31557600;
+assert readyShopify.config.services.localBinaryCache.publisher.tokenValidity == 31557600;
 assert lib.all
   (
     configuration:
