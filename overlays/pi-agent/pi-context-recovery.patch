@@ -1,0 +1,562 @@
+From 32850ef7c5edff7a6eee0214516fbb7382bf292d Mon Sep 17 00:00:00 2001
+From: David Brailovsky <davidbrai@gmail.com>
+Date: Mon, 3 Aug 2026 18:07:53 +0200
+Subject: [PATCH] fix(coding-agent): resume after context-limited length stops
+ (#7540)
+
+Backport-of: https://github.com/earendil-works/pi/commit/32850ef7c5edff7a6eee0214516fbb7382bf292d
+Upstream-parent: e56893f4cd6545ab1498b72ae4e1e2241a0926f4
+Backport-base: https://github.com/earendil-works/pi/tree/v0.83.0
+License: MIT (https://github.com/earendil-works/pi/blob/v0.83.0/LICENSE)
+Adaptations: none; all hunks apply with line offsets only.
+
+* fix(coding-agent): resume after context-limited length stops
+
+Treat length stops as context overflow when prompt usage is within 1% of
+Pi's configured context window. Include cache-write tokens in that usage
+and allow non-zero output because OpenAI may emit reasoning tokens before
+returning an incomplete response.
+
+After compaction, remove any retryable error or truncated-length assistant
+message restored from persisted session history so the interrupted agent
+turn can continue.
+
+This is specifically for handling this case for openai models:
+https://developers.openai.com/api/docs/guides/reasoning
+
+> If the generated tokens reach the context window limit or the max_output_tokens value you've set, you'll receive a response with a status of incomplete and incomplete_details with reason set to max_output_tokens. This might occur before any visible output tokens are produced, meaning you could incur costs for input and reasoning tokens without receiving a visible response.
+
+This detection currently assumes the reported prompt usage is within 1% of
+the context window configured in Pi. Its reliability therefore depends on
+Pi's model contextWindow metadata matching the provider's effective limit.
+
+Maybe we should consider treating OpenAI incomplete responses as requiring compaction
+regardless of the local context-window estimate?
+
+fixes #7020
+
+* fix(coding-agent): recover truncated responses after compaction
+
+Classify length stops by comparing provider-reported output usage with the model's intended output limit. Compact and retry once when generation ends below that limit, avoiding unreliable context-window estimates while preserving genuine max-output stops.
+
+Normalize OpenAI Responses incomplete reasons so only max_output_tokens is treated as a length stop. Preserve qualified provider reasons for diagnostics, surface other reasons as errors, and use neutral truncation wording in the TUI.
+---
+ packages/ai/src/api/azure-openai-responses.ts |  2 +-
+ .../ai/src/api/openai-responses-shared.ts     | 34 +++++---
+ packages/ai/src/api/openai-responses.ts       |  2 +-
+ packages/ai/src/utils/overflow.ts             | 14 +++-
+ .../openai-responses-terminal-event.test.ts   | 35 +++++++-
+ packages/ai/test/overflow.test.ts             | 68 ++++++++++++----
+ .../coding-agent/src/core/agent-session.ts    | 28 ++++---
+ .../components/assistant-message.ts           |  9 +--
+ .../test/assistant-message.test.ts            |  5 +-
+ .../suite/agent-session-compaction.test.ts    | 79 +++++++++++++++++++
+ 10 files changed, 225 insertions(+), 51 deletions(-)
+
+diff --git a/packages/ai/src/api/azure-openai-responses.ts b/packages/ai/src/api/azure-openai-responses.ts
+index 2523614b9f1..5f12e17a28b 100644
+--- a/packages/ai/src/api/azure-openai-responses.ts
++++ b/packages/ai/src/api/azure-openai-responses.ts
+@@ -136,7 +136,7 @@ export const stream: StreamFunction<"azure-openai-responses", AzureOpenAIRespons
+ 				throw new Error("Azure OpenAI Responses stream ended without a stop reason");
+ 			}
+ 			if (output.stopReason === "aborted" || output.stopReason === "error") {
+-				throw new Error("An unknown error occurred");
++				throw new Error(output.errorMessage || "An unknown error occurred");
+ 			}
+ 
+ 			stream.push({ type: "done", reason: output.stopReason, message: output });
+diff --git a/packages/ai/src/api/openai-responses-shared.ts b/packages/ai/src/api/openai-responses-shared.ts
+index fbb11c22589..ad24c8d463c 100644
+--- a/packages/ai/src/api/openai-responses-shared.ts
++++ b/packages/ai/src/api/openai-responses-shared.ts
+@@ -562,10 +562,15 @@ export async function processResponsesStream<TApi extends Api>(
+ 				: (response?.service_tier ?? options.serviceTier);
+ 			options.applyServiceTierPricing(output.usage, serviceTier);
+ 		}
+-		// Map status to stop reason
++		// Map status to stop reason. For incomplete responses, retain the provider's
++		// specific reason so max-output truncation and content filtering stay distinct.
+ 		const status = response?.status;
+-		output.rawStopReason = status;
+-		output.stopReason = mapStopReason(status);
++		const incompleteDetails = response?.incomplete_details as { reason?: unknown } | null | undefined;
++		const incompleteReason = typeof incompleteDetails?.reason === "string" ? incompleteDetails.reason : undefined;
++		output.rawStopReason = incompleteReason ? `${status}.${incompleteReason}` : status;
++		const mappedStop = mapStopReason(status, incompleteReason);
++		output.stopReason = mappedStop.stopReason;
++		output.errorMessage = mappedStop.errorMessage;
+ 		if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
+ 			output.stopReason = "toolUse";
+ 		}
+@@ -734,20 +739,31 @@ export async function processResponsesStream<TApi extends Api>(
+ 	}
+ }
+ 
+-function mapStopReason(status: OpenAI.Responses.ResponseStatus | undefined): StopReason {
+-	if (!status) return "stop";
++function mapStopReason(
++	status: OpenAI.Responses.ResponseStatus | undefined,
++	incompleteReason?: string,
++): { stopReason: StopReason; errorMessage?: string } {
++	if (!status) return { stopReason: "stop" };
+ 	switch (status) {
+ 		case "completed":
+-			return "stop";
++			return { stopReason: "stop" };
+ 		case "incomplete":
+-			return "length";
++			if (incompleteReason === "max_output_tokens") {
++				return { stopReason: "length" };
++			}
++			return {
++				stopReason: "error",
++				errorMessage: incompleteReason
++					? `Response incomplete: ${incompleteReason}`
++					: "Response incomplete without a provider reason",
++			};
+ 		case "failed":
+ 		case "cancelled":
+-			return "error";
++			return { stopReason: "error" };
+ 		// These two are wonky ...
+ 		case "in_progress":
+ 		case "queued":
+-			return "stop";
++			return { stopReason: "stop" };
+ 		default: {
+ 			const _exhaustive: never = status;
+ 			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
+diff --git a/packages/ai/src/api/openai-responses.ts b/packages/ai/src/api/openai-responses.ts
+index 3e2961c65ac..4b25804963f 100644
+--- a/packages/ai/src/api/openai-responses.ts
++++ b/packages/ai/src/api/openai-responses.ts
+@@ -171,7 +171,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+ 				throw new Error("OpenAI Responses stream ended without a stop reason");
+ 			}
+ 			if (output.stopReason === "aborted" || output.stopReason === "error") {
+-				throw new Error("An unknown error occurred");
++				throw new Error(output.errorMessage || "An unknown error occurred");
+ 			}
+ 
+ 			stream.push({ type: "done", reason: output.stopReason, message: output });
+diff --git a/packages/ai/src/utils/overflow.ts b/packages/ai/src/utils/overflow.ts
+index 6554b0b0362..c1e6457ffc1 100644
+--- a/packages/ai/src/utils/overflow.ts
++++ b/packages/ai/src/utils/overflow.ts
+@@ -80,11 +80,13 @@ const NON_OVERFLOW_PATTERNS = [
+ /**
+  * Check if an assistant message represents a context overflow error.
+  *
+- * This handles two cases:
++ * This handles three cases:
+  * 1. Error-based overflow: Most providers return stopReason "error" with a
+  *    specific error message pattern.
+  * 2. Silent overflow: Some providers accept overflow requests and return
+  *    successfully. For these, we check if usage.input exceeds the context window.
++ * 3. Length-stop overflow: Xiaomi MiMo can return "length" with zero output when
++ *    the input fills the context window.
+  *
+  * ## Reliability by Provider
+  *
+@@ -160,6 +162,16 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
+ 	return false;
+ }
+ 
++/**
++ * Check whether a length stop ended below the caller or model's intended output limit.
++ * Such responses may be caused by context pressure or provider-side truncation, so callers
++ * can make one bounded compact-and-retry attempt. `desiredMaxOutput` must be the original
++ * limit before any context-based clamping.
++ */
++export function isRecoverableLength(message: AssistantMessage, desiredMaxOutput: number): boolean {
++	return message.stopReason === "length" && desiredMaxOutput > 0 && message.usage.output < desiredMaxOutput;
++}
++
+ /**
+  * Get the overflow patterns for testing purposes.
+  */
+diff --git a/packages/ai/test/openai-responses-terminal-event.test.ts b/packages/ai/test/openai-responses-terminal-event.test.ts
+index 2e02151e076..a6c2fd94c9d 100644
+--- a/packages/ai/test/openai-responses-terminal-event.test.ts
++++ b/packages/ai/test/openai-responses-terminal-event.test.ts
+@@ -124,13 +124,14 @@ async function* createCompletedEvents(): AsyncIterable<ResponseStreamEvent> {
+ 	} as unknown as ResponseStreamEvent;
+ }
+ 
+-async function* createIncompleteEvents(): AsyncIterable<ResponseStreamEvent> {
++async function* createIncompleteEvents(reason = "max_output_tokens"): AsyncIterable<ResponseStreamEvent> {
+ 	yield {
+ 		type: "response.incomplete",
+ 		sequence_number: 0,
+ 		response: {
+ 			id: "resp_incomplete",
+ 			status: "incomplete",
++			incomplete_details: { reason },
+ 			usage: {
+ 				input_tokens: 30,
+ 				output_tokens: 12,
+@@ -187,7 +188,11 @@ async function* createPhasedMessageEvents(
+ 		yield {
+ 			type: "response.incomplete",
+ 			sequence_number: 2,
+-			response: { id: "resp_phase", status: "incomplete" },
++			response: {
++				id: "resp_phase",
++				status: "incomplete",
++				incomplete_details: { reason: "max_output_tokens" },
++			},
+ 		} as ResponseStreamEvent;
+ 		return;
+ 	}
+@@ -304,7 +309,7 @@ describe("OpenAI Responses terminal event handling", () => {
+ 
+ 		expect(output.responseId).toBe("resp_incomplete");
+ 		expect(output.stopReason).toBe("length");
+-		expect(output.rawStopReason).toBe("incomplete");
++		expect(output.rawStopReason).toBe("incomplete.max_output_tokens");
+ 		expect(output.usage).toMatchObject({
+ 			input: 25,
+ 			output: 12,
+@@ -314,6 +319,30 @@ describe("OpenAI Responses terminal event handling", () => {
+ 		});
+ 	});
+ 
++	it("finalizes content-filtered incomplete responses as non-retryable errors", async () => {
++		const model = createModel();
++		const output = createOutput(model);
++		const stream = new AssistantMessageEventStream();
++
++		await processResponsesStream(createIncompleteEvents("content_filter"), output, stream, model);
++
++		expect(output.stopReason).toBe("error");
++		expect(output.rawStopReason).toBe("incomplete.content_filter");
++		expect(output.errorMessage).toBe("Response incomplete: content_filter");
++	});
++
++	it("preserves unknown provider incomplete reasons as non-retryable errors", async () => {
++		const model = createModel();
++		const output = createOutput(model);
++		const stream = new AssistantMessageEventStream();
++
++		await processResponsesStream(createIncompleteEvents("max_time_limit"), output, stream, model);
++
++		expect(output.stopReason).toBe("error");
++		expect(output.rawStopReason).toBe("incomplete.max_time_limit");
++		expect(output.errorMessage).toBe("Response incomplete: max_time_limit");
++	});
++
+ 	it("rejects failed terminal events with the provider error", async () => {
+ 		const model = createModel();
+ 		const output = createOutput(model);
+diff --git a/packages/ai/test/overflow.test.ts b/packages/ai/test/overflow.test.ts
+index e36677fe431..9066fcc4940 100644
+--- a/packages/ai/test/overflow.test.ts
++++ b/packages/ai/test/overflow.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from "vitest";
+ import type { AssistantMessage } from "../src/types.ts";
+-import { isContextOverflow } from "../src/utils/overflow.ts";
++import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
+ 
+ function createErrorMessage(errorMessage: string): AssistantMessage {
+ 	return {
+@@ -102,19 +102,28 @@ describe("isContextOverflow", () => {
+ 		expect(isContextOverflow(message, 200000)).toBe(false);
+ 	});
+ 
+-	function createLengthStopMessage(input: number, cacheRead: number, output: number): AssistantMessage {
++	function createLengthStopMessage(options: {
++		input: number;
++		cacheRead: number;
++		output: number;
++		cacheWrite?: number;
++		api?: AssistantMessage["api"];
++		provider?: string;
++		model?: string;
++	}): AssistantMessage {
++		const cacheWrite = options.cacheWrite ?? 0;
+ 		return {
+ 			role: "assistant",
+ 			content: [],
+-			api: "openai-completions",
+-			provider: "xiaomi",
+-			model: "mimo-v2.5-pro",
++			api: options.api ?? "openai-completions",
++			provider: options.provider ?? "test-provider",
++			model: options.model ?? "test-model",
+ 			usage: {
+-				input,
+-				output,
+-				cacheRead,
+-				cacheWrite: 0,
+-				totalTokens: input + cacheRead + output,
++				input: options.input,
++				output: options.output,
++				cacheRead: options.cacheRead,
++				cacheWrite,
++				totalTokens: options.input + options.cacheRead + cacheWrite + options.output,
+ 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+ 			},
+ 			stopReason: "length",
+@@ -123,17 +132,46 @@ describe("isContextOverflow", () => {
+ 	}
+ 
+ 	it("detects Xiaomi-style overflow (length stop with zero output and filled context)", () => {
+-		const message = createLengthStopMessage(58, 1048512, 0);
++		const message = createLengthStopMessage({
++			input: 58,
++			cacheRead: 1048512,
++			output: 0,
++			provider: "xiaomi",
++			model: "mimo-v2.5-pro",
++		});
+ 		expect(isContextOverflow(message, 1048576)).toBe(true);
+ 	});
+ 
+-	it("does not treat normal length stops with output as overflow", () => {
+-		const message = createLengthStopMessage(1000, 0, 4096);
++	it("treats a length stop below the desired output limit as recoverable", () => {
++		const message = createLengthStopMessage({
++			input: 3,
++			cacheRead: 253584,
++			cacheWrite: 25554,
++			output: 16,
++			api: "openai-responses",
++			provider: "openai",
++			model: "gpt-5.6-sol",
++		});
++		expect(isRecoverableLength(message, 128000)).toBe(true);
++	});
++
++	it("does not recover a length stop that reached the desired output limit", () => {
++		const message = createLengthStopMessage({ input: 4062, cacheRead: 0, output: 1024 });
++		expect(isRecoverableLength(message, 1024)).toBe(false);
++	});
++
++	it("treats zero-output length stops as recoverable without context metadata", () => {
++		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
++		expect(isRecoverableLength(message, 128000)).toBe(true);
++	});
++
++	it("does not treat normal length stops with output as context overflow", () => {
++		const message = createLengthStopMessage({ input: 1000, cacheRead: 0, output: 4096 });
+ 		expect(isContextOverflow(message, 200000)).toBe(false);
+ 	});
+ 
+-	it("does not treat length stops far below context as overflow", () => {
+-		const message = createLengthStopMessage(100, 0, 0);
++	it("does not treat zero-output length stops far below context as context overflow", () => {
++		const message = createLengthStopMessage({ input: 100, cacheRead: 0, output: 0 });
+ 		expect(isContextOverflow(message, 200000)).toBe(false);
+ 	});
+ });
+diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
+index 196482af0b2..0b5ceff1e23 100644
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -39,6 +39,7 @@ import {
+ 	cleanupSessionResources,
+ 	getSupportedThinkingLevels,
+ 	isContextOverflow,
++	isRecoverableLength,
+ 	isRetryableAssistantError,
+ 	modelsAreEqual,
+ 	type RetryCallbacks,
+@@ -652,7 +653,7 @@ export class AgentSession {
+ 				this._lastAssistantMessage = event.message;
+ 
+ 				const assistantMsg = event.message as AssistantMessage;
+-				if (assistantMsg.stopReason !== "error") {
++				if (assistantMsg.stopReason !== "error" && assistantMsg.stopReason !== "length") {
+ 					this._overflowRecoveryAttempted = false;
+ 				}
+ 
+@@ -1940,7 +1941,8 @@ export class AgentSession {
+ 	 * Called after agent_end and before prompt submission.
+ 	 *
+ 	 * Two cases:
+-	 * 1. Overflow: LLM returned context overflow error, remove error message from agent state, compact, auto-retry
++	 * 1. Recoverable failure: LLM returned context overflow or stopped below its desired output limit;
++	 *    remove the assistant message, compact, and auto-retry once
+ 	 * 2. Threshold: Context over threshold, compact, NO auto-retry (user continues manually)
+ 	 *
+ 	 * @param assistantMessage The assistant message to check
+@@ -1972,11 +1974,13 @@ export class AgentSession {
+ 			return false;
+ 		}
+ 
+-		// Case 1: Overflow - LLM returned context overflow error, or reported usage exceeded
+-		// the configured window. A successful response over the configured window should compact
+-		// but must not retry: the assistant answer already completed and agent.continue() cannot
+-		// continue from an assistant message.
+-		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
++		// Case 1: Recoverable failure. Explicit/silent context overflow still uses context metadata.
++		// A length stop is recoverable when output ended below the model's original desired limit,
++		// independent of the configured context size or any context-clamped provider request limit.
++		// A successful response over the configured window should compact but must not retry: the
++		// assistant answer already completed and agent.continue() cannot continue from an assistant.
++		const recoverableLength = sameModel && isRecoverableLength(assistantMessage, this.model?.maxTokens ?? 0);
++		if (sameModel && (isContextOverflow(assistantMessage, contextWindow) || recoverableLength)) {
+ 			const willRetry = assistantMessage.stopReason !== "stop";
+ 
+ 			if (!willRetry) {
+@@ -1997,8 +2001,8 @@ export class AgentSession {
+ 			}
+ 
+ 			this._overflowRecoveryAttempted = true;
+-			// Remove the error message from agent state (it IS saved to session for history,
+-			// but we don't want it in context for the retry)
++			// Remove the failed or truncated message from agent state. It remains in session history,
++			// but must not be included in the compact-and-retry context.
+ 			const messages = this.agent.state.messages;
+ 			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+ 				this.agent.state.messages = messages.slice(0, -1);
+@@ -2180,7 +2184,11 @@ export class AgentSession {
+ 			if (willRetry) {
+ 				const messages = this.agent.state.messages;
+ 				const lastMsg = messages[messages.length - 1];
+-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
++				// The overflow response was persisted on message_end before _checkCompaction() removed it
++				// from agent state. Rebuilding state from the new compaction can restore that kept entry,
++				// leaving an assistant as the final message. agent.continue() rejects that state, so remove
++				// the retriable error or truncated-length response again before continuing the interrupted turn.
++				if (lastMsg?.role === "assistant" && (lastMsg.stopReason === "error" || lastMsg.stopReason === "length")) {
+ 					this.agent.state.messages = messages.slice(0, -1);
+ 				}
+ 				return true;
+diff --git a/packages/coding-agent/src/modes/interactive/components/assistant-message.ts b/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
+index 3f00394be9d..0afaeb13558 100644
+--- a/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
++++ b/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
+@@ -177,14 +177,7 @@ export class AssistantMessageComponent extends Container {
+ 		if (message.stopReason === "length") {
+ 			this.contentContainer.addChild(new Spacer(1));
+ 			this.contentContainer.addChild(
+-				new Text(
+-					theme.fg(
+-						"error",
+-						"Error: Model stopped because it reached the maximum output token limit. The response may be incomplete.",
+-					),
+-					this.outputPad,
+-					0,
+-				),
++				new Text(theme.fg("error", "Response was truncated before completion."), this.outputPad, 0),
+ 			);
+ 		} else if (!hasToolCalls) {
+ 			if (message.stopReason === "aborted") {
+diff --git a/packages/coding-agent/test/assistant-message.test.ts b/packages/coding-agent/test/assistant-message.test.ts
+index ab8b9d2e2e4..2ab64c09f8e 100644
+--- a/packages/coding-agent/test/assistant-message.test.ts
++++ b/packages/coding-agent/test/assistant-message.test.ts
+@@ -60,7 +60,7 @@ describe("AssistantMessageComponent", () => {
+ 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
+ 	});
+ 
+-	test("renders length stops as visible errors", () => {
++	test("renders length stops with neutral truncation wording", () => {
+ 		initTheme("dark");
+ 
+ 		const component = new AssistantMessageComponent(
+@@ -70,8 +70,7 @@ describe("AssistantMessageComponent", () => {
+ 		const rendered = component.render(80).join("\n");
+ 
+ 		expect(rendered).toContain("Thinking...");
+-		expect(rendered).toContain("maximum output token limit");
+-		expect(rendered).toContain("response may be incomplete");
++		expect(rendered).toContain("Response was truncated before completion.");
+ 	});
+ 
+ 	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {
+diff --git a/packages/coding-agent/test/suite/agent-session-compaction.test.ts b/packages/coding-agent/test/suite/agent-session-compaction.test.ts
+index db1f117dc3f..9faaaba24f8 100644
+--- a/packages/coding-agent/test/suite/agent-session-compaction.test.ts
++++ b/packages/coding-agent/test/suite/agent-session-compaction.test.ts
+@@ -242,6 +242,85 @@ describe("AgentSession compaction characterization", () => {
+ 		expect(getStreamCallCount()).toBe(1);
+ 	});
+ 
++	it("compacts and resumes after a length stop below the desired output limit", async () => {
++		const harness = await createHarness({
++			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
++			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
++			extensionFactories: [
++				(pi) => {
++					pi.on("session_before_compact", async (event) => ({
++						compaction: {
++							summary: "overflow compacted",
++							firstKeptEntryId: event.preparation.firstKeptEntryId,
++							tokensBefore: event.preparation.tokensBefore,
++							details: {},
++						},
++					}));
++				},
++			],
++		});
++		harnesses.push(harness);
++		harness.setResponses([
++			fauxAssistantMessage("partial response", { stopReason: "length" }),
++			fauxAssistantMessage("completed response"),
++		]);
++
++		await harness.session.prompt("x".repeat(5000));
++
++		expect(harness.faux.state.callCount).toBe(2);
++		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
++			reason: "overflow",
++			aborted: false,
++			willRetry: true,
++		});
++		expect(harness.session.getLastAssistantText()).toBe("completed response");
++	});
++
++	it("does not compact when a length stop reaches the desired output limit", async () => {
++		const harness = await createHarness({
++			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
++		});
++		harnesses.push(harness);
++		harness.setResponses([fauxAssistantMessage("x".repeat(400), { stopReason: "length" })]);
++
++		await harness.session.prompt("hello");
++
++		expect(harness.faux.state.callCount).toBe(1);
++		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
++	});
++
++	it("stops after one compact-and-retry when a second response is also truncated", async () => {
++		const harness = await createHarness({
++			models: [{ id: "faux-1", contextWindow: 1_000_000, maxTokens: 100 }],
++			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
++			extensionFactories: [
++				(pi) => {
++					pi.on("session_before_compact", async (event) => ({
++						compaction: {
++							summary: "overflow compacted",
++							firstKeptEntryId: event.preparation.firstKeptEntryId,
++							tokensBefore: event.preparation.tokensBefore,
++							details: {},
++						},
++					}));
++				},
++			],
++		});
++		harnesses.push(harness);
++		harness.setResponses([
++			() => fauxAssistantMessage("x".repeat(64), { stopReason: "length", timestamp: Date.now() + 10_000 }),
++			() => fauxAssistantMessage("y".repeat(64), { stopReason: "length", timestamp: Date.now() + 10_000 }),
++		]);
++
++		await harness.session.prompt("x".repeat(5000));
++
++		expect(harness.faux.state.callCount).toBe(2);
++		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
++		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
++			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
++		);
++	});
++
+ 	it("cancels in-progress manual compaction when abortCompaction is called", async () => {
+ 		const harness = await createHarness({
+ 			settings: { compaction: { keepRecentTokens: 1 } },
+-- 
+2.51.0

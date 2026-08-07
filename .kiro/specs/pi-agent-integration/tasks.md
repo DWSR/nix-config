@@ -28,7 +28,7 @@
   - _Boundary: Package Set_
   - _Depends: 1.2_
 
-- [ ] 1.4 Backport and verify context-limit recovery
+- [x] 1.4 Backport and verify context-limit recovery
   - Apply the complete upstream recovery change for incomplete length-limited turns, including compaction and continuation behavior.
   - Carry source provenance and focused upstream tests with the patch.
   - Verify ordinary terminal events remain unchanged.
@@ -549,3 +549,4 @@
 
 ## Implementation Notes
 - Task 1.3: When patches or `postPatch` replace an npm lock, override both `npmDepsHash` and `npmDeps`; inheriting the original fixed-output `npmDeps` leaves the old dependency graph in place.
+- Task 1.4: Nix test derivations must install sorted semantic manifests, not raw runner logs containing paths, timestamps, durations, or execution order, so `nix build --rebuild` remains reproducible.
