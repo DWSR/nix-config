@@ -19,7 +19,7 @@
   - _Boundary: Acceptance Harness_
   - _Depends: 1.1_
 
-- [ ] 1.3 Remediate the Pi production dependency advisory
+- [x] 1.3 Remediate the Pi production dependency advisory
   - Regenerate the Pi production lock so `undici` resolves to `8.9.0` or newer without changing unrelated dependencies.
   - Update the package dependency hash and preserve the pinned Pi source version.
   - Add a package assertion and advisory scan proving the affected version is absent.
@@ -546,3 +546,6 @@
   - _Requirements: 10.10, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7_
   - _Boundary: Acceptance Harness — Integration_
   - _Depends: 7.6, 7.7, 7.8_
+
+## Implementation Notes
+- Task 1.3: When patches or `postPatch` replace an npm lock, override both `npmDepsHash` and `npmDeps`; inheriting the original fixed-output `npmDeps` leaves the old dependency graph in place.

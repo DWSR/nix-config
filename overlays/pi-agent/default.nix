@@ -6,6 +6,9 @@ let
   requireSupported =
     value: if system == supportedSystem then value else throw "pi-agent supports only aarch64-darwin";
   upstream = requireSupported inputs.pi-nix.packages.${system}.coding-agent;
+  undiciPatch = ./pi-undici-8.9.0.patch;
+  piLock = ./pi-package-lock.json;
+  npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   manifest = final.writeText "pi-agent-extensions.json" (
     builtins.toJSON {
       schemaVersion = 1;
@@ -16,13 +19,26 @@ let
 in
 {
   pi-agent = requireSupported (
-    upstream.overrideAttrs (old: {
-      # Tasks 1.3 and 1.4 append the dependency and recovery patches here.
-      patches = old.patches or [ ];
-      meta = (old.meta or { }) // {
-        platforms = [ supportedSystem ];
-      };
-    })
+    upstream.overrideAttrs (
+      old:
+      let
+        patches = (old.patches or [ ]) ++ [ undiciPatch ];
+        postPatch = (old.postPatch or "") + ''
+          cp ${piLock} package-lock.json
+        '';
+      in
+      {
+        inherit patches postPatch npmDepsHash;
+        npmDeps = final.fetchNpmDeps {
+          inherit (old) src;
+          inherit patches postPatch;
+          hash = npmDepsHash;
+        };
+        meta = (old.meta or { }) // {
+          platforms = [ supportedSystem ];
+        };
+      }
+    )
   );
 
   pi-agent-extensions = requireSupported (
