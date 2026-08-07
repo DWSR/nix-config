@@ -105,9 +105,9 @@ in
   # into `apps/cli/dist/index.js` via `noExternal`.
   #
   # Build layout:
-  #   - `pnpm_9.fetchDeps` populates the offline pnpm store from the
-  #     vendored `pnpm-lock.yaml`.
-  #   - `pnpm_9.configHook` runs `pnpm install --offline
+  #   - `fetchPnpmDeps` populates the offline pnpm store from the
+  #     vendored `pnpm-lock.yaml` using pnpm 10.
+  #   - `pnpmConfigHook` runs `pnpm install --offline
   #     --frozen-lockfile --ignore-scripts`, so native postinstalls
   #     (better-sqlite3) do not run automatically — buildPhase invokes
   #     better-sqlite3's install script explicitly with
@@ -120,7 +120,7 @@ in
   #     LICENSE, README.md, slim package.json with only the six
   #     third-party runtime deps), then copies the runtime deps from
   #     the workspace pnpm store into the slim layout's node_modules.
-  #     `pnpm deploy` would do this in one step but in pnpm 9 it
+  #     `pnpm deploy` would do this in one step but it
   #     re-resolves the workspace topology against the network, which
   #     the Nix sandbox forbids.
   #   - `makeWrapper` exposes `bin/cavemem` as a stable absolute path
@@ -157,14 +157,14 @@ in
 
     pnpmDeps = final.fetchPnpmDeps {
       inherit (finalAttrs) pname version src;
-      pnpm = final.pnpm_9;
+      pnpm = final.pnpm_10;
       fetcherVersion = 3;
-      hash = "sha256-xVdck9jTZPm3gf3kZ/KZI4bO0jkTfhZP5j41MlNAvlA=";
+      hash = "sha256-/C4HE52RMiabYQBhLZbVmVdFUaL1/MrvlAORGWuEfbU=";
     };
 
     nativeBuildInputs = [
       final.nodejs
-      final.pnpm_9
+      final.pnpm_10
       final.pnpmConfigHook
       final.makeWrapper
       final.python3
@@ -216,7 +216,7 @@ in
       # already-built native binding for better-sqlite3 (which the
       # buildPhase compiled in the workspace store).
       #
-      # `pnpm deploy` would do this neatly but in pnpm 9 it requires
+      # `pnpm deploy` would do this neatly but it requires
       # network access (it re-resolves the workspace transitively),
       # which the Nix sandbox forbids. Instead, we run the upstream
       # `pack:release` build script (which already knows the slim

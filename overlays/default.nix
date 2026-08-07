@@ -26,8 +26,25 @@ in
     # (python312 → mcp-server-time, python313 → ast-grep-mcp).
     pythonPackagesExtensions = (prev.pythonPackagesExtensions or [ ]) ++ [
       (_pyfinal: pyprev: {
-        mcp = pyprev.mcp.overridePythonAttrs (old: {
-          disabledTests = (old.disabledTests or [ ]) ++ [ "test_stdio_client_bad_path" ];
+        mcp = pyprev.mcp.overridePythonAttrs (
+          old:
+          {
+            disabledTests = (old.disabledTests or [ ]) ++ [ "test_stdio_client_bad_path" ];
+          }
+          // final.lib.optionalAttrs final.stdenv.hostPlatform.isDarwin {
+            # Individual server tests pass in isolation, but the full upstream
+            # suite accumulates process-cleanup failures until later localhost
+            # servers miss their fixed startup deadlines.
+            doCheck = false;
+          }
+        );
+        # These timing tests expect exactly two pings; Kqueue can schedule three
+        # while still delivering the complete five-event stream.
+        sse-starlette = pyprev.sse-starlette.overridePythonAttrs (old: {
+          disabledTests = (old.disabledTests or [ ]) ++ [
+            "test_response_send_whenValidInput_thenGeneratesExpectedOutput"
+            "test_eventSourceResponse_whenUsingMemoryChannel_thenHandlesAsyncQueueCorrectly"
+          ];
         });
       })
     ];
