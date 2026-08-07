@@ -10,7 +10,7 @@
   - _Requirements: 1.2, 1.5, 15.3_
   - _Boundary: Package Set_
 
-- [ ] 1.2 Create the deterministic test and flake-check harness
+- [x] 1.2 Create the deterministic test and flake-check harness
   - Add the Node test runner, isolated fixtures, writable copied-source setup, and check result conventions.
   - Provide fake Pi, provider, mcpproxy, Cavemem, nono, language-server, and subprocess probes for later tests.
   - Keep credential-bearing and switched-host tests outside pure derivations.

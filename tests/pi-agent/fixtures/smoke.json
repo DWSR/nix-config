@@ -1,0 +1,13 @@
+{
+  "generation": "pi-agent-harness-v1",
+  "workspace": "smoke-workspace",
+  "writableValue": "smoke-mutated\n",
+  "manualGate": {
+    "name": "shopify-live",
+    "status": "manual-required",
+    "evidence": [
+      "credential-bearing",
+      "switched-host-only"
+    ]
+  }
+}

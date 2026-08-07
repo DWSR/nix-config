@@ -1590,10 +1590,31 @@
                   '';
             }
           );
+
+          piAgentChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+            pi-agent-harness =
+              pkgs.runCommand "pi-agent-harness"
+                {
+                  nativeBuildInputs = [
+                    pkgs.nix
+                    pkgs.nodejs
+                  ];
+                }
+                ''
+                  export HOME=$(mktemp -d)
+                  export NIX_CONFIG="experimental-features = nix-command flakes"
+                  cp -R ${./.} source
+                  chmod -R u+w source
+                  cd source
+                  node --test tests/pi-agent/
+                  node tests/pi-agent/run.js --smoke > $out
+                '';
+          };
         in
         nixvimTests
         // hammerspoonChecks
         // deskflowChecks
+        // piAgentChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 

@@ -1,0 +1,7 @@
+{
+  "name": "pi-agent-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Test suite and deterministic smoke entry point for the managed Pi integration."
+}
