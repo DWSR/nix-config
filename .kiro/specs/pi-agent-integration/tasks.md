@@ -2,7 +2,7 @@
 
 - [ ] 1. Establish the package and test foundation
 
-- [ ] 1.1 Pin the Pi source and expose the package skeleton
+- [x] 1.1 Pin the Pi source and expose the package skeleton
   - Add the pinned Pi flake source, repository overlay entry, patched-package placeholder, and extension-package placeholder.
   - Keep the upstream Pi wrapper off `PATH`; expose only package outputs consumed by later managed wrappers.
   - Assert `aarch64-darwin` support and a single Pi executable closure.

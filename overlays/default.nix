@@ -4,6 +4,7 @@ let
   zellijPlugins = import ./zellij-plugins.nix { inherit inputs; };
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
+  piAgent = import ./pi-agent { inherit inputs; };
 in
 {
   fixed-packages = final: prev: {
@@ -92,5 +93,6 @@ in
     (mcpServers final prev)
     // (zellijPlugins final prev)
     // (misc final prev)
-    // (litestream final prev);
+    // (litestream final prev)
+    // (piAgent final prev);
 }
