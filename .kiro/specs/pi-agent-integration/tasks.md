@@ -58,6 +58,7 @@
   - _Requirements: 1.1, 1.3, 2.7, 15.7_
   - _Boundary: Home Module_
   - _Depends: 1.1_
+  - _Blocked: debug attempted twice, still failing — typed contract validation still permits credentials through owned headers and provider paths, and accepts invalid Nix store roots._
 
 - [ ] 2.2 Render secret-free desired state and module enablement behavior
   - Render generation-addressed settings, provider declarations, extension order, MCP endpoint, sandbox defaults, and immutable package paths.
