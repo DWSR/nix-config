@@ -16,6 +16,16 @@ const patchedLockPath = path.join(repoRoot, "overlays/pi-agent/pi-package-lock.j
 const undiciPatchPath = path.join(repoRoot, "overlays/pi-agent/pi-undici-8.9.0.patch");
 const hosts = ["Brandons-MacBook-Pro", "ShopifyLaptop"];
 const nixHosts = `[ ${hosts.map((host) => JSON.stringify(host)).join(" ")} ]`;
+const expectedExtensionVersions = {
+  backgroundTasks: "2.0.0",
+  bashTimeout: "4.6.0",
+  codeIntelligence: "4.6.0",
+  mcp: "2.20.1",
+  plan: "0.49.2",
+  questions: "4.6.0",
+  subagents: "0.40.0",
+  timestamps: "0.49.3",
+};
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -307,11 +317,19 @@ test("both hosts resolve the same uninstalled Pi package skeleton", () => {
     assert.equal(rendered[host].system, "aarch64-darwin");
     assert.equal(rendered[host].package.version, expectedVersion);
     assert.equal(rendered[host].package.mainProgram, "pi");
-    assert.deepEqual(rendered[host].extensions.manifest, {
-      schemaVersion: 1,
-      piVersion: expectedVersion,
-      extensions: {},
-    });
+    assert.equal(rendered[host].extensions.manifest.schemaVersion, 1);
+    assert.equal(rendered[host].extensions.manifest.piVersion, expectedVersion);
+    assert.deepEqual(
+      Object.fromEntries(
+        Object.entries(rendered[host].extensions.manifest.extensions)
+          .map(([name, extension]) => [name, extension.version]),
+      ),
+      expectedExtensionVersions,
+    );
+    for (const extension of Object.values(rendered[host].extensions.manifest.extensions)) {
+      assert.equal(extension.license, "MIT");
+      assert.match(extension.entryPath, /^lib\/node_modules\//);
+    }
     assert.equal(rendered[host].installed, false);
   }
 

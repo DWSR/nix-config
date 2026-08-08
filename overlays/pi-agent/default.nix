@@ -94,11 +94,89 @@ let
   undiciPatch = ./pi-undici-8.9.0.patch;
   piLock = ./pi-package-lock.json;
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
-  manifest = final.writeText "pi-agent-extensions.json" (
+  extensionRoot = ./extensions;
+  extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
+  extensionInventory = {
+    mcp = {
+      package = "pi-mcp-adapter";
+      version = "2.20.1";
+      sourceRef = "1dbdef96";
+      entryPath = "lib/node_modules/pi-mcp-adapter/index.ts";
+      license = "MIT";
+    };
+    subagents = {
+      package = "pi-subagents";
+      version = "0.40.0";
+      sourceRef = "d4d2ab70";
+      entryPath = "lib/node_modules/pi-subagents/index.ts";
+      license = "MIT";
+    };
+    plan = {
+      package = "@narumitw/pi-plan-mode";
+      version = "0.49.2";
+      sourceRef = "df5f5ce7";
+      entryPath = "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts";
+      license = "MIT";
+    };
+    timestamps = {
+      package = "@narumitw/pi-stamp";
+      version = "0.49.3";
+      sourceRef = "4c2c2e8c";
+      entryPath = "lib/node_modules/@narumitw/pi-stamp/src/index.ts";
+      license = "MIT";
+    };
+    bashTimeout = {
+      package = "@mrclrchtr/supi-bash-timeout";
+      version = "4.6.0";
+      sourceRef = "98b80f6d";
+      entryPath = "lib/node_modules/@mrclrchtr/supi-bash-timeout/src/extension.ts";
+      license = "MIT";
+    };
+    questions = {
+      package = "@mrclrchtr/supi-ask-user";
+      version = "4.6.0";
+      sourceRef = "98b80f6d";
+      entryPath = "lib/node_modules/@mrclrchtr/supi-ask-user/src/extension.ts";
+      license = "MIT";
+    };
+    codeIntelligence = {
+      package = "@mrclrchtr/supi-code-intelligence";
+      version = "4.6.0";
+      sourceRef = "98b80f6d";
+      entryPath = "lib/node_modules/@mrclrchtr/supi-code-intelligence/src/extension.ts";
+      license = "MIT";
+    };
+    backgroundTasks = {
+      package = "@99percentpeople/pi-background-tasks";
+      version = "2.0.0";
+      sourceRef = "0d231ab3";
+      entryPath = "lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts";
+      license = "MIT";
+    };
+  };
+  extensionRuntimeDependencies = {
+    nodePty = {
+      package = "node-pty";
+      version = "1.2.0-beta.14";
+      entryPath = "lib/node_modules/node-pty/lib/index.js";
+    };
+  };
+  extensionManifest = final.writeText "pi-agent-extensions.json" (
     builtins.toJSON {
       schemaVersion = 1;
       piVersion = upstream.version;
-      extensions = { };
+      extensions = final.lib.mapAttrs (_logicalName: extension: {
+        inherit (extension) version entryPath license;
+      }) extensionInventory;
+    }
+  );
+  extensionProvenance = final.writeText "pi-agent-extensions-provenance.json" (
+    builtins.toJSON {
+      schemaVersion = 1;
+      extensions = final.lib.mapAttrs (_logicalName: extension: {
+        inherit (extension) package version sourceRef;
+      }) extensionInventory;
+      runtimeDependencies = extensionRuntimeDependencies;
     }
   );
 in
@@ -193,16 +271,68 @@ in
   );
 
   pi-agent-extensions = requireSupported (
-    final.runCommand "pi-agent-extensions-${upstream.version}-placeholder"
-      {
-        passthru = { inherit manifest; };
-        meta = {
-          description = "Managed Pi extension package placeholder";
-          platforms = [ supportedSystem ];
-        };
-      }
-      ''
-        install -Dm444 ${manifest} "$out/share/pi-agent/extensions.json"
-      ''
+    final.buildNpmPackage {
+      pname = "pi-agent-extensions";
+      inherit (upstream) version;
+      src = extensionRoot;
+      npmDepsHash = extensionNpmDepsHash;
+      dontNpmBuild = true;
+
+      installPhase = ''
+        runHook preInstall
+
+        piRuntime=$(find node_modules -type d \( \
+          -path 'node_modules/@earendil-works/pi-*' -o \
+          -path '*/node_modules/@earendil-works/pi-*' \
+        \) -print -quit)
+        if [ -n "$piRuntime" ]; then
+          echo "nested Pi runtime found: $piRuntime" >&2
+          exit 1
+        fi
+
+        test -f node_modules/node-pty/prebuilds/darwin-arm64/pty.node
+        test -x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
+        rm -rf node_modules/.bin
+
+        mkdir -p "$out/lib/node_modules"
+        cp -R node_modules/. "$out/lib/node_modules/"
+
+        install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
+        install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"
+        install -Dm444 package.json "$out/share/pi-agent/extensions-package.json"
+        install -Dm444 package-lock.json "$out/share/pi-agent/extensions-package-lock.json"
+
+        install -Dm444 node_modules/pi-mcp-adapter/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/mcp/LICENSE"
+        install -Dm444 node_modules/pi-subagents/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/subagents/LICENSE"
+        install -Dm444 node_modules/@narumitw/pi-plan-mode/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/plan/LICENSE"
+        install -Dm444 node_modules/@narumitw/pi-stamp/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/timestamps/LICENSE"
+        install -Dm444 licenses/supi-LICENSE \
+          "$out/share/licenses/pi-agent-extensions/bashTimeout/LICENSE"
+        install -Dm444 licenses/supi-LICENSE \
+          "$out/share/licenses/pi-agent-extensions/questions/LICENSE"
+        install -Dm444 licenses/supi-LICENSE \
+          "$out/share/licenses/pi-agent-extensions/codeIntelligence/LICENSE"
+        install -Dm444 node_modules/@99percentpeople/pi-background-tasks/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/backgroundTasks/LICENSE"
+        install -Dm444 node_modules/node-pty/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/nodePty/LICENSE"
+
+        runHook postInstall
+      '';
+
+      passthru = {
+        manifest = extensionManifest;
+        provenance = extensionProvenance;
+      };
+      meta = {
+        description = "Fixed public extension closure for the managed Pi agent";
+        license = final.lib.licenses.mit;
+        platforms = [ supportedSystem ];
+      };
+    }
   );
 }

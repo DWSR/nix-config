@@ -8,9 +8,11 @@ import { fileURLToPath } from "node:url";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const patchPath = path.join(repoRoot, "overlays/pi-agent/pi-undici-8.9.0.patch");
 const lockPath = path.join(repoRoot, "overlays/pi-agent/pi-package-lock.json");
+const extensionRoot = path.join(repoRoot, "overlays/pi-agent/extensions");
 const expectedVersion = "0.83.0";
 const expectedNpmVersion = "11.6.2";
-const expectedProductionDependencies = 170;
+const expectedPiProductionDependencies = 170;
+const expectedExtensionProductionDependencies = 77;
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -65,7 +67,7 @@ function piMetadata() {
   );
 }
 
-function runAudit(npm, workspace, cache) {
+function runAudit(npm, workspace, cache, expectedProductionDependencies, label) {
   const result = childProcess.spawnSync(
     npm,
     ["audit", "--omit=dev", "--package-lock-only", "--audit-level=high", "--json"],
@@ -97,10 +99,10 @@ function runAudit(npm, workspace, cache) {
   assert.equal(
     report.metadata?.dependencies?.prod,
     expectedProductionDependencies,
-    "audit did not inspect the full Pi production workspace",
+    `audit did not inspect the full ${label} production workspace`,
   );
-  assert.equal(report.metadata?.vulnerabilities?.high, 0, "npm audit found high advisories");
-  assert.equal(report.metadata?.vulnerabilities?.critical, 0, "npm audit found critical advisories");
+  assert.equal(report.metadata?.vulnerabilities?.high, 0, `${label} audit found high advisories`);
+  assert.equal(report.metadata?.vulnerabilities?.critical, 0, `${label} audit found critical advisories`);
   if (result.status !== 0) {
     throw new Error(`npm audit exited ${result.status}: ${result.stderr.trim()}`);
   }
@@ -123,31 +125,57 @@ function main() {
   assert.equal(npmVersion, expectedNpmVersion);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-audit-"));
-  const workspace = path.join(root, "pi");
+  const piWorkspace = path.join(root, "pi");
+  const extensionWorkspace = path.join(root, "extensions");
   try {
-    fs.cpSync(metadata.source, workspace, { recursive: true });
-    makeWritable(workspace);
+    fs.cpSync(metadata.source, piWorkspace, { recursive: true });
+    makeWritable(piWorkspace);
     command("patch", ["--batch", "--forward", "--strip=1", `--input=${patchPath}`], {
-      cwd: workspace,
+      cwd: piWorkspace,
     });
-    fs.copyFileSync(lockPath, path.join(workspace, "package-lock.json"));
+    fs.copyFileSync(lockPath, path.join(piWorkspace, "package-lock.json"));
 
     const manifest = JSON.parse(
-      fs.readFileSync(path.join(workspace, "packages/coding-agent/package.json"), "utf8"),
+      fs.readFileSync(path.join(piWorkspace, "packages/coding-agent/package.json"), "utf8"),
     );
     assert.equal(manifest.version, expectedVersion);
     assert.equal(manifest.dependencies.undici, "8.9.0");
-    assert.ok(fs.existsSync(path.join(workspace, "packages/agent/package.json")));
-    assert.ok(fs.existsSync(path.join(workspace, "packages/ai/package.json")));
+    assert.ok(fs.existsSync(path.join(piWorkspace, "packages/agent/package.json")));
+    assert.ok(fs.existsSync(path.join(piWorkspace, "packages/ai/package.json")));
 
-    const report = runAudit(npm, workspace, path.join(root, "npm-cache"));
+    fs.cpSync(extensionRoot, extensionWorkspace, { recursive: true });
+    makeWritable(extensionWorkspace);
+    const extensionManifest = JSON.parse(
+      fs.readFileSync(path.join(extensionWorkspace, "package.json"), "utf8"),
+    );
+    assert.equal(extensionManifest.private, true);
+    assert.equal(extensionManifest.dependencies["node-pty"], "1.2.0-beta.14");
+
+    const piReport = runAudit(
+      npm,
+      piWorkspace,
+      path.join(root, "npm-cache"),
+      expectedPiProductionDependencies,
+      "Pi",
+    );
+    const extensionReport = runAudit(
+      npm,
+      extensionWorkspace,
+      path.join(root, "npm-cache"),
+      expectedExtensionProductionDependencies,
+      "extension",
+    );
     process.stdout.write(
       `${JSON.stringify({
-        auditReportVersion: report.auditReportVersion,
+        auditReportVersion: piReport.auditReportVersion,
         npmVersion,
         piVersion: metadata.version,
-        productionDependencies: report.metadata.dependencies.prod,
-        vulnerabilities: report.metadata.vulnerabilities,
+        productionDependencies: piReport.metadata.dependencies.prod,
+        vulnerabilities: piReport.metadata.vulnerabilities,
+        extensions: {
+          productionDependencies: extensionReport.metadata.dependencies.prod,
+          vulnerabilities: extensionReport.metadata.vulnerabilities,
+        },
       })}\n`,
     );
   } finally {

@@ -37,7 +37,7 @@
   - _Boundary: Package Set_
   - _Depends: 1.3_
 
-- [ ] 1.5 Build the pinned public extension dependency closure
+- [x] 1.5 Build the pinned public extension dependency closure
   - Lock the approved public extension versions and direct runtime dependencies without loading their mutable installers.
   - Preserve the Darwin ARM `node-pty` prebuild and verify one pipe and one PTY spawn.
   - Include required license texts and reject a nested Pi runtime or mutable source reference.
