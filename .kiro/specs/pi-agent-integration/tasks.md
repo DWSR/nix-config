@@ -131,6 +131,7 @@
   - _Requirements: 10.3, 10.6, 10.9, 10.10_
   - _Boundary: Cavemem Full Mode_
   - _Depends: 3.1_
+  - _Blocked: debug attempted twice, still failing — the full-mode privacy scanner still leaks escaped or structured secrets and corrupts benign code and URL text._
 
 - [ ] 3.3 Verify Cavemem storage limits and package compatibility
   - Exercise a complete full-mode row at the active SQLite maximum fixture and a maximum-plus-one failure.
