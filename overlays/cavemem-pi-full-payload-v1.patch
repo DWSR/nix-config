@@ -1,0 +1,460 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DWSR nix-config <noreply@local>
+Date: Sat, 8 Aug 2026 07:50:50 -0400
+Subject: [PATCH] cavemem: add opt-in Pi full payload capture
+
+Written for pi-agent-integration task 3.1 against Cavemem v0.2.1,
+commit e934e436e0dcb68422475d85385f7f8eb5e449b1.
+
+Add the explicit `post-tool-use --capture-mode pi-full-v1` control path.
+The mode validates a canonical PiFullToolObservationV1 payload, serializes
+only that versioned envelope, and inserts it through the existing storage
+path with compression disabled and null intensity.
+
+The CLI object permits only transport fields `session_id` and `ide` outside
+the stored five-field envelope. Unknown envelope or output fields fail before
+session or observation insertion, and errors omit discarded field values.
+
+The default hook branch is retained verbatim, including permissive JSON
+parsing, 500-character input/output shortening, the 4,000-character body
+cap, grammar compression, metadata, stdout, and exit behavior. Privacy,
+embedding exclusion, retrieval, and SQLite-limit policy remain for tasks
+3.2 and 3.3; this patch accepts the bridge's canonical redacted-stage
+envelope and does not change those subsystems.
+---
+ apps/cli/src/commands/hook.ts                 |  76 +++++++++++---
+ packages/core/src/memory-store.ts             |  18 ++++
+ packages/hooks/src/handlers/post-tool-use.ts  | 165 ++++++++++++++++++++++-
+ packages/hooks/src/index.ts                   |   8 +-
+ packages/hooks/src/runner.ts                  |  15 ++-
+ packages/hooks/src/types.ts                   |  23 ++++
+ 6 files changed, 289 insertions(+), 16 deletions(-)
+
+diff --git a/apps/cli/src/commands/hook.ts b/apps/cli/src/commands/hook.ts
+--- a/apps/cli/src/commands/hook.ts
++++ b/apps/cli/src/commands/hook.ts
+@@ -1,6 +1,18 @@
+-import { type HookName, type HookResult, runHook } from '@cavemem/hooks';
++import {
++  type CaptureMode,
++  type HookName,
++  type HookResult,
++  runHook,
++} from '@cavemem/hooks';
+ import type { Command } from 'commander';
+ 
++const PI_FULL_CAPTURE_MODE: CaptureMode = 'pi-full-v1';
++
++interface HookCommandOptions {
++  ide?: string;
++  captureMode?: string;
++}
++
+ const VALID: HookName[] = [
+   'session-start',
+   'user-prompt-submit',
+@@ -25,7 +37,8 @@ export function registerHookCommand(program: Command): void {
+     .command('run <name>')
+     .description('Run a hook by name (reads JSON from stdin)')
+     .option('--ide <name>', 'IDE that invoked the hook (Claude Code does not send this)')
+-    .action(async (name: string, opts: { ide?: string }) => {
++    .option('--capture-mode <mode>', 'Versioned payload capture mode')
++    .action(async (name: string, opts: HookCommandOptions) => {
+       if (!VALID.includes(name as HookName)) {
+         // Stay non-blocking: the IDE's hook config could be stale.
+         process.stderr.write(`${JSON.stringify({ ok: false, error: `unknown hook ${name}` })}\n`);
+@@ -33,15 +46,46 @@ export function registerHookCommand(program: Command): void {
+         return;
+       }
+       const hookName = name as HookName;
++      if (opts.captureMode !== undefined && opts.captureMode !== PI_FULL_CAPTURE_MODE) {
++        process.stderr.write(
++          `${JSON.stringify({ ok: false, error: `unknown capture mode ${opts.captureMode}` })}\n`,
++        );
++        process.exitCode = 1;
++        return;
++      }
++      if (opts.captureMode !== undefined && hookName !== 'post-tool-use') {
++        process.stderr.write(
++          `${JSON.stringify({
++            ok: false,
++            error: `capture mode ${opts.captureMode} requires post-tool-use`,
++          })}\n`,
++        );
++        process.exitCode = 1;
++        return;
++      }
+       const raw = await readStdin();
+-      const parsed = raw.trim() ? safeJson(raw) : {};
+-      const input = {
+-        session_id: typeof parsed.session_id === 'string' ? parsed.session_id : 'unknown',
+-        ...parsed,
+-        ...(opts.ide ? { ide: opts.ide } : {}),
+-      } as Parameters<typeof runHook>[1];
+-
+-      const result = await runHook(hookName, input);
++      const parsed =
++        opts.captureMode === PI_FULL_CAPTURE_MODE
++          ? strictJsonObject(raw)
++          : raw.trim()
++            ? safeJson(raw)
++            : {};
++      const input =
++        opts.captureMode === PI_FULL_CAPTURE_MODE
++          ? ({
++              ...parsed,
++              ...(opts.ide ? { ide: opts.ide } : {}),
++            } as Parameters<typeof runHook>[1])
++          : ({
++              session_id: typeof parsed.session_id === 'string' ? parsed.session_id : 'unknown',
++              ...parsed,
++              ...(opts.ide ? { ide: opts.ide } : {}),
++            } as Parameters<typeof runHook>[1]);
++
++      const result =
++        opts.captureMode === undefined
++          ? await runHook(hookName, input)
++          : await runHook(hookName, input, { captureMode: opts.captureMode });
+ 
+       // Telemetry always goes to stderr — stdout is reserved for the IDE's
+       // hook protocol and any text we put there is interpreted (e.g. injected
+@@ -83,6 +127,18 @@ function safeJson(s: string): Record<string, unknown> {
+   }
+ }
+ 
++function strictJsonObject(s: string): Record<string, unknown> {
++  try {
++    const value = JSON.parse(s);
++    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
++      return value as Record<string, unknown>;
++    }
++  } catch {
++    // The mode-specific error below deliberately differs from legacy safeJson.
++  }
++  throw new Error('pi-full-v1 requires a valid JSON object');
++}
++
+ function readStdin(): Promise<string> {
+   return new Promise((resolve) => {
+     if (process.stdin.isTTY) {
+diff --git a/packages/core/src/memory-store.ts b/packages/core/src/memory-store.ts
+--- a/packages/core/src/memory-store.ts
++++ b/packages/core/src/memory-store.ts
+@@ -66,6 +66,24 @@ export class MemoryStore {
+     return this.storage.insertObservation(obs);
+   }
+ 
++  addUncompressedObservation(p: {
++    session_id: string;
++    kind: string;
++    content: string;
++    metadata?: Record<string, unknown>;
++  }): number {
++    if (!p.content.trim()) return -1;
++    this.ensureSession(p.session_id);
++    return this.storage.insertObservation({
++      session_id: p.session_id,
++      kind: p.kind,
++      content: p.content,
++      compressed: false,
++      intensity: null,
++      ...(p.metadata !== undefined ? { metadata: p.metadata } : {}),
++    });
++  }
++
+   addSummary(p: { session_id: string; scope: 'turn' | 'session'; content: string }): number {
+     const redacted = redactPrivate(p.content);
+     this.ensureSession(p.session_id);
+diff --git a/packages/hooks/src/handlers/post-tool-use.ts b/packages/hooks/src/handlers/post-tool-use.ts
+--- a/packages/hooks/src/handlers/post-tool-use.ts
++++ b/packages/hooks/src/handlers/post-tool-use.ts
+@@ -1,7 +1,46 @@
+ import type { MemoryStore } from '@cavemem/core';
+-import type { HookInput } from '../types.js';
++import type {
++  CaptureMode,
++  HookInput,
++  PiFullToolObservationV1,
++} from '../types.js';
++
++const PI_FULL_ENVELOPE_FIELDS = [
++  'schemaVersion',
++  'toolCallId',
++  'toolName',
++  'input',
++  'output',
++] as const;
++// session_id and ide wrap the stored envelope and are never serialized.
++const PI_FULL_TRANSPORT_FIELDS = new Set<string>([
++  'session_id',
++  'ide',
++  ...PI_FULL_ENVELOPE_FIELDS,
++]);
++const PI_FULL_OUTPUT_FIELDS = new Set(['content', 'details', 'isError', 'usage']);
++
++export async function postToolUse(
++  store: MemoryStore,
++  input: HookInput,
++  captureMode?: CaptureMode,
++): Promise<void> {
++  if (captureMode === 'pi-full-v1') {
++    const content = serializePiFullToolObservationV1(input);
++    store.addUncompressedObservation({
++      session_id: input.session_id,
++      kind: 'tool_use',
++      content,
++      metadata: {
++        tool: input.toolName,
++        captureMode,
++        schemaVersion: 1,
++        toolCallId: input.toolCallId,
++      },
++    });
++    return;
++  }
+ 
+-export async function postToolUse(store: MemoryStore, input: HookInput): Promise<void> {
+   const tool = input.tool_name ?? input.tool ?? 'unknown';
+   const toolInput = input.tool_input;
+   const toolOutput = input.tool_response ?? input.tool_output;
+@@ -19,6 +58,128 @@ export async function postToolUse(store: MemoryStore, input: HookInput): Promise<void> {
+   });
+ }
+ 
++function serializePiFullToolObservationV1(input: HookInput): string {
++  assertOnlyFields(input, PI_FULL_TRANSPORT_FIELDS, 'envelope');
++  if (typeof input.session_id !== 'string' || !input.session_id.trim()) {
++    throw new Error('pi-full-v1 session_id must be a non-empty string');
++  }
++  if (input.schemaVersion !== 1) {
++    throw new Error('pi-full-v1 schemaVersion must equal 1');
++  }
++  if (typeof input.toolCallId !== 'string' || !input.toolCallId.trim()) {
++    throw new Error('pi-full-v1 toolCallId must be a non-empty string');
++  }
++  if (typeof input.toolName !== 'string' || !input.toolName.trim()) {
++    throw new Error('pi-full-v1 toolName must be a non-empty string');
++  }
++  if (!Object.hasOwn(input, 'input')) {
++    throw new Error('pi-full-v1 input is required');
++  }
++  assertJsonSerializable(input.input, 'input');
++
++  if (!isRecord(input.output)) {
++    throw new Error('pi-full-v1 output must be an object');
++  }
++  assertOnlyFields(input.output, PI_FULL_OUTPUT_FIELDS, 'output');
++  if (!Object.hasOwn(input.output, 'content')) {
++    throw new Error('pi-full-v1 output.content is required');
++  }
++  if (!Object.hasOwn(input.output, 'details')) {
++    throw new Error('pi-full-v1 output.details is required');
++  }
++  if (typeof input.output.isError !== 'boolean') {
++    throw new Error('pi-full-v1 output.isError must be a boolean');
++  }
++  assertJsonSerializable(input.output.content, 'output.content');
++  assertJsonSerializable(input.output.details, 'output.details');
++
++  const usage = input.output.usage;
++  if (
++    usage !== undefined &&
++    (!isRecord(usage) ||
++      !Object.values(usage).every((value) => typeof value === 'number' && Number.isFinite(value)))
++  ) {
++    throw new Error('pi-full-v1 output.usage must contain only finite numbers');
++  }
++
++  const envelope: PiFullToolObservationV1 = {
++    schemaVersion: 1,
++    toolCallId: input.toolCallId,
++    toolName: input.toolName,
++    input: input.input,
++    output: {
++      content: input.output.content,
++      details: input.output.details,
++      isError: input.output.isError,
++      ...(usage !== undefined ? { usage: usage as Record<string, number> } : {}),
++    },
++  };
++  return JSON.stringify(envelope);
++}
++
++function assertOnlyFields(
++  value: object,
++  allowed: ReadonlySet<string>,
++  scope: 'envelope' | 'output',
++): void {
++  const unknown = Object.getOwnPropertyNames(value)
++    .filter((field) => !allowed.has(field))
++    .sort();
++  const symbols = Object.getOwnPropertySymbols(value);
++  if (unknown.length === 0 && symbols.length === 0) return;
++
++  const fields = [
++    ...unknown.map((field) =>
++      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(field) ? field : '<invalid>',
++    ),
++    ...symbols.map(() => '<invalid>'),
++  ];
++  const noun = fields.length === 1 ? 'field' : 'fields';
++  const displayed = fields.slice(0, 3).join(', ');
++  const suffix = fields.length > 3 ? ', ...' : '';
++  throw new Error(`pi-full-v1 ${scope} contains unknown ${noun}: ${displayed}${suffix}`);
++}
++
++function assertJsonSerializable(value: unknown, field: string, seen = new Set<object>()): void {
++  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
++  if (typeof value === 'number') {
++    if (Number.isFinite(value)) return;
++    throw new Error(`pi-full-v1 ${field} must be JSON-serializable`);
++  }
++  if (typeof value !== 'object') {
++    throw new Error(`pi-full-v1 ${field} must be JSON-serializable`);
++  }
++  if (seen.has(value)) {
++    throw new Error(`pi-full-v1 ${field} must be JSON-serializable`);
++  }
++
++  seen.add(value);
++  if (Array.isArray(value)) {
++    for (let index = 0; index < value.length; index += 1) {
++      if (!Object.hasOwn(value, index)) {
++        throw new Error(`pi-full-v1 ${field} must be JSON-serializable`);
++      }
++      assertJsonSerializable(value[index], field, seen);
++    }
++  } else {
++    const prototype = Object.getPrototypeOf(value);
++    if (
++      (prototype !== Object.prototype && prototype !== null) ||
++      Object.getOwnPropertySymbols(value).length > 0
++    ) {
++      throw new Error(`pi-full-v1 ${field} must be JSON-serializable`);
++    }
++    for (const nested of Object.values(value)) {
++      assertJsonSerializable(nested, field, seen);
++    }
++  }
++  seen.delete(value);
++}
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return value !== null && typeof value === 'object' && !Array.isArray(value);
++}
++
+ function stringifyShort(v: unknown): string {
+   if (v == null) return '';
+   if (typeof v === 'string') return v.length > 500 ? `${v.slice(0, 500)}…` : v;
+diff --git a/packages/hooks/src/index.ts b/packages/hooks/src/index.ts
+--- a/packages/hooks/src/index.ts
++++ b/packages/hooks/src/index.ts
+@@ -1,6 +1,12 @@
+ export { runHook } from './runner.js';
+ export { ensureWorkerRunning } from './auto-spawn.js';
+-export type { HookName, HookInput, HookResult } from './types.js';
++export type {
++  CaptureMode,
++  HookName,
++  HookInput,
++  HookResult,
++  PiFullToolObservationV1,
++} from './types.js';
+ export { sessionStart } from './handlers/session-start.js';
+ export { userPromptSubmit } from './handlers/user-prompt-submit.js';
+ export { postToolUse } from './handlers/post-tool-use.js';
+diff --git a/packages/hooks/src/runner.ts b/packages/hooks/src/runner.ts
+--- a/packages/hooks/src/runner.ts
++++ b/packages/hooks/src/runner.ts
+@@ -7,7 +7,7 @@ import { sessionEnd } from './handlers/session-end.js';
+ import { sessionStart } from './handlers/session-start.js';
+ import { stop } from './handlers/stop.js';
+ import { userPromptSubmit } from './handlers/user-prompt-submit.js';
+-import type { HookInput, HookName, HookResult } from './types.js';
++import type { CaptureMode, HookInput, HookName, HookResult } from './types.js';
+ 
+ export interface RunHookOptions {
+   /**
+@@ -15,6 +15,7 @@ export interface RunHookOptions {
+    * will not construct or close the store — the caller owns its lifecycle.
+    */
+   store?: MemoryStore;
++  captureMode?: string;
+ }
+ 
+ export async function runHook(
+@@ -23,6 +24,12 @@ export async function runHook(
+   opts: RunHookOptions = {},
+ ): Promise<HookResult> {
+   const start = performance.now();
++  if (opts.captureMode !== undefined && opts.captureMode !== 'pi-full-v1') {
++    return failedResult(start, `unknown capture mode ${opts.captureMode}`);
++  }
++  if (opts.captureMode !== undefined && name !== 'post-tool-use') {
++    return failedResult(start, `capture mode ${opts.captureMode} requires post-tool-use`);
++  }
+   const injected = opts.store !== undefined;
+   let store: MemoryStore;
+   let settingsForSpawn: ReturnType<typeof loadSettings> | undefined;
+@@ -44,7 +51,7 @@ export async function runHook(
+         context = await userPromptSubmit(store, input);
+         break;
+       case 'post-tool-use':
+-        await postToolUse(store, input);
++        await postToolUse(store, input, opts.captureMode as CaptureMode | undefined);
+         break;
+       case 'stop':
+         await stop(store, input);
+@@ -72,3 +79,7 @@ export async function runHook(
+     if (!injected) store.close();
+   }
+ }
++
++function failedResult(start: number, error: string): HookResult {
++  return { ok: false, ms: Math.round(performance.now() - start), error };
++}
+diff --git a/packages/hooks/src/types.ts b/packages/hooks/src/types.ts
+--- a/packages/hooks/src/types.ts
++++ b/packages/hooks/src/types.ts
+@@ -5,6 +5,8 @@ export type HookName =
+   | 'stop'
+   | 'session-end';
+ 
++export type CaptureMode = 'pi-full-v1';
++
+ /**
+  * Union of fields sent by every supported IDE. Claude Code's payload uses
+  * `tool_name` / `tool_response` / `last_assistant_message`; we keep the older
+@@ -42,6 +44,13 @@ export interface HookInput {
+   tool?: string;
+   tool_output?: unknown;
+ 
++  // Canonical pi-full-v1 PostToolUse envelope.
++  schemaVersion?: unknown;
++  toolCallId?: unknown;
++  toolName?: unknown;
++  input?: unknown;
++  output?: unknown;
++
+   // Stop.
+   last_assistant_message?: string;
+   stop_hook_active?: boolean;
+@@ -58,3 +67,16 @@ export interface HookResult {
+   context?: string;
+   error?: string;
+ }
++
++export interface PiFullToolObservationV1 {
++  readonly schemaVersion: 1;
++  readonly toolCallId: string;
++  readonly toolName: string;
++  readonly input: unknown;
++  readonly output: {
++    readonly content: unknown;
++    readonly details: unknown;
++    readonly isError: boolean;
++    readonly usage?: Readonly<Record<string, number>>;
++  };
++}
+-- 
+2.51.0

@@ -138,21 +138,18 @@ in
     };
 
     # Bug-fix patches cherry-picked from upstream PRs against the
-    # v0.2.1 source tree, plus one written-from-scratch patch for the
-    # `CAVEMEM_DATA_DIR` env var (no upstream PR exists). Order matters
-    # only insofar as later patches must apply cleanly on top of
-    # earlier ones; the four patches touch disjoint files
-    # (installers/opencode.ts, config/schema.ts, config/loader.ts,
-    # plus core/memory-store.ts + hooks/handlers/session-start.ts +
-    # storage/storage.ts for #39), so any order works. The
-    # data-dir-env patch is what makes `home.cavemem.dataDir` in the
-    # home-manager module actually take effect (cavemem v0.2.1 has no
-    # other override mechanism for the hardcoded `~/.cavemem` path).
+    # v0.2.1 source tree, plus repository-owned data-dir and Pi full-payload
+    # patches. Keep the Pi patch last: it extends core/memory-store.ts after
+    # the project-scoped search patch. The data-dir patch is what makes
+    # `home.cavemem.dataDir` in the home-manager module actually take effect
+    # (cavemem v0.2.1 has no other override mechanism for the hardcoded
+    # `~/.cavemem` path).
     patches = [
       ./cavemem-14-hook-payload-shape.patch
       ./cavemem-39-session-start-cwd-filter.patch
       ./cavemem-25-search-alpha-doc.patch
       ./cavemem-data-dir-env.patch
+      ./cavemem-pi-full-payload-v1.patch
     ];
 
     pnpmDeps = final.fetchPnpmDeps {

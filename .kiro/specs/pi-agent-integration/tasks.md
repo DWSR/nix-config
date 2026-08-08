@@ -112,7 +112,7 @@
 
 - [ ] 3. Add MCP and Cavemem integration contracts
 
-- [ ] 3.1 (P) Add the versioned Cavemem full-payload write mode
+- [x] 3.1 (P) Add the versioned Cavemem full-payload write mode
   - Add the explicit `pi-full-v1` control path only for canonical post-tool events; reject unknown modes and invalid canonical fields.
   - Store one versioned input/output envelope without the default truncation or grammar compression.
   - Preserve default hook parsing, content, metadata, compression, and exit behavior byte-for-byte.
@@ -551,3 +551,4 @@
 ## Implementation Notes
 - Task 1.3: When patches or `postPatch` replace an npm lock, override both `npmDepsHash` and `npmDeps`; inheriting the original fixed-output `npmDeps` leaves the old dependency graph in place.
 - Task 1.4: Nix test derivations must install sorted semantic manifests, not raw runner logs containing paths, timestamps, durations, or execution order, so `nix build --rebuild` remains reproducible.
+- Task 3.1: Versioned canonical envelopes use closed transport, envelope, and output key allowlists; unknown keys fail before any database insertion.

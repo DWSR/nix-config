@@ -1,0 +1,19 @@
+{
+  "exitStatus": 0,
+  "stdout": "",
+  "telemetry": {
+    "hook": "post-tool-use",
+    "ok": true
+  },
+  "row": {
+    "session_id": "legacy-golden-session",
+    "kind": "tool_use",
+    "contentBytes": 996,
+    "contentSha256": "4b07e2fcd2180a86cfdd2a9fbc5d1888526f5177019cada00a91a6fb33ded8f9",
+    "compressed": 1,
+    "intensity": "full",
+    "metadata": "{\"tool\":\"Read\"}",
+    "metadataBytes": 15,
+    "metadataSha256": "57e7b3e69db3281e8fd25c633f59fd699ce28e4ea4a3b6e0afba3f7fea9be3d7"
+  }
+}
