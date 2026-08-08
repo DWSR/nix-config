@@ -49,36 +49,39 @@
 
 - [ ] 2. Build managed state and security foundations
 
-- [ ] 2.1 Define the typed option and desired-state contracts
-  - Define package, state, provider, MCP, sandbox, extension, sub-agent, plan, timeout, LSP, resource, and security options.
-  - Model credential sources as Pi auth, a declared environment name, or an absolute command argument vector; reject literal secrets.
-  - Model advisory exceptions with an ID, rationale, approver, and expiry.
-  - Validate provider URL-source exclusivity and unsupported host/system combinations.
-  - Done when valid common and host option fixtures evaluate and invalid credential, advisory, or provider fixtures fail with named fields.
-  - _Requirements: 1.1, 1.3, 2.7, 15.7_
+- [ ] 2.1 Define closed structural option contracts
+  - Accept package-backed references for extensions, manifests, instructions, resources, and language-server executables, each paired with a canonical relative path; only the module may render complete store paths.
+  - Limit provider configuration to the closed personal and Shopify role catalog, enabled-role and default-model references, and the `pi-auth`, `shopify-gateway-token`, and `shopify-gateway-base` resolver kinds.
+  - Keep state, MCP, sandbox, sub-agent, plan, timeout, and advisory-exception values structurally typed, with no host-authored provider URLs, headers, model metadata, environment names, argv, shell text, public literals, or store strings.
+  - Use real derivations plus relative paths in positive fixtures; add negative compile and evaluation fixtures for prior header, `runtimeBasePath`, credential-bearing `baseUrl`, secret-argv, and literal-store-root bypass shapes.
+  - Done when valid fixtures evaluate and every removed bypass shape is unrepresentable at module evaluation.
+  - _Requirements: 1.1, 1.3, 1.5, 2.7, 3.2, 7.1, 12.1, 15.1, 15.6, 15.7_
   - _Boundary: Home Module_
   - _Depends: 1.1_
-  - _Blocked: debug attempted twice, still failing — typed contract validation still permits credentials through owned headers and provider paths, and accepts invalid Nix store roots._
 
-- [ ] 2.2 Render secret-free desired state and module enablement behavior
-  - Render generation-addressed settings, provider declarations, extension order, MCP endpoint, sandbox defaults, and immutable package paths.
-  - Force install telemetry, analytics, self-version checks, and unmanaged package updates off.
-  - Emit no Pi packages, profiles, fragments, or resources when disabled and perform no mutable-state activation writes.
-  - Reject unsupported systems with an actionable evaluation error.
-  - Done when enabled and disabled render fixtures contain only expected immutable artifacts and a full secret scan is clean.
-  - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.6, 2.6, 2.7, 7.5_
-  - _Boundary: Home Module_
-  - _Depends: 2.1_
+- [ ] 2.2 Render the fixed provider catalog and secret-free managed state
+  - Make `ProviderCatalogV1` the sole source of the personal default and the five Shopify roles, including fixed routes, APIs, built-in model provenance, request policies, unsupported providers, and defaults.
+  - Render `ManagedConfigV1` and expose a deterministic projection factory that emits `PersistedProviderProjectionV1` with catalog-ordered `PersistedProviderV1` rows from closed selections and joined catalog URLs.
+  - Make the emitted projection the sole provider artifact consumed unchanged by Task 2.3; fixed generation and factory inputs must produce identical bytes with exact environment-reference templates and no token or launch UUID literals.
+  - Preserve personal Pi authentication without a provider override and preserve xAI per-model APIs by omitting its provider-level API.
+  - Render only package-backed output paths, disable telemetry, self-update, and unmanaged package behavior, and emit no artifacts or activation writes while disabled.
+  - Use real derivations plus relative paths in render fixtures; keep heuristic secret scans as defense-in-depth after structural and schema validation.
+  - Done when enabled, disabled, unsupported-system, catalog, and same-generation stability fixtures produce the exact managed artifacts without runtime values.
+  - _Requirements: 1.1, 1.3, 1.4, 1.5, 1.6, 2.1, 2.6, 2.7, 3.2, 3.7, 7.5, 15.3_
+  - _Boundary: Home Module, Provider Composition - Integration_
+  - _Depends: 1.5, 2.1_
 
-- [ ] 2.3 (P) Implement managed ownership and reconciliation semantics
+- [ ] 2.3 Implement projection-only managed ownership and reconciliation
+  - Accept only `PersistedProviderProjectionV1`; do not resolve provider bases, construct routes or headers, expand templates, or accept `ProviderRuntimeSecretsV1`.
   - Parse every managed JSON file as an object before mutation and reject malformed input without writes.
   - Track generation, pending/committed transaction state, owned pointers/providers, and prior value hashes.
   - Add, update, or remove only owned values; preserve unrelated settings, auth, trust, packages, providers, and sessions.
   - Fail on active managed drift instead of overwriting user changes.
-  - Done when add, update, stale-removal, unrelated-value, invalid-JSON, and drift fixtures produce the specified complete result.
+  - Canonically order provider bytes, skip identical projections, and reject a different joined URL under the same generation as a projection conflict.
+  - Done when add, update, stale-removal, no-op, projection-conflict, unrelated-value, invalid-JSON, and drift fixtures produce the specified complete result.
   - _Requirements: 2.1, 2.2, 2.3, 2.5_
   - _Boundary: Runtime Control_
-  - _Depends: 1.5, 2.1_
+  - _Depends: 2.2_
 
 - [ ] 2.4 Add reconciliation locking, atomicity, and recovery
   - Hold one integration lock and coordinate settings access with Pi-compatible locking.
@@ -90,15 +93,17 @@
   - _Boundary: Runtime Control_
   - _Depends: 2.3_
 
-- [ ] 2.5 (P) Implement the credential source and spawn-boundary policy
-  - Validate Pi-auth, environment, and shell-free command sources and derive the exact sensitive-name set.
-  - Produce root-Pi, child-Pi, and scrubbed subprocess environments from one policy.
-  - Register resolved values with the in-memory redactor without serializing them.
-  - Provide the credential-scrubbed shell contract consumed by Bash and later spawn adapters.
-  - Done when unit fixtures retain provider variables only for root/child Pi and remove every sentinel from scrubbed environments and status values.
+- [ ] 2.5 (P) Define the closed resolver plan and runtime-secret constructor
+  - Derive only the three closed resolver plans from host selection; Shopify plans use the package-rendered `devx` executable and launcher-owned fixed argv, while personal Pi auth has no executable.
+  - Keep plan derivation pure and execute no resolver process in this task.
+  - Define a pure constructor that accepts injected validated resolver results and a fresh launch UUID, then partitions root-Pi, child-Pi, and scrubbed subprocess environments into `ProviderRuntimeSecretsV1`.
+  - Expose in-memory `exactRedactionValues` through `ProviderRuntimeSecretsV1` without registering or consuming them in the unimplemented Capture Bridge.
+  - Provide the scrubbed shell contract and expose no JSON encoder, ownership record, status form, rollback form, host-supplied environment name, or host-supplied argv.
+  - Exercise plan derivation and constructor behavior with injected results, real derivations, and relative paths rather than fabricated store strings.
+  - Done when pure fixtures produce exact plans and environment partitions, retain provider values only for root and child Pi, and keep every serializable surface sentinel-free.
   - _Requirements: 3.5, 3.6, 3.7, 14.1, 14.2, 14.3, 14.4, 14.5_
   - _Boundary: Credential Boundary_
-  - _Depends: 2.1_
+  - _Depends: 2.1, 2.2_
 
 - [ ] 2.6 (P) Render the standalone Pi nono profile catalog
   - Pin and adapt the public Pi policy without runtime pack wiring, credential routes, git config, LaunchServices, or profile drafts.
@@ -122,28 +127,41 @@
   - _Boundary: Cavemem Full Mode_
   - _Depends: 1.2_
 
-- [ ] 3.2 Add full-mode privacy, retrieval, and embedding behavior
-  - Apply private-region removal, exact runtime-value redaction, and enhanced secret/JSON-key redaction before persistence.
-  - Keep full-mode rows uncompressed and exclude them from embedding and embedding backfill.
-  - Bypass expansion when retrieving an uncompressed observation and preserve its redacted bytes.
-  - Keep normal hook rows on the existing compression, privacy, retrieval, and embedding paths.
-  - Done when private, token, JSON-secret, PEM, false-positive, retrieval, and embedding fixtures pass for both modes.
-  - _Requirements: 10.3, 10.6, 10.9, 10.10_
-  - _Boundary: Cavemem Full Mode_
+- [ ] 3.2 Implement context-bounded full-mode privacy
+  - Own the focused privacy patch and privacy corpus without changing retrieval, embedding, or package-overlay wiring.
+  - Recursively walk actual envelope objects and arrays before stringify, normalize structured keys as specified, and replace complete values only for the finite sensitive-key vocabulary.
+  - Apply only private regions, complete authorization values, the finite provider-token forms, JWTs, private-key PEM blocks, and URL-authority userinfo beginning at lexical URL boundaries; malformed private or PEM openers redact through EOF.
+  - Treat arbitrary string leaves as opaque and explicitly prohibit parsing embedded JSON, YAML, shell assignments, environment text, or source code.
+  - Keep exact runtime-value removal bridge-owned; Cavemem diagnostics report only rule and structural location and never include a source value.
+  - Add a leak corpus, a byte-identical false-positive corpus, and scaled malformed-input cases proving monotonic scanning under a timeout.
+  - Done when every finite leak class is absent from persisted data and WAL evidence, every false-positive fixture is unchanged, and malformed inputs complete within the bound with value-free errors.
+  - _Requirements: 10.3, 10.6, 10.9, 10.10, 14.4_
+  - _Boundary: Cavemem Full Mode - Privacy_
   - _Depends: 3.1_
-  - _Blocked: debug attempted twice, still failing — the full-mode privacy scanner still leaks escaped or structured secrets and corrupts benign code and URL text._
 
-- [ ] 3.3 Verify Cavemem storage limits and package compatibility
+- [ ] 3.3 (P) Implement raw retrieval and embedding exclusion for full rows
+  - Own a separate storage-policy patch and storage-focused fixtures without changing privacy logic or package-overlay wiring.
+  - Use already-redacted canonical fixtures from Task 3.1 and select behavior only from persisted compression and embedding state; this task does not own redaction.
+  - Bypass expansion for `compressed=0` observations on every retrieval path and return the exact persisted bytes.
+  - Restrict missing-embedding selection, live embedding, backfill, and vector enumeration to `compressed=1`, and remove stale vectors attached to full rows.
+  - Preserve all retrieval, expansion, embedding, and backfill behavior for default compressed observations.
+  - Done when already-redacted raw rows round-trip byte-for-byte, never enter live or backfill embedding, lose stale vectors, and matched default rows retain their existing behavior without invoking privacy logic.
+  - _Requirements: 10.3, 10.7, 10.9, 10.10_
+  - _Boundary: Cavemem Full Mode - Storage Policy_
+  - _Depends: 3.1_
+
+- [ ] 3.4 Verify Cavemem storage limits and package compatibility
+  - Wire the independently reviewed privacy and storage-policy patches into the Cavemem package before running combined compatibility checks.
   - Exercise a complete full-mode row at the active SQLite maximum fixture and a maximum-plus-one failure.
   - Assert limit failure stores no partial observation and reports the active storage boundary.
-  - Verify `compressed=0`, null intensity, no embedding, FTS/BM25 discovery, and unmodified schema version.
+  - Verify `compressed=0`, null intensity, raw retrieval, embedding exclusion, FTS/BM25 discovery, and an unmodified schema version.
   - Extend package smoke coverage for default-mode parity and invalid-mode failure.
   - Done when the patched Cavemem package, smoke suite, raw retrieval, and legacy regressions all pass.
   - _Requirements: 10.3, 10.6, 10.7, 10.9, 10.10, 10.11, 15.3, 15.4_
-  - _Boundary: Cavemem Full Mode_
-  - _Depends: 3.2_
+  - _Boundary: Cavemem Full Mode - Integration_
+  - _Depends: 3.2, 3.3_
 
-- [ ] 3.4 Implement Pi session lifecycle capture and backpressure
+- [ ] 3.5 Implement Pi session lifecycle capture and backpressure
   - Load the bridge first and map session start, user input, assistant turn end, and session shutdown to existing Cavemem hooks.
   - Use Pi's stable session identity, `ide=pi`, configured working directory, and shared Cavemem data directory.
   - Serialize hook work through a FIFO and await it from event handlers instead of dropping accepted events.
@@ -151,19 +169,20 @@
   - Done when ordered session, prompt, stop, shutdown, reload, and failure fixtures produce searchable observations in one data store.
   - _Requirements: 10.1, 10.2, 10.4, 10.6, 10.8_
   - _Boundary: Capture Bridge_
-  - _Depends: 1.5, 2.5, 3.3_
+  - _Depends: 1.5, 3.4_
 
-- [ ] 3.5 Capture complete pre-mutation tool results and failures
+- [ ] 3.6 Capture complete pre-mutation tool results and failures
   - Snapshot tool events synchronously before the first await and before later extension mutation.
-  - Record successful and failed tool name, call identity, validated input, complete redacted content/details, usage, and outcome.
+  - Consume `ProviderRuntimeSecretsV1.exactRedactionValues` in the Capture Bridge, register them in memory before provider use, and remove each value from the snapshot before constructing JSON or spawning Cavemem.
+  - Record successful and failed tool name, call identity, validated input, complete bounded-redacted content/details, usage, and outcome.
   - Use tool-execution completion as the fallback for validation, unavailable-tool, or blocked calls without a result event.
   - Invoke `pi-full-v1` and surface malformed, storage, redaction, and process failures as sticky sanitized Pi errors.
   - Done when later-mutator, success, tool-error, blocked-tool, unavailable-tool, and sticky-error fixtures retain the expected pre-mutation payload.
-  - _Requirements: 10.3, 10.6, 10.9_
+  - _Requirements: 10.3, 10.6, 10.9, 14.1, 14.4, 14.5_
   - _Boundary: Capture Bridge_
-  - _Depends: 3.4_
+  - _Depends: 2.5, 3.5_
 
-- [ ] 3.6 Complete session lineage, child attribution, and hook isolation
+- [ ] 3.7 Complete session lineage, child attribution, and hook isolation
   - Preserve identity on resume and compaction, create a distinct fork identity, and flush each transition in order.
   - Define child-attribution observations containing parent session, run, agent, and child index without changing Cavemem schema.
   - Pass only the managed scrubbed environment to Cavemem hook and worker processes.
@@ -171,9 +190,9 @@
   - Done when resume, fork, compact, attribution-fixture, scrubbed-environment, shutdown, and mcpproxy-search tests pass.
   - _Requirements: 8.6, 10.4, 10.5, 10.6, 10.7, 10.8, 14.1, 14.4, 14.5_
   - _Boundary: Capture Bridge_
-  - _Depends: 3.5_
+  - _Depends: 3.6_
 
-- [ ] 3.7 (P) Implement the isolated six-tool mcpproxy adapter
+- [ ] 3.8 (P) Implement the isolated six-tool mcpproxy adapter
   - Create one in-memory adapter configuration for the local `/mcp/call` endpoint without ambient MCP-file merging.
   - Disable authentication discovery, resources, sampling, elicitation, script mode, and the generic proxy tool.
   - Freeze the six approved direct tools without prefixes and wait for eager metadata on cold start.
@@ -183,7 +202,7 @@
   - _Boundary: MCP Bridge_
   - _Depends: 1.2, 1.5_
 
-- [ ] 3.8 Enforce MCP cache, approval, and preflight behavior
+- [ ] 3.9 Enforce MCP cache, approval, and preflight behavior
   - Cover cold, stale, partial, malformed, and concurrent metadata-cache starts with private atomic cache files.
   - Require allow-once/session approval for write and destructive calls and fail headless approval closed.
   - Reject a mutating fixture routed through `call_tool_read` and assert zero upstream calls.
@@ -191,7 +210,7 @@
   - Done when denied mutations reach upstream zero times, approved calls reach it once, and every cache/preflight fixture converges on the six-tool surface.
   - _Requirements: 4.1, 4.2, 6.2, 6.3, 6.4, 6.5, 6.6_
   - _Boundary: MCP Bridge_
-  - _Depends: 3.7_
+  - _Depends: 3.8_
 
 - [ ] 4. Configure and harden required Pi extensions
 
@@ -203,7 +222,7 @@
   - Done when single, parallel, chain, budget, tool-ceiling, child-capture, and session-artifact fixtures pass.
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6, 14.2_
   - _Boundary: Extension Runtime — Subagents_
-  - _Depends: 1.5, 2.5, 3.6_
+  - _Depends: 1.5, 2.5, 3.7_
 
 - [ ] 4.2 Prevent detached sub-agents and orphan processes
   - Reject async, detached, and scheduled child requests before process creation.
@@ -253,24 +272,24 @@
   - _Depends: 1.5_
 
 - [ ] 4.7 Configure managed code-intelligence capabilities
-  - Declare Nix-managed language servers and expose orientation, resolve, inspect, graph, find, health, and refactor-plan/apply tools.
+  - Consume only module-rendered language-server executables derived from packages plus canonical relative paths, and expose orientation, resolve, inspect, graph, find, health, and refactor-plan/apply tools.
   - Return source locations for definitions, references, implementations, hovers, symbols, and diagnostics.
   - Keep refactor preview no-write and apply as a separate operation.
   - Report unavailable server identity and cause without terminating unrelated Pi capabilities.
   - Done when a fixture server reports ready, returns known locations/diagnostics, previews without writes, and applies only after the apply call.
   - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5_
   - _Boundary: Extension Runtime — LSP_
-  - _Depends: 1.5, 2.5_
+  - _Depends: 1.5, 2.1_
 
 - [ ] 4.8 Isolate and clean up language-server processes
-  - Launch only declared Nix-store server executables with the credential-scrubbed environment.
+  - Launch only module-rendered package-backed server executables with the credential-scrubbed environment.
   - Keep one server failure isolated from other servers and Pi tools.
   - Perform protocol shutdown/exit followed by bounded process-group escalation.
   - Exclude refactor apply in plan and review modes.
   - Done when fake servers observe no credential sentinels, failures remain isolated, and session exit leaves no server process.
   - _Requirements: 12.4, 12.5, 12.6, 14.1_
   - _Boundary: Extension Runtime — LSP_
-  - _Depends: 4.7_
+  - _Depends: 2.5, 4.7_
 
 - [ ] 4.9 Configure managed background pipe tasks
   - Expose stable task identifiers and status, bounded logs, wait, input, and termination operations.
@@ -300,7 +319,7 @@
   - Done when exact-name registry snapshots and side-effect probes pass for normal, plan, resumed-plan, and review modes.
   - _Requirements: 5.3, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 12.4, 13.7_
   - _Boundary: Extension Runtime — Integration_
-  - _Depends: 2.6, 3.8, 4.2, 4.3, 4.8, 4.10_
+  - _Depends: 2.6, 3.9, 4.2, 4.3, 4.8, 4.10_
 
 - [ ] 4.12 Assemble the exact extension manifest and load order
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
@@ -310,40 +329,39 @@
   - Done when a combined loader accepts one prompt with the exact ordered inventory and rejects every altered manifest fixture.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
   - _Boundary: Package Set, Extension Runtime — Integration_
-  - _Depends: 3.6, 3.8, 4.2, 4.3, 4.4, 4.5, 4.6, 4.8, 4.10, 4.11_
+  - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.5, 4.6, 4.8, 4.10, 4.11_
 
 - [ ] 5. Compose providers, sandboxing, status, and launch behavior
 
-- [ ] 5.1 Configure the personal OpenAI provider contract
-  - Use Pi's built-in OpenAI catalog and Pi-owned authentication state without a custom endpoint or exported personal credential.
-  - Enforce `openai/gpt-5.6-sol` with `xhigh` as the managed personal default.
-  - Preserve unrelated Pi authentication and provider state.
-  - Reject Shopify commands, endpoints, headers, and credential names in personal desired state.
-  - Done when personal provider fixtures resolve the default through Pi auth and a full Shopify-string scan is empty.
+- [ ] 5.1 Materialize the personal provider runtime contract
+  - Consume the catalog-rendered personal projection with no provider override, endpoint, header, or Shopify resolver execution.
+  - Use Pi-owned authentication and enforce `openai/gpt-5.6-sol` with `xhigh` as the managed default.
+  - Preserve unrelated Pi authentication and provider state while producing the empty personal runtime-secret environment.
+  - Keep heuristic Shopify-string scans as defense-in-depth after structural assertions reject Shopify roles, resolvers, and provider objects.
+  - Done when personal fixtures resolve the default through Pi auth, preserve unrelated state, and contain no Shopify provider surface.
   - _Requirements: 3.4, 3.5, 3.7_
   - _Boundary: Provider Composition — Personal_
-  - _Depends: 2.1, 2.5_
+  - _Depends: 2.2, 2.5_
 
-- [ ] 5.2 Configure the Shopify static provider catalog
-  - Override built-in Anthropic, OpenAI, Google, Groq, and xAI providers with the declared gateway route suffixes and Pi API modes.
-  - Preserve Pi model catalogs and compatibility metadata; omit Cohere and Perplexity.
-  - Configure token, affinity, usage, and Google bearer headers without literal credentials.
-  - Enforce `openai/gpt-5.6-sol` with `xhigh` as the managed Shopify default.
-  - Materialize concrete HTTPS base URLs with no unresolved placeholders.
-  - Done when all five provider objects, route joins, headers, APIs, model metadata, and default assertions pass.
-  - _Requirements: 3.1, 3.2, 3.6, 3.7_
-  - _Boundary: Provider Composition — Shopify_
-  - _Depends: 2.1, 2.5_
+- [ ] 5.2 Execute Shopify resolver plans and construct runtime secrets
+  - Execute only the package-backed base and token plans from Task 2.5 with their fixed launcher-owned argv and bounded timeouts; personal mode executes none.
+  - Validate process status and bounded outputs, require one non-empty token, generate a fresh launch UUID, and invoke the Task 2.5 constructor to produce validated `ProviderRuntimeSecretsV1`.
+  - Return the resolved base candidate separately for Task 5.3 without joining routes or defining catalog, projection, or environment-partition behavior.
+  - Report resolver kind and operation only; never place token, UUID, command output, or a credential-bearing temporary value in diagnostics or status.
+  - Done when success, timeout, empty-token, command-failure, distinct-launch, and personal-no-dispatch process fixtures produce the exact constructor result and separate base candidate.
+  - _Requirements: 3.1, 3.3, 3.6, 3.7, 14.2, 14.4, 14.5_
+  - _Boundary: Credential Boundary_
+  - _Depends: 2.5_
 
-- [ ] 5.3 Add bounded Shopify gateway preflight and auth-conflict handling
-  - Resolve gateway base and token with bounded commands before TUI launch and validate non-empty token plus credential-free HTTPS base.
-  - Generate one launch session identifier for affinity and usage headers.
-  - Reject CLI, auth-state, or ambient credentials that would override a managed provider.
-  - Redact command output, token, headers, and errors from status and logs.
-  - Done when success, timeout, empty-token, invalid-base, command-failure, and every auth-precedence conflict fixture has the specified fail-before-TUI result.
-  - _Requirements: 3.1, 3.3, 3.6, 3.7_
+- [ ] 5.3 Validate and hand off the Shopify persisted projection
+  - Validate the Task 5.2 base candidate as HTTPS without userinfo, query, or fragment.
+  - Join only the fixed catalog routes while retaining the validated origin, then invoke the Task 2.2 projection factory with the generation, closed selection, and joined URLs.
+  - Pass the emitted `PersistedProviderProjectionV1` unchanged to Task 2.3 reconciliation while keeping `ProviderRuntimeSecretsV1` outside that boundary.
+  - Do not define or modify projection schema, provider catalog, APIs, model provenance, request policies, header templates, or defaults.
+  - Done when valid-base, invalid-base, route-join, factory-pass-through, stable-byte, and secret-exclusion fixtures produce the exact reconciliation input or fail before mutation.
+  - _Requirements: 3.1, 3.2, 3.3, 3.7_
   - _Boundary: Provider Composition, Runtime Control — Integration_
-  - _Depends: 5.2_
+  - _Depends: 2.2, 2.3, 5.2_
 
 - [ ] 5.4 Implement sandbox state and override resolution
   - Resolve host default plus `PI_NONO`, profile, listen-port, and rollback overrides.
@@ -364,7 +382,7 @@
   - Done when exact command capture and grant fixtures cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
   - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8_
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
-  - _Depends: 2.5, 3.6, 3.8, 4.2, 4.8, 4.10, 4.11, 4.12, 5.1, 5.2, 5.4_
+  - _Depends: 2.5, 3.7, 3.9, 4.2, 4.8, 4.10, 4.11, 4.12, 5.1, 5.3, 5.4_
 
 - [ ] 5.6 Implement redacted managed status
   - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
@@ -374,7 +392,7 @@
   - Done when complete, degraded, drifted, and sentinel fixtures produce stable output with no secret value.
   - _Requirements: 4.4, 14.4_
   - _Boundary: Runtime Control_
-  - _Depends: 2.4, 3.6, 3.8, 4.12, 5.1, 5.2, 5.3, 5.4, 5.5_
+  - _Depends: 2.4, 3.7, 3.9, 4.12, 5.1, 5.3, 5.4, 5.5_
 
 - [ ] 5.7 Implement the runtime compatibility validator
   - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, Cavemem, PTY, LSP, and reconciliation drift.
@@ -387,14 +405,14 @@
   - _Depends: 5.6_
 
 - [ ] 5.8 Compose the fail-before-TUI launch pipeline
-  - Resolve provider runtime values, then hold one integration lock across provider materialization and every managed JSON update.
+  - Orchestrate Task 5.2 resolver execution and Task 5.3 projection handoff, reject authentication-precedence conflicts, and hold one integration lock across reconciliation and every managed JSON update.
   - Reconcile one complete generation before probing package, profile, mcpproxy, Cavemem, extensions, and runtime compatibility.
   - Stop before Pi on every provider, state, service, profile, extension, or validator failure and name its recovery action.
   - Exercise concurrent launches through the complete provider-and-reconciliation pipeline.
   - Done when ordered call traces match the design and concurrent fixtures commit one complete generation without opening the TUI on failure.
-  - _Requirements: 2.1, 2.4, 3.1, 3.3, 4.1, 4.2, 4.5, 6.6, 7.3_
+  - _Requirements: 2.1, 2.4, 3.1, 3.3, 3.6, 3.7, 4.1, 4.2, 4.5, 6.6, 7.3_
   - _Boundary: Runtime Control — Integration_
-  - _Depends: 2.2, 2.4, 3.6, 3.8, 4.12, 5.3, 5.5, 5.7_
+  - _Depends: 2.4, 3.7, 3.9, 4.12, 5.2, 5.3, 5.5, 5.7_
 
 - [ ] 5.9 Execute the final managed Pi surface exactly once
   - Reject install, remove, uninstall, and binary-update commands before Pi receives arguments.
@@ -416,41 +434,41 @@
   - Done when content tests find every required command/contract and no stale OpenCode, Sieve, direct Tool Gateway, or mutable install instruction.
   - _Requirements: 4.4, 6.4, 15.1, 15.7_
   - _Boundary: Home Module_
-  - _Depends: 3.8, 4.11_
+  - _Depends: 3.9, 4.11_
 
 - [ ] 6.2 Integrate all managed artifacts in the common module
-  - Connect package outputs, desired state, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through typed options.
+  - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
   - Install only repository-owned managed commands while retaining the base Pi package as a closure dependency.
   - Render exact profiles and resource paths only when enabled.
   - Keep activation free of mutable Pi-state writes and secrets.
   - Done when common enabled/disabled evaluations expose the complete intended surface, activation artifacts are immutable, and all read-back options match status inputs.
   - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 15.7_
   - _Boundary: Home Module — Integration_
-  - _Depends: 2.2, 2.4, 2.5, 2.6, 3.6, 3.8, 4.12, 5.6, 5.7, 5.8, 5.9, 6.1_
+  - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.12, 5.6, 5.7, 5.8, 5.9, 6.1_
 
 - [ ] 6.3 (P) Enable and verify the personal host contract
   - Enable the common Pi module with personal provider mode and audit sandbox default.
-  - Configure built-in OpenAI, Pi authentication state, and `openai/gpt-5.6-sol` at `xhigh`.
+  - Select the catalog-owned `openai/gpt-5.6-sol` default at `xhigh` and leave Pi authentication plus built-in OpenAI provider state unoverridden.
   - Reuse the local mcpproxy endpoint, Cavemem directory, and common extension inventory.
-  - Add a dedicated personal render fixture and reject every Shopify command, endpoint, header, and credential name.
-  - Done when the personal host evaluates to a usable managed Pi surface and the host-specific leakage scan is empty.
+  - Add a dedicated render fixture that structurally rejects Shopify roles, resolvers, provider objects, and runtime values; retain a closure scan only as defense-in-depth.
+  - Done when the personal host evaluates to the exact usable managed surface with no Shopify configuration.
   - _Requirements: 1.3, 3.4, 3.5, 3.7_
   - _Boundary: Personal Host Configuration_
   - _Depends: 5.1, 6.2_
 
 - [ ] 6.4 (P) Enable and verify the Shopify host contract
   - Enable the common Pi module with Shopify gateway mode and audit sandbox default.
-  - Configure the five managed providers, route suffixes, headers, and `openai/gpt-5.6-sol` at `xhigh`.
+  - Select the five catalog roles and catalog-owned `openai/gpt-5.6-sol` default at `xhigh` without supplying routes, APIs, headers, resolver argv, or store paths.
   - Reuse the local mcpproxy endpoint, Cavemem directory, and Shopify-specific instruction addendum.
-  - Add a dedicated Shopify render fixture with no resolved token or credential-bearing header value.
-  - Done when the Shopify host evaluates to the exact managed catalog/default and a generated-artifact secret scan is empty.
+  - Add a dedicated render fixture using real package references and canonical relative paths, with no resolved token or launch UUID; retain generated-artifact scans only as defense-in-depth.
+  - Done when the Shopify host evaluates to the exact closed role selection, managed catalog/default, and secret-free projection templates.
   - _Requirements: 1.3, 3.1, 3.2, 3.3, 3.6, 3.7_
   - _Boundary: Shopify Host Configuration_
-  - _Depends: 5.2, 6.2_
+  - _Depends: 5.3, 6.2_
 
 - [ ] 6.5 Add combined host render and static closure gates
   - Compare both host outputs for the same common package, profile, extension, command, and instruction versions with only declared provider deltas.
-  - Scan publishable closures for private Shopify source, mutable source URLs, credential sentinels, literal secrets, and missing licenses.
+  - Run defense-in-depth scans over publishable closures for private Shopify source, mutable source URLs, credential sentinels, literal secrets, and missing licenses.
   - Verify unsupported-system evaluation still fails with the actionable compatibility error.
   - Keep these checks inside the test runner without final flake registration yet.
   - Done when both host renders and every static closure/evaluation gate pass from one deterministic runner invocation.

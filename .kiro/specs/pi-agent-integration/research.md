@@ -1,6 +1,24 @@
 # Research: pi-agent-integration
 
-## Sources Reviewed
+## Summary
+- **Feature**: `pi-agent-integration`
+- **Discovery Scope**: Extension; light integration-focused merge discovery
+- **Key Findings**:
+  - Free-form provider URLs, headers, commands, and store paths make credential
+    exclusion depend on incomplete string heuristics. Closed role and resolver
+    contracts remove those channels.
+  - Universal parsing of Cavemem string leaves alternated between leaks and
+    corruption. Structured recursion plus finite lexical rules provides an
+    enforceable privacy and false-positive boundary.
+  - Provider behavior and per-launch values need separate explicit contracts:
+    one closed catalog, one stable persisted projection, and one memory-only
+    token/UUID object.
+  - Completed package Tasks 1.1–1.5 and canonical-envelope Task 3.1 remain valid;
+    blocked Task 2.1 and 3.2 partial implementations are not design evidence.
+
+## Research Log
+
+### Sources Reviewed
 - Upstream Pi `v0.83.0`, `pi.nix` at `1d37b586`, and Pi package/configuration
   documentation
 - `nolabs-ai/nono-packs` Pi pack `0.2.0`
@@ -122,47 +140,115 @@
 - **Risk: High**. The untested Darwin extension matrix, Shopify wire protocols,
   credential isolation, and process cleanup are rollout gates.
 
-### Design research still required
-- Choose the credential-resolution contract that keeps provider values out of
-  model-invoked subprocess environments.
-- Verify each Shopify provider's Pi API mode, model ID, reasoning controls,
-  context window, headers, and token-refresh behavior.
-- Confirm the live mcpproxy direct tool inventory and adapter cache behavior.
-- Map Pi events to Cavemem hooks and the opt-in full-payload path, including
-  failures, resume, redaction, and shutdown flushing.
-- Validate the adapted nono policy for Darwin paths, localhost access, language
-  servers, sub-agents, PTYs, signals, and rollback.
-- Determine one reproducible extension closure that preserves the Darwin ARM
-  `node-pty` binary and all license notices.
+### Provider contract blocker
+- **Context**: Task 2.1 attempted to prove secret-free configuration while
+  exposing `baseUrl`, `runtimeBasePath`, arbitrary headers, environment/command
+  credential sources, argv, and raw store paths.
+- **Findings**: Successive finite scanners admitted concrete credentials through
+  `X-ApiKey`, provider paths and queries, encoded command assignments, and
+  credential argv, while broader rules rejected benign flags, headers, URLs,
+  and package names. Store-root parsing also diverged from Nix's own validity
+  rules. Every repair left another equivalent string channel.
+- **Implications**: Host input must select fixed provider roles and model
+  references. The module owns routes, API/request policy, header bindings, and
+  closed resolver kinds. Package-backed resources enter as derivations plus
+  canonical relative paths; only module outputs contain store roots. Evaluation
+  checks structure and references, while generated-manifest, closure, and
+  launcher checks remain separate defenses.
+- **Validation repair**: The first structural revision still hid behavior behind
+  `FixedRoleContract` and mixed persisted provider data with a runtime launch ID.
+  `ProviderCatalogV1` now fixes every route/API/model/request-policy field and
+  exact header/template. `PersistedProviderV1` excludes values;
+  `ProviderRuntimeSecretsV1` owns token/UUID process state. The reconciler accepts
+  only a deterministic persisted projection.
 
-## Design Synthesis
-- **Pattern**: use `pi.nix` only as the pinned base-package source. A new typed
-  Home Manager module owns desired state, wrapper behavior, profiles, resources,
-  and tests; this avoids pi.nix's competing mutable-file wrapper.
-- **Configuration seam**: one provenance-aware reconciler owns explicit JSON
-  pointers and provider IDs. Host activation writes immutable desired state;
-  launch-time reconciliation is locked and atomic.
-- **Credential seam**: the Shopify launcher resolves a short-lived token and
-  base URL outside nono. Root and child Pi receive provider values; managed
-  shell, background, LSP, and Cavemem subprocess boundaries scrub them.
-- **Provider scope**: built-in Anthropic, OpenAI, Google, Groq, and xAI providers
-  retain Pi's catalogs and compatibility metadata. Cohere and Perplexity are
-  omitted rather than introducing a provider extension.
-- **Host defaults**: personal uses `openai/gpt-5.6-sol` at `xhigh` with Pi-owned
-  authentication state. Shopify uses the same initial default through its
-  managed gateway catalog.
-- **MCP seam**: a repository-owned adapter wrapper supplies an isolated in-memory
-  config for one `/mcp/call` server and six direct tools. Ambient MCP files,
-  generic proxy tools, scripting, code execution, and duplicate servers are
-  excluded.
-- **Sandbox seam**: standalone Pi profiles adapt the pinned public pack. nono
-  owns OS boundaries; Pi tool configuration owns plan/review tool visibility.
-- **Extension seam**: one fixed-lock closure contains public extensions without
-  a nested Pi runtime. Small patches disable detached sub-agents and scrub LSP
-  and background-process environments.
-- **Capture seam**: the first-loaded Pi bridge snapshots events synchronously.
-  A versioned `pi-full-v1` Cavemem hook mode stores one complete redacted payload
-  up to the active SQLite maximum with compression and embedding disabled;
-  default hook behavior is unchanged.
-- **Simplifications**: no private Shopify extension, Sieve, direct Tool Gateway,
-  generic wrapper framework, Pi package manager, or cross-host state sync.
+### Cavemem privacy blocker
+- **Context**: Task 3.2 tried to redact secrets from arbitrary free text by
+  recognizing JSON, YAML, environment, shell, URI, PEM, and source-like forms.
+- **Findings**: Added grammars repeatedly fixed one leak while creating another
+  false positive. Leaks included short authorization values, URL userinfo,
+  escaped/unquoted keys, shell assignments, and malformed regions. False
+  positives included TypeScript declarations, path-adjacent URL text, and benign
+  code. The blocked patch also coupled redaction, retrieval, and embedding work.
+- **Implications**: The Pi bridge removes exact runtime values before transport.
+  Cavemem recurses over real objects, strips private regions, and applies only a
+  finite lexical rule set to opaque strings. It does not parse string leaves as
+  embedded languages. Raw retrieval and embedding exclusion form an independent
+  storage-policy unit.
+
+### Implementation continuity
+- Package Tasks 1.1–1.5 already establish the pinned Pi package, deterministic
+  harness, Undici remediation, context recovery, and extension closure.
+- Cavemem Task 3.1 already establishes the closed canonical envelope, explicit
+  `pi-full-v1` mode, uncompressed insertion flags, and default-mode byte parity.
+- The uncommitted Task 2.1 and 3.2 implementations demonstrate why the old
+  contracts failed; their scanner details do not constrain the replacement.
+- No requirement, Cavemem schema, default hook path, provider count, or extension
+  scope changes in this revision.
+
+## Architecture Pattern Evaluation
+
+| Option | Strength | Limitation | Decision |
+|---|---|---|---|
+| Free-form provider fields plus scanners | Flexible | Equivalent credential channels remain representable | Rejected |
+| Closed provider-role and resolver catalogs | Invalid credential-bearing forms have no input shape | New roles require reviewed module changes | Selected |
+| Opaque role contract | Closed names with hidden behavior | Tasks must invent routes, headers, and model policy | Rejected |
+| Explicit catalog plus persisted/runtime split | Complete behavior and stable concurrent files | Catalog changes require review | Selected |
+| Universal free-text privacy parser | Attempts broad leak coverage | Unbounded language ambiguity and false positives | Rejected |
+| Structured recursion plus finite lexical rules | Testable leak and false-positive boundary | Opaque embedded languages are intentionally not parsed | Selected |
+| Combined redaction/retrieval/embedding patch | One delivery unit | Hides independent failure and review seams | Split by responsibility |
+
+## Design Decisions
+- **Package seam**: use `pi.nix` only as the pinned base-package source. The
+  repository owns desired state, launcher, profiles, resources, and validation.
+- **Configuration seam**: host activation renders immutable closed selections;
+  one provenance-aware runtime reconciler owns explicit JSON pointers and fixed
+  provider IDs under locking and atomic replacement.
+- **Provider seam**: `ProviderCatalogV1` fixes personal OpenAI and all five
+  Shopify routes, APIs, built-in model provenance, no-override policy, exact
+  affinity/usage headers, Google bearer policy, defaults, and unsupported roles.
+- **Resolver seam**: `pi-auth`, `shopify-gateway-token`, and
+  `shopify-gateway-base` are the complete resolver set. The launcher constructs
+  fixed argv from package-backed executables; no command or environment source
+  extension exists.
+- **Artifact seam**: options carry derivations plus canonical relative paths.
+  Module outputs carry rendered store paths. Evaluation, manifest validation,
+  closure scans, and runtime URL validation have separate responsibilities.
+- **Projection seam**: managed `models.json` contains concrete joined URLs plus
+  `${SHOPIFY_PI_TOKEN}`/`${PI_AGENT_LAUNCH_ID}` templates. Token and UUID live in
+  `ProviderRuntimeSecretsV1`; concurrent launches retain byte-identical files.
+- **Credential seam**: root/child Pi alone receive actual provider values;
+  other subprocesses are scrubbed and the Capture Bridge redacts exact values.
+- **Capture seam**: Cavemem recurses over canonical object values by normalized
+  sensitive keys, strips private regions, and applies finite authorization,
+  provider-token, JWT, PEM, and lexical URL-userinfo rules to opaque strings.
+- **Storage seam**: full-mode raw retrieval and embedding exclusion are separate
+  from redaction. Compression state remains the embedding eligibility boundary.
+- **Preserved seams**: the six-tool mcpproxy adapter, standalone nono profiles,
+  fixed-lock extension closure, and provenance-aware reconciliation remain as
+  previously designed.
+- **Simplifications**: no arbitrary providers, headers, resolver plugins,
+  extension ecosystem, embedded-language privacy parser, Sieve, private Shopify
+  extension, exact `devx pi` parity, schema change, or cross-host state sync.
+
+## Risks & Mitigations
+- A fixed Shopify route or request policy drifts: revalidate every role against
+  the switched-host protocol gate before rollout.
+- Concurrent base resolution disagrees under one generation: fail projection
+  reconciliation rather than allow last-writer-wins provider state.
+- A runtime credential has no known lexical form: bridge exact-value redaction
+  remains authoritative before transport.
+- An opaque string contains an unrelated secret in embedded syntax: callers must
+  send structured data or use `<private>`; tests lock this documented boundary.
+- A new provider, resolver, or lexical rule is needed: require a module/design
+  review and explicit revalidation rather than an escape hatch.
+- Full rows approach SQLite limits and duplicate into FTS: expose database growth
+  and active limits in status and validation.
+
+## References
+- Pi `v0.83.0` and `pi.nix` `1d37b586` provider/configuration contracts.
+- Cavemem `v0.2.1` hook, storage, retrieval, worker, and MCP paths.
+- Repository `configurations/shopify/home-manager/opencode.nix` for current
+  gateway integration roles.
+- `tasks.md` implementation notes for completed Tasks 1.1–1.5 and 3.1; blocked
+  partial code is failure evidence only.
