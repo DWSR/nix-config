@@ -49,7 +49,7 @@
 
 - [ ] 2. Build managed state and security foundations
 
-- [ ] 2.1 Define closed structural option contracts
+- [x] 2.1 Define closed structural option contracts
   - Accept package-backed references for extensions, manifests, instructions, resources, and language-server executables, each paired with a canonical relative path; only the module may render complete store paths.
   - Limit provider configuration to the closed personal and Shopify role catalog, enabled-role and default-model references, and the `pi-auth`, `shopify-gateway-token`, and `shopify-gateway-base` resolver kinds.
   - Keep state, MCP, sandbox, sub-agent, plan, timeout, and advisory-exception values structurally typed, with no host-authored provider URLs, headers, model metadata, environment names, argv, shell text, public literals, or store strings.
@@ -571,3 +571,4 @@
 - Task 1.3: When patches or `postPatch` replace an npm lock, override both `npmDepsHash` and `npmDeps`; inheriting the original fixed-output `npmDeps` leaves the old dependency graph in place.
 - Task 1.4: Nix test derivations must install sorted semantic manifests, not raw runner logs containing paths, timestamps, durations, or execution order, so `nix build --rebuild` remains reproducible.
 - Task 3.1: Versioned canonical envelopes use closed transport, envelope, and output key allowlists; unknown keys fail before any database insertion.
+- Task 2.1: `types.package` and `lib.isDerivation` are structurally spoofable; bind package text/context to the selected output and force every public submodule's `_module.freeformType` to null.
