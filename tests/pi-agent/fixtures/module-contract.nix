@@ -3,11 +3,11 @@
   repoRoot,
 }:
 let
-  flake = builtins.getFlake (toString repoRoot);
+  flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString repoRoot));
   pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
   inherit (pkgs) lib;
 
-  modulePath = /. + "${repoRoot}/home-manager/common/pi-agent/default.nix";
+  modulePath = repoRoot + "/home-manager/common/pi-agent/default.nix";
   extensionPackage = pkgs.writeTextDir "lib/pi/extensions/fixture.mjs" "export default {};";
   manifestPackage = pkgs.writeTextDir "share/pi-agent/extensions.json" "{}";
   instructionPackage = pkgs.writeTextDir "share/pi-agent/instructions.md" "# Fixture instructions";
@@ -222,6 +222,15 @@ let
     inherit (cfg) provider;
     resolverKinds = cfg.internal.resolverKinds;
     security = cfg.security or null;
+    sandboxCatalog =
+      if cfg.internal.sandboxCatalog == null then
+        null
+      else
+        {
+          packageIsDerivation = lib.isDerivation cfg.internal.sandboxCatalog;
+          packageHasOutputContext = builtins.getContext cfg.internal.sandboxCatalog.outPath != { };
+          packageOutputName = cfg.internal.sandboxCatalog.outputName;
+        };
     inherit (cfg)
       state
       mcp
@@ -329,6 +338,7 @@ let
     disabled = builtins.deepSeq (summarizeConfig disabledCfg) {
       inherit (disabledCfg) enable;
       inherit emittedConfigKeys;
+      inherit (summarizeConfig disabledCfg) sandboxCatalog;
     };
     advisory-normalized = securitySummaryAt "2026-08-08" (securityModule [
       (mkAdvisory {

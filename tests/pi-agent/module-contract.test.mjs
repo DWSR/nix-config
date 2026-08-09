@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
-const fixturePath = path.join(testsDir, "fixtures/module-contract.nix");
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -16,9 +15,16 @@ const commandOptions = {
 
 function evaluateFixture(fixture) {
   const expression = `
-    import (/. + ${JSON.stringify(fixturePath)}) {
+    let
+      repoSource = builtins.path {
+        path = /. + ${JSON.stringify(repoRoot)};
+        name = "pi-agent-module-contract-source";
+        filter = path: type: builtins.baseNameOf path != ".git";
+      };
+    in
+    import (repoSource + "/tests/pi-agent/fixtures/module-contract.nix") {
       fixture = ${JSON.stringify(fixture)};
-      repoRoot = ${JSON.stringify(repoRoot)};
+      repoRoot = repoSource;
     }
   `;
 
@@ -152,6 +158,11 @@ test("valid Shopify options deep-force every closed contract category", () => {
     allowCapabilityElevation: false,
     allowLiteralProviderValues: false,
   });
+  assert.deepEqual(config.sandboxCatalog, {
+    packageHasOutputContext: true,
+    packageIsDerivation: true,
+    packageOutputName: "out",
+  });
 });
 
 test("personal selection is OpenAI-only and uses the closed resolver vocabulary", () => {
@@ -167,6 +178,7 @@ test("disabled defaults emit no packages, files, or activation actions", () => {
   assert.deepEqual(validFixture("disabled"), {
     emittedConfigKeys: [],
     enable: false,
+    sandboxCatalog: null,
   });
 });
 

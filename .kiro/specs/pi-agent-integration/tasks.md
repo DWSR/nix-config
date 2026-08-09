@@ -106,7 +106,7 @@
   - _Boundary: Credential Boundary_
   - _Depends: 2.1, 2.2_
 
-- [ ] 2.6 (P) Render the standalone Pi nono profile catalog
+- [x] 2.6 (P) Render the standalone Pi nono profile catalog
   - Pin and adapt the public Pi policy without runtime pack wiring, credential routes, git config, LaunchServices, or profile drafts.
   - Render managed, audit, and review profiles with explicit filesystem, network, environment, process, signal, and metadata deltas.
   - Preserve writable Pi/Cavemem/private-temp state and make review workspace access read-only.
@@ -577,3 +577,4 @@
 - Task 2.3: Never claim an unowned same-ID provider, even when bytes match; same-generation projections must preserve the complete owned provider set and joined URLs.
 - Task 2.4: The approved threat model covers cooperative local `proper-lockfile` users and fail-closed behavior after detected compromise; external lock replacement before heartbeat detection is treated as host compromise, not a fencing guarantee.
 - Task 2.5: Bind package-backed `devx` through a trusted module-owned lexical output; inspecting arbitrary Nix `drvAttrs` to authenticate a package can trigger IFD or recursion.
+- Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.

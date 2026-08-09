@@ -8,6 +8,7 @@ let
   inherit (lib) mkEnableOption mkOption types;
   credentialPolicy = import ./credential-policy.nix { inherit lib pkgs; };
   managedConfigRenderer = import ./managed-config.nix { inherit lib pkgs; };
+  profileCatalogRenderer = import ./profiles.nix { inherit lib pkgs; };
 
   extensionNames = [
     "cavemem"
@@ -392,6 +393,7 @@ in
             config.internal = {
               managedConfig = if config.enable then renderedManagedArtifacts.managedConfig else null;
               projectionFactory = if config.enable then renderedManagedArtifacts.projectionFactory else null;
+              sandboxCatalog = if config.enable then profileCatalogRenderer.package else null;
             };
           }
         )
@@ -600,6 +602,12 @@ in
           internal = true;
           readOnly = true;
           description = "Immutable PersistedProviderProjectionV1 factory package.";
+        };
+        internal.sandboxCatalog = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable standalone Pi nono profile catalog package.";
         };
       };
     };
