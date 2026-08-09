@@ -71,7 +71,7 @@
   - _Boundary: Home Module, Provider Composition - Integration_
   - _Depends: 1.5, 2.1_
 
-- [ ] 2.3 Implement projection-only managed ownership and reconciliation
+- [x] 2.3 Implement projection-only managed ownership and reconciliation
   - Accept only `PersistedProviderProjectionV1`; do not resolve provider bases, construct routes or headers, expand templates, or accept `ProviderRuntimeSecretsV1`.
   - Parse every managed JSON file as an object before mutation and reject malformed input without writes.
   - Track generation, pending/committed transaction state, owned pointers/providers, and prior value hashes.
@@ -573,3 +573,4 @@
 - Task 3.1: Versioned canonical envelopes use closed transport, envelope, and output key allowlists; unknown keys fail before any database insertion.
 - Task 2.1: `types.package` and `lib.isDerivation` are structurally spoofable; bind package text/context to the selected output and force every public submodule's `_module.freeformType` to null.
 - Task 2.2: Render exact schema fields and validated `package.outPath` values; never serialize broad option attrsets or coerce packages through host-controlled `__toString`.
+- Task 2.3: Never claim an unowned same-ID provider, even when bytes match; same-generation projections must preserve the complete owned provider set and joined URLs.

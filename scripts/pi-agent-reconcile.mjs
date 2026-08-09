@@ -1,0 +1,1074 @@
+import { createHash } from "node:crypto";
+
+const SETTINGS_PATH = "settings.json";
+const MODELS_PATH = "models.json";
+const OWNERSHIP_PATH = "ownership.json";
+const PROVIDER_ORDER = ["anthropic", "openai", "google", "groq", "xai"];
+const PROVIDER_SET = new Set(PROVIDER_ORDER);
+const MANAGED_CONFIG_KEYS = [
+  "schemaVersion",
+  "generation",
+  "agentDir",
+  "settings",
+  "providerCatalog",
+  "providerSelection",
+  "extensionManifest",
+  "extensionOrder",
+  "instructionResources",
+  "lspExecutables",
+  "mcpEndpoint",
+  "sandboxDefault",
+];
+const MANAGED_SETTING_KEYS = [
+  "defaultModel",
+  "defaultThinkingLevel",
+  "installTelemetry",
+  "selfUpdate",
+  "unmanagedPackages",
+];
+const MANAGED_SETTING_POINTERS = new Set(MANAGED_SETTING_KEYS.map((key) => `/${key}`));
+const SECURITY_SETTING_POINTERS = new Set([
+  "/installTelemetry",
+  "/selfUpdate",
+  "/unmanagedPackages",
+]);
+const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._+,:=@~-]*$/;
+const SAFE_MODEL_ID =
+  /^[A-Za-z0-9][A-Za-z0-9._+,:=@~-]*(\/[A-Za-z0-9][A-Za-z0-9._+,:=@~-]*)*$/;
+const VALUE_HASH = /^sha256:[0-9a-f]{64}$/;
+const RENDERED_STORE_PATH = /^\/nix\/store\/[0-9a-df-np-sv-z]{32}-[^/]+\/.+$/;
+const API_BY_PROVIDER = {
+  anthropic: "anthropic-messages",
+  openai: "openai-responses",
+  google: "google-generative-ai",
+  groq: "openai-completions",
+};
+const PROVIDER_CATALOG_CONTRACTS = {
+  anthropic: {
+    routeRole: "anthropic-api-v1",
+    suffix: "/apis/anthropic/v1",
+    api: "anthropic-messages",
+    requestPolicy: "shopify-standard-v1",
+  },
+  openai: {
+    routeRole: "openai-vendor-v1",
+    suffix: "/vendors/openai/v1",
+    api: "openai-responses",
+    requestPolicy: "shopify-standard-v1",
+  },
+  google: {
+    routeRole: "google-vertex-global",
+    suffix:
+      "/vendors/googlevertexai-global/v1beta1/projects/shopify-ml-production/locations/global/publishers/google",
+    api: "google-generative-ai",
+    requestPolicy: "shopify-google-bearer-v1",
+  },
+  groq: {
+    routeRole: "groq-openai-v1",
+    suffix: "/vendors/groq/openai/v1",
+    api: "openai-completions",
+    requestPolicy: "shopify-standard-v1",
+  },
+  xai: {
+    routeRole: "xai-vendor-v1",
+    suffix: "/vendors/xai/v1",
+    api: "pi-per-model",
+    requestPolicy: "shopify-standard-v1",
+  },
+};
+const STANDARD_HEADERS = [
+  {
+    name: "X-Shopify-Session-Affinity-Header",
+    value: { kind: "fixed-public-literal", value: "pi-agent-session-id" },
+  },
+  {
+    name: "pi-agent-session-id",
+    value: {
+      kind: "environment-reference",
+      name: "PI_AGENT_LAUNCH_ID",
+      template: "${PI_AGENT_LAUNCH_ID}",
+    },
+  },
+  {
+    name: "Shopify-Usage-Tag",
+    value: { kind: "fixed-public-literal", value: "pi-agent" },
+  },
+];
+const GOOGLE_HEADERS = [
+  ...STANDARD_HEADERS,
+  {
+    name: "Authorization",
+    value: {
+      kind: "bearer-environment-reference",
+      name: "SHOPIFY_PI_TOKEN",
+      template: "Bearer ${SHOPIFY_PI_TOKEN}",
+    },
+  },
+];
+
+function compareText(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+class ReconcileFailure extends Error {
+  constructor(error) {
+    super(error.kind);
+    this.error = error;
+  }
+}
+
+function fail(error) {
+  throw new ReconcileFailure(error);
+}
+
+function invalidInput(path) {
+  fail({ kind: "invalid-input", path });
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function isPlainObject(value) {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function requireExactKeys(value, expected, path) {
+  if (!isPlainObject(value)) {
+    invalidInput(path);
+  }
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  if (actual.length !== required.length || actual.some((key, index) => key !== required[index])) {
+    invalidInput(path);
+  }
+}
+
+function validateJsonValue(value, error, ancestors = new Set()) {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    if (ancestors.has(value)) {
+      fail(error);
+    }
+    const keys = Object.keys(value);
+    if (
+      Object.getPrototypeOf(value) !== Array.prototype ||
+      Object.getOwnPropertySymbols(value).length !== 0 ||
+      Object.getOwnPropertyNames(value).length !== value.length + 1 ||
+      keys.length !== value.length ||
+      keys.some((key, index) => key !== String(index))
+    ) {
+      fail(error);
+    }
+    ancestors.add(value);
+    for (let index = 0; index < value.length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || !("value" in descriptor)) {
+        fail(error);
+      }
+      validateJsonValue(descriptor.value, error, ancestors);
+    }
+    ancestors.delete(value);
+    return;
+  }
+
+  if (!isPlainObject(value) || ancestors.has(value)) {
+    fail(error);
+  }
+  const keys = Object.keys(value);
+  if (
+    Object.getOwnPropertySymbols(value).length !== 0 ||
+    Object.getOwnPropertyNames(value).length !== keys.length
+  ) {
+    fail(error);
+  }
+  ancestors.add(value);
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      fail(error);
+    }
+    validateJsonValue(descriptor.value, error, ancestors);
+  }
+  ancestors.delete(value);
+}
+
+function validateTargetRoot(value, path) {
+  if (!isPlainObject(value)) {
+    fail({ kind: "invalid-json", path });
+  }
+  validateJsonValue(value, { kind: "invalid-json", path });
+}
+
+function validateInputJson(value, path) {
+  validateJsonValue(value, { kind: "invalid-input", path });
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) {
+    return value.map(canonicalize);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, canonicalize(value[key])]),
+    );
+  }
+  return value;
+}
+
+function cloneJson(value) {
+  if (Array.isArray(value)) {
+    return value.map(cloneJson);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).map((key) => [key, cloneJson(value[key])]));
+  }
+  return value;
+}
+
+function canonicalHash(value) {
+  validateJsonValue(value, { kind: "invalid-input", path: "canonical-json" });
+  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+}
+
+export function hashCanonicalJsonInternal(value) {
+  try {
+    return { ok: true, valueHash: canonicalHash(value) };
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      return { ok: false, error: error.error };
+    }
+    throw error;
+  }
+}
+
+function validateSafeString(value, pattern, path) {
+  if (typeof value !== "string" || !pattern.test(value)) {
+    invalidInput(path);
+  }
+}
+
+function validateModel(model, path) {
+  requireExactKeys(model, ["provider", "modelId"], path);
+  if (!PROVIDER_SET.has(model.provider)) {
+    invalidInput(`${path}.provider`);
+  }
+  validateSafeString(model.modelId, SAFE_MODEL_ID, `${path}.modelId`);
+}
+
+function validateRenderedStorePath(value, path) {
+  if (typeof value !== "string" || !RENDERED_STORE_PATH.test(value)) {
+    invalidInput(path);
+  }
+}
+
+function validateProviderCatalog(catalog) {
+  requireExactKeys(
+    catalog,
+    ["schemaVersion", "personal", "shopify", "defaults", "unsupported"],
+    "managedConfig.providerCatalog",
+  );
+  if (catalog.schemaVersion !== 1) {
+    invalidInput("managedConfig.providerCatalog.schemaVersion");
+  }
+
+  requireExactKeys(
+    catalog.personal,
+    ["role", "providerId", "api", "modelSource", "modelOverrides", "requestPolicy"],
+    "managedConfig.providerCatalog.personal",
+  );
+  const personal = catalog.personal;
+  if (
+    personal.role !== "personal-openai" ||
+    personal.providerId !== "openai" ||
+    personal.api !== "openai-responses" ||
+    personal.modelSource !== "pi-0.83.0-built-in:openai" ||
+    personal.modelOverrides !== "none" ||
+    personal.requestPolicy !== "personal-pi-auth-v1"
+  ) {
+    invalidInput("managedConfig.providerCatalog.personal");
+  }
+
+  if (!Array.isArray(catalog.shopify) || catalog.shopify.length !== PROVIDER_ORDER.length) {
+    invalidInput("managedConfig.providerCatalog.shopify");
+  }
+  for (let index = 0; index < PROVIDER_ORDER.length; index += 1) {
+    const providerId = PROVIDER_ORDER[index];
+    const contract = PROVIDER_CATALOG_CONTRACTS[providerId];
+    const entry = catalog.shopify[index];
+    const path = `managedConfig.providerCatalog.shopify[${index}]`;
+    requireExactKeys(
+      entry,
+      ["role", "providerId", "route", "api", "modelSource", "modelOverrides", "requestPolicy"],
+      path,
+    );
+    requireExactKeys(entry.route, ["owner", "role", "suffix"], `${path}.route`);
+    if (
+      entry.role !== providerId ||
+      entry.providerId !== providerId ||
+      entry.route.owner !== "pi-agent-module" ||
+      entry.route.role !== contract.routeRole ||
+      entry.route.suffix !== contract.suffix ||
+      entry.api !== contract.api ||
+      entry.modelSource !== `pi-0.83.0-built-in:${providerId}` ||
+      entry.modelOverrides !== "none" ||
+      entry.requestPolicy !== contract.requestPolicy
+    ) {
+      invalidInput(path);
+    }
+  }
+
+  requireExactKeys(catalog.defaults, ["personal", "shopify"], "managedConfig.providerCatalog.defaults");
+  for (const mode of ["personal", "shopify"]) {
+    const path = `managedConfig.providerCatalog.defaults.${mode}`;
+    requireExactKeys(catalog.defaults[mode], ["model", "reasoning"], path);
+    if (
+      catalog.defaults[mode].model !== "openai/gpt-5.6-sol" ||
+      catalog.defaults[mode].reasoning !== "xhigh"
+    ) {
+      invalidInput(path);
+    }
+  }
+
+  const unsupported = [
+    { providerId: "cohere", policy: "reject", reason: "no-pi-core-api" },
+    {
+      providerId: "perplexity",
+      policy: "reject",
+      reason: "no-required-coding-tool-path",
+    },
+  ];
+  if (!Array.isArray(catalog.unsupported) || catalog.unsupported.length !== unsupported.length) {
+    invalidInput("managedConfig.providerCatalog.unsupported");
+  }
+  for (let index = 0; index < unsupported.length; index += 1) {
+    const path = `managedConfig.providerCatalog.unsupported[${index}]`;
+    requireExactKeys(catalog.unsupported[index], ["providerId", "policy", "reason"], path);
+    if (!sameClosedValue(catalog.unsupported[index], unsupported[index])) {
+      invalidInput(path);
+    }
+  }
+}
+
+function validateProviderSelection(selection) {
+  if (!isPlainObject(selection)) {
+    invalidInput("managedConfig.providerSelection");
+  }
+  if (selection.mode === "personal") {
+    requireExactKeys(selection, ["mode", "defaultModel"], "managedConfig.providerSelection");
+    validateModel(selection.defaultModel, "managedConfig.providerSelection.defaultModel");
+    if (selection.defaultModel.provider !== "openai") {
+      invalidInput("managedConfig.providerSelection.defaultModel.provider");
+    }
+    return;
+  }
+  if (selection.mode !== "shopify-gateway") {
+    invalidInput("managedConfig.providerSelection.mode");
+  }
+  requireExactKeys(
+    selection,
+    ["mode", "enabledRoles", "defaultModel"],
+    "managedConfig.providerSelection",
+  );
+  if (!Array.isArray(selection.enabledRoles) || selection.enabledRoles.length === 0) {
+    invalidInput("managedConfig.providerSelection.enabledRoles");
+  }
+  const roles = new Set();
+  for (const role of selection.enabledRoles) {
+    if (!PROVIDER_SET.has(role) || roles.has(role)) {
+      invalidInput("managedConfig.providerSelection.enabledRoles");
+    }
+    roles.add(role);
+  }
+  validateModel(selection.defaultModel, "managedConfig.providerSelection.defaultModel");
+  if (!roles.has(selection.defaultModel.provider)) {
+    invalidInput("managedConfig.providerSelection.defaultModel.provider");
+  }
+}
+
+function validateManagedConfig(managedConfig) {
+  validateInputJson(managedConfig, "managedConfig");
+  requireExactKeys(managedConfig, MANAGED_CONFIG_KEYS, "managedConfig");
+  if (managedConfig.schemaVersion !== 1) {
+    invalidInput("managedConfig.schemaVersion");
+  }
+  validateSafeString(managedConfig.generation, SAFE_IDENTIFIER, "managedConfig.generation");
+  if (managedConfig.agentDir !== "pi-default") {
+    invalidInput("managedConfig.agentDir");
+  }
+  requireExactKeys(managedConfig.settings, MANAGED_SETTING_KEYS, "managedConfig.settings");
+  validateModel(managedConfig.settings.defaultModel, "managedConfig.settings.defaultModel");
+  if (
+    !["off", "minimal", "low", "medium", "high", "xhigh"].includes(
+      managedConfig.settings.defaultThinkingLevel,
+    )
+  ) {
+    invalidInput("managedConfig.settings.defaultThinkingLevel");
+  }
+  for (const key of ["installTelemetry", "selfUpdate", "unmanagedPackages"]) {
+    if (managedConfig.settings[key] !== false) {
+      invalidInput(`managedConfig.settings.${key}`);
+    }
+  }
+  validateProviderCatalog(managedConfig.providerCatalog);
+  validateProviderSelection(managedConfig.providerSelection);
+  if (!sameClosedValue(managedConfig.settings.defaultModel, managedConfig.providerSelection.defaultModel)) {
+    invalidInput("managedConfig.providerSelection.defaultModel");
+  }
+
+  validateRenderedStorePath(managedConfig.extensionManifest, "managedConfig.extensionManifest");
+  if (!Array.isArray(managedConfig.extensionOrder)) {
+    invalidInput("managedConfig.extensionOrder");
+  }
+  const extensionNames = new Set();
+  for (const extension of managedConfig.extensionOrder) {
+    if (typeof extension !== "string" || !SAFE_IDENTIFIER.test(extension) || extensionNames.has(extension)) {
+      invalidInput("managedConfig.extensionOrder");
+    }
+    extensionNames.add(extension);
+  }
+  if (!Array.isArray(managedConfig.instructionResources)) {
+    invalidInput("managedConfig.instructionResources");
+  }
+  for (const resource of managedConfig.instructionResources) {
+    validateRenderedStorePath(resource, "managedConfig.instructionResources");
+  }
+  if (!isPlainObject(managedConfig.lspExecutables)) {
+    invalidInput("managedConfig.lspExecutables");
+  }
+  for (const name of Object.keys(managedConfig.lspExecutables)) {
+    validateSafeString(name, SAFE_IDENTIFIER, "managedConfig.lspExecutables");
+    validateRenderedStorePath(
+      managedConfig.lspExecutables[name],
+      "managedConfig.lspExecutables",
+    );
+  }
+
+  if (typeof managedConfig.mcpEndpoint !== "string") {
+    invalidInput("managedConfig.mcpEndpoint");
+  }
+  let mcpEndpoint;
+  try {
+    mcpEndpoint = new URL(managedConfig.mcpEndpoint);
+  } catch (_error) {
+    invalidInput("managedConfig.mcpEndpoint");
+  }
+  if (
+    mcpEndpoint.protocol !== "http:" ||
+    mcpEndpoint.hostname !== "127.0.0.1" ||
+    mcpEndpoint.port === "" ||
+    Number(mcpEndpoint.port) < 1 ||
+    Number(mcpEndpoint.port) > 65535 ||
+    mcpEndpoint.pathname !== "/mcp" ||
+    mcpEndpoint.username !== "" ||
+    mcpEndpoint.password !== "" ||
+    mcpEndpoint.search !== "" ||
+    mcpEndpoint.hash !== "" ||
+    mcpEndpoint.href !== managedConfig.mcpEndpoint
+  ) {
+    invalidInput("managedConfig.mcpEndpoint");
+  }
+  if (!new Set(["disabled", "audit", "enforced"]).has(managedConfig.sandboxDefault)) {
+    invalidInput("managedConfig.sandboxDefault");
+  }
+}
+
+function sameClosedValue(actual, expected) {
+  return canonicalHash(actual) === canonicalHash(expected);
+}
+
+function validateHeaderValue(actual, expected, path) {
+  requireExactKeys(actual, Object.keys(expected), path);
+  for (const key of Object.keys(expected)) {
+    if (actual[key] !== expected[key]) {
+      invalidInput(path);
+    }
+  }
+}
+
+function validateHeaders(headers, providerId, path) {
+  const expected = providerId === "google" ? GOOGLE_HEADERS : STANDARD_HEADERS;
+  if (!Array.isArray(headers) || headers.length !== expected.length) {
+    invalidInput(path);
+  }
+  for (let index = 0; index < expected.length; index += 1) {
+    const headerPath = `${path}[${index}]`;
+    requireExactKeys(headers[index], ["name", "value"], headerPath);
+    if (headers[index].name !== expected[index].name) {
+      invalidInput(headerPath);
+    }
+    validateHeaderValue(headers[index].value, expected[index].value, `${headerPath}.value`);
+  }
+}
+
+function validateProvider(provider, index) {
+  const path = `providerProjection.providers[${index}]`;
+  requireExactKeys(
+    provider,
+    ["providerId", "catalogRole", "baseUrl", "api", "modelCatalog", "credential", "headers"],
+    path,
+  );
+  if (!PROVIDER_SET.has(provider.providerId) || provider.catalogRole !== provider.providerId) {
+    invalidInput(path);
+  }
+
+  if (typeof provider.baseUrl !== "string") {
+    invalidInput(`${path}.baseUrl`);
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(provider.baseUrl);
+  } catch (_error) {
+    invalidInput(`${path}.baseUrl`);
+  }
+  if (
+    parsedUrl.protocol !== "https:" ||
+    parsedUrl.origin === "null" ||
+    parsedUrl.username !== "" ||
+    parsedUrl.password !== "" ||
+    parsedUrl.search !== "" ||
+    parsedUrl.hash !== "" ||
+    parsedUrl.href !== provider.baseUrl
+  ) {
+    invalidInput(`${path}.baseUrl`);
+  }
+
+  if (provider.providerId === "xai") {
+    requireExactKeys(provider.api, ["kind", "providerApiField"], `${path}.api`);
+    if (provider.api.kind !== "pi-per-model-api" || provider.api.providerApiField !== "omit") {
+      invalidInput(`${path}.api`);
+    }
+  } else {
+    requireExactKeys(provider.api, ["kind", "value"], `${path}.api`);
+    if (
+      provider.api.kind !== "provider-api" ||
+      provider.api.value !== API_BY_PROVIDER[provider.providerId]
+    ) {
+      invalidInput(`${path}.api`);
+    }
+  }
+
+  requireExactKeys(provider.modelCatalog, ["source", "overrides"], `${path}.modelCatalog`);
+  if (
+    provider.modelCatalog.source !== `pi-0.83.0-built-in:${provider.providerId}` ||
+    !Array.isArray(provider.modelCatalog.overrides) ||
+    provider.modelCatalog.overrides.length !== 0
+  ) {
+    invalidInput(`${path}.modelCatalog`);
+  }
+
+  requireExactKeys(provider.credential, ["field", "value"], `${path}.credential`);
+  if (provider.credential.field !== "apiKey") {
+    invalidInput(`${path}.credential`);
+  }
+  requireExactKeys(
+    provider.credential.value,
+    ["kind", "name", "template"],
+    `${path}.credential.value`,
+  );
+  if (
+    provider.credential.value.kind !== "environment-reference" ||
+    provider.credential.value.name !== "SHOPIFY_PI_TOKEN" ||
+    provider.credential.value.template !== "${SHOPIFY_PI_TOKEN}"
+  ) {
+    invalidInput(`${path}.credential.value`);
+  }
+  validateHeaders(provider.headers, provider.providerId, `${path}.headers`);
+}
+
+function validateProviderProjection(projection) {
+  validateInputJson(projection, "providerProjection");
+  requireExactKeys(
+    projection,
+    ["schemaVersion", "generation", "mode", "default", "providers"],
+    "providerProjection",
+  );
+  if (projection.schemaVersion !== 1) {
+    invalidInput("providerProjection.schemaVersion");
+  }
+  validateSafeString(projection.generation, SAFE_IDENTIFIER, "providerProjection.generation");
+  if (projection.mode !== "personal" && projection.mode !== "shopify-gateway") {
+    invalidInput("providerProjection.mode");
+  }
+  requireExactKeys(projection.default, ["model", "reasoning"], "providerProjection.default");
+  validateModel(projection.default.model, "providerProjection.default.model");
+  if (projection.default.reasoning !== "xhigh" || !Array.isArray(projection.providers)) {
+    invalidInput("providerProjection.default");
+  }
+
+  if (projection.mode === "personal") {
+    if (projection.default.model.provider !== "openai" || projection.providers.length !== 0) {
+      invalidInput("providerProjection.providers");
+    }
+    return;
+  }
+  if (projection.providers.length === 0) {
+    invalidInput("providerProjection.providers");
+  }
+
+  const selectedProviders = new Set();
+  for (let index = 0; index < projection.providers.length; index += 1) {
+    validateProvider(projection.providers[index], index);
+    const providerId = projection.providers[index].providerId;
+    if (selectedProviders.has(providerId)) {
+      invalidInput("providerProjection.providers");
+    }
+    selectedProviders.add(providerId);
+  }
+  if (!selectedProviders.has(projection.default.model.provider)) {
+    invalidInput("providerProjection.default.model.provider");
+  }
+}
+
+function providerPointer(providerId) {
+  return `/providers/${providerId}`;
+}
+
+function providerIdFromPointer(pointer) {
+  const prefix = "/providers/";
+  return pointer.startsWith(prefix) ? pointer.slice(prefix.length) : null;
+}
+
+function validateOwnershipState(ownershipState) {
+  validateInputJson(ownershipState, "ownershipState");
+  requireExactKeys(
+    ownershipState,
+    ["schemaVersion", "generation", "transaction", "files"],
+    "ownershipState",
+  );
+  if (ownershipState.schemaVersion !== 1) {
+    invalidInput("ownershipState.schemaVersion");
+  }
+  validateSafeString(ownershipState.generation, SAFE_IDENTIFIER, "ownershipState.generation");
+  if (ownershipState.transaction !== "pending" && ownershipState.transaction !== "committed") {
+    invalidInput("ownershipState.transaction");
+  }
+  if (!isPlainObject(ownershipState.files)) {
+    invalidInput("ownershipState.files");
+  }
+
+  for (const filePath of Object.keys(ownershipState.files)) {
+    if (filePath !== SETTINGS_PATH && filePath !== MODELS_PATH) {
+      invalidInput("ownershipState.files");
+    }
+    const records = ownershipState.files[filePath];
+    if (!isPlainObject(records)) {
+      invalidInput(`ownershipState.files.${filePath}`);
+    }
+    for (const pointer of Object.keys(records)) {
+      if (filePath === SETTINGS_PATH) {
+        if (!MANAGED_SETTING_POINTERS.has(pointer)) {
+          invalidInput(`ownershipState.files.${filePath}`);
+        }
+      } else {
+        const providerId = providerIdFromPointer(pointer);
+        if (providerId === null || !PROVIDER_SET.has(providerId)) {
+          invalidInput(`ownershipState.files.${filePath}`);
+        }
+      }
+      requireExactKeys(records[pointer], ["valueHash"], `ownershipState.files.${filePath}`);
+      if (typeof records[pointer].valueHash !== "string" || !VALUE_HASH.test(records[pointer].valueHash)) {
+        invalidInput(`ownershipState.files.${filePath}`);
+      }
+    }
+  }
+  return ownershipState;
+}
+
+function projectProvider(provider) {
+  const headers = Object.fromEntries(
+    provider.headers
+      .map((header) => [
+        header.name,
+        header.value.kind === "fixed-public-literal"
+          ? header.value.value
+          : header.value.template,
+      ])
+      .sort(([left], [right]) => compareText(left, right)),
+  );
+  const entries = [];
+  if (provider.api.kind === "provider-api") {
+    entries.push(["api", provider.api.value]);
+  }
+  entries.push(["apiKey", provider.credential.value.template]);
+  entries.push(["baseUrl", provider.baseUrl]);
+  entries.push(["headers", headers]);
+  return Object.fromEntries(entries);
+}
+
+function recordsFor(ownershipState, path) {
+  if (!ownershipState || !hasOwn(ownershipState.files, path)) {
+    return Object.create(null);
+  }
+  return ownershipState.files[path];
+}
+
+function managedDrift(path, pointer) {
+  fail({ kind: "managed-drift", path, pointer });
+}
+
+function checkSameGenerationProviderIdentity(
+  priorOwnership,
+  priorProviders,
+  desiredProviders,
+  generation,
+) {
+  if (!priorOwnership || priorOwnership.generation !== generation) {
+    return;
+  }
+  for (const providerId of PROVIDER_ORDER) {
+    const pointer = providerPointer(providerId);
+    const priorRecord = priorProviders[pointer];
+    const desiredValue = desiredProviders.get(providerId);
+    if ((priorRecord === undefined) !== (desiredValue === undefined)) {
+      fail({ kind: "provider-projection-conflict", providerId });
+    }
+    if (priorRecord !== undefined && priorRecord.valueHash !== canonicalHash(desiredValue)) {
+      fail({ kind: "provider-projection-conflict", providerId });
+    }
+  }
+}
+
+function checkActiveValue({
+  path,
+  pointer,
+  currentContainer,
+  currentKey,
+  desiredValue,
+  priorRecord,
+  providerId,
+}) {
+  const desiredHash = canonicalHash(desiredValue);
+  const currentExists = hasOwn(currentContainer, currentKey);
+  const currentHash = currentExists ? canonicalHash(currentContainer[currentKey]) : null;
+  if (providerId !== undefined && priorRecord === undefined && currentExists) {
+    managedDrift(path, pointer);
+  }
+  if (priorRecord !== undefined) {
+    if (!currentExists || currentHash !== priorRecord.valueHash) {
+      managedDrift(path, pointer);
+    }
+  } else if (currentExists && currentHash !== desiredHash) {
+    managedDrift(path, pointer);
+  }
+  return desiredHash;
+}
+
+function checkStaleValue({ path, pointer, currentContainer, currentKey, priorRecord }) {
+  if (!hasOwn(currentContainer, currentKey)) {
+    return "drop";
+  }
+  if (canonicalHash(currentContainer[currentKey]) === priorRecord.valueHash) {
+    return "remove";
+  }
+  if (path === MODELS_PATH || SECURITY_SETTING_POINTERS.has(pointer)) {
+    managedDrift(path, pointer);
+  }
+  return "retain";
+}
+
+function buildSettings(currentSettings, desiredSettings, priorSettings, retainedPointers) {
+  const managedKeys = new Set(MANAGED_SETTING_KEYS);
+  for (const pointer of Object.keys(priorSettings)) {
+    managedKeys.add(pointer.slice(1));
+  }
+
+  const entries = [];
+  for (const key of Object.keys(currentSettings)) {
+    if (!managedKeys.has(key)) {
+      entries.push([key, cloneJson(currentSettings[key])]);
+    }
+  }
+  for (const key of MANAGED_SETTING_KEYS) {
+    const pointer = `/${key}`;
+    if (desiredSettings.has(key)) {
+      entries.push([key, cloneJson(desiredSettings.get(key))]);
+    } else if (retainedPointers.has(pointer)) {
+      entries.push([key, cloneJson(currentSettings[key])]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+function buildProviders(currentProviders, desiredProviders, priorProviders, retainedPointers) {
+  const managedIds = new Set(desiredProviders.keys());
+  for (const pointer of Object.keys(priorProviders)) {
+    managedIds.add(providerIdFromPointer(pointer));
+  }
+
+  const entries = [];
+  for (const providerId of Object.keys(currentProviders)) {
+    if (!managedIds.has(providerId)) {
+      entries.push([providerId, cloneJson(currentProviders[providerId])]);
+    }
+  }
+  for (const providerId of PROVIDER_ORDER) {
+    const pointer = providerPointer(providerId);
+    if (desiredProviders.has(providerId)) {
+      entries.push([providerId, cloneJson(desiredProviders.get(providerId))]);
+    } else if (retainedPointers.has(pointer)) {
+      entries.push([providerId, cloneJson(currentProviders[providerId])]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+function buildModels(currentModels, nextProviders) {
+  const entries = [];
+  let foundProviders = false;
+  for (const key of Object.keys(currentModels)) {
+    if (key === "providers") {
+      entries.push([key, nextProviders]);
+      foundProviders = true;
+    } else {
+      entries.push([key, cloneJson(currentModels[key])]);
+    }
+  }
+  if (!foundProviders && Object.keys(nextProviders).length !== 0) {
+    entries.push(["providers", nextProviders]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function ownershipState(generation, transaction, hashes) {
+  const files = [];
+  for (const path of [MODELS_PATH, SETTINGS_PATH]) {
+    const records = hashes.get(path);
+    if (!records || records.size === 0) {
+      continue;
+    }
+    files.push([
+      path,
+      Object.fromEntries(
+        [...records.entries()]
+          .sort(([left], [right]) => compareText(left, right))
+          .map(([pointer, valueHash]) => [pointer, { valueHash }]),
+      ),
+    ]);
+  }
+  return {
+    schemaVersion: 1,
+    generation,
+    transaction,
+    files: Object.fromEntries(files),
+  };
+}
+
+function planEnabled(input) {
+  if (!isPlainObject(input)) {
+    invalidInput("$");
+  }
+  const inputKeys = [
+    "managedConfig",
+    "providerProjection",
+    "currentSettings",
+    "currentModels",
+  ];
+  if (hasOwn(input, "ownershipState")) {
+    inputKeys.push("ownershipState");
+  }
+  requireExactKeys(input, inputKeys, "$");
+
+  validateTargetRoot(input.currentSettings, SETTINGS_PATH);
+  validateTargetRoot(input.currentModels, MODELS_PATH);
+  if (hasOwn(input.currentModels, "providers") && !isPlainObject(input.currentModels.providers)) {
+    fail({ kind: "invalid-json", path: MODELS_PATH });
+  }
+
+  validateManagedConfig(input.managedConfig);
+  validateProviderProjection(input.providerProjection);
+  const priorOwnership = hasOwn(input, "ownershipState")
+    ? validateOwnershipState(input.ownershipState)
+    : null;
+  if (priorOwnership?.transaction === "pending") {
+    fail({ kind: "pending-transaction", path: OWNERSHIP_PATH });
+  }
+  if (input.managedConfig.generation !== input.providerProjection.generation) {
+    invalidInput("providerProjection.generation");
+  }
+  if (
+    !sameClosedValue(input.managedConfig.settings.defaultModel, input.providerProjection.default.model) ||
+    input.managedConfig.settings.defaultThinkingLevel !== input.providerProjection.default.reasoning
+  ) {
+    invalidInput("providerProjection.default");
+  }
+  if (input.managedConfig.providerSelection.mode !== input.providerProjection.mode) {
+    invalidInput("providerProjection.mode");
+  }
+  const selectedProviderIds =
+    input.managedConfig.providerSelection.mode === "shopify-gateway"
+      ? new Set(input.managedConfig.providerSelection.enabledRoles)
+      : new Set();
+  const projectedProviderIds = new Set(
+    input.providerProjection.providers.map(({ providerId }) => providerId),
+  );
+  for (const providerId of PROVIDER_ORDER) {
+    if (selectedProviderIds.has(providerId) !== projectedProviderIds.has(providerId)) {
+      invalidInput("providerProjection.providers");
+    }
+  }
+
+  const currentProviders = hasOwn(input.currentModels, "providers")
+    ? input.currentModels.providers
+    : Object.create(null);
+  const desiredSettings = new Map(
+    MANAGED_SETTING_KEYS.map((key) => [key, cloneJson(input.managedConfig.settings[key])]),
+  );
+  const projectionByProvider = new Map(
+    input.providerProjection.providers.map((provider) => [provider.providerId, provider]),
+  );
+  const desiredProviders = new Map(
+    PROVIDER_ORDER.filter((providerId) => projectionByProvider.has(providerId)).map((providerId) => [
+      providerId,
+      projectProvider(projectionByProvider.get(providerId)),
+    ]),
+  );
+  const priorSettings = recordsFor(priorOwnership, SETTINGS_PATH);
+  const priorProviders = recordsFor(priorOwnership, MODELS_PATH);
+  const retainedSettings = new Set();
+  const retainedProviders = new Set();
+  const nextHashes = new Map([
+    [SETTINGS_PATH, new Map()],
+    [MODELS_PATH, new Map()],
+  ]);
+  checkSameGenerationProviderIdentity(
+    priorOwnership,
+    priorProviders,
+    desiredProviders,
+    input.providerProjection.generation,
+  );
+
+  for (const [key, desiredValue] of desiredSettings) {
+    const pointer = `/${key}`;
+    const desiredHash = checkActiveValue({
+      path: SETTINGS_PATH,
+      pointer,
+      currentContainer: input.currentSettings,
+      currentKey: key,
+      desiredValue,
+      priorRecord: priorSettings[pointer],
+    });
+    nextHashes.get(SETTINGS_PATH).set(pointer, desiredHash);
+  }
+  for (const pointer of Object.keys(priorSettings)) {
+    const key = pointer.slice(1);
+    if (desiredSettings.has(key)) {
+      continue;
+    }
+    const disposition = checkStaleValue({
+      path: SETTINGS_PATH,
+      pointer,
+      currentContainer: input.currentSettings,
+      currentKey: key,
+      priorRecord: priorSettings[pointer],
+    });
+    if (disposition === "retain") {
+      retainedSettings.add(pointer);
+      nextHashes.get(SETTINGS_PATH).set(pointer, priorSettings[pointer].valueHash);
+    }
+  }
+
+  for (const [providerId, desiredValue] of desiredProviders) {
+    const pointer = providerPointer(providerId);
+    const desiredHash = checkActiveValue({
+      path: MODELS_PATH,
+      pointer,
+      currentContainer: currentProviders,
+      currentKey: providerId,
+      desiredValue,
+      priorRecord: priorProviders[pointer],
+      providerId,
+    });
+    nextHashes.get(MODELS_PATH).set(pointer, desiredHash);
+  }
+  for (const pointer of Object.keys(priorProviders)) {
+    const providerId = providerIdFromPointer(pointer);
+    if (desiredProviders.has(providerId)) {
+      continue;
+    }
+    const disposition = checkStaleValue({
+      path: MODELS_PATH,
+      pointer,
+      currentContainer: currentProviders,
+      currentKey: providerId,
+      priorRecord: priorProviders[pointer],
+    });
+    if (disposition === "retain") {
+      retainedProviders.add(pointer);
+      nextHashes.get(MODELS_PATH).set(pointer, priorProviders[pointer].valueHash);
+    }
+  }
+
+  const nextSettings = buildSettings(
+    input.currentSettings,
+    desiredSettings,
+    priorSettings,
+    retainedSettings,
+  );
+  const nextProviders = buildProviders(
+    currentProviders,
+    desiredProviders,
+    priorProviders,
+    retainedProviders,
+  );
+  const nextModels = buildModels(input.currentModels, nextProviders);
+  const candidates = [
+    [MODELS_PATH, input.currentModels, nextModels],
+    [SETTINGS_PATH, input.currentSettings, nextSettings],
+  ];
+  const writes = candidates
+    .filter(([_path, currentValue, nextValue]) => canonicalHash(currentValue) !== canonicalHash(nextValue))
+    .map(([path, _currentValue, value]) => ({ path, value }));
+  const generation = input.managedConfig.generation;
+
+  const reconcileResult = {
+    ok: true,
+    generation,
+    changed: writes.map(({ path }) => path),
+  };
+  return {
+    reconcileResult,
+    writePlan: {
+      schemaVersion: 1,
+      generation,
+      writes,
+      ownershipStates: {
+        pending: ownershipState(generation, "pending", nextHashes),
+        committed: ownershipState(generation, "committed", nextHashes),
+      },
+    },
+  };
+}
+
+// Pure Task 2.4 handoff: this computes write intent and ownership states without I/O.
+export function planManagedReconciliationInternal(input) {
+  try {
+    return planEnabled(input);
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      return {
+        reconcileResult: { ok: false, error: error.error },
+        writePlan: null,
+      };
+    }
+    throw error;
+  }
+}
+
+export function planManagedReconciliation(input) {
+  return planManagedReconciliationInternal(input).reconcileResult;
+}
