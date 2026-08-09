@@ -128,7 +128,7 @@
   - _Boundary: Cavemem Full Mode_
   - _Depends: 1.2_
 
-- [ ] 3.2 Implement context-bounded full-mode privacy
+- [x] 3.2 Implement context-bounded full-mode privacy
   - Own the focused privacy patch and privacy corpus without changing retrieval, embedding, or package-overlay wiring.
   - Recursively walk actual envelope objects and arrays before stringify, normalize structured keys as specified, and replace complete values only for the finite sensitive-key vocabulary.
   - Apply only private regions, complete authorization values, the finite provider-token forms, JWTs, private-key PEM blocks, and URL-authority userinfo beginning at lexical URL boundaries; malformed private or PEM openers redact through EOF.
@@ -578,3 +578,4 @@
 - Task 2.4: The approved threat model covers cooperative local `proper-lockfile` users and fail-closed behavior after detected compromise; external lock replacement before heartbeat detection is treated as host compromise, not a fencing guarantee.
 - Task 2.5: Bind package-backed `devx` through a trusted module-owned lexical output; inspecting arbitrary Nix `drvAttrs` to authenticate a package can trigger IFD or recursion.
 - Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.
+- Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
