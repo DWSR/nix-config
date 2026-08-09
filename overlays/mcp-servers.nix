@@ -601,16 +601,16 @@ in
 
   github-mcp-server = final.buildGoModule {
     pname = "github-mcp-server";
-    version = "1.2.0";
+    version = "1.8.0";
 
     src = final.fetchFromGitHub {
       owner = "github";
       repo = "github-mcp-server";
-      tag = "v1.2.0";
-      hash = "sha256-ZPDgs1mIYT1RtnqkuMgGssonrG1Psqa4z/FPvH1ysmE=";
+      tag = "v1.8.0";
+      hash = "sha256-oPsH9pC8sWSxaVQxL5p+Ok4ed3mOtiVsNvQUH/DfCFk=";
     };
 
-    vendorHash = "sha256-J1hC4hdEKLENXLJrsyV41TaJ9+2CuPz5KoIMm2mXvTE=";
+    vendorHash = "sha256-QztH+35KQReYsft50WBZMB0EEBWmQZiSA/mFzsvLSQU=";
     subPackages = [ "cmd/github-mcp-server" ];
 
     meta = with final.lib; {
