@@ -6,6 +6,7 @@
 }:
 let
   inherit (lib) mkEnableOption mkOption types;
+  credentialPolicy = import ./credential-policy.nix { inherit lib pkgs; };
   managedConfigRenderer = import ./managed-config.nix { inherit lib pkgs; };
 
   extensionNames = [
@@ -26,11 +27,7 @@ let
     "groq"
     "xai"
   ];
-  resolverKinds = [
-    "pi-auth"
-    "shopify-gateway-token"
-    "shopify-gateway-base"
-  ];
+  inherit (credentialPolicy) resolverKinds;
 
   decodeCodepoint = hex: builtins.fromJSON "\"\\u${hex}\"";
   metadataUnicodeWhitespace = map decodeCodepoint [

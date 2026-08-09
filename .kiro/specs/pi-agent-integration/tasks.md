@@ -94,7 +94,7 @@
   - _Boundary: Runtime Control_
   - _Depends: 2.3_
 
-- [ ] 2.5 (P) Define the closed resolver plan and runtime-secret constructor
+- [x] 2.5 (P) Define the closed resolver plan and runtime-secret constructor
   - Derive only the three closed resolver plans from host selection; Shopify plans use the package-rendered `devx` executable and launcher-owned fixed argv, while personal Pi auth has no executable.
   - Keep plan derivation pure and execute no resolver process in this task.
   - Define a pure constructor that accepts injected validated resolver results and a fresh launch UUID, then partitions root-Pi, child-Pi, and scrubbed subprocess environments into `ProviderRuntimeSecretsV1`.
