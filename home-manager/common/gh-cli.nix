@@ -1,6 +1,8 @@
-_: {
+{ pkgs, ... }:
+{
   programs.gh = {
     enable = true;
+    extensions = [ pkgs.unstable.gh-stack ];
     gitCredentialHelper.enable = true;
 
     settings = {
