@@ -270,6 +270,12 @@ in
     )
   );
 
+  pi-agent-reconcile = requireSupported (
+    final.callPackage ../../scripts/pi-agent-reconcile.nix {
+      inherit (final) pi-agent;
+    }
+  );
+
   pi-agent-extensions = requireSupported (
     final.buildNpmPackage {
       pname = "pi-agent-extensions";

@@ -83,10 +83,11 @@
   - _Boundary: Runtime Control_
   - _Depends: 2.2_
 
-- [ ] 2.4 Add reconciliation locking, atomicity, and recovery
+- [x] 2.4 Add reconciliation locking, atomicity, and recovery
   - Hold one integration lock and coordinate settings access with Pi-compatible locking.
   - Use private same-directory temporary files, flush completed content, and publish ownership only after every target is committed.
   - Recover or fail safely from pending transactions, interrupted writes, and lock timeouts.
+  - Fail closed after `proper-lockfile` reports compromise; external lock replacement before heartbeat detection is outside the cooperative local-lock threat model.
   - Exercise concurrent launches against shared mutable fixtures.
   - Done when concurrent runs leave valid files from one complete generation with no orphan temporary files or unrelated changes.
   - _Requirements: 2.3, 2.4_
@@ -574,3 +575,4 @@
 - Task 2.1: `types.package` and `lib.isDerivation` are structurally spoofable; bind package text/context to the selected output and force every public submodule's `_module.freeformType` to null.
 - Task 2.2: Render exact schema fields and validated `package.outPath` values; never serialize broad option attrsets or coerce packages through host-controlled `__toString`.
 - Task 2.3: Never claim an unowned same-ID provider, even when bytes match; same-generation projections must preserve the complete owned provider set and joined URLs.
+- Task 2.4: The approved threat model covers cooperative local `proper-lockfile` users and fail-closed behavior after detected compromise; external lock replacement before heartbeat detection is treated as host compromise, not a fencing guarantee.

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { before, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -19,6 +21,10 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
 const managedConfigFixture = path.join(testsDir, "fixtures/managed-config.nix");
 const factoryExecutable = "bin/pi-agent-provider-projection";
+const reconcilerExecutable = "bin/pi-agent-reconcile";
+const transactionFileName = ".pi-agent-reconcile-transaction.json";
+const integrationLockName = ".pi-agent-reconcile.lock";
+const temporaryPrefix = ".pi-agent-reconcile-";
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -35,6 +41,8 @@ const { planManagedReconciliation, planManagedReconciliationInternal } = reconci
 
 let personalFactory;
 let personalManagedConfigArtifact;
+let piRuntime;
+let reconcilerPackage;
 let shopifyFactory;
 let shopifyManagedConfigArtifact;
 
@@ -77,6 +85,264 @@ function runFactory(factory, input) {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, "");
   return JSON.parse(result.stdout);
+}
+
+function jsonBytes(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function bytesHash(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function writePrivateJson(file, value) {
+  fs.writeFileSync(file, jsonBytes(value), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+}
+
+function mutableFixture(t, current = currentDocuments()) {
+  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-reconcile-"));
+  t.after(() => fs.rmSync(agentDir, { force: true, recursive: true }));
+  writePrivateJson(path.join(agentDir, "settings.json"), current.settings);
+  writePrivateJson(path.join(agentDir, "models.json"), current.models);
+  return agentDir;
+}
+
+function filesystemInput(agentDir, providerProjection, lockTimeoutMs = 2_000) {
+  return {
+    agentDir,
+    managedConfig: managedConfigForProjection(providerProjection),
+    providerProjection,
+    lockTimeoutMs,
+  };
+}
+
+function parseReconcilerOutput(result) {
+  assert.equal(result.signal, null, result.stderr);
+  assert.notEqual(result.stdout.trim(), "", result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+function runPackagedReconciler(input, options = {}) {
+  const { args = [], env = {}, ...spawnOptions } = options;
+  const result = childProcess.spawnSync(
+    path.join(reconcilerPackage, reconcilerExecutable),
+    args,
+    {
+      ...commandOptions,
+      ...spawnOptions,
+      env: { ...process.env, ...env },
+      input: `${JSON.stringify(input)}\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  assert.ifError(result.error);
+  return { process: result, result: parseReconcilerOutput(result) };
+}
+
+function runPackagedRaw(args, input) {
+  const result = childProcess.spawnSync(
+    path.join(reconcilerPackage, reconcilerExecutable),
+    args,
+    {
+      ...commandOptions,
+      input,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  assert.ifError(result.error);
+  return { process: result, result: parseReconcilerOutput(result) };
+}
+
+function collectChild(child, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let stderr = "";
+    let stdout = "";
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`child did not exit within ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (status, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        assert.equal(signal, null, stderr);
+        resolve({ status, stderr, result: JSON.parse(stdout) });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+function runPackagedWithBlockedStdin(args, partialInput) {
+  const child = childProcess.spawn(path.join(reconcilerPackage, reconcilerExecutable), args, {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.write(partialInput);
+  return collectChild(child, 1_000);
+}
+
+function spawnPackagedReconciler(input) {
+  const child = childProcess.spawn(path.join(reconcilerPackage, reconcilerExecutable), [], {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  child.stdin.end(`${JSON.stringify(input)}\n`);
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status, signal) => {
+      try {
+        assert.equal(signal, null, stderr);
+        resolve({ status, stderr, result: JSON.parse(stdout) });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function snapshotDirectory(root) {
+  const snapshot = [];
+  function visit(relativeDir) {
+    const directory = path.join(root, relativeDir);
+    for (const name of fs.readdirSync(directory).sort()) {
+      const relativePath = path.join(relativeDir, name);
+      const file = path.join(root, relativePath);
+      const stat = fs.lstatSync(file);
+      if (stat.isDirectory()) {
+        snapshot.push({ path: relativePath, type: "directory", mode: stat.mode & 0o777 });
+        visit(relativePath);
+      } else {
+        snapshot.push({
+          path: relativePath,
+          type: "file",
+          mode: stat.mode & 0o777,
+          bytes: fs.readFileSync(file).toString("base64"),
+        });
+      }
+    }
+  }
+  visit("");
+  return snapshot;
+}
+
+function snapshotManagedArtifacts(agentDir) {
+  return snapshotDirectory(agentDir).filter(
+    ({ path: relativePath }) =>
+      relativePath !== integrationLockName &&
+      relativePath !== "settings.json.lock" &&
+      !relativePath.startsWith(`${integrationLockName}${path.sep}`) &&
+      !relativePath.startsWith(`settings.json.lock${path.sep}`),
+  );
+}
+
+function runCompromiseProbe(input, mode, logPath = null) {
+  const fixtureRoot = path.join(testsDir, "fixtures/lock-compromise");
+  const result = childProcess.spawnSync(
+    process.execPath,
+    [
+      "--require",
+      path.join(testsDir, "fixtures/lock-compromise-preload.cjs"),
+      path.join(repoRoot, "scripts/pi-agent-reconcile.mjs"),
+    ],
+    {
+      ...commandOptions,
+      env: {
+        ...process.env,
+        NODE_PATH: [
+          path.join(fixtureRoot, "node_modules"),
+          path.join(piRuntime, "lib/node_modules"),
+        ].join(path.delimiter),
+        PI_AGENT_LOCK_COMPROMISE_PROBE: mode,
+        ...(logPath === null ? {} : { PI_AGENT_LOCK_COMPROMISE_LOG: logPath }),
+      },
+      input: `${JSON.stringify(input)}\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  assert.ifError(result.error);
+  return { process: result, result: parseReconcilerOutput(result) };
+}
+
+function spawnRealLockRace(input, logPath) {
+  const fixtureRoot = path.join(testsDir, "fixtures/real-lock-race");
+  const child = childProcess.spawn(
+    process.execPath,
+    [path.join(repoRoot, "scripts/pi-agent-reconcile.mjs")],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        NODE_PATH: path.join(fixtureRoot, "node_modules"),
+        PI_AGENT_LOCK_RACE_LOG: logPath,
+        PI_AGENT_REAL_PROPER_LOCKFILE: path.join(
+          piRuntime,
+          "lib/node_modules/proper-lockfile",
+        ),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  child.stdin.end(`${JSON.stringify(input)}\n`);
+  return collectChild(child, 7_000);
+}
+
+function readRaceEvents(logPath) {
+  return fs
+    .readFileSync(logPath, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function assertNoTransactionArtifacts(agentDir) {
+  assert.deepEqual(
+    fs.readdirSync(agentDir).filter(
+      (name) =>
+        name === transactionFileName ||
+        name === integrationLockName ||
+        name === "settings.json.lock" ||
+        name.startsWith(temporaryPrefix),
+    ),
+    [],
+  );
+}
+
+function waitForLine(stream, expected) {
+  return new Promise((resolve, reject) => {
+    let output = "";
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk) => {
+      output += chunk;
+      if (output.includes(expected)) resolve();
+    });
+    stream.on("error", reject);
+  });
 }
 
 function shopifyProjection(options = {}) {
@@ -197,6 +463,8 @@ function assertValueFreeError(result, forbidden = []) {
 }
 
 before(() => {
+  reconcilerPackage = buildFactory("reconciler");
+  piRuntime = buildFactory("pi-runtime");
   shopifyFactory = buildFactory("shopify-projection-factory");
   personalFactory = buildFactory("personal-projection-factory");
   shopifyManagedConfigArtifact = JSON.parse(
@@ -867,4 +1135,479 @@ test("review round 1 RED: internal write planning is a separate explicit contrac
     "writes",
   ]);
   assert.deepEqual(reconcile(), execution.reconcileResult);
+});
+
+test("packaged reconciliation commits private files and ownership last", (t) => {
+  const current = currentDocuments();
+  current.settings = JSON.parse(
+    `${JSON.stringify(current.settings).slice(0, -1)},"__proto__":{"safe":"settings"},"constructor":{"safe":"constructor"},"prototype":{"safe":"prototype"}}`,
+  );
+  const specialProviders = JSON.parse(
+    '{"__proto__":{"safe":"provider-proto"},"constructor":{"safe":"provider-constructor"},"prototype":{"safe":"provider-prototype"}}',
+  );
+  current.models.providers = Object.fromEntries([
+    ...Object.entries(current.models.providers),
+    ...Object.entries(specialProviders),
+  ]);
+  const agentDir = mutableFixture(t, current);
+  fs.writeFileSync(
+    path.join(agentDir, `${temporaryPrefix}interrupted-settings.json.tmp`),
+    '{"partial":',
+    { mode: 0o600 },
+  );
+  const projection = shopifyProjection();
+  const execution = runPackagedReconciler(filesystemInput(agentDir, projection));
+
+  assert.equal(execution.process.status, 0, execution.process.stderr);
+  assert.deepEqual(execution.result, {
+    ok: true,
+    generation: generationV1,
+    changed: ["models.json", "settings.json"],
+  });
+  const settings = readJson(path.join(agentDir, "settings.json"));
+  const models = readJson(path.join(agentDir, "models.json"));
+  const ownership = readJson(path.join(agentDir, "ownership.json"));
+  assert.equal(ownership.transaction, "committed");
+  assert.equal(ownership.generation, generationV1);
+  assert.deepEqual(settings.__proto__, { safe: "settings" });
+  assert.deepEqual(settings.constructor, { safe: "constructor" });
+  assert.deepEqual(settings.prototype, { safe: "prototype" });
+  assert.deepEqual(models.auth, current.models.auth);
+  assert.deepEqual(models.providers.local, current.models.providers.local);
+  for (const providerId of Object.keys(specialProviders)) {
+    assert.deepEqual(models.providers[providerId], specialProviders[providerId]);
+  }
+  for (const name of ["settings.json", "models.json", "ownership.json"]) {
+    assert.equal(fs.statSync(path.join(agentDir, name)).mode & 0o777, 0o600);
+  }
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("rejects every non-empty argv before mutable-state access", async (t) => {
+  for (const args of [["--dry-run"], ["status"], ["--", "pi-argument"]]) {
+    await t.test(args.join(" "), () => {
+      const agentDir = mutableFixture(t);
+      fs.writeFileSync(
+        path.join(agentDir, `${temporaryPrefix}argv-sentinel.tmp`),
+        "must remain byte-identical",
+        { mode: 0o600 },
+      );
+      const before = snapshotDirectory(agentDir);
+      const execution = runPackagedReconciler(
+        filesystemInput(agentDir, shopifyProjection()),
+        { args },
+      );
+
+      assert.equal(execution.process.status, 1);
+      assert.deepEqual(execution.result, {
+        ok: false,
+        error: { kind: "invalid-input", path: "argv" },
+      });
+      assert.deepEqual(snapshotDirectory(agentDir), before);
+    });
+  }
+});
+
+test("packaged argv rejection never reads stdin", async (t) => {
+  const agentDir = mutableFixture(t);
+  const before = snapshotDirectory(agentDir);
+  const malformed = `{"agentDir":${JSON.stringify(agentDir)}`;
+
+  for (const [name, input] of [["malformed", malformed], ["empty", ""]]) {
+    await t.test(name, () => {
+      const execution = runPackagedRaw(["--dry-run"], input);
+      assert.equal(execution.process.status, 1);
+      assert.deepEqual(execution.result, {
+        ok: false,
+        error: { kind: "invalid-input", path: "argv" },
+      });
+      assert.deepEqual(snapshotDirectory(agentDir), before);
+    });
+  }
+
+  await t.test("blocked without EOF", async () => {
+    const execution = await runPackagedWithBlockedStdin(["--dry-run"], malformed);
+    assert.equal(execution.status, 1);
+    assert.deepEqual(execution.result, {
+      ok: false,
+      error: { kind: "invalid-input", path: "argv" },
+    });
+    assert.deepEqual(snapshotDirectory(agentDir), before);
+  });
+});
+
+test("concurrent generations serialize to one complete generation", async (t) => {
+  const current = currentDocuments();
+  const agentDir = mutableFixture(t, current);
+  const firstProjection = shopifyProjection();
+  const secondProjection = shopifyProjection({
+    generation: generationV2,
+    origin: "https://next-gateway.example.test",
+    defaultModel: { provider: "anthropic", modelId: "claude-opus-4-6" },
+  });
+
+  const executions = await Promise.all([
+    spawnPackagedReconciler(filesystemInput(agentDir, firstProjection, 10_000)),
+    spawnPackagedReconciler(filesystemInput(agentDir, secondProjection, 10_000)),
+  ]);
+  for (const execution of executions) {
+    assert.equal(execution.status, 0, execution.stderr);
+    assert.equal(execution.result.ok, true);
+  }
+
+  const settings = readJson(path.join(agentDir, "settings.json"));
+  const models = readJson(path.join(agentDir, "models.json"));
+  const ownership = readJson(path.join(agentDir, "ownership.json"));
+  const expected = ownership.generation === generationV1 ? firstProjection : secondProjection;
+  assert.ok([generationV1, generationV2].includes(ownership.generation));
+  assert.equal(ownership.transaction, "committed");
+  assert.deepEqual(settings.defaultModel, expected.default.model);
+  for (const provider of expected.providers) {
+    assert.equal(models.providers[provider.providerId].baseUrl, provider.baseUrl);
+  }
+  assert.deepEqual(settings.packages, current.settings.packages);
+  assert.deepEqual(models.providers.local, current.models.providers.local);
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("Pi-compatible settings lock timeout fails without mutation", async (t) => {
+  const agentDir = mutableFixture(t);
+  const settingsPath = path.join(agentDir, "settings.json");
+  const holder = childProcess.spawn(
+    process.execPath,
+    [path.join(testsDir, "fixtures/hold-proper-lock.cjs"), settingsPath, "", "1000"],
+    {
+      env: {
+        ...process.env,
+        NODE_PATH: path.join(piRuntime, "lib/node_modules"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  t.after(() => holder.kill());
+  await waitForLine(holder.stdout, "locked\n");
+  const before = {
+    settings: fs.readFileSync(settingsPath, "utf8"),
+    models: fs.readFileSync(path.join(agentDir, "models.json"), "utf8"),
+  };
+
+  const execution = runPackagedReconciler(
+    filesystemInput(agentDir, shopifyProjection(), 50),
+  );
+  assert.equal(execution.process.status, 1);
+  assert.deepEqual(execution.result, {
+    ok: false,
+    error: { kind: "lock-timeout", path: "settings.json" },
+  });
+  assert.equal(fs.readFileSync(settingsPath, "utf8"), before.settings);
+  assert.equal(fs.readFileSync(path.join(agentDir, "models.json"), "utf8"), before.models);
+  assert.equal(fs.existsSync(path.join(agentDir, "ownership.json")), false);
+  assert.equal(fs.existsSync(path.join(agentDir, integrationLockName)), false);
+});
+
+test("integration lock timeout fails before settings access", async (t) => {
+  const agentDir = mutableFixture(t);
+  const integrationLockPath = path.join(agentDir, integrationLockName);
+  const holder = childProcess.spawn(
+    process.execPath,
+    [
+      path.join(testsDir, "fixtures/hold-proper-lock.cjs"),
+      agentDir,
+      integrationLockPath,
+      "1000",
+    ],
+    {
+      env: {
+        ...process.env,
+        NODE_PATH: path.join(piRuntime, "lib/node_modules"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  t.after(() => holder.kill());
+  await waitForLine(holder.stdout, "locked\n");
+
+  const execution = runPackagedReconciler(
+    filesystemInput(agentDir, shopifyProjection(), 50),
+  );
+  assert.equal(execution.process.status, 1);
+  assert.deepEqual(execution.result, {
+    ok: false,
+    error: { kind: "lock-timeout", path: integrationLockName },
+  });
+  assert.equal(fs.existsSync(path.join(agentDir, "settings.json.lock")), false);
+  assert.equal(fs.existsSync(path.join(agentDir, "ownership.json")), false);
+});
+
+test("lock compromise prevents every subsequent filesystem mutation", async (t) => {
+  await t.test("settings lock before recovery cleanup", () => {
+    const agentDir = mutableFixture(t);
+    fs.writeFileSync(
+      path.join(agentDir, `${temporaryPrefix}cleanup-sentinel.tmp`),
+      "must survive lock compromise",
+      { mode: 0o600 },
+    );
+    const before = snapshotDirectory(agentDir);
+    const execution = runCompromiseProbe(
+      filesystemInput(agentDir, shopifyProjection()),
+      "settings-before-recovery",
+    );
+
+    assert.equal(execution.process.status, 1);
+    assert.deepEqual(execution.result, {
+      ok: false,
+      error: { kind: "write-failure", path: "settings.json" },
+    });
+    assert.deepEqual(snapshotDirectory(agentDir), before);
+  });
+
+  await t.test("integration lock during state read", () => {
+    const agentDir = mutableFixture(t);
+    const before = snapshotDirectory(agentDir);
+    const execution = runCompromiseProbe(
+      filesystemInput(agentDir, shopifyProjection()),
+      "integration-during-state-read",
+    );
+
+    assert.equal(execution.process.status, 1);
+    assert.deepEqual(execution.result, {
+      ok: false,
+      error: { kind: "write-failure", path: integrationLockName },
+    });
+    assert.deepEqual(snapshotDirectory(agentDir), before);
+  });
+});
+
+test("detected integration compromise is authoritative on a no-op exit", (t) => {
+  const sentinel = "task-2.4-no-op-compromise-value-sentinel";
+  const current = currentDocuments();
+  current.settings.unrelatedCompromiseValue = sentinel;
+  const agentDir = mutableFixture(t, current);
+  const projection = shopifyProjection();
+  const initial = runPackagedReconciler(filesystemInput(agentDir, projection));
+  assert.equal(initial.process.status, 0, initial.process.stderr);
+
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-compromise-"));
+  const logPath = path.join(logDir, "events.jsonl");
+  t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
+  const before = snapshotDirectory(agentDir);
+  const execution = runCompromiseProbe(
+    filesystemInput(agentDir, projection),
+    "integration-during-state-read",
+    logPath,
+  );
+
+  assert.equal(execution.process.status, 1);
+  assertValueFreeError(execution.result, [sentinel]);
+  assert.deepEqual(execution.result.error, {
+    kind: "write-failure",
+    path: integrationLockName,
+  });
+  assert.deepEqual(snapshotDirectory(agentDir), before);
+
+  const events = readRaceEvents(logPath);
+  const compromisedAt = events.findIndex(({ event }) => event === "integration-compromised");
+  assert.notEqual(compromisedAt, -1, JSON.stringify(events));
+  assert.equal(
+    events.slice(compromisedAt + 1).some(({ event }) => event.endsWith("-release")),
+    false,
+    JSON.stringify(events),
+  );
+});
+
+test("detected integration compromise overrides an ordinary state error", (t) => {
+  const sentinel = "task-2.4-error-compromise-value-sentinel";
+  const agentDir = mutableFixture(t);
+  fs.writeFileSync(
+    path.join(agentDir, "settings.json"),
+    `{"unrelated":"${sentinel}"`,
+    { mode: 0o600 },
+  );
+  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-compromise-"));
+  const logPath = path.join(logDir, "events.jsonl");
+  t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
+  const before = snapshotDirectory(agentDir);
+  const execution = runCompromiseProbe(
+    filesystemInput(agentDir, shopifyProjection()),
+    "integration-during-state-read",
+    logPath,
+  );
+
+  assert.equal(execution.process.status, 1);
+  assertValueFreeError(execution.result, [sentinel]);
+  assert.deepEqual(execution.result.error, {
+    kind: "write-failure",
+    path: integrationLockName,
+  });
+  assert.deepEqual(snapshotDirectory(agentDir), before);
+
+  const events = readRaceEvents(logPath);
+  const compromisedAt = events.findIndex(({ event }) => event === "integration-compromised");
+  assert.notEqual(compromisedAt, -1, JSON.stringify(events));
+  assert.equal(
+    events.slice(compromisedAt + 1).some(({ event }) => event.endsWith("-release")),
+    false,
+    JSON.stringify(events),
+  );
+});
+
+test("integration compromise dominates settings contention races", async (t) => {
+  const cases = [
+    ["contention clears", 2500, 5000],
+    ["settings timeout", 5000, 2500],
+  ];
+
+  for (const [name, holdMs, lockTimeoutMs] of cases) {
+    await t.test(name, async (t) => {
+      const agentDir = mutableFixture(t);
+      const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-race-"));
+      const logPath = path.join(logDir, "events.jsonl");
+      t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
+      const holder = childProcess.spawn(
+        process.execPath,
+        [
+          path.join(testsDir, "fixtures/hold-proper-lock.cjs"),
+          path.join(agentDir, "settings.json"),
+          "",
+          String(holdMs),
+        ],
+        {
+          env: {
+            ...process.env,
+            NODE_PATH: path.join(piRuntime, "lib/node_modules"),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
+      t.after(() => holder.kill());
+      await waitForLine(holder.stdout, "locked\n");
+      const before = snapshotManagedArtifacts(agentDir);
+
+      const execution = await spawnRealLockRace(
+        filesystemInput(agentDir, shopifyProjection(), lockTimeoutMs),
+        logPath,
+      );
+      assert.equal(execution.status, 1, execution.stderr);
+      assert.deepEqual(execution.result, {
+        ok: false,
+        error: { kind: "write-failure", path: integrationLockName },
+      });
+      assert.deepEqual(snapshotManagedArtifacts(agentDir), before);
+
+      const events = readRaceEvents(logPath);
+      const compromisedAt = events.findIndex(
+        ({ event }) => event === "integration-compromised",
+      );
+      assert.notEqual(compromisedAt, -1, JSON.stringify(events));
+      assert.equal(events[compromisedAt].code, "ECOMPROMISED");
+      assert.equal(
+        events
+          .slice(compromisedAt + 1)
+          .some(({ event }) =>
+            [
+              "settings-attempt",
+              "settings-acquired",
+              "settings-release",
+              "integration-release",
+            ].includes(event),
+          ),
+        false,
+        JSON.stringify(events),
+      );
+    });
+  }
+});
+
+test("resumes a durable pending transaction after a partial commit", (t) => {
+  const agentDir = mutableFixture(t);
+  const firstProjection = shopifyProjection();
+  const first = runPackagedReconciler(filesystemInput(agentDir, firstProjection));
+  assert.equal(first.process.status, 0, first.process.stderr);
+
+  const secondProjection = shopifyProjection({
+    generation: generationV2,
+    origin: "https://next-gateway.example.test",
+    defaultModel: { provider: "anthropic", modelId: "claude-opus-4-6" },
+  });
+  const current = {
+    settings: readJson(path.join(agentDir, "settings.json")),
+    models: readJson(path.join(agentDir, "models.json")),
+  };
+  const priorOwnership = readJson(path.join(agentDir, "ownership.json"));
+  const next = successfulPlan(plan({
+    current,
+    ownershipState: priorOwnership,
+    providerProjection: secondProjection,
+  }));
+  const transactionId = "recovery-fixture";
+  const targets = next.writePlan.writes.map(({ path: targetPath, value }) => {
+    const beforeBytes = fs.readFileSync(path.join(agentDir, targetPath), "utf8");
+    const afterBytes = jsonBytes(value);
+    const temporaryPath = `${temporaryPrefix}${transactionId}-${targetPath}.tmp`;
+    fs.writeFileSync(path.join(agentDir, temporaryPath), afterBytes, { mode: 0o600 });
+    return {
+      path: targetPath,
+      temporaryPath,
+      beforeHash: bytesHash(beforeBytes),
+      afterHash: bytesHash(afterBytes),
+    };
+  });
+  const priorOwnershipBytes = fs.readFileSync(path.join(agentDir, "ownership.json"), "utf8");
+  writePrivateJson(path.join(agentDir, transactionFileName), {
+    schemaVersion: 1,
+    generation: generationV2,
+    previousOwnershipHash: bytesHash(priorOwnershipBytes),
+    pendingOwnership: next.writePlan.ownershipStates.pending,
+    committedOwnership: next.writePlan.ownershipStates.committed,
+    targets,
+  });
+  writePrivateJson(
+    path.join(agentDir, "ownership.json"),
+    next.writePlan.ownershipStates.pending,
+  );
+  fs.renameSync(
+    path.join(agentDir, targets[0].temporaryPath),
+    path.join(agentDir, targets[0].path),
+  );
+
+  const recovered = runPackagedReconciler(filesystemInput(agentDir, secondProjection));
+  assert.equal(recovered.process.status, 0, recovered.process.stderr);
+  assert.equal(recovered.result.ok, true);
+  assert.equal(readJson(path.join(agentDir, "ownership.json")).transaction, "committed");
+  assert.deepEqual(readJson(path.join(agentDir, "settings.json")).defaultModel, {
+    provider: "anthropic",
+    modelId: "claude-opus-4-6",
+  });
+  assert.equal(
+    readJson(path.join(agentDir, "models.json")).providers.openai.baseUrl,
+    "https://next-gateway.example.test/vendors/openai/v1",
+  );
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("unknown pending ownership fails safely", (t) => {
+  const agentDir = mutableFixture(t);
+  const projection = shopifyProjection();
+  const first = runPackagedReconciler(filesystemInput(agentDir, projection));
+  assert.equal(first.process.status, 0, first.process.stderr);
+  const ownershipPath = path.join(agentDir, "ownership.json");
+  const pending = readJson(ownershipPath);
+  pending.transaction = "pending";
+  writePrivateJson(ownershipPath, pending);
+  const before = new Map(
+    ["settings.json", "models.json", "ownership.json"].map((name) => [
+      name,
+      fs.readFileSync(path.join(agentDir, name), "utf8"),
+    ]),
+  );
+
+  const execution = runPackagedReconciler(filesystemInput(agentDir, projection));
+  assert.equal(execution.process.status, 1);
+  assert.deepEqual(execution.result, {
+    ok: false,
+    error: { kind: "pending-transaction", path: "ownership.json" },
+  });
+  for (const [name, bytes] of before) {
+    assert.equal(fs.readFileSync(path.join(agentDir, name), "utf8"), bytes);
+  }
 });

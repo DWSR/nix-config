@@ -1,8 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SETTINGS_PATH = "settings.json";
 const MODELS_PATH = "models.json";
 const OWNERSHIP_PATH = "ownership.json";
+const TRANSACTION_PATH = ".pi-agent-reconcile-transaction.json";
+const INTEGRATION_LOCK_PATH = ".pi-agent-reconcile.lock";
+const TEMPORARY_PREFIX = ".pi-agent-reconcile-";
+const TARGET_PATHS = new Set([MODELS_PATH, SETTINGS_PATH]);
+const FILE_MODE = 0o600;
 const PROVIDER_ORDER = ["anthropic", "openai", "google", "groq", "xai"];
 const PROVIDER_SET = new Set(PROVIDER_ORDER);
 const MANAGED_CONFIG_KEYS = [
@@ -105,6 +114,8 @@ const GOOGLE_HEADERS = [
     },
   },
 ];
+const require = createRequire(import.meta.url);
+let properLockfile;
 
 function compareText(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -116,6 +127,8 @@ class ReconcileFailure extends Error {
     this.error = error;
   }
 }
+
+class LockCompromisedFailure extends ReconcileFailure {}
 
 function fail(error) {
   throw new ReconcileFailure(error);
@@ -1071,4 +1084,779 @@ export function planManagedReconciliationInternal(input) {
 
 export function planManagedReconciliation(input) {
   return planManagedReconciliationInternal(input).reconcileResult;
+}
+
+function byteHash(bytes) {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function jsonBytes(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+function errorCode(error) {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : null;
+}
+
+function writeFailure(filePath) {
+  fail({ kind: "write-failure", path: filePath });
+}
+
+function lockCompromised(filePath) {
+  throw new LockCompromisedFailure({ kind: "write-failure", path: filePath });
+}
+
+function pendingTransaction() {
+  fail({ kind: "pending-transaction", path: OWNERSHIP_PATH });
+}
+
+function getProperLockfile() {
+  if (properLockfile === undefined) {
+    try {
+      properLockfile = require("proper-lockfile");
+    } catch (_error) {
+      writeFailure(INTEGRATION_LOCK_PATH);
+    }
+  }
+  return properLockfile;
+}
+
+async function readBytes(agentDir, filePath) {
+  try {
+    return await fs.promises.readFile(path.join(agentDir, filePath), "utf8");
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      return null;
+    }
+    writeFailure(filePath);
+  }
+}
+
+function parseJsonBytes(bytes, filePath, fallback) {
+  if (bytes === null) {
+    return fallback;
+  }
+  try {
+    return JSON.parse(bytes);
+  } catch (_error) {
+    fail({ kind: "invalid-json", path: filePath });
+  }
+}
+
+async function readOwnership(agentDir) {
+  const bytes = await readBytes(agentDir, OWNERSHIP_PATH);
+  if (bytes === null) {
+    return { bytes, value: null };
+  }
+  const value = parseJsonBytes(bytes, OWNERSHIP_PATH, null);
+  try {
+    validateOwnershipState(value);
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      fail({ kind: "invalid-json", path: OWNERSHIP_PATH });
+    }
+    throw error;
+  }
+  return { bytes, value };
+}
+
+async function syncDirectory(agentDir, errorPath, assertLocks) {
+  let handle;
+  try {
+    handle = await fs.promises.open(agentDir, "r");
+    assertLocks();
+    await handle.sync();
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    writeFailure(errorPath);
+  } finally {
+    if (handle !== undefined) {
+      try {
+        await handle.close();
+      } catch (_error) {
+        writeFailure(errorPath);
+      }
+    }
+  }
+}
+
+async function removeFile(agentDir, filePath, errorPath, assertLocks) {
+  try {
+    assertLocks();
+    await fs.promises.unlink(path.join(agentDir, filePath));
+    return true;
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    if (errorCode(error) === "ENOENT") {
+      return false;
+    }
+    writeFailure(errorPath);
+  }
+}
+
+function privateTemporaryName(targetPath) {
+  return `${TEMPORARY_PREFIX}${randomUUID()}-${path.basename(targetPath)}.tmp`;
+}
+
+async function writePrivateTemporary(agentDir, temporaryPath, bytes, errorPath, assertLocks) {
+  let handle;
+  try {
+    assertLocks();
+    handle = await fs.promises.open(
+      path.join(agentDir, temporaryPath),
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      FILE_MODE,
+    );
+    assertLocks();
+    await handle.chmod(FILE_MODE);
+    assertLocks();
+    await handle.writeFile(bytes, "utf8");
+    assertLocks();
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+  } catch (error) {
+    if (handle !== undefined) {
+      try {
+        await handle.close();
+      } catch (_closeError) {
+        // The original write failure remains authoritative.
+      }
+    }
+    try {
+      assertLocks();
+      await fs.promises.unlink(path.join(agentDir, temporaryPath));
+    } catch (cleanupError) {
+      if (cleanupError instanceof ReconcileFailure) {
+        throw error instanceof ReconcileFailure ? error : cleanupError;
+      }
+      if (errorCode(cleanupError) !== "ENOENT") {
+        writeFailure(errorPath);
+      }
+    }
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    writeFailure(errorPath);
+  }
+}
+
+async function publishTemporary(agentDir, temporaryPath, targetPath, assertLocks) {
+  try {
+    assertLocks();
+    await fs.promises.rename(
+      path.join(agentDir, temporaryPath),
+      path.join(agentDir, targetPath),
+    );
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    writeFailure(targetPath);
+  }
+  await syncDirectory(agentDir, targetPath, assertLocks);
+}
+
+async function atomicWritePrivate(agentDir, targetPath, bytes, assertLocks) {
+  const temporaryPath = privateTemporaryName(targetPath);
+  await writePrivateTemporary(agentDir, temporaryPath, bytes, targetPath, assertLocks);
+  try {
+    await publishTemporary(agentDir, temporaryPath, targetPath, assertLocks);
+  } catch (error) {
+    await removeFile(agentDir, temporaryPath, targetPath, assertLocks);
+    throw error;
+  }
+}
+
+async function cleanupTemporaryFiles(agentDir, assertLocks, keep = new Set()) {
+  let names;
+  try {
+    names = await fs.promises.readdir(agentDir);
+  } catch (_error) {
+    writeFailure(OWNERSHIP_PATH);
+  }
+  let changed = false;
+  for (const name of names) {
+    if (
+      name !== TRANSACTION_PATH &&
+      name.startsWith(TEMPORARY_PREFIX) &&
+      !keep.has(name)
+    ) {
+      changed =
+        (await removeFile(agentDir, name, OWNERSHIP_PATH, assertLocks)) || changed;
+    }
+  }
+  if (changed) {
+    await syncDirectory(agentDir, OWNERSHIP_PATH, assertLocks);
+  }
+}
+
+function validateTransactionJournal(journal) {
+  try {
+    validateInputJson(journal, "transaction");
+    requireExactKeys(
+      journal,
+      [
+        "schemaVersion",
+        "generation",
+        "previousOwnershipHash",
+        "pendingOwnership",
+        "committedOwnership",
+        "targets",
+      ],
+      "transaction",
+    );
+    if (journal.schemaVersion !== 1) {
+      pendingTransaction();
+    }
+    validateSafeString(journal.generation, SAFE_IDENTIFIER, "transaction.generation");
+    if (
+      journal.previousOwnershipHash !== null &&
+      (typeof journal.previousOwnershipHash !== "string" ||
+        !VALUE_HASH.test(journal.previousOwnershipHash))
+    ) {
+      pendingTransaction();
+    }
+    validateOwnershipState(journal.pendingOwnership);
+    validateOwnershipState(journal.committedOwnership);
+    if (
+      journal.pendingOwnership.transaction !== "pending" ||
+      journal.committedOwnership.transaction !== "committed" ||
+      journal.pendingOwnership.generation !== journal.generation ||
+      journal.committedOwnership.generation !== journal.generation ||
+      !sameClosedValue(
+        { ...journal.pendingOwnership, transaction: "committed" },
+        journal.committedOwnership,
+      )
+    ) {
+      pendingTransaction();
+    }
+    if (
+      !Array.isArray(journal.targets) ||
+      journal.targets.length === 0 ||
+      journal.targets.length > TARGET_PATHS.size
+    ) {
+      pendingTransaction();
+    }
+    const targetPaths = new Set();
+    const temporaryPaths = new Set();
+    for (const target of journal.targets) {
+      requireExactKeys(
+        target,
+        ["path", "temporaryPath", "beforeHash", "afterHash"],
+        "transaction.targets",
+      );
+      if (
+        !TARGET_PATHS.has(target.path) ||
+        targetPaths.has(target.path) ||
+        typeof target.temporaryPath !== "string" ||
+        path.basename(target.temporaryPath) !== target.temporaryPath ||
+        !target.temporaryPath.startsWith(TEMPORARY_PREFIX) ||
+        !target.temporaryPath.endsWith(`-${target.path}.tmp`) ||
+        temporaryPaths.has(target.temporaryPath) ||
+        (target.beforeHash !== null &&
+          (typeof target.beforeHash !== "string" || !VALUE_HASH.test(target.beforeHash))) ||
+        typeof target.afterHash !== "string" ||
+        !VALUE_HASH.test(target.afterHash)
+      ) {
+        pendingTransaction();
+      }
+      targetPaths.add(target.path);
+      temporaryPaths.add(target.temporaryPath);
+    }
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      pendingTransaction();
+    }
+    throw error;
+  }
+  return journal;
+}
+
+async function readTransactionJournal(agentDir) {
+  const bytes = await readBytes(agentDir, TRANSACTION_PATH);
+  if (bytes === null) {
+    return null;
+  }
+  let journal;
+  try {
+    journal = JSON.parse(bytes);
+  } catch (_error) {
+    pendingTransaction();
+  }
+  return validateTransactionJournal(journal);
+}
+
+async function inspectTransactionTarget(agentDir, target) {
+  const [currentBytes, temporaryBytes] = await Promise.all([
+    readBytes(agentDir, target.path),
+    readBytes(agentDir, target.temporaryPath),
+  ]);
+  return {
+    target,
+    currentHash: currentBytes === null ? null : byteHash(currentBytes),
+    temporaryHash: temporaryBytes === null ? null : byteHash(temporaryBytes),
+  };
+}
+
+async function cleanupJournal(agentDir, journal, assertLocks) {
+  for (const target of journal.targets) {
+    await removeFile(agentDir, target.temporaryPath, OWNERSHIP_PATH, assertLocks);
+  }
+  await removeFile(agentDir, TRANSACTION_PATH, OWNERSHIP_PATH, assertLocks);
+  await cleanupTemporaryFiles(agentDir, assertLocks);
+  await syncDirectory(agentDir, OWNERSHIP_PATH, assertLocks);
+}
+
+async function recoverPendingTransaction(agentDir, assertLocks) {
+  const ownership = await readOwnership(agentDir);
+  const journal = await readTransactionJournal(agentDir);
+
+  if (journal === null) {
+    if (ownership.value?.transaction === "pending") {
+      pendingTransaction();
+    }
+    await cleanupTemporaryFiles(agentDir, assertLocks);
+    return;
+  }
+
+  const inspected = await Promise.all(
+    journal.targets.map((target) => inspectTransactionTarget(agentDir, target)),
+  );
+  if (ownership.value?.transaction === "pending") {
+    if (!sameClosedValue(ownership.value, journal.pendingOwnership)) {
+      pendingTransaction();
+    }
+    for (const state of inspected) {
+      if (state.currentHash === state.target.afterHash) {
+        if (
+          state.temporaryHash !== null &&
+          state.temporaryHash !== state.target.afterHash
+        ) {
+          pendingTransaction();
+        }
+      } else if (
+        state.currentHash !== state.target.beforeHash ||
+        state.temporaryHash !== state.target.afterHash
+      ) {
+        pendingTransaction();
+      }
+    }
+
+    for (const state of inspected) {
+      assertLocks();
+      if (state.currentHash === state.target.afterHash) {
+        await removeFile(
+          agentDir,
+          state.target.temporaryPath,
+          state.target.path,
+          assertLocks,
+        );
+      } else {
+        await publishTemporary(
+          agentDir,
+          state.target.temporaryPath,
+          state.target.path,
+          assertLocks,
+        );
+      }
+    }
+    assertLocks();
+    await atomicWritePrivate(
+      agentDir,
+      OWNERSHIP_PATH,
+      jsonBytes(journal.committedOwnership),
+      assertLocks,
+    );
+    await cleanupJournal(agentDir, journal, assertLocks);
+    return;
+  }
+
+  const ownershipHash = ownership.bytes === null ? null : byteHash(ownership.bytes);
+  if (ownershipHash === journal.previousOwnershipHash) {
+    if (
+      inspected.some(
+        (state) =>
+          state.currentHash !== state.target.beforeHash ||
+          state.temporaryHash !== state.target.afterHash,
+      )
+    ) {
+      pendingTransaction();
+    }
+    await cleanupJournal(agentDir, journal, assertLocks);
+    return;
+  }
+
+  if (
+    ownership.value?.transaction === "committed" &&
+    sameClosedValue(ownership.value, journal.committedOwnership) &&
+    inspected.every(
+      (state) =>
+        state.currentHash === state.target.afterHash &&
+        (state.temporaryHash === null || state.temporaryHash === state.target.afterHash),
+    )
+  ) {
+    await cleanupJournal(agentDir, journal, assertLocks);
+    return;
+  }
+  pendingTransaction();
+}
+
+async function acquireLock(
+  targetPath,
+  lockfilePath,
+  timeoutMs,
+  errorPath,
+  prerequisiteLock = null,
+) {
+  const lockfile = getProperLockfile();
+  const deadline = Date.now() + timeoutMs;
+  let compromised = false;
+  const assertOwned = () => {
+    if (compromised) {
+      lockCompromised(errorPath);
+    }
+  };
+  const assertPrerequisite = () => prerequisiteLock?.assert();
+  const assertHeld = () => {
+    assertPrerequisite();
+    assertOwned();
+  };
+  for (;;) {
+    assertPrerequisite();
+    try {
+      const release = await lockfile.lock(targetPath, {
+        realpath: false,
+        retries: 0,
+        ...(lockfilePath === null ? {} : { lockfilePath }),
+        onCompromised: () => {
+          compromised = true;
+        },
+      });
+      assertHeld();
+      const heldLock = {
+        assert: assertHeld,
+        async release() {
+          assertHeld();
+          try {
+            await release();
+          } catch (_error) {
+            assertHeld();
+            writeFailure(errorPath);
+          }
+        },
+      };
+      return heldLock;
+    } catch (error) {
+      assertPrerequisite();
+      if (error instanceof ReconcileFailure) {
+        throw error;
+      }
+      if (errorCode(error) !== "ELOCKED") {
+        writeFailure(errorPath);
+      }
+      const remaining = deadline - Date.now();
+      assertPrerequisite();
+      if (remaining <= 0) {
+        assertPrerequisite();
+        fail({ kind: "lock-timeout", path: errorPath });
+      }
+      assertPrerequisite();
+      await new Promise((resolve) => setTimeout(resolve, Math.min(20, remaining)));
+      assertPrerequisite();
+    }
+  }
+}
+
+async function withLock(lock, errorPath, operation) {
+  let operationError;
+  let value;
+  try {
+    value = await operation();
+  } catch (error) {
+    operationError = error;
+  }
+
+  if (operationError instanceof LockCompromisedFailure) {
+    throw operationError;
+  }
+  lock.assert();
+
+  let releaseError;
+  try {
+    await lock.release();
+  } catch (error) {
+    releaseError = error;
+  }
+  if (releaseError instanceof LockCompromisedFailure) {
+    throw releaseError;
+  }
+  if (operationError !== undefined) {
+    throw operationError;
+  }
+  if (releaseError !== undefined) {
+    if (releaseError instanceof ReconcileFailure) {
+      throw releaseError;
+    }
+    writeFailure(errorPath);
+  }
+  return value;
+}
+
+function validateExecutionInput(input) {
+  if (!isPlainObject(input)) {
+    invalidInput("$");
+  }
+  const inputKeys = ["agentDir", "managedConfig", "providerProjection"];
+  if (hasOwn(input, "lockTimeoutMs")) {
+    inputKeys.push("lockTimeoutMs");
+  }
+  requireExactKeys(input, inputKeys, "$");
+  if (
+    typeof input.agentDir !== "string" ||
+    !path.isAbsolute(input.agentDir) ||
+    path.normalize(input.agentDir) !== input.agentDir
+  ) {
+    invalidInput("agentDir");
+  }
+  const lockTimeoutMs = input.lockTimeoutMs ?? 5_000;
+  if (!Number.isSafeInteger(lockTimeoutMs) || lockTimeoutMs <= 0 || lockTimeoutMs > 600_000) {
+    invalidInput("lockTimeoutMs");
+  }
+  const validation = planManagedReconciliationInternal({
+    managedConfig: input.managedConfig,
+    providerProjection: input.providerProjection,
+    currentSettings: {},
+    currentModels: {},
+  });
+  if (!validation.reconcileResult.ok) {
+    fail(validation.reconcileResult.error);
+  }
+  return lockTimeoutMs;
+}
+
+async function executeWritePlan(agentDir, writePlan, currentBytes, ownershipBytes, assertLocks) {
+  const staged = [];
+  let journalPublished = false;
+  try {
+    for (const write of writePlan.writes) {
+      const bytes = jsonBytes(write.value);
+      const temporaryPath = privateTemporaryName(write.path);
+      await writePrivateTemporary(
+        agentDir,
+        temporaryPath,
+        bytes,
+        write.path,
+        assertLocks,
+      );
+      staged.push({
+        path: write.path,
+        temporaryPath,
+        beforeHash:
+          currentBytes.get(write.path) === null
+            ? null
+            : byteHash(currentBytes.get(write.path)),
+        afterHash: byteHash(bytes),
+      });
+    }
+
+    const journal = {
+      schemaVersion: 1,
+      generation: writePlan.generation,
+      previousOwnershipHash:
+        ownershipBytes === null ? null : byteHash(ownershipBytes),
+      pendingOwnership: writePlan.ownershipStates.pending,
+      committedOwnership: writePlan.ownershipStates.committed,
+      targets: staged,
+    };
+    const journalTemporaryPath = privateTemporaryName(TRANSACTION_PATH);
+    await writePrivateTemporary(
+      agentDir,
+      journalTemporaryPath,
+      jsonBytes(journal),
+      OWNERSHIP_PATH,
+      assertLocks,
+    );
+    try {
+      assertLocks();
+      await fs.promises.rename(
+        path.join(agentDir, journalTemporaryPath),
+        path.join(agentDir, TRANSACTION_PATH),
+      );
+      journalPublished = true;
+    } catch (error) {
+      if (error instanceof ReconcileFailure) {
+        throw error;
+      }
+      writeFailure(OWNERSHIP_PATH);
+    }
+    await syncDirectory(agentDir, OWNERSHIP_PATH, assertLocks);
+
+    assertLocks();
+    await atomicWritePrivate(
+      agentDir,
+      OWNERSHIP_PATH,
+      jsonBytes(writePlan.ownershipStates.pending),
+      assertLocks,
+    );
+    for (const target of staged) {
+      assertLocks();
+      await publishTemporary(
+        agentDir,
+        target.temporaryPath,
+        target.path,
+        assertLocks,
+      );
+    }
+    assertLocks();
+    await atomicWritePrivate(
+      agentDir,
+      OWNERSHIP_PATH,
+      jsonBytes(writePlan.ownershipStates.committed),
+      assertLocks,
+    );
+    await cleanupJournal(agentDir, journal, assertLocks);
+  } catch (error) {
+    if (!journalPublished) {
+      for (const target of staged) {
+        await removeFile(
+          agentDir,
+          target.temporaryPath,
+          OWNERSHIP_PATH,
+          assertLocks,
+        );
+      }
+      await cleanupTemporaryFiles(agentDir, assertLocks);
+    }
+    throw error;
+  }
+}
+
+async function reconcileLocked(input, integrationLock, settingsLock) {
+  const assertLocks = () => {
+    integrationLock.assert();
+    settingsLock.assert();
+  };
+  await recoverPendingTransaction(input.agentDir, assertLocks);
+  assertLocks();
+
+  const [settingsBytes, modelsBytes, ownership] = await Promise.all([
+    readBytes(input.agentDir, SETTINGS_PATH),
+    readBytes(input.agentDir, MODELS_PATH),
+    readOwnership(input.agentDir),
+  ]);
+  const execution = planManagedReconciliationInternal({
+    managedConfig: input.managedConfig,
+    providerProjection: input.providerProjection,
+    currentSettings: parseJsonBytes(settingsBytes, SETTINGS_PATH, {}),
+    currentModels: parseJsonBytes(modelsBytes, MODELS_PATH, {}),
+    ...(ownership.value === null ? {} : { ownershipState: ownership.value }),
+  });
+  if (!execution.reconcileResult.ok) {
+    return execution.reconcileResult;
+  }
+
+  if (execution.writePlan.writes.length === 0) {
+    const committedBytes = jsonBytes(execution.writePlan.ownershipStates.committed);
+    let ownershipMode = null;
+    if (ownership.bytes !== null) {
+      try {
+        ownershipMode = (await fs.promises.stat(path.join(input.agentDir, OWNERSHIP_PATH))).mode & 0o777;
+      } catch (_error) {
+        writeFailure(OWNERSHIP_PATH);
+      }
+    }
+    if (ownership.bytes !== committedBytes || ownershipMode !== FILE_MODE) {
+      assertLocks();
+      await atomicWritePrivate(
+        input.agentDir,
+        OWNERSHIP_PATH,
+        committedBytes,
+        assertLocks,
+      );
+    }
+    return execution.reconcileResult;
+  }
+
+  await executeWritePlan(
+    input.agentDir,
+    execution.writePlan,
+    new Map([
+      [SETTINGS_PATH, settingsBytes],
+      [MODELS_PATH, modelsBytes],
+    ]),
+    ownership.bytes,
+    assertLocks,
+  );
+  return execution.reconcileResult;
+}
+
+export async function reconcileManagedState(input) {
+  try {
+    const lockTimeoutMs = validateExecutionInput(input);
+    try {
+      await fs.promises.mkdir(input.agentDir, { recursive: true, mode: 0o700 });
+    } catch (_error) {
+      writeFailure(OWNERSHIP_PATH);
+    }
+    const integrationLock = await acquireLock(
+      input.agentDir,
+      path.join(input.agentDir, INTEGRATION_LOCK_PATH),
+      lockTimeoutMs,
+      INTEGRATION_LOCK_PATH,
+    );
+    return await withLock(integrationLock, INTEGRATION_LOCK_PATH, async () => {
+      const settingsLock = await acquireLock(
+        path.join(input.agentDir, SETTINGS_PATH),
+        null,
+        lockTimeoutMs,
+        SETTINGS_PATH,
+        integrationLock,
+      );
+      return withLock(settingsLock, SETTINGS_PATH, () =>
+        reconcileLocked(input, integrationLock, settingsLock),
+      );
+    });
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      return { ok: false, error: error.error };
+    }
+    return { ok: false, error: { kind: "write-failure", path: OWNERSHIP_PATH } };
+  }
+}
+
+async function runCli() {
+  if (process.argv.length > 2) {
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, error: { kind: "invalid-input", path: "argv" } })}\n`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  let input;
+  try {
+    input = JSON.parse(fs.readFileSync(0, "utf8"));
+  } catch (_error) {
+    process.stdout.write(`${JSON.stringify({ ok: false, error: { kind: "invalid-input", path: "$" } })}\n`);
+    process.exitCode = 1;
+    return;
+  }
+  const result = await reconcileManagedState(input);
+  process.stdout.write(`${JSON.stringify(result)}\n`);
+  if (!result.ok) {
+    process.exitCode = 1;
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  runCli().catch(() => {
+    process.stdout.write(`${JSON.stringify({ ok: false, error: { kind: "write-failure", path: OWNERSHIP_PATH } })}\n`);
+    process.exitCode = 1;
+  });
 }

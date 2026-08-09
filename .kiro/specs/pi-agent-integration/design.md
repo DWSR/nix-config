@@ -1073,6 +1073,10 @@ enter diagnostics, logs, or status output.
 ## Security Considerations
 - The public extension bundle is trusted in-process code; only fixed reviewed
   sources enter the closure.
+- Reconciliation assumes cooperative local `proper-lockfile` users. Crashes,
+  stale-lock recovery, and detected compromise fail safely; external lock
+  deletion or replacement before heartbeat detection is host compromise and is
+  not a fencing guarantee provided by this integration.
 - Shopify token and launch UUID reach root Pi and foreground child Pi only.
   Managed shell, PTY, LSP, and Cavemem spawn paths remove the exact sensitive
   variables. Sentinel tests scan process output, JSONL, logs, temp files, status,
@@ -1103,7 +1107,7 @@ Residual accepted exposure:
 
 ## Performance and Limits
 - Reconciliation performs one bounded transaction per launch and no activation
-  mutation. Two concurrent launches serialize on one lock.
+  mutation. Two cooperative concurrent launches serialize on one lock.
 - Provider preflight dispatches two fixed bounded resolvers; no gateway operation
   can hang launch indefinitely.
 - MCP cold-cache startup waits for six direct tool schemas before agent start.

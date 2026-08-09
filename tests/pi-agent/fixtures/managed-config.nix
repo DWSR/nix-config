@@ -247,6 +247,8 @@ let
   unsupportedEvaluation = mkEvaluation unsupportedPkgs (mkModule unsupportedPkgs unsupportedPackages);
 
   fixtures = {
+    reconciler = supportedPkgs.pi-agent-reconcile;
+    pi-runtime = supportedPkgs.pi-agent;
     shopify-managed-config = shopifyCfg.internal.managedConfig;
     shopify-projection-factory = shopifyCfg.internal.projectionFactory;
     personal-managed-config = personalCfg.internal.managedConfig;
