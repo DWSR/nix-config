@@ -59,7 +59,7 @@
   - _Boundary: Home Module_
   - _Depends: 1.1_
 
-- [ ] 2.2 Render the fixed provider catalog and secret-free managed state
+- [x] 2.2 Render the fixed provider catalog and secret-free managed state
   - Make `ProviderCatalogV1` the sole source of the personal default and the five Shopify roles, including fixed routes, APIs, built-in model provenance, request policies, unsupported providers, and defaults.
   - Render `ManagedConfigV1` and expose a deterministic projection factory that emits `PersistedProviderProjectionV1` with catalog-ordered `PersistedProviderV1` rows from closed selections and joined catalog URLs.
   - Make the emitted projection the sole provider artifact consumed unchanged by Task 2.3; fixed generation and factory inputs must produce identical bytes with exact environment-reference templates and no token or launch UUID literals.
@@ -572,3 +572,4 @@
 - Task 1.4: Nix test derivations must install sorted semantic manifests, not raw runner logs containing paths, timestamps, durations, or execution order, so `nix build --rebuild` remains reproducible.
 - Task 3.1: Versioned canonical envelopes use closed transport, envelope, and output key allowlists; unknown keys fail before any database insertion.
 - Task 2.1: `types.package` and `lib.isDerivation` are structurally spoofable; bind package text/context to the selected output and force every public submodule's `_module.freeformType` to null.
+- Task 2.2: Render exact schema fields and validated `package.outPath` values; never serialize broad option attrsets or coerce packages through host-controlled `__toString`.

@@ -6,6 +6,7 @@
 }:
 let
   inherit (lib) mkEnableOption mkOption types;
+  managedConfigRenderer = import ./managed-config.nix { inherit lib pkgs; };
 
   extensionNames = [
     "cavemem"
@@ -374,7 +375,9 @@ let
   };
   validateAgentConfig =
     cfg:
-    if cfg.enable && cfg.provider.defaultModel == null then
+    if cfg.enable && pkgs.stdenv.hostPlatform.system != managedConfigRenderer.supportedSystem then
+      managedConfigRenderer.validateSystem cfg
+    else if cfg.enable && cfg.provider.defaultModel == null then
       throw "programs.pi-agent.provider.defaultModel must be set when programs.pi-agent is enabled"
     else
       cfg;
@@ -382,6 +385,20 @@ in
 {
   options.programs.pi-agent = mkOption {
     type = closedSubmodule {
+      imports = [
+        (
+          { config, ... }:
+          let
+            renderedManagedArtifacts = managedConfigRenderer.render config;
+          in
+          {
+            config.internal = {
+              managedConfig = if config.enable then renderedManagedArtifacts.managedConfig else null;
+              projectionFactory = if config.enable then renderedManagedArtifacts.projectionFactory else null;
+            };
+          }
+        )
+      ];
       options = {
         enable = mkEnableOption "the managed Pi agent integration";
 
@@ -574,6 +591,18 @@ in
           internal = true;
           readOnly = true;
           description = "Module-owned finite provider resolver vocabulary.";
+        };
+        internal.managedConfig = mkOption {
+          type = types.nullOr types.path;
+          internal = true;
+          readOnly = true;
+          description = "Immutable secret-free ManagedConfigV1 JSON artifact.";
+        };
+        internal.projectionFactory = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable PersistedProviderProjectionV1 factory package.";
         };
       };
     };
