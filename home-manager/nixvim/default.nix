@@ -46,6 +46,7 @@ in
     ./plugins/noice.nix
     ./plugins/numbertoggle.nix
     ./plugins/nvim-lsp-file-operations.nix
+    ./plugins/precognition.nix
     ./plugins/smear-cursor.nix
     ./plugins/snacks.nix
     ./plugins/todo-comments.nix
