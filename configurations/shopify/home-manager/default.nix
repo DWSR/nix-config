@@ -16,6 +16,7 @@ in
     ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
 
+    ./binks-pr-review.nix
     ./deskflow.nix
     ./dev.nix
     ./git.nix

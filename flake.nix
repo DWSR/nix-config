@@ -1732,6 +1732,24 @@
                 touch $out
               '';
 
+          binks-pr-review-tests =
+            pkgs.runCommand "binks-pr-review-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/binks-pr-review/*.test.js
+                touch $out
+              '';
+
           opencode-nono-tests =
             pkgs.runCommand "opencode-nono-tests"
               {
