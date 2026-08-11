@@ -247,7 +247,7 @@
   - _Boundary: Extension Runtime — Plan_
   - _Depends: 1.5, 2.6_
 
-- [ ] 4.4 Configure local display timestamps
+- [x] 4.4 Configure local display timestamps
   - Display local timestamps after user and assistant turns without injecting text into model context.
   - Persist timestamp entries through reload and resume.
   - Keep the extension presentation-only and free of network, process, or telemetry behavior.
@@ -585,3 +585,4 @@
 - Task 3.8: Resolve the endpoint contract before implementation; `pi-mcp-adapter` needs the MCP transport at `/mcp`, while the approved task/design currently name `/mcp/call`.
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
+- Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.
