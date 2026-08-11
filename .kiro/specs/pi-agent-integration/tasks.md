@@ -150,6 +150,7 @@
   - _Requirements: 10.3, 10.7, 10.9, 10.10_
   - _Boundary: Cavemem Full Mode - Storage Policy_
   - _Depends: 3.1_
+  - _Blocked: debug attempted twice, still failing — worker startup has no safe ordering for failed PID publication cleanup and restart against an unverified pre-ready port owner._
 
 - [ ] 3.4 Verify Cavemem storage limits and package compatibility
   - Wire the independently reviewed privacy and storage-policy patches into the Cavemem package before running combined compatibility checks.
@@ -202,6 +203,7 @@
   - _Requirements: 4.1, 4.2, 6.1, 6.2, 6.3, 6.4_
   - _Boundary: MCP Bridge_
   - _Depends: 1.2, 1.5_
+  - _Blocked: spec conflict — this task and design require `/mcp/call`, while `ManagedConfigV1` and the reconciler require the `/mcp` transport endpoint consumed by `pi-mcp-adapter`._
 
 - [ ] 3.9 Enforce MCP cache, approval, and preflight behavior
   - Cover cold, stale, partial, malformed, and concurrent metadata-cache starts with private atomic cache files.
@@ -235,13 +237,13 @@
   - _Boundary: Extension Runtime — Subagents_
   - _Depends: 4.1_
 
-- [ ] 4.3 Configure strict plan-mode state and transitions
-  - Limit default planning tools to read, grep, find, ls, and plan interaction tools.
-  - Reject command execution, mutation, background, sub-agent, MCP mutation, and refactor apply while planning.
-  - Require operator approval before restoring the exact captured implementation tool set.
-  - Persist planning/approved state and restoration behavior across session resume and cancellation.
-  - Done when mutation attempts are side-effect free and enter, complete, approve, cancel, restore, and resume fixtures pass.
-  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6_
+- [x] 4.3 Configure cooperative plan-mode state and transitions
+  - Select read, grep, find, ls, and plan interaction tools by name at Plan entry and supported turn boundaries within the trusted managed extension order.
+  - Block every non-allowlisted model tool call before execution and report the denial, including command, mutation, background, sub-agent, MCP mutation, and refactor apply calls.
+  - Present completed plans for approval before restoration; explicit exit or cancellation restores captured registered names and reports unavailable names.
+  - Record planning, approval, and captured-name state through Pi session entries; resume valid state and fall back to reported normal mode when state is unavailable or invalid.
+  - Done when enter, reported denial, plan presentation, approve, explicit exit, cancel, unavailable-name restore, valid resume, and invalid-state fallback pass without blocked execution.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7_
   - _Boundary: Extension Runtime — Plan_
   - _Depends: 1.5, 2.6_
 
@@ -312,17 +314,7 @@
   - _Boundary: Extension Runtime — Background_
   - _Depends: 4.9_
 
-- [ ] 4.11 Verify the final plan and review tool registries
-  - Load every custom tool before calculating plan and review visibility.
-  - Assert plan exposes only its read and interaction tools.
-  - Assert review exposes the approved read-only file, code-intelligence, question, and MCP-read tools.
-  - Prove Bash, write/edit, sub-agent, background, MCP mutation, and refactor apply cannot be restored by user arguments or resume state.
-  - Done when exact-name registry snapshots and side-effect probes pass for normal, plan, resumed-plan, and review modes.
-  - _Requirements: 5.3, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 12.4, 13.7_
-  - _Boundary: Extension Runtime — Integration_
-  - _Depends: 2.6, 3.9, 4.2, 4.3, 4.8, 4.10_
-
-- [ ] 4.12 Assemble the exact extension manifest and load order
+- [ ] 4.11 Assemble the exact extension manifest and load order
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
   - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
@@ -330,7 +322,16 @@
   - Done when a combined loader accepts one prompt with the exact ordered inventory and rejects every altered manifest fixture.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
   - _Boundary: Package Set, Extension Runtime — Integration_
-  - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.5, 4.6, 4.8, 4.10, 4.11_
+  - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.5, 4.6, 4.8, 4.10_
+
+- [ ] 4.12 Verify Plan controls with the assembled manifest
+  - Load the complete managed manifest and register every custom tool before entering Plan mode.
+  - Verify Plan selects its six managed names and reports denial of mutation, background, sub-agent, MCP-mutation, and refactor-apply calls before side effects.
+  - Verify completed-plan presentation, approval, explicit exit, cancellation, unavailable-name restoration, valid resume, and invalid-state fallback.
+  - Done when ordered-name snapshots, denial probes, and zero-side-effect checks pass for normal, Plan, resumed-Plan, and invalid-state modes.
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 12.4, 13.7_
+  - _Boundary: Extension Runtime — Plan Integration_
+  - _Depends: 2.6, 4.3, 4.11_
 
 - [ ] 5. Compose providers, sandboxing, status, and launch behavior
 
@@ -378,10 +379,11 @@
   - Resolve and strictly validate the selected profile before launch.
   - Require mcpproxy port, provider network, package reads, writable Pi/Cavemem/temp state, workspace mode, admitted root-Pi variables, and same-sandbox process control for enabled capabilities.
   - Append review tool restrictions after user arguments so excluded tools cannot be restored.
+  - Attempt refactor apply and background start under review; assert zero writes, processes, and fallback execution.
   - Execute nono noninteractively with the selected profile and mandatory current-directory grant; execute bare Pi only for explicitly reported disabled state.
   - Fail closed on any missing grant, binary, profile, or capability prerequisite.
-  - Done when exact command capture and grant fixtures cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
-  - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8_
+  - Done when exact command capture, grant fixtures, and review side-effect probes cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
+  - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8, 12.4, 13.7_
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
   - _Depends: 2.5, 3.7, 3.9, 4.2, 4.8, 4.10, 4.11, 4.12, 5.1, 5.3, 5.4_
 
@@ -435,7 +437,7 @@
   - Done when content tests find every required command/contract and no stale OpenCode, Sieve, direct Tool Gateway, or mutable install instruction.
   - _Requirements: 4.4, 6.4, 15.1, 15.7_
   - _Boundary: Home Module_
-  - _Depends: 3.9, 4.11_
+  - _Depends: 3.9, 4.12_
 
 - [ ] 6.2 Integrate all managed artifacts in the common module
   - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
@@ -491,11 +493,11 @@
 
 - [ ] 7.2 Exercise all interactive extensions together under Pi
   - Run timestamps, Bash timeout, ask-user, plan transitions, code-intelligence preview/apply, and background pipe/PTY in one managed session.
-  - Verify plan and review hide every execution/mutation tool after all extensions register.
-  - Resume the session and verify timestamp and plan state plus exact tool restoration.
+  - Verify Plan selects managed names and denies other calls, while review hides execution and mutation tools after all extensions register.
+  - Resume the session and verify timestamp and Plan state plus captured available-name restoration.
   - Confirm timeout and background process behavior remain independent.
   - Done when the combined runtime fixture completes every capability without tool collision, context pollution, or leaked process.
-  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 15.4_
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7, 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7, 15.4_
   - _Boundary: Acceptance Harness — Extension Integration_
   - _Depends: 7.1_
 
@@ -579,3 +581,7 @@
 - Task 2.5: Bind package-backed `devx` through a trusted module-owned lexical output; inspecting arbitrary Nix `drvAttrs` to authenticate a package can trigger IFD or recursion.
 - Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.
 - Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
+- Task 3.3: Worker lifecycle safety requires one linearized protocol across port binding, readiness, PID publication, IPC, and shutdown; the current patch still releases the listener before failed-publication cleanup and can restart past an unverified pre-ready owner.
+- Task 3.8: Resolve the endpoint contract before implementation; `pi-mcp-adapter` needs the MCP transport at `/mcp`, while the approved task/design currently name `/mcp/call`.
+- Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
+- Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.

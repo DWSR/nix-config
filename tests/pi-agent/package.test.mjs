@@ -66,7 +66,12 @@ function nixBuild(expression) {
 function flakeExpression(body) {
   return `
     let
-      flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)});
+      source = builtins.path {
+        path = ${JSON.stringify(repoRoot)};
+        name = "nix-config-pi-agent-package-tests";
+        filter = path: type: builtins.baseNameOf path != ".git";
+      };
+      flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
     in
       ${body}
   `;
@@ -252,6 +257,14 @@ test("Pi package rebuilds npmDeps from the patched source and lock", () => {
   assert.equal(
     metadata.patches.filter((patch) => /\/pi-undici-8\.9\.0\.patch$/.test(patch)).length,
     1,
+  );
+  assert.equal(
+    metadata.patches.some((patch) => /\/pi-final-tool-snapshot\.patch$/.test(patch)),
+    false,
+  );
+  assert.equal(
+    metadata.patches.some((patch) => /\/pi-plan-tool-ceiling\.patch$/.test(patch)),
+    false,
   );
   assert.match(metadata.postPatch, /-pi-package-lock\.json/);
 });

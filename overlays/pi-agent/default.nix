@@ -96,6 +96,36 @@ let
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
+  cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
+  planModeTypecheckConfig = final.writeText "pi-plan-mode-tsconfig.json" (
+    builtins.toJSON {
+      compilerOptions = {
+        allowImportingTsExtensions = true;
+        baseUrl = ".";
+        esModuleInterop = true;
+        forceConsistentCasingInFileNames = true;
+        module = "Node16";
+        moduleResolution = "Node16";
+        noEmit = true;
+        paths = {
+          "@earendil-works/pi-coding-agent" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"
+          ];
+          "@earendil-works/pi-tui" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-tui/index.d.ts"
+          ];
+          "@narumitw/pi-tui-kit" = [ "pi-tui-kit/dist/index.d.ts" ];
+        };
+        resolveJsonModule = true;
+        skipLibCheck = true;
+        strict = true;
+        target = "ES2022";
+        typeRoots = [ "${final.pi-agent}/lib/node_modules/@types" ];
+        types = [ "node" ];
+      };
+      files = [ "plan-mode/src/index.ts" ];
+    }
+  );
   extensionInventory = {
     mcp = {
       package = "pi-mcp-adapter";
@@ -176,6 +206,13 @@ let
       extensions = final.lib.mapAttrs (_logicalName: extension: {
         inherit (extension) package version sourceRef;
       }) extensionInventory;
+      patches = {
+        planModeCooperativeState = {
+          file = builtins.baseNameOf cooperativePlanModePatch;
+          package = "@narumitw/pi-plan-mode@0.49.2";
+          task = "pi-agent-integration 4.3";
+        };
+      };
       runtimeDependencies = extensionRuntimeDependencies;
     }
   );
@@ -287,6 +324,18 @@ in
       installPhase = ''
         runHook preInstall
 
+        install -m444 managed-plan-mode.ts.in \
+          node_modules/@narumitw/pi-plan-mode/src/managed-plan-mode.ts
+        patch --no-backup-if-mismatch -d node_modules/@narumitw/pi-plan-mode -p1 < ${cooperativePlanModePatch}
+
+        typecheckDir=$(mktemp -d)
+        ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
+        ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
+        install -Dm444 ${planModeTypecheckConfig} "$typecheckDir/tsconfig.json"
+        ${final.nodejs}/bin/node \
+          ${final.pi-agent}/lib/node_modules/typescript/bin/tsc \
+          --project "$typecheckDir/tsconfig.json"
+
         piRuntime=$(find node_modules -type d \( \
           -path 'node_modules/@earendil-works/pi-*' -o \
           -path '*/node_modules/@earendil-works/pi-*' \
@@ -333,6 +382,7 @@ in
       passthru = {
         manifest = extensionManifest;
         provenance = extensionProvenance;
+        typecheckConfig = planModeTypecheckConfig;
       };
       meta = {
         description = "Fixed public extension closure for the managed Pi agent";

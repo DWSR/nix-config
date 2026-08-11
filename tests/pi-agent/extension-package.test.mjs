@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createRequire } from "node:module";
@@ -68,6 +69,13 @@ const expectedRuntimeDependencies = {
     entryPath: "lib/node_modules/node-pty/lib/index.js",
   },
 };
+const expectedPatches = {
+  planModeCooperativeState: {
+    file: "pi-plan-mode-cooperative-state.patch",
+    package: "@narumitw/pi-plan-mode@0.49.2",
+    task: "pi-agent-integration 4.3",
+  },
+};
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -76,6 +84,7 @@ const commandOptions = {
 };
 
 let builtExtensionPath;
+let builtPiPath;
 
 function nixEvalJson(expression) {
   return JSON.parse(
@@ -120,6 +129,25 @@ function buildExtensions() {
   assert.match(builtExtensionPath, /^\/nix\/store\//);
   assert.equal(builtExtensionPath.includes("\n"), false);
   return builtExtensionPath;
+}
+
+function buildPi() {
+  builtPiPath ??= childProcess
+    .execFileSync(
+      "nix",
+      [
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--impure",
+        "--expr",
+        filteredFlakeExpression("flake.darwinConfigurations.ShopifyLaptop.pkgs.pi-agent"),
+      ],
+      commandOptions,
+    )
+    .trim();
+  assert.match(builtPiPath, /^\/nix\/store\//);
+  return builtPiPath;
 }
 
 function readJson(file) {
@@ -199,6 +227,10 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
       {
         manifest = builtins.fromJSON (builtins.readFile package.manifest);
         provenance = builtins.fromJSON (builtins.readFile package.provenance);
+        typecheckConfig = builtins.fromJSON (
+          builtins.unsafeDiscardStringContext (builtins.readFile package.typecheckConfig)
+        );
+        installPhase = package.installPhase;
         npmDepsHash = package.npmDepsHash;
       }
     `),
@@ -233,6 +265,12 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     ),
   );
   assert.deepEqual(metadata.provenance.runtimeDependencies, expectedRuntimeDependencies);
+  assert.deepEqual(metadata.provenance.patches, expectedPatches);
+  assert.equal(metadata.typecheckConfig.compilerOptions.noEmit, true);
+  assert.equal(metadata.typecheckConfig.compilerOptions.strict, true);
+  assert.deepEqual(metadata.typecheckConfig.files, ["plan-mode/src/index.ts"]);
+  assert.match(metadata.installPhase, /typescript\/bin\/tsc/);
+  assert.match(metadata.installPhase, /--project "\$typecheckDir\/tsconfig\.json"/);
   assert.equal(metadata.provenance.schemaVersion, 1);
   assert.match(metadata.npmDepsHash, /^sha256-[A-Za-z0-9+/]{43}=$/);
 });
@@ -254,6 +292,7 @@ test("built extension closure contains exact entries, licenses, and no commands 
       },
     ]),
   ));
+  assert.deepEqual(provenance.patches, expectedPatches);
 
   for (const [logicalName, expected] of Object.entries(expectedExtensions)) {
     const packageRoot = packageDirectory(output, expected.package);
@@ -298,6 +337,11 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
 
   const nodePtyRoot = packageDirectory(output, "node-pty");
+  const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
+  assert.deepEqual(
+    fs.readdirSync(planSourceRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
+    [],
+  );
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node")), true);
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")), true);
@@ -306,6 +350,53 @@ test("built extension closure contains exact entries, licenses, and no commands 
     path.join(output, "share/licenses/pi-agent-extensions/nodePty/LICENSE"),
     "node-pty",
   );
+});
+
+test("patched Plan extension typechecks against the exact Pi dependency declarations", () => {
+  const output = buildExtensions();
+  const pi = buildPi();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plan-mode-typecheck-"));
+  const configPath = path.join(root, "tsconfig.json");
+  const config = {
+    compilerOptions: {
+      allowImportingTsExtensions: true,
+      baseUrl: root,
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      module: "Node16",
+      moduleResolution: "Node16",
+      noEmit: true,
+      paths: {
+        "@earendil-works/pi-coding-agent": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"),
+        ],
+        "@earendil-works/pi-tui": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-tui/index.d.ts"),
+        ],
+        "@narumitw/pi-tui-kit": [
+          path.join(output, "lib/node_modules/@narumitw/pi-tui-kit/dist/index.d.ts"),
+        ],
+      },
+      resolveJsonModule: true,
+      skipLibCheck: true,
+      strict: true,
+      target: "ES2022",
+      typeRoots: [path.join(pi, "lib/node_modules/@types")],
+      types: ["node"],
+    },
+    files: [path.join(output, expectedExtensions.plan.entryPath)],
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`, "utf8");
+  try {
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [path.join(pi, "lib/node_modules/typescript/bin/tsc"), "--project", configPath],
+      commandOptions,
+    );
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("built closure supports one pipe spawn and one real Darwin PTY spawn", async () => {
