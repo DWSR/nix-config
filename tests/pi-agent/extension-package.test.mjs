@@ -80,6 +80,11 @@ const expectedPatches = {
     package: "@narumitw/pi-plan-mode@0.49.2",
     task: "pi-agent-integration 4.3",
   },
+  structuredQuestions: {
+    file: "supi-ask-user-structured-results.patch",
+    package: "@mrclrchtr/supi-ask-user@4.6.0",
+    task: "pi-agent-integration 4.7",
+  },
 };
 const commandOptions = {
   cwd: repoRoot,
@@ -274,6 +279,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
   assert.equal(metadata.typecheckConfig.compilerOptions.noEmit, true);
   assert.equal(metadata.typecheckConfig.compilerOptions.strict, true);
   assert.deepEqual(metadata.typecheckConfig.files, [
+    "ask-user/src/extension.ts",
     "bash-timeout/src/extension.ts",
     "plan-mode/src/index.ts",
   ]);
@@ -349,8 +355,12 @@ test("built extension closure contains exact entries, licenses, and no commands 
     packageDirectory(output, "@mrclrchtr/supi-bash-timeout"),
     "src",
   );
+  const questionSourceRoot = path.join(
+    packageDirectory(output, "@mrclrchtr/supi-ask-user"),
+    "src",
+  );
   const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
-  for (const sourceRoot of [bashTimeoutSourceRoot, planSourceRoot]) {
+  for (const sourceRoot of [bashTimeoutSourceRoot, planSourceRoot, questionSourceRoot]) {
     assert.deepEqual(
       fs.readdirSync(sourceRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
       [],
@@ -369,6 +379,25 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(managedTimeoutSource, /2_147_483_647/);
   assert.match(managedTimeoutSource, /Math\.trunc\(seconds \* 1000\)/);
   assert.match(managedTimeoutSource, /export function parseManagedTimeoutSeconds/);
+  const askUserSource = fs.readFileSync(path.join(questionSourceRoot, "ask-user.ts"), "utf8");
+  const questionControllerSource = fs.readFileSync(
+    path.join(questionSourceRoot, "session/controller.ts"),
+    "utf8",
+  );
+  const questionFormSource = fs.readFileSync(
+    path.join(questionSourceRoot, "ui/form-component.ts"),
+    "utf8",
+  );
+  assert.match(askUserSource, /prepareArguments: prepareAskUserArguments/);
+  assert.match(askUserSource, /Value\.Check\(AskUserParamsSchema, args\)/);
+  assert.doesNotMatch(askUserSource, /resolveToolPromptSurface|notifyToolPromptSurfaceDiagnostics/);
+  assert.match(askUserSource, /description: ASK_USER_PROMPT_SURFACE_DEFAULTS\.description/);
+  assert.match(askUserSource, /event\.toolName !== ASK_USER_TOOL_NAME \|\| event\.isError/);
+  assert.match(askUserSource, /if \(signal\?\.aborted\) cancelInteraction\(ctx\)/);
+  assert.match(questionControllerSource, /state\.value = value;/);
+  assert.match(questionControllerSource, /state\.value\.trim\(\)\.length > 0/);
+  assert.match(questionFormSource, /pendingTextSubmission/);
+  assert.match(questionFormSource, /this\.args\.done[\s\S]+removeEventListener\("abort"/);
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node")), true);
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")), true);
@@ -403,6 +432,8 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
         "@narumitw/pi-tui-kit": [
           path.join(output, "lib/node_modules/@narumitw/pi-tui-kit/dist/index.d.ts"),
         ],
+        typebox: [path.join(output, "lib/node_modules/typebox/build/index.d.mts")],
+        "typebox/*": [path.join(output, "lib/node_modules/typebox/build/*/index.d.mts")],
       },
       resolveJsonModule: true,
       skipLibCheck: true,
@@ -412,6 +443,7 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
       types: ["node"],
     },
     files: [
+      path.join(output, expectedExtensions.questions.entryPath),
       path.join(output, expectedExtensions.bashTimeout.entryPath),
       path.join(output, expectedExtensions.plan.entryPath),
     ],

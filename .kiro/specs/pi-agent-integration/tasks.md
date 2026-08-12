@@ -276,7 +276,7 @@
   - _Boundary: Extension Runtime — Timeout_
   - _Depends: 1.5, 4.5_
 
-- [ ] 4.7 Configure structured operator questions
+- [x] 4.7 Configure structured operator questions
   - Enable single-choice, multiple-choice, and free-text question forms outside plan mode.
   - Preserve ordered structured answers and recommendation metadata.
   - Make cancellation terminate the active turn without fabricating an answer.
@@ -602,3 +602,4 @@
 - Task 4.5: The managed timeout is authoritative at 1 through 2147483647 milliseconds, travels through `PI_AGENT_BASH_TIMEOUT_MS` outside provider secrets, and the trusted shell wrapper removes that binding plus provider values before model-command execution.
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
+- Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.

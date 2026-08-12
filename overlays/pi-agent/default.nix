@@ -98,6 +98,7 @@ let
   extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
+  structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
   planModeTypecheckConfig = final.writeText "pi-plan-mode-tsconfig.json" (
     builtins.toJSON {
       compilerOptions = {
@@ -116,6 +117,8 @@ let
             "${final.pi-agent}/lib/node_modules/@earendil-works/pi-tui/index.d.ts"
           ];
           "@narumitw/pi-tui-kit" = [ "pi-tui-kit/dist/index.d.ts" ];
+          "typebox" = [ "typebox/build/index.d.mts" ];
+          "typebox/*" = [ "typebox/build/*/index.d.mts" ];
         };
         resolveJsonModule = true;
         skipLibCheck = true;
@@ -125,6 +128,7 @@ let
         types = [ "node" ];
       };
       files = [
+        "ask-user/src/extension.ts"
         "bash-timeout/src/extension.ts"
         "plan-mode/src/index.ts"
       ];
@@ -220,6 +224,11 @@ let
           file = builtins.baseNameOf cooperativePlanModePatch;
           package = "@narumitw/pi-plan-mode@0.49.2";
           task = "pi-agent-integration 4.3";
+        };
+        structuredQuestions = {
+          file = builtins.baseNameOf structuredQuestionsPatch;
+          package = "@mrclrchtr/supi-ask-user@4.6.0";
+          task = "pi-agent-integration 4.7";
         };
       };
       runtimeDependencies = extensionRuntimeDependencies;
@@ -338,11 +347,15 @@ in
         patch --no-backup-if-mismatch -d node_modules/@narumitw/pi-plan-mode -p1 < ${cooperativePlanModePatch}
         patch --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-bash-timeout -p1 \
           < ${managedBashTimeoutPatch}
+        patch --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-ask-user -p1 \
+          < ${structuredQuestionsPatch}
 
         typecheckDir=$(mktemp -d)
+        ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
+        ln -s "$PWD/node_modules/typebox" "$typecheckDir/typebox"
         install -Dm444 ${planModeTypecheckConfig} "$typecheckDir/tsconfig.json"
         ${final.nodejs}/bin/node \
           ${final.pi-agent}/lib/node_modules/typescript/bin/tsc \
