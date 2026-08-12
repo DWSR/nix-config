@@ -80,6 +80,10 @@ in
     source = ./skills/create-yb-fix-pr;
   };
 
+  xdg.configFile."opencode/skills/quick" = {
+    source = pkgs.quick-skills;
+  };
+
   xdg.configFile."opencode/skills/validate-yb-issue" = {
     source = ./skills/validate-yb-issue;
   };

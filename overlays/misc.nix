@@ -616,4 +616,35 @@ final: prev: {
         cp -r .kiro/settings   $out/kiro-settings
         cp    AGENTS.md        $out/agents-md
       '';
+
+  # Package the Quick skill tree from a caller-supplied source checkout.
+  # Shopify/skai-train is private, so the Shopify host supplies a pinned
+  # builtins.fetchGit source from configurations/shopify/default.nix rather
+  # than making it a flake input that would break evaluation on personal hosts.
+  mkQuickSkills =
+    {
+      src,
+      version,
+      rev,
+    }:
+    final.runCommand "quick-skills-${version}"
+      {
+        passthru = {
+          inherit rev version;
+        };
+        meta = {
+          description = "Agent skill for Shopify's internal Quick platform";
+          homepage = "https://quick.shopify.io";
+          license = final.lib.licenses.mit;
+          platforms = final.lib.platforms.unix;
+        };
+      }
+      ''
+        mkdir -p "$out"
+        cp -R ${src}/projects/quick/root/skills/quick/. "$out/"
+
+        test -f "$out/SKILL.md"
+        test -f "$out/client/db.md"
+        test -f "$out/recipes/ci.md"
+      '';
 }

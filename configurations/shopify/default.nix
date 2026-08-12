@@ -10,6 +10,18 @@ let
     builtins.readFile ../../certificates/local-binary-cache/cache-public-key.txt
   );
   cacheSecretsFile = ../../secrets/local-binary-cache.shopify.yaml;
+
+  # @shopify/quick 0.3.32 downloads this skill tree imperatively during
+  # `quick init`. Pin the private monorepo source here instead; private Shopify
+  # repositories must not become flake inputs because personal hosts lack the
+  # required GitHub credentials.
+  quickVersion = "0.3.32";
+  quickRev = "f45c7e10f9c6f9e33922f0748a0cef7742aeaa86";
+  quickSource = builtins.fetchGit {
+    url = "https://github.com/Shopify/skai-train.git";
+    ref = "main";
+    rev = quickRev;
+  };
 in
 {
   imports = [
@@ -88,6 +100,19 @@ in
       !include nix.conf.d/shopify.conf
     '';
   };
+
+  # Instantiate the generic package builder only on the Shopify host. This
+  # keeps the private source out of personal-host evaluation while still
+  # exposing a normal pkgs.quick-skills derivation to Home Manager.
+  nixpkgs.overlays = [
+    (final: _prev: {
+      quick-skills = final.mkQuickSkills {
+        src = quickSource;
+        version = quickVersion;
+        rev = quickRev;
+      };
+    })
+  ];
 
   home-manager.users.${username} = import ./home-manager;
 
