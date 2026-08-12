@@ -4,6 +4,13 @@
   trustedDevxOutPath ? null,
 }:
 let
+  bashTimeoutBinding = {
+    environmentName = "PI_AGENT_BASH_TIMEOUT_MS";
+    targets = [
+      "rootPi"
+      "foregroundChildPi"
+    ];
+  };
   resolverKinds = [
     "pi-auth"
     "shopify-gateway-token"
@@ -77,6 +84,14 @@ let
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
   ];
+  shellRemoveNames = lib.sort builtins.lessThan (
+    lib.unique (sensitiveNames ++ [ bashTimeoutBinding.environmentName ])
+  );
+  managedShell = pkgs.callPackage ../../../scripts/pi-agent-shell.nix {
+    inherit shellAllowlist;
+    removeNames = shellRemoveNames;
+  };
+  shellExecutable = "${managedShell}/bin/pi-agent-shell";
   spawnEnvironmentPartitions = {
     rootPi = "rootPiEnvironment";
     foregroundChildPi = "childPiEnvironment";
@@ -132,9 +147,11 @@ let
       destination = "/lib/pi-agent/credential-policy.mjs";
       text = ''
         const MODE = ${builtins.toJSON mode};
+        const BASH_TIMEOUT_BINDING_VALUE = ${builtins.toJSON bashTimeoutBinding};
         const RESOLVER_PLAN_VALUES = ${builtins.toJSON resolverPlans};
         const SENSITIVE_NAME_VALUES = ${builtins.toJSON sensitiveNames};
         const SHELL_ALLOWLIST_VALUES = ${builtins.toJSON shellAllowlist};
+        const SHELL_REMOVE_NAME_VALUES = ${builtins.toJSON shellRemoveNames};
         const SPAWN_ENVIRONMENT_PARTITION_VALUES = ${builtins.toJSON spawnEnvironmentPartitions};
 
         function deepFreeze(value) {
@@ -192,6 +209,12 @@ let
             !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)
           ) {
             invalid("launchId", "expected a canonical version 4 UUID");
+          }
+        }
+
+        function requireBashDefaultMs(value) {
+          if (!Number.isSafeInteger(value) || value < 1 || value > 2147483647) {
+            invalid("bashDefaultMs", "expected an integer from 1 through 2147483647 milliseconds");
           }
         }
 
@@ -259,7 +282,7 @@ let
             }
             if (
               SHELL_ALLOWLIST_VALUES.includes(name) &&
-              !sensitiveNameSet.has(name) &&
+              !shellRemoveNameSet.has(name) &&
               typeof descriptor.value === "string"
             ) {
               scrubbed[name] = descriptor.value;
@@ -268,6 +291,7 @@ let
           return Object.freeze(scrubbed);
         }
 
+        export const bashTimeoutBinding = deepFreeze(BASH_TIMEOUT_BINDING_VALUE);
         export const resolverPlans = deepFreeze(RESOLVER_PLAN_VALUES);
         export const sensitiveNames = deepFreeze(SENSITIVE_NAME_VALUES);
         export const spawnEnvironmentPartitions = deepFreeze(SPAWN_ENVIRONMENT_PARTITION_VALUES);
@@ -275,13 +299,23 @@ let
           kind: "allowlist-v1",
           environment: "scrubbedEnvironment",
           allow: [...SHELL_ALLOWLIST_VALUES],
-          remove: [...SENSITIVE_NAME_VALUES],
+          remove: [...SHELL_REMOVE_NAME_VALUES],
         });
 
-        const sensitiveNameSet = new Set(sensitiveNames);
+        const shellRemoveNameSet = new Set(SHELL_REMOVE_NAME_VALUES);
 
         export function scrubEnvironment(environment) {
           return scrubbedEnvironmentSnapshot(environment);
+        }
+
+        export function createBashRuntimeInputs(input) {
+          const runtimeInput = snapshotPlainObject(input, ["bashDefaultMs"], "$bashRuntime");
+          requireBashDefaultMs(runtimeInput.bashDefaultMs);
+          const value = String(runtimeInput.bashDefaultMs);
+          return deepFreeze({
+            rootPiEnvironment: { [bashTimeoutBinding.environmentName]: value },
+            childPiEnvironment: { [bashTimeoutBinding.environmentName]: value },
+          });
         }
 
         export function createProviderRuntimeSecrets(input) {
@@ -381,6 +415,13 @@ let
     };
 in
 {
-  inherit resolverKinds;
+  inherit
+    bashTimeoutBinding
+    managedShell
+    resolverKinds
+    shellAllowlist
+    shellExecutable
+    shellRemoveNames
+    ;
   render = renderEnabled;
 }

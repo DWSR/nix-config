@@ -191,6 +191,8 @@ function expectedSafeEnvironment() {
 
 function assertClosedRuntimeExports(runtimeModule) {
   assert.deepEqual(Object.keys(runtimeModule).sort(), [
+    "bashTimeoutBinding",
+    "createBashRuntimeInputs",
     "createCredentialBoundary",
     "createProviderRuntimeSecrets",
     "resolverPlans",
@@ -387,12 +389,15 @@ test("Shopify constructor retains token and launch UUID only in provider-capable
   assert.deepEqual(runtimeModule.resolverPlans, contract.shopifyPlans);
   assert.deepEqual(runtimeModule.spawnEnvironmentPartitions, spawnEnvironmentPartitions);
   assert.deepEqual(runtimeModule.scrubbedShellContract.allow, shellAllowlist);
-  assert.deepEqual(runtimeModule.scrubbedShellContract.remove, runtimeModule.sensitiveNames);
+  assert.deepEqual(
+    runtimeModule.scrubbedShellContract.remove,
+    [...runtimeModule.sensitiveNames, "PI_AGENT_BASH_TIMEOUT_MS"].sort(),
+  );
   assert.deepEqual(runtimeModule.scrubbedShellContract, {
     kind: "allowlist-v1",
     environment: "scrubbedEnvironment",
     allow: shellAllowlist,
-    remove: runtimeModule.sensitiveNames,
+    remove: [...runtimeModule.sensitiveNames, "PI_AGENT_BASH_TIMEOUT_MS"].sort(),
   });
   assert.deepEqual(runtimeModule.sensitiveNames, [...new Set(runtimeModule.sensitiveNames)].sort());
   for (const name of requiredSensitiveNames) {

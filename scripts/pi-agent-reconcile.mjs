@@ -19,6 +19,7 @@ const MANAGED_CONFIG_KEYS = [
   "generation",
   "agentDir",
   "settings",
+  "timeouts",
   "providerCatalog",
   "providerSelection",
   "extensionManifest",
@@ -31,6 +32,7 @@ const MANAGED_CONFIG_KEYS = [
 const MANAGED_SETTING_KEYS = [
   "defaultModel",
   "defaultThinkingLevel",
+  "shellPath",
   "installTelemetry",
   "selfUpdate",
   "unmanagedPackages",
@@ -432,10 +434,19 @@ function validateManagedConfig(managedConfig) {
   ) {
     invalidInput("managedConfig.settings.defaultThinkingLevel");
   }
+  validateRenderedStorePath(managedConfig.settings.shellPath, "managedConfig.settings.shellPath");
   for (const key of ["installTelemetry", "selfUpdate", "unmanagedPackages"]) {
     if (managedConfig.settings[key] !== false) {
       invalidInput(`managedConfig.settings.${key}`);
     }
+  }
+  requireExactKeys(managedConfig.timeouts, ["bashDefaultMs"], "managedConfig.timeouts");
+  if (
+    !Number.isSafeInteger(managedConfig.timeouts.bashDefaultMs) ||
+    managedConfig.timeouts.bashDefaultMs < 1 ||
+    managedConfig.timeouts.bashDefaultMs > 2147483647
+  ) {
+    invalidInput("managedConfig.timeouts.bashDefaultMs");
   }
   validateProviderCatalog(managedConfig.providerCatalog);
   validateProviderSelection(managedConfig.providerSelection);

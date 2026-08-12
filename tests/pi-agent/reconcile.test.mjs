@@ -19,7 +19,6 @@ import {
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
-const managedConfigFixture = path.join(testsDir, "fixtures/managed-config.nix");
 const factoryExecutable = "bin/pi-agent-provider-projection";
 const reconcilerExecutable = "bin/pi-agent-reconcile";
 const transactionFileName = ".pi-agent-reconcile-transaction.json";
@@ -33,6 +32,7 @@ const commandOptions = {
 const managedSettingKeys = [
   "defaultModel",
   "defaultThinkingLevel",
+  "shellPath",
   "installTelemetry",
   "selfUpdate",
   "unmanagedPackages",
@@ -48,10 +48,17 @@ let shopifyManagedConfigArtifact;
 
 function fixtureExpression(fixture) {
   return `
-    import (/. + ${JSON.stringify(managedConfigFixture)}) {
-      fixture = ${JSON.stringify(fixture)};
-      repoRoot = ${JSON.stringify(repoRoot)};
-    }
+    let
+      repoSource = builtins.path {
+        path = /. + ${JSON.stringify(repoRoot)};
+        name = "pi-agent-reconcile-source";
+        filter = sourcePath: type: builtins.baseNameOf sourcePath != ".git";
+      };
+    in
+      import (repoSource + "/tests/pi-agent/fixtures/managed-config.nix") {
+        fixture = ${JSON.stringify(fixture)};
+        repoRoot = repoSource;
+      }
   `;
 }
 
@@ -517,6 +524,7 @@ test("adds only managed settings and actual Task 2.2 provider projections", () =
     "/defaultThinkingLevel",
     "/installTelemetry",
     "/selfUpdate",
+    "/shellPath",
     "/unmanagedPackages",
   ]);
 });
@@ -549,6 +557,31 @@ test("updates owned values only after matching their prior managed hashes", () =
   );
   assert.deepEqual(next.models.providers.local, current.models.providers.local);
   assert.equal(writePlan.ownershipStates.committed.generation, generationV2);
+});
+
+test("replaces the owned shell path and removes the stale store value", () => {
+  const current = currentDocuments();
+  const firstProjection = shopifyProjection();
+  const first = successfulPlan(plan({ current, providerProjection: firstProjection }));
+  const applied = appliedDocuments(first.writePlan, current);
+  const oldShellPath = applied.settings.shellPath;
+  const nextProjection = shopifyProjection({ generation: generationV2 });
+  const nextManagedConfig = managedConfigForProjection(nextProjection);
+  nextManagedConfig.settings.shellPath = nextManagedConfig.extensionManifest;
+  const { writePlan } = successfulPlan(plan({
+    current: applied,
+    managedConfig: nextManagedConfig,
+    providerProjection: nextProjection,
+    ownershipState: first.writePlan.ownershipStates.committed,
+  }));
+  const next = appliedDocuments(writePlan, applied);
+
+  assert.equal(next.settings.shellPath, nextManagedConfig.extensionManifest);
+  assert.notEqual(next.settings.shellPath, oldShellPath);
+  assert.doesNotMatch(JSON.stringify(next.settings), new RegExp(oldShellPath));
+  assert.deepEqual(writePlan.ownershipStates.committed.files["settings.json"]["/shellPath"], {
+    valueHash: hashCanonicalJson(nextManagedConfig.extensionManifest),
+  });
 });
 
 test("removes unchanged stale providers without touching user providers", () => {
@@ -624,6 +657,14 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
       { kind: "managed-drift", path: "settings.json", pointer: "/selfUpdate" },
     ],
     [
+      "managed shell path",
+      {
+        settings: { ...structuredClone(applied.settings), shellPath: "/tmp/user-shell" },
+        models: structuredClone(applied.models),
+      },
+      { kind: "managed-drift", path: "settings.json", pointer: "/shellPath" },
+    ],
+    [
       "provider",
       {
         settings: structuredClone(applied.settings),
@@ -632,7 +673,7 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
       { kind: "managed-drift", path: "models.json", pointer: "/providers/openai" },
     ],
   ];
-  cases[2][1].models.providers.openai.baseUrl = "https://user-drift.example.test/v1";
+  cases.at(-1)[1].models.providers.openai.baseUrl = "https://user-drift.example.test/v1";
 
   for (const [name, drifted, expectedError] of cases) {
     await t.test(name, () => {
@@ -932,6 +973,34 @@ test("review round 1 RED: rejects unknown runtime channels in complete ManagedCo
       assertValueFreeError(result, [token]);
       assert.equal(execution.writePlan, null);
       assert.deepEqual(result.error, { kind: "invalid-input", path: expectedPath });
+    });
+  }
+});
+
+test("rejects malformed managed shell paths and timeout state before planning writes", async (t) => {
+  const cases = [
+    ["relative shell", (config) => (config.settings.shellPath = "bin/bash"), "managedConfig.settings.shellPath"],
+    ["host shell", (config) => (config.settings.shellPath = "/bin/bash"), "managedConfig.settings.shellPath"],
+    ["zero timeout", (config) => (config.timeouts.bashDefaultMs = 0), "managedConfig.timeouts.bashDefaultMs"],
+    ["fractional timeout", (config) => (config.timeouts.bashDefaultMs = 1.5), "managedConfig.timeouts.bashDefaultMs"],
+    ["overflow timeout", (config) => (config.timeouts.bashDefaultMs = 2147483648), "managedConfig.timeouts.bashDefaultMs"],
+    ["timeout binding", (config) => (config.timeouts.bindingName = "HOST_TIMEOUT"), "managedConfig.timeouts"],
+  ];
+
+  for (const [name, mutate, expectedPath] of cases) {
+    await t.test(name, () => {
+      const managedConfig = structuredClone(shopifyManagedConfigArtifact);
+      mutate(managedConfig);
+      const execution = plan({
+        managedConfig,
+        providerProjection: shopifyProjection({ generation: managedConfig.generation }),
+      });
+      assertValueFreeError(execution.reconcileResult, ["HOST_TIMEOUT"]);
+      assert.equal(execution.writePlan, null);
+      assert.deepEqual(execution.reconcileResult.error, {
+        kind: "invalid-input",
+        path: expectedPath,
+      });
     });
   }
 });
@@ -1262,6 +1331,8 @@ test("concurrent generations serialize to one complete generation", async (t) =>
   assert.ok([generationV1, generationV2].includes(ownership.generation));
   assert.equal(ownership.transaction, "committed");
   assert.deepEqual(settings.defaultModel, expected.default.model);
+  assert.equal(settings.shellPath, managedConfigForProjection(expected).settings.shellPath);
+  assert.ok(Object.hasOwn(ownership.files["settings.json"], "/shellPath"));
   for (const provider of expected.providers) {
     assert.equal(models.providers[provider.providerId].baseUrl, provider.baseUrl);
   }
@@ -1578,6 +1649,13 @@ test("resumes a durable pending transaction after a partial commit", (t) => {
     provider: "anthropic",
     modelId: "claude-opus-4-6",
   });
+  assert.equal(
+    readJson(path.join(agentDir, "settings.json")).shellPath,
+    managedConfigForProjection(secondProjection).settings.shellPath,
+  );
+  assert.ok(
+    Object.hasOwn(readJson(path.join(agentDir, "ownership.json")).files["settings.json"], "/shellPath"),
+  );
   assert.equal(
     readJson(path.join(agentDir, "models.json")).providers.openai.baseUrl,
     "https://next-gateway.example.test/vendors/openai/v1",

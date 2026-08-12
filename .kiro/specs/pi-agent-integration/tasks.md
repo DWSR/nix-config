@@ -256,16 +256,27 @@
   - _Boundary: Extension Runtime — Timestamp_
   - _Depends: 1.5_
 
-- [ ] 4.5 Configure default and explicit Bash timeouts
-  - Apply the managed default only when a Bash call omits its timeout.
-  - Preserve valid explicit timeout values.
-  - Route commands through the scrubbed shell and terminate the command process tree on expiry.
-  - Done when omitted, explicit, completed-before-timeout, and expired process-tree fixtures return the expected timeout behavior without credential sentinels.
-  - _Requirements: 11.3, 11.4, 11.5_
-  - _Boundary: Extension Runtime — Timeout_
-  - _Depends: 1.5, 2.5_
+- [x] 4.5 Establish managed Bash runtime inputs
+  - Carry the positive bounded Home Manager Bash timeout unchanged in immutable managed state and publish one fixed launcher-to-extension binding.
+  - Admit only values from 1 through 2147483647 milliseconds and declare the public binding for root and foreground child Pi outside provider-secret state.
+  - Render one package-owned credential-scrubbed shell and make managed Pi settings own its absolute path.
+  - Extend reconciliation to add, update, and remove only the managed shell path while preserving locking, atomicity, drift handling, unrelated settings, and activation purity.
+  - Treat the wrapper as the trusted scrub boundary: root Pi may start it with provider state, but the model-controlled shell receives only the allowlisted environment without provider values or the timeout binding.
+  - Done when a non-default timeout and package-rendered shell path render deterministically, shell-path ownership reconciles safely, root/child binding fixtures pass, and a sentinel command observes no removed value.
+  - _Requirements: 2.1, 2.2, 2.3, 2.6, 2.7, 11.3, 14.1, 15.3_
+  - _Boundary: Home Module, Runtime Control, Credential Boundary - Bash Runtime Integration_
+  - _Depends: 2.4, 2.5_
 
-- [ ] 4.6 Configure structured operator questions
+- [ ] 4.6 Configure default and explicit Bash timeouts
+  - Consume only the launcher-owned managed timeout binding, reject missing or out-of-range values, and prevent mutable Supi timeout settings from overriding it.
+  - Convert managed milliseconds to Pi timeout seconds only when a Bash timeout is omitted and preserve valid explicit seconds exactly.
+  - Exercise Pi built-in Bash using Task 4.5's managed runtime inputs without modifying shell or reconciliation ownership, and rely on Pi's detached process-group timeout cleanup.
+  - Done when hostile Supi overrides, a non-120000 default, explicit timeout, early completion, expired ordinary descendants, timeout reporting, and credential sentinels all produce the expected behavior.
+  - _Requirements: 11.3, 11.4, 11.5, 14.1_
+  - _Boundary: Extension Runtime — Timeout_
+  - _Depends: 1.5, 4.5_
+
+- [ ] 4.7 Configure structured operator questions
   - Enable single-choice, multiple-choice, and free-text question forms outside plan mode.
   - Preserve ordered structured answers and recommendation metadata.
   - Make cancellation terminate the active turn without fabricating an answer.
@@ -274,7 +285,7 @@
   - _Boundary: Extension Runtime — Questions_
   - _Depends: 1.5_
 
-- [ ] 4.7 Configure managed code-intelligence capabilities
+- [ ] 4.8 Configure managed code-intelligence capabilities
   - Consume only module-rendered language-server executables derived from packages plus canonical relative paths, and expose orientation, resolve, inspect, graph, find, health, and refactor-plan/apply tools.
   - Return source locations for definitions, references, implementations, hovers, symbols, and diagnostics.
   - Keep refactor preview no-write and apply as a separate operation.
@@ -284,7 +295,7 @@
   - _Boundary: Extension Runtime — LSP_
   - _Depends: 1.5, 2.1_
 
-- [ ] 4.8 Isolate and clean up language-server processes
+- [ ] 4.9 Isolate and clean up language-server processes
   - Launch only module-rendered package-backed server executables with the credential-scrubbed environment.
   - Keep one server failure isolated from other servers and Pi tools.
   - Perform protocol shutdown/exit followed by bounded process-group escalation.
@@ -292,9 +303,9 @@
   - Done when fake servers observe no credential sentinels, failures remain isolated, and session exit leaves no server process.
   - _Requirements: 12.4, 12.5, 12.6, 14.1_
   - _Boundary: Extension Runtime — LSP_
-  - _Depends: 2.5, 4.7_
+  - _Depends: 2.5, 4.8_
 
-- [ ] 4.9 Configure managed background pipe tasks
+- [ ] 4.10 Configure managed background pipe tasks
   - Expose stable task identifiers and status, bounded logs, wait, input, and termination operations.
   - Preserve deterministic ordering within each task while allowing independent tasks to run concurrently.
   - Report truncation and retain bounded operator-accessible output.
@@ -304,7 +315,7 @@
   - _Boundary: Extension Runtime — Background_
   - _Depends: 1.5, 2.5_
 
-- [ ] 4.10 Add interactive PTY control and process-group cleanup
+- [ ] 4.11 Add interactive PTY control and process-group cleanup
   - Enable attach, detach, input, signal, and kill operations for managed PTY tasks.
   - Preserve process state across detach and report final state after signal or kill.
   - Launch PTYs with the scrubbed environment and terminate the entire process group on task or session shutdown.
@@ -312,9 +323,9 @@
   - Done when PTY interaction works, detach preserves the process, termination removes the group, and no sentinel reaches child output.
   - _Requirements: 13.3, 13.5, 13.6, 14.1_
   - _Boundary: Extension Runtime — Background_
-  - _Depends: 4.9_
+  - _Depends: 4.10_
 
-- [ ] 4.11 Assemble the exact extension manifest and load order
+- [ ] 4.12 Assemble the exact extension manifest and load order
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
   - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
@@ -322,16 +333,16 @@
   - Done when a combined loader accepts one prompt with the exact ordered inventory and rejects every altered manifest fixture.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
   - _Boundary: Package Set, Extension Runtime — Integration_
-  - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.5, 4.6, 4.8, 4.10_
+  - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.6, 4.7, 4.9, 4.11_
 
-- [ ] 4.12 Verify Plan controls with the assembled manifest
+- [ ] 4.13 Verify Plan controls with the assembled manifest
   - Load the complete managed manifest and register every custom tool before entering Plan mode.
   - Verify Plan selects its six managed names and reports denial of mutation, background, sub-agent, MCP-mutation, and refactor-apply calls before side effects.
   - Verify completed-plan presentation, approval, explicit exit, cancellation, unavailable-name restoration, valid resume, and invalid-state fallback.
   - Done when ordered-name snapshots, denial probes, and zero-side-effect checks pass for normal, Plan, resumed-Plan, and invalid-state modes.
   - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 12.4, 13.7_
   - _Boundary: Extension Runtime — Plan Integration_
-  - _Depends: 2.6, 4.3, 4.11_
+  - _Depends: 2.6, 4.3, 4.12_
 
 - [ ] 5. Compose providers, sandboxing, status, and launch behavior
 
@@ -385,7 +396,7 @@
   - Done when exact command capture, grant fixtures, and review side-effect probes cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
   - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8, 12.4, 13.7_
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
-  - _Depends: 2.5, 3.7, 3.9, 4.2, 4.8, 4.10, 4.11, 4.12, 5.1, 5.3, 5.4_
+  - _Depends: 2.5, 3.7, 3.9, 4.2, 4.9, 4.11, 4.12, 4.13, 5.1, 5.3, 5.4_
 
 - [ ] 5.6 Implement redacted managed status
   - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
@@ -395,7 +406,7 @@
   - Done when complete, degraded, drifted, and sentinel fixtures produce stable output with no secret value.
   - _Requirements: 4.4, 14.4_
   - _Boundary: Runtime Control_
-  - _Depends: 2.4, 3.7, 3.9, 4.12, 5.1, 5.3, 5.4, 5.5_
+  - _Depends: 2.4, 3.7, 3.9, 4.13, 5.1, 5.3, 5.4, 5.5_
 
 - [ ] 5.7 Implement the runtime compatibility validator
   - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, Cavemem, PTY, LSP, and reconciliation drift.
@@ -415,15 +426,16 @@
   - Done when ordered call traces match the design and concurrent fixtures commit one complete generation without opening the TUI on failure.
   - _Requirements: 2.1, 2.4, 3.1, 3.3, 3.6, 3.7, 4.1, 4.2, 4.5, 6.6, 7.3_
   - _Boundary: Runtime Control — Integration_
-  - _Depends: 2.4, 3.7, 3.9, 4.12, 5.2, 5.3, 5.5, 5.7_
+  - _Depends: 2.4, 3.7, 3.9, 4.13, 5.2, 5.3, 5.5, 5.7_
 
 - [ ] 5.9 Execute the final managed Pi surface exactly once
   - Reject install, remove, uninstall, and binary-update commands before Pi receives arguments.
   - Disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
   - Clear sub-agent binary overrides so children use the underlying managed Pi runtime inside the same sandbox.
+  - Export the immutable managed timeout binding to root and foreground child Pi, execute Bash through the reconciled managed shell path, and keep that binding out of the model-controlled shell environment.
   - Execute the bare or nono-wrapped Pi package exactly once after successful preflight.
   - Done when mutation-command, normal, review, disabled, audit, and enforced fixtures capture one expected executable invocation and no alternate package path.
-  - _Requirements: 1.6, 4.3, 5.2, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - _Requirements: 1.6, 4.3, 5.2, 7.2, 7.3, 7.4, 7.5, 7.6, 11.3, 14.1_
   - _Boundary: Runtime Control — Integration_
   - _Depends: 5.8_
 
@@ -437,17 +449,18 @@
   - Done when content tests find every required command/contract and no stale OpenCode, Sieve, direct Tool Gateway, or mutable install instruction.
   - _Requirements: 4.4, 6.4, 15.1, 15.7_
   - _Boundary: Home Module_
-  - _Depends: 3.9, 4.12_
+  - _Depends: 3.9, 4.13_
 
 - [ ] 6.2 Integrate all managed artifacts in the common module
   - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
+  - Connect the package-owned scrubbed shell, managed timeout field, fixed timeout binding, timeout extension, and shell-path ownership through their approved boundaries.
   - Install only repository-owned managed commands while retaining the base Pi package as a closure dependency.
   - Render exact profiles and resource paths only when enabled.
   - Keep activation free of mutable Pi-state writes and secrets.
   - Done when common enabled/disabled evaluations expose the complete intended surface, activation artifacts are immutable, and all read-back options match status inputs.
-  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 15.7_
+  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 11.3, 14.1, 15.7_
   - _Boundary: Home Module — Integration_
-  - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.12, 5.6, 5.7, 5.8, 5.9, 6.1_
+  - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.13, 5.6, 5.7, 5.8, 5.9, 6.1_
 
 - [ ] 6.3 (P) Enable and verify the personal host contract
   - Enable the common Pi module with personal provider mode and audit sandbox default.
@@ -586,3 +599,5 @@
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.
+- Task 4.5: The managed timeout is authoritative at 1 through 2147483647 milliseconds, travels through `PI_AGENT_BASH_TIMEOUT_MS` outside provider secrets, and the trusted shell wrapper removes that binding plus provider values before model-command execution.
+- Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.

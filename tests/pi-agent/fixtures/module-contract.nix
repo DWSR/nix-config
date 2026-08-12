@@ -276,6 +276,14 @@ let
       "xdg"
     ]
   ) (builtins.attrNames disabledEvaluation.config);
+  enabledEmittedConfigKeys = builtins.filter (
+    name:
+    builtins.elem name [
+      "activation"
+      "launchd"
+      "systemd"
+    ]
+  ) (builtins.attrNames validEvaluation.config);
 
   invalidPath =
     relativePath:
@@ -284,6 +292,20 @@ let
         package = extensionPackage;
         inherit relativePath;
       };
+    });
+  timeoutSummary =
+    value:
+    let
+      timeouts =
+        (mkEvaluation (overridePi {
+          timeouts.bashDefaultMs = value;
+        })).config.programs.pi-agent.timeouts;
+    in
+    builtins.deepSeq timeouts timeouts;
+  invalidBashTimeout =
+    value:
+    forceModule (overridePi {
+      timeouts.bashDefaultMs = value;
     });
 
   incompleteAdvisory = {
@@ -340,6 +362,10 @@ let
       inherit emittedConfigKeys;
       inherit (summarizeConfig disabledCfg) sandboxCatalog;
     };
+    bash-timeout-min = timeoutSummary 1;
+    bash-timeout-max = timeoutSummary 2147483647;
+    bash-timeout-non-default = timeoutSummary 543210;
+    bash-activation-purity = builtins.deepSeq validSummary enabledEmittedConfigKeys;
     advisory-normalized = securitySummaryAt "2026-08-08" (securityModule [
       (mkAdvisory {
         id = "  GHSA-normalized  ";
@@ -495,6 +521,22 @@ let
     });
     timeout-string = forceModule (overridePi {
       timeouts.resolverMs = "ten seconds";
+    });
+    bash-timeout-zero = invalidBashTimeout 0;
+    bash-timeout-negative = invalidBashTimeout (-1);
+    bash-timeout-non-integer = invalidBashTimeout 1.5;
+    bash-timeout-overflow = invalidBashTimeout 2147483648;
+    bash-public-shell-path = forceModule (overridePi {
+      shellPath = "/tmp/host-shell";
+    });
+    bash-public-shell-text = forceModule (overridePi {
+      shell.text = "printf host-shell";
+    });
+    bash-public-shell-argv = forceModule (overridePi {
+      shell.argv = [ "--host-shell" ];
+    });
+    bash-public-binding-name = forceModule (overridePi {
+      timeouts.bindingName = "HOST_BASH_TIMEOUT";
     });
     state-generation-shell-text = forceModule (overridePi {
       state.generation = "generation; printf fixture-secret";

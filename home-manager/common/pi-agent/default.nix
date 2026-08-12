@@ -7,7 +7,10 @@
 let
   inherit (lib) mkEnableOption mkOption types;
   credentialPolicy = import ./credential-policy.nix { inherit lib pkgs; };
-  managedConfigRenderer = import ./managed-config.nix { inherit lib pkgs; };
+  managedConfigRenderer = import ./managed-config.nix {
+    inherit lib pkgs;
+    shellPath = credentialPolicy.shellExecutable;
+  };
   profileCatalogRenderer = import ./profiles.nix { inherit lib pkgs; };
 
   extensionNames = [
@@ -568,7 +571,7 @@ in
                 description = "Managed preflight timeout in milliseconds.";
               };
               bashDefaultMs = mkOption {
-                type = types.ints.positive;
+                type = types.ints.between 1 2147483647;
                 default = 120000;
                 description = "Default Bash tool timeout in milliseconds.";
               };

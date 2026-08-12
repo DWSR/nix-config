@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
 const rendererPath = path.join(repoRoot, "home-manager/common/pi-agent/managed-config.nix");
-const fixturePath = path.join(testsDir, "fixtures/managed-config.nix");
 const factoryExecutable = "bin/pi-agent-provider-projection";
 const commandOptions = {
   cwd: repoRoot,
@@ -161,10 +160,17 @@ const joinedUrls = {
 
 function fixtureExpression(fixture) {
   return `
-    import (/. + ${JSON.stringify(fixturePath)}) {
-      fixture = ${JSON.stringify(fixture)};
-      repoRoot = ${JSON.stringify(repoRoot)};
-    }
+    let
+      repoSource = builtins.path {
+        path = /. + ${JSON.stringify(repoRoot)};
+        name = "pi-agent-managed-config-source";
+        filter = sourcePath: type: builtins.baseNameOf sourcePath != ".git";
+      };
+    in
+      import (repoSource + "/tests/pi-agent/fixtures/managed-config.nix") {
+        fixture = ${JSON.stringify(fixture)};
+        repoRoot = repoSource;
+      }
   `;
 }
 
@@ -321,10 +327,12 @@ test("ManagedConfigV1 renders the exact fixed catalog and package-backed paths",
     settings: {
       defaultModel: { provider: "openai", modelId: "gpt-5.6-sol" },
       defaultThinkingLevel: "xhigh",
+      shellPath: config.settings.shellPath,
       installTelemetry: false,
       selfUpdate: false,
       unmanagedPackages: false,
     },
+    timeouts: { bashDefaultMs: 543210 },
     providerCatalog,
     providerSelection: {
       mode: "shopify-gateway",
@@ -350,6 +358,7 @@ test("ManagedConfigV1 renders the exact fixed catalog and package-backed paths",
   });
 
   for (const renderedPath of [
+    config.settings.shellPath,
     config.extensionManifest,
     ...config.instructionResources,
     ...Object.values(config.lspExecutables),

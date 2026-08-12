@@ -234,6 +234,7 @@ let
     };
     personal-runtime-module = personal.runtimeModule;
     shopify-runtime-module = shopify.runtimeModule;
+    managed-shell = policy.managedShell;
     ignored-null-ifd-contract = {
       inherit (builtins.head (forcePlans ignoredNullIfdShopify)) executable;
       expectedExecutable = "${ignoredNullIfdPackage.outPath}/bin/devx";

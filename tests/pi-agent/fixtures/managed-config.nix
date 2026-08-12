@@ -3,9 +3,9 @@
   repoRoot,
 }:
 let
-  flake = builtins.getFlake (toString repoRoot);
+  flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString repoRoot));
   supportedPkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-  modulePath = /. + "${repoRoot}/home-manager/common/pi-agent/default.nix";
+  modulePath = repoRoot + "/home-manager/common/pi-agent/default.nix";
 
   extensionNames = [
     "cavemem"
@@ -119,6 +119,7 @@ let
       };
       mcp.port = 8080;
       sandbox.defaultState = "audit";
+      timeouts.bashDefaultMs = 543210;
     };
   };
 

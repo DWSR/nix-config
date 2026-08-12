@@ -1,4 +1,8 @@
-{ lib, pkgs }:
+{
+  lib,
+  pkgs,
+  shellPath,
+}:
 let
   supportedSystem = "aarch64-darwin";
   extensionNames = [
@@ -472,9 +476,11 @@ let
               if cfg.provider.mode == "personal" then "personal" else "shopify"
             }.reasoning;
           installTelemetry = false;
+          inherit shellPath;
           selfUpdate = false;
           unmanagedPackages = false;
         };
+        timeouts.bashDefaultMs = cfg.timeouts.bashDefaultMs;
         inherit providerCatalog providerSelection;
         extensionManifest =
           if builtins.length manifests == 1 then
