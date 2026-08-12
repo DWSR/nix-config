@@ -17,6 +17,10 @@ let
     git
     python313
   ];
+  gitEligibilityPath = lib.makeBinPath [
+    coreutils
+    git
+  ];
 in
 writeShellApplication {
   name = "binks-review";
@@ -37,6 +41,96 @@ writeShellApplication {
     package_spec="$package==$package_version"
     entrypoint="binks-pr-review"
     binks_production_url="https://binks.shopify.io"
+    force_no_upload=0
+
+    if [[ "''${1:-}" == "--no-upload" ]]; then
+      force_no_upload=1
+      shift
+    fi
+
+    check_repository_eligibility() {
+      local remote_url remote_path owner repository
+      local -a git_environment
+
+      git_environment=(
+        "${coreutils}/bin/env"
+        -i
+        "GIT_CONFIG_GLOBAL=/dev/null"
+        "GIT_CONFIG_NOSYSTEM=1"
+        "GIT_CONFIG_SYSTEM=/dev/null"
+        "HOME=${homeDirectory}"
+        "LC_ALL=C"
+        "PATH=${gitEligibilityPath}"
+      )
+
+      # Read only literal repository-scoped configuration (local + worktree).
+      # Ignore caller GIT_CONFIG_* overrides and fail closed on includes, URL
+      # rewrites, or multiple origins that could change Git's effective URL.
+      if "''${git_environment[@]}" "${git}/bin/git" config --no-includes --get-regexp '^include\.' >/dev/null 2>&1 \
+        || "''${git_environment[@]}" "${git}/bin/git" config --no-includes --get-regexp '^includeif\.' >/dev/null 2>&1 \
+        || "''${git_environment[@]}" "${git}/bin/git" config --no-includes --get-regexp '^url\.' >/dev/null 2>&1; then
+        printf '%s\n' 'INELIGIBLE: local Git includes or URL rewrite rules are present' >&2
+        return 1
+      fi
+
+      if ! remote_url="$("''${git_environment[@]}" "${git}/bin/git" config --no-includes --get-all remote.origin.url 2>/dev/null)" \
+        || [[ -z "$remote_url" ]] \
+        || [[ "$remote_url" == *$'\n'* ]]; then
+        printf '%s\n' 'INELIGIBLE: remote.origin.url is missing or ambiguous' >&2
+        return 1
+      fi
+
+      shopt -s nocasematch
+      case "$remote_url" in
+        https://github.com/*)
+          remote_path="''${remote_url#https://github.com/}"
+          ;;
+        ssh://git@github.com/*)
+          remote_path="''${remote_url#ssh://git@github.com/}"
+          ;;
+        git@github.com:*)
+          remote_path="''${remote_url#git@github.com:}"
+          ;;
+        *)
+          shopt -u nocasematch
+          printf '%s\n' 'INELIGIBLE: origin is not an exact supported github.com URL' >&2
+          return 1
+          ;;
+      esac
+
+      remote_path="''${remote_path%.git}"
+      owner="''${remote_path%%/*}"
+      repository="''${remote_path#*/}"
+      if [[ -z "$owner" \
+        || -z "$repository" \
+        || "$repository" == "$remote_path" \
+        || "$repository" == */* \
+        || "$repository" == "." \
+        || "$repository" == ".." \
+        || ! "$repository" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        shopt -u nocasematch
+        printf '%s\n' 'INELIGIBLE: origin does not identify one GitHub organization and repository' >&2
+        return 1
+      fi
+
+      if [[ "$owner" != "shopify" && "$owner" != "shop" ]]; then
+        shopt -u nocasematch
+        printf '%s\n' 'INELIGIBLE: GitHub organization is not Shopify or shop' >&2
+        return 1
+      fi
+      shopt -u nocasematch
+
+      printf 'ELIGIBLE: github.com/%s/%s\n' "$owner" "$repository"
+    }
+
+    if [[ "''${1:-}" == "--check-repository-eligibility" ]]; then
+      if [[ "$#" -ne 1 ]]; then
+        printf '%s\n' 'binks-review: --check-repository-eligibility accepts no other arguments' >&2
+        exit 2
+      fi
+      check_repository_eligibility
+      exit $?
+    fi
 
     cloudsmith_url="pkgs.shopify.io/basic/data/python/simple/"
     cloudsmith_token_path="gs://dev-tokens/cloudsmith/shopify/data/latest"
@@ -58,6 +152,12 @@ writeShellApplication {
     proxy_openai_key="''${OPENAI_API_KEY:-}"
     proxy_anthropic_key="''${ANTHROPIC_API_KEY:-}"
     proxy_base_hint="''${BINKS_AI_PROXY_URL:-''${AI_PROXY_BASE_URL:-''${DEFAULT_PROXY_BASE:-}}}"
+
+    if [[ "$force_no_upload" == 1 ]]; then
+      requested_upload=0
+      requested_upload_user=""
+      requested_upload_password=""
+    fi
 
     # Do not expose wrapper-managed credentials or routing to the mutable tool
     # installation during version checks. Restore only the canonical Binks key

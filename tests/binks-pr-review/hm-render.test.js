@@ -119,6 +119,10 @@ function hostRenderExpr() {
   return `
     let
       ${sourcePrelude()}
+      renderAgentText = agent:
+        if agent == null then null
+        else if builtins.isPath agent then builtins.readFile agent
+        else agent;
       summarize = host:
         let
           config = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
@@ -134,6 +138,11 @@ function hostRenderExpr() {
           skillPresent = builtins.hasAttr "opencode/skills/binks-pr-review" files;
           skillSource = if skillPresent then files."opencode/skills/binks-pr-review".source else null;
           skillText = if skillPresent then builtins.readFile (skillSource + "/SKILL.md") else null;
+          binksReviewer = config.programs.opencode.agents."binks-reviewer" or null;
+          binksReviewerText = renderAgentText binksReviewer;
+          kiroReviewSource = files."opencode/skills/kiro-review".source;
+          kiroVerifySource = files."opencode/skills/kiro-verify-completion".source;
+          kiroImplSource = files."opencode/skills/kiro-impl".source;
           stateActivation = config.home.activation.createBinksReviewState.data or null;
           binksXdgFiles = builtins.filter
             (name: builtins.match ".*binks.*" name != null)
@@ -147,7 +156,12 @@ function hostRenderExpr() {
           audit = config.programs.opencode-nono.profiles.\${auditName};
         in
         {
-          inherit packagePaths commandText skillPresent skillText stateActivation binksXdgFiles piBinksFiles;
+          inherit packagePaths commandText skillPresent skillText binksReviewerText stateActivation binksXdgFiles piBinksFiles;
+          skillsPackagePath = builtins.unsafeDiscardStringContext "\${config.programs.cc-sdd.skillsPackage}";
+          kiroReviewText = builtins.readFile (kiroReviewSource + "/SKILL.md");
+          kiroVerifyText = builtins.readFile (kiroVerifySource + "/SKILL.md");
+          kiroImplText = builtins.readFile (kiroImplSource + "/SKILL.md");
+          kiroReviewerPromptText = builtins.readFile (kiroImplSource + "/templates/reviewer-prompt.md");
           commandNames = builtins.attrNames commands;
           agentNames = builtins.attrNames config.programs.opencode.agents;
           skillNames = builtins.filter
@@ -200,6 +214,122 @@ test('wrapper builds with a Nix-controlled pin and no periodic updater', {
   assert.doesNotMatch(wrapper, /upgrade-last-run/);
   assert.doesNotMatch(wrapper, /date \+%s/);
   assert.doesNotMatch(wrapper, /stat -c/);
+});
+
+test('repository eligibility accepts only Shopify and shop organizations on github.com', {
+  skip: !canExecuteShopifyPackage,
+}, () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'binks-review-eligibility-test-'));
+  const outPath = nixBuildOutPath(isolatedPackageBuildExpr(tempDir));
+  const executable = path.join(outPath, 'bin', 'binks-review');
+
+  function check(remoteUrl, { extraConfig = '', extraEnv = {}, worktreeConfig = null } = {}) {
+    const repository = fs.mkdtempSync(path.join(tempDir, 'repo-'));
+    const escapedRemoteUrl = remoteUrl.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
+    fs.mkdirSync(path.join(repository, '.git', 'objects'), { recursive: true });
+    fs.mkdirSync(path.join(repository, '.git', 'refs', 'heads'), { recursive: true });
+    fs.writeFileSync(path.join(repository, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    fs.writeFileSync(
+      path.join(repository, '.git', 'config'),
+      `[core]\n\trepositoryformatversion = 0\n\tbare = false\n[remote "origin"]\n\turl = "${escapedRemoteUrl}"\n${extraConfig}`,
+    );
+    if (worktreeConfig !== null) {
+      fs.writeFileSync(path.join(repository, '.git', 'config.worktree'), worktreeConfig);
+    }
+    return childProcess.spawnSync(executable, ['--check-repository-eligibility'], {
+      cwd: repository,
+      encoding: 'utf8',
+      env: {
+        HOME: tempDir,
+        PATH: process.env.PATH,
+        ...extraEnv,
+      },
+      timeout: NIX_COMMAND_TIMEOUT_MS,
+    });
+  }
+
+  for (const remoteUrl of [
+    'https://github.com/Shopify/shopify.git',
+    'git@github.com:shop/shopify.git',
+    'ssh://git@github.com/ShOpIfY/example.git',
+  ]) {
+    const result = check(remoteUrl);
+    assert.equal(result.status, 0, `${remoteUrl}: ${result.stderr}`);
+    assert.match(result.stdout, /^ELIGIBLE: github\.com\/(Shopify|shop|ShOpIfY)\//);
+  }
+
+  for (const remoteUrl of [
+    'https://github.com/DWSR/nix-config.git',
+    'https://gitlab.com/Shopify/example.git',
+    'git@github.example.com:Shopify/example.git',
+    'https://user:credential-secret@github.com/Shopify/example.git',
+    'https://github.com/Shopify/example.git?access_token=credential-secret',
+    'https://github.com/Shopify/example.git#credential-secret',
+    'https://github.com/Shopify/.',
+    'git@github.com:shop/..',
+    'ssh://git@github.com/Shopify/.',
+    'https://github.com/Shopify',
+    'https://github.com/Shopify/example/extra.git',
+    'https://github.com/Shopifyevil/example.git',
+  ]) {
+    const result = check(remoteUrl);
+    assert.equal(result.status, 1, `${remoteUrl}: ${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /^INELIGIBLE:/);
+    assert.equal(result.stderr.includes(remoteUrl), false);
+    assert.doesNotMatch(result.stderr, /credential-secret/);
+  }
+
+  const environmentSpoof = check('https://github.com/DWSR/nix-config.git', {
+    extraEnv: {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'remote.origin.url',
+      GIT_CONFIG_VALUE_0: 'https://github.com/Shopify/spoofed.git',
+      GIT_CONFIG_GLOBAL: '/tmp/attacker-gitconfig',
+    },
+  });
+  assert.equal(environmentSpoof.status, 1);
+  assert.match(environmentSpoof.stderr, /organization is not Shopify or shop/);
+
+  const localRewrite = check('https://github.com/Shopify/example.git', {
+    extraConfig: '[url "https://gitlab.com/Shopify/"]\n\tinsteadOf = https://github.com/Shopify/\n',
+  });
+  assert.equal(localRewrite.status, 1);
+  assert.match(localRewrite.stderr, /local Git includes or URL rewrite rules are present/);
+
+  const localInclude = check('https://github.com/Shopify/example.git', {
+    extraConfig: '[include]\n\tpath = /tmp/attacker-gitconfig\n',
+  });
+  assert.equal(localInclude.status, 1);
+  assert.match(localInclude.stderr, /local Git includes or URL rewrite rules are present/);
+
+  const duplicateOrigin = check('https://github.com/Shopify/example.git', {
+    extraConfig: '[remote "origin"]\n\turl = https://gitlab.com/Shopify/example.git\n',
+  });
+  assert.equal(duplicateOrigin.status, 1);
+  assert.match(duplicateOrigin.stderr, /remote\.origin\.url is missing or ambiguous/);
+
+  const worktreeOverride = check('https://github.com/Shopify/example.git', {
+    extraConfig: '[extensions]\n\tworktreeConfig = true\n',
+    worktreeConfig: '[remote "origin"]\n\turl = https://gitlab.com/Shopify/example.git\n',
+  });
+  assert.equal(worktreeOverride.status, 1);
+  assert.match(worktreeOverride.stderr, /remote\.origin\.url is missing or ambiguous/);
+
+  const noOriginRepository = fs.mkdtempSync(path.join(tempDir, 'repo-no-origin-'));
+  fs.mkdirSync(path.join(noOriginRepository, '.git', 'objects'), { recursive: true });
+  fs.mkdirSync(path.join(noOriginRepository, '.git', 'refs', 'heads'), { recursive: true });
+  fs.writeFileSync(path.join(noOriginRepository, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+  fs.writeFileSync(path.join(noOriginRepository, '.git', 'config'), '[core]\n\tbare = false\n');
+  const noOrigin = childProcess.spawnSync(executable, ['--check-repository-eligibility'], {
+    cwd: noOriginRepository,
+    encoding: 'utf8',
+    env: { HOME: tempDir, PATH: process.env.PATH },
+    timeout: NIX_COMMAND_TIMEOUT_MS,
+  });
+
+  fs.rmSync(tempDir, { recursive: true, force: true });
+  assert.equal(noOrigin.status, 1);
+  assert.match(noOrigin.stderr, /remote\.origin\.url is missing/);
 });
 
 test('wrapper executes an already-pinned tool without credential leakage', {
@@ -288,12 +418,14 @@ if [ "\${1:-}" = "--version" ]; then
   printf '%s\\n' 'binks-pr-review 0.13.3'
   exit 0
 fi
-printf 'user=%s password=%s base_url=%s\\n' "$BINKS_API_USER" "$BINKS_API_PASSWORD" "$BINKS_BASE_URL"
+printf 'args:'
+printf ' <%s>' "$@"
+printf '\\nuser=%s password=%s base_url=%s\\n' "$BINKS_API_USER" "$BINKS_API_PASSWORD" "$BINKS_BASE_URL"
 `,
     { mode: 0o755 },
   );
 
-  const result = childProcess.spawnSync(executable, ['--provider', 'local'], {
+  const uploadResult = childProcess.spawnSync(executable, ['--provider', 'local'], {
     cwd: tempDir,
     encoding: 'utf8',
     env: {
@@ -307,10 +439,30 @@ printf 'user=%s password=%s base_url=%s\\n' "$BINKS_API_USER" "$BINKS_API_PASSWO
     timeout: NIX_COMMAND_TIMEOUT_MS,
   });
 
+  const localOnlyResult = childProcess.spawnSync(executable, ['--no-upload', '--provider', 'local'], {
+    cwd: tempDir,
+    encoding: 'utf8',
+    env: {
+      HOME: tempDir,
+      PATH: process.env.PATH,
+      BINKS_AI_PROXY_KEY: 'proxy-key',
+      BINKS_REVIEW_UPLOAD: '1',
+      BINKS_API_USER: 'inherited-user',
+      BINKS_API_PASSWORD: 'upload-password',
+    },
+    timeout: NIX_COMMAND_TIMEOUT_MS,
+  });
+
   fs.rmSync(tempDir, { recursive: true, force: true });
-  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-  assert.match(result.stdout, /user=binks-api-upload-prod password=upload-password base_url=https:\/\/binks\.shopify\.io/);
-  assert.doesNotMatch(result.stdout, /attacker\.invalid/);
+  assert.equal(uploadResult.status, 0, `${uploadResult.stderr}\n${uploadResult.stdout}`);
+  assert.match(uploadResult.stdout, /args: <--provider> <local>/);
+  assert.match(uploadResult.stdout, /user=binks-api-upload-prod password=upload-password base_url=https:\/\/binks\.shopify\.io/);
+  assert.doesNotMatch(uploadResult.stdout, /attacker\.invalid/);
+  assert.equal(localOnlyResult.status, 0, `${localOnlyResult.stderr}\n${localOnlyResult.stdout}`);
+  assert.match(localOnlyResult.stdout, /args: <--provider> <local>/);
+  assert.doesNotMatch(localOnlyResult.stdout, /--no-upload/);
+  assert.match(localOnlyResult.stdout, /user= password= base_url=https:\/\/binks\.shopify\.io/);
+  assert.doesNotMatch(localOnlyResult.stdout, /upload-password|inherited-user/);
 });
 
 test('wrapper reconciles a mismatched tool once and clears the index credential', {
@@ -405,7 +557,7 @@ printf '%s\\n' 'binks-pr-review 0.12.0'
   assert.equal(installAttempted, false);
 });
 
-test('Shopify alone renders the package, explicit command, and new OpenCode skill', () => {
+test('Shopify alone renders Binks and its Kiro review integration', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
   assert.equal(rendered.personal.packagePaths.length, 0);
@@ -413,6 +565,12 @@ test('Shopify alone renders the package, explicit command, and new OpenCode skil
   assert.equal(rendered.personal.skillPresent, false);
   assert.equal(rendered.personal.stateActivation, null);
   assert.deepEqual(rendered.personal.binksXdgFiles, []);
+  assert.equal(rendered.personal.binksReviewerText, null);
+  assert.equal(rendered.personal.agentNames.includes('binks-reviewer'), false);
+  assert.doesNotMatch(rendered.personal.kiroReviewText, /binks-reviewer/);
+  assert.doesNotMatch(rendered.personal.kiroVerifyText, /binks-reviewer/);
+  assert.doesNotMatch(rendered.personal.kiroImplText, /External Review Handoff/);
+  assert.doesNotMatch(rendered.personal.kiroReviewerPromptText, /Binks Review/);
 
   assert.equal(rendered.shopify.packagePaths.length, 1);
   assert.match(rendered.shopify.packagePaths[0], /-binks-review$/);
@@ -424,16 +582,40 @@ test('Shopify alone renders the package, explicit command, and new OpenCode skil
   assert.match(rendered.shopify.skillText, /performs no hourly or periodic update/);
   assert.match(rendered.shopify.skillText, /--provider local/);
   assert.match(rendered.shopify.skillText, /Review authorization does not authorize edits or result upload/);
+  assert.match(rendered.shopify.skillText, /dispatch from the Shopify-host `kiro-review`/);
+  assert.match(rendered.shopify.skillText, /--check-repository-eligibility/);
+  assert.match(rendered.shopify.skillText, /wrapper-only `--no-upload` argument/);
   assert.match(rendered.shopify.skillText, /BINKS_REVIEW_UPLOAD=1/);
+  assert.match(rendered.shopify.skillsPackagePath, /-cc-sdd-skills-shopify-3\.0\.2$/);
+  assert.match(rendered.shopify.binksReviewerText, /mode: subagent/);
+  assert.match(rendered.shopify.binksReviewerText, /Load the `binks-pr-review` skill/);
+  assert.match(rendered.shopify.binksReviewerText, /exact host is `github\.com`/);
+  assert.match(rendered.shopify.binksReviewerText, /binks-review --no-upload/);
+  assert.match(rendered.shopify.binksReviewerText, /## External Review Handoff/);
+  assert.match(rendered.shopify.binksReviewerText, /WORKTREE_FINGERPRINT/);
+  assert.match(rendered.shopify.binksReviewerText, /DISPOSITION: VALID \| FALSE_POSITIVE \| NEEDS_CONTEXT/);
+  assert.match(rendered.shopify.kiroReviewText, /one local Binks review per task/);
+  assert.match(rendered.shopify.kiroReviewText, /BINKS: REUSED/);
+  assert.match(rendered.shopify.kiroReviewText, /Never write a marker/);
+  assert.match(rendered.shopify.kiroVerifyText, /Every invocation of this Shopify-host skill/);
+  assert.match(rendered.shopify.kiroVerifyText, /runs in main\/controller context/);
+  assert.match(rendered.shopify.kiroVerifyText, /reuses a handoff from an earlier reviewer/);
+  assert.match(rendered.shopify.kiroVerifyText, /every other Git forge/);
+  assert.match(rendered.shopify.kiroImplText, /retain its first `## External Review Handoff` in session context/);
+  assert.match(rendered.shopify.kiroImplText, /Before spawning the task reviewer/);
+  assert.match(rendered.shopify.kiroReviewerPromptText, /parent owns eligibility and dispatch/);
+  assert.match(rendered.shopify.kiroReviewerPromptText, /not launch a nested `binks-reviewer`/);
   assert.match(rendered.shopify.stateActivation, /install -d -m 0700/);
   assert.match(rendered.shopify.stateActivation, /\.local\/share\/binks-review/);
   includesAll(rendered.shopify.binksXdgFiles, [
     'opencode/agents/binks-overrider.md',
+    'opencode/agents/binks-reviewer.md',
     'opencode/commands/binks-review.md',
     'opencode/skills/binks-pr-review',
   ]);
   assert.equal(rendered.shopify.agentNames.includes('binks-pr-review'), false);
   assert.equal(rendered.shopify.agentNames.includes('binks-overrider'), true);
+  assert.equal(rendered.shopify.agentNames.includes('binks-reviewer'), true);
   assert.equal(rendered.shopify.skillNames.includes('opencode/skills/binks-pr-review'), true);
   assert.deepEqual(rendered.shopify.piBinksFiles, []);
 });

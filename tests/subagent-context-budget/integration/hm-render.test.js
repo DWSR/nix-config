@@ -520,6 +520,7 @@ test('rendered metadata is host-aware and filters Shopify-only agents from perso
   assert.equal(rendered.personal.agentNames.includes('kiro-spec-orchestrator'), true);
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.personal.hasYbSleuth, false);
+  assert.equal(rendered.personal.agentNames.includes('binks-reviewer'), false);
   assert.equal(rendered.personal.general.hostScope, 'all');
   assert.deepEqual(rendered.personal.general.state, { kind: 'enforced', reason: 'default' });
   assert.equal(rendered.personal.kiroSpecOrchestrator.permissionBudget.skill, 'allow');
@@ -535,6 +536,7 @@ test('rendered metadata is host-aware and filters Shopify-only agents from perso
   assert.equal(rendered.shopify.agentNames.includes('stack-preflight-auditor'), true);
   assert.equal(rendered.shopify.agentNames.includes('stack-fix-reviewer'), true);
   assert.equal(rendered.shopify.agentNames.includes('binks-overrider'), true);
+  assert.equal(rendered.shopify.agentNames.includes('binks-reviewer'), true);
   assert.equal(rendered.shopify.agentNames.includes('yb-sleuth'), true);
   assert.deepEqual(rendered.shopify.stackCaptain.state, { kind: 'enforced', reason: 'host-override' });
   assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_retrieve_tools, 'allow');
@@ -571,6 +573,7 @@ test('enforcement keeps global rules unchanged while plugin and agent overrides 
   assert.ok(rendered.shopifyEnforced.agentNames.includes('general'));
   assert.ok(rendered.shopifyEnforced.agentNames.includes('stack-captain'));
   assert.ok(rendered.shopifyEnforced.agentNames.includes('binks-overrider'));
+  assert.ok(rendered.shopifyEnforced.agentNames.includes('binks-reviewer'));
 });
 
 test('rendered OpenCode config matches budgeted config shape for both hosts', () => {
@@ -652,6 +655,7 @@ test('both nix-darwin hosts evaluate runtime prerequisites for the Home Manager 
   assert.equal(rendered.hosts.shopify.metadata.host, 'shopify');
   assert.equal(rendered.hosts.shopify.agentNames.includes('stack-captain'), true);
   assert.equal(rendered.hosts.shopify.agentNames.includes('binks-overrider'), true);
+  assert.equal(rendered.hosts.shopify.agentNames.includes('binks-reviewer'), true);
   assert.equal(rendered.hosts.shopify.agentNames.includes('yb-sleuth'), true);
 });
 

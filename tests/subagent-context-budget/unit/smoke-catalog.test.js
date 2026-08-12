@@ -41,6 +41,7 @@ const BUDGETED_AGENTS = {
   'vault-curator': { smokeClass: 'vault-dedup-plan', hostScope: 'all' },
   'vault-synthesizer': { smokeClass: 'cavemem-to-memory-draft', hostScope: 'all' },
   'binks-overrider': { smokeClass: 'shopify-binks-override', hostScope: 'shopify' },
+  'binks-reviewer': { smokeClass: 'shopify-binks-review', hostScope: 'shopify' },
   'bot-thread-triager': { smokeClass: 'shopify-bot-thread-triage', hostScope: 'shopify' },
   'ci-log-sleuth': { smokeClass: 'shopify-ci-log-analysis', hostScope: 'shopify' },
   'stack-fix-reviewer': { smokeClass: 'shopify-fix-review', hostScope: 'shopify' },

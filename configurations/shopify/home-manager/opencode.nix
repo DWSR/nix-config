@@ -280,6 +280,7 @@ in
   # snippet (or skip it) in lock-step with the common subagents whenever
   # `home.opencode.enableCaveman` flips.
   programs.opencode.agents = {
+    binks-reviewer = config.home.opencode.agentWithCaveman ./agents/binks-reviewer.md;
     stack-captain = config.home.opencode.agentWithCaveman ./agents/stack-captain.md;
     stack-status-sweeper = config.home.opencode.agentWithCaveman ./agents/stack-status-sweeper.md;
     ci-log-sleuth = config.home.opencode.agentWithCaveman ./agents/ci-log-sleuth.md;

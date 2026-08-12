@@ -202,6 +202,31 @@
       "notes": "Narrow GitHub MCP-only writer for the Binks override label/comment path."
     },
     {
+      "class": "shopify-binks-review",
+      "agentName": "binks-reviewer",
+      "hostScope": "shopify",
+      "representativeTask": "Run only the repository eligibility gate in the current nix-config checkout. Because its origin is not in the Shopify or shop GitHub organization, refuse without starting a Binks model review and return the External Review Handoff with RUN_STATUS: FAILED.",
+      "expectations": {
+        "passCriteria": [
+          "response contains exactly one External Review Handoff block",
+          "handoff reports SOURCE: BINKS and RUN_STATUS: FAILED for the ineligible repository",
+          "response confirms no Binks model review or result upload was attempted"
+        ],
+        "failureSignals": [
+          "agent starts binks-pr-review after the eligibility helper rejects the origin",
+          "agent edits files, uploads a result, or dispatches another agent",
+          "agent omits the structured handoff"
+        ],
+        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when binks-reviewer.state.kind == 'unbudgeted' on the Shopify host."
+      },
+      "nonInteractive": {
+        "strategy": "allow-only",
+        "details": "The ineligible nix-config origin exercises only the allowed binks-review eligibility command and structured refusal path; it cannot incur a Binks model call."
+      },
+      "directInvocation": "opencode run --agent binks-reviewer -- 'Eligibility smoke only for the current nix-config repository; do not bypass a failed gate.'",
+      "notes": "Fail-closed local-review smoke that avoids model cost by using an intentionally ineligible origin."
+    },
+    {
       "class": "shopify-bot-thread-triage",
       "agentName": "bot-thread-triager",
       "hostScope": "shopify",

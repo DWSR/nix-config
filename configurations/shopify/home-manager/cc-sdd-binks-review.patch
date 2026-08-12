@@ -1,0 +1,231 @@
+diff --git a/skills/kiro-review/SKILL.md b/skills/kiro-review/SKILL.md
+--- a/skills/kiro-review/SKILL.md
++++ b/skills/kiro-review/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: kiro-review
+-description: Review a task implementation against approved specs, task boundaries, and verification evidence. Use after an implementer finishes a task, after remediation, or before accepting a task as complete.
++description: Review a task implementation against approved specs, task boundaries, verification evidence, and one eligible local Binks run per task. Use after an implementer finishes a task, after remediation, or before accepting a task as complete.
+ ---
+ 
+ # kiro-review
+@@ -37,5 +37,6 @@ Provide:
+ - Validation commands discovered by the controller
+ - Relevant steering excerpts when applicable
+ - Relevant `## Implementation Notes` entries when applicable
++- An existing Binks handoff for this task from the current session, when one exists
+ 
+ ## Outputs
+@@ -47,6 +48,7 @@ Also return:
+ - Mechanical results
+ - Findings with severity
+ - Required remediation
++- Binks dispatch status and the external-review handoff when applicable
+ - One-sentence summary
+ 
+ Use the language specified in `spec.json`.
+@@ -55,7 +57,45 @@ Use the language specified in `spec.json`.
+ ## First Action
+ 
+ Run `git diff` to inspect the actual code changes. If the diff is large or ambiguous, read the changed files directly. Do not trust the implementer report as source of truth.
+ 
++## Shopify Binks Review
++
++This Shopify-host override adds one local Binks review per task. Keep its run
++state only in the active session context.
++
++1. Run `binks-review --check-repository-eligibility` in the repository before
++   dispatching. Continue only when it exits zero. The helper accepts only an
++   `origin` on the exact `github.com` host in the exact `Shopify` or `shop`
++   organization, case-insensitively.
++2. On any nonzero result, do not dispatch `binks-reviewer`. Record
++   `BINKS: SKIPPED_INELIGIBLE_REPOSITORY` and continue the normal Kiro review.
++3. When the repository is eligible, look in the current session context for an
++   `## External Review Handoff` with `SOURCE: BINKS` for this exact task.
++4. Reuse an existing same-task handoff without dispatching another run. Record
++   `BINKS: REUSED`. The controller must pass this handoff into later review
++   rounds for the same task.
++5. If no same-task handoff is present, the main/controller applying this
++   protocol dispatches exactly one `binks-reviewer` with the repository path,
++   task context, boundary/spec refs, and intended PR base when known. Record
++   `BINKS: DISPATCHED`. This protocol authorizes that one read-only run.
++6. In autonomous `kiro-impl`, the parent performs the eligibility check and
++   dispatch before spawning the task reviewer, then passes the status and
++   handoff into that reviewer. Direct main-context use performs the same steps.
++7. A nested task reviewer consumes the caller-supplied status and handoff; it
++   must not launch another nested reviewer. Reject an eligible review when the
++   parent omitted the required handoff.
++8. Keep the returned handoff in session context only. Never write a marker,
++   cache, task annotation, or other durable run state. If context is lost, a
++   later review may dispatch another run.
++9. Independently verify every `VALID` or `NEEDS_CONTEXT` finding against the
++   current worktree and spec. Add confirmed valid findings to the Kiro findings
++   with this skill's severity. A false positive does not reject the task.
++10. A reused handoff describes its recorded worktree fingerprint, not the
++   current worktree. Verify whether each old finding is now resolved and never
++   describe a stale `CLEAN` result as a fresh Binks review.
++11. If the Binks handoff has `RUN_STATUS: FAILED`, reject because required review
++   evidence is unavailable and identify the non-code remediation explicitly.
++
+ ## Core Principle
+ 
+ Read the spec yourself. Read the diff yourself. Verify mechanically where possible. Reject on concrete failures rather than interpretive optimism.
+@@ -150,11 +190,15 @@ Use:
+ | “This gap is small enough to let through” | Real gaps must be rejected or escalated. |
+ 
+ ## Output Format
+ 
++When Binks was dispatched or reused, reproduce its complete `## External Review
++Handoff` block immediately before the final review verdict.
++
+ ```md
+ ## Review Verdict
+ - VERDICT: APPROVED | REJECTED
+ - TASK: <task-id>
++- BINKS: DISPATCHED | REUSED | SKIPPED_INELIGIBLE_REPOSITORY
+ - MECHANICAL_RESULTS:
+   - Tests: PASS | FAIL (command and exit code)
+   - TBD/TODO grep: CLEAN | <count> matches
+diff --git a/skills/kiro-verify-completion/SKILL.md b/skills/kiro-verify-completion/SKILL.md
+--- a/skills/kiro-verify-completion/SKILL.md
++++ b/skills/kiro-verify-completion/SKILL.md
+@@ -1,6 +1,6 @@
+ ---
+ name: kiro-verify-completion
+-description: Verify completion and success claims with fresh evidence. Use before claiming a task is complete, a fix works, tests pass, or a feature is ready for GO.
++description: Verify completion and success claims with fresh evidence and an eligible fresh Binks review. Use before claiming a task is complete, a fix works, tests pass, or a feature is ready for GO.
+ ---
+ 
+ # kiro-verify-completion
+@@ -38,5 +38,7 @@ Provide:
+   - integration status
+   - blocked task status
++- Absolute repository path
++- Task boundary and spec refs when applicable
+ 
+ ## Outputs
+ 
+@@ -50,9 +52,38 @@ Also return:
+ - Claim reviewed
+ - Evidence used
+ - Scope/evidence mismatch, if any
++- Binks dispatch status and external-review handoff when applicable
+ 
+ Use the language specified in `spec.json`.
+ 
++## Shopify Binks Completion Review
++
++Every invocation of this Shopify-host skill runs in main/controller context and
++performs its own eligibility check and eligible fresh Binks review. A caller
++without delegation permission returns `MANUAL_VERIFY_REQUIRED`; it never skips
++the run or reuses a handoff from an earlier reviewer or verification invocation.
++
++1. Run `binks-review --check-repository-eligibility` in the repository before
++   dispatching. Continue only when it exits zero. The helper accepts only an
++   `origin` on the exact `github.com` host in the exact `Shopify` or `shop`
++   organization, case-insensitively.
++2. On any nonzero result, do not dispatch `binks-reviewer`. Record
++   `BINKS: SKIPPED_INELIGIBLE_REPOSITORY` and continue with the normal evidence
++   gate. This includes other GitHub organizations and every other Git forge.
++3. When eligible, dispatch exactly one fresh `binks-reviewer` subagent even if
++   the current context already contains a Binks handoff. Supply the absolute
++   repository path, exact claim, claim type, task/spec context, and intended PR
++   base when known. This protocol authorizes that one read-only run.
++4. Reproduce the returned `## External Review Handoff` in the output and record
++   `BINKS: DISPATCHED`.
++5. Independently validate the handoff. Confirmed valid findings make the claim
++   `NOT_VERIFIED`. Findings needing context make it
++   `MANUAL_VERIFY_REQUIRED`. False positives do not block verification.
++6. A failed Binks run makes the claim `MANUAL_VERIFY_REQUIRED`; identify the
++   environment or review evidence that is missing.
++7. Do not write durable run state. Each invocation intentionally starts with a
++   new eligibility check and eligible Binks run.
++
+ ## Gate Function
+ 
+ 1. Identify the exact claim.
+@@ -118,12 +149,16 @@ Return `NOT_VERIFIED` when:
+ | “The feature is done because all tasks are checked off” | `FEATURE_GO` also requires coverage, integration, and design alignment. |
+ 
+ ## Output Format
+ 
++When Binks was dispatched, reproduce its complete `## External Review Handoff`
++block immediately before the final verification result.
++
+ ```md
+ ## Verification Result
+ - STATUS: VERIFIED | NOT_VERIFIED | MANUAL_VERIFY_REQUIRED
+ - CLAIM_TYPE: TASK | FIX | TEST_OR_BUILD | FEATURE_GO
+ - CLAIM: <exact claim>
++- BINKS: DISPATCHED | SKIPPED_INELIGIBLE_REPOSITORY
+ - EVIDENCE: <command/checklist and result>
+ - GAPS: <scope/evidence mismatch or missing validation>
+ - NOTES: <next action if not verified>
+diff --git a/skills/kiro-impl/SKILL.md b/skills/kiro-impl/SKILL.md
+--- a/skills/kiro-impl/SKILL.md
++++ b/skills/kiro-impl/SKILL.md
+@@ -74,7 +74,7 @@ Execute tasks using the approved spec, one task at a time.
+ 
+ **Iteration discipline**: Process exactly ONE sub-task (e.g., 1.1) per iteration. Do NOT batch multiple sub-tasks into a single sub-agent dispatch. Each iteration follows the full cycle: dispatch implementer → review → commit → re-read tasks.md → next.
+ 
+-**Context management**: At the start of each iteration, re-read `tasks.md` to determine the next actionable sub-task. Do NOT rely on accumulated memory of previous iterations. After completing each iteration, retain only a one-line summary (e.g., "1.1: READY_FOR_REVIEW, 3 files changed") and discard the full status report and reviewer details.
++**Context management**: At the start of each iteration, re-read `tasks.md` to determine the next actionable sub-task. Do NOT rely on accumulated memory of previous iterations. During one task, retain its first `## External Review Handoff` in session context and pass it to every later reviewer round for that task. After completing the iteration, discard that handoff and retain only a one-line summary (e.g., "1.1: READY_FOR_REVIEW, 3 files changed"). Never persist Binks run state to disk.
+ 
+ If multi-agent capability is available, for each task (one at a time):
+ 
+@@ -101,2 +101,6 @@ If multi-agent capability is available, for each task (one at a time):
+ - Read `templates/reviewer-prompt.md` from this skill's directory
++- Before spawning the task reviewer, run `binks-review --check-repository-eligibility`. If eligible and no same-task handoff exists in session context, dispatch exactly one `binks-reviewer` from the parent and capture its handoff. If ineligible, capture `BINKS: SKIPPED_INELIGIBLE_REPOSITORY` without dispatching.
++- Pass the Binks status and existing or new handoff into every reviewer round for this task. If `RUN_STATUS` is `FAILED`, stop for human/environment remediation instead of sending the failure to the code implementer.
++- Keep this state only in parent session context and discard it after the task.
++- Apply the later `kiro-verify-completion` invocation in parent/main context so it can dispatch its own fresh eligible Binks run rather than reusing the task-review handoff.
+ - Construct a review prompt with:
+@@ -203,6 +206,7 @@ For tasks that add or change behavior, enforce RED → GREEN with a feature flag:
+ - **Selective Staging**: NEVER use `git add -A` or `git add .`; always stage explicit file paths
+ - **Bounded Review Rounds**: Max 2 implementer re-dispatch rounds per reviewer rejection, then debug
+ - **Bounded Debug**: Max 2 debug rounds per task (debug + re-implementation per round); if still failing → BLOCKED
++- **Ephemeral Binks State**: Retain at most one task-review handoff in current session context; never write run markers or durable state
+ - **Bounded Remediation**: Cap final-validation remediation at 3 rounds
+ 
+ ## Output Description
+diff --git a/skills/kiro-impl/templates/reviewer-prompt.md b/skills/kiro-impl/templates/reviewer-prompt.md
+--- a/skills/kiro-impl/templates/reviewer-prompt.md
++++ b/skills/kiro-impl/templates/reviewer-prompt.md
+@@ -14,11 +14,19 @@ You are an independent, adversarial reviewer. Your job is to verify that a task
+ - The implementer's status report (for reference only — do NOT trust it as source of truth)
+ - The task's `_Boundary:_` scope constraints
+ - Validation commands discovered by the controller
++- The parent-provided Binks dispatch status and first handoff for this task when eligible
+ 
+ ## First Action
+ 
+ Run `git diff` to see the actual code changes. This is your primary input. If the diff is large, also read the full changed files for context.
+ 
++## Binks Review
++
++Apply the Shopify Binks section of `kiro-review` using the status and same-task
++handoff supplied by the parent. The parent owns eligibility and dispatch; do
++not launch a nested `binks-reviewer` from this task-review subagent. Keep no
++state on disk and independently verify findings against the current worktree.
++
+ ## Core Principle
+ 
+ **Do Not Trust the Report.** Run `git diff` yourself and read the actual code changes line by line. Read the spec sections yourself. The implementer may report READY_FOR_REVIEW while the code is a stub, tests are trivial, or requirements are partially met.
+@@ -88,6 +97,9 @@ Evaluate each item. If ANY item fails, the verdict is REJECTED.
+ ## Review Verdict
+ 
+ End your response with this structured verdict:
++
++When Binks was dispatched or reused, place its complete `## External Review
++Handoff` block immediately before the final verdict block.
+ 
+ The parent controller parses the exact `- VERDICT:` line. Do NOT rename the heading, omit the block, or replace `APPROVED | REJECTED` with synonyms. Return exactly one final verdict block. Put extra explanation inside the defined sections, not after the block.
+ 
+@@ -96,6 +108,7 @@ The parent controller parses the exact `- VERDICT:` line. Do NOT rename the hea
+ ## Review Verdict
+ - VERDICT: APPROVED | REJECTED
+ - TASK: <task-id>
++- BINKS: DISPATCHED | REUSED | SKIPPED_INELIGIBLE_REPOSITORY
+ - MECHANICAL_RESULTS:
+   - Tests: PASS | FAIL (command and exit code)
+   - TBD/TODO grep: CLEAN | <count> matches

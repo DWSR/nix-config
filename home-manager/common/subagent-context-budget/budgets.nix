@@ -242,6 +242,33 @@ let
       smokeClass = "shopify-binks-override";
     })
     (mkAgent {
+      name = "binks-reviewer";
+      source = "host-markdown";
+      hostScope = "shopify";
+      state = enforced "host-override";
+      permissionBudget = {
+        read = "allow";
+        glob = "allow";
+        grep = "allow";
+        list = "allow";
+        external_directory = "allow";
+        skill = "allow";
+        bash = {
+          "*" = "deny";
+          binks-review = "allow";
+          "binks-review *" = "allow";
+          "mktemp -d *" = "allow";
+        };
+        mcpproxy_retrieve_tools = "allow";
+        mcpproxy_call_tool_read = "allow";
+      };
+      instructionProfile = "shopify-binks-local-review";
+      capabilityRationale = [
+        "local Binks execution, git-mcp reads, temporary artifact reads, and structured finding triage"
+      ];
+      smokeClass = "shopify-binks-review";
+    })
+    (mkAgent {
       name = "yb-sleuth";
       source = "host-markdown";
       hostScope = "shopify";

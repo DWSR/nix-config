@@ -14,9 +14,13 @@ own Shopify AI proxy budget.
 - An explicit `/binks-review` invocation authorizes one read-only local run.
 - An explicit request for local or pre-PR Binks review authorizes one read-only
   local run.
+- A `binks-reviewer` dispatch from the Shopify-host `kiro-review` or
+  `kiro-verify-completion` protocol authorizes that dispatch's one read-only
+  local run. The caller owns its per-task or per-invocation run limit.
 - Otherwise, explain the time and separate model cost and ask before running.
 - Never install a hook that runs Binks on every edit, commit, or push.
-- Ask before rerunning after fixes because each run incurs a new model cost.
+- Ask before rerunning after fixes unless a Shopify-host Kiro protocol dispatches
+  that run under its configured per-task or per-invocation policy.
 - Review authorization does not authorize edits or result upload. Fix findings
   only when the same request explicitly asks for fixes; otherwise report them.
 - Result upload is disabled by default. Set `BINKS_REVIEW_UPLOAD=1` only after
@@ -24,18 +28,22 @@ own Shopify AI proxy budget.
 
 ## Prepare
 
-1. Confirm `binks-review --version` succeeds. The wrapper uses only the
+1. Run `binks-review --check-repository-eligibility` in the repository. Proceed
+   only when it exits zero. It accepts only an `origin` URL on the exact
+   `github.com` host in the `Shopify` or `shop` organization. Treat an absent,
+   malformed, non-GitHub, or differently owned origin as ineligible.
+2. Confirm `binks-review --version` succeeds. The wrapper uses only the
    Nix-pinned package version and performs no hourly or periodic update. If the
    managed environment is missing, ask the user to run this command once from a
    normal host shell; OpenCode has read-only access and cannot install it.
-2. Determine the intended PR target with the approved git tooling. Use
+3. Determine the intended PR target with the approved git tooling. Use
    `origin/main` only when it is the actual target. For stacked changes, use the
    branch the current change will target.
-3. Draft a short title describing what changed and a description explaining
+4. Draft a short title describing what changed and a description explaining
    why, important tradeoffs, rollout context, and deliberate non-goals.
-4. Create an output directory under `$TMPDIR`. Do not write Binks artifacts
+5. Create an output directory under `$TMPDIR`. Do not write Binks artifacts
    into the repository because that dirties the review target.
-5. Never splice `$ARGUMENTS`, PR metadata, branch names, or source text directly
+6. Never splice `$ARGUMENTS`, PR metadata, branch names, or source text directly
    into shell syntax. Store values in shell variables and quote every expansion.
 
 ## Run
@@ -50,6 +58,11 @@ binks-review \
   --description "$description" \
   --output-dir "$output_dir"
 ```
+
+When invoked by `binks-reviewer`, add the wrapper-only `--no-upload` argument
+immediately after `binks-review`. The wrapper strips it before starting the
+upstream CLI and ignores inherited upload requests. Omit it only for a direct
+user-authorized run that separately authorizes result upload.
 
 Allow at least 15 minutes. Do not wrap the command in a short system timeout.
 
