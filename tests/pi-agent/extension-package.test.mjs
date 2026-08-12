@@ -70,6 +70,11 @@ const expectedRuntimeDependencies = {
   },
 };
 const expectedPatches = {
+  bashTimeoutManagedDefault: {
+    file: "supi-bash-timeout-managed-default.patch",
+    package: "@mrclrchtr/supi-bash-timeout@4.6.0",
+    task: "pi-agent-integration 4.6",
+  },
   planModeCooperativeState: {
     file: "pi-plan-mode-cooperative-state.patch",
     package: "@narumitw/pi-plan-mode@0.49.2",
@@ -268,7 +273,10 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
   assert.deepEqual(metadata.provenance.patches, expectedPatches);
   assert.equal(metadata.typecheckConfig.compilerOptions.noEmit, true);
   assert.equal(metadata.typecheckConfig.compilerOptions.strict, true);
-  assert.deepEqual(metadata.typecheckConfig.files, ["plan-mode/src/index.ts"]);
+  assert.deepEqual(metadata.typecheckConfig.files, [
+    "bash-timeout/src/extension.ts",
+    "plan-mode/src/index.ts",
+  ]);
   assert.match(metadata.installPhase, /typescript\/bin\/tsc/);
   assert.match(metadata.installPhase, /--project "\$typecheckDir\/tsconfig\.json"/);
   assert.equal(metadata.provenance.schemaVersion, 1);
@@ -337,11 +345,30 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
 
   const nodePtyRoot = packageDirectory(output, "node-pty");
-  const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
-  assert.deepEqual(
-    fs.readdirSync(planSourceRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
-    [],
+  const bashTimeoutSourceRoot = path.join(
+    packageDirectory(output, "@mrclrchtr/supi-bash-timeout"),
+    "src",
   );
+  const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
+  for (const sourceRoot of [bashTimeoutSourceRoot, planSourceRoot]) {
+    assert.deepEqual(
+      fs.readdirSync(sourceRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
+      [],
+    );
+  }
+  const bashTimeoutSource = fs.readFileSync(path.join(bashTimeoutSourceRoot, "bash-timeout.ts"), "utf8");
+  const managedTimeoutSource = fs.readFileSync(
+    path.join(bashTimeoutSourceRoot, "managed-timeout.ts"),
+    "utf8",
+  );
+  assert.match(bashTimeoutSource, /TIMEOUT_BINDING/);
+  assert.match(bashTimeoutSource, /pi\.on\("message_end"/);
+  assert.match(bashTimeoutSource, /item\.arguments\.timeout !== null/);
+  assert.doesNotMatch(bashTimeoutSource, /loadBashTimeoutConfig|registerBashTimeoutSettings/);
+  assert.match(managedTimeoutSource, /PI_AGENT_BASH_TIMEOUT_MS/);
+  assert.match(managedTimeoutSource, /2_147_483_647/);
+  assert.match(managedTimeoutSource, /Math\.trunc\(seconds \* 1000\)/);
+  assert.match(managedTimeoutSource, /export function parseManagedTimeoutSeconds/);
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node")), true);
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")), true);
@@ -352,7 +379,7 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
 });
 
-test("patched Plan extension typechecks against the exact Pi dependency declarations", () => {
+test("patched extensions typecheck against the exact Pi dependency declarations", () => {
   const output = buildExtensions();
   const pi = buildPi();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plan-mode-typecheck-"));
@@ -384,7 +411,10 @@ test("patched Plan extension typechecks against the exact Pi dependency declarat
       typeRoots: [path.join(pi, "lib/node_modules/@types")],
       types: ["node"],
     },
-    files: [path.join(output, expectedExtensions.plan.entryPath)],
+    files: [
+      path.join(output, expectedExtensions.bashTimeout.entryPath),
+      path.join(output, expectedExtensions.plan.entryPath),
+    ],
   };
   fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`, "utf8");
   try {

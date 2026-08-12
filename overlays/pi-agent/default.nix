@@ -97,6 +97,7 @@ let
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
+  managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   planModeTypecheckConfig = final.writeText "pi-plan-mode-tsconfig.json" (
     builtins.toJSON {
       compilerOptions = {
@@ -123,7 +124,10 @@ let
         typeRoots = [ "${final.pi-agent}/lib/node_modules/@types" ];
         types = [ "node" ];
       };
-      files = [ "plan-mode/src/index.ts" ];
+      files = [
+        "bash-timeout/src/extension.ts"
+        "plan-mode/src/index.ts"
+      ];
     }
   );
   extensionInventory = {
@@ -207,6 +211,11 @@ let
         inherit (extension) package version sourceRef;
       }) extensionInventory;
       patches = {
+        bashTimeoutManagedDefault = {
+          file = builtins.baseNameOf managedBashTimeoutPatch;
+          package = "@mrclrchtr/supi-bash-timeout@4.6.0";
+          task = "pi-agent-integration 4.6";
+        };
         planModeCooperativeState = {
           file = builtins.baseNameOf cooperativePlanModePatch;
           package = "@narumitw/pi-plan-mode@0.49.2";
@@ -327,8 +336,11 @@ in
         install -m444 managed-plan-mode.ts.in \
           node_modules/@narumitw/pi-plan-mode/src/managed-plan-mode.ts
         patch --no-backup-if-mismatch -d node_modules/@narumitw/pi-plan-mode -p1 < ${cooperativePlanModePatch}
+        patch --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-bash-timeout -p1 \
+          < ${managedBashTimeoutPatch}
 
         typecheckDir=$(mktemp -d)
+        ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
         install -Dm444 ${planModeTypecheckConfig} "$typecheckDir/tsconfig.json"

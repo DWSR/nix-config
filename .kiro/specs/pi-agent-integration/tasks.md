@@ -267,7 +267,7 @@
   - _Boundary: Home Module, Runtime Control, Credential Boundary - Bash Runtime Integration_
   - _Depends: 2.4, 2.5_
 
-- [ ] 4.6 Configure default and explicit Bash timeouts
+- [x] 4.6 Configure default and explicit Bash timeouts
   - Consume only the launcher-owned managed timeout binding, reject missing or out-of-range values, and prevent mutable Supi timeout settings from overriding it.
   - Convert managed milliseconds to Pi timeout seconds only when a Bash timeout is omitted and preserve valid explicit seconds exactly.
   - Exercise Pi built-in Bash using Task 4.5's managed runtime inputs without modifying shell or reconciliation ownership, and rely on Pi's detached process-group timeout cleanup.
@@ -601,3 +601,4 @@
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.
 - Task 4.5: The managed timeout is authoritative at 1 through 2147483647 milliseconds, travels through `PI_AGENT_BASH_TIMEOUT_MS` outside provider secrets, and the trusted shell wrapper removes that binding plus provider values before model-command execution.
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
+- Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
