@@ -70,6 +70,11 @@ const expectedRuntimeDependencies = {
   },
 };
 const expectedPatches = {
+  backgroundTasksManagedPipe: {
+    file: "pi-background-tasks-managed-pipe.patch",
+    package: "@99percentpeople/pi-background-tasks@2.0.0",
+    task: "pi-agent-integration 4.10",
+  },
   bashTimeoutManagedDefault: {
     file: "supi-bash-timeout-managed-default.patch",
     package: "@mrclrchtr/supi-bash-timeout@4.6.0",
@@ -280,6 +285,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
   assert.equal(metadata.typecheckConfig.compilerOptions.strict, true);
   assert.deepEqual(metadata.typecheckConfig.files, [
     "ask-user/src/extension.ts",
+    "background-tasks/dist/managed-environment.ts",
     "bash-timeout/src/extension.ts",
     "plan-mode/src/index.ts",
   ]);
@@ -351,6 +357,10 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
 
   const nodePtyRoot = packageDirectory(output, "node-pty");
+  const backgroundTasksRoot = packageDirectory(
+    output,
+    "@99percentpeople/pi-background-tasks",
+  );
   const bashTimeoutSourceRoot = path.join(
     packageDirectory(output, "@mrclrchtr/supi-bash-timeout"),
     "src",
@@ -360,7 +370,12 @@ test("built extension closure contains exact entries, licenses, and no commands 
     "src",
   );
   const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
-  for (const sourceRoot of [bashTimeoutSourceRoot, planSourceRoot, questionSourceRoot]) {
+  for (const sourceRoot of [
+    path.join(backgroundTasksRoot, "dist"),
+    bashTimeoutSourceRoot,
+    planSourceRoot,
+    questionSourceRoot,
+  ]) {
     assert.deepEqual(
       fs.readdirSync(sourceRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
       [],
@@ -398,6 +413,20 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(questionControllerSource, /state\.value\.trim\(\)\.length > 0/);
   assert.match(questionFormSource, /pendingTextSubmission/);
   assert.match(questionFormSource, /this\.args\.done[\s\S]+removeEventListener\("abort"/);
+  const backgroundTasksSource = fs.readFileSync(
+    path.join(backgroundTasksRoot, "dist/index.ts"),
+    "utf8",
+  );
+  const managedBackgroundEnvironmentSource = fs.readFileSync(
+    path.join(backgroundTasksRoot, "dist/managed-environment.ts"),
+    "utf8",
+  );
+  assert.match(backgroundTasksSource, /scrubManagedEnvironment\(shell\.env\)/);
+  assert.match(backgroundTasksSource, /output truncated; retained latest/);
+  assert.match(backgroundTasksSource, /stdoutTruncated/);
+  assert.match(managedBackgroundEnvironmentSource, /const ALLOW_NAMES/);
+  assert.match(managedBackgroundEnvironmentSource, /PI_AGENT_BASH_TIMEOUT_MS/);
+  assert.match(managedBackgroundEnvironmentSource, /SHOPIFY_PI_TOKEN/);
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node")), true);
   assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")), true);
@@ -444,6 +473,10 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
     },
     files: [
       path.join(output, expectedExtensions.questions.entryPath),
+      path.join(
+        output,
+        "lib/node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts",
+      ),
       path.join(output, expectedExtensions.bashTimeout.entryPath),
       path.join(output, expectedExtensions.plan.entryPath),
     ],

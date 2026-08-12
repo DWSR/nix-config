@@ -305,7 +305,7 @@
   - _Boundary: Extension Runtime — LSP_
   - _Depends: 2.5, 4.8_
 
-- [ ] 4.10 Configure managed background pipe tasks
+- [x] 4.10 Configure managed background pipe tasks
   - Expose stable task identifiers and status, bounded logs, wait, input, and termination operations.
   - Preserve deterministic ordering within each task while allowing independent tasks to run concurrently.
   - Report truncation and retain bounded operator-accessible output.
@@ -603,3 +603,4 @@
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
+- Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.

@@ -3,6 +3,10 @@ final: _prev:
 let
   system = final.stdenv.hostPlatform.system;
   supportedSystem = "aarch64-darwin";
+  credentialPolicy = import ../../home-manager/common/pi-agent/credential-policy.nix {
+    lib = final.lib;
+    pkgs = final;
+  };
   requireSupported =
     value: if system == supportedSystem then value else throw "pi-agent supports only aarch64-darwin";
   upstream = requireSupported inputs.pi-nix.packages.${system}.coding-agent;
@@ -99,6 +103,22 @@ let
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
+  managedBackgroundPipePatch = ./extensions/patches/pi-background-tasks-managed-pipe.patch;
+  managedBackgroundEnvironmentModule = final.writeText "pi-background-tasks-managed-environment.ts" ''
+    const ALLOW_NAMES: readonly string[] = ${builtins.toJSON credentialPolicy.shellAllowlist};
+    const REMOVE_NAMES = new Set<string>(${builtins.toJSON credentialPolicy.shellRemoveNames});
+
+    export function scrubManagedEnvironment(
+      environment: Readonly<Record<string, string | undefined>>,
+    ): Record<string, string> {
+      const scrubbed: Record<string, string> = {};
+      for (const name of ALLOW_NAMES) {
+        const value = environment[name];
+        if (!REMOVE_NAMES.has(name) && typeof value === "string") scrubbed[name] = value;
+      }
+      return scrubbed;
+    }
+  '';
   planModeTypecheckConfig = final.writeText "pi-plan-mode-tsconfig.json" (
     builtins.toJSON {
       compilerOptions = {
@@ -129,6 +149,7 @@ let
       };
       files = [
         "ask-user/src/extension.ts"
+        "background-tasks/dist/managed-environment.ts"
         "bash-timeout/src/extension.ts"
         "plan-mode/src/index.ts"
       ];
@@ -219,6 +240,11 @@ let
           file = builtins.baseNameOf managedBashTimeoutPatch;
           package = "@mrclrchtr/supi-bash-timeout@4.6.0";
           task = "pi-agent-integration 4.6";
+        };
+        backgroundTasksManagedPipe = {
+          file = builtins.baseNameOf managedBackgroundPipePatch;
+          package = "@99percentpeople/pi-background-tasks@2.0.0";
+          task = "pi-agent-integration 4.10";
         };
         planModeCooperativeState = {
           file = builtins.baseNameOf cooperativePlanModePatch;
@@ -349,9 +375,14 @@ in
           < ${managedBashTimeoutPatch}
         patch --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-ask-user -p1 \
           < ${structuredQuestionsPatch}
+        install -m444 ${managedBackgroundEnvironmentModule} \
+          node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts
+        patch --no-backup-if-mismatch -d node_modules/@99percentpeople/pi-background-tasks -p1 \
+          < ${managedBackgroundPipePatch}
 
         typecheckDir=$(mktemp -d)
         ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
+        ln -s "$PWD/node_modules/@99percentpeople/pi-background-tasks" "$typecheckDir/background-tasks"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
