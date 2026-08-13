@@ -366,7 +366,7 @@
   - _Boundary: Credential Boundary_
   - _Depends: 2.5_
 
-- [ ] 5.3 Validate and hand off the Shopify persisted projection
+- [x] 5.3 Validate and hand off the Shopify persisted projection
   - Validate the Task 5.2 base candidate as HTTPS without userinfo, query, or fragment.
   - Join only the fixed catalog routes while retaining the validated origin, then invoke the Task 2.2 projection factory with the generation, closed selection, and joined URLs.
   - Pass the emitted `PersistedProviderProjectionV1` unchanged to Task 2.3 reconciliation while keeping `ProviderRuntimeSecretsV1` outside that boundary.
@@ -608,3 +608,4 @@
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
 - Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.
 - Task 5.2: Embed and digest the closed execution plan; bound resolver streams while reading, kill the detached group on failure, and never echo output.
+- Task 5.3: Keep runtime secrets outside the handoff API; validate raw URL authority before WHATWG normalization and treat backslash as a path delimiter.

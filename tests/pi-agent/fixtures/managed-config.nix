@@ -252,8 +252,10 @@ let
     pi-runtime = supportedPkgs.pi-agent;
     shopify-managed-config = shopifyCfg.internal.managedConfig;
     shopify-projection-factory = shopifyCfg.internal.projectionFactory;
+    shopify-provider-handoff = shopifyCfg.internal.shopifyProviderHandoff;
     personal-managed-config = personalCfg.internal.managedConfig;
     personal-projection-factory = personalCfg.internal.projectionFactory;
+    personal-provider-handoff-is-null = personalCfg.internal.shopifyProviderHandoff == null;
     malicious-model-managed-config = maliciousModelCfg.internal.managedConfig;
     malicious-model-projection-factory = maliciousModelCfg.internal.projectionFactory;
     hostile-package-managed-config = hostilePackageCfg.internal.managedConfig;

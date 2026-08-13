@@ -396,6 +396,8 @@ in
             config.internal = {
               managedConfig = if config.enable then renderedManagedArtifacts.managedConfig else null;
               projectionFactory = if config.enable then renderedManagedArtifacts.projectionFactory else null;
+              shopifyProviderHandoff =
+                if config.enable then renderedManagedArtifacts.shopifyProviderHandoff else null;
               sandboxCatalog = if config.enable then profileCatalogRenderer.package else null;
             };
           }
@@ -605,6 +607,12 @@ in
           internal = true;
           readOnly = true;
           description = "Immutable PersistedProviderProjectionV1 factory package.";
+        };
+        internal.shopifyProviderHandoff = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable Shopify provider composition and reconciliation handoff package.";
         };
         internal.sandboxCatalog = mkOption {
           type = types.nullOr derivationPackageType;

@@ -499,10 +499,21 @@ let
         mcpEndpoint = "http://127.0.0.1:${toString cfg.mcp.port}/mcp";
         sandboxDefault = cfg.sandbox.defaultState;
       };
+      managedConfigJson = builtins.toJSON managedConfigValue;
+      managedConfig = pkgs.writeText "pi-agent-managed-config.json" managedConfigJson;
+      shopifyProviderHandoff =
+        if cfg.provider.mode == "shopify-gateway" then
+          import ../../../scripts/pi-agent-shopify-provider-handoff.nix {
+            inherit managedConfig pkgs projectionFactory;
+            managedConfigDigest = builtins.hashString "sha256" managedConfigJson;
+            projectionFactoryDigest = builtins.hashString "sha256" "${projectionFactory}/bin/pi-agent-provider-projection";
+            reconcilerModule = ../../../scripts/pi-agent-reconcile.mjs;
+          }
+        else
+          null;
     in
     {
-      managedConfig = pkgs.writeText "pi-agent-managed-config.json" (builtins.toJSON managedConfigValue);
-      inherit projectionFactory;
+      inherit managedConfig projectionFactory shopifyProviderHandoff;
     };
 in
 {
