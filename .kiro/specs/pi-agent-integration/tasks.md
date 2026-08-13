@@ -376,7 +376,7 @@
   - _Boundary: Provider Composition, Runtime Control — Integration_
   - _Depends: 2.2, 2.3, 5.2_
 
-- [ ] 5.4 Implement sandbox state and override resolution
+- [x] 5.4 Implement sandbox state and override resolution
   - Resolve host default plus `PI_NONO`, profile, listen-port, and rollback overrides.
   - Map disabled, audit, enforced, and review selections to the correct profile and final tool policy.
   - Validate explicit listen ports and reject wildcard, malformed, unknown-state, or unknown-profile input.
@@ -609,3 +609,4 @@
 - Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.
 - Task 5.2: Embed and digest the closed execution plan; bound resolver streams while reading, kill the detached group on failure, and never echo output.
 - Task 5.3: Keep runtime secrets outside the handoff API; validate raw URL authority before WHATWG normalization and treat backslash as a path delimiter.
+- Task 5.4: Host-default disabled is not rollback; disabled rejects profile/listen overrides, and ports use canonical comma-separated decimals.
