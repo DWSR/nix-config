@@ -285,7 +285,7 @@
   - _Boundary: Extension Runtime — Questions_
   - _Depends: 1.5_
 
-- [ ] 4.8 Configure managed code-intelligence capabilities
+- [x] 4.8 Configure managed code-intelligence capabilities
   - Consume only module-rendered language-server executables derived from packages plus canonical relative paths, and expose orientation, resolve, inspect, graph, find, health, and refactor-plan/apply tools.
   - Return source locations for definitions, references, implementations, hovers, symbols, and diagnostics.
   - Keep refactor preview no-write and apply as a separate operation.
@@ -604,6 +604,7 @@
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
+- Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
 - Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.

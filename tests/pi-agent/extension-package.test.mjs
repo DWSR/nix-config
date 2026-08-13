@@ -95,6 +95,11 @@ const expectedPatches = {
     package: "@mrclrchtr/supi-ask-user@4.6.0",
     task: "pi-agent-integration 4.7",
   },
+  codeIntelligenceManagedLsp: {
+    file: "supi-code-intelligence-managed-lsp.patch",
+    package: "@mrclrchtr/supi-code-intelligence@4.6.0",
+    task: "pi-agent-integration 4.8",
+  },
 };
 const expectedBackgroundTypeDiagnostics = [
   "error TS2322: Type '(value: unknown) => void' is not assignable to type '() => void'.",
@@ -312,6 +317,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "ask-user/src/extension.ts",
     "background-tasks/dist/managed-environment.ts",
     "bash-timeout/src/extension.ts",
+    "code-intelligence/src/extension.ts",
     "plan-mode/src/index.ts",
   ]);
   assert.equal(metadata.backgroundTypecheckConfig.compilerOptions.noEmit, true);
@@ -323,6 +329,10 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
   assert.match(metadata.installPhase, /typescript\/bin\/tsc/);
   assert.match(metadata.installPhase, /background-typecheck\.json/);
   assert.match(metadata.installPhase, /--project "\$typecheckDir\/tsconfig\.json"/);
+  assert.match(
+    metadata.installPhase,
+    /patch --fuzz=0 --no-backup-if-mismatch -d node_modules\/@mrclrchtr\/supi-code-intelligence/,
+  );
   assert.equal(metadata.provenance.schemaVersion, 1);
   assert.match(metadata.npmDepsHash, /^sha256-[A-Za-z0-9+/]{43}=$/);
 });
@@ -401,10 +411,16 @@ test("built extension closure contains exact entries, licenses, and no commands 
     packageDirectory(output, "@mrclrchtr/supi-ask-user"),
     "src",
   );
+  const codeIntelligenceRoot = packageDirectory(
+    output,
+    "@mrclrchtr/supi-code-intelligence",
+  );
+  const codeIntelligenceSourceRoot = path.join(codeIntelligenceRoot, "src");
   const planSourceRoot = path.join(packageDirectory(output, "@narumitw/pi-plan-mode"), "src");
   for (const sourceRoot of [
     path.join(backgroundTasksRoot, "dist"),
     bashTimeoutSourceRoot,
+    codeIntelligenceSourceRoot,
     planSourceRoot,
     questionSourceRoot,
   ]) {
@@ -445,6 +461,40 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(questionControllerSource, /state\.value\.trim\(\)\.length > 0/);
   assert.match(questionFormSource, /pendingTextSubmission/);
   assert.match(questionFormSource, /this\.args\.done[\s\S]+removeEventListener\("abort"/);
+  const managedLspSource = fs.readFileSync(
+    path.join(
+      codeIntelligenceRoot,
+      "node_modules/@mrclrchtr/supi-lsp/src/config/managed-executables.ts",
+    ),
+    "utf8",
+  );
+  assert.match(managedLspSource, /PI_AGENT_LSP_EXECUTABLES/);
+  assert.match(managedLspSource, /realpathSync\.native/);
+  assert.match(managedLspSource, /Object\.create\(null\)/);
+  assert.match(
+    managedLspSource,
+    /SAFE_SERVER_ID\.test\(name\) && Object\.hasOwn\(catalog, name\)/,
+  );
+  assert.match(managedLspSource, /package-to-ID provenance is trusted/i);
+  assert.doesNotMatch(managedLspSource, /MANAGED_CODE_INTELLIGENCE_ENABLED/);
+  const refactorApplySource = fs.readFileSync(
+    path.join(codeIntelligenceSourceRoot, "analysis/refactor/managed-apply.ts"),
+    "utf8",
+  );
+  const refactorPlanSource = fs.readFileSync(
+    path.join(codeIntelligenceSourceRoot, "session/refactor-plans.ts"),
+    "utf8",
+  );
+  assert.match(refactorApplySource, /realpathSync\.native/);
+  assert.match(refactorApplySource, /openSync/);
+  assert.match(refactorApplySource, /fchownSync/);
+  assert.match(refactorApplySource, /fchmodSync/);
+  assert.match(refactorApplySource, /fsyncSync/);
+  assert.match(refactorApplySource, /closeSync/);
+  assert.match(refactorApplySource, /renameSync/);
+  assert.match(refactorPlanSource, /randomUUID/);
+  assert.match(refactorPlanSource, /claimPlan/);
+  assert.doesNotMatch(refactorPlanSource, /Date\.now\(\).*plan|slice\(0, 12\)/s);
   const backgroundTasksSource = fs.readFileSync(
     path.join(backgroundTasksRoot, "dist/index.ts"),
     "utf8",
@@ -522,6 +572,12 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
       moduleResolution: "Node16",
       noEmit: true,
       paths: {
+        "@earendil-works/pi-ai": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-ai/dist/index.d.ts"),
+        ],
+        "@earendil-works/pi-ai/compat": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-ai/dist/compat.d.ts"),
+        ],
         "@earendil-works/pi-coding-agent": [
           path.join(pi, "lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"),
         ],
@@ -548,6 +604,7 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
         "lib/node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts",
       ),
       path.join(output, expectedExtensions.bashTimeout.entryPath),
+      path.join(output, expectedExtensions.codeIntelligence.entryPath),
       path.join(output, expectedExtensions.plan.entryPath),
     ],
   };

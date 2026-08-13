@@ -120,7 +120,8 @@ let
       return scrubbed;
     }
   '';
-  planModeTypecheckConfig = final.writeText "pi-plan-mode-tsconfig.json" (
+  managedCodeIntelligencePatch = ./extensions/patches/supi-code-intelligence-managed-lsp.patch;
+  extensionTypecheckConfig = final.writeText "pi-extension-tsconfig.json" (
     builtins.toJSON {
       compilerOptions = {
         allowImportingTsExtensions = true;
@@ -131,6 +132,12 @@ let
         moduleResolution = "Node16";
         noEmit = true;
         paths = {
+          "@earendil-works/pi-ai" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-ai/dist/index.d.ts"
+          ];
+          "@earendil-works/pi-ai/compat" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-ai/dist/compat.d.ts"
+          ];
           "@earendil-works/pi-coding-agent" = [
             "${final.pi-agent}/lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"
           ];
@@ -152,6 +159,7 @@ let
         "ask-user/src/extension.ts"
         "background-tasks/dist/managed-environment.ts"
         "bash-timeout/src/extension.ts"
+        "code-intelligence/src/extension.ts"
         "plan-mode/src/index.ts"
       ];
     }
@@ -346,6 +354,11 @@ let
           package = "@mrclrchtr/supi-ask-user@4.6.0";
           task = "pi-agent-integration 4.7";
         };
+        codeIntelligenceManagedLsp = {
+          file = builtins.baseNameOf managedCodeIntelligencePatch;
+          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+          task = "pi-agent-integration 4.8";
+        };
       };
       runtimeDependencies = extensionRuntimeDependencies;
     }
@@ -471,6 +484,8 @@ in
           < ${managedBackgroundPipePatch}
         patch --no-backup-if-mismatch -d node_modules/@99percentpeople/pi-background-tasks -p1 \
           < ${managedBackgroundPtyPatch}
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
+          < ${managedCodeIntelligencePatch}
 
         typecheckDir=$(mktemp -d)
         ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
@@ -478,10 +493,11 @@ in
         ln -s "$PWD/node_modules/@99percentpeople/pi-shared-settings" "$typecheckDir/shared-settings"
         ln -s "$PWD/node_modules/node-pty" "$typecheckDir/node-pty"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
+        ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
         ln -s "$PWD/node_modules/typebox" "$typecheckDir/typebox"
-        install -Dm444 ${planModeTypecheckConfig} "$typecheckDir/tsconfig.json"
+        install -Dm444 ${extensionTypecheckConfig} "$typecheckDir/tsconfig.json"
         install -Dm444 ${backgroundTypecheckConfig} "$typecheckDir/background-typecheck.json"
         backgroundDiagnostics="$typecheckDir/background-diagnostics.txt"
         if ${final.nodejs}/bin/node \
@@ -546,7 +562,7 @@ in
         manifest = extensionManifest;
         provenance = extensionProvenance;
         inherit backgroundTypecheckConfig;
-        typecheckConfig = planModeTypecheckConfig;
+        typecheckConfig = extensionTypecheckConfig;
       };
       meta = {
         description = "Fixed public extension closure for the managed Pi agent";
