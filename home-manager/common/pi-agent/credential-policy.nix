@@ -252,6 +252,14 @@ let
               writable: false,
               value: () => membership.values(),
             },
+            toJSON: {
+              configurable: false,
+              enumerable: false,
+              writable: false,
+              value() {
+                throw new Error("exact redaction values are not serializable");
+              },
+            },
             [Symbol.iterator]: {
               configurable: false,
               enumerable: false,

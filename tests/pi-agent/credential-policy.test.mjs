@@ -21,6 +21,7 @@ const baseSentinel = "https://task-2-5-base-sentinel.example.test";
 const firstLaunchId = "45df5e03-b165-4e14-b1b7-775cd9c038af";
 const secondLaunchId = "99319aad-1c25-4bd5-b3aa-af8fddc676f1";
 const ambientCredentialSentinel = "task-2-5-ambient-provider-sentinel";
+const exactRedactionSerializationError = "exact redaction values are not serializable";
 const shellAllowlist = [
   "COLORTERM",
   "HOME",
@@ -220,6 +221,76 @@ function assertClosedSerialization(value, sentinels) {
   }
 }
 
+function assertReadonlySecretMembership(view, expectedValues, sentinels) {
+  for (const [description, serialize] of [
+    ["direct exact-redaction view", () => JSON.stringify(view)],
+    ["nested exact-redaction view", () => JSON.stringify({ exactRedactionValues: view })],
+  ]) {
+    let serialized;
+    let serializationError;
+    try {
+      serialized = serialize();
+    } catch (error) {
+      serializationError = error;
+    }
+
+    assert.ok(
+      serializationError instanceof Error,
+      `${description} unexpectedly serialized as ${serialized}`,
+    );
+    assert.equal(serializationError.message, exactRedactionSerializationError);
+    for (const sentinel of sentinels) {
+      assert.doesNotMatch(serializationError.message, new RegExp(sentinel));
+    }
+  }
+
+  assert.equal(view instanceof Set, false);
+  assert.equal(Object.isFrozen(view), true);
+  assert.deepEqual(Object.keys(view), []);
+  assert.deepEqual(Object.getOwnPropertyNames(view).sort(), ["has", "size", "toJSON", "values"]);
+  assert.deepEqual(Reflect.ownKeys(view), ["size", "has", "values", "toJSON", Symbol.iterator]);
+  assert.equal(view.size, expectedValues.length);
+  assert.equal(typeof view.has, "function");
+  assert.equal(typeof view.values, "function");
+  assert.deepEqual([...view.values()], expectedValues);
+  assert.deepEqual([...view], expectedValues);
+  for (const expectedValue of expectedValues) {
+    assert.equal(view.has(expectedValue), true);
+  }
+  assert.equal(view.add, undefined);
+  assert.equal(view.delete, undefined);
+  assert.equal(view.clear, undefined);
+
+  const descriptors = Object.getOwnPropertyDescriptors(view);
+  assert.deepEqual(
+    {
+      configurable: descriptors.size.configurable,
+      enumerable: descriptors.size.enumerable,
+      hasSetter: descriptors.size.set !== undefined,
+    },
+    { configurable: false, enumerable: false, hasSetter: false },
+  );
+  for (const name of ["has", "values", "toJSON"]) {
+    assert.deepEqual(
+      {
+        configurable: descriptors[name].configurable,
+        enumerable: descriptors[name].enumerable,
+        writable: descriptors[name].writable,
+      },
+      { configurable: false, enumerable: false, writable: false },
+    );
+  }
+  const iteratorDescriptor = Object.getOwnPropertyDescriptor(view, Symbol.iterator);
+  assert.deepEqual(
+    {
+      configurable: iteratorDescriptor.configurable,
+      enumerable: iteratorDescriptor.enumerable,
+      writable: iteratorDescriptor.writable,
+    },
+    { configurable: false, enumerable: false, writable: false },
+  );
+}
+
 function assertNoSerializationApi(runtimeModule) {
   assert.ok(
     Object.keys(runtimeModule).every(
@@ -360,12 +431,7 @@ test("personal policy has no Shopify runtime surface and preserves an empty Pi-a
   assert.equal(runtime.mode, "personal");
   assert.deepEqual(runtime.rootPiEnvironment, {});
   assert.deepEqual(runtime.childPiEnvironment, {});
-  assert.equal(runtime.exactRedactionValues instanceof Set, false);
-  assert.equal(runtime.exactRedactionValues.size, 0);
-  assert.equal(typeof runtime.exactRedactionValues.has, "function");
-  assert.equal(runtime.exactRedactionValues.add, undefined);
-  assert.equal(runtime.exactRedactionValues.delete, undefined);
-  assert.equal(runtime.exactRedactionValues.clear, undefined);
+  assertReadonlySecretMembership(runtime.exactRedactionValues, [], [tokenSentinel, firstLaunchId]);
   assertNoSerializationApi(runtimeModule);
   assertClosedSerialization(runtime, []);
   assertClosedSerialization(runtime.rootPiEnvironment, []);
@@ -429,14 +495,11 @@ test("Shopify constructor retains token and launch UUID only in provider-capable
   });
   assert.deepEqual(runtime.childPiEnvironment, runtime.rootPiEnvironment);
   assert.notEqual(runtime.childPiEnvironment, runtime.rootPiEnvironment);
-  assert.equal(runtime.exactRedactionValues instanceof Set, false);
-  assert.equal(typeof runtime.exactRedactionValues.has, "function");
-  assert.deepEqual([...runtime.exactRedactionValues], [tokenSentinel, firstLaunchId]);
-  assert.equal(runtime.exactRedactionValues.has(tokenSentinel), true);
-  assert.equal(runtime.exactRedactionValues.has(firstLaunchId), true);
-  assert.equal(runtime.exactRedactionValues.add, undefined);
-  assert.equal(runtime.exactRedactionValues.delete, undefined);
-  assert.equal(runtime.exactRedactionValues.clear, undefined);
+  assertReadonlySecretMembership(
+    runtime.exactRedactionValues,
+    [tokenSentinel, firstLaunchId],
+    [tokenSentinel, firstLaunchId],
+  );
   assert.throws(() => Set.prototype.delete.call(runtime.exactRedactionValues, tokenSentinel));
   assert.equal(runtime.exactRedactionValues.has(tokenSentinel), true);
   assertNoSerializationApi(runtimeModule);

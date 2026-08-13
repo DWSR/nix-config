@@ -592,6 +592,7 @@
 - Task 2.3: Never claim an unowned same-ID provider, even when bytes match; same-generation projections must preserve the complete owned provider set and joined URLs.
 - Task 2.4: The approved threat model covers cooperative local `proper-lockfile` users and fail-closed behavior after detected compromise; external lock replacement before heartbeat detection is treated as host compromise, not a fencing guarantee.
 - Task 2.5: Bind package-backed `devx` through a trusted module-owned lexical output; inspecting arbitrary Nix `drvAttrs` to authenticate a package can trigger IFD or recursion.
+- Task 2.5: Frozen method-only views still stringify as `{}`; exact-redaction membership must define a non-enumerable throwing `toJSON`.
 - Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.
 - Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
 - Task 3.3: Worker lifecycle safety requires one linearized protocol across port binding, readiness, PID publication, IPC, and shutdown; the current patch still releases the listener before failed-publication cleanup and can restart past an unverified pre-ready owner.
