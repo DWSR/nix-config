@@ -346,7 +346,7 @@
 
 - [ ] 5. Compose providers, sandboxing, status, and launch behavior
 
-- [ ] 5.1 Materialize the personal provider runtime contract
+- [x] 5.1 Materialize the personal provider runtime contract
   - Consume the catalog-rendered personal projection with no provider override, endpoint, header, or Shopify resolver execution.
   - Use Pi-owned authentication and enforce `openai/gpt-5.6-sol` with `xhigh` as the managed default.
   - Preserve unrelated Pi authentication and provider state while producing the empty personal runtime-secret environment.
@@ -606,3 +606,4 @@
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
+- Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.

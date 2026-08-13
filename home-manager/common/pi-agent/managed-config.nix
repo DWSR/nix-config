@@ -322,6 +322,12 @@ let
           if (selection.defaultModel.provider !== "openai") {
             invalid("providerSelection.defaultModel.provider", "personal mode requires openai");
           }
+          if (
+            selection.defaultModel.provider + "/" + selection.defaultModel.modelId !==
+              CATALOG.defaults.personal.model
+          ) {
+            invalid("providerSelection.defaultModel", "personal mode requires the catalog default");
+          }
           requireExactKeys(input.joinedUrls, [], "joinedUrls");
           return;
         }
