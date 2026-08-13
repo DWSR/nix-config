@@ -315,7 +315,7 @@
   - _Boundary: Extension Runtime — Background_
   - _Depends: 1.5, 2.5_
 
-- [ ] 4.11 Add interactive PTY control and process-group cleanup
+- [x] 4.11 Add interactive PTY control and process-group cleanup
   - Enable attach, detach, input, signal, and kill operations for managed PTY tasks.
   - Preserve process state across detach and report final state after signal or kill.
   - Launch PTYs with the scrubbed environment and terminate the entire process group on task or session shutdown.
@@ -604,3 +604,4 @@
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
+- Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.

@@ -75,6 +75,11 @@ const expectedPatches = {
     package: "@99percentpeople/pi-background-tasks@2.0.0",
     task: "pi-agent-integration 4.10",
   },
+  backgroundTasksManagedPty: {
+    file: "pi-background-tasks-managed-pty.patch",
+    package: "@99percentpeople/pi-background-tasks@2.0.0",
+    task: "pi-agent-integration 4.11",
+  },
   bashTimeoutManagedDefault: {
     file: "supi-bash-timeout-managed-default.patch",
     package: "@mrclrchtr/supi-bash-timeout@4.6.0",
@@ -91,6 +96,23 @@ const expectedPatches = {
     task: "pi-agent-integration 4.7",
   },
 };
+const expectedBackgroundTypeDiagnostics = [
+  "error TS2322: Type '(value: unknown) => void' is not assignable to type '() => void'.",
+  "error TS2339: Property 'codePointAt' does not exist on type 'unknown'.",
+  "error TS2339: Property 'killWindowsProcessTree' does not exist on type '{}'.",
+  "error TS2339: Property 'loadConfig' does not exist on type '{}'.",
+  "error TS2339: Property 'ptySpawnProcess' does not exist on type '{}'.",
+  "error TS2339: Property 'retainForNextAgentTurn' does not exist on type 'unknown'.",
+  "error TS2339: Property 'saveConfig' does not exist on type '{}'.",
+  "error TS2339: Property 'spawnProcess' does not exist on type '{}'.",
+  "error TS2339: Property 'terminalInput' does not exist on type '{}'.",
+  "error TS2339: Property 'terminalOutput' does not exist on type '{}'.",
+  ...Array(3).fill("error TS2554: Expected 2 arguments, but got 1."),
+  ...Array(3).fill("error TS2554: Expected 3 arguments, but got 2."),
+  ...Array(3).fill("error TS2554: Expected 5 arguments, but got 3."),
+  "error TS2554: Expected 5 arguments, but got 4.",
+  ...Array(3).fill("error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?"),
+].sort();
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
@@ -245,6 +267,9 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
         typecheckConfig = builtins.fromJSON (
           builtins.unsafeDiscardStringContext (builtins.readFile package.typecheckConfig)
         );
+        backgroundTypecheckConfig = builtins.fromJSON (
+          builtins.unsafeDiscardStringContext (builtins.readFile package.backgroundTypecheckConfig)
+        );
         installPhase = package.installPhase;
         npmDepsHash = package.npmDepsHash;
       }
@@ -289,7 +314,14 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "bash-timeout/src/extension.ts",
     "plan-mode/src/index.ts",
   ]);
+  assert.equal(metadata.backgroundTypecheckConfig.compilerOptions.noEmit, true);
+  assert.equal(metadata.backgroundTypecheckConfig.compilerOptions.strict, false);
+  assert.deepEqual(metadata.backgroundTypecheckConfig.files, [
+    "background-tasks/dist/index.ts",
+    "background-tasks/dist/managed-environment.ts",
+  ]);
   assert.match(metadata.installPhase, /typescript\/bin\/tsc/);
+  assert.match(metadata.installPhase, /background-typecheck\.json/);
   assert.match(metadata.installPhase, /--project "\$typecheckDir\/tsconfig\.json"/);
   assert.equal(metadata.provenance.schemaVersion, 1);
   assert.match(metadata.npmDepsHash, /^sha256-[A-Za-z0-9+/]{43}=$/);
@@ -422,15 +454,53 @@ test("built extension closure contains exact entries, licenses, and no commands 
     "utf8",
   );
   assert.match(backgroundTasksSource, /scrubManagedEnvironment\(shell\.env\)/);
+  assert.match(backgroundTasksSource, /const ptyEnvironment = scrubManagedEnvironment\(shell\.env\)/);
+  assert.match(backgroundTasksSource, /env: ptyEnvironment/);
+  assert.match(backgroundTasksSource, /const processGroupId = process\.platform !== "win32"[\s\S]+taskProcess\.kind === "pty"/);
+  assert.match(backgroundTasksSource, /function resolveLocalProcessGroupOperations/);
+  assert.match(backgroundTasksSource, /Object\.freeze\(\{ probe, signal \}\)/);
+  assert.match(backgroundTasksSource, /processGroupOperations: processGroupId === null \? null : localProcessGroupOperations/);
+  assert.match(backgroundTasksSource, /process\.kill\(-processGroupId, 0\)/);
+  assert.match(backgroundTasksSource, /process\.kill\(-processGroupId, processSignal\)/);
+  assert.match(backgroundTasksSource, /async function waitForLocalProcessGroupEnd/);
+  assert.match(backgroundTasksSource, /function startLocalProcessGroupCleanup/);
+  assert.match(backgroundTasksSource, /async function terminateLocalProcessGroup/);
+  assert.match(backgroundTasksSource, /async function settleReleasedLocalTask/);
+  assert.match(backgroundTasksSource, /groupAlreadyReleased: true, signalDelivered: false/);
+  assert.match(
+    backgroundTasksSource,
+    /const finalState = await settleReleasedLocalTask[\s\S]+return \{[\s\S]+\.\.\.cleanup,[\s\S]+\.\.\.finalState,/,
+  );
+  assert.match(backgroundTasksSource, /assertLocalProcessGroupReleased\(task, "restore over"\)/);
+  assert.match(backgroundTasksSource, /assertLocalProcessGroupReleased\(task, "discard"\)/);
+  assert.match(backgroundTasksSource, /await startLocalProcessGroupCleanup\(task/);
+  assert.match(
+    backgroundTasksSource,
+    /async function sendProcessSignal[\s\S]+await settleReleasedLocalTask\(task, 3000\)/,
+  );
+  assert.match(backgroundTasksSource, /Timed out waiting for task/);
+  assert.match(backgroundTasksSource, /Status: \$\{task\.status\}/);
+  assert.doesNotMatch(backgroundTasksSource, /PI_AGENT_TASK_4_11_MANAGED_PTY/);
   assert.match(backgroundTasksSource, /output truncated; retained latest/);
   assert.match(backgroundTasksSource, /stdoutTruncated/);
   assert.match(managedBackgroundEnvironmentSource, /const ALLOW_NAMES/);
   assert.match(managedBackgroundEnvironmentSource, /PI_AGENT_BASH_TIMEOUT_MS/);
   assert.match(managedBackgroundEnvironmentSource, /SHOPIFY_PI_TOKEN/);
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
-  assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node")), true);
-  assert.equal(fs.existsSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")), true);
-  assert.ok((fs.statSync(path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper")).mode & 0o111) !== 0);
+  const ptyNode = path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node");
+  const spawnHelper = path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper");
+  assert.equal(
+    path.relative(output, ptyNode),
+    "lib/node_modules/node-pty/prebuilds/darwin-arm64/pty.node",
+  );
+  assert.equal(
+    path.relative(output, spawnHelper),
+    "lib/node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper",
+  );
+  assert.equal(fs.statSync(ptyNode).isFile(), true);
+  assert.equal(fs.statSync(spawnHelper).isFile(), true);
+  assert.equal(fs.statSync(ptyNode).mode & 0o777, 0o444);
+  assert.equal(fs.statSync(spawnHelper).mode & 0o777, 0o555);
   assertMitText(
     path.join(output, "share/licenses/pi-agent-extensions/nodePty/LICENSE"),
     "node-pty",
@@ -489,6 +559,78 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
       commandOptions,
     );
     assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("patched background source adds no diagnostics beyond the reviewed bundled baseline", () => {
+  const output = buildExtensions();
+  const pi = buildPi();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-background-typecheck-"));
+  const configPath = path.join(root, "tsconfig.json");
+  const config = {
+    compilerOptions: {
+      allowImportingTsExtensions: true,
+      baseUrl: path.join(output, "lib/node_modules"),
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      lib: ["ES2023"],
+      module: "Node16",
+      moduleResolution: "Node16",
+      noEmit: true,
+      paths: {
+        "@earendil-works/pi-ai": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-ai/dist/index.d.ts"),
+        ],
+        "@earendil-works/pi-ai/compat": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-ai/dist/compat.d.ts"),
+        ],
+        "@earendil-works/pi-coding-agent": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"),
+        ],
+        "@earendil-works/pi-tui": [
+          path.join(pi, "lib/node_modules/@earendil-works/pi-tui/index.d.ts"),
+        ],
+        "@narumitw/pi-tui-kit": [
+          path.join(output, "lib/node_modules/@narumitw/pi-tui-kit/dist/index.d.ts"),
+        ],
+        "@99percentpeople/pi-shared-settings": [
+          path.join(output, "lib/node_modules/@99percentpeople/pi-shared-settings/dist/index.d.ts"),
+        ],
+        "node-pty": [path.join(output, "lib/node_modules/node-pty/typings/node-pty.d.ts")],
+        typebox: [path.join(output, "lib/node_modules/typebox/build/index.d.mts")],
+        "typebox/*": [path.join(output, "lib/node_modules/typebox/build/*/index.d.mts")],
+      },
+      resolveJsonModule: true,
+      skipLibCheck: true,
+      strict: false,
+      target: "ES2023",
+      typeRoots: [path.join(pi, "lib/node_modules/@types")],
+      types: ["node"],
+    },
+    files: [
+      path.join(output, expectedExtensions.backgroundTasks.entryPath),
+      path.join(
+        output,
+        "lib/node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts",
+      ),
+    ],
+  };
+  fs.writeFileSync(configPath, `${JSON.stringify(config)}\n`, "utf8");
+  try {
+    const result = childProcess.spawnSync(
+      process.execPath,
+      [path.join(pi, "lib/node_modules/typescript/bin/tsc"), "--pretty", "false", "--project", configPath],
+      commandOptions,
+    );
+    const diagnostics = result.stdout
+      .split("\n")
+      .map((line) => line.match(/error TS\d+: .*/)?.[0])
+      .filter(Boolean)
+      .sort();
+    assert.equal(result.status, 2, `${result.stdout}${result.stderr}`);
+    assert.deepEqual(diagnostics, expectedBackgroundTypeDiagnostics);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

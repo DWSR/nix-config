@@ -104,6 +104,7 @@ let
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
   managedBackgroundPipePatch = ./extensions/patches/pi-background-tasks-managed-pipe.patch;
+  managedBackgroundPtyPatch = ./extensions/patches/pi-background-tasks-managed-pty.patch;
   managedBackgroundEnvironmentModule = final.writeText "pi-background-tasks-managed-environment.ts" ''
     const ALLOW_NAMES: readonly string[] = ${builtins.toJSON credentialPolicy.shellAllowlist};
     const REMOVE_NAMES = new Set<string>(${builtins.toJSON credentialPolicy.shellRemoveNames});
@@ -155,6 +156,90 @@ let
       ];
     }
   );
+  backgroundTypecheckExpectedDiagnostics = [
+    "error TS2322: Type '(value: unknown) => void' is not assignable to type '() => void'."
+    "error TS2339: Property 'codePointAt' does not exist on type 'unknown'."
+    "error TS2339: Property 'killWindowsProcessTree' does not exist on type '{}'."
+    "error TS2339: Property 'loadConfig' does not exist on type '{}'."
+    "error TS2339: Property 'ptySpawnProcess' does not exist on type '{}'."
+    "error TS2339: Property 'retainForNextAgentTurn' does not exist on type 'unknown'."
+    "error TS2339: Property 'saveConfig' does not exist on type '{}'."
+    "error TS2339: Property 'spawnProcess' does not exist on type '{}'."
+    "error TS2339: Property 'terminalInput' does not exist on type '{}'."
+    "error TS2339: Property 'terminalOutput' does not exist on type '{}'."
+    "error TS2554: Expected 2 arguments, but got 1."
+    "error TS2554: Expected 2 arguments, but got 1."
+    "error TS2554: Expected 2 arguments, but got 1."
+    "error TS2554: Expected 3 arguments, but got 2."
+    "error TS2554: Expected 3 arguments, but got 2."
+    "error TS2554: Expected 3 arguments, but got 2."
+    "error TS2554: Expected 5 arguments, but got 3."
+    "error TS2554: Expected 5 arguments, but got 3."
+    "error TS2554: Expected 5 arguments, but got 3."
+    "error TS2554: Expected 5 arguments, but got 4."
+    "error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?"
+    "error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?"
+    "error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?"
+  ];
+  backgroundTypecheckConfig = final.writeText "pi-background-typecheck-tsconfig.json" (
+    builtins.toJSON {
+      compilerOptions = {
+        allowImportingTsExtensions = true;
+        baseUrl = ".";
+        esModuleInterop = true;
+        forceConsistentCasingInFileNames = true;
+        lib = [ "ES2023" ];
+        module = "Node16";
+        moduleResolution = "Node16";
+        noEmit = true;
+        paths = {
+          "@earendil-works/pi-ai" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-ai/dist/index.d.ts"
+          ];
+          "@earendil-works/pi-ai/compat" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-ai/dist/compat.d.ts"
+          ];
+          "@earendil-works/pi-coding-agent" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-coding-agent/index.d.ts"
+          ];
+          "@earendil-works/pi-tui" = [
+            "${final.pi-agent}/lib/node_modules/@earendil-works/pi-tui/index.d.ts"
+          ];
+          "@narumitw/pi-tui-kit" = [ "pi-tui-kit/dist/index.d.ts" ];
+          "@99percentpeople/pi-shared-settings" = [ "shared-settings/dist/index.d.ts" ];
+          "node-pty" = [ "node-pty/typings/node-pty.d.ts" ];
+          "typebox" = [ "typebox/build/index.d.mts" ];
+          "typebox/*" = [ "typebox/build/*/index.d.mts" ];
+        };
+        resolveJsonModule = true;
+        skipLibCheck = true;
+        strict = false;
+        target = "ES2023";
+        typeRoots = [ "${final.pi-agent}/lib/node_modules/@types" ];
+        types = [ "node" ];
+      };
+      files = [
+        "background-tasks/dist/index.ts"
+        "background-tasks/dist/managed-environment.ts"
+      ];
+    }
+  );
+  backgroundTypecheckRenderer = final.writeText "pi-background-typecheck-render.mjs" ''
+    import fs from "node:fs";
+
+    const [diagnosticsPath, statusText] = process.argv.slice(2);
+    const expected = ${builtins.toJSON backgroundTypecheckExpectedDiagnostics}.sort();
+    const diagnostics = fs.readFileSync(diagnosticsPath, "utf8");
+    const actual = diagnostics
+      .split("\n")
+      .map((line) => line.match(/error TS\d+: .*/)?.[0])
+      .filter(Boolean)
+      .sort();
+    if (Number(statusText) !== 2 || JSON.stringify(actual) !== JSON.stringify(expected)) {
+      process.stderr.write(diagnostics);
+      throw new Error("background task TypeScript diagnostics changed from the reviewed bundled baseline");
+    }
+  '';
   extensionInventory = {
     mcp = {
       package = "pi-mcp-adapter";
@@ -245,6 +330,11 @@ let
           file = builtins.baseNameOf managedBackgroundPipePatch;
           package = "@99percentpeople/pi-background-tasks@2.0.0";
           task = "pi-agent-integration 4.10";
+        };
+        backgroundTasksManagedPty = {
+          file = builtins.baseNameOf managedBackgroundPtyPatch;
+          package = "@99percentpeople/pi-background-tasks@2.0.0";
+          task = "pi-agent-integration 4.11";
         };
         planModeCooperativeState = {
           file = builtins.baseNameOf cooperativePlanModePatch;
@@ -379,15 +469,32 @@ in
           node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts
         patch --no-backup-if-mismatch -d node_modules/@99percentpeople/pi-background-tasks -p1 \
           < ${managedBackgroundPipePatch}
+        patch --no-backup-if-mismatch -d node_modules/@99percentpeople/pi-background-tasks -p1 \
+          < ${managedBackgroundPtyPatch}
 
         typecheckDir=$(mktemp -d)
         ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
         ln -s "$PWD/node_modules/@99percentpeople/pi-background-tasks" "$typecheckDir/background-tasks"
+        ln -s "$PWD/node_modules/@99percentpeople/pi-shared-settings" "$typecheckDir/shared-settings"
+        ln -s "$PWD/node_modules/node-pty" "$typecheckDir/node-pty"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
         ln -s "$PWD/node_modules/typebox" "$typecheckDir/typebox"
         install -Dm444 ${planModeTypecheckConfig} "$typecheckDir/tsconfig.json"
+        install -Dm444 ${backgroundTypecheckConfig} "$typecheckDir/background-typecheck.json"
+        backgroundDiagnostics="$typecheckDir/background-diagnostics.txt"
+        if ${final.nodejs}/bin/node \
+          ${final.pi-agent}/lib/node_modules/typescript/bin/tsc \
+          --pretty false \
+          --project "$typecheckDir/background-typecheck.json" \
+          > "$backgroundDiagnostics" 2>&1; then
+          backgroundTypecheckStatus=0
+        else
+          backgroundTypecheckStatus=$?
+        fi
+        ${final.nodejs}/bin/node ${backgroundTypecheckRenderer} \
+          "$backgroundDiagnostics" "$backgroundTypecheckStatus"
         ${final.nodejs}/bin/node \
           ${final.pi-agent}/lib/node_modules/typescript/bin/tsc \
           --project "$typecheckDir/tsconfig.json"
@@ -438,6 +545,7 @@ in
       passthru = {
         manifest = extensionManifest;
         provenance = extensionProvenance;
+        inherit backgroundTypecheckConfig;
         typecheckConfig = planModeTypecheckConfig;
       };
       meta = {
