@@ -356,7 +356,7 @@
   - _Boundary: Provider Composition — Personal_
   - _Depends: 2.2, 2.5_
 
-- [ ] 5.2 Execute Shopify resolver plans and construct runtime secrets
+- [x] 5.2 Execute Shopify resolver plans and construct runtime secrets
   - Execute only the package-backed base and token plans from Task 2.5 with their fixed launcher-owned argv and bounded timeouts; personal mode executes none.
   - Validate process status and bounded outputs, require one non-empty token, generate a fresh launch UUID, and invoke the Task 2.5 constructor to produce validated `ProviderRuntimeSecretsV1`.
   - Return the resolved base candidate separately for Task 5.3 without joining routes or defining catalog, projection, or environment-partition behavior.
@@ -607,3 +607,4 @@
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
 - Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.
+- Task 5.2: Embed and digest the closed execution plan; bound resolver streams while reading, kill the detached group on failure, and never echo output.

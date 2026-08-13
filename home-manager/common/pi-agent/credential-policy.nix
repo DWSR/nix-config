@@ -416,10 +416,31 @@ let
           }
         else
           throw "pi-agent credential policy received a resolver plan outside the closed plan set";
+      runtimeModule = renderRuntimeModule hostSelection.mode resolverPlans;
+      executionPlans = map (
+        plan:
+        let
+          invocation = launcherInvocation plan;
+        in
+        {
+          inherit (plan) kind;
+          executable = if invocation == null then null else invocation.executable;
+          argv = if invocation == null then null else invocation.argv;
+        }
+      ) resolverPlans;
+      executionPlanDigest = builtins.hashString "sha256" (builtins.toJSON executionPlans);
+      resolverExecutor = import ../../../scripts/pi-agent-credential-resolver.nix {
+        inherit executionPlanDigest executionPlans pkgs;
+        credentialRuntimeModule = runtimeModule;
+      };
     in
     {
-      inherit launcherInvocation resolverPlans;
-      runtimeModule = renderRuntimeModule hostSelection.mode resolverPlans;
+      inherit
+        launcherInvocation
+        resolverExecutor
+        resolverPlans
+        runtimeModule
+        ;
     };
 in
 {
