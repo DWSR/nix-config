@@ -44,10 +44,17 @@ function filteredFlakeExpression(body) {
       };
       flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      integrationPatchNames = [
+        "cavemem-pi-full-privacy-v1.patch"
+        "cavemem-pi-full-storage-policy-v1.patch"
+        "cavemem-pi-full-storage-limit-v1.patch"
+      ];
       cavememWithPrivacy = pkgs.cavemem.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ [
-          (source + "/overlays/cavemem-pi-full-privacy-v1.patch")
-        ];
+        patches =
+          builtins.filter
+            (patch: !(builtins.elem (builtins.baseNameOf (toString patch)) integrationPatchNames))
+            (old.patches or [ ])
+          ++ [ (source + "/overlays/cavemem-pi-full-privacy-v1.patch") ];
       });
     in
       ${body}

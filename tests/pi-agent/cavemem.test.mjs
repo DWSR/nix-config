@@ -293,7 +293,7 @@ test("pi-full-v1 rejects unknown canonical keys without a row", async (t) => {
     {
       name: "unknown envelope key",
       payload: { session_id: "invalid", ...valid, unexpected: "discarded" },
-      error: /pi-full-v1 envelope contains unknown field: unexpected/,
+      error: /pi-full-v1 unknown-field rule failed at envelope/,
     },
     {
       name: "unknown output key",
@@ -302,7 +302,7 @@ test("pi-full-v1 rejects unknown canonical keys without a row", async (t) => {
         ...valid,
         output: { ...valid.output, unexpected: "discarded" },
       },
-      error: /pi-full-v1 output contains unknown field: unexpected/,
+      error: /pi-full-v1 unknown-field rule failed at output/,
     },
   ];
 
@@ -321,6 +321,7 @@ test("pi-full-v1 rejects unknown canonical keys without a row", async (t) => {
         );
         assert.equal(result.stdout, "", fixture.name);
         assert.match(result.stderr, fixture.error, fixture.name);
+        assert.equal(result.stderr.includes("unexpected"), false, fixture.name);
         assert.equal(result.stderr.includes("discarded"), false, fixture.name);
       });
     });

@@ -43,10 +43,17 @@ function filteredFlakeExpression(body) {
       };
       flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      integrationPatchNames = [
+        "cavemem-pi-full-privacy-v1.patch"
+        "cavemem-pi-full-storage-policy-v1.patch"
+        "cavemem-pi-full-storage-limit-v1.patch"
+      ];
       cavememWithStoragePolicy = pkgs.cavemem.overrideAttrs (old: {
-        patches = (old.patches or [ ]) ++ [
-          (source + "/overlays/cavemem-pi-full-storage-policy-v1.patch")
-        ];
+        patches =
+          builtins.filter
+            (patch: !(builtins.elem (builtins.baseNameOf (toString patch)) integrationPatchNames))
+            (old.patches or [ ])
+          ++ [ (source + "/overlays/cavemem-pi-full-storage-policy-v1.patch") ];
       });
     in
       ${body}
@@ -904,7 +911,7 @@ function embeddingRows(dataDir) {
   );
 }
 
-test("storage policy patch is independent from privacy, schema, and production wiring", () => {
+test("storage policy patch is independent from privacy and schema", () => {
   assert.match(process.execPath, /^\/nix\/store\//);
   const patch = fs.readFileSync(patchPath, "utf8");
   const changedPaths = [
@@ -930,14 +937,6 @@ test("storage policy patch is independent from privacy, schema, and production w
   assert.doesNotMatch(
     addedCode,
     /redact|privacy|captureMode|PiFullToolObservation|SCHEMA_SQL|CREATE TABLE|ALTER TABLE/i,
-  );
-  const productionOverlay = fs.readFileSync(
-    path.join(repoRoot, "overlays/mcp-servers.nix"),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    productionOverlay,
-    /cavemem-pi-full-(?:privacy|storage-policy)-v1\.patch/,
   );
 });
 

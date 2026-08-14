@@ -137,12 +137,12 @@ in
       hash = "sha256-0YkpwaBYyH/nJCV0Y2EvaFL1KEvVtgf/tN2h1azwdNg=";
     };
 
-    # Bug-fix patches cherry-picked from upstream PRs against the
-    # v0.2.1 source tree, plus repository-owned data-dir and Pi full-payload
-    # patches. Keep the Pi patch last: it extends core/memory-store.ts after
-    # the project-scoped search patch. The data-dir patch is what makes
-    # `home.cavemem.dataDir` in the home-manager module actually take effect
-    # (cavemem v0.2.1 has no other override mechanism for the hardcoded
+    # Bug-fix patches cherry-picked from upstream PRs against the v0.2.1
+    # source tree, plus repository-owned data-dir and Pi full-mode patches.
+    # Keep the Pi stack ordered payload, privacy, storage policy, then the
+    # integration-owned storage-limit diagnostic. The data-dir patch is what
+    # makes `home.cavemem.dataDir` in the home-manager module actually take
+    # effect (cavemem v0.2.1 has no other override mechanism for the hardcoded
     # `~/.cavemem` path).
     patches = [
       ./cavemem-14-hook-payload-shape.patch
@@ -150,6 +150,9 @@ in
       ./cavemem-25-search-alpha-doc.patch
       ./cavemem-data-dir-env.patch
       ./cavemem-pi-full-payload-v1.patch
+      ./cavemem-pi-full-privacy-v1.patch
+      ./cavemem-pi-full-storage-policy-v1.patch
+      ./cavemem-pi-full-storage-limit-v1.patch
     ];
 
     pnpmDeps = final.fetchPnpmDeps {

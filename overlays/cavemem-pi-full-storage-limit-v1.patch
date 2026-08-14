@@ -1,0 +1,92 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DWSR nix-config <noreply@local>
+Date: Fri, 14 Aug 2026 12:00:00 -0400
+Subject: [PATCH] cavemem: report the active full-row storage limit
+
+Written for pi-agent-integration task 3.4 against Cavemem v0.2.1,
+commit e934e436e0dcb68422475d85385f7f8eb5e449b1, after the repository's
+pi-full-v1 payload, privacy, and storage-policy patches.
+
+Translate SQLITE_TOOBIG from an uncompressed full-row insert into a
+value-free diagnostic that names the active SQLite compile boundary. The
+failed INSERT and its FTS trigger remain one atomic SQLite statement, so no
+partial observation is retained. Default compressed observations preserve
+their existing error path.
+---
+ packages/storage/src/storage.ts | 56 ++++++++++++++++++++++++++++++++--------
+ 1 file changed, 46 insertions(+), 10 deletions(-)
+
+diff --git a/packages/storage/src/storage.ts b/packages/storage/src/storage.ts
+--- a/packages/storage/src/storage.ts
++++ b/packages/storage/src/storage.ts
+@@ -47,15 +47,26 @@ export class Storage {
+       'INSERT INTO observations(session_id, kind, content, compressed, intensity, ts, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)',
+     );
+-    const info = stmt.run(
+-      o.session_id,
+-      o.kind,
+-      o.content,
+-      o.compressed ? 1 : 0,
+-      o.intensity,
+-      ts,
+-      o.metadata ? JSON.stringify(o.metadata) : null,
+-    );
+-    return Number(info.lastInsertRowid);
++    try {
++      const info = stmt.run(
++        o.session_id,
++        o.kind,
++        o.content,
++        o.compressed ? 1 : 0,
++        o.intensity,
++        ts,
++        o.metadata ? JSON.stringify(o.metadata) : null,
++      );
++      return Number(info.lastInsertRowid);
++    } catch (error) {
++      if (!o.compressed && isSqliteTooBig(error)) {
++        const maximum = sqliteMaximumValueLength(this.db);
++        const boundary = maximum === null ? 'SQLITE_MAX_LENGTH' : `SQLITE_MAX_LENGTH=${maximum}`;
++        throw new Error(
++          `pi-full-v1 storage limit exceeded at active SQLite boundary ${boundary}`,
++        );
++      }
++      throw error;
++    }
+   }
+ 
+   getObservations(ids: number[]): ObservationRow[] {
+@@ -291,6 +302,31 @@ export class Storage {
+   }
+ }
+ 
++function isSqliteTooBig(error: unknown): boolean {
++  return (
++    typeof error === 'object' &&
++    error !== null &&
++    'code' in error &&
++    (error as { code?: unknown }).code === 'SQLITE_TOOBIG'
++  );
++}
++
++function sqliteMaximumValueLength(db: Database.Database): number | null {
++  try {
++    const options = db.pragma('compile_options') as Array<{ compile_options?: unknown }>;
++    for (const option of options) {
++      if (typeof option.compile_options !== 'string') continue;
++      const match = /^MAX_LENGTH=(\d+)$/.exec(option.compile_options);
++      if (match === null) continue;
++      const maximum = Number(match[1]);
++      return Number.isSafeInteger(maximum) && maximum > 0 ? maximum : null;
++    }
++  } catch {
++    // The symbolic boundary below remains actionable if introspection fails.
++  }
++  return null;
++}
++
+ function sanitizeMatch(q: string): string {
+   // Escape double quotes and wrap each bare term to avoid FTS5 syntax errors.
+   return q
+-- 
+2.51.0

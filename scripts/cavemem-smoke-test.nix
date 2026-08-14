@@ -162,6 +162,73 @@ writeShellApplication {
     fi
 
     # ----------------------------------------------------------------
+    # Pi default mode: omission preserves compressed legacy behavior
+    # ----------------------------------------------------------------
+    pi_default_prefix=$(printf 'D%.0s' {1..600})
+    pi_default_payload=$(jq -nc \
+      --arg marker "${"$"}pi_default_prefix-default-tail" '
+      {
+        session_id: "pi-default-mode-session",
+        tool_name: "Read",
+        tool_input: { marker: $marker },
+        tool_response: { status: "ok" }
+      }')
+
+    if ! printf '%s' "${"$"}pi_default_payload" \
+      | cavemem hook run post-tool-use --ide opencode >/dev/null 2>&1; then
+      echo "FAIL: pi-default-mode: omitted capture mode exited non-zero" >&2
+      fail_labels+=("pi-default-mode")
+    else
+      pi_default_state=$(sqlite3 "${"$"}tmpdir/data.db" \
+        "SELECT compressed || '|' || COALESCE(intensity, 'NULL')
+         FROM observations WHERE session_id = 'pi-default-mode-session';" \
+        2>/dev/null || true)
+      pi_default_content=$(sqlite3 "${"$"}tmpdir/data.db" \
+        "SELECT content FROM observations
+         WHERE session_id = 'pi-default-mode-session';" \
+        2>/dev/null || true)
+      if [ "${"$"}pi_default_state" != "1|full" ]; then
+        echo "FAIL: pi-default-mode: expected compressed=1 and intensity=full" >&2
+        fail_labels+=("pi-default-mode")
+      elif printf '%s' "${"$"}pi_default_content" | grep -qF "default-tail"; then
+        echo "FAIL: pi-default-mode: legacy 500-character truncation was bypassed" >&2
+        fail_labels+=("pi-default-mode")
+      else
+        echo "OK: pi-default-mode"
+      fi
+    fi
+
+    # ----------------------------------------------------------------
+    # Pi invalid mode: fail before inserting any observation
+    # ----------------------------------------------------------------
+    pi_invalid_before=$(sqlite3 "${"$"}tmpdir/data.db" \
+      "SELECT COUNT(*) FROM observations;" 2>/dev/null || true)
+    pi_invalid_stdout="${"$"}tmpdir/pi-invalid-stdout.txt"
+    pi_invalid_stderr="${"$"}tmpdir/pi-invalid-stderr.txt"
+    if printf '%s' "${"$"}pi_default_payload" \
+      | cavemem hook run post-tool-use --ide pi --capture-mode pi-full-v2 \
+        >"${"$"}pi_invalid_stdout" 2>"${"$"}pi_invalid_stderr"; then
+      echo "FAIL: pi-invalid-mode: unsupported mode exited zero" >&2
+      fail_labels+=("pi-invalid-mode")
+    else
+      pi_invalid_after=$(sqlite3 "${"$"}tmpdir/data.db" \
+        "SELECT COUNT(*) FROM observations;" 2>/dev/null || true)
+      if [ "${"$"}pi_invalid_after" != "${"$"}pi_invalid_before" ]; then
+        echo "FAIL: pi-invalid-mode: unsupported mode inserted an observation" >&2
+        fail_labels+=("pi-invalid-mode")
+      elif [ -s "${"$"}pi_invalid_stdout" ]; then
+        echo "FAIL: pi-invalid-mode: unsupported mode wrote protocol output" >&2
+        fail_labels+=("pi-invalid-mode")
+      elif ! grep -qF '"error":"unknown capture mode pi-full-v2"' \
+        "${"$"}pi_invalid_stderr"; then
+        echo "FAIL: pi-invalid-mode: expected diagnostic was absent" >&2
+        fail_labels+=("pi-invalid-mode")
+      else
+        echo "OK: pi-invalid-mode"
+      fi
+    fi
+
+    # ----------------------------------------------------------------
     # bug-39: session-start hints scoped to current cwd (Req 9.2)
     # ----------------------------------------------------------------
     # The patched session-start handler (overlays/cavemem-39-session-
