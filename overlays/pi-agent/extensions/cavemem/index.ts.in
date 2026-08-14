@@ -1,0 +1,320 @@
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+export type CavememHookName =
+	| "session-start"
+	| "user-prompt-submit"
+	| "stop"
+	| "session-end";
+
+export interface CavememHookRequest {
+	name: CavememHookName;
+	payload: Record<string, unknown>;
+	cwd: string;
+}
+
+export type CavememHookRunner = (request: CavememHookRequest) => Promise<void>;
+
+export interface CavememBridgeOptions {
+	command?: string;
+	killGraceMs?: number;
+	noProgressMs?: number;
+	runHook?: CavememHookRunner;
+}
+
+export const CAVEMEM_COMMAND = "@cavemem@";
+
+const DEFAULT_KILL_GRACE_MS = 1_000;
+const DEFAULT_NO_PROGRESS_MS = 15_000;
+
+type CaptureFailureKind =
+	| "completion-timeout"
+	| "exit"
+	| "hook"
+	| "quiescence-timeout"
+	| "serialize"
+	| "spawn"
+	| "startup-timeout"
+	| "stdin"
+	| "stdin-timeout";
+
+class CaptureFailure extends Error {
+	readonly hook: CavememHookName;
+	readonly kind: CaptureFailureKind;
+
+	constructor(hook: CavememHookName, kind: CaptureFailureKind) {
+		super(captureDiagnostic(hook, kind));
+		this.name = "CaptureFailure";
+		this.hook = hook;
+		this.kind = kind;
+	}
+}
+
+export function createCavememBridge(options: CavememBridgeOptions = {}) {
+	const runHook =
+		options.runHook ??
+		createProcessHookRunner(
+			options.command ?? CAVEMEM_COMMAND,
+			positiveMilliseconds(options.noProgressMs, DEFAULT_NO_PROGRESS_MS),
+			positiveMilliseconds(options.killGraceMs, DEFAULT_KILL_GRACE_MS),
+		);
+
+	return function cavememBridge(pi: ExtensionAPI): void {
+		let tail: Promise<void> = Promise.resolve();
+
+		const enqueue = async (
+			request: CavememHookRequest,
+			ctx: ExtensionContext,
+		): Promise<void> => {
+			const operation = tail.then(() => runHook(request));
+			tail = operation.catch(() => undefined);
+			try {
+				await operation;
+			} catch (error: unknown) {
+				const failure =
+					error instanceof CaptureFailure
+						? error
+						: new CaptureFailure(request.name, "hook");
+				ctx.ui.notify(failure.message, "error");
+				throw failure;
+			}
+		};
+
+		pi.on("session_start", async (event, ctx) => {
+			const request = lifecycleRequest(ctx, "session-start", { source: event.reason });
+			await enqueue(request, ctx);
+		});
+
+		pi.on("input", async (event, ctx) => {
+			if (event.text.trim().length === 0) return;
+			const request = lifecycleRequest(ctx, "user-prompt-submit", { prompt: event.text });
+			await enqueue(request, ctx);
+		});
+
+		pi.on("turn_end", async (event, ctx) => {
+			const request = lifecycleRequest(ctx, "stop", {
+				last_assistant_message: visibleAssistantText(event.message),
+			});
+			await enqueue(request, ctx);
+		});
+
+		pi.on("session_before_compact", async () => {
+			await tail;
+		});
+
+		pi.on("session_shutdown", async (event, ctx) => {
+			if (event.reason === "reload") {
+				await tail;
+				return;
+			}
+			const request = lifecycleRequest(ctx, "session-end");
+			await enqueue(request, ctx);
+		});
+	};
+}
+
+export default createCavememBridge();
+
+function lifecycleRequest(
+	ctx: { cwd: string; sessionManager: { getSessionId(): string } },
+	name: CavememHookName,
+	extra: Record<string, unknown> = {},
+): CavememHookRequest {
+	return {
+		name,
+		cwd: ctx.cwd,
+		payload: {
+			session_id: ctx.sessionManager.getSessionId(),
+			cwd: ctx.cwd,
+			...extra,
+		},
+	};
+}
+
+function visibleAssistantText(message: unknown): string {
+	if (!isRecord(message) || message.role !== "assistant") return "";
+	if (typeof message.content === "string") return message.content;
+	if (!Array.isArray(message.content)) return "";
+	return message.content
+		.filter(
+			(part): part is { type: "text"; text: string } =>
+				isRecord(part) && part.type === "text" && typeof part.text === "string",
+		)
+		.map(({ text }) => text)
+		.join("\n");
+}
+
+function createProcessHookRunner(
+	command: string,
+	noProgressMs: number,
+	killGraceMs: number,
+): CavememHookRunner {
+	const ownsProcessGroups = process.platform !== "win32";
+	let quiescenceFailed = false;
+
+	return async (request) => {
+		if (quiescenceFailed) {
+			throw new CaptureFailure(request.name, "quiescence-timeout");
+		}
+
+		let input: string;
+		try {
+			input = JSON.stringify(request.payload);
+		} catch {
+			throw new CaptureFailure(request.name, "serialize");
+		}
+
+		await new Promise<void>((resolve, reject) => {
+			let settled = false;
+			let closeObserved = false;
+			let closeFailure: CaptureFailure | null = null;
+			let noProgressTimer: NodeJS.Timeout | undefined;
+			let killTimer: NodeJS.Timeout | undefined;
+			let quiescenceTimer: NodeJS.Timeout | undefined;
+			let pendingFailure: CaptureFailure | null | undefined;
+			let child: ChildProcessWithoutNullStreams;
+			let processGroupId: number | undefined;
+
+			const clearNoProgressTimer = () => {
+				if (noProgressTimer === undefined) return;
+				clearTimeout(noProgressTimer);
+				noProgressTimer = undefined;
+			};
+			const clearKillTimer = () => {
+				if (killTimer === undefined) return;
+				clearTimeout(killTimer);
+				killTimer = undefined;
+			};
+			const clearQuiescenceTimer = () => {
+				if (quiescenceTimer === undefined) return;
+				clearTimeout(quiescenceTimer);
+				quiescenceTimer = undefined;
+			};
+			const finish = (failure?: CaptureFailure) => {
+				if (settled) return;
+				settled = true;
+				clearNoProgressTimer();
+				clearKillTimer();
+				clearQuiescenceTimer();
+				if (failure) reject(failure);
+				else resolve();
+			};
+			const processGroupReleased = () => {
+				if (processGroupId === undefined) return closeObserved;
+				try {
+					process.kill(-processGroupId, 0);
+					return false;
+				} catch (error: unknown) {
+					return isRecord(error) && error.code === "ESRCH";
+				}
+			};
+			const confirmedQuiescent = () => closeObserved && processGroupReleased();
+			const signalOwnedExecution = (signal: NodeJS.Signals) => {
+				try {
+					if (processGroupId !== undefined) {
+						process.kill(-processGroupId, signal);
+						return true;
+					}
+					if (child.exitCode !== null || child.signalCode !== null) return false;
+					return child.kill(signal);
+				} catch {
+					return false;
+				}
+			};
+			const finishPending = () => finish(pendingFailure ?? undefined);
+			const failQuiescence = () => {
+				quiescenceFailed = true;
+				child.stdin.destroy();
+				child.stdout.destroy();
+				child.stderr.destroy();
+				finish(new CaptureFailure(request.name, "quiescence-timeout"));
+			};
+			const armQuiescenceDeadline = () => {
+				if (settled || quiescenceTimer !== undefined) return;
+				quiescenceTimer = setTimeout(() => {
+					quiescenceTimer = undefined;
+					if (confirmedQuiescent()) finishPending();
+					else failQuiescence();
+				}, killGraceMs);
+			};
+			const terminate = (failure: CaptureFailure | null) => {
+				if (settled || pendingFailure !== undefined) return;
+				pendingFailure = failure;
+				clearNoProgressTimer();
+				signalOwnedExecution("SIGTERM");
+				killTimer = setTimeout(() => {
+					killTimer = undefined;
+					if (confirmedQuiescent()) {
+						finishPending();
+						return;
+					}
+					signalOwnedExecution("SIGKILL");
+					armQuiescenceDeadline();
+				}, killGraceMs);
+			};
+			const armNoProgress = (kind: CaptureFailureKind) => {
+				if (settled || pendingFailure !== undefined) return;
+				clearNoProgressTimer();
+				noProgressTimer = setTimeout(() => {
+					noProgressTimer = undefined;
+					terminate(new CaptureFailure(request.name, kind));
+				}, noProgressMs);
+			};
+
+			try {
+				child = spawn(command, ["hook", "run", request.name, "--ide", "pi"], {
+					cwd: request.cwd,
+					detached: ownsProcessGroups,
+					stdio: ["pipe", "pipe", "pipe"],
+				}) as ChildProcessWithoutNullStreams;
+				const childPid = child.pid;
+				if (ownsProcessGroups && childPid !== undefined && Number.isInteger(childPid) && childPid > 0) {
+					processGroupId = childPid;
+				}
+			} catch {
+				finish(new CaptureFailure(request.name, "spawn"));
+				return;
+			}
+
+			armNoProgress("startup-timeout");
+			child.once("spawn", () => {
+				armNoProgress("stdin-timeout");
+				try {
+					child.stdin.end(input, () => armNoProgress("completion-timeout"));
+				} catch {
+					terminate(new CaptureFailure(request.name, "stdin"));
+				}
+			});
+			child.stdin.once("error", () => {
+				terminate(new CaptureFailure(request.name, "stdin"));
+			});
+			child.stdout.on("data", () => armNoProgress("completion-timeout"));
+			child.stderr.on("data", () => armNoProgress("completion-timeout"));
+			child.once("error", () => {
+				if (pendingFailure === undefined) finish(new CaptureFailure(request.name, "spawn"));
+			});
+			child.once("close", (code) => {
+				closeObserved = true;
+				closeFailure = code === 0 ? null : new CaptureFailure(request.name, "exit");
+				if (pendingFailure !== undefined) {
+					if (confirmedQuiescent()) finishPending();
+					return;
+				}
+				if (processGroupReleased()) finish(closeFailure ?? undefined);
+				else terminate(closeFailure);
+			});
+		});
+	};
+}
+
+function captureDiagnostic(hook: CavememHookName, kind: CaptureFailureKind): string {
+	return `Cavemem capture failed (hook=${hook}, kind=${kind}). Verify the shared Cavemem data store and retry.`;
+}
+
+function positiveMilliseconds(value: number | undefined, fallback: number): number {
+	return Number.isFinite(value) && value !== undefined && value > 0 ? value : fallback;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}

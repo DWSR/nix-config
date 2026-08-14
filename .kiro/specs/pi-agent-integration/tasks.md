@@ -163,7 +163,7 @@
   - _Boundary: Cavemem Full Mode - Integration_
   - _Depends: 3.2, 3.3_
 
-- [ ] 3.5 Implement Pi session lifecycle capture and backpressure
+- [x] 3.5 Implement Pi session lifecycle capture and backpressure
   - Load the bridge first and map session start, user input, assistant turn end, and session shutdown to existing Cavemem hooks.
   - Use Pi's stable session identity, `ide=pi`, configured working directory, and shared Cavemem data directory.
   - Serialize hook work through a FIFO and await it from event handlers instead of dropping accepted events.
@@ -604,6 +604,7 @@
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
+- Task 3.5: Keep hook TERM/KILL and quiescence timers referenced until the owned process group is confirmed gone; unresolved promises and unref'd timers do not keep Node alive.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.

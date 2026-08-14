@@ -100,6 +100,10 @@ let
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
+  cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
+    cavemem = "${final.cavemem}/bin/cavemem";
+  };
+  cavememBridgePackage = builtins.fromJSON (builtins.readFile ./extensions/cavemem/package.json);
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
@@ -159,6 +163,7 @@ let
         "ask-user/src/extension.ts"
         "background-tasks/dist/managed-environment.ts"
         "bash-timeout/src/extension.ts"
+        "cavemem/index.ts"
         "code-intelligence/src/extension.ts"
         "plan-mode/src/index.ts"
       ];
@@ -249,6 +254,13 @@ let
     }
   '';
   extensionInventory = {
+    cavemem = {
+      package = cavememBridgePackage.name;
+      inherit (cavememBridgePackage) version;
+      sourceRef = "repository";
+      entryPath = "lib/pi-agent/extensions/cavemem/index.ts";
+      license = "MIT";
+    };
     mcp = {
       package = "pi-mcp-adapter";
       version = "2.20.1";
@@ -494,6 +506,8 @@ in
         ln -s "$PWD/node_modules/node-pty" "$typecheckDir/node-pty"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
+        install -Dm444 ${cavememBridgeSource} "$typecheckDir/cavemem/index.ts"
+        install -Dm444 ${./extensions/cavemem/package.json} "$typecheckDir/cavemem/package.json"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
         ln -s "$PWD/node_modules/typebox" "$typecheckDir/typebox"
@@ -530,6 +544,9 @@ in
 
         mkdir -p "$out/lib/node_modules"
         cp -R node_modules/. "$out/lib/node_modules/"
+        install -Dm444 ${cavememBridgeSource} "$out/lib/pi-agent/extensions/cavemem/index.ts"
+        install -Dm444 ${./extensions/cavemem/package.json} \
+          "$out/lib/pi-agent/extensions/cavemem/package.json"
 
         install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
         install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"

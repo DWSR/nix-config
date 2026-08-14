@@ -13,6 +13,12 @@ const packagePath = path.join(extensionRoot, "package.json");
 const lockPath = path.join(extensionRoot, "package-lock.json");
 const expectedPiVersion = "0.83.0";
 const expectedExtensions = {
+  cavemem: {
+    package: "@dwsr/pi-cavemem-bridge",
+    version: "0.1.0",
+    sourceRef: "repository",
+    entryPath: "lib/pi-agent/extensions/cavemem/index.ts",
+  },
   mcp: {
     package: "pi-mcp-adapter",
     version: "2.20.1",
@@ -213,6 +219,7 @@ test("extension root pins the reviewed peerless inventory", () => {
   const npmConfig = fs.readFileSync(path.join(extensionRoot, ".npmrc"), "utf8");
   const expectedDependencies = Object.fromEntries(
     [...Object.values(expectedExtensions), ...Object.values(expectedRuntimeDependencies)]
+      .filter(({ sourceRef }) => sourceRef !== "repository")
       .map(({ package: packageName, version }) => [packageName, version])
       .sort(([left], [right]) => left.localeCompare(right)),
   );
@@ -255,7 +262,7 @@ test("extension lock resolves exact immutable registry artifacts without Pi", ()
   for (const { package: packageName, version } of [
     ...Object.values(expectedExtensions),
     ...Object.values(expectedRuntimeDependencies),
-  ]) {
+  ].filter(({ sourceRef }) => sourceRef !== "repository")) {
     assert.equal(lock.packages[`node_modules/${packageName}`].version, version);
   }
 });
@@ -317,6 +324,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "ask-user/src/extension.ts",
     "background-tasks/dist/managed-environment.ts",
     "bash-timeout/src/extension.ts",
+    "cavemem/index.ts",
     "code-intelligence/src/extension.ts",
     "plan-mode/src/index.ts",
   ]);
@@ -357,14 +365,7 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.deepEqual(provenance.patches, expectedPatches);
 
   for (const [logicalName, expected] of Object.entries(expectedExtensions)) {
-    const packageRoot = packageDirectory(output, expected.package);
-    const packageJson = readJson(path.join(packageRoot, "package.json"));
     const entry = manifest.extensions[logicalName];
-    const licensePath = path.join(output, "share/licenses/pi-agent-extensions", logicalName, "LICENSE");
-
-    assert.equal(packageJson.name, expected.package);
-    assert.equal(packageJson.version, expected.version);
-    assert.equal(packageJson.license, "MIT");
     assert.deepEqual(entry, {
       version: expected.version,
       entryPath: expected.entryPath,
@@ -372,6 +373,23 @@ test("built extension closure contains exact entries, licenses, and no commands 
     });
     assert.equal(fs.existsSync(path.join(output, entry.entryPath)), true,
       `${logicalName} entry path is missing`);
+    if (expected.sourceRef === "repository") {
+      const packageJson = readJson(
+        path.join(output, path.dirname(entry.entryPath), "package.json"),
+      );
+      assert.equal(packageJson.name, expected.package);
+      assert.equal(packageJson.version, expected.version);
+      assert.equal(packageJson.type, "module");
+      continue;
+    }
+
+    const packageRoot = packageDirectory(output, expected.package);
+    const packageJson = readJson(path.join(packageRoot, "package.json"));
+    const licensePath = path.join(output, "share/licenses/pi-agent-extensions", logicalName, "LICENSE");
+
+    assert.equal(packageJson.name, expected.package);
+    assert.equal(packageJson.version, expected.version);
+    assert.equal(packageJson.license, "MIT");
     assertMitText(licensePath, expected.package);
   }
 
@@ -604,6 +622,7 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
         "lib/node_modules/@99percentpeople/pi-background-tasks/dist/managed-environment.ts",
       ),
       path.join(output, expectedExtensions.bashTimeout.entryPath),
+      path.join(output, expectedExtensions.cavemem.entryPath),
       path.join(output, expectedExtensions.codeIntelligence.entryPath),
       path.join(output, expectedExtensions.plan.entryPath),
     ],
