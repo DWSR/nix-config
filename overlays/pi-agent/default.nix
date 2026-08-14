@@ -4,7 +4,7 @@ let
   system = final.stdenv.hostPlatform.system;
   supportedSystem = "aarch64-darwin";
   credentialPolicy = import ../../home-manager/common/pi-agent/credential-policy.nix {
-    lib = final.lib;
+    inherit (final) lib;
     pkgs = final;
   };
   requireSupported =
