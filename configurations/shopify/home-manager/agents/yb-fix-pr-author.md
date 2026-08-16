@@ -8,8 +8,6 @@ description: >-
   to run under the nono sandbox. Dispatched by the create-yb-fix-pr skill
   with an issue number and analysis artifact.
 mode: subagent
-model: anthropic/claude-fable-5
-variant: max
 permission: allow
 ---
 

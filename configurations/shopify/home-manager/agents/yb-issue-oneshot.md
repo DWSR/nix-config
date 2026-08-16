@@ -6,8 +6,6 @@ description: >-
   feature-stack/* PR. Give it an issue number or URL. Any verdict other than
   VALIDATED halts the run after validation — no fix is attempted.
 mode: primary
-model: anthropic/claude-fable-5
-variant: max
 permission: allow
 ---
 

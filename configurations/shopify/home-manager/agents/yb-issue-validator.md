@@ -6,8 +6,6 @@ description: >-
   verdict plus a handoff analysis artifact. Dispatched by the validate-yb-issue
   skill; may also be invoked directly with an issue number.
 mode: subagent
-model: anthropic/claude-fable-5
-variant: max
 permission: allow
 ---
 

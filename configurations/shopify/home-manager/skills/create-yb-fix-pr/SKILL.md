@@ -20,7 +20,8 @@ opened as a PR against `master`.
 ## Execution model — dispatch the subagent
 
 This skill runs as a dispatcher in the main session; the heavy work happens in
-the `yb-fix-pr-author` subagent (Fable, max thinking, full permissions).
+the `yb-fix-pr-author` subagent, which inherits OpenCode's configured default
+model without a model-specific variant override and has full permissions.
 
 **If you ARE the `yb-fix-pr-author` subagent, skip this section and execute
 the workflow below directly. Never re-dispatch.**
