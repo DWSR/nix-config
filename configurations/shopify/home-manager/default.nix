@@ -137,6 +137,14 @@ in
         chrome-devtools = {
           command = "${pkgs.chrome-devtools-mcp}/bin/chrome-devtools-mcp";
         };
+
+        yugabyte-gh-issue-backlog-review = {
+          command = "${config.home.homeDirectory}/.local/state/tec/profiles/base/current/global/bin/quick";
+          args = [
+            "mcp"
+            "yugabyte-gh-issue-backlog-review"
+          ];
+        };
       };
     };
   };

@@ -272,6 +272,7 @@ in
     make-stack-green = ./commands/make-stack-green.md;
     restack = ./commands/restack.md;
     upgrade-environment = ./commands/upgrade-environment.md;
+    validate-yb-backlog = ./commands/validate-yb-backlog.md;
   };
 
   # Shopify-specific agents are wrapped via the shared
@@ -290,6 +291,7 @@ in
     binks-overrider = config.home.opencode.agentWithCaveman ./agents/binks-overrider.md;
     yb-sleuth = config.home.opencode.agentWithCaveman ./agents/yb-sleuth.md;
     yb-fix-pr-author = config.home.opencode.agentWithCaveman ./agents/yb-fix-pr-author.md;
+    yb-backlog-validator = config.home.opencode.agentWithCaveman ./agents/yb-backlog-validator.md;
     yb-issue-oneshot = config.home.opencode.agentWithCaveman ./agents/yb-issue-oneshot.md;
     yb-issue-validator = config.home.opencode.agentWithCaveman ./agents/yb-issue-validator.md;
   };
