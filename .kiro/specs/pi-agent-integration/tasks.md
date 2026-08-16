@@ -126,6 +126,15 @@
   - _Boundary: Package Set, Credential Boundary — Runtime Bootstrap Integration_
   - _Depends: 1.4, 2.5_
 
+- [x] 2.8 (P) Expose the loader-stable Cavemem subprocess environment
+  - Extend the patched CLI with a separate immutable `CavememProcessEnvironmentV1` capability while preserving the closed Task 2.7 redaction capability and direct `bin/pi` entrypoint.
+  - Generate its allowlist from Credential Boundary policy, preserve required runtime paths and `CAVEMEM_DATA_DIR`, and snapshot only own string data properties whose values contain no exact provider value.
+  - Exclude provider credentials, undeclared variables, accessors, and test-only `CAVEMEM_NO_AUTOSTART`; reload reuses the process snapshot and each foreground child Pi creates its own.
+  - Done when direct/reload/child fixtures prove exact allowed names, shared data-dir propagation, value-free rejection, immutability, non-serialization, and zero credential inheritance.
+  - _Requirements: 3.7, 10.1, 10.6, 10.8, 14.1, 14.2, 14.3, 14.4, 14.5_
+  - _Boundary: Package Set, Credential Boundary — Cavemem Environment Integration_
+  - _Depends: 2.5, 2.7_
+
 - [ ] 3. Add MCP and Cavemem integration contracts
 
 - [x] 3.1 (P) Add the versioned Cavemem full-payload write mode
@@ -617,6 +626,7 @@
 - Task 3.5: Keep hook TERM/KILL and quiescence timers referenced until the owned process group is confirmed gone; unresolved promises and unref'd timers do not keep Node alive.
 - Task 3.6: Consume the process bootstrap on each Jiti load; retain bounded strong redacted snapshots, use validated fallback input after `tool_call`, and ignore unknown ends or stale pre-validation results.
 - Task 2.7: Install the immutable capability in patched `bin/pi` before dynamic Pi imports; read only own environment data properties, and select a replacement marker that contains neither exact value.
+- Task 2.8: Keep Cavemem subprocess state in a separate policy-generated capability; include `CAVEMEM_DATA_DIR`, omit test-only and credential variables, and drop allowed values changed by exact redaction.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.

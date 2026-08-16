@@ -41,6 +41,7 @@ const shellAllowlist = [
   "XDG_DATA_HOME",
   "XDG_STATE_HOME",
 ];
+const cavememEnvironmentAllowlist = ["CAVEMEM_DATA_DIR", ...shellAllowlist].sort();
 const spawnEnvironmentPartitions = {
   rootPi: "rootPiEnvironment",
   foregroundChildPi: "childPiEnvironment",
@@ -193,6 +194,7 @@ function expectedSafeEnvironment() {
 function assertClosedRuntimeExports(runtimeModule) {
   assert.deepEqual(Object.keys(runtimeModule).sort(), [
     "bashTimeoutBinding",
+    "cavememEnvironmentAllowlist",
     "createBashRuntimeInputs",
     "createCredentialBoundary",
     "createProviderRuntimeSecrets",
@@ -298,6 +300,26 @@ function assertNoSerializationApi(runtimeModule) {
     ),
   );
 }
+
+test("Cavemem subprocess names are a closed policy export derived from the shell allowlist", async () => {
+  for (const { exports: runtimeModule } of [
+    await getPersonalRuntimeModule(),
+    await getShopifyRuntimeModule(),
+  ]) {
+    assert.deepEqual(runtimeModule.cavememEnvironmentAllowlist, cavememEnvironmentAllowlist);
+    assert.equal(Object.isFrozen(runtimeModule.cavememEnvironmentAllowlist), true);
+    assert.equal(runtimeModule.cavememEnvironmentAllowlist.includes("CAVEMEM_DATA_DIR"), true);
+    for (const name of [
+      ...runtimeModule.sensitiveNames,
+      "PI_AGENT_BASH_TIMEOUT_MS",
+      "CAVEMEM_NO_AUTOSTART",
+      "PI_SUBAGENT_UNDECLARED",
+      "UNDECLARED_HOST_VALUE",
+    ]) {
+      assert.equal(runtimeModule.cavememEnvironmentAllowlist.includes(name), false, name);
+    }
+  }
+});
 
 test("closed resolver plans use the package-rendered devx executable and fixed launcher argv", () => {
   const contract = getResolverContract();

@@ -84,6 +84,15 @@ let
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
   ];
+  cavememEnvironmentAllowlist = lib.sort builtins.lessThan (
+    lib.filter (
+      name:
+      !builtins.elem name sensitiveNames
+      && name != bashTimeoutBinding.environmentName
+      && name != "CAVEMEM_NO_AUTOSTART"
+      && !lib.hasPrefix "PI_SUBAGENT_" name
+    ) (lib.unique (shellAllowlist ++ [ "CAVEMEM_DATA_DIR" ]))
+  );
   shellRemoveNames = lib.sort builtins.lessThan (
     lib.unique (sensitiveNames ++ [ bashTimeoutBinding.environmentName ])
   );
@@ -148,6 +157,7 @@ let
       text = ''
         const MODE = ${builtins.toJSON mode};
         const BASH_TIMEOUT_BINDING_VALUE = ${builtins.toJSON bashTimeoutBinding};
+        const CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES = ${builtins.toJSON cavememEnvironmentAllowlist};
         const RESOLVER_PLAN_VALUES = ${builtins.toJSON resolverPlans};
         const SENSITIVE_NAME_VALUES = ${builtins.toJSON sensitiveNames};
         const SHELL_ALLOWLIST_VALUES = ${builtins.toJSON shellAllowlist};
@@ -300,6 +310,7 @@ let
         }
 
         export const bashTimeoutBinding = deepFreeze(BASH_TIMEOUT_BINDING_VALUE);
+        export const cavememEnvironmentAllowlist = deepFreeze(CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES);
         export const resolverPlans = deepFreeze(RESOLVER_PLAN_VALUES);
         export const sensitiveNames = deepFreeze(SENSITIVE_NAME_VALUES);
         export const spawnEnvironmentPartitions = deepFreeze(SPAWN_ENVIRONMENT_PARTITION_VALUES);
@@ -446,6 +457,7 @@ in
 {
   inherit
     bashTimeoutBinding
+    cavememEnvironmentAllowlist
     managedShell
     resolverKinds
     shellAllowlist

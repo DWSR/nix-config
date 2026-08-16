@@ -14,6 +14,9 @@ let
   contextRecoveryParent = "e56893f4cd6545ab1498b72ae4e1e2241a0926f4";
   contextRecoveryPatch = ./pi-context-recovery.patch;
   piRuntimeBootstrapPatch = ./pi-launch-redaction-bootstrap.patch;
+  piCavememEnvironmentBootstrapPatch = final.replaceVars ./pi-cavemem-environment-bootstrap.patch {
+    cavememEnvironmentAllowlist = builtins.toJSON credentialPolicy.cavememEnvironmentAllowlist;
+  };
   contextRecoveryTestFiles = [
     "packages/ai/test/openai-responses-terminal-event.test.ts"
     "packages/ai/test/overflow.test.ts"
@@ -386,6 +389,7 @@ in
           undiciPatch
           contextRecoveryPatch
           piRuntimeBootstrapPatch
+          piCavememEnvironmentBootstrapPatch
         ];
         postPatch = (old.postPatch or "") + ''
           cp ${piLock} package-lock.json
