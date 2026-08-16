@@ -1,0 +1,232 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DWSR <noreply@dwsr.dev>
+Date: Sat, 15 Aug 2026 23:46:14 -0400
+Subject: [PATCH] feat(coding-agent): install runtime redaction bootstrap
+
+Task: pi-agent-integration 2.7
+Backport-base: https://github.com/earendil-works/pi/tree/v0.83.0
+License: MIT (https://github.com/earendil-works/pi/blob/v0.83.0/LICENSE)
+Adaptations: repository-owned launch bootstrap for the managed Pi package.
+---
+ packages/coding-agent/src/cli.ts               |   8 +-
+ packages/coding-agent/src/runtime-bootstrap.ts | 190 ++++++++++++++++++++++++
+ 2 files changed, 195 insertions(+), 3 deletions(-)
+ create mode 100644 packages/coding-agent/src/runtime-bootstrap.ts
+
+diff --git a/packages/coding-agent/src/cli.ts b/packages/coding-agent/src/cli.ts
+index 760a261..b05b359 100755
+--- a/packages/coding-agent/src/cli.ts
++++ b/packages/coding-agent/src/cli.ts
+@@ -5,9 +5,11 @@
+  *
+  * Test with: npx tsx src/cli-new.ts [args...]
+  */
+-import { APP_NAME } from "./config.ts";
+-import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
+-import { main } from "./main.ts";
++import "./runtime-bootstrap.ts";
++
++const { APP_NAME } = await import("./config.ts");
++const { configureHttpDispatcher } = await import("./core/http-dispatcher.ts");
++const { main } = await import("./main.ts");
+ 
+ process.title = APP_NAME;
+ process.env.PI_CODING_AGENT = "true";
+diff --git a/packages/coding-agent/src/runtime-bootstrap.ts b/packages/coding-agent/src/runtime-bootstrap.ts
+new file mode 100644
+index 0000000..e3ad0fb
+--- /dev/null
++++ b/packages/coding-agent/src/runtime-bootstrap.ts
+@@ -0,0 +1,190 @@
++import { Buffer } from "node:buffer";
++
++const BOOTSTRAP_SYMBOL_KEY = "dwsr.pi-agent.runtime-bootstrap.v1";
++const REDACTION_MARKER = "[REDACTED]";
++const MAX_TOKEN_BYTES = 16 * 1024;
++const PRIVATE_USE_START = 0xe000;
++const PRIVATE_USE_END = 0xf8ff;
++const DUPLICATE_ERROR = "Pi runtime bootstrap is already installed";
++const PARTIAL_ERROR = "Pi runtime bootstrap requires both SHOPIFY_PI_TOKEN and PI_AGENT_LAUNCH_ID";
++const TOKEN_ERROR =
++	"Pi runtime bootstrap requires SHOPIFY_PI_TOKEN to contain 1 through 16384 UTF-8 bytes";
++const LAUNCH_ID_ERROR =
++	"Pi runtime bootstrap requires PI_AGENT_LAUNCH_ID to be a canonical lowercase RFC 4122 v4 UUID";
++const SERIALIZATION_ERROR = "Pi runtime bootstrap is not serializable";
++const INPUT_ERROR = "Pi runtime bootstrap redaction input must be a string";
++const ENVIRONMENT_ERROR =
++	"Pi runtime bootstrap environment properties must be own string data properties";
++const UUID_V4_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
++
++const objectDefineProperty = Object.defineProperty;
++const objectFreeze = Object.freeze;
++const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
++const objectHasOwn = Object.hasOwn;
++const reflectApply = Reflect.apply;
++const errorConstructor = Error;
++const regexpTest = RegExp.prototype.test;
++const stringConstructor = String;
++const stringIndexOf = String.prototype.indexOf;
++const stringSlice = String.prototype.slice;
++const stringFromCharCode = String.fromCharCode;
++const symbolConstructor = Symbol;
++const symbolFor = Symbol.for;
++const bufferByteLength = Buffer.byteLength;
++const bootstrapSymbol = reflectApply(symbolFor, symbolConstructor, [BOOTSTRAP_SYMBOL_KEY]) as symbol;
++
++interface PiRuntimeBootstrapV1 {
++	readonly schemaVersion: 1;
++	readonly mode: "personal" | "shopify-gateway";
++	readonly redactExact: (value: string) => string;
++}
++
++function fail(message: string): never {
++	throw new errorConstructor(message);
++}
++
++if (objectGetOwnPropertyDescriptor(globalThis, bootstrapSymbol) !== undefined) {
++	fail(DUPLICATE_ERROR);
++}
++
++const environment = process.env;
++function readOwnEnvironmentValue(name: string): string | undefined {
++	const descriptor = objectGetOwnPropertyDescriptor(environment, name);
++	if (descriptor === undefined) return undefined;
++	if (!objectHasOwn(descriptor, "value") || typeof descriptor.value !== "string") {
++		fail(ENVIRONMENT_ERROR);
++	}
++	return descriptor.value;
++}
++
++const token = readOwnEnvironmentValue("SHOPIFY_PI_TOKEN");
++const launchId = readOwnEnvironmentValue("PI_AGENT_LAUNCH_ID");
++let mode: PiRuntimeBootstrapV1["mode"];
++let primaryValue: string | undefined;
++let secondaryValue: string | undefined;
++
++if (token === undefined && launchId === undefined) {
++	mode = "personal";
++} else {
++	if (token === undefined || launchId === undefined) fail(PARTIAL_ERROR);
++	const tokenBytes = reflectApply(bufferByteLength, Buffer, [token, "utf8"]) as number;
++	if (tokenBytes === 0 || tokenBytes > MAX_TOKEN_BYTES) fail(TOKEN_ERROR);
++	if (!(reflectApply(regexpTest, UUID_V4_PATTERN, [launchId]) as boolean)) fail(LAUNCH_ID_ERROR);
++
++	mode = "shopify-gateway";
++	if (token === launchId) {
++		primaryValue = token;
++	} else if (token.length >= launchId.length) {
++		primaryValue = token;
++		secondaryValue = launchId;
++	} else {
++		primaryValue = launchId;
++		secondaryValue = token;
++	}
++}
++
++function findFrom(value: string, candidate: string, cursor: number): number {
++	return reflectApply(stringIndexOf, value, [candidate, cursor]) as number;
++}
++
++function slice(value: string, start: number, end?: number): string {
++	return reflectApply(stringSlice, value, end === undefined ? [start] : [start, end]) as string;
++}
++
++function redactWithMarker(value: string, marker: string): string {
++	if (primaryValue === undefined) return value;
++	let cursor = 0;
++	let output = "";
++	while (cursor < value.length) {
++		const primaryIndex = findFrom(value, primaryValue, cursor);
++		const secondaryIndex = secondaryValue === undefined ? -1 : findFrom(value, secondaryValue, cursor);
++		let matchIndex: number;
++		let matchValue: string;
++
++		if (primaryIndex === -1) {
++			if (secondaryIndex === -1 || secondaryValue === undefined) break;
++			matchIndex = secondaryIndex;
++			matchValue = secondaryValue;
++		} else if (
++			secondaryIndex !== -1 &&
++			secondaryValue !== undefined &&
++			secondaryIndex + secondaryValue.length <= primaryIndex
++		) {
++			matchIndex = secondaryIndex;
++			matchValue = secondaryValue;
++		} else {
++			matchIndex = primaryIndex;
++			matchValue = primaryValue;
++		}
++
++		output += slice(value, cursor, matchIndex);
++		output += marker;
++		cursor = matchIndex + matchValue.length;
++	}
++
++	if (cursor === 0) return value;
++	return output + slice(value, cursor);
++}
++
++function valueContains(value: string | undefined, candidate: string): boolean {
++	return value !== undefined && findFrom(value, candidate, 0) !== -1;
++}
++
++function markerContains(marker: string, value: string | undefined): boolean {
++	return value !== undefined && findFrom(marker, value, 0) !== -1;
++}
++
++function defaultMarkerIsSafe(): boolean {
++	if (primaryValue === undefined) return true;
++	const first = slice(REDACTION_MARKER, 0, 1);
++	const last = slice(REDACTION_MARKER, REDACTION_MARKER.length - 1);
++	return (
++		!markerContains(REDACTION_MARKER, primaryValue) &&
++		!markerContains(REDACTION_MARKER, secondaryValue) &&
++		!valueContains(primaryValue, first) &&
++		!valueContains(primaryValue, last) &&
++		!valueContains(secondaryValue, first) &&
++		!valueContains(secondaryValue, last)
++	);
++}
++
++function selectRedactionMarker(): string {
++	if (defaultMarkerIsSafe()) return REDACTION_MARKER;
++	for (let code = PRIVATE_USE_START; code <= PRIVATE_USE_END; code++) {
++		const sentinel = reflectApply(stringFromCharCode, stringConstructor, [code]) as string;
++		if (!valueContains(primaryValue, sentinel) && !valueContains(secondaryValue, sentinel)) return sentinel;
++	}
++
++	return fail("Pi runtime bootstrap cannot construct a collision-free redaction marker");
++}
++
++const redactionMarker = selectRedactionMarker();
++
++function redactExact(value: string): string {
++	if (typeof value !== "string") fail(INPUT_ERROR);
++	if (primaryValue === undefined) return value;
++	return redactWithMarker(value, redactionMarker);
++}
++
++objectFreeze(redactExact);
++const rejectSerialization = objectFreeze(function rejectSerialization(): never {
++	return fail(SERIALIZATION_ERROR);
++});
++const capability: PiRuntimeBootstrapV1 = {
++	schemaVersion: 1,
++	mode,
++	redactExact,
++};
++objectDefineProperty(capability, "toJSON", {
++	value: rejectSerialization,
++	configurable: false,
++	enumerable: false,
++	writable: false,
++});
++objectFreeze(capability);
++objectDefineProperty(globalThis, bootstrapSymbol, {
++	value: capability,
++	configurable: false,
++	enumerable: false,
++	writable: false,
++});
+-- 
+2.53.0

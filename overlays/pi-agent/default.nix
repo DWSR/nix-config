@@ -13,6 +13,7 @@ let
   contextRecoveryCommit = "32850ef7c5edff7a6eee0214516fbb7382bf292d";
   contextRecoveryParent = "e56893f4cd6545ab1498b72ae4e1e2241a0926f4";
   contextRecoveryPatch = ./pi-context-recovery.patch;
+  piRuntimeBootstrapPatch = ./pi-launch-redaction-bootstrap.patch;
   contextRecoveryTestFiles = [
     "packages/ai/test/openai-responses-terminal-event.test.ts"
     "packages/ai/test/overflow.test.ts"
@@ -384,6 +385,7 @@ in
         patches = (old.patches or [ ]) ++ [
           undiciPatch
           contextRecoveryPatch
+          piRuntimeBootstrapPatch
         ];
         postPatch = (old.postPatch or "") + ''
           cp ${piLock} package-lock.json

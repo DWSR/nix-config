@@ -116,6 +116,16 @@
   - _Boundary: Sandbox Catalog_
   - _Depends: 2.1_
 
+- [x] 2.7 (P) Add the loader-stable Pi runtime bootstrap
+  - Patch the managed Pi CLI entrypoint, without replacing `bin/pi`, to install `PiRuntimeBootstrapV1` before importing Pi modules or loading resources.
+  - Derive personal mode when both managed provider variables are absent; require a non-empty bounded token and canonical launch UUID when both are present; reject partial or duplicate installation value-free.
+  - Install one immutable, non-serializable capability on a versioned process-global symbol for the process lifetime; reload reuses it and each foreground child Pi creates its own capability.
+  - Add no file, argv, stdin, `NODE_OPTIONS`, custom-entrypoint, or wrapper secret transport.
+  - Done when personal, Shopify, partial-environment, duplicate-install, real-Jiti-load, reload, child-Pi, serialization, value-free-error, version, and direct-executable fixtures pass.
+  - _Requirements: 1.2, 3.7, 4.3, 7.2, 10.3, 14.1, 14.2, 14.3, 14.4, 14.5_
+  - _Boundary: Package Set, Credential Boundary — Runtime Bootstrap Integration_
+  - _Depends: 1.4, 2.5_
+
 - [ ] 3. Add MCP and Cavemem integration contracts
 
 - [x] 3.1 (P) Add the versioned Cavemem full-payload write mode
@@ -605,6 +615,7 @@
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
 - Task 3.5: Keep hook TERM/KILL and quiescence timers referenced until the owned process group is confirmed gone; unresolved promises and unref'd timers do not keep Node alive.
+- Task 2.7: Install the immutable capability in patched `bin/pi` before dynamic Pi imports; read only own environment data properties, and select a replacement marker that contains neither exact value.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.

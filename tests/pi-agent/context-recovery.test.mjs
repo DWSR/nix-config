@@ -49,7 +49,12 @@ function command(commandName, args) {
 function flakeExpression(body) {
   return `
     let
-      flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)});
+      source = builtins.path {
+        path = ${JSON.stringify(repoRoot)};
+        name = "nix-config-pi-context-recovery-tests";
+        filter = path: type: builtins.baseNameOf path != ".git";
+      };
+      flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
     in
       ${body}
   `;
