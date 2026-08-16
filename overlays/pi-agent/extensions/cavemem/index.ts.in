@@ -1,4 +1,7 @@
+import { Buffer } from "node:buffer";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { isAbsolute, normalize } from "node:path";
 import { types as nodeUtilTypes } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -26,6 +29,11 @@ export interface PiRuntimeBootstrapV1 {
 	readonly redactExact: (value: string) => string;
 }
 
+export interface CavememProcessEnvironmentV1 {
+	readonly schemaVersion: 1;
+	readonly environment: Readonly<Record<string, string>>;
+}
+
 export interface CavememBridgeOptions {
 	command?: string;
 	killGraceMs?: number;
@@ -40,8 +48,26 @@ const DEFAULT_NO_PROGRESS_MS = 15_000;
 const MAX_ACTIVE_TOOL_CAPTURES = 256;
 const MAX_RETIRED_TOOL_CAPTURES = 256;
 const RUNTIME_BOOTSTRAP_SYMBOL_KEY = "dwsr.pi-agent.runtime-bootstrap.v1";
+const CAVEMEM_ENVIRONMENT_SYMBOL_KEY = "dwsr.pi-agent.cavemem-environment.v1";
+const BRIDGE_RUNTIME_STATE_SYMBOL_KEY = "dwsr.pi-agent.cavemem-runtime-state.v1";
+const MAX_ATTRIBUTION_FIELD_BYTES = 1_024;
+const MAX_ATTRIBUTION_INDEX_BYTES = 16;
+const MAX_ATTRIBUTION_INPUT_BYTES = 2_304;
+const MAX_DYNAMIC_REDACTED_BYTES = 1_000_000_000;
+const MAX_DYNAMIC_KEY_BYTES = 1_024;
+const MAX_EMITTED_ATTRIBUTIONS = 256;
+const MAX_LINEAGE_FIELD_BYTES = 4_096;
+const MAX_LINEAGE_INPUT_BYTES = 4_608;
+const MAX_SYNTHETIC_ID_BYTES = 128;
+const PI_SUBAGENT_CHILD = "PI_SUBAGENT_CHILD";
+const PI_SUBAGENT_PARENT_SESSION = "PI_SUBAGENT_PARENT_SESSION";
+const PI_SUBAGENT_ORCHESTRATOR_SESSION_ID = "PI_SUBAGENT_ORCHESTRATOR_SESSION_ID";
+const PI_SUBAGENT_RUN_ID = "PI_SUBAGENT_RUN_ID";
+const PI_SUBAGENT_CHILD_AGENT = "PI_SUBAGENT_CHILD_AGENT";
+const PI_SUBAGENT_CHILD_INDEX = "PI_SUBAGENT_CHILD_INDEX";
 
 const arrayIsArray = Array.isArray;
+const bufferByteLength = Buffer.byteLength;
 const jsonStringify = JSON.stringify;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
@@ -51,21 +77,29 @@ const objectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const objectHasOwn = Object.hasOwn;
-const objectIs = Object.is;
 const objectIsFrozen = Object.isFrozen;
 const reflectApply = Reflect.apply;
+const stringIncludes = String.prototype.includes;
 const stringTrim = String.prototype.trim;
 const symbolConstructor = Symbol;
 const symbolFor = Symbol.for;
 const runtimeBootstrapSymbol = reflectApply(symbolFor, symbolConstructor, [
 	RUNTIME_BOOTSTRAP_SYMBOL_KEY,
 ]) as symbol;
-const preparedProcessEnvironments = new WeakMap<CavememHookRequest, NodeJS.ProcessEnv>();
+const cavememEnvironmentSymbol = reflectApply(symbolFor, symbolConstructor, [
+	CAVEMEM_ENVIRONMENT_SYMBOL_KEY,
+]) as symbol;
+const bridgeRuntimeStateSymbol = reflectApply(symbolFor, symbolConstructor, [
+	BRIDGE_RUNTIME_STATE_SYMBOL_KEY,
+]) as symbol;
 
 type CaptureFailureKind =
 	| "completion-timeout"
+	| "attribution"
+	| "environment"
 	| "exit"
 	| "hook"
+	| "lineage"
 	| "malformed"
 	| "quiescence-timeout"
 	| "redaction"
@@ -100,6 +134,28 @@ interface PiFullToolObservationV1 {
 	};
 }
 
+interface PiChildAttributionInputV1 {
+	readonly parentSessionId: string;
+	readonly runId: string;
+	readonly agent: string;
+	readonly childIndex: string;
+}
+
+type ChildAttributionState =
+	| { readonly kind: "absent" }
+	| { readonly kind: "malformed" }
+	| { readonly kind: "valid"; readonly input: PiChildAttributionInputV1 };
+
+interface BridgeRuntimeStateV1 {
+	readonly schemaVersion: 1;
+	readonly replaceFork: (parentSessionId: string) => boolean;
+	readonly consumeFork: () => string | undefined;
+	readonly clearFork: () => void;
+	readonly claimAttribution: (sessionIdentity: string) => "claimed" | "duplicate" | "full" | "invalid";
+	readonly completeAttribution: (sessionIdentity: string) => boolean;
+	readonly releaseAttribution: (sessionIdentity: string) => boolean;
+}
+
 class CaptureFailure extends Error {
 	readonly hook: CavememHookName;
 	readonly kind: CaptureFailureKind;
@@ -114,15 +170,19 @@ class CaptureFailure extends Error {
 
 const runtimeBootstrap = consumeRuntimeBootstrap();
 const runtimeRedactExact = runtimeBootstrap.redactExact;
+const cavememProcessEnvironment = consumeCavememProcessEnvironment();
+const managedCavememEnvironment = cavememProcessEnvironment.environment;
+const childAttribution = snapshotChildAttribution();
+const bridgeRuntimeState = consumeBridgeRuntimeState();
 
 export function createCavememBridge(options: CavememBridgeOptions = {}) {
-	const usesProcessRunner = options.runHook === undefined;
 	const runHook =
 		options.runHook ??
 		createProcessHookRunner(
 			options.command ?? CAVEMEM_COMMAND,
 			positiveMilliseconds(options.noProgressMs, DEFAULT_NO_PROGRESS_MS),
 			positiveMilliseconds(options.killGraceMs, DEFAULT_KILL_GRACE_MS),
+			requireManagedCavememEnvironment("session-start"),
 		);
 
 	return function cavememBridge(pi: ExtensionAPI): void {
@@ -134,13 +194,6 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 			request: CavememHookRequest,
 			ctx: ExtensionContext,
 		): Promise<void> => {
-			try {
-				if (usesProcessRunner && !preparedProcessEnvironments.has(request)) {
-					preparedProcessEnvironments.set(request, safeCavememEnvironment(request.name));
-				}
-			} catch (error: unknown) {
-				throw surfaceCaptureFailure(ctx, request.name, error);
-			}
 			const operation = tail.then(() => runHook(request));
 			tail = operation.catch(() => undefined);
 			try {
@@ -204,14 +257,91 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 		};
 
 		pi.on("session_start", async (event, ctx) => {
-			let source: unknown;
+			let source: "fork" | "new" | "reload" | "resume" | "startup";
+			let attributionIdentity: string | undefined;
+			let attributionRequest: CavememHookRequest | undefined;
+			let attributionFailure: CaptureFailure | undefined;
+			let lineageRequest: CavememHookRequest | undefined;
+			let lineageFailure: CaptureFailure | undefined;
 			try {
-				source = requiredEventProperty(event, "reason", "session-start");
+				const reason = requiredEventString(event, "reason", "session-start", true);
+				if (!isSessionStartReason(reason)) {
+					throw new CaptureFailure("session-start", "malformed");
+				}
+				source = reason;
 			} catch (error: unknown) {
 				throw surfaceCaptureFailure(ctx, "session-start", error);
 			}
+			if (childAttribution.kind === "valid") {
+				try {
+					attributionIdentity = stableSessionIdentity(ctx.sessionManager.getSessionId());
+					const claim = bridgeRuntimeState.claimAttribution(attributionIdentity);
+					if (claim === "claimed") {
+						attributionRequest = syntheticObservationRequest(
+							ctx,
+							"pi_child_attribution",
+							childAttribution.input,
+						);
+					} else if (claim !== "duplicate") {
+						throw new CaptureFailure("post-tool-use", "attribution");
+					}
+				} catch (error: unknown) {
+					if (attributionIdentity !== undefined) {
+						bridgeRuntimeState.releaseAttribution(attributionIdentity);
+					}
+					attributionFailure = error instanceof CaptureFailure
+						? error
+						: new CaptureFailure("post-tool-use", "attribution");
+				}
+			}
+			try {
+				const lineageInput = sessionStartLineageInput(source);
+				if (lineageInput !== undefined) {
+					lineageRequest = syntheticObservationRequest(
+						ctx,
+						"pi_session_lineage",
+						lineageInput,
+					);
+				}
+			} catch (error: unknown) {
+				lineageFailure = error instanceof CaptureFailure
+					? error
+					: new CaptureFailure("post-tool-use", "lineage");
+			}
 			const request = safeLifecycleRequest(ctx, "session-start", { source });
-			await enqueue(request, ctx);
+			try {
+				await enqueue(request, ctx);
+			} catch (error: unknown) {
+				if (attributionIdentity !== undefined) {
+					bridgeRuntimeState.releaseAttribution(attributionIdentity);
+				}
+				throw error;
+			}
+			if (childAttribution.kind === "malformed") {
+				throw surfaceCaptureFailure(
+					ctx,
+					"post-tool-use",
+					new CaptureFailure("post-tool-use", "attribution"),
+				);
+			}
+			if (attributionFailure !== undefined) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", attributionFailure);
+			}
+			if (attributionRequest !== undefined && attributionIdentity !== undefined) {
+				try {
+					await enqueue(attributionRequest, ctx);
+					if (!bridgeRuntimeState.completeAttribution(attributionIdentity)) {
+						throw new CaptureFailure("post-tool-use", "attribution");
+					}
+				} catch (error: unknown) {
+					bridgeRuntimeState.releaseAttribution(attributionIdentity);
+					throw error;
+				}
+			}
+			if (lineageFailure !== undefined) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", lineageFailure);
+			}
+			if (lineageRequest !== undefined) await enqueue(lineageRequest, ctx);
 		});
 
 		pi.on("input", async (event, ctx) => {
@@ -268,7 +398,7 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 			const state = toolCaptures.get(toolCallId);
 			if (state === undefined || state.terminal !== "open" || state.input.phase === "validated") return;
 			try {
-				const toolName = redactedIdentifier(
+				const toolName = redactedBoundedIdentifier(
 					requiredEventString(event, "toolName", "post-tool-use", true),
 					"post-tool-use",
 				);
@@ -361,18 +491,72 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 			}
 		});
 
+		pi.on("session_before_switch", async () => {
+			bridgeRuntimeState.clearFork();
+			await tail;
+		});
+
+		pi.on("session_before_fork", async (_event, ctx) => {
+			try {
+				const parentSessionId = redactedBoundedIdentifier(
+					ctx.sessionManager.getSessionId(),
+					"post-tool-use",
+				);
+				if (!bridgeRuntimeState.replaceFork(parentSessionId)) {
+					throw new CaptureFailure("post-tool-use", "lineage");
+				}
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			await tail;
+		});
+
 		pi.on("session_before_compact", async () => {
 			await tail;
 		});
 
-		pi.on("session_shutdown", async (event, ctx) => {
-			let reason: string;
+		pi.on("session_compact", async (_event, ctx) => {
+			const sessionStart = safeLifecycleRequest(ctx, "session-start", {
+				source: "compact",
+			});
+			let marker: CavememHookRequest;
 			try {
-				reason = requiredEventString(event, "reason", "session-end");
+				marker = syntheticObservationRequest(ctx, "pi_session_lineage", {
+					source: "compact",
+				});
 			} catch (error: unknown) {
-				throw surfaceCaptureFailure(ctx, "session-end", error);
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
 			}
-			if (reason === "reload") {
+			await enqueue(sessionStart, ctx);
+			await enqueue(marker, ctx);
+		});
+
+		pi.on("session_shutdown", async (event, ctx) => {
+			let reason: "fork" | "new" | "quit" | "reload" | "resume";
+			try {
+				const value = requiredEventString(event, "reason", "session-end", true);
+				if (!isSessionShutdownReason(value)) {
+					throw new CaptureFailure("session-end", "malformed");
+				}
+				reason = value;
+				if (reason === "fork") {
+					const parentSessionId = redactedBoundedIdentifier(
+						ctx.sessionManager.getSessionId(),
+						"post-tool-use",
+					);
+					if (!bridgeRuntimeState.replaceFork(parentSessionId)) {
+						throw new CaptureFailure("post-tool-use", "lineage");
+					}
+				} else {
+					bridgeRuntimeState.clearFork();
+				}
+			} catch (error: unknown) {
+				const hook = error instanceof CaptureFailure && error.hook === "post-tool-use"
+					? "post-tool-use"
+					: "session-end";
+				throw surfaceCaptureFailure(ctx, hook, error);
+			}
+			if (reason !== "quit") {
 				try {
 					await tail;
 				} finally {
@@ -382,7 +566,7 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 				return;
 			}
 			try {
-				const request = safeLifecycleRequest(ctx, "session-end");
+				const request = safeLifecycleRequest(ctx, "session-end", { source: reason });
 				await enqueue(request, ctx);
 			} finally {
 				toolCaptures.clear();
@@ -392,7 +576,9 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 	};
 }
 
-export default createCavememBridge();
+export default function cavememBridge(pi: ExtensionAPI): void {
+	createCavememBridge()(pi);
+}
 
 function consumeRuntimeBootstrap(): PiRuntimeBootstrapV1 {
 	const malformed = (): never => {
@@ -450,6 +636,216 @@ function consumeRuntimeBootstrap(): PiRuntimeBootstrapV1 {
 	return capability as PiRuntimeBootstrapV1;
 }
 
+function consumeCavememProcessEnvironment(): CavememProcessEnvironmentV1 {
+	const unavailable = (): never => {
+		throw new Error("Cavemem process environment is unavailable");
+	};
+	const malformed = (): never => {
+		throw new Error("Cavemem process environment is malformed");
+	};
+	const globalDescriptor = objectGetOwnPropertyDescriptor(globalThis, cavememEnvironmentSymbol);
+	if (globalDescriptor === undefined) return unavailable();
+	if (
+		!objectHasOwn(globalDescriptor, "value") ||
+		globalDescriptor.configurable !== false ||
+		globalDescriptor.enumerable !== false ||
+		globalDescriptor.writable !== false
+	) {
+		return malformed();
+	}
+
+	const capability = globalDescriptor.value;
+	if (
+		typeof capability !== "object" ||
+		capability === null ||
+		nodeUtilTypes.isProxy(capability) ||
+		objectGetPrototypeOf(capability) !== Object.prototype ||
+		!objectIsFrozen(capability)
+	) {
+		return malformed();
+	}
+	const names = objectGetOwnPropertyNames(capability);
+	if (
+		names.length !== 3 ||
+		names[0] !== "schemaVersion" ||
+		names[1] !== "environment" ||
+		names[2] !== "toJSON" ||
+		objectGetOwnPropertySymbols(capability).length !== 0
+	) {
+		return malformed();
+	}
+	const schemaVersion = bootstrapDataProperty(capability, "schemaVersion", true, malformed);
+	const environment = bootstrapDataProperty(capability, "environment", true, malformed);
+	const toJSON = bootstrapDataProperty(capability, "toJSON", false, malformed);
+	if (
+		schemaVersion !== 1 ||
+		typeof environment !== "object" ||
+		environment === null ||
+		nodeUtilTypes.isProxy(environment) ||
+		objectGetPrototypeOf(environment) !== Object.prototype ||
+		!objectIsFrozen(environment) ||
+		objectGetOwnPropertySymbols(environment).length !== 0 ||
+		typeof toJSON !== "function" ||
+		!objectIsFrozen(toJSON)
+	) {
+		return malformed();
+	}
+	for (const name of objectGetOwnPropertyNames(environment)) {
+		const descriptor = objectGetOwnPropertyDescriptor(environment, name);
+		if (
+			descriptor === undefined ||
+			!objectHasOwn(descriptor, "value") ||
+			typeof descriptor.value !== "string" ||
+			descriptor.configurable !== false ||
+			descriptor.enumerable !== true ||
+			descriptor.writable !== false
+		) {
+			return malformed();
+		}
+	}
+	return capability as CavememProcessEnvironmentV1;
+}
+
+function consumeBridgeRuntimeState(): BridgeRuntimeStateV1 {
+	const malformed = (): never => {
+		throw new Error("Cavemem bridge runtime state is malformed");
+	};
+	const existing = objectGetOwnPropertyDescriptor(globalThis, bridgeRuntimeStateSymbol);
+	if (existing !== undefined) {
+		if (
+			!objectHasOwn(existing, "value") ||
+			existing.configurable !== false ||
+			existing.enumerable !== false ||
+			existing.writable !== false
+		) {
+			return malformed();
+		}
+		const capability = existing.value;
+		if (
+			typeof capability !== "object" ||
+			capability === null ||
+			nodeUtilTypes.isProxy(capability) ||
+			objectGetPrototypeOf(capability) !== Object.prototype ||
+			!objectIsFrozen(capability) ||
+			objectGetOwnPropertySymbols(capability).length !== 0
+		) {
+			return malformed();
+		}
+		const names = objectGetOwnPropertyNames(capability);
+		if (
+			names.length !== 8 ||
+			names[0] !== "schemaVersion" ||
+			names[1] !== "replaceFork" ||
+			names[2] !== "consumeFork" ||
+			names[3] !== "clearFork" ||
+			names[4] !== "claimAttribution" ||
+			names[5] !== "completeAttribution" ||
+			names[6] !== "releaseAttribution" ||
+			names[7] !== "toJSON"
+		) {
+			return malformed();
+		}
+		const schemaVersion = bootstrapDataProperty(capability, "schemaVersion", true, malformed);
+		const replaceFork = bootstrapDataProperty(capability, "replaceFork", true, malformed);
+		const consumeFork = bootstrapDataProperty(capability, "consumeFork", true, malformed);
+		const clearFork = bootstrapDataProperty(capability, "clearFork", true, malformed);
+		const claimAttribution = bootstrapDataProperty(capability, "claimAttribution", true, malformed);
+		const completeAttribution = bootstrapDataProperty(capability, "completeAttribution", true, malformed);
+		const releaseAttribution = bootstrapDataProperty(capability, "releaseAttribution", true, malformed);
+		const toJSON = bootstrapDataProperty(capability, "toJSON", false, malformed);
+		if (
+			schemaVersion !== 1 ||
+			typeof replaceFork !== "function" ||
+			typeof consumeFork !== "function" ||
+			typeof clearFork !== "function" ||
+			typeof claimAttribution !== "function" ||
+			typeof completeAttribution !== "function" ||
+			typeof releaseAttribution !== "function" ||
+			typeof toJSON !== "function" ||
+			!objectIsFrozen(replaceFork) ||
+			!objectIsFrozen(consumeFork) ||
+			!objectIsFrozen(clearFork) ||
+			!objectIsFrozen(claimAttribution) ||
+			!objectIsFrozen(completeAttribution) ||
+			!objectIsFrozen(releaseAttribution) ||
+			!objectIsFrozen(toJSON)
+		) {
+			return malformed();
+		}
+		return capability as BridgeRuntimeStateV1;
+	}
+
+	let pendingForkParent: string | undefined;
+	const attributionStates = new Map<string, "emitted" | "pending">();
+	const replaceFork = objectFreeze((parentSessionId: string): boolean => {
+		if (!isBoundedLineageString(parentSessionId)) return false;
+		pendingForkParent = parentSessionId;
+		return true;
+	});
+	const consumeFork = objectFreeze((): string | undefined => {
+		const parentSessionId = pendingForkParent;
+		pendingForkParent = undefined;
+		return parentSessionId;
+	});
+	const clearFork = objectFreeze(() => {
+		pendingForkParent = undefined;
+	});
+	const claimAttribution = objectFreeze((
+		sessionIdentity: string,
+	): "claimed" | "duplicate" | "full" | "invalid" => {
+		if (!/^[0-9a-f]{64}$/.test(sessionIdentity)) return "invalid";
+		if (attributionStates.has(sessionIdentity)) return "duplicate";
+		while (attributionStates.size >= MAX_EMITTED_ATTRIBUTIONS) {
+			let evicted = false;
+			for (const [identity, state] of attributionStates) {
+				if (state !== "emitted") continue;
+				attributionStates.delete(identity);
+				evicted = true;
+				break;
+			}
+			if (!evicted) return "full";
+		}
+		attributionStates.set(sessionIdentity, "pending");
+		return "claimed";
+	});
+	const completeAttribution = objectFreeze((sessionIdentity: string): boolean => {
+		if (attributionStates.get(sessionIdentity) !== "pending") return false;
+		attributionStates.delete(sessionIdentity);
+		attributionStates.set(sessionIdentity, "emitted");
+		return true;
+	});
+	const releaseAttribution = objectFreeze((sessionIdentity: string): boolean => {
+		if (attributionStates.get(sessionIdentity) !== "pending") return false;
+		attributionStates.delete(sessionIdentity);
+		return true;
+	});
+	const capability = {
+		schemaVersion: 1 as const,
+		replaceFork,
+		consumeFork,
+		clearFork,
+		claimAttribution,
+		completeAttribution,
+		releaseAttribution,
+	};
+	objectDefineProperty(capability, "toJSON", {
+		configurable: false,
+		enumerable: false,
+		value: objectFreeze((): never => {
+			throw new Error("Cavemem bridge runtime state is not serializable");
+		}),
+		writable: false,
+	});
+	objectFreeze(capability);
+	objectDefineProperty(globalThis, bridgeRuntimeStateSymbol, {
+		configurable: false,
+		enumerable: false,
+		value: capability,
+		writable: false,
+	});
+	return capability;
+}
+
 function bootstrapDataProperty(
 	value: object,
 	key: PropertyKey,
@@ -469,6 +865,145 @@ function bootstrapDataProperty(
 	return descriptor.value;
 }
 
+function snapshotChildAttribution(): ChildAttributionState {
+	try {
+		const environment = process.env as unknown;
+		if (
+			typeof environment !== "object" ||
+			environment === null ||
+			nodeUtilTypes.isProxy(environment)
+		) {
+			return objectFreeze({ kind: "malformed" });
+		}
+		const discriminator = ownEnvironmentString(environment, PI_SUBAGENT_CHILD, false);
+		if (discriminator === undefined) return objectFreeze({ kind: "absent" });
+		if (discriminator !== "1") return objectFreeze({ kind: "malformed" });
+
+		const parentSessionId = boundedAttributionField(
+			ownEnvironmentString(environment, PI_SUBAGENT_PARENT_SESSION, true),
+		);
+		const duplicateParent = ownEnvironmentString(
+			environment,
+			PI_SUBAGENT_ORCHESTRATOR_SESSION_ID,
+			false,
+		);
+		if (
+			duplicateParent !== undefined &&
+			boundedAttributionField(duplicateParent) !== parentSessionId
+		) {
+			return objectFreeze({ kind: "malformed" });
+		}
+		const runId = boundedAttributionField(
+			ownEnvironmentString(environment, PI_SUBAGENT_RUN_ID, true),
+		);
+		const agent = boundedAttributionField(
+			ownEnvironmentString(environment, PI_SUBAGENT_CHILD_AGENT, true),
+		);
+		const childIndex = ownEnvironmentString(environment, PI_SUBAGENT_CHILD_INDEX, true);
+		if (
+			childIndex === undefined ||
+			byteLength(childIndex) > MAX_ATTRIBUTION_INDEX_BYTES ||
+			!/^(?:0|[1-9][0-9]*)$/.test(childIndex) ||
+			!Number.isSafeInteger(Number(childIndex))
+		) {
+			return objectFreeze({ kind: "malformed" });
+		}
+
+		const redactedChildIndex = redactedAttributionField(
+			childIndex,
+			MAX_ATTRIBUTION_INDEX_BYTES,
+		);
+		if (!/^(?:0|[1-9][0-9]*)$/.test(redactedChildIndex)) {
+			return objectFreeze({ kind: "malformed" });
+		}
+		const input = objectFreeze({
+			parentSessionId: redactedAttributionField(parentSessionId),
+			runId: redactedAttributionField(runId),
+			agent: redactedAttributionField(agent),
+			childIndex: redactedChildIndex,
+		});
+		const encoded = reflectApply(jsonStringify, JSON, [input]) as string;
+		if (byteLength(encoded) > MAX_ATTRIBUTION_INPUT_BYTES) {
+			return objectFreeze({ kind: "malformed" });
+		}
+		return objectFreeze({ kind: "valid", input });
+	} catch {
+		return objectFreeze({ kind: "malformed" });
+	}
+}
+
+function ownEnvironmentString(
+	environment: object,
+	name: string,
+	required: boolean,
+): string | undefined {
+	const descriptor = objectGetOwnPropertyDescriptor(environment, name);
+	if (descriptor === undefined) {
+		if (required) throw new Error("missing environment property");
+		return undefined;
+	}
+	if (
+		!descriptor.enumerable ||
+		!objectHasOwn(descriptor, "value") ||
+		typeof descriptor.value !== "string"
+	) {
+		throw new Error("invalid environment property");
+	}
+	return descriptor.value;
+}
+
+function boundedAttributionField(value: string | undefined): string {
+	if (
+		value === undefined ||
+		trim(value).length === 0 ||
+		byteLength(value) > MAX_ATTRIBUTION_FIELD_BYTES
+	) {
+		throw new Error("invalid attribution field");
+	}
+	return value;
+}
+
+function redactedAttributionField(
+	value: string,
+	maximumBytes = MAX_ATTRIBUTION_FIELD_BYTES,
+): string {
+	const redacted = redactRuntimeString(value, "post-tool-use");
+	if (trim(redacted).length === 0 || byteLength(redacted) > maximumBytes) {
+		throw new Error("invalid redacted attribution field");
+	}
+	return redacted;
+}
+
+function byteLength(value: string): number {
+	return reflectApply(bufferByteLength, Buffer, [value, "utf8"]) as number;
+}
+
+function stableDigest(parts: readonly string[]): string {
+	const hash = createHash("sha256");
+	for (const part of parts) {
+		hash.update(`${byteLength(part)}:`);
+		hash.update(part, "utf8");
+	}
+	return hash.digest("hex");
+}
+
+function stableSessionIdentity(sessionId: string): string {
+	const redacted = redactedBoundedIdentifier(sessionId, "post-tool-use");
+	return stableDigest(["pi-child-attribution-v1", redacted]);
+}
+
+function assertBoundedLineageString(value: string): void {
+	if (!isBoundedLineageString(value)) {
+		throw new CaptureFailure("post-tool-use", "lineage");
+	}
+}
+
+function isBoundedLineageString(value: unknown): value is string {
+	return typeof value === "string" &&
+		trim(value).length > 0 &&
+		byteLength(value) <= MAX_LINEAGE_FIELD_BYTES;
+}
+
 function assertInspectableObject(value: unknown): asserts value is object {
 	if ((typeof value !== "object" && typeof value !== "function") || value === null) {
 		throw new Error("invalid object");
@@ -484,8 +1019,8 @@ function createToolCaptureState(
 	return {
 		input: { phase: "raw", snapshot: snapshotRedactedJson(input, "post-tool-use") },
 		terminal: "open",
-		toolCallId: redactedIdentifier(toolCallId, "post-tool-use"),
-		toolName: redactedIdentifier(toolName, "post-tool-use"),
+		toolCallId: redactedBoundedIdentifier(toolCallId, "post-tool-use"),
+		toolName: redactedBoundedIdentifier(toolName, "post-tool-use"),
 	};
 }
 
@@ -501,33 +1036,132 @@ function fullToolRequest(
 	},
 	state: ToolCaptureState,
 ): CavememHookRequest {
-	const eventToolName = redactedIdentifier(toolName, "post-tool-use");
+	const eventToolName = redactedBoundedIdentifier(toolName, "post-tool-use");
 	if (state.toolName !== eventToolName || typeof output.isError !== "boolean") {
 		throw new CaptureFailure("post-tool-use", "malformed");
 	}
 
 	const usage = flattenUsage(output.usage);
-	const observation: PiFullToolObservationV1 & { readonly session_id: string } = {
-		session_id: ctx.sessionManager.getSessionId(),
+	const payload: Record<string, unknown> & PiFullToolObservationV1 & {
+		readonly session_id: string;
+	} = {
+		session_id: redactedBoundedIdentifier(
+			ctx.sessionManager.getSessionId(),
+			"post-tool-use",
+		),
 		schemaVersion: 1,
 		toolCallId: state.toolCallId,
 		toolName: state.toolName,
 		input,
 		output: {
-			content: output.content === undefined ? [] : output.content,
-			details: output.details === undefined ? null : output.details,
+			content: snapshotRedactedJson(
+				output.content === undefined ? [] : output.content,
+				"post-tool-use",
+			),
+			details: snapshotRedactedJson(
+				output.details === undefined ? null : output.details,
+				"post-tool-use",
+			),
 			isError: output.isError,
 			...(usage === undefined ? {} : { usage }),
 		},
 	};
-	const payload = snapshotRedactedJson(observation, "post-tool-use");
-	if (!isRecord(payload)) throw new CaptureFailure("post-tool-use", "malformed");
 	return {
 		name: "post-tool-use",
 		captureMode: "pi-full-v1",
 		cwd: ctx.cwd,
 		payload,
 	};
+}
+
+function syntheticObservationRequest(
+	ctx: { cwd: string; sessionManager: { getSessionId(): string } },
+	toolName: "pi_child_attribution" | "pi_session_lineage",
+	input: object,
+): CavememHookRequest {
+	let sessionId: string;
+	let toolCallId: string;
+	try {
+		sessionId = redactedBoundedIdentifier(
+			ctx.sessionManager.getSessionId(),
+			"post-tool-use",
+		);
+		const encodedInput = reflectApply(jsonStringify, JSON, [input]) as string;
+		toolCallId = `pi-synthetic-v1:${toolName}:${stableDigest([
+			"pi-synthetic-v1",
+			toolName,
+			sessionId,
+			encodedInput,
+		])}`;
+		if (byteLength(toolCallId) > MAX_SYNTHETIC_ID_BYTES) {
+			throw new Error("synthetic identifier exceeds bound");
+		}
+	} catch {
+		throw new CaptureFailure("post-tool-use", "malformed");
+	}
+	const payload: Record<string, unknown> & PiFullToolObservationV1 & {
+		readonly session_id: string;
+	} = {
+		session_id: sessionId,
+		schemaVersion: 1,
+		toolCallId,
+		toolName,
+		input,
+		output: {
+			content: [],
+			details: null,
+			isError: false,
+		},
+	};
+	return {
+		name: "post-tool-use",
+		captureMode: "pi-full-v1",
+		cwd: ctx.cwd,
+		payload,
+	};
+}
+
+function sessionStartLineageInput(
+	reason: "fork" | "new" | "reload" | "resume" | "startup",
+): Readonly<Record<string, unknown>> | undefined {
+	if (reason === "fork") {
+		const parentSessionId = bridgeRuntimeState.consumeFork();
+		if (parentSessionId === undefined) {
+			throw new CaptureFailure("post-tool-use", "lineage");
+		}
+		assertBoundedLineageString(parentSessionId);
+		const input = objectFreeze({ source: "fork", parentSessionId });
+		if (byteLength(reflectApply(jsonStringify, JSON, [input]) as string) > MAX_LINEAGE_INPUT_BYTES) {
+			throw new CaptureFailure("post-tool-use", "lineage");
+		}
+		return input;
+	}
+	if (reason === "resume" || reason === "reload") {
+		bridgeRuntimeState.clearFork();
+		return objectFreeze({ source: reason });
+	}
+	bridgeRuntimeState.clearFork();
+	return undefined;
+}
+
+function isSessionStartReason(
+	value: string,
+): value is "fork" | "new" | "reload" | "resume" | "startup" {
+	return value === "fork" ||
+		value === "new" ||
+		value === "reload" ||
+		value === "resume" ||
+		value === "startup";
+}
+
+function isSessionShutdownReason(
+	value: string,
+): value is "fork" | "new" | "quit" | "reload" | "resume" {
+	return value === "fork" ||
+		value === "new" ||
+		value === "quit" ||
+		value === "reload" ||
+		value === "resume";
 }
 
 function toolExecutionEndOutput(
@@ -628,12 +1262,17 @@ function redactRuntimeString(value: string, hook: CavememHookName): string {
 	}
 }
 
-function redactedIdentifier(value: unknown, hook: CavememHookName): string {
+function redactedBoundedIdentifier(value: unknown, hook: CavememHookName): string {
 	if (typeof value !== "string" || trim(value).length === 0) {
 		throw new CaptureFailure(hook, "malformed");
 	}
 	const redacted = redactRuntimeString(value, hook);
-	if (trim(redacted).length === 0) throw new CaptureFailure(hook, "malformed");
+	if (
+		trim(redacted).length === 0 ||
+		byteLength(redacted) > MAX_LINEAGE_FIELD_BYTES
+	) {
+		throw new CaptureFailure(hook, "malformed");
+	}
 	return redacted;
 }
 
@@ -656,6 +1295,9 @@ function flattenUsage(usage: unknown): Readonly<Record<string, number>> | undefi
 			throw new CaptureFailure("post-tool-use", "malformed");
 		}
 		const key = redactRuntimeString(rawKey, "post-tool-use");
+		if (byteLength(key) > MAX_DYNAMIC_KEY_BYTES) {
+			throw new CaptureFailure("post-tool-use", "malformed");
+		}
 		if (key === "cost") {
 			flattenUsageCost(descriptor.value, flat);
 			continue;
@@ -681,6 +1323,7 @@ function flattenUsageCost(cost: unknown, flat: Record<string, number>): void {
 		if (
 			!descriptor?.enumerable ||
 			!objectHasOwn(descriptor, "value") ||
+			byteLength(key) > MAX_DYNAMIC_KEY_BYTES ||
 			!allowed.has(key) ||
 			typeof descriptor.value !== "number" ||
 			!Number.isFinite(descriptor.value)
@@ -710,6 +1353,13 @@ function snapshotRedactedJson(
 	hook: CavememHookName,
 ): unknown {
 	let root: unknown;
+	let redactedBytes = 0;
+	const accountRedactedBytes = (value: string): void => {
+		redactedBytes += byteLength(value);
+		if (redactedBytes > MAX_DYNAMIC_REDACTED_BYTES) {
+			throw new CaptureFailure(hook, "malformed");
+		}
+	};
 	const active = new Set<object>();
 	const pending: SnapshotFrame[] = [{ kind: "visit", value }];
 	while (pending.length > 0) {
@@ -725,7 +1375,9 @@ function snapshotRedactedJson(
 			continue;
 		}
 		if (typeof source === "string") {
-			assignSnapshotValue(frame, redactRuntimeString(source, hook), (next) => {
+			const redacted = redactRuntimeString(source, hook);
+			accountRedactedBytes(redacted);
+			assignSnapshotValue(frame, redacted, (next) => {
 				root = next;
 			});
 			continue;
@@ -786,7 +1438,11 @@ function snapshotRedactedJson(
 				throw new CaptureFailure(hook, "malformed");
 			}
 			const redactedKey = redactRuntimeString(key, hook);
-			if (redactedKeys.has(redactedKey)) {
+			accountRedactedBytes(redactedKey);
+			if (
+				byteLength(redactedKey) > MAX_DYNAMIC_KEY_BYTES ||
+				redactedKeys.has(redactedKey)
+			) {
 				throw new CaptureFailure(hook, "malformed");
 			}
 			redactedKeys.add(redactedKey);
@@ -825,15 +1481,25 @@ function lifecycleRequest(
 	name: CavememHookName,
 	extra: Record<string, unknown> = {},
 ): CavememHookRequest {
-	const payload = snapshotRedactedJson(
-		{
-			session_id: ctx.sessionManager.getSessionId(),
-			cwd: ctx.cwd,
-			...extra,
-		},
-		name,
-	);
-	if (!isRecord(payload)) throw new CaptureFailure(name, "malformed");
+	const payload: Record<string, unknown> = {
+		session_id: redactedBoundedIdentifier(ctx.sessionManager.getSessionId(), name),
+		cwd: snapshotRedactedJson(ctx.cwd, name),
+	};
+	for (const key of objectGetOwnPropertyNames(extra)) {
+		if (key === "session_id" || key === "cwd") {
+			throw new CaptureFailure(name, "malformed");
+		}
+		const descriptor = objectGetOwnPropertyDescriptor(extra, key);
+		if (!descriptor?.enumerable || !objectHasOwn(descriptor, "value")) {
+			throw new CaptureFailure(name, "malformed");
+		}
+		objectDefineProperty(payload, key, {
+			configurable: true,
+			enumerable: true,
+			value: snapshotRedactedJson(descriptor.value, name),
+			writable: true,
+		});
+	}
 	return {
 		name,
 		cwd: ctx.cwd,
@@ -875,6 +1541,7 @@ function createProcessHookRunner(
 	command: string,
 	noProgressMs: number,
 	killGraceMs: number,
+	environment: NodeJS.ProcessEnv,
 ): CavememHookRunner {
 	const ownsProcessGroups = process.platform !== "win32";
 	let quiescenceFailed = false;
@@ -998,9 +1665,6 @@ function createProcessHookRunner(
 				if (request.captureMode === "pi-full-v1") {
 					args.push("--capture-mode", "pi-full-v1");
 				}
-				const environment =
-					preparedProcessEnvironments.get(request) ?? safeCavememEnvironment(request.name);
-				preparedProcessEnvironments.delete(request);
 				child = spawn(command, args, {
 					cwd: request.cwd,
 					detached: ownsProcessGroups,
@@ -1057,23 +1721,24 @@ function createProcessHookRunner(
 	};
 }
 
-const CAVEMEM_ALWAYS_REMOVED_ENVIRONMENT_NAMES = new Set([
-	"PI_AGENT_LAUNCH_ID",
-	"SHOPIFY_PI_TOKEN",
-]);
-
-function safeCavememEnvironment(hook: CavememHookName): NodeJS.ProcessEnv {
-	const safe = objectCreate(null) as NodeJS.ProcessEnv;
-	for (const name of objectGetOwnPropertyNames(process.env)) {
-		if (CAVEMEM_ALWAYS_REMOVED_ENVIRONMENT_NAMES.has(name)) continue;
-		const descriptor = objectGetOwnPropertyDescriptor(process.env, name);
-		if (descriptor === undefined || !objectHasOwn(descriptor, "value")) continue;
-		const value = descriptor.value;
-		if (typeof value !== "string") continue;
-		if (!objectIs(redactRuntimeString(value, hook), value)) continue;
-		safe[name] = value;
+function requireManagedCavememEnvironment(hook: CavememHookName): NodeJS.ProcessEnv {
+	const descriptor = objectGetOwnPropertyDescriptor(
+		managedCavememEnvironment,
+		"CAVEMEM_DATA_DIR",
+	);
+	if (
+		descriptor === undefined ||
+		!objectHasOwn(descriptor, "value") ||
+		typeof descriptor.value !== "string" ||
+		trim(descriptor.value).length === 0 ||
+		descriptor.value !== trim(descriptor.value) ||
+		(reflectApply(stringIncludes, descriptor.value, ["\0"]) as boolean) ||
+		!isAbsolute(descriptor.value) ||
+		normalize(descriptor.value) !== descriptor.value
+	) {
+		throw new CaptureFailure(hook, "environment");
 	}
-	return safe;
+	return managedCavememEnvironment as NodeJS.ProcessEnv;
 }
 
 interface FixedByteMatcher {

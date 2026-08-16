@@ -203,7 +203,7 @@
   - _Boundary: Capture Bridge_
   - _Depends: 2.7, 3.5_
 
-- [ ] 3.7 Complete session lineage, child attribution, and hook isolation
+- [x] 3.7 Complete session lineage, child attribution, and hook isolation
   - Preserve identity on resume and compaction, create a distinct fork identity, and flush each transition in order.
   - Define child-attribution observations containing parent session, run, agent, and child index without changing Cavemem schema.
   - Pass only the managed scrubbed environment to Cavemem hook and worker processes.
@@ -211,7 +211,7 @@
   - Done when resume, fork, compact, attribution-fixture, scrubbed-environment, shutdown, and mcpproxy-search tests pass.
   - _Requirements: 8.6, 10.4, 10.5, 10.6, 10.7, 10.8, 14.1, 14.4, 14.5_
   - _Boundary: Capture Bridge_
-  - _Depends: 3.6_
+  - _Depends: 2.8, 3.6_
 
 - [ ] 3.8 (P) Implement the isolated six-tool mcpproxy adapter
   - Create one in-memory adapter configuration for the local `/mcp/call` endpoint without ambient MCP-file merging.
@@ -627,6 +627,7 @@
 - Task 3.6: Consume the process bootstrap on each Jiti load; retain bounded strong redacted snapshots, use validated fallback input after `tool_call`, and ignore unknown ends or stale pre-validation results.
 - Task 2.7: Install the immutable capability in patched `bin/pi` before dynamic Pi imports; read only own environment data properties, and select a replacement marker that contains neither exact value.
 - Task 2.8: Keep Cavemem subprocess state in a separate policy-generated capability; include `CAVEMEM_DATA_DIR`, omit test-only and credential variables, and drop allowed values changed by exact redaction.
+- Task 3.7: Keep canonical envelope keys trusted, bound dynamic data after redaction, emit deterministic once-per-child attribution, never reopen parent session paths, and end sessions only on terminal quit.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
