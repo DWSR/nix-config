@@ -183,16 +183,16 @@
   - _Boundary: Capture Bridge_
   - _Depends: 1.5, 3.4_
 
-- [ ] 3.6 Capture complete pre-mutation tool results and failures
+- [x] 3.6 Capture complete pre-mutation tool results and failures
   - Snapshot tool events synchronously before the first await and before later extension mutation.
-  - Consume `ProviderRuntimeSecretsV1.exactRedactionValues` in the Capture Bridge, register them in memory before provider use, and remove each value from the snapshot before constructing JSON or spawning Cavemem.
+  - Consume the immutable `PiRuntimeBootstrapV1` capability during every Jiti factory load and remove each exact value from the snapshot before constructing JSON or spawning Cavemem.
   - Record successful and failed tool name, call identity, validated input, complete bounded-redacted content/details, usage, and outcome.
   - Use tool-execution completion as the fallback for validation, unavailable-tool, or blocked calls without a result event.
   - Invoke `pi-full-v1` and surface malformed, storage, redaction, and process failures as sticky sanitized Pi errors.
-  - Done when later-mutator, success, tool-error, blocked-tool, unavailable-tool, and sticky-error fixtures retain the expected pre-mutation payload.
+  - Done when real-loader/reload, later-mutator, success, tool-error, blocked-tool, unavailable-tool, stale-ID reuse, end-before-start, and sticky-error fixtures retain exactly one expected pre-mutation payload.
   - _Requirements: 10.3, 10.6, 10.9, 14.1, 14.4, 14.5_
   - _Boundary: Capture Bridge_
-  - _Depends: 2.5, 3.5_
+  - _Depends: 2.7, 3.5_
 
 - [ ] 3.7 Complete session lineage, child attribution, and hook isolation
   - Preserve identity on resume and compaction, create a distinct fork identity, and flush each transition in order.
@@ -615,6 +615,7 @@
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
 - Task 3.5: Keep hook TERM/KILL and quiescence timers referenced until the owned process group is confirmed gone; unresolved promises and unref'd timers do not keep Node alive.
+- Task 3.6: Consume the process bootstrap on each Jiti load; retain bounded strong redacted snapshots, use validated fallback input after `tool_call`, and ignore unknown ends or stale pre-validation results.
 - Task 2.7: Install the immutable capability in patched `bin/pi` before dynamic Pi imports; read only own environment data properties, and select a replacement marker that contains neither exact value.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.

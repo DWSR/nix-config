@@ -1,19 +1,30 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { types as nodeUtilTypes } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export type CavememHookName =
 	| "session-start"
 	| "user-prompt-submit"
+	| "post-tool-use"
 	| "stop"
 	| "session-end";
+
+export type CavememCaptureMode = "pi-full-v1";
 
 export interface CavememHookRequest {
 	name: CavememHookName;
 	payload: Record<string, unknown>;
 	cwd: string;
+	captureMode?: CavememCaptureMode;
 }
 
 export type CavememHookRunner = (request: CavememHookRequest) => Promise<void>;
+
+export interface PiRuntimeBootstrapV1 {
+	readonly schemaVersion: 1;
+	readonly mode: "personal" | "shopify-gateway";
+	readonly redactExact: (value: string) => string;
+}
 
 export interface CavememBridgeOptions {
 	command?: string;
@@ -26,17 +37,68 @@ export const CAVEMEM_COMMAND = "@cavemem@";
 
 const DEFAULT_KILL_GRACE_MS = 1_000;
 const DEFAULT_NO_PROGRESS_MS = 15_000;
+const MAX_ACTIVE_TOOL_CAPTURES = 256;
+const MAX_RETIRED_TOOL_CAPTURES = 256;
+const RUNTIME_BOOTSTRAP_SYMBOL_KEY = "dwsr.pi-agent.runtime-bootstrap.v1";
+
+const arrayIsArray = Array.isArray;
+const jsonStringify = JSON.stringify;
+const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const objectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const objectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectIs = Object.is;
+const objectIsFrozen = Object.isFrozen;
+const reflectApply = Reflect.apply;
+const stringTrim = String.prototype.trim;
+const symbolConstructor = Symbol;
+const symbolFor = Symbol.for;
+const runtimeBootstrapSymbol = reflectApply(symbolFor, symbolConstructor, [
+	RUNTIME_BOOTSTRAP_SYMBOL_KEY,
+]) as symbol;
+const preparedProcessEnvironments = new WeakMap<CavememHookRequest, NodeJS.ProcessEnv>();
 
 type CaptureFailureKind =
 	| "completion-timeout"
 	| "exit"
 	| "hook"
+	| "malformed"
 	| "quiescence-timeout"
+	| "redaction"
 	| "serialize"
 	| "spawn"
 	| "startup-timeout"
+	| "storage"
 	| "stdin"
 	| "stdin-timeout";
+
+interface ToolCaptureState {
+	input: ToolCaptureInput;
+	terminal: "fallback-pending" | "open" | "result-pending";
+	toolCallId: string;
+	toolName: string;
+}
+
+type ToolCaptureInput =
+	| { readonly phase: "raw"; readonly snapshot: unknown }
+	| { readonly phase: "validated"; readonly snapshot: unknown };
+
+interface PiFullToolObservationV1 {
+	readonly schemaVersion: 1;
+	readonly toolCallId: string;
+	readonly toolName: string;
+	readonly input: unknown;
+	readonly output: {
+		readonly content: unknown;
+		readonly details: unknown;
+		readonly isError: boolean;
+		readonly usage?: Readonly<Record<string, number>>;
+	};
+}
 
 class CaptureFailure extends Error {
 	readonly hook: CavememHookName;
@@ -50,7 +112,11 @@ class CaptureFailure extends Error {
 	}
 }
 
+const runtimeBootstrap = consumeRuntimeBootstrap();
+const runtimeRedactExact = runtimeBootstrap.redactExact;
+
 export function createCavememBridge(options: CavememBridgeOptions = {}) {
+	const usesProcessRunner = options.runHook === undefined;
 	const runHook =
 		options.runHook ??
 		createProcessHookRunner(
@@ -61,11 +127,20 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 
 	return function cavememBridge(pi: ExtensionAPI): void {
 		let tail: Promise<void> = Promise.resolve();
+		const toolCaptures = new Map<string, ToolCaptureState>();
+		const retiredToolCaptures = new Map<string, true>();
 
 		const enqueue = async (
 			request: CavememHookRequest,
 			ctx: ExtensionContext,
 		): Promise<void> => {
+			try {
+				if (usesProcessRunner && !preparedProcessEnvironments.has(request)) {
+					preparedProcessEnvironments.set(request, safeCavememEnvironment(request.name));
+				}
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, request.name, error);
+			}
 			const operation = tail.then(() => runHook(request));
 			tail = operation.catch(() => undefined);
 			try {
@@ -80,22 +155,210 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 			}
 		};
 
+		const surfaceCaptureFailure = (
+			ctx: ExtensionContext,
+			hook: CavememHookName,
+			error: unknown,
+		): CaptureFailure => {
+			const failure =
+				error instanceof CaptureFailure
+					? error
+					: new CaptureFailure(hook, "malformed");
+			ctx.ui.notify(failure.message, "error");
+			return failure;
+		};
+
+		const boundedToolCapture = (toolCallId: string, state: ToolCaptureState): void => {
+			if (!toolCaptures.has(toolCallId) && toolCaptures.size >= MAX_ACTIVE_TOOL_CAPTURES) {
+				throw new CaptureFailure("post-tool-use", "malformed");
+			}
+			toolCaptures.set(toolCallId, state);
+		};
+
+		const retireToolCapture = (
+			toolCallId: string,
+			state: ToolCaptureState,
+		): void => {
+			const current = toolCaptures.get(toolCallId);
+			if (current !== state) return;
+			toolCaptures.delete(toolCallId);
+			retiredToolCaptures.delete(toolCallId);
+			retiredToolCaptures.set(toolCallId, true);
+			while (retiredToolCaptures.size > MAX_RETIRED_TOOL_CAPTURES) {
+				const oldest = retiredToolCaptures.keys().next();
+				if (oldest.done) break;
+				retiredToolCaptures.delete(oldest.value);
+			}
+		};
+
+		const safeLifecycleRequest = (
+			ctx: ExtensionContext,
+			name: CavememHookName,
+			extra: Record<string, unknown> = {},
+		): CavememHookRequest => {
+			try {
+				return lifecycleRequest(ctx, name, extra);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, name, error);
+			}
+		};
+
 		pi.on("session_start", async (event, ctx) => {
-			const request = lifecycleRequest(ctx, "session-start", { source: event.reason });
+			let source: unknown;
+			try {
+				source = requiredEventProperty(event, "reason", "session-start");
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "session-start", error);
+			}
+			const request = safeLifecycleRequest(ctx, "session-start", { source });
 			await enqueue(request, ctx);
 		});
 
 		pi.on("input", async (event, ctx) => {
-			if (event.text.trim().length === 0) return;
-			const request = lifecycleRequest(ctx, "user-prompt-submit", { prompt: event.text });
+			let text: string;
+			try {
+				text = requiredEventString(event, "text", "user-prompt-submit");
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "user-prompt-submit", error);
+			}
+			if (trim(text).length === 0) return;
+			const request = safeLifecycleRequest(ctx, "user-prompt-submit", { prompt: text });
 			await enqueue(request, ctx);
 		});
 
 		pi.on("turn_end", async (event, ctx) => {
-			const request = lifecycleRequest(ctx, "stop", {
-				last_assistant_message: visibleAssistantText(event.message),
+			let lastAssistantMessage: string;
+			try {
+				lastAssistantMessage = visibleAssistantText(
+					requiredEventProperty(event, "message", "stop"),
+				);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "stop", error);
+			}
+			const request = safeLifecycleRequest(ctx, "stop", {
+				last_assistant_message: lastAssistantMessage,
 			});
 			await enqueue(request, ctx);
+		});
+
+		pi.on("tool_execution_start", (event, ctx) => {
+			try {
+				const toolCallId = requiredEventString(event, "toolCallId", "post-tool-use", true);
+				if (toolCaptures.has(toolCallId) || retiredToolCaptures.has(toolCallId)) return;
+				if (toolCaptures.size >= MAX_ACTIVE_TOOL_CAPTURES) {
+					throw new CaptureFailure("post-tool-use", "malformed");
+				}
+				const toolName = requiredEventString(event, "toolName", "post-tool-use", true);
+				const input = requiredEventProperty(event, "args", "post-tool-use");
+				const state = createToolCaptureState(toolCallId, toolName, input);
+				boundedToolCapture(toolCallId, state);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+		});
+
+		pi.on("tool_call", (event, ctx) => {
+			let toolCallId: string;
+			try {
+				toolCallId = requiredEventString(event, "toolCallId", "post-tool-use", true);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			if (retiredToolCaptures.has(toolCallId)) return;
+			const state = toolCaptures.get(toolCallId);
+			if (state === undefined || state.terminal !== "open" || state.input.phase === "validated") return;
+			try {
+				const toolName = redactedIdentifier(
+					requiredEventString(event, "toolName", "post-tool-use", true),
+					"post-tool-use",
+				);
+				if (toolName !== state.toolName) {
+					throw new CaptureFailure("post-tool-use", "malformed");
+				}
+				const input = requiredEventProperty(event, "input", "post-tool-use");
+				const validatedInput = snapshotRedactedJson(input, "post-tool-use");
+				state.input = { phase: "validated", snapshot: validatedInput };
+			} catch (error: unknown) {
+				retireToolCapture(toolCallId, state);
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+		});
+
+		pi.on("tool_result", async (event, ctx) => {
+			let toolCallId: string;
+			try {
+				toolCallId = requiredEventString(event, "toolCallId", "post-tool-use", true);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			if (retiredToolCaptures.has(toolCallId)) return;
+			const state = toolCaptures.get(toolCallId);
+			if (state === undefined || state.terminal !== "open" || state.input.phase !== "validated") {
+				return;
+			}
+			let request: CavememHookRequest;
+			try {
+				state.terminal = "result-pending";
+				request = fullToolRequest(
+					ctx,
+					requiredEventString(event, "toolName", "post-tool-use", true),
+					state.input.snapshot,
+					{
+						content: requiredEventProperty(event, "content", "post-tool-use"),
+						details: requiredEventProperty(event, "details", "post-tool-use"),
+						isError: requiredEventProperty(event, "isError", "post-tool-use"),
+						usage: optionalEventProperty(event, "usage", "post-tool-use"),
+					},
+					state,
+				);
+			} catch (error: unknown) {
+				state.terminal = "result-pending";
+				retireToolCapture(toolCallId, state);
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			try {
+				await enqueue(request, ctx);
+			} finally {
+				retireToolCapture(toolCallId, state);
+			}
+		});
+
+		pi.on("tool_execution_end", async (event, ctx) => {
+			let toolCallId: string;
+			try {
+				toolCallId = requiredEventString(event, "toolCallId", "post-tool-use", true);
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			if (retiredToolCaptures.has(toolCallId)) return;
+			const state = toolCaptures.get(toolCallId);
+			if (state === undefined || state.terminal !== "open") return;
+
+			let request: CavememHookRequest;
+			try {
+				request = fullToolRequest(
+					ctx,
+					requiredEventString(event, "toolName", "post-tool-use", true),
+					state.input.snapshot,
+					toolExecutionEndOutput(
+						requiredEventProperty(event, "result", "post-tool-use"),
+						requiredEventProperty(event, "isError", "post-tool-use"),
+					),
+					state,
+				);
+			} catch (error: unknown) {
+				state.terminal = "fallback-pending";
+				retireToolCapture(toolCallId, state);
+				throw surfaceCaptureFailure(ctx, "post-tool-use", error);
+			}
+			await Promise.resolve();
+			if (state.terminal !== "open") return;
+			state.terminal = "fallback-pending";
+			try {
+				await enqueue(request, ctx);
+			} finally {
+				retireToolCapture(toolCallId, state);
+			}
 		});
 
 		pi.on("session_before_compact", async () => {
@@ -103,45 +366,509 @@ export function createCavememBridge(options: CavememBridgeOptions = {}) {
 		});
 
 		pi.on("session_shutdown", async (event, ctx) => {
-			if (event.reason === "reload") {
-				await tail;
+			let reason: string;
+			try {
+				reason = requiredEventString(event, "reason", "session-end");
+			} catch (error: unknown) {
+				throw surfaceCaptureFailure(ctx, "session-end", error);
+			}
+			if (reason === "reload") {
+				try {
+					await tail;
+				} finally {
+					toolCaptures.clear();
+					retiredToolCaptures.clear();
+				}
 				return;
 			}
-			const request = lifecycleRequest(ctx, "session-end");
-			await enqueue(request, ctx);
+			try {
+				const request = safeLifecycleRequest(ctx, "session-end");
+				await enqueue(request, ctx);
+			} finally {
+				toolCaptures.clear();
+				retiredToolCaptures.clear();
+			}
 		});
 	};
 }
 
 export default createCavememBridge();
 
+function consumeRuntimeBootstrap(): PiRuntimeBootstrapV1 {
+	const malformed = (): never => {
+		throw new Error("Cavemem runtime bootstrap is malformed");
+	};
+	const globalDescriptor = objectGetOwnPropertyDescriptor(globalThis, runtimeBootstrapSymbol);
+	if (globalDescriptor === undefined) {
+		throw new Error("Cavemem runtime bootstrap is unavailable");
+	}
+	if (
+		!objectHasOwn(globalDescriptor, "value") ||
+		globalDescriptor.configurable !== false ||
+		globalDescriptor.enumerable !== false ||
+		globalDescriptor.writable !== false
+	) {
+		return malformed();
+	}
+
+	const capability = globalDescriptor.value;
+	if (
+		typeof capability !== "object" ||
+		capability === null ||
+		nodeUtilTypes.isProxy(capability) ||
+		objectGetPrototypeOf(capability) !== Object.prototype ||
+		!objectIsFrozen(capability)
+	) {
+		return malformed();
+	}
+	const names = objectGetOwnPropertyNames(capability);
+	if (
+		names.length !== 4 ||
+		names[0] !== "schemaVersion" ||
+		names[1] !== "mode" ||
+		names[2] !== "redactExact" ||
+		names[3] !== "toJSON" ||
+		objectGetOwnPropertySymbols(capability).length !== 0
+	) {
+		return malformed();
+	}
+
+	const schemaVersion = bootstrapDataProperty(capability, "schemaVersion", true, malformed);
+	const mode = bootstrapDataProperty(capability, "mode", true, malformed);
+	const redactExact = bootstrapDataProperty(capability, "redactExact", true, malformed);
+	const toJSON = bootstrapDataProperty(capability, "toJSON", false, malformed);
+	if (
+		schemaVersion !== 1 ||
+		(mode !== "personal" && mode !== "shopify-gateway") ||
+		typeof redactExact !== "function" ||
+		typeof toJSON !== "function" ||
+		!objectIsFrozen(redactExact) ||
+		!objectIsFrozen(toJSON)
+	) {
+		return malformed();
+	}
+	return capability as PiRuntimeBootstrapV1;
+}
+
+function bootstrapDataProperty(
+	value: object,
+	key: PropertyKey,
+	enumerable: boolean,
+	malformed: () => never,
+): unknown {
+	const descriptor = objectGetOwnPropertyDescriptor(value, key);
+	if (
+		descriptor === undefined ||
+		!objectHasOwn(descriptor, "value") ||
+		descriptor.configurable !== false ||
+		descriptor.enumerable !== enumerable ||
+		descriptor.writable !== false
+	) {
+		return malformed();
+	}
+	return descriptor.value;
+}
+
+function assertInspectableObject(value: unknown): asserts value is object {
+	if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+		throw new Error("invalid object");
+	}
+	if (nodeUtilTypes.isProxy(value)) throw new Error("invalid object");
+}
+
+function createToolCaptureState(
+	toolCallId: string,
+	toolName: string,
+	input: unknown,
+): ToolCaptureState {
+	return {
+		input: { phase: "raw", snapshot: snapshotRedactedJson(input, "post-tool-use") },
+		terminal: "open",
+		toolCallId: redactedIdentifier(toolCallId, "post-tool-use"),
+		toolName: redactedIdentifier(toolName, "post-tool-use"),
+	};
+}
+
+function fullToolRequest(
+	ctx: { cwd: string; sessionManager: { getSessionId(): string } },
+	toolName: string,
+	input: unknown,
+	output: {
+		readonly content: unknown;
+		readonly details: unknown;
+		readonly isError: unknown;
+		readonly usage?: unknown;
+	},
+	state: ToolCaptureState,
+): CavememHookRequest {
+	const eventToolName = redactedIdentifier(toolName, "post-tool-use");
+	if (state.toolName !== eventToolName || typeof output.isError !== "boolean") {
+		throw new CaptureFailure("post-tool-use", "malformed");
+	}
+
+	const usage = flattenUsage(output.usage);
+	const observation: PiFullToolObservationV1 & { readonly session_id: string } = {
+		session_id: ctx.sessionManager.getSessionId(),
+		schemaVersion: 1,
+		toolCallId: state.toolCallId,
+		toolName: state.toolName,
+		input,
+		output: {
+			content: output.content === undefined ? [] : output.content,
+			details: output.details === undefined ? null : output.details,
+			isError: output.isError,
+			...(usage === undefined ? {} : { usage }),
+		},
+	};
+	const payload = snapshotRedactedJson(observation, "post-tool-use");
+	if (!isRecord(payload)) throw new CaptureFailure("post-tool-use", "malformed");
+	return {
+		name: "post-tool-use",
+		captureMode: "pi-full-v1",
+		cwd: ctx.cwd,
+		payload,
+	};
+}
+
+function toolExecutionEndOutput(
+	result: unknown,
+	isError: unknown,
+): {
+	readonly content: unknown;
+	readonly details: unknown;
+	readonly isError: unknown;
+	readonly usage?: unknown;
+} {
+	assertPlainRecord(result, "post-tool-use");
+	return {
+		content: optionalOwnDataProperty(result, "content", "post-tool-use"),
+		details: optionalOwnDataProperty(result, "details", "post-tool-use"),
+		isError,
+		usage: optionalOwnDataProperty(result, "usage", "post-tool-use"),
+	};
+}
+
+function requiredEventProperty(
+	event: unknown,
+	key: PropertyKey,
+	hook: CavememHookName,
+): unknown {
+	assertPlainRecord(event, hook);
+	const descriptor = objectGetOwnPropertyDescriptor(event, key);
+	if (descriptor === undefined || !descriptor.enumerable || !objectHasOwn(descriptor, "value")) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	return descriptor.value;
+}
+
+function optionalEventProperty(
+	event: unknown,
+	key: PropertyKey,
+	hook: CavememHookName,
+): unknown {
+	assertPlainRecord(event, hook);
+	return optionalOwnDataProperty(event, key, hook);
+}
+
+function requiredEventString(
+	event: unknown,
+	key: PropertyKey,
+	hook: CavememHookName,
+	nonempty = false,
+): string {
+	const value = requiredEventProperty(event, key, hook);
+	if (typeof value !== "string" || (nonempty && trim(value).length === 0)) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	return value;
+}
+
+function optionalOwnDataProperty(
+	value: object,
+	key: PropertyKey,
+	hook: CavememHookName,
+): unknown {
+	const descriptor = objectGetOwnPropertyDescriptor(value, key);
+	if (descriptor === undefined) return undefined;
+	if (!descriptor.enumerable || !objectHasOwn(descriptor, "value")) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	return descriptor.value;
+}
+
+function assertPlainRecord(
+	value: unknown,
+	hook: CavememHookName,
+): asserts value is Record<string, unknown> {
+	try {
+		assertInspectableObject(value);
+	} catch {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	if (arrayIsArray(value) || objectGetOwnPropertySymbols(value).length !== 0) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	const prototype = objectGetPrototypeOf(value);
+	if (prototype !== Object.prototype && prototype !== null) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+}
+
+function trim(value: string): string {
+	return reflectApply(stringTrim, value, []) as string;
+}
+
+function redactRuntimeString(value: string, hook: CavememHookName): string {
+	try {
+		const redacted = reflectApply(runtimeRedactExact, runtimeBootstrap, [value]) as unknown;
+		if (typeof redacted !== "string") throw new Error("invalid redaction result");
+		return redacted;
+	} catch {
+		throw new CaptureFailure(hook, "redaction");
+	}
+}
+
+function redactedIdentifier(value: unknown, hook: CavememHookName): string {
+	if (typeof value !== "string" || trim(value).length === 0) {
+		throw new CaptureFailure(hook, "malformed");
+	}
+	const redacted = redactRuntimeString(value, hook);
+	if (trim(redacted).length === 0) throw new CaptureFailure(hook, "malformed");
+	return redacted;
+}
+
+function flattenUsage(usage: unknown): Readonly<Record<string, number>> | undefined {
+	if (usage === undefined) return undefined;
+	assertPlainRecord(usage, "post-tool-use");
+	const flat: Record<string, number> = {};
+	const scalarFields = new Set([
+		"input",
+		"output",
+		"cacheRead",
+		"cacheWrite",
+		"cacheWrite1h",
+		"reasoning",
+		"totalTokens",
+	]);
+	for (const rawKey of objectGetOwnPropertyNames(usage)) {
+		const descriptor = objectGetOwnPropertyDescriptor(usage, rawKey);
+		if (!descriptor?.enumerable || !objectHasOwn(descriptor, "value")) {
+			throw new CaptureFailure("post-tool-use", "malformed");
+		}
+		const key = redactRuntimeString(rawKey, "post-tool-use");
+		if (key === "cost") {
+			flattenUsageCost(descriptor.value, flat);
+			continue;
+		}
+		if (!scalarFields.has(key)) throw new CaptureFailure("post-tool-use", "malformed");
+		if (descriptor.value === undefined && (key === "cacheWrite1h" || key === "reasoning")) {
+			continue;
+		}
+		if (typeof descriptor.value !== "number" || !Number.isFinite(descriptor.value)) {
+			throw new CaptureFailure("post-tool-use", "malformed");
+		}
+		flat[key] = descriptor.value;
+	}
+	return objectFreeze(flat);
+}
+
+function flattenUsageCost(cost: unknown, flat: Record<string, number>): void {
+	assertPlainRecord(cost, "post-tool-use");
+	const allowed = new Set(["input", "output", "cacheRead", "cacheWrite", "total"]);
+	for (const rawKey of objectGetOwnPropertyNames(cost)) {
+		const descriptor = objectGetOwnPropertyDescriptor(cost, rawKey);
+		const key = redactRuntimeString(rawKey, "post-tool-use");
+		if (
+			!descriptor?.enumerable ||
+			!objectHasOwn(descriptor, "value") ||
+			!allowed.has(key) ||
+			typeof descriptor.value !== "number" ||
+			!Number.isFinite(descriptor.value)
+		) {
+			throw new CaptureFailure("post-tool-use", "malformed");
+		}
+		flat[`cost.${key}`] = descriptor.value;
+	}
+}
+
+interface SnapshotVisitFrame {
+	readonly kind: "visit";
+	readonly value: unknown;
+	readonly parent?: object;
+	readonly key?: PropertyKey;
+}
+
+interface SnapshotExitFrame {
+	readonly kind: "exit";
+	readonly value: object;
+}
+
+type SnapshotFrame = SnapshotVisitFrame | SnapshotExitFrame;
+
+function snapshotRedactedJson(
+	value: unknown,
+	hook: CavememHookName,
+): unknown {
+	let root: unknown;
+	const active = new Set<object>();
+	const pending: SnapshotFrame[] = [{ kind: "visit", value }];
+	while (pending.length > 0) {
+		const frame = pending.pop()!;
+		if (frame.kind === "exit") {
+			active.delete(frame.value);
+			continue;
+		}
+
+		const source = frame.value;
+		if (source === null || typeof source === "boolean") {
+			assignSnapshotValue(frame, source, (next) => { root = next; });
+			continue;
+		}
+		if (typeof source === "string") {
+			assignSnapshotValue(frame, redactRuntimeString(source, hook), (next) => {
+				root = next;
+			});
+			continue;
+		}
+		if (typeof source === "number") {
+			if (!Number.isFinite(source)) throw new CaptureFailure(hook, "malformed");
+			assignSnapshotValue(frame, source, (next) => { root = next; });
+			continue;
+		}
+		if (typeof source !== "object") {
+			throw new CaptureFailure(hook, "malformed");
+		}
+		try {
+			assertInspectableObject(source);
+		} catch {
+			throw new CaptureFailure(hook, "malformed");
+		}
+		if (active.has(source)) throw new CaptureFailure(hook, "malformed");
+
+		if (arrayIsArray(source)) {
+			if (objectGetPrototypeOf(source) !== Array.prototype || objectGetOwnPropertySymbols(source).length !== 0) {
+				throw new CaptureFailure(hook, "malformed");
+			}
+			const lengthDescriptor = objectGetOwnPropertyDescriptor(source, "length");
+			if (!lengthDescriptor || !objectHasOwn(lengthDescriptor, "value")) {
+				throw new CaptureFailure(hook, "malformed");
+			}
+			const length = lengthDescriptor.value as number;
+			const names = objectGetOwnPropertyNames(source);
+			if (names.length !== length + 1) throw new CaptureFailure(hook, "malformed");
+			const clone: unknown[] = new Array(length);
+			assignSnapshotValue(frame, clone, (next) => { root = next; });
+			active.add(source);
+			pending.push({ kind: "exit", value: source });
+			for (let index = length - 1; index >= 0; index -= 1) {
+				const descriptor = objectGetOwnPropertyDescriptor(source, String(index));
+				if (!descriptor?.enumerable || !objectHasOwn(descriptor, "value")) {
+					throw new CaptureFailure(hook, "malformed");
+				}
+				pending.push({ kind: "visit", value: descriptor.value, parent: clone, key: index });
+			}
+			continue;
+		}
+
+		const prototype = objectGetPrototypeOf(source);
+		if (
+			(prototype !== Object.prototype && prototype !== null) ||
+			objectGetOwnPropertySymbols(source).length !== 0
+		) {
+			throw new CaptureFailure(hook, "malformed");
+		}
+		const clone = objectCreate(prototype) as Record<string, unknown>;
+		const children: Array<{ readonly key: string; readonly value: unknown }> = [];
+		const redactedKeys = new Set<string>();
+		for (const key of objectGetOwnPropertyNames(source)) {
+			const descriptor = objectGetOwnPropertyDescriptor(source, key);
+			if (!descriptor?.enumerable || !objectHasOwn(descriptor, "value")) {
+				throw new CaptureFailure(hook, "malformed");
+			}
+			const redactedKey = redactRuntimeString(key, hook);
+			if (redactedKeys.has(redactedKey)) {
+				throw new CaptureFailure(hook, "malformed");
+			}
+			redactedKeys.add(redactedKey);
+			children.push({ key: redactedKey, value: descriptor.value });
+		}
+		assignSnapshotValue(frame, clone, (next) => { root = next; });
+		active.add(source);
+		pending.push({ kind: "exit", value: source });
+		for (let index = children.length - 1; index >= 0; index -= 1) {
+			const child = children[index];
+			pending.push({ kind: "visit", value: child.value, parent: clone, key: child.key });
+		}
+	}
+	return root;
+}
+
+function assignSnapshotValue(
+	frame: SnapshotVisitFrame,
+	value: unknown,
+	assignRoot: (value: unknown) => void,
+): void {
+	if (frame.parent === undefined || frame.key === undefined) {
+		assignRoot(value);
+		return;
+	}
+	objectDefineProperty(frame.parent, frame.key, {
+		configurable: true,
+		enumerable: true,
+		value,
+		writable: true,
+	});
+}
+
 function lifecycleRequest(
 	ctx: { cwd: string; sessionManager: { getSessionId(): string } },
 	name: CavememHookName,
 	extra: Record<string, unknown> = {},
 ): CavememHookRequest {
-	return {
-		name,
-		cwd: ctx.cwd,
-		payload: {
+	const payload = snapshotRedactedJson(
+		{
 			session_id: ctx.sessionManager.getSessionId(),
 			cwd: ctx.cwd,
 			...extra,
 		},
+		name,
+	);
+	if (!isRecord(payload)) throw new CaptureFailure(name, "malformed");
+	return {
+		name,
+		cwd: ctx.cwd,
+		payload,
 	};
 }
 
 function visibleAssistantText(message: unknown): string {
-	if (!isRecord(message) || message.role !== "assistant") return "";
-	if (typeof message.content === "string") return message.content;
-	if (!Array.isArray(message.content)) return "";
-	return message.content
-		.filter(
-			(part): part is { type: "text"; text: string } =>
-				isRecord(part) && part.type === "text" && typeof part.text === "string",
-		)
-		.map(({ text }) => text)
-		.join("\n");
+	assertPlainRecord(message, "stop");
+	if (optionalOwnDataProperty(message, "role", "stop") !== "assistant") return "";
+	const content = optionalOwnDataProperty(message, "content", "stop");
+	if (typeof content === "string") return content;
+	if (!arrayIsArray(content)) return "";
+	if (objectGetPrototypeOf(content) !== Array.prototype || objectGetOwnPropertySymbols(content).length !== 0) {
+		throw new CaptureFailure("stop", "malformed");
+	}
+	const lengthDescriptor = objectGetOwnPropertyDescriptor(content, "length");
+	if (!lengthDescriptor || !objectHasOwn(lengthDescriptor, "value")) {
+		throw new CaptureFailure("stop", "malformed");
+	}
+	const text: string[] = [];
+	for (let index = 0; index < lengthDescriptor.value; index += 1) {
+		const descriptor = objectGetOwnPropertyDescriptor(content, String(index));
+		if (!descriptor?.enumerable || !objectHasOwn(descriptor, "value")) {
+			throw new CaptureFailure("stop", "malformed");
+		}
+		const part = descriptor.value;
+		if (!isRecord(part)) continue;
+		assertPlainRecord(part, "stop");
+		if (optionalOwnDataProperty(part, "type", "stop") !== "text") continue;
+		const partText = optionalOwnDataProperty(part, "text", "stop");
+		if (typeof partText !== "string") throw new CaptureFailure("stop", "malformed");
+		text.push(partText);
+	}
+	return text.join("\n");
 }
 
 function createProcessHookRunner(
@@ -159,9 +886,12 @@ function createProcessHookRunner(
 
 		let input: string;
 		try {
-			input = JSON.stringify(request.payload);
+			input = jsonStringify(request.payload);
 		} catch {
-			throw new CaptureFailure(request.name, "serialize");
+			throw new CaptureFailure(
+				request.name,
+				request.captureMode === "pi-full-v1" ? "malformed" : "serialize",
+			);
 		}
 
 		await new Promise<void>((resolve, reject) => {
@@ -174,6 +904,8 @@ function createProcessHookRunner(
 			let pendingFailure: CaptureFailure | null | undefined;
 			let child: ChildProcessWithoutNullStreams;
 			let processGroupId: number | undefined;
+			const failureClassifier =
+				request.captureMode === "pi-full-v1" ? createFullModeFailureClassifier() : undefined;
 
 			const clearNoProgressTimer = () => {
 				if (noProgressTimer === undefined) return;
@@ -262,17 +994,29 @@ function createProcessHookRunner(
 			};
 
 			try {
-				child = spawn(command, ["hook", "run", request.name, "--ide", "pi"], {
+				const args = ["hook", "run", request.name, "--ide", "pi"];
+				if (request.captureMode === "pi-full-v1") {
+					args.push("--capture-mode", "pi-full-v1");
+				}
+				const environment =
+					preparedProcessEnvironments.get(request) ?? safeCavememEnvironment(request.name);
+				preparedProcessEnvironments.delete(request);
+				child = spawn(command, args, {
 					cwd: request.cwd,
 					detached: ownsProcessGroups,
+					env: environment,
 					stdio: ["pipe", "pipe", "pipe"],
 				}) as ChildProcessWithoutNullStreams;
 				const childPid = child.pid;
 				if (ownsProcessGroups && childPid !== undefined && Number.isInteger(childPid) && childPid > 0) {
 					processGroupId = childPid;
 				}
-			} catch {
-				finish(new CaptureFailure(request.name, "spawn"));
+			} catch (error: unknown) {
+				finish(
+					error instanceof CaptureFailure
+						? error
+						: new CaptureFailure(request.name, "spawn"),
+				);
 				return;
 			}
 
@@ -289,13 +1033,19 @@ function createProcessHookRunner(
 				terminate(new CaptureFailure(request.name, "stdin"));
 			});
 			child.stdout.on("data", () => armNoProgress("completion-timeout"));
-			child.stderr.on("data", () => armNoProgress("completion-timeout"));
+			child.stderr.on("data", (chunk: unknown) => {
+				failureClassifier?.feed(chunk);
+				armNoProgress("completion-timeout");
+			});
 			child.once("error", () => {
 				if (pendingFailure === undefined) finish(new CaptureFailure(request.name, "spawn"));
 			});
 			child.once("close", (code) => {
 				closeObserved = true;
-				closeFailure = code === 0 ? null : new CaptureFailure(request.name, "exit");
+				closeFailure =
+					code === 0
+						? null
+						: new CaptureFailure(request.name, failureClassifier?.failureKind() ?? "exit");
 				if (pendingFailure !== undefined) {
 					if (confirmedQuiescent()) finishPending();
 					return;
@@ -305,6 +1055,99 @@ function createProcessHookRunner(
 			});
 		});
 	};
+}
+
+const CAVEMEM_ALWAYS_REMOVED_ENVIRONMENT_NAMES = new Set([
+	"PI_AGENT_LAUNCH_ID",
+	"SHOPIFY_PI_TOKEN",
+]);
+
+function safeCavememEnvironment(hook: CavememHookName): NodeJS.ProcessEnv {
+	const safe = objectCreate(null) as NodeJS.ProcessEnv;
+	for (const name of objectGetOwnPropertyNames(process.env)) {
+		if (CAVEMEM_ALWAYS_REMOVED_ENVIRONMENT_NAMES.has(name)) continue;
+		const descriptor = objectGetOwnPropertyDescriptor(process.env, name);
+		if (descriptor === undefined || !objectHasOwn(descriptor, "value")) continue;
+		const value = descriptor.value;
+		if (typeof value !== "string") continue;
+		if (!objectIs(redactRuntimeString(value, hook), value)) continue;
+		safe[name] = value;
+	}
+	return safe;
+}
+
+interface FixedByteMatcher {
+	readonly failure: readonly number[];
+	readonly kind: "malformed" | "redaction" | "storage";
+	readonly pattern: Uint8Array;
+	found: boolean;
+	position: number;
+}
+
+interface FullModeFailureClassifier {
+	feed(chunk: unknown): void;
+	failureKind(): "malformed" | "redaction" | "storage" | undefined;
+}
+
+function createFullModeFailureClassifier(): FullModeFailureClassifier {
+	const matchers = [
+		fixedByteMatcher("storage", "pi-full-v1 storage limit exceeded at active SQLite boundary"),
+		fixedByteMatcher("redaction", "pi-full-v1 privacy "),
+		fixedByteMatcher("malformed", "pi-full-v1 requires a valid JSON object"),
+		fixedByteMatcher("malformed", "pi-full-v1 session_id "),
+		fixedByteMatcher("malformed", "pi-full-v1 schemaVersion "),
+		fixedByteMatcher("malformed", "pi-full-v1 toolCallId "),
+		fixedByteMatcher("malformed", "pi-full-v1 toolName "),
+		fixedByteMatcher("malformed", "pi-full-v1 input "),
+		fixedByteMatcher("malformed", "pi-full-v1 output"),
+		fixedByteMatcher("malformed", "pi-full-v1 unknown-field "),
+	];
+	return {
+		feed(chunk: unknown): void {
+			const bytes =
+				typeof chunk === "string"
+					? Buffer.from(chunk)
+					: chunk instanceof Uint8Array
+						? chunk
+						: undefined;
+			if (bytes === undefined) return;
+			for (const matcher of matchers) feedFixedByteMatcher(matcher, bytes);
+		},
+		failureKind(): "malformed" | "redaction" | "storage" | undefined {
+			if (matchers.some((matcher) => matcher.kind === "storage" && matcher.found)) return "storage";
+			if (matchers.some((matcher) => matcher.kind === "redaction" && matcher.found)) return "redaction";
+			if (matchers.some((matcher) => matcher.kind === "malformed" && matcher.found)) return "malformed";
+			return undefined;
+		},
+	};
+}
+
+function fixedByteMatcher(
+	kind: FixedByteMatcher["kind"],
+	text: string,
+): FixedByteMatcher {
+	const pattern = Buffer.from(text, "ascii");
+	const failure = new Array<number>(pattern.length).fill(0);
+	for (let index = 1, prefix = 0; index < pattern.length; index += 1) {
+		while (prefix > 0 && pattern[index] !== pattern[prefix]) prefix = failure[prefix - 1];
+		if (pattern[index] === pattern[prefix]) prefix += 1;
+		failure[index] = prefix;
+	}
+	return { failure, found: false, kind, pattern, position: 0 };
+}
+
+function feedFixedByteMatcher(matcher: FixedByteMatcher, bytes: Uint8Array): void {
+	if (matcher.found) return;
+	for (const byte of bytes) {
+		while (matcher.position > 0 && byte !== matcher.pattern[matcher.position]) {
+			matcher.position = matcher.failure[matcher.position - 1];
+		}
+		if (byte === matcher.pattern[matcher.position]) matcher.position += 1;
+		if (matcher.position === matcher.pattern.length) {
+			matcher.found = true;
+			return;
+		}
+	}
 }
 
 function captureDiagnostic(hook: CavememHookName, kind: CaptureFailureKind): string {
