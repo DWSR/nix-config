@@ -462,7 +462,7 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
     lsp: 'allow',
   });
   assert.deepEqual(rendered.personal.nixPkg.bash, {
-    nix: 'allow',
+    'nix *': 'allow',
     'nixos-rebuild': 'ask',
   });
   assert.equal(rendered.personal.kiroSpecOrchestrator.skill, 'allow');
@@ -567,7 +567,7 @@ test('enforcement keeps global rules unchanged while plugin and agent overrides 
   assert.ok(rendered.personalEnforced.agentNames.includes('kiro-spec-orchestrator'));
   assert.ok(rendered.personalEnforced.agentNames.includes('nix-pkg'));
   assert.equal(rendered.personalEnforced.generalPermission.read, 'allow');
-  assert.equal(rendered.personalEnforced.nixPkgPermission.bash.nix, 'allow');
+  assert.equal(rendered.personalEnforced.nixPkgPermission.bash['nix *'], 'allow');
 
   assert.match(rendered.shopifyEnforced.pluginSource, /home-manager\/common\/subagent-context-budget\/plugin\.ts$/);
   assert.ok(rendered.shopifyEnforced.agentNames.includes('general'));

@@ -89,14 +89,14 @@
         ],
         "failureSignals": [
           "agent attempts `nixos-rebuild` (which is ask-gated) and stalls awaiting permission",
-          "agent reports missing bash.nix permission",
+          "agent reports missing the `nix *` bash permission",
           "agent invokes a bash subcommand outside the `nix` allowlist"
         ],
         "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when nix-pkg.state.kind == 'unbudgeted'."
       },
       "nonInteractive": {
         "strategy": "task-restricts-ask",
-        "details": "bash.nixos-rebuild is ask-gated; the smoke prompt explicitly forbids it. bash.nix and webfetch are allow rules. Smoke runner asserts the agent's bash invocations all match the `nix` allowlist."
+        "details": "The `nixos-rebuild` bash pattern is ask-gated; the smoke prompt explicitly forbids it. The `nix *` bash pattern and webfetch are allow rules. Smoke runner asserts the agent's bash invocations all match the `nix` allowlist."
       },
       "directInvocation": "opencode run --agent nix-pkg -- 'Run `nix flake show --json` and report the darwinConfigurations outputs. No nixos-rebuild.'",
       "notes": "Design.md spec: 'package-evaluation dry run that reaches planning output before mutation' — `nix flake show` is dry evaluation."

@@ -20,11 +20,7 @@ permission:
     "git *": deny
     "gt": deny
     "gt *": deny
-    "nix build*": allow
-    "nix eval*": allow
-    "nix fmt*": allow
-    "nix flake*": allow
-    "nix hash*": allow
+    "nix *": allow
     "nix-prefetch-*": allow
     "nix-prefetch-url*": allow
     "nix-prefetch-git*": allow

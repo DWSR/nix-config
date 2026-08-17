@@ -87,7 +87,7 @@ let
       source = "common-markdown";
       permissionBudget = researchBudget // {
         bash = {
-          nix = "allow";
+          "nix *" = "allow";
           nixos-rebuild = "ask";
         };
       };

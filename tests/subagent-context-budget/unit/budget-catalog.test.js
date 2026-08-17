@@ -54,7 +54,7 @@ function completeMetadata(overrides = {}) {
         hostScope: 'all',
         state: { kind: 'enforced', reason: 'default' },
         instructionProfile: 'nix-package',
-        permissionBudget: { read: 'allow', grep: 'allow', glob: 'allow', bash: { nix: 'allow' } },
+        permissionBudget: { read: 'allow', grep: 'allow', glob: 'allow', bash: { 'nix *': 'allow' } },
         capabilityRationale: ['nix dry-run and evaluation commands'],
         smokeClass: 'nix-package-evaluation',
       },
