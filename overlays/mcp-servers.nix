@@ -555,11 +555,11 @@ in
 
   chrome-devtools-mcp = final.stdenv.mkDerivation {
     pname = "chrome-devtools-mcp";
-    version = "0.21.0";
+    version = "1.7.0";
 
     src = final.fetchurl {
-      url = "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-0.21.0.tgz";
-      hash = "sha256-KMHWSSctf6ihIT792yZeTqaYuHqmUanN2SJje5PI184=";
+      url = "https://registry.npmjs.org/chrome-devtools-mcp/-/chrome-devtools-mcp-1.7.0.tgz";
+      hash = "sha256-iVczWGoOzhOEk3kMB+iwg7hXGx0gN6cxJDNNlo0QRtA=";
     };
 
     dontBuild = true;
