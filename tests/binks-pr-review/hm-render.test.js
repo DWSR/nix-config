@@ -612,6 +612,7 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.binksReviewerText, /DISPOSITION: VALID \| FALSE_POSITIVE \| NEEDS_CONTEXT/);
   assert.equal(rendered.shopify.agentNames.includes('yb-backlog-validator'), true);
   assert.match(rendered.shopify.ybBacklogValidatorText, /mode: all/);
+  assert.doesNotMatch(rendered.shopify.ybBacklogValidatorText, /^model:/m);
   assert.match(rendered.shopify.ybBacklogValidatorText, /waves of exactly four/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /blocked_this_run/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /"\*": deny/);

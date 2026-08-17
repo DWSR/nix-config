@@ -1,7 +1,6 @@
 ---
 description: Orchestrates resumable YugabyteDB backlog validation in waves of four, using the Quick backlog site as the durable queue and yb-issue-validator workers for issue-level evidence.
 mode: all
-model: openai/gpt-5.6
 variant: xhigh
 temperature: 0.1
 permission:
