@@ -103,11 +103,13 @@ let
   piLock = ./pi-package-lock.json;
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
-  extensionNpmDepsHash = "sha256-wE7PBb/d2x9ueJ7X7S2Ju3xugHM6NNHsAkHI0u9c3ak=";
+  extensionNpmDepsHash = "sha256-vi1LJnFWUiEuCFRgk5HGYaAKrd0a92LMyw4WUMN1xtY=";
   cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
     cavemem = "${final.cavemem}/bin/cavemem";
   };
   cavememBridgePackage = builtins.fromJSON (builtins.readFile ./extensions/cavemem/package.json);
+  mcpproxyAdapterPackage = builtins.fromJSON (builtins.readFile ./extensions/mcpproxy/package.json);
+  managedMcpAdapterPatch = ./extensions/patches/pi-mcp-adapter-managed-direct-tools.patch;
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
@@ -153,6 +155,10 @@ let
             "${final.pi-agent}/lib/node_modules/@earendil-works/pi-tui/index.d.ts"
           ];
           "@narumitw/pi-tui-kit" = [ "pi-tui-kit/dist/index.d.ts" ];
+          "cross-spawn" = [
+            "${final.pi-agent}/lib/node_modules/@types/cross-spawn/index.d.ts"
+          ];
+          "pi-mcp-adapter" = [ "pi-mcp-adapter/index.ts" ];
           "typebox" = [ "typebox/build/index.d.mts" ];
           "typebox/*" = [ "typebox/build/*/index.d.mts" ];
         };
@@ -169,6 +175,7 @@ let
         "bash-timeout/src/extension.ts"
         "cavemem/index.ts"
         "code-intelligence/src/extension.ts"
+        "mcpproxy/index.ts"
         "plan-mode/src/index.ts"
       ];
     }
@@ -266,10 +273,10 @@ let
       license = "MIT";
     };
     mcp = {
-      package = "pi-mcp-adapter";
-      version = "2.20.1";
-      sourceRef = "1dbdef96";
-      entryPath = "lib/node_modules/pi-mcp-adapter/index.ts";
+      package = mcpproxyAdapterPackage.name;
+      inherit (mcpproxyAdapterPackage) version;
+      sourceRef = "repository";
+      entryPath = "lib/pi-agent/extensions/mcpproxy/index.ts";
       license = "MIT";
     };
     subagents = {
@@ -323,6 +330,17 @@ let
     };
   };
   extensionRuntimeDependencies = {
+    mcpAdapter = {
+      package = "pi-mcp-adapter";
+      version = "2.20.1";
+      sourceRef = "1dbdef96";
+      entryPath = "lib/node_modules/pi-mcp-adapter/index.ts";
+    };
+    mcpServerSdk = {
+      package = "@modelcontextprotocol/server";
+      version = "2.0.0";
+      entryPath = "lib/node_modules/@modelcontextprotocol/server/dist/index.mjs";
+    };
     nodePty = {
       package = "node-pty";
       version = "1.2.0-beta.14";
@@ -374,6 +392,11 @@ let
           file = builtins.baseNameOf managedCodeIntelligencePatch;
           package = "@mrclrchtr/supi-code-intelligence@4.6.0";
           task = "pi-agent-integration 4.8";
+        };
+        mcpAdapterManagedDirectTools = {
+          file = builtins.baseNameOf managedMcpAdapterPatch;
+          package = "pi-mcp-adapter@2.20.1";
+          task = "pi-agent-integration 3.8";
         };
       };
       runtimeDependencies = extensionRuntimeDependencies;
@@ -504,6 +527,8 @@ in
           < ${managedBackgroundPtyPatch}
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
           < ${managedCodeIntelligencePatch}
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-mcp-adapter -p1 \
+          < ${managedMcpAdapterPatch}
 
         typecheckDir=$(mktemp -d)
         ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
@@ -514,6 +539,10 @@ in
         ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
         install -Dm444 ${cavememBridgeSource} "$typecheckDir/cavemem/index.ts"
         install -Dm444 ${./extensions/cavemem/package.json} "$typecheckDir/cavemem/package.json"
+        install -Dm444 ${./extensions/mcpproxy/index.ts} "$typecheckDir/mcpproxy/index.ts"
+        install -Dm444 ${./extensions/mcpproxy/package.json} "$typecheckDir/mcpproxy/package.json"
+        ln -s "$PWD/node_modules/pi-mcp-adapter" "$typecheckDir/pi-mcp-adapter"
+        ln -s "$PWD/node_modules" "$typecheckDir/node_modules"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
         ln -s "$PWD/node_modules/typebox" "$typecheckDir/typebox"
@@ -553,6 +582,10 @@ in
         install -Dm444 ${cavememBridgeSource} "$out/lib/pi-agent/extensions/cavemem/index.ts"
         install -Dm444 ${./extensions/cavemem/package.json} \
           "$out/lib/pi-agent/extensions/cavemem/package.json"
+        install -Dm444 ${./extensions/mcpproxy/index.ts} \
+          "$out/lib/pi-agent/extensions/mcpproxy/index.ts"
+        install -Dm444 ${./extensions/mcpproxy/package.json} \
+          "$out/lib/pi-agent/extensions/mcpproxy/package.json"
 
         install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
         install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"
@@ -561,6 +594,8 @@ in
 
         install -Dm444 node_modules/pi-mcp-adapter/LICENSE \
           "$out/share/licenses/pi-agent-extensions/mcp/LICENSE"
+        install -Dm444 node_modules/@modelcontextprotocol/server/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/mcpServerSdk/LICENSE"
         install -Dm444 node_modules/pi-subagents/LICENSE \
           "$out/share/licenses/pi-agent-extensions/subagents/LICENSE"
         install -Dm444 node_modules/@narumitw/pi-plan-mode/LICENSE \

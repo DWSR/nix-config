@@ -20,10 +20,10 @@ const expectedExtensions = {
     entryPath: "lib/pi-agent/extensions/cavemem/index.ts",
   },
   mcp: {
-    package: "pi-mcp-adapter",
-    version: "2.20.1",
-    sourceRef: "1dbdef96",
-    entryPath: "lib/node_modules/pi-mcp-adapter/index.ts",
+    package: "@dwsr/pi-mcpproxy-adapter",
+    version: "0.1.0",
+    sourceRef: "repository",
+    entryPath: "lib/pi-agent/extensions/mcpproxy/index.ts",
   },
   subagents: {
     package: "pi-subagents",
@@ -69,6 +69,17 @@ const expectedExtensions = {
   },
 };
 const expectedRuntimeDependencies = {
+  mcpAdapter: {
+    package: "pi-mcp-adapter",
+    version: "2.20.1",
+    sourceRef: "1dbdef96",
+    entryPath: "lib/node_modules/pi-mcp-adapter/index.ts",
+  },
+  mcpServerSdk: {
+    package: "@modelcontextprotocol/server",
+    version: "2.0.0",
+    entryPath: "lib/node_modules/@modelcontextprotocol/server/dist/index.mjs",
+  },
   nodePty: {
     package: "node-pty",
     version: "1.2.0-beta.14",
@@ -105,6 +116,11 @@ const expectedPatches = {
     file: "supi-code-intelligence-managed-lsp.patch",
     package: "@mrclrchtr/supi-code-intelligence@4.6.0",
     task: "pi-agent-integration 4.8",
+  },
+  mcpAdapterManagedDirectTools: {
+    file: "pi-mcp-adapter-managed-direct-tools.patch",
+    package: "pi-mcp-adapter@2.20.1",
+    task: "pi-agent-integration 3.8",
   },
 };
 const expectedBackgroundTypeDiagnostics = [
@@ -326,6 +342,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "bash-timeout/src/extension.ts",
     "cavemem/index.ts",
     "code-intelligence/src/extension.ts",
+    "mcpproxy/index.ts",
     "plan-mode/src/index.ts",
   ]);
   assert.equal(metadata.backgroundTypecheckConfig.compilerOptions.noEmit, true);
@@ -417,6 +434,9 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
 
   const nodePtyRoot = packageDirectory(output, "node-pty");
+  const mcpAdapterRoot = packageDirectory(output, "pi-mcp-adapter");
+  const mcpServerSdkRoot = packageDirectory(output, "@modelcontextprotocol/server");
+  const mcpproxyWrapperRoot = path.join(output, "lib/pi-agent/extensions/mcpproxy");
   const backgroundTasksRoot = packageDirectory(
     output,
     "@99percentpeople/pi-background-tasks",
@@ -554,6 +574,44 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(managedBackgroundEnvironmentSource, /const ALLOW_NAMES/);
   assert.match(managedBackgroundEnvironmentSource, /PI_AGENT_BASH_TIMEOUT_MS/);
   assert.match(managedBackgroundEnvironmentSource, /SHOPIFY_PI_TOKEN/);
+  assert.equal(readJson(path.join(mcpAdapterRoot, "package.json")).version, "2.20.1");
+  assert.equal(readJson(path.join(mcpServerSdkRoot, "package.json")).version, "2.0.0");
+  const mcpAdapterSource = fs.readFileSync(path.join(mcpAdapterRoot, "index.ts"), "utf8");
+  const mcpAdapterInitSource = fs.readFileSync(path.join(mcpAdapterRoot, "init.ts"), "utf8");
+  const mcpproxyWrapperSource = fs.readFileSync(path.join(mcpproxyWrapperRoot, "index.ts"), "utf8");
+  assert.match(mcpAdapterSource, /cloneDirectToolSelection/);
+  assert.match(mcpAdapterSource, /cloneAndValidateDirectToolInputSchema/);
+  assert.match(mcpAdapterSource, /DIRECT_TOOL_JSON_LIMITS/);
+  assert.match(mcpAdapterSource, /const cloneBudget = createJsonCloneBudget\(\)/);
+  assert.match(mcpAdapterSource, /validateClonedDirectToolInputSchema\(liveTool\.inputSchema\)/);
+  assert.match(mcpAdapterSource, /directToolSchemaFailureReason/);
+  assert.match(mcpAdapterSource, /utilTypes\.isProxy/);
+  assert.doesNotMatch(mcpAdapterSource, /Object\.getOwnPropertyDescriptors/);
+  assert.match(mcpAdapterSource, /stageLiveDirectTools/);
+  assert.match(mcpAdapterSource, /const prepared = specs\.map/);
+  assert.match(mcpAdapterSource, /strictDirectTools/);
+  assert.match(mcpAdapterSource, /await initialization/);
+  assert.match(mcpAdapterSource, /return async function mcpAdapter/);
+  assert.doesNotMatch(mcpAdapterSource, /unregisterTool/);
+  assert.doesNotMatch(`${mcpAdapterSource}\n${mcpAdapterInitSource}`, /MCP_DIRECT_TOOLS/);
+  assert.match(mcpproxyWrapperSource, /directTools: MCPPROXY_ADAPTER_DIRECT_TOOLS/);
+  assert.match(mcpproxyWrapperSource, /validateManagedMcpSurface/);
+  assert.match(mcpproxyWrapperSource, /export default async function mcpproxyAdapter/);
+  assert.doesNotMatch(mcpproxyWrapperSource, /MCP_DIRECT_TOOLS|process\.env/);
+  assert.doesNotMatch(mcpproxyWrapperSource, /pi\.on\("(?:session_start|before_agent_start)"/);
+  assert.equal(fs.existsSync(path.join(mcpproxyWrapperRoot, "pi-mcp-adapter.d.ts")), false);
+  assert.deepEqual(
+    fs.readdirSync(mcpAdapterRoot).filter((entry) => /\.(?:orig|rej)$/.test(entry)),
+    [],
+  );
+  assertMitText(
+    path.join(output, "share/licenses/pi-agent-extensions/mcp/LICENSE"),
+    "pi-mcp-adapter",
+  );
+  assertMitText(
+    path.join(output, "share/licenses/pi-agent-extensions/mcpServerSdk/LICENSE"),
+    "@modelcontextprotocol/server",
+  );
   assert.equal(readJson(path.join(nodePtyRoot, "package.json")).version, "1.2.0-beta.14");
   const ptyNode = path.join(nodePtyRoot, "prebuilds/darwin-arm64/pty.node");
   const spawnHelper = path.join(nodePtyRoot, "prebuilds/darwin-arm64/spawn-helper");
@@ -605,6 +663,12 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
         "@narumitw/pi-tui-kit": [
           path.join(output, "lib/node_modules/@narumitw/pi-tui-kit/dist/index.d.ts"),
         ],
+        "cross-spawn": [
+          path.join(pi, "lib/node_modules/@types/cross-spawn/index.d.ts"),
+        ],
+        "pi-mcp-adapter": [
+          path.join(output, "lib/node_modules/pi-mcp-adapter/index.ts"),
+        ],
         typebox: [path.join(output, "lib/node_modules/typebox/build/index.d.mts")],
         "typebox/*": [path.join(output, "lib/node_modules/typebox/build/*/index.d.mts")],
       },
@@ -624,6 +688,7 @@ test("patched extensions typecheck against the exact Pi dependency declarations"
       path.join(output, expectedExtensions.bashTimeout.entryPath),
       path.join(output, expectedExtensions.cavemem.entryPath),
       path.join(output, expectedExtensions.codeIntelligence.entryPath),
+      path.join(output, expectedExtensions.mcp.entryPath),
       path.join(output, expectedExtensions.plan.entryPath),
     ],
   };

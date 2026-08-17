@@ -159,19 +159,23 @@
   - _Boundary: Cavemem Full Mode - Privacy_
   - _Depends: 3.1_
 
-- [ ] 3.3 (P) Implement raw retrieval and embedding exclusion for full rows
-  - Own a separate storage-policy patch and storage-focused fixtures without changing privacy logic or package-overlay wiring.
+- [x] 3.3 (P) Implement raw retrieval and embedding exclusion for full rows
+  - Own a separate storage-policy patch plus worker-lifecycle fixtures without changing privacy logic or package-overlay wiring.
   - Use already-redacted canonical fixtures from Task 3.1 and select behavior only from persisted compression and embedding state; this task does not own redaction.
   - Bypass expansion for `compressed=0` observations on every retrieval path and return the exact persisted bytes.
   - Restrict missing-embedding selection, live embedding, backfill, and vector enumeration to `compressed=1`, and remove stale vectors attached to full rows.
+  - Bind the worker listener before PID-file access, stale-vector cleanup, or provider initialization; serve deterministic pre-ready health from the same listener.
+  - Publish `worker.pid` atomically as a nonce-bearing readiness receipt only after cleanup and initialization; report started only after matching IPC or health readiness.
+  - Let bind losers mutate no state: matching ready health means already running, while any other port owner fails as a conflict.
+  - Compare-remove the receipt during shutdown while retaining the listener; restart waits bounded port release and escalates before spawning a successor.
+  - Close store and listener on every startup failure and leave no receipt, child, listener, or partial vector cleanup.
   - Preserve all retrieval, expansion, embedding, and backfill behavior for default compressed observations.
-  - Done when already-redacted raw rows round-trip byte-for-byte, never enter live or backfill embedding, lose stale vectors, and matched default rows retain their existing behavior without invoking privacy logic.
+  - Done when storage fixtures pass and lifecycle probes cover dead, malformed, live-unrelated, and failed-publication receipts; concurrent starts; cleanup failure; unrelated port ownership; and slow restart without false readiness or stale vectors.
   - _Requirements: 10.3, 10.7, 10.9, 10.10_
   - _Boundary: Cavemem Full Mode - Storage Policy_
   - _Depends: 3.1_
-  - _Blocked: debug attempted twice, still failing — worker startup has no safe ordering for failed PID publication cleanup and restart against an unverified pre-ready port owner._
 
-- [ ] 3.4 Verify Cavemem storage limits and package compatibility
+- [x] 3.4 Verify Cavemem storage limits and package compatibility
   - Wire the independently reviewed privacy and storage-policy patches into the Cavemem package before running combined compatibility checks.
   - Exercise a complete full-mode row at the active SQLite maximum fixture and a maximum-plus-one failure.
   - Assert limit failure stores no partial observation and reports the active storage boundary.
@@ -213,8 +217,8 @@
   - _Boundary: Capture Bridge_
   - _Depends: 2.8, 3.6_
 
-- [ ] 3.8 (P) Implement the isolated six-tool mcpproxy adapter
-  - Create one in-memory adapter configuration for the local `/mcp/call` endpoint without ambient MCP-file merging.
+- [x] 3.8 (P) Implement the isolated six-tool mcpproxy adapter
+  - Create one in-memory adapter configuration for the standard local `/mcp` transport endpoint without ambient MCP-file merging.
   - Disable authentication discovery, resources, sampling, elicitation, script mode, and the generic proxy tool.
   - Freeze the six approved direct tools without prefixes and wait for eager metadata on cold start.
   - Exercise retrieve-then-describe and retrieve-then-read flows against a deterministic server.
@@ -222,7 +226,6 @@
   - _Requirements: 4.1, 4.2, 6.1, 6.2, 6.3, 6.4_
   - _Boundary: MCP Bridge_
   - _Depends: 1.2, 1.5_
-  - _Blocked: spec conflict — this task and design require `/mcp/call`, while `ManagedConfigV1` and the reconciler require the `/mcp` transport endpoint consumed by `pi-mcp-adapter`._
 
 - [ ] 3.9 Enforce MCP cache, approval, and preflight behavior
   - Cover cold, stale, partial, malformed, and concurrent metadata-cache starts with private atomic cache files.
@@ -348,6 +351,7 @@
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
   - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
+  - Run the MCP reserved-name and exact direct-surface validator after every managed extension has registered.
   - Fail validation on a missing, duplicate, incompatible, reordered, or unexpected extension.
   - Done when a combined loader accepts one prompt with the exact ordered inventory and rejects every altered manifest fixture.
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
@@ -452,6 +456,8 @@
   - Disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
   - Clear sub-agent binary overrides so children use the underlying managed Pi runtime inside the same sandbox.
   - Export the immutable managed timeout binding to root and foreground child Pi, execute Bash through the reconciled managed shell path, and keep that binding out of the model-controlled shell environment.
+  - Export the managed `CAVEMEM_DATA_DIR` before invoking Pi so hook and mcpproxy search paths share one store.
+  - Invoke only patched `bin/pi`; do not import or call Pi `main()` from a launcher wrapper.
   - Execute the bare or nono-wrapped Pi package exactly once after successful preflight.
   - Done when mutation-command, normal, review, disabled, audit, and enforced fixtures capture one expected executable invocation and no alternate package path.
   - _Requirements: 1.6, 4.3, 5.2, 7.2, 7.3, 7.4, 7.5, 7.6, 11.3, 14.1_
@@ -472,12 +478,12 @@
 
 - [ ] 6.2 Integrate all managed artifacts in the common module
   - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
-  - Connect the package-owned scrubbed shell, managed timeout field, fixed timeout binding, timeout extension, and shell-path ownership through their approved boundaries.
+  - Connect the package-owned scrubbed shell, managed timeout binding, Cavemem data-directory binding, timeout extension, and shell-path ownership through their approved boundaries.
   - Install only repository-owned managed commands while retaining the base Pi package as a closure dependency.
   - Render exact profiles and resource paths only when enabled.
   - Keep activation free of mutable Pi-state writes and secrets.
   - Done when common enabled/disabled evaluations expose the complete intended surface, activation artifacts are immutable, and all read-back options match status inputs.
-  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 11.3, 14.1, 15.7_
+  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 2.8, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 11.3, 14.1, 15.7_
   - _Boundary: Home Module — Integration_
   - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.13, 5.6, 5.7, 5.8, 5.9, 6.1_
 
@@ -614,8 +620,8 @@
 - Task 2.5: Frozen method-only views still stringify as `{}`; exact-redaction membership must define a non-enumerable throwing `toJSON`.
 - Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.
 - Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
-- Task 3.3: Worker lifecycle safety requires one linearized protocol across port binding, readiness, PID publication, IPC, and shutdown; the current patch still releases the listener before failed-publication cleanup and can restart past an unverified pre-ready owner.
-- Task 3.8: Resolve the endpoint contract before implementation; `pi-mcp-adapter` needs the MCP transport at `/mcp`, while the approved task/design currently name `/mcp/call`.
+- Task 3.3: The listener is the worker startup lease; `worker.pid` is only a nonce-bearing readiness receipt published after cleanup and initialization.
+- Task 3.8: Use the standard MCP transport at `/mcp`; `/mcp/call` is not an adapter transport endpoint.
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.

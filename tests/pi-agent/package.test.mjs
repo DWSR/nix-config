@@ -19,8 +19,9 @@ const nixHosts = `[ ${hosts.map((host) => JSON.stringify(host)).join(" ")} ]`;
 const expectedExtensionVersions = {
   backgroundTasks: "2.0.0",
   bashTimeout: "4.6.0",
+  cavemem: "0.1.0",
   codeIntelligence: "4.6.0",
-  mcp: "2.20.1",
+  mcp: "0.1.0",
   plan: "0.49.2",
   questions: "4.6.0",
   subagents: "0.40.0",
@@ -339,9 +340,16 @@ test("both hosts resolve the same uninstalled Pi package skeleton", () => {
       ),
       expectedExtensionVersions,
     );
-    for (const extension of Object.values(rendered[host].extensions.manifest.extensions)) {
+    for (const [name, extension] of Object.entries(rendered[host].extensions.manifest.extensions)) {
       assert.equal(extension.license, "MIT");
-      assert.match(extension.entryPath, /^lib\/node_modules\//);
+      if (name === "cavemem" || name === "mcp") {
+        assert.equal(
+          extension.entryPath,
+          `lib/pi-agent/extensions/${name === "mcp" ? "mcpproxy" : name}/index.ts`,
+        );
+      } else {
+        assert.match(extension.entryPath, /^lib\/node_modules\//);
+      }
     }
     assert.equal(rendered[host].installed, false);
   }
