@@ -1,0 +1,229 @@
+diff --git a/src/agents/agents.ts b/src/agents/agents.ts
+--- a/src/agents/agents.ts
++++ b/src/agents/agents.ts
+@@ -20,6 +20,7 @@ import { parseModelScopeConfig, type ModelScopeConfig } from "../runs/shared/mo
+ export { buildRuntimeName, frontmatterNameForConfig, parsePackageName } from "./identity.ts";
+ import { parseMemoryFrontmatter } from "./agent-memory.ts";
+ import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
++import { createManagedAgents, managedAgentDirectory } from "../managed-policy.ts";
+ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
+ 
+ export type AgentScope = "user" | "project" | "both";
+@@ -1644,6 +1645,7 @@ function extraUserAgentDirs(): string[] {
+ }
+ 
+ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryResult {
++	return { agents: createManagedAgents(), projectAgentsDir: null };
+ 	const userDirOld = path.join(getAgentDir(), "agents");
+ 	const userDirNew = path.join(os.homedir(), ".agents");
+ 	const { readDirs: projectAgentDirs, preferredDir: projectAgentsDir } = resolveNearestProjectAgentDirs(cwd);
+@@ -1713,6 +1715,20 @@ export function discoverAgentsAll(cwd: string): {
+ 	userSettingsPath: string;
+ 	projectSettingsPath: string | null;
+ } {
++	return {
++		builtin: [],
++		package: createManagedAgents(),
++		user: [],
++		project: [],
++		chains: [],
++		chainDiagnostics: [],
++		userDir: managedAgentDirectory(),
++		projectDir: null,
++		userChainDir: managedAgentDirectory(),
++		projectChainDir: null,
++		userSettingsPath: path.join(managedAgentDirectory(), "settings.json"),
++		projectSettingsPath: null,
++	};
+ 	const userDirOld = path.join(getAgentDir(), "agents");
+ 	const userDirNew = path.join(os.homedir(), ".agents");
+ 	const userChainDir = getUserChainDir();
+diff --git a/src/extension/config.ts b/src/extension/config.ts
+--- a/src/extension/config.ts
++++ b/src/extension/config.ts
+@@ -4,1 +4,2 @@
+-import { getAgentDir } from "../shared/utils.ts";
++import { getAgentDir } from "../shared/utils.ts";
++import { managedMaximumDepth } from "../managed-policy.ts";
+@@ -34,11 +34,5 @@ export function updateConfig(updater: (config: ExtensionConfig) => ExtensionConf
+ }
+ 
+ export function loadConfig(): ExtensionConfig {
+-	const configPath = getConfigPath();
+-	try {
+-		return readConfigForUpdate(configPath);
+-	} catch (error) {
+-		console.error(`Failed to load subagent config from '${configPath}':`, error);
+-	}
+-	return {};
++	return { asyncByDefault: false, artifactDir: "session", intercomBridge: { mode: "off" }, maxSubagentDepth: managedMaximumDepth() };
+ }
+diff --git a/src/agents/skills.ts b/src/agents/skills.ts
+--- a/src/agents/skills.ts
++++ b/src/agents/skills.ts
+@@ -730,1 +730,1 @@ export function discoverAvailableSkills(cwd: string): Array<{
+-	const skills = getCachedSkills(cwd);
++	const skills: ReturnType<typeof getCachedSkills> = [];
+diff --git a/src/runs/foreground/chain-execution.ts b/src/runs/foreground/chain-execution.ts
+--- a/src/runs/foreground/chain-execution.ts
++++ b/src/runs/foreground/chain-execution.ts
+@@ -329,12 +329,11 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Singl
+ 			const taskTemplate = input.parallelTemplates[taskIndex] ?? "{previous}";
+ 			const behavior = suppressProgressForReadOnlyTask(input.parallelBehaviors[taskIndex]!, taskTemplate, input.originalTask);
+ 			const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
+-			const templateHasPrevious = taskTemplate.includes("{previous}");
+ 			const { prefix, suffix } = buildChainInstructions(
+ 				{ ...behavior, output: false },
+ 				input.chainDir,
+ 				false,
+-				templateHasPrevious ? undefined : input.prev,
++				undefined,
+ 			);
+ 
+ 			let taskStr = resolveOutputReferences(taskTemplate, input.outputs);
+@@ -1264,12 +1263,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainEx
+ 				progressCreated = true;
+ 			}
+ 
+-			const templateHasPrevious = stepTemplate.includes("{previous}");
+ 			const { prefix, suffix } = buildChainInstructions(
+ 				{ ...behavior, output: false },
+ 				chainDir,
+ 				isFirstProgress,
+-				templateHasPrevious ? undefined : prev,
++				undefined,
+ 			);
+ 
+ 			let stepTask = resolveOutputReferences(stepTemplate, outputs);
+diff --git a/src/runs/foreground/execution.ts b/src/runs/foreground/execution.ts
+--- a/src/runs/foreground/execution.ts
++++ b/src/runs/foreground/execution.ts
+@@ -90,6 +90,7 @@ import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAcceptan
+ import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
+ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+ import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
++import { managedAgentResources } from "../../managed-policy.ts";
+ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+ import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+ import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+@@ -449,6 +450,7 @@ async function runSingleAttempt(
+ 		return result;
+ 	}
+ 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
++	delete spawnEnv.PI_SUBAGENT_PI_BINARY;
+ 	let observedMutationAttempt = false;
+ 	let structuredOutputToolInvoked = false;
+ 
+@@ -455,4 +457,4 @@ async function runSingleAttempt(
+ 	const exitCode = await new Promise<number>((resolve) => {
+-		const spawnSpec = getPiSpawnCommand(args);
++		const spawnSpec = getPiSpawnCommand(args, { env: spawnEnv });
+ 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
+ 			cwd: options.cwd ?? runtimeCwd,
+@@ -1345,2 +1347,10 @@ async function runSyncCompletion(
++	const managedResources = managedAgentResources(agent.name);
++	if (managedResources) {
++		options = {
++			...options,
++			turnBudget: { ...managedResources.turnBudget },
++			toolBudget: { ...managedResources.toolBudget },
++		};
++	}
+ 	try {
+ 		assertAgentAllowedByCapabilityCeiling(agent.name, options.capabilityCeiling);
+diff --git a/src/runs/foreground/subagent-executor.ts b/src/runs/foreground/subagent-executor.ts
+--- a/src/runs/foreground/subagent-executor.ts
++++ b/src/runs/foreground/subagent-executor.ts
+@@ -7,1 +7,1 @@
+-import { getArtifactsDir, getProjectChainRunsDir } from "../../shared/artifacts.ts";
++import { getArtifactsDir } from "../../shared/artifacts.ts";
+@@ -57,6 +57,7 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
+ import { usageBudgetExceededMessage, usageBudgetState, validateUsageBudgetConfig } from "../shared/usage-budget.ts";
+ import { intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+ import { isAgentContractV1 } from "../shared/agent-contract.ts";
++import { validateManagedExecutionRequest } from "../../managed-policy.ts";
+ import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
+ import { cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
+ import { compactForegroundDetails, getSingleResultOutput, mapConcurrent, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage } from "../../shared/utils.ts";
+@@ -4460,6 +4461,8 @@ export function createSubagentExecutor(deps: ExecutorDeps) {
+ 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
+ 		ctx: ExtensionContext,
+ 	): Promise<AgentToolResult<Details>> => {
++		const policyError = validateManagedExecutionRequest(params);
++		if (policyError) return buildRequestedModeError(params, policyError);
+ 		const requestParams = omitExecutionModeActionAlias(params);
+ 		if (requestParams.action) return execute(id, requestParams, signal, onUpdate, ctx);
+ 		const { depth } = checkSubagentDepth(deps.config.maxSubagentDepth);
+@@ -4482,6 +4485,8 @@ export function createSubagentExecutor(deps: ExecutorDeps) {
+ 		onUpdate: ((r: AgentToolResult<Details>) => void) | undefined,
+ 		ctx: ExtensionContext,
+ 	): Promise<AgentToolResult<Details>> => {
++		const policyError = validateManagedExecutionRequest(params);
++		if (policyError) return buildRequestedModeError(params, policyError);
+ 		const delegatedParams = { ...params };
+ 		const privateParams = delegatedParams as SubagentParamsLike & {
+ 			delegatedThinkingOverride?: AgentConfig["thinking"];
+diff --git a/src/runs/shared/pi-args.ts b/src/runs/shared/pi-args.ts
+--- a/src/runs/shared/pi-args.ts
++++ b/src/runs/shared/pi-args.ts
+@@ -4,7 +4,8 @@ import * as os from "node:os";
+ import * as path from "node:path";
+ import { fileURLToPath } from "node:url";
+ import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
+-import { resolveMcpDirectToolSelections, type ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-allowlist.ts";
++import type { ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-allowlist.ts";
++import { resolveManagedMcpDirectToolSelections } from "../../managed-policy.ts";
+ import { resolvePiPackageRoot } from "./pi-spawn.ts";
+ import { RUNTIME_EXTENSION_ACK_PATH_ENV } from "./runtime-acknowledged-extensions.ts";
+ import { STRUCTURED_OUTPUT_CAPTURE_ENV, STRUCTURED_OUTPUT_SCHEMA_ENV } from "./structured-output.ts";
+@@ -196,7 +197,7 @@ export function resolvePiLaunchToolPlan(input: ResolvePiLaunchToolPlanInput): PiL
+ 			: requestedBuiltinTools).filter((tool) => !allowedToolSet || allowedToolSet.has(tool));
+ 	const fanoutAuthorized = declaredBuiltinTools.includes("subagent");
+ 	const toolExtensionPaths: string[] = capabilityCeiling?.denyExtensions ? [] : (input.tools ?? []).filter((tool) => !requestedBuiltinTools.includes(tool) && (tool.includes("/") || tool.endsWith(".ts") || tool.endsWith(".js")));
+-	const resolvedMcpSelections = capabilityCeiling?.denyExtensions ? [] : resolveMcpDirectToolSelections(input.mcpDirectTools, input.cwd);
++	const resolvedMcpSelections = capabilityCeiling?.denyExtensions ? [] : resolveManagedMcpDirectToolSelections(input.mcpDirectTools);
+ 	const effectiveMcpSelections = resolvedMcpSelections.filter((selection) => !allowedToolSet || allowedToolSet.has(selection.name));
+ 	const effectiveMcpTools = effectiveMcpSelections.map((selection) => selection.name);
+ 	const explicitToolAllowlist = input.tools !== undefined || (input.mcpDirectTools?.length ?? 0) > 0 || allowedToolSet !== undefined;
+diff --git a/src/shared/artifacts.ts b/src/shared/artifacts.ts
+--- a/src/shared/artifacts.ts
++++ b/src/shared/artifacts.ts
+@@ -25,8 +25,8 @@ export function getArtifactsDir(
+ 	switch (dirPreference) {
+ 		case "session":
+ 			if (sessionFile) {
+-				const sessionDir = path.dirname(sessionFile);
+-				return path.join(sessionDir, "subagent-artifacts");
++				const parentSessionDir = path.join(path.dirname(sessionFile), path.basename(sessionFile, path.extname(sessionFile)));
++				return path.join(parentSessionDir, "subagent-artifacts");
+ 			}
+ 			return TEMP_ARTIFACTS_DIR;
+ 		case "temp":
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -12,1 +12,2 @@
+-import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
++import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
++import { managedMaximumDepth } from "../managed-policy.ts";
+@@ -1781,7 +1782,5 @@ export function normalizeMaxSubagentDepth(value: unknown): number | undefined {
+ 
+-export function resolveCurrentMaxSubagentDepth(configMaxDepth?: number): number {
+-	return normalizeMaxSubagentDepth(process.env.PI_SUBAGENT_MAX_DEPTH)
+-		?? normalizeMaxSubagentDepth(configMaxDepth)
+-		?? DEFAULT_SUBAGENT_MAX_DEPTH;
++export function resolveCurrentMaxSubagentDepth(_configMaxDepth?: number): number {
++	return managedMaximumDepth();
+ }
+ 
+@@ -1801,7 +1800,7 @@ export function checkSubagentDepth(configMaxDepth?: number): { blocked: boolean;
+-export function getSubagentDepthEnv(maxDepth?: number): Record<string, string> {
++export function getSubagentDepthEnv(_maxDepth?: number): Record<string, string> {
+ 	const parentDepth = Number(process.env.PI_SUBAGENT_DEPTH ?? "0");
+ 	const nextDepth = Number.isFinite(parentDepth) ? parentDepth + 1 : 1;
+ 	return {
+ 		PI_SUBAGENT_DEPTH: String(nextDepth),
+-		PI_SUBAGENT_MAX_DEPTH: String(normalizeMaxSubagentDepth(maxDepth) ?? resolveCurrentMaxSubagentDepth()),
++		PI_SUBAGENT_MAX_DEPTH: String(managedMaximumDepth()),
+ 	};
+ }

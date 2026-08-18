@@ -1,0 +1,226 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const CATALOG_PATH = path.resolve(PACKAGE_ROOT, "..", "..", "..", "share", "pi-agent", "subagents.json");
+const EXTENSION_ROOT = path.resolve(PACKAGE_ROOT, "..", "..", "pi-agent", "extensions");
+const MANAGED_AGENT_DIR = path.join(PACKAGE_ROOT, "managed-agents");
+const MANAGED_MAX_DEPTH = 1 as const;
+const ROLE_NAMES = ["reader", "worker"] as const;
+const MCP_SELECTORS = new Map([
+  ["retrieve_tools", "mcpproxy/retrieve_tools"],
+  ["describe_tool", "mcpproxy/describe_tool"],
+  ["call_tool_read", "mcpproxy/call_tool_read"],
+  ["read_cache", "mcpproxy/read_cache"],
+]);
+const MCP_NAMES = new Map([...MCP_SELECTORS].map(([name, selector]) => [selector, name]));
+
+type ManagedRoleName = (typeof ROLE_NAMES)[number];
+interface ManagedRole {
+  model: "host-managed-default";
+  maxTurns: number;
+  maxToolCalls: number;
+  workspace: "parent-read" | "parent-readwrite";
+  tools: string[];
+  extensions: Array<"cavemem" | "mcp">;
+  mcp: "none" | "read-only";
+}
+interface ManagedCatalog {
+  schemaVersion: 1;
+  reader: ManagedRole;
+  worker: ManagedRole;
+}
+interface ManagedAgentConfig {
+  name: ManagedRoleName;
+  description: string;
+  tools: string[];
+  mcpDirectTools?: string[];
+  systemPromptMode: "replace";
+  inheritProjectContext: false;
+  inheritSkills: false;
+  defaultContext: "fresh";
+  defaultTurnBudget: { maxTurns: number; graceTurns: 0 };
+  toolBudget: { hard: number; block: "*" };
+  systemPrompt: string;
+  source: "package";
+  filePath: string;
+  extensions: string[];
+}
+
+const catalog = JSON.parse(fs.readFileSync(CATALOG_PATH, "utf8")) as ManagedCatalog;
+if (catalog.schemaVersion !== 1 || Object.keys(catalog).sort().join(",") !== "reader,schemaVersion,worker") {
+  throw new Error("Managed subagent catalog is invalid");
+}
+
+const OVERRIDE_FIELDS = new Set([
+  "model",
+  "thinking",
+  "fallbackModels",
+  "budget",
+  "turnBudget",
+  "toolBudget",
+  "usageBudget",
+  "maxTurns",
+  "maxToolCalls",
+  "timeoutMs",
+  "maxRuntimeMs",
+  "tools",
+  "workspace",
+  "cwd",
+  "context",
+  "worktree",
+  "worktreeSetupHook",
+  "worktreeBaseDir",
+  "extensions",
+  "subagentOnlyExtensions",
+  "mcp",
+  "mcpDirectTools",
+  "depth",
+  "maxSubagentDepth",
+  "output",
+  "outputMode",
+  "outputSchema",
+  "maxOutput",
+  "artifacts",
+  "sessionDir",
+  "chainDir",
+  "reads",
+  "skill",
+  "skills",
+  "agentScope",
+  "scope",
+]);
+
+function isManagedRole(value: unknown): value is ManagedRoleName {
+  return typeof value === "string" && (ROLE_NAMES as readonly string[]).includes(value);
+}
+
+function childPath(parent: string, key: string): string {
+  return /^\d+$/.test(key) ? `${parent}[${key}]` : parent ? `${parent}.${key}` : key;
+}
+
+function findRejectedOverride(value: unknown): string | undefined {
+  const pending: Array<{ value: unknown; path: string }> = [{ value, path: "" }];
+  const seen = new WeakSet<object>();
+  while (pending.length > 0) {
+    const current = pending.pop()!;
+    if (!current.value || typeof current.value !== "object") continue;
+    if (seen.has(current.value)) continue;
+    seen.add(current.value);
+    for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(current.value))) {
+      const fieldPath = childPath(current.path, key);
+      if (OVERRIDE_FIELDS.has(key)) return fieldPath;
+      if (!("value" in descriptor)) continue;
+      if (key === "agent" && !isManagedRole(descriptor.value)) {
+        return fieldPath;
+      }
+      pending.push({ value: descriptor.value, path: fieldPath });
+    }
+  }
+  return undefined;
+}
+
+function findRejectedChainTask(chain: unknown[]): string | undefined {
+  for (let index = 0; index < chain.length; index += 1) {
+    const pending: Array<{ value: unknown; path: string }> = [{ value: chain[index], path: `chain[${index}]` }];
+    const seen = new WeakSet<object>();
+    while (pending.length > 0) {
+      const current = pending.pop()!;
+      if (!current.value || typeof current.value !== "object") continue;
+      if (seen.has(current.value)) continue;
+      seen.add(current.value);
+      for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(current.value))) {
+        const fieldPath = childPath(current.path, key);
+        if (!("value" in descriptor)) continue;
+        if (key === "task" && typeof descriptor.value === "string") {
+          if ((index === 0 && descriptor.value.includes("{previous}")) || descriptor.value.includes("{outputs.")) {
+            return fieldPath;
+          }
+        }
+        pending.push({ value: descriptor.value, path: fieldPath });
+      }
+    }
+  }
+  return undefined;
+}
+
+export function validateManagedExecutionRequest(value: unknown): string | undefined {
+  const rejected = findRejectedOverride(value);
+  if (rejected) {
+    return `Managed subagent policy rejects call-level override or agent '${rejected}'.`;
+  }
+  const chain = value && typeof value === "object" && "chain" in value
+    ? (value as { chain?: unknown }).chain
+    : undefined;
+  if (Array.isArray(chain)) {
+    const rejectedTask = findRejectedChainTask(chain);
+    if (rejectedTask) return `Managed subagent chain input at ${rejectedTask} may reference only its immediate predecessor.`;
+  }
+  return undefined;
+}
+
+export function managedMaximumDepth(): 1 {
+  return MANAGED_MAX_DEPTH;
+}
+
+export function managedAgentDirectory(): string {
+  return MANAGED_AGENT_DIR;
+}
+
+export function managedAgentResources(name: string): {
+  turnBudget: { maxTurns: number; graceTurns: 0 };
+  toolBudget: { hard: number; block: "*" };
+} | undefined {
+  if (!isManagedRole(name)) return undefined;
+  const role = catalog[name];
+  return {
+    turnBudget: { maxTurns: role.maxTurns, graceTurns: 0 },
+    toolBudget: { hard: role.maxToolCalls, block: "*" },
+  };
+}
+
+export function resolveManagedMcpDirectToolSelections(selectors: string[] | undefined): Array<{
+  name: string;
+  selector: string;
+}> {
+  if (!selectors) return [];
+  return selectors.map((selector) => {
+    const name = MCP_NAMES.get(selector);
+    if (!name) throw new Error("Managed subagent MCP selection is invalid");
+    return { name, selector };
+  });
+}
+
+function extensionPath(name: "cavemem" | "mcp"): string {
+  return path.join(EXTENSION_ROOT, name === "cavemem" ? "cavemem/index.ts" : "mcpproxy/index.ts");
+}
+
+export function createManagedAgents(): ManagedAgentConfig[] {
+  return ROLE_NAMES.map((name) => {
+    const role = catalog[name];
+    const resources = managedAgentResources(name)!;
+    const mcpDirectTools = role.tools
+      .map((tool) => MCP_SELECTORS.get(tool))
+      .filter((tool): tool is string => Boolean(tool));
+    const localTools = role.tools.filter((tool) => !MCP_SELECTORS.has(tool));
+    return {
+      name,
+      description: name === "reader" ? "Managed read-only research child" : "Managed implementation child",
+      tools: [...localTools],
+      ...(mcpDirectTools.length > 0 ? { mcpDirectTools } : {}),
+      systemPromptMode: "replace",
+      inheritProjectContext: false,
+      inheritSkills: false,
+      defaultContext: "fresh",
+      defaultTurnBudget: { ...resources.turnBudget },
+      toolBudget: { ...resources.toolBudget },
+      systemPrompt: name === "reader"
+        ? "Investigate the assigned task using only the managed read-only resources and return a concise result."
+        : "Complete the assigned task within the managed workspace and return the result to the parent.",
+      source: "package",
+      filePath: path.join(MANAGED_AGENT_DIR, `${name}.md`),
+      extensions: role.extensions.map(extensionPath),
+    };
+  });
+}

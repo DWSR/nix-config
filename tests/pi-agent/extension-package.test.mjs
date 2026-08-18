@@ -132,6 +132,11 @@ const expectedPatches = {
     package: "pi-mcp-adapter@2.20.1",
     task: "pi-agent-integration 3.9",
   },
+  managedSubagents: {
+    file: "pi-subagents-managed-children.patch",
+    package: "pi-subagents@0.40.0",
+    task: "pi-agent-integration 4.1",
+  },
 };
 const expectedBackgroundTypeDiagnostics = [
   "error TS2322: Type '(value: unknown) => void' is not assignable to type '() => void'.",
@@ -353,6 +358,7 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "cavemem/index.ts",
     "code-intelligence/src/extension.ts",
     "mcpproxy/index.ts",
+    "pi-subagents/src/managed-policy.ts",
     "plan-mode/src/index.ts",
   ]);
   assert.equal(metadata.backgroundTypecheckConfig.compilerOptions.noEmit, true);

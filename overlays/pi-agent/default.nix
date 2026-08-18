@@ -104,6 +104,13 @@ let
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-bSn4YVPB1qGfOAGXYzl9Oq3XmQ0G9rNCsk+coNgTFTM=";
+  managedSubagentCatalog = final.writeText "pi-agent-managed-subagents.json" (
+    builtins.readFile ./extensions/managed-subagents.json
+  );
+  managedSubagentPolicy = ./extensions/pi-subagents-managed-policy.ts.in;
+  managedSubagentReader = ./extensions/pi-subagents-reader.md;
+  managedSubagentWorker = ./extensions/pi-subagents-worker.md;
+  managedSubagentsPatch = ./extensions/patches/pi-subagents-managed-children.patch;
   cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
     cavemem = "${final.cavemem}/bin/cavemem";
   };
@@ -177,6 +184,7 @@ let
         "cavemem/index.ts"
         "code-intelligence/src/extension.ts"
         "mcpproxy/index.ts"
+        "pi-subagents/src/managed-policy.ts"
         "plan-mode/src/index.ts"
       ];
     }
@@ -409,6 +417,11 @@ let
           package = "pi-mcp-adapter@2.20.1";
           task = "pi-agent-integration 3.9";
         };
+        managedSubagents = {
+          file = builtins.baseNameOf managedSubagentsPatch;
+          package = "pi-subagents@0.40.0";
+          task = "pi-agent-integration 4.1";
+        };
       };
       runtimeDependencies = extensionRuntimeDependencies;
     }
@@ -523,6 +536,14 @@ in
       installPhase = ''
         runHook preInstall
 
+        install -Dm444 ${managedSubagentPolicy} node_modules/pi-subagents/src/managed-policy.ts
+        install -Dm444 ${managedSubagentReader} node_modules/pi-subagents/managed-agents/reader.md
+        install -Dm444 ${managedSubagentWorker} node_modules/pi-subagents/managed-agents/worker.md
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-subagents -p1 \
+          < ${managedSubagentsPatch}
+        substituteInPlace node_modules/pi-subagents/src/runs/foreground/subagent-executor.ts \
+          --replace-fail 'chainDir: params.chainDir ?? getProjectChainRunsDir(effectiveCwd),' \
+          'chainDir: path.join(path.dirname(sessionRoot), "chain-runs"),'
         install -m444 managed-plan-mode.ts.in \
           node_modules/@narumitw/pi-plan-mode/src/managed-plan-mode.ts
         patch --no-backup-if-mismatch -d node_modules/@narumitw/pi-plan-mode -p1 < ${cooperativePlanModePatch}
@@ -554,6 +575,7 @@ in
         install -Dm444 ${./extensions/mcpproxy/index.ts} "$typecheckDir/mcpproxy/index.ts"
         install -Dm444 ${./extensions/mcpproxy/package.json} "$typecheckDir/mcpproxy/package.json"
         ln -s "$PWD/node_modules/pi-mcp-adapter" "$typecheckDir/pi-mcp-adapter"
+        ln -s "$PWD/node_modules/pi-subagents" "$typecheckDir/pi-subagents"
         ln -s "$PWD/node_modules" "$typecheckDir/node_modules"
         ln -s "$PWD/node_modules/@narumitw/pi-plan-mode" "$typecheckDir/plan-mode"
         ln -s "$PWD/node_modules/@narumitw/pi-tui-kit" "$typecheckDir/pi-tui-kit"
@@ -601,6 +623,7 @@ in
 
         install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
         install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"
+        install -Dm444 ${managedSubagentCatalog} "$out/share/pi-agent/subagents.json"
         install -Dm444 package.json "$out/share/pi-agent/extensions-package.json"
         install -Dm444 package-lock.json "$out/share/pi-agent/extensions-package-lock.json"
 

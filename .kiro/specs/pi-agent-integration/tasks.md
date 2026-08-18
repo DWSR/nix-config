@@ -239,13 +239,14 @@
 
 - [ ] 4. Configure and harden required Pi extensions
 
-- [ ] 4.1 Configure bounded sub-agent workflows and child resources
+- [x] 4.1 Configure bounded sub-agent workflows and child resources
   - Support single, parallel, and chain execution with independent failures and predecessor-only chain input.
-  - Apply declared model budget, tools, workspace, depth, and explicit child extension ceilings.
+  - Expose only `reader` (host model, 8 turns, 32 tool calls, read-only parent workspace, local read tools plus read-only MCP, Cavemem) and `worker` (host model, 12 turns, 64 tool calls, read-write parent workspace, local read/write/command tools, Cavemem without MCP).
+  - Apply the module-owned depth and reject call-level overrides of model, budget, tools, workspace/cwd, extensions, MCP, depth, output, or agent scope.
   - Store artifacts under the owning parent session and return results to the parent.
   - Load the Cavemem bridge and provider resources in every child; add MCP only when the agent declares it.
-  - Done when single, parallel, chain, budget, tool-ceiling, child-capture, and session-artifact fixtures pass.
-  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6, 14.2_
+  - Done when single, parallel, chain, budget, hostile-override, tool-ceiling, child-capture, and session-artifact fixtures pass.
+  - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6, 8.8, 14.2_
   - _Boundary: Extension Runtime — Subagents_
   - _Depends: 1.5, 2.5, 3.7_
 
@@ -623,6 +624,8 @@
 - Task 3.3: The listener is the worker startup lease; `worker.pid` is only a nonce-bearing readiness receipt published after cleanup and initialization.
 - Task 3.8: Use the standard MCP transport at `/mcp`; `/mcp/call` is not an adapter transport endpoint.
 - Task 3.9: Direct write/destructive tools remain approval-gated; the operator accepted that mutations routed through `call_tool_read` rely on mcpproxy and may bypass Pi approval.
+- Task 4.1: The fixed `reader`/`worker` catalog inherits the host model, rejects all call-level resource overrides, and never discovers mutable user/project agents.
+- Task 4.1: Chain validation must recurse into nested parallel tasks, managed depth must ignore ambient overrides, and chain state belongs under the parent-session root rather than workspace `.pi-subagents`.
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.
