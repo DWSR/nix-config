@@ -46,7 +46,6 @@ in
       keychainSecrets = {
         "mcp-github-token" = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
         "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
-        "mcp-explainify-token" = "op://Employee/explainify mcp api token/password";
         "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
       };
 
@@ -97,12 +96,6 @@ in
             "--enabled-toolsets=all"
           ];
           env.BUILDKITE_API_TOKEN = readKeychainSecret "mcp-buildkite-token";
-        };
-
-        explainify-mcp = {
-          type = "streamable-http";
-          url = "https://explainify.shopifycloud.com/mcp";
-          headers.Authorization = "Bearer " + readKeychainSecret "mcp-explainify-token";
         };
 
         fellow = {
