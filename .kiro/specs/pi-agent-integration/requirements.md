@@ -10,9 +10,12 @@ scope decisions.
   mcpproxy, Cavemem capture, sub-agents, plan mode, timestamps, Bash timeout,
   user questions, code intelligence, and background tasks on both hosts.
 - **Out of scope**: Sieve, exact `devx pi` parity, private Shopify extension
-  source, Pi self-updates, and changes to mcpproxy or Cavemem storage/MCP APIs.
+  source, Pi self-updates, changes to mcpproxy or Cavemem storage/MCP APIs,
+  adversarial isolation among managed Pi extensions, immutable provider-tool
+  payload enforcement, and crash-atomic plan-state transitions.
 - **Adjacent expectations**: mcpproxy remains the only MCP entrypoint, Cavemem
-  remains the session store, and existing OpenCode launch behavior is unchanged.
+  remains the session store, existing OpenCode launch behavior is unchanged,
+  and the managed in-process Pi extension set is trusted.
 
 ## Requirements
 
@@ -83,8 +86,9 @@ scope decisions.
 2. When the MCP extension loads, the Pi integration shall expose only the approved direct mcpproxy discovery and invocation tools.
 3. The Pi integration shall not expose an additional generic MCP proxy tool, script-execution tool, direct Cavemem server, or direct Shopify Tool Gateway server.
 4. When Pi invokes an approved mcpproxy read operation, the Pi integration shall return the selected upstream result through the discover-then-invoke flow.
-5. When Pi requests a write or destructive mcpproxy operation, the Pi integration shall require the configured explicit approval before forwarding it.
+5. When Pi invokes `call_tool_write` or `call_tool_destructive`, the Pi integration shall require the configured explicit approval before forwarding it.
 6. If mcpproxy or a mandatory upstream is unavailable during preflight, the Pi integration shall refuse to launch Pi and identify the unavailable service.
+7. When Pi invokes `call_tool_read`, the Pi integration shall rely on mcpproxy's routing decision without an additional target-effect approval gate.
 
 ### Requirement 7: Declarative required-extension inventory
 **Objective:** As the operator, I want one reviewed extension inventory on both hosts, so that Pi capabilities do not depend on mutable package installation.
@@ -110,15 +114,16 @@ scope decisions.
 7. When a child is cancelled or the parent session exits, the Pi integration shall terminate the child and leave no orphan process.
 
 ### Requirement 9: Read-only plan mode
-**Objective:** As the operator, I want a strict planning state before implementation, so that Pi can investigate and propose work without changing the project.
+**Objective:** As the operator, I want a guarded planning state before implementation, so that Pi can investigate and propose work before implementation actions are allowed.
 
 #### Acceptance Criteria
-1. When the operator enters plan mode, the Pi integration shall expose only the approved read-only file discovery tools and plan-mode interaction tools.
-2. While plan mode is active, the Pi integration shall withhold edit, write, Bash, background-task, sub-agent, MCP mutation, and code-refactor-apply tools.
-3. If a plan-mode action attempts to mutate files or execute a command, the Pi integration shall reject it without performing the action.
+1. When the operator enters plan mode, the Pi integration shall select the managed read-only discovery and plan-interaction tool names that are registered for the session.
+2. While plan mode is active, the Pi integration shall block each model-requested tool call outside the managed planning allowlist before invoking that tool.
+3. If Pi makes a non-allowlisted tool visible while plan mode is active, the Pi integration shall continue to block that tool's execution and shall report the denial.
 4. When Pi completes a plan, the Pi integration shall present the plan for operator approval before restoring implementation tools.
-5. When the operator exits or cancels plan mode, the Pi integration shall restore the exact pre-plan tool set.
-6. While a plan-mode session is resumed, the Pi integration shall preserve whether the session is still planning or has been approved for implementation.
+5. When the operator exits, cancels, or approves plan mode, the Pi integration shall restore the captured ordered pre-plan tool names that remain registered and shall report unavailable names.
+6. When a plan-mode session resumes with valid recorded state, the Pi integration shall restore the recorded workflow mode and captured pre-plan tool names.
+7. If recorded plan-mode state is unavailable or invalid during resume, the Pi integration shall start in normal mode and report that the state was not restored.
 
 ### Requirement 10: Cavemem ambient capture
 **Objective:** As the operator, I want Pi sessions captured by the existing memory system, so that Pi activity is searchable alongside OpenCode activity.
@@ -142,9 +147,9 @@ scope decisions.
 #### Acceptance Criteria
 1. When the operator submits a prompt or receives an assistant response, the Pi integration shall display its local timestamp without adding timestamp text to model context.
 2. When a session reloads or resumes, the Pi integration shall preserve previously recorded display timestamps.
-3. When Pi invokes Bash without an explicit timeout, the Pi integration shall apply the configured default timeout.
+3. When Pi invokes Bash without an explicit timeout, the Pi integration shall apply the declarative `bashDefaultMs` value after converting milliseconds to seconds, and mutable Supi settings shall not override it.
 4. When Pi invokes Bash with an explicit timeout, the Pi integration shall preserve that value.
-5. When the default or explicit Bash timeout expires, the Pi integration shall terminate the command process tree and report a timeout result.
+5. When the default or explicit Bash timeout expires, the Pi integration shall terminate the Bash process group, including ordinary descendants that remain in that group, and report a timeout result.
 6. When Pi needs operator input outside plan mode, the Pi integration shall support structured choice, multiple-choice, and free-text questions.
 7. When the operator cancels an active question, the Pi integration shall cancel the active turn without fabricating an answer.
 
@@ -155,7 +160,7 @@ scope decisions.
 1. When a configured language server is available for the active repository, the Pi integration shall report it as ready.
 2. When Pi requests symbol inspection, the Pi integration shall return definitions, references, implementations, hover information, symbols, or diagnostics with source locations as applicable.
 3. When Pi requests a refactor, the Pi integration shall provide a no-write preview before an apply operation is available.
-4. While plan mode or the review sandbox profile is active, the Pi integration shall not expose a refactor apply operation.
+4. While plan mode or the review sandbox profile is active, the Pi integration shall prevent refactor apply operations from executing.
 5. If a required language server fails to start, the Pi integration shall identify the server and failure without terminating unrelated Pi capabilities.
 6. When the Pi session ends, the Pi integration shall terminate its language-server processes.
 
@@ -169,7 +174,7 @@ scope decisions.
 4. When a background task exceeds its configured output limit, the Pi integration shall retain bounded operator-accessible output and report truncation.
 5. When Pi terminates a background task, the Pi integration shall terminate the full process group and report the final state.
 6. When the owning session exits, the Pi integration shall terminate all remaining background tasks and leave no orphan process.
-7. While plan mode or the review sandbox profile is active, the Pi integration shall not expose background-task execution tools.
+7. While plan mode or the review sandbox profile is active, the Pi integration shall prevent background tasks from starting.
 
 ### Requirement 14: Credential and process isolation
 **Objective:** As the operator, I want runtime credentials constrained to provider use, so that model-invoked tools do not receive secret material unnecessarily.

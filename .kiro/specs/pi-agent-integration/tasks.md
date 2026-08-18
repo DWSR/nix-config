@@ -227,13 +227,13 @@
   - _Boundary: MCP Bridge_
   - _Depends: 1.2, 1.5_
 
-- [ ] 3.9 Enforce MCP cache, approval, and preflight behavior
+- [x] 3.9 Enforce MCP cache, approval, and preflight behavior
   - Cover cold, stale, partial, malformed, and concurrent metadata-cache starts with private atomic cache files.
-  - Require allow-once/session approval for write and destructive calls and fail headless approval closed.
-  - Reject a mutating fixture routed through `call_tool_read` and assert zero upstream calls.
+  - Require allow-once/session approval for `call_tool_write` and `call_tool_destructive` and fail headless approval closed.
+  - Preserve mcpproxy routing for `call_tool_read` without an additional Pi-side target-effect approval gate.
   - Probe health, readiness, mandatory upstream state, initialize, and exact tools before Pi starts.
-  - Done when denied mutations reach upstream zero times, approved calls reach it once, and every cache/preflight fixture converges on the six-tool surface.
-  - _Requirements: 4.1, 4.2, 6.2, 6.3, 6.4, 6.5, 6.6_
+  - Done when denied direct mutations reach upstream zero times, approved calls reach it once, routed reads remain usable, and every cache/preflight fixture converges on the six-tool surface.
+  - _Requirements: 4.1, 4.2, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
   - _Boundary: MCP Bridge_
   - _Depends: 3.8_
 
@@ -622,6 +622,7 @@
 - Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
 - Task 3.3: The listener is the worker startup lease; `worker.pid` is only a nonce-bearing readiness receipt published after cleanup and initialization.
 - Task 3.8: Use the standard MCP transport at `/mcp`; `/mcp/call` is not an adapter transport endpoint.
+- Task 3.9: Direct write/destructive tools remain approval-gated; the operator accepted that mutations routed through `call_tool_read` rely on mcpproxy and may bypass Pi approval.
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.

@@ -28,7 +28,7 @@ remain shared services.
 ## Boundary Commitments
 
 ### This Spec Owns
-- The patched Pi package derived from the pinned `pi.nix` package output.
+- The patched Pi package, including its launch-fenced CLI bootstrap, derived from the pinned `pi.nix` package output.
 - The fixed-lock public extension closure and repository-owned Pi extensions.
 - The `programs.pi-agent` option surface and both host configurations.
 - The closed personal and Shopify provider-role catalog, resolver catalog, and
@@ -46,13 +46,9 @@ remain shared services.
 - Cavemem database schema, MCP tools, existing OpenCode bridge behavior, and
   default hook compression behavior.
 - OpenCode package, wrapper, profiles, plugins, and host settings.
-- Upstream extension feature development beyond scoped compatibility and safety
-  patches required by these requirements.
-- Private Shopify source, provider parity features, Sieve, and optional
-  `shop-pi-fy` resources.
-- Arbitrary provider endpoints, header maps, credential commands, model metadata,
-  extension ecosystems, or parsing of embedded JSON, YAML, shell, and source
-  text for secrets.
+- Pi-core reference-monitor changes, hostile managed extensions, immutable provider payloads, or crash-atomic Plan state.
+- Private Shopify source, provider parity features, Sieve, and optional `shop-pi-fy` resources.
+- Arbitrary providers, headers, credential commands, model metadata, extension ecosystems, or embedded-text secret parsing.
 
 ### Allowed Dependencies
 - `pi.nix` as the pinned base-package source; its mutable settings/model wrapper
@@ -72,7 +68,7 @@ remain shared services.
   session, child-process, or output-artifact contract.
 - `pi.nix` changes its package output shape or starts mutating state in the base
   package.
-- mcpproxy changes `/mcp/call`, its six approved tools, strict mutation
+- mcpproxy changes the standard MCP transport at `/mcp`, its six approved tools, strict mutation
   validation, health endpoints, or authentication posture.
 - Cavemem changes hook input, compression flags, privacy processing, storage
   schema, or uncompressed retrieval.
@@ -117,9 +113,10 @@ flowchart TB
     Nono --> PiRuntime[Direct Pi runtime]
     PiState --> PiRuntime
     PackageSet --> PiRuntime
+    PiRuntime --> RuntimeBootstrap[CLI runtime bootstrap]
     PiRuntime --> McpBridge[MCP bridge]
     McpBridge --> McpProxy
-    PiRuntime --> CaptureBridge[Cavemem bridge]
+    RuntimeBootstrap --> CaptureBridge[Cavemem bridge]
     CaptureBridge --> FullModeRedactor[Bounded full mode redactor]
     FullModeRedactor --> Cavemem
     PiRuntime --> ManagedChildren[Managed child processes]
@@ -139,12 +136,12 @@ flowchart TB
 
 | Layer | Choice / Version | Role | Constraint |
 |---|---|---|---|
-| Agent CLI | Pi `0.83.0` from pinned `pi.nix` | Direct coding-agent runtime | Carry security and context-recovery patches |
+| Agent CLI | Pi `0.83.0` from pinned `pi.nix` | Direct coding-agent runtime | Carry security, context-recovery, and launch-bootstrap patches |
 | Package runtime | Node `>=22.19.0` | Pi and TypeScript extensions | One Pi runtime in the closure |
 | Configuration | Home Manager and JSON | Closed provider selections and desired state | Package references in, rendered paths out; no secrets |
 | Reconciliation | Node ESM, JSON Schema, `proper-lockfile` | Atomic managed-key updates | Runtime only; provenance-aware |
 | Sandbox | Existing nono package and Pi pack `0.2.0` policy | Darwin filesystem, network, and process boundary | Standalone rendered profiles |
-| MCP | mcpproxy `0.52.1`, `pi-mcp-adapter@2.20.1` | Six direct tools over local HTTP | No ambient MCP config merge |
+| MCP | mcpproxy `0.52.1`, `pi-mcp-adapter@2.20.1` | Six direct tools over the standard local MCP transport | No ambient MCP config merge |
 | Memory | Cavemem `0.2.1` plus scoped patches | Canonical capture, bounded privacy, raw retrieval | Existing schema and MCP surface retained |
 | Extensions | Pins in `research.md` | Required Pi capabilities | Fixed lock; no nested Pi dependencies |
 | Native process | `node-pty@1.2.0-beta.14` | Interactive background tasks | Preserve Darwin ARM prebuild |
@@ -157,6 +154,7 @@ overlays/
 ├── pi-agent/
 │   ├── default.nix                       # Patched Pi and extension packages
 │   ├── pi-context-recovery.patch         # Upstream context-limit backport
+│   ├── pi-launch-redaction-bootstrap.patch # Pre-import process capability
 │   ├── pi-undici-8.9.0.patch             # Production dependency remediation
 │   ├── pi-package-lock.json              # Patched Pi dependency lock
 │   └── extensions/
@@ -167,7 +165,7 @@ overlays/
 │       └── patches/                      # Scoped upstream extension patches
 ├── cavemem-pi-full-payload-v1.patch      # Opt-in full capture mode
 ├── cavemem-pi-full-privacy-v1.patch      # Bounded structured and lexical redaction
-├── cavemem-pi-full-storage-policy-v1.patch # Raw retrieval and embedding exclusion
+├── cavemem-pi-full-storage-policy-v1.patch # Raw retrieval, embedding exclusion, worker lease
 └── default.nix                           # Adds the Pi overlay
 
 home-manager/common/pi-agent/
@@ -253,7 +251,8 @@ sequenceDiagram
     Services-->>Validator: Required contracts ready
     Validator-->>Launcher: Ready
     Launcher->>Nono: Start selected profile
-    Nono->>Pi: Execute direct Pi once
+    Nono->>Pi: Execute patched direct Pi once
+    Pi->>Pi: Install launch-fenced redaction capability before imports
 ```
 
 The projection writes `${SHOPIFY_PI_TOKEN}` and `${PI_AGENT_LAUNCH_ID}` templates,
@@ -298,10 +297,10 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7 | Host providers | Provider Composition, Credential Boundary, Runtime Control | ProviderCatalogV1, ProviderRequestPolicyV1, PersistedProviderV1, ProviderRuntimeSecretsV1, Managed Launch |
 | 4.1, 4.2, 4.3, 4.4, 4.5 | Preflight and status | Runtime Control, Acceptance Harness | StatusV1, Error Strategy |
 | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 | nono profiles | Sandbox Catalog, Runtime Control | SandboxSelection, Sandbox State |
-| 6.1, 6.2, 6.3, 6.4, 6.5, 6.6 | Sole MCP entrypoint | MCP Bridge, Runtime Control | MCP config contract, Managed Launch |
+| 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7 | Sole MCP entrypoint | MCP Bridge, Runtime Control | MCP config contract, Managed Launch |
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Extension inventory | Package Set, Extension Runtime | ExtensionManifestV1 |
 | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7 | Sub-agents | Extension Runtime, Sandbox Catalog | ChildPolicyV1 |
-| 9.1, 9.2, 9.3, 9.4, 9.5, 9.6 | Plan mode | Extension Runtime, Sandbox Catalog | SandboxSelection, Sandbox State |
+| 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | Plan mode | Extension Runtime, Sandbox Catalog | Active tool names, Plan session state |
 | 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11 | Cavemem capture | Capture Bridge, Cavemem Full Mode | PiFullToolObservationV1, PiFullPrivacyPolicyV1, Tool Capture |
 | 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7 | Session aids | Extension Runtime | ExtensionManifestV1 |
 | 12.1, 12.2, 12.3, 12.4, 12.5, 12.6 | Code intelligence | Extension Runtime, Sandbox Catalog | ExtensionManifestV1, SandboxSelection |
@@ -314,15 +313,15 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | Component | Domain | Intent | Requirement Coverage | Critical Dependencies | Contracts |
 |---|---|---|---|---|---|
 | Package Set | Build | Produce patched Pi and one extension closure | 1, 7, 15 | pi.nix P0, npm pins P0 | State |
-| Home Module | Configuration | Render closed provider plans and package-backed artifacts | 1, 2, 4, 5, 7 | Home Manager P0 | State |
-| Runtime Control | Launch | Reconcile persisted projection, validate, and execute Pi | 2, 3, 4, 5, 14 | Provider P0, nono P0 | Service, State |
+| Home Module | Configuration | Render closed provider plans and package-backed artifacts | 1, 2, 4, 5, 7, 11, 14 | Home Manager P0 | State |
+| Runtime Control | Launch | Reconcile persisted projection, validate, and execute Pi | 2, 3, 4, 5, 11, 14 | Provider P0, nono P0 | Service, State |
 | Provider Composition | Integration | Own the exact catalog and generation-stable projection | 3, 14 | devx P0 on Shopify | Service, State |
 | Credential Boundary | Security | Own per-launch values and scrub non-provider spawns | 3, 14 | Provider Composition P0 | Service, State |
-| Sandbox Catalog | Security | Define OS profiles and Pi tool ceilings | 5, 8, 9, 12, 13 | nono P0 | State |
+| Sandbox Catalog | Security | Define OS profiles and the launch-time review ceiling | 5, 8, 9, 12, 13 | nono P0 | State |
 | MCP Bridge | Integration | Expose six governed mcpproxy tools | 6 | mcpproxy P0, adapter P0 | Service |
 | Extension Runtime | Agent | Supply required tools and controlled subprocesses | 7, 8, 9, 11, 12, 13, 14 | Extension bundle P0 | Service, State |
 | Capture Bridge | Memory | Snapshot events and remove exact runtime values before transport | 8, 10, 14 | Cavemem P0 | Event, Batch, State |
-| Cavemem Full Mode | Memory | Apply bounded privacy and uncompressed storage policy | 10, 14 | Canonical envelope P0 | Batch, State |
+| Cavemem Full Mode | Memory | Apply bounded privacy, uncompressed storage, and fenced worker cleanup | 10, 14 | Canonical envelope P0 | Batch, State |
 | Acceptance Harness | Validation | Prove package, host, runtime, and security contracts | 4, 15 | Both host outputs P0 | Batch |
 
 ### Build and Configuration
@@ -368,30 +367,17 @@ runtimes, missing license texts, wrong `undici`, or absent recovery markers.
 | Field | Detail |
 |---|---|
 | Intent | Convert typed common and host values into secret-free artifacts |
-| Requirements | 1.1–1.6, 2.1, 2.6, 2.7, 4.4, 5.1, 7.1, 7.2 |
+| Requirements | 1.1–1.6, 2.1, 2.6, 2.7, 4.4, 5.1, 7.1, 7.2, 11.3, 14.1 |
 
 **Responsibilities & Constraints**
-- Define `programs.pi-agent` with typed package, state, closed provider
-  selection, MCP, sandbox, extension, sub-agent, plan, timeout, LSP, resource,
-  and security options.
-- Let personal hosts select a default from Pi's built-in OpenAI catalog. Let
-  Shopify hosts enable only the fixed five role IDs and select a default model
-  that resolves through an enabled role.
-- Accept packages as Nix derivations. Extension entries, manifests,
-  instructions, resources, and LSP executables pair a package with a canonical
-  relative path; the module alone renders complete `/nix/store` paths.
-- Render `ManagedConfigV1`, three standalone profiles, composed instructions,
-  package metadata, and absolute output paths.
-- Enforce closed submodules, finite enums, unique role references, canonical
-  relative path segments, and host/default compatibility. Do not parse URLs,
-  command argv, arbitrary headers, store roots, or credential-shaped strings at
-  evaluation time because those inputs do not exist in the public option surface.
-- Disable telemetry, analytics, self-version checks, and unmanaged updates;
-  compose Pi rules from common agent contracts without OpenCode-only commands.
-- Represent any advisory exception as an ID, rationale, approver, and expiry;
-  expired or incomplete exceptions fail evaluation.
-- Add only repository-owned runtime commands to `home.packages`; activation
-  never mutates Pi state.
+- Define `programs.pi-agent` with typed package, state, provider, MCP, sandbox, extension, sub-agent, plan, timeout, LSP, resource, and security options.
+- Let personal hosts select a built-in OpenAI default; Shopify hosts enable only the fixed five roles and select a default through an enabled role.
+- Accept packages as Nix derivations. Package-backed resources pair a package with a canonical relative path; only the module renders complete store paths.
+- Render `ManagedConfigV1`, profiles, instructions, metadata, the module-owned scrubbed shell path, and `bashDefaultMs` bounded from 1 through 2147483647.
+- Enforce closed submodules, finite enums, unique references, canonical relative paths, and host/default compatibility. Provider URLs, argv, headers, store roots, and credential literals are absent from the public options.
+- Disable telemetry, analytics, self-version checks, and unmanaged updates; compose Pi rules without OpenCode-only commands.
+- Represent advisory exceptions by ID, rationale, approver, and expiry; incomplete or expired exceptions fail evaluation.
+- Add only repository-owned runtime commands to `home.packages`; activation never mutates Pi state.
 
 **Dependencies**
 - Inbound P0: common and host module values.
@@ -423,14 +409,19 @@ type HostProviderSelection =
 interface ManagedSettingsV1 {
   readonly defaultModel: ModelRef;
   readonly defaultThinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly shellPath: RenderedStorePath;
   readonly installTelemetry: false; readonly selfUpdate: false; readonly unmanagedPackages: false;
 }
+
+type BashTimeoutMs = Opaque<number, "BashTimeoutMs">;
+interface ManagedTimeoutsV1 { readonly bashDefaultMs: BashTimeoutMs; }
 
 interface ManagedConfigV1 {
   readonly schemaVersion: 1;
   readonly generation: string;
   readonly agentDir: string;
   readonly settings: ManagedSettingsV1;
+  readonly timeouts: ManagedTimeoutsV1;
   readonly providerCatalog: ProviderCatalogV1;
   readonly providerSelection: HostProviderSelection;
   readonly extensionManifest: RenderedStorePath;
@@ -442,24 +433,19 @@ interface ManagedConfigV1 {
 }
 ```
 
-`NixPackage`, `CanonicalRelativePath`, and `RenderedStorePath` denote Nix-native
-package values, validated relative path segments, and module-generated outputs;
-they are not interchangeable strings. `ManagedSettingsV1` contains only the
-module-owned Pi keys, including the selected default and disabled update paths.
+`NixPackage`, `CanonicalRelativePath`, and `RenderedStorePath` denote Nix-native package values, validated relative paths, and module-generated outputs; they are not interchangeable strings.
+`ManagedSettingsV1` contains only module-owned Pi keys: the selected default, scrubbed shell path, and disabled update paths.
 
 Validation layers remain independent:
 
 | Layer | Correctness responsibility |
 |---|---|
-| Module evaluation | Structural types, closed enums, references, canonical relative paths, and cross-field compatibility |
-| Generated-manifest validation | Schema, package membership, executable bits, extension order, catalog, selection, and persisted projection shape |
+| Module evaluation | Structural types, timeout bounds, closed enums, references, canonical relative paths, and cross-field compatibility |
+| Generated-manifest validation | Schema, package membership, executable bits, shell path, extension order, catalog, selection, and persisted projection shape |
 | Closure scans | Defense-in-depth checks for known sentinels, private source, and suspicious rendered literals |
 | Launcher | Resolver availability, bounded output, concrete HTTPS gateway base, fixed-route joining, and auth conflicts |
 
-Heuristic secret scans may reject suspicious generated output, but they are not
-the correctness boundary. The closed option graph makes credential-bearing
-provider URLs, headers, commands, and store roots unrepresentable before scans
-run.
+Heuristic secret scans may reject suspicious output, but the closed option graph makes credential-bearing provider URLs, headers, commands, and store roots unrepresentable before scans run.
 
 ### Runtime Control
 
@@ -468,7 +454,7 @@ run.
 | Field | Detail |
 |---|---|
 | Intent | Commit one managed generation and launch direct Pi once |
-| Requirements | 2.1–2.7, 3.1–3.7, 4.1–4.5, 5.2, 5.5–5.8, 14.3–14.5 |
+| Requirements | 2.1–2.7, 3.1–3.7, 4.1–4.5, 5.2, 5.5–5.8, 11.3, 14.1, 14.3–14.5 |
 
 **Responsibilities & Constraints**
 - Reject Pi package mutation commands and invalid launch overrides first.
@@ -478,8 +464,7 @@ run.
   Boundary for `ProviderRuntimeSecretsV1`. Never pass runtime secrets to the
   reconciler or serialize them for rollback, status, or ownership.
 - Hold one integration lock across provider materialization and JSON updates.
-- Coordinate `settings.json` with Pi's `proper-lockfile`; update all managed JSON
-  files by same-directory private temporary write, fsync, and atomic rename.
+- Coordinate `settings.json` with Pi's `proper-lockfile`; update managed JSON by private same-directory write, fsync, and atomic rename, with `/shellPath` under the same ownership and drift rules.
 - Record each owned JSON pointer/provider, prior managed value hash, generation,
   and transaction state in `OwnershipStateV1`.
 - Remove a stale value only when the current value still equals the prior
@@ -487,9 +472,8 @@ run.
 - Canonically sort persisted providers/keys and skip writes when bytes match.
   Concurrent same-generation projections with different joined URLs fail as
   `provider-projection-conflict` instead of overwriting each other.
-- Validate generated manifests, package closure membership, provider
-  materialization, extension, profile, MCP, Cavemem, and credential boundaries;
-  then exec bare Pi through the selected nono profile exactly once.
+- Validate manifests, closure membership, provider materialization, extensions, profiles, MCP, Cavemem, and credentials; then exec patched bare Pi through nono exactly once; its CLI installs the bootstrap before importing Pi modules.
+- Add validated `bashDefaultMs` to root and foreground child Pi as `PI_AGENT_BASH_TIMEOUT_MS`, outside `ProviderRuntimeSecretsV1`.
 - Expose the same checks through dry-run, status, and validation modes.
 
 **Dependencies**
@@ -659,9 +643,9 @@ templates only. Pi expands both refs at request time; token/UUID values are forb
 - Every non-provider process uses the policy's `scrubbedEnvironment` result,
   built from an allowlist plus removal of all declared and standard provider
   credential names.
-- Status and errors report source kind/name only. Exact resolved values are
-  registered with the Capture Bridge in memory before provider use and are
-  never serialized into Cavemem input, argv, files, logs, or child environments.
+- `pi-agent-shell` may receive root Pi's environment, but removes sensitive names and `PI_AGENT_BASH_TIMEOUT_MS` before executing the model-controlled shell under the fixed allowlist.
+- The patched CLI installs immutable process-global `PiRuntimeBootstrapV1` and `CavememProcessEnvironmentV1` capabilities before imports; the latter snapshots only policy-approved own string environment values, including `CAVEMEM_DATA_DIR`.
+- Each Jiti-loaded Capture Bridge consumes both capabilities; reload reuses them and process exit destroys them. Exact values never enter Cavemem input, argv, files, logs, or child environments.
 - `ProviderRuntimeSecretsV1` is never reconciler input and has no JSON encoder,
   ownership entry, status representation, or persisted rollback form.
 
@@ -688,6 +672,8 @@ type ProviderRuntimeSecretsV1 =
       readonly rootPiEnvironment: Readonly<{ SHOPIFY_PI_TOKEN: RuntimeToken; PI_AGENT_LAUNCH_ID: RuntimeLaunchUuid }>;
       readonly childPiEnvironment: Readonly<{ SHOPIFY_PI_TOKEN: RuntimeToken; PI_AGENT_LAUNCH_ID: RuntimeLaunchUuid }>;
       readonly exactRedactionValues: InMemorySecretSet };
+interface PiRuntimeBootstrapV1 { readonly schemaVersion: 1; readonly mode: "personal" | "shopify-gateway"; readonly redactExact: (value: string) => string; }
+interface CavememProcessEnvironmentV1 { readonly schemaVersion: 1; readonly environment: Readonly<Record<string, string>>; }
 
 interface CredentialBoundaryV1 {
   readonly resolvers: readonly ResolverPlan[];
@@ -727,8 +713,8 @@ field is an unknown-option error rather than a value that a scanner must judge.
 
 | Field | Detail |
 |---|---|
-| Intent | Pair OS isolation with an explicit model tool ceiling |
-| Requirements | 5.1–5.9, 8.4, 8.7, 9.1–9.6, 12.4, 12.6, 13.6, 13.7 |
+| Intent | Pair OS isolation with managed tool selection |
+| Requirements | 5.1–5.9, 8.4, 8.7, 9.1–9.7, 12.4, 12.6, 13.6, 13.7 |
 
 **Responsibilities & Constraints**
 - Render `pi-managed`, `pi-audit`, and `pi-review` as standalone profiles
@@ -743,9 +729,8 @@ field is an unknown-option error rather than a value that a scanner must judge.
   overrides. Unknown values and missing profiles fail closed.
 - `PI_NONO_LISTEN_PORTS` admits only validated explicit numeric ports for one
   launch. No wildcard listen range exists.
-- Review appends a managed Pi allowlist after user arguments. Plan mode defaults
-  to `read`, `grep`, `find`, and `ls`; it excludes every execution or mutation
-  extension tool.
+- Review appends a managed Pi allowlist after user arguments. Plan selects `read`,
+  `grep`, `find`, `ls`, and interaction tools, then blocks other calls before execution.
 - Before sandbox launch, resolve the profile with
   `nono profile show <name> --json --silent`, parse it, and run strict profile
   validation. An unreadable or unparseable resolved profile fails closed.
@@ -793,32 +778,33 @@ arguments cannot restore excluded tools. Disabled state executes `<bare-pi>`
 once without nono only after the explicit state override is reported.
 
 nono enforces filesystem, network, initial environment, process inspection, and
-signals. Pi configuration enforces tool visibility, sub-agent parameters, and
-plan/review transitions. Neither layer claims the other's controls.
+signals. Pi configuration manages tool selection, sub-agents, and plan/review
+transitions; the Plan call gate blocks non-allowlisted execution.
 
 #### MCP Bridge
 
 | Field | Detail |
 |---|---|
 | Intent | Expose one deterministic mcpproxy client surface |
-| Requirements | 4.1, 4.2, 6.1–6.6, 9.2 |
+| Requirements | 4.1, 4.2, 6.1–6.7, 9.2 |
 
 **Responsibilities & Constraints**
 - Load only the repository-owned wrapper around `createMcpAdapter`; do not load
   the adapter's default extension or merge ambient MCP files.
-- Connect eagerly to `http://127.0.0.1:8080/mcp/call` with authentication,
-  resources, sampling, elicitation, script mode, and generic proxy disabled.
+- Connect eagerly to `http://127.0.0.1:8080/mcp` through the standard MCP
+  transport with adapter authentication discovery, resources, sampling,
+  elicitation, script mode, and generic proxy disabled.
 - Set no tool prefix and freeze these six direct tools:
   `retrieve_tools`, `describe_tool`, `call_tool_read`, `call_tool_write`,
   `call_tool_destructive`, and `read_cache`.
-- Approval-gate write and destructive calls. Headless approval fails closed.
-- Set `MCP_DIRECT_TOOLS` so cold-cache session start waits for metadata; invalidate
-  only malformed or partial adapter-owned metadata.
-- At agent start, reject any `mcp`, `mcpScript`, code-execution, duplicate,
-  prefixed, or missing tool.
+- Approval-gate `call_tool_write` and `call_tool_destructive`. Headless approval
+  fails closed. `call_tool_read` relies on mcpproxy routing without another
+  target-effect approval gate.
+- Use typed direct-tool selection and await live metadata before isolated registration; Task 3.9 owns cache hardening.
+- Export the surface validator; Task 4.12 runs the final duplicate/forbidden/missing guard after all extensions register.
 
 **Dependencies**
-- External P0: mcpproxy health, ready, admin status, and `/mcp/call` contracts.
+- External P0: mcpproxy health, ready, admin status, and standard `/mcp` transport contracts.
 - Inbound P0: Runtime Control preflight and managed endpoint.
 - Outbound P1: Pi agent instructions describe discover-then-invoke use.
 
@@ -827,9 +813,10 @@ plan/review transitions. Neither layer claims the other's controls.
 | Config field | Contract |
 |---|---|
 | Server name | `mcpproxy` only |
+| Transport | Standard MCP at `http://127.0.0.1:8080/mcp` |
 | Lifecycle | eager, no idle timeout |
 | Tools | six-name include and direct allowlists |
-| Approval | `call_tool_write`, `call_tool_destructive` |
+| Approval | `call_tool_write`, `call_tool_destructive` only |
 | Cache | private agent-dir metadata, seven-day adapter TTL |
 | Preflight | health, ready, mandatory upstream status, initialize, tools list |
 
@@ -838,41 +825,36 @@ plan/review transitions. Neither layer claims the other's controls.
 | Field | Detail |
 |---|---|
 | Intent | Load the approved capabilities with bounded child processes |
-| Requirements | 7.1–7.6, 8.1–8.7, 9.1–9.6, 11.1–11.7, 12.1–12.6, 13.1–13.7, 14.1, 14.2 |
+| Requirements | 7.1–7.6, 8.1–8.7, 9.1–9.7, 11.1–11.7, 12.1–12.6, 13.1–13.7, 14.1, 14.2 |
 
 **Responsibilities & Constraints**
-- Launch Pi with ambient extension, skill, and prompt discovery disabled, then
-  supply module-rendered entries from the closed manifest in this order:
-  Cavemem, MCP, sub-agents, plan, timestamps, Bash timeout, ask-user, code
-  intelligence, background tasks. Hosts cannot add arbitrary extensions.
-- Configure sub-agent artifacts under the parent session and explicit child
-  extensions. Ordinary children load Cavemem and provider resources; MCP is
-  added only for agents declaring it.
-- Preserve single, parallel, and chain semantics: parallel failures remain
-  independent, and each chain step receives only its declared predecessor
-  output. Child tools, model budget, workspace, depth, and extension list come
-  from the selected managed agent definition.
-- Patch sub-agents to reject async/detached/scheduled runs, prevent recursive
-  controller loading, create foreground process groups, and escalate group
-  termination on cancel or parent shutdown.
-- Configure plan mode with only read-only built-ins and its interaction tools.
-  Plan completion requires operator approval and restores the captured prior
-  tool set. Planning/approved state persists in the Pi session across resume.
-- Apply a default Bash timeout only when omitted and preserve explicit values.
-- Patch LSP and background spawn paths to use an exact scrubbed environment.
-  Language-server options are package plus canonical relative executable path;
-  the module renders the executable, and refactor apply remains separate from
-  preview.
+- Disable ambient extension, skill, and prompt discovery. Load the closed manifest
+  as Cavemem, MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence,
+  and background tasks; hosts cannot add extensions.
+- Keep sub-agent artifacts in the parent session and give children explicit
+  extensions. Children load Cavemem/provider resources and MCP only when declared.
+- Preserve single, parallel, and chain semantics, independent failures, and
+  predecessor-only chain input. Managed agent definitions own child ceilings.
+- Reject async/detached/scheduled sub-agents, recursive controllers, and orphaned
+  process groups through bounded cancellation and shutdown escalation.
+- Plan mode selects read-only built-ins and interaction tools by name, blocks
+  other tool calls before execution, requires approval, and restores captured
+  available pre-plan names. Valid session state restores the mode on resume.
+- Managed Plan names are exactly `read`, `grep`, `find`, `ls`,
+  `plan_mode_question`, and `plan_mode_complete`. Entry captures ordered active
+  names before selection. State is valid only with phase `normal`, `planning`,
+  `awaiting-approval`, or `approved` and a unique string-name array. Invalid state
+  reports normal-mode fallback; restoration reports unavailable names.
+- Read the Bash default only from `PI_AGENT_BASH_TIMEOUT_MS`, require 1 through 2147483647, convert milliseconds only when timeout is omitted, and preserve explicit seconds; mutable Supi settings cannot override it.
+- Use Pi's detached process-group timeout cleanup and timeout result; ordinary descendants remaining in the group share termination.
+- Give LSP/background spawns an exact scrubbed environment. Module-rendered LSP
+  executables keep refactor preview and apply separate.
 - Expose code orientation, resolution, inspection, graph, find, health, and
-  refactor-plan/apply contracts. Server failure disables only that server and
-  reports its executable and error.
-- Require background pipe and PTY modes to expose bounded logs and group cleanup
-  on task termination and session shutdown. Each task has a stable ID plus
-  status, logs, wait, input, attach, detach, signal, and kill operations.
-- Keep timestamp display entries outside model context. `ask_user` is available
-  outside plan mode with single-choice, multiple-choice, and free-text forms;
-  cancellation cancels the turn. Timestamp entries use the local timezone and
-  persist in session state.
+  refactor plan/apply; one server failure disables only that server.
+- Background pipe/PTY tasks expose stable IDs, bounded logs, wait/input/control,
+  and process-group cleanup on task termination and session shutdown.
+- Keep local timestamps outside model context. Outside Plan, `ask_user` supports
+  choice, multiple-choice, and text; cancellation cancels the turn.
 
 **Dependencies**
 - Inbound P0: ExtensionManifestV1 and SandboxSelection.
@@ -891,7 +873,7 @@ interface ChildPolicyV1 {
 
 Root and child Pi are trusted credential consumers. Bash, background, LSP,
 Cavemem, status, and validation processes receive no provider credential value.
-Trusted in-process extensions remain inside the root Pi trust boundary.
+Managed in-process extensions and their load order remain trusted; plan mode does not seal provider payloads.
 
 #### Capture Bridge
 
@@ -906,7 +888,7 @@ Trusted in-process extensions remain inside the root Pi trust boundary.
   resume/fork, compaction barriers, and shutdown to existing Cavemem hooks.
 - Use the Pi session UUID with `ide=pi`; compaction retains identity, resume
   reuses it, and fork creates a new ID.
-- Replace every exact value in `CredentialBoundaryV1.exactRedactionValues`
+- Consume both runtime capabilities during each factory load, remove exact values
   while the snapshot is still in bridge memory, then construct the closed
   `PiFullToolObservationV1`. Exact values never enter JSON, stdin, argv, files,
   logs, diagnostics, or the Cavemem process environment.
@@ -987,17 +969,14 @@ interface PiFullPrivacyPolicyV1 {
   count and bounded lookahead. It never reparses replacements. Diagnostics name
   rule and structural location only and contain no source value.
 
-**Storage Policy**
-- Redaction and raw-storage behavior are separate implementation units. Storage
-  accepts only a redacted canonical envelope, stringifies it once, and inserts
-  one row with `compressed=0` and `intensity=NULL`.
-- Full rows bypass expansion on every retrieval path and return the exact stored
-  bytes. Missing-embedding selection, live embedding, backfill, and vector
-  enumeration accept only `compressed=1`; stale vectors on full rows are removed.
-- Full mode has no application payload cap. SQLite's active maximum value length
-  is the boundary; overflow stores no partial row. FTS/BM25 remains available.
-- No table, column, index, schema version, default hook, or default embedding
-  behavior changes.
+**Storage Policy and Worker Lifecycle**
+- Redaction and raw storage remain separate. Storage inserts one redacted canonical row with `compressed=0` and `intensity=NULL`.
+- Full rows bypass expansion; embedding selection, writes, backfill, and vector enumeration accept only `compressed=1`, and stale full-row vectors are removed.
+- The worker child binds its TCP listener before PID-file access, cleanup, or provider initialization. The listener is the exclusive startup lease and serves `503 Starting` until ready.
+- `worker.pid` is an atomic readiness receipt `{ pid, nonce, port }`, published only after cleanup and initialization. Start succeeds only after IPC or health reports the same nonce.
+- Bind losers never mutate the receipt: matching ready health means already running; any other owner is a port conflict. Shutdown compare-removes its receipt while holding the listener; restart waits bounded port release and escalates before spawning a successor.
+- Startup failure closes store and listener and leaves no readiness receipt. SQLite's active maximum remains the full-row limit; overflow stores no partial row and FTS/BM25 remains available.
+- No table, column, index, schema version, default hook, or default embedding behavior changes.
 
 ### Validation
 
@@ -1028,6 +1007,8 @@ interface PiFullPrivacyPolicyV1 {
 ### Managed State
 - `ManagedConfigV1` is immutable, secret-free, and generation-addressed;
   `ProviderCatalogV1` and host selection contain only closed references.
+- Its managed settings own the package-rendered shell path, and its timeout
+  contract carries the bounded millisecond value without conversion.
 - `PersistedProviderProjectionV1` is the reconciler's only provider input. It
   contains joined HTTPS URLs and templates, never token or UUID values.
 - `OwnershipStateV1` is mutable, mode `0600`, and authoritative only for keys
@@ -1039,7 +1020,9 @@ interface PiFullPrivacyPolicyV1 {
 
 ### Runtime-Only State
 - The resolved base is ephemeral until route joining. Token and launch UUID live
-  only in `ProviderRuntimeSecretsV1` and root/child Pi process environments.
+  only in provider-capable state; the separate process-lifetime Cavemem capability contains only approved non-provider environment values.
+- `PI_AGENT_BASH_TIMEOUT_MS` is a public launcher binding for root and foreground
+  child Pi. It is not provider-secret state and is removed by `pi-agent-shell`.
 - `${PI_AGENT_LAUNCH_ID}` is persisted as an env-reference template, not a UUID;
   distinct concurrent process values therefore require no provider-file rewrite.
 - Adapter metadata, extension settings, sub-agent artifacts, and background
@@ -1058,12 +1041,12 @@ interface PiFullPrivacyPolicyV1 {
 | Input | Unknown role/field, duplicate role, invalid default reference, relative path, override, or port | Fail evaluation or exit before mutation | Print accepted enum or named reference |
 | State | Invalid JSON, pending transaction, managed drift, or projection conflict | Preserve current files and exit | Repair state or stabilize the gateway base; rerun |
 | Provider | Resolver timeout, invalid base/token, join, template expansion, or auth conflict | Exit before TUI without provider writes | Restore gateway/package or conflicting auth |
-| Package | Invalid generated manifest, closure reference, patch, extension, license, PTY, or version | Block build or launch | Rebuild the managed generation |
+| Package | Invalid generated manifest, closure reference, patch, bootstrap, extension, license, PTY, or version | Block build or launch | Rebuild the managed generation |
 | MCP | Health, upstream, handshake, cache, or direct-surface failure | Exit before TUI | Restart mcpproxy or repair declared upstream |
 | Sandbox | Missing profile, validation failure, blocked prerequisite | Refuse unsandboxed fallback | Select valid profile or explicit documented rollback |
 | Extension | Load failure or unexpected tool surface | Stop before accepting a prompt | Fix package/config and validate again |
 | Capture privacy | Exact-value, canonical-envelope, private-region, or bounded-rule failure | Transport/store nothing; sticky value-free error | Repair bridge or redactor; retry the turn |
-| Capture storage | SQLite value limit, retrieval-policy, embedding-policy, timeout, or write failure | No partial row; sticky value-free error | Reduce result or repair Cavemem |
+| Capture storage/worker | SQLite limit, storage-policy failure, stale receipt, readiness mismatch, port conflict, or shutdown timeout | No partial row or false readiness; close owned resources with a value-free error | Repair storage or worker lifecycle; retry |
 | Child process | Cancellation or shutdown does not finish gracefully | Group TERM then group KILL | Report final process state and fail cleanup gate |
 
 Errors use component, resolver/rule kind, safe path, and recovery action only.
@@ -1077,27 +1060,32 @@ enter diagnostics, logs, or status output.
   stale-lock recovery, and detected compromise fail safely; external lock
   deletion or replacement before heartbeat detection is host compromise and is
   not a fencing guarantee provided by this integration.
-- Shopify token and launch UUID reach root Pi and foreground child Pi only.
-  Managed shell, PTY, LSP, and Cavemem spawn paths remove the exact sensitive
-  variables. Sentinel tests scan process output, JSONL, logs, temp files, status,
-  and nono audit data.
+- Shopify token and launch UUID reach root Pi, its redaction bootstrap, and foreground child Pi only. The separate Cavemem environment capability is allowlisted, immutable, and credential-free; sentinel tests scan output and persisted state.
+- The trusted managed shell wrapper receives root Pi's environment only to build
+  the allowlisted environment used by the model-controlled shell command.
 - `PersistedProviderV1` admits only joined URLs, finite metadata, public literals,
   and exact env templates. `ProviderRuntimeSecretsV1` cannot cross the reconciler
   type boundary; concurrent launch values never alter persisted bytes.
 - mcpproxy admin/Keychain probes run before nono. No admin key, Keychain access,
   `~/.mcpproxy`, or `/usr/bin/security` enters Pi's sandbox.
-- MCP write and destructive calls require adapter approval and mcpproxy strict
-  server validation. Code execution and server-management tools are absent.
+- `call_tool_write` and `call_tool_destructive` require adapter approval.
+  `call_tool_read` relies on mcpproxy routing. Code execution and
+  server-management tools are absent from Pi.
 - The Capture Bridge removes exact runtime values before transport. Cavemem then
   applies normalized structured-key, private-region, and finite lexical rules;
   opaque JSON/YAML/shell/source strings receive no universal parsing.
 - Personal configuration contains no Shopify role, resolver, endpoint, header,
   or credential binding. Closure scans cover both host outputs and publication.
 - Review mode combines a read-only filesystem profile and a final Pi tool
-  allowlist. Plan mode is a tool restriction, not an OS sandbox.
+  allowlist. Plan mode uses cooperative name selection and pre-execution blocking
+  within the trusted extension order; nono remains the OS effect boundary.
 
 Residual accepted exposure:
-- Trusted in-process Pi extensions can inspect root Pi environment and memory.
+- A mutation accepted by mcpproxy through `call_tool_read` bypasses Pi's
+  write/destructive approval prompt.
+- Trusted in-process Pi extensions can inspect secrets and alter Plan-visible tools or payloads.
+- Provider retries may reuse a pre-transition tool payload because payload hooks run once per logical request.
+- A crash before session-entry flush may lose Plan state; resume reports fallback to normal mode.
 - Audit mode permits unrestricted egress.
 - Managed mode writes the current repository and Pi/Cavemem state.
 - Same-sandbox process signaling lets supervised sibling processes signal each
@@ -1110,10 +1098,12 @@ Residual accepted exposure:
   mutation. Two cooperative concurrent launches serialize on one lock.
 - Provider preflight dispatches two fixed bounded resolvers; no gateway operation
   can hang launch indefinitely.
+- Managed Bash timeout input is bounded to Node's 2147483647 millisecond timer
+  ceiling before launch.
 - MCP cold-cache startup waits for six direct tool schemas before agent start.
 - Cavemem serializes accepted events through a backpressured FIFO. Full rows skip
-  embedding, use SQLite's active maximum value length, and are not subject to a
-  total write deadline while the local hook process continues making progress.
+  embedding and use SQLite's active maximum; worker startup holds one listener
+  lease, and restart waits bounded port release before spawning a successor.
 - Privacy work is linear in payload size times a fixed rule count. Malformed
   private/PEM regions terminate at EOF without rescanning consumed text.
 - Background output remains extension-bounded; session exit enforces process
@@ -1153,22 +1143,23 @@ Residual accepted exposure:
 - Render both Home Manager host outputs and inspect launcher, desired state,
   profiles, instructions, extension order, and secret-free closures.
 - Run launcher stubs through disabled, audit, enforced, review, invalid,
-  unavailable-service, and direct-exec paths; assert one bare Pi execution.
+  unavailable-service, direct-exec, bootstrap, and reload paths; assert one bare Pi execution.
 - Launch two concurrent Shopify fixtures with distinct token/UUID values; assert
   byte-identical persisted provider state, one no-op reconcile, distinct root Pi
   envs, and correct request-time apiKey/affinity/usage/Google bearer expansion.
 - Start MCP with cold, stale, partial, malformed, and concurrent metadata caches;
   assert only six direct tools and approval behavior.
 - Load all extensions together under Pi and verify timestamps, timeout,
-  ask-user, plan enter/restore, LSP preview/apply gating, and background pipe/PTY
-  lifecycle.
+  ask-user, Plan name selection, call-time denial, restore/resume behavior, LSP
+  apply gating, and background pipe/PTY lifecycle.
 - Run single, parallel, and chained sub-agents; reject async mode, verify child
   extension ceilings and artifacts, then cancel and scan for orphan groups.
 - Exercise Pi bridge prompts, successes, failures, parallel tools, resume, fork,
   compact, child attribution, later mutation, shutdown, and visible failures.
 - Keep Task 3.1's closed-envelope and default-mode golden tests byte-identical.
-  Test bounded privacy independently from exact raw retrieval, SQLite-limit
-  rejection, compression flags, embedding exclusion, and stale-vector cleanup.
+  Test bounded privacy independently from raw retrieval, SQLite limits,
+  embedding exclusion, stale-vector cleanup, listener fencing, nonce-matched
+  readiness, concurrent start, failed publication, and slow restart.
 
 ### Security Tests
 - Inject token and UUID sentinels. Root/child requests expand templates correctly;
@@ -1182,8 +1173,9 @@ Residual accepted exposure:
   declarations, ordinary prose and query parameters, path-adjacent URL-like
   text, and non-sensitive structured keys remain byte-identical. Run malformed
   inputs at scaled sizes under a timeout to verify monotonic bounds.
-- Deny an MCP write/destructive call and assert zero upstream calls; approve once
-  and assert exactly one. Reject a mutation routed through `call_tool_read`.
+- Deny a direct MCP write/destructive call and assert zero upstream calls;
+  approve once and assert exactly one. A mutation accepted by mcpproxy through
+  `call_tool_read` receives no additional Pi-side approval.
 - Under nono, allow mcpproxy port 8080 and declared provider hosts while blocking
   unlisted ports, credential directories, Keychain, and workspace writes in
   review mode.

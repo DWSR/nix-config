@@ -103,13 +103,14 @@ let
   piLock = ./pi-package-lock.json;
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
-  extensionNpmDepsHash = "sha256-vi1LJnFWUiEuCFRgk5HGYaAKrd0a92LMyw4WUMN1xtY=";
+  extensionNpmDepsHash = "sha256-bSn4YVPB1qGfOAGXYzl9Oq3XmQ0G9rNCsk+coNgTFTM=";
   cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
     cavemem = "${final.cavemem}/bin/cavemem";
   };
   cavememBridgePackage = builtins.fromJSON (builtins.readFile ./extensions/cavemem/package.json);
   mcpproxyAdapterPackage = builtins.fromJSON (builtins.readFile ./extensions/mcpproxy/package.json);
   managedMcpAdapterPatch = ./extensions/patches/pi-mcp-adapter-managed-direct-tools.patch;
+  privateMcpCachePatch = ./extensions/patches/pi-mcp-adapter-private-cache.patch;
   cooperativePlanModePatch = ./extensions/patches/pi-plan-mode-cooperative-state.patch;
   managedBashTimeoutPatch = ./extensions/patches/supi-bash-timeout-managed-default.patch;
   structuredQuestionsPatch = ./extensions/patches/supi-ask-user-structured-results.patch;
@@ -330,6 +331,11 @@ let
     };
   };
   extensionRuntimeDependencies = {
+    mcpClient = {
+      package = "@modelcontextprotocol/client";
+      version = "2.0.0";
+      entryPath = "lib/node_modules/@modelcontextprotocol/client/dist/index.mjs";
+    };
     mcpAdapter = {
       package = "pi-mcp-adapter";
       version = "2.20.1";
@@ -397,6 +403,11 @@ let
           file = builtins.baseNameOf managedMcpAdapterPatch;
           package = "pi-mcp-adapter@2.20.1";
           task = "pi-agent-integration 3.8";
+        };
+        mcpAdapterPrivateCache = {
+          file = builtins.baseNameOf privateMcpCachePatch;
+          package = "pi-mcp-adapter@2.20.1";
+          task = "pi-agent-integration 3.9";
         };
       };
       runtimeDependencies = extensionRuntimeDependencies;
@@ -529,7 +540,8 @@ in
           < ${managedCodeIntelligencePatch}
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-mcp-adapter -p1 \
           < ${managedMcpAdapterPatch}
-
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-mcp-adapter -p1 \
+          < ${privateMcpCachePatch}
         typecheckDir=$(mktemp -d)
         ln -s "$PWD/node_modules/@mrclrchtr/supi-ask-user" "$typecheckDir/ask-user"
         ln -s "$PWD/node_modules/@99percentpeople/pi-background-tasks" "$typecheckDir/background-tasks"
@@ -594,6 +606,8 @@ in
 
         install -Dm444 node_modules/pi-mcp-adapter/LICENSE \
           "$out/share/licenses/pi-agent-extensions/mcp/LICENSE"
+        install -Dm444 node_modules/@modelcontextprotocol/client/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/mcpClient/LICENSE"
         install -Dm444 node_modules/@modelcontextprotocol/server/LICENSE \
           "$out/share/licenses/pi-agent-extensions/mcpServerSdk/LICENSE"
         install -Dm444 node_modules/pi-subagents/LICENSE \

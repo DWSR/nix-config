@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
 const serverFixturePath = path.join(testsDir, "fixtures/mcpproxy-server.mjs");
+const upstreamFixturePath = path.join(testsDir, "fixtures/mcpproxy-upstream.mjs");
+const loaderProcessFixturePath = path.join(testsDir, "fixtures/mcpproxy-loader-process.mjs");
 const fatalLoadFixturePath = path.join(testsDir, "fixtures/mcpproxy-fatal-load.ts");
 const directToolNames = [
   "retrieve_tools",
@@ -18,6 +21,12 @@ const directToolNames = [
   "call_tool_destructive",
   "read_cache",
 ];
+const fixtureWriteToolName = "fixture:update_record";
+const fixtureDestructiveToolName = "fixture:delete_record";
+const fixtureUnannotatedReadToolName = "fixture:unannotated_read";
+const fixtureUnannotatedToolName = "fixture:unannotated_mutation";
+const fixtureAdminApiKey = "task-3-9-admin-key";
+const approvalEventName = "pi-mcp-adapter:tool-approval-request";
 const oversizedVariantReasons = Object.freeze({
   "oversized-depth": "JSON_DEPTH_LIMIT",
   "oversized-string": "JSON_STRING_LIMIT",
@@ -41,6 +50,7 @@ const commandOptions = {
 
 let runtimePaths;
 let runtimeModules;
+let mcpproxyRuntimePath;
 
 function filteredFlakeExpression(body) {
   return `
@@ -93,6 +103,31 @@ function buildRuntimePaths() {
   assert.match(runtimePaths.pi ?? "", /^\/nix\/store\//);
   assert.match(runtimePaths.extensions ?? "", /^\/nix\/store\//);
   return runtimePaths;
+}
+
+function buildMcpproxyRuntimePath() {
+  if (mcpproxyRuntimePath) return mcpproxyRuntimePath;
+  if (process.env.PI_AGENT_TEST_MCPPROXY_PATH) {
+    mcpproxyRuntimePath = process.env.PI_AGENT_TEST_MCPPROXY_PATH;
+    return mcpproxyRuntimePath;
+  }
+  mcpproxyRuntimePath = childProcess
+    .execFileSync(
+      "nix",
+      [
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--impure",
+        "--expr",
+        filteredFlakeExpression("pkgs.mcpproxy-go"),
+      ],
+      commandOptions,
+    )
+    .trim();
+  assert.match(mcpproxyRuntimePath, /^\/nix\/store\//);
+  assert.equal(fs.existsSync(path.join(mcpproxyRuntimePath, "bin/mcpproxy")), true);
+  return mcpproxyRuntimePath;
 }
 
 function wrapperPath() {
@@ -159,6 +194,33 @@ async function loadAdapterModule() {
       typebox: path.join(runtime.extensions, "lib/node_modules/typebox/build/index.mjs"),
     },
   }).import(path.join(runtime.extensions, "lib/node_modules/pi-mcp-adapter/index.ts"));
+}
+
+async function loadAdapterMetadataCacheModule() {
+  const runtime = buildRuntimePaths();
+  const piNodeModules = path.join(runtime.pi, "lib/node_modules");
+  const { createJiti } = await import(
+    pathToFileURL(path.join(piNodeModules, "jiti/lib/jiti.mjs"))
+  );
+  return createJiti(import.meta.url, {
+    moduleCache: false,
+    alias: {
+      "@earendil-works/pi-ai/compat": path.join(
+        piNodeModules,
+        "@earendil-works/pi-ai/compat.js",
+      ),
+      "@earendil-works/pi-ai": path.join(piNodeModules, "@earendil-works/pi-ai/index.js"),
+      "@earendil-works/pi-coding-agent": path.join(
+        piNodeModules,
+        "@earendil-works/pi-coding-agent/index.js",
+      ),
+      "@earendil-works/pi-tui": path.join(piNodeModules, "@earendil-works/pi-tui/index.js"),
+      typebox: path.join(runtime.extensions, "lib/node_modules/typebox/build/index.mjs"),
+    },
+  }).import(path.join(
+    runtime.extensions,
+    "lib/node_modules/pi-mcp-adapter/metadata-cache.ts",
+  ));
 }
 
 function assertDeepFrozen(value, seen = new Set()) {
@@ -241,7 +303,7 @@ function isProcessAlive(pid) {
   }
 }
 
-async function startFixtureServer(variant) {
+async function startFixtureServer(variant, options = {}) {
   const runtime = buildRuntimePaths();
   const child = childProcess.spawn(process.execPath, [serverFixturePath], {
     cwd: repoRoot,
@@ -251,9 +313,10 @@ async function startFixtureServer(variant) {
       LC_ALL: "C",
       PATH: process.env.PATH ?? "/usr/bin:/bin",
       PI_AGENT_MCP_FIXTURE_VARIANT: variant,
-      PI_AGENT_MCP_TOOLS_LIST_DELAY_MS: ["exact", "warm-missing"].includes(variant)
-        ? "1000"
-        : "0",
+      PI_AGENT_MCP_TOOLS_LIST_DELAY_MS: String(
+        options.toolsListDelayMs
+          ?? (["exact", "warm-missing"].includes(variant) ? 1000 : 0),
+      ),
       PI_AGENT_MCP_SERVER_MODULE: path.join(
         runtime.extensions,
         "lib/node_modules/@modelcontextprotocol/server/dist/index.mjs",
@@ -294,7 +357,184 @@ async function startFixtureServer(variant) {
   return { activities, child, port: ready.port, stderr: () => stderr };
 }
 
+async function startUpstreamFixture() {
+  const runtime = buildRuntimePaths();
+  const child = childProcess.spawn(process.execPath, [upstreamFixturePath], {
+    cwd: repoRoot,
+    env: {
+      HOME: os.tmpdir(),
+      LANG: "C",
+      LC_ALL: "C",
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      PI_AGENT_MCP_SERVER_MODULE: path.join(
+        runtime.extensions,
+        "lib/node_modules/@modelcontextprotocol/server/dist/index.mjs",
+      ),
+    },
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  const activities = [];
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.on("message", (message) => {
+    if (message?.type === "activity") activities.push(message.activity);
+  });
+  const ready = await waitForChildMessage(
+    child,
+    (message) => message?.type === "ready" || message?.type === "fatal",
+  );
+  if (ready.type === "fatal") {
+    child.kill("SIGTERM");
+    await waitForChildExit(child, 2_000);
+    throw new Error(`deterministic upstream failed: ${ready.message}${stderr}`);
+  }
+  assert.equal(Number.isInteger(ready.port) && ready.port > 0, true);
+  return { activities, child, port: ready.port, stderr: () => stderr };
+}
+
+function reserveTcpPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : undefined;
+      server.close((error) => {
+        if (error) reject(error);
+        else resolve(port);
+      });
+    });
+  });
+}
+
+async function startActualMcpproxyFixture() {
+  const upstream = await startUpstreamFixture();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mcpproxy-actual-"));
+  const dataDir = path.join(root, "data");
+  const configPath = path.join(root, "mcp_config.json");
+  const port = await reserveTcpPort();
+  const apiKey = "task-3-9-actual-admin-key";
+  writeJson(configPath, {
+    listen: `127.0.0.1:${port}`,
+    data_dir: dataDir,
+    routing_mode: "retrieve_tools",
+    quarantine_enabled: false,
+    api_key: apiKey,
+    require_mcp_auth: false,
+    logging: { level: "error", enable_file: false, enable_console: true },
+    mcpServers: [{
+      name: "fixture",
+      protocol: "http",
+      url: `http://127.0.0.1:${upstream.port}/mcp`,
+      enabled: true,
+      quarantined: false,
+    }],
+  });
+  fs.chmodSync(configPath, 0o600);
+
+  const child = childProcess.spawn(
+    path.join(buildMcpproxyRuntimePath(), "bin/mcpproxy"),
+    [
+      "serve",
+      "--config", configPath,
+      "--data-dir", dataDir,
+      "--listen", `127.0.0.1:${port}`,
+      "--enable-socket=false",
+      "--log-to-file=false",
+    ],
+    {
+      cwd: root,
+      env: {
+        HOME: root,
+        LANG: "C",
+        LC_ALL: "C",
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+
+  try {
+    let ready = false;
+    for (let attempt = 0; attempt < 400 && !ready; attempt += 1) {
+      if (child.exitCode !== null || child.signalCode !== null) {
+        throw new Error(`mcpproxy exited before readiness: ${stderr}`);
+      }
+      try {
+        const health = await fetch(`http://127.0.0.1:${port}/readyz`);
+        const status = await fetch(`http://127.0.0.1:${port}/api/v1/servers`, {
+          headers: { "X-API-Key": apiKey },
+        });
+        const body = status.ok ? await status.json() : undefined;
+        ready = health.ok
+          && body?.success === true
+          && body.data?.servers?.some((server) => (
+            server.name === "fixture" && server.connected === true
+          ));
+      } catch {
+        // Startup is asynchronous; retry within the fixed bound.
+      }
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    if (!ready) throw new Error(`mcpproxy fixture did not become ready: ${stderr}`);
+  } catch (error) {
+    child.kill("SIGTERM");
+    await waitForChildExit(child, 5_000).catch(() => child.kill("SIGKILL"));
+    await stopFixtureServer(upstream);
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+
+  return {
+    activities: upstream.activities,
+    apiKey,
+    child,
+    port,
+    stderr: () => `${stderr}${upstream.stderr()}`,
+    async stop() {
+      const pid = child.pid;
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+      await waitForChildExit(child, 5_000).catch(async () => {
+        child.kill("SIGKILL");
+        await waitForChildExit(child, 2_000);
+      });
+      await stopFixtureServer(upstream);
+      fs.rmSync(root, { recursive: true, force: true });
+      assert.equal(isProcessAlive(pid), false, `actual mcpproxy ${pid} leaked`);
+    },
+  };
+}
+
+async function listRawMcpproxyTools(port) {
+  const runtime = buildRuntimePaths();
+  const { Client, StreamableHTTPClientTransport } = await import(pathToFileURL(path.join(
+    runtime.extensions,
+    "lib/node_modules/@modelcontextprotocol/client/dist/index.mjs",
+  )));
+  const client = new Client(
+    { name: "pi-agent-task-3-9-raw-probe", version: "1.0.0" },
+    { capabilities: {} },
+  );
+  try {
+    await client.connect(new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${port}/mcp`),
+    ));
+    const result = await client.listTools(undefined, { cacheMode: "bypass" });
+    return result.tools.map(({ name }) => name);
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
 async function stopFixtureServer(fixture) {
+  if (fixture.stop) {
+    await fixture.stop();
+    return;
+  }
   const { child } = fixture;
   const pid = child.pid;
   if (child.exitCode === null && child.signalCode === null) {
@@ -342,7 +582,9 @@ function installFixtureFetchRedirect(port) {
 }
 
 async function createLoaderFixture(variant, options = {}) {
-  const server = await startFixtureServer(variant);
+  const server = options.startServer
+    ? await options.startServer()
+    : await startFixtureServer(variant, options);
   const restoreFetch = installFixtureFetchRedirect(server.port);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `pi-mcpproxy-loader-${variant}-`));
   const cwd = path.join(root, "workspace");
@@ -355,6 +597,7 @@ async function createLoaderFixture(variant, options = {}) {
     MCP_DIRECT_TOOLS: "ambient-direct-tool-sentinel",
   });
   try {
+    await options.beforeResourceLoad?.({ agentDir, cwd, homeDir, root, server });
     const { DefaultResourceLoader, SettingsManager } = await loadRuntimeModules();
     const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
     const resourceLoader = new DefaultResourceLoader({
@@ -474,7 +717,9 @@ function runHeadlessExtensionLoad() {
 }
 
 async function createSessionFixture(variant, options = {}) {
-  const server = await startFixtureServer(variant);
+  const server = options.startServer
+    ? await options.startServer()
+    : await startFixtureServer(variant, options);
   const restoreFetch = installFixtureFetchRedirect(server.port);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `pi-mcpproxy-${variant}-`));
   const cwd = path.join(root, "workspace");
@@ -504,10 +749,13 @@ async function createSessionFixture(variant, options = {}) {
   writeJson(path.join(agentDir, "mcp.json"), ambientConfig);
   writeJson(path.join(cwd, ".mcp.json"), ambientConfig);
   writeJson(path.join(cwd, ".pi/mcp.json"), ambientConfig);
-  assert.equal(fs.existsSync(path.join(agentDir, "mcp-cache.json")), false);
+  if (!options.beforeResourceLoad) {
+    assert.equal(fs.existsSync(path.join(agentDir, "mcp-cache.json")), false);
+  }
 
   let session;
   try {
+    await options.beforeResourceLoad?.({ agentDir, cwd, homeDir, root, server });
     const {
       DefaultResourceLoader,
       ModelRuntime,
@@ -633,6 +881,82 @@ async function executeTool(fixture, name, args) {
   );
 }
 
+function createApprovalBroker(decisionOrSequence, requests) {
+  const repeatDecision = !Array.isArray(decisionOrSequence);
+  const decisions = Array.isArray(decisionOrSequence)
+    ? [...decisionOrSequence]
+    : [decisionOrSequence];
+  let decisionIndex = 0;
+  return {
+    name: "task-3-9-approval-broker",
+    factory(pi) {
+      pi.events.on(approvalEventName, (request) => {
+        if (!["call_tool_write", "call_tool_destructive"].includes(request.originalToolName)) {
+          return;
+        }
+        const decision = repeatDecision ? decisions[0] : (decisions[decisionIndex] ?? "deny");
+        if (!request.claim(() => decision)) return;
+        decisionIndex += 1;
+        requests.push({
+          decision,
+          origin: request.origin,
+          serverName: request.serverName,
+          toolName: request.originalToolName,
+        });
+      });
+    },
+  };
+}
+
+function createCancelledApprovalBroker(requests) {
+  return {
+    name: "task-3-9-cancelled-approval-broker",
+    factory(pi) {
+      pi.events.on(approvalEventName, (request) => {
+        if (!["call_tool_write", "call_tool_destructive"].includes(request.originalToolName)) {
+          return;
+        }
+        if (!request.claim(() => Promise.reject(new Error("operator cancelled approval")))) return;
+        requests.push({
+          origin: request.origin,
+          serverName: request.serverName,
+          toolName: request.originalToolName,
+        });
+      });
+    },
+  };
+}
+
+function upstreamCalls(fixture, toolName) {
+  return fixture.server.activities.filter((activity) => (
+    activity.kind === "upstream-call" && (toolName === undefined || activity.name === toolName)
+  ));
+}
+
+function assertConvergedPrivateCache(agentDir) {
+  const cachePath = path.join(agentDir, "mcp-cache.json");
+  assert.equal(path.dirname(cachePath), agentDir);
+  assert.equal(fs.statSync(cachePath).mode & 0o777, 0o600);
+  const cache = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+  assert.deepEqual(cache.servers.mcpproxy.tools.map(({ name }) => name), directToolNames);
+  assert.equal(
+    fs.readdirSync(agentDir).some((name) => /^mcp-cache\.json\..*\.tmp$/.test(name)),
+    false,
+  );
+  return cache;
+}
+
+async function withFixtureServer(variant, operation) {
+  const server = await startFixtureServer(variant, { toolsListDelayMs: 0 });
+  const restoreFetch = installFixtureFetchRedirect(server.port);
+  try {
+    return await operation(server);
+  } finally {
+    restoreFetch();
+    await stopFixtureServer(server);
+  }
+}
+
 function captureError(operation) {
   try {
     operation();
@@ -712,6 +1036,7 @@ test("repository wrapper closes the real 2.20.1 adapter configuration", async ()
         lifecycle: "eager",
         idleTimeout: 0,
         exposeResources: false,
+        approveTools: ["call_tool_write", "call_tool_destructive"],
         directTools: directToolNames,
         toolPrefix: "none",
         includeTools: directToolNames,
@@ -731,6 +1056,75 @@ test("repository wrapper closes the real 2.20.1 adapter configuration", async ()
       elicitation: false,
     },
   });
+});
+
+test("host-side preflight orders probes and projects required tools from raw extras", async () => {
+  const wrapper = await loadWrapperModule();
+  await withFixtureServer("preflight-tools-extra", async (server) => {
+    const result = await wrapper.preflightMcpproxy({
+      adminApiKey: fixtureAdminApiKey,
+      mandatoryUpstreams: ["obsidian", "cavemem"],
+      timeoutMs: 5_000,
+    });
+    assert.deepEqual(result.toolNames, directToolNames);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.toolNames), true);
+
+    const requests = server.activities.filter(({ kind }) => kind === "http");
+    const healthIndex = requests.findIndex(({ path: requestPath }) => requestPath === "/healthz");
+    const readinessIndex = requests.findIndex(({ path: requestPath }) => requestPath === "/readyz");
+    const upstreamIndex = requests.findIndex(
+      ({ path: requestPath }) => requestPath === "/api/v1/servers",
+    );
+    const initializeIndex = requests.findIndex(({ rpcMethod }) => rpcMethod === "initialize");
+    const toolsIndex = requests.findIndex(({ rpcMethod }) => rpcMethod === "tools/list");
+    assert.equal(healthIndex >= 0, true);
+    assert.equal(readinessIndex > healthIndex, true);
+    assert.equal(upstreamIndex > readinessIndex, true);
+    assert.equal(initializeIndex > upstreamIndex, true);
+    assert.equal(toolsIndex > initializeIndex, true);
+    assert.deepEqual(
+      requests.filter(({ hasApiKey }) => hasApiKey).map(({ path: requestPath }) => requestPath),
+      ["/api/v1/servers"],
+    );
+    assert.equal(
+      requests.filter(({ path: requestPath }) => requestPath === "/mcp")
+        .every(({ hasApiKey, hasAuthorization }) => !hasApiKey && !hasAuthorization),
+      true,
+    );
+  });
+});
+
+test("host-side preflight fails closed with value-free component and recovery diagnostics", async () => {
+  const wrapper = await loadWrapperModule();
+  const cases = [
+    ["preflight-health-failure", "mcpproxy health"],
+    ["preflight-not-ready", "mcpproxy readiness"],
+    ["preflight-upstream-missing", "mandatory upstream"],
+    ["preflight-upstream-disconnected", "mandatory upstream"],
+    ["preflight-initialize-failure", "MCP initialize"],
+    ["preflight-tools-missing", "MCP tools"],
+    ["preflight-tools-duplicate", "MCP tools"],
+  ];
+  for (const [variant, component] of cases) {
+    await withFixtureServer(variant, async () => {
+      await assert.rejects(
+        () => wrapper.preflightMcpproxy({
+          adminApiKey: fixtureAdminApiKey,
+          mandatoryUpstreams: ["obsidian", "cavemem"],
+          timeoutMs: 5_000,
+        }),
+        (error) => {
+          assert.equal(error.component, component);
+          assert.equal(error.recovery, "restart mcpproxy or repair the declared upstream");
+          assert.match(error.message, /Recovery: restart mcpproxy or repair the declared upstream/);
+          assert.equal(error.message.includes("fixture-sensitive"), false);
+          assert.equal(error.message.includes(fixtureAdminApiKey), false);
+          return true;
+        },
+      );
+    });
+  }
 });
 
 test("exported managed MCP surface validator is exact and allows declared unrelated tools", async () => {
@@ -1211,6 +1605,406 @@ test("cold agent start exposes six direct tools and completes discover flows", a
     assert.equal(fixture.session.getToolDefinition("unrelated_server_tool"), undefined);
   });
 
+});
+
+test("seven-day metadata TTL rejects stale and future cache timestamps", async () => {
+  const wrapper = await loadWrapperModule();
+  const cacheModule = await loadAdapterMetadataCacheModule();
+  const definition = wrapper.MCPPROXY_ADAPTER_CONFIG.mcpServers.mcpproxy;
+  const configHash = cacheModule.computeServerHash(definition);
+  const makeEntry = (cachedAt) => ({
+    configHash,
+    tools: [],
+    resources: [],
+    cachedAt,
+  });
+  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  assert.equal(cacheModule.isServerCacheValid(makeEntry(now - sevenDays + 1_000), definition), true);
+  assert.equal(cacheModule.isServerCacheValid(makeEntry(now - sevenDays - 1_000), definition), false);
+  assert.equal(cacheModule.isServerCacheValid(makeEntry(now + 60_000), definition), false);
+});
+
+test("cold, stale, partial, and malformed cache starts converge on private six-tool metadata", async () => {
+  const wrapper = await loadWrapperModule();
+  const cacheModule = await loadAdapterMetadataCacheModule();
+  const definition = wrapper.MCPPROXY_ADAPTER_CONFIG.mcpServers.mcpproxy;
+  const configHash = cacheModule.computeServerHash(definition);
+  const exactTools = directToolNames.map((name) => ({
+    name,
+    description: `Seeded ${name}`,
+    inputSchema: { type: "object", additionalProperties: false },
+  }));
+  const baseEntry = {
+    configHash,
+    tools: exactTools,
+    resources: [],
+    cachedAt: Date.now(),
+  };
+  const cases = [
+    ["cold", null],
+    ["stale", { version: 1, servers: { mcpproxy: {
+      ...baseEntry,
+      cachedAt: Date.now() - (8 * 24 * 60 * 60 * 1000),
+    } } }],
+    ["partial", { version: 1, servers: { mcpproxy: {
+      ...baseEntry,
+      tools: exactTools.slice(0, 2),
+    } } }],
+    ["malformed", "{\"version\":1,\"servers\":"],
+    ["structurally-malformed", { version: 1, servers: { mcpproxy: {
+      ...baseEntry,
+      tools: 7,
+    } } }],
+  ];
+
+  for (const [name, seed] of cases) {
+    await withSessionVariant("exact", async (fixture) => {
+      assert.deepEqual(fixture.session.getActiveToolNames(), directToolNames, name);
+      const cache = assertConvergedPrivateCache(fixture.agentDir);
+      assert.equal(cache.servers.mcpproxy.cachedAt > Date.now() - 60_000, true, name);
+      assert.equal(
+        fixture.server.activities.filter((activity) => (
+          activity.kind === "protocol" && activity.method === "tools/list"
+        )).length,
+        1,
+        name,
+      );
+    }, {
+      toolsListDelayMs: 0,
+      beforeResourceLoad({ agentDir }) {
+        if (seed === null) return;
+        const cachePath = path.join(agentDir, "mcp-cache.json");
+        const contents = typeof seed === "string" ? seed : `${JSON.stringify(seed)}\n`;
+        fs.writeFileSync(cachePath, contents, { encoding: "utf8", mode: 0o600 });
+      },
+    });
+  }
+});
+
+test("separate Pi processes converge on one parseable private atomic cold cache", async () => {
+  const server = await startFixtureServer("exact", { toolsListDelayMs: 100 });
+  const restoreFetch = installFixtureFetchRedirect(server.port);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-mcpproxy-concurrent-cache-"));
+  const cwd = path.join(root, "workspace");
+  const agentDir = path.join(root, "agent");
+  for (const directory of [cwd, agentDir]) fs.mkdirSync(directory, { recursive: true });
+  const runtime = buildRuntimePaths();
+  const children = [];
+  let observing = true;
+  const parseFailures = [];
+  const cachePath = path.join(agentDir, "mcp-cache.json");
+  const observer = (async () => {
+    while (observing) {
+      if (fs.existsSync(cachePath)) {
+        try {
+          JSON.parse(fs.readFileSync(cachePath, "utf8"));
+        } catch (error) {
+          parseFailures.push(error);
+        }
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  })();
+
+  try {
+    for (let index = 0; index < 4; index += 1) {
+      const homeDir = path.join(root, `home-${index}`);
+      fs.mkdirSync(homeDir, { recursive: true });
+      const child = childProcess.spawn(process.execPath, [loaderProcessFixturePath], {
+        cwd,
+        env: {
+          HOME: homeDir,
+          LANG: "C",
+          LC_ALL: "C",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          PI_CODING_AGENT_DIR: agentDir,
+          PI_AGENT_TEST_EXTENSIONS_PATH: runtime.extensions,
+          PI_AGENT_TEST_MCP_PORT: String(server.port),
+          PI_AGENT_TEST_MCP_WRAPPER_PATH: wrapperPath(),
+          PI_AGENT_TEST_PI_PATH: runtime.pi,
+          PI_AGENT_TEST_WORKSPACE: cwd,
+          MCP_DIRECT_TOOLS: "ambient-direct-tool-sentinel",
+        },
+        stdio: ["ignore", "ignore", "pipe", "ipc"],
+      });
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      children.push({ child, stderr: () => stderr });
+    }
+    const loaded = await Promise.all(children.map(({ child }) => waitForChildMessage(
+      child,
+      (message) => message?.type === "loaded",
+      30_000,
+    )));
+    assert.equal(new Set(children.map(({ child }) => child.pid)).size, children.length);
+    for (const message of loaded) {
+      assert.deepEqual(message.errors, []);
+      assert.deepEqual(message.tools, directToolNames);
+    }
+    assert.deepEqual(parseFailures, []);
+    assertConvergedPrivateCache(agentDir);
+
+    await Promise.all(children.map(async ({ child }) => {
+      const stopped = waitForChildMessage(child, (message) => message?.type === "stopped", 10_000);
+      child.send({ type: "shutdown" });
+      await stopped;
+      await waitForChildExit(child, 2_000);
+    }));
+  } finally {
+    observing = false;
+    await observer;
+    for (const { child, stderr } of children) {
+      const pid = child.pid;
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await waitForChildExit(child, 2_000).catch(async () => {
+          child.kill("SIGKILL");
+          await waitForChildExit(child, 2_000);
+        });
+      }
+      assert.equal(isProcessAlive(pid), false, stderr());
+    }
+    restoreFetch();
+    fs.rmSync(root, { recursive: true, force: true });
+    await stopFixtureServer(server);
+  }
+});
+
+test("headless and explicit denial stop write and destructive calls before upstream", async () => {
+  await withSessionVariant("exact", async (fixture) => {
+    for (const [tool, upstreamName] of [
+      ["call_tool_write", fixtureWriteToolName],
+      ["call_tool_destructive", fixtureDestructiveToolName],
+    ]) {
+      const result = await executeTool(fixture, tool, {
+        name: upstreamName,
+        args: { id: "headless-denial" },
+      });
+      assert.equal(result.details.error, "approval_required");
+    }
+    assert.deepEqual(upstreamCalls(fixture), []);
+  }, { toolsListDelayMs: 0 });
+
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    for (const [tool, upstreamName] of [
+      ["call_tool_write", fixtureWriteToolName],
+      ["call_tool_destructive", fixtureDestructiveToolName],
+    ]) {
+      const result = await executeTool(fixture, tool, {
+        name: upstreamName,
+        args: { id: "explicit-denial" },
+      });
+      assert.equal(result.details.error, "approval_denied");
+    }
+    assert.deepEqual(upstreamCalls(fixture), []);
+    assert.deepEqual(requests.map(({ toolName }) => toolName), [
+      "call_tool_write",
+      "call_tool_destructive",
+    ]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker("deny", requests)],
+  });
+});
+
+test("allow-once forwards each approved write and destructive call exactly once", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    for (const [tool, upstreamName] of [
+      ["call_tool_write", fixtureWriteToolName],
+      ["call_tool_destructive", fixtureDestructiveToolName],
+    ]) {
+      const result = textPayload(await executeTool(fixture, tool, {
+        name: upstreamName,
+        args: { id: "allow-once" },
+      }));
+      assert.equal(result.forwarded, true);
+      assert.equal(upstreamCalls(fixture, upstreamName).length, 1);
+    }
+    assert.deepEqual(requests, [
+      {
+        decision: "allow_once",
+        origin: "direct",
+        serverName: "mcpproxy",
+        toolName: "call_tool_write",
+      },
+      {
+        decision: "allow_once",
+        origin: "direct",
+        serverName: "mcpproxy",
+        toolName: "call_tool_destructive",
+      },
+    ]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker("allow_once", requests)],
+  });
+});
+
+test("allow-once does not approve a repeated call to the same tool", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    const first = textPayload(await executeTool(fixture, "call_tool_write", {
+      name: fixtureWriteToolName,
+      args: { id: "allow-once-first" },
+    }));
+    assert.equal(first.forwarded, true);
+    const second = await executeTool(fixture, "call_tool_write", {
+      name: fixtureWriteToolName,
+      args: { id: "allow-once-second" },
+    });
+    assert.equal(second.details.error, "approval_denied");
+    assert.equal(upstreamCalls(fixture, fixtureWriteToolName).length, 1);
+    assert.deepEqual(requests.map(({ decision }) => decision), ["allow_once", "deny"]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker(["allow_once", "deny"], requests)],
+  });
+});
+
+test("malformed approval decisions fail closed before upstream dispatch", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    const result = await executeTool(fixture, "call_tool_write", {
+      name: fixtureWriteToolName,
+      args: { id: "malformed-approval" },
+    });
+    assert.equal(result.details.error, "approval_denied");
+    assert.deepEqual(upstreamCalls(fixture), []);
+    assert.deepEqual(requests.map(({ decision }) => decision), ["allow_forever"]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker("allow_forever", requests)],
+  });
+});
+
+test("cancelled approval denies write and destructive calls without a fabricated decision", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    for (const [tool, upstreamName] of [
+      ["call_tool_write", fixtureWriteToolName],
+      ["call_tool_destructive", fixtureDestructiveToolName],
+    ]) {
+      const result = await executeTool(fixture, tool, {
+        name: upstreamName,
+        args: { id: "cancelled-approval" },
+      });
+      assert.equal(result.details.error, "approval_denied");
+    }
+    assert.deepEqual(upstreamCalls(fixture), []);
+    assert.deepEqual(requests, [
+      {
+        origin: "direct",
+        serverName: "mcpproxy",
+        toolName: "call_tool_write",
+      },
+      {
+        origin: "direct",
+        serverName: "mcpproxy",
+        toolName: "call_tool_destructive",
+      },
+    ]);
+    assert.equal(requests.some((request) => Object.hasOwn(request, "decision")), false);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createCancelledApprovalBroker(requests)],
+  });
+});
+
+test("session approval is requested once and forwards each later call once", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    for (const id of ["session-first", "session-second"]) {
+      const result = textPayload(await executeTool(fixture, "call_tool_write", {
+        name: fixtureWriteToolName,
+        args: { id },
+      }));
+      assert.equal(result.forwarded, true);
+    }
+    assert.equal(upstreamCalls(fixture, fixtureWriteToolName).length, 2);
+    assert.deepEqual(requests, [
+      {
+        decision: "allow_for_session",
+        origin: "direct",
+        serverName: "mcpproxy",
+        toolName: "call_tool_write",
+      },
+    ]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker("allow_for_session", requests)],
+  });
+});
+
+test("session approval expires when the extension reloads", async () => {
+  const requests = [];
+  await withSessionVariant("exact", async (fixture) => {
+    for (const id of ["session-before-reload-1", "session-before-reload-2"]) {
+      const result = textPayload(await executeTool(fixture, "call_tool_write", {
+        name: fixtureWriteToolName,
+        args: { id },
+      }));
+      assert.equal(result.forwarded, true);
+    }
+    assert.equal(requests.length, 1);
+    await fixture.session.reload();
+    assert.deepEqual(fixture.resourceLoader.getExtensions().errors, []);
+    const afterReload = await executeTool(fixture, "call_tool_write", {
+      name: fixtureWriteToolName,
+      args: { id: "session-after-reload" },
+    });
+    assert.equal(afterReload.details.error, "approval_denied");
+    assert.equal(upstreamCalls(fixture, fixtureWriteToolName).length, 2);
+    assert.deepEqual(requests.map(({ decision }) => decision), ["allow_for_session", "deny"]);
+  }, {
+    toolsListDelayMs: 0,
+    extensionFactories: [createApprovalBroker(["allow_for_session", "deny"], requests)],
+  });
+});
+
+test("pinned gateway projects six tools and preserves call_tool_read routing without approval", async () => {
+  const approvalRequests = [];
+  await withSessionVariant("actual-mcpproxy", async (fixture) => {
+    const rawToolNames = await listRawMcpproxyTools(fixture.server.port);
+    assert.equal(rawToolNames.length, 12);
+    for (const extra of ["set_profile", "code_execution", "upstream_servers"]) {
+      assert.equal(rawToolNames.includes(extra), true, `pinned raw gateway omitted ${extra}`);
+    }
+    const wrapper = await loadWrapperModule();
+    const preflight = await wrapper.preflightMcpproxy({
+      adminApiKey: fixture.server.apiKey,
+      mandatoryUpstreams: ["fixture"],
+      timeoutMs: 5_000,
+    });
+    assert.deepEqual(preflight.toolNames, directToolNames);
+    assert.deepEqual(fixture.session.getActiveToolNames(), directToolNames);
+    for (const extra of rawToolNames.filter((name) => !directToolNames.includes(name))) {
+      assert.equal(fixture.session.getToolDefinition(extra), undefined);
+    }
+
+    for (const [target, id] of [
+      ["fixture:get_record", "actual-annotated-read"],
+      [fixtureUnannotatedReadToolName, "actual-unannotated-read"],
+      [fixtureUnannotatedToolName, "actual-routed-mutation"],
+    ]) {
+      const result = textPayload(await executeTool(fixture, "call_tool_read", {
+        name: target,
+        args: { id },
+      }));
+      assert.equal(result.forwarded, true);
+    }
+    assert.deepEqual(
+      upstreamCalls(fixture).map(({ name }) => name),
+      ["get_record", "unannotated_read", "unannotated_mutation"],
+    );
+    assert.deepEqual(approvalRequests, []);
+  }, {
+    startServer: startActualMcpproxyFixture,
+    extensionFactories: [createApprovalBroker("deny", approvalRequests)],
+  });
 });
 
 test("warm valid runner reload fails fatally on live drift without stale reactivation", async () => {

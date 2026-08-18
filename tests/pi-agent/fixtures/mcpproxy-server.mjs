@@ -23,6 +23,10 @@ const directToolNames = [
   "read_cache",
 ];
 const fixtureToolName = "fixture:get_record";
+const fixtureWriteToolName = "fixture:update_record";
+const fixtureDestructiveToolName = "fixture:delete_record";
+const fixtureUnannotatedToolName = "fixture:unannotated_mutation";
+const fixtureAdminApiKey = "task-3-9-admin-key";
 const fixtureSchema = {
   type: "object",
   additionalProperties: false,
@@ -32,6 +36,40 @@ const fixtureSchema = {
   required: ["id"],
 };
 const activities = [];
+
+const describedTools = {
+  [fixtureToolName]: {
+    name: fixtureToolName,
+    server: "fixture",
+    description: "Return the deterministic Task 3.8 fixture",
+    inputSchema: fixtureSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    call_with: "call_tool_read",
+  },
+  [fixtureWriteToolName]: {
+    name: fixtureWriteToolName,
+    server: "fixture",
+    description: "Update the deterministic Task 3.9 fixture",
+    inputSchema: fixtureSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    call_with: "call_tool_write",
+  },
+  [fixtureDestructiveToolName]: {
+    name: fixtureDestructiveToolName,
+    server: "fixture",
+    description: "Delete the deterministic Task 3.9 fixture",
+    inputSchema: fixtureSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    call_with: "call_tool_destructive",
+  },
+  [fixtureUnannotatedToolName]: {
+    name: fixtureUnannotatedToolName,
+    server: "fixture",
+    description: "Mutate the deterministic Task 3.9 fixture without annotations",
+    inputSchema: fixtureSchema,
+    call_with: "call_tool_read",
+  },
+};
 
 function activeVariant(name, listCall) {
   return variant === name || (variant === `warm-${name}` && listCall > 1);
@@ -148,8 +186,14 @@ function inputSchemaFor(name, listCall) {
 
 function listedTools(listCall) {
   let names = [...directToolNames];
-  if (variant === "unrelated") names.push("unrelated_server_tool");
-  if (variant === "missing" || (variant === "warm-missing" && listCall > 1)) {
+  if (variant === "unrelated" || variant === "preflight-tools-extra") {
+    names.push("unrelated_server_tool");
+  }
+  if (
+    variant === "missing"
+    || variant === "preflight-tools-missing"
+    || (variant === "warm-missing" && listCall > 1)
+  ) {
     names = names.filter((name) => name !== "read_cache");
   }
   if (variant === "prefixed") {
@@ -163,7 +207,9 @@ function listedTools(listCall) {
       : { description: `Deterministic ${name} fixture` }),
     inputSchema: inputSchemaFor(name, listCall),
   }));
-  if (variant === "duplicate") tools.splice(1, 0, { ...tools[0] });
+  if (variant === "duplicate" || variant === "preflight-tools-duplicate") {
+    tools.splice(1, 0, { ...tools[0] });
+  }
   return tools;
 }
 
@@ -207,15 +253,24 @@ async function createMcpSession() {
         };
         break;
       case "describe_tool":
+        {
+          const definitions = (args.tool_ids ?? [])
+            .map((toolId) => describedTools[toolId])
+            .filter(Boolean);
         payload = {
-          tools: [{
-            name: fixtureToolName,
-            description: "Return the deterministic Task 3.8 fixture",
-            inputSchema: fixtureSchema,
-          }],
+          definitions,
+          errors: [],
+          tools: definitions,
         };
         break;
+        }
       case "call_tool_read":
+        if ([fixtureWriteToolName, fixtureDestructiveToolName, fixtureUnannotatedToolName]
+          .includes(args.name)) {
+          record({ kind: "upstream-call", name: args.name, variant: name });
+          payload = { name: args.name, forwarded: true };
+          break;
+        }
         payload = {
           name: args.name,
           result: {
@@ -224,10 +279,18 @@ async function createMcpSession() {
           },
         };
         break;
-      case "call_tool_write":
-      case "call_tool_destructive":
-        payload = { name, forwarded: false };
+      case "call_tool_write": {
+        const forwarded = args.name === fixtureWriteToolName;
+        if (forwarded) record({ kind: "upstream-call", name: args.name, variant: name });
+        payload = { name: args.name, forwarded };
         break;
+      }
+      case "call_tool_destructive": {
+        const forwarded = args.name === fixtureDestructiveToolName;
+        if (forwarded) record({ kind: "upstream-call", name: args.name, variant: name });
+        payload = { name: args.name, forwarded };
+        break;
+      }
       case "read_cache":
         payload = { key: args.key, records: [] };
         break;
@@ -267,6 +330,11 @@ function webHeaders(nodeHeaders) {
   return headers;
 }
 
+function sendJson(response, status, payload) {
+  response.writeHead(status, { "content-type": "application/json" });
+  response.end(JSON.stringify(payload));
+}
+
 const httpServer = http.createServer((request, response) => {
   void (async () => {
     const chunks = [];
@@ -291,11 +359,56 @@ const httpServer = http.createServer((request, response) => {
         ? parsedBody.params?.capabilities
         : undefined,
       hasAuthorization: request.headers.authorization !== undefined,
+      hasApiKey: request.headers["x-api-key"] !== undefined,
     });
+
+    if (requestUrl.pathname === "/healthz") {
+      if (variant === "preflight-health-failure") {
+        sendJson(response, 503, { status: "fixture-sensitive-health-failure" });
+      } else {
+        sendJson(response, 200, { status: "ok" });
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === "/readyz") {
+      if (variant === "preflight-not-ready") {
+        sendJson(response, 503, { ready: false, detail: "fixture-sensitive-not-ready" });
+      } else {
+        sendJson(response, 200, { ready: true });
+      }
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/v1/servers") {
+      if (request.headers["x-api-key"] !== fixtureAdminApiKey) {
+        sendJson(response, 401, { error: "fixture-sensitive-admin-key-failure" });
+        return;
+      }
+      let servers = [
+        { name: "obsidian", enabled: true, connected: true, quarantined: false },
+        { name: "cavemem", enabled: true, connected: true, quarantined: false },
+      ];
+      if (variant === "preflight-upstream-missing") {
+        servers = servers.filter(({ name }) => name !== "cavemem");
+      }
+      if (variant === "preflight-upstream-disconnected") {
+        servers = servers.map((server) => (
+          server.name === "cavemem" ? { ...server, connected: false } : server
+        ));
+      }
+      sendJson(response, 200, { success: true, data: { servers } });
+      return;
+    }
 
     if (requestUrl.pathname !== "/mcp") {
       response.writeHead(404, { "content-type": "text/plain" });
       response.end("not found");
+      return;
+    }
+
+    if (variant === "preflight-initialize-failure" && parsedBody?.method === "initialize") {
+      sendJson(response, 500, { error: "fixture-sensitive-initialize-failure" });
       return;
     }
 

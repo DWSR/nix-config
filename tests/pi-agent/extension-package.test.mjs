@@ -69,6 +69,11 @@ const expectedExtensions = {
   },
 };
 const expectedRuntimeDependencies = {
+  mcpClient: {
+    package: "@modelcontextprotocol/client",
+    version: "2.0.0",
+    entryPath: "lib/node_modules/@modelcontextprotocol/client/dist/index.mjs",
+  },
   mcpAdapter: {
     package: "pi-mcp-adapter",
     version: "2.20.1",
@@ -121,6 +126,11 @@ const expectedPatches = {
     file: "pi-mcp-adapter-managed-direct-tools.patch",
     package: "pi-mcp-adapter@2.20.1",
     task: "pi-agent-integration 3.8",
+  },
+  mcpAdapterPrivateCache: {
+    file: "pi-mcp-adapter-private-cache.patch",
+    package: "pi-mcp-adapter@2.20.1",
+    task: "pi-agent-integration 3.9",
   },
 };
 const expectedBackgroundTypeDiagnostics = [
@@ -435,6 +445,7 @@ test("built extension closure contains exact entries, licenses, and no commands 
 
   const nodePtyRoot = packageDirectory(output, "node-pty");
   const mcpAdapterRoot = packageDirectory(output, "pi-mcp-adapter");
+  const mcpClientRoot = packageDirectory(output, "@modelcontextprotocol/client");
   const mcpServerSdkRoot = packageDirectory(output, "@modelcontextprotocol/server");
   const mcpproxyWrapperRoot = path.join(output, "lib/pi-agent/extensions/mcpproxy");
   const backgroundTasksRoot = packageDirectory(
@@ -575,9 +586,18 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(managedBackgroundEnvironmentSource, /PI_AGENT_BASH_TIMEOUT_MS/);
   assert.match(managedBackgroundEnvironmentSource, /SHOPIFY_PI_TOKEN/);
   assert.equal(readJson(path.join(mcpAdapterRoot, "package.json")).version, "2.20.1");
+  assert.equal(readJson(path.join(mcpClientRoot, "package.json")).version, "2.0.0");
   assert.equal(readJson(path.join(mcpServerSdkRoot, "package.json")).version, "2.0.0");
   const mcpAdapterSource = fs.readFileSync(path.join(mcpAdapterRoot, "index.ts"), "utf8");
+  const mcpAdapterDirectToolsSource = fs.readFileSync(
+    path.join(mcpAdapterRoot, "direct-tools.ts"),
+    "utf8",
+  );
   const mcpAdapterInitSource = fs.readFileSync(path.join(mcpAdapterRoot, "init.ts"), "utf8");
+  const mcpAdapterCacheSource = fs.readFileSync(
+    path.join(mcpAdapterRoot, "metadata-cache.ts"),
+    "utf8",
+  );
   const mcpproxyWrapperSource = fs.readFileSync(path.join(mcpproxyWrapperRoot, "index.ts"), "utf8");
   assert.match(mcpAdapterSource, /cloneDirectToolSelection/);
   assert.match(mcpAdapterSource, /cloneAndValidateDirectToolInputSchema/);
@@ -590,13 +610,29 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assert.match(mcpAdapterSource, /stageLiveDirectTools/);
   assert.match(mcpAdapterSource, /const prepared = specs\.map/);
   assert.match(mcpAdapterSource, /strictDirectTools/);
+  assert.doesNotMatch(mcpAdapterSource, /directToolCallGuard/);
+  assert.doesNotMatch(mcpAdapterDirectToolsSource, /directToolCallGuard|direct_tool_policy_denied/);
   assert.match(mcpAdapterSource, /await initialization/);
   assert.match(mcpAdapterSource, /return async function mcpAdapter/);
   assert.doesNotMatch(mcpAdapterSource, /unregisterTool/);
   assert.doesNotMatch(`${mcpAdapterSource}\n${mcpAdapterInitSource}`, /MCP_DIRECT_TOOLS/);
+  assert.match(mcpAdapterCacheSource, /const CACHE_MAX_AGE_MS = 7 \* 24 \* 60 \* 60 \* 1000/);
+  assert.match(mcpAdapterCacheSource, /randomUUID/);
+  assert.match(mcpAdapterCacheSource, /openSync\(tmpPath, "wx", 0o600\)/);
+  assert.match(mcpAdapterCacheSource, /fsyncSync/);
+  assert.match(mcpAdapterCacheSource, /renameSync\(tmpPath, cachePath\)/);
   assert.match(mcpproxyWrapperSource, /directTools: MCPPROXY_ADAPTER_DIRECT_TOOLS/);
+  assert.match(mcpproxyWrapperSource, /approveTools: \[\.\.\.MCPPROXY_APPROVAL_TOOL_NAMES\]/);
+  assert.doesNotMatch(mcpproxyWrapperSource, /directToolCallGuard|MCPPROXY_DIRECT_TOOL_CALL_GUARD/);
+  assert.match(mcpproxyWrapperSource, /export async function preflightMcpproxy/);
+  assert.match(mcpproxyWrapperSource, /\/healthz/);
+  assert.match(mcpproxyWrapperSource, /\/readyz/);
+  assert.match(mcpproxyWrapperSource, /\/api\/v1\/servers/);
+  assert.match(mcpproxyWrapperSource, /new StreamableHTTPClientTransport/);
   assert.match(mcpproxyWrapperSource, /validateManagedMcpSurface/);
   assert.match(mcpproxyWrapperSource, /export default async function mcpproxyAdapter/);
+  assert.doesNotMatch(mcpproxyWrapperSource, /TASK_3_9_MCP_HARDENING/);
+  assert.doesNotMatch(mcpproxyWrapperSource, /\/usr\/bin\/security|\.mcpproxy/);
   assert.doesNotMatch(mcpproxyWrapperSource, /MCP_DIRECT_TOOLS|process\.env/);
   assert.doesNotMatch(mcpproxyWrapperSource, /pi\.on\("(?:session_start|before_agent_start)"/);
   assert.equal(fs.existsSync(path.join(mcpproxyWrapperRoot, "pi-mcp-adapter.d.ts")), false);
@@ -607,6 +643,10 @@ test("built extension closure contains exact entries, licenses, and no commands 
   assertMitText(
     path.join(output, "share/licenses/pi-agent-extensions/mcp/LICENSE"),
     "pi-mcp-adapter",
+  );
+  assertMitText(
+    path.join(output, "share/licenses/pi-agent-extensions/mcpClient/LICENSE"),
+    "@modelcontextprotocol/client",
   );
   assertMitText(
     path.join(output, "share/licenses/pi-agent-extensions/mcpServerSdk/LICENSE"),
