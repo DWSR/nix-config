@@ -1,8 +1,38 @@
 "use strict";
 
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
+
 let buffer = Buffer.alloc(0);
 let rootUri = null;
 let readyRequestId = 1000;
+const lifecyclePath = path.join(process.cwd(), ".task-4-9-lsp-lifecycle.jsonl");
+const descendantObservationPath = path.join(
+  process.cwd(),
+  ".task-4-9-descendant-observation.json",
+);
+const ordinaryDescendant = spawn(
+  process.execPath,
+  [
+    "-e",
+    `require("node:fs").writeFileSync(${JSON.stringify(descendantObservationPath)}, JSON.stringify({ environment: process.env, pid: process.pid }) + "\\n"); setInterval(() => {}, 0x7fffffff)`,
+  ],
+  { stdio: "ignore" },
+);
+
+fs.writeFileSync(
+  path.join(process.cwd(), ".task-4-9-server-observation.json"),
+  `${JSON.stringify({
+    descendantPid: ordinaryDescendant.pid,
+    environment: process.env,
+    pid: process.pid,
+  })}\n`,
+);
+
+function recordLifecycle(event) {
+  fs.appendFileSync(lifecyclePath, `${JSON.stringify({ event })}\n`);
+}
 
 function send(message) {
   const body = Buffer.from(JSON.stringify(message), "utf8");
@@ -56,6 +86,7 @@ function diagnostics(uri) {
 function handleRequest(message) {
   const { id, method, params } = message;
   if (method === "initialize") {
+    recordLifecycle("initialize");
     rootUri = params.rootUri;
     send({
       jsonrpc: "2.0",
@@ -77,6 +108,7 @@ function handleRequest(message) {
     return;
   }
   if (method === "shutdown") {
+    recordLifecycle("shutdown");
     send({ jsonrpc: "2.0", id, result: null });
     return;
   }
@@ -306,7 +338,10 @@ function handleMessage(message) {
     diagnostics(uri);
     return;
   }
-  if (message.method === "exit") process.exit(0);
+  if (message.method === "exit") {
+    recordLifecycle("exit");
+    process.exit(0);
+  }
 }
 
 function drain() {

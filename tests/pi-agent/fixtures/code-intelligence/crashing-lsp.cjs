@@ -6,6 +6,11 @@ const path = require("node:path");
 let buffer = Buffer.alloc(0);
 let readyRequestId = 2000;
 
+fs.writeFileSync(
+  path.join(process.cwd(), ".task-4-9-crashing-observation.json"),
+  `${JSON.stringify({ environment: process.env, pid: process.pid })}\n`,
+);
+
 function send(message) {
   const body = Buffer.from(JSON.stringify(message), "utf8");
   process.stdout.write(`Content-Length: ${body.length}\r\n\r\n`);

@@ -318,7 +318,7 @@
   - _Boundary: Extension Runtime — LSP_
   - _Depends: 1.5, 2.1_
 
-- [ ] 4.9 Isolate and clean up language-server processes
+- [x] 4.9 Isolate and clean up language-server processes
   - Launch only module-rendered package-backed server executables with the credential-scrubbed environment.
   - Keep one server failure isolated from other servers and Pi tools.
   - Perform protocol shutdown/exit followed by bounded process-group escalation.
@@ -642,6 +642,7 @@
 - Task 2.8: Keep Cavemem subprocess state in a separate policy-generated capability; include `CAVEMEM_DATA_DIR`, omit test-only and credential variables, and drop allowed values changed by exact redaction.
 - Task 3.7: Keep canonical envelope keys trusted, bound dynamic data after redaction, emit deterministic once-per-child attribution, never reopen parent session paths, and end sessions only on terminal quit.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
+- Task 4.9: LSP restart and session lifecycle must be single-flight and generation-fenced; retain every owned client until cleanup succeeds, and make lease release transactional and retryable.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
 - Task 4.11: On Darwin, node-pty's `IPty.pid` is the PTY process-group ID; inject group operations per task, and make escalation fixtures suppress only TERM while delegating probes and KILL.
 - Task 5.1: Personal composition must match the catalog's exact provider/model default; an OpenAI-only check is insufficient.

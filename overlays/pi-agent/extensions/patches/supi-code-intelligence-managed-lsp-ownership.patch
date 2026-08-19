@@ -1,0 +1,558 @@
+--- a/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts
++++ b/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts
+@@ -77,12 +77,20 @@
+ export class LspManager {
+   /** Active clients keyed by "serverName:root" */
+   private clients = new Map<string, LspClient>();
++  /** Every client that may still own a registered process group. */
++  private ownedClients = new Set<LspClient>();
+   /** Per-root startup failures keyed by "serverName:root" */
+   private unavailable = new Map<string, UnavailableReason>();
+   /** Memoized per-command availability of LSP server binaries on PATH */
+   private commandAvailability = new Map<string, boolean>();
+   /** Guards against concurrent client creation for the same server:root key */
+   private pendingStarts = new Map<string, Promise<LspClient | null>>();
++  /** Coalesces concurrent restart requests for one server:root key. */
++  private pendingRestarts = new Map<string, Promise<boolean>>();
++  /** Fences publication when ownership for one server:root key changes. */
++  private clientGenerations = new Map<string, number>();
++  private shutdownOperation: Promise<void> | null = null;
++  private closing = false;
+   /** Preferred project roots discovered by proactive scan or lazy startup */
+   private knownRoots = new Map<string, string[]>();
+   /** User-configured gitignore-style exclude patterns */
+@@ -103,6 +111,28 @@
+       dependencies.createClient ??
+       ((name, serverConfig, root) => new LspClient(name, serverConfig, root));
+   }
++
++  private nextClientGeneration(key: string): number {
++    const generation = (this.clientGenerations.get(key) ?? 0) + 1;
++    this.clientGenerations.set(key, generation);
++    return generation;
++  }
++
++  private isCurrentClientGeneration(key: string, generation: number): boolean {
++    return !this.closing && this.clientGenerations.get(key) === generation;
++  }
++
++  private async releaseOwnedClient(client: LspClient): Promise<void> {
++    await client.shutdown();
++    if (client.hasRegisteredProcessGroup) {
++      throw new Error("Managed language-server cleanup retained process-group ownership.");
++    }
++    this.ownedClients.delete(client);
++  }
++
++  private deletePublishedClient(key: string, client: LspClient): void {
++    if (this.clients.get(key) === client) this.clients.delete(key);
++  }
+   getCwd(): string {
+     return this.cwd;
+   }
+@@ -188,6 +218,14 @@
+     const serverConfig = this.config.servers[serverName];
+     if (!serverConfig) return null;
+     const key = clientKey(serverName, root);
++    if (this.closing) return null;
++
++    const pendingRestart = this.pendingRestarts.get(key);
++    if (pendingRestart) {
++      await pendingRestart.catch(() => false);
++      const current = this.clients.get(key);
++      return current?.status === "running" ? current : null;
++    }
+     if (this.getUnavailableReason(key, serverConfig.command)) return null;
+ 
+     // Return existing client
+@@ -198,12 +236,11 @@
+     if (existing && existing.status === "error") {
+       this.unavailable.set(key, "runtime-error");
+       try {
+-        await existing.shutdown();
++        await this.releaseOwnedClient(existing);
+       } catch {
+         return null;
+       }
+-      if (existing.hasRegisteredProcessGroup) return null;
+-      this.clients.delete(key);
++      this.deletePublishedClient(key, existing);
+       this.clearWarmedWorkspaceSymbolProjects(existing.name, existing.root);
+       this.clearWarmedSemanticProjects(existing.name, existing.root);
+       this.clearPendingWarmProbes(existing.name, existing.root);
+@@ -216,7 +253,8 @@
+     const pending = this.pendingStarts.get(key);
+     if (pending) return pending;
+ 
+-    const startPromise = this.performStart(serverName, serverConfig, root, key);
++    const generation = this.nextClientGeneration(key);
++    const startPromise = this.performStart(serverName, serverConfig, root, key, generation);
+     this.pendingStarts.set(key, startPromise);
+     try {
+       return await startPromise;
+@@ -233,18 +271,27 @@
+    */
+   private async performStart(
+     serverName: string,
+-    serverConfig: import("../config/types.ts").ServerConfig,
++    serverConfig: ServerConfig,
+     root: string,
+     key: string,
++    generation: number,
+   ): Promise<LspClient | null> {
++    if (!this.isCurrentClientGeneration(key, generation)) return null;
+     // Validate command exists
+     if (!commandExists(serverConfig.command)) {
+-      this.unavailable.set(key, "missing-command");
++      if (this.isCurrentClientGeneration(key, generation)) {
++        this.unavailable.set(key, "missing-command");
++      }
+       return null;
+     }
+ 
+     // Spawn new client
+     const client = this.createClient(serverName, serverConfig, root);
++    this.ownedClients.add(client);
++    if (!this.isCurrentClientGeneration(key, generation)) {
++      await this.releaseOwnedClient(client);
++      return null;
++    }
+     this.clearWarmedWorkspaceSymbolProjects(serverName, root);
+     this.clearWarmedSemanticProjects(serverName, root);
+     this.clearPendingWarmProbes(serverName, root);
+@@ -252,12 +299,30 @@
+     rememberKnownRoot(this.knownRoots, serverName, root);
+     try {
+       await client.start();
++      if (
++        !this.isCurrentClientGeneration(key, generation) ||
++        this.clients.get(key) !== client
++      ) {
++        await this.releaseOwnedClient(client);
++        this.deletePublishedClient(key, client);
++        return null;
++      }
+       this.unavailable.delete(key);
+       return client;
+     } catch {
+-      this.unavailable.set(key, "start-failed");
++      if (this.isCurrentClientGeneration(key, generation)) {
++        this.unavailable.set(key, "start-failed");
++      }
+       if (!client.hasRegisteredProcessGroup) {
+-        this.clients.delete(key);
++        this.ownedClients.delete(client);
++        this.deletePublishedClient(key, client);
++      } else if (!this.isCurrentClientGeneration(key, generation)) {
++        try {
++          await this.releaseOwnedClient(client);
++        } catch {
++          // The ownedClients set keeps failed stale cleanup reachable for shutdown.
++        }
++        this.deletePublishedClient(key, client);
+       }
+       return null;
+     }
+@@ -290,38 +355,75 @@
+       if (seen.has(key)) continue;
+       seen.add(key);
+ 
+-      if (await this.restartClient(client)) {
+-        restarted.push(key);
++      let operation = this.pendingRestarts.get(key);
++      if (!operation) {
++        const generation = this.nextClientGeneration(key);
++        operation = this.restartClient(client, key, generation);
++        this.pendingRestarts.set(key, operation);
+       }
++      try {
++        if (await operation) restarted.push(key);
++      } finally {
++        if (this.pendingRestarts.get(key) === operation) {
++          this.pendingRestarts.delete(key);
++        }
++      }
+     }
+ 
+     return restarted;
+   }
+ 
+-  private async restartClient(client: LspClient): Promise<boolean> {
+-    const key = clientKey(client.name, client.root);
++  private async restartClient(
++    client: LspClient,
++    key: string,
++    generation: number,
++  ): Promise<boolean> {
+     const serverConfig = this.config.servers[client.name];
+-    if (!serverConfig) return false;
++    if (
++      !serverConfig ||
++      !this.isCurrentClientGeneration(key, generation) ||
++      this.clients.get(key) !== client
++    ) return false;
+ 
+     const openFiles = client.openFiles;
+     try {
+-      await client.shutdown();
++      await this.releaseOwnedClient(client);
+     } catch {
+       return false;
+     }
+ 
+-    this.clients.delete(key);
++    if (!this.isCurrentClientGeneration(key, generation)) {
++      this.deletePublishedClient(key, client);
++      return false;
++    }
++    this.deletePublishedClient(key, client);
+     this.unavailable.delete(key);
+     this.clearWarmedWorkspaceSymbolProjects(client.name, client.root);
+     this.clearWarmedSemanticProjects(client.name, client.root);
+     this.clearPendingWarmProbes(client.name, client.root);
+ 
+     const replacement = this.createClient(client.name, serverConfig, client.root);
++    this.ownedClients.add(replacement);
++    if (!this.isCurrentClientGeneration(key, generation)) {
++      await this.releaseOwnedClient(replacement);
++      return false;
++    }
+     this.clients.set(key, replacement);
+     rememberKnownRoot(this.knownRoots, client.name, client.root);
+ 
+     try {
+       await replacement.start();
++      if (
++        !this.isCurrentClientGeneration(key, generation) ||
++        this.clients.get(key) !== replacement
++      ) {
++        try {
++          await this.releaseOwnedClient(replacement);
++        } finally {
++          this.deletePublishedClient(key, replacement);
++        }
++        return false;
++      }
+       for (const filePath of openFiles) {
+         if (!fs.existsSync(filePath)) continue;
+         try {
+@@ -332,8 +434,20 @@
+       }
+       return true;
+     } catch {
+-      this.clients.delete(key);
+-      this.unavailable.set(key, "start-failed");
++      if (this.isCurrentClientGeneration(key, generation)) {
++        this.unavailable.set(key, "start-failed");
++      }
++      if (!replacement.hasRegisteredProcessGroup) {
++        this.ownedClients.delete(replacement);
++        this.deletePublishedClient(key, replacement);
++      } else if (!this.isCurrentClientGeneration(key, generation)) {
++        try {
++          await this.releaseOwnedClient(replacement);
++        } catch {
++          // The ownedClients set keeps failed stale cleanup reachable for shutdown.
++        }
++        this.deletePublishedClient(key, replacement);
++      }
+       return false;
+     }
+   }
+@@ -476,10 +590,29 @@
+ 
+   /** Shut down all running LSP servers. */
+   async shutdownAll(): Promise<void> {
+-    const results = await Promise.allSettled(
+-      Array.from(this.clients.values()).map((client) => client.shutdown()),
++    if (this.shutdownOperation) return this.shutdownOperation;
++    const operation = this.performShutdownAll();
++    this.shutdownOperation = operation;
++    try {
++      await operation;
++    } finally {
++      if (this.shutdownOperation === operation) this.shutdownOperation = null;
++    }
++  }
++
++  private async performShutdownAll(): Promise<void> {
++    this.closing = true;
++    await Promise.allSettled([
++      ...this.pendingStarts.values(),
++      ...this.pendingRestarts.values(),
++    ]);
++    const results = await Promise.allSettled(
++      Array.from(this.ownedClients).map((client) => this.releaseOwnedClient(client)),
+     );
+-    if (results.some((result) => result.status === "rejected")) {
++    if (
++      results.some((result) => result.status === "rejected") ||
++      Array.from(this.ownedClients).some((client) => client.hasRegisteredProcessGroup)
++    ) {
+       throw new Error("Managed language-server cleanup failed.");
+     }
+     this.clearRuntimeState();
+@@ -487,7 +620,11 @@
+ 
+   private clearRuntimeState(): void {
+     this.clients.clear();
++    this.ownedClients.clear();
+     this.unavailable.clear();
++    this.pendingStarts.clear();
++    this.pendingRestarts.clear();
++    this.clientGenerations.clear();
+     this.knownRoots.clear();
+     this.warmedWorkspaceSymbolProjects.clear();
+     this.warmedSemanticProjects.clear();
+--- a/src/substrate/lsp/lifecycle.ts
++++ b/src/substrate/lsp/lifecycle.ts
+@@ -23,7 +23,41 @@
+   const acquireProviderHost = dependencies.acquireWorkspaceProviderHost ?? acquireWorkspaceProviderHost;
+   let readinessTimer: ReturnType<typeof setInterval> | null = null;
+   let lastFingerprint = "";
++  let lifecycleGeneration = 0;
++  let lifecycleQueue: Promise<void> = Promise.resolve();
++  const acquiredLeases = new Set<Awaited<ReturnType<typeof acquireWorkspaceProviderHost>>>();
+ 
++  function enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
++    const result = lifecycleQueue.then(operation, operation);
++    lifecycleQueue = result.then(
++      () => undefined,
++      () => undefined,
++    );
++    return result;
++  }
++
++  function clearPublishedState(): void {
++    state.providerLease = null;
++    state.controller = null;
++    state.lspActive = false;
++    state.sentinelSnapshot = new Map();
++  }
++
++  async function releaseLease(
++    lease: Awaited<ReturnType<typeof acquireWorkspaceProviderHost>>,
++  ): Promise<void> {
++    await lease.release();
++    acquiredLeases.delete(lease);
++    if (state.providerLease === lease) state.providerLease = null;
++  }
++
++  async function releaseAllLeases(): Promise<void> {
++    const results = await Promise.allSettled(Array.from(acquiredLeases, releaseLease));
++    if (results.some((result) => result.status === "rejected")) {
++      throw new Error("Managed LSP session lease cleanup failed.");
++    }
++  }
++
+   function fingerprint(): string {
+     const servers = state.controller?.workspaceRuntime?.getProjectServers();
+     if (!servers) return "";
+@@ -63,35 +97,46 @@
+     lastFingerprint = "";
+   }
+ 
+-  pi.on("session_start", async (_event, ctx: ExtensionContext) => {
+-    await state.providerLease?.release();
+-    state.providerLease = null;
+-    state.controller = null;
+-    state.lspActive = false;
+-    state.sentinelSnapshot = new Map();
++  pi.on("session_start", (_event, ctx: ExtensionContext) => {
++    const generation = ++lifecycleGeneration;
+     stopReadinessPolling();
++    return enqueueLifecycle(async () => {
++      await releaseAllLeases();
++      if (generation !== lifecycleGeneration) return;
++      clearPublishedState();
+ 
+-    const lease = await acquireProviderHost(ctx.cwd, {
+-      projectTrusted: ctx.isProjectTrusted(),
+-    });
+-    state.providerLease = lease;
+-    state.controller = lease.lspController;
+-    state.lspActive = lease.lspController?.kind === "ready";
+-    state.sentinelSnapshot = lease.sentinelSnapshot;
+-    await onStarted?.(ctx);
++      const lease = await acquireProviderHost(ctx.cwd, {
++        projectTrusted: ctx.isProjectTrusted(),
++      });
++      acquiredLeases.add(lease);
++      if (generation !== lifecycleGeneration) {
++        await releaseLease(lease);
++        if (acquiredLeases.size === 0) clearPublishedState();
++        return;
++      }
+ 
+-    // Dispatch initial server list so the footer shows starting servers immediately.
+-    state.stateChanges.dispatchEvent(STATE_CHANGE_EVENT);
+-    // Poll for readiness transitions (running → ready, errors, etc.).
+-    startReadinessPolling();
++      state.providerLease = lease;
++      state.controller = lease.lspController;
++      state.lspActive = lease.lspController?.kind === "ready";
++      state.sentinelSnapshot = lease.sentinelSnapshot;
++      await onStarted?.(ctx);
++      if (generation !== lifecycleGeneration) {
++        await releaseLease(lease);
++        if (acquiredLeases.size === 0) clearPublishedState();
++        return;
++      }
++
++      state.stateChanges.dispatchEvent(STATE_CHANGE_EVENT);
++      startReadinessPolling();
++    });
+   });
+ 
+-  pi.on("session_shutdown", async () => {
++  pi.on("session_shutdown", () => {
++    ++lifecycleGeneration;
+     stopReadinessPolling();
+-    await state.providerLease?.release();
+-    state.providerLease = null;
+-    state.controller = null;
+-    state.lspActive = false;
+-    state.sentinelSnapshot = new Map();
++    return enqueueLifecycle(async () => {
++      await releaseAllLeases();
++      clearPublishedState();
++    });
+   });
+ }
+--- a/src/substrate/workspace-provider-host.ts
++++ b/src/substrate/workspace-provider-host.ts
+@@ -63,6 +63,8 @@
+   ]);
+ }
+ 
++class WorkspaceProviderHostClosedError extends Error {}
++
+ class WorkspaceProviderHost {
+   readonly cwd: string;
+   #leases = 0;
+@@ -70,7 +72,7 @@
+   #tree: TreeSitterRuntimeController | null = null;
+   #treeStarted = false;
+   #lspStarted = false;
+-  #settledStart = Promise.resolve();
++  #operations: Promise<void> = Promise.resolve();
+   #closed = false;
+ 
+   constructor(
+@@ -81,14 +83,22 @@
+   }
+ 
+   async acquire(projectTrusted: boolean): Promise<WorkspaceProviderHostLease> {
+-    if (this.#closed) throw new Error("Workspace provider host is closed.");
+-    // Count this pending acquirer before awaiting startup so the final active lease cannot shut it down.
+-    this.#leases++;
+-    this.#settledStart = this.#settledStart
+-      .then(() => this.#startMissing(projectTrusted))
+-      .catch(() => undefined);
+-    await this.#settledStart;
++    return this.#enqueue(async () => {
++      if (this.#closed) throw new WorkspaceProviderHostClosedError();
++      this.#leases++;
++      try {
++        await this.#startMissing(projectTrusted);
++      } catch (error) {
++        this.#leases--;
++        throw error;
++      }
++      return this.#createLease(projectTrusted);
++    });
++  }
++
++  #createLease(projectTrusted: boolean): WorkspaceProviderHostLease {
+     let released = false;
++    let releaseOperation: Promise<void> | null = null;
+     return {
+       cwd: this.cwd,
+       lspController: projectTrusted ? this.#lsp : null,
+@@ -98,16 +108,44 @@
+           : new Map(),
+       release: async () => {
+         if (released) return;
+-        released = true;
+-        this.#leases--;
+-        if (this.#leases === 0) {
+-          registry().delete(this.cwd);
+-          await this.#shutdown();
++        if (releaseOperation) return releaseOperation;
++        const operation = this.#releaseLease();
++        releaseOperation = operation;
++        try {
++          await operation;
++          released = true;
++        } finally {
++          if (releaseOperation === operation) releaseOperation = null;
+         }
+       },
+     };
+   }
+ 
++  #enqueue<T>(operation: () => Promise<T>): Promise<T> {
++    const result = this.#operations.then(operation, operation);
++    this.#operations = result.then(
++      () => undefined,
++      () => undefined,
++    );
++    return result;
++  }
++
++  async #releaseLease(): Promise<void> {
++    return this.#enqueue(async () => {
++      if (this.#leases < 1) throw new Error("Workspace provider lease ownership is invalid.");
++      if (this.#leases > 1) {
++        this.#leases--;
++        return;
++      }
++
++      await this.#shutdownResources();
++      this.#leases = 0;
++      this.#closed = true;
++      const hosts = registry();
++      if (hosts.get(this.cwd) === this) hosts.delete(this.cwd);
++    });
++  }
++
+   async #startMissing(projectTrusted: boolean): Promise<void> {
+     const runtime = this.dependencies.getRuntime();
+     if (!this.#treeStarted) {
+@@ -121,9 +159,7 @@
+     await this.#lsp.start().catch(() => undefined);
+   }
+ 
+-  async #shutdown(): Promise<void> {
+-    if (this.#closed) return;
+-    this.#closed = true;
++  async #shutdownResources(): Promise<void> {
+     await Promise.all([
+       ...(this.#lsp ? [this.#lsp.shutdown()] : []),
+       ...(this.#tree ? [settleWithin(this.#tree.shutdown())] : []),
+@@ -148,13 +184,19 @@
+     scanSentinels: dependencies.scanSentinels ?? DEFAULT_DEPENDENCIES.scanSentinels,
+   };
+   const workspace = canonicalWorkspace(cwd);
+-  const hosts = registry();
+-  let host = hosts.get(workspace);
+-  if (!host) {
+-    host = new WorkspaceProviderHost(workspace, resolvedDependencies);
+-    hosts.set(workspace, host);
++  while (true) {
++    const hosts = registry();
++    let host = hosts.get(workspace);
++    if (!host) {
++      host = new WorkspaceProviderHost(workspace, resolvedDependencies);
++      hosts.set(workspace, host);
++    }
++    try {
++      return await host.acquire(options.projectTrusted);
++    } catch (error) {
++      if (!(error instanceof WorkspaceProviderHostClosedError)) throw error;
++    }
+   }
+-  return host.acquire(options.projectTrusted);
+ }
+ 
+ /** Clear process-shared hosts between isolated tests. */

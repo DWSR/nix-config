@@ -1,0 +1,487 @@
+diff --git a/node_modules/@mrclrchtr/supi-lsp/src/client/client.ts b/node_modules/@mrclrchtr/supi-lsp/src/client/client.ts
+--- a/node_modules/@mrclrchtr/supi-lsp/src/client/client.ts
++++ b/node_modules/@mrclrchtr/supi-lsp/src/client/client.ts
+@@ -5,1 +5,1 @@
+-import { type ChildProcess, execSync, spawn } from "node:child_process";
++import { type ChildProcess, spawn } from "node:child_process";
+@@ -38,6 +38,8 @@ import type {
+ } from "../config/types.ts";
+ import { detectLanguageId, fileToUri, uriToFile } from "../utils.ts";
+ import { formatLspFailure } from "./failure.ts";
++import { scrubManagedEnvironment } from "./managed-environment.ts";
++import { type ProcessGroupOperations, RegisteredProcessGroup } from "./process-group.ts";
+ import { JsonRpcClient, JsonRpcRequestError } from "./transport.ts";
+ 
+ const SHUTDOWN_TIMEOUT_MS = 5_000;
+@@ -63,28 +65,3 @@
+ }
+-
+-// ── Process-tree cleanup ──────────────────────────────────────────────
+-
+-/**
+- * Kill a process and all its descendants.
+- *
+- * On Unix, sends SIGTERM to the process group (negative PID).
+- * This requires the child to be spawned with `detached: true`.
+- * On Windows, uses `taskkill /T /F` to force-kill the entire tree.
+- */
+-function killProcessTree(pid: number): void {
+-  if (process.platform === "win32") {
+-    try {
+-      execSync(`taskkill /PID ${pid} /T /F`, { stdio: "ignore" });
+-    } catch {
+-      // Process may have already exited — ignore.
+-    }
+-    return;
+-  }
+-  try {
+-    process.kill(-pid, "SIGTERM");
+-  } catch {
+-    // Process group may already be dead — ignore.
+-  }
+-}
+ 
+ // ── Types ─────────────────────────────────────────────────────────────
+@@ -111,6 +113,8 @@ export class LspClient {
+ 
+   private process: ChildProcess | null = null;
+   private rpc: JsonRpcClient | null = null;
++  private registeredProcessGroup: RegisteredProcessGroup | null = null;
++  private managedShutdown: Promise<void> | null = null;
+   private _status: ClientStatus = "initializing";
+   private capabilities: ServerCapabilities | null = null;
+ 
+@@ -133,6 +137,7 @@ export class LspClient {
+     name: string,
+     private readonly config: ServerConfig,
+     root: string,
++    private readonly processGroupOperations?: ProcessGroupOperations,
+   ) {
+     this.name = name;
+     this.root = root;
+@@ -155,6 +160,11 @@ export class LspClient {
+     return this._isReady;
+   }
+ 
++  /** Whether this client still owns a process group that has not reached ESRCH. */
++  get hasRegisteredProcessGroup(): boolean {
++    return this.registeredProcessGroup?.active ?? false;
++  }
++
+   // ── Lifecycle ───────────────────────────────────────────────────────
+   /** Spawn the server process and perform the initialize handshake. */
+   async start(): Promise<void> {
+@@ -165,12 +175,17 @@ export class LspClient {
+       this.process = spawn(cmd, args, {
+         cwd: this.root,
+         stdio: ["pipe", "pipe", "pipe"],
+-        env: { ...process.env },
++        env: scrubManagedEnvironment(process.env),
+-        // Run the server in its own process group so we can atomically
+-        // kill the entire tree (server + subprocesses like tsserver)
+-        // with `process.kill(-pid, signal)` on Unix or `taskkill /T` on Windows.
++        // Run the server in its own process group so the registered PGID owns
++        // ordinary descendants that remain in that group and can signal them
++        // with `process.kill(-pid, signal)` on Unix.
+         detached: true,
+       });
++      if (
++        process.platform !== "win32" &&
++        Number.isInteger(this.process.pid) &&
++        (this.process.pid ?? 0) > 0
++      ) this.registeredProcessGroup = new RegisteredProcessGroup(this.process.pid as number, this.processGroupOperations);
+     } catch (err) {
+       this._status = "error";
+       throw new Error(formatLspFailure(this.name, "spawn", err), { cause: err });
+@@ -178,7 +194,7 @@ export class LspClient {
+ 
+     if (!this.process.stdin || !this.process.stdout) {
+       this._status = "error";
+-      this.process.kill();
++      await this.terminateManagedProcessGroup(0);
+       throw new Error(formatLspFailure(this.name, "spawn", new Error("transport unavailable")));
+     }
+ 
+@@ -195,20 +216,28 @@ export class LspClient {
+     this.rpc.onRequest((method, params) => this.handleServerRequest(method, params));
+ 
+     // Handle crashes
+-    this.process.on("exit", (_code) => {
+-      if (this._status !== "shutdown") {
++    this.process.on("exit", () => {
++      const expectedShutdown = this._status === "shutdown";
++      if (!expectedShutdown) {
+         this._status = "error";
+         this.cancelNoProgressTimer();
+         this.rejectReady(new Error("Client crashed"));
+       }
+       this.rpc?.dispose();
++      if (!expectedShutdown) {
++        void this.terminateManagedProcessGroup(0).catch(() => undefined);
++      }
+     });
+ 
+     this.process.on("error", (_err) => {
+-      if (this._status !== "shutdown") {
++      const expectedShutdown = this._status === "shutdown";
++      if (!expectedShutdown) {
+         this._status = "error";
+         this.rejectReady(new Error("Client process error"));
+       }
++      if (!expectedShutdown) {
++        void this.terminateManagedProcessGroup(0).catch(() => undefined);
++      }
+     });
+ 
+     // Suppress stderr to avoid noise in the agent
+@@ -230,7 +257,8 @@ export class LspClient {
+       this.armNoProgressTimer();
+     } catch (err) {
+       this._status = "error";
+-      this.process.kill();
++      this.rpc.dispose();
++      await this.terminateManagedProcessGroup(0);
+       throw new Error(formatLspFailure(this.name, "initialize", err), { cause: err });
+     }
+   }
+@@ -238,60 +266,70 @@ export class LspClient {
+   /** Graceful shutdown: send shutdown → exit, kill after timeout. */
+   async shutdown(): Promise<void> {
+-    if (this._status === "shutdown") return;
+-    this._status = "shutdown";
+-
+-    if (!this.rpc || !this.process) return;
+-
+-    try {
+-      await withTimeout(this.rpc.sendRequest("shutdown"), SHUTDOWN_TIMEOUT_MS, "shutdown timeout");
+-      // Flush the final exit notification before disposing the transport.
+-      await withTimeout(
+-        this.rpc.sendNotification("exit"),
+-        SHUTDOWN_TIMEOUT_MS,
+-        "exit notification timeout",
+-      );
+-    } catch {
+-      // Timeout or error — force kill
+-    }
+-
+-    this.rpc.dispose();
+-
+-    // Kill the entire process tree (server + subprocesses like tsserver).
+-    // The LSP shutdown/exit protocol above should trigger a graceful exit,
+-    // but the process-group kill ensures no orphans survive.
+-    const pid = this.process.pid;
+-    if (this.process.exitCode === null && pid) {
+-      killProcessTree(pid);
+-      if (process.platform !== "win32") {
+-        // Escalate to SIGKILL after a brief grace period on Unix.
+-        // Windows taskkill /F is already forceful.
+-        await new Promise<void>((resolve) => {
+-          setTimeout(() => {
+-            try {
+-              process.kill(-pid, "SIGKILL");
+-            } catch {
+-              // Already dead — ignore.
+-            }
+-            resolve();
+-          }, 500);
+-        });
+-      }
+-    }
+-
+-    this.openDocs.clear();
+-    this.diagnosticStore.clear();
+-    this.releaseAllDiagnosticWaiters();
+-
+-    // Clear readiness state
+-    if (this.noProgressTimer) {
+-      clearTimeout(this.noProgressTimer);
+-      this.noProgressTimer = null;
+-    }
+-    for (const timer of this.tokenTimeouts.values()) clearTimeout(timer);
+-    this.tokenTimeouts.clear();
+-    this.rejectReady(new Error("Client shutdown"));
++    await this.shutdownManaged();
+   }
+ 
++  private async shutdownManaged(): Promise<void> {
++    if (this.managedShutdown) return this.managedShutdown;
++    const operation = this.performManagedShutdown();
++    this.managedShutdown = operation;
++    try {
++      await operation;
++    } finally {
++      if (this.managedShutdown === operation) this.managedShutdown = null;
++    }
++  }
++
++  private async performManagedShutdown(): Promise<void> {
++    const firstAttempt = this._status !== "shutdown";
++    this._status = "shutdown";
++
++    if (firstAttempt && this.rpc && this.process) {
++      try {
++        await withTimeout(this.rpc.sendRequest("shutdown"), SHUTDOWN_TIMEOUT_MS, "shutdown timeout");
++      } catch {
++        // Exit is still required after a failed or timed-out shutdown request.
++      }
++      try {
++        await withTimeout(
++          this.rpc.sendNotification("exit"),
++          SHUTDOWN_TIMEOUT_MS,
++          "exit notification timeout",
++        );
++      } catch {
++        // Registered process-group cleanup is authoritative after protocol attempts.
++      }
++    }
++
++    this.rpc?.dispose();
++    await this.terminateManagedProcessGroup(250);
++    this.rpc = null;
++    this.process = null;
++    this.openDocs.clear();
++    this.diagnosticStore.clear();
++    this.releaseAllDiagnosticWaiters();
++    if (this.noProgressTimer) {
++      clearTimeout(this.noProgressTimer);
++      this.noProgressTimer = null;
++    }
++    for (const timer of this.tokenTimeouts.values()) clearTimeout(timer);
++    this.tokenTimeouts.clear();
++    this.rejectReady(new Error("Client shutdown"));
++  }
++
++  private async terminateManagedProcessGroup(gracefulMs: number): Promise<void> {
++    const registered = this.registeredProcessGroup;
++    if (registered) {
++      await registered.terminate({ gracefulMs, termMs: 500, killMs: 500 });
++      if (!registered.active && this.registeredProcessGroup === registered) {
++        this.registeredProcessGroup = null;
++      }
++      return;
++    }
++    if (process.platform === "win32" && this.process?.exitCode === null) {
++      this.process.kill("SIGKILL");
++    }
++  }
++
+   // ── Document Synchronization ────────────────────────────────────────
+   /** Open a document (or re-sync if already open). */
+   didOpen(filePath: string, content: string): void {
+diff --git a/node_modules/@mrclrchtr/supi-lsp/src/client/process-group.ts b/node_modules/@mrclrchtr/supi-lsp/src/client/process-group.ts
+--- /dev/null
++++ b/node_modules/@mrclrchtr/supi-lsp/src/client/process-group.ts
+@@ -0,0 +1,126 @@
++export interface ProcessGroupOperations {
++  readonly probe: (processGroupId: number) => unknown;
++  readonly signal: (processGroupId: number, signal: NodeJS.Signals) => unknown;
++}
++
++export interface ProcessGroupTerminationOptions {
++  readonly gracefulMs: number;
++  readonly termMs: number;
++  readonly killMs: number;
++}
++
++export interface ProcessGroupTerminationResult {
++  readonly finalSignal: "SIGTERM" | "SIGKILL" | null;
++  readonly groupAlreadyReleased: boolean;
++}
++
++const POLL_INTERVAL_MS = 20;
++const LOCAL_OPERATIONS: ProcessGroupOperations = Object.freeze({
++  probe: (processGroupId: number) => process.kill(-processGroupId, 0),
++  signal: (processGroupId: number, signal: NodeJS.Signals) =>
++    process.kill(-processGroupId, signal),
++});
++
++function errorCode(error: unknown): unknown {
++  return error !== null && typeof error === "object" && "code" in error
++    ? (error as { code?: unknown }).code
++    : undefined;
++}
++
++function delay(milliseconds: number): Promise<void> {
++  return new Promise((resolve) => setTimeout(resolve, milliseconds));
++}
++
++/** Own one detached process group until the first terminal ESRCH observation. */
++export class RegisteredProcessGroup {
++  #processGroupId: number | null;
++  #termination: Promise<ProcessGroupTerminationResult> | null = null;
++
++  constructor(
++    processGroupId: number,
++    private readonly operations: ProcessGroupOperations = LOCAL_OPERATIONS,
++  ) {
++    if (!Number.isInteger(processGroupId) || processGroupId <= 0) {
++      throw new Error("Managed language-server process-group registration failed.");
++    }
++    this.#processGroupId = processGroupId;
++  }
++
++  get active(): boolean {
++    return this.#processGroupId !== null;
++  }
++
++  async terminate(
++    options: ProcessGroupTerminationOptions,
++  ): Promise<ProcessGroupTerminationResult> {
++    if (this.#termination) return this.#termination;
++    const operation = this.#terminate(options);
++    this.#termination = operation;
++    try {
++      return await operation;
++    } finally {
++      if (this.#termination === operation) this.#termination = null;
++    }
++  }
++
++  async #terminate(
++    options: ProcessGroupTerminationOptions,
++  ): Promise<ProcessGroupTerminationResult> {
++    if (await this.#waitForEnd(options.gracefulMs)) {
++      return { finalSignal: null, groupAlreadyReleased: true };
++    }
++    if (!this.#signal("SIGTERM")) {
++      return { finalSignal: null, groupAlreadyReleased: true };
++    }
++    if (await this.#waitForEnd(options.termMs)) {
++      return { finalSignal: "SIGTERM", groupAlreadyReleased: false };
++    }
++    if (!this.#signal("SIGKILL")) {
++      return { finalSignal: "SIGTERM", groupAlreadyReleased: false };
++    }
++    if (!await this.#waitForEnd(options.killMs)) {
++      throw new Error("Managed language-server process group remained after SIGKILL.");
++    }
++    return { finalSignal: "SIGKILL", groupAlreadyReleased: false };
++  }
++
++  async #waitForEnd(timeoutMs: number): Promise<boolean> {
++    const deadline = Date.now() + timeoutMs;
++    while (true) {
++      if (!this.#exists()) return true;
++      const remainingMs = deadline - Date.now();
++      if (remainingMs <= 0) return false;
++      await delay(Math.min(POLL_INTERVAL_MS, remainingMs));
++    }
++  }
++
++  #exists(): boolean {
++    const processGroupId = this.#processGroupId;
++    if (processGroupId === null) return false;
++    try {
++      this.operations.probe(processGroupId);
++      return true;
++    } catch (error) {
++      if (errorCode(error) === "ESRCH") {
++        this.#processGroupId = null;
++        return false;
++      }
++      throw new Error("Managed language-server process-group probe failed.");
++    }
++  }
++
++  #signal(signal: NodeJS.Signals): boolean {
++    const processGroupId = this.#processGroupId;
++    if (processGroupId === null) return false;
++    try {
++      this.operations.signal(processGroupId, signal);
++      return true;
++    } catch (error) {
++      if (errorCode(error) === "ESRCH") {
++        this.#processGroupId = null;
++        return false;
++      }
++      throw new Error(`Managed language-server process-group ${signal} failed.`);
++    }
++  }
++}
+diff --git a/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts b/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts
+--- a/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts
++++ b/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts
+@@ -181,8 +181,14 @@ export class LspManager {
+ 
+     // If existing client errored, remove it
+     if (existing && existing.status === "error") {
+-      this.clients.delete(key);
+       this.unavailable.set(key, "runtime-error");
++      try {
++        await existing.shutdown();
++      } catch {
++        return null;
++      }
++      if (existing.hasRegisteredProcessGroup) return null;
++      this.clients.delete(key);
+       this.clearWarmedWorkspaceSymbolProjects(existing.name, existing.root);
+       this.clearWarmedSemanticProjects(existing.name, existing.root);
+       this.clearPendingWarmProbes(existing.name, existing.root);
+@@ -235,7 +243,9 @@ export class LspManager {
+       return client;
+     } catch {
+       this.unavailable.set(key, "start-failed");
+-      this.clients.delete(key);
++      if (!client.hasRegisteredProcessGroup) {
++        this.clients.delete(key);
++      }
+       return null;
+     }
+   }
+@@ -454,14 +463,22 @@ export class LspManager {
+ 
+   /** Shut down all running LSP servers. */
+   async shutdownAll(): Promise<void> {
+-    const shutdowns = Array.from(this.clients.values()).map((c) => c.shutdown().catch(() => {}));
+-    await Promise.all(shutdowns);
+-    this.clients.clear();
+-    this.unavailable.clear();
+-    this.knownRoots.clear();
+-    this.warmedWorkspaceSymbolProjects.clear();
+-    this.warmedSemanticProjects.clear();
+-    this.pendingWarmProbes.clear();
++    const results = await Promise.allSettled(
++      Array.from(this.clients.values()).map((client) => client.shutdown()),
++    );
++    if (results.some((result) => result.status === "rejected")) {
++      throw new Error("Managed language-server cleanup failed.");
++    }
++    this.clearRuntimeState();
++  }
++
++  private clearRuntimeState(): void {
++    this.clients.clear();
++    this.unavailable.clear();
++    this.knownRoots.clear();
++    this.warmedWorkspaceSymbolProjects.clear();
++    this.warmedSemanticProjects.clear();
++    this.pendingWarmProbes.clear();
+   }
+   /** Get status of all servers. */
+   getStatus(): ManagerStatus {
+diff --git a/src/tool/register.ts b/src/tool/register.ts
+--- a/src/tool/register.ts
++++ b/src/tool/register.ts
+@@ -90,6 +90,22 @@ export function registerCodeIntelligenceTools(
+   if (registeredPis.has(pi)) return;
+   registeredPis.add(pi);
+ 
++  pi.on("tool_call", (event) => {
++    if (event.toolName !== "code_refactor_apply") return;
++    let active = false;
++    try {
++      active = pi.getActiveTools().includes("code_refactor_apply");
++    } catch {
++      active = false;
++    }
++    if (!active) {
++      return {
++        block: true,
++        reason: "code_refactor_apply is unavailable in the current mode.",
++      };
++    }
++  });
++
+   for (const spec of specs) {
+     const surface = promptSurfaces[spec.name];
+     pi.registerTool({

@@ -122,6 +122,21 @@ const expectedPatches = {
     package: "@mrclrchtr/supi-code-intelligence@4.6.0",
     task: "pi-agent-integration 4.8",
   },
+  codeIntelligenceManagedLspLifecycle: {
+    file: "supi-code-intelligence-managed-lsp-lifecycle.patch",
+    package: "@mrclrchtr/supi-code-intelligence@4.6.0",
+    task: "pi-agent-integration 4.9",
+  },
+  codeIntelligenceManagedLspConcurrency: {
+    file: "supi-code-intelligence-managed-lsp-concurrency.patch",
+    package: "@mrclrchtr/supi-code-intelligence@4.6.0",
+    task: "pi-agent-integration 4.9",
+  },
+  codeIntelligenceManagedLspOwnership: {
+    file: "supi-code-intelligence-managed-lsp-ownership.patch",
+    package: "@mrclrchtr/supi-code-intelligence@4.6.0",
+    task: "pi-agent-integration 4.9",
+  },
   mcpAdapterManagedDirectTools: {
     file: "pi-mcp-adapter-managed-direct-tools.patch",
     package: "pi-mcp-adapter@2.20.1",
@@ -537,6 +552,75 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
   assert.match(managedLspSource, /package-to-ID provenance is trusted/i);
   assert.doesNotMatch(managedLspSource, /MANAGED_CODE_INTELLIGENCE_ENABLED/);
+  const nestedLspRoot = path.join(
+    codeIntelligenceRoot,
+    "node_modules/@mrclrchtr/supi-lsp/src",
+  );
+  const managedLspClientSource = fs.readFileSync(
+    path.join(nestedLspRoot, "client/client.ts"),
+    "utf8",
+  );
+  const managedLspEnvironmentSource = fs.readFileSync(
+    path.join(nestedLspRoot, "client/managed-environment.ts"),
+    "utf8",
+  );
+  const managedLspProcessGroupSource = fs.readFileSync(
+    path.join(nestedLspRoot, "client/process-group.ts"),
+    "utf8",
+  );
+  const managedLspManagerSource = fs.readFileSync(
+    path.join(nestedLspRoot, "manager/manager.ts"),
+    "utf8",
+  );
+  const workspaceProviderHostSource = fs.readFileSync(
+    path.join(codeIntelligenceSourceRoot, "substrate/workspace-provider-host.ts"),
+    "utf8",
+  );
+  const lspLifecycleSource = fs.readFileSync(
+    path.join(codeIntelligenceSourceRoot, "substrate/lsp/lifecycle.ts"),
+    "utf8",
+  );
+  const codeToolRegistrationSource = fs.readFileSync(
+    path.join(codeIntelligenceSourceRoot, "tool/register.ts"),
+    "utf8",
+  );
+  assert.match(managedLspClientSource, /env: scrubManagedEnvironment\(process\.env\)/);
+  assert.match(managedLspClientSource, /detached: true/);
+  assert.match(managedLspClientSource, /new RegisteredProcessGroup\(this\.process\.pid/);
+  assert.doesNotMatch(managedLspClientSource, /killProcessTree|taskkill|execSync/);
+  assert.match(
+    managedLspClientSource,
+    /sendRequest\("shutdown"\)[\s\S]+sendNotification\("exit"\)[\s\S]+terminateManagedProcessGroup/,
+  );
+  assert.match(managedLspProcessGroupSource, /process\.kill\(-processGroupId, 0\)/);
+  assert.match(managedLspProcessGroupSource, /this\.#processGroupId = null/);
+  assert.match(managedLspProcessGroupSource, /this\.#signal\("SIGTERM"\)/);
+  assert.match(managedLspProcessGroupSource, /this\.#signal\("SIGKILL"\)/);
+  assert.match(managedLspManagerSource, /Promise\.allSettled/);
+  assert.match(managedLspManagerSource, /pendingRestarts = new Map/);
+  assert.match(managedLspManagerSource, /ownedClients = new Set/);
+  assert.match(managedLspManagerSource, /clientGenerations = new Map/);
+  assert.match(
+    managedLspManagerSource,
+    /await Promise\.allSettled\(\[[\s\S]+pendingStarts\.values\(\)[\s\S]+pendingRestarts\.values\(\)/,
+  );
+  assert.match(workspaceProviderHostSource, /this\.#lsp \? \[this\.#lsp\.shutdown\(\)\] : \[\]/);
+  assert.match(workspaceProviderHostSource, /if \(releaseOperation\) return releaseOperation/);
+  assert.match(
+    workspaceProviderHostSource,
+    /await this\.#shutdownResources\(\)[\s\S]+this\.#leases = 0[\s\S]+hosts\.delete/,
+  );
+  assert.match(lspLifecycleSource, /lifecycleGeneration/);
+  assert.match(lspLifecycleSource, /acquiredLeases = new Set/);
+  assert.match(lspLifecycleSource, /releaseAllLeases/);
+  assert.match(codeToolRegistrationSource, /event\.toolName !== "code_refactor_apply"/);
+  assert.match(codeToolRegistrationSource, /pi\.getActiveTools\(\)\.includes\("code_refactor_apply"\)/);
+  assert.match(managedLspEnvironmentSource, /const ALLOW_NAMES/);
+  assert.match(managedLspEnvironmentSource, /SHOPIFY_PI_TOKEN/);
+  assert.doesNotMatch(
+    [managedLspClientSource, managedLspManagerSource, workspaceProviderHostSource, lspLifecycleSource, codeToolRegistrationSource].join("\n"),
+    /PI_AGENT_TASK_4_9_ENABLED|TASK_4_9_ENABLED|\bsetsid\b|\bpgrep\b|\/proc\//,
+  );
   const refactorApplySource = fs.readFileSync(
     path.join(codeIntelligenceSourceRoot, "analysis/refactor/managed-apply.ts"),
     "utf8",

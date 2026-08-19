@@ -140,6 +140,9 @@ let
     }
   '';
   managedCodeIntelligencePatch = ./extensions/patches/supi-code-intelligence-managed-lsp.patch;
+  managedCodeIntelligenceLifecyclePatch = ./extensions/patches/supi-code-intelligence-managed-lsp-lifecycle.patch;
+  managedCodeIntelligenceConcurrencyPatch = ./extensions/patches/supi-code-intelligence-managed-lsp-concurrency.patch;
+  managedCodeIntelligenceOwnershipPatch = ./extensions/patches/supi-code-intelligence-managed-lsp-ownership.patch;
   extensionTypecheckConfig = final.writeText "pi-extension-tsconfig.json" (
     builtins.toJSON {
       compilerOptions = {
@@ -408,6 +411,21 @@ let
           package = "@mrclrchtr/supi-code-intelligence@4.6.0";
           task = "pi-agent-integration 4.8";
         };
+        codeIntelligenceManagedLspLifecycle = {
+          file = builtins.baseNameOf managedCodeIntelligenceLifecyclePatch;
+          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+          task = "pi-agent-integration 4.9";
+        };
+        codeIntelligenceManagedLspConcurrency = {
+          file = builtins.baseNameOf managedCodeIntelligenceConcurrencyPatch;
+          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+          task = "pi-agent-integration 4.9";
+        };
+        codeIntelligenceManagedLspOwnership = {
+          file = builtins.baseNameOf managedCodeIntelligenceOwnershipPatch;
+          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+          task = "pi-agent-integration 4.9";
+        };
         mcpAdapterManagedDirectTools = {
           file = builtins.baseNameOf managedMcpAdapterPatch;
           package = "pi-mcp-adapter@2.20.1";
@@ -565,8 +583,51 @@ in
           < ${managedBackgroundPipePatch}
         patch --no-backup-if-mismatch -d node_modules/@99percentpeople/pi-background-tasks -p1 \
           < ${managedBackgroundPtyPatch}
+        install -m444 ${managedBackgroundEnvironmentModule} \
+          node_modules/@mrclrchtr/supi-code-intelligence/node_modules/@mrclrchtr/supi-lsp/src/client/managed-environment.ts
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
           < ${managedCodeIntelligencePatch}
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
+          < ${managedCodeIntelligenceLifecyclePatch}
+        substituteInPlace \
+          node_modules/@mrclrchtr/supi-code-intelligence/node_modules/@mrclrchtr/supi-lsp/src/manager/manager.ts \
+          --replace-fail \
+          '      // Ignore shutdown failures when forcing a restart.' \
+          '      return false;'
+        substituteInPlace \
+          node_modules/@mrclrchtr/supi-code-intelligence/src/substrate/workspace-provider-host.ts \
+          --replace-fail \
+          '...(this.#lsp ? [settleWithin(this.#lsp.shutdown())] : []),' \
+          '...(this.#lsp ? [this.#lsp.shutdown()] : []),'
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
+          < ${managedCodeIntelligenceConcurrencyPatch}
+        substituteInPlace \
+          node_modules/@mrclrchtr/supi-code-intelligence/src/substrate/lsp/lifecycle.ts \
+          --replace-fail \
+          $'const READINESS_POLL_MS = 2_000;\n\n/** Acquire providers once per workspace and release them after the final Pi session ends. */' \
+          $'const READINESS_POLL_MS = 2_000;\n\nexport interface LspSessionLifecycleDependencies {\n  readonly acquireWorkspaceProviderHost?: typeof acquireWorkspaceProviderHost;\n}\n\n/** Acquire providers once per workspace and release them after the final Pi session ends. */' \
+          --replace-fail \
+          $'  onStarted?: (ctx: ExtensionContext) => void | Promise<void>,\n): void {\n  let readinessTimer' \
+          $'  onStarted?: (ctx: ExtensionContext) => void | Promise<void>,\n  dependencies: LspSessionLifecycleDependencies = {},\n): void {\n  const acquireProviderHost = dependencies.acquireWorkspaceProviderHost ?? acquireWorkspaceProviderHost;\n  let readinessTimer'
+        substituteInPlace \
+          node_modules/@mrclrchtr/supi-code-intelligence/src/substrate/workspace-provider-host.ts \
+          --replace-fail \
+          $'  constructor(cwd: string) {\n    this.cwd = cwd;\n  }' \
+          $'  constructor(\n    cwd: string,\n    private readonly dependencies: ResolvedDependencies,\n  ) {\n    this.cwd = cwd;\n  }' \
+          --replace-fail \
+          '? scanWorkspaceSentinels(this.cwd)' \
+          '? this.dependencies.scanSentinels(this.cwd)' \
+          --replace-fail \
+          'const runtime = getDefaultWorkspaceRuntime();' \
+          'const runtime = this.dependencies.getRuntime();' \
+          --replace-fail \
+          'this.#tree = new TreeSitterRuntimeController(this.cwd, runtime);' \
+          'this.#tree = this.dependencies.createTreeController(this.cwd, runtime);' \
+          --replace-fail \
+          'this.#lsp = new LspRuntimeController(this.cwd, runtime);' \
+          'this.#lsp = this.dependencies.createLspController(this.cwd, runtime);'
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/@mrclrchtr/supi-code-intelligence -p1 \
+          < ${managedCodeIntelligenceOwnershipPatch}
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-mcp-adapter -p1 \
           < ${managedMcpAdapterPatch}
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-mcp-adapter -p1 \

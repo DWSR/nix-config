@@ -21,6 +21,32 @@ let
     executable = true;
     text = "#!${pkgs.nodejs}/bin/node\n" + builtins.readFile ./code-intelligence/crashing-lsp.cjs;
   };
+  isolatedCrashingServer = pkgs.writeTextFile {
+    name = "pi-agent-managed-crashing-rust-lsp";
+    destination = "/bin/rust-analyzer";
+    executable = true;
+    text = "#!${pkgs.nodejs}/bin/node\n" + builtins.readFile ./code-intelligence/crashing-lsp.cjs;
+  };
+  stallingServer = pkgs.writeTextFile {
+    name = "pi-agent-managed-stalling-go-lsp";
+    destination = "/bin/gopls";
+    executable = true;
+    text = "#!${pkgs.nodejs}/bin/node\n" + builtins.readFile ./code-intelligence/stalling-lsp.cjs;
+  };
+  credentialPolicy = import (repoRoot + "/home-manager/common/pi-agent/credential-policy.nix") {
+    inherit pkgs;
+    inherit (pkgs) lib;
+  };
+  credentialRuntimeModule =
+    (credentialPolicy.render {
+      hostSelection = {
+        mode = "personal";
+        defaultModel = {
+          provider = "openai";
+          modelId = "gpt-5.6-sol";
+        };
+      };
+    }).runtimeModule;
   evaluate =
     languageServers:
     pkgs.lib.evalModules {
@@ -82,10 +108,32 @@ let
       relativePath = "bin/pyright-langserver";
     };
   };
+  isolated = evaluate {
+    typescript = {
+      package = validServer;
+      relativePath = "bin/typescript-language-server";
+    };
+    python = {
+      package = failingServer;
+      relativePath = "bin/pyright-langserver";
+    };
+    rust = {
+      package = isolatedCrashingServer;
+      relativePath = "bin/rust-analyzer";
+    };
+  };
 in
 {
-  inherit crashingServer failingServer validServer;
+  inherit
+    crashingServer
+    credentialRuntimeModule
+    failingServer
+    isolatedCrashingServer
+    stallingServer
+    validServer
+    ;
   crashingManagedConfig = crashing.config.programs.pi-agent.internal.managedConfig;
   healthyManagedConfig = healthy.config.programs.pi-agent.internal.managedConfig;
   degradedManagedConfig = degraded.config.programs.pi-agent.internal.managedConfig;
+  isolatedManagedConfig = isolated.config.programs.pi-agent.internal.managedConfig;
 }

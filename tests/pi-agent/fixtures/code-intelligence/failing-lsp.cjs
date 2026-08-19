@@ -1,6 +1,13 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 let buffer = Buffer.alloc(0);
+fs.writeFileSync(
+  path.join(process.cwd(), ".task-4-9-failing-observation.json"),
+  `${JSON.stringify({ environment: process.env, pid: process.pid })}\n`,
+);
 process.stderr.write("TASK_4_8_FAILED_SERVER_STDERR_SENTINEL\n");
 
 function send(message) {
