@@ -1,0 +1,444 @@
+diff --git a/src/runs/foreground/execution.ts b/src/runs/foreground/execution.ts
+--- a/src/runs/foreground/execution.ts
++++ b/src/runs/foreground/execution.ts
+@@ -54,7 +54,7 @@ import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
+ import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
+ import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
+ import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
+-import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
++import { attachPostExitStdioGuard } from "../../shared/post-exit-stdio-guard.ts";
+ import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, projectLaunchResolvedChildExtensions, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
+ import { readRuntimeAcknowledgedExtensions } from "../shared/runtime-acknowledged-extensions.ts";
+ import { assertAgentAllowedByCapabilityCeiling, decodeSubagentCapabilityCeiling, intersectSubagentCapabilityCeilings, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
+@@ -90,7 +90,7 @@ import { acceptanceFailureMessage, buildSkippedAcceptanceLedger, evaluateAccepta
+ import { attachContractProjections, isAgentContractV1 } from "../shared/agent-contract.ts";
+ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudgetState, turnBudgetDecision, turnBudgetDeferredNote, turnBudgetDeferredState, turnBudgetExceededMessage, turnBudgetSoftNote, turnBudgetState } from "../shared/turn-budget.ts";
+ import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
+-import { managedAgentResources } from "../../managed-policy.ts";
++import { assertManagedForegroundSpawnAllowed, managedAgentResources, managedForegroundSpawnDetached, registerManagedForegroundChild } from "../../managed-policy.ts";
+ import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
+ import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
+ import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+@@ -458,0 +459,1 @@ async function runSingleAttempt(
++		assertManagedForegroundSpawnAllowed();
+@@ -460,0 +461,1 @@ async function runSingleAttempt(
++			detached: managedForegroundSpawnDetached(),
+@@ -465,1 +466,3 @@ async function runSingleAttempt(
++		const managedChild = registerManagedForegroundChild(proc);
++		const signalChild = (signal: NodeJS.Signals) => managedChild.signal(signal);
+ 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
+@@ -583,7 +586,7 @@ async function runSingleAttempt(
+ 			if (childExited || finalDrainTimer || lifecycleFinished || processClosed) return;
+ 			finalDrainTimer = setTimeout(() => {
+ 				if (lifecycleFinished || processClosed) return;
+-				const termSent = trySignalChild(proc, "SIGTERM");
++				const termSent = signalChild("SIGTERM");
+ 				if (!termSent) return;
+ 				forcedTerminationSignal = true;
+ 				if (!cleanTerminalAssistantStopReceived && !agentSettledReceived && !assistantError) {
+@@ -591,7 +594,7 @@ async function runSingleAttempt(
+ 				}
+ 				finalHardKillTimer = setTimeout(() => {
+ 					if (lifecycleFinished || processClosed) return;
+-					forcedTerminationSignal = trySignalChild(proc, "SIGKILL") || forcedTerminationSignal;
++					forcedTerminationSignal = signalChild("SIGKILL") || forcedTerminationSignal;
+ 				}, HARD_KILL_MS);
+				finalHardKillTimer.unref?.();
+			}, FINAL_STOP_GRACE_MS);
+@@ -638,1 +641,1 @@ async function runSingleAttempt(
+-			const accepted = detachForeground("intercom coordination");
++			const accepted = false;
+@@ -737,15 +740,15 @@ async function runSingleAttempt(
+ 			progress.error = message;
+ 			progress.durationMs = Date.now() - startTime;
+ 			fireUpdate();
+-			trySignalChild(proc, "SIGINT");
++			signalChild("SIGINT");
+ 			turnBudgetTerminationTimer = setTimeout(() => {
+ 				if (processClosed || lifecycleFinished || result.timedOut) return;
+-				trySignalChild(proc, "SIGTERM");
++				signalChild("SIGTERM");
+ 			}, 1000);
+ 			turnBudgetTerminationTimer.unref?.();
+ 			turnBudgetHardKillTimer = setTimeout(() => {
+ 				if (processClosed || lifecycleFinished || result.timedOut) return;
+-				trySignalChild(proc, "SIGKILL");
++				signalChild("SIGKILL");
+ 			}, 4000);
+ 			turnBudgetHardKillTimer.unref?.();
+ 		};
+@@ -1001,15 +1004,15 @@ async function runSingleAttempt(
+ 				progress.error = attemptTimeout.message;
+ 				progress.durationMs = Date.now() - startTime;
+ 				fireUpdate();
+-				trySignalChild(proc, "SIGINT");
++				signalChild("SIGINT");
+ 				timeoutTerminationTimer = setTimeout(() => {
+ 					if (processClosed || lifecycleFinished) return;
+-					trySignalChild(proc, "SIGTERM");
++					signalChild("SIGTERM");
+ 				}, 1000);
+ 				timeoutTerminationTimer.unref?.();
+ 				timeoutHardKillTimer = setTimeout(() => {
+ 					if (processClosed || lifecycleFinished) return;
+-					trySignalChild(proc, "SIGKILL");
++					signalChild("SIGKILL");
+ 				}, 4000);
+ 				timeoutHardKillTimer.unref?.();
+ 			}, attemptTimeout.remainingMs);
+@@ -1026,9 +1029,9 @@ async function runSingleAttempt(
+ 			progress.durationMs = Date.now() - startTime;
+ 			fireUpdate();
+ 			if (!childExited) {
+-				trySignalChild(proc, "SIGTERM");
++				signalChild("SIGTERM");
+ 				protocolHardKillTimer = setTimeout(() => {
+-					if (!childExited) trySignalChild(proc, "SIGKILL");
++					if (!childExited) signalChild("SIGKILL");
+ 				}, 3000);
+ 				protocolHardKillTimer.unref?.();
+ 			}
+@@ -1052,0 +1056,3 @@ async function runSingleAttempt(
++			void managedChild.leaderExited().catch((error) => {
++				if (!result.error) result.error = error instanceof Error ? error.message : "Managed subagent child cleanup failed.";
++			});
+@@ -1054,3 +1060,6 @@ async function runSingleAttempt(
+-		proc.on("close", (code, signal) => {
++		proc.on("close", async (code, signal) => {
+			if (lifecycleFinished) return;
++			let managedCleanupError: string | undefined;
++			try { await managedChild.release(); } catch (error) { managedCleanupError = error instanceof Error ? error.message : "Managed subagent child cleanup failed."; }
++			if (lifecycleFinished) return;
+ 			processClosed = true;
+@@ -1066,7 +1076,7 @@ async function runSingleAttempt(
+ 			stderrReader.end();
+ 			const stderr = stderrTail.text();
+ 			const rawStdout = rawStdoutTail.text();
+-			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
++			let closeError = result.error ?? managedCleanupError ?? toolDiagnosticError ?? assistantError;
+ 			const forcedDrainAfterFinalSuccess = Boolean(forcedTerminationSignal || signal) && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
+ 			if (signal) result.processSignal = signal;
+ 			if (!closeError && isUnexplainedProcessSignal({
+@@ -1085,7 +1094,7 @@ async function runSingleAttempt(
+ 			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+ 				closeError = stderr.trim();
+ 			}
+-			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
++			const finalCode = managedCleanupError ? 1 : forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
+			if (!result.error && closeError) result.error = closeError;
+			finish(finalCode);
+		});
+@@ -1092,2 +1102,4 @@ async function runSingleAttempt(
+-		proc.on("error", (error) => {
++		proc.on("error", async (error) => {
+ 			if (lifecycleFinished) return;
++			try { await managedChild.release(); } catch (cleanupError) { if (!result.error) result.error = cleanupError instanceof Error ? cleanupError.message : "Managed subagent child cleanup failed."; }
++			if (lifecycleFinished) return;
+@@ -1112,2 +1124,3 @@ async function runSingleAttempt(
+-				proc.kill("SIGTERM");
+-				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
++				void managedChild.terminate().catch((error) => {
++					if (!result.error) result.error = error instanceof Error ? error.message : "Managed subagent child cleanup failed.";
++				});
+@@ -1131,11 +1144,9 @@ async function runSingleAttempt(
+ 				result.finalOutput = "Interrupted. Waiting for explicit next action.";
+ 				progress.activityState = undefined;
+ 				fireUpdate();
+-				trySignalChild(proc, "SIGINT");
+-				setTimeout(() => {
+-					if (lifecycleFinished || processClosed) return;
+-					trySignalChild(proc, "SIGTERM");
+-				}, 1000).unref?.();
++				void managedChild.terminate().catch((error) => {
++					if (!result.error) result.error = error instanceof Error ? error.message : "Managed subagent child cleanup failed.";
++				});
+			};
+			if (options.interruptSignal.aborted) interrupt();
+			else {
+@@ -1150,1 +1161,1 @@ async function runSingleAttempt(
+-			options.onDetachReady?.((reason = "user request") => detachForeground(reason));
++			options.onDetachReady?.(() => false);
+@@ -1158,1 +1167,1 @@ async function runSingleAttempt(
+-	if (interruptedByControl) {
++	if (interruptedByControl && !result.error) {
+diff --git a/src/extension/index.ts b/src/extension/index.ts
+--- a/src/extension/index.ts
++++ b/src/extension/index.ts
+@@ -51,6 +51,7 @@ import { resolveCurrentSubagentCapabilityCeiling } from "../runs/shared/capabil
+ import { formatDuration, shortenPath } from "../shared/formatters.ts";
+ import { loadConfig } from "./config.ts";
+ import { buildSubagentToolDescription } from "./tool-description.ts";
++import { beginManagedChildSession, terminateManagedForegroundChildren, validateManagedExecutionRequest } from "../managed-policy.ts";
+ import {
+ 	type Details,
+ 	type SubagentState,
+@@ -365,3 +366,3 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
+ 	const executeSubagentCollapsed = (id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((result: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => {
+-		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
++		if (!validateManagedExecutionRequest(params) && ctx.hasUI) ctx.ui.setToolsExpanded(false);
+ 		return executor.execute(id, params, signal, onUpdate, ctx);
+@@ -572,4 +573,5 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
+ 	pi.on("session_start", (event, ctx) => {
++		beginManagedChildSession();
+ 		const recovering = event.reason === "startup" || event.reason === "reload" || event.reason === "resume";
+ 		resetSessionState(ctx, recovering);
+ 		rpcBridge.emitReady(ctx);
+@@ -576,7 +578,9 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
+		supervisorChannel.start();
+	});
+
+-	pi.on("session_shutdown", () => {
++	pi.on("session_shutdown", async () => {
++		let managedCleanupError: unknown;
++		try { await terminateManagedForegroundChildren(); } catch (error) { managedCleanupError = error; }
+		stopResultWatcher();
+		state.currentSessionId = null;
+		state.parentSessionFile = null;
+@@ -618,5 +622,6 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
+ 		} catch (error) {
+ 			if (!isStaleExtensionContextError(error)) throw error;
+ 		}
++		if (managedCleanupError) throw managedCleanupError;
+ 	});
+ }
+diff --git a/src/extension/rpc.ts b/src/extension/rpc.ts
+--- a/src/extension/rpc.ts
++++ b/src/extension/rpc.ts
+@@ -19,6 +19,7 @@ import {
+ } from "../shared/types.ts";
+ import { readStatus } from "../shared/utils.ts";
+ import { SubagentParams } from "./schemas.ts";
++import { validateManagedExecutionRequest } from "../managed-policy.ts";
+ import { validateChainInput } from "./chain-validation.ts";
+ 
+ export const SUBAGENT_RPC_PROTOCOL_VERSION = 1;
+@@ -408,6 +409,10 @@ async function executeChecked(
+ 	method: SubagentRpcMethod,
+ 	params: SubagentParamsLike,
+ ): Promise<{ text: string; details?: Details; isError?: boolean }> {
++	const policyError = validateManagedExecutionRequest(params);
++	if (policyError) {
++		throw new SubagentRpcError("invalid_params", `RPC ${method} params: ${policyError}`);
++	}
+ 	assertSubagentParams(params, `RPC ${method} params`);
+ 	const controller = new AbortController();
+ 	const result = await options.execute(`rpc-${method}-${requestId}`, params, controller.signal, undefined, ctx);
+diff --git a/src/slash/prompt-workflows.ts b/src/slash/prompt-workflows.ts
+--- a/src/slash/prompt-workflows.ts
++++ b/src/slash/prompt-workflows.ts
+@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
+ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+ import { parseFrontmatter } from "../agents/frontmatter.ts";
+ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
++import { validateManagedExecutionRequest } from "../managed-policy.ts";
+ import type { ChainStep } from "../shared/settings.ts";
+ import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+ 
+@@ -208,6 +209,15 @@ function parseRuntimeOptions(words: string[]): { args: string[]; agentOverride?:
+ 	return { args, agentOverride, fork, fresh, worktree, bg };
+ }
+ 
++function managedPromptWorkflowWords(rawArgs: string): string[] {
++	const words = shellWords(rawArgs);
++	if (words.some((word) => word === "--bg" || word === "--async")) {
++		const policyError = validateManagedExecutionRequest({ async: true });
++		if (policyError) throw new Error(policyError);
++	}
++	return words;
++}
++
+ function splitChainDeclaration(input: string): { declaration: string; argsText: string } {
+ 	const delimiter = input.indexOf(" -- ");
+ 	if (delimiter === -1) return { declaration: input.trim(), argsText: "" };
+@@ -269,7 +279,7 @@ export function registerPromptWorkflowCommands(input: {
+ 	pi.registerCommand("prompt-workflow", {
+ 		description: "Run a prompt template through native pi-subagents: /prompt-workflow <name> [args]",
+ 		handler: async (rawArgs, ctx) => {
+-			const words = shellWords(rawArgs);
++			const words = managedPromptWorkflowWords(rawArgs);
+ 			const name = words.shift();
+ 			const workflows = discoverPromptWorkflows(ctx.cwd);
+ 			if (!name || name === "list") {
+@@ -303,6 +313,7 @@ export function registerPromptWorkflowCommands(input: {
+ 	pi.registerCommand("chain-prompts", {
+ 		description: "Run prompt templates as a native subagent chain: /chain-prompts analyze -> fix -- args",
+ 		handler: async (rawArgs, ctx) => {
++			managedPromptWorkflowWords(rawArgs);
+ 			const { declaration, argsText } = splitChainDeclaration(rawArgs);
+ 			const workflows = discoverPromptWorkflows(ctx.cwd);
+ 			if (!declaration || declaration === "list") {
+diff --git a/src/slash/prompt-template-bridge.ts b/src/slash/prompt-template-bridge.ts
+--- a/src/slash/prompt-template-bridge.ts
++++ b/src/slash/prompt-template-bridge.ts
+@@ -12,6 +12,7 @@ import {
+ 	type SubagentDelegationV2Response,
+ } from "../api/delegation.ts";
+ import { parseSubagentDelegationRequest } from "./delegation-request.ts";
++import { validateManagedExecutionRequest } from "../managed-policy.ts";
+ import {
+ 	parsePromptTemplateRequest,
+ 	toDelegationUpdate,
+@@ -207,6 +208,34 @@ export function registerPromptTemplateDelegationBridge<Ctx extends { cwd?: strin
+ 			requestId = legacyRequest.requestId;
+ 			params = toLegacyExecutionParams(legacyRequest);
+ 		}
++		const policyError = validateManagedExecutionRequest(params);
++		if (policyError) {
++			if (v2Request) {
++				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++					version: SUBAGENT_DELEGATION_V2_PROTOCOL_VERSION,
++					requestId,
++					ownerRunId: v2Request.ownerRunId,
++					nodeId: v2Request.nodeId,
++					status: "invalid_request",
++					error: policyError,
++				} satisfies SubagentDelegationV2Response);
++			} else if (versionedRequest) {
++				options.events.emit(SUBAGENT_DELEGATION_RESPONSE_EVENT, {
++					version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
++					requestId,
++					status: "invalid_request",
++					error: policyError,
++				} satisfies SubagentDelegationResponse);
++			} else if (legacyRequest) {
++				options.events.emit(PROMPT_TEMPLATE_SUBAGENT_RESPONSE_EVENT, {
++					...legacyRequest,
++					messages: [],
++					isError: true,
++					errorText: policyError,
++				} satisfies PromptTemplateDelegationResponse);
++			}
++			return;
++		}
+ 
+ 		// Legacy and V1 keep requestId-only ownership. V2 retransmission and terminal
+ 		// suppression use the full tuple, independently from logical-node ownership.
+diff --git a/src/slash/slash-bridge.ts b/src/slash/slash-bridge.ts
+--- a/src/slash/slash-bridge.ts
++++ b/src/slash/slash-bridge.ts
+@@ -1,6 +1,7 @@
+ import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
++import { validateManagedExecutionRequest } from "../managed-policy.ts";
+ import {
+ 	SLASH_SUBAGENT_CANCEL_EVENT,
+ 	SLASH_SUBAGENT_REQUEST_EVENT,
+@@ -78,6 +79,20 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
+ 		const request = data as Partial<SlashSubagentRequest>;
+ 		if (typeof request.requestId !== "string" || !request.params) return;
+ 		const { requestId, params } = request as SlashSubagentRequest;
++		const policyError = validateManagedExecutionRequest(params);
++		if (policyError) {
++			const response: SlashSubagentResponse = {
++				requestId,
++				result: {
++					content: [{ type: "text", text: policyError }],
++					details: { mode: "single" as const, results: [] },
++				},
++				isError: true,
++				errorText: policyError,
++			};
++			options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, response);
++			return;
++		}
+ 
+ 		const ctx = request.ctx ?? options.getContext();
+ 		if (!ctx) {
+diff --git a/src/slash/slash-commands.ts b/src/slash/slash-commands.ts
+--- a/src/slash/slash-commands.ts
++++ b/src/slash/slash-commands.ts
+@@ -13,6 +13,7 @@ import {
+ 	refreshProviderModelCatalog,
+ } from "../profiles/profiles.ts";
+ import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
++import { validateManagedExecutionRequest } from "../managed-policy.ts";
+ import { isDynamicParallelStep, isParallelStep, type ChainStep } from "../shared/settings.ts";
+ import { findModelInfo, toModelInfo } from "../shared/model-info.ts";
+ import { formatTokens, shortenPath } from "../shared/formatters.ts";
+@@ -124,6 +125,14 @@ const extractExecutionFlags = (rawArgs: string): { args: string; bg: boolean; for
+ 	return { args, bg, fork };
+ };
+ 
++function rejectManagedBackgroundSlash(ctx: ExtensionContext, background: boolean): boolean {
++	if (!background) return false;
++	const policyError = validateManagedExecutionRequest({ async: true });
++	if (!policyError) return false;
++	ctx.ui.notify(policyError, "error");
++	return true;
++}
++
+ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (prefix: string) => {
+ 	if (!state.baseCwd) return null;
+ 	const agents = discoverAgents(state.baseCwd, "both").agents;
+@@ -703,6 +712,11 @@ async function runSlashSubagent(
+ 	ctx: ExtensionContext,
+ 	params: SubagentParamsLike,
+ ): Promise<void> {
++	const policyError = validateManagedExecutionRequest(params);
++	if (policyError) {
++		ctx.ui.notify(policyError, "error");
++		return;
++	}
+ 	if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
+ 	const requestId = randomUUID();
+ 	const initialDetails = buildSlashInitialResult(requestId, params);
+@@ -1190,6 +1204,7 @@ export function registerSlashCommands(
+ 		getArgumentCompletions: makeAgentCompletions(state, false),
+ 		handler: async (args, ctx) => {
+ 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
++			if (rejectManagedBackgroundSlash(ctx, bg)) return;
+ 			const input = cleanedArgs.trim();
+ 			const firstSpace = input.indexOf(" ");
+ 			if (!input) { ctx.ui.notify("Usage: /run <agent> [task] [--bg] [--fork]", "error"); return; }
+@@ -1220,6 +1235,7 @@ export function registerSlashCommands(
+ 		getArgumentCompletions: makeAgentCompletions(state, true),
+ 		handler: async (args, ctx) => {
+ 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
++			if (rejectManagedBackgroundSlash(ctx, bg)) return;
+ 			const built = buildChainExpressionSteps(state, cleanedArgs, ctx);
+ 			if (!built) return;
+ 			const params: SubagentParamsLike = { chain: built.chain, task: built.task, clarify: false, agentScope: "both" };
+@@ -1234,6 +1250,7 @@ export function registerSlashCommands(
+ 		getArgumentCompletions: makeChainCompletions(state),
+ 		handler: async (args, ctx) => {
+ 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
++			if (rejectManagedBackgroundSlash(ctx, bg)) return;
+ 			const delimiterIndex = cleanedArgs.indexOf(" -- ");
+ 			const usage = "Usage: /run-chain <chainName> -- <task> [--bg] [--fork]";
+ 			if (delimiterIndex === -1) {
+@@ -1264,6 +1281,7 @@ export function registerSlashCommands(
+ 		getArgumentCompletions: makeAgentCompletions(state, true),
+ 		handler: async (args, ctx) => {
+ 			const { args: cleanedArgs, bg, fork } = extractExecutionFlags(args);
++			if (rejectManagedBackgroundSlash(ctx, bg)) return;
+ 			const parsed = parseAgentArgs(state, cleanedArgs, "parallel", ctx);
+ 			if (!parsed) return;
+ 			const tasks = parsed.steps.map(({ name, config, task: stepTask }) => ({
+@@ -1311,1 +1329,1 @@ export function registerSlashCommands(pi: ExtensionAPI, state: SubagentState): void {
+-		description: "Detach the active foreground single-subagent run without terminating it",
++		description: "Report that managed foreground runs cannot be detached",
+@@ -1313,21 +1331,2 @@ export function registerSlashCommands(pi: ExtensionAPI, state: SubagentState): void {
+-			const id = args.trim();
+-			let control: ReturnType<typeof selectForegroundDetachControl>;
+-			try {
+-				control = selectForegroundDetachControl(state, id);
+-			} catch (error) {
+-				ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+-				return;
+-			}
+-			if (!control) {
+-				ctx.ui.notify(id ? `No active foreground run found for '${id}'.` : "No active foreground single-subagent run to detach.", "info");
+-				return;
+-			}
+-			if (control.mode !== "single") {
+-				ctx.ui.notify("/subagents-detach currently supports single-subagent runs only.", "error");
+-				return;
+-			}
+-			if (!control.detach?.()) {
+-				ctx.ui.notify(`Foreground run ${control.runId} is not currently detachable.`, "info");
+-				return;
+-			}
+-			sendSlashText(pi, `Detached foreground run ${control.runId} without terminating its child. Use subagent({ action: "status", id: ${JSON.stringify(control.runId)} }) or subagent_wait({ id: ${JSON.stringify(control.runId)} }) to recover the eventual result. This does not daemonize the process or guarantee survival across Pi reload/restart.`);
++			ctx.ui.notify("Managed subagent policy rejects detached child execution.", "error");
++			return;

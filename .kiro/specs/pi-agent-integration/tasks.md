@@ -250,12 +250,12 @@
   - _Boundary: Extension Runtime — Subagents_
   - _Depends: 1.5, 2.5, 3.7_
 
-- [ ] 4.2 Prevent detached sub-agents and orphan processes
+- [x] 4.2 Prevent detached sub-agents and owned process-group orphans
   - Reject async, detached, and scheduled child requests before process creation.
   - Prevent the controller from loading recursively in a child.
   - Run foreground children in process groups and escalate group termination after bounded graceful shutdown.
   - Cover explicit cancellation, parent shutdown, signal handling, and nested-child attempts.
-  - Done when every denied mode is side-effect free and cancellation/shutdown leaves no child PID or process group.
+  - Done when every denied mode is side-effect free and cancellation/shutdown releases the registered child process group and every ordinary descendant that remains in it without signaling a reused or unrelated group.
   - _Requirements: 8.5, 8.7_
   - _Boundary: Extension Runtime — Subagents_
   - _Depends: 4.1_
@@ -553,8 +553,10 @@
 - [ ] 7.4 Verify supervised process cleanup under nono
   - Launch foreground child agents, language servers, background pipe tasks, and PTYs inside the selected sandbox.
   - Exercise cancellation, signals, session replacement, graceful exit, and forced escalation.
-  - Inspect the process tree after each path and reject detached or sibling escape.
-  - Done when every owned process group terminates and no child, server, pipe, PTY, or helper PID survives session exit.
+  - Inspect each registered process group after every path and reject a surviving
+    owned group or ordinary descendant that remains in it.
+  - Done when every owned process group terminates and no registered child,
+    server, pipe, PTY, or helper PID remaining in that group survives session exit.
   - _Requirements: 8.7, 12.6, 13.6, 15.4_
   - _Boundary: Acceptance Harness — Process Integration_
   - _Depends: 7.3_
@@ -626,6 +628,7 @@
 - Task 3.9: Direct write/destructive tools remain approval-gated; the operator accepted that mutations routed through `call_tool_read` rely on mcpproxy and may bypass Pi approval.
 - Task 4.1: The fixed `reader`/`worker` catalog inherits the host model, rejects all call-level resource overrides, and never discovers mutable user/project agents.
 - Task 4.1: Chain validation must recurse into nested parallel tasks, managed depth must ignore ambient overrides, and chain state belongs under the parent-session root rather than workspace `.pi-subagents`.
+- Task 4.2: Darwin cleanup owns registered process groups and ordinary descendants that remain in them; first `ESRCH` is terminal for that ownership generation, and every async ingress must reject before observable state changes.
 - Task 4.3: The relaxed contract uses Pi's name-based active-tool API and `tool_call` gate inside the fixed trusted extension order; schema/provenance sealing, final provider-payload/retry enforcement, and crash-atomic transitions are out of scope.
 - Task 4.3: Preserve the first ordered pre-Plan tool capture across free-form Plan continuations; only a new normal or approved workflow may replace it.
 - Task 4.4: Real `pi-stamp` acceptance fixtures must use TUI mode; persisted custom entries render on reload/resume but remain excluded from model context.

@@ -111,7 +111,8 @@ scope decisions.
 4. While a child agent runs, the Pi integration shall limit it to the declared tools, extensions, model budget, and workspace access.
 5. The Pi integration shall prevent a child agent from recursively loading the sub-agent controller.
 6. When a child produces an artifact, the Pi integration shall retain it within the owning parent session's state.
-7. When a child is cancelled or the parent session exits, the Pi integration shall terminate the child and leave no orphan process.
+7. When a child is cancelled or the parent session exits, the Pi integration shall terminate the registered child process group, including ordinary descendants that remain in that group.
+8. The Pi integration shall expose only the managed `reader` and `worker` child roles and shall reject call-level overrides of their model, budget, tools, workspace, extensions, MCP access, depth, output, or agent scope.
 
 ### Requirement 9: Read-only plan mode
 **Objective:** As the operator, I want a guarded planning state before implementation, so that Pi can investigate and propose work before implementation actions are allowed.

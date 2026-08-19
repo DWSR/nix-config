@@ -111,6 +111,7 @@ let
   managedSubagentReader = ./extensions/pi-subagents-reader.md;
   managedSubagentWorker = ./extensions/pi-subagents-worker.md;
   managedSubagentsPatch = ./extensions/patches/pi-subagents-managed-children.patch;
+  managedSubagentsLifecyclePatch = ./extensions/patches/pi-subagents-managed-lifecycle.patch;
   cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
     cavemem = "${final.cavemem}/bin/cavemem";
   };
@@ -422,6 +423,11 @@ let
           package = "pi-subagents@0.40.0";
           task = "pi-agent-integration 4.1";
         };
+        managedSubagentsLifecycle = {
+          file = builtins.baseNameOf managedSubagentsLifecyclePatch;
+          package = "pi-subagents@0.40.0";
+          task = "pi-agent-integration 4.2";
+        };
       };
       runtimeDependencies = extensionRuntimeDependencies;
     }
@@ -541,6 +547,8 @@ in
         install -Dm444 ${managedSubagentWorker} node_modules/pi-subagents/managed-agents/worker.md
         patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-subagents -p1 \
           < ${managedSubagentsPatch}
+        patch --fuzz=0 --no-backup-if-mismatch -d node_modules/pi-subagents -p1 \
+          < ${managedSubagentsLifecyclePatch}
         substituteInPlace node_modules/pi-subagents/src/runs/foreground/subagent-executor.ts \
           --replace-fail 'chainDir: params.chainDir ?? getProjectChainRunsDir(effectiveCwd),' \
           'chainDir: path.join(path.dirname(sessionRoot), "chain-runs"),'

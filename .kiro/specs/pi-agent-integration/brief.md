@@ -81,7 +81,11 @@ wrapper modeled on the OpenCode split:
 - Synchronizing Pi sessions, credentials, or mutable state between hosts
 - Supporting non-Darwin systems
 - Importing the complete `shop-pi-fy` extension catalog
-- Redesigning Pi permissions, mcpproxy routing, or Cavemem storage
+- Redesigning Pi permissions or adding a Pi-core reference monitor
+- Adversarial isolation among the managed in-process Pi extensions
+- Arbitrary subprocesses that create a new session or process group outside a
+  registered managed child process group
+- Changing mcpproxy routing or Cavemem storage
 
 ## Upstream / Downstream
 - **Upstream**: `pi.nix`, upstream Pi, the public nono Pi pack, `pkgs.nono`,
@@ -107,9 +111,11 @@ wrapper modeled on the OpenCode split:
 - Do not mutate Pi configuration during Home Manager activation; runtime
   reconciliation must be locked, atomic, provenance-aware, and limited to
   managed keys.
-- Plan mode must expose only read-only tools by default.
+- Plan mode must select read-only tools by default and block non-allowlisted
+  model tool calls before execution.
 - Background jobs, LSP servers, sub-agents, and Cavemem hooks must operate
-  inside the active nono profile and leave no orphan processes.
+  inside the active nono profile and clean up their registered process groups
+  plus ordinary descendants that remain in those groups.
 - A known high-severity dependency advisory and the required context-limit
   recovery behavior must be resolved before either host enables Pi.
 - Full Pi tool payloads remain subject to secret/private-content redaction; the

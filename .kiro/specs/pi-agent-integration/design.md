@@ -47,6 +47,8 @@ remain shared services.
   default hook compression behavior.
 - OpenCode package, wrapper, profiles, plugins, and host settings.
 - Pi-core reference-monitor changes, hostile managed extensions, immutable provider payloads, or crash-atomic Plan state.
+- Arbitrary subprocesses that call `setsid()`, double-fork, or otherwise leave a
+  registered managed child process group.
 - Private Shopify source, provider parity features, Sieve, and optional `shop-pi-fy` resources.
 - Arbitrary providers, headers, credential commands, model metadata, extension ecosystems, or embedded-text secret parsing.
 
@@ -299,7 +301,7 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 | nono profiles | Sandbox Catalog, Runtime Control | SandboxSelection, Sandbox State |
 | 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7 | Sole MCP entrypoint | MCP Bridge, Runtime Control | MCP config contract, Managed Launch |
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Extension inventory | Package Set, Extension Runtime | ExtensionManifestV1 |
-| 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7 | Sub-agents | Extension Runtime, Sandbox Catalog | ChildPolicyV1 |
+| 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8 | Sub-agents | Extension Runtime, Sandbox Catalog | ChildPolicyV1, ManagedChildAgentCatalogV1 |
 | 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | Plan mode | Extension Runtime, Sandbox Catalog | Active tool names, Plan session state |
 | 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11 | Cavemem capture | Capture Bridge, Cavemem Full Mode | PiFullToolObservationV1, PiFullPrivacyPolicyV1, Tool Capture |
 | 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7 | Session aids | Extension Runtime | ExtensionManifestV1 |
@@ -825,7 +827,7 @@ transitions; the Plan call gate blocks non-allowlisted execution.
 | Field | Detail |
 |---|---|
 | Intent | Load the approved capabilities with bounded child processes |
-| Requirements | 7.1–7.6, 8.1–8.7, 9.1–9.7, 11.1–11.7, 12.1–12.6, 13.1–13.7, 14.1, 14.2 |
+| Requirements | 7.1–7.6, 8.1–8.8, 9.1–9.7, 11.1–11.7, 12.1–12.6, 13.1–13.7, 14.1, 14.2 |
 
 **Responsibilities & Constraints**
 - Disable ambient extension, skill, and prompt discovery. Load the closed manifest
@@ -835,8 +837,12 @@ transitions; the Plan call gate blocks non-allowlisted execution.
   extensions. Children load Cavemem/provider resources and MCP only when declared.
 - Preserve single, parallel, and chain semantics, independent failures, and
   predecessor-only chain input. Managed agent definitions own child ceilings.
-- Reject async/detached/scheduled sub-agents, recursive controllers, and orphaned
-  process groups through bounded cancellation and shutdown escalation.
+- Expose only the fixed `reader` and `worker` definitions. Reject user/project
+  agent discovery and call-level overrides of model, turns, tool calls, tools,
+  workspace/cwd, extensions, MCP access, depth, output, or agent scope.
+- Reject async/detached/scheduled sub-agents and recursive controllers. Terminate
+  each registered child process group through bounded cancellation and shutdown
+  escalation; ordinary descendants remaining in that group share termination.
 - Plan mode selects read-only built-ins and interaction tools by name, blocks
   other tool calls before execution, requires approval, and restores captured
   available pre-plan names. Valid session state restores the mode on resume.
@@ -869,7 +875,29 @@ interface ChildPolicyV1 {
   readonly defaultExtensions: readonly string[]; readonly maxDepth: number;
   readonly termination: { readonly gracefulMs: number; readonly forcedMs: number };
 }
+
+interface ManagedChildAgentV1 {
+  readonly model: "host-managed-default";
+  readonly maxTurns: number; readonly maxToolCalls: number;
+  readonly workspace: "parent-read" | "parent-readwrite";
+  readonly tools: readonly string[]; readonly extensions: readonly string[];
+  readonly mcp: "none" | "read-only";
+}
+
+interface ManagedChildAgentCatalogV1 {
+  readonly reader: ManagedChildAgentV1;
+  readonly worker: ManagedChildAgentV1;
+}
 ```
+
+| Role | Budget | Workspace | Tools | Extensions / MCP |
+|---|---|---|---|---|
+| `reader` | 8 turns, 32 tool calls | Parent workspace read-only | `read`, `grep`, `find`, `ls`, `retrieve_tools`, `describe_tool`, `call_tool_read`, `read_cache` | Cavemem and MCP; read-only direct tools only |
+| `worker` | 12 turns, 64 tool calls | Parent workspace read-write | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | Cavemem; no MCP |
+
+Both roles inherit the host-managed default model and provider runtime contract,
+use the module-owned maximum depth, write artifacts only to the parent session,
+and receive no caller-controlled resource override.
 
 Root and child Pi are trusted credential consumers. Bash, background, LSP,
 Cavemem, status, and validation processes receive no provider credential value.
@@ -1047,7 +1075,7 @@ interface PiFullPrivacyPolicyV1 {
 | Extension | Load failure or unexpected tool surface | Stop before accepting a prompt | Fix package/config and validate again |
 | Capture privacy | Exact-value, canonical-envelope, private-region, or bounded-rule failure | Transport/store nothing; sticky value-free error | Repair bridge or redactor; retry the turn |
 | Capture storage/worker | SQLite limit, storage-policy failure, stale receipt, readiness mismatch, port conflict, or shutdown timeout | No partial row or false readiness; close owned resources with a value-free error | Repair storage or worker lifecycle; retry |
-| Child process | Cancellation or shutdown does not finish gracefully | Group TERM then group KILL | Report final process state and fail cleanup gate |
+| Child process | A registered process group does not finish cancellation or shutdown gracefully | Group TERM then group KILL | Report final process-group state and fail cleanup gate |
 
 Errors use component, resolver/rule kind, safe path, and recovery action only.
 Credential values, raw pre-redaction payloads, and materialized headers never
@@ -1090,6 +1118,8 @@ Residual accepted exposure:
 - Managed mode writes the current repository and Pi/Cavemem state.
 - Same-sandbox process signaling lets supervised sibling processes signal each
   other.
+- A child-created session or process group is outside the registered process
+  group's cleanup ownership.
 - A full redacted observation can approach SQLite's active maximum value length
   and is duplicated by FTS indexing.
 
@@ -1153,7 +1183,8 @@ Residual accepted exposure:
   ask-user, Plan name selection, call-time denial, restore/resume behavior, LSP
   apply gating, and background pipe/PTY lifecycle.
 - Run single, parallel, and chained sub-agents; reject async mode, verify child
-  extension ceilings and artifacts, then cancel and scan for orphan groups.
+  extension ceilings and artifacts, then cancel and scan registered groups for
+  surviving ordinary descendants.
 - Exercise Pi bridge prompts, successes, failures, parallel tools, resume, fork,
   compact, child attribution, later mutation, shutdown, and visible failures.
 - Keep Task 3.1's closed-envelope and default-mode golden tests byte-identical.
@@ -1185,7 +1216,8 @@ Residual accepted exposure:
 ### End-to-End Acceptance
 - Personal host: launch with a deterministic personal provider, complete one
   tool turn, query mcpproxy, capture/retrieve Cavemem events, delegate a child,
-  use plan mode, start/stop a PTY task, and exit with no orphan process.
+  use plan mode, start/stop a PTY task, and exit with no surviving owned process
+  group.
 - Shopify host: validate gateway preflight and every managed provider/model API
   mode with text, tools, reasoning, affinity, token failure, and context-limit
   cases; repeat the common runtime path under audit and enforced profiles.
