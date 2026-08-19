@@ -104,6 +104,45 @@ let
   npmDepsHash = "sha256-q7yPSmOAWfl3bwHr7U/YEjvIOOyIZbmr0rDnqlsnFTA=";
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-bSn4YVPB1qGfOAGXYzl9Oq3XmQ0G9rNCsk+coNgTFTM=";
+  managedExtensionOrder = [
+    "cavemem"
+    "mcp"
+    "subagents"
+    "plan"
+    "timestamps"
+    "bashTimeout"
+    "questions"
+    "codeIntelligence"
+    "backgroundTasks"
+  ];
+  managedExtensionLoaderContract = {
+    entryPath = "lib/pi-agent/extensions/managed-loader.ts";
+    discovery = {
+      extensions = false;
+      skills = false;
+      prompts = false;
+    };
+  };
+  managedExtensionContract = {
+    piVersion = upstream.version;
+    loader = managedExtensionLoaderContract;
+    extensionOrder = managedExtensionOrder;
+    extensions = final.lib.mapAttrs (_logicalName: extension: {
+      inherit (extension)
+        package
+        version
+        sourceRef
+        entryPath
+        license
+        ;
+    }) extensionInventory;
+  };
+  managedExtensionManifestSource = final.replaceVars ./extensions/managed-manifest.ts.in {
+    managedExtensionContract = builtins.toJSON managedExtensionContract;
+  };
+  managedExtensionTypecheckPackage = final.writeText "pi-managed-extension-package.json" (
+    builtins.toJSON { type = "module"; }
+  );
   managedSubagentCatalog = final.writeText "pi-agent-managed-subagents.json" (
     builtins.readFile ./extensions/managed-subagents.json
   );
@@ -187,6 +226,8 @@ let
         "bash-timeout/src/extension.ts"
         "cavemem/index.ts"
         "code-intelligence/src/extension.ts"
+        "managed-loader.ts"
+        "managed-manifest.ts"
         "mcpproxy/index.ts"
         "pi-subagents/src/managed-policy.ts"
         "plan-mode/src/index.ts"
@@ -369,6 +410,8 @@ let
     builtins.toJSON {
       schemaVersion = 1;
       piVersion = upstream.version;
+      loader = managedExtensionLoaderContract;
+      extensionOrder = managedExtensionOrder;
       extensions = final.lib.mapAttrs (_logicalName: extension: {
         inherit (extension) version entryPath license;
       }) extensionInventory;
@@ -641,6 +684,9 @@ in
         ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
         install -Dm444 ${cavememBridgeSource} "$typecheckDir/cavemem/index.ts"
         install -Dm444 ${./extensions/cavemem/package.json} "$typecheckDir/cavemem/package.json"
+        install -Dm444 ${./extensions/managed-loader.ts.in} "$typecheckDir/managed-loader.ts"
+        install -Dm444 ${managedExtensionManifestSource} "$typecheckDir/managed-manifest.ts"
+        install -Dm444 ${managedExtensionTypecheckPackage} "$typecheckDir/package.json"
         install -Dm444 ${./extensions/mcpproxy/index.ts} "$typecheckDir/mcpproxy/index.ts"
         install -Dm444 ${./extensions/mcpproxy/package.json} "$typecheckDir/mcpproxy/package.json"
         ln -s "$PWD/node_modules/pi-mcp-adapter" "$typecheckDir/pi-mcp-adapter"
@@ -689,6 +735,10 @@ in
           "$out/lib/pi-agent/extensions/mcpproxy/index.ts"
         install -Dm444 ${./extensions/mcpproxy/package.json} \
           "$out/lib/pi-agent/extensions/mcpproxy/package.json"
+        install -Dm444 ${./extensions/managed-loader.ts.in} \
+          "$out/lib/pi-agent/extensions/managed-loader.ts"
+        install -Dm444 ${managedExtensionManifestSource} \
+          "$out/lib/pi-agent/extensions/managed-manifest.ts"
 
         install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
         install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"
@@ -697,6 +747,10 @@ in
         install -Dm444 package-lock.json "$out/share/pi-agent/extensions-package-lock.json"
 
         install -Dm444 node_modules/pi-mcp-adapter/LICENSE \
+          "$out/share/licenses/pi-agent-extensions/mcpAdapter/LICENSE"
+        install -Dm444 ${./extensions/licenses/repository-LICENSE} \
+          "$out/share/licenses/pi-agent-extensions/cavemem/LICENSE"
+        install -Dm444 ${./extensions/licenses/repository-LICENSE} \
           "$out/share/licenses/pi-agent-extensions/mcp/LICENSE"
         install -Dm444 node_modules/@modelcontextprotocol/client/LICENSE \
           "$out/share/licenses/pi-agent-extensions/mcpClient/LICENSE"

@@ -3,15 +3,38 @@ import childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import {
+  PROVIDER_ENVIRONMENT_NAMES,
+  createProviderFreeEnvironment,
+} from "./fixtures/extension-manifest/subprocess-environment.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const extensionRoot = path.join(repoRoot, "overlays/pi-agent/extensions");
 const packagePath = path.join(extensionRoot, "package.json");
 const lockPath = path.join(extensionRoot, "package-lock.json");
 const expectedPiVersion = "0.83.0";
+const expectedExtensionOrder = [
+  "cavemem",
+  "mcp",
+  "subagents",
+  "plan",
+  "timestamps",
+  "bashTimeout",
+  "questions",
+  "codeIntelligence",
+  "backgroundTasks",
+];
+const expectedLoader = {
+  entryPath: "lib/pi-agent/extensions/managed-loader.ts",
+  discovery: {
+    extensions: false,
+    skills: false,
+    prompts: false,
+  },
+};
 const expectedExtensions = {
   cavemem: {
     package: "@dwsr/pi-cavemem-bridge",
@@ -175,15 +198,22 @@ const expectedBackgroundTypeDiagnostics = [
   "error TS2554: Expected 5 arguments, but got 4.",
   ...Array(3).fill("error TS2794: Expected 1 arguments, but got 0. Did you forget to include 'void' in your type argument to 'Promise'?"),
 ].sort();
+const subprocessRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-extension-package-processes-"));
+const subprocessEnvironment = createProviderFreeEnvironment(subprocessRoot);
 const commandOptions = {
   cwd: repoRoot,
   encoding: "utf8",
+  env: subprocessEnvironment,
   stdio: ["ignore", "pipe", "pipe"],
   timeout: 600_000,
 };
 
 let builtExtensionPath;
 let builtPiPath;
+
+after(() => {
+  fs.rmSync(subprocessRoot, { recursive: true, force: true });
+});
 
 function nixEvalJson(expression) {
   return JSON.parse(
@@ -352,6 +382,8 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
   assert.deepEqual(metadata.manifest, {
     schemaVersion: 1,
     piVersion: expectedPiVersion,
+    loader: expectedLoader,
+    extensionOrder: expectedExtensionOrder,
     extensions: expectedManifestExtensions,
   });
   assert.deepEqual(
@@ -377,6 +409,8 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     "bash-timeout/src/extension.ts",
     "cavemem/index.ts",
     "code-intelligence/src/extension.ts",
+    "managed-loader.ts",
+    "managed-manifest.ts",
     "mcpproxy/index.ts",
     "pi-subagents/src/managed-policy.ts",
     "plan-mode/src/index.ts",
@@ -405,6 +439,11 @@ test("built extension closure contains exact entries, licenses, and no commands 
 
   assert.equal(fs.existsSync(path.join(output, "bin")), false);
   assert.equal(fs.existsSync(path.join(output, "lib/node_modules/.bin")), false);
+  assert.equal(fs.statSync(path.join(output, expectedLoader.entryPath)).isFile(), true);
+  assert.equal(
+    fs.statSync(path.join(output, "lib/pi-agent/extensions/managed-manifest.ts")).isFile(),
+    true,
+  );
   assert.deepEqual(provenance.extensions, Object.fromEntries(
     Object.entries(expectedExtensions).map(([logicalName, extension]) => [
       logicalName,
@@ -737,6 +776,10 @@ test("built extension closure contains exact entries, licenses, and no commands 
   );
   assertMitText(
     path.join(output, "share/licenses/pi-agent-extensions/mcp/LICENSE"),
+    "@dwsr/pi-mcpproxy-adapter",
+  );
+  assertMitText(
+    path.join(output, "share/licenses/pi-agent-extensions/mcpAdapter/LICENSE"),
     "pi-mcp-adapter",
   );
   assertMitText(
@@ -766,6 +809,22 @@ test("built extension closure contains exact entries, licenses, and no commands 
     path.join(output, "share/licenses/pi-agent-extensions/nodePty/LICENSE"),
     "node-pty",
   );
+});
+
+test("Task 4.12 implementation leaves no feature seam", () => {
+  const overlay = fs.readFileSync(path.join(repoRoot, "overlays/pi-agent/default.nix"), "utf8");
+  assert.doesNotMatch(
+    overlay,
+    /task412ExactExtensionLoader|PI_AGENT_TASK_4_12|EXACT_MANAGED_LOADER_ENABLED/,
+  );
+  assert.doesNotMatch(overlay, /beforeAgentStartCancelPatch|pi-before-agent-start-cancel\.patch/);
+  assert.equal(
+    fs.existsSync(path.join(repoRoot, "overlays/pi-agent/pi-before-agent-start-cancel.patch")),
+    false,
+  );
+  for (const name of PROVIDER_ENVIRONMENT_NAMES) {
+    assert.equal(name in subprocessEnvironment, false, `${name} reached a Task 4.12 subprocess`);
+  }
 });
 
 test("patched extensions typecheck against the exact Pi dependency declarations", () => {
@@ -917,6 +976,7 @@ test("built closure supports one pipe spawn and one real Darwin PTY spawn", asyn
   const pipe = childProcess.spawnSync("/bin/sh", ["-c", "printf pi-extension-pipe-ok"], {
     cwd: output,
     encoding: "utf8",
+    env: subprocessEnvironment,
     stdio: ["ignore", "pipe", "pipe"],
   });
   assert.equal(pipe.status, 0, pipe.stderr);
@@ -928,7 +988,7 @@ test("built closure supports one pipe spawn and one real Darwin PTY spawn", asyn
     const terminal = pty.spawn("/bin/sh", ["-c", "printf pi-extension-pty-ok"], {
       cols: 80,
       cwd: output,
-      env: { PATH: "/usr/bin:/bin" },
+      env: { ...subprocessEnvironment, PATH: "/usr/bin:/bin" },
       name: "xterm-color",
       rows: 24,
     });

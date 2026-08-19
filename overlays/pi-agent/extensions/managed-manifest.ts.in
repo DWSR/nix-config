@@ -1,0 +1,430 @@
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const EXPECTED_CONTRACT = @managedExtensionContract@ as const;
+const STORE_ROOT = /^\/nix\/store\/[0-9a-z]{32}-[^/]+$/;
+const RECOVERY = "rebuild pi-agent-extensions and activate the managed generation";
+
+export type ManagedExtensionFailureKind =
+  | "duplicate"
+  | "forbidden"
+  | "incompatible"
+  | "load"
+  | "malformed"
+  | "missing"
+  | "non-file"
+  | "path"
+  | "reordered"
+  | "surface"
+  | "unexpected";
+
+export class ManagedExtensionError extends Error {
+  readonly component: string;
+  readonly kind: ManagedExtensionFailureKind;
+  readonly recovery = RECOVERY;
+
+  constructor(kind: ManagedExtensionFailureKind, component: string) {
+    super(`Managed ${component} failed (${kind}). Recovery: ${RECOVERY}.`);
+    this.name = "ManagedExtensionError";
+    this.component = component;
+    this.kind = kind;
+  }
+}
+
+interface ManifestEntry {
+  readonly entryPath: string;
+  readonly license: string;
+  readonly version: string;
+}
+
+interface ProvenanceEntry {
+  readonly package: string;
+  readonly sourceRef: string;
+  readonly version: string;
+}
+
+interface ResolvedEntry extends ManifestEntry, ProvenanceEntry {
+  readonly absoluteEntryPath: string;
+  readonly logicalName: string;
+}
+
+export interface ResolvedManagedExtensionPackage {
+  readonly entries: readonly ResolvedEntry[];
+  readonly extensionOrder: readonly string[];
+  readonly loaderEntryPath: string;
+  readonly packageRoot: string;
+  readonly piVersion: string;
+}
+
+export interface ManagedExtensionPackageInput {
+  readonly manifest: unknown;
+  readonly packageRoot: string;
+  readonly provenance: unknown;
+}
+
+function fail(kind: ManagedExtensionFailureKind, component = "extension manifest"): never {
+  throw new ManagedExtensionError(kind, component);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+function hasExactKeys(value: unknown, expected: readonly string[]): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return actual.length === sortedExpected.length
+    && actual.every((key, index) => key === sortedExpected[index]);
+}
+
+function sameValues(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isInside(root: string, target: string): boolean {
+  const relative = path.relative(root, target);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function canonicalRelativePath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && !path.posix.isAbsolute(value)
+    && !value.includes("\\")
+    && !value.includes("\0")
+    && path.posix.normalize(value) === value
+    && !value.split("/").some((segment) => segment === "" || segment === "." || segment === "..");
+}
+
+function resolveRegularFile(
+  packageRoot: string,
+  relativePath: unknown,
+  component: string,
+): string {
+  if (!canonicalRelativePath(relativePath)) fail("path", component);
+  const candidate = path.resolve(packageRoot, relativePath);
+  if (!isInside(packageRoot, candidate)) fail("path", component);
+
+  let stat;
+  try {
+    stat = lstatSync(candidate);
+  } catch {
+    fail("missing", component);
+  }
+  if (!stat.isFile()) fail("non-file", component);
+
+  let realTarget: string;
+  try {
+    realTarget = realpathSync.native(candidate);
+  } catch {
+    fail("missing", component);
+  }
+  if (!isInside(packageRoot, realTarget)) fail("path", component);
+  return realTarget;
+}
+
+function inventoryStrings(manifest: Record<string, unknown>, provenance: Record<string, unknown>): string[] {
+  const values: string[] = [];
+  const order = manifest.extensionOrder;
+  if (Array.isArray(order)) {
+    for (const value of order) if (typeof value === "string") values.push(value);
+  }
+  for (const collection of [manifest.extensions, provenance.extensions]) {
+    if (!isRecord(collection)) continue;
+    for (const [name, entry] of Object.entries(collection)) {
+      values.push(name);
+      if (!isRecord(entry)) continue;
+      for (const value of Object.values(entry)) if (typeof value === "string") values.push(value);
+    }
+  }
+  return values;
+}
+
+function hasForbiddenSurface(values: readonly string[]): boolean {
+  return values.some((value) => {
+    const lower = value.toLowerCase();
+    const compact = lower.replaceAll("_", "").replaceAll("-", "");
+    return compact.includes("sieve")
+      || compact.includes("telemetry")
+      || compact.includes("analytics")
+      || compact.includes("codeexecution")
+      || compact.includes("packagemanager")
+      || compact.includes("mutableinstaller")
+      || lower === "pi-mcp-adapter"
+      || lower.includes("/pi-mcp-adapter/")
+      || lower.includes("@earendil-works/pi-agent-core")
+      || lower.includes("@earendil-works/pi-ai")
+      || lower.includes("@earendil-works/pi-coding-agent")
+      || lower.includes("@earendil-works/pi-tui");
+  });
+}
+
+function validateNoNestedPiRuntime(packageRoot: string): void {
+  const nodeModules = path.join(packageRoot, "lib/node_modules");
+  const pending = [nodeModules];
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    if (directory === undefined) break;
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      fail("missing", "extension package");
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const child = path.join(directory, entry.name);
+      const relative = path.relative(nodeModules, child).replaceAll(path.sep, "/");
+      if (/^(?:.*\/node_modules\/)?@earendil-works\/pi-(?:agent-core|ai|coding-agent|tui)$/u.test(relative)) {
+        fail("forbidden", "extension package");
+      }
+      pending.push(child);
+    }
+  }
+  try {
+    lstatSync(path.join(nodeModules, ".bin"));
+    fail("forbidden", "extension package");
+  } catch (error) {
+    if (error instanceof ManagedExtensionError) throw error;
+  }
+}
+
+function packageDirectory(packageRoot: string, packageName: string, sourceRef: string, entryPath: string): string {
+  if (sourceRef === "repository") return path.dirname(entryPath);
+  return path.join(packageRoot, "lib/node_modules", ...packageName.split("/"));
+}
+
+function readPackageJson(directory: string, component: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(readFileSync(path.join(directory, "package.json"), "utf8"));
+    if (!isRecord(value)) fail("incompatible", component);
+    return value;
+  } catch (error) {
+    if (error instanceof ManagedExtensionError) throw error;
+    fail("missing", component);
+  }
+}
+
+function validateMitLicense(packageRoot: string, logicalName: string, component: string): void {
+  let text: string;
+  try {
+    text = readFileSync(
+      path.join(packageRoot, "share/licenses/pi-agent-extensions", logicalName, "LICENSE"),
+      "utf8",
+    );
+  } catch {
+    fail("missing", component);
+  }
+  if (!text.includes("Permission is hereby granted, free of charge") || !text.includes('THE SOFTWARE IS PROVIDED "AS IS"')) {
+    fail("incompatible", component);
+  }
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value as Record<string, unknown>)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtensionPackage {
+  if (typeof input.packageRoot !== "string" || !STORE_ROOT.test(input.packageRoot)) {
+    fail("path", "extension package");
+  }
+  let packageRoot: string;
+  try {
+    if (!lstatSync(input.packageRoot).isDirectory()) fail("non-file", "extension package");
+    packageRoot = realpathSync.native(input.packageRoot);
+  } catch (error) {
+    if (error instanceof ManagedExtensionError) throw error;
+    fail("missing", "extension package");
+  }
+  if (packageRoot !== input.packageRoot || !STORE_ROOT.test(packageRoot)) {
+    fail("path", "extension package");
+  }
+
+  if (!hasExactKeys(input.manifest, [
+    "schemaVersion",
+    "piVersion",
+    "loader",
+    "extensionOrder",
+    "extensions",
+  ])) {
+    fail("malformed");
+  }
+  if (!hasExactKeys(input.provenance, [
+    "schemaVersion",
+    "extensions",
+    "patches",
+    "runtimeDependencies",
+  ])) {
+    fail("malformed");
+  }
+  const manifest = input.manifest;
+  const provenance = input.provenance;
+  if (
+    manifest.schemaVersion !== 1
+    || provenance.schemaVersion !== 1
+    || manifest.piVersion !== EXPECTED_CONTRACT.piVersion
+  ) {
+    fail("incompatible");
+  }
+  if (
+    !hasExactKeys(manifest.loader, ["entryPath", "discovery"])
+    || !hasExactKeys(manifest.loader.discovery, ["extensions", "skills", "prompts"])
+  ) {
+    fail("malformed");
+  }
+  if (
+    manifest.loader.entryPath !== EXPECTED_CONTRACT.loader.entryPath
+    || manifest.loader.discovery.extensions !== false
+    || manifest.loader.discovery.skills !== false
+    || manifest.loader.discovery.prompts !== false
+  ) {
+    fail("incompatible");
+  }
+  const loaderEntryPath = resolveRegularFile(
+    packageRoot,
+    manifest.loader.entryPath,
+    "extension manifest",
+  );
+
+  if (!isRecord(manifest.extensions) || !isRecord(provenance.extensions)) fail("malformed");
+  if (hasForbiddenSurface(inventoryStrings(manifest, provenance))) fail("forbidden");
+
+  const expectedNames = [...EXPECTED_CONTRACT.extensionOrder];
+  const manifestNames = Object.keys(manifest.extensions);
+  const provenanceNames = Object.keys(provenance.extensions);
+  for (const name of expectedNames) {
+    if (!manifestNames.includes(name) || !provenanceNames.includes(name)) {
+      fail("missing", `extension ${name}`);
+    }
+  }
+  for (const names of [manifestNames, provenanceNames]) {
+    if (names.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
+  }
+  if (!Array.isArray(manifest.extensionOrder) || !manifest.extensionOrder.every((name) => typeof name === "string")) {
+    fail("malformed");
+  }
+  const extensionOrder = manifest.extensionOrder as string[];
+  if (new Set(extensionOrder).size !== extensionOrder.length) fail("duplicate");
+  const missingOrderedName = expectedNames.find((name) => !extensionOrder.includes(name));
+  if (missingOrderedName !== undefined) fail("missing", `extension ${missingOrderedName}`);
+  if (extensionOrder.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
+  if (!sameValues(extensionOrder, expectedNames)) fail("reordered");
+
+  const packageNames: string[] = [];
+  const entryPaths: string[] = [];
+  for (const name of expectedNames) {
+    const provenanceEntry = provenance.extensions[name];
+    const manifestEntry = manifest.extensions[name];
+    if (!hasExactKeys(manifestEntry, ["version", "entryPath", "license"])) fail("malformed", `extension ${name}`);
+    if (!hasExactKeys(provenanceEntry, ["package", "version", "sourceRef"])) fail("malformed", `extension ${name}`);
+    if (typeof manifestEntry.entryPath === "string") entryPaths.push(manifestEntry.entryPath);
+    if (typeof provenanceEntry.package === "string") packageNames.push(provenanceEntry.package);
+  }
+  if (new Set(packageNames).size !== packageNames.length || new Set(entryPaths).size !== entryPaths.length) {
+    fail("duplicate");
+  }
+
+  const entries: ResolvedEntry[] = [];
+  for (const logicalName of expectedNames) {
+    const component = `extension ${logicalName}`;
+    const manifestEntry = manifest.extensions[logicalName] as unknown as ManifestEntry;
+    const provenanceEntry = provenance.extensions[logicalName] as unknown as ProvenanceEntry;
+    const absoluteEntryPath = resolveRegularFile(
+      packageRoot,
+      manifestEntry.entryPath,
+      component,
+    );
+    const expected = EXPECTED_CONTRACT.extensions[logicalName];
+    if (
+      manifestEntry.version !== expected.version
+      || manifestEntry.entryPath !== expected.entryPath
+      || manifestEntry.license !== expected.license
+      || provenanceEntry.package !== expected.package
+      || provenanceEntry.version !== expected.version
+      || provenanceEntry.sourceRef !== expected.sourceRef
+    ) {
+      fail("incompatible", component);
+    }
+
+    const expectedPackageDirectory = packageDirectory(
+      packageRoot,
+      expected.package,
+      expected.sourceRef,
+      absoluteEntryPath,
+    );
+    let realPackageDirectory: string;
+    try {
+      realPackageDirectory = realpathSync.native(expectedPackageDirectory);
+    } catch {
+      fail("missing", component);
+    }
+    if (!isInside(realPackageDirectory, absoluteEntryPath)) fail("path", component);
+    const packageJson = readPackageJson(realPackageDirectory, component);
+    if (
+      packageJson.name !== expected.package
+      || packageJson.version !== expected.version
+      || packageJson.license !== expected.license
+    ) {
+      fail("incompatible", component);
+    }
+    validateMitLicense(packageRoot, logicalName, component);
+    entries.push({
+      absoluteEntryPath,
+      entryPath: manifestEntry.entryPath,
+      license: manifestEntry.license,
+      logicalName,
+      package: provenanceEntry.package,
+      sourceRef: provenanceEntry.sourceRef,
+      version: manifestEntry.version,
+    });
+  }
+
+  validateNoNestedPiRuntime(packageRoot);
+  return deepFreeze({
+    entries,
+    extensionOrder: [...extensionOrder],
+    loaderEntryPath: path.relative(packageRoot, loaderEntryPath).replaceAll(path.sep, "/"),
+    packageRoot,
+    piVersion: manifest.piVersion as string,
+  });
+}
+
+export function validateManagedExtensionPackage(
+  input: ManagedExtensionPackageInput,
+): ResolvedManagedExtensionPackage {
+  try {
+    return validate(input);
+  } catch (error) {
+    if (error instanceof ManagedExtensionError) throw error;
+    fail("malformed");
+  }
+}
+
+export function loadManagedExtensionPackage(): ResolvedManagedExtensionPackage {
+  const packageRoot = realpathSync.native(fileURLToPath(new URL("../../../", import.meta.url)));
+  let manifest: unknown;
+  let provenance: unknown;
+  try {
+    manifest = JSON.parse(readFileSync(path.join(packageRoot, "share/pi-agent/extensions.json"), "utf8"));
+    provenance = JSON.parse(
+      readFileSync(path.join(packageRoot, "share/pi-agent/extensions-provenance.json"), "utf8"),
+    );
+  } catch {
+    fail("malformed");
+  }
+  return validateManagedExtensionPackage({ manifest, packageRoot, provenance });
+}

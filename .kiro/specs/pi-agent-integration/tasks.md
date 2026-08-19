@@ -348,7 +348,7 @@
   - _Boundary: Extension Runtime — Background_
   - _Depends: 4.10_
 
-- [ ] 4.12 Assemble the exact extension manifest and load order
+- [x] 4.12 Assemble the exact extension manifest and load order
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
   - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
@@ -454,7 +454,7 @@
 
 - [ ] 5.9 Execute the final managed Pi surface exactly once
   - Reject install, remove, uninstall, and binary-update commands before Pi receives arguments.
-  - Disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
+  - Reject explicit extension, skill, prompt, and package paths; disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
   - Clear sub-agent binary overrides so children use the underlying managed Pi runtime inside the same sandbox.
   - Export the immutable managed timeout binding to root and foreground child Pi, execute Bash through the reconciled managed shell path, and keep that binding out of the model-controlled shell environment.
   - Export the managed `CAVEMEM_DATA_DIR` before invoking Pi so hook and mcpproxy search paths share one store.
@@ -649,3 +649,4 @@
 - Task 5.2: Embed and digest the closed execution plan; bound resolver streams while reading, kill the detached group on failure, and never echo output.
 - Task 5.3: Keep runtime secrets outside the handoff API; validate raw URL authority before WHATWG normalization and treat backslash as a path delimiter.
 - Task 5.4: Host-default disabled is not rollback; disabled rejects profile/listen overrides, and ports use canonical comma-separated decimals.
+- Task 4.12: Pi 0.83 has no public exclusive-loader or cancellable final pre-model hook; the approved boundary remains trusted and closed, with explicit extra-extension rejection owned by Task 5.9.

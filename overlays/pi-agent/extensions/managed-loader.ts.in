@@ -1,0 +1,224 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+  getPackageDir,
+  VERSION,
+  type ExtensionAPI,
+  type ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import {
+  ManagedExtensionError,
+  loadManagedExtensionPackage,
+} from "./managed-manifest.ts";
+
+type ManagedFactory = (pi: ExtensionAPI) => Promise<void> | void;
+
+interface ManagedJiti {
+  import(id: string): Promise<unknown>;
+}
+
+interface ManagedMcpSurface {
+  readonly directToolNames: readonly string[];
+  readonly validate: (
+    toolNames: readonly string[],
+    allowedUnrelatedToolNames: readonly string[],
+  ) => readonly string[];
+}
+
+interface ManagedRegistration {
+  readonly logicalName: string;
+  readonly toolName: string;
+}
+
+function managedUnrelatedToolNames(
+  registrations: readonly ManagedRegistration[],
+  directToolNames: ReadonlySet<string>,
+): string[] {
+  return registrations
+    .filter(({ logicalName, toolName }) => logicalName !== "mcp" && !directToolNames.has(toolName))
+    .map(({ toolName }) => toolName);
+}
+
+function validateDirectSurface(
+  toolNames: readonly string[],
+  allowedUnrelatedToolNames: readonly string[],
+  registrations: readonly ManagedRegistration[],
+  mcpSurface: ManagedMcpSurface,
+): void {
+  const directToolNames = new Set<string>(mcpSurface.directToolNames);
+  const directCounts = new Map<string, number>();
+  const directOwners = new Map<string, Set<string>>();
+  for (const registration of registrations) {
+    if (!directToolNames.has(registration.toolName)) continue;
+    directCounts.set(registration.toolName, (directCounts.get(registration.toolName) ?? 0) + 1);
+    const owners = directOwners.get(registration.toolName) ?? new Set<string>();
+    owners.add(registration.logicalName);
+    directOwners.set(registration.toolName, owners);
+  }
+
+  mcpSurface.validate(toolNames, allowedUnrelatedToolNames);
+  if (mcpSurface.directToolNames.some((name) => {
+    const owners = directOwners.get(name);
+    return directCounts.get(name) !== 1 || owners?.size !== 1 || !owners.has("mcp");
+  })) {
+    throw new Error("managed MCP registration ownership mismatch");
+  }
+}
+
+function managedJitiAliases(): Record<string, string> {
+  const piPackage = getPackageDir();
+  const nodeModules = path.resolve(piPackage, "../..");
+  const packagePath = (packageName: string, ...segments: string[]) => path.join(
+    nodeModules,
+    ...packageName.split("/"),
+    ...segments,
+  );
+  const piCodingAgent = path.join(piPackage, "index.js");
+  const piAgentCore = packagePath("@earendil-works/pi-agent-core", "dist/index.js");
+  const piTui = packagePath("@earendil-works/pi-tui", "index.js");
+  const piAiCompat = packagePath("@earendil-works/pi-ai", "compat.js");
+  const piAiOauth = packagePath("@earendil-works/pi-ai", "oauth.js");
+  const piAiProviders = packagePath("@earendil-works/pi-ai", "providers/all.js");
+  const typebox = packagePath("typebox", "build/index.mjs");
+  const typeboxCompile = packagePath("typebox", "build/compile/index.mjs");
+  const typeboxValue = packagePath("typebox", "build/value/index.mjs");
+  const aliases = {
+    "@earendil-works/pi-coding-agent": piCodingAgent,
+    "@earendil-works/pi-agent-core": piAgentCore,
+    "@earendil-works/pi-tui": piTui,
+    "@earendil-works/pi-ai/providers/all": piAiProviders,
+    "@earendil-works/pi-ai/compat": piAiCompat,
+    "@earendil-works/pi-ai/oauth": piAiOauth,
+    "@earendil-works/pi-ai": piAiCompat,
+    "@mariozechner/pi-coding-agent": piCodingAgent,
+    "@mariozechner/pi-agent-core": piAgentCore,
+    "@mariozechner/pi-tui": piTui,
+    "@mariozechner/pi-ai/providers/all": piAiProviders,
+    "@mariozechner/pi-ai/compat": piAiCompat,
+    "@mariozechner/pi-ai/oauth": piAiOauth,
+    "@mariozechner/pi-ai": piAiCompat,
+    "@sinclair/typebox/compile": typeboxCompile,
+    "@sinclair/typebox/value": typeboxValue,
+    "@sinclair/typebox": typebox,
+    "typebox/compile": typeboxCompile,
+    "typebox/value": typeboxValue,
+    typebox,
+  };
+  return aliases;
+}
+
+async function createManagedJiti(): Promise<ManagedJiti> {
+  const piNodeModules = path.resolve(getPackageDir(), "../..");
+  const jitiModule: unknown = await import(
+    pathToFileURL(path.join(piNodeModules, "jiti/lib/jiti.mjs")).href
+  );
+  if (jitiModule === null || typeof jitiModule !== "object") throw new Error("invalid Jiti module");
+  const createJiti = Reflect.get(jitiModule, "createJiti");
+  if (typeof createJiti !== "function") throw new Error("invalid Jiti factory");
+  return createJiti(import.meta.url, {
+    alias: managedJitiAliases(),
+    moduleCache: false,
+  }) as ManagedJiti;
+}
+
+function readManagedModule(
+  value: unknown,
+  logicalName: string,
+): { factory: ManagedFactory; mcpSurface?: ManagedMcpSurface } {
+  if (value === null || (typeof value !== "object" && typeof value !== "function")) {
+    throw new Error("invalid extension module");
+  }
+  const factory = Reflect.get(value, "default");
+  if (typeof factory !== "function") throw new Error("invalid extension factory");
+  if (logicalName !== "mcp") return { factory: factory as ManagedFactory };
+
+  const directToolNames = Reflect.get(value, "MCPPROXY_DIRECT_TOOL_NAMES");
+  const validate = Reflect.get(value, "validateManagedMcpSurface");
+  if (
+    !Array.isArray(directToolNames)
+    || directToolNames.length === 0
+    || directToolNames.some((name) => typeof name !== "string" || name.length === 0)
+    || new Set(directToolNames).size !== directToolNames.length
+    || typeof validate !== "function"
+  ) {
+    throw new Error("invalid managed MCP exports");
+  }
+  return {
+    factory: factory as ManagedFactory,
+    mcpSurface: {
+      directToolNames: Object.freeze([...directToolNames] as string[]),
+      validate: validate as ManagedMcpSurface["validate"],
+    },
+  };
+}
+
+function trackedApi(
+  pi: ExtensionAPI,
+  logicalName: string,
+  registrations: ManagedRegistration[],
+): ExtensionAPI {
+  return new Proxy(pi, {
+    get(target, property, receiver) {
+      if (property === "registerTool") {
+        return (definition: ToolDefinition) => {
+          registrations.push({ logicalName, toolName: definition.name });
+          return target.registerTool(definition);
+        };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+export default async function managedExtensionLoader(pi: ExtensionAPI): Promise<void> {
+  const registrations: ManagedRegistration[] = [];
+  let mcpSurface: ManagedMcpSurface | undefined;
+  let extensionPackage: ReturnType<typeof loadManagedExtensionPackage>;
+  try {
+    extensionPackage = loadManagedExtensionPackage();
+  } catch (error) {
+    if (error instanceof ManagedExtensionError) throw error;
+    throw new ManagedExtensionError("malformed", "extension manifest");
+  }
+  if (extensionPackage.piVersion !== VERSION) {
+    throw new ManagedExtensionError("incompatible", "extension manifest");
+  }
+
+  let jiti: ManagedJiti;
+  try {
+    jiti = await createManagedJiti();
+  } catch {
+    throw new ManagedExtensionError("load", "extension loader");
+  }
+
+  for (const entry of extensionPackage.entries) {
+    let extensionModule: ReturnType<typeof readManagedModule>;
+    try {
+      extensionModule = readManagedModule(
+        await jiti.import(entry.absoluteEntryPath),
+        entry.logicalName,
+      );
+    } catch {
+      throw new ManagedExtensionError("load", `extension ${entry.logicalName}`);
+    }
+    if (extensionModule.mcpSurface) mcpSurface = extensionModule.mcpSurface;
+    try {
+      await extensionModule.factory(trackedApi(pi, entry.logicalName, registrations));
+    } catch {
+      throw new ManagedExtensionError("load", `extension ${entry.logicalName}`);
+    }
+  }
+
+  if (!mcpSurface) throw new ManagedExtensionError("load", "extension mcp");
+  const directToolNames = new Set<string>(mcpSurface.directToolNames);
+  try {
+    validateDirectSurface(
+      registrations.map(({ toolName }) => toolName),
+      managedUnrelatedToolNames(registrations, directToolNames),
+      registrations,
+      mcpSurface,
+    );
+  } catch {
+    throw new ManagedExtensionError("surface", "extension MCP surface");
+  }
+}
