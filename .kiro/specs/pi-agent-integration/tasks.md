@@ -421,6 +421,7 @@
   - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8, 12.4, 13.7_
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
   - _Depends: 2.5, 3.7, 3.9, 4.2, 4.9, 4.11, 4.12, 4.13, 5.1, 5.3, 5.4_
+  - _Blocked: debug attempted twice, still failing — the review parser is not provenance-bound to the runtime Pi 0.83.0 package, and its evaluated language permits constructor-chain global recovery._
 
 - [ ] 5.6 Implement redacted managed status
   - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
@@ -467,7 +468,7 @@
 
 - [ ] 6. Wire the common module and both hosts
 
-- [ ] 6.1 Render Pi instructions, operator help, and exception guidance
+- [x] 6.1 Render Pi instructions, operator help, and exception guidance
   - Compose Pi-specific memory startup, mcpproxy discover-then-invoke, package, plan, subprocess, and rollback rules from current common contracts.
   - Exclude OpenCode-only commands and describe the six live direct MCP tools.
   - Render provider setup, managed status, sandbox overrides, configuration recovery, extension updates, and rollback help.
@@ -650,3 +651,4 @@
 - Task 5.3: Keep runtime secrets outside the handoff API; validate raw URL authority before WHATWG normalization and treat backslash as a path delimiter.
 - Task 5.4: Host-default disabled is not rollback; disabled rejects profile/listen overrides, and ports use canonical comma-separated decimals.
 - Task 4.12: Pi 0.83 has no public exclusive-loader or cancellable final pre-model hook; the approved boundary remains trusted and closed, with explicit extra-extension rejection owned by Task 5.9.
+- Task 5.5: A self-digested extracted parser is insufficient; bind parser generation to reviewed runtime-Pi provenance and reject constructor metaprogramming/source directives before evaluation.

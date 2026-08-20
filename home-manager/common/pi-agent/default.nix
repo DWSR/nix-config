@@ -12,6 +12,7 @@ let
     shellPath = credentialPolicy.shellExecutable;
   };
   profileCatalogRenderer = import ./profiles.nix { inherit lib pkgs; };
+  guidance = import ./guidance.nix { inherit pkgs; };
 
   extensionNames = [
     "cavemem"
@@ -399,6 +400,7 @@ in
               shopifyProviderHandoff =
                 if config.enable then renderedManagedArtifacts.shopifyProviderHandoff else null;
               sandboxCatalog = if config.enable then profileCatalogRenderer.package else null;
+              guidancePackage = if config.enable then guidance.package else null;
             };
           }
         )
@@ -619,6 +621,12 @@ in
           internal = true;
           readOnly = true;
           description = "Immutable standalone Pi nono profile catalog package.";
+        };
+        internal.guidancePackage = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable Pi instructions and operator guidance package.";
         };
       };
     };
