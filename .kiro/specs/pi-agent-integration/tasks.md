@@ -359,7 +359,7 @@
   - _Boundary: Package Set, Extension Runtime — Integration_
   - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.6, 4.7, 4.9, 4.11_
 
-- [ ] 4.13 Verify Plan controls with the assembled manifest
+- [x] 4.13 Verify Plan controls with the assembled manifest
   - Load the complete managed manifest and register every custom tool before entering Plan mode.
   - Verify Plan selects its six managed names and reports denial of mutation, background, sub-agent, MCP-mutation, and refactor-apply calls before side effects.
   - Verify completed-plan presentation, approval, explicit exit, cancellation, unavailable-name restoration, valid resume, and invalid-state fallback.
