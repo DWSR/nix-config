@@ -249,6 +249,36 @@ in
         default = false;
         description = "Automatically hide the Deskflow GUI window on start (`gui/autoHide`).";
       };
+
+      enableUpdateCheck = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Check for Deskflow updates on startup (`gui/enableUpdateCheck`). Setting this explicitly avoids the first-run update-check prompt.";
+      };
+
+      closeReminder = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Show the reminder that Deskflow continues running after its window closes (`gui/closeReminder`).";
+      };
+
+      showGenericClientFailureDialog = mkOption {
+        type = types.bool;
+        default = false;
+        description = "Show modal client connection warnings, including the generic TLS/firewall warning (`gui/showGenericClientFailureDialog`).";
+      };
+
+      shownFirstConnectedMessage = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Record that Deskflow's first-connected modal has already been shown (`gui/shownFirstConnectedMessage`).";
+      };
+
+      shownServerFirstStartMessage = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Record that Deskflow's first server-start modal has already been shown (`gui/shownServerFirstStartMessage`).";
+      };
     };
 
     client = {

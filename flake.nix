@@ -1398,6 +1398,11 @@
                   startCoreWithGui = true;
                   closeToTray = true;
                   autoHide = false;
+                  enableUpdateCheck = false;
+                  closeReminder = false;
+                  showGenericClientFailureDialog = false;
+                  shownFirstConnectedMessage = true;
+                  shownServerFirstStartMessage = true;
                 };
                 client = {
                   remoteHost = "myserver";
@@ -1459,6 +1464,17 @@
               serverLayout = (renderDeskflow serverFix).serverConfig;
               trustOut = (renderDeskflow trustedFpFix).trustText;
 
+              modalSuppressionLines = [
+                "enableUpdateCheck=false"
+                "closeReminder=false"
+                "showGenericClientFailureDialog=false"
+                "shownFirstConnectedMessage=true"
+                "shownServerFirstStartMessage=true"
+              ];
+              missingModalSuppressionLines = lib.filter (
+                line: !lib.hasInfix line clientSettings
+              ) modalSuppressionLines;
+
               # Empty-value guard (Req 7.3): a curated key rendered with no value
               # is a run of non-`=` chars followed by a trailing `=` and nothing
               # else (`key=`). `coreMode=1`, section headers, and blank lines do
@@ -1479,6 +1495,8 @@
                   "deskflow-render: client settings must contain coreMode=1 (client mode, Req 7.1).";
                 assert lib.assertMsg (lib.hasInfix ''remoteHost="myserver"'' clientSettings)
                   ''deskflow-render: client settings must contain a quoted remoteHost="myserver" (design deskflow-render bullet).'';
+                assert lib.assertMsg (missingModalSuppressionLines == [ ])
+                  "deskflow-render: client settings must contain all modal-suppression lines; missing [ ${lib.concatStringsSep ", " missingModalSuppressionLines} ].";
                 assert lib.assertMsg (lib.hasInfix "section: screens" serverLayout)
                   "deskflow-render: server layout must contain 'section: screens' (Req 7.2).";
                 assert lib.assertMsg (lib.hasInfix "deskhub" serverLayout)
@@ -1499,6 +1517,7 @@
                 ''
                   deskflow-render fixtures asserted:
                     client : coreMode=1 + quoted remoteHost
+                    modals : update, close, connection-error, first-connected, and first-server-start dialogs suppressed
                     server : ordered section: screens (deskhub, laptop) + section: links (right = laptop)
                     guard  : no empty-valued curated key lines
                     trust  : v2:sha256:<hex> line present
@@ -1544,6 +1563,7 @@
                       hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
                       cfg = hm.home.deskflow;
                       settings = hm.home.file."Library/Deskflow/Deskflow.conf".text;
+                      missingModalSuppressionLines = lib.filter (line: !lib.hasInfix line settings) modalSuppressionLines;
                     in
                     assert lib.assertMsg cfg.enable
                       "deskflow host-wiring: ${hostName} must have home.deskflow.enable=true (Req 6.1).";
@@ -1553,6 +1573,8 @@
                       "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain tlsEnabled=true (Req 7.1).";
                     assert lib.assertMsg (lib.hasInfix "port=24800" settings)
                       "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain port=24800 (Req 7.1).";
+                    assert lib.assertMsg (missingModalSuppressionLines == [ ])
+                      "deskflow host-wiring: ${hostName} Deskflow.conf must contain all modal-suppression lines; missing [ ${lib.concatStringsSep ", " missingModalSuppressionLines} ].";
                     if expectedRole == "client" then
                       let
                         trustText = hm.home.file."Library/Deskflow/tls/trusted-servers".text;

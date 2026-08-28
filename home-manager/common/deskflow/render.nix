@@ -98,6 +98,11 @@ let
     (kv "startCoreWithGui" cfg.gui.startCoreWithGui)
     (kv "closeToTray" cfg.gui.closeToTray)
     (kv "autoHide" cfg.gui.autoHide)
+    (kv "enableUpdateCheck" cfg.gui.enableUpdateCheck)
+    (kv "closeReminder" cfg.gui.closeReminder)
+    (kv "showGenericClientFailureDialog" cfg.gui.showGenericClientFailureDialog)
+    (kv "shownFirstConnectedMessage" cfg.gui.shownFirstConnectedMessage)
+    (kv "shownServerFirstStartMessage" cfg.gui.shownServerFirstStartMessage)
   ];
 
   # client/remoteHost: when unset (""), omit the key and emit a commented
