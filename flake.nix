@@ -539,6 +539,28 @@
                 inherit pkgs;
                 inherit (inputs) home-manager;
               };
+              timezoneMenubarTimezones = [
+                {
+                  label = "Toronto";
+                  timeZone = "America/Toronto";
+                }
+                {
+                  label = "UTC";
+                  timeZone = "Etc/UTC";
+                }
+                {
+                  label = "Vancouver";
+                  timeZone = "America/Vancouver";
+                }
+              ];
+              timezoneMenubarContribution = import ./home-manager/common/hammerspoon-timezone-menubar/render.nix timezoneMenubarTimezones;
+              timezoneMenubarRenderTest = import ./tests/hammerspoon-timezone-menubar/render.test.nix {
+                inherit pkgs;
+              };
+              timezoneMenubarModuleTest = import ./tests/hammerspoon-timezone-menubar/module.test.nix {
+                inherit pkgs;
+                inherit (inputs) home-manager;
+              };
               renderDeskflowWatchdog = import ./home-manager/common/hammerspoon-deskflow-watchdog/render.nix {
                 trustedSnapshotHelper = deskflowProcessSnapshot;
               };
@@ -772,6 +794,24 @@
                 reloadOnConfigChange = true;
               };
 
+              hammerspoon-timezone-menubar-tests =
+                pkgs.runCommand "hammerspoon-timezone-menubar-tests"
+                  {
+                    moduleTest = timezoneMenubarModuleTest;
+                    renderTest = timezoneMenubarRenderTest;
+                  }
+                  ''
+                    test -e "$moduleTest"
+                    test -e "$renderTest"
+                    touch "$out"
+                  '';
+
+              hammerspoon-timezone-menubar-semantic = mkSemanticCheck {
+                keybindings = [ ];
+                extraConfig = timezoneMenubarContribution;
+                reloadOnConfigChange = true;
+              };
+
               # Host-wiring eval assertions (both hosts) — Task 8.4; design
               # "#### Verification" host-wiring bullet + Testing Strategy →
               # Build/Integration host-wiring list. Pure eval over each darwin
@@ -951,6 +991,48 @@
                   ''
                     printf '%s\n' "$hostReport" > $out
                     printf '%s\n' "$zellijReport" >> $out
+                  '';
+
+              hammerspoon-timezone-menubar-wiring =
+                let
+                  hosts = [
+                    "ShopifyLaptop"
+                    "Brandons-MacBook-Pro"
+                  ];
+                  sentinel = "-- hammerspoon-timezone-menubar: compact world clocks";
+                  renderHs = import ./home-manager/common/hammerspoon-keybindings/render.nix {
+                    inherit (pkgs) lib;
+                  };
+                  checkHost =
+                    hostName:
+                    let
+                      hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
+                      timezoneMenubar = hm.home.hammerspoon.timezoneMenubar;
+                      rendered = renderHs {
+                        inherit (hm.home.hammerspoon) keybindings extraConfig reloadOnConfigChange;
+                      };
+                      configured = timezoneMenubar.enable && timezoneMenubar.timezones == timezoneMenubarTimezones;
+                      sentinelPresent = pkgs.lib.hasInfix sentinel rendered;
+                    in
+                    assert pkgs.lib.assertMsg configured
+                      "hammerspoon timezone menubar wiring: ${hostName} does not enable the expected Toronto, UTC, and Vancouver timezones.";
+                    assert pkgs.lib.assertMsg sentinelPresent
+                      "hammerspoon timezone menubar wiring: ${hostName} rendered config is missing the timezone menubar sentinel.";
+                    "${hostName}: configured=${pkgs.lib.boolToString configured}; sentinel present=${pkgs.lib.boolToString sentinelPresent}";
+                  personalMasApps = self.darwinConfigurations."Brandons-MacBook-Pro".config.homebrew.masApps;
+                  clockerPresent = builtins.hasAttr "Clocker" personalMasApps;
+                in
+                assert pkgs.lib.assertMsg (
+                  !clockerPresent
+                ) "hammerspoon timezone menubar wiring: Brandons-MacBook-Pro still installs Clocker.";
+                pkgs.runCommand "hammerspoon-timezone-menubar-wiring"
+                  {
+                    hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hosts;
+                    clockerReport = "Brandons-MacBook-Pro: Clocker present=${pkgs.lib.boolToString clockerPresent}";
+                  }
+                  ''
+                    printf '%s\n' "$hostReport" > "$out"
+                    printf '%s\n' "$clockerReport" >> "$out"
                   '';
 
               hammerspoon-deskflow-watchdog-wiring =

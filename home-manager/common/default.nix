@@ -21,6 +21,7 @@
     ./hammerspoon-deskflow-watchdog
     ./hammerspoon-keybindings
     ./hammerspoon-mic-mute
+    ./hammerspoon-timezone-menubar
     ./launchd-activation.nix
     ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
@@ -168,6 +169,23 @@
   home.hammerspoon.enable = true;
   # Maximize the built-in display brightness when switching to AC power.
   home.hammerspoon.maximizeBrightnessOnAc.enable = true;
+  home.hammerspoon.timezoneMenubar = {
+    enable = true;
+    timezones = [
+      {
+        label = "Toronto";
+        timeZone = "America/Toronto";
+      }
+      {
+        label = "UTC";
+        timeZone = "Etc/UTC";
+      }
+      {
+        label = "Vancouver";
+        timeZone = "America/Vancouver";
+      }
+    ];
+  };
 
   programs.cc-sdd.enable = true;
   programs.git-clone-isolation.enable = true;
