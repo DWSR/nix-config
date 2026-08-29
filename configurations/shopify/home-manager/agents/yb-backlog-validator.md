@@ -68,6 +68,10 @@ eligible on the next invocation even if a prior session was interrupted.
    and form interaction require it. At runtime, call it only when the exact
    discovered upstream tool name starts with `chrome-devtools:`. Refuse every
    GitHub, gt, Quick, or other upstream write tool even if retrieval returns it.
+9. A review is not complete merely because its text fields were saved. Upload
+   and byte-verify the analysis artifact and every local file referenced by the
+   persisted Quick fields before checking `review.reviewed`. Never defer file
+   collection to a later archival pass.
 
 ## Phase 0: Preflight
 
@@ -103,12 +107,12 @@ Complete every check before dispatching a worker.
    is unavailable, quarantined, unauthenticated, or its contract differs,
    stop before dispatch.
 6. Discover Chrome DevTools navigation, page selection, script evaluation,
-   and form interaction tools. Open one dedicated page at the production URL,
-   retain its page ID, and wait until `#load-status` says `Issue queue loaded`.
-   Always select this page ID before browser work. Do not reuse or mutate an
-   unrelated user tab. Record the exact discovered `chrome-devtools:` tool
-   names and enforce the write-router restriction from Hard boundary 8 on every
-   browser call.
+   file upload, wait, and form interaction tools. Open one dedicated page at
+   the production URL, retain its page ID, and wait until `#load-status` says
+   `Issue queue loaded`. Always select this page ID before browser work. Do not
+   reuse or mutate an unrelated user tab. Record the exact discovered
+   `chrome-devtools:` tool names and enforce the write-router restriction from
+   Hard boundary 8 on every browser call.
 
 ## Phase 1: Select a wave
 
@@ -163,8 +167,8 @@ ready result has been saved or blocked.
 
 Every worker prompt must contain:
 
-- the issue number, title, source key, checkout path, and current Quick review
-  fields;
+- the issue number, title, source key, checkout path, current Quick review
+  fields, and current attachment metadata;
 - that the worker is the validator and must execute the loaded
   `validate-yb-issue` Protocol directly without nested dispatch;
 - the required artifact path
@@ -173,13 +177,16 @@ Every worker prompt must contain:
 - unique issue-number-prefixed scratch and podman names;
 - permission to reuse a complete prior memory instead of repeating the
   reproduction, while recreating a missing handoff artifact from that evidence;
+- `BACKLOG_ATTACHMENT_STAGING: REQUIRED`, Quick's ten-attachment limit, and
+  the instruction to execute the validate-yb-issue skill's backlog attachment
+  staging protocol;
 - the exact final handoff contract below.
 
 Require this contract verbatim. Domain `NEEDS-INFO` is a completed validation
 and uses `STATUS: READY_FOR_QUICK`; `NEEDS_CONTEXT` is reserved for a worker
 execution problem.
 
-```markdown
+````markdown
 ## Backlog Handoff
 - STATUS: READY_FOR_QUICK | NEEDS_CONTEXT | BLOCKED
 - ISSUE: <number>
@@ -196,7 +203,20 @@ execution problem.
 
 ## Quick Backports
 <one version per line, or exactly (none)>
+
+## Quick Attachments
+```json
+[
+  {
+    "source": "/tmp/claude/yb-issue-<number>-analysis.md",
+    "staged": "<absolute path beneath os.tmpdir()/opencode>",
+    "name": "<safe unique staged basename>",
+    "size_bytes": 123,
+    "sha256": "<64 lowercase hex characters>"
+  }
+]
 ```
+````
 
 The protocol and Quick verdicts are deliberately separate. A historical bug
 can be `NOT-REPRODUCED` by the protocol and `Fixed` in Quick. Never derive one
@@ -207,7 +227,8 @@ from the other in the controller.
 Parse status only from the exact `## Backlog Handoff` block and `- STATUS:`
 field. A task tool state of completed, surrounding prose, or a plausible
 artifact is not sufficient. Require exactly one `## Backlog Handoff` block and
-exactly one of each Quick field section; duplicated contracts are malformed.
+exactly one of each Quick field section, including `## Quick Attachments`;
+duplicated contracts are malformed.
 
 For `READY_FOR_QUICK`, require all of the following:
 
@@ -229,6 +250,24 @@ For `READY_FOR_QUICK`, require all of the following:
    Reject a handoff whose current-status, affected-version, root-cause, or
    reproduction claims contradict the artifact; do not choose the more
    convenient version.
+8. Quick Details contains the exact backtick-delimited artifact path. Every
+   local path in Quick Reproduction and Quick Details is an exact regular-file
+   path under `/tmp/claude/` or `/private/tmp/claude/`; reject directory,
+   prefix, glob, brace-expansion, symlink, or missing-file references.
+9. Quick Attachments is a valid JSON array with at least the analysis artifact
+   and exactly one object per canonical local file reference in the Quick
+   fields. Objects have only `source`, `staged`, `name`, `size_bytes`, and
+   `sha256`. Source paths match the required set, staged paths are absolute
+   regular files beneath the host `os.tmpdir()/opencode` tree, all staged paths
+   share one issue-specific parent directory, names are safe unique basenames,
+   sizes are non-negative integers, and hashes are 64 lowercase hexadecimal
+   characters. Require the source and staged copies to exist and the worker's
+   reported source/staged size and hash checks to agree.
+10. Reconcile the manifest against the current Quick attachment metadata.
+    Each required object must either match one existing attachment by
+    `original_name` and size or consume one free slot. More than ten resulting
+    attachments, a name collision, or conflicting existing metadata makes the
+    handoff invalid.
 
 Malformed, missing, or empty worker output gets bounded recovery:
 
@@ -256,7 +295,8 @@ authoritative Quick record by `source_key` and require exactly one result. Zero
 or multiple results block the issue without a browser mutation.
 
 1. If it is already reviewed, do not overwrite it. Record it as externally
-   completed and continue.
+   completed, ask the worker that produced the accepted handoff to remove its
+   staging directory, and continue.
 2. If `review.updated_at` or any known review field changed since wave
    selection while the worker ran, do not overwrite concurrent human work.
    Block the issue for this invocation and report the conflict.
@@ -269,25 +309,53 @@ or multiple results block the issue without a browser mutation.
    issue. Substring filtering can return other numbers, so exact button
    matching is mandatory. Verify `#detail-heading` is exactly
    `Issue #<number>` before editing.
-5. Fill `#review-verdict`, `#review-reproduction`, `#review-details`, and
+5. Re-read the authoritative record and reconcile its attachments with the
+   validated manifest. For each missing required file, select its staged path
+   in `#attachment-file` with the Chrome `upload_file` tool. Before submitting,
+   use browser script evaluation to require exactly one selected `File`, read
+   its bytes, and verify its name, length, and SHA-256 against the manifest.
+   Then click the separate `Upload attachment` button exactly once. Wait for
+   the attachment count or status to settle before continuing. Never upload
+   two files in parallel and never delete or replace an existing attachment.
+6. After every upload, re-read the record through Quick MCP. Require exactly
+   one attachment whose `original_name` equals the manifest name and whose byte
+   length matches. On the dedicated Quick page, fetch its same-origin `url`
+   with `cache: "no-store"`, hash the response bytes with
+   `crypto.subtle.digest("SHA-256", ...)`, and require the response length and
+   digest to match the manifest. An existing attachment counts only after this
+   same verification. An ambiguous upload gets one authoritative re-read:
+   verified metadata and bytes mean success; unchanged metadata permits one
+   retry; a conflict or second failure blocks the issue.
+7. Only after every required attachment is authoritatively present and
+   byte-verified, re-read the authoritative record once more. Require every
+   non-attachment review field to still match the pre-write snapshot; only the
+   controller's verified attachment additions may differ. Then fill
+   `#review-verdict`, `#review-reproduction`, `#review-details`, and
    `#review-backports` using native value setters plus `input` and `change`
-   events. Convert `(none)` to an empty backports value. Ensure
-   `#review-reviewed` is checked. Do not touch `#review-archive`.
-6. Click `#review-save` once. Wait for `#review-form[aria-busy="true"]` to
-   clear. Require `#review-status` to say `Review changes saved.` and
-   `#review-error` to be empty.
-7. Re-read the authoritative record through Quick MCP. Count success only when
+   events. Convert `(none)` to an empty backports value, check
+   `#review-reviewed`, and do not touch `#review-archive`. Click `#review-save`
+   once. Wait for `#review-form[aria-busy="true"]` to clear. Require
+   `#review-status` to say `Review changes saved.` and `#review-error` to be
+   empty.
+8. Re-read the authoritative record through Quick MCP. Count success only when
    `reviewed`, verdict, reproduction, details, backports, and archived state
-   exactly match the candidate.
+   exactly match the candidate and the complete required attachment set still
+   passes the name, size, URL, and SHA-256 checks. Then resume the worker task
+   that produced the accepted handoff once with a cleanup-only instruction
+   naming its staging directory. Cleanup failure is a reported warning, not
+   grounds to overwrite an otherwise verified review.
 
 If the browser reports an ambiguous save, reload the queue and use Quick MCP
 to classify it. Matching authoritative fields mean success. Unchanged fields
 permit one browser retry. Divergent fields or a second failure block the issue
 for this invocation. Never blindly repeat a write whose outcome is unknown.
+When an accepted handoff is blocked after staging, ask that handoff's worker to
+remove its own staging directory before continuing; never send an unvalidated
+manifest path to a different task for cleanup.
 
 After each verified save, retain only one line in controller context:
-`#<number>: <Quick verdict>, verified, <artifact path>`. Discard the worker's
-expanded report before the next wave.
+`#<number>: <Quick verdict>, verified, <attachment count> files, <artifact
+path>`. Discard the worker's expanded report before the next wave.
 
 ## Phase 5: Continue and final gate
 
@@ -314,6 +382,8 @@ Report:
 - `GO`, `RETRYABLE_NO_GO`, or systemic stop;
 - waves attempted and issues verified this invocation;
 - one line per completed issue with Quick verdict and artifact;
+- the number of required files uploaded and byte-verified per issue, plus any
+  staging-cleanup warning;
 - blocked issue numbers, worker task IDs, retry counts, and exact reasons;
 - remaining active unreviewed count from the final authoritative scan;
 - confirmation that no GitHub comment, mutation, PR, commit, or push occurred.

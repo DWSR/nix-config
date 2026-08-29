@@ -20,7 +20,7 @@ The output is an analysis artifact that feeds directly into `create-yb-fix-pr`.
 
 **Inputs:** issue number/URL (required), target version(s) (optional).
 **Outputs:** verdict, `/tmp/claude/yb-issue-<NNNN>-analysis.md`, optional
-public issue comment, memory note.
+backlog attachment manifest, optional public issue comment, memory note.
 
 ## Execution model — dispatch the subagent
 
@@ -220,6 +220,37 @@ cases, `--cxx-test <target> --gtest_filter '<Case>'`.
 ## Confidentiality check
 Confirm the artifact contains no customer data / PII / internal refs.
 ```
+
+#### Backlog attachment staging (when requested)
+
+The `yb-backlog-validator` dispatch adds a Quick handoff contract. Only for
+that contract, stage the files that must accompany the review before returning
+`READY_FOR_QUICK`:
+
+1. Keep Quick Reproduction and Quick Details self-contained. Express every
+   local evidence reference as one exact, backtick-delimited regular-file path
+   under `/tmp/claude/` or `/private/tmp/claude/`. Do not put directory,
+   prefix, glob, brace-expansion, symlink, or missing-file references in those
+   fields.
+2. Quick Details must cite the analysis artifact. The required attachment set
+   is that artifact plus every local evidence path in Quick Reproduction and
+   Quick Details. Deduplicate by canonical source path.
+3. Use the current record's attachment metadata from the dispatch prompt to
+   choose unique upload names and respect Quick's ten-attachment limit. An
+   existing attachment satisfies a source only when the controller can verify
+   its expected name, byte length, and SHA-256. If the complete required set
+   cannot fit, return `BLOCKED`; never omit a referenced file.
+4. Chrome DevTools rejects `/tmp/claude` because it resolves outside Chrome's
+   allowed temp root. Create one unique issue-specific directory beneath
+   Node's `path.join(os.tmpdir(), "opencode")`, copy each required regular file
+   into it without symlinks, and give every copy a safe unique basename.
+5. For every source and staged copy, calculate byte length and SHA-256 and
+   require an exact match. Return the resulting JSON array in the dispatcher's
+   `## Quick Attachments` section. Each object has exactly `source`, `staged`,
+   `name`, `size_bytes`, and `sha256`; `name` equals the staged basename.
+6. Leave the staging directory in place. The controller resumes the task to
+   remove it only after Quick authoritatively confirms both the uploaded files
+   and the reviewed record.
 
 ### Step 6 (optional): Comment on the issue — authorization required
 

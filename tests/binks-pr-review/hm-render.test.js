@@ -142,10 +142,15 @@ function hostRenderExpr() {
           skillPresent = builtins.hasAttr "opencode/skills/binks-pr-review" files;
           skillSource = if skillPresent then files."opencode/skills/binks-pr-review".source else null;
           skillText = if skillPresent then builtins.readFile (skillSource + "/SKILL.md") else null;
+          ybValidationSkillPresent = builtins.hasAttr "opencode/skills/validate-yb-issue" files;
+          ybValidationSkillSource = if ybValidationSkillPresent then files."opencode/skills/validate-yb-issue".source else null;
+          ybValidationSkillText = if ybValidationSkillPresent then builtins.readFile (ybValidationSkillSource + "/SKILL.md") else null;
           binksReviewer = config.programs.opencode.agents."binks-reviewer" or null;
           binksReviewerText = renderAgentText binksReviewer;
           ybBacklogValidator = config.programs.opencode.agents."yb-backlog-validator" or null;
           ybBacklogValidatorText = renderAgentText ybBacklogValidator;
+          ybIssueValidator = config.programs.opencode.agents."yb-issue-validator" or null;
+          ybIssueValidatorText = renderAgentText ybIssueValidator;
           ybBacklogMcp = mcpServers."yugabyte-gh-issue-backlog-review" or null;
           kiroReviewSource = files."opencode/skills/kiro-review".source;
           kiroVerifySource = files."opencode/skills/kiro-verify-completion".source;
@@ -163,7 +168,7 @@ function hostRenderExpr() {
           audit = config.programs.opencode-nono.profiles.\${auditName};
         in
         {
-          inherit packagePaths commandText ybBacklogCommandText skillPresent skillText binksReviewerText ybBacklogValidatorText ybBacklogMcp stateActivation binksXdgFiles piBinksFiles;
+          inherit packagePaths commandText ybBacklogCommandText skillPresent skillText ybValidationSkillPresent ybValidationSkillText binksReviewerText ybBacklogValidatorText ybIssueValidatorText ybBacklogMcp stateActivation binksXdgFiles piBinksFiles;
           skillsPackagePath = builtins.unsafeDiscardStringContext "\${config.programs.cc-sdd.skillsPackage}";
           kiroReviewText = builtins.readFile (kiroReviewSource + "/SKILL.md");
           kiroVerifyText = builtins.readFile (kiroVerifySource + "/SKILL.md");
@@ -571,10 +576,12 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.equal(rendered.personal.commandText, null);
   assert.equal(rendered.personal.ybBacklogCommandText, null);
   assert.equal(rendered.personal.skillPresent, false);
+  assert.equal(rendered.personal.ybValidationSkillPresent, false);
   assert.equal(rendered.personal.stateActivation, null);
   assert.deepEqual(rendered.personal.binksXdgFiles, []);
   assert.equal(rendered.personal.binksReviewerText, null);
   assert.equal(rendered.personal.ybBacklogValidatorText, null);
+  assert.equal(rendered.personal.ybIssueValidatorText, null);
   assert.equal(rendered.personal.ybBacklogMcp, null);
   assert.equal(rendered.personal.agentNames.includes('binks-reviewer'), false);
   assert.equal(rendered.personal.agentNames.includes('yb-backlog-validator'), false);
@@ -591,9 +598,14 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.equal(rendered.shopify.commandNames.includes('validate-yb-backlog'), true);
   assert.match(rendered.shopify.ybBacklogCommandText, /agent: yb-backlog-validator/);
   assert.match(rendered.shopify.ybBacklogCommandText, /waves of four until the active unreviewed queue/);
+  assert.match(rendered.shopify.ybBacklogCommandText, /uploaded to that\s+issue and verified in Quick/);
   assert.match(rendered.shopify.ybBacklogCommandText, /OPENCODE_NONO=disabled opencode/);
   assert.match(rendered.shopify.ybBacklogCommandText, /\$ARGUMENTS/);
   assert.equal(rendered.shopify.skillPresent, true);
+  assert.equal(rendered.shopify.ybValidationSkillPresent, true);
+  assert.match(rendered.shopify.ybValidationSkillText, /Backlog attachment staging \(when requested\)/);
+  assert.match(rendered.shopify.ybValidationSkillText, /path\.join\(os\.tmpdir\(\), "opencode"\)/);
+  assert.match(rendered.shopify.ybValidationSkillText, /never omit a referenced file/);
   assert.match(rendered.shopify.skillText, /^---\nname: binks-pr-review\n/);
   assert.match(rendered.shopify.skillText, /performs no hourly or periodic update/);
   assert.match(rendered.shopify.skillText, /--provider local/);
@@ -611,6 +623,9 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.binksReviewerText, /WORKTREE_FINGERPRINT/);
   assert.match(rendered.shopify.binksReviewerText, /DISPOSITION: VALID \| FALSE_POSITIVE \| NEEDS_CONTEXT/);
   assert.equal(rendered.shopify.agentNames.includes('yb-backlog-validator'), true);
+  assert.equal(rendered.shopify.agentNames.includes('yb-issue-validator'), true);
+  assert.match(rendered.shopify.ybIssueValidatorText, /Backlog attachment staging/);
+  assert.match(rendered.shopify.ybIssueValidatorText, /every local file referenced by the Quick fields/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /mode: all/);
   assert.doesNotMatch(rendered.shopify.ybBacklogValidatorText, /^model:/m);
   assert.match(rendered.shopify.ybBacklogValidatorText, /waves of exactly four/);
@@ -626,6 +641,13 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.ybBacklogValidatorText, /Resume the same task ID once/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /dispatch one fresh validator/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /All review writes use the browser form/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /Never defer file\s+collection to a later archival pass/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /## Quick Attachments/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /Only after every required attachment is authoritatively present/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /whose `original_name` equals the manifest name/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /require exactly one selected `File`/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /crypto\.subtle\.digest\("SHA-256"/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /non-attachment review field to still match the pre-write snapshot/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /Review changes saved\./);
   assert.match(rendered.shopify.ybBacklogValidatorText, /RETRYABLE_NO_GO/);
   assert.equal(rendered.shopify.ybBacklogMcp.name, 'yugabyte-gh-issue-backlog-review');

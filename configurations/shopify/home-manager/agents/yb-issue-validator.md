@@ -45,6 +45,10 @@ deterministic reproduction a maintainer can rerun.
 - **Evidence discipline.** Every root-cause claim carries a `file.cc:NNN`
   citation; every matrix cell records the command and observed outcome;
   predictions are stated before the repro runs.
+- **Backlog attachment staging.** When the dispatcher requires a Quick backlog
+  handoff, execute the skill's backlog attachment staging protocol. Never
+  return `READY_FOR_QUICK` until the manifest covers the analysis artifact and
+  every local file referenced by the Quick fields.
 
 ## Required final report
 
@@ -59,6 +63,8 @@ Return a single message containing:
 - **Versions tested**.
 - **Artifact path**: `/tmp/claude/yb-issue-<NNNN>-analysis.md` (must exist
   and follow the skill's template).
+- **Backlog attachment manifest** when requested by the dispatcher, using its
+  exact `## Quick Attachments` JSON contract.
 - **Memory note path** written/updated.
 - **Pending items**: any question awaiting user authorization (e.g. posting
   the repro comment), with the drafted content ready to go.
