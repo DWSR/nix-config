@@ -1,4 +1,5 @@
 local fakeHs = {
+	_canvases = {},
 	_menubars = {},
 	_tasks = {},
 	_timers = {},
@@ -13,6 +14,11 @@ function fakeHs.menubar.new(inMenuBar, autosaveName)
 	}
 	function menubar:setTitle(title)
 		self.title = title
+		return self
+	end
+	function menubar:setIcon(icon, template)
+		self.icon = icon
+		self.iconTemplate = template
 		return self
 	end
 	function menubar:setTooltip(tooltip)
@@ -55,8 +61,34 @@ function styledTextMt:getString()
 end
 
 fakeHs.styledtext = {}
+function fakeHs.styledtext.convertFont(font, heavier)
+	assert(heavier == true)
+	return { name = "System-Bold", size = font.size }
+end
 function fakeHs.styledtext.new(text, attributes)
 	return newStyledText({ { text = text, attributes = attributes } })
+end
+
+fakeHs.canvas = {}
+function fakeHs.canvas.new(frame)
+	local canvas = {
+		elements = {},
+		frame = frame,
+	}
+	function canvas:appendElements(...)
+		for _, element in ipairs({ ... }) do
+			table.insert(self.elements, element)
+		end
+		return self
+	end
+	function canvas:imageFromCanvas()
+		return { elements = self.elements, frame = self.frame }
+	end
+	function canvas:delete()
+		self.deleted = true
+	end
+	table.insert(fakeHs._canvases, canvas)
+	return canvas
 end
 
 fakeHs.task = {}

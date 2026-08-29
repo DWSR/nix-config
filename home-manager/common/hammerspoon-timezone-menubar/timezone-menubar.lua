@@ -1,9 +1,11 @@
 local UPDATE_INTERVAL_SECONDS = 30
 local DATE_FORMAT = "+%H:%M"
 local ERROR_TIME = "--:--"
-local COLUMN_PADDING = 2
+local COLUMN_WIDTH = 50
+local CLOCK_HEIGHT = 22
+local LABEL_Y = 0
+local TIME_Y = 10
 local TITLE_FONT_SIZE = 10
-local TITLE_LINE_HEIGHT = 10
 
 local timezoneMenubar = hs.menubar.new(true, "hammerspoon-timezone-menubar")
 local refreshGeneration = 0
@@ -17,37 +19,46 @@ local retainedState = {
 -- long-lived object reachable for the lifetime of this Lua state.
 rawset(_G, "hammerspoonTimezoneMenubar", retainedState)
 
-local function centerText(text, width)
-	local textWidth = utf8.len(text) or #text
-	local padding = width - textWidth
-	local leftPadding = math.floor(padding / 2)
-	return string.rep(" ", leftPadding) .. text .. string.rep(" ", padding - leftPadding)
-end
-
-local function makeTitle(times)
-	local labels = {}
-	local values = {}
+local function makeClockImage(times)
+	local paragraphStyle = { alignment = "center", lineBreak = "clip" }
+	local timeFont = { size = TITLE_FONT_SIZE }
+	local labelFont = hs.styledtext.convertFont(timeFont, true)
+	local elements = {}
 	for index, timezone in ipairs(configuredTimezones) do
-		local time = times[index] or ERROR_TIME
-		local columnWidth = math.max(utf8.len(timezone.label) or #timezone.label, #time) + COLUMN_PADDING
-		labels[index] = centerText(timezone.label, columnWidth)
-		values[index] = centerText(time, columnWidth)
+		local x = (index - 1) * COLUMN_WIDTH
+		elements[#elements + 1] = {
+			frame = { x = x, y = LABEL_Y, w = COLUMN_WIDTH, h = 11 },
+			text = hs.styledtext.new(timezone.label, {
+				color = { white = 0 },
+				font = labelFont,
+				paragraphStyle = paragraphStyle,
+			}),
+			type = "text",
+		}
+		elements[#elements + 1] = {
+			frame = { x = x, y = TIME_Y, w = COLUMN_WIDTH, h = 11 },
+			text = hs.styledtext.new(times[index] or ERROR_TIME, {
+				color = { white = 0 },
+				font = timeFont,
+				paragraphStyle = paragraphStyle,
+			}),
+			type = "text",
+		}
 	end
 
-	local paragraphStyle = {
-		alignment = "center",
-		maximumLineHeight = TITLE_LINE_HEIGHT,
-		minimumLineHeight = TITLE_LINE_HEIGHT,
-	}
-	local labelRow = hs.styledtext.new(table.concat(labels, " "), {
-		font = { name = "Menlo-Bold", size = TITLE_FONT_SIZE },
-		paragraphStyle = paragraphStyle,
+	local clockCanvas = hs.canvas.new({
+		x = 0,
+		y = 0,
+		w = #configuredTimezones * COLUMN_WIDTH,
+		h = CLOCK_HEIGHT,
 	})
-	local timeRow = hs.styledtext.new(table.concat(values, " "), {
-		font = { name = "Menlo", size = TITLE_FONT_SIZE },
-		paragraphStyle = paragraphStyle,
-	})
-	return labelRow .. "\n" .. timeRow
+	if not clockCanvas then
+		return nil
+	end
+	clockCanvas:appendElements(table.unpack(elements))
+	local image = clockCanvas:imageFromCanvas()
+	clockCanvas:delete()
+	return image
 end
 
 local function publishTimes(generation, times)
@@ -55,7 +66,12 @@ local function publishTimes(generation, times)
 		return
 	end
 
-	timezoneMenubar:setTitle(makeTitle(times))
+	local image = makeClockImage(times)
+	if image then
+		timezoneMenubar:setTitle(nil)
+		timezoneMenubar:setIcon(image, true)
+		retainedState.image = image
+	end
 end
 
 local function refreshTimes()
