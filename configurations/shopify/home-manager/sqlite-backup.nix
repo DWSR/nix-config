@@ -1,10 +1,13 @@
 { config, ... }:
+let
+  localGoogleDriveRoot = "${config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/sqlite-backup";
+in
 {
   # Per-host wiring for the SQLite Backup module. The module is enabled
-  # with the gdrive destination declared and the cavemem database wired
-  # against it; per the existing requirements (Req 1.AC4) adding a
-  # database entry creates the runtime pipeline for that database
-  # without requiring any other change.
+  # with rclone's synthetic local backend pointed at Google Drive's File
+  # Provider folder. Restic completes against local filesystem semantics;
+  # Google Drive synchronization remains external and is not a durability
+  # signal for this pipeline.
   #
   # Cavemem is the first real database wired into this module on
   # Shopify. The cavemem-integration roadmap's "Existing Spec Updates"
@@ -21,8 +24,8 @@
       checkIntervalSeconds = 60;
     };
     rcloneDestinations = {
-      gdrive = {
-        type = "drive";
+      ":local" = {
+        type = "local";
       };
     };
     databases = [
@@ -34,10 +37,11 @@
         # data.db (NOT cavemem.db, verified at cavemem v0.2.1 source per
         # cavemem-integration task 7.2).
         path = "${config.xdg.dataHome}/cavemem/data.db";
-        remote = "gdrive";
-        # remotePath defaults to "sqlite-backup"; archiveTier defaults to
-        # 03:00 daily with 7d/4w/6m retention; replicationTier defaults
-        # to 300s off-host shipment cadence with 24h hourly retention.
+        remote = ":local";
+        remotePath = localGoogleDriveRoot;
+        # remotePath selects the local Drive File Provider root; archiveTier
+        # defaults to 03:00 daily with 7d/4w/6m retention; replicationTier
+        # defaults to 300s shipment cadence with 24h hourly retention.
         # All defaults match the cavemem workload profile (low-write
         # personal observation history) and the operator-confirmed
         # retention policy from the kiro-spec-requirements pass on
@@ -67,7 +71,8 @@
         # cavemem precedent — operator-decision pending on the personal
         # destination.
         path = "${config.xdg.dataHome}/opencode/opencode-stable.db";
-        remote = "gdrive";
+        remote = ":local";
+        remotePath = localGoogleDriveRoot;
         pressureGuard.maximumManagedLocalBytes = 96 * 1024 * 1024 * 1024;
         # Default tiers match the opencode workload profile: bursty
         # writes during active sessions but otherwise quiet; default

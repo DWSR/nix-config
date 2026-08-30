@@ -170,6 +170,26 @@ pkgs.writeShellApplication {
       ' "$MANIFEST_PATH"
     }
 
+    # Build the rclone target shared by shipment, verification, and remote
+    # restore. For the synthetic local backend this yields
+    # `:local:/absolute/path/<db>`; prefixing it with `rclone:` produces the
+    # Restic repository URI `rclone::local:/absolute/path/<db>`.
+    get_destination_target() {
+      local name="$1" remote remote_path
+      remote="$(get_database_field "$name" remote)"
+      remote_path="$(get_database_field "$name" remotePath)"
+      if [ -z "$remote" ] || [ -z "$remote_path" ]; then
+        return 1
+      fi
+      printf '%s:%s/%s\n' "$remote" "''${remote_path%/}" "$name"
+    }
+
+    get_remote_repository() {
+      local target
+      target="$(get_destination_target "$1")" || return 1
+      printf 'rclone:%s\n' "$target"
+    }
+
     # get_retention_args <db-name> <tier-field>
     # tier-field is the manifest object key for the tier
     # ("replicationTier" or "archiveTier"). Prints one retention
@@ -1350,17 +1370,15 @@ pkgs.writeShellApplication {
       # Validated up-front so an operator-misconfigured manifest
       # surfaces as a single clear error rather than a series of
       # confusing restic / rclone failures down-stream.
-      local repo_dir staging_dir remote remote_path
+      local repo_dir staging_dir remote_repo
       repo_dir="$(get_database_field "$db" repoDir)"
       staging_dir="$(get_database_field "$db" stagingDir)"
-      remote="$(get_database_field "$db" remote)"
-      remote_path="$(get_database_field "$db" remotePath)"
-      if [ -z "$repo_dir" ] || [ -z "$staging_dir" ] || [ -z "$remote" ] || [ -z "$remote_path" ]; then
+      if [ -z "$repo_dir" ] || [ -z "$staging_dir" ] \
+        || ! remote_repo="$(get_remote_repository "$db")"; then
         echo "sqlite-backup: $db: $subcmd: manifest missing repoDir/stagingDir/remote/remotePath" >&2
         log_end "$db" "$subcmd" 1
         return 1
       fi
-      local remote_repo="rclone:$remote:$remote_path/$db"
 
       # Read the per-tier retention args (variable-length JSON array
       # of strings) into a bash array. Empty array → no `--keep-*`
@@ -1607,14 +1625,11 @@ pkgs.writeShellApplication {
         # R13.23 ("if all verifications succeed").
         while IFS= read -r db_name; do
           [ -z "$db_name" ] && continue
-          remote="$(get_database_field "$db_name" remote)"
-          remote_path="$(get_database_field "$db_name" remotePath)"
-          if [ -z "$remote" ] || [ -z "$remote_path" ]; then
+          if ! target="$(get_destination_target "$db_name")"; then
             printf '%s: FAIL: missing remote/remotePath in manifest\n' "$db_name"
             any_failed=1
             continue
           fi
-          target="$remote:$remote_path/$db_name"
           if lsd_out="$(rclone lsd "$target" 2>&1)"; then
             printf '%s: OK\n' "$target"
           else
@@ -1791,14 +1806,11 @@ pkgs.writeShellApplication {
 
         # Repo selection.
         if [ "$restore_from_remote" = "true" ]; then
-          restore_remote="$(get_database_field "$restore_db" remote)"
-          restore_remote_path="$(get_database_field "$restore_db" remotePath)"
-          if [ -z "$restore_remote" ] || [ -z "$restore_remote_path" ]; then
+          if ! restore_repo="$(get_remote_repository "$restore_db")"; then
             echo "sqlite-backup: $restore_db: restore: manifest missing remote/remotePath" >&2
             log_end "$restore_db" restore 1
             exit 1
           fi
-          restore_repo="rclone:$restore_remote:$restore_remote_path/$restore_db"
 
           # rclone needs its own config-decryption passphrase to
           # reach any encrypted-config destination.
@@ -2227,6 +2239,11 @@ pkgs.writeShellApplication {
           fi
           exit 1
         fi
+        ;;
+
+      __destination-target)
+        require_db "''${1:-}"
+        get_destination_target "$1"
         ;;
 
       __replicate-trigger)

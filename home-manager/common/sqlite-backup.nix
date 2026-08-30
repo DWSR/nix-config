@@ -84,7 +84,9 @@ let
         default = "sqlite-backup";
         description = ''
           Path component appended to the rclone remote when shipping
-          this database's restic repository off-host.
+          this database's restic repository off-host. When `remote =
+          ":local"`, this must instead be the absolute local directory
+          that receives per-database repositories.
         '';
       };
 
@@ -305,6 +307,7 @@ in
       stagingDirFor = db: "${dbRootFor db}/litestream-staging";
       repoDirFor = db: "${dbRootFor db}/restic";
       litestreamMetadataDirFor = db: "${dbRootFor db}/litestream-metadata";
+      syntheticLocalRepoFor = db: "${lib.removeSuffix "/" db.remotePath}/${db.name}";
 
       litestreamConfigFor =
         db:
@@ -326,7 +329,8 @@ in
           (stagingDirFor db)
           (repoDirFor db)
           (litestreamMetadataDirFor db)
-        ];
+        ]
+        ++ lib.optional (db.remote == ":local") (syntheticLocalRepoFor db);
       };
 
       # Single derivation reference for the operator-facing CLI. The same
@@ -404,6 +408,21 @@ in
               require a JSON-safe integer.
             '';
           }
+          {
+            assertion = db.remote != ":local" || lib.hasPrefix "/" db.remotePath;
+            message = ''
+              home.sqliteBackup.databases entry "${db.name}" uses the
+              synthetic :local rclone backend, so remotePath must be an
+              absolute filesystem path.
+            '';
+          }
+          {
+            assertion = db.remote != ":local" || (cfg.rcloneDestinations.${db.remote}.type or null) == "local";
+            message = ''
+              home.sqliteBackup.rcloneDestinations.":local" must declare
+              type = "local".
+            '';
+          }
         ]) cfg.databases
       );
 
@@ -451,6 +470,7 @@ in
           # with MCP secrets (which use SERVICE = `mcpproxy`).
           keychainService = "nix-config-secrets";
           inherit (cfg) rcloneDestinations;
+          rcloneConfigDestinations = builtins.removeAttrs cfg.rcloneDestinations [ ":local" ];
           databases = map (db: {
             inherit (db)
               name

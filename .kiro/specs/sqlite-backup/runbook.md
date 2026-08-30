@@ -454,6 +454,27 @@ sqlite-backup verify-credentials <db>
 
 You are now at "first successful scheduled archive-tier run".
 
+### B.5 Shopify local Google Drive destination
+
+Shopify database entries use rclone's synthetic `:local:` backend with this
+destination root:
+
+```text
+~/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/sqlite-backup
+```
+
+Restic initializes one repository below that root per database. Backup
+processes perform no direct Google Drive remote calls; Drive for desktop owns
+background synchronization. A successful backup or `verify-credentials` run
+proves only that the local File Provider folder is accessible and updated. It
+does not prove that Google Drive has uploaded the changes. This reliability gap
+is accepted to prevent Drive API quota and retry backpressure from blocking the
+local pipeline.
+
+The pressure guard includes each local destination repository in its managed
+byte total. The 96 GiB OpenCode ceiling therefore covers both the primary local
+restic repository and the copy under the Drive File Provider root.
+
 ## Section C — Common Operator Commands
 
 Every command is on `$PATH` after a successful `darwin-rebuild
@@ -470,7 +491,7 @@ derivation time, so commands are self-contained.
 | `sqlite-backup start <db>` | Refuse an active pressure halt; otherwise clear a manual halt flag and bootstrap the per-DB Litestream agent when unloaded. Idempotent when launchctl confirms it is running. |
 | `sqlite-backup stop <db> [--include-archive]` | Halts replication-only by default; `--include-archive` halts the whole pipeline. Unloads the Litestream agent via `launchctl bootout`. Idempotent. |
 | `sqlite-backup clear-pressure <db>` | Remeasure the thresholds recorded in a pressure marker and remove it only when healthy. Never starts the pipeline. |
-| `sqlite-backup verify-credentials [<db>]` | Read-only credential probe per destination. Pre-flights `rclone config encryption check`; reports per-destination `OK` / `FAIL: <cause>` to stdout. Exit 0 iff every check passed. |
+| `sqlite-backup verify-credentials [<db>]` | Read-only destination probe. Pre-flights `rclone config encryption check`; synthetic `:local:` destinations check only their local folder and do not verify cloud synchronization. Reports per-destination `OK` / `FAIL: <cause>` to stdout. Exit 0 iff every check passed. |
 
 State locations referenced by these commands:
 
@@ -727,7 +748,21 @@ directly instead of the local repo. Both `RESTIC_PASSWORD_COMMAND`
 passphrase) are needed; the CLI reads both from Keychain
 automatically once Keychain is populated by the bootstrap below.
 
-**Manual decomposition** (the new-host bootstrap is the same whether
+For Shopify's synthetic `:local:` destination, host-loss recovery has a
+different prerequisite. Install and sign in to Google Drive for desktop on the
+replacement host, then wait for or explicitly hydrate:
+
+```text
+~/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/sqlite-backup/<db>
+```
+
+Rebuild the same Shopify configuration and run the one-liner above. The CLI
+will address that hydrated folder as `rclone::local:<path>`. Do not recreate a
+named OAuth remote for this branch. If Drive for desktop never uploaded the
+repository before the original host was lost, this recovery path has no usable
+off-host copy; local backup success alone does not establish otherwise.
+
+**Manual decomposition for configured remotes** (the new-host bootstrap is the same whether
 the operator uses the one-liner or the manual flow — only the
 restore stages at the end differ):
 

@@ -152,20 +152,25 @@ let
       { }
     else
       let
-        opencode = builtins.head (
-          builtins.filter (db: db.name == "opencode") shopifyHome.home.sqliteBackup.databases
-        );
+        sqliteBackup = shopifyHome.home.sqliteBackup;
+        localGoogleDriveRoot = "${shopifyHome.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/sqlite-backup";
+        opencode = builtins.head (builtins.filter (db: db.name == "opencode") sqliteBackup.databases);
         guardNames = builtins.filter (name: builtins.match "sqlite-backup-guard-.*" name != null) (
           builtins.attrNames shopifyHome.launchd.agents
         );
       in
       {
-        inherit guardNames;
-        inherit (shopifyHome.home.sqliteBackup.pressureGuard)
+        inherit guardNames localGoogleDriveRoot;
+        inherit (sqliteBackup.pressureGuard)
           checkIntervalSeconds
           minimumFilesystemAvailableBytes
           ;
+        databases = map (db: {
+          inherit (db) name remote remotePath;
+        }) sqliteBackup.databases;
+        manifestPath = sqliteBackup._manifestPath;
         maximumManagedLocalBytes = opencode.pressureGuard.maximumManagedLocalBytes;
+        inherit (sqliteBackup) rcloneDestinations;
       };
   shopifyPolicyFile = pkgs.writeText "sqlite-backup-shopify-policy.json" (
     builtins.toJSON shopifyPolicy
@@ -176,6 +181,8 @@ pkgs.runCommand "sqlite-backup-tests"
     nativeBuildInputs = [
       pkgs.bash
       pkgs.jq
+      pkgs.rclone
+      pkgs.restic
     ];
     SQLITE_BACKUP_ACTIVATION = activation;
     SQLITE_BACKUP_ACTIVATION_STATE_HOME = hm.config.xdg.stateHome;
@@ -187,9 +194,12 @@ pkgs.runCommand "sqlite-backup-tests"
     SQLITE_BACKUP_REAL_LITESTREAM = if realLitestream == null then "" else lib.getExe realLitestream;
     SQLITE_BACKUP_RENDER = render;
     SQLITE_BACKUP_SHOPIFY_POLICY = shopifyPolicyFile;
+    SQLITE_BACKUP_SHOPIFY_CLI =
+      if shopifyHome == null then "" else lib.getExe shopifyHome.home.sqliteBackup._cliBinary;
   }
   ''
     bash ${./persistent-emergency-halts.test.sh}
     bash ${./disk-pressure-guard.test.sh}
+    bash ${./local-google-drive-destination.test.sh}
     touch "$out"
   ''

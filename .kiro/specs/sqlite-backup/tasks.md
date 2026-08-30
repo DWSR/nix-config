@@ -245,6 +245,21 @@
   - _Boundary: HM Module, CLI Script, Shopify sqlite-backup wiring, sqlite-backup focused tests_
   - _Depends: 9.1_
 
+- [ ] 11. Shopify local Google Drive destination
+
+- [x] 11.1 Route Shopify repository copies through the Drive File Provider folder
+  - Replace the configured `gdrive` remote with rclone's synthetic `:local`
+    backend and use the existing `My Drive/sqlite-backup` folder as the absolute
+    destination root for both Shopify databases.
+  - Exclude `:local` from configured-remote matching while preserving encrypted
+    rclone config and passphrase preflight behavior.
+  - Include each local destination repository in pressure accounting and state
+    explicitly that local write success does not prove Google Drive sync.
+  - Add render and pinned Restic/rclone integration coverage for the exact
+    backend syntax and a Drive-style path containing spaces.
+  - _Requirements: 5.3, 5.4, 5.6, 19.4_
+  - _Boundary: Shopify sqlite-backup wiring, HM manifest, rclone verification, focused tests_
+
 ## Parallel Execution Wave Map
 
 The `(P)` markers above capture parallelism between immediately-adjacent peers,
@@ -351,3 +366,4 @@ even when not exploited.
 - **Post-implementation amendment (2026-05-13): per-database staging+restic nesting.** The original spec rendered staging and restic paths as `${xdg.dataHome}/sqlite-backup/{litestream-staging,restic}/<db>` (per-artifact-type, then per-DB). Operator preference shifted to per-DB nesting: `${xdg.dataHome}/sqlite-backup/<db>/{litestream-staging,restic}`. Rationale: groups all per-DB content together, simpler to reason about per-DB destruction/migration/inspection. Implementation touched only `home-manager/common/sqlite-backup.nix` (manifest renderer + `stagingDirFor` helper for the launchd Litestream agent ProgramArguments); the CLI script reads paths from the manifest and required no changes. Verified by building the manifest derivation against a synthetic one-DB config and inspecting the rendered `stagingDir`/`repoDir`. No on-disk migration was needed — the feature is dormant on both hosts (`databases = [ ]`). All spec docs (design, tasks, research, runbook, brief, requirements) updated to match. The `brief.md` and `requirements.md` architecture diagrams additionally renamed `litestream/<db>` → `<db>/litestream-staging` to align with the design doc's "litestream-staging" terminology (the brief/requirements diagrams predated that rename).
 - **Task 9.1** established fail-closed pressure state: absence must be provable through searchable ancestors, and marker writers share a transition lock with `clear-pressure`, which measures an immutable snapshot and version-checks before removal.
 - **Task 10.1** follows command-line managed-root symlinks with `du -H` without traversing nested links; every marker-generation failure preserves a durable `.failed` sentinel.
+- **Task 11.1** treats Google Drive File Provider synchronization as external: `restic copy` success covers the local `:local:` repository only, and that repository remains inside pressure accounting.

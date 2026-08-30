@@ -489,7 +489,7 @@ sequenceDiagram
 | 5.1 | Any rclone-supported backend | Operator's rclone.conf + verify | rclone's backend universe; no module restriction |
 | 5.2 | Different destinations per DB | HM module | `databases[*].remote` is per-DB; references the host's named destination set |
 | 5.3 | Same destination shape for cloud + local | HM module | `rcloneDestinations` submodule has only `type` field; works for any rclone backend including `local` |
-| 5.4 | Local FS destination uses same shipment | Replicate wrapper + archive wrapper | `restic copy` over `rclone:local:<path>` works identically to cloud backends |
+| 5.4 | Local FS destination uses same shipment | Replicate wrapper + archive wrapper | `restic copy` over `rclone::local:<absolute-path>` uses rclone's synthetic local backend without a configured remote |
 | 5.5 | Named-set + reference-by-name | HM module | `attrsOf (submodule {…})` for destinations; `databases[*].remote` is a string |
 | 6.1 | Encryption before leaving disk | Replicate wrapper + archive wrapper | restic native client-side AES-256 |
 | 6.2 | Operator passphrase, never embedded | HM module + bridge | `archivePassphraseSecret` references a Keychain service; passphrase value never in Nix |
@@ -558,14 +558,14 @@ sequenceDiagram
 | 16.5 | Off-host = on-host post-shipment | Replicate wrapper + archive wrapper | `restic copy` propagates new snapshots; mirrored `restic forget --tag <tier>` against remote (step 9) propagates deletions; both ends share chunker polynomial via `restic init --copy-chunker-params`, so snapshots are byte-equivalent |
 | 17.1 | Verify rclone config exists | Verify module | `[ -f ~/.config/rclone/rclone.conf ]` |
 | 17.2 | Verify rclone config encrypted | Verify module | `rclone config encryption check` |
-| 17.3 | Verify each declared remote present | Verify module | `rclone listremotes --long --json` parsed via jq; intersect with manifest |
+| 17.3 | Verify each configured remote present | Verify module | `rclone listremotes --long --json` parsed via jq; intersect with manifest `rcloneConfigDestinations`, which excludes synthetic `:local` |
 | 17.4 | Verify backend type matches | Verify module | Same JSON; compare `type` field per remote |
 | 17.5 | Distinguished failure modes | Verify module | Branched error reporting: missing-passphrase, mismatched-passphrase, missing-config, plaintext-config, missing-remote, type-mismatch |
 | 17.6 | Dormant exemption | Verify module | Conditional on `databases ≠ [ ]`; otherwise no-op |
 | 18.1-18.3 | Separate persistent emergency halt state | HM module + CLI | `pressure-<db>.json` is distinct from activation-cleared `halt-<db>.flag` |
 | 18.4-18.6 | Pressure-halt enforcement and visibility | CLI | `start` refuses; all tier entry points skip before locking; `status` emits `halt-reason: disk-pressure` |
 | 18.7-18.9 | Guarded explicit recovery | CLI | `clear-pressure` remeasures recorded thresholds, removes only healthy markers, and never invokes launchctl |
-| 19.1-19.5 | Guard configuration and managed paths | HM module | Global floor/interval plus per-DB ceiling; manifest lists staging, restic, and explicit Litestream metadata paths |
+| 19.1-19.5 | Guard configuration and managed paths | HM module | Global floor/interval plus per-DB ceiling; manifest lists staging, restic, explicit Litestream metadata, and synthetic-local destination paths |
 | 19.6-19.8 | Boundary measurement and halt | CLI pressure guard | Locale-independent `df -Pk` and `du -skH`; strict `<` floor and `>` ceiling checks write the marker and boot out one Litestream label |
 | 19.9-19.12 | Synchronous preflight, failures, and Shopify policy | CLI + Shopify scaffold | Tier helper preflights before locking; errors fail closed; Shopify uses 128 GiB/60 s/96 GiB |
 
@@ -1249,11 +1249,16 @@ interface Manifest {
       type: string;                     // rclone backend type
     };
   };
+  rcloneConfigDestinations: {
+    [name: string]: {
+      type: string;
+    };
+  };                                      // configured remotes; excludes :local
   databases: Array<{
     name: string;                       // unique within manifest
     path: string;                       // absolute SQLite db path
     remote: string;                     // key of rcloneDestinations
-    remotePath: string;
+    remotePath: string;                  // absolute for remote == ":local"
     stagingDir: string;                 // absolute path
     repoDir: string;                    // absolute path
     litestreamMetadataDir: string;      // absolute path
@@ -1263,7 +1268,7 @@ interface Manifest {
       minimumFilesystemAvailableBytes: number;
       maximumManagedLocalBytes: number;
       checkIntervalSeconds: number;
-      managedPaths: string[];           // staging, repo, metadata
+      managedPaths: string[];           // staging, repo, metadata, optional local destination
     };
     replicationTier: {
       cadenceSeconds: number;           // launchd StartInterval value

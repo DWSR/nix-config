@@ -166,6 +166,12 @@ land safely on every host before any specific database is wired in.
   own its installation. The Cavemem MCP server is the expected first
   downstream consumer of a configured database entry but is not part
   of this feature.
+- **Shopify local-sync exception**: Shopify database repositories are written
+  through rclone's synthetic `:local:` backend into the Google Drive File
+  Provider folder. A successful pipeline run proves the local folder was
+  updated; Google Drive synchronization is external, unmonitored, and not an
+  off-host durability guarantee. The operator accepts this reliability gap to
+  remove direct Drive API backpressure from backup runs.
 
 ## Requirements
 
@@ -305,6 +311,10 @@ right destination per host without changing the module.
    entries shall reference these destinations by name only and shall
    not embed the destination's backend type or any other backend
    attribute inline.
+6. When a database references the synthetic `:local` destination, its
+   `remotePath` shall be absolute, the destination shall be excluded from
+   configured-remote matching, and the pipeline shall address it through
+   rclone's on-the-fly local backend.
 
 ### Requirement 6: Confidentiality of archival snapshots
 
@@ -826,7 +836,8 @@ exhaust the root filesystem.
 3. Each configured database shall have an independent launchd guard agent that
    runs at load and at the configured interval.
 4. The managed-local total shall include the database's Litestream staging
-   directory, restic repository, and Litestream metadata directory.
+   directory, restic repository, Litestream metadata directory, and any
+   synthetic-local destination repository.
 5. Litestream shall use the metadata directory rendered inside the database's
    managed SQLite Backup root.
 6. The guard shall measure filesystem available bytes and physical allocated

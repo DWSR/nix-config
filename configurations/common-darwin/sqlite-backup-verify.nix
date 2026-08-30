@@ -73,8 +73,8 @@
 # module's `_manifestPath` renderer at
 # `home-manager/common/sqlite-backup.nix:342`): the script reads
 # `.rcloneConfigPath`, `.rcloneConfigPassphraseSecret`,
-# `.archivePassphraseSecret`, `.keychainService`, `.rcloneDestinations`
-# (attrset of `{ type, ... }`), and `.databases[]` (for the
+# `.archivePassphraseSecret`, `.keychainService`, `.rcloneConfigDestinations`
+# (configured remotes only; synthetic `:local` is excluded), and `.databases[]` (for the
 # referencing-database name in destination-missing errors). The
 # manifest path itself is baked into the Nix store at HM render
 # time, so any change to declared destinations re-renders the
@@ -128,7 +128,7 @@ let
 
       # ---- Step 2: rclone config file presence (R17.1) ----
       if [ ! -f "$rclone_config_path" ]; then
-        declared_destinations="$(jq -r '.rcloneDestinations | keys | join(", ")' "$manifest_path")"
+        declared_destinations="$(jq -r '.rcloneConfigDestinations | keys | join(", ")' "$manifest_path")"
         echo "sqlite-backup-verify-rclone-config: rclone config not found at $rclone_config_path" >&2
         echo "  run 'rclone config' as the operator to create it and add destinations: ''${declared_destinations:-<none declared>}" >&2
         echo "  then encrypt with 'rclone config encryption set' using the passphrase stored in Keychain ($rclone_passphrase_secret)." >&2
@@ -187,7 +187,7 @@ let
           echo "  reconcile by editing either side (run 'rclone config' to change the rclone backend, or update the Nix declaration to match)." >&2
           verify_errors=$((verify_errors + 1))
         fi
-      done < <(jq -r '.rcloneDestinations | to_entries[] | "\(.key)\t\(.value.type)"' "$manifest_path")
+      done < <(jq -r '.rcloneConfigDestinations | to_entries[] | "\(.key)\t\(.value.type)"' "$manifest_path")
 
       if [ "$verify_errors" -gt 0 ]; then
         exit 15
