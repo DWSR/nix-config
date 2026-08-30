@@ -1,0 +1,1214 @@
+From 822c87761f8587395b3e1a04b5386b2611252cd1 Mon Sep 17 00:00:00 2001
+From: nix-config downstream <noreply@localhost>
+Subject: [PATCH] pull_requests: add native stacked PR tools
+
+Downstream implementation for github/github-mcp-server#2905.
+
+The earlier upstream PR #2908 was rejected by API review because it used an
+obsolete go-github request signature, pull_numbers/base request fields, and
+undocumented PATCH/DELETE routes and response fields. This replacement follows
+the review at https://github.com/github/github-mcp-server/pull/2908#issuecomment-5412937160
+and the GitHub Stacked Pull Requests REST API documentation for version
+2026-03-10:
+https://docs.github.com/en/rest/pulls/stacks?apiVersion=2026-03-10
+
+The downstream handlers preserve v1.11.0 scope and IFC conventions, including
+repository-visibility metadata labels on successful stack responses.
+
+Backport-base: github/github-mcp-server v1.11.0
+Removal-condition: Remove this patch when a released github-mcp-server exposes
+pull_request_stack_read and pull_request_stack_write with the documented
+2026-03-10 list/get/create/add/unstack API contract.
+
+---
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1230,6 +1230,24 @@
+   - `repo`: Repository name (string, required)
+   - `threadId`: The node ID of the review thread (e.g., PRRT_kwDOxxx). Required for resolve_thread and unresolve_thread methods. Get thread IDs from pull_request_read with method get_review_comments. (string, optional)
+ 
++- **pull_request_stack_read** - Read pull request stacks
++  - **OAuth Challenge Scopes**: `repo`
++  - `method`: Stack read operation: list stacks in a repository, or get one stack by stackNumber. (string, required)
++  - `owner`: Repository owner (string, required)
++  - `page`: Page number for list pagination (min 1). (number, optional)
++  - `perPage`: Results per page for list pagination (min 1, max 100). (number, optional)
++  - `pullNumber`: Filter list results to the stack containing this pull request. (number, optional)
++  - `repo`: Repository name (string, required)
++  - `stackNumber`: Stack number. Required for get. (number, optional)
++
++- **pull_request_stack_write** - Manage pull request stacks
++  - **OAuth Challenge Scopes**: `repo`
++  - `method`: Stack write operation: create, add pull requests to the top, or unstack eligible pull requests. (string, required)
++  - `owner`: Repository owner (string, required)
++  - `pullNumbers`: Pull request numbers ordered from the bottom of the new segment to the top. Create requires at least two; add requires at least one. (number[], optional)
++  - `repo`: Repository name (string, required)
++  - `stackNumber`: Stack number. Required for add and unstack. (number, optional)
++
+ - **search_pull_requests** - Search pull requests
+   - **OAuth Challenge Scopes**: `repo`
+   - `fields`: Subset of fields to return for each pull request result. If omitted, all fields are returned. Use this to reduce response size when you only need specific fields; omitting 'body', 'reactions', and 'labels' in particular drops the largest per-result data. (string[], optional)
+diff --git a/pkg/github/__toolsnaps__/pull_request_stack_read.snap b/pkg/github/__toolsnaps__/pull_request_stack_read.snap
+new file mode 100644
+--- /dev/null
++++ b/pkg/github/__toolsnaps__/pull_request_stack_read.snap
+@@ -0,0 +1,57 @@
++{
++  "annotations": {
++    "idempotentHint": false,
++    "readOnlyHint": true,
++    "title": "Read pull request stacks"
++  },
++  "description": "List native pull request stacks in a repository or get one stack by number.",
++  "inputSchema": {
++    "additionalProperties": false,
++    "properties": {
++      "method": {
++        "description": "Stack read operation: list stacks in a repository, or get one stack by stackNumber.",
++        "enum": [
++          "list",
++          "get"
++        ],
++        "type": "string"
++      },
++      "owner": {
++        "description": "Repository owner",
++        "type": "string"
++      },
++      "page": {
++        "description": "Page number for list pagination (min 1).",
++        "minimum": 1,
++        "type": "number"
++      },
++      "perPage": {
++        "description": "Results per page for list pagination (min 1, max 100).",
++        "maximum": 100,
++        "minimum": 1,
++        "type": "number"
++      },
++      "pullNumber": {
++        "description": "Filter list results to the stack containing this pull request.",
++        "minimum": 1,
++        "type": "number"
++      },
++      "repo": {
++        "description": "Repository name",
++        "type": "string"
++      },
++      "stackNumber": {
++        "description": "Stack number. Required for get.",
++        "minimum": 1,
++        "type": "number"
++      }
++    },
++    "required": [
++      "method",
++      "owner",
++      "repo"
++    ],
++    "type": "object"
++  },
++  "name": "pull_request_stack_read"
++}
+diff --git a/pkg/github/__toolsnaps__/pull_request_stack_write.snap b/pkg/github/__toolsnaps__/pull_request_stack_write.snap
+new file mode 100644
+--- /dev/null
++++ b/pkg/github/__toolsnaps__/pull_request_stack_write.snap
+@@ -0,0 +1,52 @@
++{
++  "annotations": {
++    "destructiveHint": true,
++    "idempotentHint": false,
++    "readOnlyHint": false,
++    "title": "Manage pull request stacks"
++  },
++  "description": "Create a native pull request stack, append pull requests to its top, or remove eligible pull requests from it.",
++  "inputSchema": {
++    "additionalProperties": false,
++    "properties": {
++      "method": {
++        "description": "Stack write operation: create, add pull requests to the top, or unstack eligible pull requests.",
++        "enum": [
++          "create",
++          "add",
++          "unstack"
++        ],
++        "type": "string"
++      },
++      "owner": {
++        "description": "Repository owner",
++        "type": "string"
++      },
++      "pullNumbers": {
++        "description": "Pull request numbers ordered from the bottom of the new segment to the top. Create requires at least two; add requires at least one.",
++        "items": {
++          "minimum": 1,
++          "type": "number"
++        },
++        "minItems": 1,
++        "type": "array"
++      },
++      "repo": {
++        "description": "Repository name",
++        "type": "string"
++      },
++      "stackNumber": {
++        "description": "Stack number. Required for add and unstack.",
++        "minimum": 1,
++        "type": "number"
++      }
++    },
++    "required": [
++      "method",
++      "owner",
++      "repo"
++    ],
++    "type": "object"
++  },
++  "name": "pull_request_stack_write"
++}
+diff --git a/pkg/github/pullrequests_stacks.go b/pkg/github/pullrequests_stacks.go
+new file mode 100644
+--- /dev/null
++++ b/pkg/github/pullrequests_stacks.go
+@@ -0,0 +1,492 @@
++package github
++
++import (
++	"context"
++	"fmt"
++	"net/http"
++	"net/url"
++	"sort"
++	"strconv"
++	"strings"
++
++	ghErrors "github.com/github/github-mcp-server/pkg/errors"
++	"github.com/github/github-mcp-server/pkg/ifc"
++	"github.com/github/github-mcp-server/pkg/inventory"
++	"github.com/github/github-mcp-server/pkg/scopes"
++	"github.com/github/github-mcp-server/pkg/translations"
++	"github.com/github/github-mcp-server/pkg/utils"
++	githubapi "github.com/google/go-github/v89/github"
++	"github.com/google/jsonschema-go/jsonschema"
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++)
++
++const (
++	pullRequestStacksAPIVersion = "2026-03-10"
++	pullRequestStacksAccept     = "application/vnd.github+json"
++)
++
++// PullRequestStack is GitHub's native stacked pull request response model.
++type PullRequestStack struct {
++	ID           int64                         `json:"id"`
++	Number       int                           `json:"number"`
++	NodeID       string                        `json:"node_id"`
++	URL          string                        `json:"url"`
++	Base         PullRequestStackBase          `json:"base"`
++	Open         bool                          `json:"open"`
++	CreatedAt    string                        `json:"created_at"`
++	PullRequests []PullRequestStackPullRequest `json:"pull_requests"`
++}
++
++// PullRequestStackBase identifies the branch beneath the bottom pull request.
++type PullRequestStackBase struct {
++	Ref string `json:"ref"`
++	SHA string `json:"sha,omitempty"`
++}
++
++// PullRequestStackPullRequest describes one ordered pull request in a stack.
++type PullRequestStackPullRequest struct {
++	Number   int                             `json:"number"`
++	State    string                          `json:"state"`
++	Draft    bool                            `json:"draft"`
++	MergedAt *string                         `json:"merged_at"`
++	Head     PullRequestStackPullRequestHead `json:"head"`
++}
++
++// PullRequestStackPullRequestHead identifies a stack pull request's head.
++type PullRequestStackPullRequestHead struct {
++	Ref string `json:"ref"`
++	SHA string `json:"sha"`
++}
++
++type pullRequestStackMutation struct {
++	PullRequests []int `json:"pull_requests"`
++}
++
++type pullRequestStackUnstackResult struct {
++	Dissolved bool              `json:"dissolved"`
++	Stack     *PullRequestStack `json:"stack,omitempty"`
++}
++
++// PullRequestStackRead creates a tool for listing and getting native pull request stacks.
++func PullRequestStackRead(t translations.TranslationHelperFunc) inventory.ServerTool {
++	schema := &jsonschema.Schema{
++		Type: "object",
++		Properties: map[string]*jsonschema.Schema{
++			"method": {
++				Type:        "string",
++				Description: "Stack read operation: list stacks in a repository, or get one stack by stackNumber.",
++				Enum:        []any{"list", "get"},
++			},
++			"owner": {
++				Type:        "string",
++				Description: "Repository owner",
++			},
++			"repo": {
++				Type:        "string",
++				Description: "Repository name",
++			},
++			"stackNumber": {
++				Type:        "number",
++				Description: "Stack number. Required for get.",
++				Minimum:     jsonschema.Ptr(1.0),
++			},
++			"pullNumber": {
++				Type:        "number",
++				Description: "Filter list results to the stack containing this pull request.",
++				Minimum:     jsonschema.Ptr(1.0),
++			},
++			"page": {
++				Type:        "number",
++				Description: "Page number for list pagination (min 1).",
++				Minimum:     jsonschema.Ptr(1.0),
++			},
++			"perPage": {
++				Type:        "number",
++				Description: "Results per page for list pagination (min 1, max 100).",
++				Minimum:     jsonschema.Ptr(1.0),
++				Maximum:     jsonschema.Ptr(100.0),
++			},
++		},
++		Required:             []string{"method", "owner", "repo"},
++		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
++	}
++
++	return NewTool(
++		ToolsetMetadataPullRequests,
++		mcp.Tool{
++			Name:        "pull_request_stack_read",
++			Description: t("TOOL_PULL_REQUEST_STACK_READ_DESCRIPTION", "List native pull request stacks in a repository or get one stack by number."),
++			Annotations: &mcp.ToolAnnotations{
++				Title:        t("TOOL_PULL_REQUEST_STACK_READ_USER_TITLE", "Read pull request stacks"),
++				ReadOnlyHint: true,
++			},
++			InputSchema: schema,
++		},
++		scopes.PublicRead(scopes.Repo),
++		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
++			method, err := RequiredParam[string](args, "method")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++
++			var allowed []string
++			switch method {
++			case "list":
++				allowed = []string{"method", "owner", "repo", "pullNumber", "page", "perPage"}
++			case "get":
++				allowed = []string{"method", "owner", "repo", "stackNumber"}
++			default:
++				return utils.NewToolResultError(fmt.Sprintf("unknown method: %s", method)), nil, nil
++			}
++			if err := rejectStackArguments(args, method, allowed...); err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++
++			owner, err := RequiredParam[string](args, "owner")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++			repo, err := RequiredParam[string](args, "repo")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++			client, err := deps.GetClient(ctx)
++			if err != nil {
++				return utils.NewToolResultErrorFromErr("failed to get GitHub client", err), nil, nil
++			}
++
++			var result *mcp.CallToolResult
++			switch method {
++			case "list":
++				result = listPullRequestStacks(ctx, client, owner, repo, args)
++			case "get":
++				stackNumber, err := requiredPositiveStackInt(args, "stackNumber")
++				if err != nil {
++					return utils.NewToolResultError(err.Error()), nil, nil
++				}
++				result = getPullRequestStack(ctx, client, owner, repo, stackNumber)
++			default:
++				panic("validated pull request stack read method became unreachable")
++			}
++			result = attachRepoVisibilityIFCLabelLazy(ctx, deps, owner, repo, result, ifc.LabelRepoMetadata)
++			return result, nil, nil
++		},
++	)
++}
++
++// PullRequestStackWrite creates a tool for creating, extending, and unstacking native stacks.
++func PullRequestStackWrite(t translations.TranslationHelperFunc) inventory.ServerTool {
++	schema := &jsonschema.Schema{
++		Type: "object",
++		Properties: map[string]*jsonschema.Schema{
++			"method": {
++				Type:        "string",
++				Description: "Stack write operation: create, add pull requests to the top, or unstack eligible pull requests.",
++				Enum:        []any{"create", "add", "unstack"},
++			},
++			"owner": {
++				Type:        "string",
++				Description: "Repository owner",
++			},
++			"repo": {
++				Type:        "string",
++				Description: "Repository name",
++			},
++			"stackNumber": {
++				Type:        "number",
++				Description: "Stack number. Required for add and unstack.",
++				Minimum:     jsonschema.Ptr(1.0),
++			},
++			"pullNumbers": {
++				Type:        "array",
++				Description: "Pull request numbers ordered from the bottom of the new segment to the top. Create requires at least two; add requires at least one.",
++				Items: &jsonschema.Schema{
++					Type:    "number",
++					Minimum: jsonschema.Ptr(1.0),
++				},
++				MinItems: jsonschema.Ptr(1),
++			},
++		},
++		Required:             []string{"method", "owner", "repo"},
++		AdditionalProperties: &jsonschema.Schema{Not: &jsonschema.Schema{}},
++	}
++
++	return NewTool(
++		ToolsetMetadataPullRequests,
++		mcp.Tool{
++			Name:        "pull_request_stack_write",
++			Description: t("TOOL_PULL_REQUEST_STACK_WRITE_DESCRIPTION", "Create a native pull request stack, append pull requests to its top, or remove eligible pull requests from it."),
++			Annotations: &mcp.ToolAnnotations{
++				Title:           t("TOOL_PULL_REQUEST_STACK_WRITE_USER_TITLE", "Manage pull request stacks"),
++				ReadOnlyHint:    false,
++				DestructiveHint: jsonschema.Ptr(true),
++			},
++			InputSchema: schema,
++		},
++		scopes.RequireAll(scopes.Repo),
++		func(ctx context.Context, deps ToolDependencies, _ *mcp.CallToolRequest, args map[string]any) (*mcp.CallToolResult, any, error) {
++			method, err := RequiredParam[string](args, "method")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++
++			var allowed []string
++			switch method {
++			case "create":
++				allowed = []string{"method", "owner", "repo", "pullNumbers"}
++			case "add":
++				allowed = []string{"method", "owner", "repo", "stackNumber", "pullNumbers"}
++			case "unstack":
++				allowed = []string{"method", "owner", "repo", "stackNumber"}
++			default:
++				return utils.NewToolResultError(fmt.Sprintf("unknown method: %s", method)), nil, nil
++			}
++			if err := rejectStackArguments(args, method, allowed...); err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++
++			owner, err := RequiredParam[string](args, "owner")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++			repo, err := RequiredParam[string](args, "repo")
++			if err != nil {
++				return utils.NewToolResultError(err.Error()), nil, nil
++			}
++			client, err := deps.GetClient(ctx)
++			if err != nil {
++				return utils.NewToolResultErrorFromErr("failed to get GitHub client", err), nil, nil
++			}
++
++			var result *mcp.CallToolResult
++			switch method {
++			case "create":
++				pullNumbers, err := requiredPositiveStackInts(args, "pullNumbers", 2)
++				if err != nil {
++					return utils.NewToolResultError(err.Error()), nil, nil
++				}
++				result = createPullRequestStack(ctx, client, owner, repo, pullNumbers)
++			case "add":
++				stackNumber, err := requiredPositiveStackInt(args, "stackNumber")
++				if err != nil {
++					return utils.NewToolResultError(err.Error()), nil, nil
++				}
++				pullNumbers, err := requiredPositiveStackInts(args, "pullNumbers", 1)
++				if err != nil {
++					return utils.NewToolResultError(err.Error()), nil, nil
++				}
++				result = addPullRequestsToStack(ctx, client, owner, repo, stackNumber, pullNumbers)
++			case "unstack":
++				stackNumber, err := requiredPositiveStackInt(args, "stackNumber")
++				if err != nil {
++					return utils.NewToolResultError(err.Error()), nil, nil
++				}
++				result = unstackPullRequestStack(ctx, client, owner, repo, stackNumber)
++			default:
++				panic("validated pull request stack write method became unreachable")
++			}
++			result = attachRepoVisibilityIFCLabelLazy(ctx, deps, owner, repo, result, ifc.LabelRepoMetadata)
++			return result, nil, nil
++		},
++	)
++}
++
++func listPullRequestStacks(ctx context.Context, client *githubapi.Client, owner, repo string, args map[string]any) *mcp.CallToolResult {
++	query := url.Values{}
++	for _, parameter := range []struct {
++		mcpName string
++		apiName string
++	}{
++		{mcpName: "pullNumber", apiName: "pull_request"},
++		{mcpName: "page", apiName: "page"},
++		{mcpName: "perPage", apiName: "per_page"},
++	} {
++		value, ok, err := optionalPositiveStackInt(args, parameter.mcpName)
++		if err != nil {
++			return utils.NewToolResultError(err.Error())
++		}
++		if ok {
++			if parameter.mcpName == "perPage" && value > 100 {
++				return utils.NewToolResultError("parameter perPage must be at most 100")
++			}
++			query.Set(parameter.apiName, strconv.Itoa(value))
++		}
++	}
++
++	apiURL := fmt.Sprintf("repos/%s/%s/stacks", owner, repo)
++	if encoded := query.Encode(); encoded != "" {
++		apiURL += "?" + encoded
++	}
++
++	var stacks []PullRequestStack
++	resp, err := doPullRequestStackRequest(ctx, client, http.MethodGet, apiURL, nil, &stacks)
++	if err != nil {
++		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to list pull request stacks", resp, err)
++	}
++	if resp.StatusCode != http.StatusOK {
++		return unexpectedPullRequestStackStatus("list pull request stacks", resp.StatusCode, http.StatusOK)
++	}
++	return MarshalledTextResult(stacks)
++}
++
++func getPullRequestStack(ctx context.Context, client *githubapi.Client, owner, repo string, stackNumber int) *mcp.CallToolResult {
++	apiURL := fmt.Sprintf("repos/%s/%s/stacks/%d", owner, repo, stackNumber)
++	var stack PullRequestStack
++	resp, err := doPullRequestStackRequest(ctx, client, http.MethodGet, apiURL, nil, &stack)
++	if err != nil {
++		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to get pull request stack", resp, err)
++	}
++	if resp.StatusCode != http.StatusOK {
++		return unexpectedPullRequestStackStatus("get pull request stack", resp.StatusCode, http.StatusOK)
++	}
++	return MarshalledTextResult(stack)
++}
++
++func createPullRequestStack(ctx context.Context, client *githubapi.Client, owner, repo string, pullNumbers []int) *mcp.CallToolResult {
++	apiURL := fmt.Sprintf("repos/%s/%s/stacks", owner, repo)
++	var stack PullRequestStack
++	resp, err := doPullRequestStackRequest(ctx, client, http.MethodPost, apiURL, pullRequestStackMutation{PullRequests: pullNumbers}, &stack)
++	if err != nil {
++		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to create pull request stack", resp, err)
++	}
++	if resp.StatusCode != http.StatusCreated {
++		return unexpectedPullRequestStackStatus("create pull request stack", resp.StatusCode, http.StatusCreated)
++	}
++	return MarshalledTextResult(stack)
++}
++
++func addPullRequestsToStack(ctx context.Context, client *githubapi.Client, owner, repo string, stackNumber int, pullNumbers []int) *mcp.CallToolResult {
++	apiURL := fmt.Sprintf("repos/%s/%s/stacks/%d/add", owner, repo, stackNumber)
++	var stack PullRequestStack
++	resp, err := doPullRequestStackRequest(ctx, client, http.MethodPost, apiURL, pullRequestStackMutation{PullRequests: pullNumbers}, &stack)
++	if err != nil {
++		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to add pull requests to stack", resp, err)
++	}
++	if resp.StatusCode != http.StatusOK {
++		return unexpectedPullRequestStackStatus("add pull requests to stack", resp.StatusCode, http.StatusOK)
++	}
++	return MarshalledTextResult(stack)
++}
++
++func unstackPullRequestStack(ctx context.Context, client *githubapi.Client, owner, repo string, stackNumber int) *mcp.CallToolResult {
++	apiURL := fmt.Sprintf("repos/%s/%s/stacks/%d/unstack", owner, repo, stackNumber)
++	var stack PullRequestStack
++	resp, err := doPullRequestStackRequest(ctx, client, http.MethodPost, apiURL, nil, &stack)
++	if err != nil {
++		return ghErrors.NewGitHubAPIErrorResponse(ctx, "failed to unstack pull request stack", resp, err)
++	}
++
++	switch resp.StatusCode {
++	case http.StatusNoContent:
++		return MarshalledTextResult(pullRequestStackUnstackResult{Dissolved: true})
++	case http.StatusOK:
++		return MarshalledTextResult(pullRequestStackUnstackResult{Dissolved: false, Stack: &stack})
++	default:
++		return unexpectedPullRequestStackStatus("unstack pull request stack", resp.StatusCode, http.StatusOK, http.StatusNoContent)
++	}
++}
++
++func doPullRequestStackRequest(ctx context.Context, client *githubapi.Client, method, apiURL string, body, out any) (*githubapi.Response, error) {
++	req, err := client.NewRequest(ctx, method, apiURL, body, githubapi.WithVersion(pullRequestStacksAPIVersion))
++	if err != nil {
++		return nil, fmt.Errorf("failed to create request: %w", err)
++	}
++	req.Header.Set("Accept", pullRequestStacksAccept)
++	return client.Do(req, out)
++}
++
++func requiredPositiveStackInt(args map[string]any, name string) (int, error) {
++	raw, ok := args[name]
++	if !ok {
++		return 0, fmt.Errorf("missing required parameter: %s", name)
++	}
++	value, err := stackInt(raw)
++	if err != nil {
++		return 0, fmt.Errorf("parameter %s must be a positive integer: %w", name, err)
++	}
++	if value <= 0 {
++		return 0, fmt.Errorf("parameter %s must be a positive integer", name)
++	}
++	return value, nil
++}
++
++func optionalPositiveStackInt(args map[string]any, name string) (int, bool, error) {
++	if _, ok := args[name]; !ok {
++		return 0, false, nil
++	}
++	value, err := requiredPositiveStackInt(args, name)
++	return value, true, err
++}
++
++func requiredPositiveStackInts(args map[string]any, name string, minimumLength int) ([]int, error) {
++	raw, ok := args[name]
++	if !ok {
++		return nil, fmt.Errorf("missing required parameter: %s", name)
++	}
++
++	var values []any
++	switch value := raw.(type) {
++	case []any:
++		values = value
++	case []float64:
++		values = make([]any, len(value))
++		for i, item := range value {
++			values[i] = item
++		}
++	case []int:
++		result := append([]int(nil), value...)
++		if len(result) < minimumLength {
++			return nil, fmt.Errorf("parameter %s must contain at least %d pull request numbers", name, minimumLength)
++		}
++		for i, item := range result {
++			if item <= 0 {
++				return nil, fmt.Errorf("parameter %s item %d must be a positive integer", name, i)
++			}
++		}
++		return result, nil
++	default:
++		return nil, fmt.Errorf("parameter %s must be an array of positive integers", name)
++	}
++
++	if len(values) < minimumLength {
++		return nil, fmt.Errorf("parameter %s must contain at least %d pull request numbers", name, minimumLength)
++	}
++	result := make([]int, len(values))
++	for i, item := range values {
++		value, err := stackInt(item)
++		if err != nil || value <= 0 {
++			return nil, fmt.Errorf("parameter %s item %d must be a positive integer", name, i)
++		}
++		result[i] = value
++	}
++	return result, nil
++}
++
++func stackInt(value any) (int, error) {
++	if value, ok := value.(int); ok {
++		return value, nil
++	}
++	return toInt(value)
++}
++
++func rejectStackArguments(args map[string]any, method string, allowed ...string) error {
++	allowedSet := make(map[string]struct{}, len(allowed))
++	for _, name := range allowed {
++		allowedSet[name] = struct{}{}
++	}
++	var unexpected []string
++	for name := range args {
++		if _, ok := allowedSet[name]; !ok {
++			unexpected = append(unexpected, name)
++		}
++	}
++	if len(unexpected) == 0 {
++		return nil
++	}
++	sort.Strings(unexpected)
++	return fmt.Errorf("method %s does not accept parameter(s): %s", method, strings.Join(unexpected, ", "))
++}
++
++func unexpectedPullRequestStackStatus(action string, actual int, expected ...int) *mcp.CallToolResult {
++	return utils.NewToolResultError(fmt.Sprintf("failed to %s: unexpected HTTP status %d (expected %v)", action, actual, expected))
++}
+diff --git a/pkg/github/pullrequests_stacks_test.go b/pkg/github/pullrequests_stacks_test.go
+new file mode 100644
+--- /dev/null
++++ b/pkg/github/pullrequests_stacks_test.go
+@@ -0,0 +1,517 @@
++package github
++
++import (
++	"context"
++	"encoding/json"
++	"io"
++	"math"
++	"net/http"
++	"testing"
++
++	"github.com/github/github-mcp-server/internal/toolsnaps"
++	"github.com/github/github-mcp-server/pkg/inventory"
++	"github.com/github/github-mcp-server/pkg/translations"
++	"github.com/google/jsonschema-go/jsonschema"
++	"github.com/modelcontextprotocol/go-sdk/mcp"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++func TestPullRequestStackToolDefinitions(t *testing.T) {
++	tests := []struct {
++		name              string
++		tool              inventoryToolFactory
++		methods           []any
++		properties        []string
++		readOnly          bool
++		destructive       bool
++		scopeVisibleEmpty bool
++	}{
++		{
++			name:              "pull_request_stack_read",
++			tool:              PullRequestStackRead,
++			methods:           []any{"list", "get"},
++			properties:        []string{"method", "owner", "repo", "stackNumber", "pullNumber", "page", "perPage"},
++			readOnly:          true,
++			scopeVisibleEmpty: true,
++		},
++		{
++			name:        "pull_request_stack_write",
++			tool:        PullRequestStackWrite,
++			methods:     []any{"create", "add", "unstack"},
++			properties:  []string{"method", "owner", "repo", "stackNumber", "pullNumbers"},
++			destructive: true,
++		},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			serverTool := tc.tool(translations.NullTranslationHelper)
++			tool := serverTool.Tool
++			require.NoError(t, toolsnaps.Test(tool.Name, tool))
++			assert.Equal(t, tc.name, tool.Name)
++			assert.Equal(t, ToolsetMetadataPullRequests.ID, serverTool.Toolset.ID)
++			assert.Equal(t, tc.readOnly, tool.Annotations.ReadOnlyHint)
++			assert.Equal(t, []string{"repo"}, serverTool.ScopeAccess.Scopes)
++			assert.Equal(t, tc.scopeVisibleEmpty, serverTool.ScopeAccess.Visible(nil))
++			if tc.destructive {
++				require.NotNil(t, tool.Annotations.DestructiveHint)
++				assert.True(t, *tool.Annotations.DestructiveHint)
++			}
++
++			schema := tool.InputSchema.(*jsonschema.Schema)
++			assert.ElementsMatch(t, []string{"method", "owner", "repo"}, schema.Required)
++			assert.Equal(t, tc.methods, schema.Properties["method"].Enum)
++			assert.NotNil(t, schema.AdditionalProperties)
++			assert.NotNil(t, schema.AdditionalProperties.Not)
++			for _, property := range tc.properties {
++				assert.Contains(t, schema.Properties, property)
++			}
++			assert.Len(t, schema.Properties, len(tc.properties))
++		})
++	}
++}
++
++type inventoryToolFactory func(translations.TranslationHelperFunc) inventory.ServerTool
++
++func TestPullRequestStackToolsRegisteredAndReadOnlyFiltered(t *testing.T) {
++	allTools := AllTools(translations.NullTranslationHelper)
++	counts := map[string]int{}
++	for _, tool := range allTools {
++		counts[tool.Tool.Name]++
++	}
++	assert.Equal(t, 1, counts["pull_request_stack_read"])
++	assert.Equal(t, 1, counts["pull_request_stack_write"])
++
++	inv, err := NewInventory(translations.NullTranslationHelper).
++		WithToolsets([]string{"pull_requests"}).
++		WithReadOnly(true).
++		Build()
++	require.NoError(t, err)
++
++	available := map[string]bool{}
++	for _, tool := range inv.AvailableTools(context.Background()) {
++		available[tool.Tool.Name] = true
++	}
++	assert.True(t, available["pull_request_stack_read"])
++	assert.False(t, available["pull_request_stack_write"])
++}
++
++func TestPullRequestStackReadList(t *testing.T) {
++	want := samplePullRequestStack()
++	client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		assertStackRequest(t, r, http.MethodGet, "/repos/octo/repo/stacks")
++		assert.Equal(t, map[string][]string{
++			"page":         {"2"},
++			"per_page":     {"50"},
++			"pull_request": {"42"},
++		}, map[string][]string(r.URL.Query()))
++		writeStackJSON(t, w, http.StatusOK, []PullRequestStack{want})
++	})
++
++	result := callStackTool(t, PullRequestStackRead, client, map[string]any{
++		"method":     "list",
++		"owner":      "octo",
++		"repo":       "repo",
++		"pullNumber": float64(42),
++		"page":       float64(2),
++		"perPage":    float64(50),
++	})
++	require.False(t, result.IsError)
++	var got []PullRequestStack
++	require.NoError(t, json.Unmarshal([]byte(getTextResult(t, result).Text), &got))
++	assert.Equal(t, []PullRequestStack{want}, got)
++}
++
++func TestPullRequestStackReadListDefaultsAndEmptyResult(t *testing.T) {
++	client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		assertStackRequest(t, r, http.MethodGet, "/repos/octo/repo/stacks")
++		assert.Empty(t, r.URL.RawQuery, "omitted list arguments must use API defaults")
++		writeStackJSON(t, w, http.StatusOK, []PullRequestStack{})
++	})
++
++	result := callStackTool(t, PullRequestStackRead, client, stackArgs("list"))
++	require.False(t, result.IsError)
++	assert.JSONEq(t, `[]`, getTextResult(t, result).Text)
++}
++
++func TestPullRequestStackReadGetDecodesDocumentedShape(t *testing.T) {
++	client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		assertStackRequest(t, r, http.MethodGet, "/repos/octo/repo/stacks/7")
++		assert.Empty(t, r.URL.RawQuery)
++		writeStackJSON(t, w, http.StatusOK, map[string]any{
++			"id":         9001,
++			"number":     7,
++			"node_id":    "PRS_kwDOstack",
++			"url":        "https://api.github.com/repos/octo/repo/stacks/7",
++			"base":       map[string]any{"ref": "main", "sha": "base-sha", "invented": "ignored"},
++			"open":       true,
++			"created_at": "2026-08-01T12:00:00Z",
++			"title":      "must not escape the API adapter",
++			"updated_at": "2026-08-02T12:00:00Z",
++			"pull_requests": []map[string]any{{
++				"number":          101,
++				"state":           "open",
++				"draft":           false,
++				"merged_at":       nil,
++				"mergeable":       true,
++				"review_decision": "APPROVED",
++				"head":            map[string]any{"ref": "feature", "sha": "head-sha"},
++			}},
++		})
++	})
++
++	result := callStackTool(t, PullRequestStackRead, client, map[string]any{
++		"method":      "get",
++		"owner":       "octo",
++		"repo":        "repo",
++		"stackNumber": float64(7),
++	})
++	require.False(t, result.IsError)
++
++	var raw map[string]any
++	require.NoError(t, json.Unmarshal([]byte(getTextResult(t, result).Text), &raw))
++	assert.ElementsMatch(t,
++		[]string{"id", "number", "node_id", "url", "base", "open", "created_at", "pull_requests"},
++		mapKeys(raw),
++	)
++	pr := raw["pull_requests"].([]any)[0].(map[string]any)
++	assert.ElementsMatch(t, []string{"number", "state", "draft", "merged_at", "head"}, mapKeys(pr))
++	assert.Equal(t, "feature", pr["head"].(map[string]any)["ref"])
++	assert.Equal(t, "head-sha", pr["head"].(map[string]any)["sha"])
++}
++
++func TestPullRequestStackWriteCreate(t *testing.T) {
++	want := samplePullRequestStack()
++	client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		assertStackRequest(t, r, http.MethodPost, "/repos/octo/repo/stacks")
++		assertStackBody(t, r, map[string]any{"pull_requests": []any{float64(101), float64(102)}})
++		writeStackJSON(t, w, http.StatusCreated, want)
++	})
++
++	result := callStackTool(t, PullRequestStackWrite, client, map[string]any{
++		"method":      "create",
++		"owner":       "octo",
++		"repo":        "repo",
++		"pullNumbers": []any{float64(101), float64(102)},
++	})
++	require.False(t, result.IsError)
++	assertStackToolResult(t, result, want)
++}
++
++func TestPullRequestStackWriteAdd(t *testing.T) {
++	want := samplePullRequestStack()
++	client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++		assertStackRequest(t, r, http.MethodPost, "/repos/octo/repo/stacks/7/add")
++		assertStackBody(t, r, map[string]any{"pull_requests": []any{float64(103), float64(104)}})
++		writeStackJSON(t, w, http.StatusOK, want)
++	})
++
++	result := callStackTool(t, PullRequestStackWrite, client, map[string]any{
++		"method":      "add",
++		"owner":       "octo",
++		"repo":        "repo",
++		"stackNumber": float64(7),
++		"pullNumbers": []any{float64(103), float64(104)},
++	})
++	require.False(t, result.IsError)
++	assertStackToolResult(t, result, want)
++}
++
++func TestPullRequestStackWriteUnstack(t *testing.T) {
++	t.Run("204 dissolves the stack", func(t *testing.T) {
++		client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++			assertStackRequest(t, r, http.MethodPost, "/repos/octo/repo/stacks/7/unstack")
++			assertStackNoBody(t, r)
++			w.WriteHeader(http.StatusNoContent)
++		})
++		result := callStackTool(t, PullRequestStackWrite, client, stackUnstackArgs())
++		require.False(t, result.IsError)
++		assert.JSONEq(t, `{"dissolved":true}`, getTextResult(t, result).Text)
++	})
++
++	t.Run("200 returns a partial remaining stack", func(t *testing.T) {
++		want := samplePullRequestStack()
++		client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++			assertStackRequest(t, r, http.MethodPost, "/repos/octo/repo/stacks/7/unstack")
++			assertStackNoBody(t, r)
++			writeStackJSON(t, w, http.StatusOK, want)
++		})
++		result := callStackTool(t, PullRequestStackWrite, client, stackUnstackArgs())
++		require.False(t, result.IsError)
++		var got pullRequestStackUnstackResult
++		require.NoError(t, json.Unmarshal([]byte(getTextResult(t, result).Text), &got))
++		assert.False(t, got.Dissolved)
++		require.NotNil(t, got.Stack)
++		assert.Equal(t, want, *got.Stack)
++	})
++}
++
++func TestPullRequestStackValidation(t *testing.T) {
++	tests := []struct {
++		name    string
++		tool    inventoryToolFactory
++		args    map[string]any
++		message string
++	}{
++		{"get requires stackNumber", PullRequestStackRead, stackArgs("get"), "missing required parameter: stackNumber"},
++		{"stackNumber rejects zero", PullRequestStackRead, withStackArg(stackArgs("get"), "stackNumber", float64(0)), "stackNumber must be a positive integer"},
++		{"list rejects negative pullNumber", PullRequestStackRead, withStackArg(stackArgs("list"), "pullNumber", float64(-1)), "pullNumber must be a positive integer"},
++		{"list rejects zero page", PullRequestStackRead, withStackArg(stackArgs("list"), "page", float64(0)), "page must be a positive integer"},
++		{"list rejects fractional page", PullRequestStackRead, withStackArg(stackArgs("list"), "page", float64(1.5)), "page must be a positive integer"},
++		{"list rejects non-finite perPage", PullRequestStackRead, withStackArg(stackArgs("list"), "perPage", "NaN"), "perPage must be a positive integer"},
++		{"list rejects excessive perPage", PullRequestStackRead, withStackArg(stackArgs("list"), "perPage", float64(101)), "perPage must be at most 100"},
++		{"get rejects overflowing stackNumber", PullRequestStackRead, withStackArg(stackArgs("get"), "stackNumber", "1e100"), "stackNumber must be a positive integer"},
++		{"get rejects list arguments", PullRequestStackRead, withStackArg(stackArgs("get"), "page", float64(1)), "method get does not accept parameter(s): page"},
++		{"create rejects empty pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{}), "at least 2 pull request numbers"},
++		{"create needs two pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1)}), "at least 2 pull request numbers"},
++		{"create rejects non-positive pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), float64(-2)}), "item 1 must be a positive integer"},
++		{"create rejects fractional pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), float64(2.5)}), "item 1 must be a positive integer"},
++		{"create rejects non-finite pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), "Inf"}), "item 1 must be a positive integer"},
++		{"create rejects overflowing pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), "1e100"}), "item 1 must be a positive integer"},
++		{"create rejects base mutation", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), float64(2)}), "base", "main"), "method create does not accept parameter(s): base"},
++		{"create rejects stackNumber", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("create"), "pullNumbers", []any{float64(1), float64(2)}), "stackNumber", float64(7)), "method create does not accept parameter(s): stackNumber"},
++		{"add requires stackNumber", PullRequestStackWrite, withStackArg(stackArgs("add"), "pullNumbers", []any{float64(3)}), "missing required parameter: stackNumber"},
++		{"add requires pullNumbers", PullRequestStackWrite, withStackArg(stackArgs("add"), "stackNumber", float64(7)), "missing required parameter: pullNumbers"},
++		{"unstack rejects pullNumbers", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("unstack"), "stackNumber", float64(7)), "pullNumbers", []any{float64(1)}), "method unstack does not accept parameter(s): pullNumbers"},
++		{"write rejects unknown method", PullRequestStackWrite, stackArgs("sync"), "unknown method: sync"},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			client := stackTestClient(t, func(http.ResponseWriter, *http.Request) {
++				t.Fatal("validation failure must not issue an HTTP request")
++			})
++			result := callStackTool(t, tc.tool, client, tc.args)
++			require.True(t, result.IsError)
++			assert.Contains(t, getErrorResult(t, result).Text, tc.message)
++		})
++	}
++}
++
++func TestPullRequestStackNumericHelpersRejectNonFiniteValues(t *testing.T) {
++	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
++		_, err := requiredPositiveStackInt(map[string]any{"value": value}, "value")
++		require.Error(t, err)
++
++		_, err = requiredPositiveStackInts(map[string]any{"values": []any{float64(1), value}}, "values", 2)
++		require.Error(t, err)
++	}
++}
++
++func TestPullRequestStackAPIErrors(t *testing.T) {
++	tests := []struct {
++		name       string
++		tool       inventoryToolFactory
++		args       map[string]any
++		status     int
++		method     string
++		path       string
++		wantPrefix string
++	}{
++		{"list 404", PullRequestStackRead, stackArgs("list"), http.StatusNotFound, http.MethodGet, "/repos/octo/repo/stacks", "failed to list pull request stacks"},
++		{"list 422", PullRequestStackRead, stackArgs("list"), http.StatusUnprocessableEntity, http.MethodGet, "/repos/octo/repo/stacks", "failed to list pull request stacks"},
++		{"get 404", PullRequestStackRead, withStackArg(stackArgs("get"), "stackNumber", float64(999)), http.StatusNotFound, http.MethodGet, "/repos/octo/repo/stacks/999", "failed to get pull request stack"},
++		{"create 404", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(101), float64(102)}), http.StatusNotFound, http.MethodPost, "/repos/octo/repo/stacks", "failed to create pull request stack"},
++		{"create 422", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(101), float64(102)}), http.StatusUnprocessableEntity, http.MethodPost, "/repos/octo/repo/stacks", "failed to create pull request stack"},
++		{"add 404", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("add"), "stackNumber", float64(7)), "pullNumbers", []any{float64(103)}), http.StatusNotFound, http.MethodPost, "/repos/octo/repo/stacks/7/add", "failed to add pull requests to stack"},
++		{"add 409", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("add"), "stackNumber", float64(7)), "pullNumbers", []any{float64(103)}), http.StatusConflict, http.MethodPost, "/repos/octo/repo/stacks/7/add", "failed to add pull requests to stack"},
++		{"add 422", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("add"), "stackNumber", float64(7)), "pullNumbers", []any{float64(103)}), http.StatusUnprocessableEntity, http.MethodPost, "/repos/octo/repo/stacks/7/add", "failed to add pull requests to stack"},
++		{"unstack 404", PullRequestStackWrite, stackUnstackArgs(), http.StatusNotFound, http.MethodPost, "/repos/octo/repo/stacks/7/unstack", "failed to unstack pull request stack"},
++		{"unstack 409", PullRequestStackWrite, stackUnstackArgs(), http.StatusConflict, http.MethodPost, "/repos/octo/repo/stacks/7/unstack", "failed to unstack pull request stack"},
++		{"unstack 422", PullRequestStackWrite, stackUnstackArgs(), http.StatusUnprocessableEntity, http.MethodPost, "/repos/octo/repo/stacks/7/unstack", "failed to unstack pull request stack"},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			client := stackTestClient(t, func(w http.ResponseWriter, r *http.Request) {
++				assertStackRequest(t, r, tc.method, tc.path)
++				writeStackJSON(t, w, tc.status, map[string]any{"message": http.StatusText(tc.status)})
++			})
++			result := callStackTool(t, tc.tool, client, tc.args)
++			require.True(t, result.IsError)
++			assert.Contains(t, getErrorResult(t, result).Text, tc.wantPrefix)
++		})
++	}
++}
++
++func TestPullRequestStackSuccessesCarryRepositoryMetadataIFC(t *testing.T) {
++	tests := []struct {
++		name      string
++		tool      inventoryToolFactory
++		args      map[string]any
++		method    string
++		path      string
++		status    int
++		body      any
++		isPrivate bool
++	}{
++		{"list public", PullRequestStackRead, stackArgs("list"), http.MethodGet, "/repos/octo/repo/stacks", http.StatusOK, []PullRequestStack{samplePullRequestStack()}, false},
++		{"get private", PullRequestStackRead, withStackArg(stackArgs("get"), "stackNumber", float64(7)), http.MethodGet, "/repos/octo/repo/stacks/7", http.StatusOK, samplePullRequestStack(), true},
++		{"create public", PullRequestStackWrite, withStackArg(stackArgs("create"), "pullNumbers", []any{float64(101), float64(102)}), http.MethodPost, "/repos/octo/repo/stacks", http.StatusCreated, samplePullRequestStack(), false},
++		{"add private", PullRequestStackWrite, withStackArg(withStackArg(stackArgs("add"), "stackNumber", float64(7)), "pullNumbers", []any{float64(103)}), http.MethodPost, "/repos/octo/repo/stacks/7/add", http.StatusOK, samplePullRequestStack(), true},
++		{"unstack dissolved public", PullRequestStackWrite, stackUnstackArgs(), http.MethodPost, "/repos/octo/repo/stacks/7/unstack", http.StatusNoContent, nil, false},
++		{"unstack partial private", PullRequestStackWrite, stackUnstackArgs(), http.MethodPost, "/repos/octo/repo/stacks/7/unstack", http.StatusOK, samplePullRequestStack(), true},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			visibilityRequests := 0
++			client := mustNewGHClient(t, MockHTTPClientWithHandler(func(w http.ResponseWriter, r *http.Request) {
++				if r.URL.Path == "/repos/octo/repo" {
++					visibilityRequests++
++					assert.Equal(t, http.MethodGet, r.Method)
++					writeStackJSON(t, w, http.StatusOK, map[string]any{"name": "repo", "private": tc.isPrivate})
++					return
++				}
++				assertStackRequest(t, r, tc.method, tc.path)
++				writeStackJSON(t, w, tc.status, tc.body)
++			}))
++			deps := BaseDeps{
++				Client:         client,
++				featureChecker: featureCheckerFor(FeatureFlagIFCLabels),
++				Obsv:           stubExporters(),
++			}
++
++			result := callStackToolWithDeps(t, tc.tool, deps, tc.args)
++			require.False(t, result.IsError)
++			require.Equal(t, 1, visibilityRequests)
++			require.NotNil(t, result.Meta)
++			label := unmarshalIFC(t, result.Meta["ifc"])
++			assert.Equal(t, "trusted", label["integrity"])
++			if tc.isPrivate {
++				assert.Equal(t, "private", label["confidentiality"])
++			} else {
++				assert.Equal(t, "public", label["confidentiality"])
++			}
++		})
++	}
++}
++
++func TestPullRequestStackAPIErrorsDoNotCarryIFC(t *testing.T) {
++	visibilityRequests := 0
++	client := mustNewGHClient(t, MockHTTPClientWithHandler(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path == "/repos/octo/repo" {
++			visibilityRequests++
++			t.Fatal("error results must not trigger repository visibility lookup")
++		}
++		assertStackRequest(t, r, http.MethodGet, "/repos/octo/repo/stacks/999")
++		writeStackJSON(t, w, http.StatusNotFound, map[string]any{"message": "Not Found"})
++	}))
++	deps := BaseDeps{
++		Client:         client,
++		featureChecker: featureCheckerFor(FeatureFlagIFCLabels),
++		Obsv:           stubExporters(),
++	}
++
++	result := callStackToolWithDeps(t, PullRequestStackRead, deps, withStackArg(stackArgs("get"), "stackNumber", float64(999)))
++	require.True(t, result.IsError)
++	assert.Zero(t, visibilityRequests)
++	if result.Meta != nil {
++		_, hasIFC := result.Meta["ifc"]
++		assert.False(t, hasIFC)
++	}
++}
++
++func samplePullRequestStack() PullRequestStack {
++	mergedAt := "2026-08-02T12:00:00Z"
++	return PullRequestStack{
++		ID:        9001,
++		Number:    7,
++		NodeID:    "PRS_kwDOstack",
++		URL:       "https://api.github.com/repos/octo/repo/stacks/7",
++		Base:      PullRequestStackBase{Ref: "main", SHA: "base-sha"},
++		Open:      true,
++		CreatedAt: "2026-08-01T12:00:00Z",
++		PullRequests: []PullRequestStackPullRequest{
++			{Number: 101, State: "open", Draft: false, MergedAt: nil, Head: PullRequestStackPullRequestHead{Ref: "feature-1", SHA: "sha-1"}},
++			{Number: 102, State: "closed", Draft: false, MergedAt: &mergedAt, Head: PullRequestStackPullRequestHead{Ref: "feature-2", SHA: "sha-2"}},
++		},
++	}
++}
++
++func stackTestClient(t *testing.T, handler http.HandlerFunc) *http.Client {
++	t.Helper()
++	return MockHTTPClientWithHandler(handler)
++}
++
++func callStackTool(t *testing.T, factory inventoryToolFactory, client *http.Client, args map[string]any) *mcp.CallToolResult {
++	t.Helper()
++	deps := BaseDeps{Client: mustNewGHClient(t, client), Obsv: stubExporters()}
++	return callStackToolWithDeps(t, factory, deps, args)
++}
++
++func callStackToolWithDeps(t *testing.T, factory inventoryToolFactory, deps BaseDeps, args map[string]any) *mcp.CallToolResult {
++	t.Helper()
++	request := createMCPRequest(args)
++	serverTool := factory(translations.NullTranslationHelper)
++	result, err := serverTool.Handler(deps)(ContextWithDeps(context.Background(), deps), &request)
++	require.NoError(t, err)
++	return result
++}
++
++func assertStackRequest(t *testing.T, r *http.Request, method, path string) {
++	t.Helper()
++	assert.Equal(t, method, r.Method)
++	assert.Equal(t, path, r.URL.Path)
++	assert.Equal(t, pullRequestStacksAccept, r.Header.Get("Accept"))
++	assert.Equal(t, pullRequestStacksAPIVersion, r.Header.Get("X-GitHub-Api-Version"))
++}
++
++func assertStackBody(t *testing.T, r *http.Request, want map[string]any) {
++	t.Helper()
++	var got map[string]any
++	require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
++	assert.Equal(t, want, got)
++}
++
++func assertStackNoBody(t *testing.T, r *http.Request) {
++	t.Helper()
++	if r.Body == nil {
++		return
++	}
++	body, err := io.ReadAll(r.Body)
++	require.NoError(t, err)
++	assert.Empty(t, body)
++}
++
++func writeStackJSON(t *testing.T, w http.ResponseWriter, status int, body any) {
++	t.Helper()
++	w.Header().Set("Content-Type", "application/json")
++	w.WriteHeader(status)
++	if status != http.StatusNoContent {
++		require.NoError(t, json.NewEncoder(w).Encode(body))
++	}
++}
++
++func assertStackToolResult(t *testing.T, result *mcp.CallToolResult, want PullRequestStack) {
++	t.Helper()
++	var got PullRequestStack
++	require.NoError(t, json.Unmarshal([]byte(getTextResult(t, result).Text), &got))
++	assert.Equal(t, want, got)
++}
++
++func stackArgs(method string) map[string]any {
++	return map[string]any{"method": method, "owner": "octo", "repo": "repo"}
++}
++
++func stackUnstackArgs() map[string]any {
++	return withStackArg(stackArgs("unstack"), "stackNumber", float64(7))
++}
++
++func withStackArg(args map[string]any, name string, value any) map[string]any {
++	copy := make(map[string]any, len(args)+1)
++	for key, existing := range args {
++		copy[key] = existing
++	}
++	copy[name] = value
++	return copy
++}
++
++func mapKeys(values map[string]any) []string {
++	keys := make([]string, 0, len(values))
++	for key := range values {
++		keys = append(keys, key)
++	}
++	return keys
++}
+diff --git a/pkg/github/tools.go b/pkg/github/tools.go
+--- a/pkg/github/tools.go
++++ b/pkg/github/tools.go
+@@ -266,6 +266,8 @@
+ 
+ 		// Pull request tools
+ 		PullRequestRead(t),
++		PullRequestStackRead(t),
++		PullRequestStackWrite(t),
+ 		ListPullRequests(t),
+ 		SearchPullRequests(t),
+ 		MergePullRequest(t),
+diff --git a/pkg/github/toolset_instructions.go b/pkg/github/toolset_instructions.go
+--- a/pkg/github/toolset_instructions.go
++++ b/pkg/github/toolset_instructions.go
+@@ -19,6 +19,9 @@
+ 	instructions := `## Pull Requests
+ 
+ PR review workflow: Always use 'pull_request_review_write' with method 'create' to create a pending review, then 'add_comment_to_pending_review' to add comments, and finally 'pull_request_review_write' with method 'submit_pending' to submit the review for complex reviews with line-specific comments.`
++	instructions += `
++
++Native stacked pull requests: Supply pullNumbers from the bottom of the stack to the top. The add method is append-only and adds the supplied pull requests above the current top; it cannot reorder or remove existing entries. Unstack removes only eligible unmerged pull requests, so a successful 200 response can contain a partial remaining stack while a 204 response reports dissolved=true.`
+ 
+ 	if inv.HasToolset("repos") {
+ 		instructions += `

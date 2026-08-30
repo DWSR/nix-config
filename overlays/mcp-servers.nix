@@ -613,8 +613,14 @@ in
       hash = "sha256-omRwUoVmbG+BNe5JJXYNE3csa4vMXBP+LOL2PMIGOEA=";
     };
 
+    patches = [ ./github-mcp-server-stacked-prs.patch ];
+
     vendorHash = "sha256-6a5zjwTfEjGx23lG1ZTnUewm97FNacQY/y92TzAATXg=";
     subPackages = [ "cmd/github-mcp-server" ];
+
+    postCheck = ''
+      buildGoDir test ./pkg/github/...
+    '';
 
     meta = with final.lib; {
       description = "GitHub's official MCP server for interacting with GitHub APIs";

@@ -1894,6 +1894,8 @@
                 touch $out
               '';
 
+          inherit (pkgs) github-mcp-server;
+
           grep-app-mcp =
             pkgs.runCommand "grep-app-mcp"
               {
