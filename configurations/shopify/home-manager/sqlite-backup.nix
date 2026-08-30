@@ -73,7 +73,7 @@ in
         path = "${config.xdg.dataHome}/opencode/opencode-stable.db";
         remote = ":local";
         remotePath = localGoogleDriveRoot;
-        pressureGuard.maximumManagedLocalBytes = 96 * 1024 * 1024 * 1024;
+        pressureGuard.maximumManagedLocalBytes = 128 * 1024 * 1024 * 1024;
         # Default tiers match the opencode workload profile: bursty
         # writes during active sessions but otherwise quiet; default
         # 300s replication cadence and 03:00 daily archive with

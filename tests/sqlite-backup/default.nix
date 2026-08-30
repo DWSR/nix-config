@@ -83,6 +83,30 @@ let
     maximum = 0;
     managedPaths = [ "${managedSymlink}" ];
   };
+  recoveryPolicyManifest = mkManifest {
+    suffix = "recovery-policy";
+    minimum = 102400;
+    maximum = 204800;
+    managedPaths = [ "/" ];
+  };
+  markerPolicyManifest = mkManifest {
+    suffix = "marker-policy";
+    minimum = 102400;
+    maximum = 102400;
+    managedPaths = [ "/" ];
+  };
+  lowerPolicyManifest = mkManifest {
+    suffix = "lower-policy";
+    minimum = 102400;
+    maximum = 51200;
+    managedPaths = [ "/" ];
+  };
+  invalidPolicyManifest = mkManifest {
+    suffix = "invalid-policy";
+    minimum = 102400;
+    maximum = 102400;
+    managedPaths = [ ];
+  };
   mkCli =
     manifestPath:
     import ../../scripts/sqlite-backup-cli.nix {
@@ -93,6 +117,10 @@ let
   belowBoundaryCli = mkCli belowBoundaryManifest;
   aboveBoundaryCli = mkCli aboveBoundaryManifest;
   symlinkCli = mkCli symlinkManifest;
+  recoveryPolicyCli = mkCli recoveryPolicyManifest;
+  markerPolicyCli = mkCli markerPolicyManifest;
+  lowerPolicyCli = mkCli lowerPolicyManifest;
+  invalidPolicyCli = mkCli invalidPolicyManifest;
 
   hm = home-manager.lib.homeManagerConfiguration {
     pkgs = testPkgs;
@@ -189,6 +217,10 @@ pkgs.runCommand "sqlite-backup-tests"
     SQLITE_BACKUP_CLI_ABOVE_BOUNDARY = lib.getExe aboveBoundaryCli;
     SQLITE_BACKUP_CLI_BELOW_BOUNDARY = lib.getExe belowBoundaryCli;
     SQLITE_BACKUP_CLI_MANAGED_SYMLINK = lib.getExe symlinkCli;
+    SQLITE_BACKUP_CLI_RECOVERY_POLICY = lib.getExe recoveryPolicyCli;
+    SQLITE_BACKUP_CLI_MARKER_POLICY = lib.getExe markerPolicyCli;
+    SQLITE_BACKUP_CLI_LOWER_POLICY = lib.getExe lowerPolicyCli;
+    SQLITE_BACKUP_CLI_INVALID_POLICY = lib.getExe invalidPolicyCli;
     SQLITE_BACKUP_CLI = lib.getExe cli;
     SQLITE_BACKUP_MANAGED_SYMLINK = managedSymlink;
     SQLITE_BACKUP_REAL_LITESTREAM = if realLitestream == null then "" else lib.getExe realLitestream;

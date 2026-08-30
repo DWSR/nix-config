@@ -15,6 +15,15 @@ assert_contains() {
   fi
 }
 
+assert_not_contains() {
+  local file="$1" unexpected="$2"
+  if grep -F -- "$unexpected" "$file" >/dev/null; then
+    printf '%s\n' "--- $file ---" >&2
+    printf '%s\n' "$(<"$file")" >&2
+    fail "did not expect '$unexpected' in $file"
+  fi
+}
+
 expect_failure() {
   local output="$1"
   shift
@@ -46,6 +55,10 @@ case "${1:-}" in
     fi
     if [ "${TEST_LAUNCHCTL_WRITE_MARKER:-0}" = "1" ]; then
       cp "$TEST_RACE_MARKER" "$TEST_PRESSURE_MARKER"
+    fi
+    if [ "${TEST_LAUNCHCTL_MOVE_LOCK_TO_FAILURE:-0}" = "1" ] \
+      && [ -d "$TEST_PRESSURE_LOCK" ]; then
+      mv -- "$TEST_PRESSURE_LOCK" "$TEST_PRESSURE_FAILED"
     fi
     if [ -f "$LAUNCHCTL_STATE" ]; then
       exit 0
@@ -137,13 +150,37 @@ fi
 exec jq "$@"
 STUB
 
+cat >"$work/bin/publish-marker-hook" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$TEST_PRESSURE_MARKER"
+rmdir "$TEST_PRESSURE_LOCK"
+STUB
+
+cat >"$work/bin/fail-marker-hook" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir "$TEST_PRESSURE_LOCK"
+mv -- "$TEST_PRESSURE_LOCK" "$TEST_PRESSURE_FAILED"
+STUB
+
+cat >"$work/bin/repair-marker-hook" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$TEST_PRESSURE_MARKER"
+rmdir "$TEST_PRESSURE_FAILED"
+STUB
+
 chmod +x \
   "$work/bin/launchctl" \
   "$work/bin/df" \
   "$work/bin/du" \
   "$work/bin/date" \
   "$work/bin/mv" \
-  "$work/bin/marker-jq"
+  "$work/bin/marker-jq" \
+  "$work/bin/publish-marker-hook" \
+  "$work/bin/fail-marker-hook" \
+  "$work/bin/repair-marker-hook"
 export SQLITE_BACKUP_LAUNCHCTL_BIN="$work/bin/launchctl"
 export SQLITE_BACKUP_DF_BIN="$work/bin/df"
 export SQLITE_BACKUP_DU_BIN="$work/bin/du"
@@ -192,7 +229,7 @@ jq -e '
   .localGoogleDriveRoot as $root
   | .minimumFilesystemAvailableBytes == 137438953472
   and .checkIntervalSeconds == 60
-  and .maximumManagedLocalBytes == 103079215104
+  and .maximumManagedLocalBytes == 137438953472
   and (.rcloneDestinations | keys) == [":local"]
   and .rcloneDestinations[":local"].type == "local"
   and all(.databases[]; .remote == ":local" and .remotePath == $root)
@@ -253,36 +290,110 @@ reset_healthy() {
     TEST_DU_BLOCK_STARTED \
     TEST_LAUNCHCTL_BOOTOUT_FAIL \
     TEST_LAUNCHCTL_LIST_FAIL \
+    TEST_LAUNCHCTL_MOVE_LOCK_TO_FAILURE \
     TEST_LAUNCHCTL_WRITE_MARKER \
     TEST_MARKER_CONFIG_JQ_FAIL \
     TEST_MV_FAIL \
+    TEST_PRESSURE_FAILED \
+    TEST_PRESSURE_LOCK \
     TEST_PRESSURE_MARKER \
     TEST_RACE_MARKER
   export TEST_AVAILABLE_KIB=100
   export TEST_MANAGED_KIB=1
 }
 
-# Guard measurement owns both the pressure gate and backup mutex. A competing
-# tier cannot overtake it, and normal completion removes both nested locks.
+# Reproduce the live ordering: a backup owns the per-database mutex, then the
+# guard acquires the pressure gate and waits behind that backup. Status must
+# preserve Litestream's actual state while exposing the pending transition.
 reset_healthy
-export TEST_DU_BLOCK_STARTED="$work/du-block-started"
-export TEST_DU_BLOCK_RELEASE="$work/du-block-release"
-rm -f -- "$TEST_DU_BLOCK_STARTED" "$TEST_DU_BLOCK_RELEASE"
+mkdir "$TMPDIR/sqlite-backup-fixture.lock"
 "$SQLITE_BACKUP_CLI" __pressure-guard fixture >"$work/concurrent-guard.out" 2>&1 &
 guard_pid=$!
-while [ ! -e "$TEST_DU_BLOCK_STARTED" ]; do
+while [ ! -d "$lock" ]; do
   sleep 0.01
 done
 
 test -d "$lock" || fail "guard measurement did not hold the pressure lock"
-test -d "$TMPDIR/sqlite-backup-fixture.lock" || fail "guard measurement did not hold the backup lock"
+test -d "$TMPDIR/sqlite-backup-fixture.lock" || fail "backup fixture did not hold its mutex"
+"$SQLITE_BACKUP_CLI" status fixture >"$work/concurrent-status.out"
+assert_contains "$work/concurrent-status.out" "replication-state: running"
+assert_contains "$work/concurrent-status.out" "halt-reason: none"
+assert_contains "$work/concurrent-status.out" "pressure-state: transition-active"
+expect_failure "$work/concurrent-start.out" "$SQLITE_BACKUP_CLI" start fixture
+assert_contains "$work/concurrent-start.out" "pressure transition active"
+assert_not_contains "$work/concurrent-start.out" "clear-pressure"
 expect_failure "$work/concurrent-tier.out" env \
   SQLITE_BACKUP_LOCK_RETRY_ATTEMPTS=1 \
   "$SQLITE_BACKUP_CLI" __archive-trigger fixture
-touch "$TEST_DU_BLOCK_RELEASE"
+rmdir "$TMPDIR/sqlite-backup-fixture.lock"
 wait "$guard_pid"
 test ! -e "$lock" || fail "guard completion leaked the pressure lock"
 test ! -e "$TMPDIR/sqlite-backup-fixture.lock" || fail "guard completion leaked the backup lock"
+
+# Classification is one coherent snapshot. If the pressure lock becomes a
+# durable failed-write sentinel during the launchctl probe, the current status
+# remains transition-active; the next status observes the durable halt.
+reset_healthy
+mkdir "$lock"
+export TEST_LAUNCHCTL_MOVE_LOCK_TO_FAILURE=1
+export TEST_PRESSURE_LOCK="$lock"
+export TEST_PRESSURE_FAILED="$failed"
+"$SQLITE_BACKUP_CLI" status fixture >"$work/lock-to-failed-race.out"
+assert_contains "$work/lock-to-failed-race.out" "replication-state: running"
+assert_contains "$work/lock-to-failed-race.out" "halt-reason: none"
+assert_contains "$work/lock-to-failed-race.out" "pressure-state: transition-active"
+test -d "$failed" || fail "status race fixture did not move lock to failed sentinel"
+unset TEST_LAUNCHCTL_MOVE_LOCK_TO_FAILURE TEST_PRESSURE_LOCK TEST_PRESSURE_FAILED
+"$SQLITE_BACKUP_CLI" status fixture >"$work/failed-sentinel-status.out"
+assert_contains "$work/failed-sentinel-status.out" "replication-state: halted-disk-pressure"
+assert_contains "$work/failed-sentinel-status.out" "halt-reason: disk-pressure"
+assert_contains "$work/failed-sentinel-status.out" "pressure-state: halted"
+mkdir "$lock"
+"$SQLITE_BACKUP_CLI" status fixture >"$work/failed-sentinel-repair-status.out"
+assert_contains "$work/failed-sentinel-repair-status.out" "replication-state: halted-disk-pressure"
+assert_contains "$work/failed-sentinel-repair-status.out" "halt-reason: disk-pressure"
+assert_contains "$work/failed-sentinel-repair-status.out" "pressure-state: halted"
+
+# Sentinel repair publishes the marker before clearing .failed while retaining
+# the transition lock. Even if the first durable probe straddles that handoff,
+# the observed lock must not downgrade durable state to transition-only.
+reset_healthy
+mkdir "$failed" "$lock"
+export TEST_PRESSURE_MARKER="$marker"
+export TEST_PRESSURE_FAILED="$failed"
+env SQLITE_BACKUP_DURABLE_PRESSURE_PROBE_HOOK="$work/bin/repair-marker-hook" \
+  "$SQLITE_BACKUP_CLI" status fixture >"$work/failed-to-marker-race.out"
+assert_contains "$work/failed-to-marker-race.out" "replication-state: halted-disk-pressure"
+assert_contains "$work/failed-to-marker-race.out" "halt-reason: disk-pressure"
+assert_contains "$work/failed-to-marker-race.out" "pressure-state: halted"
+
+# Marker publication precedes pressure-lock release. If those operations land
+# between the first durable-state probe and the lock probe, status must recheck
+# durable state rather than report a state that never existed.
+reset_healthy
+mkdir "$lock"
+export TEST_PRESSURE_MARKER="$marker"
+export TEST_PRESSURE_LOCK="$lock"
+env SQLITE_BACKUP_PRESSURE_STATE_PROBE_HOOK="$work/bin/publish-marker-hook" \
+  "$SQLITE_BACKUP_CLI" status fixture >"$work/publish-marker-race.out"
+assert_contains "$work/publish-marker-race.out" "replication-state: halted-disk-pressure"
+assert_contains "$work/publish-marker-race.out" "halt-reason: disk-pressure"
+assert_contains "$work/publish-marker-race.out" "pressure-state: halted"
+
+# A guard can rename pressure lock -> failed after tier preflight. Every tier
+# must detect the durable sentinel after acquiring a replacement pressure lock
+# and skip before taking the backup mutex or invoking Restic.
+for failed_tier in __archive-trigger __replicate-trigger backup; do
+  reset_healthy
+  export TEST_PRESSURE_LOCK="$lock"
+  export TEST_PRESSURE_FAILED="$failed"
+  env SQLITE_BACKUP_TIER_PRESSURE_PROBE_HOOK="$work/bin/fail-marker-hook" \
+    "$SQLITE_BACKUP_CLI" "$failed_tier" fixture >"$work/$failed_tier-failed-race.out"
+  assert_contains "$work/$failed_tier-failed-race.out" "disk-pressure halt"
+  test -d "$failed" || fail "$failed_tier lost the failed-write sentinel"
+  test ! -e "$TMPDIR/sqlite-backup-fixture.lock" \
+    || fail "$failed_tier acquired the backup mutex after failed-marker state"
+done
 
 # A healthy tier reaches the post-gate path and then fails on the intentionally
 # unwritable fixture repository. The shared EXIT trap must still release the

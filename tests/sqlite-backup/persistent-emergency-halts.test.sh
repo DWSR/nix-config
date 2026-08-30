@@ -34,7 +34,9 @@ mkdir -p "$TMPDIR"
 
 export LAUNCHCTL_LOG="$work/launchctl.log"
 export LAUNCHCTL_STATE="$work/launchctl-loaded"
-touch "$LAUNCHCTL_LOG" "$LAUNCHCTL_STATE"
+export DU_LOG="$work/du.log"
+export DF_LOG="$work/df.log"
+touch "$DF_LOG" "$DU_LOG" "$LAUNCHCTL_LOG" "$LAUNCHCTL_STATE"
 
 cat >"$work/bin/launchctl" <<'STUB'
 #!/usr/bin/env bash
@@ -59,6 +61,7 @@ set -euo pipefail
 if [ "${TEST_DF_FAIL:-0}" = "1" ]; then
   exit 1
 fi
+printf '%s\n' "${*: -1}" >>"$DF_LOG"
 printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
 printf '/dev/fixture 100000 1 %s 1%% /\n' "$TEST_AVAILABLE_KIB"
 STUB
@@ -66,13 +69,19 @@ STUB
 cat >"$work/bin/du" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+path="${*: -1}"
 if [ "${TEST_DU_FAIL:-0}" = "1" ]; then
+  exit 1
+fi
+if [ -n "${TEST_DU_FAIL_PATH:-}" ] && [ "$path" = "$TEST_DU_FAIL_PATH" ]; then
+  printf 'du: %s: Permission denied\n' "$path" >&2
   exit 1
 fi
 if [ "${TEST_DU_REPLACE_MARKER:-0}" = "1" ]; then
   cp "$TEST_DU_REPLACEMENT" "$TEST_PRESSURE_MARKER"
 fi
-printf '%s\t%s\n' "$TEST_MANAGED_KIB" "${*: -1}"
+printf '%s\n' "$path" >>"$DU_LOG"
+printf '%s\t%s\n' "$TEST_MANAGED_KIB" "$path"
 STUB
 
 chmod +x "$work/bin/launchctl" "$work/bin/df" "$work/bin/du"
@@ -82,6 +91,7 @@ export SQLITE_BACKUP_DF_BIN="$work/bin/df"
 export SQLITE_BACKUP_DU_BIN="$work/bin/du"
 export TEST_AVAILABLE_KIB=100
 export TEST_MANAGED_KIB=100
+readonly CLEAR_PRESSURE_CLI="$SQLITE_BACKUP_CLI_MARKER_POLICY"
 
 plist="$HOME/Library/LaunchAgents/dev.dwsr.sqlite-backup.litestream.fixture.plist"
 touch "$plist"
@@ -161,6 +171,7 @@ test ! -s "$LAUNCHCTL_LOG" || fail "pressure-blocked start invoked launchctl"
 "$SQLITE_BACKUP_CLI" status fixture >"$work/pressure-status.out"
 assert_contains "$work/pressure-status.out" "replication-state: halted-disk-pressure"
 assert_contains "$work/pressure-status.out" "halt-reason: disk-pressure"
+assert_contains "$work/pressure-status.out" "pressure-state: halted"
 
 for trigger in __replicate-trigger __archive-trigger backup; do
   "$SQLITE_BACKUP_CLI" "$trigger" fixture >"$work/$trigger.out"
@@ -187,7 +198,7 @@ mkdir "$pressure_marker"
 expect_failure "$work/nonregular-start.out" "$SQLITE_BACKUP_CLI" start fixture
 "$SQLITE_BACKUP_CLI" __archive-trigger fixture >"$work/nonregular-trigger.out"
 assert_contains "$work/nonregular-trigger.out" "disk-pressure halt"
-expect_failure "$work/clear-nonregular.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-nonregular.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 test -d "$pressure_marker" || fail "non-regular marker was removed"
 rmdir "$pressure_marker"
 cp "$work/valid-pressure.json" "$pressure_marker"
@@ -199,7 +210,7 @@ jq '.timestamp = "2026-08-29T12:01:00Z" | .configuredLimits.maximumManagedLocalB
 export TEST_DU_REPLACE_MARKER=1
 export TEST_DU_REPLACEMENT="$work/replacement-pressure.json"
 export TEST_PRESSURE_MARKER="$pressure_marker"
-expect_failure "$work/clear-concurrent-replacement.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-concurrent-replacement.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$pressure_marker" '"timestamp": "2026-08-29T12:01:00Z"'
 unset TEST_DU_REPLACE_MARKER TEST_DU_REPLACEMENT TEST_PRESSURE_MARKER
 cp "$work/valid-pressure.json" "$pressure_marker"
@@ -207,92 +218,139 @@ cp "$work/valid-pressure.json" "$pressure_marker"
 # Required schema objects cannot be omitted merely because their child fields
 # happen to evaluate as null in jq.
 jq 'del(.observedBytes)' "$work/valid-pressure.json" >"$pressure_marker"
-expect_failure "$work/clear-missing-observed.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-missing-observed.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-missing-observed.out" "pressure marker is invalid"
 cp "$work/valid-pressure.json" "$pressure_marker"
 
 jq 'del(.configuredLimits.maximumManagedLocalBytes)' \
   "$work/valid-pressure.json" >"$pressure_marker"
-expect_failure "$work/clear-missing-child.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-missing-child.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-missing-child.out" "pressure marker is invalid"
 cp "$work/valid-pressure.json" "$pressure_marker"
 
 # Marker integers are bounded to a range that Bash can compare exactly.
 jq '.configuredLimits.maximumManagedLocalBytes = 1000000000000000000000000' \
   "$work/valid-pressure.json" >"$pressure_marker"
-expect_failure "$work/clear-oversized-limit.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-oversized-limit.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-oversized-limit.out" "pressure marker is invalid"
 cp "$work/valid-pressure.json" "$pressure_marker"
 
 rm -f -- "$pressure_marker"
 ln -s "$work/valid-pressure.json" "$pressure_marker"
-expect_failure "$work/clear-symlink.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-symlink.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 test -L "$pressure_marker" || fail "symlink marker was removed"
 rm -f -- "$pressure_marker"
 mkfifo "$pressure_marker"
-expect_failure "$work/clear-fifo.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-fifo.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 test -p "$pressure_marker" || fail "FIFO marker was removed"
 rm -f -- "$pressure_marker"
 cp "$work/valid-pressure.json" "$pressure_marker"
 
-# A missing path counts as zero, but an unsearchable ancestor must fail closed
-# rather than making an inaccessible child look absent.
+# Historical marker paths are audit evidence and do not override the current
+# manifest policy. An inaccessible historical path is not measured.
 mkdir "$work/inaccessible"
 chmod 000 "$work/inaccessible"
 jq --arg path "$work/inaccessible/child" '.measurement.managedPaths = [$path]' \
   "$work/valid-pressure.json" >"$pressure_marker"
-expect_failure "$work/clear-inaccessible.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
-assert_contains "$work/clear-inaccessible.out" "could not measure managed local bytes"
-test -f "$pressure_marker" || fail "inaccessible-path refusal removed the marker"
+"$CLEAR_PRESSURE_CLI" clear-pressure fixture >"$work/clear-historical-inaccessible.out"
+test ! -e "$pressure_marker" || fail "historical inaccessible path overrode current policy"
 chmod 700 "$work/inaccessible"
 cp "$work/valid-pressure.json" "$pressure_marker"
 
+# Failure to measure the current manifest path remains fail-closed.
+export TEST_DU_FAIL_PATH=/
+expect_failure "$work/clear-current-inaccessible.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
+assert_contains "$work/clear-current-inaccessible.out" "could not measure managed local bytes"
+test -f "$pressure_marker" || fail "current-path measurement failure removed the marker"
+unset TEST_DU_FAIL_PATH
+
 jq --arg path "$work/absent/managed" '.measurement.managedPaths = [$path]' \
   "$work/valid-pressure.json" >"$pressure_marker"
-"$SQLITE_BACKUP_CLI" clear-pressure fixture >"$work/clear-missing-path.out"
+"$CLEAR_PRESSURE_CLI" clear-pressure fixture >"$work/clear-missing-path.out"
 test ! -e "$pressure_marker" || fail "a provably missing managed path did not count as zero"
 cp "$work/valid-pressure.json" "$pressure_marker"
+
+# Recovery uses the current manifest policy, not the historical threshold and
+# path recorded for audit in the marker. Raising a declarative ceiling can
+# therefore recover a now-healthy pipeline without rewriting its marker.
+export TEST_AVAILABLE_KIB=100
+export TEST_MANAGED_KIB=150
+: >"$DF_LOG"
+: >"$DU_LOG"
+"$SQLITE_BACKUP_CLI_RECOVERY_POLICY" clear-pressure fixture \
+  >"$work/clear-raised-policy.out"
+test ! -e "$pressure_marker" || fail "raised current policy did not clear the historical marker"
+assert_contains "$work/clear-raised-policy.out" "managed-local=153600 maximum=204800"
+assert_contains "$DF_LOG" "/"
+if grep -F -- "$work" "$DF_LOG" >/dev/null; then
+  fail "clear-pressure measured the marker's historical filesystem path"
+fi
+assert_contains "$DU_LOG" "/"
+if grep -F -- "$work/managed" "$DU_LOG" >/dev/null; then
+  fail "clear-pressure measured the marker's historical managed path"
+fi
+cp "$work/valid-pressure.json" "$pressure_marker"
+
+# A lower current policy wins over the marker's more permissive historical
+# ceiling, and a failed recovery attempt leaves the marker byte-identical.
+export TEST_MANAGED_KIB=75
+cp "$pressure_marker" "$work/lower-policy-marker-before.json"
+expect_failure "$work/clear-lower-policy.out" \
+  "$SQLITE_BACKUP_CLI_LOWER_POLICY" clear-pressure fixture
+assert_contains "$work/clear-lower-policy.out" "managed local bytes 76800 above maximum 51200"
+cmp "$work/lower-policy-marker-before.json" "$pressure_marker" \
+  || fail "lower current policy modified the historical marker"
+
+# Invalid current policy is fail-closed before measurement and preserves the
+# historical marker exactly.
+cp "$pressure_marker" "$work/invalid-policy-marker-before.json"
+expect_failure "$work/clear-invalid-policy.out" \
+  "$SQLITE_BACKUP_CLI_INVALID_POLICY" clear-pressure fixture
+assert_contains "$work/clear-invalid-policy.out" "current pressure guard configuration is missing or invalid"
+cmp "$work/invalid-policy-marker-before.json" "$pressure_marker" \
+  || fail "invalid current policy modified the historical marker"
+export TEST_MANAGED_KIB=100
 
 # clear-pressure measures both configured limits and preserves the marker if
 # either current value is unhealthy.
 export TEST_AVAILABLE_KIB=99
 export TEST_MANAGED_KIB=100
-expect_failure "$work/clear-low-space.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-low-space.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-low-space.out" "filesystem available bytes 101376 below minimum 102400"
 test -f "$pressure_marker" || fail "low-space refusal removed the marker"
 
 export TEST_AVAILABLE_KIB=100
 export TEST_MANAGED_KIB=101
-expect_failure "$work/clear-over-budget.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-over-budget.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-over-budget.out" "managed local bytes 103424 above maximum 102400"
 test -f "$pressure_marker" || fail "over-budget refusal removed the marker"
 
 export TEST_AVAILABLE_KIB=100
 export TEST_MANAGED_KIB=100
 export TEST_DF_FAIL=1
-expect_failure "$work/clear-df-failure.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-df-failure.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 test -f "$pressure_marker" || fail "filesystem measurement failure removed the marker"
 unset TEST_DF_FAIL
 
 export TEST_DU_FAIL=1
-expect_failure "$work/clear-du-failure.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-du-failure.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 test -f "$pressure_marker" || fail "managed-byte measurement failure removed the marker"
 unset TEST_DU_FAIL
 
 export TEST_AVAILABLE_KIB=1000000000000000000000000
-expect_failure "$work/clear-oversized-df.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-oversized-df.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-oversized-df.out" "could not measure filesystem available bytes"
 test -f "$pressure_marker" || fail "oversized df measurement removed the marker"
 
 export TEST_AVAILABLE_KIB=100
 export TEST_MANAGED_KIB=1000000000000000000000000
-expect_failure "$work/clear-oversized-du.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-oversized-du.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-oversized-du.out" "could not measure managed local bytes"
 test -f "$pressure_marker" || fail "oversized du measurement removed the marker"
 export TEST_MANAGED_KIB=100
 
 printf '{"schemaVersion":1}\n' >"$pressure_marker"
-expect_failure "$work/clear-malformed.out" "$SQLITE_BACKUP_CLI" clear-pressure fixture
+expect_failure "$work/clear-malformed.out" "$CLEAR_PRESSURE_CLI" clear-pressure fixture
 assert_contains "$work/clear-malformed.out" "pressure marker is invalid"
 test "$(cat "$pressure_marker")" = '{"schemaVersion":1}' \
   || fail "invalid-marker refusal modified the marker"
@@ -301,13 +359,14 @@ cp "$work/valid-pressure.json" "$pressure_marker"
 # Equality is healthy for both floor and ceiling. Clearing is state-only: it
 # does not invoke launchctl, and status remains not-running until start.
 : >"$LAUNCHCTL_LOG"
-"$SQLITE_BACKUP_CLI" clear-pressure fixture >"$work/clear-healthy.out"
+"$CLEAR_PRESSURE_CLI" clear-pressure fixture >"$work/clear-healthy.out"
 test ! -e "$pressure_marker" || fail "healthy clear left the pressure marker"
 test ! -s "$LAUNCHCTL_LOG" || fail "clear-pressure started the pipeline"
 
 "$SQLITE_BACKUP_CLI" status fixture >"$work/cleared-status.out"
 assert_contains "$work/cleared-status.out" "replication-state: not-running"
 assert_contains "$work/cleared-status.out" "halt-reason: none"
+assert_contains "$work/cleared-status.out" "pressure-state: clear"
 
 "$SQLITE_BACKUP_CLI" start fixture >"$work/post-clear-start.out"
 test -f "$LAUNCHCTL_STATE" || fail "explicit post-clear start did not load the fixture agent"

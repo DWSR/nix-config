@@ -564,10 +564,11 @@ sequenceDiagram
 | 17.6 | Dormant exemption | Verify module | Conditional on `databases ≠ [ ]`; otherwise no-op |
 | 18.1-18.3 | Separate persistent emergency halt state | HM module + CLI | `pressure-<db>.json` is distinct from activation-cleared `halt-<db>.flag` |
 | 18.4-18.6 | Pressure-halt enforcement and visibility | CLI | `start` refuses; all tier entry points skip before locking; `status` emits `halt-reason: disk-pressure` |
-| 18.7-18.9 | Guarded explicit recovery | CLI | `clear-pressure` remeasures recorded thresholds, removes only healthy markers, and never invokes launchctl |
+| 18.7-18.9 | Guarded explicit recovery | CLI | `clear-pressure` validates the historical marker, remeasures the current manifest policy, removes only healthy markers, and never invokes launchctl |
 | 19.1-19.5 | Guard configuration and managed paths | HM module | Global floor/interval plus per-DB ceiling; manifest lists staging, restic, explicit Litestream metadata, and synthetic-local destination paths |
 | 19.6-19.8 | Boundary measurement and halt | CLI pressure guard | Locale-independent `df -Pk` and `du -skH`; strict `<` floor and `>` ceiling checks write the marker and boot out one Litestream label |
-| 19.9-19.12 | Synchronous preflight, failures, and Shopify policy | CLI + Shopify scaffold | Tier helper preflights before locking; errors fail closed; Shopify uses 128 GiB/60 s/96 GiB |
+| 19.9-19.12 | Synchronous preflight, failures, and Shopify policy | CLI + Shopify scaffold | Tier helper preflights before locking; errors fail closed; Shopify uses a 128 GiB floor, 60 s interval, and 128 GiB OpenCode ceiling |
+| 19.13 | Transition status accuracy | CLI status | A lock-only transition reports `pressure-state: transition-active`; durable marker state alone reports `halted-disk-pressure` |
 
 ## Components and Interfaces
 
@@ -745,7 +746,7 @@ home.sqliteBackup = {
         "pressureGuard": {
           "filesystemPath": "/",
           "minimumFilesystemAvailableBytes": 137438953472,
-          "maximumManagedLocalBytes": 103079215104,
+          "maximumManagedLocalBytes": 137438953472,
           "checkIntervalSeconds": 60,
           "managedPaths": ["<stagingDir>", "<repoDir>", "<litestreamMetadataDir>"]
         },
@@ -933,7 +934,8 @@ sqlite-backup status [<db>]
   Output: per-database table with columns: name, replication-state
   (running | not-running | halted-replication-only |
   halted-whole-pipeline | halted-disk-pressure), halt-reason
-  (none | replication-only | whole-pipeline | disk-pressure),
+  (none | replication-only | whole-pipeline | disk-pressure), pressure-state
+  (clear | transition-active | halted),
   last-archival-snapshot-timestamp (or never), last-replicate-
   shipment-timestamp (or never).
   With <db>: scoped to one database.
@@ -967,9 +969,10 @@ sqlite-backup stop <db> [--include-archive]
   halt was already set.
 
 sqlite-backup clear-pressure <db>
-  Behavior: validates the marker schema, remeasures filesystem available
-  bytes and physical allocated bytes for every recorded managed path, and
-  removes the marker only when available >= minimum and managed <= maximum.
+  Behavior: validates the marker schema, then remeasures filesystem available
+  bytes and physical allocated bytes using the current manifest's paths and
+  limits. Removes the marker only when available >= current minimum and
+  managed <= current maximum. Marker policy remains historical audit data.
   Missing managed paths count as zero; malformed state, unreadable paths, and
   failed measurements preserve the marker and return non-zero.
   Never invokes launchctl. A subsequent `sqlite-backup start <db>` is required.
@@ -1068,6 +1071,9 @@ sqlite-backup --help
   before measurement through the healthy/marker decision. While it waits for
   an active backup, the pressure lock prevents another backup or start from
   overtaking it.
+- A transition lock alone is not a pressure halt. Status preserves the actual
+  Litestream replication state and reports `pressure-state: transition-active`;
+  only a JSON marker or failed-write sentinel reports `halted-disk-pressure`.
 - The guard measures root available bytes with `LC_ALL=C df -Pk` and sums
   physical allocation for staging, restic, and Litestream metadata with
   `LC_ALL=C du -skH`. `-H` follows a managed root that is itself a symlink
@@ -1219,9 +1225,11 @@ interface PressureMarker {
 }
 ```
 
-The pressure guard writes this record atomically. `clear-pressure`
-uses its recorded limits and paths for current measurements; equality is
-healthy at both the free-space floor and managed-byte ceiling.
+The pressure guard writes this record atomically. `clear-pressure` validates
+the record but uses current manifest limits and paths for recovery
+measurements; equality is healthy at both the free-space floor and managed-byte
+ceiling. This lets an intentional declarative policy change recover a marker
+without mutating its historical trigger evidence.
 All byte values are unsigned JSON-safe integers (`0..9007199254740991`) and
 all measurement paths are absolute. Any filesystem object at the marker path
 blocks start and backup work; only a regular, non-symlink marker with a valid

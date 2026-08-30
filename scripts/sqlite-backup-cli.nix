@@ -102,9 +102,9 @@ pkgs.writeShellApplication {
     # without touching the live user's launchd domain.
     readonly LAUNCHCTL_BIN="''${SQLITE_BACKUP_LAUNCHCTL_BIN:-/bin/launchctl}"
 
-    # clear-pressure remeasures the byte thresholds captured in the pressure
-    # marker. Coreutils supplies the production binaries; overrides keep the
-    # boundary-value tests deterministic without filling a real filesystem.
+    # clear-pressure remeasures the current manifest policy. Coreutils supplies
+    # the production binaries; overrides keep the boundary-value tests
+    # deterministic without filling a real filesystem.
     readonly DF_BIN="''${SQLITE_BACKUP_DF_BIN:-df}"
     readonly DU_BIN="''${SQLITE_BACKUP_DU_BIN:-du}"
     readonly DATE_BIN="''${SQLITE_BACKUP_DATE_BIN:-date}"
@@ -467,6 +467,21 @@ pkgs.writeShellApplication {
         || pressure_failure_blocks_work "$1"
     }
 
+    # Durable pressure state means a threshold/error marker exists or marker
+    # persistence previously failed. A transition lock remains fail-closed for
+    # work admission, but is not evidence that a byte threshold was crossed.
+    has_durable_pressure_halt() {
+      local db="$1"
+      if pressure_marker_blocks_work "$db"; then
+        return 0
+      fi
+      # Test-only synchronization seam for the failed -> marker handoff.
+      if [ -n "''${SQLITE_BACKUP_DURABLE_PRESSURE_PROBE_HOOK:-}" ]; then
+        "$SQLITE_BACKUP_DURABLE_PRESSURE_PROBE_HOOK" "$db"
+      fi
+      pressure_failure_blocks_work "$db"
+    }
+
     acquire_pressure_lock() {
       local target
       target="$(pressure_lock_path "$1")"
@@ -598,6 +613,32 @@ pkgs.writeShellApplication {
       ' "$marker" >/dev/null 2>&1
     }
 
+    validate_pressure_guard_config() {
+      local guard_json="$1"
+      jq -e --argjson maxSafe "$MAX_SAFE_INTEGER" '
+        def uint:
+          type == "number" and . >= 0 and . <= $maxSafe and floor == .;
+
+        type == "object"
+        and has("filesystemPath")
+        and has("managedPaths")
+        and has("minimumFilesystemAvailableBytes")
+        and has("maximumManagedLocalBytes")
+        and (
+          .filesystemPath
+          | type == "string" and startswith("/") and length > 0
+        )
+        and (
+          .managedPaths
+          | type == "array"
+          and length > 0
+          and all(.[]; type == "string" and startswith("/") and length > 0)
+        )
+        and (.minimumFilesystemAvailableBytes | uint)
+        and (.maximumManagedLocalBytes | uint)
+      ' <<<"$guard_json" >/dev/null 2>&1
+    }
+
     normalize_uint() {
       local value="$1"
       while [ "''${#value}" -gt 1 ] && [ "''${value#0}" != "$value" ]; do
@@ -722,19 +763,11 @@ pkgs.writeShellApplication {
     }
 
     measure_managed_local_bytes() {
-      local marker="$1"
-      measure_managed_paths < <(jq -r '.measurement.managedPaths[]' "$marker")
-    }
-
-    measure_managed_local_bytes_for_db() {
-      local db="$1"
-      measure_managed_paths < <(
-        jq -r --arg db "$db" '
-          .databases[]
-          | select(.name == $db)
-          | .pressureGuard.managedPaths[]
-        ' "$MANIFEST_PATH"
-      )
+      local guard_json="$1" managed_paths
+      if ! managed_paths="$(jq -er '.managedPaths[]' <<<"$guard_json")"; then
+        return 1
+      fi
+      measure_managed_paths <<<"$managed_paths"
     }
 
     unload_litestream_for_pressure() {
@@ -931,7 +964,7 @@ pkgs.writeShellApplication {
         printf 'sqlite-backup: %s: pressure guard filesystem measurement failed path=%s\n' \
           "$db" "$filesystem_path" >&2
       fi
-      if ! managed="$(measure_managed_local_bytes_for_db "$db")"; then
+      if ! managed="$(measure_managed_local_bytes "$guard_json")"; then
         managed=null
         measurement_error=1
         printf 'sqlite-backup: %s: pressure guard managed-byte measurement failed\n' \
@@ -1024,7 +1057,7 @@ pkgs.writeShellApplication {
           "$db" >&2
         return 11
       fi
-      if pressure_marker_blocks_work "$db"; then
+      if has_durable_pressure_halt "$db"; then
         release_pressure_lock
         unload_litestream_for_pressure "$db" || return 11
         return 10
@@ -1043,8 +1076,11 @@ pkgs.writeShellApplication {
     }
 
     get_halt_reason() {
-      local db="$1"
-      if has_pressure_marker "$db"; then
+      local db="$1" pressure_state="''${2:-}"
+      if [ -z "$pressure_state" ]; then
+        pressure_state="$(get_pressure_state "$db")"
+      fi
+      if [ "$pressure_state" = "halted" ]; then
         printf 'disk-pressure\n'
         return
       fi
@@ -1058,6 +1094,33 @@ pkgs.writeShellApplication {
       fi
     }
 
+    get_pressure_state() {
+      local db="$1"
+      # Probe in transition order. Marker publication happens while the lock
+      # exists, and marker-write failure atomically renames lock -> failed.
+      # marker -> lock -> failed therefore cannot observe all three as absent
+      # during a compliant transition.
+      if has_durable_pressure_halt "$db"; then
+        printf 'halted\n'
+      else
+        # Test-only synchronization seam for deterministic transition races.
+        if [ -n "''${SQLITE_BACKUP_PRESSURE_STATE_PROBE_HOOK:-}" ]; then
+          "$SQLITE_BACKUP_PRESSURE_STATE_PROBE_HOOK" "$db"
+        fi
+        if pressure_lock_blocks_work "$db"; then
+          if has_durable_pressure_halt "$db"; then
+            printf 'halted\n'
+          else
+            printf 'transition-active\n'
+          fi
+        elif has_durable_pressure_halt "$db"; then
+          printf 'halted\n'
+        else
+          printf 'clear\n'
+        fi
+      fi
+    }
+
     # get_replication_state <db>
     # Compute the operator-visible state per design.md §"CLI Script →
     # Service Interface" `status` block. The halt flag, when present,
@@ -1067,8 +1130,11 @@ pkgs.writeShellApplication {
     # during launchd reload, after a `launchctl bootout` outside the
     # CLI, or when the agent has crashed past `KeepAlive` retries).
     get_replication_state() {
-      local db="$1"
-      if has_pressure_marker "$db"; then
+      local db="$1" pressure_state="''${2:-}"
+      if [ -z "$pressure_state" ]; then
+        pressure_state="$(get_pressure_state "$db")"
+      fi
+      if [ "$pressure_state" = "halted" ]; then
         printf 'halted-disk-pressure\n'
         return
       fi
@@ -1146,14 +1212,16 @@ pkgs.writeShellApplication {
     # consumers that already grep `last-replication-snapshot:`).
     print_db_status() {
       local db="$1"
-      local state halt_reason last_rep last_arc
-      state="$(get_replication_state "$db")"
-      halt_reason="$(get_halt_reason "$db")"
+      local state halt_reason pressure_state last_rep last_arc
+      pressure_state="$(get_pressure_state "$db")"
+      state="$(get_replication_state "$db" "$pressure_state")"
+      halt_reason="$(get_halt_reason "$db" "$pressure_state")"
       last_rep="$(get_last_snapshot "$db" replication)"
       last_arc="$(get_last_snapshot "$db" archive)"
       printf '%s:\n' "$db"
       printf '  replication-state: %s\n' "$state"
       printf '  halt-reason: %s\n' "$halt_reason"
+      printf '  pressure-state: %s\n' "$pressure_state"
       printf '  last-replication-snapshot: %s\n' "$last_rep"
       printf '  last-archive-snapshot: %s\n' "$last_arc"
     }
@@ -1304,13 +1372,16 @@ pkgs.writeShellApplication {
       # Serialize the final marker check with backup-lock acquisition. A guard
       # writer cannot publish a marker between these operations because both
       # transitions use the pressure lock.
+      if [ -n "''${SQLITE_BACKUP_TIER_PRESSURE_PROBE_HOOK:-}" ]; then
+        "$SQLITE_BACKUP_TIER_PRESSURE_PROBE_HOOK" "$db"
+      fi
       if ! acquire_pressure_lock "$db"; then
         printf 'sqlite-backup: %s: %s failed closed (pressure transition active)\n' \
           "$db" "$subcmd" >&2
         log_end "$db" "$subcmd" 1
         return 1
       fi
-      if pressure_marker_blocks_work "$db"; then
+      if has_durable_pressure_halt "$db"; then
         release_pressure_lock
         printf 'sqlite-backup: %s: %s skipped (disk-pressure halt)\n' \
           "$db" "$subcmd"
@@ -1930,15 +2001,25 @@ pkgs.writeShellApplication {
         require_db "''${1:-}"
         start_db="$1"
 
-        if has_pressure_marker "$start_db"; then
-          printf 'sqlite-backup: %s: disk-pressure halt active; refusing to start\n' \
-            "$start_db" >&2
-          printf 'sqlite-backup: %s: recovery command: sqlite-backup clear-pressure %s\n' \
-            "$start_db" "$start_db" >&2
-          log_start "$start_db" start || true
-          log_end "$start_db" start 1 || true
-          exit 1
-        fi
+        start_pressure_state="$(get_pressure_state "$start_db")"
+        case "$start_pressure_state" in
+          halted)
+            printf 'sqlite-backup: %s: disk-pressure halt active; refusing to start\n' \
+              "$start_db" >&2
+            printf 'sqlite-backup: %s: recovery command: sqlite-backup clear-pressure %s\n' \
+              "$start_db" "$start_db" >&2
+            log_start "$start_db" start || true
+            log_end "$start_db" start 1 || true
+            exit 1
+            ;;
+          transition-active)
+            printf 'sqlite-backup: %s: pressure transition active; retry after the current guard completes\n' \
+              "$start_db" >&2
+            log_start "$start_db" start || true
+            log_end "$start_db" start 1 || true
+            exit 1
+            ;;
+        esac
 
         log_start "$start_db" start
 
@@ -1948,7 +2029,7 @@ pkgs.writeShellApplication {
           log_end "$start_db" start 1
           exit 1
         fi
-        if pressure_marker_blocks_work "$start_db"; then
+        if has_durable_pressure_halt "$start_db"; then
           release_pressure_lock
           printf 'sqlite-backup: %s: disk-pressure halt active; refusing to start\n' \
             "$start_db" >&2
@@ -1972,7 +2053,7 @@ pkgs.writeShellApplication {
           printf 'sqlite-backup: %s: halt cleared\n' "$start_db"
         fi
 
-        if pressure_marker_blocks_work "$start_db"; then
+        if has_durable_pressure_halt "$start_db"; then
           release_pressure_lock
           printf 'sqlite-backup: %s: disk-pressure halt appeared during start; refusing bootstrap\n' \
             "$start_db" >&2
@@ -2068,9 +2149,20 @@ pkgs.writeShellApplication {
           exit 1
         fi
 
-        clear_filesystem_path="$(jq -r '.measurement.filesystemPath' "$clear_snapshot")"
-        clear_minimum_available="$(jq -r '.configuredLimits.minimumFilesystemAvailableBytes' "$clear_snapshot")"
-        clear_maximum_managed="$(jq -r '.configuredLimits.maximumManagedLocalBytes' "$clear_snapshot")"
+        clear_guard_json="$(jq -c --arg db "$clear_db" '
+          .databases[] | select(.name == $db) | .pressureGuard
+        ' "$MANIFEST_PATH")"
+        if [ -z "$clear_guard_json" ] \
+          || ! validate_pressure_guard_config "$clear_guard_json"; then
+          printf 'sqlite-backup: %s: current pressure guard configuration is missing or invalid; marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        clear_filesystem_path="$(jq -r '.filesystemPath' <<<"$clear_guard_json")"
+        clear_minimum_available="$(jq -r '.minimumFilesystemAvailableBytes' <<<"$clear_guard_json")"
+        clear_maximum_managed="$(jq -r '.maximumManagedLocalBytes' <<<"$clear_guard_json")"
 
         if ! clear_available="$(measure_filesystem_available_bytes "$clear_filesystem_path")"; then
           printf 'sqlite-backup: %s: could not measure filesystem available bytes at %s; pressure marker preserved\n' \
@@ -2078,7 +2170,7 @@ pkgs.writeShellApplication {
           log_end "$clear_db" clear-pressure 1
           exit 1
         fi
-        if ! clear_managed="$(measure_managed_local_bytes "$clear_snapshot")"; then
+        if ! clear_managed="$(measure_managed_local_bytes "$clear_guard_json")"; then
           printf 'sqlite-backup: %s: could not measure managed local bytes; pressure marker preserved\n' \
             "$clear_db" >&2
           log_end "$clear_db" clear-pressure 1

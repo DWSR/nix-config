@@ -445,7 +445,7 @@ sqlite-backup backup <db>
 
 ```sh
 sqlite-backup status <db>
-# Expected fields: name, replication-state, halt-reason,
+# Expected fields: name, replication-state, halt-reason, pressure-state,
 # last-replication-snapshot, last-archive-snapshot.
 
 sqlite-backup verify-credentials <db>
@@ -472,7 +472,7 @@ is accepted to prevent Drive API quota and retry backpressure from blocking the
 local pipeline.
 
 The pressure guard includes each local destination repository in its managed
-byte total. The 96 GiB OpenCode ceiling therefore covers both the primary local
+byte total. The 128 GiB OpenCode ceiling therefore covers both the primary local
 restic repository and the copy under the Drive File Provider root.
 
 ## Section C — Common Operator Commands
@@ -485,12 +485,12 @@ derivation time, so commands are self-contained.
 | Command | Purpose |
 |---|---|
 | `sqlite-backup list` | One configured database name per line. Empty stdout + exit 0 when no databases declared. |
-| `sqlite-backup status [<db>]` | Per-DB table: name, replication state, last archive snapshot, last replicate shipment. Always exit 0. |
+| `sqlite-backup status [<db>]` | Per-DB table including replication state, halt reason, and pressure state. `transition-active` means a guard is serializing with backup work, not that a threshold was crossed. Always exit 0. |
 | `sqlite-backup backup <db>` | One-shot archive-tier run. Bypasses manual halt flags, but skips while an emergency pressure marker exists. Exit non-zero on pipeline failure. |
 | `sqlite-backup restore <db> [--target <path>] [--time <ts>] [--from-remote] [--force]` | Two-stage restore: `restic restore` of staging dir, then `litestream restore -o <target>`. Defaults: `--target ${PWD}/<db>-restored.db`, `--time latest`, local repo. Refuses to overwrite a non-empty target without `--force`. (Detail in Task 7.2.) |
 | `sqlite-backup start <db>` | Refuse an active pressure halt; otherwise clear a manual halt flag and bootstrap the per-DB Litestream agent when unloaded. Idempotent when launchctl confirms it is running. |
 | `sqlite-backup stop <db> [--include-archive]` | Halts replication-only by default; `--include-archive` halts the whole pipeline. Unloads the Litestream agent via `launchctl bootout`. Idempotent. |
-| `sqlite-backup clear-pressure <db>` | Remeasure the thresholds recorded in a pressure marker and remove it only when healthy. Never starts the pipeline. |
+| `sqlite-backup clear-pressure <db>` | Validate the historical marker, then remeasure the current configured paths and thresholds and remove it only when healthy. Never starts the pipeline. |
 | `sqlite-backup verify-credentials [<db>]` | Read-only destination probe. Pre-flights `rclone config encryption check`; synthetic `:local:` destinations check only their local folder and do not verify cloud synchronization. Reports per-destination `OK` / `FAIL: <cause>` to stdout. Exit 0 iff every check passed. |
 
 State locations referenced by these commands:
@@ -500,11 +500,13 @@ State locations referenced by these commands:
 - Emergency pressure markers:
   `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.json`.
   Preserved by HM activation and removed only by `clear-pressure` after current
-  free-space and managed-byte measurements satisfy the recorded limits.
+  free-space and managed-byte measurements satisfy current configured limits.
 - Pressure transition locks:
   `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.lock`.
   A guard write and `clear-pressure` hold this lock while changing marker state;
-  its presence also blocks pipeline work.
+  its presence also blocks pipeline work. A lock without a JSON marker or
+  failed-write sentinel appears as `pressure-state: transition-active`, not a
+  disk-pressure halt.
 - Failed marker-write sentinels:
   `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.failed`.
   The next guard or `clear-pressure` remeasures and converts this directory into
@@ -533,9 +535,9 @@ sqlite-backup clear-pressure <db>
 sqlite-backup start <db>
 ```
 
-`clear-pressure` validates the marker, measures filesystem available bytes and
-the physical allocation of every managed path recorded by the pressure guard,
-and compares them with the recorded free-space floor and local-data ceiling.
+`clear-pressure` validates the marker, then measures filesystem available bytes
+and physical allocation using the current manifest's managed paths and limits.
+The marker's paths, observations, and limits remain historical audit evidence.
 It exits non-zero and preserves the marker if either limit remains violated or
 any measurement fails. At equality, the threshold is healthy. A successful
 clear removes only the pressure marker; it does not invoke `launchctl`.
@@ -562,7 +564,7 @@ home.sqliteBackup.pressureGuard = {
 };
 
 # On the OpenCode database entry:
-pressureGuard.maximumManagedLocalBytes = 96 * 1024 * 1024 * 1024;
+pressureGuard.maximumManagedLocalBytes = 128 * 1024 * 1024 * 1024;
 ```
 
 The host-wide floor applies to both Shopify databases. Databases without a

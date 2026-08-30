@@ -587,11 +587,12 @@ surfaces.
     error.
 18. The SQLite Backup module's operator commands shall include a
     `status` command that, when invoked without arguments, prints —
-    for each configured database — at minimum the database's name and
-    the current state of its backup pipeline (running, halted via
-    replication-only stop, or halted via whole-pipeline stop). When
-    invoked with a database name as an argument, the `status` command
-    shall scope its output to that single database.
+    for each configured database — at minimum the database's name, current
+    replication state, halt reason, and pressure state (`clear`,
+    `transition-active`, or `halted`). A pressure transition lock without a
+    durable marker or failed-write sentinel shall not be reported as a
+    disk-pressure halt. When invoked with a database name as an argument, the
+    `status` command shall scope its output to that single database.
 19. When the operator invokes the on-demand backup command for a
     configured database whose pipeline is currently halted via the
     operator commands (whether replication-only or whole-pipeline),
@@ -808,12 +809,15 @@ activation cannot restart a pipeline that was stopped to protect the host.
 5. While an emergency pressure halt exists, replication-tier, archive-tier,
    and on-demand backup invocations shall skip before acquiring the
    per-database backup lock.
-6. `sqlite-backup status [<db>]` shall expose `halt-reason: disk-pressure`
-   while an emergency pressure halt exists.
+6. `sqlite-backup status [<db>]` shall expose `halt-reason: disk-pressure` and
+   `pressure-state: halted` while an emergency pressure halt record or
+   failed-write sentinel exists.
 7. `sqlite-backup clear-pressure <db>` shall preserve the emergency halt if
    its record is malformed, a current measurement fails, filesystem available
-   bytes are below the recorded minimum, or managed local bytes are above the
-   recorded maximum.
+   bytes are below the current configured minimum, or managed local bytes are
+   above the current configured maximum. Current measurements shall use the
+   managed paths from the current manifest; marker limits and paths remain
+   historical audit data.
 8. When both current thresholds are healthy, `sqlite-backup clear-pressure
    <db>` shall remove only the emergency halt record and shall not start the
    pipeline.
@@ -855,4 +859,7 @@ exhaust the root filesystem.
 11. Guard output shall include observed and configured byte values without
     secret material.
 12. ShopifyLaptop shall use a 128 GiB root free-space floor, a 60-second check
-    interval, and a 96 GiB OpenCode managed-local ceiling.
+    interval, and a 128 GiB OpenCode managed-local ceiling.
+13. While a guard holds only the pressure transition lock, `status` shall
+    expose `pressure-state: transition-active`, preserve the actual Litestream
+    replication state, and shall not expose `halt-reason: disk-pressure`.

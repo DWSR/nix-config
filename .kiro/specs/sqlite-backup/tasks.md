@@ -240,7 +240,7 @@
   - Render Litestream `meta-path` inside each database's managed root and include staging, restic, and metadata paths in physical allocated-byte accounting.
   - Add an independent per-database RunAtLoad/StartInterval guard and run the same guard before every backup lock acquisition.
   - Atomically persist the Requirement 18 marker and unload only the affected Litestream agent on threshold or measurement failure.
-  - Configure ShopifyLaptop with a 128 GiB floor, 60-second interval, and 96 GiB OpenCode ceiling; add hermetic boundary, error, render, and preflight tests.
+  - Configure ShopifyLaptop initially with a 128 GiB floor, 60-second interval, and 96 GiB OpenCode ceiling; add hermetic boundary, error, render, and preflight tests.
   - _Requirements: 19.1-19.12_
   - _Boundary: HM Module, CLI Script, Shopify sqlite-backup wiring, sqlite-backup focused tests_
   - _Depends: 9.1_
@@ -259,6 +259,31 @@
     backend syntax and a Drive-style path containing spaces.
   - _Requirements: 5.3, 5.4, 5.6, 19.4_
   - _Boundary: Shopify sqlite-backup wiring, HM manifest, rclone verification, focused tests_
+
+- [ ] 12. Pressure status accuracy
+
+- [x] 12.1 Distinguish a live pressure transition from a durable halt
+  - Keep pressure transition locks fail-closed for start and backup admission,
+    but do not classify a lock alone as a disk-pressure halt.
+  - Add `pressure-state` output with `clear`, `transition-active`, and `halted`
+    values while preserving the actual launchd-derived replication state.
+  - Make `start` tell the operator to retry a live transition instead of
+    incorrectly directing them to `clear-pressure`.
+  - Reproduce a guard holding the transition lock while Litestream is loaded.
+  - _Requirements: 13.18, 18.6, 19.13_
+  - _Boundary: CLI status/start reporting, focused pressure tests_
+
+- [ ] 13. Configurable pressure recovery
+
+- [x] 13.1 Apply current manifest policy when clearing pressure
+  - Preserve the marker's trigger observations, limits, and paths as immutable
+    audit evidence while validating recovery against current manifest policy.
+  - Fail closed when current limits or paths are invalid or cannot be measured.
+  - Raise Shopify OpenCode's managed-local ceiling from 96 GiB to 128 GiB.
+  - Prove a raised current ceiling can clear an older marker and that current,
+    not historical, managed paths are measured.
+  - _Requirements: 18.7, 19.12_
+  - _Boundary: CLI pressure recovery, Shopify sqlite-backup policy, focused tests_
 
 ## Parallel Execution Wave Map
 
@@ -367,3 +392,5 @@ even when not exploited.
 - **Task 9.1** established fail-closed pressure state: absence must be provable through searchable ancestors, and marker writers share a transition lock with `clear-pressure`, which measures an immutable snapshot and version-checks before removal.
 - **Task 10.1** follows command-line managed-root symlinks with `du -H` without traversing nested links; every marker-generation failure preserves a durable `.failed` sentinel.
 - **Task 11.1** treats Google Drive File Provider synchronization as external: `restic copy` success covers the local `:local:` repository only, and that repository remains inside pressure accounting.
+- **Task 12.1** reserves `halted-disk-pressure` for durable marker state; a guard waiting behind backup work remains fail-closed but reports `pressure-state: transition-active`.
+- **Task 13.1** treats marker limits and paths as historical audit data; explicit Nix policy changes control subsequent `clear-pressure` validation.
