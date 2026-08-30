@@ -14,8 +14,8 @@ destination (cloud or local).
 pipeline declaratively (Nix module configuration in
 `home-manager/common/sqlite-backup.nix` and per-host scaffolds) and
 imperatively (a single `sqlite-backup` CLI binary on `PATH`
-exposing `list`, `status`, `backup`, `restore`, `start`, `stop`, and
-`verify-credentials` subcommands).
+exposing `list`, `status`, `backup`, `restore`, `start`, `stop`,
+`clear-pressure`, and `verify-credentials` subcommands).
 
 **Impact**: Adds three new artifacts to the repo (one HM module, one
 system-tier activation module, one operator-CLI script), one overlay,
@@ -64,12 +64,12 @@ consumer, `attrsOf (submodule {…})` module options, and launchd
 - `home-manager/common/sqlite-backup.nix` — the HM module: option
   surface (`enable`, `rcloneDestinations`, `databases`, secret-name
   references, retention defaults), launchd agent declarations
-  (Litestream daemon, replicate-tier wrapper, archive-tier wrapper —
-  three agents per configured DB), `home.mcp.keychainSecrets` entries
+  (Litestream daemon, replicate-tier wrapper, archive-tier wrapper, pressure
+  guard: four agents per configured DB), `home.mcp.keychainSecrets` entries
   for the two passphrases, manifest rendering, eval-time assertions
   (R1.AC5 missing-destination, R10 platform, R11 tool versions),
-  `home.activation` hook that clears halt flags on rebuild (R13.AC15
-  ephemeral persistence).
+  `home.activation` hook that clears manual halt flags on rebuild (R13.AC15)
+  while preserving emergency pressure markers (R18.3).
 - `overlays/litestream.nix` — single-line lift from
   `pkgs.unstable.litestream` (v0.5.11) into the active package set,
   so `pkgs.litestream` resolves to a v0.5.x build.
@@ -79,8 +79,10 @@ consumer, `attrsOf (submodule {…})` module options, and launchd
 - `scripts/sqlite-backup-cli.nix` — single `pkgs.writeShellApplication`
   derivation producing the `sqlite-backup` binary, dispatching on
   `$1` to public subcommands (`list`, `status`, `backup`, `restore`,
-  `start`, `stop`, `verify-credentials`) and internal subcommands
-  (`__replicate-trigger`, `__archive-trigger`) used by launchd.
+  `start`, `stop`, `clear-pressure`, `verify-credentials`) and internal
+  subcommands
+  (`__replicate-trigger`, `__archive-trigger`, `__pressure-guard`) used by
+  launchd.
 - `configurations/personal/home-manager/sqlite-backup.nix` and
   `configurations/shopify/home-manager/sqlite-backup.nix` — per-host
   scaffolds: `enable = true; rcloneDestinations = { }; databases = [
@@ -118,8 +120,8 @@ consumer, `attrsOf (submodule {…})` module options, and launchd
 - Implementation of any Cavemem MCP server (the imminent first
   consumer of this module is a separate spec).
 - Backup of non-SQLite data.
-- `flake.nix` build surface beyond importing the new overlay; no
-  changes to checks, formatters, or hooks.
+- `flake.nix` build surface beyond the existing overlay import and the focused
+  `sqlite-backup-tests` regression check; no formatter or hook changes.
 
 ### Allowed Dependencies
 
@@ -154,12 +156,13 @@ spec or consumer that integrates with this design:
   module to the system-tier verification script and to the CLI binary)
   — consumers reading the manifest must re-validate.
 - A change in the per-database launchd agent label scheme
-  (`dev.dwsr.sqlite-backup.{litestream,replicate,archive}.<db>`) —
+  (`dev.dwsr.sqlite-backup.{litestream,replicate,archive,guard}.<db>`) —
   any external monitoring or status tooling that lists agents must
   update.
 - A change in the on-disk path conventions for the staging directory
   (`${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`) or the
-  restic repo (`${xdg.dataHome}/sqlite-backup/<db>/restic/`) — any
+  restic repo (`${xdg.dataHome}/sqlite-backup/<db>/restic/`) or Litestream
+  metadata (`${xdg.dataHome}/sqlite-backup/<db>/litestream-metadata/`) — any
   recovery procedure or runbook must update.
 - A change in the Keychain account name from `mcp-hub` to a
   `sqlite-backup`-specific account — the bridge module's account
@@ -284,7 +287,7 @@ graph TB
 | Off-host shipment | `restic copy` over `rclone:` backend (rclone v1.72.1) | Mirror local restic repo to remote restic repo | Restic-native, structurally race-safe (research.md §3.B) |
 | Operator-managed remote definitions | `~/.config/rclone/rclone.conf`, encrypted via `RCLONE_ENCRYPT_V0` | Holds OAuth tokens, API keys, backend types | Operator-bootstrapped via `rclone config`; not Nix-rendered |
 | Secret materialization | `mcp-sops-bridge` (existing) → macOS Keychain (`mcp-hub` account) | Two new entries: rclone-config passphrase and restic archive passphrase | Reuses existing pipeline; no bridge changes |
-| Per-host scheduling | nix-darwin / HM 25.11 `launchd.agents.<name>` | Per-DB agents: Litestream daemon (`KeepAlive=true`), replicate wrapper (`StartInterval=300`), archive wrapper (`StartCalendarInterval={Hour=3;Minute=0;}`) | First `StartInterval` user in this repo |
+| Per-host scheduling | nix-darwin / HM 25.11 `launchd.agents.<name>` | Per-DB agents: guarded Litestream daemon (`KeepAlive=true`), replicate wrapper (`StartInterval=300`), archive wrapper (`StartCalendarInterval={Hour=3;Minute=0;}`), pressure guard (`RunAtLoad=true`, `StartInterval=60`) | Four isolated agents per database |
 | Activation-time verification | `system.activationScripts.postActivation.text` at `lib.mkOrder 10000` (system-tier) | Runs after `mcp-secrets-activate` (order 9999); reads manifest and verifies rclone.conf | First `home.activation` consumer is the much smaller halt-clearing script (the heavyweight verification lives system-tier per research.md §3.A) |
 | Pipeline mutex | `mkdir`-based atomic lockfile in bash wrapper | Prevents replicate + archive wrappers from racing per-DB | `flock(1)` not on macOS; `mkdir` is POSIX-atomic |
 
@@ -319,6 +322,8 @@ flake.nix                                        # MODIFY: register the new over
 
 .kiro/specs/sqlite-backup/
 └── runbook.md                                    # New (during implementation): operator bootstrap + recovery procedures
+
+tests/sqlite-backup/                              # Hermetic CLI + activation safety regressions
 ```
 
 ### File-Level Responsibilities
@@ -331,10 +336,11 @@ flake.nix                                        # MODIFY: register the new over
   databases, archivePassphraseSecret, rcloneConfigPassphraseSecret}`);
   renders the JSON manifest via `pkgs.writeText`; exposes the
   manifest path as `home.sqliteBackup._manifestPath`; declares per-DB
-  launchd agents (3 per DB); declares `home.mcp.keychainSecrets`
+  launchd agents (4 per DB); declares `home.mcp.keychainSecrets`
   additions; declares `home.packages` addition for the CLI binary;
   declares `home.activation.sqlite-backup-clear-halts` (small bash
-  fragment that removes any halt flag files); eval-time `assertions`
+  fragment that removes manual halt flag files but preserves pressure markers);
+  eval-time `assertions`
   for R1.AC5 / R10 / R11. ~300–400 LoC.
 - **`configurations/common-darwin/sqlite-backup-verify.nix`**:
   System-tier activation module. Reads the HM-rendered manifest path
@@ -463,9 +469,9 @@ sequenceDiagram
 | 1.1 | Configuration surface | HM module | `home.sqliteBackup.{enable, rcloneDestinations, databases, archivePassphraseSecret, rcloneConfigPassphraseSecret}` option set |
 | 1.2 | Dormant default safe | HM module | When `databases = [ ]`, no agents declared; module evaluates with empty rclone secrets |
 | 1.3 | Dormant passes `nix flake check` | HM module | Pure Nix eval check; no IFD; assertions only fire when active |
-| 1.4 | Adding a DB doesn't disturb others | HM module | Each DB gets its own 3-agent triplet; no shared state per-DB |
+| 1.4 | Adding a DB doesn't disturb others | HM module | Each DB gets its own four-agent set; no shared state per-DB |
 | 1.5 | Eval-time failure on missing destination ref | HM module | `assertions` block scans `databases[*].remote` against `rcloneDestinations` keys |
-| 2.1 | Continuous replication | Per-DB Litestream daemon | `litestream replicate <db-path> file://<staging-dir>`, KeepAlive agent |
+| 2.1 | Continuous replication | Per-DB Litestream daemon | Guarded `__litestream-trigger` execs `litestream replicate -config <generated-yaml>` in a KeepAlive agent |
 | 2.2 | ~1 s on-host RPO | Per-DB Litestream daemon | Litestream native behavior under low-write profile |
 | 2.3 | Live-DB writer never blocked | Per-DB Litestream daemon | Litestream uses SQLite shared-mode reads; no exclusive locks |
 | 2.4 | Auto-restart on agent exit | Per-DB Litestream daemon | `KeepAlive = true` |
@@ -556,6 +562,12 @@ sequenceDiagram
 | 17.4 | Verify backend type matches | Verify module | Same JSON; compare `type` field per remote |
 | 17.5 | Distinguished failure modes | Verify module | Branched error reporting: missing-passphrase, mismatched-passphrase, missing-config, plaintext-config, missing-remote, type-mismatch |
 | 17.6 | Dormant exemption | Verify module | Conditional on `databases ≠ [ ]`; otherwise no-op |
+| 18.1-18.3 | Separate persistent emergency halt state | HM module + CLI | `pressure-<db>.json` is distinct from activation-cleared `halt-<db>.flag` |
+| 18.4-18.6 | Pressure-halt enforcement and visibility | CLI | `start` refuses; all tier entry points skip before locking; `status` emits `halt-reason: disk-pressure` |
+| 18.7-18.9 | Guarded explicit recovery | CLI | `clear-pressure` remeasures recorded thresholds, removes only healthy markers, and never invokes launchctl |
+| 19.1-19.5 | Guard configuration and managed paths | HM module | Global floor/interval plus per-DB ceiling; manifest lists staging, restic, and explicit Litestream metadata paths |
+| 19.6-19.8 | Boundary measurement and halt | CLI pressure guard | Locale-independent `df -Pk` and `du -skH`; strict `<` floor and `>` ceiling checks write the marker and boot out one Litestream label |
+| 19.9-19.12 | Synchronous preflight, failures, and Shopify policy | CLI + Shopify scaffold | Tier helper preflights before locking; errors fail closed; Shopify uses 128 GiB/60 s/96 GiB |
 
 ## Components and Interfaces
 
@@ -621,7 +633,7 @@ No contracts; just a Nix overlay.
   rcloneConfigPassphraseSecret}`.
 - Owns the manifest schema (rendered via `pkgs.writeText`; exposed
   as `home.sqliteBackup._manifestPath`).
-- Owns the per-DB launchd agent declarations (3 per DB).
+- Owns the per-DB launchd agent declarations (4 per DB).
 - Owns the `home.activation.sqlite-backup-clear-halts` hook for
   R13.AC15 ephemeral persistence.
 - Owns the eval-time `assertions` block (R1.AC5, R10, R11).
@@ -650,6 +662,11 @@ No contracts; just a Nix overlay.
 home.sqliteBackup = {
   enable :: bool;
 
+  pressureGuard = {
+    minimumFilesystemAvailableBytes :: unsigned int; # default 0
+    checkIntervalSeconds :: positive int;            # default 60
+  };
+
   rcloneDestinations :: attrsOf (submodule {
     options = {
       type :: str;        # rclone backend type (e.g. "drive", "b2", "local")
@@ -672,6 +689,8 @@ home.sqliteBackup = {
         schedule :: attrs;                 # default { Hour = 3; Minute = 0; }
         retention :: listOf str;           # default [ "--keep-daily" "7" "--keep-weekly" "4" "--keep-monthly" "6" ]
       };
+
+      pressureGuard.maximumManagedLocalBytes :: unsigned int; # default 2^53-1
     };
   });
 
@@ -686,7 +705,7 @@ home.sqliteBackup = {
   `databases[*].remote` must reference a key in
   `rcloneDestinations`. Platform must be darwin.
   `pkgs.litestream.version >= "0.5.7"`.
-- **Postconditions**: Per host: 3·N launchd agents declared (where
+- **Postconditions**: Per host: 4·N launchd agents declared (where
   N = number of configured databases); 2 entries added to
   `home.mcp.keychainSecrets`; 1 entry added to `home.packages`; 1
   manifest JSON file written to `${pkgs.writeText}` store path; 1
@@ -722,6 +741,14 @@ home.sqliteBackup = {
         "remotePath": "sqlite-backup",
         "stagingDir": "/Users/<user>/Library/Application Support/sqlite-backup/cavemem/litestream-staging",
         "repoDir": "/Users/<user>/Library/Application Support/sqlite-backup/cavemem/restic",
+        "litestreamMetadataDir": "/Users/<user>/Library/Application Support/sqlite-backup/cavemem/litestream-metadata",
+        "pressureGuard": {
+          "filesystemPath": "/",
+          "minimumFilesystemAvailableBytes": 137438953472,
+          "maximumManagedLocalBytes": 103079215104,
+          "checkIntervalSeconds": 60,
+          "managedPaths": ["<stagingDir>", "<repoDir>", "<litestreamMetadataDir>"]
+        },
         "replicationTier": { "cadenceSeconds": 300, "retention": ["--keep-hourly","24"] },
         "archiveTier": { "schedule": { "Hour": 3, "Minute": 0 }, "retention": ["--keep-daily","7","--keep-weekly","4","--keep-monthly","6"] }
       }
@@ -864,9 +891,11 @@ home.sqliteBackup = {
 - Implements public subcommands: `list`, `status`, `backup <db>`,
   `restore <db> [--target <path>] [--time <ts>] [--from-remote]
   [--force]`, `start <db>`, `stop <db> [--include-archive]`,
+  `clear-pressure <db>`,
   `verify-credentials [<db>]`, `--help`.
 - Implements internal subcommands (prefixed `__`, hidden from
-  `--help`): `__replicate-trigger <db>`, `__archive-trigger <db>`.
+  `--help`): `__replicate-trigger <db>`, `__archive-trigger <db>`, and
+  `__pressure-guard <db>`.
   These are invoked by launchd agents.
 - All subcommands consume the manifest JSON (path baked in at
   derivation time via Nix string interpolation).
@@ -877,8 +906,8 @@ home.sqliteBackup = {
 - mkdir-based per-DB mutex around restic operations
   (`${TMPDIR:-/var/tmp}/sqlite-backup-<db>.lock`); failure to
   acquire = early exit 0 with log line.
-- Halt-flag check at the top of each tier-trigger and at the top of
-  `start`/`stop` for current-state report.
+- Pressure-marker check before every tier lock and before `start`; manual
+  halt-flag checks retain their tier-specific behavior.
 
 **Dependencies**
 
@@ -902,15 +931,17 @@ sqlite-backup list
 
 sqlite-backup status [<db>]
   Output: per-database table with columns: name, replication-state
-  (running | halted-replication-only | halted-whole-pipeline),
+  (running | not-running | halted-replication-only |
+  halted-whole-pipeline | halted-disk-pressure), halt-reason
+  (none | replication-only | whole-pipeline | disk-pressure),
   last-archival-snapshot-timestamp (or never), last-replicate-
   shipment-timestamp (or never).
   With <db>: scoped to one database.
   Exit 0 always (status is informational).
 
 sqlite-backup backup <db>
-  Behavior: invokes __archive-trigger as a one-shot, regardless of
-  halt state (R19). Halt state preserved.
+  Behavior: invokes __archive-trigger as a one-shot, bypassing manual
+  halt state (R19) but not an emergency pressure halt. Halt state preserved.
   Exit: 0 on success; non-zero on any pipeline failure with cause
   on stderr.
 
@@ -924,10 +955,9 @@ sqlite-backup restore <db> [--target <path>] [--time <ts>] [--from-remote] [--fo
   Exit: 0 on success; non-zero with cause on failure.
 
 sqlite-backup start <db>
-  Behavior: removes halt flag for <db>; bootstraps the per-DB
-  Litestream agent if it was unloaded.
-  Idempotent: reports "already running" without error if no halt
-  was set.
+  Behavior: refuses while a pressure marker exists; otherwise removes a
+  manual halt flag and bootstraps the per-DB Litestream agent if unloaded.
+  Idempotent: reports "already running" when launchctl confirms the agent.
 
 sqlite-backup stop <db> [--include-archive]
   Behavior: writes halt flag (content: "replication-only" by
@@ -935,6 +965,14 @@ sqlite-backup stop <db> [--include-archive]
   per-DB Litestream agent via launchctl bootout.
   Idempotent: reports "already halted" without error if a matching
   halt was already set.
+
+sqlite-backup clear-pressure <db>
+  Behavior: validates the marker schema, remeasures filesystem available
+  bytes and physical allocated bytes for every recorded managed path, and
+  removes the marker only when available >= minimum and managed <= maximum.
+  Missing managed paths count as zero; malformed state, unreadable paths, and
+  failed measurements preserve the marker and return non-zero.
+  Never invokes launchctl. A subsequent `sqlite-backup start <db>` is required.
 
 sqlite-backup verify-credentials [<db>]
   Behavior: runs `rclone lsd <remote>:<remotePath>/<db>` for each
@@ -955,7 +993,8 @@ sqlite-backup --help
     `dev.dwsr.sqlite-backup.replicate.<db>`.
   - Input: `<db>` argument; reads manifest for per-DB config.
   - Steps:
-    1. Check halt flag; exit 0 if any halt is set (logged).
+    1. Check the pressure marker, then the tier-specific manual halt flag;
+       exit 0 when either blocks the invocation (logged).
     2. Acquire mkdir lock; exit 0 if held (logged).
     3. Read archive passphrase from Keychain (export
        `RESTIC_PASSWORD` and `RESTIC_FROM_PASSWORD_COMMAND` for
@@ -1013,9 +1052,45 @@ sqlite-backup --help
   content `replication-only` or `whole-pipeline`. Cleared on every
   HM activation (R13.AC15) by the HM module's
   `home.activation.sqlite-backup-clear-halts` hook.
+- **Pressure markers**: per-DB JSON records at
+  `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.json`.
+  They are authoritative by existence, survive HM activation, and are removed
+  only by a healthy `clear-pressure` transition.
 - **Locks**: per-DB mkdir lockfiles at
   `${TMPDIR:-/var/tmp}/sqlite-backup-<db>.lock`. Created by the
   first wrapper to claim the mutex; removed via `trap` on EXIT.
+
+##### Disk-Pressure Guard Contract
+
+- Each configured database has `dev.dwsr.sqlite-backup.guard.<db>` with
+  `RunAtLoad = true` and `StartInterval = checkIntervalSeconds`.
+- A guard holds the pressure transition lock and per-database backup mutex from
+  before measurement through the healthy/marker decision. While it waits for
+  an active backup, the pressure lock prevents another backup or start from
+  overtaking it.
+- The guard measures root available bytes with `LC_ALL=C df -Pk` and sums
+  physical allocation for staging, restic, and Litestream metadata with
+  `LC_ALL=C du -skH`. `-H` follows a managed root that is itself a symlink
+  without following nested symlinks. Missing paths are zero; inaccessible paths
+  fail closed.
+- Equality is healthy. Available bytes below the floor or managed bytes above
+  the ceiling atomically write the Requirement 18 marker under the shared
+  pressure transition lock, then boot out only
+  `dev.dwsr.sqlite-backup.litestream.<db>`.
+- `tier_trigger` runs the same guard before CLI log writes and manual-halt
+  handling. Before the per-database backup mutex, it holds the pressure lock
+  across the
+  final marker check and backup-mutex acquisition, preventing a marker from
+  appearing in that gap. Measurement failures persist a marker with the
+  unavailable observation as `null`, unload Litestream, and return non-zero.
+- The Litestream launchd job invokes `__litestream-trigger`, not Litestream
+  directly. Startup runs the guard and a final serialized marker check before
+  executing `litestream replicate -config <generated-yaml>`.
+- If atomic JSON persistence fails, the pressure lock is atomically renamed to
+  `${XDG_STATE_HOME}/sqlite-backup/pressure-<db>.failed`. The next guard or
+  `clear-pressure` remeasures and converts that sentinel into a normal marker.
+  Ambiguous launchctl failures are errors; only exit 113 proves an
+  already-unloaded label.
 
 **Implementation Notes**
 
@@ -1082,7 +1157,7 @@ sqlite-backup --help
 
 ### Domain Model
 
-The data domain has three persistent on-host artifact classes per
+The data domain has four persistent on-host artifact classes per
 database:
 
 - **Live SQLite database** (`database.path`): operator-owned, written
@@ -1091,11 +1166,16 @@ database:
   module-owned, holds LTX segments produced by the per-DB Litestream
   daemon. Treated as transient working data; no operator-facing
   guarantees about its contents beyond "Litestream restore reads it".
+- **Litestream metadata directory** (`${xdg.dataHome}/sqlite-backup/<db>/litestream-metadata/`):
+  module-owned local LTX working state selected through Litestream's
+  `meta-path` configuration and included in managed-byte accounting.
 - **Restic repository** (`${xdg.dataHome}/sqlite-backup/<db>/restic/`):
   module-owned, encrypted, holds both `replication`-tagged and
   `archive`-tagged snapshots. The single backup repository per
   database (R16). Inspectable end-to-end with stock `restic`
   commands.
+- **Pressure halt marker** (`${xdg.stateHome}/sqlite-backup/pressure-<db>.json`):
+  persistent structured safety state retained across activation.
 
 And three transient state artifacts:
 
@@ -1114,6 +1194,44 @@ And one off-host artifact:
   byte-equivalent mirror of the on-host restic repo (R16.AC5),
   written via `restic copy` from each replicate-tier and archive-tier
   wrapper invocation.
+
+### Logical Data Model — Pressure Marker JSON
+
+```typescript
+interface PressureMarker {
+  schemaVersion: 1;
+  database: string;
+  haltReason: "disk-pressure";
+  trigger: string;
+  observedBytes: {
+    filesystemAvailable: number | null;
+    managedLocal: number | null;
+  };
+  configuredLimits: {
+    minimumFilesystemAvailableBytes: number;
+    maximumManagedLocalBytes: number;
+  };
+  measurement: {
+    filesystemPath: string;
+    managedPaths: string[];
+  };
+  timestamp: string;
+}
+```
+
+The pressure guard writes this record atomically. `clear-pressure`
+uses its recorded limits and paths for current measurements; equality is
+healthy at both the free-space floor and managed-byte ceiling.
+All byte values are unsigned JSON-safe integers (`0..9007199254740991`) and
+all measurement paths are absolute. Any filesystem object at the marker path
+blocks start and backup work; only a regular, non-symlink marker with a valid
+schema can be cleared.
+
+Pressure-marker writers and `clear-pressure` serialize through
+`${XDG_STATE_HOME}/sqlite-backup/pressure-<db>.lock`. The lock itself blocks
+pipeline work. `clear-pressure` validates and measures an immutable snapshot,
+then compares the live marker version before removal; a concurrent replacement
+is preserved. The guard uses the same lock when it writes or replaces a marker.
 
 ### Logical Data Model — Manifest JSON
 
@@ -1138,6 +1256,15 @@ interface Manifest {
     remotePath: string;
     stagingDir: string;                 // absolute path
     repoDir: string;                    // absolute path
+    litestreamMetadataDir: string;      // absolute path
+    litestreamConfigPath: string;       // generated YAML store path
+    pressureGuard: {
+      filesystemPath: string;           // "/"
+      minimumFilesystemAvailableBytes: number;
+      maximumManagedLocalBytes: number;
+      checkIntervalSeconds: number;
+      managedPaths: string[];           // staging, repo, metadata
+    };
     replicationTier: {
       cadenceSeconds: number;           // launchd StartInterval value
       retention: string[];              // restic forget args
@@ -1202,6 +1329,9 @@ other tier.
   required argument; database name not in manifest. All handled by
   the dispatch shell function; helpful error + suggested correction
   printed.
+- **Pressure recovery errors**: malformed marker, measurement failure, free
+  space below the floor, or managed bytes above the ceiling. All preserve the
+  marker and leave launchd untouched.
 
 ### Monitoring
 
@@ -1248,6 +1378,10 @@ check.
 - **I5**: `darwin-rebuild switch` after a `stop` command clears the
   halt flag and re-bootstraps the agent (R13.AC15 ephemeral
   persistence).
+- **I6**: `tests/sqlite-backup/persistent-emergency-halts.test.sh` executes
+  the rendered HM activation fragment and CLI against temporary state plus
+  stubbed launchctl/df/du; it covers pressure persistence, threshold
+  boundaries, trigger skips, explicit restart, and existing manual lifecycle.
 
 ### E2E Tests (operator path, manual)
 
@@ -1296,9 +1430,10 @@ check.
   `${xdg.dataHome}/sqlite-backup/<db>/litestream-staging/`; restic
   encrypts before the data leaves disk; rclone (via `restic copy`)
   only ever sees encrypted restic pack files.
-- **Halt-flag race**: An attacker with write access to
+- **Halt-state race**: An attacker with write access to
   `${xdg.stateHome}/sqlite-backup/` could create halt flags to
-  silently disable backups. Mitigation: macOS file permissions
+  silently disable backups or forge pressure-marker measurements. Mitigation:
+  macOS file permissions
   (operator's home directory is mode 0700 by default); risk is
   comparable to any other operator-controlled state file.
 
@@ -1308,7 +1443,7 @@ check.
   healthy network (R14.AC2); cavemem-style append-only personal
   databases.
 - **Scaling**: Per-host capacity is operator-bounded (single
-  operator, expected 1–3 databases per host). 3·N launchd agents
+  operator, expected 1–3 databases per host). 4·N launchd agents
   per host scales linearly with database count; no design concern.
 - **Disk usage**: Local restic repo grows with retention policy;
   `--keep-hourly 24` (replication tier) + `--keep-daily 7
@@ -1372,8 +1507,9 @@ flowchart TB
 7. **Add a database**: declare a `databases = [ { name; path;
    remote; ... } ];` entry in the per-host scaffold.
 
-8. **`darwin-rebuild switch`**: HM module creates the 3 launchd
-   agents (Litestream daemon, replicate wrapper, archive wrapper)
+8. **`darwin-rebuild switch`**: HM module creates the 4 launchd
+   agents (guarded Litestream daemon, replicate wrapper, archive wrapper,
+   pressure guard)
    for the new database.
 
 9. **First scheduled replicate-tier run**: wrapper auto-inits the

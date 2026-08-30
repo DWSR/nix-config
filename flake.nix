@@ -1758,6 +1758,13 @@
                 touch $out
               '';
 
+          sqlite-backup-tests = import ./tests/sqlite-backup {
+            inherit pkgs;
+            inherit (inputs) home-manager;
+            realLitestream = if system == "aarch64-darwin" then pkgs.litestream else null;
+            shopifyHome = self.darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama;
+          };
+
           local-binary-cache-render =
             let
               publisherValidatorFixture = pkgs.writeShellScriptBin "local-binary-cache-publish" ''

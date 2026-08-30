@@ -8,6 +8,8 @@ let
   inherit (lib) mkOption types;
 
   cfg = config.home.sqliteBackup;
+  maxSafeInteger = 9007199254740991;
+  yamlFormat = pkgs.formats.yaml { };
 
   # Single discoverable declaration site for the minimum versions of
   # the underlying tools this pipeline relies on (R11.AC3). Future
@@ -157,6 +159,22 @@ let
           for this database.
         '';
       };
+
+      pressureGuard = mkOption {
+        type = types.submodule {
+          options.maximumManagedLocalBytes = mkOption {
+            type = types.ints.unsigned;
+            default = maxSafeInteger;
+            description = ''
+              Maximum physical allocated bytes across this database's
+              Litestream staging, restic repository, and Litestream metadata
+              directories before the complete pipeline is pressure-halted.
+            '';
+          };
+        };
+        default = { };
+        description = "Per-database local disk-pressure guard settings.";
+      };
     };
   };
 in
@@ -197,6 +215,29 @@ in
         and performs no activation-time verification — the dormant
         default required by R1.AC2 and R1.AC3.
       '';
+    };
+
+    pressureGuard = mkOption {
+      type = types.submodule {
+        options = {
+          minimumFilesystemAvailableBytes = mkOption {
+            type = types.ints.unsigned;
+            default = 0;
+            description = ''
+              Minimum bytes that must remain available on the root filesystem.
+              A lower observation pressure-halts each affected database.
+            '';
+          };
+
+          checkIntervalSeconds = mkOption {
+            type = types.ints.positive;
+            default = 60;
+            description = "Cadence of each per-database pressure guard agent.";
+          };
+        };
+      };
+      default = { };
+      description = "Host-wide SQLite backup disk-pressure guard settings.";
     };
 
     archivePassphraseSecret = mkOption {
@@ -248,10 +289,10 @@ in
         Per-database operator CLI derivation. Built and wired in by
         the CLI-integration task that follows the per-DB launchd
         agent declaration (see tasks.md). When `null`, the per-DB
-        replicate and archive launchd agents are not declared — only
+        replicate, archive, and pressure-guard launchd agents are not declared — only
         the Litestream daemon agent is emitted per configured
         database. When set to a derivation exposing
-        `bin/sqlite-backup`, all three agents per database are
+        `bin/sqlite-backup`, all four agents per database are
         declared. Operators do not set this option directly; the
         configuration glue layer wires it from the CLI module.
       '';
@@ -260,14 +301,42 @@ in
 
   config = lib.mkIf cfg.enable (
     let
+      dbRootFor = db: "${config.xdg.dataHome}/sqlite-backup/${db.name}";
+      stagingDirFor = db: "${dbRootFor db}/litestream-staging";
+      repoDirFor = db: "${dbRootFor db}/restic";
+      litestreamMetadataDirFor = db: "${dbRootFor db}/litestream-metadata";
+
+      litestreamConfigFor =
+        db:
+        yamlFormat.generate "sqlite-backup-litestream-${db.name}.yaml" {
+          dbs = [
+            {
+              path = toString db.path;
+              "meta-path" = litestreamMetadataDirFor db;
+              replica.url = "file://${stagingDirFor db}";
+            }
+          ];
+        };
+
+      pressureGuardFor = db: {
+        inherit (cfg.pressureGuard) checkIntervalSeconds minimumFilesystemAvailableBytes;
+        inherit (db.pressureGuard) maximumManagedLocalBytes;
+        filesystemPath = "/";
+        managedPaths = [
+          (stagingDirFor db)
+          (repoDirFor db)
+          (litestreamMetadataDirFor db)
+        ];
+      };
+
       # Single derivation reference for the operator-facing CLI. The same
       # value is exposed three ways:
       #
       #   1. `home.packages = [ cliBinary ]` — puts `sqlite-backup` on
       #      the operator's interactive shell PATH (R13.AC1, R13.AC2).
       #   2. `home.sqliteBackup._cliBinary = cliBinary` — flips the
-      #      placeholder option from Task 2.5 so the per-DB replicate
-      #      and archive launchd wrappers are emitted with
+      #      placeholder option from Task 2.5 so the per-DB replicate,
+      #      archive, and pressure-guard launchd wrappers are emitted with
       #      `ProgramArguments` pointing at the same store path.
       #
       # Holding the binding once guarantees the launchd
@@ -292,6 +361,14 @@ in
       # cleanly with `databases = [ ]`.
       assertions = [
         (lib.hm.assertions.assertPlatform "home.sqliteBackup" pkgs lib.platforms.darwin)
+        {
+          assertion = cfg.pressureGuard.minimumFilesystemAvailableBytes <= maxSafeInteger;
+          message = ''
+            home.sqliteBackup.pressureGuard.minimumFilesystemAvailableBytes
+            must not exceed ${toString maxSafeInteger} so runtime JSON and
+            shell arithmetic remain exact.
+          '';
+        }
       ]
       ++ lib.optionals (cfg.databases != [ ]) (
         [
@@ -306,26 +383,41 @@ in
             '';
           }
         ]
-        ++ lib.flip map cfg.databases (db: {
-          assertion = builtins.hasAttr db.remote cfg.rcloneDestinations;
-          message = ''
-            home.sqliteBackup.databases entry "${db.name}" references
-            rclone destination "${db.remote}", but no entry with that
-            name is declared in home.sqliteBackup.rcloneDestinations.
-            Either add a "${db.remote}" entry to rcloneDestinations,
-            or change database "${db.name}" to reference an existing
-            destination.
-          '';
-        })
+        ++ lib.concatMap (db: [
+          {
+            assertion = builtins.hasAttr db.remote cfg.rcloneDestinations;
+            message = ''
+              home.sqliteBackup.databases entry "${db.name}" references
+              rclone destination "${db.remote}", but no entry with that
+              name is declared in home.sqliteBackup.rcloneDestinations.
+              Either add a "${db.remote}" entry to rcloneDestinations,
+              or change database "${db.name}" to reference an existing
+              destination.
+            '';
+          }
+          {
+            assertion = db.pressureGuard.maximumManagedLocalBytes <= maxSafeInteger;
+            message = ''
+              home.sqliteBackup.databases entry "${db.name}" sets
+              pressureGuard.maximumManagedLocalBytes above
+              ${toString maxSafeInteger}; runtime JSON and shell arithmetic
+              require a JSON-safe integer.
+            '';
+          }
+        ]) cfg.databases
       );
 
-      # Halt-flag clearing activation hook (R13.AC15). On every HM
-      # activation (e.g. `darwin-rebuild switch`), remove any halt
+      # Manual halt-flag clearing activation hook (R13.AC15). On every HM
+      # activation (e.g. `darwin-rebuild switch`), remove any manual halt
       # flags written by the operator CLI under
       # `${config.xdg.stateHome}/sqlite-backup/halt-*.flag`. This makes
-      # halt state ephemeral with respect to rebuilds: the declarative
+      # manual halt state ephemeral with respect to rebuilds: the declarative
       # `home.sqliteBackup.databases` configuration takes precedence
       # and pipelines return to their declared running state.
+      #
+      # Emergency `pressure-*.json` markers are a separate persistent safety
+      # state and MUST NOT be removed by activation. Only the CLI's guarded
+      # `clear-pressure` transition may remove them.
       #
       # Uses HM's `run` and `verboseEcho` shell helpers (see
       # home-manager modules/home-environment.nix:433-488), which honor
@@ -333,7 +425,7 @@ in
       # tail keeps activation idempotent on first run when neither the
       # parent directory nor any halt files exist.
       home.activation.sqlite-backup-clear-halts = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        verboseEcho "Clearing sqlite-backup halt flags (R13.AC15)"
+        verboseEcho "Clearing sqlite-backup manual halt flags; preserving pressure markers"
         run rm -f -- "${config.xdg.stateHome}/sqlite-backup/halt-"*.flag 2>/dev/null || true
       '';
 
@@ -368,16 +460,19 @@ in
               replicationTier
               archiveTier
               ;
-            stagingDir = "${config.xdg.dataHome}/sqlite-backup/${db.name}/litestream-staging";
-            repoDir = "${config.xdg.dataHome}/sqlite-backup/${db.name}/restic";
+            stagingDir = stagingDirFor db;
+            repoDir = repoDirFor db;
+            litestreamMetadataDir = litestreamMetadataDirFor db;
+            litestreamConfigPath = litestreamConfigFor db;
+            pressureGuard = pressureGuardFor db;
           }) cfg.databases;
         }
       );
 
       # Per-database launchd agent declarations (R2.1, R2.4-2.6, R12.3,
       # R14.2-3, R15.1, R15.5). For each entry in `cfg.databases` we
-      # emit up to three agents under the
-      # `dev.dwsr.sqlite-backup.{litestream,replicate,archive}.<db>`
+      # emit up to four agents under the
+      # `dev.dwsr.sqlite-backup.{litestream,replicate,archive,guard}.<db>`
       # label scheme documented in design.md §"Architecture Pattern &
       # Boundary Map":
       #
@@ -391,8 +486,11 @@ in
       #   * `archive.<db>` — `StartCalendarInterval`-driven wrapper
       #     that drives the archive-tier snapshot via the operator
       #     CLI (`__archive-trigger` subcommand, R14.3).
+      #   * `guard.<db>` — independent RunAtLoad + StartInterval disk guard
+      #     that persists a pressure marker and unloads Litestream when a
+      #     configured byte threshold is violated.
       #
-      # The replicate and archive wrappers depend on the per-database
+      # The replicate, archive, and guard wrappers depend on the per-database
       # CLI binary, which is built by a later task and wired into
       # `cfg._cliBinary` by the configuration glue layer. While
       # `_cliBinary` is the default `null`, only the Litestream daemon
@@ -401,8 +499,6 @@ in
       # (`databases = [ ]`, R1.AC2 / R1.AC3) emits no agents at all.
       launchd.agents =
         let
-          stagingDirFor = db: "${config.xdg.dataHome}/sqlite-backup/${db.name}/litestream-staging";
-
           logBaseFor = db: role: "${config.home.homeDirectory}/Library/Logs/sqlite-backup-${db.name}-${role}";
 
           # Build a single launchd agent name/value pair for use with
@@ -428,10 +524,9 @@ in
               KeepAlive = true;
               RunAtLoad = true;
               ProgramArguments = [
-                "${pkgs.litestream}/bin/litestream"
-                "replicate"
-                "${db.path}"
-                "file://${stagingDirFor db}"
+                "${cliBinary}/bin/sqlite-backup"
+                "__litestream-trigger"
+                db.name
               ];
             };
 
@@ -457,12 +552,25 @@ in
               ];
             };
 
+          guardAgent =
+            db:
+            mkAgent db "guard" {
+              RunAtLoad = true;
+              StartInterval = cfg.pressureGuard.checkIntervalSeconds;
+              ProgramArguments = [
+                "${cfg._cliBinary}/bin/sqlite-backup"
+                "__pressure-guard"
+                db.name
+              ];
+            };
+
           perDbAgents =
             db:
             [ (litestreamAgent db) ]
             ++ lib.optionals (cfg._cliBinary != null) [
               (replicateAgent db)
               (archiveAgent db)
+              (guardAgent db)
             ];
         in
         lib.listToAttrs (lib.concatMap perDbAgents cfg.databases);
@@ -473,8 +581,8 @@ in
       # store path the operator invokes from a shell.
       home.packages = [ cliBinary ];
 
-      # Flip the Task 2.5 placeholder so the per-DB replicate and archive
-      # launchd agents get emitted alongside the always-on Litestream
+      # Flip the Task 2.5 placeholder so the per-DB replicate, archive, and
+      # guard launchd agents get emitted alongside the always-on Litestream
       # daemon agent. Single source of truth — same derivation reference
       # appears in `home.packages` (above) and here, so the launchd
       # ProgramArguments and the PATH binary cannot diverge.

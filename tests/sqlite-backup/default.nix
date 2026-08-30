@@ -1,0 +1,195 @@
+{
+  pkgs,
+  home-manager,
+  realLitestream ? null,
+  shopifyHome ? null,
+}:
+let
+  inherit (pkgs) lib;
+
+  litestreamFixture =
+    (pkgs.writeShellScriptBin "litestream" ''
+      echo "litestream fixture must not run in sqlite-backup tests" >&2
+      exit 1
+    '').overrideAttrs
+      (_: {
+        version = "0.5.11";
+      });
+  testPkgs = pkgs.extend (
+    _final: _prev: {
+      litestream = litestreamFixture;
+    }
+  );
+  databaseFixture = pkgs.writeText "sqlite-backup-test.db" "";
+
+  manifestData = builtins.fromJSON (builtins.readFile ./manifest.json);
+  mkManifest =
+    {
+      suffix,
+      minimum,
+      maximum,
+      managedPaths ? null,
+    }:
+    let
+      db = builtins.head manifestData.databases;
+    in
+    pkgs.writeText "sqlite-backup-test-manifest-${suffix}.json" (
+      builtins.toJSON (
+        manifestData
+        // {
+          databases = [
+            (
+              db
+              // {
+                pressureGuard =
+                  db.pressureGuard
+                  // {
+                    minimumFilesystemAvailableBytes = minimum;
+                    maximumManagedLocalBytes = maximum;
+                  }
+                  // lib.optionalAttrs (managedPaths != null) { inherit managedPaths; };
+              }
+            )
+          ]
+          ++ builtins.tail manifestData.databases;
+        }
+      )
+    );
+  managedSymlinkTarget = pkgs.runCommand "sqlite-backup-managed-symlink-target" { } ''
+    mkdir -p "$out"
+    printf 'allocated managed data\n' >"$out/payload"
+  '';
+  managedSymlink = pkgs.runCommand "sqlite-backup-managed-symlink" { } ''
+    ln -s ${managedSymlinkTarget} "$out"
+  '';
+  manifest = mkManifest {
+    suffix = "exact";
+    minimum = 102400;
+    maximum = 3072;
+  };
+  belowBoundaryManifest = mkManifest {
+    suffix = "below-boundary";
+    minimum = 102401;
+    maximum = 3073;
+  };
+  aboveBoundaryManifest = mkManifest {
+    suffix = "above-boundary";
+    minimum = 102399;
+    maximum = 3071;
+  };
+  symlinkManifest = mkManifest {
+    suffix = "managed-symlink";
+    minimum = 0;
+    maximum = 0;
+    managedPaths = [ "${managedSymlink}" ];
+  };
+  mkCli =
+    manifestPath:
+    import ../../scripts/sqlite-backup-cli.nix {
+      pkgs = testPkgs;
+      inherit lib manifestPath;
+    };
+  cli = mkCli manifest;
+  belowBoundaryCli = mkCli belowBoundaryManifest;
+  aboveBoundaryCli = mkCli aboveBoundaryManifest;
+  symlinkCli = mkCli symlinkManifest;
+
+  hm = home-manager.lib.homeManagerConfiguration {
+    pkgs = testPkgs;
+    modules = [
+      ../../home-manager/common/sqlite-backup.nix
+      (
+        { lib, ... }:
+        {
+          options.home.mcp.keychainSecrets = lib.mkOption {
+            type = lib.types.attrsOf lib.types.str;
+            default = { };
+          };
+
+          config = {
+            home = {
+              username = "sqlite-backup-test";
+              homeDirectory = "/var/empty/sqlite-backup-test";
+              stateVersion = "26.05";
+              sqliteBackup = {
+                enable = true;
+                pressureGuard = {
+                  minimumFilesystemAvailableBytes = 102400;
+                  checkIntervalSeconds = 60;
+                };
+                rcloneDestinations.fixture.type = "local";
+                databases = [
+                  {
+                    name = "fixture";
+                    path = databaseFixture;
+                    remote = "fixture";
+                    pressureGuard.maximumManagedLocalBytes = 3072;
+                  }
+                ];
+              };
+            };
+          };
+        }
+      )
+    ];
+  };
+
+  activation =
+    pkgs.writeText "sqlite-backup-clear-halts-activation"
+      hm.config.home.activation."sqlite-backup-clear-halts".data;
+
+  render = pkgs.writeText "sqlite-backup-pressure-guard-render.json" (
+    builtins.toJSON {
+      agentNames = builtins.attrNames hm.config.launchd.agents;
+      guard = hm.config.launchd.agents."sqlite-backup-guard-fixture".config;
+      litestream = hm.config.launchd.agents."sqlite-backup-litestream-fixture".config;
+      manifestPath = hm.config.home.sqliteBackup._manifestPath;
+    }
+  );
+
+  shopifyPolicy =
+    if shopifyHome == null then
+      { }
+    else
+      let
+        opencode = builtins.head (
+          builtins.filter (db: db.name == "opencode") shopifyHome.home.sqliteBackup.databases
+        );
+        guardNames = builtins.filter (name: builtins.match "sqlite-backup-guard-.*" name != null) (
+          builtins.attrNames shopifyHome.launchd.agents
+        );
+      in
+      {
+        inherit guardNames;
+        inherit (shopifyHome.home.sqliteBackup.pressureGuard)
+          checkIntervalSeconds
+          minimumFilesystemAvailableBytes
+          ;
+        maximumManagedLocalBytes = opencode.pressureGuard.maximumManagedLocalBytes;
+      };
+  shopifyPolicyFile = pkgs.writeText "sqlite-backup-shopify-policy.json" (
+    builtins.toJSON shopifyPolicy
+  );
+in
+pkgs.runCommand "sqlite-backup-tests"
+  {
+    nativeBuildInputs = [
+      pkgs.bash
+      pkgs.jq
+    ];
+    SQLITE_BACKUP_ACTIVATION = activation;
+    SQLITE_BACKUP_ACTIVATION_STATE_HOME = hm.config.xdg.stateHome;
+    SQLITE_BACKUP_CLI_ABOVE_BOUNDARY = lib.getExe aboveBoundaryCli;
+    SQLITE_BACKUP_CLI_BELOW_BOUNDARY = lib.getExe belowBoundaryCli;
+    SQLITE_BACKUP_CLI_MANAGED_SYMLINK = lib.getExe symlinkCli;
+    SQLITE_BACKUP_CLI = lib.getExe cli;
+    SQLITE_BACKUP_MANAGED_SYMLINK = managedSymlink;
+    SQLITE_BACKUP_REAL_LITESTREAM = if realLitestream == null then "" else lib.getExe realLitestream;
+    SQLITE_BACKUP_RENDER = render;
+    SQLITE_BACKUP_SHOPIFY_POLICY = shopifyPolicyFile;
+  }
+  ''
+    bash ${./persistent-emergency-halts.test.sh}
+    bash ${./disk-pressure-guard.test.sh}
+    touch "$out"
+  ''

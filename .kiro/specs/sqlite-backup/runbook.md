@@ -368,7 +368,7 @@ This time the activation does more work:
    expected backend type. Activation fails with a categorized
    error and one of exit codes `11..15` if any check fails — see
    the docstring at `configurations/common-darwin/sqlite-backup-verify.nix:42-54`.
-2. The HM module declares three launchd agents per database:
+2. The HM module declares four launchd agents per database:
    - `dev.dwsr.sqlite-backup.litestream.<db>` —
      `KeepAlive = true`, `RunAtLoad = true`. Long-running
      Litestream daemon replicating `<db>.path` into the staging
@@ -377,13 +377,17 @@ This time the activation does more work:
      `replicationTier.cadenceSeconds` (default 300s).
    - `dev.dwsr.sqlite-backup.archive.<db>` — fires on
      `archiveTier.schedule` (default 03:00 daily).
-3. The halt-flag clearing activation hook runs (idempotent).
+   - `dev.dwsr.sqlite-backup.guard.<db>` — runs at load and every
+     `pressureGuard.checkIntervalSeconds` (default 60s), independently of the
+     backup schedules.
+3. The manual halt-flag clearing activation hook runs (idempotent). Persistent
+   `pressure-<db>.json` emergency markers are preserved.
 
 Verify the agents are loaded:
 
 ```sh
 launchctl list | grep dev.dwsr.sqlite-backup
-# Expected: three lines per database (litestream, replicate, archive)
+# Expected: four lines per database (litestream, replicate, archive, guard)
 ```
 
 ### B.3 First scheduled cycle auto-inits the remote restic repo
@@ -394,10 +398,13 @@ the cadence).
 
 On the first invocation of `__replicate-trigger <db>`, the wrapper:
 
-1. Initializes the LOCAL restic repo at
+1. Runs the disk-pressure guard before acquiring the backup lock. A violated
+   threshold persists `pressure-<db>.json`, unloads Litestream, and skips the
+   backup. A measurement error does the same and exits non-zero.
+2. Initializes the LOCAL restic repo at
    `${XDG_DATA_HOME}/sqlite-backup/<db>/restic` if it does not
    exist (`restic init`).
-2. Initializes the REMOTE restic repo at
+3. Initializes the REMOTE restic repo at
    `rclone:<remote>:<remotePath>/<db>` if it does not exist, using
    `restic init --copy-chunker-params --from-repo <local-repo>`.
    The `--copy-chunker-params` flag copies the chunker polynomial
@@ -405,12 +412,12 @@ On the first invocation of `__replicate-trigger <db>`, the wrapper:
    dedup boundaries between the two repos. Without this flag,
    `restic copy` would re-chunk every blob and balloon the
    off-host transfer.
-3. Runs `restic backup --tag replication ${stagingDir}` against
+4. Runs `restic backup --tag replication ${stagingDir}` against
    the local repo.
-4. Runs `restic copy --from-repo <local-repo> --repo
+5. Runs `restic copy --from-repo <local-repo> --repo
    rclone:<remote>:<remotePath>/<db>` to ship the new snapshot
    off-host.
-5. Runs the retention policy on both repos.
+6. Runs the retention policy on both repos.
 
 Inspect the logs:
 
@@ -430,15 +437,16 @@ You can shortcut the wait:
 
 ```sh
 sqlite-backup backup <db>
-# Runs the archive-tier flow immediately, regardless of halt state.
+# Runs the archive-tier flow immediately, bypassing manual halts only.
+# Pressure markers and a newly-failed guard still block the run.
 ```
 
 ### B.4 Confirm steady state
 
 ```sh
 sqlite-backup status <db>
-# Expected columns: name, replication-state, last-archival-snapshot-timestamp,
-# last-replicate-shipment-timestamp.
+# Expected fields: name, replication-state, halt-reason,
+# last-replication-snapshot, last-archive-snapshot.
 
 sqlite-backup verify-credentials <db>
 # Expected: <remote>:<remotePath>/<db>: OK   (exit 0)
@@ -457,26 +465,90 @@ derivation time, so commands are self-contained.
 |---|---|
 | `sqlite-backup list` | One configured database name per line. Empty stdout + exit 0 when no databases declared. |
 | `sqlite-backup status [<db>]` | Per-DB table: name, replication state, last archive snapshot, last replicate shipment. Always exit 0. |
-| `sqlite-backup backup <db>` | One-shot archive-tier run. Bypasses any halt flag. Exit non-zero on pipeline failure. |
+| `sqlite-backup backup <db>` | One-shot archive-tier run. Bypasses manual halt flags, but skips while an emergency pressure marker exists. Exit non-zero on pipeline failure. |
 | `sqlite-backup restore <db> [--target <path>] [--time <ts>] [--from-remote] [--force]` | Two-stage restore: `restic restore` of staging dir, then `litestream restore -o <target>`. Defaults: `--target ${PWD}/<db>-restored.db`, `--time latest`, local repo. Refuses to overwrite a non-empty target without `--force`. (Detail in Task 7.2.) |
-| `sqlite-backup start <db>` | Clear halt flag. Bootstraps the per-DB Litestream agent if it was unloaded by `stop`. Idempotent. |
+| `sqlite-backup start <db>` | Refuse an active pressure halt; otherwise clear a manual halt flag and bootstrap the per-DB Litestream agent when unloaded. Idempotent when launchctl confirms it is running. |
 | `sqlite-backup stop <db> [--include-archive]` | Halts replication-only by default; `--include-archive` halts the whole pipeline. Unloads the Litestream agent via `launchctl bootout`. Idempotent. |
+| `sqlite-backup clear-pressure <db>` | Remeasure the thresholds recorded in a pressure marker and remove it only when healthy. Never starts the pipeline. |
 | `sqlite-backup verify-credentials [<db>]` | Read-only credential probe per destination. Pre-flights `rclone config encryption check`; reports per-destination `OK` / `FAIL: <cause>` to stdout. Exit 0 iff every check passed. |
 
 State locations referenced by these commands:
 
-- Halt flags: `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/halt-<db>.flag`.
+- Manual halt flags: `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/halt-<db>.flag`.
   Cleared by every HM activation (R13.AC15).
+- Emergency pressure markers:
+  `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.json`.
+  Preserved by HM activation and removed only by `clear-pressure` after current
+  free-space and managed-byte measurements satisfy the recorded limits.
+- Pressure transition locks:
+  `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.lock`.
+  A guard write and `clear-pressure` hold this lock while changing marker state;
+  its presence also blocks pipeline work.
+- Failed marker-write sentinels:
+  `${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup/pressure-<db>.failed`.
+  The next guard or `clear-pressure` remeasures and converts this directory into
+  a normal JSON marker before recovery continues.
 - Per-DB lockfiles: `${TMPDIR:-/var/tmp}/sqlite-backup-<db>.lock`.
   Held by whichever wrapper (replicate / archive / on-demand backup)
   is currently inside the restic critical section.
-- Logs: `~/Library/Logs/sqlite-backup-<db>-{litestream,replicate,archive}.{log,error.log}`.
+- Logs: `~/Library/Logs/sqlite-backup-<db>-{litestream,replicate,archive,guard}.{log,error.log}`.
 - Local restic repo: `${XDG_DATA_HOME}/sqlite-backup/<db>/restic/`.
 - Litestream staging dir: `${XDG_DATA_HOME}/sqlite-backup/<db>/litestream-staging/`.
+- Litestream metadata dir:
+  `${XDG_DATA_HOME}/sqlite-backup/<db>/litestream-metadata/`. Litestream's
+  generated YAML sets this as `meta-path`; the guard includes it in accounting.
 - Encrypted rclone config: `~/.config/rclone/rclone.conf`.
 - Manifest JSON (consumed by CLI + verify hook): rendered into the
   Nix store at HM build time; path exposed via
   `home.sqliteBackup._manifestPath`.
+
+### C.1 Recovering an emergency pressure halt
+
+Do not remove `pressure-<db>.json` manually and do not use `start` as a probe.
+Resolve the disk-pressure cause first, then run the two explicit transitions:
+
+```sh
+sqlite-backup clear-pressure <db>
+sqlite-backup start <db>
+```
+
+`clear-pressure` validates the marker, measures filesystem available bytes and
+the physical allocation of every managed path recorded by the pressure guard,
+and compares them with the recorded free-space floor and local-data ceiling.
+It exits non-zero and preserves the marker if either limit remains violated or
+any measurement fails. At equality, the threshold is healthy. A successful
+clear removes only the pressure marker; it does not invoke `launchctl`.
+
+`start` prints the exact `clear-pressure` command and exits non-zero while the
+marker exists. After a successful clear, `status` reports `not-running` until
+the explicit `start` loads the Litestream agent.
+
+### C.2 Disk-pressure policy
+
+The guard sums physical allocated bytes for each database's staging, restic,
+and Litestream metadata directories. It also reads available bytes from the
+root filesystem. Missing managed paths count as zero; inaccessible paths or
+command failures halt the database and return non-zero. A managed root symlink
+is dereferenced, but nested symlinks are not. Equality at either limit is
+healthy.
+
+ShopifyLaptop uses:
+
+```nix
+home.sqliteBackup.pressureGuard = {
+  minimumFilesystemAvailableBytes = 128 * 1024 * 1024 * 1024;
+  checkIntervalSeconds = 60;
+};
+
+# On the OpenCode database entry:
+pressureGuard.maximumManagedLocalBytes = 96 * 1024 * 1024 * 1024;
+```
+
+The host-wide floor applies to both Shopify databases. Databases without a
+specific ceiling use the JSON-safe maximum and are constrained by the floor.
+Inspect guard outcomes in
+`~/Library/Logs/sqlite-backup-<db>-guard.{log,error.log}`. Every check prints
+observed and configured byte values.
 
 ## Section D — Recovery Procedures
 

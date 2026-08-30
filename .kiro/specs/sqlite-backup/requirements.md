@@ -774,3 +774,74 @@ scheduled backup run fails.
    activation step shall not perform any of the verification steps
    defined in this requirement and shall not fail on the absence of
    an rclone configuration file or its encryption state.
+
+### Requirement 18: Persistent emergency pressure halts
+
+**Objective:** As the operator, I want safety-triggered halts to survive
+routine rebuilds and require validated recovery, so that declarative
+activation cannot restart a pipeline that was stopped to protect the host.
+
+#### Acceptance Criteria
+
+1. When disk-safety logic halts a configured database, the SQLite Backup
+   pipeline shall represent that state separately from operator-created
+   `replication-only` and `whole-pipeline` halt flags.
+2. The emergency halt record shall identify the database, halt reason,
+   trigger, observed byte values, configured byte limits, measurement paths,
+   and timestamp in a structured JSON document.
+3. A home-manager activation shall preserve every emergency pressure halt
+   record while retaining Requirement 13.15 behavior for operator-created
+   halt flags.
+4. While an emergency pressure halt exists, `sqlite-backup start <db>` shall
+   exit non-zero, shall not invoke `launchctl`, and shall print
+   `sqlite-backup clear-pressure <db>` as the recovery command.
+5. While an emergency pressure halt exists, replication-tier, archive-tier,
+   and on-demand backup invocations shall skip before acquiring the
+   per-database backup lock.
+6. `sqlite-backup status [<db>]` shall expose `halt-reason: disk-pressure`
+   while an emergency pressure halt exists.
+7. `sqlite-backup clear-pressure <db>` shall preserve the emergency halt if
+   its record is malformed, a current measurement fails, filesystem available
+   bytes are below the recorded minimum, or managed local bytes are above the
+   recorded maximum.
+8. When both current thresholds are healthy, `sqlite-backup clear-pressure
+   <db>` shall remove only the emergency halt record and shall not start the
+   pipeline.
+9. After a successful `clear-pressure`, `sqlite-backup start <db>` shall be
+   required to load an otherwise-unloaded Litestream agent.
+
+### Requirement 19: Proactive disk-pressure guard
+
+**Objective:** As the operator, I want every configured database constrained by
+host free-space and per-database local-data limits before backup growth can
+exhaust the root filesystem.
+
+#### Acceptance Criteria
+
+1. The SQLite Backup module shall accept a host-wide minimum filesystem
+   available-byte floor, a guard check interval, and a per-database maximum
+   managed-local-byte ceiling as integer byte values.
+2. The rendered manifest shall include both configured limits, the root
+   filesystem measurement path, the guard interval, and every managed path.
+3. Each configured database shall have an independent launchd guard agent that
+   runs at load and at the configured interval.
+4. The managed-local total shall include the database's Litestream staging
+   directory, restic repository, and Litestream metadata directory.
+5. Litestream shall use the metadata directory rendered inside the database's
+   managed SQLite Backup root.
+6. The guard shall measure filesystem available bytes and physical allocated
+   managed bytes with locale-independent command output.
+7. Filesystem available bytes equal to the configured minimum and managed bytes
+   equal to the configured maximum shall be healthy.
+8. Filesystem available bytes below the configured minimum or managed bytes
+   above the configured maximum shall atomically create the Requirement 18
+   pressure marker and unload only that database's Litestream agent.
+9. Replication-tier, archive-tier, and on-demand backup execution shall run the
+   same guard synchronously before acquiring the per-database backup lock.
+10. Missing managed paths shall contribute zero bytes. Inaccessible paths and
+    measurement failures shall create a pressure marker, unload Litestream,
+    emit an actionable error, and return non-zero.
+11. Guard output shall include observed and configured byte values without
+    secret material.
+12. ShopifyLaptop shall use a 128 GiB root free-space floor, a 60-second check
+    interval, and a 96 GiB OpenCode managed-local ceiling.

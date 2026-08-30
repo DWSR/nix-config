@@ -1,0 +1,64 @@
+{
+  "archivePassphraseSecret": "sqlite-backup-test-archive-passphrase",
+  "databases": [
+    {
+      "archiveTier": {
+        "retention": ["--keep-daily", "1"],
+        "schedule": {"Hour": 3, "Minute": 0}
+      },
+      "name": "fixture",
+      "path": "/var/empty/sqlite-backup-fixture.db",
+      "litestreamMetadataDir": "/var/empty/sqlite-backup-fixture/litestream-metadata",
+      "pressureGuard": {
+        "checkIntervalSeconds": 60,
+        "filesystemPath": "/",
+        "managedPaths": [
+          "/",
+          "/var",
+          "/usr",
+          "/var/empty/sqlite-backup-definitely-missing"
+        ],
+        "maximumManagedLocalBytes": 3072,
+        "minimumFilesystemAvailableBytes": 102400
+      },
+      "remote": "fixture",
+      "remotePath": "sqlite-backup",
+      "replicationTier": {
+        "cadenceSeconds": 300,
+        "retention": ["--keep-hourly", "1"]
+      },
+      "repoDir": "/var/empty/sqlite-backup-fixture/restic",
+      "stagingDir": "/var/empty/sqlite-backup-fixture/litestream-staging"
+    },
+    {
+      "archiveTier": {
+        "retention": ["--keep-daily", "1"],
+        "schedule": {"Hour": 3, "Minute": 0}
+      },
+      "name": "other",
+      "path": "/var/empty/sqlite-backup-other.db",
+      "litestreamMetadataDir": "/var/empty/sqlite-backup-other/litestream-metadata",
+      "pressureGuard": {
+        "checkIntervalSeconds": 60,
+        "filesystemPath": "/",
+        "managedPaths": ["/var/empty/sqlite-backup-other-missing"],
+        "maximumManagedLocalBytes": 3072,
+        "minimumFilesystemAvailableBytes": 102400
+      },
+      "remote": "fixture",
+      "remotePath": "sqlite-backup",
+      "replicationTier": {
+        "cadenceSeconds": 300,
+        "retention": ["--keep-hourly", "1"]
+      },
+      "repoDir": "/var/empty/sqlite-backup-other/restic",
+      "stagingDir": "/var/empty/sqlite-backup-other/litestream-staging"
+    }
+  ],
+  "keychainService": "sqlite-backup-test",
+  "rcloneConfigPassphraseSecret": "sqlite-backup-test-rclone-passphrase",
+  "rcloneConfigPath": "/var/empty/sqlite-backup-rclone.conf",
+  "rcloneDestinations": {
+    "fixture": {"type": "local"}
+  }
+}

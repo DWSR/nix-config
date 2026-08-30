@@ -16,6 +16,10 @@
   # decision.
   home.sqliteBackup = {
     enable = true;
+    pressureGuard = {
+      minimumFilesystemAvailableBytes = 128 * 1024 * 1024 * 1024;
+      checkIntervalSeconds = 60;
+    };
     rcloneDestinations = {
       gdrive = {
         type = "drive";
@@ -64,6 +68,7 @@
         # destination.
         path = "${config.xdg.dataHome}/opencode/opencode-stable.db";
         remote = "gdrive";
+        pressureGuard.maximumManagedLocalBytes = 96 * 1024 * 1024 * 1024;
         # Default tiers match the opencode workload profile: bursty
         # writes during active sessions but otherwise quiet; default
         # 300s replication cadence and 03:00 daily archive with

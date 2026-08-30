@@ -36,19 +36,20 @@
   - _Requirements: 13.15_
 
 - [x] 2.5 Per-database launchd agent declarations
-  - For each entry in `databases`, declare three `launchd.agents` entries:
-    - `dev.dwsr.sqlite-backup.litestream.<db>` — `KeepAlive = true; RunAtLoad = true; ProgramArguments = [ "${pkgs.litestream}/bin/litestream" "replicate" "<db.path>" "file://<stagingDir>" ];`
+  - For each entry in `databases`, declare four `launchd.agents` entries:
+    - `dev.dwsr.sqlite-backup.litestream.<db>` — `KeepAlive = true; RunAtLoad = true; ProgramArguments = [ "<sqlite-backup>/bin/sqlite-backup" "__litestream-trigger" "<db.name>" ];`; the guarded trigger execs Litestream with generated YAML.
     - `dev.dwsr.sqlite-backup.replicate.<db>` — `StartInterval = db.replicationTier.cadenceSeconds; ProgramArguments = [ "<sqlite-backup>/bin/sqlite-backup" "__replicate-trigger" "<db.name>" ];`
     - `dev.dwsr.sqlite-backup.archive.<db>` — `StartCalendarInterval = db.archiveTier.schedule; ProgramArguments = [ "<sqlite-backup>/bin/sqlite-backup" "__archive-trigger" "<db.name>" ];`
+    - `dev.dwsr.sqlite-backup.guard.<db>` — `RunAtLoad = true; StartInterval = pressureGuard.checkIntervalSeconds; ProgramArguments = [ "<sqlite-backup>/bin/sqlite-backup" "__pressure-guard" "<db.name>" ];`
   - Each agent declares `StandardOutPath` and `StandardErrorPath` under `${config.home.homeDirectory}/Library/Logs/sqlite-backup-<db>-<role>.{log,error.log}`.
-  - Confirm: with one synthetic database in the config, `launchctl list | grep dev.dwsr.sqlite-backup` shows three labels after `darwin-rebuild switch`.
+  - Confirm: with one synthetic database in the config, `launchctl list | grep dev.dwsr.sqlite-backup` shows four labels after `darwin-rebuild switch`.
   - _Requirements: 2.1, 2.4, 2.5, 2.6, 12.3, 14.2, 14.3, 15.1, 15.5_
 
 - [ ] 3. Operator CLI binary
 
 - [x] 3.1 CLI dispatcher and shared helpers
   - Create `scripts/sqlite-backup-cli.nix` as a `pkgs.writeShellApplication` taking `pkgs`, `lib`, and `manifestPath` as args; emit a binary named `sqlite-backup`.
-  - Implement case-on-`$1` dispatch for all public subcommands (`list`, `status`, `backup`, `restore`, `start`, `stop`, `verify-credentials`, `--help`) and internal subcommands (`__replicate-trigger`, `__archive-trigger`).
+  - Implement case-on-`$1` dispatch for all public subcommands (`list`, `status`, `backup`, `restore`, `start`, `stop`, `clear-pressure`, `verify-credentials`, `--help`) and internal subcommands (`__litestream-trigger`, `__replicate-trigger`, `__archive-trigger`, `__pressure-guard`).
   - Implement shared helper functions: read manifest via baked path + `jq`, read Keychain secret via absolute-path `/usr/bin/security find-generic-password -s <svc> -a mcp-hub -w`, acquire/release per-database mkdir lockfile under `${TMPDIR:-/var/tmp}/sqlite-backup-<db>.lock`, log start/end with timestamps to `~/Library/Logs/sqlite-backup-<db>-cli.log`.
   - Implement common error UX: when invoked without a required `<db>` arg or with a `<db>` not present in the manifest, list all configured database names on stderr.
   - Confirm: `sqlite-backup --help` lists exactly the seven public subcommands; `sqlite-backup backup nonexistent` exits non-zero and prints the configured DB names.
@@ -222,6 +223,28 @@
   - Confirm: pre-commit run exits 0 across all new and modified files.
   - _Requirements: implied by repo conventions; lint-pass gate for landing_
 
+- [ ] 9. Persistent emergency halts
+
+- [x] 9.1 Separate pressure state and guarded recovery
+  - Preserve manual `halt-<db>.flag` behavior and add persistent `pressure-<db>.json` emergency state with a versioned structured schema.
+  - Make activation preserve pressure markers; make `start` refuse them; make replication, archive, and on-demand backup skip before locking.
+  - Add `clear-pressure <db>` with fail-closed current threshold validation and no automatic launchd transition; expose the halt reason through `status`.
+  - Add a focused hermetic flake check using temporary state and stubbed `launchctl`, `df`, and `du`, including execution of the rendered HM activation fragment.
+  - _Requirements: 18.1-18.9_
+  - _Boundary: HM Module, CLI Script, sqlite-backup focused tests_
+
+- [ ] 10. Proactive disk-pressure guard
+
+- [x] 10.1 Add periodic and synchronous byte-limit enforcement
+  - Add host-wide minimum filesystem available bytes and check interval options plus a per-database maximum managed local bytes option; render integer limits and managed paths into the manifest.
+  - Render Litestream `meta-path` inside each database's managed root and include staging, restic, and metadata paths in physical allocated-byte accounting.
+  - Add an independent per-database RunAtLoad/StartInterval guard and run the same guard before every backup lock acquisition.
+  - Atomically persist the Requirement 18 marker and unload only the affected Litestream agent on threshold or measurement failure.
+  - Configure ShopifyLaptop with a 128 GiB floor, 60-second interval, and 96 GiB OpenCode ceiling; add hermetic boundary, error, render, and preflight tests.
+  - _Requirements: 19.1-19.12_
+  - _Boundary: HM Module, CLI Script, Shopify sqlite-backup wiring, sqlite-backup focused tests_
+  - _Depends: 9.1_
+
 ## Parallel Execution Wave Map
 
 The `(P)` markers above capture parallelism between immediately-adjacent peers,
@@ -326,3 +349,5 @@ even when not exploited.
 - **Task 3.2** also surfaced minor spec-vs-implementation field-name drift (design.md uses `last-archival-snapshot-timestamp` / `last-replicate-shipment-timestamp`; tasks.md uses `last-replication-snapshot timestamp` / `last-archive-snapshot timestamp`; implementation matched tasks.md). Not implementation-blocking; reconcile in spec.
 - **Tasks 6.1 / 6.2 deferred their per-host import-list additions to Task 6.3** (Approach A from the review). The per-host scaffolds reference `home.sqliteBackup.enable`, an option only defined when the HM module is imported via `home-manager/common/default.nix` — which is also Task 6.3's job. Task 6.3 must therefore append `./sqlite-backup.nix` to BOTH `configurations/personal/home-manager/default.nix` AND `configurations/shopify/home-manager/default.nix` IN ADDITION TO its documented work on `home-manager/common/default.nix` and `configurations/common-darwin/default.nix`. Without this, R1.2/R1.3 (dormant declaration on each host) silently fails to land.
 - **Post-implementation amendment (2026-05-13): per-database staging+restic nesting.** The original spec rendered staging and restic paths as `${xdg.dataHome}/sqlite-backup/{litestream-staging,restic}/<db>` (per-artifact-type, then per-DB). Operator preference shifted to per-DB nesting: `${xdg.dataHome}/sqlite-backup/<db>/{litestream-staging,restic}`. Rationale: groups all per-DB content together, simpler to reason about per-DB destruction/migration/inspection. Implementation touched only `home-manager/common/sqlite-backup.nix` (manifest renderer + `stagingDirFor` helper for the launchd Litestream agent ProgramArguments); the CLI script reads paths from the manifest and required no changes. Verified by building the manifest derivation against a synthetic one-DB config and inspecting the rendered `stagingDir`/`repoDir`. No on-disk migration was needed — the feature is dormant on both hosts (`databases = [ ]`). All spec docs (design, tasks, research, runbook, brief, requirements) updated to match. The `brief.md` and `requirements.md` architecture diagrams additionally renamed `litestream/<db>` → `<db>/litestream-staging` to align with the design doc's "litestream-staging" terminology (the brief/requirements diagrams predated that rename).
+- **Task 9.1** established fail-closed pressure state: absence must be provable through searchable ancestors, and marker writers share a transition lock with `clear-pressure`, which measures an immutable snapshot and version-checks before removal.
+- **Task 10.1** follows command-line managed-root symlinks with `du -H` without traversing nested links; every marker-generation failure preserves a durable `.failed` sentinel.

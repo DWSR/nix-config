@@ -6,12 +6,13 @@
 # sqlite-backup: operator-facing CLI for the SQLite backup pipeline.
 #
 # Single binary owning every public operator command (list, status,
-# backup, restore, start, stop, verify-credentials) AND the launchd-
-# triggered tier wrappers (__replicate-trigger, __archive-trigger).
+# backup, restore, start, stop, clear-pressure, verify-credentials) AND the launchd-
+# triggered wrappers (__litestream-trigger, __replicate-trigger,
+# __archive-trigger, __pressure-guard).
 # Subcommand dispatch is performed on `$1`; per-subcommand bodies are
 # implemented in tasks 3.2 through 3.7. This task (3.1) provides:
 #
-#   * The dispatcher framework with case-on-`$1` covering all 9
+#   * The dispatcher framework with case-on-`$1` covering all 12
 #     subcommands plus `--help`.
 #   * Shared helpers used by every subcommand: manifest reader (jq +
 #     baked path), Keychain reader (absolute-path
@@ -61,6 +62,8 @@ pkgs.writeShellApplication {
     litestream
   ];
   text = ''
+    export LC_ALL=C
+
     # Manifest path baked at derivation time. The HM module renders the
     # JSON via `pkgs.writeText "sqlite-backup-manifest.json" ...` and
     # threads the resulting store path through this derivation's
@@ -94,26 +97,41 @@ pkgs.writeShellApplication {
     # locked environment (mirrors `scripts/mcp-secrets-activate.nix`).
     readonly SECURITY_BIN=/usr/bin/security
 
-    # `launchctl` is a system binary at the documented `/bin/launchctl`
-    # path on every supported macOS release; calling by absolute path
-    # avoids any PATH-discovery surprise inside writeShellApplication's
-    # locked environment. Used by `status` (R13.AC18) to probe whether
-    # the per-DB Litestream agent is currently loaded.
-    readonly LAUNCHCTL_BIN=/bin/launchctl
+    # Production uses the documented system launchctl path. The optional
+    # override is a narrow test seam so lifecycle transitions can be exercised
+    # without touching the live user's launchd domain.
+    readonly LAUNCHCTL_BIN="''${SQLITE_BACKUP_LAUNCHCTL_BIN:-/bin/launchctl}"
 
-    # Halt-flag root per design.md §"State Management": one file per
-    # database, content `replication-only` or `whole-pipeline`. Cleared
-    # on every HM activation by the module's `home.activation.sqlite-
-    # backup-clear-halts` hook (R13.AC15).
+    # clear-pressure remeasures the byte thresholds captured in the pressure
+    # marker. Coreutils supplies the production binaries; overrides keep the
+    # boundary-value tests deterministic without filling a real filesystem.
+    readonly DF_BIN="''${SQLITE_BACKUP_DF_BIN:-df}"
+    readonly DU_BIN="''${SQLITE_BACKUP_DU_BIN:-du}"
+    readonly DATE_BIN="''${SQLITE_BACKUP_DATE_BIN:-date}"
+    readonly MARKER_JQ_BIN="''${SQLITE_BACKUP_MARKER_JQ_BIN:-jq}"
+    readonly MARKER_MV_BIN="''${SQLITE_BACKUP_MARKER_MV_BIN:-mv}"
+
+    # State root per design.md §"State Management". Manual halt flags contain
+    # `replication-only` or `whole-pipeline` and remain ephemeral across HM
+    # activation. Safety-triggered pressure markers are separate JSON records
+    # and survive activation until clear-pressure validates recovery.
     readonly STATE_DIR="''${XDG_STATE_HOME:-$HOME/.local/state}/sqlite-backup"
 
-    readonly LOG_DIR="$HOME/Library/Logs"
+    readonly LOG_DIR="''${SQLITE_BACKUP_LOG_DIR:-$HOME/Library/Logs}"
     readonly LOCK_DIR_BASE="''${TMPDIR:-/var/tmp}"
+    # JSON-safe integer ceiling keeps jq rendering and Bash arithmetic exact.
+    readonly MAX_SAFE_INTEGER=9007199254740991
+    readonly MAX_SAFE_KIB=8796093022207
+    # Zero means wait indefinitely. A guard waiting behind an active backup
+    # holds the pressure gate so no new backup/start transition can overtake it.
+    readonly PRESSURE_LOCK_RETRY_ATTEMPTS="''${SQLITE_BACKUP_LOCK_RETRY_ATTEMPTS:-0}"
+    readonly PRESSURE_LOCK_RETRY_DELAY="''${SQLITE_BACKUP_LOCK_RETRY_DELAY:-0.1}"
 
     # Track the currently-held mkdir lock so the EXIT trap can clean up
     # even if the script is killed mid-run. release_lock clears the
     # variable AND the trap together so the trap never fires twice.
     LOCK_DIR=""
+    PRESSURE_LOCK_DIR=""
 
     # ----------------------------------------------------------------
     # Manifest helpers (jq-backed; baked-path-only)
@@ -226,9 +244,31 @@ pkgs.writeShellApplication {
     # held; callers treat the latter as "another wrapper is mid-run,
     # exit 0 with logged reason" per the tier-trigger contract.
     #
-    # The trap captures LOCK_DIR by NAME (single-quoted); release_lock
-    # clears both the variable AND the trap so the cleanup runs at
-    # most once even on signal interruption.
+    install_lock_traps() {
+      trap 'cleanup_all_locks' EXIT
+      trap 'cleanup_all_locks; exit 1' INT TERM
+    }
+
+    clear_lock_traps_if_idle() {
+      if [ -z "$LOCK_DIR" ] && [ -z "$PRESSURE_LOCK_DIR" ]; then
+        trap - EXIT INT TERM
+      fi
+    }
+
+    cleanup_all_locks() {
+      if [ -n "$LOCK_DIR" ]; then
+        rm -rf -- "$LOCK_DIR"
+        LOCK_DIR=""
+      fi
+      if [ -n "$PRESSURE_LOCK_DIR" ]; then
+        rm -f -- "$PRESSURE_LOCK_DIR/marker.json" 2>/dev/null || true
+        rm -f -- "$PRESSURE_LOCK_DIR/new-marker.json" 2>/dev/null || true
+        rmdir -- "$PRESSURE_LOCK_DIR" 2>/dev/null || true
+        PRESSURE_LOCK_DIR=""
+      fi
+      trap - EXIT INT TERM
+    }
+
     acquire_lock() {
       local db="$1"
       local target="$LOCK_DIR_BASE/sqlite-backup-$db.lock"
@@ -236,15 +276,27 @@ pkgs.writeShellApplication {
         return 1
       fi
       LOCK_DIR="$target"
-      trap 'rm -rf -- "$LOCK_DIR"' EXIT INT TERM
+      install_lock_traps
       return 0
+    }
+
+    acquire_lock_with_retry() {
+      local db="$1" attempt=1
+      while ! acquire_lock "$db"; do
+        if [ "$PRESSURE_LOCK_RETRY_ATTEMPTS" -gt 0 ] \
+          && [ "$attempt" -ge "$PRESSURE_LOCK_RETRY_ATTEMPTS" ]; then
+          return 1
+        fi
+        sleep "$PRESSURE_LOCK_RETRY_DELAY"
+        attempt=$((attempt + 1))
+      done
     }
 
     release_lock() {
       if [ -n "$LOCK_DIR" ]; then
         rm -rf -- "$LOCK_DIR"
         LOCK_DIR=""
-        trap - EXIT INT TERM
+        clear_lock_traps_if_idle
       fi
     }
 
@@ -266,7 +318,7 @@ pkgs.writeShellApplication {
       local log_file="$LOG_DIR/sqlite-backup-$db-cli.log"
       mkdir -p "$LOG_DIR"
       printf '[%s] sqlite-backup %s start\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$subcmd" \
+        "$("$DATE_BIN" -u +%Y-%m-%dT%H:%M:%SZ)" "$subcmd" \
         >>"$log_file"
     }
 
@@ -278,7 +330,7 @@ pkgs.writeShellApplication {
       local log_file="$LOG_DIR/sqlite-backup-$db-cli.log"
       mkdir -p "$LOG_DIR"
       printf '[%s] sqlite-backup %s end exit=%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$subcmd" "$code" \
+        "$("$DATE_BIN" -u +%Y-%m-%dT%H:%M:%SZ)" "$subcmd" "$code" \
         >>"$log_file"
     }
 
@@ -314,7 +366,8 @@ pkgs.writeShellApplication {
 
     # require_db <name>
     # Pre-check used by subcommands that REQUIRE a <db> arg (backup,
-    # restore, start, stop, __replicate-trigger, __archive-trigger).
+    # restore, start, stop, clear-pressure, __litestream-trigger,
+    # __replicate-trigger, __archive-trigger, __pressure-guard).
     # Either passes silently or terminates via die_unknown_db.
     require_db() {
       local supplied="''${1:-}"
@@ -354,6 +407,637 @@ pkgs.writeShellApplication {
       fi
     }
 
+    pressure_marker_path() {
+      printf '%s/pressure-%s.json' "$STATE_DIR" "$1"
+    }
+
+    pressure_lock_path() {
+      printf '%s/pressure-%s.lock' "$STATE_DIR" "$1"
+    }
+
+    pressure_failure_path() {
+      printf '%s/pressure-%s.failed' "$STATE_DIR" "$1"
+    }
+
+    pressure_marker_blocks_work() {
+      path_blocks_pressure_work "$(pressure_marker_path "$1")"
+    }
+
+    pressure_lock_blocks_work() {
+      path_blocks_pressure_work "$(pressure_lock_path "$1")"
+    }
+
+    pressure_failure_blocks_work() {
+      path_blocks_pressure_work "$(pressure_failure_path "$1")"
+    }
+
+    # Return 0 when a path exists OR when absence cannot be proven because an
+    # ancestor is inaccessible. Safety consumers treat uncertainty as halted.
+    path_blocks_pressure_work() {
+      local path="$1"
+      if [ -e "$path" ] || [ -L "$path" ]; then
+        return 0
+      fi
+      ! path_is_confirmed_missing "$path"
+    }
+
+    has_pressure_marker() {
+      pressure_marker_blocks_work "$1" \
+        || pressure_lock_blocks_work "$1" \
+        || pressure_failure_blocks_work "$1"
+    }
+
+    acquire_pressure_lock() {
+      local target
+      target="$(pressure_lock_path "$1")"
+      if ! mkdir "$target" 2>/dev/null; then
+        return 1
+      fi
+      PRESSURE_LOCK_DIR="$target"
+      install_lock_traps
+    }
+
+    acquire_pressure_lock_with_retry() {
+      local db="$1" attempt=1
+      while ! acquire_pressure_lock "$db"; do
+        if [ "$PRESSURE_LOCK_RETRY_ATTEMPTS" -gt 0 ] \
+          && [ "$attempt" -ge "$PRESSURE_LOCK_RETRY_ATTEMPTS" ]; then
+          return 1
+        fi
+        sleep "$PRESSURE_LOCK_RETRY_DELAY"
+        attempt=$((attempt + 1))
+      done
+    }
+
+    release_pressure_lock() {
+      if [ -n "$PRESSURE_LOCK_DIR" ]; then
+        rm -f -- "$PRESSURE_LOCK_DIR/marker.json" 2>/dev/null || true
+        rm -f -- "$PRESSURE_LOCK_DIR/new-marker.json" 2>/dev/null || true
+        rmdir -- "$PRESSURE_LOCK_DIR" 2>/dev/null || true
+        PRESSURE_LOCK_DIR=""
+        clear_lock_traps_if_idle
+      fi
+    }
+
+    preserve_pressure_lock() {
+      # Leave the directory in place as a durable fail-closed sentinel when a
+      # JSON marker cannot be persisted. Future work and start both treat the
+      # pressure lock itself as an active halt.
+      PRESSURE_LOCK_DIR=""
+      clear_lock_traps_if_idle
+    }
+
+    preserve_pressure_failure() {
+      local db="$1" failure
+      failure="$(pressure_failure_path "$db")"
+      if [ -d "$failure" ] && [ ! -L "$failure" ]; then
+        release_pressure_lock
+        return 0
+      fi
+      if mv -- "$PRESSURE_LOCK_DIR" "$failure" 2>/dev/null; then
+        PRESSURE_LOCK_DIR=""
+        clear_lock_traps_if_idle
+        return 0
+      else
+        preserve_pressure_lock
+        return 1
+      fi
+    }
+
+    clear_pressure_failure() {
+      local failure
+      failure="$(pressure_failure_path "$1")"
+      if path_is_confirmed_missing "$failure"; then
+        return 0
+      fi
+      if [ -d "$failure" ] && [ ! -L "$failure" ]; then
+        rm -f -- "$failure/marker.json" "$failure/new-marker.json" 2>/dev/null || true
+        rmdir -- "$failure" 2>/dev/null
+        return
+      fi
+      return 1
+    }
+
+    # The marker is deliberately self-contained for the handoff between the
+    # future pressure guard and this recovery command. Limits and measurement
+    # paths are the exact configuration that triggered the emergency halt.
+    validate_pressure_marker() {
+      local db="$1" marker="$2"
+      jq -e --arg db "$db" --argjson maxSafe "$MAX_SAFE_INTEGER" '
+        def uint:
+          type == "number" and . >= 0 and . <= $maxSafe and floor == .;
+        def observed:
+          . == null or uint;
+
+        type == "object"
+        and has("schemaVersion")
+        and has("database")
+        and has("haltReason")
+        and has("trigger")
+        and has("observedBytes")
+        and has("configuredLimits")
+        and has("measurement")
+        and has("timestamp")
+        and .schemaVersion == 1
+        and .database == $db
+        and .haltReason == "disk-pressure"
+        and (.trigger | type == "string" and length > 0)
+        and (.timestamp | type == "string" and length > 0)
+        and (
+          .observedBytes
+          | type == "object"
+          and has("filesystemAvailable")
+          and has("managedLocal")
+          and (.filesystemAvailable | observed)
+          and (.managedLocal | observed)
+        )
+        and (
+          .configuredLimits
+          | type == "object"
+          and has("minimumFilesystemAvailableBytes")
+          and has("maximumManagedLocalBytes")
+          and (.minimumFilesystemAvailableBytes | uint)
+          and (.maximumManagedLocalBytes | uint)
+        )
+        and (
+          .measurement
+          | type == "object"
+          and has("filesystemPath")
+          and has("managedPaths")
+          and (
+            .filesystemPath
+            | type == "string" and startswith("/") and length > 0
+          )
+          and (
+            .managedPaths
+            | type == "array"
+            and length > 0
+            and all(.[]; type == "string" and startswith("/") and length > 0)
+          )
+        )
+      ' "$marker" >/dev/null 2>&1
+    }
+
+    normalize_uint() {
+      local value="$1"
+      while [ "''${#value}" -gt 1 ] && [ "''${value#0}" != "$value" ]; do
+        value="''${value#0}"
+      done
+      printf '%s\n' "$value"
+    }
+
+    uint_lte() {
+      local left="$1" right="$2"
+      [[ "$left" =~ ^[0-9]+$ ]] || return 1
+      [[ "$right" =~ ^[0-9]+$ ]] || return 1
+      left="$(normalize_uint "$left")"
+      right="$(normalize_uint "$right")"
+      if [ "''${#left}" -lt "''${#right}" ]; then
+        return 0
+      fi
+      if [ "''${#left}" -gt "''${#right}" ]; then
+        return 1
+      fi
+      [[ "$left" == "$right" || "$left" < "$right" ]]
+    }
+
+    # Print filesystem available bytes for a path. POSIX `df -Pk` gives a
+    # locale-stable available-block column in 1024-byte units.
+    measure_filesystem_available_bytes() {
+      local path="$1" output line mounted
+      local -a lines=()
+      if ! output="$(LC_ALL=C "$DF_BIN" -Pk -- "$path" 2>/dev/null)"; then
+        return 1
+      fi
+      mapfile -t lines <<<"$output"
+      if [ "''${#lines[@]}" -ne 2 ]; then
+        return 1
+      fi
+      line="''${lines[1]}"
+
+      local available
+      read -r _ _ _ available _ mounted <<<"$line"
+      if [ -z "$mounted" ] || ! uint_lte "$available" "$MAX_SAFE_KIB"; then
+        return 1
+      fi
+      printf '%s\n' "$((available * 1024))"
+    }
+
+    # Return 0 only when a path is provably absent through a searchable
+    # existing ancestor. This distinguishes ENOENT from an inaccessible child,
+    # for which `[ -e ]` also returns false.
+    path_is_confirmed_missing() {
+      local candidate="$1" parent
+      while [ ! -e "$candidate" ] && [ ! -L "$candidate" ]; do
+        parent="''${candidate%/*}"
+        if [ -z "$parent" ]; then
+          parent=/
+        fi
+        if [ "$parent" = "$candidate" ]; then
+          return 0
+        fi
+        if [ -e "$parent" ] || [ -L "$parent" ]; then
+          [ -d "$parent" ] && [ -x "$parent" ]
+          return
+        fi
+        candidate="$parent"
+      done
+      return 1
+    }
+
+    # Print the sum of physical allocated bytes for paths read from stdin.
+    # Missing paths contribute zero; any unreadable path fails closed.
+    measure_managed_paths() {
+      local total=0 path output kib reported_path
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        if [ ! -e "$path" ]; then
+          if path_is_confirmed_missing "$path"; then
+            continue
+          fi
+          printf 'sqlite-backup: pressure guard managed path %s is inaccessible or cannot be resolved\n' \
+            "$path" >&2
+          return 1
+        fi
+        if [ -d "$path" ]; then
+          if [ ! -r "$path" ] || [ ! -x "$path" ]; then
+            printf 'sqlite-backup: pressure guard managed path %s is not readable and searchable\n' \
+              "$path" >&2
+            return 1
+          fi
+        elif [ ! -r "$path" ]; then
+          printf 'sqlite-backup: pressure guard managed path %s is not readable\n' \
+            "$path" >&2
+          return 1
+        fi
+        # `-H` follows a command-line symlink such as an XDG data root moved to
+        # another volume, while leaving nested symlinks alone. Without it GNU
+        # du reports only the symlink inode (typically zero KiB).
+        if ! output="$("$DU_BIN" -skH -- "$path")"; then
+          printf 'sqlite-backup: pressure guard could not measure managed path %s with du\n' \
+            "$path" >&2
+          return 1
+        fi
+        if [[ "$output" == *$'\n'* ]]; then
+          printf 'sqlite-backup: pressure guard received multiline du output for managed path %s\n' \
+            "$path" >&2
+          return 1
+        fi
+        read -r kib reported_path <<<"$output"
+        if [ "$reported_path" != "$path" ] || ! uint_lte "$kib" "$MAX_SAFE_KIB"; then
+          printf 'sqlite-backup: pressure guard received invalid du output for managed path %s\n' \
+            "$path" >&2
+          return 1
+        fi
+        local bytes
+        bytes=$((kib * 1024))
+        if [ "$total" -gt "$((MAX_SAFE_INTEGER - bytes))" ]; then
+          printf 'sqlite-backup: pressure guard managed-byte total overflow at path %s\n' \
+            "$path" >&2
+          return 1
+        fi
+        total=$((total + bytes))
+      done
+      printf '%s\n' "$total"
+    }
+
+    measure_managed_local_bytes() {
+      local marker="$1"
+      measure_managed_paths < <(jq -r '.measurement.managedPaths[]' "$marker")
+    }
+
+    measure_managed_local_bytes_for_db() {
+      local db="$1"
+      measure_managed_paths < <(
+        jq -r --arg db "$db" '
+          .databases[]
+          | select(.name == $db)
+          | .pressureGuard.managedPaths[]
+        ' "$MANIFEST_PATH"
+      )
+    }
+
+    unload_litestream_for_pressure() {
+      local db="$1"
+      local label uid
+      label="$(litestream_label "$db")"
+      uid="$(id -u)"
+      if "$LAUNCHCTL_BIN" bootout "gui/$uid/$label" >/dev/null 2>&1; then
+        printf 'sqlite-backup: %s: pressure guard unloaded Litestream\n' "$db"
+      else
+        local list_status
+        if "$LAUNCHCTL_BIN" list "$label" >/dev/null 2>&1; then
+          list_status=0
+        else
+          list_status=$?
+        fi
+        if [ "$list_status" -eq 113 ]; then
+          printf 'sqlite-backup: %s: pressure guard confirmed Litestream is unloaded\n' "$db"
+          return 0
+        fi
+        printf 'sqlite-backup: %s: pressure guard could not unload Litestream label=%s\n' \
+          "$db" "$label" >&2
+        return 1
+      fi
+    }
+
+    write_pressure_marker_locked() {
+      local db="$1" trigger="$2" available_json="$3" managed_json="$4"
+      local marker guard_json minimum maximum filesystem_path managed_paths timestamp tmp
+
+      marker="$(pressure_marker_path "$db")"
+      if [ -z "$PRESSURE_LOCK_DIR" ]; then
+        printf 'sqlite-backup: %s: pressure marker write attempted without pressure lock\n' \
+          "$db" >&2
+        return 1
+      fi
+
+      # shellcheck disable=SC2016  # `$db` below is a jq variable.
+      if ! guard_json="$("$MARKER_JQ_BIN" -ce --arg db "$db" '
+        .databases[] | select(.name == $db) | .pressureGuard
+      ' "$MANIFEST_PATH")" \
+        || ! minimum="$("$MARKER_JQ_BIN" -er '.minimumFilesystemAvailableBytes' <<<"$guard_json")" \
+        || ! maximum="$("$MARKER_JQ_BIN" -er '.maximumManagedLocalBytes' <<<"$guard_json")" \
+        || ! filesystem_path="$("$MARKER_JQ_BIN" -er '.filesystemPath' <<<"$guard_json")" \
+        || ! managed_paths="$("$MARKER_JQ_BIN" -ce '.managedPaths' <<<"$guard_json")"; then
+        printf 'sqlite-backup: %s: pressure guard could not read marker configuration\n' \
+          "$db" >&2
+        preserve_pressure_failure "$db" || true
+        return 1
+      fi
+      if ! timestamp="$("$DATE_BIN" -u +%Y-%m-%dT%H:%M:%SZ)" \
+        || [ -z "$timestamp" ]; then
+        printf 'sqlite-backup: %s: pressure guard could not obtain a timestamp\n' "$db" >&2
+        preserve_pressure_failure "$db" || true
+        return 1
+      fi
+
+      # Preserve the first durable halt if another guard won the race.
+      if path_blocks_pressure_work "$marker"; then
+        return 0
+      fi
+
+      tmp="$PRESSURE_LOCK_DIR/new-marker.json"
+      if ! jq -n \
+        --arg database "$db" \
+        --arg trigger "$trigger" \
+        --arg timestamp "$timestamp" \
+        --arg filesystemPath "$filesystem_path" \
+        --argjson filesystemAvailable "$available_json" \
+        --argjson managedLocal "$managed_json" \
+        --argjson minimumFilesystemAvailableBytes "$minimum" \
+        --argjson maximumManagedLocalBytes "$maximum" \
+        --argjson managedPaths "$managed_paths" \
+        '{
+          schemaVersion: 1,
+          database: $database,
+          haltReason: "disk-pressure",
+          trigger: $trigger,
+          observedBytes: {
+            filesystemAvailable: $filesystemAvailable,
+            managedLocal: $managedLocal
+          },
+          configuredLimits: {
+            minimumFilesystemAvailableBytes: $minimumFilesystemAvailableBytes,
+            maximumManagedLocalBytes: $maximumManagedLocalBytes
+          },
+          measurement: {
+            filesystemPath: $filesystemPath,
+            managedPaths: $managedPaths
+          },
+          timestamp: $timestamp
+        }' >"$tmp"; then
+        printf 'sqlite-backup: %s: pressure guard could not render marker JSON\n' "$db" >&2
+        preserve_pressure_failure "$db"
+        return 1
+      fi
+      if ! chmod 600 "$tmp"; then
+        printf 'sqlite-backup: %s: pressure guard could not secure marker permissions\n' \
+          "$db" >&2
+        preserve_pressure_failure "$db"
+        return 1
+      fi
+      if ! "$MARKER_MV_BIN" -fT -- "$tmp" "$marker"; then
+        printf 'sqlite-backup: %s: pressure guard could not persist marker %s\n' \
+          "$db" "$marker" >&2
+        preserve_pressure_failure "$db"
+        return 1
+      fi
+      printf 'sqlite-backup: %s: pressure marker persisted trigger=%s path=%s\n' \
+        "$db" "$trigger" "$marker"
+    }
+
+    # Return 0 when healthy, 10 after a durable threshold halt, and 11 after a
+    # fail-closed measurement/configuration error.
+    pressure_guard() {
+      local db="$1"
+      if pressure_marker_blocks_work "$db"; then
+        printf 'sqlite-backup: %s: pressure guard preserving active halt\n' "$db"
+        unload_litestream_for_pressure "$db" || return 11
+        return 10
+      fi
+
+      if ! mkdir -p "$STATE_DIR"; then
+        printf 'sqlite-backup: %s: pressure guard could not create state directory %s\n' \
+          "$db" "$STATE_DIR" >&2
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+      if ! acquire_pressure_lock_with_retry "$db"; then
+        printf 'sqlite-backup: %s: pressure guard timed out waiting for pressure transition\n' \
+          "$db" >&2
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+      if pressure_marker_blocks_work "$db"; then
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || return 11
+        return 10
+      fi
+
+      local force_marker=0
+      if pressure_failure_blocks_work "$db"; then
+        force_marker=1
+      fi
+      if ! acquire_lock_with_retry "$db"; then
+        printf 'sqlite-backup: %s: pressure guard timed out waiting for backup lock\n' \
+          "$db" >&2
+        preserve_pressure_failure "$db" || true
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+
+      local guard_json filesystem_path minimum maximum
+      guard_json="$(jq -c --arg db "$db" '
+        .databases[] | select(.name == $db) | .pressureGuard // empty
+      ' "$MANIFEST_PATH")"
+      if [ -z "$guard_json" ] || ! jq -e '
+        type == "object"
+        and (.filesystemPath | type == "string" and startswith("/"))
+        and (
+          .managedPaths
+          | type == "array"
+          and length > 0
+          and all(.[]; type == "string" and startswith("/"))
+        )
+      ' <<<"$guard_json" >/dev/null; then
+        printf 'sqlite-backup: %s: pressure guard configuration is missing or invalid\n' "$db" >&2
+        preserve_pressure_failure "$db" || true
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+
+      filesystem_path="$(jq -r '.filesystemPath' <<<"$guard_json")"
+      minimum="$(jq -r '.minimumFilesystemAvailableBytes' <<<"$guard_json")"
+      maximum="$(jq -r '.maximumManagedLocalBytes' <<<"$guard_json")"
+      if ! uint_lte "$minimum" "$MAX_SAFE_INTEGER" \
+        || ! uint_lte "$maximum" "$MAX_SAFE_INTEGER"; then
+        printf 'sqlite-backup: %s: pressure guard byte limits are invalid\n' "$db" >&2
+        preserve_pressure_failure "$db" || true
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+
+      local available=null managed=null measurement_error=0
+      if ! available="$(measure_filesystem_available_bytes "$filesystem_path")"; then
+        available=null
+        measurement_error=1
+        printf 'sqlite-backup: %s: pressure guard filesystem measurement failed path=%s\n' \
+          "$db" "$filesystem_path" >&2
+      fi
+      if ! managed="$(measure_managed_local_bytes_for_db "$db")"; then
+        managed=null
+        measurement_error=1
+        printf 'sqlite-backup: %s: pressure guard managed-byte measurement failed\n' \
+          "$db" >&2
+      fi
+
+      printf 'sqlite-backup: %s: pressure guard filesystem-available=%s minimum=%s managed-local=%s maximum=%s\n' \
+        "$db" "$available" "$minimum" "$managed" "$maximum"
+
+      if [ "$measurement_error" -ne 0 ]; then
+        if ! write_pressure_marker_locked "$db" measurement-error "$available" "$managed"; then
+          release_lock
+          release_pressure_lock
+          unload_litestream_for_pressure "$db" || true
+          return 11
+        fi
+        if ! clear_pressure_failure "$db"; then
+          printf 'sqlite-backup: %s: pressure guard could not clear failed-write sentinel\n' \
+            "$db" >&2
+        fi
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+
+      local filesystem_violated=0 managed_violated=0 trigger
+      if [ "$available" -lt "$minimum" ]; then
+        filesystem_violated=1
+      fi
+      if [ "$managed" -gt "$maximum" ]; then
+        managed_violated=1
+      fi
+      if [ "$filesystem_violated" -eq 0 ] \
+        && [ "$managed_violated" -eq 0 ] \
+        && [ "$force_marker" -eq 0 ]; then
+        release_lock
+        release_pressure_lock
+        return 0
+      elif [ "$filesystem_violated" -ne 0 ] && [ "$managed_violated" -ne 0 ]; then
+        trigger="multiple-thresholds"
+      elif [ "$filesystem_violated" -ne 0 ]; then
+        trigger="minimum-filesystem-available-bytes"
+      elif [ "$managed_violated" -ne 0 ]; then
+        trigger="maximum-managed-local-bytes"
+      else
+        trigger="marker-persistence-error"
+      fi
+
+      printf 'sqlite-backup: %s: pressure guard tripped trigger=%s\n' "$db" "$trigger"
+      if ! write_pressure_marker_locked "$db" "$trigger" "$available" "$managed"; then
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+      if ! clear_pressure_failure "$db"; then
+        printf 'sqlite-backup: %s: pressure guard could not clear failed-write sentinel\n' \
+          "$db" >&2
+        release_lock
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || true
+        return 11
+      fi
+      release_lock
+      release_pressure_lock
+      if ! unload_litestream_for_pressure "$db"; then
+        return 11
+      fi
+      return 10
+    }
+
+    litestream_trigger() {
+      local db="$1" guard_status config_path
+
+      # Gate launchd's own RunAtLoad path through the same measurement used by
+      # the periodic and synchronous guards. A pre-existing or newly-created
+      # marker causes pressure_guard to boot out this Litestream job.
+      if pressure_guard "$db"; then
+        :
+      else
+        guard_status=$?
+        return "$guard_status"
+      fi
+
+      # Serialize the last marker check with startup. If another transition is
+      # active, KeepAlive retries this wrapper after that transition completes.
+      if ! acquire_pressure_lock "$db"; then
+        printf 'sqlite-backup: %s: Litestream startup deferred by pressure transition\n' \
+          "$db" >&2
+        return 11
+      fi
+      if pressure_marker_blocks_work "$db"; then
+        release_pressure_lock
+        unload_litestream_for_pressure "$db" || return 11
+        return 10
+      fi
+
+      config_path="$(get_database_field "$db" litestreamConfigPath)"
+      if [ -z "$config_path" ] || [ ! -f "$config_path" ]; then
+        release_pressure_lock
+        printf 'sqlite-backup: %s: manifest missing readable litestreamConfigPath\n' \
+          "$db" >&2
+        return 11
+      fi
+      release_pressure_lock
+
+      exec litestream replicate -config "$config_path"
+    }
+
+    get_halt_reason() {
+      local db="$1"
+      if has_pressure_marker "$db"; then
+        printf 'disk-pressure\n'
+        return
+      fi
+
+      local halt
+      halt="$(get_halt_content "$db")"
+      if [ -n "$halt" ]; then
+        printf '%s\n' "$halt"
+      else
+        printf 'none\n'
+      fi
+    }
+
     # get_replication_state <db>
     # Compute the operator-visible state per design.md §"CLI Script →
     # Service Interface" `status` block. The halt flag, when present,
@@ -364,6 +1048,10 @@ pkgs.writeShellApplication {
     # CLI, or when the agent has crashed past `KeepAlive` retries).
     get_replication_state() {
       local db="$1"
+      if has_pressure_marker "$db"; then
+        printf 'halted-disk-pressure\n'
+        return
+      fi
       local halt
       halt="$(get_halt_content "$db")"
       case "$halt" in
@@ -431,19 +1119,21 @@ pkgs.writeShellApplication {
     }
 
     # print_db_status <db>
-    # Emit the four-line block format for one database (the format
+    # Emit the structured block format for one database (the format
     # mandated by task 3.2 implementation guidance — operator-friendly
     # YAML-style key/value, distinct from a tabular layout, so that
     # extra fields can be added in future tasks without breaking
     # consumers that already grep `last-replication-snapshot:`).
     print_db_status() {
       local db="$1"
-      local state last_rep last_arc
+      local state halt_reason last_rep last_arc
       state="$(get_replication_state "$db")"
+      halt_reason="$(get_halt_reason "$db")"
       last_rep="$(get_last_snapshot "$db" replication)"
       last_arc="$(get_last_snapshot "$db" archive)"
       printf '%s:\n' "$db"
       printf '  replication-state: %s\n' "$state"
+      printf '  halt-reason: %s\n' "$halt_reason"
       printf '  last-replication-snapshot: %s\n' "$last_rep"
       printf '  last-archive-snapshot: %s\n' "$last_arc"
     }
@@ -533,7 +1223,26 @@ pkgs.writeShellApplication {
       esac
       local subcmd="$tier-trigger"
 
-      log_start "$db" "$subcmd"
+      # Run the safety guard before log I/O so an unwritable/full log volume
+      # cannot bypass pressure enforcement. Halt/error paths log best-effort;
+      # healthy paths retain the normal mandatory start/end logging contract.
+      local guard_status
+      if pressure_guard "$db"; then
+        log_start "$db" "$subcmd"
+      else
+        guard_status=$?
+        log_start "$db" "$subcmd" || true
+        if [ "$guard_status" -eq 10 ]; then
+          printf 'sqlite-backup: %s: %s skipped (disk-pressure halt; guard tripped)\n' \
+            "$db" "$subcmd"
+          log_end "$db" "$subcmd" 0 || true
+          return 0
+        fi
+        printf 'sqlite-backup: %s: %s failed closed (pressure measurement error)\n' \
+          "$db" "$subcmd" >&2
+        log_end "$db" "$subcmd" 1 || true
+        return 1
+      fi
 
       # Step 1: tier-specific halt-flag semantics.
       #   * `whole-pipeline`     → skip both replication and archive.
@@ -572,15 +1281,34 @@ pkgs.writeShellApplication {
         esac
       fi
 
-      # Step 2: per-DB mkdir mutex. Held iff another wrapper for the
-      # same DB is mid-run; treat as a no-op skip (exit 0 with logged
-      # reason) per the tier-trigger contract.
+      # Serialize the final marker check with backup-lock acquisition. A guard
+      # writer cannot publish a marker between these operations because both
+      # transitions use the pressure lock.
+      if ! acquire_pressure_lock "$db"; then
+        printf 'sqlite-backup: %s: %s failed closed (pressure transition active)\n' \
+          "$db" "$subcmd" >&2
+        log_end "$db" "$subcmd" 1
+        return 1
+      fi
+      if pressure_marker_blocks_work "$db"; then
+        release_pressure_lock
+        printf 'sqlite-backup: %s: %s skipped (disk-pressure halt)\n' \
+          "$db" "$subcmd"
+        log_end "$db" "$subcmd" 0
+        return 0
+      fi
+
+      # Step 2: acquire the per-DB backup mutex while the pressure gate is
+      # still held. Once acquired, release only the pressure gate; the backup
+      # lock's shared EXIT trap remains armed for the rest of the run.
       if ! acquire_lock "$db"; then
+        release_pressure_lock
         printf 'sqlite-backup: %s: %s skipped (lock held by another run)\n' \
           "$db" "$subcmd"
         log_end "$db" "$subcmd" 0
         return 0
       fi
+      release_pressure_lock
 
       # Step 3: build and export the Keychain-backed password command
       # strings. restic and rclone both fork+exec these strings via
@@ -751,6 +1479,7 @@ pkgs.writeShellApplication {
       restore <db> [opts]             Restore a database from snapshots.
       start <db>                      Resume a halted database's pipeline.
       stop <db> [--include-archive]   Halt a database's pipeline.
+      clear-pressure <db>             Clear a healthy emergency pressure halt.
       verify-credentials [<db>]       Probe rclone destinations.
 
     Run `sqlite-backup --help` to print this message.
@@ -1182,43 +1911,225 @@ pkgs.writeShellApplication {
         ;;
 
       start)
-        # R13.12, R13.16: clear halt flag and re-bootstrap the per-DB
-        # Litestream agent. Idempotent — when no halt flag is present
-        # we report "already running" and skip the bootstrap (the agent
-        # was never unloaded by us, so re-bootstrapping it would error
-        # with "service already loaded" and add nothing).
+        # R13.12, R13.16, R18.4, R18.9: pressure state blocks start.
+        # Otherwise clear any manual halt and ensure the per-DB Litestream
+        # agent is loaded. No manual halt plus an unloaded agent is the normal
+        # post-clear-pressure state and therefore still needs a bootstrap.
         require_db "''${1:-}"
         start_db="$1"
 
+        if has_pressure_marker "$start_db"; then
+          printf 'sqlite-backup: %s: disk-pressure halt active; refusing to start\n' \
+            "$start_db" >&2
+          printf 'sqlite-backup: %s: recovery command: sqlite-backup clear-pressure %s\n' \
+            "$start_db" "$start_db" >&2
+          log_start "$start_db" start || true
+          log_end "$start_db" start 1 || true
+          exit 1
+        fi
+
         log_start "$start_db" start
+
+        if ! acquire_pressure_lock "$start_db"; then
+          printf 'sqlite-backup: %s: pressure transition active; refusing to start\n' \
+            "$start_db" >&2
+          log_end "$start_db" start 1
+          exit 1
+        fi
+        if pressure_marker_blocks_work "$start_db"; then
+          release_pressure_lock
+          printf 'sqlite-backup: %s: disk-pressure halt active; refusing to start\n' \
+            "$start_db" >&2
+          printf 'sqlite-backup: %s: recovery command: sqlite-backup clear-pressure %s\n' \
+            "$start_db" "$start_db" >&2
+          log_end "$start_db" start 1
+          exit 1
+        fi
 
         start_flag="$STATE_DIR/halt-$start_db.flag"
         if [ ! -f "$start_flag" ]; then
-          printf 'sqlite-backup: %s: already running\n' "$start_db"
-          log_end "$start_db" start 0
-          exit 0
+          start_label="$(litestream_label "$start_db")"
+          if "$LAUNCHCTL_BIN" list "$start_label" >/dev/null 2>&1; then
+            release_pressure_lock
+            printf 'sqlite-backup: %s: already running\n' "$start_db"
+            log_end "$start_db" start 0
+            exit 0
+          fi
+        else
+          rm -f -- "$start_flag"
+          printf 'sqlite-backup: %s: halt cleared\n' "$start_db"
         fi
 
-        rm -f -- "$start_flag"
-        printf 'sqlite-backup: %s: halt cleared\n' "$start_db"
+        if pressure_marker_blocks_work "$start_db"; then
+          release_pressure_lock
+          printf 'sqlite-backup: %s: disk-pressure halt appeared during start; refusing bootstrap\n' \
+            "$start_db" >&2
+          printf 'sqlite-backup: %s: recovery command: sqlite-backup clear-pressure %s\n' \
+            "$start_db" "$start_db" >&2
+          log_end "$start_db" start 1
+          exit 1
+        fi
 
-        # Bootstrap the Litestream daemon. Failure here is non-fatal
-        # from the operator's perspective — the most common cause is
-        # "service already loaded" (e.g., on a host where the agent
-        # was never actually unloaded), and the halt flag — the
-        # authoritative state per the wrappers — is already cleared.
+        # Bootstrap the Litestream daemon. A failed bootstrap is accepted only
+        # when a follow-up list proves the agent was already loaded; otherwise
+        # start fails rather than claiming an unloaded pipeline is running.
         start_plist="$(litestream_plist_path "$start_db")"
         start_uid="$(id -u)"
         if [ ! -f "$start_plist" ]; then
-          printf 'sqlite-backup: %s: litestream plist not found at %s; skipping bootstrap\n' \
+          release_pressure_lock
+          printf 'sqlite-backup: %s: litestream plist not found at %s\n' \
             "$start_db" "$start_plist" >&2
+          log_end "$start_db" start 1
+          exit 1
         elif "$LAUNCHCTL_BIN" bootstrap "gui/$start_uid" "$start_plist" >/dev/null 2>&1; then
           printf 'sqlite-backup: %s: litestream agent bootstrapped\n' "$start_db"
-        else
+        elif "$LAUNCHCTL_BIN" list "$(litestream_label "$start_db")" >/dev/null 2>&1; then
           printf 'sqlite-backup: %s: litestream agent already loaded\n' "$start_db"
+        else
+          release_pressure_lock
+          printf 'sqlite-backup: %s: failed to bootstrap litestream agent\n' "$start_db" >&2
+          log_end "$start_db" start 1
+          exit 1
         fi
 
+        release_pressure_lock
         log_end "$start_db" start 0
+        exit 0
+        ;;
+
+      clear-pressure)
+        require_db "''${1:-}"
+        clear_db="$1"
+        clear_marker="$(pressure_marker_path "$clear_db")"
+
+        # Convert a prior marker-write failure sentinel into a normal JSON
+        # marker using fresh serialized measurements. This keeps the fallback
+        # fail closed without making it permanently unrecoverable.
+        if ! pressure_marker_blocks_work "$clear_db" \
+          && pressure_failure_blocks_work "$clear_db"; then
+          if pressure_guard "$clear_db"; then
+            :
+          else
+            clear_repair_status=$?
+            if [ "$clear_repair_status" -ne 10 ]; then
+              printf 'sqlite-backup: %s: could not repair failed pressure marker state\n' \
+                "$clear_db" >&2
+              exit 1
+            fi
+          fi
+        fi
+
+        log_start "$clear_db" clear-pressure
+
+        if ! has_pressure_marker "$clear_db"; then
+          printf 'sqlite-backup: %s: no disk-pressure halt is active\n' "$clear_db"
+          log_end "$clear_db" clear-pressure 0
+          exit 0
+        fi
+
+        if ! acquire_pressure_lock "$clear_db"; then
+          printf 'sqlite-backup: %s: another pressure-state transition is active; marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        if [ ! -f "$clear_marker" ] || [ -L "$clear_marker" ]; then
+          printf 'sqlite-backup: %s: pressure marker is invalid; refusing to clear %s\n' \
+            "$clear_db" "$clear_marker" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        clear_snapshot="$PRESSURE_LOCK_DIR/marker.json"
+        if ! cp -- "$clear_marker" "$clear_snapshot" 2>/dev/null \
+          || ! validate_pressure_marker "$clear_db" "$clear_snapshot"; then
+          printf 'sqlite-backup: %s: pressure marker is invalid; refusing to clear %s\n' \
+            "$clear_db" "$clear_marker" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+        if ! clear_marker_version="$(jq -cS . "$clear_snapshot" 2>/dev/null)"; then
+          printf 'sqlite-backup: %s: pressure marker changed before validation completed; marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        clear_filesystem_path="$(jq -r '.measurement.filesystemPath' "$clear_snapshot")"
+        clear_minimum_available="$(jq -r '.configuredLimits.minimumFilesystemAvailableBytes' "$clear_snapshot")"
+        clear_maximum_managed="$(jq -r '.configuredLimits.maximumManagedLocalBytes' "$clear_snapshot")"
+
+        if ! clear_available="$(measure_filesystem_available_bytes "$clear_filesystem_path")"; then
+          printf 'sqlite-backup: %s: could not measure filesystem available bytes at %s; pressure marker preserved\n' \
+            "$clear_db" "$clear_filesystem_path" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+        if ! clear_managed="$(measure_managed_local_bytes "$clear_snapshot")"; then
+          printf 'sqlite-backup: %s: could not measure managed local bytes; pressure marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        printf 'sqlite-backup: %s: pressure check filesystem-available=%s minimum=%s managed-local=%s maximum=%s\n' \
+          "$clear_db" "$clear_available" "$clear_minimum_available" \
+          "$clear_managed" "$clear_maximum_managed"
+
+        clear_unhealthy=0
+        if [ "$clear_available" -lt "$clear_minimum_available" ]; then
+          printf 'sqlite-backup: %s: filesystem available bytes %s below minimum %s\n' \
+            "$clear_db" "$clear_available" "$clear_minimum_available" >&2
+          clear_unhealthy=1
+        fi
+        if [ "$clear_managed" -gt "$clear_maximum_managed" ]; then
+          printf 'sqlite-backup: %s: managed local bytes %s above maximum %s\n' \
+            "$clear_db" "$clear_managed" "$clear_maximum_managed" >&2
+          clear_unhealthy=1
+        fi
+        if [ "$clear_unhealthy" -ne 0 ]; then
+          printf 'sqlite-backup: %s: pressure marker preserved at %s\n' \
+            "$clear_db" "$clear_marker" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        if [ ! -f "$clear_marker" ] || [ -L "$clear_marker" ] \
+          || ! clear_current_version="$(jq -cS . "$clear_marker" 2>/dev/null)"; then
+          # A non-cooperating concurrent writer may have removed the marker.
+          # Restore the validated version when the path is provably absent;
+          # otherwise the inaccessible/replacement state remains authoritative.
+          if path_is_confirmed_missing "$clear_marker"; then
+            clear_restore_tmp="$clear_marker.recover.$$"
+            printf '%s\n' "$clear_marker_version" >"$clear_restore_tmp"
+            mv -f -- "$clear_restore_tmp" "$clear_marker"
+          fi
+          printf 'sqlite-backup: %s: pressure marker changed during validation; marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+        if [ "$clear_current_version" != "$clear_marker_version" ]; then
+          printf 'sqlite-backup: %s: pressure marker changed during validation; marker preserved\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        if ! clear_pressure_failure "$clear_db"; then
+          printf 'sqlite-backup: %s: failed pressure-state sentinel could not be cleared\n' \
+            "$clear_db" >&2
+          log_end "$clear_db" clear-pressure 1
+          exit 1
+        fi
+
+        rm -f -- "$clear_marker"
+        release_pressure_lock
+        printf 'sqlite-backup: %s: pressure halt cleared; pipeline remains stopped\n' "$clear_db"
+        printf 'sqlite-backup: %s: start explicitly with: sqlite-backup start %s\n' \
+          "$clear_db" "$clear_db"
+        log_end "$clear_db" clear-pressure 0
         exit 0
         ;;
 
@@ -1298,6 +2209,24 @@ pkgs.writeShellApplication {
 
         log_end "$stop_db" stop 0
         exit 0
+        ;;
+
+      __litestream-trigger)
+        require_db "''${1:-}"
+        litestream_trigger "$1"
+        ;;
+
+      __pressure-guard)
+        require_db "''${1:-}"
+        if pressure_guard "$1"; then
+          exit 0
+        else
+          pressure_guard_status=$?
+          if [ "$pressure_guard_status" -eq 10 ]; then
+            exit 0
+          fi
+          exit 1
+        fi
         ;;
 
       __replicate-trigger)
