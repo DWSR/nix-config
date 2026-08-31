@@ -142,6 +142,9 @@ in
     };
   };
 
+  xdg.dataFile."orangemonkey/github-pr-review-chords.user.js".source =
+    ./github-pr-review-chords.user.js;
+
   launchd.agents.git-clone-isolation-globaldb-yugabyte-refresh = {
     inherit (gitCloneIsolation) enable;
     config = {
