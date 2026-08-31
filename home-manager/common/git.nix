@@ -14,10 +14,12 @@
       };
 
       push.autoRemoteSetup = true;
+      remote.pushDefault = "origin";
       commit.gpgSign = true;
       branch.sort = "-committerdate";
       init.defaultBranch = "main";
       rebase.updateRefs = true;
+      rerere.enabled = true;
       pull.rebase = true;
       help.autocorrect = "prompt";
     };
