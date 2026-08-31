@@ -21,8 +21,6 @@ permission:
     "cat *": ask
     "git": deny
     "git *": deny
-    "gt": deny
-    "gt *": deny
     "cd /tmp/security-review/*": allow
     "mkdir -p /tmp/security-review/*": allow
 ---

@@ -230,7 +230,7 @@
       "class": "shopify-bot-thread-triage",
       "agentName": "bot-thread-triager",
       "hostScope": "shopify",
-      "representativeTask": "For a supplied owner/repo and PR number list, read GitHub PR review comments through MCP and classify bot comments into actionable, stacked false positive, incorrect/not applicable, deferred, or unknown. Do not reply or resolve.",
+      "representativeTask": "For a supplied owner/repo and native Stack PR number list, read GitHub PR review comments through MCP and classify bot comments into actionable, Stack-context false positive, incorrect/not applicable, deferred, or unknown. Do not reply or resolve.",
       "expectations": {
         "passCriteria": [
           "response lists classification buckets even when no comments are found",
@@ -296,7 +296,7 @@
       },
       "nonInteractive": {
         "strategy": "allow-only",
-        "details": "Read, grep, glob, list, and lsp are allow rules; mutation tools are not in the budget."
+        "details": "Read, grep, glob, list, lsp, and mcpproxy read calls are allowed; mutation tools are not in the budget."
       },
       "directInvocation": "opencode run --agent stack-fix-reviewer -- 'Review this hypothetical mutation wave: no diff supplied. Return the appropriate verdict and why.'",
       "notes": "Read-only reviewer for stack-captain mutation waves."
@@ -330,15 +330,15 @@
       "class": "shopify-stack-plan",
       "agentName": "stack-captain",
       "hostScope": "shopify",
-      "representativeTask": "On a Shopify-host repo with an active Graphite stack, produce a textual fan-out/fan-in review plan for the current stack. Prefer gt-mcp and GitHub MCP. Do NOT invoke submit, modify, label, comment, edit, or any mutating call.",
+      "representativeTask": "On a Shopify-host repo with an active GitHub-native Stack, produce a textual fan-out/fan-in review plan. Map it with GitHub MCP. Do NOT invoke Stack writes, labels, comments, edits, Git writes, or any other mutating call.",
       "expectations": {
         "passCriteria": [
-          "response lists each branch in the active Graphite stack in bottom-up order with its branch name and PR number",
+          "response lists each member in the active native Stack in bottom-to-top order with its branch name and PR number",
           "response names the MCP tools it would use for stack mapping and status sweeps",
-          "response explicitly states no mutating MCP, gt, git, or gh operation was attempted"
+          "response explicitly states no mutating MCP, Git, or gh stack operation was attempted"
         ],
         "failureSignals": [
-          "agent attempts `gt submit`, `gt modify`, `git push`, `git rebase`, or a GitHub write",
+          "agent attempts a native Stack write, Git write, `gh stack`, or another GitHub write",
           "agent applies labels/comments or edits files during the plan smoke",
           "agent reports missing mcpproxy_retrieve_tools or mcpproxy_call_tool_read permission"
         ],
@@ -348,33 +348,33 @@
         "strategy": "task-restricts-ask",
         "details": "stack-captain has broad writer permissions in production. The smoke prompt is plan-only and explicitly forbids mutation; smoke runner asserts no mutating operation appears in the tool history."
       },
-      "directInvocation": "opencode run --agent stack-captain -- 'Output a fan-out/fan-in review plan for the current Graphite stack. Plan-only; no submit, no push, no edit.'",
+      "directInvocation": "opencode run --agent stack-captain -- 'Output a fan-out/fan-in review plan for the current GitHub-native Stack. Plan-only; no Stack write, push, or edit.'",
       "notes": "Shopify-host smoke. Plan-only — never mutates the stack."
     },
     {
       "class": "shopify-stack-preflight",
       "agentName": "stack-preflight-auditor",
       "hostScope": "shopify",
-      "representativeTask": "Given an absolute repository cwd, use gt-mcp read-only stack commands to report stack shape and metadata risks. Do not run mutating Graphite commands or shell commands.",
+      "representativeTask": "Given owner/repo, a Stack or member PR number, and an optional absolute cwd, use GitHub native Stack reads plus Git-MCP reads to report remote chain and local worktree risks. Do not mutate or run shell commands.",
       "expectations": {
         "passCriteria": [
           "response reports stack shape or insufficient-input/tool-gap status",
-          "response names gt-mcp read-only args it used or would use",
-          "response confirms no mutating gt command was attempted"
+          "response names the native Stack and Git-MCP read operations it used or would use",
+          "response confirms no write, destructive, or shell operation was attempted"
         ],
         "failureSignals": [
-          "agent attempts mcpproxy_call_tool_write for mutating gt args",
-          "agent runs bash gt/git/gh",
+          "agent attempts mcpproxy_call_tool_write or mcpproxy_call_tool_destructive",
+          "agent runs bash or gh stack",
           "agent recommends force/no-verify without flagging user authorization"
         ],
         "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted on non-Shopify hosts and when stack-preflight-auditor.state.kind == 'unbudgeted' on the Shopify host."
       },
       "nonInteractive": {
         "strategy": "allow-only",
-        "details": "The helper budget only includes mcpproxy read access; production prompt restricts gt-mcp args to read-only commands."
+        "details": "The helper budget only includes local and mcpproxy read access; the production prompt restricts both Stack and repository inspection to read operations."
       },
-      "directInvocation": "opencode run --agent stack-preflight-auditor -- 'Preflight this cwd for stack risks using gt-mcp read-only commands. No mutation.'",
-      "notes": "Fan-out Graphite metadata preflight helper for stack-captain."
+      "directInvocation": "opencode run --agent stack-preflight-auditor -- 'Preflight the supplied GitHub-native Stack and cwd using read-only tools. No mutation.'",
+      "notes": "Fan-out native Stack and worktree preflight helper for stack-captain."
     },
     {
       "class": "shopify-stack-status",

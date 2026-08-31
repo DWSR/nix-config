@@ -18,8 +18,6 @@ permission:
     "wc *": allow
     "git": deny
     "git *": deny
-    "gt": deny
-    "gt *": deny
     "nix *": allow
     "nix-prefetch-*": allow
     "nix-prefetch-url*": allow

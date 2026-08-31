@@ -313,8 +313,6 @@
       # session start, and its "Skills Structure" block is now inlined
       # verbatim into ./agents-cc-sdd.md. See
       # memories/2026-05-20-agents-md-compression.md for the rationale.
-      # Hosts that need to layer on more guidance (e.g. Shopify's Graphite
-      # addendum) override this with lib.mkForce, prepending the same chunks.
       context = lib.concatStringsSep "\n\n" [
         (builtins.readFile ./agents.md)
         (builtins.readFile ./agents-cc-sdd.md)
@@ -402,30 +400,25 @@
         # skills.paths at https://opencode.ai/config.json
         skills.paths = [ ".claude/skills" ];
 
-        # Globally disallow the `git` and `gt` (Graphite) CLIs in the bash
-        # tool. Agents must use the matching base server via mcpproxy (OUTSIDE
-        # the sandbox) for every version-control operation: git-mcp for plain
-        # git, gt-mcp (`run_gt_cmd`, which can run any gt subcommand) for
-        # Graphite. git-mcp carries the full git config (commit identity,
-        # signing, ~/.gitconfig includes) that the nono sandbox denies to bash
-        # `git`, and neither is a bash command so these denies never touch
-        # them. AGENTS.md already states the git-mcp-first and gt-via-gt-mcp
-        # rules as preferences; this makes them enforceable rather than
-        # advisory.
+        # Globally disallow the `git` and `gt` CLIs in the bash tool. Routine
+        # version-control operations use git-mcp outside the sandbox, where
+        # commit identity, signing, and ~/.gitconfig includes remain available.
+        # The retained legacy-recovery skill uses gt-mcp only when explicitly
+        # loaded after a matching failure. Neither MCP server is a bash command,
+        # so these denies do not affect it.
         #
         # Pattern semantics (https://opencode.ai/docs/permissions): bash rules
         # match the parsed command, last-match-wins. Nix serialises attrs keys
         # lexicographically, so the catch-all "*" (ASCII 0x2A) always sorts
         # before "git"/"git *"/"gt"/"gt *" and stays the FIRST (broadest)
         # rule. "git"/"gt" block the bare binaries; "git *"/"gt *" block every
-        # subcommand (git status, git add, gt create, gt submit, …). The
-        # Shopify stacked-PR workflow keeps working through gt-mcp, and git
-        # staging routes through git-mcp's git_add.
+        # subcommand. Native Stack workflows use GitHub MCP plus explicit local
+        # CLI handoffs, while ordinary staging routes through git-mcp's git_add.
         #
         # Built-in agents (build/plan/general/explore) inherit this default;
         # custom agents with their own permission.bash block OVERRIDE it
-        # (agent rules win), so each such agent re-states these git/gt denies
-        # in its frontmatter — see the agents/ directories.
+        # because agent rules win. Those agents define their own narrower
+        # command surface in frontmatter.
         #
         # Merges with each host's permission block (e.g. the Shopify host's
         # `permission."*" = "allow"`): `bash` is an explicit per-tool key, so

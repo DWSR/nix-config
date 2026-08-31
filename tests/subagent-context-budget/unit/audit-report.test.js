@@ -256,7 +256,7 @@ test('buildAuditReport: reports host-specific agents and declared permission sur
       mcpproxy_call_tool_read: 'allow',
       mcpproxy_call_tool_write: 'allow',
     },
-    capabilityRationale: ['Graphite, GitHub, Buildkite, bash fallback, and subagent orchestration for stack operations'],
+    capabilityRationale: ['GitHub-native Stack, Buildkite, local repair, and subagent orchestration'],
     smokeClass: 'shopify-stack-plan',
   };
   metadata.agents['yb-sleuth'] = {

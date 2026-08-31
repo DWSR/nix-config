@@ -38,37 +38,6 @@ in
   # setting is preserved by moving it into the structured option.
   programs.opencode.tui.scroll_acceleration.enabled = true;
 
-  # Override the common AGENTS.md (home-manager/common/agents.md) with a
-  # concatenated version that adds Shopify-host-specific Graphite guidance.
-  # The common module declares programs.opencode.context, so mkForce is
-  # required to replace rather than collide. The rendered file is the
-  # two common chunks (memory + cc-sdd preamble) plus the Shopify-only
-  # Graphite addendum, separated by blank lines. The upstream
-  # cc-sdd quickstart (pkgs.cc-sdd-skills/agents-md) is intentionally
-  # NOT included — the slash-command catalogue is already covered by
-  # the cc-sdd preamble and the per-skill SKILL.md frontmatter that
-  # opencode loads from ~/.config/opencode/skills/. See
-  # memories/2026-05-20-agents-md-compression.md for the rationale.
-  #
-  # The agents-graphite.md addendum is the lean version: decision
-  # matrix, green-path rule, bypass-autonomy rule, pitfall index, and
-  # workflow rules summary. The full Category A/B/C bash recovery
-  # catalogue lives in the graphite-pitfalls skill (./skills/) and
-  # only loads when a gt command has actually failed. See
-  # memories/2026-04-30-graphite-pitfalls.md for the deeper
-  # investigative reference (new failure modes not yet in the skill).
-  #
-  # The home-manager opencode module's `context` option is `lines`-typed
-  # (null | string), not a path or derivation. Pass the concatenated
-  # string directly rather than via pkgs.writeText.
-  programs.opencode.context = lib.mkForce (
-    lib.concatStringsSep "\n\n" [
-      (builtins.readFile ../../../home-manager/common/agents.md)
-      (builtins.readFile ../../../home-manager/common/agents-cc-sdd.md)
-      (builtins.readFile ./agents-graphite.md)
-    ]
-  );
-
   # Shopify-only skills, co-installed alongside the cc-sdd kiro-* skills
   # under ~/.config/opencode/skills/ per the pattern documented in
   # home-manager/common/cc-sdd.nix lines 64-68.
@@ -313,10 +282,9 @@ in
     ];
     share = "disabled";
     autoupdate = false;
-    # bash `git` and `gt` (Graphite) are denied globally in
-    # home-manager/common/opencode.nix (git-mcp-first / gt-via-gt-mcp). That
-    # `permission.bash` sub-key deep-merges in here and wins for bash commands
-    # despite the top-level "*" allow below.
+    # bash `git` and `gt` are denied globally in home-manager/common/opencode.nix.
+    # That `permission.bash` sub-key deep-merges in here and wins for bash
+    # commands despite the top-level "*" allow below.
     permission = {
       "*" = "allow";
       "doom_loop" = "allow";

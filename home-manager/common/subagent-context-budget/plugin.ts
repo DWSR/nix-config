@@ -47,13 +47,13 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
       "Do not edit tasks.md from subagent implementation handoffs unless explicitly assigned that parent-controller role.",
     ].join("\n"),
   }),
-  "graphite-minimal": Object.freeze({
-    name: "graphite-minimal",
+  "github-native-stacks-minimal": Object.freeze({
+    name: "github-native-stacks-minimal",
     category: "workflow",
     text: [
-      "# Minimal Graphite workflow instructions",
-      "For Shopify stacks, prefer gt through mcpproxy and ask before any force, no-verify, or environment-bypass operation.",
-      "Load the Graphite pitfall recovery playbook only after an actual gt failure.",
+      "# Minimal GitHub-native Stack instructions",
+      "Map remote Stack order through GitHub MCP before acting on any member.",
+      "Never imitate cascade rebase, sync, or push with per-branch Git calls. Diagnose through MCP and provide the exact user-owned gh stack handoff when local orchestration is required.",
     ].join("\n"),
   }),
   "shopify-host": Object.freeze({
@@ -111,7 +111,7 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
   "shopify-stack": Object.freeze({
     name: "shopify-stack",
     category: "role-fragment",
-    text: "# Shopify stack role\nPlan and inspect Shopify stacked-PR workflows without applying bypasses unless explicitly authorized.",
+    text: "# Shopify stack role\nPlan and inspect Shopify GitHub-native Stack workflows without applying bypasses unless explicitly authorized.",
   }),
   "shopify-yugabyte-readonly": Object.freeze({
     name: "shopify-yugabyte-readonly",
@@ -129,7 +129,7 @@ const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object
   "security-readonly": Object.freeze(["universal", "memory-mcpproxy", "security-readonly"]),
   "vault-curation": Object.freeze(["universal", "memory-mcpproxy", "vault-curation"]),
   "vault-synthesis": Object.freeze(["universal", "memory-mcpproxy", "vault-synthesis"]),
-  "shopify-stack": Object.freeze(["universal", "memory-mcpproxy", "graphite-minimal", "shopify-host", "shopify-stack"]),
+  "shopify-stack": Object.freeze(["universal", "memory-mcpproxy", "github-native-stacks-minimal", "shopify-host", "shopify-stack"]),
   "shopify-yugabyte-readonly": Object.freeze(["universal", "memory-mcpproxy", "shopify-host", "shopify-yugabyte-readonly"]),
 })
 

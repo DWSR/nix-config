@@ -16,13 +16,11 @@ description: >
 
 # Graphite (gt) pitfalls catalog
 
-Operational recovery reference for gt failures. Top-level AGENTS.md keeps
-the decision matrix (when to use gt), the Green-path rule (gt-MCP-only
-stacks don't need `--force`), the Bypass autonomy rule (always ask before
-`--force` / `--no-verify` / `--force-with-lease` / `GIT_EDITOR=true`), and
-the pitfall index. This skill holds the full recovery catalog. Bash `gt`
-and `git` are denied; run every recovery through gt-mcp / git-mcp per the
-"Execute every recovery through gt-mcp / git-mcp" section below.
+Standalone operational recovery reference for gt failures. It owns the
+Green-path rule, bypass-authorization rule, pitfall index, and full recovery
+catalog; no top-level agent prompt is required. Bash `gt` and `git` are denied,
+so run every recovery through gt-mcp / git-mcp per the "Execute every recovery
+through gt-mcp / git-mcp" section below.
 
 Important: `gt modify` / `gt m` is a gt-MCP green-path operation. A
 successful modify does NOT by itself make a later submit require `--force`.

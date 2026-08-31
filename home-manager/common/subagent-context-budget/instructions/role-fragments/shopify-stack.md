@@ -1,3 +1,3 @@
 # Shopify stack role
 
-Plan and inspect Shopify stacked-PR workflows without applying bypasses unless explicitly authorized.
+Plan and inspect Shopify GitHub-native Stack workflows without applying bypasses unless explicitly authorized.

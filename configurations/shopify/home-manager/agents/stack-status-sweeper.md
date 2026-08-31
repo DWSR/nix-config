@@ -1,5 +1,5 @@
 ---
-description: Read-only Shopify stack helper. Sweeps GitHub PR metadata, statuses, reviews, comments, labels, and files for every PR in a Graphite stack. Use from @stack-captain during fan-out status collection.
+description: Read-only Shopify native Stack helper. Sweeps GitHub PR metadata, statuses, reviews, comments, labels, and files for every member PR. Use from @stack-captain during fan-out status collection.
 mode: subagent
 model: openai/gpt-5.6
 variant: xhigh
@@ -27,7 +27,7 @@ Expect the prompt to include owner, repo, and the PR numbers in bottom-up order.
 
 - Use mcpproxy's discover-then-invoke idiom only.
 - Use GitHub MCP read tools such as `pull_request_read` and `issue_read`.
-- Do not mutate GitHub, Graphite, files, labels, comments, or review state.
+- Do not mutate GitHub, native Stack state, files, labels, comments, or review state.
 - Do not use bash or `gh`.
 
 ## Output
@@ -35,7 +35,7 @@ Expect the prompt to include owner, repo, and the PR numbers in bottom-up order.
 Return a compact report with:
 
 - PR number, title, branch, head SHA, draft state, review decision, mergeability.
-- Actionable check statuses, explicitly excluding `Graphite Mergeability Check` from the actionable-CI calculation.
+- Required and optional check statuses, with approval-only merge gates reported separately from actionable machine checks.
 - `PR Review Bot Comments Addressed` status:
   - `missing` means Binks has not produced required output yet and is not green for stack-captain's final gate.
   - present pending/failure/success must be reported exactly.

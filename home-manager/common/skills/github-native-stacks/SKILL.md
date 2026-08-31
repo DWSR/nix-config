@@ -5,7 +5,7 @@ description: >-
   MCP. Use ONLY when the user explicitly mentions GitHub native stacks,
   native Stack objects, or `gh stack`, or explicitly asks to list, inspect,
   create, extend, or unstack one. Do not trigger for generic stacked PRs or
-  Graphite stacks.
+  stacks managed by another tool.
 ---
 
 # GitHub Native Stacks
@@ -16,8 +16,8 @@ pull request above the bottom targets the head branch of the pull request below
 it.
 
 This skill is explicit-only. Generic requests about stacked PRs continue to use
-the repository's existing Git or Graphite policy. Never convert a Graphite
-stack into a GitHub-native Stack unless the user explicitly asks.
+the repository's existing version-control policy. Never convert a stack managed
+by another tool into a GitHub-native Stack unless the user explicitly asks.
 
 ## Scope and boundaries
 
@@ -42,6 +42,12 @@ skill is a user-owned handoff, not an agent command. Inspect through MCP,
 explain the capability boundary, and provide the exact command the user can
 run. Use Git-MCP automatically only for the safe operations listed in
 "Git-MCP recovery boundary" below.
+
+Application-code repair on one verified existing member branch is distinct
+from Stack orchestration. When the user explicitly requests a code fix,
+Git-MCP may stage explicit paths and create one ordinary fix commit on that
+branch. It must not amend or rewrite existing Stack commits, and the required
+cascade rebase or push remains a user-owned `gh stack` handoff.
 
 ## Terminology and ordering
 
@@ -473,6 +479,8 @@ Git-MCP may perform these supporting operations when requested:
 - Read status, current branch, branch lists, worktrees, logs, and diffs.
 - Fetch a named remote after explicit authorization to update local refs.
 - Check out an existing local branch identified from remote Stack order.
+- Stage explicit paths and create one ordinary fix commit for an explicitly
+  requested code repair on a verified member branch.
 - Stage explicit conflict-resolution paths after the files are resolved.
 
 Git-MCP must not be used to imitate these `gh stack` operations:
@@ -480,6 +488,7 @@ Git-MCP must not be used to imitate these `gh stack` operations:
 - Cascade rebase or sync.
 - Continue or abort a `gh stack` rebase.
 - Multi-branch or atomic Stack push.
+- Amend, reset, or rewrite existing Stack member commits.
 - Stack reorder, split, combine, or commit-boundary reconstruction.
 - Hard-reset rollback of a partially changed Stack.
 - Editing or synthesizing `.git/gh-stack` metadata.

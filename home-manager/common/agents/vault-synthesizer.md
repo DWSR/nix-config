@@ -17,8 +17,6 @@ permission:
     "wc *": allow
     "head *": allow
     "tail *": allow
-    "gt": deny
-    "gt *": deny
 ---
 
 # vault-synthesizer
@@ -279,15 +277,13 @@ not.
 
 ### Promote — examples
 
-- An observation cluster shows the user evaluating `gt submit
-  --no-interactive` against `gt submit --no-interactive --force` on a
-  4-PR globaldb-yugabyte stack, hitting Category B7 (remote auto-rebase
-  vs. local restack diff-equivalent SHAs), verifying with the
-  `diff <(git diff origin/main...local) <(git diff origin/main...remote)`
-  pattern, and then force-pushing. Draft title: `Graphite stack B7
-  recovery — verify diff-equivalence before --force`. Tags include
-  `graphite`, `gt`. Fires the **bug root cause** and **reusable
-  pattern** criteria from AGENTS.md "When to create a memory".
+- An observation cluster shows the user discovering that the released GitHub
+  MCP lacked native Stack endpoints, comparing an upstream proposal with the
+  published API, and adding compatible `list`, `get`, `create`, `add`, and
+  `unstack` tools. Draft title: `GitHub MCP native stacks require the published
+  append and unstack contract`. Tags include `github-mcp`, `gh-stack`. Fires
+  the **non-obvious fact** and **reusable pattern** criteria from AGENTS.md
+  "When to create a memory".
 - A cluster shows the user pinning `nixvim` past a breaking input change
   by switching the flake input from `nixvim.url = "github:nix-community/nixvim"`
   to a tag ref and rebuilding `darwin-rebuild switch --flake .#hostname`
@@ -316,8 +312,8 @@ not.
   wrapper role's `meta/main.yml` pinned an old `chrony_role` version;
   fix was to bump the meta-deps pin and re-run molecule locally before
   pushing. Draft title: `Ansible wrapper-role meta-deps pin gates
-  chrony collectors`. Tags include `yugabytedb`, `graphite` (multi-PR
-  stack context). Fires the **bug root cause** criterion.
+  chrony collectors`. Tags include `yugabytedb`, `stacked-prs`. Fires the
+  **bug root cause** criterion.
 
 ### Skip — examples
 
@@ -331,14 +327,13 @@ not.
   decision documented and no failure debugged. Skip: matches "do NOT
   create: temporary information (build output, test results)". A
   successful build is the expected state; nothing to preserve.
-- A cluster that restates the gt B7 auto-rebase recovery already
-  covered by an existing memory (e.g.,
-  `memories/2026-04-30-graphite-pitfalls.md`). Skip because signal is
-  unclear, NOT because the agent deduplicated. Deduplication against
-  the live vault is vault-curator's job in the next pipeline stage
-  (per the INVARIANTS above); the synthesizer skips here because the
-  cluster's novelty is unclear — it may simply be the user re-applying
-  a known recipe, in which case there is no new fact to capture.
+- A cluster that restates the native Stack API contract already covered by an
+  existing memory (e.g., `memories/2026-08-29-github-mcp-native-stacks.md`).
+  Skip because signal is unclear, NOT because the agent deduplicated.
+  Deduplication against the live vault is vault-curator's job in the next
+  pipeline stage (per the INVARIANTS above); the synthesizer skips here because
+  the cluster's novelty is unclear — it may simply be the user re-applying a
+  known recipe, in which case there is no new fact to capture.
 - A cluster of `gh pr view <num> --json title,body,isDraft` lookups
   across a stack, used to confirm PR state before asking the user
   whether to `gh pr ready` them. Skip: matches "do NOT create: simple
@@ -746,7 +741,7 @@ across two project contexts:
   "drafts_written": 2,
   "draft_paths": [
     "memories/2026-05-13-cavemem-importer-build-failure.md",
-    "memories/2026-05-14-gt-stack-b7-recovery.md"
+    "memories/2026-05-14-github-native-stack-api.md"
   ],
   "failed_clusters": []
 }

@@ -1,5 +1,5 @@
 ---
-description: Read-only Shopify review-thread helper. Classifies bot review comments across PRs as actionable, stacked-PR false positive, incorrect, or deferred. Use from @stack-captain during fan-out bot triage.
+description: Read-only Shopify review-thread helper. Classifies bot review comments across native Stack members as actionable, Stack-context false positive, incorrect, or deferred. Use from @stack-captain during fan-out bot triage.
 mode: subagent
 model: openai/gpt-5.6
 variant: xhigh
@@ -40,7 +40,7 @@ Classify each bot item as:
 
 - `A_actionable_small`: real issue, small targeted fix.
 - `A_actionable_large`: real issue but design-level or broad; user decision required.
-- `B_stacked_false_positive`: valid only when isolated to one PR; addressed upstack/downstack.
+- `B_stack_context_false_positive`: valid only when a PR is viewed in isolation; addressed by a lower or higher Stack member.
 - `C_incorrect_or_not_applicable`: factually wrong or out-of-scope.
 - `D_deferred_by_user_policy`: technically valid but explicitly deferred by current user instruction.
 - `unknown`: insufficient context.

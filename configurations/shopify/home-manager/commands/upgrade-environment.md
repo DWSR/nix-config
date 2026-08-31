@@ -4,7 +4,7 @@ description: Upgrade all YugabyteDB clusters in an environment and merge the ass
 
 # Upgrade YugabyteDB Environment
 
-Upgrade all YugabyteDB clusters in a single environment to the version specified by the current Graphite PR stack, then merge the associated inventory PR.
+Upgrade all YugabyteDB clusters in a single environment to the version specified by the current GitHub-native PR Stack, then merge the associated inventory PR.
 
 ## Usage
 
@@ -16,12 +16,12 @@ Where `<environment>` is one of: `testing`, `staging`, `production`.
 
 ## Prerequisites
 
-- A Graphite PR stack from `/upgrade-yugabyte` must already exist
+- A GitHub-native PR Stack from `/upgrade-yugabyte` must already exist
 - The download lookup PR (PR 1 in the stack, titled "add <version> to downloaded versions") must already be merged
 - Chrome DevTools MCP must be available (for Infra Central UI interaction)
 - Infra Central MCP must be available (for workflow status polling and cluster lookups)
 - GitHub MCP must be available (for PR merging)
-- GT MCP must be available (for PR stack identification)
+- Git-MCP must be available (for current branch and repository identification)
 
 ## Tool invocation idiom
 
@@ -29,40 +29,48 @@ All MCP work goes through mcpproxy's four-tool agent surface
 (`retrieve_tools` + `call_tool_*`). For each upstream tool referenced
 below, discover its canonical name with
 `retrieve_tools(query: "<server> <operation>")` — the result's `name`
-field is in `server:tool` form (e.g. `gt-mcp:run_gt_cmd`,
+field is in `server:tool` form (e.g. `github:pull_request_stack_read`,
 `github:merge_pull_request`) and the `call_with` field recommends the
 verb. Invoke with the matching `call_tool_*`:
 
-- `call_tool_read` for read-only operations (e.g. PR state queries).
-- `call_tool_write` for state-mutating operations (gt subcommands,
-  PR merges, review writes, comment adds).
+- `call_tool_read` for read-only operations (e.g. Stack and PR state queries).
+- `call_tool_write` for state-mutating operations (PR merges, review writes,
+  comment adds).
 - `call_tool_destructive` for irreversible removals (none in this
   command).
 
 Pass parameters in the `args` field (a JSON object), not the legacy
 `arguments` field. Example:
-`call_tool_write(name: "gt-mcp:run_gt_cmd", args: { args: ["state"], cwd: "/abs/repo", why: "identify current Graphite stack" })`.
+`call_tool_read(name: "github:pull_request_stack_read", args: { method: "list", owner: "<owner>", repo: "<repo>", pullNumber: <number> })`.
 
 ## Instructions
 
 ### Step 0: Detect context and validate
 
-1. Invoke `gt-mcp:run_gt_cmd` (via `call_tool_write`) with upstream args `{ args: ["state"], cwd: "/abs/repo", why: "identify current Graphite stack" }` to identify the current Graphite PR stack.
+1. Use Git-MCP reads with the explicit absolute repository path to identify
+   the current branch and remote owner/repo. Discover a GitHub PR search/read
+   tool and resolve the open PR for that branch. If no PR can be resolved, ask
+   for a member PR or Stack number.
 
-2. Read the PR titles to find the target version. Look for a PR titled like "add <version> to downloaded versions" — extract the version from the title.
+2. Discover `github:pull_request_stack_read`. Use `method: "list"` with the
+   member `pullNumber`, then `method: "get"` with the returned human-facing
+   Stack number. Stop if the PR is not in exactly one native Stack; do not infer
+   a Stack from PR base branches.
 
-3. Identify which PR in the stack corresponds to the `$ARGUMENTS` environment:
+3. Read the PR titles to find the target version. Look for a PR titled like "add <version> to downloaded versions" — extract the version from the title.
+
+4. Identify which PR in the Stack corresponds to the `$ARGUMENTS` environment:
    - `testing` → PR titled containing "set testing clusters to"
    - `staging` → PR titled containing "set staging clusters to"
    - `production` → PR titled containing "set production clusters to"
 
-4. Confirm by checking the PR diff — it should modify files under `tools/ansible/inventories/<environment>/`.
+5. Confirm by checking the PR diff — it should modify files under `tools/ansible/inventories/<environment>/`.
 
-5. Verify PR 1 (download lookup) is already merged. If not, stop and tell the user: "PR 1 (download lookup) must be merged before upgrading any environment."
+6. Verify PR 1 (download lookup) is already merged. If not, stop and tell the user: "PR 1 (download lookup) must be merged before upgrading any environment."
 
-6. Extract the target version and build from the environment PR content (look for `node_yugabyte_current_version` and `node_yugabyte_current_build`).
+7. Extract the target version and build from the environment PR content (look for `node_yugabyte_current_version` and `node_yugabyte_current_build`).
 
-7. **If `$ARGUMENTS` is `production`**, ask for explicit confirmation: "You are about to upgrade PRODUCTION. This includes an irreversible YSQL catalog upgrade (upgrade_ysql). Are you sure you want to proceed?"
+8. **If `$ARGUMENTS` is `production`**, ask for explicit confirmation: "You are about to upgrade PRODUCTION. This includes an irreversible YSQL catalog upgrade (upgrade_ysql). Are you sure you want to proceed?"
 
 ### Step 1: Identify clusters to upgrade
 

@@ -75,7 +75,7 @@ eligible on the next invocation even if a prior session was interrupted.
    not individual upstream names. It is allowed only because Chrome navigation
    and form interaction require it. At runtime, call it only when the exact
    discovered upstream tool name starts with `chrome-devtools:`. Refuse every
-   GitHub, gt, Quick, or other upstream write tool even if retrieval returns it.
+   GitHub, Quick, or other upstream write tool even if retrieval returns it.
 9. A review is not complete merely because its text fields were saved. Upload
    and byte-verify the analysis artifact and every local file referenced by the
    persisted Quick fields before checking `review.reviewed`. Never defer file

@@ -33,7 +33,7 @@ Expect owner, repo, PR number, failed check name, and any known run/build/job id
 - Prefer Buildkite MCP reads for Buildkite checks: `get_build`, `tail_logs`, `get_job_logs`.
 - Use GitHub MCP reads for GitHub Actions logs/statuses when needed.
 - You may read local source files to correlate log paths with code, but you must not edit.
-- Do not run shell commands, retry builds, submit stacks, or mutate PR state.
+- Do not run shell commands, retry builds, publish Stack branches, or mutate PR state.
 
 ## Output
 
@@ -43,5 +43,5 @@ Return:
 - Root cause with the smallest relevant log excerpts.
 - Flake classification: `real`, `probable-flake`, or `unknown`, with rationale.
 - Proposed fix plan scoped to files/components, not an applied patch.
-- Whether the fix appears small enough for autonomous `stack-captain` mutation.
+- Whether the fix appears small enough for an autonomous local mutation before the user-owned publish handoff.
 - Metrics: log tools called, jobs inspected, elapsed CI duration if visible.

@@ -326,14 +326,11 @@ shelling out to the `git` CLI via bash.
 - A `git_commit` "File not found" for a file you know exists, or a
   `git_status` reporting a branch you never checked out, signals a hijacked
   session working dir — re-issue the call with an explicit `path`.
-- Where Graphite (`gt`, via the `gt-mcp` server) is used for stacked PRs, gt
-  remains the tool for that workflow and is likewise unaffected (it too runs
-  outside the sandbox). Use `git-mcp` for plain, non-stacked git work.
 
 
 # Commit messages
 
-When writing a git or Graphite commit message:
+When writing a commit message:
 
 - **Be concise.** Short subjects, tight bodies. Don't restate obvious
   context. One-line change → one-line message.
@@ -346,9 +343,6 @@ When writing a git or Graphite commit message:
   message explains why — the motivating bug, the preceding decision, the
   user-visible outcome, the constraint that forced the choice. Don't
   paraphrase the diff in prose.
-
-Applies equally to plain `git commit` and to `gt create` / `gt modify` on
-Graphite stacks.
 
 
 # Time and dates: use the `time` MCP, not shell `date`

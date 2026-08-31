@@ -37,6 +37,7 @@ test('instruction fragment files exist for universal, memory, SDD, host, and rol
     'universal.md',
     'memory-mcpproxy.md',
     'cc-sdd-minimal.md',
+    'github-native-stacks-minimal.md',
     'host-specific/shopify.md',
     'role-fragments/general-research.md',
     'role-fragments/kiro-spec-orchestration.md',
@@ -83,8 +84,9 @@ test('composeInstructionProfile omits unrelated workflow fragments', async () =>
   assert.doesNotMatch(readonly.systemText, /Shopify host/);
 
   assert.equal(shopify.kind, 'composed');
-  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'graphite-minimal'));
+  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'github-native-stacks-minimal'));
   assert.ok(shopify.fragments.some((fragment) => fragment.name === 'shopify-host'));
+  assert.match(shopify.systemText, /GitHub-native Stack/);
   assert.doesNotMatch(shopify.systemText, /Neovim/);
 });
 

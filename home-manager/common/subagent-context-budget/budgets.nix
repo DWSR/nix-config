@@ -169,7 +169,7 @@ let
       };
       instructionProfile = "shopify-stack";
       capabilityRationale = [
-        "Graphite, GitHub, Buildkite, bash fallback, and subagent orchestration for stack operations"
+        "GitHub-native Stack, Buildkite, local repair, and subagent orchestration"
       ];
       smokeClass = "shopify-stack-plan";
     })
@@ -210,7 +210,7 @@ let
       state = enforced "host-override";
       permissionBudget = mcpReadOnlyBudget;
       instructionProfile = "shopify-stack-preflight-readonly";
-      capabilityRationale = [ "gt-mcp read access for Graphite stack preflight checks" ];
+      capabilityRationale = [ "GitHub and Git MCP read access for native Stack preflight checks" ];
       smokeClass = "shopify-stack-preflight";
     })
     (mkAgent {
@@ -220,9 +220,11 @@ let
       state = enforced "host-override";
       permissionBudget = readOnlyBudget // {
         lsp = "allow";
+        mcpproxy_retrieve_tools = "allow";
+        mcpproxy_call_tool_read = "allow";
       };
       instructionProfile = "shopify-stack-fix-review";
-      capabilityRationale = [ "read-only code and LSP access for mutation wave review" ];
+      capabilityRationale = [ "read-only code, LSP, and startup memory checks for mutation wave review" ];
       smokeClass = "shopify-fix-review";
     })
     (mkAgent {

@@ -1,43 +1,54 @@
 ---
-description: Restack Graphite PR stack and resolve conflicts
+description: Prepare a GitHub-native Stack rebase, conflict-resolution, and push handoff
 ---
 
-Restack the current Graphite PR stack, automatically resolving any merge conflicts, then submit.
+# Rebase Native Stack
 
-## Tool invocation idiom
+Prepare the current GitHub-native PR Stack for a cascade rebase and push.
 
-All `gt` operations go through mcpproxy's four-tool agent surface
-(`retrieve_tools` + `call_tool_*`). Discover the gt run-command tool
-once with `retrieve_tools(query: "gt run gt command")` — the result's
-`name` will be `gt-mcp:run_gt_cmd` and its `call_with` will be
-`call_tool_write` (every `gt` subcommand mutates VCS state). Invoke
-with upstream args shaped like
-`{ args: ["<subcommand>", "<flag>"], cwd: "/abs/repo", why: "reason" }`.
-Pass parameters in the `args` field (a JSON object), not the legacy
-`arguments` field.
+Load `github-native-stacks` first. Map the remote Stack with GitHub MCP and use
+Git-MCP only for safe local inspection or explicit conflict-file staging. Never
+execute `gh stack`, loop ordinary Git rebases or pushes, or mutate PR bases to
+imitate a Stack operation.
 
 ## Instructions
 
-### Step 1: Restack the stack
+1. Resolve owner, repo, and the current PR with Git-MCP and GitHub MCP reads.
+2. Use `pull_request_stack_read` with `method: "list"` and `pullNumber`, then
+   `method: "get"`, to show the Stack number and bottom-to-top member order.
+3. Inspect local status and worktrees through Git-MCP with the explicit
+   absolute repository path.
+4. If local Stack tracking or member branches are missing, provide and stop at:
 
-Invoke the `gt-mcp:run_gt_cmd` tool (via `call_tool_write`) with the
-upstream args `{ args: ["restack"], cwd: "/abs/repo", why: "restack the current Graphite stack" }`.
+   ```bash
+   gh stack checkout <stack-number>
+   ```
 
-### Step 2: Handle merge conflicts
+5. Otherwise provide the rebase command matching the requested scope:
 
-If the restack indicates merge conflicts:
+   ```bash
+   gh stack rebase --remote <remote>
+   gh stack rebase --upstack --remote <remote>
+   gh stack rebase --downstack --remote <remote>
+   ```
 
-1. Identify conflicting files by running `git diff --name-only --diff-filter=U`.
-2. For each conflicting file:
-   - Read the file to see the conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`)
-   - Resolve the conflict by editing the file, choosing the correct resolution based on the intent of both changes
-   - Stage the resolved file with `git add <file>`
-3. Invoke the `gt-mcp:run_gt_cmd` tool (via `call_tool_write`) with the
-   upstream args `{ args: ["continue"], cwd: "/abs/repo", why: "continue the Graphite restack after conflict resolution" }` to resume the restack.
-4. Repeat steps 1-3 if further conflicts arise on subsequent branches in the stack.
+6. Explain that the user must run the command. Do not select `--upstack` or
+   `--downstack` without a current member and explicit scope.
+7. If the user returns with conflicts, inspect and resolve the named files,
+   stage only those paths through Git-MCP, then provide one command:
 
-### Step 3: Submit the stack
+   ```bash
+   gh stack rebase --continue
+   gh stack rebase --abort
+   ```
 
-Once the restack completes successfully, invoke the `gt-mcp:run_gt_cmd`
-tool (via `call_tool_write`) with upstream args `{ args: ["submit", "--no-interactive"], cwd: "/abs/repo", why: "submit the restacked PRs" }`
-to push all branches and update PRs.
+8. After the user confirms a successful rebase, re-read local and remote state,
+   then provide:
+
+   ```bash
+   gh stack push --remote <remote>
+   ```
+
+9. Explain that push uses per-branch force-with-lease and is not atomic. After
+   the user confirms completion, re-read the remote Stack and every member PR
+   before reporting success.

@@ -16,8 +16,6 @@ permission:
     "find *": allow
     "git": deny
     "git *": deny
-    "gt": deny
-    "gt *": deny
     "nix *": allow
     "nvim --headless *": allow
 ---
