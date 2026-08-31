@@ -28,8 +28,9 @@ deterministic reproduction a maintainer can rerun.
 ## Non-negotiables
 
 - **Memory first.** Search Obsidian memories and cavemem for the issue number
-  and symptom keywords before any other research; a complete prior validation
-  is reused, not repeated.
+  and symptom keywords before any other research. Reuse prior root-cause and
+  reproduction work, but skip a matrix run only when the prior evidence tested
+  the versions that still resolve as the latest required targets.
 - **Public-artifact confidentiality.** Anything you post to GitHub is
   permanent and public. Apply `src/AGENTS.md` § Confidentiality to every
   comment, script, and filename. When unsure whether a string is sensitive,
@@ -45,6 +46,11 @@ deterministic reproduction a maintainer can rerun.
 - **Evidence discipline.** Every root-cause claim carries a `file.cc:NNN`
   citation; every matrix cell records the command and observed outcome;
   predictions are stated before the repro runs.
+- **Complete support matrix.** Run the reproduction and controls against the
+  newest published release from each current in-support branch (`2024.2`,
+  `2025.1`, `2025.2`, and `2026.1`) and the latest preview corresponding to
+  `master`. A backport commit is provenance, not runtime proof: use it to find
+  the first release containing a fix, never to infer that the fix is effective.
 - **Backlog attachment staging.** When the dispatcher requires a Quick backlog
   handoff, execute the skill's backlog attachment staging protocol. Never
   return `READY_FOR_QUICK` until the manifest covers the analysis artifact and
@@ -56,11 +62,17 @@ Return a single message containing:
 
 - **Verdict**: VALIDATED / NOT-REPRODUCED / NOT-A-BUG / NEEDS-INFO, with a
   one-line justification.
-- **Root cause**: `file.cc:NNN` + mechanism (2-5 sentences); whether master
-  is still affected.
+- **Root cause**: `file.cc:NNN` + mechanism (2-5 sentences); which required
+  validation targets are still affected.
 - **Trigger matrix**: predicted vs observed, per cell.
 - **Reproduction**: exact commands, image tags, failure signature.
-- **Versions tested**.
+- **Versions tested**: resolution time and authoritative freshness evidence,
+  followed by observed reproduction and control outcomes for the latest
+  `2024.2`, `2025.1`, `2025.2`, `2026.1`, and `master` targets, plus the
+  reported release when distinct.
+- **Backport provenance**: first released version containing the fix on each
+  applicable support branch, derived from tag/commit ancestry and kept
+  separate from runtime proof.
 - **Artifact path**: `/tmp/claude/yb-issue-<NNNN>-analysis.md` (must exist
   and follow the skill's template).
 - **Backlog attachment manifest** when requested by the dispatcher, using its

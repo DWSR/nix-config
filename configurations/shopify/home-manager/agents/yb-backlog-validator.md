@@ -31,6 +31,14 @@ Quick site `https://yugabyte-gh-issue-backlog-review.quick.shopify.io/` is the
 durable work queue. You orchestrate; fresh `yb-issue-validator` workers perform
 issue-level research and reproduction.
 
+The current required validation targets are `2024.2`, `2025.1`, `2025.2`,
+`2026.1`, and `master`. For each release branch, the worker must resolve and
+test its newest published release. For `master`, it must test the latest
+preview image and record the corresponding source revision. A backport commit
+is provenance, not runtime proof: it can identify the first release containing
+a fix, but only an observed reproduction result on a branch's latest version
+can establish whether that fix is effective there.
+
 ## Mission
 
 With no issue arguments, process active unreviewed Quick records in ascending
@@ -72,6 +80,12 @@ eligible on the next invocation even if a prior session was interrupted.
    and byte-verify the analysis artifact and every local file referenced by the
    persisted Quick fields before checking `review.reviewed`. Never defer file
    collection to a later archival pass.
+10. Never accept `READY_FOR_QUICK` unless every executable reproduction was run
+    with controls on every current required validation target. A `NEEDS-INFO`
+    artifact that cannot form a faithful reproduction must identify the same
+    missing input for each target and make no affected/fixed claim. Source
+    inspection, branch ancestry, and the presence of a backport commit cannot
+    replace a runtime matrix cell.
 
 ## Phase 0: Preflight
 
@@ -160,6 +174,16 @@ unreviewed notes can contain useful prior evidence and must not be ignored.
 
 ## Phase 2: Dispatch four validators
 
+Immediately before each wave, resolve one authoritative `resolved_targets` map
+for all four workers. Use current public YugabyteDB release/tag metadata and
+official image metadata; do not copy versions from a worker, Quick, or memory.
+For each release branch, record the newest published non-preview release, image
+tag, source tag revision, resolution time, and evidence that the tag belongs to
+that branch. For `master`, record the latest preview image and corresponding
+source revision. If any target cannot be resolved unambiguously, stop the run as
+a systemic failure. Re-resolve for the next wave so a long backlog run does not
+keep using a superseded release.
+
 Dispatch all independent workers for a wave in one parallel Task-tool message.
 Use a fresh `yb-issue-validator` task for each issue. Do not start the next wave
 until every task in the current wave has reached a terminal result and every
@@ -176,7 +200,15 @@ Every worker prompt must contain:
 - `GitHub comments and pull requests are explicitly prohibited`;
 - unique issue-number-prefixed scratch and podman names;
 - permission to reuse a complete prior memory instead of repeating the
-  reproduction, while recreating a missing handoff artifact from that evidence;
+  reproduction only when that prior evidence includes the complete current
+  support matrix, while recreating a missing handoff artifact from that
+  evidence;
+- `SUPPORTED_TARGETS: 2024.2, 2025.1, 2025.2, 2026.1, master` and the complete
+  controller-resolved `resolved_targets` map, with instructions to verify that
+  map's evidence and run the reproduction and controls against every exact
+  resolved target;
+- that backport commits may be used only to map the first release containing a
+  fix and never as a substitute for an observed matrix result;
 - `BACKLOG_ATTACHMENT_STAGING: REQUIRED`, Quick's ten-attachment limit, and
   the instruction to execute the validate-yb-issue skill's backlog attachment
   staging protocol;
@@ -202,7 +234,8 @@ execution problem.
 <paste-ready evidence, root cause/current status, source citations, and date>
 
 ## Quick Backports
-<one version per line, or exactly (none)>
+<one support branch/version that remains affected and requires a backport per
+line, or exactly (none)>
 
 ## Quick Attachments
 ```json
@@ -235,8 +268,14 @@ For `READY_FOR_QUICK`, require all of the following:
 1. The issue number and artifact path match the selected record.
 2. The protocol and Quick verdicts are exact allowlisted values.
 3. Quick Reproduction and Quick Details are non-empty. An explanatory `N/A`
-   is valid for behavior-delta or historical validation.
+   is valid only when no faithful executable reproduction can be formed, such
+   as a `NEEDS-INFO` result missing required input. A historical issue or known
+   backport is not a reason to use `N/A`.
 4. Quick Backports is either `(none)` or newline-separated non-empty versions.
+   Each listed value identifies an in-support branch/version that the runtime
+   matrix shows remains affected and therefore requires a backport. First-fixed
+   release provenance belongs in the artifact and Quick Details, not in Quick's
+   `backports_required` field.
 5. The artifact exists, names the same issue in its H1, and contains exactly
    one non-empty `## Verdict`, `## Root cause`, `## Trigger matrix`,
    `## Reproduction`, `## Versions tested`, and `## Confidentiality check`.
@@ -245,11 +284,26 @@ For `READY_FOR_QUICK`, require all of the following:
    `NEEDS-INFO`, in which case it must identify the evidence that is missing.
    The reproduction and trigger sections must contain observed evidence or an
    explicit explanation of why executable reproduction does not apply.
+   The Versions tested section must include one explicit row for each of
+   `2024.2`, `2025.1`, `2025.2`, `2026.1`, and `master`, plus the reported
+   release when it is different. Every release-branch row must identify the
+   newest published release resolved during this validation; the `master` row
+   must identify the latest preview and corresponding source revision. Every
+   row must record an observed reproduction and control outcome and whether the
+   fix is effective. Reject a runtime row inferred only from source or commit
+   presence. If an executable reproduction exists and any required target could
+   not be run, the handoff is not ready. A `NEEDS-INFO` row may instead name the
+   input that prevents a faithful run, but it cannot claim affected or fixed.
+   The section's target versions, source revisions, resolution time, and
+   freshness evidence must exactly match the controller's `resolved_targets`
+   map. A stale memory relabeled as current is invalid.
 6. The memory path ends in `.md` and the Obsidian read-note tool can read it.
 7. Quick Reproduction and Quick Details must be supported by the artifact.
    Reject a handoff whose current-status, affected-version, root-cause, or
    reproduction claims contradict the artifact; do not choose the more
-   convenient version.
+   convenient version. Quick Details must summarize the complete required
+   validation matrix and distinguish runtime evidence from first-fixed-version
+   ancestry.
 8. Quick Details contains the exact backtick-delimited artifact path. Every
    local path in Quick Reproduction and Quick Details is an exact regular-file
    path under `/tmp/claude/` or `/private/tmp/claude/`; reject directory,

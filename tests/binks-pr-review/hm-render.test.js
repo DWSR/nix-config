@@ -599,6 +599,8 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.ybBacklogCommandText, /agent: yb-backlog-validator/);
   assert.match(rendered.shopify.ybBacklogCommandText, /waves of four until the active unreviewed queue/);
   assert.match(rendered.shopify.ybBacklogCommandText, /uploaded to that\s+issue and verified in Quick/);
+  assert.match(rendered.shopify.ybBacklogCommandText, /`2024\.2`, `2025\.1`, `2025\.2`,\s+and `2026\.1`, plus the latest preview corresponding to `master`/);
+  assert.match(rendered.shopify.ybBacklogCommandText, /presence is\s+not runtime proof/);
   assert.match(rendered.shopify.ybBacklogCommandText, /OPENCODE_NONO=disabled opencode/);
   assert.match(rendered.shopify.ybBacklogCommandText, /\$ARGUMENTS/);
   assert.equal(rendered.shopify.skillPresent, true);
@@ -606,6 +608,9 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.ybValidationSkillText, /Backlog attachment staging \(when requested\)/);
   assert.match(rendered.shopify.ybValidationSkillText, /path\.join\(os\.tmpdir\(\), "opencode"\)/);
   assert.match(rendered.shopify.ybValidationSkillText, /never omit a referenced file/);
+  assert.match(rendered.shopify.ybValidationSkillText, /current required targets are `2024\.2`, `2025\.1`, `2025\.2`,\s+`2026\.1`, and `master`/);
+  assert.match(rendered.shopify.ybValidationSkillText, /newest published release from each in-support\s+branch/);
+  assert.match(rendered.shopify.ybValidationSkillText, /backport commit does not\s+satisfy a cell/);
   assert.match(rendered.shopify.skillText, /^---\nname: binks-pr-review\n/);
   assert.match(rendered.shopify.skillText, /performs no hourly or periodic update/);
   assert.match(rendered.shopify.skillText, /--provider local/);
@@ -626,6 +631,9 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.equal(rendered.shopify.agentNames.includes('yb-issue-validator'), true);
   assert.match(rendered.shopify.ybIssueValidatorText, /Backlog attachment staging/);
   assert.match(rendered.shopify.ybIssueValidatorText, /every local file referenced by the Quick fields/);
+  assert.match(rendered.shopify.ybIssueValidatorText, /Complete support matrix/);
+  assert.match(rendered.shopify.ybIssueValidatorText, /A backport commit is provenance, not runtime proof/);
+  assert.match(rendered.shopify.ybIssueValidatorText, /resolution time and authoritative freshness evidence/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /mode: all/);
   assert.doesNotMatch(rendered.shopify.ybBacklogValidatorText, /^model:/m);
   assert.match(rendered.shopify.ybBacklogValidatorText, /waves of exactly four/);
@@ -642,6 +650,14 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.ybBacklogValidatorText, /dispatch one fresh validator/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /All review writes use the browser form/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /Never defer file\s+collection to a later archival pass/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /SUPPORTED_TARGETS: 2024\.2, 2025\.1, 2025\.2, 2026\.1, master/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /If an executable reproduction exists and any required target could\s+not be run, the handoff is not ready/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /presence of a backport\s+commit cannot\s+replace a runtime matrix cell/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /resolve one authoritative `resolved_targets` map/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /Re-resolve for the next wave/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /A historical issue or known\s+backport is not a reason to use `N\/A`/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /remains affected and therefore requires a backport/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /must exactly match the controller's `resolved_targets`/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /## Quick Attachments/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /Only after every required attachment is authoritatively present/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /whose `original_name` equals the manifest name/);

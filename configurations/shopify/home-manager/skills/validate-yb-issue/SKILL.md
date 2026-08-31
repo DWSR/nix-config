@@ -41,8 +41,8 @@ As the dispatcher:
    authorization state, the expected artifact path
    (`/tmp/claude/yb-issue-<NNNN>-analysis.md`), and the required return
    format (verdict, root cause file:line, trigger-matrix summary, repro
-   commands, versions tested, artifact path, memory-note path, pending
-   questions).
+   commands, the complete supported-release matrix, backport provenance,
+   artifact path, memory-note path, pending questions).
 3. When the subagent returns with pending questions (e.g. "may I post the
    repro comment?"), relay them to the user via the question tool, then
    resume the same task (pass the prior `task_id`) with the answers.
@@ -71,7 +71,10 @@ validated — e.g. #32549 was fully validated, fixed, and memorialized):
    with `["yugabyte-db"]` / `["yugabytedb"]`.
 2. Cavemem: `search` with the issue number and symptom keywords.
 
-A complete prior validation → reuse it; do not re-reproduce.
+Reuse a prior root cause and reproduction design, but first resolve today's
+required target versions. Skip execution only for cells whose prior evidence
+tested those exact versions; rerun every stale or missing cell. An older memory
+that predates the current support matrix is not a complete validation.
 
 ### Step 1: Fetch and parse the issue
 
@@ -108,9 +111,13 @@ Work in this checkout; make no modifications in this skill.
    frames) — symbolize by reading source, not the binary. A FATAL line in
    newer builds embeds the full build path (`.../src/yb/util/date_time.cc:111`),
    which proves the defect file:line for that version without a local build.
-2. **Confirm on master AND the reported release.** Nearby lines shift between
-   versions; the defect site is what must match. State explicitly whether
-   master is still affected — it decides whether a fix PR is warranted.
+2. **Confirm the mechanism on every supported branch, master, and the reported
+   release.** The current required targets are `2024.2`, `2025.1`, `2025.2`,
+   `2026.1`, and `master`; also inspect the reported release when it is
+   different. Nearby lines shift between versions, so match the defect site and
+   mechanism rather than line numbers. Source inspection forms the prediction;
+   it does not establish whether a fix is effective. State explicitly which
+   targets remain affected and whether a master fix PR is warranted.
 3. **Trace the trigger path.** Walk callers until you can state *when* the code
    runs (startup? first use? background timer?) and *what input* makes it
    fail. Distinguish deterministic-at-startup from scheduled-later paths
@@ -132,9 +139,24 @@ Cite everything as `path/to/file.cc:NNN`.
 Prefer official container images over local builds — fast, version-pinned, and
 maintainers can rerun them. `podman` is the runtime on this host.
 
+- **Required targets:** test the newest published release from each in-support
+  branch (`2024.2`, `2025.1`, `2025.2`, and `2026.1`) plus the latest preview
+  corresponding to `master`. Also test the reported version when it is not one
+  of those resolved versions.
+- **Resolve versions at run time:** for each release branch, identify the
+  newest published non-preview release tag whose source tag belongs to that
+  branch. For `master`, identify the latest published preview tag and its
+  corresponding source revision. Record both the resolved tags and the
+  evidence that they are current; never reuse version choices from an old
+  memory without rechecking them.
 - **Images:** `docker.io/yugabytedb/yugabyte:<tag>`. On Apple Silicon use the
-  explicit `-aarch64` tag suffix. Pin explicit versions; also test the latest
-  preview tag (tracks master) to show the bug is/isn't version-specific.
+  explicit `-aarch64` tag suffix. Pin every resolved version explicitly.
+- **Execute every cell:** run the same behavioral reproduction and controls
+  against every resolved target. Version-specific command adjustments are
+  allowed only when documented and the asserted behavior remains identical.
+  Source inspection, branch ancestry, or a present backport commit does not
+  satisfy a cell. If any required target cannot be run, report the blocker and
+  do not claim a complete validation or return `READY_FOR_QUICK`.
 - **Binaries live at `/home/yugabyte/bin/`** inside the image and are NOT on
   PATH (`yb-master`, `yb-tserver`, `yugabyted`, `ysqlsh`, `ycqlsh`).
 - **Fast path** — run the one daemon that crashes, directly, with minimal
@@ -158,6 +180,11 @@ maintainers can rerun them. `podman` is the runtime on this host.
 - **Always include control cases** (e.g. `TZ=UTC` clean start) — causality
   needs both directions.
 - **Run the full predicted matrix** from Step 2.4 and record every cell.
+- **Determine first fixed releases separately:** after the runtime matrix, use
+  fix/backport commit and tag ancestry to identify the first published version
+  on each applicable release branch that contains the fix. This is provenance
+  for version boundaries, not evidence that the fix works; the latest-version
+  reproduction result is the effectiveness proof.
 - **Artifacts** (`reproduce.sh`, `REPRODUCTION.md`, matrix logs) go under
   `/tmp/claude/` — NOT `~/scratch` (outside the opencode sandbox; a prior
   session's `~/scratch` repro became unreadable to later sessions). If a repro
@@ -173,6 +200,11 @@ aliases `127.0.0.2`–`127.0.0.7` on `lo0` for mini-cluster tests. Build per
 ### Step 4: Verdict
 
 Pick exactly one:
+
+Do not choose a final verdict until every required target for which an
+executable reproduction exists has an observed reproduction and control
+result. A missing required cell is an execution blocker, not evidence of a
+fix.
 
 - **VALIDATED** — failure reproduced with the reported signature; root cause
   identified at file:line; trigger matrix matches the source-derived
@@ -206,7 +238,22 @@ invariant breaks, why the failure presents as reported).
 Exact commands + image tags + failure signature to grep for. Control case.
 
 ## Versions tested
-<tags/SHAs>; master affected: yes/no (evidence).
+Resolved at: <ISO timestamp>
+Resolution evidence: <authoritative release/tag and image metadata queries>
+
+| target | latest resolved version | source revision | observed repro/control | effective status |
+| 2024.2 | <release tag> | <tag SHA> | <observed result> | affected/fixed/not-applicable |
+| 2025.1 | <release tag> | <tag SHA> | <observed result> | affected/fixed/not-applicable |
+| 2025.2 | <release tag> | <tag SHA> | <observed result> | affected/fixed/not-applicable |
+| 2026.1 | <release tag> | <tag SHA> | <observed result> | affected/fixed/not-applicable |
+| master | <preview tag> | <source SHA> | <observed result> | affected/fixed/not-applicable |
+
+Add the reported release when distinct. Beneath the table, record the first
+published release containing the fix on each applicable support branch and the
+tag/commit ancestry used to identify it. Do not present commit presence as
+runtime proof or put first-fixed releases in Quick's `backports_required`
+field; that field lists support branches/versions that still require a
+backport.
 
 ## Proposed fix direction
 Files to change, approach, alternatives considered. Known edge cases the fix
@@ -272,5 +319,7 @@ _automated · <agent>_
 Bug root cause identified → memory-worthy by definition. Dedup first (search
 tags + issue number), then create/update
 `memories/<date>-yb-<slug>.md` covering: signature, root cause file:line,
-trigger matrix, repro commands, verdict, and — if a fix follows — a pointer to
-the PR. Exemplar: `memories/2026-07-09-yb-master-negative-halfhour-tz-crash.md`.
+trigger matrix, the complete supported-release runtime matrix, first-fixed
+release provenance, repro commands, verdict, and — if a fix follows — a pointer
+to the PR. Exemplar:
+`memories/2026-07-09-yb-master-negative-halfhour-tz-crash.md`.

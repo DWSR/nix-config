@@ -19,6 +19,13 @@ file referenced by the persisted review fields have been uploaded to that
 issue and verified in Quick. The controller performs those uploads before it
 marks the issue reviewed.
 
+Every validation must run its reproduction and controls against the newest
+published release from each in-support branch: `2024.2`, `2025.1`, `2025.2`,
+and `2026.1`, plus the latest preview corresponding to `master`. A backport
+commit may identify the first release that contains a fix, but its presence is
+not runtime proof; the latest version from each branch must demonstrate whether
+the fix is effective.
+
 When issue numbers or URLs are supplied, validate only those issues, still in
 waves of at most four. This targeted mode is intended for retrying blocked
 items.
