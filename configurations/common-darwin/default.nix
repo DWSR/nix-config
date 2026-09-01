@@ -159,6 +159,16 @@
       stateVersion = 7;
       primaryUser = username;
 
+      # Homebrew installs before --force-cleanup, so the conflicting stable cask
+      # must be removed before deskflow-dev can be installed. Remove this bridge
+      # when switching the declaration back to a fixed stable Deskflow release.
+      activationScripts.preActivation.text = ''
+        if [[ -x /opt/homebrew/bin/brew ]] \
+          && sudo --user=${username} --set-home /opt/homebrew/bin/brew list --cask deskflow >/dev/null 2>&1; then
+          sudo --user=${username} --set-home /opt/homebrew/bin/brew uninstall --cask deskflow
+        fi
+      '';
+
       # activationScripts are executed every time you boot the system or run `nixos-rebuild` / `darwin-rebuild`.
       # Reload settings without requiring re-login
       activationScripts.postActivation.text = ''
@@ -221,7 +231,10 @@
     homebrew.casks = [
       "audio-hijack"
       "contexts"
-      "deskflow"
+      # Stable 1.26.0 can dispatch queued clipboard events through stale client
+      # proxies after a reconnect (deskflow/deskflow#9843). The continuous cask
+      # includes the upstream fix until it reaches the next stable release.
+      "deskflow-dev"
       "loopback"
       "moom"
       "obsidian"
