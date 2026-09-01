@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GitHub pull request review chords
 // @namespace    https://github.com/DWSR/nix-config
-// @version      1.0.1
-// @description  Review a pull request from its summary page with r y, r n, or r c.
+// @version      1.0.2
+// @description  Review a pull request from any PR page with r y, r n, or r c.
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @run-at       document-end
@@ -44,9 +44,9 @@
   let chordTimer;
   let activeAction;
 
-  const pullRequestFromSummaryPage = () => {
+  const pullRequestFromPage = () => {
     const match = location.pathname.match(
-      /^\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/,
+      /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/,
     );
 
     if (!match) {
@@ -101,8 +101,8 @@
     return null;
   };
 
-  const getHeadSha = (pullRequest) => {
-    for (const script of document.querySelectorAll(
+  const headShaFromDocument = (documentRoot, pullRequest) => {
+    for (const script of documentRoot.querySelectorAll(
       'script[type="application/json"]',
     )) {
       try {
@@ -114,11 +114,34 @@
           return headSha;
         }
       } catch {
-        // GitHub has unrelated application/json script tags on the page.
+        // GitHub has unrelated application/json script tags on PR pages.
       }
     }
 
-    throw new Error("GitHub's pull request head SHA is unavailable");
+    return null;
+  };
+
+  const getHeadSha = async (pullRequest) => {
+    const currentPageHeadSha = headShaFromDocument(document, pullRequest);
+    if (currentPageHeadSha) {
+      return currentPageHeadSha;
+    }
+
+    const response = await fetch(pullRequest.path, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error("GitHub's pull request summary is unavailable");
+    }
+
+    const summaryDocument = new DOMParser().parseFromString(
+      await response.text(),
+      "text/html",
+    );
+    const summaryHeadSha = headShaFromDocument(summaryDocument, pullRequest);
+    if (!summaryHeadSha) {
+      throw new Error("GitHub's pull request head SHA is unavailable");
+    }
+
+    return summaryHeadSha;
   };
 
   const verifiedFetchHeaders = () => {
@@ -145,6 +168,7 @@
   };
 
   const submitReview = async (pullRequest, action, body) => {
+    const headSha = await getHeadSha(pullRequest);
     const response = await fetch(
       `${pullRequest.path}/page_data/submit_review`,
       {
@@ -155,7 +179,7 @@
         body: JSON.stringify({
           body,
           event: action.event,
-          headSha: getHeadSha(pullRequest),
+          headSha,
         }),
       },
     );
@@ -272,7 +296,7 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
 
-      const pullRequest = pullRequestFromSummaryPage();
+      const pullRequest = pullRequestFromPage();
       const body = textarea.value.trim();
       if (!pullRequest || !activeAction) {
         dialog.close();
@@ -295,7 +319,8 @@
       try {
         const result = await submitReview(pullRequest, activeAction, body);
         status.dataset.status = "success";
-        status.textContent = "Review submitted. Refreshing...";
+        status.textContent = "Review submitted.";
+        dialog.close();
         const redirect = new URL(
           result.redirectUrl ?? pullRequest.path,
           location.origin,
@@ -358,7 +383,7 @@
         event.metaKey ||
         event.shiftKey ||
         isEditable(event.target) ||
-        !pullRequestFromSummaryPage()
+        !pullRequestFromPage()
       ) {
         resetChord();
         return;
