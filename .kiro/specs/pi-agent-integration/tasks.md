@@ -410,18 +410,19 @@
   - _Boundary: Sandbox Catalog_
   - _Depends: 2.6_
 
-- [ ] 5.5 Integrate resolved grant checks with exact nono execution
+- [x] 5.5 Integrate resolved grant checks with exact nono execution
   - Resolve and strictly validate the selected profile before launch.
   - Require mcpproxy port, provider network, package reads, writable Pi/Cavemem/temp state, workspace mode, admitted root-Pi variables, and same-sandbox process control for enabled capabilities.
   - Append review tool restrictions after user arguments so excluded tools cannot be restored.
+  - Validate review arguments with a package-owned parse-only helper that statically imports `parseArgs` from the exact `piPackage` that supplies runtime `bin/pi`; run it with an empty environment and fixed working directory, and verify the reviewed Pi version and parser bytes before spawning it.
+  - Do not accept a separate parser package or extract, transmit, or dynamically evaluate parser source. Reject parser errors, managed-suffix consumption, changed non-tool parse fields, or any effective review tool set other than `read`, `grep`, `find`, and `ls` before starting nono or Pi.
   - Attempt refactor apply and background start under review; assert zero writes, processes, and fallback execution.
   - Execute nono noninteractively with the selected profile and mandatory current-directory grant; execute bare Pi only for explicitly reported disabled state.
   - Fail closed on any missing grant, binary, profile, or capability prerequisite.
-  - Done when exact command capture, grant fixtures, and review side-effect probes cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
+  - Done when exact command capture, parser-provenance and suffix-boundary fixtures, grant fixtures, and review side-effect probes cover normal, audit, review, rollback, missing-grant, and unavailable-nono paths.
   - _Requirements: 4.2, 4.3, 5.2, 5.6, 5.7, 5.8, 12.4, 13.7_
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
   - _Depends: 2.5, 3.7, 3.9, 4.2, 4.9, 4.11, 4.12, 4.13, 5.1, 5.3, 5.4_
-  - _Blocked: debug attempted twice, still failing — the review parser is not provenance-bound to the runtime Pi 0.83.0 package, and its evaluated language permits constructor-chain global recovery._
 
 - [ ] 5.6 Implement redacted managed status
   - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
@@ -651,4 +652,4 @@
 - Task 5.3: Keep runtime secrets outside the handoff API; validate raw URL authority before WHATWG normalization and treat backslash as a path delimiter.
 - Task 5.4: Host-default disabled is not rollback; disabled rejects profile/listen overrides, and ports use canonical comma-separated decimals.
 - Task 4.12: Pi 0.83 has no public exclusive-loader or cancellable final pre-model hook; the approved boundary remains trusted and closed, with explicit extra-extension rejection owned by Task 5.9.
-- Task 5.5: A self-digested extracted parser is insufficient; bind parser generation to reviewed runtime-Pi provenance and reject constructor metaprogramming/source directives before evaluation.
+- Task 5.5: Treat Pi's parser as immutable selected-runtime code: verify its reviewed identity, then invoke it only through a fixed same-package helper with an empty environment; never extract or dynamically evaluate parser source.
