@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -209,6 +210,7 @@ const commandOptions = {
 };
 
 let builtExtensionPath;
+let builtExtensionIdentityPath;
 let builtPiPath;
 
 after(() => {
@@ -260,6 +262,27 @@ function buildExtensions() {
   return builtExtensionPath;
 }
 
+function buildExtensionIdentity() {
+  builtExtensionIdentityPath ??= childProcess
+    .execFileSync(
+      "nix",
+      [
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--impure",
+        "--expr",
+        filteredFlakeExpression("flake.darwinConfigurations.ShopifyLaptop.pkgs.pi-agent-extensions.identity"),
+      ],
+      commandOptions,
+    )
+    .trim();
+
+  assert.match(builtExtensionIdentityPath, /^\/nix\/store\//);
+  assert.equal(builtExtensionIdentityPath.includes("\n"), false);
+  return builtExtensionIdentityPath;
+}
+
 function buildPi() {
   builtPiPath ??= childProcess
     .execFileSync(
@@ -281,6 +304,19 @@ function buildPi() {
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function storeReferences(storePath) {
+  return new Set(
+    childProcess.execFileSync("nix-store", ["--query", "--references", storePath], commandOptions)
+      .trim()
+      .split("\n")
+      .filter(Boolean),
+  );
+}
+
+function sha256File(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 function packageDirectory(root, packageName) {
@@ -356,7 +392,10 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
       in
       {
         manifest = builtins.fromJSON (builtins.readFile package.manifest);
-        provenance = builtins.fromJSON (builtins.readFile package.provenance);
+        outputs = package.outputs;
+        identityFile = package.identityFile;
+        provenancePath = package.provenancePath;
+        postFixup = package.postFixup;
         typecheckConfig = builtins.fromJSON (
           builtins.unsafeDiscardStringContext (builtins.readFile package.typecheckConfig)
         );
@@ -378,7 +417,6 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
       },
     ]),
   );
-
   assert.deepEqual(metadata.manifest, {
     schemaVersion: 1,
     piVersion: expectedPiVersion,
@@ -386,21 +424,9 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     extensionOrder: expectedExtensionOrder,
     extensions: expectedManifestExtensions,
   });
-  assert.deepEqual(
-    metadata.provenance.extensions,
-    Object.fromEntries(
-      Object.entries(expectedExtensions).map(([logicalName, extension]) => [
-        logicalName,
-        {
-          package: extension.package,
-          sourceRef: extension.sourceRef,
-          version: extension.version,
-        },
-      ]),
-    ),
-  );
-  assert.deepEqual(metadata.provenance.runtimeDependencies, expectedRuntimeDependencies);
-  assert.deepEqual(metadata.provenance.patches, expectedPatches);
+  assert.deepEqual(metadata.outputs, ["out", "identity"]);
+  assert.equal(metadata.identityFile, "extensions-provenance.json");
+  assert.equal(metadata.provenancePath, "share/pi-agent/extensions-provenance.json");
   assert.equal(metadata.typecheckConfig.compilerOptions.noEmit, true);
   assert.equal(metadata.typecheckConfig.compilerOptions.strict, true);
   assert.deepEqual(metadata.typecheckConfig.files, [
@@ -428,15 +454,22 @@ test("Nix publishes deterministic extension entry and provenance metadata", () =
     metadata.installPhase,
     /patch --fuzz=0 --no-backup-if-mismatch -d node_modules\/@mrclrchtr\/supi-code-intelligence/,
   );
-  assert.equal(metadata.provenance.schemaVersion, 1);
+  assert.match(metadata.postFixup, /pi-agent-extension-provenance-renderer\.mjs/);
   assert.match(metadata.npmDepsHash, /^sha256-[A-Za-z0-9+/]{43}=$/);
 });
 
 test("built extension closure contains exact entries, licenses, and no commands or Pi runtime", () => {
   const output = buildExtensions();
+  const identityRoot = buildExtensionIdentity();
   const manifest = readJson(path.join(output, "share/pi-agent/extensions.json"));
   const provenance = readJson(path.join(output, "share/pi-agent/extensions-provenance.json"));
+  const trustedIdentityPath = path.join(identityRoot, "extensions-provenance.json");
+  const trustedIdentity = readJson(trustedIdentityPath);
 
+  assert.notEqual(identityRoot, output);
+  assert.deepEqual(trustedIdentity, provenance);
+  assert.equal(storeReferences(output).has(identityRoot), true);
+  assert.equal(storeReferences(identityRoot).has(output), false);
   assert.equal(fs.existsSync(path.join(output, "bin")), false);
   assert.equal(fs.existsSync(path.join(output, "lib/node_modules/.bin")), false);
   assert.equal(fs.statSync(path.join(output, expectedLoader.entryPath)).isFile(), true);
@@ -444,17 +477,35 @@ test("built extension closure contains exact entries, licenses, and no commands 
     fs.statSync(path.join(output, "lib/pi-agent/extensions/managed-manifest.ts")).isFile(),
     true,
   );
-  assert.deepEqual(provenance.extensions, Object.fromEntries(
-    Object.entries(expectedExtensions).map(([logicalName, extension]) => [
-      logicalName,
-      {
-        package: extension.package,
-        sourceRef: extension.sourceRef,
-        version: extension.version,
-      },
-    ]),
-  ));
+  assert.deepEqual(Object.keys(provenance).sort(), [
+    "extensionOrder",
+    "extensions",
+    "loader",
+    "packageRoot",
+    "patches",
+    "piVersion",
+    "runtimeDependencies",
+    "schemaVersion",
+  ]);
+  assert.equal(provenance.schemaVersion, 2);
+  assert.equal(provenance.packageRoot, output);
+  assert.equal(provenance.piVersion, expectedPiVersion);
+  assert.deepEqual(provenance.extensionOrder, expectedExtensionOrder);
+  assert.deepEqual(provenance.loader, {
+    entryPath: expectedLoader.entryPath,
+    kind: "regular-file",
+    sha256: sha256File(path.join(output, expectedLoader.entryPath)),
+  });
   assert.deepEqual(provenance.patches, expectedPatches);
+  assert.deepEqual(provenance.runtimeDependencies, expectedRuntimeDependencies);
+  for (const file of [
+    path.join(output, expectedLoader.entryPath),
+    path.join(output, "lib/pi-agent/extensions/managed-manifest.ts"),
+  ]) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.equal(source.includes(trustedIdentityPath), true);
+    assert.equal(source.includes("__PI_AGENT_EXTENSION_IDENTITY_PATH__"), false);
+  }
 
   for (const [logicalName, expected] of Object.entries(expectedExtensions)) {
     const entry = manifest.extensions[logicalName];
@@ -462,6 +513,14 @@ test("built extension closure contains exact entries, licenses, and no commands 
       version: expected.version,
       entryPath: expected.entryPath,
       license: "MIT",
+    });
+    assert.deepEqual(provenance.extensions[logicalName], {
+      package: expected.package,
+      version: expected.version,
+      sourceRef: expected.sourceRef,
+      entryPath: expected.entryPath,
+      kind: "regular-file",
+      sha256: sha256File(path.join(output, expected.entryPath)),
     });
     assert.equal(fs.existsSync(path.join(output, entry.entryPath)), true,
       `${logicalName} entry path is missing`);
@@ -815,7 +874,7 @@ test("Task 4.12 implementation leaves no feature seam", () => {
   const overlay = fs.readFileSync(path.join(repoRoot, "overlays/pi-agent/default.nix"), "utf8");
   assert.doesNotMatch(
     overlay,
-    /task412ExactExtensionLoader|PI_AGENT_TASK_4_12|EXACT_MANAGED_LOADER_ENABLED/,
+    /task412(?:ExactExtensionLoader|DigestProvenanceEnabled|TrustedIdentityEnabled)|PI_AGENT_TASK_4_12|EXACT_MANAGED_LOADER_ENABLED/,
   );
   assert.doesNotMatch(overlay, /beforeAgentStartCancelPatch|pi-before-agent-start-cancel\.patch/);
   assert.equal(

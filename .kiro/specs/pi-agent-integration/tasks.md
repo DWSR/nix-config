@@ -350,12 +350,14 @@
 
 - [x] 4.12 Assemble the exact extension manifest and load order
   - Publish entry paths and versions for the two repository-owned and all approved public extensions.
+  - Publish one closed, versioned provenance inventory with the immutable package root, canonical relative entry paths, and build-time content digests. Make the loader validate and expose this inventory so status consumes the same identity contract instead of re-deriving path rules.
+  - Reject symlinked path components, package escapes, and digest mismatches before import or readiness reporting while accepting regular Nix-store files that are legitimately hardlinked by store optimization.
   - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
   - Run the MCP reserved-name and exact direct-surface validator after every managed extension has registered.
   - Fail validation on a missing, duplicate, incompatible, reordered, or unexpected extension.
-  - Done when a combined loader accepts one prompt with the exact ordered inventory and rejects every altered manifest fixture.
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
+  - Done when loader and status identity checks accept the same exact ordered inventory, tolerate legitimate hardlinks, and reject every altered manifest, symlink, escape, and digest fixture before a prompt or complete status.
+  - _Requirements: 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 7.6_
   - _Boundary: Package Set, Extension Runtime — Integration_
   - _Depends: 2.2, 3.7, 3.9, 4.2, 4.3, 4.4, 4.6, 4.7, 4.9, 4.11_
 
@@ -432,7 +434,7 @@
   - Done when complete, degraded, drifted, and sentinel fixtures produce stable output with no secret value.
   - _Requirements: 4.4, 14.4_
   - _Boundary: Runtime Control_
-  - _Depends: 2.4, 3.7, 3.9, 4.13, 5.1, 5.3, 5.4, 5.5_
+  - _Depends: 2.4, 3.7, 3.9, 4.12, 4.13, 5.1, 5.3, 5.4, 5.5_
 
 - [ ] 5.7 Implement the runtime compatibility validator
   - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, Cavemem, PTY, LSP, and reconciliation drift.
@@ -653,3 +655,5 @@
 - Task 5.4: Host-default disabled is not rollback; disabled rejects profile/listen overrides, and ports use canonical comma-separated decimals.
 - Task 4.12: Pi 0.83 has no public exclusive-loader or cancellable final pre-model hook; the approved boundary remains trusted and closed, with explicit extra-extension rejection owned by Task 5.9.
 - Task 5.5: Treat Pi's parser as immutable selected-runtime code: verify its reviewed identity, then invoke it only through a fixed same-package helper with an empty environment; never extract or dynamically evaluate parser source.
+- Tasks 4.12 and 5.6: Extension readiness must consume one loader-owned provenance inventory; status-only symlink or hardlink rules diverge from runtime, and Nix may legitimately deduplicate store files with hardlinks.
+- Task 4.12: Anchor entry digests and the package root in a distinct Nix `identity` output referenced by production code; exported validators accept no caller-provided trust object or path.

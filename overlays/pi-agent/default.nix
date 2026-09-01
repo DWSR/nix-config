@@ -127,6 +127,7 @@ let
     piVersion = upstream.version;
     loader = managedExtensionLoaderContract;
     extensionOrder = managedExtensionOrder;
+    provenance = extensionProvenanceContract;
     extensions = final.lib.mapAttrs (_logicalName: extension: {
       inherit (extension)
         package
@@ -137,8 +138,13 @@ let
         ;
     }) extensionInventory;
   };
+  trustedIdentityPlaceholder = "__PI_AGENT_EXTENSION_IDENTITY_PATH__";
+  managedExtensionLoaderSource = final.replaceVars ./extensions/managed-loader.ts.in {
+    trustedIdentityPath = trustedIdentityPlaceholder;
+  };
   managedExtensionManifestSource = final.replaceVars ./extensions/managed-manifest.ts.in {
     managedExtensionContract = builtins.toJSON managedExtensionContract;
+    trustedIdentityPath = trustedIdentityPlaceholder;
   };
   managedExtensionTypecheckPackage = final.writeText "pi-managed-extension-package.json" (
     builtins.toJSON { type = "module"; }
@@ -417,82 +423,154 @@ let
       }) extensionInventory;
     }
   );
-  extensionProvenance = final.writeText "pi-agent-extensions-provenance.json" (
-    builtins.toJSON {
-      schemaVersion = 1;
-      extensions = final.lib.mapAttrs (_logicalName: extension: {
-        inherit (extension) package version sourceRef;
-      }) extensionInventory;
-      patches = {
-        bashTimeoutManagedDefault = {
-          file = builtins.baseNameOf managedBashTimeoutPatch;
-          package = "@mrclrchtr/supi-bash-timeout@4.6.0";
-          task = "pi-agent-integration 4.6";
-        };
-        backgroundTasksManagedPipe = {
-          file = builtins.baseNameOf managedBackgroundPipePatch;
-          package = "@99percentpeople/pi-background-tasks@2.0.0";
-          task = "pi-agent-integration 4.10";
-        };
-        backgroundTasksManagedPty = {
-          file = builtins.baseNameOf managedBackgroundPtyPatch;
-          package = "@99percentpeople/pi-background-tasks@2.0.0";
-          task = "pi-agent-integration 4.11";
-        };
-        planModeCooperativeState = {
-          file = builtins.baseNameOf cooperativePlanModePatch;
-          package = "@narumitw/pi-plan-mode@0.49.2";
-          task = "pi-agent-integration 4.3";
-        };
-        structuredQuestions = {
-          file = builtins.baseNameOf structuredQuestionsPatch;
-          package = "@mrclrchtr/supi-ask-user@4.6.0";
-          task = "pi-agent-integration 4.7";
-        };
-        codeIntelligenceManagedLsp = {
-          file = builtins.baseNameOf managedCodeIntelligencePatch;
-          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
-          task = "pi-agent-integration 4.8";
-        };
-        codeIntelligenceManagedLspLifecycle = {
-          file = builtins.baseNameOf managedCodeIntelligenceLifecyclePatch;
-          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
-          task = "pi-agent-integration 4.9";
-        };
-        codeIntelligenceManagedLspConcurrency = {
-          file = builtins.baseNameOf managedCodeIntelligenceConcurrencyPatch;
-          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
-          task = "pi-agent-integration 4.9";
-        };
-        codeIntelligenceManagedLspOwnership = {
-          file = builtins.baseNameOf managedCodeIntelligenceOwnershipPatch;
-          package = "@mrclrchtr/supi-code-intelligence@4.6.0";
-          task = "pi-agent-integration 4.9";
-        };
-        mcpAdapterManagedDirectTools = {
-          file = builtins.baseNameOf managedMcpAdapterPatch;
-          package = "pi-mcp-adapter@2.20.1";
-          task = "pi-agent-integration 3.8";
-        };
-        mcpAdapterPrivateCache = {
-          file = builtins.baseNameOf privateMcpCachePatch;
-          package = "pi-mcp-adapter@2.20.1";
-          task = "pi-agent-integration 3.9";
-        };
-        managedSubagents = {
-          file = builtins.baseNameOf managedSubagentsPatch;
-          package = "pi-subagents@0.40.0";
-          task = "pi-agent-integration 4.1";
-        };
-        managedSubagentsLifecycle = {
-          file = builtins.baseNameOf managedSubagentsLifecyclePatch;
-          package = "pi-subagents@0.40.0";
-          task = "pi-agent-integration 4.2";
-        };
-      };
-      runtimeDependencies = extensionRuntimeDependencies;
+  extensionPatchProvenance = {
+    bashTimeoutManagedDefault = {
+      file = builtins.baseNameOf managedBashTimeoutPatch;
+      package = "@mrclrchtr/supi-bash-timeout@4.6.0";
+      task = "pi-agent-integration 4.6";
+    };
+    backgroundTasksManagedPipe = {
+      file = builtins.baseNameOf managedBackgroundPipePatch;
+      package = "@99percentpeople/pi-background-tasks@2.0.0";
+      task = "pi-agent-integration 4.10";
+    };
+    backgroundTasksManagedPty = {
+      file = builtins.baseNameOf managedBackgroundPtyPatch;
+      package = "@99percentpeople/pi-background-tasks@2.0.0";
+      task = "pi-agent-integration 4.11";
+    };
+    planModeCooperativeState = {
+      file = builtins.baseNameOf cooperativePlanModePatch;
+      package = "@narumitw/pi-plan-mode@0.49.2";
+      task = "pi-agent-integration 4.3";
+    };
+    structuredQuestions = {
+      file = builtins.baseNameOf structuredQuestionsPatch;
+      package = "@mrclrchtr/supi-ask-user@4.6.0";
+      task = "pi-agent-integration 4.7";
+    };
+    codeIntelligenceManagedLsp = {
+      file = builtins.baseNameOf managedCodeIntelligencePatch;
+      package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+      task = "pi-agent-integration 4.8";
+    };
+    codeIntelligenceManagedLspLifecycle = {
+      file = builtins.baseNameOf managedCodeIntelligenceLifecyclePatch;
+      package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+      task = "pi-agent-integration 4.9";
+    };
+    codeIntelligenceManagedLspConcurrency = {
+      file = builtins.baseNameOf managedCodeIntelligenceConcurrencyPatch;
+      package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+      task = "pi-agent-integration 4.9";
+    };
+    codeIntelligenceManagedLspOwnership = {
+      file = builtins.baseNameOf managedCodeIntelligenceOwnershipPatch;
+      package = "@mrclrchtr/supi-code-intelligence@4.6.0";
+      task = "pi-agent-integration 4.9";
+    };
+    mcpAdapterManagedDirectTools = {
+      file = builtins.baseNameOf managedMcpAdapterPatch;
+      package = "pi-mcp-adapter@2.20.1";
+      task = "pi-agent-integration 3.8";
+    };
+    mcpAdapterPrivateCache = {
+      file = builtins.baseNameOf privateMcpCachePatch;
+      package = "pi-mcp-adapter@2.20.1";
+      task = "pi-agent-integration 3.9";
+    };
+    managedSubagents = {
+      file = builtins.baseNameOf managedSubagentsPatch;
+      package = "pi-subagents@0.40.0";
+      task = "pi-agent-integration 4.1";
+    };
+    managedSubagentsLifecycle = {
+      file = builtins.baseNameOf managedSubagentsLifecyclePatch;
+      package = "pi-subagents@0.40.0";
+      task = "pi-agent-integration 4.2";
+    };
+  };
+  extensionProvenanceContract = {
+    schemaVersion = 2;
+    piVersion = upstream.version;
+    loader = {
+      inherit (managedExtensionLoaderContract) entryPath;
+      kind = "regular-file";
+    };
+    extensionOrder = managedExtensionOrder;
+    extensions = final.lib.mapAttrs (_logicalName: extension: {
+      inherit (extension)
+        package
+        version
+        sourceRef
+        entryPath
+        ;
+      kind = "regular-file";
+    }) extensionInventory;
+    patches = extensionPatchProvenance;
+    runtimeDependencies = extensionRuntimeDependencies;
+  };
+  extensionProvenanceRenderer = final.writeText "pi-agent-extension-provenance-renderer.mjs" ''
+    import { createHash } from "node:crypto";
+    import fs from "node:fs";
+    import path from "node:path";
+
+    const contract = ${builtins.toJSON extensionProvenanceContract};
+    const [packageRoot, identityRoot] = process.argv.slice(2);
+    if (
+      !packageRoot
+      || !identityRoot
+      || !path.isAbsolute(packageRoot)
+      || !path.isAbsolute(identityRoot)
+      || fs.realpathSync.native(packageRoot) !== packageRoot
+    ) {
+      throw new Error("extension package root is not canonical");
     }
-  );
+    fs.mkdirSync(identityRoot, { recursive: true });
+    if (fs.realpathSync.native(identityRoot) !== identityRoot || identityRoot === packageRoot) {
+      throw new Error("extension identity root is not distinct and canonical");
+    }
+
+    function sha256(relativePath) {
+      const segments = relativePath.split("/");
+      let current = packageRoot;
+      for (const [index, segment] of segments.entries()) {
+        current = path.join(current, segment);
+        const stat = fs.lstatSync(current);
+        if (stat.isSymbolicLink()) throw new Error("extension inventory path contains a symlink");
+        if (index < segments.length - 1 && !stat.isDirectory()) {
+          throw new Error("extension inventory path component is not a directory");
+        }
+        if (index === segments.length - 1 && !stat.isFile()) {
+          throw new Error("extension inventory entry is not a regular file");
+        }
+      }
+      return createHash("sha256").update(fs.readFileSync(current)).digest("hex");
+    }
+
+    const provenance = {
+      ...contract,
+      packageRoot,
+      loader: {
+        ...contract.loader,
+        sha256: sha256(contract.loader.entryPath),
+      },
+      extensions: Object.fromEntries(contract.extensionOrder.map((logicalName) => {
+        const extension = contract.extensions[logicalName];
+        return [logicalName, {
+          ...extension,
+          sha256: sha256(extension.entryPath),
+        }];
+      })),
+    };
+    const rendered = JSON.stringify(provenance, null, 2) + "\n";
+    for (const outputPath of [
+      path.join(packageRoot, "share/pi-agent/extensions-provenance.json"),
+      path.join(identityRoot, "extensions-provenance.json"),
+    ]) {
+      fs.writeFileSync(outputPath, rendered, { mode: 0o444 });
+    }
+  '';
 in
 {
   pi-agent = requireSupported (
@@ -596,6 +674,13 @@ in
     final.buildNpmPackage {
       pname = "pi-agent-extensions";
       inherit (upstream) version;
+      __structuredAttrs = true;
+      outputs = [
+        "out"
+        "identity"
+      ];
+      # The identity JSON embeds $out; $out retains the identity output in its closure.
+      unsafeDiscardReferences.identity = true;
       src = extensionRoot;
       npmDepsHash = extensionNpmDepsHash;
       dontNpmBuild = true;
@@ -684,7 +769,7 @@ in
         ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
         install -Dm444 ${cavememBridgeSource} "$typecheckDir/cavemem/index.ts"
         install -Dm444 ${./extensions/cavemem/package.json} "$typecheckDir/cavemem/package.json"
-        install -Dm444 ${./extensions/managed-loader.ts.in} "$typecheckDir/managed-loader.ts"
+        install -Dm444 ${managedExtensionLoaderSource} "$typecheckDir/managed-loader.ts"
         install -Dm444 ${managedExtensionManifestSource} "$typecheckDir/managed-manifest.ts"
         install -Dm444 ${managedExtensionTypecheckPackage} "$typecheckDir/package.json"
         install -Dm444 ${./extensions/mcpproxy/index.ts} "$typecheckDir/mcpproxy/index.ts"
@@ -726,7 +811,7 @@ in
         test -x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper
         rm -rf node_modules/.bin
 
-        mkdir -p "$out/lib/node_modules"
+        mkdir -p "$out/lib/node_modules" "$identity"
         cp -R node_modules/. "$out/lib/node_modules/"
         install -Dm444 ${cavememBridgeSource} "$out/lib/pi-agent/extensions/cavemem/index.ts"
         install -Dm444 ${./extensions/cavemem/package.json} \
@@ -735,13 +820,18 @@ in
           "$out/lib/pi-agent/extensions/mcpproxy/index.ts"
         install -Dm444 ${./extensions/mcpproxy/package.json} \
           "$out/lib/pi-agent/extensions/mcpproxy/package.json"
-        install -Dm444 ${./extensions/managed-loader.ts.in} \
+        install -Dm444 ${managedExtensionLoaderSource} \
           "$out/lib/pi-agent/extensions/managed-loader.ts"
         install -Dm444 ${managedExtensionManifestSource} \
           "$out/lib/pi-agent/extensions/managed-manifest.ts"
+        for managedSource in \
+          "$out/lib/pi-agent/extensions/managed-loader.ts" \
+          "$out/lib/pi-agent/extensions/managed-manifest.ts"; do
+          substituteInPlace "$managedSource" \
+            --replace-fail '${trustedIdentityPlaceholder}' "$identity/extensions-provenance.json"
+        done
 
         install -Dm444 ${extensionManifest} "$out/share/pi-agent/extensions.json"
-        install -Dm444 ${extensionProvenance} "$out/share/pi-agent/extensions-provenance.json"
         install -Dm444 ${managedSubagentCatalog} "$out/share/pi-agent/subagents.json"
         install -Dm444 package.json "$out/share/pi-agent/extensions-package.json"
         install -Dm444 package-lock.json "$out/share/pi-agent/extensions-package-lock.json"
@@ -776,9 +866,14 @@ in
         runHook postInstall
       '';
 
+      postFixup = ''
+        ${final.nodejs}/bin/node ${extensionProvenanceRenderer} "$out" "$identity"
+      '';
+
       passthru = {
         manifest = extensionManifest;
-        provenance = extensionProvenance;
+        identityFile = "extensions-provenance.json";
+        provenancePath = "share/pi-agent/extensions-provenance.json";
         inherit backgroundTypecheckConfig;
         typecheckConfig = extensionTypecheckConfig;
       };

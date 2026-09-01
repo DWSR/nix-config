@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import childProcess from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,10 @@ import {
   MANIFEST_ALTERATIONS,
   MANIFEST_SENTINEL,
 } from "./fixtures/extension-manifest/manifest-alterations.mjs";
+import {
+  PROVENANCE_FAILURE_FIXTURES,
+  PROVENANCE_SENTINEL,
+} from "./fixtures/extension-manifest/provenance-fixtures.mjs";
 import {
   PROVIDER_ENVIRONMENT_NAMES,
   createProviderFreeEnvironment,
@@ -32,46 +37,55 @@ const expectedExtensions = {
   cavemem: {
     package: "@dwsr/pi-cavemem-bridge",
     version: "0.1.0",
+    sourceRef: "repository",
     entryPath: "lib/pi-agent/extensions/cavemem/index.ts",
   },
   mcp: {
     package: "@dwsr/pi-mcpproxy-adapter",
     version: "0.1.0",
+    sourceRef: "repository",
     entryPath: "lib/pi-agent/extensions/mcpproxy/index.ts",
   },
   subagents: {
     package: "pi-subagents",
     version: "0.40.0",
+    sourceRef: "d4d2ab70",
     entryPath: "lib/node_modules/pi-subagents/index.ts",
   },
   plan: {
     package: "@narumitw/pi-plan-mode",
     version: "0.49.2",
+    sourceRef: "df5f5ce7",
     entryPath: "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts",
   },
   timestamps: {
     package: "@narumitw/pi-stamp",
     version: "0.49.3",
+    sourceRef: "4c2c2e8c",
     entryPath: "lib/node_modules/@narumitw/pi-stamp/src/index.ts",
   },
   bashTimeout: {
     package: "@mrclrchtr/supi-bash-timeout",
     version: "4.6.0",
+    sourceRef: "98b80f6d",
     entryPath: "lib/node_modules/@mrclrchtr/supi-bash-timeout/src/extension.ts",
   },
   questions: {
     package: "@mrclrchtr/supi-ask-user",
     version: "4.6.0",
+    sourceRef: "98b80f6d",
     entryPath: "lib/node_modules/@mrclrchtr/supi-ask-user/src/extension.ts",
   },
   codeIntelligence: {
     package: "@mrclrchtr/supi-code-intelligence",
     version: "4.6.0",
+    sourceRef: "98b80f6d",
     entryPath: "lib/node_modules/@mrclrchtr/supi-code-intelligence/src/extension.ts",
   },
   backgroundTasks: {
     package: "@99percentpeople/pi-background-tasks",
     version: "2.0.0",
+    sourceRef: "0d231ab3",
     entryPath: "lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts",
   },
 };
@@ -98,6 +112,7 @@ const forbiddenToolNames = [
   "mcpproxy_code_execution",
 ];
 const recovery = "rebuild pi-agent-extensions and activate the managed generation";
+const inputSentinel = "TASK_4_12_PRIVATE_VALIDATOR_INPUT_SENTINEL";
 const subprocessRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-extension-manifest-processes-"));
 const subprocessEnvironment = createProviderFreeEnvironment(subprocessRoot);
 const commandOptions = {
@@ -114,6 +129,7 @@ let runtimeModules;
 let manifestModule;
 let lateCollisionExtensionPath;
 let alteredManifestPackagePaths;
+let alteredProvenancePackagePaths;
 let importFailurePackagePaths;
 let orderedTracePackagePath;
 
@@ -149,22 +165,27 @@ function buildRuntimePaths() {
         "--print-out-paths",
         "--impure",
         "--expr",
-        filteredFlakeExpression("[ pkgs.pi-agent pkgs.pi-agent-extensions ]"),
+        filteredFlakeExpression("[ pkgs.pi-agent pkgs.pi-agent-extensions pkgs.pi-agent-extensions.identity ]"),
       ],
       commandOptions,
     )
     .trim()
     .split("\n")
     .filter(Boolean);
-  assert.equal(outputs.length, 2, `expected two runtime outputs, got ${outputs.join(", ")}`);
+  assert.equal(outputs.length, 3, `expected three runtime outputs, got ${outputs.join(", ")}`);
   runtimePaths = {
     pi: outputs.find((output) => fs.existsSync(path.join(output, "bin/pi"))),
     extensions: outputs.find((output) =>
       fs.existsSync(path.join(output, "share/pi-agent/extensions.json")),
     ),
+    identity: outputs.find((output) =>
+      fs.existsSync(path.join(output, "extensions-provenance.json")),
+    ),
   };
   assert.match(runtimePaths.pi ?? "", /^\/nix\/store\//);
   assert.match(runtimePaths.extensions ?? "", /^\/nix\/store\//);
+  assert.match(runtimePaths.identity ?? "", /^\/nix\/store\//);
+  assert.notEqual(runtimePaths.identity, runtimePaths.extensions);
   return runtimePaths;
 }
 
@@ -180,12 +201,23 @@ function buildLateCollisionExtensionPath() {
         "--impure",
         "--expr",
         filteredFlakeExpression(`
-          pkgs.runCommand "pi-agent-extensions-late-reserved-collision" { } ''
+          pkgs.runCommand "pi-agent-extensions-late-reserved-collision" {
+            __structuredAttrs = true;
+            outputs = [ "out" "identity" ];
+            unsafeDiscardReferences.identity = true;
+          } ''
             mkdir -p "$out"
             cp -R ${"${pkgs.pi-agent-extensions}"}/. "$out/"
-            chmod u+w "$out/lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts"
+            chmod u+w \
+              "$out/lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts" \
+              "$out/share/pi-agent/extensions-provenance.json"
             cp ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/late-reserved-collision.ts\"}"} \\
               "$out/lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts"
+            ${"${pkgs.nodejs}"}/bin/node \
+              ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+              prepare "$out" "$identity" \
+              ${"${pkgs.pi-agent-extensions.identity}"}/extensions-provenance.json
+            printf '%s\n' "$identity/extensions-provenance.json" > "$out/fixture-identity-path"
           ''
         `),
       ],
@@ -213,16 +245,23 @@ function buildAlteredManifestPackagePaths() {
             fixtures = builtins.fromJSON ${JSON.stringify(fixtureIds)};
             mkFixture = fixture: pkgs.runCommand "pi-agent-extension-manifest-\${fixture}" {
               inherit fixture;
+              __structuredAttrs = true;
               nativeBuildInputs = [ pkgs.nodejs ];
+              outputs = [ "out" "identity" ];
+              unsafeDiscardReferences.identity = true;
             } ''
               mkdir -p "$out"
               cp -R ${"${pkgs.pi-agent-extensions}"}/. "$out/"
               chmod u+w \
                 "$out/share/pi-agent/extensions.json" \
                 "$out/share/pi-agent/extensions-provenance.json"
+              node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+                prepare "$out" "$identity" \
+                ${"${pkgs.pi-agent-extensions.identity}"}/extensions-provenance.json
               node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/manifest-alterations.mjs\"}"} \
                 "$fixture" "$out"
               printf '%s\\n' "$fixture" > "$out/fixture-name"
+              printf '%s\\n' "$identity/extensions-provenance.json" > "$out/fixture-identity-path"
             '';
           in map mkFixture fixtures
         `),
@@ -240,6 +279,61 @@ function buildAlteredManifestPackagePaths() {
   return alteredManifestPackagePaths;
 }
 
+function buildAlteredProvenancePackagePaths() {
+  if (alteredProvenancePackagePaths) return alteredProvenancePackagePaths;
+  const fixtureIds = JSON.stringify(PROVENANCE_FAILURE_FIXTURES.map(({ id }) => id));
+  const outputs = childProcess
+    .execFileSync(
+      "nix",
+      [
+        "build",
+        "--no-link",
+        "--print-out-paths",
+        "--impure",
+        "--expr",
+        filteredFlakeExpression(`
+          let
+            fixtures = builtins.fromJSON ${JSON.stringify(fixtureIds)};
+            mkFixture = fixture: pkgs.runCommand "pi-agent-extension-provenance-\${fixture}" {
+              inherit fixture;
+              __structuredAttrs = true;
+              nativeBuildInputs = [ pkgs.nodejs ];
+              outputs = [ "out" "identity" "forgedIdentity" ];
+              unsafeDiscardReferences.forgedIdentity = true;
+              unsafeDiscardReferences.identity = true;
+            } ''
+              mkdir -p "$out"
+              cp -R ${"${pkgs.pi-agent-extensions}"}/. "$out/"
+              chmod -R u+w "$out"
+              node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+                prepare "$out" "$identity" \
+                ${"${pkgs.pi-agent-extensions.identity}"}/extensions-provenance.json
+              node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+                "$fixture" "$out" ${"${pkgs.pi-agent-extensions}"}
+              mkdir -p "$forgedIdentity"
+              cp "$out/share/pi-agent/extensions-provenance.json" \
+                "$forgedIdentity/extensions-provenance.json"
+              printf '%s\\n' "$fixture" > "$out/fixture-name"
+              printf '%s\\n' "$identity/extensions-provenance.json" > "$out/fixture-identity-path"
+              printf '%s\\n' "$forgedIdentity/extensions-provenance.json" \
+                > "$out/fixture-forged-identity-path"
+            '';
+          in map mkFixture fixtures
+        `),
+      ],
+      commandOptions,
+    )
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.equal(outputs.length, PROVENANCE_FAILURE_FIXTURES.length);
+  alteredProvenancePackagePaths = new Map(outputs.map((output) => [
+    fs.readFileSync(path.join(output, "fixture-name"), "utf8").trim(),
+    output,
+  ]));
+  return alteredProvenancePackagePaths;
+}
+
 function buildImportFailurePackagePaths() {
   if (importFailurePackagePaths) return importFailurePackagePaths;
   const outputs = childProcess
@@ -255,7 +349,10 @@ function buildImportFailurePackagePaths() {
           let
             mkFixture = variant: pkgs.runCommand "pi-agent-extension-import-failure-\${variant}" {
               inherit variant;
+              __structuredAttrs = true;
               nativeBuildInputs = [ pkgs.nodejs ];
+              outputs = [ "out" "identity" ];
+              unsafeDiscardReferences.identity = true;
             } ''
               mkdir -p "$out"
               cp -R ${"${pkgs.pi-agent-extensions}"}/. "$out/"
@@ -270,11 +367,15 @@ function buildImportFailurePackagePaths() {
                 cp ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/import-time-failure.ts\"}"} \
                   "$out/lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts"
               fi
+              node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+                prepare "$out" "$identity" \
+                ${"${pkgs.pi-agent-extensions.identity}"}/extensions-provenance.json
               if [ "$variant" = "invalid-manifest" ]; then
                 node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/manifest-alterations.mjs\"}"} \
                   reordered "$out"
               fi
               printf '%s\\n' "$variant" > "$out/fixture-name"
+              printf '%s\\n' "$identity/extensions-provenance.json" > "$out/fixture-identity-path"
             '';
           in map mkFixture [ "import" "factory" "invalid-manifest" ]
         `),
@@ -314,11 +415,22 @@ function buildOrderedTracePackagePath() {
         "--expr",
         filteredFlakeExpression(`
           pkgs.runCommand "pi-agent-extension-ordered-factory-trace" {
+            __structuredAttrs = true;
             nativeBuildInputs = [ pkgs.nodejs ];
+            outputs = [ "out" "identity" ];
+            unsafeDiscardReferences.identity = true;
           } ''
             mkdir -p "$out"
             cp -R ${"${pkgs.pi-agent-extensions}"}/. "$out/"
             ${replacements}
+            chmod u+w "$out/lib/pi-agent/extensions/mcpproxy"
+            chmod u+w "$out/share/pi-agent/extensions-provenance.json"
+            node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+              prepare "$out" "$identity" \
+              ${"${pkgs.pi-agent-extensions.identity}"}/extensions-provenance.json
+            node ${"${source + \"/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs\"}"} \
+              provenance-hardlink "$out"
+            printf '%s\n' "$identity/extensions-provenance.json" > "$out/fixture-identity-path"
           ''
         `),
       ],
@@ -420,23 +532,35 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function sha256File(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
 function readPackageArtifacts(extensions = buildRuntimePaths().extensions) {
+  const identityPath = extensions === buildRuntimePaths().extensions
+    ? path.join(buildRuntimePaths().identity, "extensions-provenance.json")
+    : fs.readFileSync(path.join(extensions, "fixture-identity-path"), "utf8").trim();
   return {
     manifest: readJson(path.join(extensions, "share/pi-agent/extensions.json")),
     provenance: readJson(path.join(extensions, "share/pi-agent/extensions-provenance.json")),
+    trustedProvenance: readJson(identityPath),
   };
 }
 
-async function loadManifestModule() {
-  if (manifestModule) return manifestModule;
+async function importManifestModule(extensionRoot) {
   const runtime = buildRuntimePaths();
   const piNodeModules = path.join(runtime.pi, "lib/node_modules");
   const { createJiti } = await import(
     pathToFileURL(path.join(piNodeModules, "jiti/lib/jiti.mjs"))
   );
-  manifestModule = await createJiti(import.meta.url, { moduleCache: false }).import(
-    path.join(runtime.extensions, "lib/pi-agent/extensions/managed-manifest.ts"),
+  return createJiti(import.meta.url, { moduleCache: false }).import(
+    path.join(extensionRoot, "lib/pi-agent/extensions/managed-manifest.ts"),
   );
+}
+
+async function loadManifestModule() {
+  if (manifestModule) return manifestModule;
+  manifestModule = await importManifestModule(buildRuntimePaths().extensions);
   return manifestModule;
 }
 
@@ -486,10 +610,54 @@ function assertDeepFrozen(value, seen = new Set()) {
   for (const nested of Object.values(value)) assertDeepFrozen(nested, seen);
 }
 
+function assertManagedFailure(action, fixture) {
+  assert.throws(
+    action,
+    (error) => {
+      assert.equal(error.name, "ManagedExtensionError", fixture.id);
+      assert.equal(error.kind, fixture.kind, fixture.id);
+      assert.equal(error.component, fixture.component, fixture.id);
+      assert.equal(error.recovery, recovery);
+      assert.equal(
+        error.message,
+        `Managed ${fixture.component} failed (${fixture.kind}). Recovery: ${recovery}.`,
+      );
+      assert.equal(error.message.includes(MANIFEST_SENTINEL), false);
+      assert.equal(error.message.includes(PROVENANCE_SENTINEL), false);
+      assert.equal(error.message.includes(inputSentinel), false);
+      assert.equal(JSON.stringify(error).includes(MANIFEST_SENTINEL), false);
+      assert.equal(JSON.stringify(error).includes(PROVENANCE_SENTINEL), false);
+      assert.equal(JSON.stringify(error).includes(inputSentinel), false);
+      return true;
+    },
+    fixture.id,
+  );
+}
+
 test("package publishes the exact closed, ordered, immutable extension manifest", { timeout: 1_200_000 }, async () => {
   const runtime = buildRuntimePaths();
-  const { manifest, provenance } = readPackageArtifacts();
+  const { manifest, provenance, trustedProvenance } = readPackageArtifacts();
   assert.deepEqual(manifest, expectedManifest());
+  assert.deepEqual(trustedProvenance, provenance);
+  assert.deepEqual(Object.keys(provenance).sort(), [
+    "extensionOrder",
+    "extensions",
+    "loader",
+    "packageRoot",
+    "patches",
+    "piVersion",
+    "runtimeDependencies",
+    "schemaVersion",
+  ]);
+  assert.equal(provenance.schemaVersion, 2);
+  assert.equal(provenance.packageRoot, runtime.extensions);
+  assert.equal(provenance.piVersion, "0.83.0");
+  assert.deepEqual(provenance.extensionOrder, expectedOrder);
+  assert.deepEqual(provenance.loader, {
+    entryPath: expectedLoader.entryPath,
+    kind: "regular-file",
+    sha256: sha256File(path.join(runtime.extensions, expectedLoader.entryPath)),
+  });
   assert.deepEqual(Object.keys(manifest.extensions).sort(), [...expectedOrder].sort());
   assert.deepEqual(Object.keys(provenance.extensions).sort(), [...expectedOrder].sort());
   assert.equal(new Set(expectedOrder).size, expectedOrder.length);
@@ -501,8 +669,23 @@ test("package publishes the exact closed, ordered, immutable extension manifest"
     new Set(Object.values(manifest.extensions).map(({ entryPath }) => entryPath)).size,
     expectedOrder.length,
   );
+  for (const logicalName of expectedOrder) {
+    const expected = expectedExtensions[logicalName];
+    assert.deepEqual(provenance.extensions[logicalName], {
+      package: expected.package,
+      version: expected.version,
+      sourceRef: expected.sourceRef,
+      entryPath: expected.entryPath,
+      kind: "regular-file",
+      sha256: sha256File(path.join(runtime.extensions, expected.entryPath)),
+    });
+  }
 
   const validator = await loadManifestModule();
+  assert.equal(
+    validator.MANAGED_EXTENSION_IDENTITY_PATH,
+    path.join(runtime.identity, "extensions-provenance.json"),
+  );
   const resolved = validator.validateManagedExtensionPackage({
     packageRoot: runtime.extensions,
     manifest,
@@ -510,28 +693,52 @@ test("package publishes the exact closed, ordered, immutable extension manifest"
   });
   assert.deepEqual(resolved.extensionOrder, expectedOrder);
   assert.deepEqual(
-    resolved.entries.map(({ logicalName, package: packageName, version, entryPath, license }) => ({
+    resolved.entries.map(({
       logicalName,
       package: packageName,
       version,
+      sourceRef,
       entryPath,
       license,
+      kind,
+      sha256,
+    }) => ({
+      logicalName,
+      package: packageName,
+      version,
+      sourceRef,
+      entryPath,
+      license,
+      kind,
+      sha256,
     })),
     expectedOrder.map((logicalName) => ({
       logicalName,
       package: expectedExtensions[logicalName].package,
       version: expectedExtensions[logicalName].version,
+      sourceRef: expectedExtensions[logicalName].sourceRef,
       entryPath: expectedExtensions[logicalName].entryPath,
       license: "MIT",
+      kind: "regular-file",
+      sha256: sha256File(path.join(runtime.extensions, expectedExtensions[logicalName].entryPath)),
     })),
   );
-  assert.equal(resolved.loaderEntryPath, expectedLoader.entryPath);
+  assert.deepEqual(resolved.loader, {
+    absoluteEntryPath: path.join(runtime.extensions, expectedLoader.entryPath),
+    entryPath: expectedLoader.entryPath,
+    kind: "regular-file",
+    sha256: sha256File(path.join(runtime.extensions, expectedLoader.entryPath)),
+  });
+  assert.equal(resolved.packageRoot, runtime.extensions);
   assert.equal(resolved.piVersion, "0.83.0");
   for (const entry of resolved.entries) {
     assert.equal(fs.statSync(entry.absoluteEntryPath).isFile(), true);
     assert.equal(path.relative(runtime.extensions, entry.absoluteEntryPath).startsWith(".."), false);
   }
   assertDeepFrozen(resolved);
+  const loaded = validator.loadManagedExtensionPackage();
+  assert.deepEqual(loaded, resolved);
+  assertDeepFrozen(loaded);
 });
 
 test("manifest validator rejects every altered inventory value-safely", { timeout: 1_200_000 }, async () => {
@@ -555,27 +762,142 @@ test("manifest validator rejects every altered inventory value-safely", { timeou
   for (const fixture of MANIFEST_ALTERATIONS) {
     const artifacts = cloneArtifacts();
     fixture.alter(artifacts);
-    assert.throws(
+    assertManagedFailure(
       () => validateManagedExtensionPackage({
         packageRoot: runtime.extensions,
         ...artifacts,
       }),
-      (error) => {
-        assert.equal(error.name, "ManagedExtensionError", fixture.id);
-        assert.equal(error.kind, fixture.kind, fixture.id);
-        assert.equal(error.component, fixture.component, fixture.id);
-        assert.equal(error.recovery, recovery);
-        assert.equal(
-          error.message,
-          `Managed ${fixture.component} failed (${fixture.kind}). Recovery: ${recovery}.`,
-        );
-        assert.equal(error.message.includes(MANIFEST_SENTINEL), false);
-        assert.equal(JSON.stringify(error).includes(MANIFEST_SENTINEL), false);
-        return true;
-      },
-      fixture.id,
+      fixture,
     );
   }
+});
+
+test("exported validator rejects hostile descriptors without invoking user code", { timeout: 1_200_000 }, async () => {
+  const runtime = buildRuntimePaths();
+  const validator = await loadManifestModule();
+  const expectedFailure = {
+    id: "hostile-validator-input",
+    kind: "malformed",
+    component: "extension manifest",
+  };
+  const input = {
+    packageRoot: runtime.extensions,
+    ...cloneArtifacts(),
+  };
+
+  let trapCalls = 0;
+  const trapHandler = {
+    get(target, property, receiver) {
+      trapCalls += 1;
+      return Reflect.get(target, property, receiver);
+    },
+    getOwnPropertyDescriptor(target, property) {
+      trapCalls += 1;
+      return Reflect.getOwnPropertyDescriptor(target, property);
+    },
+    getPrototypeOf(target) {
+      trapCalls += 1;
+      return Reflect.getPrototypeOf(target);
+    },
+    ownKeys(target) {
+      trapCalls += 1;
+      return Reflect.ownKeys(target);
+    },
+  };
+  const transparentProxy = new Proxy(input, trapHandler);
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(transparentProxy),
+    expectedFailure,
+  );
+  assert.equal(trapCalls, 0);
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      ...input,
+      provenance: new Proxy(input.provenance, trapHandler),
+    }),
+    expectedFailure,
+  );
+  assert.equal(trapCalls, 0);
+
+  const revocable = Proxy.revocable(input, {
+    get() {
+      trapCalls += 1;
+      throw new Error(inputSentinel);
+    },
+  });
+  revocable.revoke();
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(revocable.proxy),
+    expectedFailure,
+  );
+  assert.equal(trapCalls, 0);
+
+  let getterCalls = 0;
+  const forged = new validator.ManagedExtensionError("path", inputSentinel);
+  const accessorInput = {
+    manifest: input.manifest,
+    provenance: input.provenance,
+  };
+  Object.defineProperty(accessorInput, "packageRoot", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw forged;
+    },
+  });
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(accessorInput),
+    expectedFailure,
+  );
+  assert.equal(getterCalls, 0);
+  const nestedAccessorProvenance = { ...input.provenance };
+  Object.defineProperty(nestedAccessorProvenance, "extensions", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw forged;
+    },
+  });
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      ...input,
+      provenance: nestedAccessorProvenance,
+    }),
+    expectedFailure,
+  );
+  assert.equal(getterCalls, 0);
+  assert.equal(typeof validator.isManagedExtensionError, "function");
+  assert.equal(validator.isManagedExtensionError(forged), false);
+
+  const extraInput = { ...input, [inputSentinel]: true };
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(extraInput),
+    expectedFailure,
+  );
+  let toJsonCalls = 0;
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      ...input,
+      toJSON() {
+        toJsonCalls += 1;
+        throw forged;
+      },
+    }),
+    expectedFailure,
+  );
+  assert.equal(toJsonCalls, 0);
+  const symbolInput = { ...input, [Symbol(inputSentinel)]: true };
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(symbolInput),
+    expectedFailure,
+  );
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      ...input,
+      provenance: { ...input.provenance, [Symbol(inputSentinel)]: true },
+    }),
+    expectedFailure,
+  );
 });
 
 test("real Pi/Jiti combined loader rejects every altered manifest before a model call", { timeout: 1_200_000 }, () => {
@@ -587,6 +909,124 @@ test("real Pi/Jiti combined loader rejects every altered manifest before a model
       runCombinedLoaderProbe(extensionRoot),
       `Managed ${fixture.component} failed (${fixture.kind})`,
       MANIFEST_SENTINEL,
+      fixture.id,
+    );
+  }
+});
+
+test("shared validator rejects every altered filesystem provenance identity", { timeout: 1_200_000 }, async () => {
+  const packages = buildAlteredProvenancePackagePaths();
+  for (const fixture of PROVENANCE_FAILURE_FIXTURES) {
+    const extensionRoot = packages.get(fixture.id);
+    assert.match(extensionRoot ?? "", /^\/nix\/store\//, fixture.id);
+    const { validateManagedExtensionPackage } = await importManifestModule(extensionRoot);
+    const { manifest, provenance } = readPackageArtifacts(extensionRoot);
+    assertManagedFailure(
+      () => validateManagedExtensionPackage({
+        packageRoot: extensionRoot,
+        manifest,
+        provenance,
+      }),
+      fixture,
+    );
+  }
+});
+
+test("exported APIs cannot replace the build-time trusted identity", { timeout: 1_200_000 }, async () => {
+  const extensionRoot = buildAlteredProvenancePackagePaths().get("provenance-recomputed-tamper");
+  assert.match(extensionRoot ?? "", /^\/nix\/store\//);
+  const validator = await importManifestModule(extensionRoot);
+  assert.equal(validator.validateManagedExtensionPackage.length, 1);
+  assert.equal(validator.loadManagedExtensionPackage.length, 0);
+  const { manifest, provenance } = readPackageArtifacts(extensionRoot);
+  const digestFailure = PROVENANCE_FAILURE_FIXTURES.find(
+    ({ id }) => id === "provenance-recomputed-tamper",
+  );
+  assert.ok(digestFailure);
+  const malformedFailure = {
+    id: "trusted-provenance-override",
+    kind: "malformed",
+    component: "extension manifest",
+  };
+
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      packageRoot: extensionRoot,
+      manifest,
+      provenance,
+      trustedProvenance: structuredClone(provenance),
+    }),
+    malformedFailure,
+  );
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage({
+      packageRoot: extensionRoot,
+      manifest,
+      provenance,
+    }),
+    digestFailure,
+  );
+  assertManagedFailure(
+    () => validator.validateManagedExtensionPackage(
+      { packageRoot: extensionRoot, manifest, provenance },
+      structuredClone(provenance),
+    ),
+    digestFailure,
+  );
+
+  const forgedIdentityPath = fs.readFileSync(
+    path.join(extensionRoot, "fixture-forged-identity-path"),
+    "utf8",
+  ).trim();
+  assertManagedFailure(
+    () => validator.loadManagedExtensionPackage(forgedIdentityPath),
+    digestFailure,
+  );
+
+  let trapCalls = 0;
+  const transparentOverride = new Proxy({}, {
+    get() { trapCalls += 1; return forgedIdentityPath; },
+    getPrototypeOf() { trapCalls += 1; return Object.prototype; },
+    ownKeys() { trapCalls += 1; return []; },
+  });
+  assertManagedFailure(
+    () => validator.loadManagedExtensionPackage(transparentOverride),
+    digestFailure,
+  );
+  const revocableOverride = Proxy.revocable({}, {
+    get() { trapCalls += 1; throw new Error(inputSentinel); },
+  });
+  revocableOverride.revoke();
+  assertManagedFailure(
+    () => validator.loadManagedExtensionPackage(revocableOverride.proxy),
+    digestFailure,
+  );
+  assert.equal(trapCalls, 0);
+
+  let getterCalls = 0;
+  const accessorOverride = {};
+  Object.defineProperty(accessorOverride, "toString", {
+    get() {
+      getterCalls += 1;
+      throw new validator.ManagedExtensionError("path", inputSentinel);
+    },
+  });
+  assertManagedFailure(
+    () => validator.loadManagedExtensionPackage(accessorOverride),
+    digestFailure,
+  );
+  assert.equal(getterCalls, 0);
+});
+
+test("real Pi/Jiti loader rejects every altered provenance before a model call", { timeout: 1_200_000 }, () => {
+  const packages = buildAlteredProvenancePackagePaths();
+  for (const fixture of PROVENANCE_FAILURE_FIXTURES) {
+    const extensionRoot = packages.get(fixture.id);
+    assert.match(extensionRoot ?? "", /^\/nix\/store\//, fixture.id);
+    assertRejectedBeforeModel(
+      runCombinedLoaderProbe(extensionRoot),
+      `Managed ${fixture.component} failed (${fixture.kind})`,
+      PROVENANCE_SENTINEL,
       fixture.id,
     );
   }
@@ -604,8 +1044,29 @@ test("real pi --print exits on a managed loader error before print-mode dispatch
   assert.doesNotMatch(result.stderr, /must not reach print mode|TASK_4_12_PRIVATE_MANIFEST_SENTINEL/);
 });
 
-test("managed entries alternate evaluation and factory invocation in exact order", { timeout: 1_200_000 }, () => {
-  const { report } = runCombinedLoaderProbe(buildOrderedTracePackagePath());
+test("unchanged hardlinked entry validates and loads in exact factory order", { timeout: 1_200_000 }, async () => {
+  const extensionRoot = buildOrderedTracePackagePath();
+  const entry = path.join(extensionRoot, expectedExtensions.mcp.entryPath);
+  const hardlinkTarget = `${entry}.hardlink-target`;
+  const entryStat = fs.statSync(entry);
+  const targetStat = fs.statSync(hardlinkTarget);
+  assert.equal(entryStat.dev, targetStat.dev);
+  assert.equal(entryStat.ino, targetStat.ino);
+
+  const { validateManagedExtensionPackage } = await importManifestModule(extensionRoot);
+  const { manifest, provenance } = readPackageArtifacts(extensionRoot);
+  const resolved = validateManagedExtensionPackage({
+    packageRoot: extensionRoot,
+    manifest,
+    provenance,
+  });
+  assert.equal(
+    resolved.entries.find(({ logicalName }) => logicalName === "mcp")?.sha256,
+    sha256File(entry),
+  );
+  assertDeepFrozen(resolved);
+
+  const { report } = runCombinedLoaderProbe(extensionRoot);
   assert.equal(report.thrown, null);
   assert.deepEqual(report.errors, []);
   assert.deepEqual(
@@ -1160,6 +1621,6 @@ test("Task 4.12 production files contain no feature seam", () => {
   ].map((file) => fs.readFileSync(file, "utf8")).join("\n");
   assert.doesNotMatch(
     sources,
-    /task412ExactExtensionLoader|PI_AGENT_TASK_4_12|EXACT_MANAGED_LOADER_ENABLED/,
+    /task412(?:ExactExtensionLoader|DigestProvenanceEnabled|TrustedIdentityEnabled)|PI_AGENT_TASK_4_12|EXACT_MANAGED_LOADER_ENABLED/,
   );
 });

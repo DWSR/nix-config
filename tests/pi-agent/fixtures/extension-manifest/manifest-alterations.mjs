@@ -93,6 +93,22 @@ export const MANIFEST_ALTERATIONS = [
     },
   },
   {
+    id: "malformed-provenance-shape",
+    kind: "malformed",
+    component: "extension manifest",
+    alter({ provenance }) {
+      provenance[MANIFEST_SENTINEL] = true;
+    },
+  },
+  {
+    id: "mismatched-provenance-entry",
+    kind: "incompatible",
+    component: "extension mcp",
+    alter({ provenance }) {
+      provenance.extensions.mcp.entryPath = "lib/pi-agent/extensions/mcpproxy/package.json";
+    },
+  },
+  {
     id: "incompatible-source-reference",
     kind: "incompatible",
     component: "extension plan",

@@ -7,9 +7,13 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
+  MANAGED_EXTENSION_IDENTITY_PATH,
   ManagedExtensionError,
+  isManagedExtensionError,
   loadManagedExtensionPackage,
 } from "./managed-manifest.ts";
+
+const TRUSTED_IDENTITY_PATH = "@trustedIdentityPath@";
 
 type ManagedFactory = (pi: ExtensionAPI) => Promise<void> | void;
 
@@ -174,10 +178,13 @@ export default async function managedExtensionLoader(pi: ExtensionAPI): Promise<
   const registrations: ManagedRegistration[] = [];
   let mcpSurface: ManagedMcpSurface | undefined;
   let extensionPackage: ReturnType<typeof loadManagedExtensionPackage>;
+  if (MANAGED_EXTENSION_IDENTITY_PATH !== TRUSTED_IDENTITY_PATH) {
+    throw new ManagedExtensionError("incompatible", "extension identity");
+  }
   try {
     extensionPackage = loadManagedExtensionPackage();
   } catch (error) {
-    if (error instanceof ManagedExtensionError) throw error;
+    if (isManagedExtensionError(error)) throw error;
     throw new ManagedExtensionError("malformed", "extension manifest");
   }
   if (extensionPackage.piVersion !== VERSION) {

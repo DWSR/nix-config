@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   lstatSync,
   readFileSync,
@@ -6,12 +7,16 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { types as utilTypes } from "node:util";
 
 const EXPECTED_CONTRACT = @managedExtensionContract@ as const;
+const EMBEDDED_TRUSTED_IDENTITY_PATH = "@trustedIdentityPath@";
 const STORE_ROOT = /^\/nix\/store\/[0-9a-z]{32}-[^/]+$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 const RECOVERY = "rebuild pi-agent-extensions and activate the managed generation";
 
 export type ManagedExtensionFailureKind =
+  | "digest"
   | "duplicate"
   | "forbidden"
   | "incompatible"
@@ -37,13 +42,27 @@ export class ManagedExtensionError extends Error {
   }
 }
 
+const INTERNAL_FAILURES = new WeakSet<ManagedExtensionError>();
+
+export function isManagedExtensionError(error: unknown): error is ManagedExtensionError {
+  return error !== null
+    && (typeof error === "object" || typeof error === "function")
+    && INTERNAL_FAILURES.has(error as ManagedExtensionError);
+}
+
 interface ManifestEntry {
   readonly entryPath: string;
   readonly license: string;
   readonly version: string;
 }
 
-interface ProvenanceEntry {
+interface ProvenanceFile {
+  readonly entryPath: string;
+  readonly kind: "regular-file";
+  readonly sha256: string;
+}
+
+interface ProvenanceEntry extends ProvenanceFile {
   readonly package: string;
   readonly sourceRef: string;
   readonly version: string;
@@ -54,10 +73,14 @@ interface ResolvedEntry extends ManifestEntry, ProvenanceEntry {
   readonly logicalName: string;
 }
 
+interface ResolvedFile extends ProvenanceFile {
+  readonly absoluteEntryPath: string;
+}
+
 export interface ResolvedManagedExtensionPackage {
   readonly entries: readonly ResolvedEntry[];
   readonly extensionOrder: readonly string[];
-  readonly loaderEntryPath: string;
+  readonly loader: ResolvedFile;
   readonly packageRoot: string;
   readonly piVersion: string;
 }
@@ -69,7 +92,79 @@ export interface ManagedExtensionPackageInput {
 }
 
 function fail(kind: ManagedExtensionFailureKind, component = "extension manifest"): never {
-  throw new ManagedExtensionError(kind, component);
+  const error = new ManagedExtensionError(kind, component);
+  INTERNAL_FAILURES.add(error);
+  throw error;
+}
+
+function snapshotClosedData(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (
+    value === null
+    || typeof value === "string"
+    || typeof value === "boolean"
+    || (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return value;
+  }
+  if (typeof value !== "object" || utilTypes.isProxy(value)) {
+    throw new Error("invalid managed extension input");
+  }
+  if (seen.has(value)) throw new Error("invalid managed extension input");
+  seen.add(value);
+
+  const prototype = Object.getPrototypeOf(value);
+  const keys = Reflect.ownKeys(value);
+  if (keys.some((key) => typeof key !== "string")) {
+    throw new Error("invalid managed extension input");
+  }
+  if (Array.isArray(value)) {
+    if (prototype !== Array.prototype) throw new Error("invalid managed extension input");
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (
+      lengthDescriptor === undefined
+      || !("value" in lengthDescriptor)
+      || !Number.isSafeInteger(lengthDescriptor.value)
+      || lengthDescriptor.value < 0
+      || keys.length !== lengthDescriptor.value + 1
+    ) {
+      throw new Error("invalid managed extension input");
+    }
+    const snapshot: unknown[] = [];
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+        throw new Error("invalid managed extension input");
+      }
+      snapshot.push(snapshotClosedData(descriptor.value, seen));
+    }
+    return snapshot;
+  }
+  if (prototype !== Object.prototype) throw new Error("invalid managed extension input");
+
+  const snapshot: Record<string, unknown> = {};
+  for (const key of keys as string[]) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || descriptor.enumerable !== true || !("value" in descriptor)) {
+      throw new Error("invalid managed extension input");
+    }
+    Object.defineProperty(snapshot, key, {
+      enumerable: true,
+      value: snapshotClosedData(descriptor.value, seen),
+    });
+  }
+  return snapshot;
+}
+
+function snapshotPackageInput(input: unknown): ManagedExtensionPackageInput {
+  const snapshot = snapshotClosedData(input);
+  if (!hasExactKeys(snapshot, [
+    "manifest",
+    "packageRoot",
+    "provenance",
+  ])) {
+    throw new Error("invalid managed extension input");
+  }
+  return snapshot as unknown as ManagedExtensionPackageInput;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -89,6 +184,19 @@ function hasExactKeys(value: unknown, expected: readonly string[]): value is Rec
 
 function sameValues(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameClosedValue(actual: unknown, expected: unknown): boolean {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual)
+      && actual.length === expected.length
+      && actual.every((value, index) => sameClosedValue(value, expected[index]));
+  }
+  if (isRecord(expected)) {
+    if (!isRecord(actual) || !hasExactKeys(actual, Object.keys(expected))) return false;
+    return Object.keys(expected).every((key) => sameClosedValue(actual[key], expected[key]));
+  }
+  return actual === expected;
 }
 
 function isInside(root: string, target: string): boolean {
@@ -115,13 +223,20 @@ function resolveRegularFile(
   const candidate = path.resolve(packageRoot, relativePath);
   if (!isInside(packageRoot, candidate)) fail("path", component);
 
-  let stat;
-  try {
-    stat = lstatSync(candidate);
-  } catch {
-    fail("missing", component);
+  const segments = relativePath.split("/");
+  let current = packageRoot;
+  for (const [index, segment] of segments.entries()) {
+    current = path.join(current, segment);
+    let stat;
+    try {
+      stat = lstatSync(current);
+    } catch {
+      fail("missing", component);
+    }
+    if (stat.isSymbolicLink()) fail("path", component);
+    if (index < segments.length - 1 && !stat.isDirectory()) fail("non-file", component);
+    if (index === segments.length - 1 && !stat.isFile()) fail("non-file", component);
   }
-  if (!stat.isFile()) fail("non-file", component);
 
   let realTarget: string;
   try {
@@ -129,8 +244,72 @@ function resolveRegularFile(
   } catch {
     fail("missing", component);
   }
-  if (!isInside(packageRoot, realTarget)) fail("path", component);
-  return realTarget;
+  if (realTarget !== candidate || !isInside(packageRoot, realTarget)) fail("path", component);
+  return candidate;
+}
+
+function resolvePackageRoot(value: unknown, component = "extension package"): string {
+  if (typeof value !== "string" || !STORE_ROOT.test(value)) fail("path", component);
+  let stat;
+  try {
+    stat = lstatSync(value);
+  } catch {
+    fail("missing", component);
+  }
+  if (stat.isSymbolicLink()) fail("path", component);
+  if (!stat.isDirectory()) fail("non-file", component);
+  let packageRoot: string;
+  try {
+    packageRoot = realpathSync.native(value);
+  } catch {
+    fail("missing", component);
+  }
+  if (packageRoot !== value || !STORE_ROOT.test(packageRoot)) fail("path", component);
+  return packageRoot;
+}
+
+function resolveTrustedIdentityPath(value: unknown): string {
+  if (typeof value !== "string" || path.basename(value) !== "extensions-provenance.json") {
+    fail("path", "extension identity");
+  }
+  const identityRoot = resolvePackageRoot(path.dirname(value), "extension identity");
+  const identityPath = resolveRegularFile(
+    identityRoot,
+    "extensions-provenance.json",
+    "extension identity",
+  );
+  if (identityPath !== value) fail("path", "extension identity");
+  return identityPath;
+}
+
+function verifyDigest(file: string, expected: unknown, component: string): string {
+  if (typeof expected !== "string" || !SHA256.test(expected)) fail("malformed", component);
+  let actual: string;
+  try {
+    actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+  } catch {
+    fail("missing", component);
+  }
+  if (actual !== expected) fail("digest", component);
+  return expected;
+}
+
+function verifyTrustedDigest(
+  file: string,
+  claimed: unknown,
+  trusted: unknown,
+  component: string,
+): string {
+  if (
+    typeof claimed !== "string"
+    || !SHA256.test(claimed)
+    || typeof trusted !== "string"
+    || !SHA256.test(trusted)
+  ) {
+    fail("malformed", component);
+  }
+  if (claimed !== trusted) fail("digest", component);
+  return verifyDigest(file, trusted, component);
 }
 
 function inventoryStrings(manifest: Record<string, unknown>, provenance: Record<string, unknown>): string[] {
@@ -195,7 +374,7 @@ function validateNoNestedPiRuntime(packageRoot: string): void {
     lstatSync(path.join(nodeModules, ".bin"));
     fail("forbidden", "extension package");
   } catch (error) {
-    if (error instanceof ManagedExtensionError) throw error;
+    if (isManagedExtensionError(error)) throw error;
   }
 }
 
@@ -210,7 +389,7 @@ function readPackageJson(directory: string, component: string): Record<string, u
     if (!isRecord(value)) fail("incompatible", component);
     return value;
   } catch (error) {
-    if (error instanceof ManagedExtensionError) throw error;
+    if (isManagedExtensionError(error)) throw error;
     fail("missing", component);
   }
 }
@@ -238,21 +417,11 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtensionPackage {
-  if (typeof input.packageRoot !== "string" || !STORE_ROOT.test(input.packageRoot)) {
-    fail("path", "extension package");
-  }
-  let packageRoot: string;
-  try {
-    if (!lstatSync(input.packageRoot).isDirectory()) fail("non-file", "extension package");
-    packageRoot = realpathSync.native(input.packageRoot);
-  } catch (error) {
-    if (error instanceof ManagedExtensionError) throw error;
-    fail("missing", "extension package");
-  }
-  if (packageRoot !== input.packageRoot || !STORE_ROOT.test(packageRoot)) {
-    fail("path", "extension package");
-  }
+function validate(
+  input: ManagedExtensionPackageInput,
+  trustedInput: unknown,
+): ResolvedManagedExtensionPackage {
+  const packageRoot = resolvePackageRoot(input.packageRoot);
 
   if (!hasExactKeys(input.manifest, [
     "schemaVersion",
@@ -263,20 +432,52 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
   ])) {
     fail("malformed");
   }
-  if (!hasExactKeys(input.provenance, [
+  const provenanceKeys = [
     "schemaVersion",
+    "packageRoot",
+    "piVersion",
+    "loader",
+    "extensionOrder",
     "extensions",
     "patches",
     "runtimeDependencies",
-  ])) {
+  ] as const;
+  if (
+    !hasExactKeys(input.provenance, provenanceKeys)
+    || !hasExactKeys(trustedInput, provenanceKeys)
+  ) {
     fail("malformed");
   }
   const manifest = input.manifest;
   const provenance = input.provenance;
+  const trustedProvenance = trustedInput;
   if (
     manifest.schemaVersion !== 1
-    || provenance.schemaVersion !== 1
+    || provenance.schemaVersion !== EXPECTED_CONTRACT.provenance.schemaVersion
+    || trustedProvenance.schemaVersion !== EXPECTED_CONTRACT.provenance.schemaVersion
     || manifest.piVersion !== EXPECTED_CONTRACT.piVersion
+  ) {
+    fail("incompatible");
+  }
+  if (
+    provenance.packageRoot !== packageRoot
+    || trustedProvenance.packageRoot !== packageRoot
+  ) {
+    fail("path", "extension package");
+  }
+  if (
+    provenance.piVersion !== manifest.piVersion
+    || trustedProvenance.piVersion !== manifest.piVersion
+    || !sameClosedValue(provenance.patches, EXPECTED_CONTRACT.provenance.patches)
+    || !sameClosedValue(trustedProvenance.patches, EXPECTED_CONTRACT.provenance.patches)
+    || !sameClosedValue(
+      provenance.runtimeDependencies,
+      EXPECTED_CONTRACT.provenance.runtimeDependencies,
+    )
+    || !sameClosedValue(
+      trustedProvenance.runtimeDependencies,
+      EXPECTED_CONTRACT.provenance.runtimeDependencies,
+    )
   ) {
     fail("incompatible");
   }
@@ -294,24 +495,57 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
   ) {
     fail("incompatible");
   }
-  const loaderEntryPath = resolveRegularFile(
+  if (
+    !hasExactKeys(provenance.loader, ["entryPath", "kind", "sha256"])
+    || !hasExactKeys(trustedProvenance.loader, ["entryPath", "kind", "sha256"])
+  ) {
+    fail("malformed", "extension loader");
+  }
+  const absoluteLoaderEntryPath = resolveRegularFile(
     packageRoot,
     manifest.loader.entryPath,
-    "extension manifest",
+    "extension loader",
+  );
+  if (
+    provenance.loader.entryPath !== manifest.loader.entryPath
+    || provenance.loader.entryPath !== EXPECTED_CONTRACT.provenance.loader.entryPath
+    || provenance.loader.kind !== EXPECTED_CONTRACT.provenance.loader.kind
+    || trustedProvenance.loader.entryPath !== manifest.loader.entryPath
+    || trustedProvenance.loader.entryPath !== EXPECTED_CONTRACT.provenance.loader.entryPath
+    || trustedProvenance.loader.kind !== EXPECTED_CONTRACT.provenance.loader.kind
+  ) {
+    fail("incompatible", "extension loader");
+  }
+  const loaderSha256 = verifyTrustedDigest(
+    absoluteLoaderEntryPath,
+    provenance.loader.sha256,
+    trustedProvenance.loader.sha256,
+    "extension loader",
   );
 
-  if (!isRecord(manifest.extensions) || !isRecord(provenance.extensions)) fail("malformed");
+  if (
+    !isRecord(manifest.extensions)
+    || !isRecord(provenance.extensions)
+    || !isRecord(trustedProvenance.extensions)
+  ) {
+    fail("malformed");
+  }
   if (hasForbiddenSurface(inventoryStrings(manifest, provenance))) fail("forbidden");
 
   const expectedNames = [...EXPECTED_CONTRACT.extensionOrder];
   const manifestNames = Object.keys(manifest.extensions);
   const provenanceNames = Object.keys(provenance.extensions);
+  const trustedProvenanceNames = Object.keys(trustedProvenance.extensions);
   for (const name of expectedNames) {
-    if (!manifestNames.includes(name) || !provenanceNames.includes(name)) {
+    if (
+      !manifestNames.includes(name)
+      || !provenanceNames.includes(name)
+      || !trustedProvenanceNames.includes(name)
+    ) {
       fail("missing", `extension ${name}`);
     }
   }
-  for (const names of [manifestNames, provenanceNames]) {
+  for (const names of [manifestNames, provenanceNames, trustedProvenanceNames]) {
     if (names.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
   }
   if (!Array.isArray(manifest.extensionOrder) || !manifest.extensionOrder.every((name) => typeof name === "string")) {
@@ -323,18 +557,74 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
   if (missingOrderedName !== undefined) fail("missing", `extension ${missingOrderedName}`);
   if (extensionOrder.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
   if (!sameValues(extensionOrder, expectedNames)) fail("reordered");
+  if (
+    !Array.isArray(provenance.extensionOrder)
+    || !provenance.extensionOrder.every((name) => typeof name === "string")
+  ) {
+    fail("malformed");
+  }
+  const provenanceOrder = provenance.extensionOrder as string[];
+  if (new Set(provenanceOrder).size !== provenanceOrder.length) fail("duplicate");
+  const missingProvenanceName = expectedNames.find((name) => !provenanceOrder.includes(name));
+  if (missingProvenanceName !== undefined) fail("missing", `extension ${missingProvenanceName}`);
+  if (provenanceOrder.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
+  if (!sameValues(provenanceOrder, expectedNames)) fail("reordered");
+  if (
+    !Array.isArray(trustedProvenance.extensionOrder)
+    || !trustedProvenance.extensionOrder.every((name) => typeof name === "string")
+  ) {
+    fail("malformed");
+  }
+  const trustedProvenanceOrder = trustedProvenance.extensionOrder as string[];
+  if (new Set(trustedProvenanceOrder).size !== trustedProvenanceOrder.length) fail("duplicate");
+  const missingTrustedName = expectedNames.find((name) => !trustedProvenanceOrder.includes(name));
+  if (missingTrustedName !== undefined) fail("missing", `extension ${missingTrustedName}`);
+  if (trustedProvenanceOrder.some((name) => !expectedNames.includes(name as never))) fail("unexpected");
+  if (!sameValues(trustedProvenanceOrder, expectedNames)) fail("reordered");
 
   const packageNames: string[] = [];
   const entryPaths: string[] = [];
+  const provenanceEntryPaths: string[] = [];
+  const trustedPackageNames: string[] = [];
+  const trustedEntryPaths: string[] = [];
   for (const name of expectedNames) {
     const provenanceEntry = provenance.extensions[name];
+    const trustedEntry = trustedProvenance.extensions[name];
     const manifestEntry = manifest.extensions[name];
     if (!hasExactKeys(manifestEntry, ["version", "entryPath", "license"])) fail("malformed", `extension ${name}`);
-    if (!hasExactKeys(provenanceEntry, ["package", "version", "sourceRef"])) fail("malformed", `extension ${name}`);
+    if (!hasExactKeys(provenanceEntry, [
+      "package",
+      "version",
+      "sourceRef",
+      "entryPath",
+      "kind",
+      "sha256",
+    ])) {
+      fail("malformed", `extension ${name}`);
+    }
+    if (!hasExactKeys(trustedEntry, [
+      "package",
+      "version",
+      "sourceRef",
+      "entryPath",
+      "kind",
+      "sha256",
+    ])) {
+      fail("malformed", `extension ${name}`);
+    }
     if (typeof manifestEntry.entryPath === "string") entryPaths.push(manifestEntry.entryPath);
     if (typeof provenanceEntry.package === "string") packageNames.push(provenanceEntry.package);
+    if (typeof provenanceEntry.entryPath === "string") provenanceEntryPaths.push(provenanceEntry.entryPath);
+    if (typeof trustedEntry.package === "string") trustedPackageNames.push(trustedEntry.package);
+    if (typeof trustedEntry.entryPath === "string") trustedEntryPaths.push(trustedEntry.entryPath);
   }
-  if (new Set(packageNames).size !== packageNames.length || new Set(entryPaths).size !== entryPaths.length) {
+  if (
+    new Set(packageNames).size !== packageNames.length
+    || new Set(entryPaths).size !== entryPaths.length
+    || new Set(provenanceEntryPaths).size !== provenanceEntryPaths.length
+    || new Set(trustedPackageNames).size !== trustedPackageNames.length
+    || new Set(trustedEntryPaths).size !== trustedEntryPaths.length
+  ) {
     fail("duplicate");
   }
 
@@ -343,12 +633,14 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
     const component = `extension ${logicalName}`;
     const manifestEntry = manifest.extensions[logicalName] as unknown as ManifestEntry;
     const provenanceEntry = provenance.extensions[logicalName] as unknown as ProvenanceEntry;
+    const trustedEntry = trustedProvenance.extensions[logicalName] as unknown as ProvenanceEntry;
     const absoluteEntryPath = resolveRegularFile(
       packageRoot,
       manifestEntry.entryPath,
       component,
     );
     const expected = EXPECTED_CONTRACT.extensions[logicalName];
+    const expectedProvenance = EXPECTED_CONTRACT.provenance.extensions[logicalName];
     if (
       manifestEntry.version !== expected.version
       || manifestEntry.entryPath !== expected.entryPath
@@ -356,9 +648,27 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
       || provenanceEntry.package !== expected.package
       || provenanceEntry.version !== expected.version
       || provenanceEntry.sourceRef !== expected.sourceRef
+      || provenanceEntry.package !== expectedProvenance.package
+      || provenanceEntry.version !== expectedProvenance.version
+      || provenanceEntry.sourceRef !== expectedProvenance.sourceRef
+      || provenanceEntry.entryPath !== manifestEntry.entryPath
+      || provenanceEntry.entryPath !== expectedProvenance.entryPath
+      || provenanceEntry.kind !== expectedProvenance.kind
+      || trustedEntry.package !== expectedProvenance.package
+      || trustedEntry.version !== expectedProvenance.version
+      || trustedEntry.sourceRef !== expectedProvenance.sourceRef
+      || trustedEntry.entryPath !== manifestEntry.entryPath
+      || trustedEntry.entryPath !== expectedProvenance.entryPath
+      || trustedEntry.kind !== expectedProvenance.kind
     ) {
       fail("incompatible", component);
     }
+    const sha256 = verifyTrustedDigest(
+      absoluteEntryPath,
+      provenanceEntry.sha256,
+      trustedEntry.sha256,
+      component,
+    );
 
     const expectedPackageDirectory = packageDirectory(
       packageRoot,
@@ -385,10 +695,12 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
     entries.push({
       absoluteEntryPath,
       entryPath: manifestEntry.entryPath,
+      kind: provenanceEntry.kind,
       license: manifestEntry.license,
       logicalName,
       package: provenanceEntry.package,
       sourceRef: provenanceEntry.sourceRef,
+      sha256,
       version: manifestEntry.version,
     });
   }
@@ -397,34 +709,70 @@ function validate(input: ManagedExtensionPackageInput): ResolvedManagedExtension
   return deepFreeze({
     entries,
     extensionOrder: [...extensionOrder],
-    loaderEntryPath: path.relative(packageRoot, loaderEntryPath).replaceAll(path.sep, "/"),
+    loader: {
+      absoluteEntryPath: absoluteLoaderEntryPath,
+      entryPath: provenance.loader.entryPath as string,
+      kind: provenance.loader.kind as "regular-file",
+      sha256: loaderSha256,
+    },
     packageRoot,
     piVersion: manifest.piVersion as string,
   });
 }
 
+export const MANAGED_EXTENSION_IDENTITY_PATH = EMBEDDED_TRUSTED_IDENTITY_PATH;
+
+function readEmbeddedTrustedProvenance(): unknown {
+  try {
+    return JSON.parse(
+      readFileSync(resolveTrustedIdentityPath(MANAGED_EXTENSION_IDENTITY_PATH), "utf8"),
+    );
+  } catch (error) {
+    if (isManagedExtensionError(error)) throw error;
+    fail("malformed");
+  }
+}
+
 export function validateManagedExtensionPackage(
-  input: ManagedExtensionPackageInput,
+  input: unknown,
 ): ResolvedManagedExtensionPackage {
   try {
-    return validate(input);
+    return validate(
+      snapshotPackageInput(input),
+      snapshotClosedData(readEmbeddedTrustedProvenance()),
+    );
   } catch (error) {
-    if (error instanceof ManagedExtensionError) throw error;
+    if (isManagedExtensionError(error)) throw error;
     fail("malformed");
   }
 }
 
 export function loadManagedExtensionPackage(): ResolvedManagedExtensionPackage {
-  const packageRoot = realpathSync.native(fileURLToPath(new URL("../../../", import.meta.url)));
+  const packageRoot = resolvePackageRoot(path.resolve(fileURLToPath(new URL("../../../", import.meta.url))));
   let manifest: unknown;
   let provenance: unknown;
   try {
-    manifest = JSON.parse(readFileSync(path.join(packageRoot, "share/pi-agent/extensions.json"), "utf8"));
-    provenance = JSON.parse(
-      readFileSync(path.join(packageRoot, "share/pi-agent/extensions-provenance.json"), "utf8"),
+    const manifestPath = resolveRegularFile(
+      packageRoot,
+      "share/pi-agent/extensions.json",
+      "extension manifest",
     );
-  } catch {
+    const provenancePath = resolveRegularFile(
+      packageRoot,
+      "share/pi-agent/extensions-provenance.json",
+      "extension manifest",
+    );
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    provenance = JSON.parse(
+      readFileSync(provenancePath, "utf8"),
+    );
+  } catch (error) {
+    if (isManagedExtensionError(error)) throw error;
     fail("malformed");
   }
-  return validateManagedExtensionPackage({ manifest, packageRoot, provenance });
+  return validateManagedExtensionPackage({
+    manifest,
+    packageRoot,
+    provenance,
+  });
 }
