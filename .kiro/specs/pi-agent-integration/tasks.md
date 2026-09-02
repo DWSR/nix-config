@@ -436,7 +436,7 @@
   - _Boundary: Runtime Control_
   - _Depends: 2.4, 3.7, 3.9, 4.12, 4.13, 5.1, 5.3, 5.4, 5.5_
 
-- [ ] 5.7 Implement the runtime compatibility validator
+- [x] 5.7 Implement the runtime compatibility validator
   - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, Cavemem, PTY, LSP, and reconciliation drift.
   - Run check and dry-run modes without mutating Pi state or exposing credentials.
   - Classify each gate as pass, fail, or manual-required with versioned evidence.
@@ -658,3 +658,4 @@
 - Tasks 4.12 and 5.6: Extension readiness must consume one loader-owned provenance inventory; status-only symlink or hardlink rules diverge from runtime, and Nix may legitimately deduplicate store files with hardlinks.
 - Task 4.12: Anchor entry digests and the package root in a distinct Nix `identity` output referenced by production code; exported validators accept no caller-provided trust object or path.
 - Task 5.6: Keep managed status at a command-byte boundary; reject sensitive environment descriptors below the root without invoking accessors, then scan the exact human or JSON bytes before output.
+- Task 5.7: Normalize empty sandbox controls to absence, then reject any non-empty control containing an exact credential before spawning status or another validator probe.
