@@ -426,7 +426,7 @@
   - _Boundary: Sandbox Catalog, Runtime Control — Integration_
   - _Depends: 2.5, 3.7, 3.9, 4.2, 4.9, 4.11, 4.12, 4.13, 5.1, 5.3, 5.4_
 
-- [ ] 5.6 Implement redacted managed status
+- [x] 5.6 Implement redacted managed status
   - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
   - Support stable human and JSON formats without starting Pi.
   - Redact sensitive values and credential-bearing headers using the shared policy.
@@ -657,3 +657,4 @@
 - Task 5.5: Treat Pi's parser as immutable selected-runtime code: verify its reviewed identity, then invoke it only through a fixed same-package helper with an empty environment; never extract or dynamically evaluate parser source.
 - Tasks 4.12 and 5.6: Extension readiness must consume one loader-owned provenance inventory; status-only symlink or hardlink rules diverge from runtime, and Nix may legitimately deduplicate store files with hardlinks.
 - Task 4.12: Anchor entry digests and the package root in a distinct Nix `identity` output referenced by production code; exported validators accept no caller-provided trust object or path.
+- Task 5.6: Keep managed status at a command-byte boundary; reject sensitive environment descriptors below the root without invoking accessors, then scan the exact human or JSON bytes before output.
