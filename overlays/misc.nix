@@ -426,14 +426,15 @@ final: prev: {
   # the `opencode` flake input's packages.<system>.opencode, built from its
   # nix/opencode.nix + nix/node_modules.nix. This replaces overriding nixpkgs'
   # `opencode` derivation. Because the packaging is version-matched to the
-  # source, we no longer hand-maintain:
+  # source, we normally no longer hand-maintain:
   #   - the node_modules `outputHash` (the fork ships it per-platform in
-  #     nix/hashes.json; flake.lock pins the source), or
+  #     nix/hashes.json; flake.lock pins the source; see the v1.18.26
+  #     aarch64-darwin exception below), or
   #   - the `--filter`-dropping node_modules buildPhase override. That existed
   #     only to make the root-workspace `prettier` devDep land for the older
   #     nixpkgs build machinery; by v1.16.2 the build-time prettier import was
   #     removed and prettier moved into packages/opencode, so it is moot.
-  # v1.18.4's build requires bun 1.3.14 (its package.json
+  # OpenCode's build requires bun 1.3.14 (its package.json
   # `packageManager: "bun@1.3.14"`), while this repo's current nixpkgs-unstable
   # lock still exposes bun 1.3.13. Keep upstream
   # opencode's own Nix packaging, but replace only the build-time `bun` native
@@ -442,7 +443,7 @@ final: prev: {
   # opencode`; update/remove `opencodeBun` only if the new tag's build floor or
   # nixpkgs Bun state changes.
   #
-  # `version` is pinned to a clean "1.18.4" because the upstream packages
+  # `version` is pinned to a clean "1.18.26" because the upstream packages
   # output bakes a "+<rev>" suffix (node_modules.nix sets
   # `${packageJson.version}+${rev}`); this keeps the derivation name and
   # `opencode --version` identical to the previous override.
@@ -484,8 +485,17 @@ final: prev: {
       replaceBun = input: if (input.pname or null) == "bun" then opencodeBun else input;
     in
     inputs.opencode.packages.${final.stdenv.hostPlatform.system}.opencode.overrideAttrs (old: {
-      version = "1.18.4";
+      version = "1.18.26";
       __intentionallyOverridingVersion = true;
+
+      # v1.18.26's committed aarch64-darwin node_modules hash does not
+      # reproduce with the release's pinned nixpkgs/Bun package.
+      node_modules = old.node_modules.overrideAttrs (
+        _oldNodeModules:
+        final.lib.optionalAttrs (final.stdenv.hostPlatform.system == "aarch64-darwin") {
+          outputHash = "sha256-ytmHSdC0PVGAJSbpt/+YwL5ySF3w6r/9uZpZACPppkI=";
+        }
+      );
 
       nativeBuildInputs = map replaceBun (old.nativeBuildInputs or [ ]);
 

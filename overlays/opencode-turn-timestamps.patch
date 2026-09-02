@@ -69,7 +69,7 @@ diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes
        },
      },
      {
-@@ -1340,20 +1343,26 @@
+@@ -1355,20 +1358,26 @@
                  </box>
                </Match>
              </Switch>
@@ -91,19 +91,19 @@ diff --git a/packages/tui/src/routes/session/index.tsx b/packages/tui/src/routes
    parts: Part[]
    onMouseUp: () => void
    index: number
-   pending?: string
+   pending?: number
  }) {
    const ctx = use()
    const local = useLocal()
    const text = createMemo(() => {
-@@ -1367,20 +1376,27 @@
+@@ -1382,20 +1391,27 @@
        .filter(Boolean)
      return texts.join("\n\n")
    })
    const files = createMemo(() => props.parts.flatMap((x) => (x.type === "file" ? [x] : [])))
    const { theme } = useTheme()
    const [hover, setHover] = createSignal(false)
-   const queued = createMemo(() => props.pending && props.message.id > props.pending)
+   const queued = createMemo(() => props.pending !== undefined && props.index > props.pending)
    const color = createMemo(() => local.agent.color(props.message.agent))
    const queuedFg = createMemo(() => selectedForeground(theme, color()))
    const metadataVisible = createMemo(() => queued() || ctx.showTimestamps())
