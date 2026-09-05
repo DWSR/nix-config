@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { before, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import * as reconciliation from "../../scripts/pi-agent-reconcile.mjs";
 import {
@@ -37,10 +37,12 @@ const managedSettingKeys = [
   "selfUpdate",
   "unmanagedPackages",
 ];
-const { planManagedReconciliation, planManagedReconciliationInternal } = reconciliation;
+const { planManagedReconciliation, planManagedReconciliationInternal } =
+  reconciliation;
 
 let personalFactory;
 let personalManagedConfigArtifact;
+let packagedReconciliation;
 let piRuntime;
 let reconcilerPackage;
 let shopifyFactory;
@@ -82,11 +84,15 @@ function buildFactory(fixture) {
 }
 
 function runFactory(factory, input) {
-  const result = childProcess.spawnSync(path.join(factory, factoryExecutable), [], {
-    ...commandOptions,
-    input: `${JSON.stringify(input)}\n`,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const result = childProcess.spawnSync(
+    path.join(factory, factoryExecutable),
+    [],
+    {
+      ...commandOptions,
+      input: `${JSON.stringify(input)}\n`,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
 
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
@@ -108,7 +114,9 @@ function writePrivateJson(file, value) {
 }
 
 function mutableFixture(t, current = currentDocuments()) {
-  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-reconcile-"));
+  const agentDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "pi-agent-reconcile-"),
+  );
   t.after(() => fs.rmSync(agentDir, { force: true, recursive: true }));
   writePrivateJson(path.join(agentDir, "settings.json"), current.settings);
   writePrivateJson(path.join(agentDir, "models.json"), current.models);
@@ -195,21 +203,29 @@ function collectChild(child, timeoutMs) {
 }
 
 function runPackagedWithBlockedStdin(args, partialInput) {
-  const child = childProcess.spawn(path.join(reconcilerPackage, reconcilerExecutable), args, {
-    cwd: repoRoot,
-    env: process.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child = childProcess.spawn(
+    path.join(reconcilerPackage, reconcilerExecutable),
+    args,
+    {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   child.stdin.write(partialInput);
   return collectChild(child, 1_000);
 }
 
 function spawnPackagedReconciler(input) {
-  const child = childProcess.spawn(path.join(reconcilerPackage, reconcilerExecutable), [], {
-    cwd: repoRoot,
-    env: process.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  const child = childProcess.spawn(
+    path.join(reconcilerPackage, reconcilerExecutable),
+    [],
+    {
+      cwd: repoRoot,
+      env: process.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
   child.stdin.end(`${JSON.stringify(input)}\n`);
   return new Promise((resolve, reject) => {
     let stdout = "";
@@ -241,7 +257,11 @@ function snapshotDirectory(root) {
       const file = path.join(root, relativePath);
       const stat = fs.lstatSync(file);
       if (stat.isDirectory()) {
-        snapshot.push({ path: relativePath, type: "directory", mode: stat.mode & 0o777 });
+        snapshot.push({
+          path: relativePath,
+          type: "directory",
+          mode: stat.mode & 0o777,
+        });
         visit(relativePath);
       } else {
         snapshot.push({
@@ -329,13 +349,15 @@ function readRaceEvents(logPath) {
 
 function assertNoTransactionArtifacts(agentDir) {
   assert.deepEqual(
-    fs.readdirSync(agentDir).filter(
-      (name) =>
-        name === transactionFileName ||
-        name === integrationLockName ||
-        name === "settings.json.lock" ||
-        name.startsWith(temporaryPrefix),
-    ),
+    fs
+      .readdirSync(agentDir)
+      .filter(
+        (name) =>
+          name === transactionFileName ||
+          name === integrationLockName ||
+          name === "settings.json.lock" ||
+          name.startsWith(temporaryPrefix),
+      ),
     [],
   );
 }
@@ -367,13 +389,17 @@ function managedConfigForProjection(providerProjection) {
       : shopifyManagedConfigArtifact,
   );
   managedConfig.generation = providerProjection.generation;
-  managedConfig.settings.defaultModel = structuredClone(providerProjection.default.model);
-  managedConfig.settings.defaultThinkingLevel = providerProjection.default.reasoning;
-  managedConfig.providerSelection.defaultModel = structuredClone(providerProjection.default.model);
+  managedConfig.settings.defaultModel = structuredClone(
+    providerProjection.default.model,
+  );
+  managedConfig.settings.defaultThinkingLevel =
+    providerProjection.default.reasoning;
+  managedConfig.providerSelection.defaultModel = structuredClone(
+    providerProjection.default.model,
+  );
   if (providerProjection.mode === "shopify-gateway") {
-    managedConfig.providerSelection.enabledRoles = providerProjection.providers.map(
-      ({ providerId }) => providerId,
-    );
+    managedConfig.providerSelection.enabledRoles =
+      providerProjection.providers.map(({ providerId }) => providerId);
   }
   return managedConfig;
 }
@@ -386,7 +412,8 @@ function reconciliationInput(options = {}) {
     ownershipState,
     extra = {},
   } = options;
-  const effectiveManagedConfig = managedConfig ?? managedConfigForProjection(providerProjection);
+  const effectiveManagedConfig =
+    managedConfig ?? managedConfigForProjection(providerProjection);
   const input = {
     managedConfig: effectiveManagedConfig,
     providerProjection,
@@ -427,7 +454,10 @@ function successfulPlan(execution) {
 }
 
 function writtenValue(writePlan, targetPath, currentValue) {
-  return writePlan.writes.find(({ path: writePath }) => writePath === targetPath)?.value ?? currentValue;
+  return (
+    writePlan.writes.find(({ path: writePath }) => writePath === targetPath)
+      ?.value ?? currentValue
+  );
 }
 
 function appliedDocuments(writePlan, current) {
@@ -469,7 +499,7 @@ function assertValueFreeError(result, forbidden = []) {
   assert.deepEqual(Object.keys(result).sort(), ["error", "ok"]);
 }
 
-before(() => {
+before(async () => {
   reconcilerPackage = buildFactory("reconciler");
   piRuntime = buildFactory("pi-runtime");
   shopifyFactory = buildFactory("shopify-projection-factory");
@@ -480,6 +510,288 @@ before(() => {
   personalManagedConfigArtifact = JSON.parse(
     fs.readFileSync(buildFactory("personal-managed-config"), "utf8"),
   );
+  packagedReconciliation = await import(
+    pathToFileURL(path.join(reconcilerPackage, "lib/pi-agent/reconcile.mjs"))
+  );
+});
+
+test("the packaged reconciler exposes one narrow locked projection callback API", () => {
+  assert.deepEqual(Object.keys(packagedReconciliation).sort(), [
+    "hashCanonicalJsonInternal",
+    "planManagedReconciliation",
+    "planManagedReconciliationInternal",
+    "reconcileManagedState",
+    "reconcileManagedStateWithProviderProjection",
+  ]);
+  assert.equal(
+    packagedReconciliation.reconcileManagedStateWithProviderProjection.length,
+    1,
+  );
+  assert.equal(
+    fs.realpathSync(
+      path.join(reconcilerPackage, "lib/node_modules/proper-lockfile"),
+    ),
+    path.join(piRuntime, "lib/node_modules/proper-lockfile"),
+  );
+  assert.equal(
+    JSON.parse(
+      fs.readFileSync(
+        path.join(
+          reconcilerPackage,
+          "lib/node_modules/proper-lockfile/package.json",
+        ),
+        "utf8",
+      ),
+    ).version,
+    "4.1.2",
+  );
+});
+
+test("locked projection observes an immutable recovered snapshot and commits through existing internals", async (t) => {
+  const authSentinel = "task-5-8-auth-snapshot-sentinel";
+  const current = currentDocuments();
+  const agentDir = mutableFixture(t, current);
+  writePrivateJson(path.join(agentDir, "auth.json"), {
+    custom: { type: "api_key", key: authSentinel },
+  });
+  const abandoned = `${temporaryPrefix}abandoned-settings.json.tmp`;
+  fs.writeFileSync(path.join(agentDir, abandoned), "partial", { mode: 0o600 });
+  const projection = shopifyProjection();
+  let snapshot;
+
+  const result =
+    await packagedReconciliation.reconcileManagedStateWithProviderProjection({
+      agentDir,
+      managedConfig: managedConfigForProjection(projection),
+      lockTimeoutMs: 2_000,
+      projectionCallback(currentState) {
+        snapshot = currentState;
+        assert.equal(
+          fs.existsSync(path.join(agentDir, integrationLockName)),
+          true,
+        );
+        assert.equal(
+          fs.existsSync(path.join(agentDir, "settings.json.lock")),
+          true,
+        );
+        assert.equal(fs.existsSync(path.join(agentDir, abandoned)), false);
+        assert.deepEqual(Object.keys(currentState), [
+          "currentSettings",
+          "currentModels",
+          "currentAuthProviderIds",
+        ]);
+        assert.equal(Object.isFrozen(currentState), true);
+        assert.equal(Object.isFrozen(currentState.currentSettings), true);
+        assert.equal(Object.isFrozen(currentState.currentModels), true);
+        assert.equal(
+          Object.isFrozen(currentState.currentModels.providers),
+          true,
+        );
+        assert.equal(Object.isFrozen(currentState.currentAuthProviderIds), true);
+        assert.deepEqual(currentState.currentAuthProviderIds, ["custom"]);
+        assert.throws(() => {
+          currentState.currentSettings.theme = "mutated";
+        }, TypeError);
+        return { providerProjection: projection };
+      },
+    });
+
+  assert.deepEqual(result, {
+    ok: true,
+    generation: generationV1,
+    changed: ["models.json", "settings.json"],
+  });
+  assert.equal(Object.hasOwn(snapshot, "currentAuth"), false);
+  assert.equal(Object.hasOwn(snapshot, "currentAuthProviderIds"), true);
+  assert.equal(
+    readJson(path.join(agentDir, "settings.json")).theme,
+    "user-theme",
+  );
+  assert.equal(
+    readJson(path.join(agentDir, "models.json")).providers.openai.baseUrl,
+    "https://gateway.example.test/vendors/openai/v1",
+  );
+  assert.deepEqual(readJson(path.join(agentDir, "auth.json")), {
+    custom: { type: "api_key", key: authSentinel },
+  });
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("locked projection converts callback proxy results to a value-free failure", async (t) => {
+  const projection = shopifyProjection();
+  const agentDir = mutableFixture(t);
+  const providerProjection = new Proxy(projection, {
+    getPrototypeOf() {
+      throw new Error("provider projection proxy sentinel");
+    },
+  });
+
+  const result =
+    await packagedReconciliation.reconcileManagedStateWithProviderProjection({
+      agentDir,
+      managedConfig: managedConfigForProjection(projection),
+      projectionCallback() {
+        return { providerProjection };
+      },
+    });
+
+  assertValueFreeError(result, ["provider projection proxy sentinel"]);
+  assert.deepEqual(result.error, {
+    kind: "invalid-input",
+    path: "providerProjection",
+  });
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("locked projection converts nested Proxy arrays to a value-free failure", async (t) => {
+  const sentinel = "task-5-8-nested-proxy-array-sentinel";
+  const projection = shopifyProjection();
+  const hostileProjection = structuredClone(projection);
+  hostileProjection.providers[0].modelCatalog.overrides = new Proxy([], {
+    getPrototypeOf() {
+      throw new Error(sentinel);
+    },
+    ownKeys() {
+      throw new Error(sentinel);
+    },
+  });
+  const agentDir = mutableFixture(t);
+
+  const result =
+    await packagedReconciliation.reconcileManagedStateWithProviderProjection({
+      agentDir,
+      managedConfig: managedConfigForProjection(projection),
+      projectionCallback() {
+        return { providerProjection: hostileProjection };
+      },
+    });
+
+  assertValueFreeError(result, [sentinel]);
+  assert.deepEqual(result.error, {
+    kind: "invalid-input",
+    path: "providerProjection",
+  });
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("projection callback exceptions release both locks without managed mutation", async (t) => {
+  const agentDir = mutableFixture(t);
+  const projection = shopifyProjection();
+  const before = snapshotDirectory(agentDir);
+  const callbackError = new Error("fixed callback failure");
+
+  await assert.rejects(
+    packagedReconciliation.reconcileManagedStateWithProviderProjection({
+      agentDir,
+      managedConfig: managedConfigForProjection(projection),
+      projectionCallback() {
+        throw callbackError;
+      },
+    }),
+    (error) => error === callbackError,
+  );
+
+  assert.deepEqual(snapshotDirectory(agentDir), before);
+  assert.equal(fs.existsSync(path.join(agentDir, integrationLockName)), false);
+  assert.equal(fs.existsSync(path.join(agentDir, "settings.json.lock")), false);
+});
+
+test("locked projection accepts only an immediate closed providerProjection result", async (t) => {
+  const projection = shopifyProjection();
+  let secretInspected = false;
+  const runtimeSecrets = new Proxy(Object.freeze({}), {
+    getPrototypeOf() {
+      secretInspected = true;
+      throw new Error("runtime secret inspection sentinel");
+    },
+    ownKeys() {
+      secretInspected = true;
+      throw new Error("runtime secret inspection sentinel");
+    },
+  });
+  const cases = [
+    ["raw projection", () => projection],
+    ["missing projection", () => ({})],
+    ["extra key", () => ({ providerProjection: projection, extra: true })],
+    [
+      "runtime secrets",
+      () => ({ providerProjection: projection, runtimeSecrets }),
+    ],
+    ["async callback", async () => ({ providerProjection: projection })],
+  ];
+
+  for (const [name, projectionCallback] of cases) {
+    await t.test(name, async (subtest) => {
+      const agentDir = mutableFixture(subtest);
+      const before = snapshotDirectory(agentDir);
+      const result =
+        await packagedReconciliation.reconcileManagedStateWithProviderProjection(
+          {
+            agentDir,
+            managedConfig: managedConfigForProjection(projection),
+            projectionCallback,
+          },
+        );
+
+      assert.deepEqual(result, {
+        ok: false,
+        error: { kind: "invalid-input", path: "projectionCallback" },
+      });
+      assert.deepEqual(snapshotDirectory(agentDir), before);
+      assertNoTransactionArtifacts(agentDir);
+    });
+  }
+  assert.equal(secretInspected, false);
+});
+
+test("locked projection input rejects extra runtime channels before callback or value inspection", async (t) => {
+  const projection = shopifyProjection();
+  const agentDir = mutableFixture(t);
+  const before = snapshotDirectory(agentDir);
+  let callbackCalls = 0;
+  let secretInspected = false;
+  const runtimeSecrets = new Proxy(Object.freeze({}), {
+    getPrototypeOf() {
+      secretInspected = true;
+      throw new Error("runtime secret inspection sentinel");
+    },
+  });
+  const baseInput = {
+    agentDir,
+    managedConfig: managedConfigForProjection(projection),
+    projectionCallback() {
+      callbackCalls += 1;
+      return { providerProjection: projection };
+    },
+  };
+  const symbolInput = { ...baseInput };
+  symbolInput[Symbol("runtime-secret-channel")] = runtimeSecrets;
+  const accessorInput = { ...baseInput };
+  Object.defineProperty(accessorInput, "projectionCallback", {
+    enumerable: true,
+    get() {
+      callbackCalls += 1;
+      throw new Error("callback accessor must not run");
+    },
+  });
+
+  for (const input of [
+    { ...baseInput, runtimeSecrets },
+    symbolInput,
+    accessorInput,
+  ]) {
+    const result =
+      await packagedReconciliation.reconcileManagedStateWithProviderProjection(
+        input,
+      );
+    assert.deepEqual(result, {
+      ok: false,
+      error: { kind: "invalid-input", path: "$" },
+    });
+  }
+  assert.equal(callbackCalls, 0);
+  assert.equal(secretInspected, false);
+  assert.deepEqual(snapshotDirectory(agentDir), before);
 });
 
 test("adds only managed settings and actual Task 2.2 provider projections", () => {
@@ -491,42 +803,74 @@ test("adds only managed settings and actual Task 2.2 provider projections", () =
   const projection = shopifyProjection({
     roles: ["xai", "groq", "google", "openai", "anthropic"],
   });
-  const { result, writePlan } = successfulPlan(plan({ current, providerProjection: projection }));
+  const { result, writePlan } = successfulPlan(
+    plan({ current, providerProjection: projection }),
+  );
   assert.deepEqual(result.changed, ["models.json", "settings.json"]);
   const next = appliedDocuments(writePlan, current);
 
   for (const key of managedSettingKeys) {
-    assert.deepEqual(next.settings[key], managedConfigForProjection(projection).settings[key]);
+    assert.deepEqual(
+      next.settings[key],
+      managedConfigForProjection(projection).settings[key],
+    );
   }
   assert.equal(JSON.stringify(current.settings), currentBytes.settings);
   assert.equal(JSON.stringify(current.models), currentBytes.models);
-  assert.equal(JSON.stringify(next.settings.unknownSetting), JSON.stringify(current.settings.unknownSetting));
-  assert.equal(JSON.stringify(next.settings.packages), JSON.stringify(current.settings.packages));
-  assert.equal(JSON.stringify(next.models.auth), JSON.stringify(current.models.auth));
-  assert.equal(JSON.stringify(next.models.trust), JSON.stringify(current.models.trust));
-  assert.equal(JSON.stringify(next.models.packages), JSON.stringify(current.models.packages));
-  assert.equal(JSON.stringify(next.models.sessions), JSON.stringify(current.models.sessions));
+  assert.equal(
+    JSON.stringify(next.settings.unknownSetting),
+    JSON.stringify(current.settings.unknownSetting),
+  );
+  assert.equal(
+    JSON.stringify(next.settings.packages),
+    JSON.stringify(current.settings.packages),
+  );
+  assert.equal(
+    JSON.stringify(next.models.auth),
+    JSON.stringify(current.models.auth),
+  );
+  assert.equal(
+    JSON.stringify(next.models.trust),
+    JSON.stringify(current.models.trust),
+  );
+  assert.equal(
+    JSON.stringify(next.models.packages),
+    JSON.stringify(current.models.packages),
+  );
+  assert.equal(
+    JSON.stringify(next.models.sessions),
+    JSON.stringify(current.models.sessions),
+  );
   assert.equal(
     JSON.stringify(next.models.unknownModelsValue),
     JSON.stringify(current.models.unknownModelsValue),
   );
-  assert.deepEqual(Object.keys(next.models.providers), ["local", ...providerOrder]);
+  assert.deepEqual(Object.keys(next.models.providers), [
+    "local",
+    ...providerOrder,
+  ]);
   for (const provider of projection.providers) {
-    assert.deepEqual(next.models.providers[provider.providerId], expectedPersistedProvider(provider));
+    assert.deepEqual(
+      next.models.providers[provider.providerId],
+      expectedPersistedProvider(provider),
+    );
   }
 
   assert.equal(writePlan.ownershipStates.pending.transaction, "pending");
   assert.equal(writePlan.ownershipStates.committed.transaction, "committed");
   assert.equal(writePlan.ownershipStates.committed.schemaVersion, 1);
   assert.equal(writePlan.ownershipStates.committed.generation, generationV1);
-  assert.deepEqual(Object.keys(writePlan.ownershipStates.committed.files["settings.json"]), [
-    "/defaultModel",
-    "/defaultThinkingLevel",
-    "/installTelemetry",
-    "/selfUpdate",
-    "/shellPath",
-    "/unmanagedPackages",
-  ]);
+  assert.deepEqual(
+    Object.keys(writePlan.ownershipStates.committed.files["settings.json"]),
+    [
+      "/defaultModel",
+      "/defaultThinkingLevel",
+      "/installTelemetry",
+      "/selfUpdate",
+      "/shellPath",
+      "/unmanagedPackages",
+    ],
+  );
 });
 
 test("updates owned values only after matching their prior managed hashes", () => {
@@ -538,11 +882,13 @@ test("updates owned values only after matching their prior managed hashes", () =
     origin: "https://next-gateway.example.test",
     defaultModel: { provider: "anthropic", modelId: "claude-opus-4-6" },
   });
-  const nextExecution = successfulPlan(plan({
-    providerProjection: nextProjection,
-    current: applied,
-    ownershipState: first.writePlan.ownershipStates.committed,
-  }));
+  const nextExecution = successfulPlan(
+    plan({
+      providerProjection: nextProjection,
+      current: applied,
+      ownershipState: first.writePlan.ownershipStates.committed,
+    }),
+  );
 
   const { result, writePlan } = nextExecution;
   assert.deepEqual(result.changed, ["models.json", "settings.json"]);
@@ -562,46 +908,59 @@ test("updates owned values only after matching their prior managed hashes", () =
 test("replaces the owned shell path and removes the stale store value", () => {
   const current = currentDocuments();
   const firstProjection = shopifyProjection();
-  const first = successfulPlan(plan({ current, providerProjection: firstProjection }));
+  const first = successfulPlan(
+    plan({ current, providerProjection: firstProjection }),
+  );
   const applied = appliedDocuments(first.writePlan, current);
   const oldShellPath = applied.settings.shellPath;
   const nextProjection = shopifyProjection({ generation: generationV2 });
   const nextManagedConfig = managedConfigForProjection(nextProjection);
   nextManagedConfig.settings.shellPath = nextManagedConfig.extensionManifest;
-  const { writePlan } = successfulPlan(plan({
-    current: applied,
-    managedConfig: nextManagedConfig,
-    providerProjection: nextProjection,
-    ownershipState: first.writePlan.ownershipStates.committed,
-  }));
+  const { writePlan } = successfulPlan(
+    plan({
+      current: applied,
+      managedConfig: nextManagedConfig,
+      providerProjection: nextProjection,
+      ownershipState: first.writePlan.ownershipStates.committed,
+    }),
+  );
   const next = appliedDocuments(writePlan, applied);
 
   assert.equal(next.settings.shellPath, nextManagedConfig.extensionManifest);
   assert.notEqual(next.settings.shellPath, oldShellPath);
   assert.doesNotMatch(JSON.stringify(next.settings), new RegExp(oldShellPath));
-  assert.deepEqual(writePlan.ownershipStates.committed.files["settings.json"]["/shellPath"], {
-    valueHash: hashCanonicalJson(nextManagedConfig.extensionManifest),
-  });
+  assert.deepEqual(
+    writePlan.ownershipStates.committed.files["settings.json"]["/shellPath"],
+    {
+      valueHash: hashCanonicalJson(nextManagedConfig.extensionManifest),
+    },
+  );
 });
 
 test("removes unchanged stale providers without touching user providers", () => {
   const current = currentDocuments();
   const first = successfulPlan(plan({ current }));
   const applied = appliedDocuments(first.writePlan, current);
-  const projection = shopifyProjection({ generation: generationV2, roles: ["openai"] });
-  const { result, writePlan } = successfulPlan(plan({
-    providerProjection: projection,
-    current: applied,
-    ownershipState: first.writePlan.ownershipStates.committed,
-  }));
+  const projection = shopifyProjection({
+    generation: generationV2,
+    roles: ["openai"],
+  });
+  const { result, writePlan } = successfulPlan(
+    plan({
+      providerProjection: projection,
+      current: applied,
+      ownershipState: first.writePlan.ownershipStates.committed,
+    }),
+  );
 
   assert.deepEqual(result.changed, ["models.json"]);
   const next = appliedDocuments(writePlan, applied);
   assert.deepEqual(Object.keys(next.models.providers), ["local", "openai"]);
   assert.deepEqual(next.models.providers.local, current.models.providers.local);
-  assert.deepEqual(Object.keys(writePlan.ownershipStates.committed.files["models.json"]), [
-    "/providers/openai",
-  ]);
+  assert.deepEqual(
+    Object.keys(writePlan.ownershipStates.committed.files["models.json"]),
+    ["/providers/openai"],
+  );
 });
 
 test("rejects invalid target roots before planning mutations", async (t) => {
@@ -629,7 +988,10 @@ test("rejects invalid target roots before planning mutations", async (t) => {
       });
 
       assertValueFreeError(result);
-      assert.deepEqual(result.error, { kind: "invalid-json", path: expectedPath });
+      assert.deepEqual(result.error, {
+        kind: "invalid-json",
+        path: expectedPath,
+      });
     });
   }
 });
@@ -643,10 +1005,17 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
     [
       "active setting",
       {
-        settings: { ...structuredClone(applied.settings), defaultThinkingLevel: "low" },
+        settings: {
+          ...structuredClone(applied.settings),
+          defaultThinkingLevel: "low",
+        },
         models: structuredClone(applied.models),
       },
-      { kind: "managed-drift", path: "settings.json", pointer: "/defaultThinkingLevel" },
+      {
+        kind: "managed-drift",
+        path: "settings.json",
+        pointer: "/defaultThinkingLevel",
+      },
     ],
     [
       "security setting",
@@ -659,7 +1028,10 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
     [
       "managed shell path",
       {
-        settings: { ...structuredClone(applied.settings), shellPath: "/tmp/user-shell" },
+        settings: {
+          ...structuredClone(applied.settings),
+          shellPath: "/tmp/user-shell",
+        },
         models: structuredClone(applied.models),
       },
       { kind: "managed-drift", path: "settings.json", pointer: "/shellPath" },
@@ -670,10 +1042,15 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
         settings: structuredClone(applied.settings),
         models: structuredClone(applied.models),
       },
-      { kind: "managed-drift", path: "models.json", pointer: "/providers/openai" },
+      {
+        kind: "managed-drift",
+        path: "models.json",
+        pointer: "/providers/openai",
+      },
     ],
   ];
-  cases.at(-1)[1].models.providers.openai.baseUrl = "https://user-drift.example.test/v1";
+  cases.at(-1)[1].models.providers.openai.baseUrl =
+    "https://user-drift.example.test/v1";
 
   for (const [name, drifted, expectedError] of cases) {
     await t.test(name, () => {
@@ -695,14 +1072,18 @@ test("fails value-free on active, security-key, and provider drift", async (t) =
 test("returns no rewrite intent for an identical current projection", () => {
   const current = currentDocuments();
   const projection = shopifyProjection();
-  const first = successfulPlan(plan({ current, providerProjection: projection }));
+  const first = successfulPlan(
+    plan({ current, providerProjection: projection }),
+  );
   const applied = appliedDocuments(first.writePlan, current);
   const beforeBytes = JSON.stringify(applied);
-  const { result, writePlan } = successfulPlan(plan({
-    current: applied,
-    providerProjection: projection,
-    ownershipState: first.writePlan.ownershipStates.committed,
-  }));
+  const { result, writePlan } = successfulPlan(
+    plan({
+      current: applied,
+      providerProjection: projection,
+      ownershipState: first.writePlan.ownershipStates.committed,
+    }),
+  );
 
   assert.deepEqual(result.changed, []);
   assert.deepEqual(writePlan.writes, []);
@@ -726,7 +1107,10 @@ test("canonical hashes ignore object insertion order and preserve array order", 
       ),
     ),
   );
-  assert.notEqual(hashCanonicalJson({ values: [1, 2] }), hashCanonicalJson({ values: [2, 1] }));
+  assert.notEqual(
+    hashCanonicalJson({ values: [1, 2] }),
+    hashCanonicalJson({ values: [2, 1] }),
+  );
   assert.match(hashCanonicalJson({ stable: true }), /^sha256:[0-9a-f]{64}$/);
 });
 
@@ -764,7 +1148,10 @@ test("canonical hash validation rejects non-JSON values without echoing them", a
     await t.test(name, () => {
       const result = reconciliation.hashCanonicalJsonInternal(value);
       assertValueFreeError(result, ["hash-sentinel"]);
-      assert.deepEqual(result.error, { kind: "invalid-input", path: "canonical-json" });
+      assert.deepEqual(result.error, {
+        kind: "invalid-input",
+        path: "canonical-json",
+      });
     });
   }
 
@@ -780,16 +1167,23 @@ test("personal projection removes only unchanged previously owned Shopify provid
   const current = currentDocuments();
   const first = successfulPlan(plan({ current }));
   const applied = appliedDocuments(first.writePlan, current);
-  const { result, writePlan } = successfulPlan(plan({
-    providerProjection: personalProjection(),
-    current: applied,
-    ownershipState: first.writePlan.ownershipStates.committed,
-  }));
+  const { result, writePlan } = successfulPlan(
+    plan({
+      providerProjection: personalProjection(),
+      current: applied,
+      ownershipState: first.writePlan.ownershipStates.committed,
+    }),
+  );
 
   assert.deepEqual(result.changed, ["models.json"]);
   const next = appliedDocuments(writePlan, applied);
-  assert.deepEqual(next.models.providers, { local: current.models.providers.local });
-  assert.equal("models.json" in writePlan.ownershipStates.committed.files, false);
+  assert.deepEqual(next.models.providers, {
+    local: current.models.providers.local,
+  });
+  assert.equal(
+    "models.json" in writePlan.ownershipStates.committed.files,
+    false,
+  );
 });
 
 test("same-generation joined URL changes are provider-projection-conflict", () => {
@@ -837,14 +1231,20 @@ test("closed inputs reject unknown and runtime-secret channels without echoing v
   const launchId = "13e77fb0-a076-45aa-a55b-c89eebd88d60";
   const baseProjection = shopifyProjection();
   const cases = [
-    ["top-level runtime secrets", baseProjection, { providerRuntimeSecrets: { token } }],
+    [
+      "top-level runtime secrets",
+      baseProjection,
+      { providerRuntimeSecrets: { token } },
+    ],
     ["projection token", { ...structuredClone(baseProjection), token }, {}],
     [
       "provider launch ID",
       {
         ...structuredClone(baseProjection),
         providers: baseProjection.providers.map((provider, index) =>
-          index === 0 ? { ...structuredClone(provider), launchId } : structuredClone(provider),
+          index === 0
+            ? { ...structuredClone(provider), launchId }
+            : structuredClone(provider),
         ),
       },
       {},
@@ -905,8 +1305,14 @@ test("canonicalizes managed settings, provider rows, fields, and ownership", () 
   );
 
   const next = appliedDocuments(writePlan, current);
-  assert.deepEqual(Object.keys(next.settings).slice(-managedSettingKeys.length), managedSettingKeys);
-  assert.deepEqual(Object.keys(next.models.providers), ["local", ...providerOrder]);
+  assert.deepEqual(
+    Object.keys(next.settings).slice(-managedSettingKeys.length),
+    managedSettingKeys,
+  );
+  assert.deepEqual(Object.keys(next.models.providers), [
+    "local",
+    ...providerOrder,
+  ]);
   assert.deepEqual(Object.keys(next.models.providers.anthropic), [
     "api",
     "apiKey",
@@ -922,21 +1328,28 @@ test("canonicalizes managed settings, provider rows, fields, and ownership", () 
     "models.json",
     "settings.json",
   ]);
-  assert.deepEqual(Object.keys(writePlan.ownershipStates.committed.files["models.json"]), [
-    "/providers/anthropic",
-    "/providers/google",
-    "/providers/groq",
-    "/providers/openai",
-    "/providers/xai",
-  ]);
+  assert.deepEqual(
+    Object.keys(writePlan.ownershipStates.committed.files["models.json"]),
+    [
+      "/providers/anthropic",
+      "/providers/google",
+      "/providers/groq",
+      "/providers/openai",
+      "/providers/xai",
+    ],
+  );
 });
 
 test("review round 1 RED: accepts the actual complete ManagedConfigV1 artifact", () => {
-  const projection = shopifyProjection({ generation: shopifyManagedConfigArtifact.generation });
-  const { result } = successfulPlan(plan({
-    managedConfig: shopifyManagedConfigArtifact,
-    providerProjection: projection,
-  }));
+  const projection = shopifyProjection({
+    generation: shopifyManagedConfigArtifact.generation,
+  });
+  const { result } = successfulPlan(
+    plan({
+      managedConfig: shopifyManagedConfigArtifact,
+      providerProjection: projection,
+    }),
+  );
 
   assert.equal(result.ok, true);
 });
@@ -956,7 +1369,8 @@ test("review round 1 RED: rejects unknown runtime channels in complete ManagedCo
     ],
     [
       "provider catalog runtime secrets",
-      (managedConfig) => (managedConfig.providerCatalog.shopify[0].runtimeSecrets = { token }),
+      (managedConfig) =>
+        (managedConfig.providerCatalog.shopify[0].runtimeSecrets = { token }),
       "managedConfig.providerCatalog.shopify[0]",
     ],
   ];
@@ -967,24 +1381,53 @@ test("review round 1 RED: rejects unknown runtime channels in complete ManagedCo
       mutate(managedConfig);
       const execution = plan({
         managedConfig,
-        providerProjection: shopifyProjection({ generation: managedConfig.generation }),
+        providerProjection: shopifyProjection({
+          generation: managedConfig.generation,
+        }),
       });
       const result = execution.reconcileResult;
       assertValueFreeError(result, [token]);
       assert.equal(execution.writePlan, null);
-      assert.deepEqual(result.error, { kind: "invalid-input", path: expectedPath });
+      assert.deepEqual(result.error, {
+        kind: "invalid-input",
+        path: expectedPath,
+      });
     });
   }
 });
 
 test("rejects malformed managed shell paths and timeout state before planning writes", async (t) => {
   const cases = [
-    ["relative shell", (config) => (config.settings.shellPath = "bin/bash"), "managedConfig.settings.shellPath"],
-    ["host shell", (config) => (config.settings.shellPath = "/bin/bash"), "managedConfig.settings.shellPath"],
-    ["zero timeout", (config) => (config.timeouts.bashDefaultMs = 0), "managedConfig.timeouts.bashDefaultMs"],
-    ["fractional timeout", (config) => (config.timeouts.bashDefaultMs = 1.5), "managedConfig.timeouts.bashDefaultMs"],
-    ["overflow timeout", (config) => (config.timeouts.bashDefaultMs = 2147483648), "managedConfig.timeouts.bashDefaultMs"],
-    ["timeout binding", (config) => (config.timeouts.bindingName = "HOST_TIMEOUT"), "managedConfig.timeouts"],
+    [
+      "relative shell",
+      (config) => (config.settings.shellPath = "bin/bash"),
+      "managedConfig.settings.shellPath",
+    ],
+    [
+      "host shell",
+      (config) => (config.settings.shellPath = "/bin/bash"),
+      "managedConfig.settings.shellPath",
+    ],
+    [
+      "zero timeout",
+      (config) => (config.timeouts.bashDefaultMs = 0),
+      "managedConfig.timeouts.bashDefaultMs",
+    ],
+    [
+      "fractional timeout",
+      (config) => (config.timeouts.bashDefaultMs = 1.5),
+      "managedConfig.timeouts.bashDefaultMs",
+    ],
+    [
+      "overflow timeout",
+      (config) => (config.timeouts.bashDefaultMs = 2147483648),
+      "managedConfig.timeouts.bashDefaultMs",
+    ],
+    [
+      "timeout binding",
+      (config) => (config.timeouts.bindingName = "HOST_TIMEOUT"),
+      "managedConfig.timeouts",
+    ],
   ];
 
   for (const [name, mutate, expectedPath] of cases) {
@@ -993,7 +1436,9 @@ test("rejects malformed managed shell paths and timeout state before planning wr
       mutate(managedConfig);
       const execution = plan({
         managedConfig,
-        providerProjection: shopifyProjection({ generation: managedConfig.generation }),
+        providerProjection: shopifyProjection({
+          generation: managedConfig.generation,
+        }),
       });
       assertValueFreeError(execution.reconcileResult, ["HOST_TIMEOUT"]);
       assert.equal(execution.writePlan, null);
@@ -1008,7 +1453,9 @@ test("rejects malformed managed shell paths and timeout state before planning wr
 test("review round 1 RED: identical unowned provider bytes are a managed collision", () => {
   const providerProjection = shopifyProjection({ roles: ["openai"] });
   const current = currentDocuments();
-  current.models.providers.openai = expectedPersistedProvider(providerProjection.providers[0]);
+  current.models.providers.openai = expectedPersistedProvider(
+    providerProjection.providers[0],
+  );
   const execution = plan({ current, providerProjection });
   const result = execution.reconcileResult;
 
@@ -1024,8 +1471,14 @@ test("review round 1 RED: identical unowned provider bytes are a managed collisi
     plan({ current, providerProjection: personalProjection(generationV2) }),
   );
   const afterPersonal = appliedDocuments(personal.writePlan, current);
-  assert.deepEqual(afterPersonal.models.providers.openai, current.models.providers.openai);
-  assert.equal("models.json" in personal.writePlan.ownershipStates.committed.files, false);
+  assert.deepEqual(
+    afterPersonal.models.providers.openai,
+    current.models.providers.openai,
+  );
+  assert.equal(
+    "models.json" in personal.writePlan.ownershipStates.committed.files,
+    false,
+  );
 });
 
 test("review round 1 RED: same-generation provider set removal conflicts before stale removal", () => {
@@ -1034,7 +1487,10 @@ test("review round 1 RED: same-generation provider set removal conflicts before 
   const applied = appliedDocuments(first.writePlan, current);
   const execution = plan({
     current: applied,
-    providerProjection: shopifyProjection({ generation: generationV1, roles: ["openai"] }),
+    providerProjection: shopifyProjection({
+      generation: generationV1,
+      roles: ["openai"],
+    }),
     ownershipState: first.writePlan.ownershipStates.committed,
   });
   const result = execution.reconcileResult;
@@ -1073,7 +1529,10 @@ test("review round 1 RED: explicit null ownership is not absent ownership", () =
 
   assertValueFreeError(result);
   assert.equal(execution.writePlan, null);
-  assert.deepEqual(result.error, { kind: "invalid-input", path: "ownershipState" });
+  assert.deepEqual(result.error, {
+    kind: "invalid-input",
+    path: "ownershipState",
+  });
 });
 
 test("review round 1: malformed ownership states fail closed", async (t) => {
@@ -1083,17 +1542,32 @@ test("review round 1: malformed ownership states fail closed", async (t) => {
     ["empty object", {}, "ownershipState"],
     [
       "unknown schema",
-      { schemaVersion: 2, generation: generationV1, transaction: "committed", files: {} },
+      {
+        schemaVersion: 2,
+        generation: generationV1,
+        transaction: "committed",
+        files: {},
+      },
       "ownershipState.schemaVersion",
     ],
     [
       "unknown transaction",
-      { schemaVersion: 1, generation: generationV1, transaction: "unknown", files: {} },
+      {
+        schemaVersion: 1,
+        generation: generationV1,
+        transaction: "unknown",
+        files: {},
+      },
       "ownershipState.transaction",
     ],
     [
       "non-object files",
-      { schemaVersion: 1, generation: generationV1, transaction: "committed", files: [] },
+      {
+        schemaVersion: 1,
+        generation: generationV1,
+        transaction: "committed",
+        files: [],
+      },
       "ownershipState.files",
     ],
   ];
@@ -1115,10 +1589,22 @@ test("review round 1: target validation rejects every non-JSON hash input value-
   const cases = [
     ["undefined", (current) => (current.settings.unknownSetting = undefined)],
     ["NaN", (current) => (current.settings.unknownSetting = Number.NaN)],
-    ["positive infinity", (current) => (current.settings.unknownSetting = Number.POSITIVE_INFINITY)],
-    ["negative infinity", (current) => (current.settings.unknownSetting = Number.NEGATIVE_INFINITY)],
-    ["cycle", (current) => (current.settings.unknownSetting = current.settings)],
-    ["exotic prototype", (current) => (current.settings.unknownSetting = new Date(0))],
+    [
+      "positive infinity",
+      (current) => (current.settings.unknownSetting = Number.POSITIVE_INFINITY),
+    ],
+    [
+      "negative infinity",
+      (current) => (current.settings.unknownSetting = Number.NEGATIVE_INFINITY),
+    ],
+    [
+      "cycle",
+      (current) => (current.settings.unknownSetting = current.settings),
+    ],
+    [
+      "exotic prototype",
+      (current) => (current.settings.unknownSetting = new Date(0)),
+    ],
   ];
 
   for (const [name, mutate] of cases) {
@@ -1129,7 +1615,10 @@ test("review round 1: target validation rejects every non-JSON hash input value-
       const result = execution.reconcileResult;
       assertValueFreeError(result, ["polluted"]);
       assert.equal(execution.writePlan, null);
-      assert.deepEqual(result.error, { kind: "invalid-json", path: "settings.json" });
+      assert.deepEqual(result.error, {
+        kind: "invalid-json",
+        path: "settings.json",
+      });
     });
   }
 
@@ -1137,7 +1626,10 @@ test("review round 1: target validation rejects every non-JSON hash input value-
     const current = currentDocuments();
     current.settings = Object.assign(Object.create(null), current.settings);
     current.models = Object.assign(Object.create(null), current.models);
-    current.models.providers = Object.assign(Object.create(null), current.models.providers);
+    current.models.providers = Object.assign(
+      Object.create(null),
+      current.models.providers,
+    );
     successfulPlan(plan({ current }));
   });
 });
@@ -1160,10 +1652,16 @@ test("review round 2 RED: preserves special-name unrelated JSON properties safel
   ]);
   const before = {
     settings: Object.fromEntries(
-      Object.keys(specialSettings).map((key) => [key, JSON.stringify(current.settings[key])]),
+      Object.keys(specialSettings).map((key) => [
+        key,
+        JSON.stringify(current.settings[key]),
+      ]),
     ),
     providers: Object.fromEntries(
-      Object.keys(specialProviders).map((key) => [key, JSON.stringify(current.models.providers[key])]),
+      Object.keys(specialProviders).map((key) => [
+        key,
+        JSON.stringify(current.models.providers[key]),
+      ]),
     ),
   };
 
@@ -1176,7 +1674,10 @@ test("review round 2 RED: preserves special-name unrelated JSON properties safel
   }
   for (const providerId of Object.keys(specialProviders)) {
     assert.equal(Object.hasOwn(next.models.providers, providerId), true);
-    assert.equal(JSON.stringify(next.models.providers[providerId]), before.providers[providerId]);
+    assert.equal(
+      JSON.stringify(next.models.providers[providerId]),
+      before.providers[providerId],
+    );
   }
   assert.equal(Object.getPrototypeOf(next.settings), Object.prototype);
   assert.equal(Object.getPrototypeOf(next.models.providers), Object.prototype);
@@ -1192,11 +1693,21 @@ test("review round 1 RED: public ReconcileResult has the exact design shape", ()
 });
 
 test("review round 1 RED: internal write planning is a separate explicit contract", () => {
-  assert.equal(typeof reconciliation.planManagedReconciliationInternal, "function");
+  assert.equal(
+    typeof reconciliation.planManagedReconciliationInternal,
+    "function",
+  );
   const execution = plan();
-  assert.deepEqual(Object.keys(execution).sort(), ["reconcileResult", "writePlan"]);
+  assert.deepEqual(Object.keys(execution).sort(), [
+    "reconcileResult",
+    "writePlan",
+  ]);
   assert.equal(execution.reconcileResult.ok, true);
-  assert.deepEqual(Object.keys(execution.reconcileResult).sort(), ["changed", "generation", "ok"]);
+  assert.deepEqual(Object.keys(execution.reconcileResult).sort(), [
+    "changed",
+    "generation",
+    "ok",
+  ]);
   assert.deepEqual(Object.keys(execution.writePlan).sort(), [
     "generation",
     "ownershipStates",
@@ -1225,7 +1736,9 @@ test("packaged reconciliation commits private files and ownership last", (t) => 
     { mode: 0o600 },
   );
   const projection = shopifyProjection();
-  const execution = runPackagedReconciler(filesystemInput(agentDir, projection));
+  const execution = runPackagedReconciler(
+    filesystemInput(agentDir, projection),
+  );
 
   assert.equal(execution.process.status, 0, execution.process.stderr);
   assert.deepEqual(execution.result, {
@@ -1244,7 +1757,10 @@ test("packaged reconciliation commits private files and ownership last", (t) => 
   assert.deepEqual(models.auth, current.models.auth);
   assert.deepEqual(models.providers.local, current.models.providers.local);
   for (const providerId of Object.keys(specialProviders)) {
-    assert.deepEqual(models.providers[providerId], specialProviders[providerId]);
+    assert.deepEqual(
+      models.providers[providerId],
+      specialProviders[providerId],
+    );
   }
   for (const name of ["settings.json", "models.json", "ownership.json"]) {
     assert.equal(fs.statSync(path.join(agentDir, name)).mode & 0o777, 0o600);
@@ -1282,7 +1798,10 @@ test("packaged argv rejection never reads stdin", async (t) => {
   const before = snapshotDirectory(agentDir);
   const malformed = `{"agentDir":${JSON.stringify(agentDir)}`;
 
-  for (const [name, input] of [["malformed", malformed], ["empty", ""]]) {
+  for (const [name, input] of [
+    ["malformed", malformed],
+    ["empty", ""],
+  ]) {
     await t.test(name, () => {
       const execution = runPackagedRaw(["--dry-run"], input);
       assert.equal(execution.process.status, 1);
@@ -1295,7 +1814,10 @@ test("packaged argv rejection never reads stdin", async (t) => {
   }
 
   await t.test("blocked without EOF", async () => {
-    const execution = await runPackagedWithBlockedStdin(["--dry-run"], malformed);
+    const execution = await runPackagedWithBlockedStdin(
+      ["--dry-run"],
+      malformed,
+    );
     assert.equal(execution.status, 1);
     assert.deepEqual(execution.result, {
       ok: false,
@@ -1317,7 +1839,9 @@ test("concurrent generations serialize to one complete generation", async (t) =>
 
   const executions = await Promise.all([
     spawnPackagedReconciler(filesystemInput(agentDir, firstProjection, 10_000)),
-    spawnPackagedReconciler(filesystemInput(agentDir, secondProjection, 10_000)),
+    spawnPackagedReconciler(
+      filesystemInput(agentDir, secondProjection, 10_000),
+    ),
   ]);
   for (const execution of executions) {
     assert.equal(execution.status, 0, execution.stderr);
@@ -1327,14 +1851,21 @@ test("concurrent generations serialize to one complete generation", async (t) =>
   const settings = readJson(path.join(agentDir, "settings.json"));
   const models = readJson(path.join(agentDir, "models.json"));
   const ownership = readJson(path.join(agentDir, "ownership.json"));
-  const expected = ownership.generation === generationV1 ? firstProjection : secondProjection;
+  const expected =
+    ownership.generation === generationV1 ? firstProjection : secondProjection;
   assert.ok([generationV1, generationV2].includes(ownership.generation));
   assert.equal(ownership.transaction, "committed");
   assert.deepEqual(settings.defaultModel, expected.default.model);
-  assert.equal(settings.shellPath, managedConfigForProjection(expected).settings.shellPath);
+  assert.equal(
+    settings.shellPath,
+    managedConfigForProjection(expected).settings.shellPath,
+  );
   assert.ok(Object.hasOwn(ownership.files["settings.json"], "/shellPath"));
   for (const provider of expected.providers) {
-    assert.equal(models.providers[provider.providerId].baseUrl, provider.baseUrl);
+    assert.equal(
+      models.providers[provider.providerId].baseUrl,
+      provider.baseUrl,
+    );
   }
   assert.deepEqual(settings.packages, current.settings.packages);
   assert.deepEqual(models.providers.local, current.models.providers.local);
@@ -1346,7 +1877,12 @@ test("Pi-compatible settings lock timeout fails without mutation", async (t) => 
   const settingsPath = path.join(agentDir, "settings.json");
   const holder = childProcess.spawn(
     process.execPath,
-    [path.join(testsDir, "fixtures/hold-proper-lock.cjs"), settingsPath, "", "1000"],
+    [
+      path.join(testsDir, "fixtures/hold-proper-lock.cjs"),
+      settingsPath,
+      "",
+      "1000",
+    ],
     {
       env: {
         ...process.env,
@@ -1371,7 +1907,10 @@ test("Pi-compatible settings lock timeout fails without mutation", async (t) => 
     error: { kind: "lock-timeout", path: "settings.json" },
   });
   assert.equal(fs.readFileSync(settingsPath, "utf8"), before.settings);
-  assert.equal(fs.readFileSync(path.join(agentDir, "models.json"), "utf8"), before.models);
+  assert.equal(
+    fs.readFileSync(path.join(agentDir, "models.json"), "utf8"),
+    before.models,
+  );
   assert.equal(fs.existsSync(path.join(agentDir, "ownership.json")), false);
   assert.equal(fs.existsSync(path.join(agentDir, integrationLockName)), false);
 });
@@ -1458,7 +1997,9 @@ test("detected integration compromise is authoritative on a no-op exit", (t) => 
   const initial = runPackagedReconciler(filesystemInput(agentDir, projection));
   assert.equal(initial.process.status, 0, initial.process.stderr);
 
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-compromise-"));
+  const logDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "pi-agent-lock-compromise-"),
+  );
   const logPath = path.join(logDir, "events.jsonl");
   t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
   const before = snapshotDirectory(agentDir);
@@ -1477,10 +2018,14 @@ test("detected integration compromise is authoritative on a no-op exit", (t) => 
   assert.deepEqual(snapshotDirectory(agentDir), before);
 
   const events = readRaceEvents(logPath);
-  const compromisedAt = events.findIndex(({ event }) => event === "integration-compromised");
+  const compromisedAt = events.findIndex(
+    ({ event }) => event === "integration-compromised",
+  );
   assert.notEqual(compromisedAt, -1, JSON.stringify(events));
   assert.equal(
-    events.slice(compromisedAt + 1).some(({ event }) => event.endsWith("-release")),
+    events
+      .slice(compromisedAt + 1)
+      .some(({ event }) => event.endsWith("-release")),
     false,
     JSON.stringify(events),
   );
@@ -1494,7 +2039,9 @@ test("detected integration compromise overrides an ordinary state error", (t) =>
     `{"unrelated":"${sentinel}"`,
     { mode: 0o600 },
   );
-  const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-compromise-"));
+  const logDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "pi-agent-lock-compromise-"),
+  );
   const logPath = path.join(logDir, "events.jsonl");
   t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
   const before = snapshotDirectory(agentDir);
@@ -1513,10 +2060,14 @@ test("detected integration compromise overrides an ordinary state error", (t) =>
   assert.deepEqual(snapshotDirectory(agentDir), before);
 
   const events = readRaceEvents(logPath);
-  const compromisedAt = events.findIndex(({ event }) => event === "integration-compromised");
+  const compromisedAt = events.findIndex(
+    ({ event }) => event === "integration-compromised",
+  );
   assert.notEqual(compromisedAt, -1, JSON.stringify(events));
   assert.equal(
-    events.slice(compromisedAt + 1).some(({ event }) => event.endsWith("-release")),
+    events
+      .slice(compromisedAt + 1)
+      .some(({ event }) => event.endsWith("-release")),
     false,
     JSON.stringify(events),
   );
@@ -1531,7 +2082,9 @@ test("integration compromise dominates settings contention races", async (t) => 
   for (const [name, holdMs, lockTimeoutMs] of cases) {
     await t.test(name, async (t) => {
       const agentDir = mutableFixture(t);
-      const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-lock-race-"));
+      const logDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "pi-agent-lock-race-"),
+      );
       const logPath = path.join(logDir, "events.jsonl");
       t.after(() => fs.rmSync(logDir, { force: true, recursive: true }));
       const holder = childProcess.spawn(
@@ -1592,7 +2145,9 @@ test("integration compromise dominates settings contention races", async (t) => 
 test("resumes a durable pending transaction after a partial commit", (t) => {
   const agentDir = mutableFixture(t);
   const firstProjection = shopifyProjection();
-  const first = runPackagedReconciler(filesystemInput(agentDir, firstProjection));
+  const first = runPackagedReconciler(
+    filesystemInput(agentDir, firstProjection),
+  );
   assert.equal(first.process.status, 0, first.process.stderr);
 
   const secondProjection = shopifyProjection({
@@ -1605,17 +2160,24 @@ test("resumes a durable pending transaction after a partial commit", (t) => {
     models: readJson(path.join(agentDir, "models.json")),
   };
   const priorOwnership = readJson(path.join(agentDir, "ownership.json"));
-  const next = successfulPlan(plan({
-    current,
-    ownershipState: priorOwnership,
-    providerProjection: secondProjection,
-  }));
+  const next = successfulPlan(
+    plan({
+      current,
+      ownershipState: priorOwnership,
+      providerProjection: secondProjection,
+    }),
+  );
   const transactionId = "recovery-fixture";
   const targets = next.writePlan.writes.map(({ path: targetPath, value }) => {
-    const beforeBytes = fs.readFileSync(path.join(agentDir, targetPath), "utf8");
+    const beforeBytes = fs.readFileSync(
+      path.join(agentDir, targetPath),
+      "utf8",
+    );
     const afterBytes = jsonBytes(value);
     const temporaryPath = `${temporaryPrefix}${transactionId}-${targetPath}.tmp`;
-    fs.writeFileSync(path.join(agentDir, temporaryPath), afterBytes, { mode: 0o600 });
+    fs.writeFileSync(path.join(agentDir, temporaryPath), afterBytes, {
+      mode: 0o600,
+    });
     return {
       path: targetPath,
       temporaryPath,
@@ -1623,7 +2185,10 @@ test("resumes a durable pending transaction after a partial commit", (t) => {
       afterHash: bytesHash(afterBytes),
     };
   });
-  const priorOwnershipBytes = fs.readFileSync(path.join(agentDir, "ownership.json"), "utf8");
+  const priorOwnershipBytes = fs.readFileSync(
+    path.join(agentDir, "ownership.json"),
+    "utf8",
+  );
   writePrivateJson(path.join(agentDir, transactionFileName), {
     schemaVersion: 1,
     generation: generationV2,
@@ -1641,24 +2206,136 @@ test("resumes a durable pending transaction after a partial commit", (t) => {
     path.join(agentDir, targets[0].path),
   );
 
-  const recovered = runPackagedReconciler(filesystemInput(agentDir, secondProjection));
+  const recovered = runPackagedReconciler(
+    filesystemInput(agentDir, secondProjection),
+  );
   assert.equal(recovered.process.status, 0, recovered.process.stderr);
   assert.equal(recovered.result.ok, true);
-  assert.equal(readJson(path.join(agentDir, "ownership.json")).transaction, "committed");
-  assert.deepEqual(readJson(path.join(agentDir, "settings.json")).defaultModel, {
-    provider: "anthropic",
-    modelId: "claude-opus-4-6",
-  });
+  assert.equal(
+    readJson(path.join(agentDir, "ownership.json")).transaction,
+    "committed",
+  );
+  assert.deepEqual(
+    readJson(path.join(agentDir, "settings.json")).defaultModel,
+    {
+      provider: "anthropic",
+      modelId: "claude-opus-4-6",
+    },
+  );
   assert.equal(
     readJson(path.join(agentDir, "settings.json")).shellPath,
     managedConfigForProjection(secondProjection).settings.shellPath,
   );
   assert.ok(
-    Object.hasOwn(readJson(path.join(agentDir, "ownership.json")).files["settings.json"], "/shellPath"),
+    Object.hasOwn(
+      readJson(path.join(agentDir, "ownership.json")).files["settings.json"],
+      "/shellPath",
+    ),
   );
   assert.equal(
     readJson(path.join(agentDir, "models.json")).providers.openai.baseUrl,
     "https://next-gateway.example.test/vendors/openai/v1",
+  );
+  assertNoTransactionArtifacts(agentDir);
+});
+
+test("locked projection callback receives state only after durable pending recovery", async (t) => {
+  const agentDir = mutableFixture(t);
+  const firstProjection = shopifyProjection();
+  const first = runPackagedReconciler(
+    filesystemInput(agentDir, firstProjection),
+  );
+  assert.equal(first.process.status, 0, first.process.stderr);
+
+  const secondProjection = shopifyProjection({
+    generation: generationV2,
+    origin: "https://next-gateway.example.test",
+    defaultModel: { provider: "anthropic", modelId: "claude-opus-4-6" },
+  });
+  const current = {
+    settings: readJson(path.join(agentDir, "settings.json")),
+    models: readJson(path.join(agentDir, "models.json")),
+  };
+  const priorOwnership = readJson(path.join(agentDir, "ownership.json"));
+  const next = successfulPlan(
+    plan({
+      current,
+      ownershipState: priorOwnership,
+      providerProjection: secondProjection,
+    }),
+  );
+  const targets = next.writePlan.writes.map(({ path: targetPath, value }) => {
+    const beforeBytes = fs.readFileSync(
+      path.join(agentDir, targetPath),
+      "utf8",
+    );
+    const afterBytes = jsonBytes(value);
+    const temporaryPath = `${temporaryPrefix}callback-recovery-${targetPath}.tmp`;
+    fs.writeFileSync(path.join(agentDir, temporaryPath), afterBytes, {
+      mode: 0o600,
+    });
+    return {
+      path: targetPath,
+      temporaryPath,
+      beforeHash: bytesHash(beforeBytes),
+      afterHash: bytesHash(afterBytes),
+    };
+  });
+  const priorOwnershipBytes = fs.readFileSync(
+    path.join(agentDir, "ownership.json"),
+    "utf8",
+  );
+  writePrivateJson(path.join(agentDir, transactionFileName), {
+    schemaVersion: 1,
+    generation: generationV2,
+    previousOwnershipHash: bytesHash(priorOwnershipBytes),
+    pendingOwnership: next.writePlan.ownershipStates.pending,
+    committedOwnership: next.writePlan.ownershipStates.committed,
+    targets,
+  });
+  writePrivateJson(
+    path.join(agentDir, "ownership.json"),
+    next.writePlan.ownershipStates.pending,
+  );
+  fs.renameSync(
+    path.join(agentDir, targets[0].temporaryPath),
+    path.join(agentDir, targets[0].path),
+  );
+  let callbackCalls = 0;
+
+  const recovered =
+    await packagedReconciliation.reconcileManagedStateWithProviderProjection({
+      agentDir,
+      managedConfig: managedConfigForProjection(secondProjection),
+      projectionCallback(snapshot) {
+        callbackCalls += 1;
+        assert.equal(snapshot.ownershipState.transaction, "committed");
+        assert.equal(snapshot.ownershipState.generation, generationV2);
+        assert.deepEqual(snapshot.currentSettings.defaultModel, {
+          provider: "anthropic",
+          modelId: "claude-opus-4-6",
+        });
+        assert.equal(
+          snapshot.currentModels.providers.openai.baseUrl,
+          "https://next-gateway.example.test/vendors/openai/v1",
+        );
+        assert.equal(
+          fs.existsSync(path.join(agentDir, transactionFileName)),
+          false,
+        );
+        return { providerProjection: secondProjection };
+      },
+    });
+
+  assert.deepEqual(recovered, {
+    ok: true,
+    generation: generationV2,
+    changed: [],
+  });
+  assert.equal(callbackCalls, 1);
+  assert.equal(
+    readJson(path.join(agentDir, "ownership.json")).transaction,
+    "committed",
   );
   assertNoTransactionArtifacts(agentDir);
 });
@@ -1679,7 +2356,9 @@ test("unknown pending ownership fails safely", (t) => {
     ]),
   );
 
-  const execution = runPackagedReconciler(filesystemInput(agentDir, projection));
+  const execution = runPackagedReconciler(
+    filesystemInput(agentDir, projection),
+  );
   assert.equal(execution.process.status, 1);
   assert.deepEqual(execution.result, {
     ok: false,

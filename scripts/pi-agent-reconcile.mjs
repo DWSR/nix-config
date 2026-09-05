@@ -2,10 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { types } from "node:util";
 import { pathToFileURL } from "node:url";
 
 const SETTINGS_PATH = "settings.json";
 const MODELS_PATH = "models.json";
+const AUTH_PATH = "auth.json";
 const OWNERSHIP_PATH = "ownership.json";
 const TRANSACTION_PATH = ".pi-agent-reconcile-transaction.json";
 const INTEGRATION_LOCK_PATH = ".pi-agent-reconcile.lock";
@@ -37,7 +39,9 @@ const MANAGED_SETTING_KEYS = [
   "selfUpdate",
   "unmanagedPackages",
 ];
-const MANAGED_SETTING_POINTERS = new Set(MANAGED_SETTING_KEYS.map((key) => `/${key}`));
+const MANAGED_SETTING_POINTERS = new Set(
+  MANAGED_SETTING_KEYS.map((key) => `/${key}`),
+);
 const SECURITY_SETTING_POINTERS = new Set([
   "/installTelemetry",
   "/selfUpdate",
@@ -145,7 +149,12 @@ function hasOwn(value, key) {
 }
 
 function isPlainObject(value) {
-  if (value === null || Array.isArray(value) || typeof value !== "object") {
+  if (
+    value === null ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    types.isProxy(value)
+  ) {
     return false;
   }
   const prototype = Object.getPrototypeOf(value);
@@ -158,12 +167,18 @@ function requireExactKeys(value, expected, path) {
   }
   const actual = Object.keys(value).sort();
   const required = [...expected].sort();
-  if (actual.length !== required.length || actual.some((key, index) => key !== required[index])) {
+  if (
+    actual.length !== required.length ||
+    actual.some((key, index) => key !== required[index])
+  ) {
     invalidInput(path);
   }
 }
 
 function validateJsonValue(value, error, ancestors = new Set()) {
+  if (value !== null && typeof value === "object" && types.isProxy(value)) {
+    fail(error);
+  }
   if (
     value === null ||
     typeof value === "string" ||
@@ -250,14 +265,28 @@ function cloneJson(value) {
     return value.map(cloneJson);
   }
   if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).map((key) => [key, cloneJson(value[key])]));
+    return Object.fromEntries(
+      Object.keys(value).map((key) => [key, cloneJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function deepFreezeJson(value) {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) {
+      deepFreezeJson(child);
+    }
+    Object.freeze(value);
   }
   return value;
 }
 
 function canonicalHash(value) {
   validateJsonValue(value, { kind: "invalid-input", path: "canonical-json" });
-  return `sha256:${createHash("sha256").update(JSON.stringify(canonicalize(value))).digest("hex")}`;
+  return `sha256:${createHash("sha256")
+    .update(JSON.stringify(canonicalize(value)))
+    .digest("hex")}`;
 }
 
 export function hashCanonicalJsonInternal(value) {
@@ -303,7 +332,14 @@ function validateProviderCatalog(catalog) {
 
   requireExactKeys(
     catalog.personal,
-    ["role", "providerId", "api", "modelSource", "modelOverrides", "requestPolicy"],
+    [
+      "role",
+      "providerId",
+      "api",
+      "modelSource",
+      "modelOverrides",
+      "requestPolicy",
+    ],
     "managedConfig.providerCatalog.personal",
   );
   const personal = catalog.personal;
@@ -318,7 +354,10 @@ function validateProviderCatalog(catalog) {
     invalidInput("managedConfig.providerCatalog.personal");
   }
 
-  if (!Array.isArray(catalog.shopify) || catalog.shopify.length !== PROVIDER_ORDER.length) {
+  if (
+    !Array.isArray(catalog.shopify) ||
+    catalog.shopify.length !== PROVIDER_ORDER.length
+  ) {
     invalidInput("managedConfig.providerCatalog.shopify");
   }
   for (let index = 0; index < PROVIDER_ORDER.length; index += 1) {
@@ -328,7 +367,15 @@ function validateProviderCatalog(catalog) {
     const path = `managedConfig.providerCatalog.shopify[${index}]`;
     requireExactKeys(
       entry,
-      ["role", "providerId", "route", "api", "modelSource", "modelOverrides", "requestPolicy"],
+      [
+        "role",
+        "providerId",
+        "route",
+        "api",
+        "modelSource",
+        "modelOverrides",
+        "requestPolicy",
+      ],
       path,
     );
     requireExactKeys(entry.route, ["owner", "role", "suffix"], `${path}.route`);
@@ -347,7 +394,11 @@ function validateProviderCatalog(catalog) {
     }
   }
 
-  requireExactKeys(catalog.defaults, ["personal", "shopify"], "managedConfig.providerCatalog.defaults");
+  requireExactKeys(
+    catalog.defaults,
+    ["personal", "shopify"],
+    "managedConfig.providerCatalog.defaults",
+  );
   for (const mode of ["personal", "shopify"]) {
     const path = `managedConfig.providerCatalog.defaults.${mode}`;
     requireExactKeys(catalog.defaults[mode], ["model", "reasoning"], path);
@@ -367,12 +418,19 @@ function validateProviderCatalog(catalog) {
       reason: "no-required-coding-tool-path",
     },
   ];
-  if (!Array.isArray(catalog.unsupported) || catalog.unsupported.length !== unsupported.length) {
+  if (
+    !Array.isArray(catalog.unsupported) ||
+    catalog.unsupported.length !== unsupported.length
+  ) {
     invalidInput("managedConfig.providerCatalog.unsupported");
   }
   for (let index = 0; index < unsupported.length; index += 1) {
     const path = `managedConfig.providerCatalog.unsupported[${index}]`;
-    requireExactKeys(catalog.unsupported[index], ["providerId", "policy", "reason"], path);
+    requireExactKeys(
+      catalog.unsupported[index],
+      ["providerId", "policy", "reason"],
+      path,
+    );
     if (!sameClosedValue(catalog.unsupported[index], unsupported[index])) {
       invalidInput(path);
     }
@@ -384,8 +442,15 @@ function validateProviderSelection(selection) {
     invalidInput("managedConfig.providerSelection");
   }
   if (selection.mode === "personal") {
-    requireExactKeys(selection, ["mode", "defaultModel"], "managedConfig.providerSelection");
-    validateModel(selection.defaultModel, "managedConfig.providerSelection.defaultModel");
+    requireExactKeys(
+      selection,
+      ["mode", "defaultModel"],
+      "managedConfig.providerSelection",
+    );
+    validateModel(
+      selection.defaultModel,
+      "managedConfig.providerSelection.defaultModel",
+    );
     if (selection.defaultModel.provider !== "openai") {
       invalidInput("managedConfig.providerSelection.defaultModel.provider");
     }
@@ -399,7 +464,10 @@ function validateProviderSelection(selection) {
     ["mode", "enabledRoles", "defaultModel"],
     "managedConfig.providerSelection",
   );
-  if (!Array.isArray(selection.enabledRoles) || selection.enabledRoles.length === 0) {
+  if (
+    !Array.isArray(selection.enabledRoles) ||
+    selection.enabledRoles.length === 0
+  ) {
     invalidInput("managedConfig.providerSelection.enabledRoles");
   }
   const roles = new Set();
@@ -409,7 +477,10 @@ function validateProviderSelection(selection) {
     }
     roles.add(role);
   }
-  validateModel(selection.defaultModel, "managedConfig.providerSelection.defaultModel");
+  validateModel(
+    selection.defaultModel,
+    "managedConfig.providerSelection.defaultModel",
+  );
   if (!roles.has(selection.defaultModel.provider)) {
     invalidInput("managedConfig.providerSelection.defaultModel.provider");
   }
@@ -421,12 +492,23 @@ function validateManagedConfig(managedConfig) {
   if (managedConfig.schemaVersion !== 1) {
     invalidInput("managedConfig.schemaVersion");
   }
-  validateSafeString(managedConfig.generation, SAFE_IDENTIFIER, "managedConfig.generation");
+  validateSafeString(
+    managedConfig.generation,
+    SAFE_IDENTIFIER,
+    "managedConfig.generation",
+  );
   if (managedConfig.agentDir !== "pi-default") {
     invalidInput("managedConfig.agentDir");
   }
-  requireExactKeys(managedConfig.settings, MANAGED_SETTING_KEYS, "managedConfig.settings");
-  validateModel(managedConfig.settings.defaultModel, "managedConfig.settings.defaultModel");
+  requireExactKeys(
+    managedConfig.settings,
+    MANAGED_SETTING_KEYS,
+    "managedConfig.settings",
+  );
+  validateModel(
+    managedConfig.settings.defaultModel,
+    "managedConfig.settings.defaultModel",
+  );
   if (
     !["off", "minimal", "low", "medium", "high", "xhigh"].includes(
       managedConfig.settings.defaultThinkingLevel,
@@ -434,13 +516,20 @@ function validateManagedConfig(managedConfig) {
   ) {
     invalidInput("managedConfig.settings.defaultThinkingLevel");
   }
-  validateRenderedStorePath(managedConfig.settings.shellPath, "managedConfig.settings.shellPath");
+  validateRenderedStorePath(
+    managedConfig.settings.shellPath,
+    "managedConfig.settings.shellPath",
+  );
   for (const key of ["installTelemetry", "selfUpdate", "unmanagedPackages"]) {
     if (managedConfig.settings[key] !== false) {
       invalidInput(`managedConfig.settings.${key}`);
     }
   }
-  requireExactKeys(managedConfig.timeouts, ["bashDefaultMs"], "managedConfig.timeouts");
+  requireExactKeys(
+    managedConfig.timeouts,
+    ["bashDefaultMs"],
+    "managedConfig.timeouts",
+  );
   if (
     !Number.isSafeInteger(managedConfig.timeouts.bashDefaultMs) ||
     managedConfig.timeouts.bashDefaultMs < 1 ||
@@ -450,17 +539,29 @@ function validateManagedConfig(managedConfig) {
   }
   validateProviderCatalog(managedConfig.providerCatalog);
   validateProviderSelection(managedConfig.providerSelection);
-  if (!sameClosedValue(managedConfig.settings.defaultModel, managedConfig.providerSelection.defaultModel)) {
+  if (
+    !sameClosedValue(
+      managedConfig.settings.defaultModel,
+      managedConfig.providerSelection.defaultModel,
+    )
+  ) {
     invalidInput("managedConfig.providerSelection.defaultModel");
   }
 
-  validateRenderedStorePath(managedConfig.extensionManifest, "managedConfig.extensionManifest");
+  validateRenderedStorePath(
+    managedConfig.extensionManifest,
+    "managedConfig.extensionManifest",
+  );
   if (!Array.isArray(managedConfig.extensionOrder)) {
     invalidInput("managedConfig.extensionOrder");
   }
   const extensionNames = new Set();
   for (const extension of managedConfig.extensionOrder) {
-    if (typeof extension !== "string" || !SAFE_IDENTIFIER.test(extension) || extensionNames.has(extension)) {
+    if (
+      typeof extension !== "string" ||
+      !SAFE_IDENTIFIER.test(extension) ||
+      extensionNames.has(extension)
+    ) {
       invalidInput("managedConfig.extensionOrder");
     }
     extensionNames.add(extension);
@@ -506,7 +607,11 @@ function validateManagedConfig(managedConfig) {
   ) {
     invalidInput("managedConfig.mcpEndpoint");
   }
-  if (!new Set(["disabled", "audit", "enforced"]).has(managedConfig.sandboxDefault)) {
+  if (
+    !new Set(["disabled", "audit", "enforced"]).has(
+      managedConfig.sandboxDefault,
+    )
+  ) {
     invalidInput("managedConfig.sandboxDefault");
   }
 }
@@ -535,7 +640,11 @@ function validateHeaders(headers, providerId, path) {
     if (headers[index].name !== expected[index].name) {
       invalidInput(headerPath);
     }
-    validateHeaderValue(headers[index].value, expected[index].value, `${headerPath}.value`);
+    validateHeaderValue(
+      headers[index].value,
+      expected[index].value,
+      `${headerPath}.value`,
+    );
   }
 }
 
@@ -543,10 +652,21 @@ function validateProvider(provider, index) {
   const path = `providerProjection.providers[${index}]`;
   requireExactKeys(
     provider,
-    ["providerId", "catalogRole", "baseUrl", "api", "modelCatalog", "credential", "headers"],
+    [
+      "providerId",
+      "catalogRole",
+      "baseUrl",
+      "api",
+      "modelCatalog",
+      "credential",
+      "headers",
+    ],
     path,
   );
-  if (!PROVIDER_SET.has(provider.providerId) || provider.catalogRole !== provider.providerId) {
+  if (
+    !PROVIDER_SET.has(provider.providerId) ||
+    provider.catalogRole !== provider.providerId
+  ) {
     invalidInput(path);
   }
 
@@ -573,7 +693,10 @@ function validateProvider(provider, index) {
 
   if (provider.providerId === "xai") {
     requireExactKeys(provider.api, ["kind", "providerApiField"], `${path}.api`);
-    if (provider.api.kind !== "pi-per-model-api" || provider.api.providerApiField !== "omit") {
+    if (
+      provider.api.kind !== "pi-per-model-api" ||
+      provider.api.providerApiField !== "omit"
+    ) {
       invalidInput(`${path}.api`);
     }
   } else {
@@ -586,16 +709,25 @@ function validateProvider(provider, index) {
     }
   }
 
-  requireExactKeys(provider.modelCatalog, ["source", "overrides"], `${path}.modelCatalog`);
+  requireExactKeys(
+    provider.modelCatalog,
+    ["source", "overrides"],
+    `${path}.modelCatalog`,
+  );
   if (
-    provider.modelCatalog.source !== `pi-0.83.0-built-in:${provider.providerId}` ||
+    provider.modelCatalog.source !==
+      `pi-0.83.0-built-in:${provider.providerId}` ||
     !Array.isArray(provider.modelCatalog.overrides) ||
     provider.modelCatalog.overrides.length !== 0
   ) {
     invalidInput(`${path}.modelCatalog`);
   }
 
-  requireExactKeys(provider.credential, ["field", "value"], `${path}.credential`);
+  requireExactKeys(
+    provider.credential,
+    ["field", "value"],
+    `${path}.credential`,
+  );
   if (provider.credential.field !== "apiKey") {
     invalidInput(`${path}.credential`);
   }
@@ -624,18 +756,32 @@ function validateProviderProjection(projection) {
   if (projection.schemaVersion !== 1) {
     invalidInput("providerProjection.schemaVersion");
   }
-  validateSafeString(projection.generation, SAFE_IDENTIFIER, "providerProjection.generation");
+  validateSafeString(
+    projection.generation,
+    SAFE_IDENTIFIER,
+    "providerProjection.generation",
+  );
   if (projection.mode !== "personal" && projection.mode !== "shopify-gateway") {
     invalidInput("providerProjection.mode");
   }
-  requireExactKeys(projection.default, ["model", "reasoning"], "providerProjection.default");
+  requireExactKeys(
+    projection.default,
+    ["model", "reasoning"],
+    "providerProjection.default",
+  );
   validateModel(projection.default.model, "providerProjection.default.model");
-  if (projection.default.reasoning !== "xhigh" || !Array.isArray(projection.providers)) {
+  if (
+    projection.default.reasoning !== "xhigh" ||
+    !Array.isArray(projection.providers)
+  ) {
     invalidInput("providerProjection.default");
   }
 
   if (projection.mode === "personal") {
-    if (projection.default.model.provider !== "openai" || projection.providers.length !== 0) {
+    if (
+      projection.default.model.provider !== "openai" ||
+      projection.providers.length !== 0
+    ) {
       invalidInput("providerProjection.providers");
     }
     return;
@@ -677,8 +823,15 @@ function validateOwnershipState(ownershipState) {
   if (ownershipState.schemaVersion !== 1) {
     invalidInput("ownershipState.schemaVersion");
   }
-  validateSafeString(ownershipState.generation, SAFE_IDENTIFIER, "ownershipState.generation");
-  if (ownershipState.transaction !== "pending" && ownershipState.transaction !== "committed") {
+  validateSafeString(
+    ownershipState.generation,
+    SAFE_IDENTIFIER,
+    "ownershipState.generation",
+  );
+  if (
+    ownershipState.transaction !== "pending" &&
+    ownershipState.transaction !== "committed"
+  ) {
     invalidInput("ownershipState.transaction");
   }
   if (!isPlainObject(ownershipState.files)) {
@@ -704,8 +857,15 @@ function validateOwnershipState(ownershipState) {
           invalidInput(`ownershipState.files.${filePath}`);
         }
       }
-      requireExactKeys(records[pointer], ["valueHash"], `ownershipState.files.${filePath}`);
-      if (typeof records[pointer].valueHash !== "string" || !VALUE_HASH.test(records[pointer].valueHash)) {
+      requireExactKeys(
+        records[pointer],
+        ["valueHash"],
+        `ownershipState.files.${filePath}`,
+      );
+      if (
+        typeof records[pointer].valueHash !== "string" ||
+        !VALUE_HASH.test(records[pointer].valueHash)
+      ) {
         invalidInput(`ownershipState.files.${filePath}`);
       }
     }
@@ -761,7 +921,10 @@ function checkSameGenerationProviderIdentity(
     if ((priorRecord === undefined) !== (desiredValue === undefined)) {
       fail({ kind: "provider-projection-conflict", providerId });
     }
-    if (priorRecord !== undefined && priorRecord.valueHash !== canonicalHash(desiredValue)) {
+    if (
+      priorRecord !== undefined &&
+      priorRecord.valueHash !== canonicalHash(desiredValue)
+    ) {
       fail({ kind: "provider-projection-conflict", providerId });
     }
   }
@@ -778,7 +941,9 @@ function checkActiveValue({
 }) {
   const desiredHash = canonicalHash(desiredValue);
   const currentExists = hasOwn(currentContainer, currentKey);
-  const currentHash = currentExists ? canonicalHash(currentContainer[currentKey]) : null;
+  const currentHash = currentExists
+    ? canonicalHash(currentContainer[currentKey])
+    : null;
   if (providerId !== undefined && priorRecord === undefined && currentExists) {
     managedDrift(path, pointer);
   }
@@ -792,7 +957,13 @@ function checkActiveValue({
   return desiredHash;
 }
 
-function checkStaleValue({ path, pointer, currentContainer, currentKey, priorRecord }) {
+function checkStaleValue({
+  path,
+  pointer,
+  currentContainer,
+  currentKey,
+  priorRecord,
+}) {
   if (!hasOwn(currentContainer, currentKey)) {
     return "drop";
   }
@@ -805,7 +976,12 @@ function checkStaleValue({ path, pointer, currentContainer, currentKey, priorRec
   return "retain";
 }
 
-function buildSettings(currentSettings, desiredSettings, priorSettings, retainedPointers) {
+function buildSettings(
+  currentSettings,
+  desiredSettings,
+  priorSettings,
+  retainedPointers,
+) {
   const managedKeys = new Set(MANAGED_SETTING_KEYS);
   for (const pointer of Object.keys(priorSettings)) {
     managedKeys.add(pointer.slice(1));
@@ -828,7 +1004,12 @@ function buildSettings(currentSettings, desiredSettings, priorSettings, retained
   return Object.fromEntries(entries);
 }
 
-function buildProviders(currentProviders, desiredProviders, priorProviders, retainedPointers) {
+function buildProviders(
+  currentProviders,
+  desiredProviders,
+  priorProviders,
+  retainedPointers,
+) {
   const managedIds = new Set(desiredProviders.keys());
   for (const pointer of Object.keys(priorProviders)) {
     managedIds.add(providerIdFromPointer(pointer));
@@ -909,7 +1090,10 @@ function planEnabled(input) {
 
   validateTargetRoot(input.currentSettings, SETTINGS_PATH);
   validateTargetRoot(input.currentModels, MODELS_PATH);
-  if (hasOwn(input.currentModels, "providers") && !isPlainObject(input.currentModels.providers)) {
+  if (
+    hasOwn(input.currentModels, "providers") &&
+    !isPlainObject(input.currentModels.providers)
+  ) {
     fail({ kind: "invalid-json", path: MODELS_PATH });
   }
 
@@ -925,12 +1109,18 @@ function planEnabled(input) {
     invalidInput("providerProjection.generation");
   }
   if (
-    !sameClosedValue(input.managedConfig.settings.defaultModel, input.providerProjection.default.model) ||
-    input.managedConfig.settings.defaultThinkingLevel !== input.providerProjection.default.reasoning
+    !sameClosedValue(
+      input.managedConfig.settings.defaultModel,
+      input.providerProjection.default.model,
+    ) ||
+    input.managedConfig.settings.defaultThinkingLevel !==
+      input.providerProjection.default.reasoning
   ) {
     invalidInput("providerProjection.default");
   }
-  if (input.managedConfig.providerSelection.mode !== input.providerProjection.mode) {
+  if (
+    input.managedConfig.providerSelection.mode !== input.providerProjection.mode
+  ) {
     invalidInput("providerProjection.mode");
   }
   const selectedProviderIds =
@@ -941,7 +1131,10 @@ function planEnabled(input) {
     input.providerProjection.providers.map(({ providerId }) => providerId),
   );
   for (const providerId of PROVIDER_ORDER) {
-    if (selectedProviderIds.has(providerId) !== projectedProviderIds.has(providerId)) {
+    if (
+      selectedProviderIds.has(providerId) !==
+      projectedProviderIds.has(providerId)
+    ) {
       invalidInput("providerProjection.providers");
     }
   }
@@ -950,13 +1143,21 @@ function planEnabled(input) {
     ? input.currentModels.providers
     : Object.create(null);
   const desiredSettings = new Map(
-    MANAGED_SETTING_KEYS.map((key) => [key, cloneJson(input.managedConfig.settings[key])]),
+    MANAGED_SETTING_KEYS.map((key) => [
+      key,
+      cloneJson(input.managedConfig.settings[key]),
+    ]),
   );
   const projectionByProvider = new Map(
-    input.providerProjection.providers.map((provider) => [provider.providerId, provider]),
+    input.providerProjection.providers.map((provider) => [
+      provider.providerId,
+      provider,
+    ]),
   );
   const desiredProviders = new Map(
-    PROVIDER_ORDER.filter((providerId) => projectionByProvider.has(providerId)).map((providerId) => [
+    PROVIDER_ORDER.filter((providerId) =>
+      projectionByProvider.has(providerId),
+    ).map((providerId) => [
       providerId,
       projectProvider(projectionByProvider.get(providerId)),
     ]),
@@ -1002,7 +1203,9 @@ function planEnabled(input) {
     });
     if (disposition === "retain") {
       retainedSettings.add(pointer);
-      nextHashes.get(SETTINGS_PATH).set(pointer, priorSettings[pointer].valueHash);
+      nextHashes
+        .get(SETTINGS_PATH)
+        .set(pointer, priorSettings[pointer].valueHash);
     }
   }
 
@@ -1033,7 +1236,9 @@ function planEnabled(input) {
     });
     if (disposition === "retain") {
       retainedProviders.add(pointer);
-      nextHashes.get(MODELS_PATH).set(pointer, priorProviders[pointer].valueHash);
+      nextHashes
+        .get(MODELS_PATH)
+        .set(pointer, priorProviders[pointer].valueHash);
     }
   }
 
@@ -1055,7 +1260,10 @@ function planEnabled(input) {
     [SETTINGS_PATH, input.currentSettings, nextSettings],
   ];
   const writes = candidates
-    .filter(([_path, currentValue, nextValue]) => canonicalHash(currentValue) !== canonicalHash(nextValue))
+    .filter(
+      ([_path, currentValue, nextValue]) =>
+        canonicalHash(currentValue) !== canonicalHash(nextValue),
+    )
     .map(([path, _currentValue, value]) => ({ path, value }));
   const generation = input.managedConfig.generation;
 
@@ -1089,7 +1297,13 @@ export function planManagedReconciliationInternal(input) {
         writePlan: null,
       };
     }
-    throw error;
+    return {
+      reconcileResult: {
+        ok: false,
+        error: { kind: "invalid-input", path: "$" },
+      },
+      writePlan: null,
+    };
   }
 }
 
@@ -1215,7 +1429,13 @@ function privateTemporaryName(targetPath) {
   return `${TEMPORARY_PREFIX}${randomUUID()}-${path.basename(targetPath)}.tmp`;
 }
 
-async function writePrivateTemporary(agentDir, temporaryPath, bytes, errorPath, assertLocks) {
+async function writePrivateTemporary(
+  agentDir,
+  temporaryPath,
+  bytes,
+  errorPath,
+  assertLocks,
+) {
   let handle;
   try {
     assertLocks();
@@ -1258,7 +1478,12 @@ async function writePrivateTemporary(agentDir, temporaryPath, bytes, errorPath, 
   }
 }
 
-async function publishTemporary(agentDir, temporaryPath, targetPath, assertLocks) {
+async function publishTemporary(
+  agentDir,
+  temporaryPath,
+  targetPath,
+  assertLocks,
+) {
   try {
     assertLocks();
     await fs.promises.rename(
@@ -1276,7 +1501,13 @@ async function publishTemporary(agentDir, temporaryPath, targetPath, assertLocks
 
 async function atomicWritePrivate(agentDir, targetPath, bytes, assertLocks) {
   const temporaryPath = privateTemporaryName(targetPath);
-  await writePrivateTemporary(agentDir, temporaryPath, bytes, targetPath, assertLocks);
+  await writePrivateTemporary(
+    agentDir,
+    temporaryPath,
+    bytes,
+    targetPath,
+    assertLocks,
+  );
   try {
     await publishTemporary(agentDir, temporaryPath, targetPath, assertLocks);
   } catch (error) {
@@ -1300,7 +1531,8 @@ async function cleanupTemporaryFiles(agentDir, assertLocks, keep = new Set()) {
       !keep.has(name)
     ) {
       changed =
-        (await removeFile(agentDir, name, OWNERSHIP_PATH, assertLocks)) || changed;
+        (await removeFile(agentDir, name, OWNERSHIP_PATH, assertLocks)) ||
+        changed;
     }
   }
   if (changed) {
@@ -1326,7 +1558,11 @@ function validateTransactionJournal(journal) {
     if (journal.schemaVersion !== 1) {
       pendingTransaction();
     }
-    validateSafeString(journal.generation, SAFE_IDENTIFIER, "transaction.generation");
+    validateSafeString(
+      journal.generation,
+      SAFE_IDENTIFIER,
+      "transaction.generation",
+    );
     if (
       journal.previousOwnershipHash !== null &&
       (typeof journal.previousOwnershipHash !== "string" ||
@@ -1372,7 +1608,8 @@ function validateTransactionJournal(journal) {
         !target.temporaryPath.endsWith(`-${target.path}.tmp`) ||
         temporaryPaths.has(target.temporaryPath) ||
         (target.beforeHash !== null &&
-          (typeof target.beforeHash !== "string" || !VALUE_HASH.test(target.beforeHash))) ||
+          (typeof target.beforeHash !== "string" ||
+            !VALUE_HASH.test(target.beforeHash))) ||
         typeof target.afterHash !== "string" ||
         !VALUE_HASH.test(target.afterHash)
       ) {
@@ -1418,7 +1655,12 @@ async function inspectTransactionTarget(agentDir, target) {
 
 async function cleanupJournal(agentDir, journal, assertLocks) {
   for (const target of journal.targets) {
-    await removeFile(agentDir, target.temporaryPath, OWNERSHIP_PATH, assertLocks);
+    await removeFile(
+      agentDir,
+      target.temporaryPath,
+      OWNERSHIP_PATH,
+      assertLocks,
+    );
   }
   await removeFile(agentDir, TRANSACTION_PATH, OWNERSHIP_PATH, assertLocks);
   await cleanupTemporaryFiles(agentDir, assertLocks);
@@ -1489,7 +1731,8 @@ async function recoverPendingTransaction(agentDir, assertLocks) {
     return;
   }
 
-  const ownershipHash = ownership.bytes === null ? null : byteHash(ownership.bytes);
+  const ownershipHash =
+    ownership.bytes === null ? null : byteHash(ownership.bytes);
   if (ownershipHash === journal.previousOwnershipHash) {
     if (
       inspected.some(
@@ -1510,7 +1753,8 @@ async function recoverPendingTransaction(agentDir, assertLocks) {
     inspected.every(
       (state) =>
         state.currentHash === state.target.afterHash &&
-        (state.temporaryHash === null || state.temporaryHash === state.target.afterHash),
+        (state.temporaryHash === null ||
+          state.temporaryHash === state.target.afterHash),
     )
   ) {
     await cleanupJournal(agentDir, journal, assertLocks);
@@ -1579,7 +1823,9 @@ async function acquireLock(
         fail({ kind: "lock-timeout", path: errorPath });
       }
       assertPrerequisite();
-      await new Promise((resolve) => setTimeout(resolve, Math.min(20, remaining)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(20, remaining)),
+      );
       assertPrerequisite();
     }
   }
@@ -1637,7 +1883,11 @@ function validateExecutionInput(input) {
     invalidInput("agentDir");
   }
   const lockTimeoutMs = input.lockTimeoutMs ?? 5_000;
-  if (!Number.isSafeInteger(lockTimeoutMs) || lockTimeoutMs <= 0 || lockTimeoutMs > 600_000) {
+  if (
+    !Number.isSafeInteger(lockTimeoutMs) ||
+    lockTimeoutMs <= 0 ||
+    lockTimeoutMs > 600_000
+  ) {
     invalidInput("lockTimeoutMs");
   }
   const validation = planManagedReconciliationInternal({
@@ -1652,7 +1902,91 @@ function validateExecutionInput(input) {
   return lockTimeoutMs;
 }
 
-async function executeWritePlan(agentDir, writePlan, currentBytes, ownershipBytes, assertLocks) {
+function validateProjectionExecutionInput(input) {
+  try {
+    if (!isPlainObject(input)) {
+      invalidInput("$");
+    }
+    const actualKeys = Reflect.ownKeys(input);
+    const inputKeys = ["agentDir", "managedConfig", "projectionCallback"];
+    if (actualKeys.includes("lockTimeoutMs")) {
+      inputKeys.push("lockTimeoutMs");
+    }
+    if (
+      actualKeys.some((key) => typeof key !== "string") ||
+      actualKeys.length !== inputKeys.length ||
+      [...actualKeys]
+        .sort()
+        .some((key, index) => key !== [...inputKeys].sort()[index])
+    ) {
+      invalidInput("$");
+    }
+    for (const key of actualKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, key);
+      if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+        invalidInput("$");
+      }
+    }
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    invalidInput("$");
+  }
+  if (
+    typeof input.agentDir !== "string" ||
+    !path.isAbsolute(input.agentDir) ||
+    path.normalize(input.agentDir) !== input.agentDir
+  ) {
+    invalidInput("agentDir");
+  }
+  if (typeof input.projectionCallback !== "function") {
+    invalidInput("projectionCallback");
+  }
+  const lockTimeoutMs = input.lockTimeoutMs ?? 5_000;
+  if (
+    !Number.isSafeInteger(lockTimeoutMs) ||
+    lockTimeoutMs <= 0 ||
+    lockTimeoutMs > 600_000
+  ) {
+    invalidInput("lockTimeoutMs");
+  }
+  validateManagedConfig(input.managedConfig);
+  return lockTimeoutMs;
+}
+
+function projectionFromCallbackResult(result) {
+  try {
+    if (!isPlainObject(result)) {
+      invalidInput("projectionCallback");
+    }
+    const keys = Reflect.ownKeys(result);
+    if (keys.length !== 1 || keys[0] !== "providerProjection") {
+      invalidInput("projectionCallback");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(
+      result,
+      "providerProjection",
+    );
+    if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) {
+      invalidInput("projectionCallback");
+    }
+    return descriptor.value;
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      throw error;
+    }
+    invalidInput("projectionCallback");
+  }
+}
+
+async function executeWritePlan(
+  agentDir,
+  writePlan,
+  currentBytes,
+  ownershipBytes,
+  assertLocks,
+) {
   const staged = [];
   let journalPublished = false;
   try {
@@ -1749,7 +2083,12 @@ async function executeWritePlan(agentDir, writePlan, currentBytes, ownershipByte
   }
 }
 
-async function reconcileLocked(input, integrationLock, settingsLock) {
+async function reconcileLocked(
+  input,
+  integrationLock,
+  settingsLock,
+  projectionCallback = null,
+) {
   const assertLocks = () => {
     integrationLock.assert();
     settingsLock.assert();
@@ -1757,16 +2096,40 @@ async function reconcileLocked(input, integrationLock, settingsLock) {
   await recoverPendingTransaction(input.agentDir, assertLocks);
   assertLocks();
 
-  const [settingsBytes, modelsBytes, ownership] = await Promise.all([
+  const [settingsBytes, modelsBytes, ownership, authBytes] = await Promise.all([
     readBytes(input.agentDir, SETTINGS_PATH),
     readBytes(input.agentDir, MODELS_PATH),
     readOwnership(input.agentDir),
+    projectionCallback === null
+      ? Promise.resolve(null)
+      : readBytes(input.agentDir, AUTH_PATH),
   ]);
+  assertLocks();
+  const currentSettings = parseJsonBytes(settingsBytes, SETTINGS_PATH, {});
+  const currentModels = parseJsonBytes(modelsBytes, MODELS_PATH, {});
+  let providerProjection = input.providerProjection;
+  if (projectionCallback !== null) {
+    const currentAuth = parseJsonBytes(authBytes, AUTH_PATH, {});
+    validateTargetRoot(currentAuth, AUTH_PATH);
+    const snapshot = {
+      currentSettings,
+      currentModels,
+      currentAuthProviderIds: Object.freeze(
+        Object.keys(currentAuth).sort(compareText),
+      ),
+      ...(ownership.value === null ? {} : { ownershipState: ownership.value }),
+    };
+    deepFreezeJson(snapshot);
+    providerProjection = projectionFromCallbackResult(
+      projectionCallback(snapshot),
+    );
+    assertLocks();
+  }
   const execution = planManagedReconciliationInternal({
     managedConfig: input.managedConfig,
-    providerProjection: input.providerProjection,
-    currentSettings: parseJsonBytes(settingsBytes, SETTINGS_PATH, {}),
-    currentModels: parseJsonBytes(modelsBytes, MODELS_PATH, {}),
+    providerProjection,
+    currentSettings,
+    currentModels,
     ...(ownership.value === null ? {} : { ownershipState: ownership.value }),
   });
   if (!execution.reconcileResult.ok) {
@@ -1774,11 +2137,15 @@ async function reconcileLocked(input, integrationLock, settingsLock) {
   }
 
   if (execution.writePlan.writes.length === 0) {
-    const committedBytes = jsonBytes(execution.writePlan.ownershipStates.committed);
+    const committedBytes = jsonBytes(
+      execution.writePlan.ownershipStates.committed,
+    );
     let ownershipMode = null;
     if (ownership.bytes !== null) {
       try {
-        ownershipMode = (await fs.promises.stat(path.join(input.agentDir, OWNERSHIP_PATH))).mode & 0o777;
+        ownershipMode =
+          (await fs.promises.stat(path.join(input.agentDir, OWNERSHIP_PATH)))
+            .mode & 0o777;
       } catch (_error) {
         writeFailure(OWNERSHIP_PATH);
       }
@@ -1808,37 +2175,64 @@ async function reconcileLocked(input, integrationLock, settingsLock) {
   return execution.reconcileResult;
 }
 
+async function reconcileWithLocks(
+  input,
+  lockTimeoutMs,
+  projectionCallback = null,
+) {
+  try {
+    await fs.promises.mkdir(input.agentDir, { recursive: true, mode: 0o700 });
+  } catch (_error) {
+    writeFailure(OWNERSHIP_PATH);
+  }
+  const integrationLock = await acquireLock(
+    input.agentDir,
+    path.join(input.agentDir, INTEGRATION_LOCK_PATH),
+    lockTimeoutMs,
+    INTEGRATION_LOCK_PATH,
+  );
+  return withLock(integrationLock, INTEGRATION_LOCK_PATH, async () => {
+    const settingsLock = await acquireLock(
+      path.join(input.agentDir, SETTINGS_PATH),
+      null,
+      lockTimeoutMs,
+      SETTINGS_PATH,
+      integrationLock,
+    );
+    return withLock(settingsLock, SETTINGS_PATH, () =>
+      reconcileLocked(input, integrationLock, settingsLock, projectionCallback),
+    );
+  });
+}
+
 export async function reconcileManagedState(input) {
   try {
     const lockTimeoutMs = validateExecutionInput(input);
-    try {
-      await fs.promises.mkdir(input.agentDir, { recursive: true, mode: 0o700 });
-    } catch (_error) {
-      writeFailure(OWNERSHIP_PATH);
-    }
-    const integrationLock = await acquireLock(
-      input.agentDir,
-      path.join(input.agentDir, INTEGRATION_LOCK_PATH),
-      lockTimeoutMs,
-      INTEGRATION_LOCK_PATH,
-    );
-    return await withLock(integrationLock, INTEGRATION_LOCK_PATH, async () => {
-      const settingsLock = await acquireLock(
-        path.join(input.agentDir, SETTINGS_PATH),
-        null,
-        lockTimeoutMs,
-        SETTINGS_PATH,
-        integrationLock,
-      );
-      return withLock(settingsLock, SETTINGS_PATH, () =>
-        reconcileLocked(input, integrationLock, settingsLock),
-      );
-    });
+    return await reconcileWithLocks(input, lockTimeoutMs);
   } catch (error) {
     if (error instanceof ReconcileFailure) {
       return { ok: false, error: error.error };
     }
-    return { ok: false, error: { kind: "write-failure", path: OWNERSHIP_PATH } };
+    return {
+      ok: false,
+      error: { kind: "write-failure", path: OWNERSHIP_PATH },
+    };
+  }
+}
+
+export async function reconcileManagedStateWithProviderProjection(input) {
+  try {
+    const lockTimeoutMs = validateProjectionExecutionInput(input);
+    return await reconcileWithLocks(
+      input,
+      lockTimeoutMs,
+      input.projectionCallback,
+    );
+  } catch (error) {
+    if (error instanceof ReconcileFailure) {
+      return { ok: false, error: error.error };
+    }
+    throw error;
   }
 }
 
@@ -1854,7 +2248,9 @@ async function runCli() {
   try {
     input = JSON.parse(fs.readFileSync(0, "utf8"));
   } catch (_error) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: { kind: "invalid-input", path: "$" } })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, error: { kind: "invalid-input", path: "$" } })}\n`,
+    );
     process.exitCode = 1;
     return;
   }
@@ -1865,9 +2261,14 @@ async function runCli() {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   runCli().catch(() => {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: { kind: "write-failure", path: OWNERSHIP_PATH } })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: false, error: { kind: "write-failure", path: OWNERSHIP_PATH } })}\n`,
+    );
     process.exitCode = 1;
   });
 }

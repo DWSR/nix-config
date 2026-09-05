@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { types } from "node:util";
 
 import { planManagedReconciliation } from "__PI_AGENT_RECONCILER_MODULE__";
 
@@ -34,6 +35,21 @@ function projectionValidationFailed() {
 
 function reconciliationValidationFailed() {
   throw new Error("Shopify provider reconciliation validation failed");
+}
+
+function rejectHostileState(value, seen = new Set()) {
+  if (value === null || typeof value !== "object") return;
+  if (types.isProxy(value)) reconciliationValidationFailed();
+  if (seen.has(value)) return;
+  seen.add(value);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") reconciliationValidationFailed();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      reconciliationValidationFailed();
+    }
+    rejectHostileState(descriptor.value, seen);
+  }
 }
 
 function snapshotClosedDataObject(value, requiredKeys, optionalKeys = []) {
@@ -238,6 +254,11 @@ export function composeShopifyProviderHandoff(...inputs) {
     ["baseCandidate", "currentSettings", "currentModels"],
     ["ownershipState"],
   );
+  rejectHostileState(input.currentSettings);
+  rejectHostileState(input.currentModels);
+  if (Object.hasOwn(input, "ownershipState")) {
+    rejectHostileState(input.ownershipState);
+  }
   const origin = validateBaseCandidate(input.baseCandidate);
   const managedConfig = loadManagedArtifacts();
   const factoryInput = createFactoryInput(managedConfig, origin);

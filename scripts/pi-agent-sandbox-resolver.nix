@@ -23,6 +23,7 @@ let
     schemaVersion = 1;
   };
   source = builtins.readFile ./pi-agent-sandbox-resolver.mjs;
+  validatorSource = builtins.readFile ./pi-agent-sandbox-validator.mjs;
   resolverModule = pkgs.writeTextFile {
     name = "pi-agent-sandbox-resolver-module-${checkedDefaultState}";
     destination = "/lib/pi-agent/sandbox-resolver.mjs";
@@ -38,6 +39,13 @@ let
         ]
         source;
   };
+  validatorModule = pkgs.writeTextFile {
+    name = "pi-agent-sandbox-validator-module-${checkedDefaultState}";
+    destination = "/lib/pi-agent/sandbox-validator.mjs";
+    text =
+      builtins.replaceStrings [ "__PI_AGENT_SANDBOX_VALIDATOR_NONO__" ] [ "${pkgs.nono}/bin/nono" ]
+        validatorSource;
+  };
   defaultArtifact = pkgs.writeTextFile {
     name = "pi-agent-sandbox-default-${checkedDefaultState}";
     destination = "/share/pi-agent/sandbox/default.json";
@@ -49,6 +57,8 @@ pkgs.runCommand "pi-agent-sandbox-resolver-${checkedDefaultState}" { } ''
   cp -R -L ${profileCatalog.package}/. "$out/"
   chmod -R u+w "$out"
   cp -R -L ${resolverModule}/. "$out/"
+  chmod -R u+w "$out"
+  cp -R -L ${validatorModule}/. "$out/"
   chmod -R u+w "$out"
   cp -R -L ${defaultArtifact}/. "$out/"
 ''

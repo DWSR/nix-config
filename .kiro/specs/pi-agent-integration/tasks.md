@@ -446,7 +446,7 @@
   - _Boundary: Runtime Control_
   - _Depends: 5.6_
 
-- [ ] 5.8 Compose the fail-before-TUI launch pipeline
+- [x] 5.8 Compose the fail-before-TUI launch pipeline
   - Orchestrate Task 5.2 resolver execution and Task 5.3 projection handoff, reject authentication-precedence conflicts, and hold one integration lock across reconciliation and every managed JSON update.
   - Reconcile one complete generation before probing package, profile, mcpproxy, Cavemem, extensions, and runtime compatibility.
   - Stop before Pi on every provider, state, service, profile, extension, or validator failure and name its recovery action.
@@ -659,3 +659,4 @@
 - Task 4.12: Anchor entry digests and the package root in a distinct Nix `identity` output referenced by production code; exported validators accept no caller-provided trust object or path.
 - Task 5.6: Keep managed status at a command-byte boundary; reject sensitive environment descriptors below the root without invoking accessors, then scan the exact human or JSON bytes before output.
 - Task 5.7: Normalize empty sandbox controls to absence, then reject any non-empty control containing an exact credential before spawning status or another validator probe.
+- Task 5.8: Keep fixed launcher diagnostic labels separate from untrusted redaction values, and preserve value-free accepted-value and component-identity errors through preflight.
