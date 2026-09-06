@@ -1,4 +1,5 @@
 {
+  config,
   lib,
   piAgentAdvisoryDate ? null,
   pkgs,
@@ -6,7 +7,20 @@
 }:
 let
   inherit (lib) mkEnableOption mkOption types;
-  credentialPolicy = import ./credential-policy.nix { inherit lib pkgs; };
+  homeConfig = config;
+  gatewayResolverPackage = pkgs.writeShellScriptBin "devx" ''
+    set -eu
+    gateway="$(command -v devx || true)"
+    if [ -z "$gateway" ]; then
+      printf '%s\n' "pi-agent: managed Shopify gateway command is unavailable" >&2
+      exit 127
+    fi
+    exec "$gateway" "$@"
+  '';
+  credentialPolicy = import ./credential-policy.nix {
+    inherit lib pkgs;
+    trustedDevxOutPath = gatewayResolverPackage.outPath;
+  };
   managedConfigRenderer = import ./managed-config.nix {
     inherit lib pkgs;
     shellPath = credentialPolicy.shellExecutable;
@@ -25,6 +39,226 @@ let
     "codeIntelligence"
     "backgroundTasks"
   ];
+  extensionPackage = pkgs.pi-agent-extensions;
+  extensionEntryPaths = {
+    cavemem = "lib/pi-agent/extensions/cavemem/index.ts";
+    mcp = "lib/pi-agent/extensions/mcpproxy/index.ts";
+    subagents = "lib/node_modules/pi-subagents/index.ts";
+    plan = "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts";
+    timestamps = "lib/node_modules/@narumitw/pi-stamp/src/index.ts";
+    bashTimeout = "lib/node_modules/@mrclrchtr/supi-bash-timeout/src/extension.ts";
+    questions = "lib/node_modules/@mrclrchtr/supi-ask-user/src/extension.ts";
+    codeIntelligence = "lib/node_modules/@mrclrchtr/supi-code-intelligence/src/extension.ts";
+    backgroundTasks = "lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts";
+  };
+  defaultExtensionRefs = lib.genAttrs extensionNames (name: {
+    package = extensionPackage;
+    relativePath = extensionEntryPaths.${name};
+  });
+  defaultManifestRef = {
+    package = extensionPackage;
+    relativePath = "share/pi-agent/extensions.json";
+  };
+  renderIntegration =
+    {
+      cfg,
+      managedConfig,
+      outerConfig,
+      projectionFactory,
+      providerHandoff,
+    }:
+    let
+      profileCatalog = import ./profiles.nix {
+        inherit (pkgs) lib;
+        inherit pkgs;
+      };
+      integrationPolicy = import ./credential-policy.nix {
+        inherit lib pkgs;
+        trustedDevxOutPath = gatewayResolverPackage.outPath;
+      };
+      credentialArtifacts = integrationPolicy.render { hostSelection = cfg.provider; };
+      renderReference = reference: "${reference.package.outPath}/${reference.relativePath}";
+      integrationExtensionPackage = pkgs.pi-agent-extensions;
+      extensionManifest = renderReference (builtins.head cfg.manifests);
+      extensionIdentity = "${integrationExtensionPackage.identity}/extensions-provenance.json";
+      homeDirectory = toString outerConfig.home.homeDirectory;
+      cavememDataDir =
+        if outerConfig.home ? cavemem && outerConfig.home.cavemem ? dataDir then
+          toString outerConfig.home.cavemem.dataDir
+        else
+          "${homeDirectory}/.local/share/cavemem";
+      agentDir = "${homeDirectory}/.pi/agent";
+      profilePaths = lib.mapAttrs (
+        name: _profile: "${profileCatalog.package}/share/pi-agent/nono/profiles/${name}.json"
+      ) profileCatalog.profiles;
+      sandboxResolver = pkgs.callPackage ../../../scripts/pi-agent-sandbox-resolver.nix {
+        defaultState = cfg.sandbox.defaultState;
+      };
+      sandboxExecutor = pkgs.callPackage ../../../scripts/pi-agent-sandbox-executor.nix {
+        defaultState = cfg.sandbox.defaultState;
+        piPackage = cfg.package;
+        inherit profileCatalog;
+      };
+      reconciler = pkgs.pi-agent-reconcile;
+      status = pkgs.callPackage ../../../scripts/pi-agent-status.nix {
+        cavememPackage = pkgs.cavemem;
+        credentialRuntimeModule = credentialArtifacts.runtimeModule;
+        defaultState = cfg.sandbox.defaultState;
+        extensionIdentity = integrationExtensionPackage.identity;
+        inherit extensionManifest;
+        extensionPackage = integrationExtensionPackage;
+        inherit managedConfig;
+        piPackage = cfg.package;
+      };
+      validator = pkgs.callPackage ../../../scripts/pi-agent-validate.nix {
+        credentialRuntimeModule = credentialArtifacts.runtimeModule;
+        extensionPackage = integrationExtensionPackage;
+        piPackage = cfg.package;
+        inherit profileCatalog;
+        statusPackage = status;
+      };
+      launcher = pkgs.callPackage ../../../scripts/pi-agent-launcher.nix {
+        cavememPackage = pkgs.cavemem;
+        credentialResolverPackage = credentialArtifacts.resolverExecutor;
+        credentialRuntimeModule = credentialArtifacts.runtimeModule;
+        inherit managedConfig;
+        piPackage = cfg.package;
+        inherit projectionFactory providerHandoff;
+        reconcilerPackage = reconciler;
+        sandboxExecutorPackage = sandboxExecutor;
+        sandboxResolverPackage = sandboxResolver;
+        statusPackage = status;
+        validatorPackage = validator;
+      };
+      commandSource = pkgs.writeText "pi-agent-managed-command.mjs" ''
+        import { executeManagedLaunch } from ${builtins.toJSON "${launcher}/lib/pi-agent/launcher.mjs"};
+
+        const args = process.argv.slice(2);
+        const agentDir = ${builtins.toJSON agentDir};
+        const cavememDataDir = ${builtins.toJSON cavememDataDir};
+
+        if (args[0] === "--managed-status") {
+          const { spawnSync } = await import("node:child_process");
+          const statusArgs = args.slice(1);
+          if (statusArgs.some((arg) => arg !== "--json")) process.exitCode = 64;
+          else {
+            const result = spawnSync(
+              ${builtins.toJSON "${status}/bin/pi-agent-status"},
+              statusArgs,
+              {
+                encoding: "utf8",
+                input: JSON.stringify({ schemaVersion: 1, agentDir, cavememDataDir }) + "\\n",
+                stdio: ["pipe", "pipe", "pipe"],
+              },
+            );
+            if (result.stdout) process.stdout.write(result.stdout);
+            if (result.stderr) process.stderr.write(result.stderr);
+            process.exitCode = result.status ?? 2;
+          }
+        } else {
+          try {
+            const result = await executeManagedLaunch({ agentDir, cavememDataDir, userArguments: args });
+            process.exitCode = result?.status ?? 0;
+          } catch (error) {
+            const component =
+              error?.name === "ManagedLaunchError" &&
+              typeof error.component === "string"
+                ? error.component
+                : "unknown";
+            const recovery =
+              error?.name === "ManagedLaunchError" &&
+              typeof error.recovery === "string"
+                ? error.recovery
+                : "run pi-agent-status and repair the managed generation";
+            process.stderr.write(
+              `Managed launch failed: ${"$"}{component}. Recovery: ${"$"}{recovery}.\n`,
+            );
+            process.exitCode = 1;
+          }
+        }
+      '';
+      managedCommand = pkgs.writeTextFile {
+        name = "pi-agent-launcher";
+        destination = "/bin/pi";
+        executable = true;
+        text = ''
+          #!${pkgs.runtimeShell}
+          exec ${pkgs.nodejs}/bin/node ${commandSource} "$@"
+        '';
+      };
+      statusCommand = pkgs.writeTextFile {
+        name = "pi-agent-status";
+        destination = "/bin/pi-agent-status";
+        executable = true;
+        text = ''
+          #!${pkgs.runtimeShell}
+          exec ${pkgs.nodejs}/bin/node -e ${lib.escapeShellArg ''
+            const { spawnSync } = require("node:child_process");
+            const result = spawnSync(${builtins.toJSON "${status}/bin/pi-agent-status"}, process.argv.slice(1), {
+              encoding: "utf8",
+              input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, cavememDataDir: ${builtins.toJSON cavememDataDir} }) + "\\n",
+              stdio: ["pipe", "inherit", "inherit"],
+            });
+            process.exitCode = result.status ?? 2;
+          ''} "$@"
+        '';
+      };
+      validatorCommand = pkgs.writeTextFile {
+        name = "pi-agent-validate";
+        destination = "/bin/pi-agent-validate";
+        executable = true;
+        text = ''
+          #!${pkgs.runtimeShell}
+          exec ${pkgs.nodejs}/bin/node -e ${lib.escapeShellArg ''
+            const { spawnSync } = require("node:child_process");
+            const result = spawnSync(${builtins.toJSON "${validator}/bin/pi-agent-validate"}, process.argv.slice(1), {
+              encoding: "utf8",
+              input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, cavememDataDir: ${builtins.toJSON cavememDataDir} }) + "\\n",
+              stdio: ["pipe", "inherit", "inherit"],
+            });
+            process.exitCode = result.status ?? 2;
+          ''} "$@"
+        '';
+      };
+    in
+    {
+      inherit
+        agentDir
+        cavememDataDir
+        extensionIdentity
+        extensionManifest
+        managedCommand
+        reconciler
+        sandboxExecutor
+        sandboxResolver
+        status
+        statusCommand
+        validator
+        validatorCommand
+        ;
+      credentialResolver = credentialArtifacts.resolverExecutor;
+      credentialRuntimeModule = credentialArtifacts.runtimeModule;
+      inherit (credentialArtifacts) resolverPlans;
+      instructionResources = map renderReference (cfg.instructions ++ cfg.resources);
+      inherit launcher;
+      inherit (integrationPolicy) managedShell;
+      inherit profilePaths;
+      statusInputs = {
+        inherit
+          agentDir
+          cavememDataDir
+          extensionIdentity
+          extensionManifest
+          ;
+        managedConfig = toString managedConfig;
+      };
+      commands = [
+        "pi"
+        "pi-agent-status"
+        "pi-agent-validate"
+        "pi-agent-reconcile"
+      ];
+    };
   shopifyProviderRoles = [
     "anthropic"
     "openai"
@@ -377,34 +611,71 @@ let
   };
   validateAgentConfig =
     cfg:
-    if cfg.enable && pkgs.stdenv.hostPlatform.system != managedConfigRenderer.supportedSystem then
-      managedConfigRenderer.validateSystem cfg
-    else if cfg.enable && cfg.provider.defaultModel == null then
-      throw "programs.pi-agent.provider.defaultModel must be set when programs.pi-agent is enabled"
+    if cfg ? internal && cfg.internal ? managedConfig && cfg.internal.managedConfig != null then
+      throw "programs.pi-agent.internal.managedConfig is read-only"
+    else if
+      cfg ? internal && cfg.internal ? projectionFactory && cfg.internal.projectionFactory != null
+    then
+      throw "programs.pi-agent.internal.projectionFactory is read-only"
+    else if
+      cfg ? internal && cfg.internal ? guidancePackage && cfg.internal.guidancePackage != null
+    then
+      throw "programs.pi-agent.internal.guidancePackage is read-only"
     else
-      cfg;
+      let
+        validated =
+          if cfg.enable && pkgs.stdenv.hostPlatform.system != managedConfigRenderer.supportedSystem then
+            managedConfigRenderer.validateSystem cfg
+          else if cfg.enable && cfg.provider.defaultModel == null then
+            throw "programs.pi-agent.provider.defaultModel must be set when programs.pi-agent is enabled"
+          else
+            cfg;
+        rendered = if validated.enable then managedConfigRenderer.render validated else null;
+        integrated =
+          if validated.enable then
+            renderIntegration {
+              cfg = validated;
+              outerConfig = homeConfig;
+              inherit (rendered) managedConfig projectionFactory;
+              providerHandoff = rendered.shopifyProviderHandoff;
+            }
+          else
+            { };
+        internal = {
+          inherit resolverKinds;
+          managedConfig = if rendered == null then null else rendered.managedConfig;
+          projectionFactory = if rendered == null then null else rendered.projectionFactory;
+          shopifyProviderHandoff = if rendered == null then null else rendered.shopifyProviderHandoff;
+          sandboxCatalog = if validated.enable then profileCatalogRenderer.package else null;
+          guidancePackage = if validated.enable then guidance.package else null;
+          credentialRuntimeModule = integrated.credentialRuntimeModule or null;
+          credentialResolver = integrated.credentialResolver or null;
+          managedShell = integrated.managedShell or null;
+          resolverPlans = integrated.resolverPlans or [ ];
+          sandboxResolver = integrated.sandboxResolver or null;
+          sandboxExecutor = integrated.sandboxExecutor or null;
+          reconciler = integrated.reconciler or null;
+          launcher = integrated.launcher or null;
+          status = integrated.status or null;
+          validator = integrated.validator or null;
+          managedCommand = integrated.managedCommand or null;
+          managedStatusCommand = integrated.statusCommand or null;
+          managedValidatorCommand = integrated.validatorCommand or null;
+          cavememDataDir = integrated.cavememDataDir or null;
+          extensionManifest = integrated.extensionManifest or null;
+          extensionIdentity = integrated.extensionIdentity or null;
+          instructionResources = integrated.instructionResources or [ ];
+          profilePaths = integrated.profilePaths or { };
+          statusInputs = integrated.statusInputs or { };
+          commands = integrated.commands or [ ];
+        };
+      in
+      validated // { inherit internal; };
 in
 {
   options.programs.pi-agent = mkOption {
     type = closedSubmodule {
-      imports = [
-        (
-          { config, ... }:
-          let
-            renderedManagedArtifacts = managedConfigRenderer.render config;
-          in
-          {
-            config.internal = {
-              managedConfig = if config.enable then renderedManagedArtifacts.managedConfig else null;
-              projectionFactory = if config.enable then renderedManagedArtifacts.projectionFactory else null;
-              shopifyProviderHandoff =
-                if config.enable then renderedManagedArtifacts.shopifyProviderHandoff else null;
-              sandboxCatalog = if config.enable then profileCatalogRenderer.package else null;
-              guidancePackage = if config.enable then guidance.package else null;
-            };
-          }
-        )
-      ];
+      imports = [ ];
       options = {
         enable = mkEnableOption "the managed Pi agent integration";
 
@@ -419,22 +690,22 @@ in
           type = closedSubmodule {
             options = lib.genAttrs extensionNames optionalPackageResourceRef;
           };
-          default = { };
+          default = defaultExtensionRefs;
           description = "Closed package-backed managed extension inventory.";
         };
         manifests = mkOption {
           type = types.listOf packageResourceRefType;
-          default = [ ];
+          default = [ defaultManifestRef ];
           description = "Package-backed manifest references.";
         };
         instructions = mkOption {
           type = types.listOf packageResourceRefType;
-          default = [ ];
+          default = [ guidance.instructionResource ];
           description = "Package-backed instruction references.";
         };
         resources = mkOption {
           type = types.listOf packageResourceRefType;
-          default = [ ];
+          default = [ guidance.guideResource ];
           description = "Package-backed managed resource references.";
         };
         languageServers = mkOption {
@@ -628,10 +899,131 @@ in
           readOnly = true;
           description = "Immutable Pi instructions and operator guidance package.";
         };
+        internal.credentialRuntimeModule = mkOption {
+          type = types.nullOr types.path;
+          internal = true;
+          readOnly = true;
+          description = "Immutable credential and subprocess policy module.";
+        };
+        internal.credentialResolver = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable package-owned credential resolver.";
+        };
+        internal.resolverPlans = mkOption {
+          type = types.listOf types.attrs;
+          internal = true;
+          readOnly = true;
+          description = "Read-back package-backed credential resolver plans.";
+        };
+        internal.managedShell = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable credential-scrubbed shell package.";
+        };
+        internal.sandboxResolver = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable sandbox selection and validation package.";
+        };
+        internal.sandboxExecutor = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable nono and direct Pi execution package.";
+        };
+        internal.reconciler = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable managed-state reconciler package.";
+        };
+        internal.launcher = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable preflight and managed launch package.";
+        };
+        internal.status = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable redacted managed status package.";
+        };
+        internal.validator = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Immutable runtime compatibility validator package.";
+        };
+        internal.managedCommand = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Repository-owned managed pi command package.";
+        };
+        internal.managedStatusCommand = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Repository-owned status command package.";
+        };
+        internal.managedValidatorCommand = mkOption {
+          type = types.nullOr derivationPackageType;
+          internal = true;
+          readOnly = true;
+          description = "Repository-owned validator command package.";
+        };
+        internal.cavememDataDir = mkOption {
+          type = types.nullOr types.str;
+          internal = true;
+          readOnly = true;
+          description = "Read-back Cavemem data directory passed to managed runtime probes.";
+        };
+        internal.extensionManifest = mkOption {
+          type = types.nullOr types.path;
+          internal = true;
+          readOnly = true;
+          description = "Read-back immutable extension manifest path.";
+        };
+        internal.extensionIdentity = mkOption {
+          type = types.nullOr types.path;
+          internal = true;
+          readOnly = true;
+          description = "Read-back immutable extension identity path.";
+        };
+        internal.instructionResources = mkOption {
+          type = types.listOf types.str;
+          internal = true;
+          readOnly = true;
+          description = "Read-back managed instruction and help resource paths.";
+        };
+        internal.profilePaths = mkOption {
+          type = types.attrsOf types.str;
+          internal = true;
+          readOnly = true;
+          description = "Read-back managed sandbox profile paths.";
+        };
+        internal.statusInputs = mkOption {
+          type = types.attrsOf types.anything;
+          internal = true;
+          readOnly = true;
+          description = "Status input paths shared with the launcher contract.";
+        };
+        internal.commands = mkOption {
+          type = types.listOf types.str;
+          internal = true;
+          readOnly = true;
+          description = "Repository-owned commands installed by the managed integration.";
+        };
       };
     };
     default = { };
     apply = validateAgentConfig;
     description = "Closed structural contracts for the managed Pi integration.";
   };
+
 }

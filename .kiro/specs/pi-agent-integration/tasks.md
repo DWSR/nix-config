@@ -481,7 +481,7 @@
   - _Boundary: Home Module_
   - _Depends: 3.9, 4.13_
 
-- [ ] 6.2 Integrate all managed artifacts in the common module
+- [x] 6.2 Integrate all managed artifacts in the common module
   - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
   - Connect the package-owned scrubbed shell, managed timeout binding, Cavemem data-directory binding, timeout extension, and shell-path ownership through their approved boundaries.
   - Install only repository-owned managed commands while retaining the base Pi package as a closure dependency.
@@ -661,3 +661,4 @@
 - Task 5.7: Normalize empty sandbox controls to absence, then reject any non-empty control containing an exact credential before spawning status or another validator probe.
 - Task 5.8: Keep fixed launcher diagnostic labels separate from untrusted redaction values, and preserve value-free accepted-value and component-identity errors through preflight.
 - Task 5.9: Root Pi execution must use the policy-owned environment allowlist; profile admission and rollback scrubbing are separate contracts from model-shell scrubbing.
+- Task 6.2: Force every enabled common-module artifact, including resolver/status/validator outputs, in integration tests so package-contract failures cannot hide behind lazy evaluation.

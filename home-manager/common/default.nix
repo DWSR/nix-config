@@ -1,4 +1,5 @@
 {
+  config,
   inputs,
   lib,
   pkgs,
@@ -29,6 +30,7 @@
     ./opencode-nono-audit.nix
     ./opencode-rtk.nix
     ./opencode.nix
+    ./pi-agent
     ./session-compaction.nix
     ./sqlite-backup.nix
     ./subagent-context-budget.nix
@@ -102,38 +104,46 @@
   home = {
     preferXdgDirectories = true;
 
-    packages = with pkgs; [
-      apple-sdk
-      atuin
-      # Universal formatters for conform.nvim (devshell tools take priority)
-      nixfmt
-      shfmt
-      stylua
-      cloc
-      cosign
-      crane
-      curl
-      direnv
-      dyff
-      entr
-      karabiner-elements
-      kubectl
-      k9s
-      lazygit
-      openssh
-      rclone
-      readline
-      rsync
-      shadowenv
-      tokscale
-      tree
-      unstable.keymapp
-      unstable.slack
-      viddy
-      xz
+    packages =
+      with pkgs;
+      [
+        apple-sdk
+        atuin
+        # Universal formatters for conform.nvim (devshell tools take priority)
+        nixfmt
+        shfmt
+        stylua
+        cloc
+        cosign
+        crane
+        curl
+        direnv
+        dyff
+        entr
+        karabiner-elements
+        kubectl
+        k9s
+        lazygit
+        openssh
+        rclone
+        readline
+        rsync
+        shadowenv
+        tokscale
+        tree
+        unstable.keymapp
+        unstable.slack
+        viddy
+        xz
 
-      raycast
-    ];
+        raycast
+      ]
+      ++ lib.optionals config.programs.pi-agent.enable [
+        config.programs.pi-agent.internal.managedCommand
+        config.programs.pi-agent.internal.managedStatusCommand
+        config.programs.pi-agent.internal.managedValidatorCommand
+        config.programs.pi-agent.internal.reconciler
+      ];
 
     activation.createScratchDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       mkdir -p ~/scratch
