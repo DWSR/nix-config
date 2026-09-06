@@ -76,6 +76,8 @@ let
       sandbox
       mcp
       ;
+    package = toString shopifyConfig.package;
+    packageVersion = shopifyConfig.package.version;
     cavememDataDir = shopifyConfig.internal.cavememDataDir;
     hostCavememDataDir = toString shopify.config.home.cavemem.dataDir;
     extensionRefs = builtins.mapAttrs (_name: packageReference) shopifyConfig.extensions;
@@ -87,6 +89,18 @@ let
     managedConfig = pathOrNull shopifyConfig.internal.managedConfig;
     projectionFactory = pathOrNull shopifyConfig.internal.projectionFactory;
     providerHandoff = pathOrNull shopifyConfig.internal.shopifyProviderHandoff;
+    guidancePackage = pathOrNull shopifyConfig.internal.guidancePackage;
+    commands = shopifyConfig.internal.commands;
+    publishableArtifacts = map toString shopifyPublishableArtifacts;
+    commandPackages = {
+      reconciler = pathOrNull shopifyConfig.internal.reconciler;
+      launcher = pathOrNull shopifyConfig.internal.launcher;
+      status = pathOrNull shopifyConfig.internal.status;
+      validator = pathOrNull shopifyConfig.internal.validator;
+      managed = pathOrNull shopifyConfig.internal.managedCommand;
+      managedStatus = pathOrNull shopifyConfig.internal.managedStatusCommand;
+      managedValidator = pathOrNull shopifyConfig.internal.managedValidatorCommand;
+    };
     resolverPlans = shopifyConfig.internal.resolverPlans;
     selected = {
       inherit (shopifyManagedConfig) providerCatalog providerSelection;
@@ -99,6 +113,41 @@ let
         ;
     };
   };
+  shopifyPublishableArtifacts = [
+    shopifyConfig.package
+    shopifyConfig.internal.managedConfig
+    shopifyConfig.internal.projectionFactory
+    shopifyConfig.internal.extensionManifest
+    shopifyConfig.internal.extensionIdentity
+    shopifyConfig.internal.shopifyProviderHandoff
+    shopifyConfig.internal.guidancePackage
+    shopifyConfig.internal.sandboxCatalog
+    shopifyConfig.internal.credentialRuntimeModule
+    shopifyConfig.internal.credentialResolver
+    shopifyConfig.internal.managedShell
+    shopifyConfig.internal.sandboxResolver
+    shopifyConfig.internal.sandboxExecutor
+    shopifyConfig.internal.reconciler
+    shopifyConfig.internal.launcher
+    shopifyConfig.internal.status
+    shopifyConfig.internal.validator
+    shopifyConfig.internal.managedCommand
+    shopifyConfig.internal.managedStatusCommand
+    shopifyConfig.internal.managedValidatorCommand
+  ]
+  ++ builtins.attrValues shopifyConfig.internal.profilePaths
+  ++ shopifyConfig.internal.instructionResources
+  ++ map (reference: reference.package) (builtins.attrValues shopifyConfig.extensions)
+  ++ map (reference: reference.package) (
+    shopifyConfig.manifests ++ shopifyConfig.instructions ++ shopifyConfig.resources
+  )
+  ++ map (reference: reference.package) (builtins.attrValues shopifyConfig.languageServers);
+  shopifyPublishable = pkgs.runCommand "pi-agent-shopify-host-publishable" { } ''
+    mkdir -p "$out/roots"
+    ${pkgs.lib.concatImapStringsSep "\n" (
+      index: package: "ln -s ${package} \"$out/roots/${toString index}\""
+    ) shopifyPublishableArtifacts}
+  '';
 in
 {
   shopify =
@@ -106,6 +155,7 @@ in
       summary = discardContexts shopifySummary;
     in
     builtins.deepSeq summary summary;
+  shopify-publishable = shopifyPublishable;
   # Deliberately force each host-injection fixture so evaluation must reject
   # every removed provider escape hatch at the closed option boundary.
   shopify-routes = builtins.deepSeq invalidRoutes.config.programs.pi-agent true;

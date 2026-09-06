@@ -512,7 +512,7 @@
   - _Boundary: Shopify Host Configuration_
   - _Depends: 5.3, 6.2_
 
-- [ ] 6.5 Add combined host render and static closure gates
+- [x] 6.5 Add combined host render and static closure gates
   - Compare both host outputs for the same common package, profile, extension, command, and instruction versions with only declared provider deltas.
   - Run defense-in-depth scans over publishable closures for private Shopify source, mutable source URLs, credential sentinels, literal secrets, and missing licenses.
   - Verify unsupported-system evaluation still fails with the actionable compatibility error.

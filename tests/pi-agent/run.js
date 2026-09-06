@@ -32,8 +32,20 @@ async function runSmoke() {
   process.stdout.write(`${JSON.stringify(report)}\n`);
 }
 
+async function runCombined() {
+  const { runCombinedHostGates } = await import('./harness.mjs');
+  const report = runCombinedHostGates();
+
+  process.stdout.write(`${JSON.stringify(report)}\n`);
+}
+
 if (process.argv.slice(2).includes('--smoke')) {
   runSmoke().catch((error) => {
+    process.stderr.write(`${error.stack ?? error}\n`);
+    process.exitCode = 1;
+  });
+} else if (process.argv.slice(2).includes('--combined')) {
+  runCombined().catch((error) => {
     process.stderr.write(`${error.stack ?? error}\n`);
     process.exitCode = 1;
   });
