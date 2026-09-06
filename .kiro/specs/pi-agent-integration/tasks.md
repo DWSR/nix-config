@@ -534,7 +534,7 @@
   - _Boundary: Acceptance Harness — Extension Integration_
   - _Depends: 6.5_
 
-- [ ] 7.2 Exercise all interactive extensions together under Pi
+- [x] 7.2 Exercise all interactive extensions together under Pi
   - Run timestamps, Bash timeout, ask-user, plan transitions, code-intelligence preview/apply, and background pipe/PTY in one managed session.
   - Verify Plan selects managed names and denies other calls, while review hides execution and mutation tools after all extensions register.
   - Resume the session and verify timestamp and Plan state plus captured available-name restoration.
