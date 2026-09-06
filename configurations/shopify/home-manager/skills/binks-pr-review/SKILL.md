@@ -5,9 +5,8 @@ description: Run Shopify's local binks-pr-review against the current worktree an
 
 # Local Binks PR Review
 
-Run the same review graph used by hosted Binks against local changes before a
-pull request is opened or updated. A run takes several minutes and consumes its
-own Shopify AI proxy budget.
+Run Binks against local changes before a pull request is opened or updated. A
+run takes several minutes and consumes its own Shopify AI proxy budget.
 
 ## Authorization
 
@@ -48,10 +47,13 @@ own Shopify AI proxy budget.
 
 ## Run
 
-Use the agent-oriented metadata path so Binks does not call `gh pr view`:
+Use the agent-oriented metadata path so Binks does not call `gh pr view`. Pin
+the review to GPT 5.6 Sol with `xhigh`, Binks' maximum reasoning effort:
 
 ```bash
-binks-review \
+REASONING_EFFORT=xhigh binks-review \
+  --config '' \
+  --model openai:gpt-5.6-sol \
   --provider local \
   --base "$base" \
   --title "$title" \

@@ -1,8 +1,8 @@
 ---
 description: Shopify-only local Binks review subagent. Runs binks-pr-review for eligible github.com/Shopify or github.com/shop worktrees and returns a structured external-review handoff.
 mode: subagent
-model: openai/gpt-5.6
-variant: xhigh
+model: openai/gpt-5.6-luna
+variant: low
 temperature: 0.1
 permission:
   "*": deny
