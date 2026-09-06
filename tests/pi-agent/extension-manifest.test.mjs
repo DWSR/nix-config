@@ -105,11 +105,49 @@ const directToolNames = [
   "call_tool_destructive",
   "read_cache",
 ];
+const expectedRegisteredTools = [
+  "read",
+  "bash",
+  "edit",
+  "write",
+  "grep",
+  "find",
+  "ls",
+  ...directToolNames,
+  "subagent",
+  "subagent_wait",
+  "plan_mode_question",
+  "plan_mode_complete",
+  "ask_user",
+  "code_resolve",
+  "code_inspect",
+  "code_orientation",
+  "code_graph",
+  "code_find",
+  "code_health",
+  "code_refactor_plan",
+  "code_refactor_apply",
+  "bg_start",
+  "bg_wait",
+  "bg_status",
+  "bg_logs",
+  "bg_send",
+  "bg_kill",
+  "subagent_supervisor",
+  "intercom",
+];
+const expectedManagedExtensionTools = expectedRegisteredTools.filter(
+  (name) => !["read", "bash", "edit", "write", "grep", "find", "ls"].includes(name),
+);
 const forbiddenToolNames = [
   "mcp",
   "mcpScript",
   "code_execution",
   "mcpproxy_code_execution",
+  "sieve",
+  "pi_install",
+  "package_manager",
+  "telemetry",
 ];
 const recovery = "rebuild pi-agent-extensions and activate the managed generation";
 const inputSentinel = "TASK_4_12_PRIVATE_VALIDATOR_INPUT_SENTINEL";
@@ -744,6 +782,30 @@ test("package publishes the exact closed, ordered, immutable extension manifest"
 test("manifest validator rejects every altered inventory value-safely", { timeout: 1_200_000 }, async () => {
   const runtime = buildRuntimePaths();
   const { validateManagedExtensionPackage } = await loadManifestModule();
+  assert.deepEqual(
+    MANIFEST_ALTERATIONS
+      .filter(({ id }) => [
+        "missing",
+        "duplicate-logical-identity",
+        "incompatible-version",
+        "generic-mcp-proxy",
+        "code-execution",
+        "sieve",
+        "mutable-package-manager",
+        "telemetry",
+      ].includes(id))
+      .map(({ id }) => id),
+    [
+      "missing",
+      "duplicate-logical-identity",
+      "incompatible-version",
+      "generic-mcp-proxy",
+      "code-execution",
+      "sieve",
+      "mutable-package-manager",
+      "telemetry",
+    ],
+  );
   assert.deepEqual(
     [...new Set(MANIFEST_ALTERATIONS.map(({ kind }) => kind))].sort(),
     [
@@ -1559,6 +1621,19 @@ test("real Pi/Jiti loader registers all nine factories before accepting one prom
   const restoreFetch = installFetchRedirect(server.port);
   let accepted;
   try {
+    const manifest = readPackageArtifacts().manifest;
+    assert.deepEqual(manifest.extensionOrder, expectedOrder);
+    assert.deepEqual(
+      Object.fromEntries(expectedOrder.map((logicalName) => [
+        logicalName,
+        manifest.extensions[logicalName].version,
+      ])),
+      Object.fromEntries(expectedOrder.map((logicalName) => [
+        logicalName,
+        expectedExtensions[logicalName].version,
+      ])),
+    );
+    assert.deepEqual(manifest.loader, expectedLoader);
     accepted = await createCombinedSession({
       id: "task-4-12-accepted",
       responseText: "task-4-12 prompt accepted",
@@ -1567,16 +1642,19 @@ test("real Pi/Jiti loader registers all nine factories before accepting one prom
     const loaded = accepted.resourceLoader.getExtensions().extensions;
     assert.equal(loaded.length, 1);
     assert.equal(loaded[0].resolvedPath, path.join(runtime.extensions, expectedLoader.entryPath));
-    const registeredNames = [...loaded[0].tools.keys()];
-    for (const directName of directToolNames) {
-      assert.equal(registeredNames.filter((name) => name === directName).length, 1);
-    }
+    const registeredNames = accepted.session.getAllTools().map(({ name }) => name);
+    assert.deepEqual(
+      [...loaded[0].tools.keys()],
+      expectedManagedExtensionTools,
+    );
+    assert.deepEqual(registeredNames, expectedRegisteredTools);
+    assert.deepEqual(accepted.resourceLoader.getSkills(), { skills: [], diagnostics: [] });
+    assert.deepEqual(accepted.resourceLoader.getPrompts(), { prompts: [], diagnostics: [] });
     for (const forbiddenName of forbiddenToolNames) {
       assert.equal(registeredNames.includes(forbiddenName), false);
     }
     assert.equal(registeredNames.some((name) => name.startsWith("mcpproxy_")), false);
     assert.equal(registeredNames.some((name) => name.startsWith("mcp__mcpproxy_")), false);
-    assert.equal(registeredNames.includes("sieve"), false);
 
     await accepted.session.prompt("accept this minimal managed prompt");
     await accepted.session.waitForIdle();

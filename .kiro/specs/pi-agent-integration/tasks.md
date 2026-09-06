@@ -524,7 +524,7 @@
 
 - [ ] 7. Prove integrated runtime and release readiness
 
-- [ ] 7.1 Verify the combined extension and direct-tool surface
+- [x] 7.1 Verify the combined extension and direct-tool surface
   - Load the full managed manifest under the patched Pi runtime with ambient resources disabled.
   - Assert exact extension order, versions, six direct MCP tools, and required non-MCP tools before the first prompt.
   - Reject missing, duplicate, incompatible, generic-proxy, code-execution, Sieve, mutable-install, or telemetry surfaces.
