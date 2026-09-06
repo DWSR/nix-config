@@ -50,6 +50,7 @@ const requiredEnvironmentNames = [
   "NIX_SSL_CERT_FILE",
   "NO_COLOR",
   "PATH",
+  "PI_AGENT_BASH_TIMEOUT_MS",
   "PI_AGENT_LAUNCH_ID",
   "PI_CODING_AGENT_DIR",
   "SHELL",
@@ -192,6 +193,7 @@ function makeRuntimeProbeEnvironment(requiredNames) {
   }
   Object.assign(environment, {
     CAVEMEM_DATA_DIR: path.join(environment.XDG_DATA_HOME, "cavemem"),
+    PI_AGENT_BASH_TIMEOUT_MS: "543210",
     NODE_PATH: "pi-agent-dangerous-node-path",
     OPENAI_API_KEY: "pi-agent-denied-openai",
     AWS_SECRET_ACCESS_KEY: "pi-agent-denied-aws",

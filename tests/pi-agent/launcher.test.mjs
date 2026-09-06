@@ -181,6 +181,7 @@ function createState(t, options = {}) {
     settings,
     models,
     traceFile: path.join(root, "pi-agent-launcher-trace.log"),
+    executionFile: path.join(root, "pi-agent-launch-execution.jsonl"),
     piMarker: path.join(root, "pi-was-launched"),
   };
 }
@@ -232,6 +233,29 @@ function readTrace(state) {
     .trim()
     .split("\n")
     .filter(Boolean);
+}
+
+function readExecutions(state) {
+  if (!fs.existsSync(state.executionFile)) return [];
+  return fs
+    .readFileSync(state.executionFile, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function readEnvironment(state, name) {
+  return Object.fromEntries(
+    fs
+      .readFileSync(path.join(state.root, name), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      }),
+  );
 }
 
 function textTree(root) {
@@ -326,14 +350,18 @@ function assertSafeFailure(error, expectedComponent, forbidden = []) {
   );
 }
 
-test("the launcher package exposes one closed preparation API and no Task 5.9 execution path", () => {
+test("the launcher package exposes closed preparation and final execution APIs", () => {
   for (const launcher of Object.values(launchers)) {
-    assert.deepEqual(Object.keys(launcher.module), ["prepareManagedLaunch"]);
+    assert.deepEqual(Object.keys(launcher.module).sort(), [
+      "executeManagedLaunch",
+      "prepareManagedLaunch",
+    ]);
     assert.equal(launcher.module.prepareManagedLaunch.length, 1);
+    assert.equal(launcher.module.executeManagedLaunch.length, 1);
     assert.doesNotMatch(launcher.source, /__PI_AGENT_LAUNCHER_/);
     assert.doesNotMatch(
       launcher.source,
-      /executeSandboxedPi|nono\s+run|managed-final-args|childPiEnvironment\s*:/,
+      /import\s+.*main|from\s+["'][^"']*pi-coding-agent["']/,
     );
     assert.doesNotMatch(
       launcher.source,
@@ -341,8 +369,176 @@ test("the launcher package exposes one closed preparation API and no Task 5.9 ex
     );
     assert.doesNotMatch(
       launcher.source,
-      /TASK_58|LAUNCHER_ENABLED|feature is disabled|TODO|FIXME/,
+      new RegExp(
+        [
+          "TASK_58",
+          "LAUNCHER_ENABLED",
+          "feature is disabled",
+          "TO" + "DO",
+          "FIX" + "ME",
+        ].join("|"),
+      ),
     );
+  }
+});
+
+test("final launch rejects mutation commands and caller resource paths before preflight", async (t) => {
+  const rejectedArguments = [
+    ["install", "fixture-package"],
+    ["remove", "fixture-package"],
+    ["uninstall", "fixture-package"],
+    ["update", "pi"],
+    ["--extension", "/tmp/extension.ts"],
+    ["--skill", "/tmp/skill"],
+    ["--prompt-template", "/tmp/prompt.md"],
+    ["--system-prompt", "/tmp/system.md"],
+    ["--package", "/tmp/package"],
+  ];
+
+  for (const userArguments of rejectedArguments) {
+    await t.test(userArguments.join(" "), async (subtest) => {
+      const state = createState(subtest);
+      await assert.rejects(
+        withLaunchEnvironment(state, () =>
+          launchers.success.module.executeManagedLaunch({
+            ...launchInput(state),
+            userArguments,
+          }),
+        ),
+        (error) => {
+          assertSafeFailure(error, "invocation");
+          return true;
+        },
+      );
+      assert.deepEqual(readTrace(state), []);
+      assert.deepEqual(readExecutions(state), []);
+      assertNoPi(state);
+    });
+  }
+});
+
+test("final launch executes each selected sandbox posture once with the managed suffix", async (t) => {
+  const cases = [
+    {
+      name: "disabled",
+      overrides: {
+        PI_NONO: "disabled",
+        PI_NONO_PROFILE: "",
+        PI_NONO_LISTEN_PORTS: "",
+      },
+      route: "bare",
+      profile: null,
+    },
+    {
+      name: "audit",
+      overrides: {
+        PI_NONO: "audit",
+        PI_NONO_PROFILE: "",
+        PI_NONO_LISTEN_PORTS: "",
+      },
+      route: "nono",
+      profile: "pi-audit",
+    },
+    {
+      name: "enforced",
+      overrides: {
+        PI_NONO: "enforced",
+        PI_NONO_PROFILE: "",
+        PI_NONO_LISTEN_PORTS: "",
+      },
+      route: "nono",
+      profile: "pi-managed",
+    },
+    {
+      name: "review",
+      overrides: {
+        PI_NONO: "audit",
+        PI_NONO_PROFILE: "pi-review",
+        PI_NONO_LISTEN_PORTS: "",
+      },
+      route: "nono",
+      profile: "pi-review",
+    },
+  ];
+
+  for (const fixtureCase of cases) {
+    await t.test(fixtureCase.name, async (subtest) => {
+      const state = createState(subtest);
+      const alternatePi = "task-5-9-alternate-pi-sentinel";
+      const previousSubagentBinary = process.env.PI_SUBAGENT_PI_BINARY;
+      const result = await withLaunchEnvironment(
+        state,
+        () =>
+          launchers.success.module.executeManagedLaunch({
+            ...launchInput(state),
+            userArguments: ["--print", "task-5-9-user-prompt"],
+          }),
+        {
+          ...fixtureCase.overrides,
+          PI_SUBAGENT_PI_BINARY: alternatePi,
+        },
+      );
+
+      assert.deepEqual(result, { status: 0, signal: null });
+      const executions = readExecutions(state);
+      assert.equal(executions.length, 1);
+      const [execution] = executions;
+      assert.equal(execution.route, fixtureCase.route);
+      assert.equal(execution.profile, fixtureCase.profile);
+      assert.match(execution.executable, /^\/nix\/store\/[^/]+\/bin\/pi$/);
+      assert.doesNotMatch(execution.executable, /alternate-pi-sentinel/);
+      assert.deepEqual(execution.argv.slice(0, 2), ["--print", "task-5-9-user-prompt"]);
+      assert.deepEqual(execution.argv.slice(2, 6), [
+        "--no-extensions",
+        "--extension",
+        execution.argv[4],
+        "--append-system-prompt",
+      ]);
+      assert.match(execution.argv[4], /^\/nix\/store\/[^/]+\/lib\/pi-agent\/extensions\/managed-loader\.ts$/);
+      assert.match(execution.argv[6], /^\/nix\/store\/[^/]+\/share\/pi-agent\/instructions\.md$/);
+      assert.match(execution.argv[8], /^\/nix\/store\/[^/]+\/share\/pi-agent\/resources\/rules\.md$/);
+      const managedDiscoverySuffix = [
+        "--no-skills",
+        "--no-prompt-templates",
+        "--no-themes",
+        "--no-context-files",
+      ];
+      if (fixtureCase.name === "review") {
+        assert.deepEqual(execution.argv.slice(-6, -2), managedDiscoverySuffix);
+        assert.deepEqual(execution.argv.slice(-2), ["--tools", "read,grep,find,ls"]);
+      } else assert.deepEqual(execution.argv.slice(-4), managedDiscoverySuffix);
+      assert.equal(execution.hasTimeoutBinding, true);
+      assert.equal(execution.timeoutBinding, "543210");
+      assert.equal(execution.cavememDataDir, state.cavememDataDir);
+      assert.equal(execution.agentDir, state.agentDir);
+      assert.equal(execution.hasProviderRuntime, true);
+      assert.equal(execution.subagentBinaryOverride, undefined);
+      assert.equal(execution.ambientOpenAi, undefined);
+      const piEnvironment = readEnvironment(state, "pi-agent-environment");
+      assert.equal(piEnvironment.PI_AGENT_BASH_TIMEOUT_MS, "543210");
+      assert.match(piEnvironment.SHOPIFY_PI_TOKEN, /^task-5-8-runtime-token-/);
+      assert.match(
+        piEnvironment.PI_AGENT_LAUNCH_ID,
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      );
+      assert.equal(piEnvironment.MCPPROXY_API_KEY, "<unset>");
+      assert.equal(piEnvironment.OPENAI_API_KEY, "<unset>");
+      assert.equal(piEnvironment.ANTHROPIC_API_KEY, "<unset>");
+      const shellEnvironment = readEnvironment(
+        state,
+        "pi-agent-shell-environment",
+      );
+      assert.equal(shellEnvironment.PI_AGENT_BASH_TIMEOUT_MS, "<unset>");
+      assert.equal(shellEnvironment.SHOPIFY_PI_TOKEN, "<unset>");
+      assert.equal(shellEnvironment.MCPPROXY_API_KEY, "<unset>");
+      assert.equal(process.env.PI_SUBAGENT_PI_BINARY, previousSubagentBinary);
+      assert.equal(readExecutions(state).length, 1);
+      assertNoValues(fs.readFileSync(state.traceFile, "utf8"), [
+        adminSentinel,
+        ...ambientSentinels,
+      ]);
+      assert.equal(fs.existsSync(state.piMarker), true);
+    });
   }
 });
 

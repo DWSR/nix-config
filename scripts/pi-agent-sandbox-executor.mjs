@@ -50,6 +50,11 @@ const PI_PARSER_HELPER = path.join(
 const PI_PARSER_HELPER_DIGEST = "__PI_AGENT_PI_PARSER_HELPER_DIGEST__";
 const PROFILE_NAMES = Object.freeze(["pi-audit", "pi-managed", "pi-review"]);
 const STATES = Object.freeze(["disabled", "audit", "enforced"]);
+const SANDBOX_CONTROL_NAMES = Object.freeze([
+  "PI_NONO",
+  "PI_NONO_PROFILE",
+  "PI_NONO_LISTEN_PORTS",
+]);
 const REVIEW_TOOLS = Object.freeze(["read", "grep", "find", "ls"]);
 const PI_ARGUMENT_FIELDS = Object.freeze([
   "provider",
@@ -1465,6 +1470,12 @@ function executeProgram(executable, arguments_, environment) {
   return Object.freeze({ status: result.status, signal: result.signal });
 }
 
+function barePiEnvironment() {
+  const environment = { ...process.env };
+  for (const name of SANDBOX_CONTROL_NAMES) delete environment[name];
+  return Object.freeze(environment);
+}
+
 export function executeSandboxedPi(...inputs) {
   const input = snapshotInput(inputs);
   const catalog = loadCatalog();
@@ -1478,7 +1489,7 @@ export function executeSandboxedPi(...inputs) {
   verifyExecutable(PI_EXECUTABLE, EXECUTABLE_DIGESTS.pi, "pi");
 
   if (selection.state === "disabled") {
-    return executeProgram(PI_EXECUTABLE, input.userArguments, process.env);
+    return executeProgram(PI_EXECUTABLE, input.userArguments, barePiEnvironment());
   }
 
   const finalArguments = managedFinalArguments(

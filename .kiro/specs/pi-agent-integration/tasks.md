@@ -456,7 +456,7 @@
   - _Boundary: Runtime Control — Integration_
   - _Depends: 2.4, 3.7, 3.9, 4.13, 5.2, 5.3, 5.5, 5.7_
 
-- [ ] 5.9 Execute the final managed Pi surface exactly once
+- [x] 5.9 Execute the final managed Pi surface exactly once
   - Reject install, remove, uninstall, and binary-update commands before Pi receives arguments.
   - Reject explicit extension, skill, prompt, and package paths; disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
   - Clear sub-agent binary overrides so children use the underlying managed Pi runtime inside the same sandbox.
@@ -660,3 +660,4 @@
 - Task 5.6: Keep managed status at a command-byte boundary; reject sensitive environment descriptors below the root without invoking accessors, then scan the exact human or JSON bytes before output.
 - Task 5.7: Normalize empty sandbox controls to absence, then reject any non-empty control containing an exact credential before spawning status or another validator probe.
 - Task 5.8: Keep fixed launcher diagnostic labels separate from untrusted redaction values, and preserve value-free accepted-value and component-identity errors through preflight.
+- Task 5.9: Root Pi execution must use the policy-owned environment allowlist; profile admission and rollback scrubbing are separate contracts from model-shell scrubbing.

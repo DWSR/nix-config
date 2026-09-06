@@ -43,6 +43,7 @@ let
     "HF_TOKEN"
     "KIMI_API_KEY"
     "LLAMA_API_KEY"
+    "MCPPROXY_API_KEY"
     "MINIMAX_API_KEY"
     "MINIMAX_CN_API_KEY"
     "MISTRAL_API_KEY"
@@ -84,6 +85,13 @@ let
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
   ];
+  rootPiEnvironmentAllowlist = lib.sort builtins.lessThan (
+    shellAllowlist
+    ++ [
+      "NIX_SSL_CERT_FILE"
+      "SSL_CERT_FILE"
+    ]
+  );
   cavememEnvironmentAllowlist = lib.sort builtins.lessThan (
     lib.filter (
       name:
@@ -158,6 +166,7 @@ let
         const MODE = ${builtins.toJSON mode};
         const BASH_TIMEOUT_BINDING_VALUE = ${builtins.toJSON bashTimeoutBinding};
         const CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES = ${builtins.toJSON cavememEnvironmentAllowlist};
+        const ROOT_PI_ENVIRONMENT_ALLOWLIST_VALUES = ${builtins.toJSON rootPiEnvironmentAllowlist};
         const RESOLVER_PLAN_VALUES = ${builtins.toJSON resolverPlans};
         const SENSITIVE_NAME_VALUES = ${builtins.toJSON sensitiveNames};
         const SHELL_ALLOWLIST_VALUES = ${builtins.toJSON shellAllowlist};
@@ -311,6 +320,7 @@ let
 
         export const bashTimeoutBinding = deepFreeze(BASH_TIMEOUT_BINDING_VALUE);
         export const cavememEnvironmentAllowlist = deepFreeze(CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES);
+        export const rootPiEnvironmentAllowlist = deepFreeze(ROOT_PI_ENVIRONMENT_ALLOWLIST_VALUES);
         export const resolverPlans = deepFreeze(RESOLVER_PLAN_VALUES);
         export const sensitiveNames = deepFreeze(SENSITIVE_NAME_VALUES);
         export const spawnEnvironmentPartitions = deepFreeze(SPAWN_ENVIRONMENT_PARTITION_VALUES);

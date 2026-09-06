@@ -8,6 +8,7 @@
   projectionFactory,
   providerHandoff ? null,
   reconcilerPackage,
+  sandboxExecutorPackage,
   sandboxResolverPackage,
   statusPackage,
   validatorPackage,
@@ -47,6 +48,7 @@ let
         "__PI_AGENT_LAUNCHER_KEYCHAIN__"
         "__PI_AGENT_LAUNCHER_NODE__"
         "__PI_AGENT_LAUNCHER_PI_PACKAGE__"
+        "__PI_AGENT_LAUNCHER_SANDBOX_EXECUTOR__"
         "__PI_AGENT_LAUNCHER_PROBE_CWD__"
         "__PI_AGENT_LAUNCHER_PROVIDER_MODE__"
       ]
@@ -68,6 +70,7 @@ let
         keychainExecutable
         "${pkgs.nodejs}/bin/node"
         (toString piPackage)
+        "${sandboxExecutorPackage}/lib/pi-agent/sandbox-executor.mjs"
         (toString probeWorkingDirectory)
         providerMode
       ]

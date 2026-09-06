@@ -209,6 +209,7 @@ let
     in
     {
       resolverPackage = wrapper;
+      inherit (policy) managedShell;
       inherit (rendered) runtimeModule;
     };
 
@@ -256,7 +257,7 @@ let
     };
 
   mkPiPackage =
-    failStage:
+    failStage: shellPackage:
     let
       manifest = pkgs.writeText "pi-agent-launcher-pi-package.json" (
         builtins.toJSON {
@@ -273,13 +274,84 @@ let
       ''
         mkdir -p "$out/bin" "$out/lib/node_modules/@earendil-works/pi-coding-agent"
         cp ${manifest} "$out/lib/node_modules/@earendil-works/pi-coding-agent/package.json"
-        cat > "$out/bin/pi" <<'EOF'
+         cat > "$out/bin/pi" <<'EOF'
         #!${pkgs.runtimeShell}
         printf '%s\n' launched > "''${TMPDIR:?}/pi-was-launched"
-        exit 99
+        {
+          printf 'PI_AGENT_BASH_TIMEOUT_MS=%s\n' "''${PI_AGENT_BASH_TIMEOUT_MS-<unset>}"
+          printf 'SHOPIFY_PI_TOKEN=%s\n' "''${SHOPIFY_PI_TOKEN-<unset>}"
+          printf 'PI_AGENT_LAUNCH_ID=%s\n' "''${PI_AGENT_LAUNCH_ID-<unset>}"
+          printf 'MCPPROXY_API_KEY=%s\n' "''${MCPPROXY_API_KEY-<unset>}"
+          printf 'OPENAI_API_KEY=%s\n' "''${OPENAI_API_KEY-<unset>}"
+          printf 'ANTHROPIC_API_KEY=%s\n' "''${ANTHROPIC_API_KEY-<unset>}"
+        } > "''${TMPDIR:?}/pi-agent-environment"
+        ${shellPackage}/bin/pi-agent-shell -c '
+          printf "PI_AGENT_BASH_TIMEOUT_MS=%s\\n" "''${PI_AGENT_BASH_TIMEOUT_MS-<unset>}"
+          printf "SHOPIFY_PI_TOKEN=%s\\n" "''${SHOPIFY_PI_TOKEN-<unset>}"
+          printf "MCPPROXY_API_KEY=%s\\n" "''${MCPPROXY_API_KEY-<unset>}"
+        ' > "''${TMPDIR:?}/pi-agent-shell-environment"
+        exit 0
         EOF
         chmod 0555 "$out/bin/pi"
       '';
+
+  mkSandboxExecutor =
+    piPackage:
+    pkgs.writeTextFile {
+      name = "pi-agent-launcher-sandbox-executor";
+      destination = "/lib/pi-agent/sandbox-executor.mjs";
+      text = ''
+        import { spawnSync } from "node:child_process";
+        import fs from "node:fs";
+        import path from "node:path";
+
+        const PI_EXECUTABLE = ${builtins.toJSON "${piPackage}/bin/pi"};
+        const REVIEW_TOOLS = "read,grep,find,ls";
+
+        export function executeSandboxedPi(...inputs) {
+          if (inputs.length !== 1) throw new Error("sandbox executor invocation rejected");
+          const input = inputs[0];
+          if (input === null || typeof input !== "object") throw new Error("sandbox executor input rejected");
+          const route = process.env.PI_NONO === "disabled" ? "bare" : "nono";
+          const profile = process.env.PI_NONO_PROFILE ||
+            (process.env.PI_NONO === "enforced" ? "pi-managed" : "pi-audit");
+          const argv = [...input.userArguments];
+          if (profile === "pi-review") argv.push("--tools", REVIEW_TOOLS);
+          const execution = {
+            executable: PI_EXECUTABLE,
+            argv,
+            route,
+            profile: route === "bare" ? null : profile,
+            providerOrigin: input.providerOrigin,
+            hasProviderRuntime: typeof process.env.SHOPIFY_PI_TOKEN === "string"
+              && typeof process.env.PI_AGENT_LAUNCH_ID === "string",
+            hasTimeoutBinding: Object.hasOwn(process.env, "PI_AGENT_BASH_TIMEOUT_MS"),
+            timeoutBinding: process.env.PI_AGENT_BASH_TIMEOUT_MS,
+            cavememDataDir: process.env.CAVEMEM_DATA_DIR,
+            agentDir: process.env.PI_CODING_AGENT_DIR,
+            subagentBinaryOverride: process.env.PI_SUBAGENT_PI_BINARY,
+            ambientOpenAi: process.env.OPENAI_API_KEY,
+          };
+          const piEnvironment = { ...process.env };
+          for (const name of ["PI_NONO", "PI_NONO_PROFILE", "PI_NONO_LISTEN_PORTS"]) {
+            delete piEnvironment[name];
+          }
+          fs.appendFileSync(
+            path.join(process.env.TMPDIR, "pi-agent-launch-execution.jsonl"),
+            JSON.stringify(execution) + "\n",
+            { mode: 0o600 },
+          );
+          const result = spawnSync(PI_EXECUTABLE, argv, {
+            cwd: process.cwd(),
+            env: piEnvironment,
+            shell: false,
+            stdio: "inherit",
+          });
+          if (result.error) throw result.error;
+          return { status: result.status, signal: result.signal };
+        }
+      '';
+    };
 
   mkSandboxResolver =
     failStage:
@@ -287,62 +359,66 @@ let
       resolver = pkgs.writeText "pi-agent-launcher-sandbox-resolver-${failStage}.mjs" (
         commonProbeSource
         + ''
-           const ACCEPTED = Object.freeze({
-            states: Object.freeze(["disabled", "audit", "enforced"]),
-            profiles: Object.freeze(["pi-audit", "pi-managed", "pi-review"]),
-            listenPorts: "comma-separated canonical decimal ports from 1 through 65535",
-          });
+            const ACCEPTED = Object.freeze({
+             states: Object.freeze(["disabled", "audit", "enforced"]),
+             profiles: Object.freeze(["pi-audit", "pi-managed", "pi-review"]),
+             listenPorts: "comma-separated canonical decimal ports from 1 through 65535",
+           });
 
-           function selection(environment = {}) {
-             assertCommitted();
-             trace("profile:committed");
-             if (${builtins.toJSON (failStage == "profile")}) {
-               throw new Error("fixture profile raw failure");
-             }
-             const state = environment.PI_NONO ?? "";
-             const profile = environment.PI_NONO_PROFILE ?? "";
-             const listenPorts = environment.PI_NONO_LISTEN_PORTS ?? "";
-             if (!["", "disabled", "audit", "enforced"].includes(state)) {
-               throw new Error("sandbox override PI_NONO is invalid; accepted values: disabled, audit, enforced");
-             }
-             if (
-               profile !== "" &&
-               !["pi-audit", "pi-managed", "pi-review"].includes(profile)
-             ) {
-               throw new Error("sandbox override PI_NONO_PROFILE is invalid; accepted values: pi-audit, pi-managed, pi-review");
-             }
-             if (
-               listenPorts !== "" &&
-               !/^[1-9][0-9]*(?:,[1-9][0-9]*)*$/.test(listenPorts)
-             ) {
-               throw new Error("sandbox override PI_NONO_LISTEN_PORTS is invalid; accepted format: comma-separated canonical decimal ports from 1 through 65535");
-             }
-             return Object.freeze({
-              schemaVersion: 1,
-              state: "audit",
-              profile: "pi-audit",
-              listenPorts: Object.freeze([]),
-              piTools: null,
-              source: Object.freeze({
-                state: "sandbox.defaultState",
-                profile: "state-default",
-                listenPorts: "none",
-              }),
-              rollback: false,
-              disableReason: null,
-              accepted: ACCEPTED,
-            });
-          }
-
-          export function resolveSandboxSelection(...inputs) {
-            if (inputs.length !== 0) throw new Error("sandbox resolver invocation rejected");
-            return selection();
-          }
-
-           export function resolveSandboxSelectionFromEnvironment(...inputs) {
-              if (inputs.length !== 1) throw new Error("sandbox resolver invocation rejected");
-              return selection(inputs[0]);
+          function selection(environment = {}) {
+              assertCommitted();
+              trace("profile:committed");
+              if (${builtins.toJSON (failStage == "profile")}) {
+                throw new Error("fixture profile raw failure");
+              }
+              const state = environment.PI_NONO ?? "";
+              const profile = environment.PI_NONO_PROFILE ?? "";
+              const listenPorts = environment.PI_NONO_LISTEN_PORTS ?? "";
+              if (!["", "disabled", "audit", "enforced"].includes(state)) {
+                throw new Error("sandbox override PI_NONO is invalid; accepted values: disabled, audit, enforced");
+              }
+              if (
+                profile !== "" &&
+                !["pi-audit", "pi-managed", "pi-review"].includes(profile)
+              ) {
+                throw new Error("sandbox override PI_NONO_PROFILE is invalid; accepted values: pi-audit, pi-managed, pi-review");
+              }
+              if (
+                listenPorts !== "" &&
+                !/^[1-9][0-9]*(?:,[1-9][0-9]*)*$/.test(listenPorts)
+              ) {
+                throw new Error("sandbox override PI_NONO_LISTEN_PORTS is invalid; accepted format: comma-separated canonical decimal ports from 1 through 65535");
+              }
+               const selectedState = state === "" ? "audit" : state;
+               const selectedProfile = profile === ""
+                 ? (selectedState === "enforced" ? "pi-managed" : "pi-audit")
+                 : profile;
+               return Object.freeze({
+                schemaVersion: 1,
+                state: selectedState,
+                profile: selectedState === "disabled" ? null : selectedProfile,
+                listenPorts: Object.freeze([]),
+                piTools: selectedProfile === "pi-review" ? Object.freeze(["read", "grep", "find", "ls"]) : null,
+                source: Object.freeze({
+                  state: state === "" ? "sandbox.defaultState" : "PI_NONO",
+                  profile: profile === "" ? "state-default" : "PI_NONO_PROFILE",
+                  listenPorts: "none",
+                }),
+                rollback: selectedState === "disabled" && state !== "",
+                disableReason: selectedState === "disabled" ? (state === "" ? "host-default" : "override") : null,
+                accepted: ACCEPTED,
+              });
            }
+
+           export function resolveSandboxSelection(...inputs) {
+             if (inputs.length !== 0) throw new Error("sandbox resolver invocation rejected");
+             return selection();
+           }
+
+            export function resolveSandboxSelectionFromEnvironment(...inputs) {
+               if (inputs.length !== 1) throw new Error("sandbox resolver invocation rejected");
+               return selection(inputs[0]);
+            }
         ''
       );
       validator = pkgs.writeText "pi-agent-launcher-sandbox-validator-${failStage}.mjs" (
@@ -352,13 +428,17 @@ let
             if (inputs.length !== 1) throw new Error("sandbox validator invocation rejected");
             assertCommitted();
             trace("profile:validated");
-            if (${builtins.toJSON (failStage == "profile-validation")}) {
-              throw new Error("fixture profile validation raw failure");
-            }
-            const selected = inputs[0];
-            if (selected.profile !== "pi-audit" || selected.state !== "audit") {
-              throw new Error("fixture profile grant failure");
-            }
+             if (${builtins.toJSON (failStage == "profile-validation")}) {
+               throw new Error("fixture profile validation raw failure");
+             }
+             const selected = inputs[0];
+             const expectedState = process.env.PI_NONO || "audit";
+             const expectedProfile = expectedState === "disabled"
+               ? null
+               : (process.env.PI_NONO_PROFILE || (expectedState === "enforced" ? "pi-managed" : "pi-audit"));
+             if (selected.profile !== expectedProfile || selected.state !== expectedState) {
+               throw new Error("fixture profile grant failure");
+             }
             return selected;
           }
         ''
@@ -394,8 +474,8 @@ let
         inherit (config) generation;
         piVersion = "0.83.0";
         providerMode = config.providerSelection.mode;
-        sandboxState = "audit";
-        profile = "pi-audit";
+        sandboxState = null;
+        profile = null;
         inherit (config) mcpEndpoint;
         mcpReady = true;
         cavememDataDir = null;
@@ -425,7 +505,12 @@ let
           assertCommitted();
           assertScrubbed();
           trace("extensions:committed");
-          const report = ${builtins.toJSON statusReport};
+           const report = ${builtins.toJSON statusReport};
+           const selectedState = process.env.PI_NONO || "audit";
+           const selectedProfile = process.env.PI_NONO_PROFILE ||
+             (selectedState === "enforced" ? "pi-managed" : "pi-audit");
+           report.sandboxState = selectedState;
+           report.profile = selectedState === "disabled" ? null : selectedProfile;
           report.cavememDataDir = input.cavememDataDir;
           process.stdout.write(JSON.stringify(report) + "\n");
         ''
@@ -532,11 +617,12 @@ let
       credential = mkCredential mode failStage;
       providerHandoff =
         if mode == "personal" then null else mkProviderHandoff managedConfig projectionFactory failStage;
-      piPackage = mkPiPackage failStage;
+      piPackage = mkPiPackage failStage credential.managedShell;
       sandboxResolverPackage = mkSandboxResolver failStage;
       statusPackage = mkStatusPackage managedConfig failStage;
       validatorPackage = mkValidator managedConfig mode failStage;
       cavememPackage = mkCavemem failStage;
+      sandboxExecutorPackage = mkSandboxExecutor piPackage;
     in
     import (repoRoot + "/scripts/pi-agent-launcher.nix") {
       inherit
@@ -548,6 +634,7 @@ let
         providerHandoff
         reconcilerPackage
         sandboxResolverPackage
+        sandboxExecutorPackage
         statusPackage
         validatorPackage
         ;

@@ -28,8 +28,10 @@ let
           touch "$out/lib/pi/extensions/${name}.mjs"
         '') extensionNames}
       '';
-      manifestPackage = pkgs.writeTextDir "share/pi-agent/extensions.json" ''
-        {"schemaVersion":1}
+      manifestPackage = pkgs.runCommand "pi-agent-managed-config-manifest" { } ''
+        mkdir -p "$out/share/pi-agent" "$out/lib/pi-agent/extensions"
+        printf '%s\n' '{"schemaVersion":1}' > "$out/share/pi-agent/extensions.json"
+        printf '%s\n' 'export default async function managedLoader() {}' > "$out/lib/pi-agent/extensions/managed-loader.ts"
       '';
       instructionPackage = pkgs.writeTextDir "share/pi-agent/instructions.md" ''
         # Managed fixture instructions

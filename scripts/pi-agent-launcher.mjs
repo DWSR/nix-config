@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { types } from "node:util";
 import { pathToFileURL } from "node:url";
 
 const CREDENTIAL_RESOLVER_MODULE = "__PI_AGENT_LAUNCHER_CREDENTIAL_RESOLVER__";
@@ -22,6 +23,8 @@ const SANDBOX_VALIDATOR_MODULE = "__PI_AGENT_LAUNCHER_SANDBOX_VALIDATOR__";
 const KEYCHAIN_EXECUTABLE = "__PI_AGENT_LAUNCHER_KEYCHAIN__";
 const NODE_EXECUTABLE = "__PI_AGENT_LAUNCHER_NODE__";
 const PI_PACKAGE_ROOT = "__PI_AGENT_LAUNCHER_PI_PACKAGE__";
+const SANDBOX_EXECUTOR_MODULE =
+  "__PI_AGENT_LAUNCHER_SANDBOX_EXECUTOR__";
 const PROBE_CWD = "__PI_AGENT_LAUNCHER_PROBE_CWD__";
 const EXPECTED_PROVIDER_MODE = "__PI_AGENT_LAUNCHER_PROVIDER_MODE__";
 const EXPECTED_PI_VERSION = "0.83.0";
@@ -107,6 +110,30 @@ const GATE_RECOVERY = Object.freeze({
   "provider-setup": RECOVERY.resolver,
 });
 const PRIVATE_REJECTION = Symbol();
+const STORE_PATH = /^\/nix\/store\/[a-z0-9]{32}-[^/]+(?:\/.*)?$/;
+const MUTATION_COMMANDS = new Set([
+  "install",
+  "remove",
+  "uninstall",
+  "update",
+]);
+const MANAGED_RESOURCE_FLAGS = new Set([
+  "--append-system-prompt",
+  "--extension",
+  "--models",
+  "--no-context-files",
+  "--no-extensions",
+  "--no-prompt-templates",
+  "--no-skills",
+  "--no-themes",
+  "--package",
+  "--package-path",
+  "--prompt-template",
+  "--skill",
+  "--system-prompt",
+  "--theme",
+  "-e",
+]);
 
 class ManagedLaunchError extends Error {
   constructor(component, recovery, details = {}) {
@@ -173,7 +200,12 @@ function compareText(left, right) {
 }
 
 function isPlainObject(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    types.isProxy(value) ||
+    Array.isArray(value)
+  ) {
     return false;
   }
   const prototype = Object.getPrototypeOf(value);
@@ -251,6 +283,95 @@ function snapshotInvocation(input) {
   }
 }
 
+function snapshotArguments(value) {
+  try {
+    if (
+      !Array.isArray(value) ||
+      types.isProxy(value) ||
+      Object.getPrototypeOf(value) !== Array.prototype
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (!lengthDescriptor || !Number.isSafeInteger(lengthDescriptor.value)) {
+      throw PRIVATE_REJECTION;
+    }
+    const result = [];
+    let bytes = 0;
+    for (let index = 0; index < lengthDescriptor.value; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (
+        !descriptor ||
+        !descriptor.enumerable ||
+        !("value" in descriptor) ||
+        typeof descriptor.value !== "string" ||
+        descriptor.value.includes("\0")
+      ) {
+        throw PRIVATE_REJECTION;
+      }
+      bytes += Buffer.byteLength(descriptor.value);
+      if (bytes > 1024 * 1024) throw PRIVATE_REJECTION;
+      result.push(descriptor.value);
+    }
+    if (Object.keys(value).length !== result.length) throw PRIVATE_REJECTION;
+    return Object.freeze(result);
+  } catch {
+    throwFailure("invocation", RECOVERY.invocation);
+  }
+}
+
+function snapshotExecutionInvocation(input) {
+  try {
+    if (
+      !exactDataKeys(input, ["agentDir", "cavememDataDir", "userArguments"])
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const agentDir = Object.getOwnPropertyDescriptor(input, "agentDir").value;
+    const cavememDataDir = Object.getOwnPropertyDescriptor(
+      input,
+      "cavememDataDir",
+    ).value;
+    const userArguments = Object.getOwnPropertyDescriptor(
+      input,
+      "userArguments",
+    ).value;
+    const directories = snapshotInvocation({ agentDir, cavememDataDir });
+    return Object.freeze({
+      ...directories,
+      userArguments: snapshotArguments(userArguments),
+    });
+  } catch (error) {
+    if (error instanceof ManagedLaunchError) throw error;
+    throwFailure("invocation", RECOVERY.invocation);
+  }
+}
+
+function rejectManagedArgumentOverrides(userArguments, redactionValues = []) {
+  const first = userArguments[0];
+  if (MUTATION_COMMANDS.has(first)) {
+    throwFailure(
+      "invocation",
+      RECOVERY.invocation,
+      { operation: first },
+      redactionValues,
+    );
+  }
+  for (const argument of userArguments) {
+    const flag = argument.startsWith("--")
+      ? argument.split("=", 1)[0]
+      : argument;
+    if (MANAGED_RESOURCE_FLAGS.has(flag)) {
+      throwFailure(
+        "invocation",
+        RECOVERY.invocation,
+        { operation: "managed-resource-override" },
+        redactionValues,
+      );
+    }
+  }
+}
+
 function deepFreeze(value) {
   if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
     for (const child of Object.values(value)) deepFreeze(child);
@@ -317,6 +438,90 @@ function loadManagedConfig() {
   }
 }
 
+function checkedManagedPath(value, component) {
+  if (
+    typeof value !== "string" ||
+    !STORE_PATH.test(value) ||
+    path.normalize(value) !== value ||
+    CONTROL.test(value)
+  ) {
+    throw PRIVATE_REJECTION;
+  }
+  const stat = fs.statSync(value);
+  if (!stat.isFile()) throw PRIVATE_REJECTION;
+  return value;
+}
+
+function managedExtensionPath(manifestPath) {
+  checkedManagedPath(manifestPath, "extension");
+  if (path.basename(manifestPath) !== "extensions.json") {
+    throw PRIVATE_REJECTION;
+  }
+  const packageRoot = path.dirname(path.dirname(path.dirname(manifestPath)));
+  const loaderPath = path.join(
+    packageRoot,
+    "lib",
+    "pi-agent",
+    "extensions",
+    "managed-loader.ts",
+  );
+  checkedManagedPath(loaderPath, "extension");
+  return loaderPath;
+}
+
+function managedLaunchArguments(config, redactionValues) {
+  try {
+    if (
+      !Array.isArray(config.instructionResources) ||
+      config.instructionResources.length === 0
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const extensionPath = managedExtensionPath(config.extensionManifest);
+    const arguments_ = ["--no-extensions", "--extension", extensionPath];
+    for (const resource of config.instructionResources) {
+      arguments_.push("--append-system-prompt", checkedManagedPath(resource, "package"));
+    }
+    arguments_.push(
+      "--no-skills",
+      "--no-prompt-templates",
+      "--no-themes",
+      "--no-context-files",
+    );
+    return Object.freeze(arguments_);
+  } catch {
+    throwFailure("package", RECOVERY.package, {}, redactionValues);
+  }
+}
+
+function providerOriginFromCandidate(baseCandidate, redactionValues) {
+  if (EXPECTED_PROVIDER_MODE === "personal") return null;
+  try {
+    if (
+      typeof baseCandidate !== "string" ||
+      baseCandidate.length === 0 ||
+      CONTROL.test(baseCandidate) ||
+      containsExactValue(baseCandidate, redactionValues)
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const parsed = new URL(baseCandidate);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.origin === "null" ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.search !== "" ||
+      parsed.hash !== ""
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    return parsed.origin;
+  } catch {
+    throwFailure("provider-projection", RECOVERY.projection, {}, redactionValues);
+  }
+}
+
 function snapshotSensitiveValues(runtimeSecrets) {
   try {
     const values = [...runtimeSecrets.exactRedactionValues];
@@ -365,6 +570,100 @@ function mergeExactValues(...groups) {
       (left, right) => right.length - left.length || compareText(left, right),
     ),
   );
+}
+
+function createRootPiEnvironment(
+  request,
+  managedConfig,
+  credentialPolicy,
+  runtimeSecrets,
+  redactionValues,
+) {
+  try {
+    if (
+      typeof credentialPolicy.createBashRuntimeInputs !== "function" ||
+      !Array.isArray(credentialPolicy.rootPiEnvironmentAllowlist) ||
+      credentialPolicy.rootPiEnvironmentAllowlist.some(
+        (name) =>
+          typeof name !== "string" ||
+          credentialPolicy.sensitiveNames.includes(name) ||
+          name === "PI_AGENT_BASH_TIMEOUT_MS",
+      ) ||
+      new Set(credentialPolicy.rootPiEnvironmentAllowlist).size !==
+        credentialPolicy.rootPiEnvironmentAllowlist.length
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const bashInputs = credentialPolicy.createBashRuntimeInputs({
+      bashDefaultMs: managedConfig.timeouts.bashDefaultMs,
+    });
+    if (
+      !isPlainObject(bashInputs) ||
+      !isPlainObject(bashInputs.rootPiEnvironment) ||
+      !isPlainObject(bashInputs.childPiEnvironment) ||
+      !exactEnumerableDataKeys(bashInputs.rootPiEnvironment, [
+        "PI_AGENT_BASH_TIMEOUT_MS",
+      ]) ||
+      !exactEnumerableDataKeys(bashInputs.childPiEnvironment, [
+        "PI_AGENT_BASH_TIMEOUT_MS",
+      ])
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+    const environment = {};
+    for (const name of credentialPolicy.rootPiEnvironmentAllowlist) {
+      const descriptor = Object.getOwnPropertyDescriptor(process.env, name);
+      if (descriptor === undefined) continue;
+      if (!('value' in descriptor) || typeof descriptor.value !== "string") {
+        throw PRIVATE_REJECTION;
+      }
+      environment[name] = descriptor.value;
+    }
+    if (Object.values(environment).some((value) => containsExactValue(value, redactionValues))) {
+      throw PRIVATE_REJECTION;
+    }
+    Object.assign(
+      environment,
+      runtimeSecrets.rootPiEnvironment,
+      bashInputs.rootPiEnvironment,
+      {
+        PI_CODING_AGENT_DIR: request.agentDir,
+        CAVEMEM_DATA_DIR: request.cavememDataDir,
+      },
+    );
+    const selectionEnvironment = sandboxEnvironment(redactionValues);
+    for (const name of SANDBOX_CONTROL_NAMES) {
+      if (selectionEnvironment[name] !== undefined) {
+        environment[name] = selectionEnvironment[name];
+      }
+    }
+    return Object.freeze(environment);
+  } catch (error) {
+    if (error instanceof ManagedLaunchError) throw error;
+    throwFailure("package", RECOVERY.package, {}, redactionValues);
+  }
+}
+
+function withTemporaryProcessEnvironment(environment, operation) {
+  const previous = new Map();
+  const names = new Set([...Object.keys(process.env), ...Object.keys(environment)]);
+  for (const name of names) {
+    previous.set(name, Object.hasOwn(process.env, name) ? process.env[name] : undefined);
+  }
+  try {
+    for (const name of Object.keys(process.env)) {
+      if (!Object.hasOwn(environment, name)) delete process.env[name];
+    }
+    for (const [name, value] of Object.entries(environment)) {
+      process.env[name] = value;
+    }
+    return operation();
+  } finally {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
 }
 
 function validateResolverOutcome(outcome) {
@@ -1028,6 +1327,9 @@ function closedHandoff(
   runtimeSecrets,
   reconciliation,
   sandboxSelection,
+  providerOrigin,
+  managedArguments,
+  bashDefaultMs,
 ) {
   const result = {
     schemaVersion: 1,
@@ -1042,6 +1344,26 @@ function closedHandoff(
   Object.defineProperty(result, "runtimeSecrets", {
     enumerable: true,
     get: () => runtimeSecrets,
+  });
+  Object.defineProperties(result, {
+    providerOrigin: {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: providerOrigin,
+    },
+    managedArguments: {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: managedArguments,
+    },
+    bashDefaultMs: {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: bashDefaultMs,
+    },
   });
   Object.defineProperty(result, "toJSON", {
     value() {
@@ -1133,6 +1455,11 @@ export async function prepareManagedLaunch(input) {
     throw PRIVATE_REJECTION;
   }
 
+  const providerOrigin = providerOriginFromCandidate(
+    resolverOutcome.baseCandidate,
+    redactionValues,
+  );
+
   let reconciliation;
   try {
     reconciliation =
@@ -1170,6 +1497,10 @@ export async function prepareManagedLaunch(input) {
   deepFreeze(reconciliation);
 
   packagePreflight(configArtifact, configArtifact.value, redactionValues);
+  const managedArguments = managedLaunchArguments(
+    configArtifact.value,
+    redactionValues,
+  );
   const selectionEnvironment = sandboxEnvironment(redactionValues);
   let sandboxSelection;
   let rawSandboxSelection;
@@ -1226,5 +1557,54 @@ export async function prepareManagedLaunch(input) {
     runtimeSecrets,
     reconciliation,
     sandboxSelection,
+    providerOrigin,
+    managedArguments,
+    configArtifact.value.timeouts.bashDefaultMs,
+  );
+}
+
+export async function executeManagedLaunch(input) {
+  const request = snapshotExecutionInvocation(input);
+  rejectManagedArgumentOverrides(request.userArguments);
+  const handoff = await prepareManagedLaunch({
+    agentDir: request.agentDir,
+    cavememDataDir: request.cavememDataDir,
+  });
+  const runtimeSecrets = handoff.runtimeSecrets;
+  const redactionValues = snapshotSensitiveValues(runtimeSecrets);
+  let credentialPolicy;
+  let sandboxExecutor;
+  try {
+    [credentialPolicy, sandboxExecutor] = await Promise.all([
+      import(pathToFileURL(CREDENTIAL_POLICY_MODULE).href),
+      import(pathToFileURL(SANDBOX_EXECUTOR_MODULE).href),
+    ]);
+    if (
+      typeof credentialPolicy.createBashRuntimeInputs !== "function" ||
+      typeof sandboxExecutor.executeSandboxedPi !== "function" ||
+      sandboxExecutor.executeSandboxedPi.length !== 0
+    ) {
+      throw PRIVATE_REJECTION;
+    }
+  } catch {
+    throwFailure("package", RECOVERY.package, {}, redactionValues);
+  }
+
+  const environment = createRootPiEnvironment(
+    request,
+    { timeouts: { bashDefaultMs: handoff.bashDefaultMs } },
+    credentialPolicy,
+    runtimeSecrets,
+    redactionValues,
+  );
+  const userArguments = Object.freeze([
+    ...request.userArguments,
+    ...handoff.managedArguments,
+  ]);
+  return withTemporaryProcessEnvironment(environment, () =>
+    sandboxExecutor.executeSandboxedPi({
+      providerOrigin: handoff.providerOrigin,
+      userArguments,
+    }),
   );
 }

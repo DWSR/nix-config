@@ -42,6 +42,11 @@ const shellAllowlist = [
   "XDG_STATE_HOME",
 ];
 const cavememEnvironmentAllowlist = ["CAVEMEM_DATA_DIR", ...shellAllowlist].sort();
+const rootPiEnvironmentAllowlist = [
+  ...shellAllowlist,
+  "NIX_SSL_CERT_FILE",
+  "SSL_CERT_FILE",
+].sort();
 const spawnEnvironmentPartitions = {
   rootPi: "rootPiEnvironment",
   foregroundChildPi: "childPiEnvironment",
@@ -66,6 +71,7 @@ const requiredSensitiveNames = [
   "GOOGLE_APPLICATION_CREDENTIALS",
   "GOOGLE_CLOUD_API_KEY",
   "GROQ_API_KEY",
+  "MCPPROXY_API_KEY",
   "OPENAI_API_KEY",
   "PI_AGENT_LAUNCH_ID",
   "SHOPIFY_PI_TOKEN",
@@ -199,6 +205,7 @@ function assertClosedRuntimeExports(runtimeModule) {
     "createCredentialBoundary",
     "createProviderRuntimeSecrets",
     "resolverPlans",
+    "rootPiEnvironmentAllowlist",
     "scrubEnvironment",
     "scrubbedShellContract",
     "sensitiveNames",
@@ -309,6 +316,8 @@ test("Cavemem subprocess names are a closed policy export derived from the shell
     assert.deepEqual(runtimeModule.cavememEnvironmentAllowlist, cavememEnvironmentAllowlist);
     assert.equal(Object.isFrozen(runtimeModule.cavememEnvironmentAllowlist), true);
     assert.equal(runtimeModule.cavememEnvironmentAllowlist.includes("CAVEMEM_DATA_DIR"), true);
+    assert.deepEqual(runtimeModule.rootPiEnvironmentAllowlist, rootPiEnvironmentAllowlist);
+    assert.equal(Object.isFrozen(runtimeModule.rootPiEnvironmentAllowlist), true);
     for (const name of [
       ...runtimeModule.sensitiveNames,
       "PI_AGENT_BASH_TIMEOUT_MS",
@@ -436,7 +445,7 @@ test("general Home Module package binding and disabled mode remain regression-cl
 
 test("personal policy has no Shopify runtime surface and preserves an empty Pi-auth partition", async () => {
   const { exports: runtimeModule, source } = await getPersonalRuntimeModule();
-  assertClosedRuntimeExports(runtimeModule);
+    assertClosedRuntimeExports(runtimeModule);
   assert.deepEqual(runtimeModule.resolverPlans, [{ kind: "pi-auth" }]);
   assert.doesNotMatch(source, /\/nix\/store\/[^"']+-devx\/bin\/devx/);
 
