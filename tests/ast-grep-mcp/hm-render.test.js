@@ -190,7 +190,6 @@ test('both hosts render ast-grep upstream through mcpproxy and preserve existing
     'cavemem',
     'grep-app',
     'ast-grep',
-    'gt-mcp',
     'buildkite',
     'gcloud-mcp',
     'tool-gateway',

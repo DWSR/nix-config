@@ -76,11 +76,6 @@ in
           headers.Authorization = "Bearer " + readKeychainSecret "mcp-infra-central-token";
         };
 
-        gt-mcp = {
-          command = "${pkgs.unstable.graphite-cli}/bin/gt";
-          args = [ "mcp" ];
-        };
-
         grep-app = {
           command = "${pkgs.grep-app-mcp}/bin/grep-app-mcp";
         };

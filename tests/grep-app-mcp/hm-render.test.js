@@ -163,11 +163,11 @@ test('both hosts render grep-app upstream through mcpproxy and preserve existing
     'mcp-nixos',
     'cavemem',
     'grep-app',
-    'gt-mcp',
     'buildkite',
     'gcloud-mcp',
     'tool-gateway',
   ], 'Shopify mcpproxy servers');
+  assert.equal(rendered.shopify.serverNames.includes('gt-mcp'), false, 'Shopify mcpproxy excludes Graphite CLI');
 
   assert.equal(rendered.personal.routingMode, 'retrieve_tools');
   assert.equal(rendered.shopify.routingMode, 'retrieve_tools');

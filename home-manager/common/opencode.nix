@@ -403,9 +403,8 @@
         # Globally disallow the `git` and `gt` CLIs in the bash tool. Routine
         # version-control operations use git-mcp outside the sandbox, where
         # commit identity, signing, and ~/.gitconfig includes remain available.
-        # The retained legacy-recovery skill uses gt-mcp only when explicitly
-        # loaded after a matching failure. Neither MCP server is a bash command,
-        # so these denies do not affect it.
+        # Graphite is not exposed through mcpproxy. git-mcp is not a bash
+        # command, so these denies do not affect it.
         #
         # Pattern semantics (https://opencode.ai/docs/permissions): bash rules
         # match the parsed command, last-match-wins. Nix serialises attrs keys
