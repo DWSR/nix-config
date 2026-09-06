@@ -502,7 +502,7 @@
   - _Boundary: Personal Host Configuration_
   - _Depends: 5.1, 6.2_
 
-- [ ] 6.4 (P) Enable and verify the Shopify host contract
+- [x] 6.4 (P) Enable and verify the Shopify host contract
   - Enable the common Pi module with Shopify gateway mode and audit sandbox default.
   - Select the five catalog roles and catalog-owned `openai/gpt-5.6-sol` default at `xhigh` without supplying routes, APIs, headers, resolver argv, or store paths.
   - Reuse the local mcpproxy endpoint, Cavemem directory, and Shopify-specific instruction addendum.
