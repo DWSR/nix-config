@@ -56,6 +56,7 @@ const SANDBOX_CONTROL_NAMES = Object.freeze([
   "PI_NONO_LISTEN_PORTS",
 ]);
 const REVIEW_TOOLS = Object.freeze(["read", "grep", "find", "ls"]);
+const PROVIDER_NETWORK_PROFILE = "minimal";
 const PI_ARGUMENT_FIELDS = Object.freeze([
   "provider",
   "model",
@@ -907,14 +908,17 @@ function validateResolvedGrants(
   listenPorts,
 ) {
   validateResolvedShape(resolved, resolved.name);
-  const expectedBlocked = networkPolicy === "runtime-provider-host-required";
+  const expectedBlocked =
+    providerHost === null && networkPolicy === "runtime-provider-host-required";
   const expectedDomains = providerHost === null ? [] : [providerHost];
+  const expectedNetworkProfile =
+    providerHost === null ? null : PROVIDER_NETWORK_PROFILE;
   if (
     resolved.network.block !== expectedBlocked ||
     !exactStringArray(resolved.network.allow_domain, expectedDomains) ||
     !exactStringArray(resolved.network.credentials, []) ||
     !exactNumberArray(resolved.network.listen_port, listenPorts) ||
-    resolved.network.network_profile !== null ||
+    resolved.network.network_profile !== expectedNetworkProfile ||
     !exactStringArray(resolved.network.no_proxy, []) ||
     resolved.network.upstream_proxy !== null ||
     !exactStringArray(resolved.network.upstream_bypass, [])
@@ -1188,7 +1192,11 @@ function validateManifest(
     !exactDataObject(manifest.network.ports, expectedPortKeys) ||
     manifest.network.dns !== true ||
     manifest.network.mode !==
-      (networkPolicy === "unrestricted-audit" ? "unrestricted" : "blocked") ||
+      (providerHost !== null
+        ? "proxy"
+        : networkPolicy === "unrestricted-audit"
+          ? "unrestricted"
+          : "blocked") ||
     !exactNumberArray(manifest.network.ports.localhost, [contract.mcpPort]) ||
     (listenPorts.length > 0 &&
       !exactNumberArray(manifest.network.ports.bind, listenPorts)) ||
@@ -1285,6 +1293,9 @@ function createRuntimeProfile(source, providerHost, listenPorts) {
     fs.chmodSync(directory, 0o700);
     const file = path.join(directory, "profile.json");
     const runtimeSource = structuredClone(source);
+    runtimeSource.network.block = providerHost === null ? source.network.block : false;
+    runtimeSource.network.network_profile =
+      providerHost === null ? null : PROVIDER_NETWORK_PROFILE;
     runtimeSource.network.allow_domain = providerHost === null ? [] : [providerHost];
     runtimeSource.network.listen_port = [...listenPorts];
     fs.writeFileSync(file, `${JSON.stringify(runtimeSource)}\n`, {
@@ -1402,6 +1413,10 @@ function prepareEnabledExecution(input, selection, catalog) {
       "profile",
     );
     const expectedRuntimeResolved = structuredClone(selectedResolved);
+    expectedRuntimeResolved.network.block =
+      providerHost === null ? selectedResolved.network.block : false;
+    expectedRuntimeResolved.network.network_profile =
+      providerHost === null ? null : PROVIDER_NETWORK_PROFILE;
     expectedRuntimeResolved.network.allow_domain =
       providerHost === null ? [] : [providerHost];
     expectedRuntimeResolved.network.listen_port = [...selection.listenPorts];
