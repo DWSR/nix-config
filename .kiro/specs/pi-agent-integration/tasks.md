@@ -492,7 +492,7 @@
   - _Boundary: Home Module — Integration_
   - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.13, 5.6, 5.7, 5.8, 5.9, 6.1_
 
-- [ ] 6.3 (P) Enable and verify the personal host contract
+- [x] 6.3 (P) Enable and verify the personal host contract
   - Enable the common Pi module with personal provider mode and audit sandbox default.
   - Select the catalog-owned `openai/gpt-5.6-sol` default at `xhigh` and leave Pi authentication plus built-in OpenAI provider state unoverridden.
   - Reuse the local mcpproxy endpoint, Cavemem directory, and common extension inventory.
@@ -662,3 +662,4 @@
 - Task 5.8: Keep fixed launcher diagnostic labels separate from untrusted redaction values, and preserve value-free accepted-value and component-identity errors through preflight.
 - Task 5.9: Root Pi execution must use the policy-owned environment allowlist; profile admission and rollback scrubbing are separate contracts from model-shell scrubbing.
 - Task 6.2: Force every enabled common-module artifact, including resolver/status/validator outputs, in integration tests so package-contract failures cannot hide behind lazy evaluation.
+- Task 6.3: Keep personal host selection limited to Pi-owned OpenAI auth and structurally reject Shopify provider surfaces rather than relying on closure scans alone.
