@@ -32,7 +32,6 @@ let
         (envLine "AGENTMEMORY_RUNTIME_DIR" cfg.runtimeDir)
         (envLine "AGENTMEMORY_URL" "http://127.0.0.1:${toString cfg.restPort}")
         (envLine "AGENTMEMORY_VIEWER_URL" "http://127.0.0.1:${toString cfg.viewerPort}")
-        (envLine "AGENTMEMORY_SECRET" cfg.bearerReference)
         (envLine "AGENTMEMORY_SECRET_REFERENCE" cfg.bearerReference)
         (envLine "III_REST_PORT" cfg.restPort)
         (envLine "III_STREAM_PORT" cfg.streamPort)
@@ -44,6 +43,24 @@ let
       )
     )
     + "\n";
+
+  agentmemoryLauncher = pkgs.writeShellApplication {
+    name = "agentmemory";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      set -eu
+
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      if [ -z "$agentmemory_secret" ]; then
+        echo "ERROR: AgentMemory bearer unavailable from macOS Keychain; daemon not started." >&2
+        echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
+        exit 1
+      fi
+
+      export AGENTMEMORY_SECRET="$agentmemory_secret"
+      exec ${cfg.package}/bin/agentmemory "$@"
+    '';
+  };
 in
 {
   options.programs.agentmemory = {
@@ -126,6 +143,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    assertions = lib.optional (options.home ? mcp) {
+      assertion = builtins.hasAttr cfg.bearerReference config.home.mcp.keychainSecrets;
+      message = "programs.agentmemory.bearerReference must name a home.mcp.keychainSecrets entry.";
+    };
+
     home = {
       packages = [
         cfg.package
@@ -141,7 +163,11 @@ in
     // lib.optionalAttrs (options.home ? mcp) {
       mcp.extraServers.agentmemory = {
         command = "${cfg.package}/bin/agentmemory-mcp";
-        env.AGENTMEMORY_TOOLS = "core";
+        env = {
+          AGENTMEMORY_URL = "http://127.0.0.1:${toString cfg.restPort}";
+          AGENTMEMORY_TOOLS = "core";
+          AGENTMEMORY_SECRET = config.home.mcp.readKeychainSecret cfg.bearerReference;
+        };
       };
     };
 
@@ -152,14 +178,14 @@ in
       enable = true;
       config = {
         Label = "dev.dwsr.agentmemory";
-        ProgramArguments = [ "${cfg.package}/bin/agentmemory" ];
+        ProgramArguments = [ "${agentmemoryLauncher}/bin/agentmemory" ];
         RunAtLoad = true;
         KeepAlive = true;
         WorkingDirectory = cfg.runtimeDir;
         EnvironmentVariables = {
           AGENTMEMORY_DATA_DIR = toString cfg.dataDir;
           AGENTMEMORY_RUNTIME_DIR = toString cfg.runtimeDir;
-          AGENTMEMORY_SECRET = cfg.bearerReference;
+          AGENTMEMORY_SECRET_REFERENCE = cfg.bearerReference;
           III_REST_PORT = toString cfg.restPort;
           III_STREAM_PORT = toString cfg.streamPort;
           III_VIEWER_PORT = toString cfg.viewerPort;

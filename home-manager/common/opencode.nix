@@ -11,6 +11,7 @@ let
     rev = "6e0c72a3b4b46f87ac01ed1291f646bf77beafb0";
     hash = "sha256-uKMCItuqK7JXeGeXvG3RiUg7xWLzlO93K3XMbVEn8ZI=";
   };
+  agentmemory = config.programs.agentmemory;
 in
 {
   options.home.opencode = {
@@ -248,6 +249,27 @@ in
           exit 1
         fi
       ''
+    ]
+    # AgentMemory preflight deliberately follows the independent Obsidian
+    # check above. The authenticated health route is the full-daemon gate;
+    # standalone MCP fallback has no healthy daemon response and is rejected.
+    ++ lib.optional agentmemory.enable ''
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      if [ -z "$agentmemory_secret" ]; then
+        echo "ERROR: AgentMemory daemon preflight failed: bearer unavailable from macOS Keychain." >&2
+        echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
+        exit 1
+      fi
+      export AGENTMEMORY_URL="http://127.0.0.1:${toString agentmemory.restPort}"
+      export AGENTMEMORY_SECRET="$agentmemory_secret"
+      agentmemory_health=$(/usr/bin/curl -sf --max-time 2 -H "Authorization: Bearer $AGENTMEMORY_SECRET" http://127.0.0.1:${toString agentmemory.restPort}/agentmemory/health 2>/dev/null) || agentmemory_health=""
+      if ! printf "%s" "$agentmemory_health" | ${pkgs.jq}/bin/jq -e '(.status == "healthy") or (.status == "ok")' >/dev/null 2>&1; then
+        echo "ERROR: AgentMemory daemon preflight failed: full-daemon health check did not report healthy." >&2
+        echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
+        exit 1
+      fi
+    ''
+    ++ [
       # Enable the experimental `lsp` tool so the model can use the configured
       # LSP servers for goToDefinition / findReferences / hover / symbols / etc.
       # https://opencode.ai/docs/tools/#lsp-experimental

@@ -99,8 +99,12 @@ function renderStockMcpModule({ enable }) {
         home.mcp = {
           obsidianVaultPath = "/tmp/agentmemory/vault";
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
+          keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
         };
-        programs.agentmemory.enable = ${nixBoolean};
+        programs.agentmemory = {
+          enable = ${nixBoolean};
+          restPort = 35111;
+        };
         programs.opencode.settings.mcp.mcpproxy = {
           type = "remote";
           url = "http://127.0.0.1:8080/mcp";
@@ -142,7 +146,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.III_STREAM_PORT, '35112');
   assert.equal(first.launchd.environment.III_VIEWER_PORT, '35113');
   assert.equal(first.launchd.environment.III_ENGINE_PORT, '61134');
-  assert.equal(first.launchd.environment.AGENTMEMORY_SECRET, 'agentmemory-bearer');
+  assert.equal(first.launchd.environment.AGENTMEMORY_SECRET, undefined);
+  assert.equal(first.launchd.environment.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
   assert.match(first.settings, /AGENTMEMORY_DATA_DIR=\/tmp\/agentmemory\/data/);
   assert.match(first.settings, /AGENTMEMORY_URL=http:\/\/127\.0\.0\.1:35111/);
   assert.match(first.settings, /AGENTMEMORY_BACKUP_DESTINATION=\/tmp\/agentmemory\/backups/);
@@ -184,7 +189,11 @@ test('enabled AgentMemory registers the stock core shim through mcpproxy only', 
   assert.equal(server.protocol, 'stdio');
   assert.match(server.command, /\/bin\/agentmemory-mcp$/);
   assert.deepEqual(server.args, []);
-  assert.deepEqual(server.env, { AGENTMEMORY_TOOLS: 'core' });
+  assert.deepEqual(server.env, {
+    AGENTMEMORY_URL: 'http://127.0.0.1:35111',
+    AGENTMEMORY_SECRET: '${env:AGENTMEMORY_BEARER}',
+    AGENTMEMORY_TOOLS: 'core',
+  });
   assert.equal(server.enabled, true);
   assert.equal(server.quarantined, false);
   assert.equal(rendered.mcpConfig.routing_mode, 'retrieve_tools');
@@ -200,6 +209,8 @@ test('enabled AgentMemory registers the stock core shim through mcpproxy only', 
     'protocol',
     'quarantined',
   ]);
+  assert.doesNotMatch(JSON.stringify(rendered.mcpConfig), /op:\/\/Private\/AgentMemory\/Bearer/);
+  assert.doesNotMatch(JSON.stringify(rendered.mcpConfig), /test-secret/);
 });
 
 test('disabled AgentMemory contributes no stock MCP registration', () => {

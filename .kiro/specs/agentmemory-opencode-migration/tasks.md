@@ -58,7 +58,7 @@
   - _Requirements: 3.1, 3.2, 3.3, 3.6_
   - _Boundary: StockMcpIntegration_
 
-- [ ] 2.3 Wire preflight, bearer, and nono access
+- [x] 2.3 Wire preflight, bearer, and nono access
   - Load the standard bearer into the OpenCode process and AgentMemory MCP shim through existing secret plumbing.
   - Allow OpenCode's sandbox to reach the loopback REST endpoint without granting the data directory.
   - Require full-daemon health during startup and preserve the independent Obsidian check.

@@ -60,6 +60,7 @@
 }:
 let
   cfg = config.programs.opencode-nono;
+  agentmemory = config.programs.agentmemory;
 
   # The runtime paths granted under `filesystem.allow` (managed + audit) and
   # `filesystem.read` (review). The OpenCode paths and `$TMPDIR` are the
@@ -142,6 +143,10 @@ let
     # default-deny, so the NAME must be admitted here or it is stripped at
     # the sandbox boundary.
     "CAVEMEM_DATA_DIR"
+  ]
+  ++ lib.optionals agentmemory.enable [
+    "AGENTMEMORY_SECRET"
+    "AGENTMEMORY_URL"
   ];
 
   # Render one profile model to the 0.61.1 authoring schema as a plain
@@ -646,7 +651,7 @@ in
         workdir.access = lib.mkDefault "readwrite";
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault [ 8080 ];
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -667,7 +672,7 @@ in
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.block = lib.mkDefault false;
-        network.openPort = lib.mkDefault [ 8080 ];
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -684,7 +689,7 @@ in
         workdir.access = lib.mkDefault "read";
         filesystem.read = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault [ 8080 ];
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
     };
