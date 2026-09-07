@@ -8,7 +8,7 @@
   - _Requirements: 6.3, 6.6, 6.7, 9.3_
   - _Boundary: Test Harness_
 
-- [ ] 1.2 Extend the existing git-mcp check runtime
+- [x] 1.2 Extend the existing git-mcp check runtime
   - Add Git, OpenSSH, mcpproxy, and process-control utilities to the existing check without creating another check.
   - Preserve the current dual-host render entry point.
   - Complete when the unchanged current git-mcp suite passes with the expanded runtime.

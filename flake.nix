@@ -2028,11 +2028,16 @@
                 nativeBuildInputs = [
                   pkgs.nix
                   pkgs.nodejs
+                  pkgs.git
+                  pkgs.openssh
+                  pkgs.mcpproxy-go
+                  pkgs.coreutils
                 ];
               }
               ''
                 export HOME=$(mktemp -d)
                 export NIX_CONFIG="experimental-features = nix-command flakes"
+                export GIT_MCP_CHECK_RUNTIME=1
                 cp -R ${./.} source
                 chmod -R u+w source
                 cd source

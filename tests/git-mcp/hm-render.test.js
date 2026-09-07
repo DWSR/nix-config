@@ -19,6 +19,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
+const fs = require('node:fs');
 const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
@@ -82,6 +83,20 @@ function assertGitMcpServer(server, hostKey) {
   assert.equal(server.env.STORAGE_PROVIDER_TYPE, 'in-memory', `${hostKey} git-mcp storage provider is in-memory`);
 }
 
+function resolveCommand(command) {
+  for (const directory of (process.env.PATH || '').split(path.delimiter)) {
+    if (!directory) continue;
+    const candidate = path.join(directory, command);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue searching the PATH.
+    }
+  }
+  return null;
+}
+
 test('git-mcp is a base server rendered on both hosts with the hardened posture', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
@@ -92,5 +107,28 @@ test('git-mcp is a base server rendered on both hosts with the hardened posture'
     );
     assert.equal(host.gitMcpCount, 1, `${hostKey} git-mcp must be registered exactly once`);
     assertGitMcpServer(host.gitMcp, hostKey);
+  }
+});
+
+test('git-mcp check runtime exposes its Git, SSH, proxy, and process tools', {
+  skip: process.env.GIT_MCP_CHECK_RUNTIME !== '1',
+}, () => {
+  const expectedCommands = [
+    ['git', 'git'],
+    ['ssh', 'openssh'],
+    ['ssh-keygen', 'openssh'],
+    ['mcpproxy', 'mcpproxy-go'],
+    ['timeout', 'coreutils'],
+    ['kill', 'coreutils'],
+  ];
+
+  for (const [command, packageName] of expectedCommands) {
+    const resolved = resolveCommand(command);
+    assert.ok(resolved, `${command} must be available in the git-mcp check PATH`);
+    assert.match(
+      resolved,
+      new RegExp(`/nix/store/[^/]+-${packageName}-[^/]+/bin/${command}$`),
+      `${command} must come from the ${packageName} Nix input`,
+    );
   }
 });
