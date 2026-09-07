@@ -140,16 +140,17 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
     system = "aarch64-darwin";
-    overlays = [ flake.outputs.overlays.custom-packages ];
+    overlays = [
+      flake.outputs.overlays.unstable-packages
+      flake.outputs.overlays.custom-packages
+    ];
     config.allowUnfree = true;
   };
   hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
     inherit pkgs;
+    extraSpecialArgs = { inherit (flake) inputs; };
     modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
-      "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/default.nix'))}
       {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
@@ -168,6 +169,12 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
 in builtins.toJSON {
   wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
   command = toString hm.programs.opencode.commands.compact;
+  agents = builtins.attrNames hm.programs.opencode.agents;
+  context = hm.programs.opencode.context;
+  memorySync = {
+    enable = hm.programs.memory-sync.enable;
+    packageNames = map (package: package.name or "") hm.home.packages;
+  };
 })`;
 
   return JSON.parse(
@@ -317,4 +324,31 @@ test('ConsumerCutover preserves explicit augmentation overrides', () => {
     cavememOverride.wrapper,
     /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
   );
+});
+
+test('ConsumerCutover removes synthesis and sync consumers only in AgentMemory mode', () => {
+  const agentMemory = renderConsumerCutover({ enable: true });
+  const cavemem = renderConsumerCutover({ enable: false });
+
+  assert.equal(agentMemory.agents.includes('vault-synthesizer'), false);
+  assert.equal(agentMemory.agents.includes('vault-curator'), true);
+  assert.equal(agentMemory.memorySync.enable, false);
+  assert.deepEqual(
+    agentMemory.memorySync.packageNames.filter((name) => /memory-sync/.test(name)),
+    [],
+  );
+
+  assert.equal(cavemem.agents.includes('vault-synthesizer'), true);
+  assert.equal(cavemem.agents.includes('vault-curator'), true);
+  assert.equal(cavemem.memorySync.enable, true);
+  assert.equal(
+    cavemem.memorySync.packageNames.filter((name) => /memory-sync/.test(name)).length,
+    1,
+  );
+
+  for (const rendered of [agentMemory, cavemem]) {
+    assert.match(rendered.context, /## Obsidian Memory Recall/);
+    assert.match(rendered.context, /## Obsidian Tool Reference/);
+    assert.match(rendered.context, /automatic AgentMemory-to-Obsidian promotion is not provided/);
+  }
 });

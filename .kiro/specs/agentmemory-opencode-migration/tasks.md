@@ -107,7 +107,7 @@
   - _Requirements: 5.1, 5.2, 7.8_
   - _Boundary: ConsumerCutover_
 
-- [ ] 3.4 Disable unported synthesis and sync consumers
+- [x] 3.4 Disable unported synthesis and sync consumers
   - Remove vault-synthesizer registration and memory-sync packaging in AgentMemory mode.
   - Preserve both features in cavemem rollback mode.
   - Keep manual Obsidian memory and vault-curator behavior unchanged.

@@ -368,6 +368,8 @@ in
         nvim-tailor = config.home.opencode.agentWithCaveman ./agents/nvim-tailor.md;
         security-auditor = config.home.opencode.agentWithCaveman ./agents/security-auditor.md;
         vault-curator = config.home.opencode.agentWithCaveman ./agents/vault-curator.md;
+      }
+      // lib.optionalAttrs (!agentmemory.enable) {
         vault-synthesizer = config.home.opencode.agentWithCaveman ./agents/vault-synthesizer.md;
       };
 

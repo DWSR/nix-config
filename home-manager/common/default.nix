@@ -244,7 +244,7 @@
   programs.jq.enable = true;
   programs.jqp.enable = true;
   programs.k9s.enable = true;
-  programs.memory-sync.enable = true;
+  programs.memory-sync.enable = !(config.programs.agentmemory.enable or false);
   programs.opencode-cost-diagnosis.enable = true;
   programs.opencode-nono.enable = true;
   programs.opencode-nono-audit.enable = true;
