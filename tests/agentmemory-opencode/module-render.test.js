@@ -77,6 +77,55 @@ in builtins.toJSON {
   );
 }
 
+function renderStockMcpModule({ enable }) {
+  const nixBoolean = enable ? 'true' : 'false';
+  const expression = `(let
+  flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+  pkgs = import flake.inputs.nixpkgs {
+    system = "aarch64-darwin";
+    overlays = [ flake.outputs.overlays.custom-packages ];
+    config.allowUnfree = true;
+  };
+  hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
+    inherit pkgs;
+    modules = [
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
+      "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+      {
+        home.username = "brandonmcnama";
+        home.homeDirectory = "/Users/brandonmcnama";
+        home.stateVersion = "26.05";
+        home.mcp = {
+          obsidianVaultPath = "/tmp/agentmemory/vault";
+          githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
+        };
+        programs.agentmemory.enable = ${nixBoolean};
+        programs.opencode.settings.mcp.mcpproxy = {
+          type = "remote";
+          url = "http://127.0.0.1:8080/mcp";
+          enabled = true;
+        };
+      }
+    ];
+  }).config;
+  mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile.${JSON.stringify("mcpproxy/mcp_config.json")}.text);
+  agentMemoryServers = builtins.filter (server: server.name == "agentmemory") mcpConfig.mcpServers;
+in builtins.toJSON {
+  mcpConfig = mcpConfig;
+  agentMemory = if agentMemoryServers == [ ] then null else builtins.head agentMemoryServers;
+  opencodeMcp = hm.programs.opencode.settings.mcp or { };
+})`;
+
+  return JSON.parse(
+    execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  );
+}
+
 test('enabled AgentMemory rendering is deterministic and declarative', () => {
   const first = renderModule({ enable: true });
   const second = renderModule({ enable: true });
@@ -125,4 +174,39 @@ test('disabled AgentMemory rendering contributes no runtime files, package, or s
     rendered.configFiles.filter((file) => file.startsWith('opencode/plugins/') && file.includes('agentmemory')),
     [],
   );
+});
+
+test('enabled AgentMemory registers the stock core shim through mcpproxy only', () => {
+  const rendered = renderStockMcpModule({ enable: true });
+  const server = rendered.agentMemory;
+
+  assert.ok(server);
+  assert.equal(server.protocol, 'stdio');
+  assert.match(server.command, /\/bin\/agentmemory-mcp$/);
+  assert.deepEqual(server.args, []);
+  assert.deepEqual(server.env, { AGENTMEMORY_TOOLS: 'core' });
+  assert.equal(server.enabled, true);
+  assert.equal(server.quarantined, false);
+  assert.equal(rendered.mcpConfig.routing_mode, 'retrieve_tools');
+  assert.equal(rendered.mcpConfig.quarantine_enabled, false);
+  assert.deepEqual(Object.keys(rendered.opencodeMcp), ['mcpproxy']);
+  assert.equal(rendered.opencodeMcp.agentmemory, undefined);
+  assert.deepEqual(Object.keys(server).sort(), [
+    'args',
+    'command',
+    'enabled',
+    'env',
+    'name',
+    'protocol',
+    'quarantined',
+  ]);
+});
+
+test('disabled AgentMemory contributes no stock MCP registration', () => {
+  const rendered = renderStockMcpModule({ enable: false });
+
+  assert.equal(rendered.agentMemory, null);
+  assert.equal(rendered.mcpConfig.mcpServers.some((server) => server.name === 'agentmemory'), false);
+  assert.deepEqual(Object.keys(rendered.opencodeMcp), ['mcpproxy']);
+  assert.equal(rendered.opencodeMcp.agentmemory, undefined);
 });

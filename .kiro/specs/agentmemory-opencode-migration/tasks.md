@@ -50,7 +50,7 @@
   - _Requirements: 1.3, 1.4, 1.5, 1.6_
   - _Boundary: AgentMemoryModule, ExistingPluginPatch_
 
-- [ ] 2.2 Register the stock core MCP tools through mcpproxy
+- [x] 2.2 Register the stock core MCP tools through mcpproxy
   - Register `@agentmemory/mcp` in core-tool mode as an mcpproxy upstream.
   - Keep mcpproxy as OpenCode's only configured MCP endpoint.
   - Preserve stock fallback and apply normal mcpproxy policy to write operations.

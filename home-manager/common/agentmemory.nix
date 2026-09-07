@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -136,6 +137,12 @@ in
       activation.agentmemoryLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         run mkdir -p "${cfg.logDir}"
       '';
+    }
+    // lib.optionalAttrs (options.home ? mcp) {
+      mcp.extraServers.agentmemory = {
+        command = "${cfg.package}/bin/agentmemory-mcp";
+        env.AGENTMEMORY_TOOLS = "core";
+      };
     };
 
     xdg.configFile."opencode/plugins/agentmemory-capture.ts".source =
