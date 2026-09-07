@@ -83,7 +83,7 @@
   - _Boundary: StockMcpIntegration, ConsumerCutover_
 
 - [ ] 3. Import history and simplify consumers
-- [ ] 3.1 Read and filter a cavemem snapshot
+- [x] 3.1 Read and filter a cavemem snapshot
   - Create a SQLite Online Backup snapshot without modifying cavemem.
   - Select non-importer sessions and skip positive Pi and Obsidian-migration records.
   - Treat remaining unknown sessions as OpenCode history.
