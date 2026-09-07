@@ -66,7 +66,7 @@
   - _Requirements: 3.4, 3.5, 6.1, 6.2, 6.3, 6.4, 6.8_
   - _Boundary: AgentMemoryModule, StockMcpIntegration_
 
-- [ ] 2.4 Verify standard plugin capture behavior
+- [x] 2.4 Verify standard plugin capture behavior
   - Exercise session start, prompt, assistant text, reasoning, tool success/failure, idle, and normal disposal.
   - Verify failed or timed-out REST calls are logged without a custom retry queue.
   - Confirm stored observations follow stock limits and compression.
