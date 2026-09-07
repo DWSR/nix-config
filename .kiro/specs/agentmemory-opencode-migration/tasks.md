@@ -9,7 +9,7 @@
   - _Requirements: 1.1, 1.5, 7.3_
   - _Boundary: Package_
 
-- [ ] 1.2 Build the standard runtime package
+- [x] 1.2 Build the standard runtime package
   - Package AgentMemory's daemon, stock MCP shim, and compatible iii binary without imperative downloads.
   - Preserve upstream start, stop, storage, indexing, fallback, and consolidation behavior.
   - Keep all service endpoints configurable and loopback by default.

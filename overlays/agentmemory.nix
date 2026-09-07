@@ -82,6 +82,7 @@ in
 
       npmDeps = final.importNpmLock { npmRoot = ./agentmemory-deps; };
       inherit (final.importNpmLock) npmConfigHook;
+      nativeBuildInputs = [ final.makeWrapper ];
 
       postInstall = ''
         packageRoot="$out/lib/node_modules/@agentmemory/agentmemory"
@@ -93,6 +94,57 @@ in
         test -f "$packageRoot/plugin/opencode/agentmemory-capture.ts"
         test -f "$packageRoot/integrations/pi/index.ts"
         test -f "$packageRoot/integrations/pi/security.ts"
+
+        # Keep the upstream CLI as the runtime entrypoint, but make its
+        # compatible iii binary available on PATH so it never falls back to
+        # an imperative network installer.
+        rm "$out/bin/agentmemory"
+        makeWrapper ${final.nodejs}/bin/node "$out/bin/agentmemory" \
+          --prefix PATH : ${iiiEngine}/bin \
+          --set AGENTMEMORY_III_VERSION ${iiiVersion} \
+          --run '
+            if [ -z "''${III_ENGINE_PORT-}" ] && [ -z "''${III_ENGINE_URL-}" ]; then
+              restPort="''${III_REST_PORT-}"
+              portArgPending=0
+              for arg in "$@"; do
+                if [ "$portArgPending" -eq 1 ]; then
+                  restPort="$arg"
+                  portArgPending=0
+                else
+                  case "$arg" in
+                    --port)
+                      portArgPending=1
+                      ;;
+                    --port=*)
+                      restPort="''${arg#--port=}"
+                      ;;
+                  esac
+                fi
+              done
+              case "$restPort" in
+                (""|*[!0-9]*) ;;
+                (*)
+                  if [ "$restPort" -gt 0 ] && [ "$restPort" -le 65535 ]; then
+                    enginePort=$((restPort + 46023))
+                    if [ "$enginePort" -gt 65535 ]; then
+                      enginePort=$(((enginePort - 1024) % 64512 + 1024))
+                    fi
+                    export III_ENGINE_PORT="$enginePort"
+                  fi
+                  ;;
+              esac
+            fi
+          ' \
+          --add-flags "$packageRoot/dist/cli.mjs"
+
+        # The upstream `mcp` command is the stock authenticated REST proxy
+        # with its documented local fallback. Expose it as a stable binary
+        # without introducing a second shim implementation.
+        makeWrapper "$out/bin/agentmemory" "$out/bin/agentmemory-mcp" \
+          --add-flags mcp
+
+        grep -q 'host: 127.0.0.1' "$packageRoot/iii-config.yaml"
+        ! grep -q 'host: 0.0.0.0' "$packageRoot/iii-config.yaml"
       '';
 
       passthru = {
