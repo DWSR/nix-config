@@ -74,7 +74,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.7, 2.8_
   - _Boundary: ExistingPluginPatch_
 
-- [ ] 2.5 Update AgentMemory recall and context instructions
+- [x] 2.5 Update AgentMemory recall and context instructions
   - Describe stock AgentMemory discovery, recall, session, and save tools through mcpproxy.
   - Keep stock automatic context injection enabled and rely on the existing disabled title/summary agents.
   - Remove strict project, stable-context, and custom-fallback claims not provided by upstream.

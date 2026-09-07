@@ -6,3 +6,5 @@ require('./module-render.test.js');
 require('./preflight.test.js');
 require('./status.test.js');
 require('./capture-smoke.test.js');
+require('./instructions-contract.test.js');
+require('./core-surface.test.js');

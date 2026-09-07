@@ -338,7 +338,7 @@ in
       # with the outer launcher. See `home.opencode.finalPackage` above.
       package = config.home.opencode.finalPackage;
       # AGENTS.md is composed from two vendored chunks:
-      #   1. ./agents.md            — Obsidian memory system + commit conventions
+      #   1. ./agents.md            — AgentMemory/Obsidian memory rules + commit conventions
       #   2. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
       #                               two-memory-system distinction + the kiro
       #                               skills catalog + workflow summary
@@ -399,7 +399,7 @@ in
         # are hidden internal agents that run extra LLM calls (title on
         # every new session, summary on every compaction). We don't rely
         # on either: session titles aren't used in our workflow, and
-        # cavemem's ambient capture already preserves the context that
+        # AgentMemory's ambient capture already preserves the context that
         # `summary` would otherwise regenerate. Schema: see `agent.*.disable`
         # at https://opencode.ai/config.json.
         agent.title.disable = true;

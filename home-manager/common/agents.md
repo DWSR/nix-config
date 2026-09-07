@@ -1,105 +1,77 @@
-# MANDATORY: Memory System (Obsidian + Cavemem)
+# MANDATORY: AgentMemory + Obsidian
 
-All sessions MUST use BOTH Obsidian vault + cavemem for persistent memory.
-Obsidian = curated agent-authored memories. Cavemem = ambient transcripts /
-summaries via opencode hooks. Non-negotiable.
+OpenCode uses stock AgentMemory as its ambient memory backend. Its existing OpenCode plugin
+starts and ends stock sessions, observes prompts, completed assistant content,
+reasoning, and tool activity through standard authenticated REST routes, and
+provides automatic context injection. Agents do not manually reproduce those
+capture calls or use the REST endpoint directly.
 
-Both servers are reached through mcpproxy's four-tool agent surface:
-`retrieve_tools`, `call_tool_read`, `call_tool_write`, and
-`call_tool_destructive`. Direct `hub_<server>__<tool>` invocation is not
-available; every operation is a two-step idiom — discover the tool name with
-`retrieve_tools`, then invoke it through the appropriate `call_tool_*`
-verb based on the operation's side-effect class (read / write / destructive).
+OpenCode reaches AgentMemory's MCP tools only through mcpproxy. mcpproxy is the
+only MCP endpoint configured in OpenCode; do not add a direct AgentMemory MCP
+entry, custom facade, capture relay, or context relay.
 
-`retrieve_tools` accepts optional filter parameters (`read_only_only`,
-`exclude_destructive`, `exclude_open_world`) intended for self-restricting
-discovery scope. DO NOT pass any of these on the calls described in this
-document. The obsidian and cavemem upstream servers do not ship MCP tool
-annotations, so any of those filters strips their results to zero and the
-Startup Check below would incorrectly fall through to the "mcpproxy
-unreachable" branch. Pass only `query` (and optionally `limit`) on every
-`retrieve_tools` call described here, regardless of which model is driving
-the session.
+Obsidian remains the manually curated vault for durable agent-authored memories;
+automatic AgentMemory-to-Obsidian promotion is not provided.
 
-## Startup Check
+## AgentMemory Recall and Context
 
-BEFORE responding to any user message, you MUST verify that BOTH MCP servers
-are available via mcpproxy by performing the following four calls (one
-`retrieve_tools` + one `call_tool_read` pair per server):
+### Discover stock tools
 
-1. `retrieve_tools(query: "obsidian list-notes")`
-   → expect a result whose `name` field has the form `obsidian:<tool>`
-   (e.g. `obsidian:list-notes`).
-2. `call_tool_read(name: <name returned in step 1>,`
-   `                args: { directory: "memories", limit: 1 })`.
-3. `retrieve_tools(query: "cavemem list sessions")`
-   → expect a result whose `name` field has the form `cavemem:<tool>`
-   (e.g. `cavemem:list_sessions`).
-4. `call_tool_read(name: <name returned in step 3>,`
-   `                args: { limit: 1 })`.
+Use mcpproxy's discover-then-invoke surface for every AgentMemory MCP operation:
 
-If ANY of those four calls FAILS, or if `retrieve_tools` returns no tool
-from the expected upstream server, or if mcpproxy itself is unreachable:
+1. `retrieve_tools(query: "agentmemory core recall")`
+   → expect a result whose `name` field has the form `agentmemory:<tool>`.
+2. Use the exact returned `name`, the returned `call_with` recommendation, and
+   an `args` JSON object. Do not invent a tool name or use raw MCP `arguments`.
 
-1. **First, sanity-check the call shape.** If the failing `retrieve_tools`
-   call passed `read_only_only`, `exclude_destructive`, or
-   `exclude_open_world`, retry it with just `query` (and optionally
-   `limit`) — those filters strip obsidian and cavemem results to zero
-   because their upstream servers ship no MCP tool annotations. If the
-   unfiltered retry returns the expected `<server>:<tool>` result, the
-   original empty response was a filter false-positive: proceed normally
-   from that point and skip steps 2-4 below.
-2. **Otherwise**, tell the user: "mcpproxy is unreachable, or the
-   obsidian/cavemem upstream servers are not registered with it. I cannot
-   create curated memories or rely on ambient session capture. Verify the
-   mcpproxy daemon is running (launchd label
-   `com.smart-mcp-proxy.mcpproxy`) and that both the obsidian and cavemem
-   upstream servers appear in its rendered config, then retry."
-3. DO NOT proceed with any work.
-4. DO NOT attempt workarounds such as writing to local files or skipping
-   either system.
+The enabled `AGENTMEMORY_TOOLS=core` set is the stock eight-tool set:
 
-## Ambient capture (cavemem)
+- `memory_recall` searches past session observations for relevant context.
+- `memory_smart_search` performs hybrid semantic and keyword recall.
+- `memory_sessions` lists recent sessions and their observation counts.
+- `memory_save` explicitly saves an insight, decision, or pattern. This is the
+  stock save/remember operation for agent-authored memory.
+- `memory_lesson_save` saves a lesson with a confidence score.
+- `memory_consolidate` runs stock memory consolidation.
+- `memory_diagnose` checks the stock memory subsystems.
+- `memory_reflect` synthesizes higher-order insights from the stock graph.
 
-Transcription + session summarization are NOT agent tasks. Cavemem captures
-every prompt, response, and tool call via opencode hooks → local SQLite
-(`home.cavemem.dataDir`). Cavemem also tracks session lifecycle: no manual
-transcription notes, no daily session lookup, no "continue or fresh?" prompt.
+Use `call_tool_read` for read operations and `call_tool_write` for save or
+other write operations. Mcpproxy applies its normal policy to core write tools.
 
-Agents MUST NOT write transcription or summary notes to Obsidian. Legacy
-`conversations/transcriptions/` and `conversations/summaries/` hold archived
-history only, not live capture.
+Session start, session end, and observation capture are automatic plugin
+behavior, not manual agent steps. The plugin sends standard `session/start`,
+`session/end`, and `observe` requests as OpenCode lifecycle events. Do not
+invent separate MCP `session_start`, `session_end`, or `observe` tools. Use
+`memory_sessions` to recall session listings and `memory_save` when an explicit
+agent-authored save is needed.
 
-Ad hoc observation retrieval — the cavemem upstream server exposes
-recent-session listing, per-session timeline, full observation bodies by
-ID, and full-text + semantic search across all observations. Invoke any
-of those via the discover-then-invoke idiom against mcpproxy:
+Keep the stock automatic context injection enabled. The plugin supplies
+AgentMemory context on the first eligible model request and uses stock file
+enrichment where applicable. Its compression, truncation, indexing,
+consolidation, project attribution, and session behavior remain upstream
+behavior; do not promise stable context or exact project/worktree isolation.
+AgentMemory recall has no project selector; stock project attribution and
+basename collisions remain accepted behavior.
 
-```
-1. retrieve_tools(query: "cavemem search")
-   → expect a result whose `name` field has the form `cavemem:<tool>`
-     (e.g. `cavemem:search`).
-2. call_tool_read(name: <name returned in step 1>,
-                  args: { query: "<search terms>" })
-```
+The OpenCode `title` and `summary` agents are disabled by configuration. Do not
+re-enable them or add another summary path to compensate for AgentMemory.
 
-Substitute the appropriate query keywords (`list sessions`, `timeline`,
-`get observations`, `search`) and `args` payloads for the operation you need.
-All cavemem operations are read-only, so they always go through
-`call_tool_read`. The `args` field of `call_tool_read` is a JSON object
-(not the raw upstream tool's kwargs flattened in line) — mcpproxy unpacks
-it before forwarding the call to the upstream server.
+The full daemon is checked before OpenCode starts. If the daemon becomes
+unavailable after startup, the stock MCP shim may use its local fallback tools
+and standalone store, with reduced graph, vector, compression, and
+consolidation behavior. This fallback is accepted upstream behavior. Do not add
+a custom fallback guard, retry queue, or relay.
 
-The same surface is available as `cavemem search` for human lookups outside
-agent sessions.
+The standard bearer is available to the in-process plugin through the OpenCode
+environment. Model-invoked subprocesses may inherit that bearer and reach the
+loopback REST endpoint; this is an accepted process-boundary consequence, not
+a hardened isolation guarantee.
 
-Curated memory creation = explicit agent-driven act, governed by "Memories"
-below.
-
-## Memory Recall
+## Obsidian Memory Recall
 
 After session init, and whenever a question / problem / topic may have been
-addressed before, search memories BEFORE using other research tools (web
+addressed before, search Obsidian memories BEFORE using other research tools (web
 fetches, codebase exploration, task agents).
 
 All Obsidian vault operations go through mcpproxy via the discover-then-invoke
@@ -110,7 +82,7 @@ covered under "Memories" below.
 
 ### At session start
 
-Search for memories tied to the current project:
+Search Obsidian memories tied to the current project:
 
 1. Discover the tag-search tool:
    `retrieve_tools(query: "obsidian search by tags")`
@@ -132,7 +104,7 @@ When a task involves any of:
 - Answering questions about prior work or decisions
 - Researching libraries / tools / integrations possibly evaluated before
 
-→ Search memories FIRST. For each search, run the two-step idiom (discover
+→ Search Obsidian memories FIRST. For each search, run the two-step idiom (discover
 the tool with `retrieve_tools`, then invoke it through `call_tool_read`):
 
 1. Vault-content keyword search — `retrieve_tools(query: "obsidian search vault")`
@@ -145,7 +117,7 @@ the tool with `retrieve_tools`, then invoke it through `call_tool_read`):
 5. Partial context → use as starting point, supplement as needed.
 6. No matches → normal research.
 
-Do NOT search memories for:
+Do NOT search Obsidian memories for:
 
 - Trivial ops (file reads, formatting, builds)
 - Tasks fully covered by the current conversation context

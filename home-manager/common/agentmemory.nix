@@ -33,6 +33,7 @@ let
         (envLine "AGENTMEMORY_URL" "http://127.0.0.1:${toString cfg.restPort}")
         (envLine "AGENTMEMORY_VIEWER_URL" "http://127.0.0.1:${toString cfg.viewerPort}")
         (envLine "AGENTMEMORY_SECRET_REFERENCE" cfg.bearerReference)
+        (envLine "AGENTMEMORY_TOOLS" "core")
         (envLine "III_REST_PORT" cfg.restPort)
         (envLine "III_STREAM_PORT" cfg.streamPort)
         (envLine "III_VIEWER_PORT" cfg.viewerPort)
@@ -186,6 +187,7 @@ in
           AGENTMEMORY_DATA_DIR = toString cfg.dataDir;
           AGENTMEMORY_RUNTIME_DIR = toString cfg.runtimeDir;
           AGENTMEMORY_SECRET_REFERENCE = cfg.bearerReference;
+          AGENTMEMORY_TOOLS = "core";
           III_REST_PORT = toString cfg.restPort;
           III_STREAM_PORT = toString cfg.streamPort;
           III_VIEWER_PORT = toString cfg.viewerPort;
