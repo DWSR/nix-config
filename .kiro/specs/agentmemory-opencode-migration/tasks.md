@@ -25,7 +25,7 @@
   - _Requirements: 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.8_
   - _Boundary: ExistingPluginPatch_
 
-- [ ] 1.4 Add the basic Home Manager runtime module
+- [x] 1.4 Add the basic Home Manager runtime module
   - Define enablement, package, managed paths, ports, bearer reference, and backup destination options.
   - Render AgentMemory settings and launchd service without running `connect opencode`.
   - Remove all files and services when disabled.

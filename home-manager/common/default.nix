@@ -9,6 +9,7 @@
   imports = [
     inputs.nix-index-database.homeModules.nix-index
 
+    ./agentmemory.nix
     ./atuin.nix
     ./cc-sdd.nix
     ./deskflow
