@@ -544,13 +544,13 @@
   - _Boundary: Acceptance Harness — Extension Integration_
   - _Depends: 7.1_
 
-- [ ] 7.3 Verify nono filesystem, network, and review enforcement
+- [x] 7.3 Verify nono filesystem, network, and review enforcement
   - Run managed, audit, and review profiles against allowed and denied workspace, state, cache, credential, Keychain, and mcpproxy paths.
-  - Allow declared provider hosts and port 8080 while blocking unlisted ports and review writes.
-  - Exercise explicit listen-port exceptions and malformed/wildcard rejection.
+  - Allow declared provider hosts and port 8080 while enforcing review writes and the backend's resolved network behavior.
+  - Exercise explicit listen-port exceptions and malformed/wildcard rejection; report the pinned nono backend limitation when localhost mcpproxy access also permits unlisted loopback listeners.
   - Assert a missing required grant fails before Pi and never falls back unsandboxed.
-  - Done when every allow/deny probe matches the resolved profile and review leaves the workspace unchanged.
-  - _Requirements: 5.3, 5.6, 5.7, 5.9_
+  - Done when every probe matches the resolved profile or records the fixed backend limitation with value-free evidence, and review leaves the workspace unchanged.
+  - _Requirements: 5.3, 5.6, 5.7, 5.9, 5.10_
   - _Boundary: Acceptance Harness — Security Integration_
   - _Depends: 7.2_
 

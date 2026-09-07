@@ -298,7 +298,7 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7 | Managed state coexistence | Home Module, Reconciler | ManagedConfigV1, PersistedProviderProjectionV1, OwnershipStateV1 |
 | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7 | Host providers | Provider Composition, Credential Boundary, Runtime Control | ProviderCatalogV1, ProviderRequestPolicyV1, PersistedProviderV1, ProviderRuntimeSecretsV1, Managed Launch |
 | 4.1, 4.2, 4.3, 4.4, 4.5 | Preflight and status | Runtime Control, Acceptance Harness | StatusV1, Error Strategy |
-| 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9 | nono profiles | Sandbox Catalog, Runtime Control | SandboxSelection, Sandbox State |
+| 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9, 5.10 | nono profiles | Sandbox Catalog, Runtime Control | SandboxSelection, Sandbox State |
 | 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7 | Sole MCP entrypoint | MCP Bridge, Runtime Control | MCP config contract, Managed Launch |
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Extension inventory | Package Set, Extension Runtime | ExtensionManifestV1 |
 | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8 | Sub-agents | Extension Runtime, Sandbox Catalog | ChildPolicyV1, ManagedChildAgentCatalogV1 |
@@ -716,7 +716,7 @@ field is an unknown-option error rather than a value that a scanner must judge.
 | Field | Detail |
 |---|---|
 | Intent | Pair OS isolation with managed tool selection |
-| Requirements | 5.1–5.9, 8.4, 8.7, 9.1–9.7, 12.4, 12.6, 13.6, 13.7 |
+| Requirements | 5.1–5.10, 8.4, 8.7, 9.1–9.7, 12.4, 12.6, 13.6, 13.7 |
 
 **Responsibilities & Constraints**
 - Render `pi-managed`, `pi-audit`, and `pi-review` as standalone profiles
@@ -730,7 +730,10 @@ field is an unknown-option error rather than a value that a scanner must judge.
 - `PI_NONO=disabled|audit|enforced` and `PI_NONO_PROFILE` are one-launch
   overrides. Unknown values and missing profiles fail closed.
 - `PI_NONO_LISTEN_PORTS` admits only validated explicit numeric ports for one
-  launch. No wildcard listen range exists.
+  launch. No wildcard listen range exists. On macOS with nono 0.69.0,
+  `open_port: 8080` also grants blanket localhost bind/inbound access because
+  the backend cannot filter bind by port; validation records this limitation
+  instead of claiming per-port denial enforcement.
 - Review appends a managed Pi allowlist after user arguments. Plan selects `read`,
   `grep`, `find`, `ls`, and interaction tools, then blocks other calls before execution.
 - Before sandbox launch, resolve the profile with
@@ -766,8 +769,10 @@ interface SandboxGrantContractV1 {
 Grant validation requires port 8080, the resolved provider host or unrestricted
 audit egress, declared agent/Cavemem/temp/workspace access, readable package and
 extension closures, admitted root-Pi environment names, and same-sandbox process
-control whenever sub-agents, LSP, or background tasks are enabled. Review
-requires read-only workspace access and no execution tools.
+control whenever sub-agents, LSP, or background tasks are enabled. It validates
+and materializes explicit listen ports, then reports backend limitations when
+the selected nono version cannot enforce them. Review requires read-only
+workspace access and no execution tools.
 
 Sandbox execution is exactly:
 
@@ -1115,6 +1120,9 @@ Residual accepted exposure:
 - Provider retries may reuse a pre-transition tool payload because payload hooks run once per logical request.
 - A crash before session-entry flush may lose Plan state; resume reports fallback to normal mode.
 - Audit mode permits unrestricted egress.
+- On macOS with nono 0.69.0, granting localhost mcpproxy access also permits
+  localhost bind/inbound access beyond `PI_NONO_LISTEN_PORTS`; validation
+  reports this backend limitation and does not claim per-port enforcement.
 - Managed mode writes the current repository and Pi/Cavemem state.
 - Same-sandbox process signaling lets supervised sibling processes signal each
   other.

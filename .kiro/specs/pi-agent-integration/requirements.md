@@ -77,6 +77,7 @@ scope decisions.
 7. If a selected profile blocks a required provider, mcpproxy, Cavemem, language-server, sub-agent, or background-task capability, the Pi integration shall fail with an actionable error.
 8. The Pi integration shall provide an explicit documented rollback launch that bypasses sandbox enforcement.
 9. The Pi integration shall not include provider credentials or MCP secrets in a sandbox profile.
+10. When the selected nono backend cannot enforce per-port loopback bind restrictions while granting required mcpproxy access, the Pi integration shall report that backend limitation in validation evidence and shall not represent `PI_NONO_LISTEN_PORTS` as an enforced denial guarantee.
 
 ### Requirement 6: mcpproxy as the sole MCP entrypoint
 **Objective:** As the operator, I want Pi to use the existing local MCP gateway, so that both agents share one governed upstream inventory.
