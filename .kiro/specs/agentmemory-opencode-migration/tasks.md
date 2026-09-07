@@ -42,7 +42,7 @@
   - _Boundary: AgentMemoryModule_
 
 - [ ] 2. Connect AgentMemory to OpenCode
-- [ ] 2.1 Install the existing plugin exactly once
+- [x] 2.1 Install the existing plugin exactly once
   - Materialize the patched upstream entrypoint under OpenCode's managed plugin directory.
   - Preserve its filename, named export, metadata, license, revision, and patch provenance.
   - Do not add a duplicate plugin setting or invoke the AgentMemory connector.

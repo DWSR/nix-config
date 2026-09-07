@@ -138,6 +138,9 @@ in
       '';
     };
 
+    xdg.configFile."opencode/plugins/agentmemory-capture.ts".source =
+      "${cfg.package}/lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts";
+
     launchd.agents.agentmemory = {
       enable = true;
       config = {
