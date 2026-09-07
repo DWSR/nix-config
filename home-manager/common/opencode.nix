@@ -9,7 +9,7 @@ let
     owner = "Cocoon-AI";
     repo = "process-flow-diagram-generator";
     rev = "6e0c72a3b4b46f87ac01ed1291f646bf77beafb0";
-    hash = "sha256-fzCyDUO2ccI16oFUNMlZfVCyjXzJgi1MdhNNuXcyl8c=";
+    hash = "sha256-uKMCItuqK7JXeGeXvG3RiUg7xWLzlO93K3XMbVEn8ZI=";
   };
 in
 {
