@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Package and run standard AgentMemory
-- [ ] 1.1 Pin the AgentMemory dependency closure
+- [x] 1.1 Pin the AgentMemory dependency closure
   - Lock AgentMemory `e04ba888`, Node dependencies, and iii-engine v0.11.2 for both Darwin systems.
   - Retain upstream OpenCode/Pi integration sources, metadata, commands, and licenses.
   - Unsupported systems fail evaluation with the selected revisions.
