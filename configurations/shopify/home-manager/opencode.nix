@@ -2,6 +2,7 @@
   pkgs,
   lib,
   config,
+  quickArchDiagramsSource,
   ...
 }:
 let
@@ -55,6 +56,12 @@ in
 
   xdg.configFile."opencode/skills/validate-yb-issue" = {
     source = ./skills/validate-yb-issue;
+  };
+
+  # Private Shopify Playground skill, exposed under the requested OpenCode
+  # name while retaining the upstream skill directory and bundled publisher.
+  xdg.configFile."opencode/skills/quick-arch-diagrams" = {
+    source = "${quickArchDiagramsSource}/skill";
   };
 
   # Apply the vendored caveman-lite output style to every common subagent

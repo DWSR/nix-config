@@ -22,6 +22,12 @@ let
     ref = "main";
     rev = quickRev;
   };
+
+  quickArchDiagramsSource = builtins.fetchGit {
+    url = "https://github.com/shopify-playground/arch-diagrams.git";
+    ref = "main";
+    rev = "e76b8c810a7db341a7fe893f6804b48205063c32";
+  };
 in
 {
   imports = [
@@ -115,6 +121,7 @@ in
   ];
 
   home-manager.users.${username} = import ./home-manager;
+  home-manager.extraSpecialArgs.quickArchDiagramsSource = quickArchDiagramsSource;
 
   # Private Shopify taps use builtins.fetchGit intentionally.
   # They cannot be flake inputs because nix flake update would fail
