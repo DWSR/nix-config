@@ -75,6 +75,8 @@ in
       version = "0.9.29";
       src = agentmemorySrc;
 
+      patches = [ ./agentmemory-patches/opencode-capture.patch ];
+
       postPatch = ''
         cp ${./agentmemory-deps/package.json} package.json
         cp ${./agentmemory-deps/package-lock.json} package-lock.json

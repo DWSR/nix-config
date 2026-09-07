@@ -17,7 +17,7 @@
   - _Requirements: 1.1, 6.1, 6.7, 7.4_
   - _Boundary: Package_
 
-- [ ] 1.3 Patch the existing upstream OpenCode plugin
+- [x] 1.3 Patch the existing upstream OpenCode plugin
   - Apply one provenance-labelled patch to `plugin/opencode/agentmemory-capture.ts` without changing its filename or named export.
   - Correct current event names and add completed assistant, reasoning, tool-state, idle, and dispose capture.
   - Retain stock REST calls, timeouts, automatic context, compression, and unaffected hooks.

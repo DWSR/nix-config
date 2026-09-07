@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: nix-config integration <noreply@local>
+Date: Mon, 7 Sep 2026 00:00:00 +0000
+Subject: [PATCH] agentmemory: complete the existing OpenCode capture lifecycle
+
+Provenance: repository-owned patch for AgentMemory e04ba88819c365c9acf9d6661ea802143e728bd6
+Source: plugin/opencode/agentmemory-capture.ts
+Scope: current OpenCode events, completed assistant content, tool lifecycle,
+idle summarization, normal disposal, and managed REST configuration only.
+
+This retains the upstream entrypoint, named export, standard REST routes,
+five-second timeout, automatic context injection, compression, truncation,
+session behavior, consolidation, and unrelated hooks.
+---
+ plugin/opencode/agentmemory-capture.ts | 117 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 110 insertions(+), 7 deletions(-)
+
+diff --git a/plugin/opencode/agentmemory-capture.ts b/plugin/opencode/agentmemory-capture.ts
+index abcdef0..1234567 100644
+--- a/plugin/opencode/agentmemory-capture.ts
++++ b/plugin/opencode/agentmemory-capture.ts
+@@ -5,1 +5,1 @@
+-const API = process.env.AGENTMEMORY_URL || "http://localhost:3111";
++const API = (process.env.AGENTMEMORY_URL || "http://localhost:3111").replace(/\/+$/, "");
+@@ -13,2 +13,2 @@
+ const DEBUG = process.env.OPENCODE_AGENTMEMORY_DEBUG === "1";
+-const SECRET = process.env.AGENTMEMORY_SECRET || "";
++const SECRET = process.env.AGENTMEMORY_SECRET?.trim() || "";
+@@ -83,9 +83,9 @@
+ const projectNameCache = new Map<string, string>();
+ 
+ function resolveProjectName(dir: string): string {
+-  const explicit = process.env.AGENTMEMORY_PROJECT_NAME?.trim();
++  const explicit = (process.env.AGENTMEMORY_PROJECT_NAME ?? "").trim();
+   if (explicit) return explicit;
+   const cached = projectNameCache.get(dir);
+   if (cached !== undefined) return cached;
+   try {
+     const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+@@ -108,6 +108,11 @@
+ const stashedFiles = new Map<string, Set<string>>();
+ const seenSubtaskIds = new Map<string, Set<string>>();
+ const seenToolCallIds = new Map<string, Set<string>>();
++const seenRunningToolCallIds = new Map<string, Set<string>>();
++const assistantMessageIds = new Map<string, Set<string>>();
++const seenAssistantTextIds = new Map<string, Set<string>>();
++const pendingAssistantTexts = new Map<string, Map<string, { messageId: string; text: string }>>();
++const startedSessionIds = new Set<string>();
+ const contextInjectedSessions = new Set<string>();
+ // cache the context returned by POST /session/start so the chat
+ // system-transform hook can inject it without a second /context fetch.
+@@ -135,1 +135,27 @@
+ }
++
++function runningToolCallSetFor(sid: string): Set<string> {
++  let s = seenRunningToolCallIds.get(sid);
++  if (!s) { s = new Set<string>(); seenRunningToolCallIds.set(sid, s); }
++  return s;
++}
++
++function assistantMessageSetFor(sid: string): Set<string> {
++  let s = assistantMessageIds.get(sid);
++  if (!s) { s = new Set<string>(); assistantMessageIds.set(sid, s); }
++  return s;
++}
++
++function assistantTextSetFor(sid: string): Set<string> {
++  let s = seenAssistantTextIds.get(sid);
++  if (!s) { s = new Set<string>(); seenAssistantTextIds.set(sid, s); }
++  return s;
++}
++
++function pendingAssistantTextSetFor(
++  sid: string,
++): Map<string, { messageId: string; text: string }> {
++  let s = pendingAssistantTexts.get(sid);
++  if (!s) { s = new Map(); pendingAssistantTexts.set(sid, s); }
++  return s;
++}
+@@ -137,6 +155,11 @@
+ function pruneSessionMaps(sid: string): void {
+   stashedFiles.delete(sid);
+   seenSubtaskIds.delete(sid);
+   seenToolCallIds.delete(sid);
++  seenRunningToolCallIds.delete(sid);
++  assistantMessageIds.delete(sid);
++  seenAssistantTextIds.delete(sid);
++  pendingAssistantTexts.delete(sid);
++  startedSessionIds.delete(sid);
+   sessionProjects.delete(sid);
+ }
+@@ -225,10 +225,15 @@
+       if (type === "session.created") {
+         const info = props.info as Record<string, unknown> | undefined;
+         activeSessionId = (info?.id as string) || props.sessionID || null;
+         if (!activeSessionId) return;
++        startedSessionIds.add(activeSessionId);
+         stashedFiles.set(activeSessionId, new Set());
+         seenSubtaskIds.delete(activeSessionId);
+         seenToolCallIds.delete(activeSessionId);
++        seenRunningToolCallIds.delete(activeSessionId);
++        assistantMessageIds.delete(activeSessionId);
++        seenAssistantTextIds.delete(activeSessionId);
++        pendingAssistantTexts.delete(activeSessionId);
+         contextInjectedSessions.delete(activeSessionId);
+         // Snapshot the session id locally — `activeSessionId` is mutable
+         // and another `session.created` event during the await could
+@@ -273,14 +273,15 @@
+-      // ── session.idle ── (summarize handled in session.status idle branch)
++      // ── session.idle ──
++      if (type === "session.idle") {
++        const sid = props.sessionID || activeSessionId;
++        if (sid) await post("/summarize", { sessionId: sid });
++      }
+ 
+       // ── session.status ──
+       if (type === "session.status") {
+         const status = props.status as Record<string, unknown> | undefined;
+         const sid = props.sessionID || activeSessionId;
+         if (!sid || !status) return;
+-        if (status.type === "idle") {
+-          await post("/summarize", { sessionId: sid });
+-        }
+         await observe(sid, "session_status", {
+           status_type: status.type,
+           attempt: status.attempt ?? null,
+           message: safeSlice(status.message, 2000),
+@@ -333,1 +333,2 @@
++        startedSessionIds.delete(sid);
+         await post("/session/end", { sessionId: sid });
+@@ -354,26 +354,28 @@
+       // ── message.updated ──
+       if (type === "message.updated") {
+         const info = props.info as Record<string, unknown> | undefined;
+         if (!info) return;
+ 
+         if (info.role === "assistant") {
+           const sid = props.sessionID || (info.sessionID as string) || activeSessionId;
+           if (!sid) return;
++          const messageId = info.id as string | undefined;
++          if (messageId) assistantMessageSetFor(sid).add(messageId);
+           const tokens = info.tokens as Record<string, unknown> | undefined;
+           const error = info.error ? extractErrorMessage(info.error) : null;
+           await observe(sid, "assistant_message", {
+             messageID: info.id,
+             parentID: info.parentID,
+             modelID: info.modelID,
+             providerID: info.providerID,
+             mode: info.mode,
+             cost: info.cost ?? 0,
+             tokens: {
+               input: tokens?.input ?? 0,
+               output: tokens?.output ?? 0,
+               reasoning: tokens?.reasoning ?? 0,
+               cache_read: (tokens?.cache as any)?.read ?? 0,
+               cache_write: (tokens?.cache as any)?.write ?? 0,
+             },
+             finish: info.finish ?? null,
+              error,
+@@ -383,1 +383,16 @@
+           });
++          if (messageId) {
++            const pending = pendingAssistantTextSetFor(sid);
++            const textSet = assistantTextSetFor(sid);
++            for (const [partId, pendingText] of pending) {
++              if (pendingText.messageId !== messageId) continue;
++              if (!textSet.has(partId)) {
++                textSet.add(partId);
++                await observe(sid, "assistant_message", {
++                  messageID: messageId,
++                  text: pendingText.text,
++                });
++              }
++              pending.delete(partId);
++            }
++          }
+@@ -402,1 +402,23 @@
+         if (!sid) return;
++
++        if (part.type === "text") {
++          const messageId = part.messageID as string;
++          const textTime = part.time as Record<string, unknown> | undefined;
++          if (!messageId || typeof textTime?.end !== "number") return;
++          const partId = part.id as string;
++          if (!partId) return;
++          const text = safeSlice(part.text, 8000);
++          const assistantMessages = assistantMessageSetFor(sid);
++          if (!assistantMessages.has(messageId)) {
++            pendingAssistantTextSetFor(sid).set(partId, { messageId, text });
++            return;
++          }
++          const textSet = assistantTextSetFor(sid);
++          if (textSet.has(partId)) return;
++          textSet.add(partId);
++          await observe(sid, "assistant_message", {
++            messageID: messageId,
++            text,
++          });
++          return;
++        }
+@@ -419,8 +419,18 @@
+           const callId = part.callID as string;
+           if (!callId) return;
+           const toolName = part.tool as string;
+ 
+-          if (state.status === "completed") {
++          if (state.status === "running") {
++            const runningSet = runningToolCallSetFor(sid);
++            if (runningSet.has(callId)) return;
++            runningSet.add(callId);
++            const st = state as Record<string, unknown>;
++            await observe(sid, "pre_tool_use", {
++              tool_name: toolName,
++              call_id: callId,
++              tool_input: safeSlice(st.input, 4000),
++            });
++          } else if (state.status === "completed") {
+             const callSet = toolCallSetFor(sid);
+             if (callSet.has(callId)) return;
+             callSet.add(callId);
+@@ -590,5 +590,16 @@
+       }
+     },
+ 
++    dispose: async () => {
++      for (const sid of [...startedSessionIds]) {
++        await post("/session/end", { sessionId: sid });
++        if (sid === activeSessionId) activeSessionId = null;
++        pruneSessionMaps(sid);
++        startContextCache.delete(sid);
++        contextInjectedSessions.delete(sid);
++      }
++      startedSessionIds.clear();
++    },
++
+     // ── chat.message ──
+     "chat.message": async (input, output) => {

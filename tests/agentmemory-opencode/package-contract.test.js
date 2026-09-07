@@ -96,6 +96,7 @@ test('runtime package keeps upstream configurable loopback configuration and sto
   assert.match(overlay, /grep -q 'host: 127\.0\.0\.1'/);
   assert.doesNotMatch(overlay, /--set III_(?:REST|STREAM|VIEWER|ENGINE)_PORT/);
   assert.match(overlay, /plugin\/opencode\/agentmemory-capture\.ts/);
+  assert.match(overlay, /patches = \[ \.\/agentmemory-patches\/opencode-capture\.patch \];/);
   assert.match(overlay, /integrations\/pi\/index\.ts/);
   assert.match(overlay, /! grep -q 'host: 0\.0\.0\.0'/);
 });
