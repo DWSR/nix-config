@@ -130,6 +130,55 @@ in builtins.toJSON {
   );
 }
 
+function renderConsumerCutover({ enable, augmentationEnabled }) {
+  const nixBoolean = enable ? 'true' : 'false';
+  const augmentationOverride =
+    augmentationEnabled === undefined
+      ? ''
+      : `augmentationEnabled = ${augmentationEnabled ? 'true' : 'false'};`;
+  const expression = `(let
+  flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+  pkgs = import flake.inputs.nixpkgs {
+    system = "aarch64-darwin";
+    overlays = [ flake.outputs.overlays.custom-packages ];
+    config.allowUnfree = true;
+  };
+  hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
+    inherit pkgs;
+    modules = [
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
+      "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+      {
+        home.username = "brandonmcnama";
+        home.homeDirectory = "/Users/brandonmcnama";
+        home.stateVersion = "26.05";
+        programs.agentmemory.enable = ${nixBoolean};
+        programs.session-compaction = {
+          enable = true;
+          thresholdTokens = 123456;
+          thresholdWallTimeHours = 7;
+          cooldownMinutes = 19;
+          ${augmentationOverride}
+        };
+      }
+    ];
+  }).config;
+in builtins.toJSON {
+  wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
+  command = toString hm.programs.opencode.commands.compact;
+})`;
+
+  return JSON.parse(
+    execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  );
+}
+
 test('enabled AgentMemory rendering is deterministic and declarative', () => {
   const first = renderModule({ enable: true });
   const second = renderModule({ enable: true });
@@ -220,4 +269,52 @@ test('disabled AgentMemory contributes no stock MCP registration', () => {
   assert.equal(rendered.mcpConfig.mcpServers.some((server) => server.name === 'agentmemory'), false);
   assert.deepEqual(Object.keys(rendered.opencodeMcp), ['mcpproxy']);
   assert.equal(rendered.opencodeMcp.agentmemory, undefined);
+});
+
+test('ConsumerCutover selects compaction source without changing native compaction wiring', () => {
+  const agentMemory = renderConsumerCutover({ enable: true });
+  const cavemem = renderConsumerCutover({ enable: false });
+
+  for (const rendered of [agentMemory, cavemem]) {
+    assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_TOKENS="123456"/);
+    assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_WALL_HOURS="7"/);
+    assert.match(rendered.wrapper, /SESSION_COMPACTION_COOLDOWN_MINUTES="19"/);
+    assert.match(rendered.command, /compact\.md$/);
+  }
+
+  assert.match(
+    agentMemory.wrapper,
+    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
+    'AgentMemory selection must use native compaction without cavemem augmentation',
+  );
+  assert.match(
+    cavemem.wrapper,
+    /SESSION_COMPACTION_AUGMENTATION_ENABLED="1"/,
+    'cavemem selection must retain the prior augmentation source',
+  );
+  assert.equal(
+    agentMemory.command,
+    cavemem.command,
+    'backend selection must not change /compact command wiring',
+  );
+});
+
+test('ConsumerCutover preserves explicit augmentation overrides', () => {
+  const agentMemoryOverride = renderConsumerCutover({
+    enable: true,
+    augmentationEnabled: true,
+  });
+  const cavememOverride = renderConsumerCutover({
+    enable: false,
+    augmentationEnabled: false,
+  });
+
+  assert.match(
+    agentMemoryOverride.wrapper,
+    /SESSION_COMPACTION_AUGMENTATION_ENABLED="1"/,
+  );
+  assert.match(
+    cavememOverride.wrapper,
+    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
+  );
 });
