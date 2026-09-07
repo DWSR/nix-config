@@ -110,8 +110,28 @@ let
         snapshot="$(<"$fixture_root/identity-snapshot")"
       fi
 
-      jq -c --arg snapshot "$snapshot" \
-        '.identitySnapshots[$snapshot] // []' "$fixture_scenario"
+      if jq -e --arg snapshot "$snapshot" \
+        '.rawIdentityListings // {} | .[$snapshot] != null' "$fixture_scenario" >/dev/null; then
+        jq -j --arg snapshot "$snapshot" \
+          '.rawIdentityListings[$snapshot]' "$fixture_scenario"
+        return
+      fi
+
+      printf '%s\n' 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid'
+      jq -r --arg snapshot "$snapshot" \
+        '.identitySnapshots[$snapshot] // [] | .[] |
+          ([
+            "p-256-ne",
+            (.hash | ascii_upcase),
+            (.protection // "none"),
+            (.label // "ssh"),
+            (.commonName // "ssh"),
+            (.emailAddress // ""),
+            (.validToDate // "23.11.26,"),
+            (.validToTime // "17:09"),
+            (.valid // "YES")
+          ] + (.extraFields // [])) | @tsv' \
+        "$fixture_scenario" | tr '\t' ' '
     }
 
     fixture_export_dir() {
@@ -228,7 +248,7 @@ let
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
       case "$fixture_operation" in
         sign)
-          fixture_hang "provider-sign" "preflight-provider-sign"
+          fixture_hang "provider-sign" "preflight-provider" "preflight-provider-sign"
           ;;
         load|probe|*)
           fixture_hang "provider-load" "preflight-provider" "preflight-provider-load"
@@ -257,6 +277,9 @@ let
           sign)
             fixture_operation="sign"
             ;;
+          -y)
+            fixture_operation="stub"
+            ;;
           -lf|-L)
             fixture_operation="fingerprint"
             ;;
@@ -268,6 +291,48 @@ let
       fixture_log_call "$@"
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
       case "$fixture_operation" in
+        stub)
+          fixture_hang "preflight-ssh-keygen-stub" "ssh-keygen-stub" "preflight-stub"
+          stub_path=""
+          next_is_stub_path=0
+          for argument in "$@"; do
+            if [[ "$next_is_stub_path" == 1 ]]; then
+              stub_path="$argument"
+              next_is_stub_path=0
+              continue
+            fi
+            case "$argument" in
+              -f)
+                next_is_stub_path=1
+                ;;
+              -f*)
+                stub_path="''${argument#-f}"
+                ;;
+            esac
+          done
+          if [[ -z "$stub_path" || ! -r "$stub_path" ]]; then
+            printf 'fixture missing resident stub: %s\n' "$stub_path" >&2
+            exit 45
+          fi
+          stub_content="$(<"$stub_path")"
+          stub_header='-----BEGIN OPENSSH PRIVATE KEY-----'
+          stub_footer='-----END OPENSSH PRIVATE KEY-----'
+          if [[ "$stub_content" != "$stub_header"$'\n'*$'\n'"$stub_footer" ]]; then
+            printf 'fixture rejected malformed resident stub: %s\n' "$stub_path" >&2
+            exit 45
+          fi
+          stub_body="''${stub_content#"$stub_header"$'\n'}"
+          stub_body="''${stub_body%$'\n'"$stub_footer"}"
+          if ! printf '%s\n' "$stub_body" | base64 --decode >/dev/null 2>&1; then
+            printf 'fixture rejected invalid resident stub encoding: %s\n' "$stub_path" >&2
+            exit 45
+          fi
+          if [[ ! -r "$stub_path.pub" ]]; then
+            printf 'fixture missing resident public key: %s.pub\n' "$stub_path" >&2
+            exit 45
+          fi
+          printf '%s\n' "$(<"$stub_path.pub")"
+          ;;
         sign)
           fixture_hang "preflight-ssh-keygen" "ssh-keygen-sign"
           if [[ "''${SSH_SK_PROVIDER:-}" != ${builtins.toJSON providerPath} ]]; then
@@ -318,29 +383,45 @@ let
   };
 
   primaryIdentity = {
-    hash = "1111111111111111111111111111111111111111";
+    hash = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
     label = "fixture-primary";
-    publicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAfixture-primary";
-    fingerprint = "SHA256:fixture-primary";
+    publicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAfixtureprimary";
+    fingerprint = "SHA256:fixtureprimary";
   };
 
   alternateIdentity = {
     hash = "2222222222222222222222222222222222222222";
     label = "fixture-alternate";
-    publicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAfixture-alternate";
-    fingerprint = "SHA256:fixture-alternate";
+    publicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAfixturealternate";
+    fingerprint = "SHA256:fixturealternate";
+  };
+
+  biometricIdentity = alternateIdentity // {
+    protection = "bio";
+  };
+
+  biometricConfiguredIdentity = primaryIdentity // {
+    protection = "bio";
+  };
+
+  malformedIdentity = primaryIdentity // {
+    extraFields = [ "unexpected" ];
+  };
+
+  invalidStatusIdentity = primaryIdentity // {
+    valid = "NO";
   };
 
   primaryExport = {
     inherit (primaryIdentity) publicKey fingerprint;
     stubName = "id_ecdsa_sk_rk";
-    stub = "fixture-resident-handle-primary";
+    stub = "-----BEGIN OPENSSH PRIVATE KEY-----\nZml4dHVyZS1yZXNpZGVudC1oYW5kbGUtcHJpbWFyeQ==\n-----END OPENSSH PRIVATE KEY-----";
   };
 
   alternateExport = {
     inherit (alternateIdentity) publicKey fingerprint;
     stubName = "id_ecdsa_sk_rk-alternate";
-    stub = "fixture-resident-handle-alternate";
+    stub = "-----BEGIN OPENSSH PRIVATE KEY-----\nZml4dHVyZS1yZXNpZGVudC1oYW5kbGUtYWx0ZXJuYXRl\n-----END OPENSSH PRIVATE KEY-----";
   };
 
   baseScenario = {
@@ -348,6 +429,7 @@ let
       before = [ ];
       after = [ primaryIdentity ];
     };
+    rawIdentityListings = { };
     residentExports = [ primaryExport ];
     hangs = [ ];
     failures = { };
@@ -358,13 +440,68 @@ let
     };
   };
 
+  rawIdentityTable = lines: lib.concatStringsSep "\r\n" lines + "\r\n";
+
+  rawTableVariants = baseScenario // {
+    rawIdentityListings = {
+      before = rawIdentityTable [
+        "  Key Type  Public Key Hash Prot Label Common Name Email Address Valid To Valid  "
+      ];
+      after = rawIdentityTable [
+        "  Key Type  Public Key Hash Prot Label Common Name Email Address Valid To Valid  "
+        "  p-384-ne 3333333333333333333333333333333333333333 bio fixture-p384 ssh p384@example.test 23.11.26, 17:09 YES  "
+        " p-384 4444444444444444444444444444444444444444 none fixture-p384 ssh 23.11.26, 17:09 YES "
+        " p-521 5555555555555555555555555555555555555555 none fixture-p521 ssh 23.11.26, 17:09 YES "
+        " p-256 6666666666666666666666666666666666666666 none fixture-p256 ssh 23.11.26, 17:09 YES "
+        " p-256-ne ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD none fixture-primary ssh 23.11.26, 17:09 YES "
+      ];
+    };
+  };
+
+  rawBiometricConfiguredIdentity = baseScenario // {
+    rawIdentityListings = {
+      after = rawIdentityTable [
+        "Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid"
+        "p-256-ne abcdefabcdefabcdefabcdefabcdefabcdefabcd bio fixture-primary ssh primary@example.test 23.11.26, 17:09 YES"
+      ];
+    };
+  };
+
+  rawMalformedIdentity = baseScenario // {
+    rawIdentityListings = {
+      after = rawIdentityTable [
+        "Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid"
+        "p-256-ne abcdefabcdefabcdefabcdefabcdefabcdefabcd none fixture-primary ssh malformed extra 23.11.26, 17:09 YES"
+      ];
+    };
+  };
+
+  rawInvalidStatusIdentity = baseScenario // {
+    rawIdentityListings = {
+      after = rawIdentityTable [
+        "Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid"
+        "p-256-ne abcdefabcdefabcdefabcdefabcdefabcdefabcd none fixture-primary ssh 23.11.26, 17:09 NO"
+      ];
+    };
+  };
+
+  rawDuplicateIdentity = baseScenario // {
+    rawIdentityListings = {
+      after = rawIdentityTable [
+        "Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid"
+        "p-256-ne abcdefabcdefabcdefabcdefabcdefabcdefabcd none fixture-primary ssh 23.11.26, 17:09 YES"
+        "p-256-ne abcdefabcdefabcdefabcdefabcdefabcdefabcd none fixture-primary ssh duplicate@example.test 23.11.26, 17:09 YES"
+      ];
+    };
+  };
+
   scenarios = {
     identitySnapshots = baseScenario // {
       identitySnapshots = {
         before = [ ];
         after = [
           primaryIdentity
-          alternateIdentity
+          biometricIdentity
         ];
       };
     };
@@ -378,6 +515,40 @@ let
         alternateExport
       ];
     };
+    ambiguousIdentity = baseScenario // {
+      identitySnapshots = {
+        before = [ ];
+        after = [
+          primaryIdentity
+          primaryIdentity
+        ];
+      };
+    };
+    biometricConfiguredIdentity = baseScenario // {
+      identitySnapshots = {
+        before = [ ];
+        after = [ biometricConfiguredIdentity ];
+      };
+    };
+    malformedIdentity = baseScenario // {
+      identitySnapshots = {
+        before = [ ];
+        after = [ malformedIdentity ];
+      };
+    };
+    invalidStatusIdentity = baseScenario // {
+      identitySnapshots = {
+        before = [ ];
+        after = [ invalidStatusIdentity ];
+      };
+    };
+    inherit
+      rawTableVariants
+      rawBiometricConfiguredIdentity
+      rawMalformedIdentity
+      rawInvalidStatusIdentity
+      rawDuplicateIdentity
+      ;
     hangCtkListing = baseScenario // {
       hangs = [ "ctk-list" ];
     };
@@ -386,6 +557,9 @@ let
     };
     hangPreflightSshKeygen = baseScenario // {
       hangs = [ "preflight-ssh-keygen" ];
+    };
+    hangPreflightSshKeygenStub = baseScenario // {
+      hangs = [ "preflight-ssh-keygen-stub" ];
     };
     hangProviderSigning = baseScenario // {
       hangs = [ "provider-sign" ];

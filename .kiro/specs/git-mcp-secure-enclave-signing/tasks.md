@@ -16,7 +16,7 @@
   - _Boundary: Test Harness_
 
 - [ ] 2. Implement the native signing tools
-- [ ] 2.1 (P) Build the Git-compatible signer adapter
+- [x] 2.1 (P) Build the Git-compatible signer adapter
   - Start one bounded worker process group before validating the provider, selector, stub, CTK identity, public key, or fingerprint for signing operations.
   - Preserve non-signing SSH program operations, native output, and argument order.
   - Enclose all signing preflight native calls and Apple `ssh-keygen` in one 20-second deadline; terminate and reap the whole worker tree on timeout.

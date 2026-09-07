@@ -117,6 +117,85 @@ function readJsonLines(root, fileName) {
     .map((line) => JSON.parse(line));
 }
 
+const identityTableHeader = 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid';
+
+function assertRawIdentityTable(output) {
+  assert.ok(output.includes('\r\n'), 'native identity output preserves CRLF row endings');
+  assert.equal(output.endsWith('\r\n'), true, 'native identity output preserves its trailing CRLF');
+  assert.match(
+    output,
+    /^\s+Key Type\s+Public Key Hash\s+Prot\s+Label\s+Common Name\s+Email Address\s+Valid To Valid\s+\r\n/,
+    'native identity output preserves header whitespace',
+  );
+
+  const rows = output.split('\r\n').slice(1, -1).filter(Boolean);
+  assert.ok(
+    rows.some((row) => {
+      const fields = row.trim().split(/\s+/);
+      return fields[0] === 'p-384-ne'
+        && fields.length === 9
+        && fields[5] === 'p384@example.test'
+        && fields[8] === 'YES';
+    }),
+    'raw table includes an unrelated p-384-ne row with an optional email',
+  );
+  assert.ok(
+    rows.some((row) => {
+      const fields = row.trim().split(/\s+/);
+      return fields[0] === 'p-521' && fields.length === 8 && fields[7] === 'YES';
+    }),
+    'raw table includes an unrelated p-521 row without an email',
+  );
+  assert.ok(
+    rows.some((row) => {
+      const fields = row.trim().split(/\s+/);
+      return fields[0] === 'p-256-ne' && fields[2] === 'none' && fields.length === 8;
+    }),
+    'raw table includes the exact configured p-256-ne row without an email',
+  );
+}
+
+function parseIdentityTable(output) {
+  const lines = output.trim().split('\n').map((line) => line.trim()).filter(Boolean);
+  assert.equal(lines.shift(), identityTableHeader);
+  return lines.map((line) => {
+    const fields = line.split(/\s+/);
+    assert.equal(fields.length, 8, `documented CTK row has eight populated fields: ${line}`);
+    const [keyType, hash, protection, label, commonName, validToDate, validToTime, valid] = fields;
+    assert.equal(keyType, 'p-256-ne');
+    assert.match(hash, /^[0-9A-F]{40}$/);
+    assert.ok(['bio', 'none'].includes(protection));
+    assert.ok(label);
+    assert.equal(commonName, 'ssh');
+    assert.match(validToDate, /^\d{2}\.\d{2}\.\d{2},$/);
+    assert.match(validToTime, /^\d{2}:\d{2}$/);
+    assert.equal(valid, 'YES');
+    return {
+      keyType,
+      hash: hash.toLowerCase(),
+      protection,
+      label,
+      commonName,
+      validToDate,
+      validToTime,
+      valid,
+    };
+  });
+}
+
+function expectedIdentityTableRows(identities) {
+  return identities.map((identity) => ({
+    keyType: 'p-256-ne',
+    hash: identity.hash,
+    protection: identity.protection || 'none',
+    label: identity.label,
+    commonName: identity.commonName || 'ssh',
+    validToDate: identity.validToDate || '23.11.26,',
+    validToTime: identity.validToTime || '17:09',
+    valid: 'YES',
+  }));
+}
+
 function assertHarnessResult(root) {
   const results = readJsonLines(root, harnessResultsFile);
   assert.equal(results.length, 1, 'one harness result is recorded per hang execution');
@@ -339,14 +418,25 @@ test('worker-tree cleanup tolerates a process group reaped between repeated clea
 
 test('signing fixtures expose isolated native scenarios and inspectable calls', async () => {
   const summary = fixtureSummary();
+  const identityListArgs = ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'];
   const requiredScenarios = [
     'identitySnapshots',
+    'rawTableVariants',
     'zeroResidentExports',
     'oneResidentExport',
     'multipleResidentExports',
+    'ambiguousIdentity',
+    'biometricConfiguredIdentity',
+    'rawBiometricConfiguredIdentity',
+    'malformedIdentity',
+    'rawMalformedIdentity',
+    'invalidStatusIdentity',
+    'rawInvalidStatusIdentity',
+    'rawDuplicateIdentity',
     'hangCtkListing',
     'hangPreflightProvider',
     'hangPreflightSshKeygen',
+    'hangPreflightSshKeygenStub',
     'hangProviderSigning',
     'hangAllPreflightPhases',
     'workerTree',
@@ -384,7 +474,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     const exportDir = path.join(root, 'exports');
     fs.mkdirSync(exportDir);
 
-    childProcess.execFileSync(scAuth, ['list-ctk-identities'], { env, encoding: 'utf8' });
+    childProcess.execFileSync(scAuth, identityListArgs, { env, encoding: 'utf8' });
     childProcess.execFileSync(scAuth, ['export', '--output-dir', exportDir], { env, encoding: 'utf8' });
     childProcess.execFileSync(sshKeygen, ['-lf', path.join(exportDir, 'id_ecdsa_sk_rk.pub')], {
       env: {
@@ -405,6 +495,24 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     fs.rmSync(root, { recursive: true, force: true });
   }
 
+  const rawTableRoot = createScenarioRoot(summary.scenarios.rawTableVariants);
+  try {
+    fs.writeFileSync(path.join(rawTableRoot, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+    const rawOutput = childProcess.execFileSync(
+      scAuth,
+      identityListArgs,
+      { env: fixtureEnvironment(rawTableRoot), encoding: 'utf8' },
+    );
+    assertRawIdentityTable(rawOutput);
+    assert.equal(
+      rawOutput,
+      summary.scenarios.rawTableVariants.rawIdentityListings.after,
+      'fixture emits the declared raw CTK table instead of regenerating JSON rows',
+    );
+  } finally {
+    fs.rmSync(rawTableRoot, { recursive: true, force: true });
+  }
+
   for (const [scenarioName, expectedExports] of [
     ['zeroResidentExports', 0],
     ['oneResidentExport', 1],
@@ -414,12 +522,12 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     try {
       const scenarioEnv = fixtureEnvironment(scenarioRoot);
       const exportDir = path.join(scenarioRoot, 'exports');
-      const snapshot = JSON.parse(childProcess.execFileSync(
+      const snapshot = parseIdentityTable(childProcess.execFileSync(
         scAuth,
-        ['list-ctk-identities'],
+        identityListArgs,
         { env: scenarioEnv, encoding: 'utf8' },
       ));
-      assert.equal(snapshot.length, 0, `${scenarioName} starts with no identities`);
+      assert.deepEqual(snapshot, [], `${scenarioName} starts with no identities`);
       childProcess.execFileSync(scAuth, ['export', '--output-dir', exportDir], {
         env: scenarioEnv,
         encoding: 'utf8',
@@ -455,22 +563,28 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
   const identityRoot = createScenarioRoot(summary.scenarios.identitySnapshots);
   try {
     const identityEnv = fixtureEnvironment(identityRoot);
-    const before = JSON.parse(childProcess.execFileSync(
+    const before = parseIdentityTable(childProcess.execFileSync(
       scAuth,
-      ['list-ctk-identities'],
+      identityListArgs,
       { env: identityEnv, encoding: 'utf8' },
     ));
     childProcess.execFileSync(scAuth, ['create', '--label', 'fixture-primary'], {
       env: identityEnv,
       encoding: 'utf8',
     });
-    const after = JSON.parse(childProcess.execFileSync(
+    const after = parseIdentityTable(childProcess.execFileSync(
       scAuth,
-      ['list-ctk-identities'],
+      identityListArgs,
       { env: identityEnv, encoding: 'utf8' },
     ));
-    assert.deepEqual(before, summary.scenarios.identitySnapshots.identitySnapshots.before);
-    assert.deepEqual(after, summary.scenarios.identitySnapshots.identitySnapshots.after);
+    assert.deepEqual(
+      before,
+      expectedIdentityTableRows(summary.scenarios.identitySnapshots.identitySnapshots.before),
+    );
+    assert.deepEqual(
+      after,
+      expectedIdentityTableRows(summary.scenarios.identitySnapshots.identitySnapshots.after),
+    );
   } finally {
     fs.rmSync(identityRoot, { recursive: true, force: true });
   }
@@ -503,7 +617,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     {
       scenario: summary.scenarios.hangCtkListing,
       command: scAuth,
-      args: ['list-ctk-identities'],
+      args: identityListArgs,
       calls: [['sc_auth', 'list']],
     },
     {
@@ -517,6 +631,12 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
       command: sshKeygen,
       args: ['-lf', 'fixture.pub'],
       calls: [['ssh-keygen', 'fingerprint']],
+    },
+    {
+      scenario: summary.scenarios.hangPreflightSshKeygenStub,
+      command: sshKeygen,
+      args: ['-y', '-f', 'fixture-stub'],
+      calls: [['ssh-keygen', 'stub']],
     },
     {
       scenario: summary.scenarios.hangProviderSigning,
@@ -542,6 +662,11 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
       command: sshKeygen,
       args: ['-lf', 'fixture.pub'],
       calls: [['ssh-keygen', 'fingerprint']],
+    },
+    'preflight-ssh-keygen-stub': {
+      command: sshKeygen,
+      args: ['-y', '-f', 'fixture-stub'],
+      calls: [['ssh-keygen', 'stub']],
     },
     'provider-sign': {
       command: sshKeygen,
