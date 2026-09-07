@@ -9,6 +9,19 @@ let
 
   cfg = config.programs.agentmemory;
 
+  statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
+    inherit (cfg)
+      dataDir
+      enginePort
+      logDir
+      restPort
+      streamPort
+      viewerPort
+      ;
+    iiiRevision = cfg.package.iiiRevision or "unknown";
+    sourceRevision = cfg.package.sourceRevision or "unknown";
+  };
+
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";
 
   settingsText =
@@ -40,6 +53,13 @@ in
       readOnly = true;
       default = pkgs.agentmemory;
       description = "Pinned AgentMemory runtime package.";
+    };
+
+    statusPackage = mkOption {
+      type = types.package;
+      readOnly = true;
+      default = statusPackage;
+      description = "Redacted AgentMemory daemon health and status command.";
     };
 
     dataDir = mkOption {
@@ -106,7 +126,10 @@ in
 
   config = lib.mkIf cfg.enable {
     home = {
-      packages = [ cfg.package ];
+      packages = [
+        cfg.package
+        cfg.statusPackage
+      ];
 
       file."${cfg.runtimeDir}/.env".text = settingsText;
 

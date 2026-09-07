@@ -33,7 +33,7 @@
   - _Requirements: 1.2, 1.3, 1.6, 1.7, 6.1, 6.2_
   - _Boundary: AgentMemoryModule_
 
-- [ ] 1.5 Add basic health and status checks
+- [x] 1.5 Add basic health and status checks
   - Report daemon health, selected revisions, managed data path, and listener state without revealing the bearer.
   - Distinguish healthy, stopped, and failed startup states.
   - Use stock process behavior rather than orphan cleanup or memory monitoring.
