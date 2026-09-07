@@ -23,6 +23,24 @@ let
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
 
+  backupPackage =
+    if cfg.backupDestination == null then
+      null
+    else
+      pkgs.callPackage ../../scripts/agentmemory-backup.nix {
+        inherit (cfg)
+          backupDestination
+          dataDir
+          enginePort
+          restPort
+          runtimeDir
+          streamPort
+          viewerPort
+          ;
+        agentmemoryPackage = cfg.package;
+        timeoutSeconds = 30;
+      };
+
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";
 
   settingsText =
@@ -139,7 +157,7 @@ in
     backupDestination = mkOption {
       type = types.nullOr types.path;
       default = null;
-      description = "Optional destination for the later stopped-runtime backup command.";
+      description = "Optional destination for the stopped-runtime backup command.";
     };
   };
 
@@ -153,7 +171,8 @@ in
       packages = [
         cfg.package
         cfg.statusPackage
-      ];
+      ]
+      ++ lib.optional (cfg.backupDestination != null) backupPackage;
 
       file."${cfg.runtimeDir}/.env".text = settingsText;
 

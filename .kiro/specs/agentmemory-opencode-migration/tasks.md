@@ -122,9 +122,10 @@
   - Either backend renders one OpenCode capture plugin while Pi remains on cavemem.
   - _Requirements: 5.1, 5.4, 7.1, 7.2, 7.6, 7.8_
   - _Boundary: CavememBoundary, ConsumerCutover_
+  - _Blocked: pre-existing Pi/Cavemem infrastructure failures: Node 24 better-sqlite3 teardown assertion and missing generated bootstrap patch artifact; fixing them would cross the Pi-owned boundary._
 
 - [ ] 4. Add basic operations and host rollout
-- [ ] 4.1 Add best-effort stopped-runtime backup
+- [x] 4.1 Add best-effort stopped-runtime backup
   - Invoke AgentMemory's stock stop path and wait for its known processes/listeners to exit within a fixed timeout.
   - Copy the complete managed data directory to the configured backup destination and restart the service.
   - Report stop, copy, and restart failures without claiming transactional consistency or restore validation.
