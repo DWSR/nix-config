@@ -4,6 +4,14 @@
   config,
   ...
 }:
+let
+  processFlowDiagramSkill = pkgs.fetchFromGitHub {
+    owner = "Cocoon-AI";
+    repo = "process-flow-diagram-generator";
+    rev = "6e0c72a3b4b46f87ac01ed1291f646bf77beafb0";
+    hash = "sha256-fzCyDUO2ccI16oFUNMlZfVCyjXzJgi1MdhNNuXcyl8c=";
+  };
+in
 {
   options.home.opencode = {
     package = lib.mkOption {
@@ -130,6 +138,11 @@
     # local gh-stack operations behind an explicit user handoff.
     xdg.configFile."opencode/skills/github-native-stacks" = {
       source = ./skills/github-native-stacks;
+    };
+
+    # Upstream skill for generating self-contained process flow diagrams.
+    xdg.configFile."opencode/skills/process-flow-diagram" = {
+      source = "${processFlowDiagramSkill}/process-flow-diagram";
     };
 
     # Define the agent-wrapping helper once (snippet is read once at
