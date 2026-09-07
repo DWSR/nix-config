@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Build the deterministic test foundation
-- [ ] 1.1 Create injectable native-signing fixtures
+- [x] 1.1 Create injectable native-signing fixtures
   - Model identity snapshots, zero/one/multiple resident exports, hangs in CTK listing and every preflight/provider phase, and worker-tree termination without touching host CTK state.
   - Expose signer and admin package builds whose native tool paths are replaced only at Nix build time.
   - Complete when every platform scenario runs in an isolated temporary directory with inspectable calls and results.
