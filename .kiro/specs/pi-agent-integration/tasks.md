@@ -554,7 +554,7 @@
   - _Boundary: Acceptance Harness — Security Integration_
   - _Depends: 7.2_
 
-- [ ] 7.4 Verify supervised process cleanup under nono
+- [x] 7.4 Verify supervised process cleanup under nono
   - Launch foreground child agents, language servers, background pipe tasks, and PTYs inside the selected sandbox.
   - Exercise cancellation, signals, session replacement, graceful exit, and forced escalation.
   - Inspect each registered process group after every path and reject a surviving
