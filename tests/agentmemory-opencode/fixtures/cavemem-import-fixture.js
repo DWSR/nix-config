@@ -4,8 +4,22 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
-function createCavememImportFixture(databasePath) {
+function createCavememImportFixture(databasePath, options = {}) {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+  const extendedRows = options.extended
+    ? `
+    INSERT INTO observations (session_id, kind, content, compressed, intensity, ts, metadata) VALUES
+      ('unknown-session', 'response', 'This batch must fail once.', 0, NULL, 1700000010040, '{"fixture":true}'),
+      ('unknown-session', 'response', 'This row has an invalid timestamp.', 0, NULL, 'not-a-timestamp', '{"fixture":true}'),
+      ('unknown-session', 'response', 'This row follows the failed batch.', 0, NULL, 1700000010050, '{"fixture":true}');
+    `
+    : '';
+  const duplicateSummary = options.duplicateSummary
+    ? `
+      INSERT INTO summaries (session_id, scope, content, compressed, intensity, ts)
+      VALUES ('unknown-session', 'turn', 'Mystery turn summary.', 0, NULL, 1700000010035);
+    `
+    : '';
   const sql = `
     PRAGMA foreign_keys = ON;
     PRAGMA journal_mode = DELETE;
@@ -75,6 +89,9 @@ function createCavememImportFixture(databasePath) {
       ('pi-session', 'session', 'Pi session summary.', 0, NULL, 1700000040030),
       ('obsidian-session', 'session', 'Obsidian session summary.', 0, NULL, 1700000050030),
       ('imported-session', 'session', 'Imported session summary.', 0, NULL, 1700000060030);
+
+    ${extendedRows}
+    ${duplicateSummary}
 
     VACUUM;
   `;

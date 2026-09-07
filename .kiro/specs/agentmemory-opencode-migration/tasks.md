@@ -91,7 +91,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.7_
   - _Boundary: BestEffortImporter_
 
-- [ ] 3.2 Import bounded deterministic batches
+- [x] 3.2 Import bounded deterministic batches
   - Transform selected rows into AgentMemory's standard import shape.
   - Derive deterministic IDs and submit batches below 8 MiB with stock skip semantics.
   - Continue after malformed rows and independent failed batches where possible.
@@ -204,3 +204,7 @@
   - Both stores remain intact and no migration is reversed.
   - _Requirements: 7.1, 7.2, 7.7, 7.8_
   - _Boundary: ValidationSuite, CavememBoundary_
+
+## Implementation Notes
+
+- AgentMemory persists summaries by target session, so the importer merges all source summaries per session, retains source IDs and narratives in provenance, and reports source `selected` counts separately from target import counts.
