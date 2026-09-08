@@ -1592,6 +1592,226 @@ writeShellApplication {
         '{identityLabel: $label, ctkPublicKeyHash: $hash, sshPublicKey: $public_key, sshFingerprint: $fingerprint, githubSigningKeyRegistered: false}'
     }
 
+    decommission() {
+      local hash="$1"
+      local requested_fingerprint="$2"
+      local home
+      local xdg_state_home
+      local xdg_config_home
+      local active_marker
+      local marker_values
+      local marker_state_dir
+      local marker_label
+      local marker_hash
+      local marker_public_key
+      local marker_fingerprint
+      local state_dir
+      local identities_dir
+      local identity_dir
+      local acceptance_dir
+      local acceptance_record
+      local identity_listing
+      local identity_rows_output
+      local identity_hash
+      local identity_key_type
+      local identity_protection
+      local identity_label
+      local target_identity_count=0
+      local target_label_count=0
+      local target_key_type=""
+      local target_protection=""
+      local target_label=""
+      local observed_identity_rows=""
+      local ssh_identity_listing
+      local ssh_rows_output
+      local ssh_fingerprint
+      local ssh_key_type
+      local ssh_protection
+      local ssh_label
+      local target_ssh_count=0
+      local observed_fingerprint=""
+      local observed_ssh_key_type=""
+      local observed_ssh_protection=""
+      local had_identity_state=0
+      local had_acceptance_record=0
+
+      if [[ ! "$hash" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "requested CTK identity hash $hash is malformed; expected 40 lowercase hexadecimal characters"
+      fi
+      if [[ ! "$requested_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
+        fail "requested SSH fingerprint $requested_fingerprint is malformed; expected SHA256:<base64>"
+      fi
+
+      home="''${HOME:-}"
+      if [[ -z "$home" ]]; then
+        fail 'HOME is required to locate managed enrollment state'
+      fi
+      xdg_state_home="''${XDG_STATE_HOME:-$home/.local/state}"
+      xdg_config_home="''${XDG_CONFIG_HOME:-$home/.config}"
+      active_marker="$xdg_config_home/git-mcp-secure-enclave-signing/active.json"
+      state_dir="$xdg_state_home/git-mcp-secure-enclave-signing"
+
+      if [[ -e "$active_marker" || -L "$active_marker" ]]; then
+        if [[ -L "$active_marker" || ! -f "$active_marker" || ! -r "$active_marker" ]]; then
+          fail "active enrollment marker $active_marker is missing or unreadable; refusing decommission"
+        fi
+        if ! jq -e '
+          ((.githubSigningKeyRegistered? | type) == "boolean")
+          and (.githubSigningKeyRegistered == true)
+        ' "$active_marker" >/dev/null 2>&1; then
+          fail "active enrollment marker $active_marker has invalid githubSigningKeyRegistered; refusing decommission"
+        fi
+        if ! marker_values="$(jq -er '
+          [.stateDir, .identityLabel, .ctkPublicKeyHash, .sshPublicKey, .sshFingerprint]
+          | if all(.[]; type == "string") then @tsv else error("missing enrollment field") end
+        ' "$active_marker" 2>/dev/null)"; then
+          fail "active enrollment marker $active_marker is malformed; refusing decommission"
+        fi
+        IFS=$'\t' read -r marker_state_dir marker_label marker_hash marker_public_key marker_fingerprint <<< "$marker_values"
+        if [[ ! "$marker_hash" =~ ^[0-9a-f]{40}$ ]]; then
+          fail "active enrollment marker $active_marker has malformed CTK hash $marker_hash; refusing decommission"
+        fi
+        if [[ "$marker_hash" == "$hash" ]]; then
+          fail "active enrollment marker $active_marker selects CTK hash $hash; refusing to decommission the active identity"
+        fi
+        if [[ -z "$marker_state_dir" || "$marker_state_dir" != /* \
+          || "$marker_state_dir" == *$'\n'* || "$marker_state_dir" == *$'\r'* ]]; then
+          fail "active enrollment marker $active_marker has invalid stateDir; refusing decommission"
+        fi
+        if [[ -z "$marker_label" || "$marker_label" == *$'\n'* || "$marker_label" == *$'\r'* ]]; then
+          fail "active enrollment marker $active_marker has invalid identityLabel; refusing decommission"
+        fi
+        if ! normalize_public_key "$marker_public_key" >/dev/null; then
+          fail "active enrollment marker $active_marker has malformed sshPublicKey; refusing decommission"
+        fi
+        if [[ ! "$marker_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
+          fail "active enrollment marker $active_marker has malformed sshFingerprint; refusing decommission"
+        fi
+        state_dir="$marker_state_dir"
+      fi
+
+      identities_dir="$state_dir/identities"
+      identity_dir="$identities_dir/$hash"
+      acceptance_dir="$state_dir/acceptance"
+      acceptance_record="$acceptance_dir/$hash.json"
+      if [[ -L "$state_dir" || -L "$identities_dir" || -L "$identity_dir" || -L "$acceptance_record" ]]; then
+        fail "managed decommission state for CTK hash $hash is symlinked; recover state before retrying"
+      fi
+      if [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
+        fail "managed enrollment state directory $state_dir is not a directory; refusing decommission"
+      fi
+      if [[ -e "$identities_dir" && ! -d "$identities_dir" ]]; then
+        fail "managed identities directory $identities_dir is not a directory; refusing decommission"
+      fi
+      if [[ -e "$identity_dir" && ! -d "$identity_dir" ]]; then
+        fail "managed identity state $identity_dir is not a directory; refusing decommission"
+      fi
+      if [[ -L "$acceptance_dir" ]]; then
+        fail "managed acceptance directory $acceptance_dir is symlinked; refusing decommission"
+      fi
+      if [[ ! -d "$acceptance_dir" ]]; then
+        fail "managed acceptance directory $acceptance_dir is absent or not a directory; refusing decommission"
+      fi
+      if [[ -e "$acceptance_record" && ! -f "$acceptance_record" ]]; then
+        fail "managed acceptance record $acceptance_record is not a regular file; refusing decommission"
+      fi
+      if [[ -e "$identity_dir" ]]; then
+        had_identity_state=1
+      fi
+      if [[ -e "$acceptance_record" ]]; then
+        had_acceptance_record=1
+      fi
+
+      if [[ ! -x "$sc_auth_path" ]]; then
+        fail "CTK identity tool $sc_auth_path is absent or not executable"
+      fi
+
+      if ! identity_listing="$("$sc_auth_path" list-ctk-identities -t sha1 -e hex)"; then
+        fail "cannot list CTK identities before decommissioning $hash; complete the first unlock and retry"
+      fi
+      if ! identity_rows_output="$(identity_rows "$identity_listing")"; then
+        fail 'sc_auth returned malformed CTK identity state; refusing decommission'
+      fi
+      while IFS=$'\t' read -r identity_hash identity_key_type identity_protection identity_label; do
+        if [[ "$identity_hash" != "$hash" ]]; then
+          continue
+        fi
+        target_identity_count=$((target_identity_count + 1))
+        target_key_type="$identity_key_type"
+        target_protection="$identity_protection"
+        target_label="$identity_label"
+      done <<< "$identity_rows_output"
+      if (( target_identity_count == 0 )); then
+        fail "CTK identity $hash is absent; recover-stub --hash $hash can restore only a still-present CTK identity. Bootstrap a replacement with: git-mcp-secure-enclave-admin bootstrap --label <new-label>, then register the new signing key"
+      fi
+      if (( target_identity_count > 1 )); then
+        fail "CTK identity $hash is ambiguous; refusing decommission without exactly one validated SHA1 row"
+      fi
+      while IFS=$'\t' read -r identity_hash identity_key_type identity_protection identity_label; do
+        if [[ "$identity_label" != "$target_label" ]]; then
+          continue
+        fi
+        target_label_count=$((target_label_count + 1))
+        if [[ -n "$observed_identity_rows" ]]; then
+          observed_identity_rows="$observed_identity_rows; "
+        fi
+        observed_identity_rows="$observed_identity_rows$identity_hash/$identity_key_type/$identity_protection/$identity_label"
+      done <<< "$identity_rows_output"
+      if (( target_label_count > 1 )); then
+        fail "CTK identity label $target_label has duplicate SHA1 rows and is ambiguous; expected exactly one p-256-ne/none row for hash $hash, observed rows: $observed_identity_rows"
+      fi
+      if [[ "$target_key_type" != "p-256-ne" || "$target_protection" != "none" ]]; then
+        fail "CTK identity $hash is not an exact p-256-ne/none target; observed $target_key_type/$target_protection label $target_label"
+      fi
+
+      if ! ssh_identity_listing="$("$sc_auth_path" list-ctk-identities -t ssh)"; then
+        fail "cannot independently observe the SSH fingerprint for CTK identity $hash; refusing decommission"
+      fi
+      if ! ssh_rows_output="$(ssh_identity_rows "$ssh_identity_listing")"; then
+        fail 'sc_auth returned malformed SSH identity state; refusing decommission'
+      fi
+      while IFS=$'\t' read -r ssh_fingerprint ssh_key_type ssh_protection ssh_label; do
+        if [[ "$ssh_label" != "$target_label" ]]; then
+          continue
+        fi
+        target_ssh_count=$((target_ssh_count + 1))
+        observed_fingerprint="$ssh_fingerprint"
+        observed_ssh_key_type="$ssh_key_type"
+        observed_ssh_protection="$ssh_protection"
+      done <<< "$ssh_rows_output"
+      if (( target_ssh_count == 0 )); then
+        fail "CTK SSH identity for CTK hash $hash and label $target_label is absent; refusing decommission"
+      fi
+      if (( target_ssh_count != 1 )); then
+        fail "CTK SSH identity label $target_label is ambiguous; refusing decommission without one exact fingerprint"
+      fi
+      if [[ "$observed_fingerprint" != "$requested_fingerprint" ]]; then
+        fail "CTK identity $hash fingerprint mismatch; expected $requested_fingerprint, observed $observed_fingerprint"
+      fi
+      if [[ "$observed_ssh_key_type" != "p-256-ne" || "$observed_ssh_protection" != "none" ]]; then
+        fail "CTK SSH identity $target_label is not an exact p-256-ne/none target; observed $observed_fingerprint ($observed_ssh_key_type/$observed_ssh_protection)"
+      fi
+
+      if ! "$sc_auth_path" delete-ctk-identity -h "$hash" >/dev/null; then
+        fail "CTK identity deletion failed for $hash; local state was preserved"
+      fi
+      if (( had_identity_state != 0 )) && ! rm -rf -- "$identity_dir"; then
+        fail "CTK identity $hash was deleted, but local state $identity_dir could not be removed; remove only that exact path and retry GitHub cleanup"
+      fi
+      if (( had_acceptance_record != 0 )) && ! rm -f -- "$acceptance_record"; then
+        fail "CTK identity $hash was deleted, but acceptance record $acceptance_record could not be removed; remove only that exact record and retry GitHub cleanup"
+      fi
+
+      printf '%s\n' "decommission: removed inactive CTK identity $hash with SSH fingerprint $requested_fingerprint"
+      if (( had_identity_state != 0 || had_acceptance_record != 0 )); then
+        printf '%s\n' "decommission: removed only the requested local non-secret state for $hash"
+      else
+        printf '%s\n' "decommission: no local non-secret state existed for $hash"
+      fi
+      printf '%s\n' "GitHub cleanup: remove the corresponding SSH signing key with fingerprint $requested_fingerprint from GitHub's signing-key settings; do not remove authentication keys"
+      printf '%s\n' "Platform cleanup: CTK identity $hash was deleted; verify that no resident identity state remains for this fingerprint"
+    }
+
     case "''${1:-}" in
       bootstrap)
         shift
@@ -1600,6 +1820,13 @@ writeShellApplication {
       rotate)
         shift
         rotate "$@"
+        ;;
+      decommission)
+        shift
+        if [[ "$#" != 4 || "$1" != "--hash" || -z "$2" || "$3" != "--fingerprint" || -z "$4" ]]; then
+          fail 'usage: decommission --hash <hash> --fingerprint <fingerprint>'
+        fi
+        decommission "$2" "$4"
         ;;
       doctor|probe)
         if [[ "$#" != 3 || "$2" != "--hash" || -z "$3" ]]; then
@@ -1614,7 +1841,7 @@ writeShellApplication {
         recover_stub "$3"
         ;;
       *)
-        fail 'usage: bootstrap|rotate --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>'
+        fail 'usage: bootstrap|rotate --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>; decommission --hash <hash> --fingerprint <fingerprint>'
         ;;
     esac
   '';

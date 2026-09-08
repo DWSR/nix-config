@@ -55,7 +55,7 @@
   - _Requirements: 7.3, 8.1, 8.2, 8.3, 8.4, 8.6_
   - _Boundary: Lifecycle CLI_
 
-- [ ] 2.6 Add guarded decommissioning
+- [x] 2.6 Add guarded decommissioning
   - Delete only an explicitly confirmed hash/fingerprint after proving the active marker is absent or selects a replacement.
   - Never invoke a delete-all operation or remove the active identity.
   - Complete when decommission removes only its exact inactive target and emits GitHub signing-key cleanup guidance.

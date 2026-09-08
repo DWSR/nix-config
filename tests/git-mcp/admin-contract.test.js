@@ -145,6 +145,31 @@ function activeMarkerPath(root) {
   );
 }
 
+function acceptancePath(stateDir, hash) {
+  return path.join(stateDir, 'acceptance', `${hash}.json`);
+}
+
+function installLocalIdentity(stateDir, identity, residentExport) {
+  const identityDir = path.join(stateDir, 'identities', identity.hash);
+  fs.mkdirSync(identityDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(identityDir, 'id_ecdsa_sk_rk'),
+    `${residentExport.stub}\n`,
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
+    path.join(identityDir, 'id_ecdsa_sk_rk.pub'),
+    `${residentExport.publicKey}\n`,
+    { mode: 0o644 },
+  );
+  return identityDir;
+}
+
+function installAcceptance(stateDir, hash) {
+  fs.mkdirSync(path.dirname(acceptancePath(stateDir, hash)), { recursive: true });
+  fs.writeFileSync(acceptancePath(stateDir, hash), '{"schemaVersion":1}\n', { mode: 0o600 });
+}
+
 function installEnrollment(root, scenario, options = {}) {
   const identity = options.identity || scenario.identitySnapshots.after[0];
   const residentExport = options.residentExport
@@ -909,6 +934,355 @@ test('rotation preserves the active enrollment when candidate creation or verifi
     } finally {
       fs.rmSync(root.root, { recursive: true, force: true });
     }
+  }
+});
+
+test('decommission refuses the identity selected by the active marker before native deletion', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const enrollment = installEnrollment(root, scenario);
+  installAcceptance(enrollment.stateDir, enrollment.identity.hash);
+  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+  const identityEntriesBefore = fs.readdirSync(enrollment.identityDir).sort();
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['decommission', '--hash', enrollment.identity.hash, '--fingerprint', enrollment.marker.sshFingerprint],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /active enrollment marker .* selects target|refus/i);
+    assert.deepEqual(readCalls(root.root), [], 'active target is refused before native calls');
+    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), identityEntriesBefore);
+    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), true);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('decommission removes only an exact inactive identity with an absent or replacement marker', () => {
+  const scenario = summary.scenarios.rotation;
+  const target = scenario.identitySnapshots.after[0];
+  const replacement = scenario.identitySnapshots.after[1];
+  const targetExport = scenario.residentExports.find((residentExport) => residentExport.publicKey === target.publicKey);
+  const replacementExport = scenario.residentExports.find(
+    (residentExport) => residentExport.publicKey === replacement.publicKey,
+  );
+
+  for (const markerMode of ['absent', 'replacement']) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const active = installEnrollment(root, scenario, {
+        identity: markerMode === 'replacement' ? replacement : target,
+        identitySnapshot: 'after',
+      });
+      const stateDir = active.stateDir;
+      const targetDir = markerMode === 'replacement'
+        ? installLocalIdentity(stateDir, target, targetExport)
+        : active.identityDir;
+      if (markerMode === 'absent') installLocalIdentity(stateDir, replacement, replacementExport);
+      if (markerMode === 'absent') fs.rmSync(activeMarkerPath(root));
+      installAcceptance(stateDir, target.hash);
+      installAcceptance(stateDir, replacement.hash);
+
+      const result = runAdmin(
+        adminCommand,
+        ['decommission', '--hash', target.hash, '--fingerprint', target.sshFingerprint],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 0, `${markerMode}: ${result.stderr}`);
+      assert.match(result.stdout, /GitHub.*signing key.*remove/i, `${markerMode} GitHub guidance`);
+      assert.match(result.stdout, /platform.*identity|CTK.*identity.*cleanup/i, `${markerMode} platform guidance`);
+      assert.equal(fs.existsSync(targetDir), false, `${markerMode} removes the requested identity directory`);
+      assert.equal(fs.existsSync(acceptancePath(stateDir, target.hash)), false, `${markerMode} removes target acceptance`);
+      assert.equal(
+        fs.existsSync(path.join(stateDir, 'identities', replacement.hash)),
+        true,
+        `${markerMode} preserves the replacement identity directory`,
+      );
+      assert.equal(
+        fs.existsSync(acceptancePath(stateDir, replacement.hash)),
+        true,
+        `${markerMode} preserves the replacement acceptance record`,
+      );
+      if (markerMode === 'replacement') {
+        const marker = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
+        assert.equal(marker.ctkPublicKeyHash, replacement.hash, 'replacement remains selected');
+      } else {
+        assert.equal(fs.existsSync(activeMarkerPath(root)), false, 'absent marker remains absent');
+      }
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${markerMode} cleans temporary data`);
+
+      const calls = readCalls(root.root);
+      const deleteCalls = calls.filter((call) => call.tool === 'sc_auth' && call.operation === 'delete');
+      assert.equal(deleteCalls.length, 1, `${markerMode} performs one exact native deletion`);
+      assert.deepEqual(deleteCalls[0].argv, ['delete-ctk-identity', '-h', target.hash]);
+      assert.equal(
+        calls.some((call) => call.argv.includes('delete-all-ctk-identities')),
+        false,
+        `${markerMode} never invokes delete-all`,
+      );
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('decommission rejects malformed or mismatched hash/fingerprint confirmation without state changes', () => {
+  const scenario = summary.scenarios.rotation;
+  const replacement = scenario.identitySnapshots.after[1];
+  const target = scenario.identitySnapshots.after[0];
+  const cases = [
+    {
+      name: 'malformed hash',
+      hash: 'not-a-ctk-hash',
+      fingerprint: target.sshFingerprint,
+      pattern: /hash .*malformed|40 lowercase hexadecimal/i,
+    },
+    {
+      name: 'malformed fingerprint',
+      hash: target.hash,
+      fingerprint: 'not-a-fingerprint',
+      pattern: /fingerprint .*malformed|SHA256/i,
+    },
+    {
+      name: 'observed fingerprint mismatch',
+      hash: target.hash,
+      fingerprint: replacement.sshFingerprint,
+      pattern: /fingerprint mismatch|expected .*observed/i,
+    },
+  ];
+
+  for (const decommissionCase of cases) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const active = installEnrollment(root, scenario, { identity: replacement, identitySnapshot: 'after' });
+      const targetExport = scenario.residentExports.find(
+        (residentExport) => residentExport.publicKey === target.publicKey,
+      );
+      installLocalIdentity(active.stateDir, target, targetExport);
+      installAcceptance(active.stateDir, target.hash);
+      const stateBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
+      const acceptanceBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+
+      const result = runAdmin(
+        adminCommand,
+        ['decommission', '--hash', decommissionCase.hash, '--fingerprint', decommissionCase.fingerprint],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, decommissionCase.name);
+      assert.match(result.stderr, decommissionCase.pattern, decommissionCase.name);
+      assert.deepEqual(
+        fs.readdirSync(path.join(active.stateDir, 'identities')).sort(),
+        stateBefore,
+        `${decommissionCase.name} preserves identity state`,
+      );
+      assert.deepEqual(
+        fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(),
+        acceptanceBefore,
+        `${decommissionCase.name} preserves acceptance state`,
+      );
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${decommissionCase.name} cleans temporary data`);
+      assert.equal(
+        readCalls(root.root).some((call) => call.tool === 'sc_auth' && call.operation === 'delete'),
+        false,
+        `${decommissionCase.name} does not delete a native identity`,
+      );
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('decommission preserves valid local state when exact native deletion fails', () => {
+  const scenario = cloneScenario(summary.scenarios.rotation, {
+    failures: {
+      sc_auth: {
+        delete: 'fixture exact CTK deletion failed',
+      },
+    },
+  });
+  const target = scenario.identitySnapshots.after[0];
+  const replacement = scenario.identitySnapshots.after[1];
+  const root = createScenarioRoot(scenario);
+  try {
+    const active = installEnrollment(root, scenario, { identity: replacement, identitySnapshot: 'after' });
+    const targetExport = scenario.residentExports.find(
+      (residentExport) => residentExport.publicKey === target.publicKey,
+    );
+    installLocalIdentity(active.stateDir, target, targetExport);
+    installAcceptance(active.stateDir, target.hash);
+    const identitiesBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
+    const acceptanceBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+
+    const result = runAdmin(
+      adminCommand,
+      ['decommission', '--hash', target.hash, '--fingerprint', target.sshFingerprint],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /deletion failed|local state was preserved/i);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'identities')).sort(), identitiesBefore);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(), acceptanceBefore);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.equal(
+      readCalls(root.root).filter((call) => call.tool === 'sc_auth' && call.operation === 'delete').length,
+      1,
+    );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('decommission refuses absent, non-directory, or symlinked acceptance state before native deletion', () => {
+  const scenario = summary.scenarios.rotation;
+  const target = scenario.identitySnapshots.after[0];
+  const replacement = scenario.identitySnapshots.after[1];
+  const targetExport = scenario.residentExports.find(
+    (residentExport) => residentExport.publicKey === target.publicKey,
+  );
+
+  for (const acceptanceState of ['absent', 'file', 'symlink']) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const active = installEnrollment(root, scenario, { identity: replacement, identitySnapshot: 'after' });
+      installLocalIdentity(active.stateDir, target, targetExport);
+      const acceptanceDir = path.join(active.stateDir, 'acceptance');
+      const outsideAcceptanceDir = path.join(root.root, 'outside-acceptance');
+      if (acceptanceState === 'file') {
+        fs.writeFileSync(acceptanceDir, 'preserve\n', { mode: 0o600 });
+      } else if (acceptanceState === 'symlink') {
+        fs.mkdirSync(outsideAcceptanceDir, { recursive: true });
+        fs.writeFileSync(path.join(outsideAcceptanceDir, `${target.hash}.json`), 'preserve\n', { mode: 0o600 });
+        fs.symlinkSync(outsideAcceptanceDir, acceptanceDir, 'dir');
+      }
+      const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+      const identityEntriesBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
+
+      const result = runAdmin(
+        adminCommand,
+        ['decommission', '--hash', target.hash, '--fingerprint', target.sshFingerprint],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, acceptanceState);
+      assert.match(
+        result.stderr,
+        new RegExp(`managed acceptance directory .*${acceptanceState === 'symlink' ? 'symlinked' : 'absent|not a directory'}`),
+        acceptanceState,
+      );
+      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+      assert.deepEqual(
+        fs.readdirSync(path.join(active.stateDir, 'identities')).sort(),
+        identityEntriesBefore,
+        `${acceptanceState} preserves identity state`,
+      );
+      assert.equal(
+        readCalls(root.root).some((call) => call.tool === 'sc_auth' && call.operation === 'delete'),
+        false,
+        `${acceptanceState} refuses before native deletion`,
+      );
+      if (acceptanceState === 'symlink') {
+        assert.equal(fs.lstatSync(acceptanceDir).isSymbolicLink(), true);
+        assert.equal(fs.existsSync(path.join(outsideAcceptanceDir, `${target.hash}.json`)), true);
+      } else if (acceptanceState === 'file') {
+        assert.equal(fs.statSync(acceptanceDir).isFile(), true);
+      } else {
+        assert.equal(fs.existsSync(acceptanceDir), false);
+      }
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${acceptanceState} cleans temporary data`);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('decommission rejects duplicate SHA1 label mapping before SSH lookup and preserves state', () => {
+  const scenario = summary.scenarios.staleSameLabel;
+  const target = scenario.identitySnapshots.after.at(-1);
+  const stale = scenario.identitySnapshots.before[0];
+  const root = createScenarioRoot(scenario);
+  try {
+    const active = installEnrollment(root, scenario, { identity: stale, identitySnapshot: 'after' });
+    installLocalIdentity(active.stateDir, target, scenario.residentExports[0]);
+    installAcceptance(active.stateDir, target.hash);
+    const expectedDiagnostic = [
+      `[git-mcp-secure-enclave-admin] CTK identity label ${target.label} has duplicate SHA1 rows and is ambiguous;`,
+      `expected exactly one p-256-ne/none row for hash ${target.hash},`,
+      `observed rows: ${stale.hash}/p-256-ne/none/${target.label};`,
+      `${target.hash}/p-256-ne/none/${target.label}`,
+    ].join(' ');
+    const identityEntriesBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
+    const acceptanceEntriesBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+
+    const result = runAdmin(
+      adminCommand,
+      ['decommission', '--hash', target.hash, '--fingerprint', target.sshFingerprint],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr.trim(), expectedDiagnostic);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'identities')).sort(), identityEntriesBefore);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(), acceptanceEntriesBefore);
+    const calls = readCalls(root.root);
+    assert.equal(
+      calls.some((call) => call.tool === 'sc_auth' && call.operation === 'list-ssh'),
+      false,
+      'duplicate SHA1 labels are rejected before SSH fingerprint lookup',
+    );
+    assert.equal(
+      calls.some((call) => call.tool === 'sc_auth' && call.operation === 'delete'),
+      false,
+      'duplicate SHA1 labels are rejected before native deletion',
+    );
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('decommission reports an absent target with bootstrap and recovery guidance', () => {
+  const scenario = summary.scenarios.rotation;
+  const target = {
+    hash: '2222222222222222222222222222222222222222',
+    label: 'fixture-lost',
+    publicKey: scenario.identitySnapshots.after[0].publicKey,
+  };
+  const replacement = scenario.identitySnapshots.after[1];
+  const root = createScenarioRoot(scenario);
+  try {
+    const active = installEnrollment(root, scenario, { identity: replacement, identitySnapshot: 'after' });
+    installLocalIdentity(active.stateDir, target, scenario.residentExports[0]);
+    installAcceptance(active.stateDir, target.hash);
+    const identityEntriesBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
+    const acceptanceEntriesBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+
+    const result = runAdmin(
+      adminCommand,
+      ['decommission', '--hash', target.hash, '--fingerprint', 'SHA256:fixturealternate'],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(`CTK identity ${target.hash} is absent`));
+    assert.match(result.stderr, new RegExp(`recover-stub --hash ${target.hash}`));
+    assert.match(result.stderr, /bootstrap --label <new-label>/);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'identities')).sort(), identityEntriesBefore);
+    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(), acceptanceEntriesBefore);
+    assert.equal(
+      readCalls(root.root).some((call) => call.tool === 'sc_auth' && call.operation === 'delete'),
+      false,
+    );
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
   }
 });
 
