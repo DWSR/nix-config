@@ -25,6 +25,8 @@ writeShellApplication {
     work_dir=""
     export_dir=""
     install_dir=""
+    backup_dir=""
+    backup_retained=0
     orphan_hashes=""
     orphan_unknown=0
 
@@ -45,6 +47,9 @@ writeShellApplication {
     cleanup() {
       if [[ -n "$install_dir" && -e "$install_dir" ]]; then
         rm -rf -- "$install_dir"
+      fi
+      if [[ "$backup_retained" == 0 && -n "$backup_dir" && -e "$backup_dir" ]]; then
+        rm -rf -- "$backup_dir"
       fi
       if [[ -n "$export_dir" && -e "$export_dir" ]]; then
         rm -rf -- "$export_dir"
@@ -577,6 +582,331 @@ writeShellApplication {
       fi
     }
 
+    recover_stub() {
+      local hash="$1"
+      local home
+      local xdg_config_home
+      local active_marker
+      local marker_values
+      local marker_state_dir
+      local marker_hash
+      local marker_label
+      local marker_public_key
+      local marker_fingerprint
+      local state_dir
+      local identities_dir
+      local identity_dir
+      local expected_public_key
+      local identity_listing
+      local identity_rows_output
+      local identity_hash
+      local identity_key_type
+      local identity_protection
+      local identity_label
+      local ssh_identity_listing
+      local ssh_rows_output
+      local ssh_fingerprint
+      local ssh_key_type
+      local ssh_protection
+      local ssh_label
+      local observed_identity_hash=""
+      local observed_identity_type=""
+      local observed_identity_protection=""
+      local observed_identity_label=""
+      local observed_ssh_fingerprint=""
+      local observed_ssh_key_type=""
+      local observed_ssh_protection=""
+      local identity_match_count=0
+      local identity_label_count=0
+      local ssh_label_count=0
+      local selected_public
+      local selected_stub
+      local selected_public_key
+      local derived_public_key
+      local fingerprint_listing
+      local fingerprint
+      local selected_fingerprint
+      local probe_file
+      local signature_file
+      local allowed_signers_file
+      local temp_parent
+      local entry
+      local entry_name
+      local -a public_candidates
+      local -a matching_candidates
+      local -a matching_fingerprints
+      local -a existing_entries
+
+      if [[ ! "$hash" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "requested CTK identity hash $hash is malformed; expected 40 lowercase hexadecimal characters"
+      fi
+
+      home="''${HOME:-}"
+      if [[ -z "$home" ]]; then
+        fail 'HOME is required to locate the active enrollment marker'
+      fi
+      xdg_config_home="''${XDG_CONFIG_HOME:-$home/.config}"
+      active_marker="$xdg_config_home/git-mcp-secure-enclave-signing/active.json"
+      if [[ ! -f "$active_marker" || ! -r "$active_marker" ]]; then
+        fail "active enrollment marker $active_marker is missing or unreadable"
+      fi
+      if ! jq -e '
+        ((.githubSigningKeyRegistered? | type) == "boolean")
+        and (.githubSigningKeyRegistered == true)
+      ' "$active_marker" >/dev/null 2>&1; then
+        fail "active enrollment marker $active_marker has invalid githubSigningKeyRegistered; expected boolean true"
+      fi
+      if ! marker_values="$(jq -er '
+        [.stateDir, .identityLabel, .ctkPublicKeyHash, .sshPublicKey, .sshFingerprint]
+        | if all(.[]; type == "string") then @tsv else error("missing enrollment field") end
+      ' "$active_marker" 2>/dev/null)"; then
+        fail "active enrollment marker $active_marker is malformed; expected stateDir, identityLabel, ctkPublicKeyHash, sshPublicKey, and sshFingerprint"
+      fi
+      IFS=$'\t' read -r marker_state_dir marker_label marker_hash marker_public_key marker_fingerprint <<< "$marker_values"
+
+      if [[ "$marker_hash" != "$hash" ]]; then
+        fail "active enrollment marker $active_marker selects CTK hash $marker_hash; expected $hash"
+      fi
+      if [[ ! "$marker_hash" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "active enrollment marker $active_marker has malformed CTK hash $marker_hash; expected 40 lowercase hexadecimal characters"
+      fi
+      if [[ -z "$marker_state_dir" || "$marker_state_dir" != /* \
+        || "$marker_state_dir" == *$'\n'* || "$marker_state_dir" == *$'\r'* ]]; then
+        fail "active enrollment marker $active_marker has invalid stateDir; expected an absolute path, observed $marker_state_dir"
+      fi
+      if [[ -z "$marker_label" || "$marker_label" == *$'\n'* || "$marker_label" == *$'\r'* ]]; then
+        fail "active enrollment marker $active_marker has invalid identityLabel; expected a non-empty label, observed $marker_label"
+      fi
+      if ! expected_public_key="$(normalize_public_key "$marker_public_key")"; then
+        fail "active enrollment marker $active_marker has malformed sshPublicKey; expected sk-ecdsa-sha2-nistp256@openssh.com, observed $marker_public_key"
+      fi
+      if [[ ! "$marker_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
+        fail "active enrollment marker $active_marker has malformed sshFingerprint; expected SHA256:<base64>, observed $marker_fingerprint"
+      fi
+
+      state_dir="$marker_state_dir"
+      identities_dir="$state_dir/identities"
+      identity_dir="$identities_dir/$hash"
+      if [[ -L "$state_dir" || -L "$identities_dir" || -L "$identity_dir" ]]; then
+        fail "managed enrollment state path for CTK hash $hash is symlinked; recover state before retrying"
+      fi
+      if [[ -e "$state_dir" && ! -d "$state_dir" ]]; then
+        fail "active enrollment state directory $state_dir is not a directory"
+      fi
+      if [[ -e "$identities_dir" && ! -d "$identities_dir" ]]; then
+        fail "managed identities directory $identities_dir is not a directory"
+      fi
+      if [[ -e "$identity_dir" && ! -d "$identity_dir" ]]; then
+        fail "managed identity path $identity_dir is not a directory"
+      fi
+      if [[ -d "$identity_dir" ]]; then
+        shopt -s nullglob dotglob
+        existing_entries=("$identity_dir"/*)
+        shopt -u nullglob dotglob
+        for entry in "''${existing_entries[@]}"; do
+          entry_name="''${entry##*/}"
+          if [[ "$entry_name" != "id_ecdsa_sk_rk" && "$entry_name" != "id_ecdsa_sk_rk.pub" ]]; then
+            fail "managed identity directory $identity_dir contains unexpected state $entry_name; preserve it and retry recovery"
+          fi
+        done
+      fi
+
+      if [[ ! -r "$provider_path" ]]; then
+        fail "signing provider $provider_path is absent or unreadable"
+      fi
+      if [[ ! -x "$sc_auth_path" ]]; then
+        fail "CTK identity tool $sc_auth_path is absent or not executable"
+      fi
+      if [[ ! -x "$ssh_keygen_path" ]]; then
+        fail "ssh-keygen $ssh_keygen_path is absent or not executable"
+      fi
+
+      if ! identity_listing="$("$sc_auth_path" list-ctk-identities -t sha1 -e hex)"; then
+        fail "sc_auth identity listing failed for CTK hash $hash; complete the first unlock after reboot and retry"
+      fi
+      if ! identity_rows_output="$(identity_rows "$identity_listing")"; then
+        fail 'sc_auth returned malformed CTK identity state; inspect the active identity and retry recovery'
+      fi
+      while IFS=$'\t' read -r identity_hash identity_key_type identity_protection identity_label; do
+        if [[ "$identity_hash" == "$hash" ]]; then
+          identity_match_count=$((identity_match_count + 1))
+          observed_identity_hash="$identity_hash"
+          observed_identity_type="$identity_key_type"
+          observed_identity_protection="$identity_protection"
+          observed_identity_label="$identity_label"
+        fi
+        if [[ "$identity_label" == "$marker_label" ]]; then
+          identity_label_count=$((identity_label_count + 1))
+        fi
+      done <<< "$identity_rows_output"
+      if (( identity_label_count > 1 )); then
+        fail "CTK identity label $marker_label has duplicate rows; expected exactly one p-256-ne/none row for hash $hash"
+      fi
+      if (( identity_match_count == 0 )); then
+        fail "CTK identity $hash is missing; the non-exportable identity must be recreated before recovery"
+      fi
+      if (( identity_label_count == 0 )) \
+        || [[ "$observed_identity_hash" != "$hash" \
+          || "$observed_identity_type" != "p-256-ne" \
+          || "$observed_identity_protection" != "none" \
+          || "$observed_identity_label" != "$marker_label" ]]; then
+        fail "CTK identity $hash mismatch; expected p-256-ne/none label $marker_label, observed $observed_identity_type/$observed_identity_protection label $observed_identity_label"
+      fi
+
+      if ! ssh_identity_listing="$("$sc_auth_path" list-ctk-identities -t ssh)"; then
+        fail "sc_auth SSH identity listing failed for label $marker_label; complete the first unlock after reboot and retry"
+      fi
+      if ! ssh_rows_output="$(ssh_identity_rows "$ssh_identity_listing")"; then
+        fail 'sc_auth returned malformed SSH identity state; inspect the active identity and retry recovery'
+      fi
+      while IFS=$'\t' read -r ssh_fingerprint ssh_key_type ssh_protection ssh_label; do
+        if [[ "$ssh_label" != "$marker_label" ]]; then
+          continue
+        fi
+        ssh_label_count=$((ssh_label_count + 1))
+        observed_ssh_fingerprint="$ssh_fingerprint"
+        observed_ssh_key_type="$ssh_key_type"
+        observed_ssh_protection="$ssh_protection"
+      done <<< "$ssh_rows_output"
+      if (( ssh_label_count == 0 )); then
+        fail "CTK SSH identity for label $marker_label is missing or mismatched; expected p-256-ne/none fingerprint $marker_fingerprint"
+      fi
+      if (( ssh_label_count != 1 )); then
+        fail "CTK SSH identity $marker_label has duplicate rows; expected exactly one p-256-ne/none fingerprint $marker_fingerprint"
+      fi
+      if [[ "$observed_ssh_fingerprint" != "$marker_fingerprint" ]]; then
+        fail "CTK SSH identity $marker_label fingerprint mismatch; expected $marker_fingerprint, observed $observed_ssh_fingerprint"
+      fi
+      if [[ "$observed_ssh_key_type" != "p-256-ne" || "$observed_ssh_protection" != "none" ]]; then
+        fail "CTK SSH identity $marker_label mismatch; expected p-256-ne/none fingerprint $marker_fingerprint, observed $observed_ssh_fingerprint ($observed_ssh_key_type/$observed_ssh_protection)"
+      fi
+
+      temp_parent="''${TMPDIR:-/tmp}"
+      work_dir="$(mktemp -d "$temp_parent/git-mcp-secure-enclave-admin-recovery.XXXXXX")" \
+        || fail "cannot create a temporary recovery directory under $temp_parent"
+      export_dir="$(mktemp -d "$work_dir/export.XXXXXX")" \
+        || fail "cannot create a temporary resident-export directory under $work_dir"
+
+      if ! (
+        cd "$export_dir" &&
+          native_ssh_keygen_for_hash "$hash" -K >/dev/null
+      ); then
+        fail "resident-key export failed for CTK identity $hash; prior resident state was preserved"
+      fi
+
+      shopt -s nullglob
+      public_candidates=("$export_dir"/*.pub)
+      shopt -u nullglob
+      matching_candidates=()
+      matching_fingerprints=()
+      for selected_public in "''${public_candidates[@]}"; do
+        selected_stub="''${selected_public%.pub}"
+        if [[ ! -f "$selected_public" || ! -r "$selected_public" \
+          || ! -f "$selected_stub" || ! -r "$selected_stub" ]]; then
+          fail 'resident-key recovery produced an unreadable public/stub pair; prior resident state was preserved'
+        fi
+        if ! selected_public_key="$(<"$selected_public")"; then
+          fail "cannot read exported public key $selected_public; prior resident state was preserved"
+        fi
+        if ! selected_public_key="$(normalize_public_key "$selected_public_key")"; then
+          fail "resident recovery public key $selected_public is malformed; prior resident state was preserved"
+        fi
+        if ! derived_public_key="$(native_ssh_keygen_for_hash "$hash" -y -f "$selected_stub")"; then
+          fail "ssh-keygen rejected exported resident stub $selected_stub; prior resident state was preserved"
+        fi
+        if ! derived_public_key="$(normalize_public_key "$derived_public_key")"; then
+          fail "ssh-keygen returned a malformed public key for exported resident stub $selected_stub; prior resident state was preserved"
+        fi
+        if [[ "$derived_public_key" != "$selected_public_key" ]]; then
+          fail "resident stub $selected_stub does not match its public key; prior resident state was preserved"
+        fi
+        if ! fingerprint_listing="$(native_ssh_keygen_for_hash "$hash" -lf "$selected_public")" \
+          || ! fingerprint="$(fingerprint_from_listing "$fingerprint_listing")"; then
+          fail "ssh-keygen returned a malformed fingerprint for exported public key $selected_public; prior resident state was preserved"
+        fi
+        if [[ "$fingerprint" == "$marker_fingerprint" ]]; then
+          matching_candidates+=("$selected_stub")
+          matching_fingerprints+=("$fingerprint")
+        fi
+      done
+
+      if (( ''${#matching_candidates[@]} != 1 )); then
+        fail "resident recovery must yield exactly one public-key fingerprint match for $hash (found ''${#matching_candidates[@]}); prior resident state was preserved"
+      fi
+      selected_stub="''${matching_candidates[0]}"
+      selected_public="''${selected_stub}.pub"
+      selected_fingerprint="''${matching_fingerprints[0]}"
+      selected_public_key="$(normalize_public_key "$(<"$selected_public")")" \
+        || fail "selected resident public key $selected_public is malformed; prior resident state was preserved"
+      if [[ "$selected_public_key" != "$expected_public_key" \
+        || "$selected_fingerprint" != "$marker_fingerprint" ]]; then
+        fail "resident recovery identity mismatch; expected public key $expected_public_key and fingerprint $marker_fingerprint, observed $selected_public_key and $selected_fingerprint; prior resident state was preserved"
+      fi
+
+      probe_file="$work_dir/recovery-probe"
+      signature_file="$work_dir/recovery-probe.sig"
+      allowed_signers_file="$work_dir/recovery-allowed-signers"
+      printf '%s\n' 'git-mcp-secure-enclave-signing recovery probe' > "$probe_file"
+      printf '%s namespaces="git" %s\n' "$marker_label" "$expected_public_key" > "$allowed_signers_file"
+      if ! native_ssh_keygen_for_hash "$hash" -Y sign -n git -f "$selected_stub" < "$probe_file" > "$signature_file"; then
+        fail "local signing verification failed for CTK identity $hash; prior resident state was preserved"
+      fi
+      if [[ ! -s "$signature_file" ]]; then
+        fail "local signing produced an empty disposable signature for CTK identity $hash; prior resident state was preserved"
+      fi
+      if ! native_ssh_keygen_for_hash "$hash" -Y verify -f "$allowed_signers_file" -I "$marker_label" -n git -s "$signature_file" < "$probe_file" >/dev/null; then
+        fail "local signature verification failed for CTK identity $hash; prior resident state was preserved"
+      fi
+
+      mkdir -p -- "$identities_dir" \
+        || fail "cannot create managed identities directory $identities_dir; prior resident state was preserved"
+      if [[ -L "$state_dir" || -L "$identities_dir" ]]; then
+        fail "managed enrollment state path for CTK hash $hash became symlinked; prior resident state was preserved"
+      fi
+      install_dir="$(mktemp -d "$identities_dir/.recover.XXXXXX")" \
+        || fail "cannot create an atomic recovery directory under $identities_dir"
+      chmod 700 "$install_dir"
+      if ! cp -- "$selected_stub" "$install_dir/id_ecdsa_sk_rk" \
+        || ! cp -- "$selected_public" "$install_dir/id_ecdsa_sk_rk.pub"; then
+        fail "cannot stage verified resident artifacts for CTK identity $hash; prior resident state was preserved"
+      fi
+      chmod 600 "$install_dir/id_ecdsa_sk_rk"
+      chmod 644 "$install_dir/id_ecdsa_sk_rk.pub"
+
+      if [[ -e "$identity_dir" || -L "$identity_dir" ]]; then
+        backup_dir="$(mktemp -d "$identities_dir/.recover-backup.XXXXXX")" \
+          || fail "cannot create an atomic recovery backup for CTK identity $hash; prior resident state was preserved"
+        if ! rmdir -- "$backup_dir"; then
+          fail "cannot prepare an atomic recovery backup for CTK identity $hash; prior resident state was preserved"
+        fi
+        if ! mv -- "$identity_dir" "$backup_dir"; then
+          backup_dir=""
+          fail "cannot stage the previous resident state for CTK identity $hash; prior resident state was preserved"
+        fi
+        if ! mv -- "$install_dir" "$identity_dir"; then
+          if mv -- "$backup_dir" "$identity_dir"; then
+            backup_dir=""
+          else
+            backup_retained=1
+            fail "cannot atomically install resident artifacts for CTK identity $hash; previous resident state was retained at $backup_dir. Restore it to $identity_dir after fixing the filesystem failure, then remove the retained backup and retry recovery"
+          fi
+          fail "cannot atomically install resident artifacts for CTK identity $hash; prior resident state was preserved"
+        fi
+        install_dir=""
+        if ! rm -rf -- "$backup_dir"; then
+          fail "cannot remove the superseded resident state for CTK identity $hash"
+        fi
+        backup_dir=""
+      else
+        if ! mv -- "$install_dir" "$identity_dir"; then
+          fail "cannot atomically install resident artifacts for CTK identity $hash; prior resident state was preserved"
+        fi
+        install_dir=""
+      fi
+
+      printf '%s\n' "recover-stub: enrollment $hash ($marker_label) restored the verified resident stub"
+    }
+
     bootstrap() {
       local label=""
       local home
@@ -895,8 +1225,14 @@ writeShellApplication {
         fi
         diagnose "$1" "$3"
         ;;
+      recover-stub)
+        if [[ "$#" != 3 || "$2" != "--hash" || -z "$3" ]]; then
+          fail 'usage: recover-stub --hash <hash>'
+        fi
+        recover_stub "$3"
+        ;;
       *)
-        fail 'usage: bootstrap --label <label>'
+        fail 'usage: bootstrap --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>'
         ;;
     esac
   '';

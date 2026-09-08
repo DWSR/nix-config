@@ -64,19 +64,25 @@ function fixtureSummary() {
   ));
 }
 
-function buildAdmin(nativeOverrides = {}) {
+function buildAdmin(nativeOverrides = {}, packageOverrides = {}) {
   const overrideEntries = Object.entries(nativeOverrides)
     .map(([name, value]) => `${name} = ${JSON.stringify(value)};`)
+    .join('\n         ');
+  const packageOverrideEntries = Object.entries(packageOverrides)
+    .map(([name, expression]) => `${name} = ${expression};`)
     .join('\n         ');
   const nativeArgs = overrideEntries
     ? `fixture.nativeToolArgs // {\n         ${overrideEntries}\n       }`
     : 'fixture.nativeToolArgs';
+  const packageArgs = packageOverrideEntries
+    ? `${nativeArgs} // {\n         ${packageOverrideEntries}\n       }`
+    : nativeArgs;
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
-      admin = pkgs.callPackage (import ${JSON.stringify(adminPath)}) (${nativeArgs});
+      admin = pkgs.callPackage (import ${JSON.stringify(adminPath)}) (${packageArgs});
     in admin
   `);
 }
@@ -213,10 +219,37 @@ function fileMode(filePath) {
 let adminCommand;
 let summary;
 let missingAdminCommands;
+let renameFailureAdminCommand;
 
 test.before(() => {
   summary = fixtureSummary();
   adminCommand = path.join(buildAdmin(), 'bin/git-mcp-secure-enclave-admin');
+  renameFailureAdminCommand = path.join(
+    buildAdmin({}, {
+      coreutils: `pkgs.runCommand "git-mcp-admin-failing-mv-coreutils" {} ''
+        mkdir -p $out/bin
+        cp -R \${pkgs.coreutils}/bin/. $out/bin/
+        rm -f $out/bin/mv
+        cat > $out/bin/mv <<'EOF'
+        #!/bin/sh
+        counter="$GIT_MCP_SIGNING_FIXTURE_ROOT/mv-count"
+        count=0
+        if [ -r "$counter" ]; then
+          count="$(cat "$counter")"
+        fi
+        count=$((count + 1))
+        printf '%s\\n' "$count" > "$counter"
+        if [ "$count" -ge 2 ]; then
+          printf '%s\\n' 'fixture forced mv failure' >&2
+          exit 75
+        fi
+        exec \${pkgs.coreutils}/bin/mv "$@"
+        EOF
+        chmod +x $out/bin/mv
+      ''`,
+    }),
+    'bin/git-mcp-secure-enclave-admin',
+  );
   missingAdminCommands = {
     provider: path.join(
       buildAdmin({ providerPath: '/nonexistent/git-mcp-admin-provider' }),
@@ -810,6 +843,213 @@ test('reports the created orphan and installs nothing when local verification fa
       readCalls(root.root).some((call) => call.tool === 'ssh-keygen' && call.operation === 'verify'),
       false,
     );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('recovers a missing resident stub only for the active hash and exact selector', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const enrollment = installEnrollment(root, scenario, { writeArtifacts: false });
+  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+  const residentExport = scenario.residentExports[0];
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['recover-stub', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /recovered|restored/i);
+    assert.equal(
+      fs.readFileSync(enrollment.stubPath, 'utf8').trim(),
+      residentExport.stub,
+    );
+    assert.equal(
+      fs.readFileSync(enrollment.publicPath, 'utf8').trim(),
+      residentExport.publicKey,
+    );
+    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.equal(fileMode(enrollment.identityDir), 0o700);
+    assert.equal(fileMode(enrollment.stubPath), 0o600);
+    assert.equal(fileMode(enrollment.publicPath), 0o644);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+
+    const calls = readCalls(root.root);
+    const exportCalls = calls.filter(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'resident-export',
+    );
+    assert.equal(exportCalls.length, 1);
+    assert.equal(exportCalls[0].selector, enrollment.identity.hash);
+    assert.equal(exportCalls[0].exportEmpty, true);
+    assert.ok(
+      calls.some((call) => call.tool === 'ssh-keygen' && call.operation === 'stub'),
+      'recovery verifies the exported stub public key',
+    );
+    assert.ok(
+      calls.some((call) => call.tool === 'ssh-keygen' && call.operation === 'fingerprint'),
+      'recovery verifies the exported public-key fingerprint',
+    );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('recover-stub preserves valid state on missing, ambiguous, and failed recovery', () => {
+  const failedExportScenario = cloneScenario(summary.scenarios.oneResidentExport, {
+    failures: {
+      'ssh-keygen': {
+        'resident-export': 'fixture resident export failed',
+      },
+    },
+  });
+  const cases = [
+    {
+      name: 'missing export',
+      scenario: summary.scenarios.zeroResidentExports,
+      residentExport: summary.scenarios.oneResidentExport.residentExports[0],
+      pattern: /exactly one|matching|export/i,
+    },
+    {
+      name: 'ambiguous export',
+      scenario: summary.scenarios.ambiguousResidentFingerprint,
+      pattern: /exactly one|ambiguous|fingerprint/i,
+    },
+    {
+      name: 'failed export',
+      scenario: failedExportScenario,
+      pattern: /resident export failed|export/i,
+    },
+    {
+      name: 'public-key mismatch',
+      scenario: summary.scenarios.oneResidentExport,
+      options: {
+        sshPublicKey: summary.scenarios.multipleResidentExports.residentExports[1].publicKey,
+      },
+      pattern: /identity mismatch|public key/i,
+    },
+  ];
+
+  for (const recoveryCase of cases) {
+    const root = createScenarioRoot(recoveryCase.scenario);
+    try {
+      const enrollment = installEnrollment(root, recoveryCase.scenario, {
+        residentExport: recoveryCase.residentExport,
+        ...recoveryCase.options,
+      });
+      const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+      const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
+      const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+      const identityEntriesBefore = fs.readdirSync(enrollment.identityDir).sort();
+
+      const result = runAdmin(
+        adminCommand,
+        ['recover-stub', '--hash', enrollment.identity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, recoveryCase.name);
+      assert.match(result.stderr, recoveryCase.pattern, recoveryCase.name);
+      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+      assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
+      assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
+      assert.deepEqual(
+        fs.readdirSync(enrollment.identityDir).sort(),
+        identityEntriesBefore,
+        `${recoveryCase.name} leaves the managed pair unchanged`,
+      );
+      assert.deepEqual(fs.readdirSync(root.tempHome), []);
+
+      const exportCall = readCalls(root.root).find(
+        (call) => call.tool === 'ssh-keygen' && call.operation === 'resident-export',
+      );
+      if (exportCall) {
+        assert.equal(exportCall.selector, enrollment.identity.hash, recoveryCase.name);
+      }
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('retains the valid backup when installation and rollback renames both fail', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const enrollment = installEnrollment(root, scenario);
+  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+  const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
+  const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+  const identitiesDir = path.dirname(enrollment.identityDir);
+
+  try {
+    const result = runAdmin(
+      renameFailureAdminCommand,
+      ['recover-stub', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.equal(fs.existsSync(enrollment.identityDir), false, 'failed rollback does not invent a replacement');
+
+    const entries = fs.readdirSync(identitiesDir).sort();
+    const backupEntries = entries.filter((entry) => entry.startsWith('.recover-backup.'));
+    const stagingEntries = entries.filter((entry) => entry.startsWith('.recover.'));
+    assert.equal(backupEntries.length, 1, 'the old identity has one retained recovery backup');
+    assert.deepEqual(stagingEntries, [], 'failed staging directory is cleaned up');
+
+    const backupDir = path.join(identitiesDir, backupEntries[0]);
+    assert.match(
+      result.stderr,
+      new RegExp(
+        `previous resident state was retained at ${quoteRegex(backupDir)}\\. Restore it to ${quoteRegex(enrollment.identityDir)}.*retry`,
+        'i',
+      ),
+      'double-rename failure gives exact recovery guidance',
+    );
+    assert.equal(
+      fs.readFileSync(path.join(backupDir, 'id_ecdsa_sk_rk'), 'utf8'),
+      stubBefore,
+      'the old resident stub remains recoverable in the retained backup',
+    );
+    assert.equal(
+      fs.readFileSync(path.join(backupDir, 'id_ecdsa_sk_rk.pub'), 'utf8'),
+      publicBefore,
+      'the old public key remains recoverable in the retained backup',
+    );
+    assert.equal(fs.readFileSync(path.join(root.root, 'mv-count'), 'utf8').trim(), '3');
+    assert.deepEqual(fs.readdirSync(root.tempHome), [], 'temporary and untracked staging artifacts are cleaned');
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('recover-stub refuses a requested hash that differs from the active marker', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const enrollment = installEnrollment(root, scenario);
+  const requestedHash = '2222222222222222222222222222222222222222';
+  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+  const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
+  const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['recover-stub', '--hash', requestedHash],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, new RegExp(
+      `active enrollment marker .* selects CTK hash ${enrollment.identity.hash}.*expected ${requestedHash}`,
+    ));
+    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
+    assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.deepEqual(readCalls(root.root), []);
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }

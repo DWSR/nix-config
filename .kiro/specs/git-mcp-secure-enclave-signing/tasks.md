@@ -41,7 +41,7 @@
   - _Requirements: 4.1, 4.4, 6.1, 6.2, 6.3, 6.4, 6.5, 7.4_
   - _Boundary: Lifecycle CLI_
 
-- [ ] 2.4 Add atomic stub recovery
+- [x] 2.4 Add atomic stub recovery
   - Require the active marker to match the requested hash and re-export only that identity.
   - Replace stub state atomically after an exact public-key and fingerprint match.
   - Complete when missing, ambiguous, or failed recovery preserves prior valid state and matching recovery restores the stub.
