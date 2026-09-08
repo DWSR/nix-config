@@ -6,6 +6,9 @@
   iiiRevision,
   lsof,
   logDir,
+  opencodeBackend,
+  opencodeRollbackBackend,
+  piBackend,
   restPort,
   sourceRevision,
   streamPort,
@@ -25,6 +28,9 @@ writeShellApplication {
     log_file=${builtins.toJSON "${toString logDir}/agentmemory.error.log"}
     source_revision=${builtins.toJSON sourceRevision}
     iii_revision=${builtins.toJSON iiiRevision}
+    opencode_backend=${builtins.toJSON opencodeBackend}
+    opencode_rollback_backend=${builtins.toJSON opencodeRollbackBackend}
+    pi_backend=${builtins.toJSON piBackend}
     rest_port=${builtins.toJSON (toString restPort)}
     stream_port=${builtins.toJSON (toString streamPort)}
     viewer_port=${builtins.toJSON (toString viewerPort)}
@@ -114,6 +120,9 @@ writeShellApplication {
     printf 'health=%s\n' "$health"
     printf 'agentmemory_revision=%s\n' "$source_revision"
     printf 'iii_revision=%s\n' "$iii_revision"
+    printf 'opencode_backend=%s\n' "$opencode_backend"
+    printf 'opencode_rollback_backend=%s\n' "$opencode_rollback_backend"
+    printf 'pi_backend=%s\n' "$pi_backend"
     printf 'data_dir=%s\n' "$data_dir"
     printf 'listener_rest=%s\n' "$listener_rest"
     printf 'listener_stream=%s\n' "$listener_stream"

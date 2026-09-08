@@ -10,7 +10,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const repoRoot = path.resolve(__dirname, '../..');
 const secret = 'status-test-bearer-value';
 
-function statusPackageDerivation() {
+function statusPackageDerivation(backend = 'agentmemory') {
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
@@ -23,19 +23,25 @@ function statusPackageDerivation() {
     modules = [
       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
       {
-        home.username = "brandonmcnama";
-        home.homeDirectory = "/Users/brandonmcnama";
-        home.stateVersion = "26.05";
-        programs.agentmemory = {
-          enable = true;
-          dataDir = "/tmp/agentmemory/status-data";
-          runtimeDir = "/tmp/agentmemory/status-runtime";
-          logDir = "/tmp/agentmemory/status-logs";
-          restPort = 35111;
-          streamPort = 35112;
-          viewerPort = 35113;
-          enginePort = 61134;
-          bearerReference = "status-bearer-reference";
+        options.home.opencode.memoryBackend = pkgs.lib.mkOption {
+          type = pkgs.lib.types.enum [ "cavemem" "agentmemory" ];
+        };
+        config = {
+          home.username = "brandonmcnama";
+          home.homeDirectory = "/Users/brandonmcnama";
+          home.stateVersion = "26.05";
+          home.opencode.memoryBackend = ${JSON.stringify(backend)};
+          programs.agentmemory = {
+            enable = true;
+            dataDir = "/tmp/agentmemory/status-data";
+            runtimeDir = "/tmp/agentmemory/status-runtime";
+            logDir = "/tmp/agentmemory/status-logs";
+            restPort = 35111;
+            streamPort = 35112;
+            viewerPort = 35113;
+            enginePort = 61134;
+            bearerReference = "status-bearer-reference";
+          };
         };
       }
     ];
@@ -48,8 +54,8 @@ in hm.programs.agentmemory.statusPackage.drvPath)`;
   }).trim();
 }
 
-function statusCommandPath() {
-  return execFileSync('nix-store', ['--realise', statusPackageDerivation()], {
+function statusCommandPath(backend = 'agentmemory') {
+  return execFileSync('nix-store', ['--realise', statusPackageDerivation(backend)], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim().split('\n').at(-1) + '/bin/agentmemory-status';
@@ -96,8 +102,8 @@ function createFixture() {
   };
 }
 
-function runStatus(fixture, state) {
-  const result = spawnSync(statusCommandPath(), [], {
+function runStatus(fixture, state, backend = 'agentmemory') {
+  const result = spawnSync(statusCommandPath(backend), [], {
     cwd: repoRoot,
     encoding: 'utf8',
     env: {
@@ -116,6 +122,9 @@ function runStatus(fixture, state) {
 function assertCommonStatus(result, expected) {
   assert.equal(result.status, expected.exitCode, result.error?.message || result.stderr);
   assert.match(result.stdout, new RegExp(`^status=${expected.status}$`, 'm'));
+  assert.match(result.stdout, new RegExp(`^opencode_backend=${expected.backend}$`, 'm'));
+  assert.match(result.stdout, /^opencode_rollback_backend=cavemem$/m);
+  assert.match(result.stdout, /^pi_backend=agentmemory$/m);
   assert.match(result.stdout, /^agentmemory_revision=e04ba88819c365c9acf9d6661ea802143e728bd6$/m);
   assert.match(result.stdout, /^iii_revision=iii\/v0\.11\.2$/m);
   assert.match(result.stdout, /^data_dir=\/tmp\/agentmemory\/status-data$/m);
@@ -136,7 +145,12 @@ test('status reports a healthy stock daemon without exposing its bearer', () => 
       STATUS_LISTENERS: 'all',
     });
 
-    assertCommonStatus(result, { exitCode: 0, listenerState: 'listening', status: 'healthy' });
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 0,
+      listenerState: 'listening',
+      status: 'healthy',
+    });
     assert.match(result.stdout, /^health=healthy$/m);
     assert.match(result.stdout, /^action=none$/m);
   } finally {
@@ -156,7 +170,12 @@ test('status reports a stopped daemon with one restart action', () => {
       STATUS_LISTENERS: 'none',
     });
 
-    assertCommonStatus(result, { exitCode: 1, listenerState: 'not-listening', status: 'stopped' });
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 1,
+      listenerState: 'not-listening',
+      status: 'stopped',
+    });
     assert.match(result.stdout, /^health=unreachable$/m);
     assert.match(result.stdout, /^action=launchctl kickstart -k gui\/test-user\/dev\.dwsr\.agentmemory$/m);
   } finally {
@@ -176,9 +195,39 @@ test('status reports a loaded job that failed startup with one diagnostic action
       STATUS_LISTENERS: 'none',
     });
 
-    assertCommonStatus(result, { exitCode: 2, listenerState: 'not-listening', status: 'failed-startup' });
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 2,
+      listenerState: 'not-listening',
+      status: 'failed-startup',
+    });
     assert.match(result.stdout, /^health=unhealthy$/m);
     assert.match(result.stdout, /^action=inspect \/tmp\/agentmemory\/status-logs\/agentmemory\.error\.log$/m);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('status documents the explicit OpenCode cavemem rollback while Pi stays on AgentMemory', () => {
+  const fixture = createFixture();
+  try {
+    const result = runStatus(
+      fixture,
+      {
+        STATUS_LIVEZ_RESPONSE: '{"ok":true}\n200',
+        STATUS_HEALTH_RESPONSE: '{"status":"healthy","version":"0.9.29"}\n200',
+        STATUS_LAUNCHCTL_RESPONSE: 'state = running\nlast exit code = 0\n',
+        STATUS_LISTENERS: 'all',
+      },
+      'cavemem',
+    );
+
+    assertCommonStatus(result, {
+      backend: 'cavemem',
+      exitCode: 0,
+      listenerState: 'listening',
+      status: 'healthy',
+    });
   } finally {
     fixture.cleanup();
   }

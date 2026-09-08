@@ -26,6 +26,9 @@ let
       viewerPort
       ;
     iiiRevision = cfg.package.iiiRevision or "unknown";
+    opencodeBackend = memoryBackend;
+    opencodeRollbackBackend = "cavemem";
+    piBackend = "agentmemory";
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
 

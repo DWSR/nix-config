@@ -140,7 +140,7 @@
   - _Requirements: 1.7, 6.5, 7.1, 7.2, 7.7_
   - _Boundary: AgentMemoryModule, PiAgentMemoryIntegration_
 
-- [ ] 4.3 Preserve an explicit OpenCode cavemem rollback selection
+- [x] 4.3 Preserve an explicit OpenCode cavemem rollback selection
   - Keep the backend selector capable of rendering the prior OpenCode cavemem plugin, checks, consumers, and instructions.
   - Keep Pi on AgentMemory in both normal and rollback selections.
   - Avoid deleting or transforming source cavemem data during OpenCode rollback.
