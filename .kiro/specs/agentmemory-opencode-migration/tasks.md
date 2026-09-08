@@ -154,11 +154,12 @@
   - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, and consumer selection.
   - Scan generated files for literal bearer values and unintended Pi-path changes.
   - The matrix runs as one flake check.
-  - _Requirements: 1.2, 1.6, 1.7, 3.2, 5.4, 6.1, 7.1, 7.2_
-  - _Boundary: ValidationSuite_
+   - _Requirements: 1.2, 1.6, 1.7, 3.2, 5.4, 6.1, 7.1, 7.2_
+   - _Boundary: ValidationSuite_
+   - _Blocked: The Shopify `yb-issue-validator` prompt still directs AgentMemory-mode agents to cavemem; this production fix belongs to task 3.5 ConsumerCutover._
 
 - [ ] 5. Validate migration and compatibility
-- [ ] 5.1 Validate daemon, capture, MCP, and automatic context end to end
+- [x] 5.1 Validate daemon, capture, MCP, and automatic context end to end
   - Start the managed daemon and OpenCode, capture one prompt/assistant/tool session, and stop normally.
   - Recall the session through stock core MCP tools via mcpproxy.
   - Verify automatic context is present under stock plugin behavior and full-daemon preflight rejects startup failure.

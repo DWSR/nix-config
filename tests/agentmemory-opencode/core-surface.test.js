@@ -177,6 +177,132 @@ async function listProxyTools(harness) {
   throw new Error(`mcpproxy tools/list did not return an upstream inventory: ${lastResult?.stderr || ''}`);
 }
 
+function runPluginSession(harness) {
+  const sourcePath = path.join(
+    harness.directory,
+    'agentmemory-capture.ts',
+  );
+  const harnessPath = path.join(harness.directory, 'plugin-harness.mjs');
+  fs.copyFileSync(
+    path.join(
+      harness.agentmemoryPackage,
+      'lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts',
+    ),
+    sourcePath,
+  );
+  fs.writeFileSync(
+    harnessPath,
+    String.raw`
+import { pathToFileURL } from "node:url";
+
+const { AgentmemoryCapturePlugin } = await import(pathToFileURL(process.argv[2]).href);
+const sessionID = "task-5-1-e2e-session";
+const hooks = await AgentmemoryCapturePlugin({
+  worktree: process.cwd(),
+  project: { id: process.cwd() },
+});
+
+await hooks.event({ event: {
+  type: "session.created",
+  properties: { info: {
+    id: sessionID,
+    directory: process.cwd(),
+    title: "Task 5.1 end-to-end validation",
+  } },
+} });
+await hooks["chat.message"](
+  { sessionID, agent: "build", model: { providerID: "test", modelID: "e2e-model" } },
+  { parts: [{ type: "text", text: "contextcheck-5-1-e2e-unique-prompt" }] },
+);
+await hooks.event({ event: {
+  type: "message.part.updated",
+  properties: { part: {
+    id: "assistant-text", sessionID, messageID: "assistant-1", type: "text",
+    text: "task-5-1-e2e-assistant-response", time: { start: 3, end: 4 },
+  } },
+} });
+await hooks.event({ event: {
+  type: "message.updated",
+  properties: { info: {
+    id: "assistant-1", sessionID, role: "assistant", parentID: "user-1",
+    modelID: "e2e-model", providerID: "test", mode: "build", cost: 0,
+    tokens: { input: 1, output: 2, reasoning: 3, cache: { read: 0, write: 0 } },
+    time: { created: 1, completed: 2 }, finish: "stop",
+  } },
+} });
+await hooks.event({ event: {
+  type: "message.part.updated",
+  properties: { part: {
+    id: "tool-running", sessionID, messageID: "assistant-1", type: "tool",
+    callID: "tool-success", tool: "read",
+    state: { status: "running", input: { path: "README.md" }, time: { start: 4 } },
+  } },
+} });
+await hooks.event({ event: {
+  type: "message.part.updated",
+  properties: { part: {
+    id: "tool-completed", sessionID, messageID: "assistant-1", type: "tool",
+    callID: "tool-success", tool: "read",
+    state: {
+      status: "completed", input: { path: "README.md" },
+      output: "contextcheck-5-1-e2e-tool-output", title: "read", metadata: {},
+      time: { start: 4, end: 5 },
+    },
+  } },
+} });
+const system = [];
+await hooks["experimental.chat.system.transform"]({ sessionID }, { system });
+await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
+await hooks.dispose();
+
+console.log(JSON.stringify({ system }));
+`,
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', harnessPath, sourcePath],
+    {
+      cwd: harness.directory,
+      env: {
+        ...process.env,
+        AGENTMEMORY_URL: harness.baseUrl,
+        AGENTMEMORY_SECRET: smokeSecret,
+        AGENTMEMORY_PROJECT_NAME: 'agentmemory-task-5-1',
+      },
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  return JSON.parse(result.stdout);
+}
+
+function callProxyRead(harness, toolName, args) {
+  const result = spawnSync(
+    path.join(harness.mcpproxyPackage, 'bin/mcpproxy'),
+    [
+      'call',
+      'tool-read',
+      `--tool-name=agentmemory:${toolName}`,
+      `--json_args=${JSON.stringify(args)}`,
+      '--output=json',
+      '--reason=Validate captured AgentMemory session recall',
+      '--sensitivity=internal',
+      `--config=${harness.configPath}`,
+      `--data-dir=${harness.proxyDataDir}`,
+    ],
+    {
+      cwd: harness.directory,
+      env: { ...process.env, HOME: harness.directory },
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  return JSON.parse(result.stdout);
+}
+
 async function startProxyHarness(rendered) {
   const agentmemoryPackage = packageRoot('agentmemory', 'AGENTMEMORY_PACKAGE_PATH');
   const mcpproxyPackage = packageRoot('mcpproxy-go', 'MCPPROXY_PACKAGE_PATH');
@@ -307,6 +433,30 @@ test('healthy mcpproxy tools/list exposes exactly the daemon core inventory', as
     assert.equal(rendered.launchdEnvironment.AGENTMEMORY_TOOLS, 'core');
     assert.ok(!names.includes('memory_export'));
     assert.ok(!names.includes('memory_governance_delete'));
+  } finally {
+    await harness.close();
+  }
+});
+
+test('the captured plugin session is recalled through stock core MCP tools', async () => {
+  const rendered = renderIntegration();
+  const harness = await startProxyHarness(rendered);
+
+  try {
+    const captured = runPluginSession(harness);
+    assert.ok(
+      captured.system.some((entry) => entry.includes('<agentmemory-instructions>')),
+      'the stock plugin must inject automatic context into the model system prompt',
+    );
+
+    const sessions = callProxyRead(harness, 'memory_sessions', {});
+    assert.match(JSON.stringify(sessions), /task-5-1-e2e-session/);
+
+    const recalled = callProxyRead(harness, 'memory_recall', {
+      query: 'contextcheck-5-1-e2e-unique-prompt',
+      limit: 10,
+    });
+    assert.match(JSON.stringify(recalled), /contextcheck-5-1-e2e-unique-prompt/);
   } finally {
     await harness.close();
   }
