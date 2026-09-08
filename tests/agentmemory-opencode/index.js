@@ -11,3 +11,4 @@ require('./core-surface.test.js');
 require('./import-cavemem.test.js');
 require('./backend-selection.test.js');
 require('./backup.test.js');
+require('./cutover-rollback.test.cjs');

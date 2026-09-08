@@ -199,7 +199,7 @@
   - _Requirements: 7.3, 7.4, 7.5, 7.6_
   - _Boundary: ValidationSuite, PiAgentMemoryIntegration_
 
-- [ ] 5.6 Validate cutover and rollback without dual writes
+- [x] 5.6 Validate cutover and rollback without dual writes
   - Start OpenCode and Pi under AgentMemory and prove neither writes new ambient history to cavemem.
   - Activate the OpenCode-only rollback selection and capture one OpenCode cavemem event.
   - Keep Pi on AgentMemory during rollback and verify its store remains unchanged.
