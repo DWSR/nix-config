@@ -149,14 +149,13 @@
   - _Requirements: 5.1, 7.7, 7.8_
   - _Boundary: PiAgentMemoryIntegration_
 
-- [ ] 4.4 Register the focused host-render validation matrix
+- [x] 4.4 Register the focused host-render validation matrix
   - Evaluate AgentMemory enabled, disabled, personal, Shopify, and OpenCode cavemem rollback configurations.
   - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, and consumer selection.
   - Scan generated files for literal bearer values and unintended Pi-path changes.
   - The matrix runs as one flake check.
    - _Requirements: 1.2, 1.6, 1.7, 3.2, 5.4, 6.1, 7.1, 7.2_
    - _Boundary: ValidationSuite_
-   - _Blocked: The Shopify `yb-issue-validator` prompt still directs AgentMemory-mode agents to cavemem; this production fix belongs to task 3.5 ConsumerCutover._
 
 - [ ] 5. Validate migration and compatibility
 - [x] 5.1 Validate daemon, capture, MCP, and automatic context end to end

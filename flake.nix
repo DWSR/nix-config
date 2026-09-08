@@ -1714,11 +1714,39 @@
                   node tests/pi-agent/run.js --smoke > $out
                 '';
           };
+
+          agentMemoryHostMatrix = import ./tests/agentmemory-opencode/host-matrix.nix {
+            inherit pkgs self;
+          };
+
+          agentMemoryChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+            agentmemory-opencode-matrix =
+              pkgs.runCommand "agentmemory-opencode-matrix"
+                {
+                  nativeBuildInputs = [
+                    pkgs.git
+                    pkgs.nix
+                    pkgs.nodejs
+                  ];
+                  inherit agentMemoryHostMatrix;
+                }
+                ''
+                  export HOME=$(mktemp -d)
+                  export NIX_CONFIG="experimental-features = nix-command flakes"
+                  export AGENTMEMORY_MATRIX_HOSTS="$agentMemoryHostMatrix"
+                  cp -R ${./.} source
+                  chmod -R u+w source
+                  cd source
+                  node --test tests/agentmemory-opencode/matrix.test.js
+                  touch $out
+                '';
+          };
         in
         nixvimTests
         // hammerspoonChecks
         // deskflowChecks
         // piAgentChecks
+        // agentMemoryChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 

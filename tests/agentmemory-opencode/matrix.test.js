@@ -1,0 +1,468 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
+const path = require('node:path');
+
+const repoRoot = path.resolve(__dirname, '../..');
+const matrixCheck = `${repoRoot}#checks.aarch64-darwin.agentmemory-opencode-matrix`;
+
+function evalMatrix() {
+  const hostMatrixPath = process.env.AGENTMEMORY_MATRIX_HOSTS || '';
+  const hostRowsExpression = hostMatrixPath
+    ? `builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile ${JSON.stringify(hostMatrixPath)}))`
+    : '{}';
+  const expression = `
+    let
+      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+      pkgs = import flake.inputs.nixpkgs {
+        system = "aarch64-darwin";
+        overlays = [
+          flake.outputs.overlays.unstable-packages
+          flake.outputs.overlays.custom-packages
+        ];
+        config.allowUnfree = true;
+      };
+      commonModules = [
+        "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/memory-sync.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/pi-agent'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
+      ];
+      mkSynthetic = scenario:
+        (flake.inputs.home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          extraSpecialArgs = { inherit (flake) inputs; };
+          modules = commonModules ++ [
+            {
+              home.username = "brandonmcnama";
+              home.homeDirectory = "/Users/brandonmcnama";
+              home.stateVersion = "26.05";
+              home.mcp = {
+                obsidianVaultPath = "/tmp/agentmemory-matrix/vault";
+                githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
+                keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
+              };
+              home.opencode.memoryBackend = scenario.backend;
+              home.cavemem = {
+                enable = scenario.cavememEnable;
+                dataDir = "/tmp/agentmemory-matrix/cavemem";
+              };
+              programs.agentmemory = {
+                enable = scenario.agentMemoryEnable;
+                dataDir = "/tmp/agentmemory-matrix/agentmemory";
+                runtimeDir = "/tmp/agentmemory-matrix/runtime";
+                logDir = "/tmp/agentmemory-matrix/logs";
+                bearerReference = "agentmemory-bearer";
+              };
+              programs.pi-agent = if scenario.piEnable then {
+                enable = true;
+                provider = {
+                  mode = "personal";
+                  defaultModel = {
+                    provider = "openai";
+                    modelId = "gpt-5.6-sol";
+                  };
+                };
+              } else { };
+              programs.opencode.settings.mcp.mcpproxy = {
+                type = "remote";
+                url = "http://127.0.0.1:8080/mcp";
+                enabled = true;
+              };
+              programs.memory-sync.enable = scenario.backend == "cavemem";
+            }
+          ];
+        }).config;
+      hostConfig = host:
+        (builtins.getAttr host flake.darwinConfigurations).config.home-manager.users.brandonmcnama;
+      hostRows = ${hostRowsExpression};
+      scenarios = {
+        enabled = mkSynthetic {
+          backend = "agentmemory";
+          agentMemoryEnable = true;
+          cavememEnable = false;
+          piEnable = true;
+        };
+        disabled = mkSynthetic {
+          backend = "cavemem";
+          agentMemoryEnable = false;
+          cavememEnable = true;
+          piEnable = false;
+        };
+        rollback = mkSynthetic {
+          backend = "cavemem";
+          agentMemoryEnable = true;
+          cavememEnable = true;
+          piEnable = true;
+        };
+        personal =
+          if builtins.hasAttr "personal" hostRows then hostRows.personal else hostConfig "Brandons-MacBook-Pro";
+        shopify = if builtins.hasAttr "shopify" hostRows then hostRows.shopify else hostConfig "ShopifyLaptop";
+      };
+      discardText = value: builtins.unsafeDiscardStringContext value;
+      configText = name: value:
+        if value ? text && value.text != null then
+          discardText value.text
+        else if value ? source && value.source != null && builtins.match ".*\\\\.(js|json|md|ts)$" name != null then
+          discardText (builtins.readFile value.source)
+        else
+          "";
+      summarize = name: hm:
+        let
+          packageNames = map (package: package.name or "") hm.home.packages;
+          configFiles = builtins.attrNames hm.xdg.configFile;
+          pluginFiles = builtins.filter (
+            file: builtins.match "opencode/plugins/.*" file != null
+          ) configFiles;
+          memoryPluginFiles = builtins.filter (
+            file: builtins.match "opencode/plugins/(cavemem\\\\.js|agentmemory-.*)" file != null
+          ) configFiles;
+          relevantConfigTexts = builtins.mapAttrs configText (
+            pkgs.lib.filterAttrs (
+              file: _: builtins.match "(opencode/.*|mcpproxy/mcp_config\\\\.json|nono/profiles/.*)" file != null
+            ) hm.xdg.configFile
+          );
+          relevantHomeTexts = builtins.mapAttrs (
+            _: value: if value ? text && value.text != null then discardText value.text else ""
+          ) (pkgs.lib.filterAttrs (
+            file: _: builtins.match ".*agentmemory.*" file != null
+          ) hm.home.file);
+          memoryPluginSources = map (
+            file: discardText (builtins.readFile (builtins.getAttr file hm.xdg.configFile).source)
+          ) memoryPluginFiles;
+          mcpConfig = builtins.fromJSON (
+            discardText hm.xdg.configFile."mcpproxy/mcp_config.json".text
+          );
+          agentMemoryServers = builtins.filter (server: server.name == "agentmemory") mcpConfig.mcpServers;
+          cavememServers = builtins.filter (server: server.name == "cavemem") mcpConfig.mcpServers;
+          agentMemoryJob =
+            if builtins.hasAttr "agentmemory" hm.launchd.agents then hm.launchd.agents.agentmemory else null;
+          agentMemorySettingsPath = hm.programs.agentmemory.runtimeDir + "/.env";
+          agentMemorySettings =
+            if builtins.hasAttr agentMemorySettingsPath hm.home.file then
+              discardText (builtins.getAttr agentMemorySettingsPath hm.home.file).text
+            else
+              null;
+          agentMemoryRuntimeConfig = discardText (
+            builtins.readFile "\${hm.programs.agentmemory.package}/lib/node_modules/@agentmemory/agentmemory/iii-config.yaml"
+          );
+          agentMemoryRuntimeLauncher = discardText (
+            builtins.readFile "\${hm.programs.agentmemory.package}/lib/node_modules/@agentmemory/agentmemory/dist/cli.mjs"
+          );
+          nonoProfiles = builtins.mapAttrs (
+            _: value: builtins.fromJSON (discardText value.text)
+          ) (pkgs.lib.filterAttrs (
+            file: _: builtins.match "nono/profiles/.*\\\\.json" file != null
+          ) hm.xdg.configFile);
+          agentTexts = builtins.mapAttrs (
+            _: value: if builtins.typeOf value == "path" then discardText (builtins.readFile value) else discardText value
+          ) hm.programs.opencode.agents;
+          pi = hm.programs.pi-agent;
+          piManagedConfig =
+            if pi.enable then builtins.fromJSON (discardText (builtins.readFile pi.internal.managedConfig)) else null;
+          piProfiles =
+            if pi.enable then
+              builtins.mapAttrs (_: file: discardText (builtins.readFile file)) pi.internal.profilePaths
+            else
+              { };
+          piManagedConfigText =
+            if piManagedConfig == null then "" else builtins.toJSON piManagedConfig;
+          launchd =
+            if agentMemoryJob == null then
+              null
+            else
+              {
+                Label = agentMemoryJob.config.Label;
+                RunAtLoad = agentMemoryJob.config.RunAtLoad;
+                KeepAlive = agentMemoryJob.config.KeepAlive;
+                ProgramArguments = map discardText agentMemoryJob.config.ProgramArguments;
+                EnvironmentVariables = builtins.mapAttrs (
+                  _: value: discardText value
+                ) agentMemoryJob.config.EnvironmentVariables;
+              };
+          allGeneratedText = builtins.concatStringsSep "\\n" (
+            [
+              (discardText (hm.programs.opencode.context or ""))
+              (builtins.concatStringsSep "\\n" (builtins.attrValues agentTexts))
+                (builtins.concatStringsSep "\\n" (builtins.attrValues relevantConfigTexts))
+                (builtins.concatStringsSep "\\n" (builtins.attrValues relevantHomeTexts))
+                (builtins.concatStringsSep "\\n" memoryPluginSources)
+                (builtins.concatStringsSep "\\n" (builtins.attrValues piProfiles))
+                piManagedConfigText
+                (builtins.concatStringsSep "\\n" (map discardText hm.home.opencode.wrapperCommands))
+            ]
+            ++ (if launchd == null then [ ] else [ (builtins.toJSON launchd) ])
+          );
+        in
+        {
+          inherit name packageNames pluginFiles memoryPluginFiles nonoProfiles allGeneratedText launchd;
+          backend = hm.home.opencode.memoryBackend;
+          agentMemory = {
+            enable = hm.programs.agentmemory.enable;
+            packageNames = builtins.filter (package: pkgs.lib.hasPrefix "agentmemory" package) packageNames;
+            settings = agentMemorySettings;
+            runtimeConfig = agentMemoryRuntimeConfig;
+            runtimeLauncher = agentMemoryRuntimeLauncher;
+            inherit launchd;
+            ports = {
+              rest = hm.programs.agentmemory.restPort;
+              stream = hm.programs.agentmemory.streamPort;
+              viewer = hm.programs.agentmemory.viewerPort;
+              engine = hm.programs.agentmemory.enginePort;
+            };
+          };
+          cavemem = {
+            enable = hm.home.cavemem.enable;
+            packageNames = builtins.filter (package: pkgs.lib.hasPrefix "cavemem" package) packageNames;
+          };
+          mcp = {
+            serverNames = map (server: server.name) mcpConfig.mcpServers;
+            agentMemoryCount = builtins.length agentMemoryServers;
+            cavememCount = builtins.length cavememServers;
+            opencodeNames = builtins.attrNames (hm.programs.opencode.settings.mcp or { });
+          };
+          instructions = {
+            context = hm.programs.opencode.context;
+            agents = agentTexts;
+          };
+          consumers = {
+            memorySync = hm.programs.memory-sync.enable;
+            vaultSynthesizer = builtins.hasAttr "vault-synthesizer" hm.programs.opencode.agents;
+            augmentation = hm.programs.session-compaction.augmentationEnabled;
+          };
+          secretReference =
+            if builtins.hasAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets then
+              hm.home.mcp.keychainSecrets."agentmemory-bearer"
+            else
+              null;
+          pi =
+            if !pi.enable then
+              null
+            else
+              {
+                extensionNames = builtins.attrNames pi.extensions;
+                extensionPath = pi.extensions.agentmemory.relativePath;
+                managedConfig = piManagedConfig;
+                profiles = piProfiles;
+              };
+        };
+    in
+    builtins.toJSON {
+      enabled = summarize "enabled" scenarios.enabled;
+      disabled = summarize "disabled" scenarios.disabled;
+      rollback = summarize "rollback" scenarios.rollback;
+      personal =
+        if builtins.hasAttr "personal" hostRows then scenarios.personal else summarize "personal" scenarios.personal;
+      shopify =
+        if builtins.hasAttr "shopify" hostRows then scenarios.shopify else summarize "shopify" scenarios.shopify;
+    }
+  `;
+
+  return JSON.parse(
+    execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+      timeout: 600_000,
+    }),
+  );
+}
+
+function assertCheckIsRegistered() {
+  assert.doesNotThrow(() => {
+    execFileSync('nix', ['eval', '--impure', '--raw', `${matrixCheck}.name`], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      timeout: 600_000,
+    });
+  });
+}
+
+function assertNoBearerLiteral(rendered) {
+  assert.doesNotMatch(
+    rendered.allGeneratedText,
+    /AGENTMEMORY_SECRET\s*=\s*["']?[A-Za-z0-9][A-Za-z0-9._-]{7,}/,
+    `${rendered.name} serializes an AgentMemory bearer value`,
+  );
+  assert.doesNotMatch(
+    rendered.allGeneratedText,
+    /Authorization:\s*Bearer\s+[A-Za-z0-9]{8,}/i,
+    `${rendered.name} serializes an Authorization bearer value`,
+  );
+}
+
+function assertLoopbackEndpointContract(rendered) {
+  const { settings, runtimeConfig, runtimeLauncher, ports } = rendered.agentMemory;
+  const urls = settings.match(/(?:https?|wss?):\/\/[^'"\s]+/g) || [];
+
+  assert.deepEqual(
+    urls,
+    [`http://127.0.0.1:${ports.rest}`, `http://127.0.0.1:${ports.viewer}`],
+    `${rendered.name} emits only loopback REST and viewer URLs`,
+  );
+
+  const portEnvironmentNames = {
+    rest: 'III_REST_PORT',
+    stream: 'III_STREAM_PORT',
+    viewer: 'III_VIEWER_PORT',
+    engine: 'III_ENGINE_PORT',
+  };
+  for (const [name, port] of Object.entries(ports)) {
+    assert.match(
+      settings,
+      new RegExp(`${portEnvironmentNames[name]}=['"]?${port}['"]?`),
+      `${rendered.name} renders the ${name} port contract`,
+    );
+  }
+
+  const hosts = [...runtimeConfig.matchAll(/\bhost:\s*([^\s#]+)/g)].map((match) => match[1]);
+  assert.ok(hosts.length >= 2, `${rendered.name} exposes REST and stream host bindings`);
+  assert.deepEqual(hosts, hosts.map(() => '127.0.0.1'));
+  assert.doesNotMatch(runtimeConfig, /\bhost:\s*(?!127\.0\.0\.1\b)[^\s#]+/);
+
+  assert.match(
+    runtimeLauncher,
+    /setWorkerPort\(lines, "iii-worker-manager", options\.ports\.enginePort\)/,
+    `${rendered.name} derives the engine binding from the configured engine port`,
+  );
+  assert.match(
+    runtimeLauncher,
+    /"      host: 127\.0\.0\.1"/,
+    `${rendered.name} keeps the generated engine binding on loopback`,
+  );
+  assert.doesNotMatch(runtimeLauncher, /\bhost:\s*(?!127\.0\.0\.1\b)[^\s#]+/);
+}
+
+function assertPiAgentMemory(rendered) {
+  assert.ok(rendered.pi, `${rendered.name} keeps Pi enabled`);
+  assert.equal(
+    rendered.pi.extensionPath,
+    'lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts',
+  );
+  assert.equal(rendered.pi.managedConfig.extensionOrder[0], 'agentmemory');
+  assert.equal(rendered.pi.managedConfig.agentMemory.url, 'http://127.0.0.1:3111');
+  assert.equal(rendered.pi.managedConfig.agentMemory.secretReference, 'agentmemory-bearer');
+  assert.doesNotMatch(
+    JSON.stringify(rendered.pi),
+    /cavemem|local\/share\/cavemem/i,
+    `${rendered.name} unexpectedly restores a Pi Cavemem path`,
+  );
+}
+
+function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
+  assert.equal(rendered.agentMemory.enable, true, `${rendered.name} enables AgentMemory`);
+  assert.equal(rendered.agentMemory.ports.rest, 3111);
+  assert.equal(rendered.agentMemory.ports.stream, 3112);
+  assert.equal(rendered.agentMemory.ports.viewer, 3113);
+  assert.equal(rendered.agentMemory.ports.engine, 49134);
+  assert.ok(rendered.agentMemory.packageNames.length >= 2);
+  assert.equal(rendered.agentMemory.launchd.Label, 'dev.dwsr.agentmemory');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_REST_PORT, '3111');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_STREAM_PORT, '3112');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_VIEWER_PORT, '3113');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_ENGINE_PORT, '49134');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET, undefined);
+  assert.equal(
+    rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET_REFERENCE,
+    'agentmemory-bearer',
+  );
+  assert.match(rendered.agentMemory.settings, /AGENTMEMORY_URL='?http:\/\/127\.0\.0\.1:3111/);
+  assert.doesNotMatch(rendered.agentMemory.settings, /AGENTMEMORY_SECRET=/);
+  assertLoopbackEndpointContract(rendered);
+  assert.equal(rendered.memoryPluginFiles.length, 1);
+  assert.deepEqual(
+    rendered.memoryPluginFiles,
+    selected === 'agentmemory'
+      ? ['opencode/plugins/agentmemory-capture.ts']
+      : ['opencode/plugins/cavemem.js'],
+  );
+  assert.equal(rendered.mcp.agentMemoryCount, 1);
+  assert.equal(rendered.cavemem.enable, cavememEnabled);
+  assert.deepEqual(rendered.mcp.opencodeNames, ['mcpproxy']);
+  assert.deepEqual(rendered.mcp.serverNames.includes('agentmemory'), true);
+  assertPiAgentMemory(rendered);
+  assertNoBearerLiteral(rendered);
+}
+
+test('the focused AgentMemory host-render matrix is registered and validates all selections', () => {
+  assertCheckIsRegistered();
+  const rendered = evalMatrix();
+
+  for (const row of [rendered.enabled, rendered.personal, rendered.shopify]) {
+    assertAgentMemoryRuntime(row, { selected: 'agentmemory', cavememEnabled: false });
+    assert.equal(row.backend, 'agentmemory');
+    assert.equal(row.mcp.cavememCount, 0);
+    assert.equal(row.consumers.memorySync, false);
+    assert.equal(row.consumers.vaultSynthesizer, false);
+    assert.equal(row.consumers.augmentation, false);
+    assert.match(row.instructions.context, /stock AgentMemory/i);
+    assert.doesNotMatch(row.instructions.context, /Ambient capture \(cavemem\)/i);
+    assert.doesNotMatch(row.instructions.agents['vault-curator'], /cavemem/i);
+    for (const [agentName, instructions] of Object.entries(row.instructions.agents)) {
+      assert.doesNotMatch(
+        instructions,
+        /cavemem/i,
+        `${row.name}/${agentName} contains Cavemem instructions`,
+      );
+    }
+    for (const profile of Object.values(row.nonoProfiles)) {
+      assert.ok(profile.network.open_port.includes(8080));
+      assert.ok(profile.network.open_port.includes(3111));
+      assert.ok(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'));
+      assert.doesNotMatch(JSON.stringify(profile), /CAVEMEM_DATA_DIR|local\/share\/cavemem/);
+    }
+    assertPiAgentMemory(row);
+  }
+
+  assert.equal(rendered.personal.secretReference, 'op://Private/AgentMemory/Bearer');
+  assert.equal(rendered.shopify.secretReference, 'op://Employee/AgentMemory/Bearer');
+  assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
+  assert.equal(rendered.shopify.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
+  assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BACKUP_DESTINATION, undefined);
+  assert.equal(
+    rendered.shopify.agentMemory.settings.includes('AGENTMEMORY_BACKUP_DESTINATION='),
+    true,
+  );
+
+  const rollback = rendered.rollback;
+  assertAgentMemoryRuntime(rollback, { selected: 'cavemem', cavememEnabled: true });
+  assert.equal(rollback.backend, 'cavemem');
+  assert.equal(rollback.mcp.cavememCount, 1);
+  assert.equal(rollback.consumers.memorySync, true);
+  assert.equal(rollback.consumers.vaultSynthesizer, true);
+  assert.equal(rollback.consumers.augmentation, true);
+  assert.match(rollback.instructions.context, /Ambient capture \(cavemem\)/i);
+  assert.doesNotMatch(rollback.instructions.context, /stock AgentMemory/i);
+  assert.match(rollback.instructions.agents['vault-curator'], /cavemem/i);
+  assert.match(rollback.instructions.agents['vault-synthesizer'], /cavemem/i);
+  assert.deepEqual(rollback.memoryPluginFiles, ['opencode/plugins/cavemem.js']);
+  assertPiAgentMemory(rollback);
+  for (const profile of Object.values(rollback.nonoProfiles)) {
+    assert.deepEqual(profile.network.open_port, [8080]);
+    assert.ok(profile.environment.allow_vars.includes('CAVEMEM_DATA_DIR'));
+    assert.equal(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'), false);
+  }
+
+  const disabled = rendered.disabled;
+  assert.equal(disabled.agentMemory.enable, false);
+  assert.equal(disabled.agentMemory.launchd, null);
+  assert.deepEqual(disabled.agentMemory.packageNames, []);
+  assert.equal(disabled.memoryPluginFiles.length, 1);
+  assert.deepEqual(disabled.memoryPluginFiles, ['opencode/plugins/cavemem.js']);
+  assert.equal(disabled.mcp.agentMemoryCount, 0);
+  assert.equal(disabled.mcp.cavememCount, 1);
+  assert.deepEqual(disabled.mcp.opencodeNames, ['mcpproxy']);
+  assert.equal(disabled.pi, null);
+  assertNoBearerLiteral(disabled);
+  for (const profile of Object.values(disabled.nonoProfiles)) {
+    assert.deepEqual(profile.network.open_port, [8080]);
+    assert.equal(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'), false);
+  }
+});
