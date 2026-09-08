@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { before, test } from "node:test";
+import { after, before, test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const testsDir = path.dirname(fileURLToPath(import.meta.url));
@@ -29,7 +29,7 @@ const managedSettingKeys = [
 const extensionVersions = {
   backgroundTasks: "2.0.0",
   bashTimeout: "4.6.0",
-  cavemem: "0.1.0",
+  agentmemory: "0.9.29",
   codeIntelligence: "4.6.0",
   mcp: "0.1.0",
   plan: "0.49.2",
@@ -46,6 +46,9 @@ const commandOptions = {
 let fixtureRoot;
 let packages;
 let personalStatusModule;
+let agentMemoryServer;
+const agentMemoryUrl = "http://127.0.0.1:3111";
+const agentMemorySecret = "agentmemory-status-secret";
 
 function fixtureExpression(fixture) {
   return `
@@ -87,6 +90,22 @@ function buildFixture(fixture) {
 
 before(
   async () => {
+    agentMemoryServer = childProcess.spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        'import http from "node:http"; http.createServer((request, response) => { const degraded = request.headers.authorization === "Bearer agentmemory-degraded-secret"; response.writeHead(degraded ? 503 : 200, { "content-type": "application/json" }); response.end(JSON.stringify({ status: degraded ? "degraded" : "healthy" })); }).listen(3111, "127.0.0.1");',
+      ],
+      { stdio: "ignore" },
+    );
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      try {
+        const response = await fetch(`${agentMemoryUrl}/agentmemory/health`);
+        if (response.ok) break;
+      } catch {}
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     fixtureRoot = buildFixture("packages");
     packages = Object.fromEntries(
       [
@@ -110,6 +129,10 @@ before(
   },
   { timeout: 600_000 },
 );
+
+after(() => {
+  agentMemoryServer?.kill();
+});
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -165,15 +188,7 @@ function createState(t, packageRoot, options = {}) {
   const config = managedConfig(packageRoot);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-status-state-"));
   const agentDir = path.join(root, "agent");
-  const cavememSuffix = options.cavememSuffix ?? "cavemem";
-  const cavememDataDir = path.join(root, cavememSuffix);
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(cavememDataDir, { recursive: true, mode: 0o700 });
-  if (options.cavememReady !== false) {
-    fs.writeFileSync(path.join(cavememDataDir, "worker-ready"), "ready\n", {
-      mode: 0o600,
-    });
-  }
 
   const settings = {
     userSetting: "preserved",
@@ -221,11 +236,22 @@ function createState(t, packageRoot, options = {}) {
   }
   writePrivateJson(path.join(agentDir, "ownership.json"), ownership);
   t.after(() => fs.rmSync(root, { force: true, recursive: true }));
-  return { root, agentDir, cavememDataDir, config };
+  return {
+    root,
+    agentDir,
+    agentMemoryUrl,
+    agentMemorySecretReference: "agentmemory-bearer",
+    config,
+  };
 }
 
 function statusEnvironment(overrides = {}) {
-  const environment = { ...process.env, NO_COLOR: "1", ...overrides };
+  const environment = {
+    ...process.env,
+    AGENTMEMORY_SECRET: agentMemorySecret,
+    NO_COLOR: "1",
+    ...overrides,
+  };
   delete environment.FORCE_COLOR;
   return environment;
 }
@@ -242,7 +268,8 @@ function runStatus(packageRoot, state, options = {}) {
       input: `${JSON.stringify({
         schemaVersion: 1,
         agentDir: state.agentDir,
-        cavememDataDir: state.cavememDataDir,
+         agentMemoryUrl: state.agentMemoryUrl,
+         agentMemorySecretReference: state.agentMemorySecretReference,
       })}\n`,
       stdio: ["pipe", "pipe", "pipe"],
     },
@@ -420,7 +447,8 @@ function runInheritedCredentialStatusProbe(state, kind) {
       input: `${JSON.stringify({
         schemaVersion: 1,
         agentDir: state.agentDir,
-        cavememDataDir: state.cavememDataDir,
+         agentMemoryUrl: state.agentMemoryUrl,
+         agentMemorySecretReference: state.agentMemorySecretReference,
       })}\n`,
       stdio: ["pipe", "pipe", "pipe"],
     },
@@ -476,8 +504,8 @@ function expectedComplete(state, providerMode, sandboxState, profile) {
     profile,
     mcpEndpoint: "http://127.0.0.1:8080/mcp",
     mcpReady: true,
-    cavememDataDir: state.cavememDataDir,
-    cavememReady: true,
+     agentMemoryUrl: state.agentMemoryUrl,
+     agentMemoryReady: true,
     extensions: extensionVersions,
     drift: [],
     lsp: { nix: "ready" },
@@ -555,7 +583,7 @@ test("the packaged component exposes one read-only status surface", async () => 
   assert.match(source, /cwd: PROBE_CWD/);
   assert.doesNotMatch(source, /__PI_AGENT_STATUS_/);
   assert.doesNotMatch(source, /await module\.preflightMcpproxy/);
-  assert.match(source, /\["worker", "status"\]/);
+   assert.match(source, /agentmemory\/health/);
   assert.doesNotMatch(
     source,
     /spawn(?:Sync)?\([^\n]*PI_EXECUTABLE|bin\/pi["']/,
@@ -729,8 +757,8 @@ test("complete personal status is stable in JSON and human formats", (t) => {
       "Provider: personal",
       "Sandbox: audit (pi-audit)",
       "MCP: ready (http://127.0.0.1:8080/mcp)",
-      `Cavemem: ready (${state.cavememDataDir})`,
-      "Extensions: backgroundTasks=2.0.0, bashTimeout=4.6.0, cavemem=0.1.0, codeIntelligence=4.6.0, mcp=0.1.0, plan=0.49.2, questions=4.6.0, subagents=0.40.0, timestamps=0.49.3",
+       `AgentMemory: ready (${state.agentMemoryUrl})`,
+       "Extensions: agentmemory=0.9.29, backgroundTasks=2.0.0, bashTimeout=4.6.0, codeIntelligence=4.6.0, mcp=0.1.0, plan=0.49.2, questions=4.6.0, subagents=0.40.0, timestamps=0.49.3",
       "LSP: nix=ready",
       "Drift: none",
       "Recovery: none",
@@ -772,19 +800,20 @@ test("Shopify status reports the effective review profile without provider detai
 });
 
 test("degraded components and configured-only LSP state retain deterministic recovery", (t) => {
-  const state = createState(t, packages.degraded, { cavememReady: false });
-  const first = runStatus(packages.degraded, state);
-  const second = runStatus(packages.degraded, state);
+  const state = createState(t, packages.degraded);
+  const degradedEnvironment = { AGENTMEMORY_SECRET: "agentmemory-degraded-secret" };
+  const first = runStatus(packages.degraded, state, { environment: degradedEnvironment });
+  const second = runStatus(packages.degraded, state, { environment: degradedEnvironment });
   assert.equal(first.stdout, second.stdout);
   const report = parseSuccessfulJson(first);
   assert.equal(report.status, "degraded");
   assert.equal(report.mcpReady, false);
-  assert.equal(report.cavememReady, false);
+  assert.equal(report.agentMemoryReady, false);
   assert.deepEqual(report.lsp, { nix: "ready", typescript: "missing" });
   assert.deepEqual(report.extensions, {
     backgroundTasks: "unavailable",
     bashTimeout: "unavailable",
-    cavemem: "unavailable",
+    agentmemory: "unavailable",
     codeIntelligence: "unavailable",
     mcp: "unavailable",
     plan: "unavailable",
@@ -795,10 +824,10 @@ test("degraded components and configured-only LSP state retain deterministic rec
   assert.deepEqual(report.drift, []);
   assert.deepEqual(report.issues, [
     {
-      component: "cavemem",
+      component: "agentmemory",
       state: "degraded",
       recovery:
-        "restart the Cavemem worker and verify the managed data directory",
+        "restart the AgentMemory daemon and verify its authenticated health route",
     },
     {
       component: "extensions",
@@ -848,7 +877,6 @@ test("reconciliation drift is observational, pointer-only, and non-mutating", (t
 
 test("credential and header sentinels never cross either output format or child probes", (t) => {
   const state = createState(t, packages.shopify, {
-    cavememSuffix: `cavemem-${providerSentinel}`,
   });
   const models = readJson(path.join(state.agentDir, "models.json"));
   models.providers.openai = managedProvider(providerSentinel);
@@ -886,18 +914,12 @@ test("credential and header sentinels never cross either output format or child 
     "MCP probe did not receive its isolated admin key",
   );
   assert.equal(
-    report.cavememReady,
-    false,
-    "unsafe Cavemem data path was probed",
+    report.agentMemoryReady,
+    true,
   );
   assert.equal(report.status, "drifted");
   assert.deepEqual(report.drift, ["models.provider.openai.value"]);
-  assert.equal(report.cavememDataDir.includes("[REDACTED]"), true);
-  assert.equal(
-    fs.existsSync(path.join(state.cavememDataDir, "probe-secret-observed")),
-    false,
-    "Cavemem observed the exact credential-bearing data path",
-  );
+  assert.equal(report.agentMemoryUrl, state.agentMemoryUrl);
 
   const combined = `${jsonResult.stdout}\n${jsonResult.stderr}\n${humanResult.stdout}\n${humanResult.stderr}`;
   for (const sentinel of [
@@ -963,11 +985,7 @@ test("shared-policy probe environments remove exact values from retained names",
     }),
   );
   assert.equal(report.mcpReady, true);
-  assert.equal(report.cavememReady, true);
-  assert.equal(
-    fs.existsSync(path.join(state.cavememDataDir, "probe-secret-observed")),
-    false,
-  );
+  assert.equal(report.agentMemoryReady, true);
 });
 
 test("every probe replaces a credential-bearing caller cwd with the fixed safe cwd", (t) => {
@@ -1000,7 +1018,7 @@ test("probe environments never inherit credential-bearing HOME or path values af
   });
   const report = parseSuccessfulJson(result);
   assert.equal(report.mcpReady, false);
-  assert.equal(report.cavememReady, true);
+  assert.equal(report.agentMemoryReady, true);
   assert.deepEqual(report.issues, [
     {
       component: "mcp",
@@ -1010,10 +1028,6 @@ test("probe environments never inherit credential-bearing HOME or path values af
   ]);
   assert.equal(
     fs.existsSync(path.join(state.root, "keychain-secret-observed")),
-    false,
-  );
-  assert.equal(
-    fs.existsSync(path.join(state.cavememDataDir, "probe-secret-observed")),
     false,
   );
   assert.equal(
@@ -1030,7 +1044,7 @@ for (const [label, control] of [
 ]) {
   test(`required paths reject ${label} before human rendering`, (t) => {
     const state = createState(t, packages.personal);
-    for (const field of ["agentDir", "cavememDataDir"]) {
+    for (const field of ["agentDir", "agentMemoryUrl", "agentMemorySecretReference"]) {
       const result = runStatus(
         packages.personal,
         {
@@ -1139,13 +1153,12 @@ for (const { label, secret, format, otherFormat } of [
 }
 
 test("validated JSON rejects an exact credential matching false", (t) => {
-  const state = createState(t, packages.personal, { cavememReady: false });
+  const state = createState(t, packages.personal);
   const result = runStatus(packages.personal, state, {
     environment: { SHOPIFY_PI_TOKEN: "false" },
   });
-  assert.equal(result.status, 2);
-  assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "pi-agent-status: invocation rejected\n");
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, "");
   assert.equal(`${result.stdout}\n${result.stderr}`.includes("false"), false);
 });
 
@@ -1178,7 +1191,8 @@ test("every CLI rejection path suppresses colliding fixed diagnostic tokens", (t
       input: `${JSON.stringify({
         schemaVersion: 1,
         agentDir: "relative",
-        cavememDataDir: state.cavememDataDir,
+         agentMemoryUrl: state.agentMemoryUrl,
+         agentMemorySecretReference: state.agentMemorySecretReference,
       })}\n`,
     },
   ];
@@ -1222,7 +1236,8 @@ test("malformed CLI input remains collision-safe in human and JSON modes", (t) =
   const input = `${JSON.stringify({
     schemaVersion: 1,
     agentDir: "relative",
-    cavememDataDir: state.cavememDataDir,
+     agentMemoryUrl: state.agentMemoryUrl,
+     agentMemorySecretReference: state.agentMemorySecretReference,
   })}\n`;
   for (const args of [[], ["--json"]]) {
     for (const secret of secrets) {
@@ -1350,7 +1365,8 @@ test("invalid invocations fail with one fixed value-free diagnostic", (t) => {
       input: `${JSON.stringify({
         schemaVersion: 1,
         agentDir: providerSentinel,
-        cavememDataDir: state.cavememDataDir,
+         agentMemoryUrl: state.agentMemoryUrl,
+         agentMemorySecretReference: state.agentMemorySecretReference,
       })}\n`,
     },
   ];

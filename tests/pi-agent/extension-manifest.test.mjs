@@ -23,7 +23,7 @@ const testsDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(testsDir, "../..");
 const mcpServerFixture = path.join(testsDir, "fixtures/mcpproxy-server.mjs");
 const expectedOrder = [
-  "cavemem",
+  "agentmemory",
   "mcp",
   "subagents",
   "plan",
@@ -34,11 +34,12 @@ const expectedOrder = [
   "backgroundTasks",
 ];
 const expectedExtensions = {
-  cavemem: {
-    package: "@dwsr/pi-cavemem-bridge",
-    version: "0.1.0",
-    sourceRef: "repository",
-    entryPath: "lib/pi-agent/extensions/cavemem/index.ts",
+  agentmemory: {
+    package: "@agentmemory/agentmemory",
+    version: "0.9.29",
+    sourceRef: "e04ba88819c365c9acf9d6661ea802143e728bd6",
+    entryPath: "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts",
+    license: "Apache-2.0",
   },
   mcp: {
     package: "@dwsr/pi-mcpproxy-adapter",
@@ -113,6 +114,9 @@ const expectedRegisteredTools = [
   "grep",
   "find",
   "ls",
+  "memory_health",
+  "memory_search",
+  "memory_save",
   ...directToolNames,
   "subagent",
   "subagent_wait",
@@ -626,7 +630,7 @@ function expectedManifest() {
         {
           version: extension.version,
           entryPath: extension.entryPath,
-          license: "MIT",
+          license: extension.license ?? "MIT",
         },
       ]),
     ),
@@ -676,6 +680,12 @@ test("package publishes the exact closed, ordered, immutable extension manifest"
   const runtime = buildRuntimePaths();
   const { manifest, provenance, trustedProvenance } = readPackageArtifacts();
   assert.deepEqual(manifest, expectedManifest());
+  assert.deepEqual(manifest.extensions.agentmemory, {
+    version: expectedExtensions.agentmemory.version,
+    entryPath: expectedExtensions.agentmemory.entryPath,
+    license: expectedExtensions.agentmemory.license,
+  });
+  assert.doesNotMatch(JSON.stringify(manifest.extensions.agentmemory), /cavemem/i);
   assert.deepEqual(trustedProvenance, provenance);
   assert.deepEqual(Object.keys(provenance).sort(), [
     "extensionOrder",
@@ -756,7 +766,7 @@ test("package publishes the exact closed, ordered, immutable extension manifest"
       version: expectedExtensions[logicalName].version,
       sourceRef: expectedExtensions[logicalName].sourceRef,
       entryPath: expectedExtensions[logicalName].entryPath,
-      license: "MIT",
+      license: expectedExtensions[logicalName].license ?? "MIT",
       kind: "regular-file",
       sha256: sha256File(path.join(runtime.extensions, expectedExtensions[logicalName].entryPath)),
     })),
@@ -1267,129 +1277,6 @@ function installFetchRedirect(port) {
   };
 }
 
-function completeCavememSettings(dataDir) {
-  return {
-    dataDir,
-    workerPort: 37777,
-    logLevel: "error",
-    compression: { intensity: "full", expandForModel: true },
-    embedding: {
-      provider: "none",
-      model: "task-4-12-none",
-      batchSize: 16,
-      autoStart: false,
-      idleShutdownMs: 60_000,
-    },
-    search: { alpha: 0.5, defaultLimit: 20 },
-    privacy: { excludePatterns: [], redactSecrets: true },
-    ides: {},
-  };
-}
-
-function installRuntimeCapabilities(root) {
-  const bootstrapSymbol = Symbol.for("dwsr.pi-agent.runtime-bootstrap.v1");
-  const environmentSymbol = Symbol.for("dwsr.pi-agent.cavemem-environment.v1");
-  const bootstrapDescriptor = Object.getOwnPropertyDescriptor(globalThis, bootstrapSymbol);
-  if (bootstrapDescriptor === undefined) {
-    const redactExact = Object.freeze((value) => value);
-    const bootstrap = { schemaVersion: 1, mode: "personal", redactExact };
-    Object.defineProperty(bootstrap, "toJSON", {
-      configurable: false,
-      enumerable: false,
-      value: Object.freeze(() => { throw new Error("Pi runtime bootstrap is not serializable"); }),
-      writable: false,
-    });
-    Object.freeze(bootstrap);
-    Object.defineProperty(globalThis, bootstrapSymbol, {
-      configurable: false,
-      enumerable: false,
-      value: bootstrap,
-      writable: false,
-    });
-  } else {
-    assert.equal(bootstrapDescriptor.configurable, false);
-    assert.equal(bootstrapDescriptor.enumerable, false);
-    assert.equal(bootstrapDescriptor.writable, false);
-    assert.equal(bootstrapDescriptor.value.schemaVersion, 1);
-    assert.match(bootstrapDescriptor.value.mode, /^(?:personal|shopify-gateway)$/);
-    assert.equal(typeof bootstrapDescriptor.value.redactExact, "function");
-    assert.equal(Object.isFrozen(bootstrapDescriptor.value), true);
-  }
-
-  const environmentDescriptor = Object.getOwnPropertyDescriptor(globalThis, environmentSymbol);
-  let values;
-  if (environmentDescriptor === undefined) {
-    values = {
-      CAVEMEM_DATA_DIR: path.join(root, "cavemem"),
-      HOME: path.join(root, "cavemem-home"),
-      LANG: "C",
-      LC_ALL: "C",
-      LC_CTYPE: "C",
-      NO_COLOR: "1",
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      SHELL: process.env.SHELL ?? "/bin/zsh",
-      TERM: "xterm-256color",
-      TMPDIR: path.join(root, "tmp"),
-      USER: "task-4-12",
-      XDG_CACHE_HOME: path.join(root, "xdg-cache"),
-      XDG_CONFIG_HOME: path.join(root, "xdg-config"),
-      XDG_DATA_HOME: path.join(root, "xdg-data"),
-      XDG_STATE_HOME: path.join(root, "xdg-state"),
-    };
-    const environment = {};
-    for (const [name, value] of Object.entries(values)) {
-      Object.defineProperty(environment, name, {
-        configurable: false,
-        enumerable: true,
-        value,
-        writable: false,
-      });
-    }
-    Object.freeze(environment);
-    const capability = { schemaVersion: 1, environment };
-    Object.defineProperty(capability, "toJSON", {
-      configurable: false,
-      enumerable: false,
-      value: Object.freeze(() => { throw new Error("Cavemem process environment is not serializable"); }),
-      writable: false,
-    });
-    Object.freeze(capability);
-    Object.defineProperty(globalThis, environmentSymbol, {
-      configurable: false,
-      enumerable: false,
-      value: capability,
-      writable: false,
-    });
-  } else {
-    assert.equal(environmentDescriptor.configurable, false);
-    assert.equal(environmentDescriptor.enumerable, false);
-    assert.equal(environmentDescriptor.writable, false);
-    assert.equal(environmentDescriptor.value.schemaVersion, 1);
-    assert.equal(Object.isFrozen(environmentDescriptor.value), true);
-    assert.equal(Object.isFrozen(environmentDescriptor.value.environment), true);
-    values = environmentDescriptor.value.environment;
-  }
-
-  const dataDir = values.CAVEMEM_DATA_DIR;
-  assert.equal(typeof dataDir, "string");
-  for (const directory of [
-    dataDir,
-    values.HOME,
-    values.TMPDIR,
-    values.XDG_CACHE_HOME,
-    values.XDG_CONFIG_HOME,
-    values.XDG_DATA_HOME,
-    values.XDG_STATE_HOME,
-  ]) {
-    fs.mkdirSync(directory, { recursive: true });
-  }
-  fs.writeFileSync(
-    path.join(dataDir, "settings.json"),
-    `${JSON.stringify(completeCavememSettings(dataDir), null, 2)}\n`,
-  );
-  return values;
-}
-
 function createUi() {
   const notifications = [];
   return {
@@ -1613,10 +1500,8 @@ async function closeCombinedSession(fixture) {
   }
 }
 
-test("real Pi/Jiti loader registers all nine factories before accepting one prompt", { timeout: 1_200_000 }, async () => {
+test("real Pi/Jiti loader registers all managed factories before accepting one prompt", { timeout: 1_200_000 }, async () => {
   const runtime = buildRuntimePaths();
-  const capabilityRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pi-extension-capabilities-"));
-  const capabilityEnvironment = installRuntimeCapabilities(capabilityRoot);
   const server = await startMcpServer();
   const restoreFetch = installFetchRedirect(server.port);
   let accepted;
@@ -1679,15 +1564,10 @@ test("real Pi/Jiti loader registers all nine factories before accepting one prom
     );
     const collisionFailure = collisionProbe.report.errors[0];
     assert.equal(collisionFailure.includes("retrieve_tools"), false);
-    assert.equal(
-      fs.statSync(path.join(capabilityEnvironment.CAVEMEM_DATA_DIR, "settings.json")).isFile(),
-      true,
-    );
   } finally {
     if (accepted) await closeCombinedSession(accepted).catch(() => {});
     restoreFetch();
     await stopMcpServer(server);
-    fs.rmSync(capabilityRoot, { recursive: true, force: true });
   }
 });
 

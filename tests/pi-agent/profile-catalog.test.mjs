@@ -38,11 +38,11 @@ const runtimeGroups = [
 ];
 const statePaths = [
   "$HOME/.pi/agent",
-  "$XDG_DATA_HOME/cavemem",
   "$TMPDIR/pi-agent",
 ];
 const requiredEnvironmentNames = [
-  "CAVEMEM_DATA_DIR",
+  "AGENTMEMORY_SECRET",
+  "AGENTMEMORY_URL",
   "COLORTERM",
   "HOME",
   "LANG",
@@ -158,7 +158,6 @@ function makeNonoEnvironment() {
 
   for (const directory of [
     path.join(home, ".pi/agent"),
-    path.join(environment.XDG_DATA_HOME, "cavemem"),
     path.join(environment.XDG_CONFIG_HOME, "nono/profiles"),
     path.join(tmp, "pi-agent"),
   ]) {
@@ -194,7 +193,6 @@ function makeRuntimeProbeEnvironment(requiredNames) {
     environment[name] ??= `pi-agent-required-${name}`;
   }
   Object.assign(environment, {
-    CAVEMEM_DATA_DIR: path.join(environment.XDG_DATA_HOME, "cavemem"),
     PI_AGENT_BASH_TIMEOUT_MS: "543210",
     NODE_PATH: "pi-agent-dangerous-node-path",
     OPENAI_API_KEY: "pi-agent-denied-openai",
@@ -206,7 +204,6 @@ function makeRuntimeProbeEnvironment(requiredNames) {
 
   for (const directory of [
     environment.PI_CODING_AGENT_DIR,
-    environment.CAVEMEM_DATA_DIR,
     path.join(environment.XDG_CONFIG_HOME, "nono/profiles"),
     path.join(tmp, "pi-agent"),
     environment.XDG_STATE_HOME,
@@ -358,14 +355,14 @@ test("managed, audit, and review expose the exact posture deltas", () => {
     allow_domain: [],
     block: true,
     listen_port: [],
-    open_port: [8080],
+     open_port: [8080, 3111],
   });
   assert.deepEqual(review.network, managed.network);
   assert.deepEqual(audit.network, {
     allow_domain: [],
     block: false,
     listen_port: [],
-    open_port: [8080],
+     open_port: [8080, 3111],
   });
   assert.equal(managed.workdir.access, "readwrite");
   assert.equal(audit.workdir.access, "readwrite");
@@ -455,15 +452,11 @@ test("the selected nono strictly validates and resolves every profile", () => {
       const expectedWorkspaceAccess = name === "pi-review" ? "read" : "readwrite";
       const expectedProcessMode = name === "pi-review" ? "isolated" : "allow_same_sandbox";
       assert.equal(hasGrant(manifest, path.join(environment.HOME, ".pi/agent"), "readwrite"), true);
-      assert.equal(
-        hasGrant(manifest, path.join(environment.XDG_DATA_HOME, "cavemem"), "readwrite"),
-        true,
-      );
-      assert.equal(hasGrant(manifest, path.join(environment.TMPDIR, "pi-agent"), "readwrite"), true);
+       assert.equal(hasGrant(manifest, path.join(environment.TMPDIR, "pi-agent"), "readwrite"), true);
       assert.equal(hasGrant(manifest, repoRoot, expectedWorkspaceAccess), true);
       assert.equal(hasGrant(manifest, "/nix/store", "read"), true);
       assert.equal(manifest.network.mode, name === "pi-audit" ? "unrestricted" : "blocked");
-      assert.deepEqual(manifest.network.ports.localhost, [8080]);
+       assert.deepEqual(manifest.network.ports.localhost, [8080, 3111]);
       assert.equal(manifest.process.signal_mode, expectedProcessMode);
       assert.equal(manifest.process.process_info_mode, expectedProcessMode);
       assert.equal(manifest.process.ipc_mode, "shared_memory_only");
@@ -547,7 +540,6 @@ test("deliberately incomplete profile fixtures fail catalog validation", async (
     "missing-signal-policy": /pi-audit.*security\.signal_mode/,
     "review-writable": /pi-review.*workdir\.access.*read/,
     "missing-pi-state": /pi-managed.*filesystem\.allow.*\$HOME\/\.pi\/agent.*readwrite/,
-    "missing-cavemem-state": /pi-managed.*filesystem\.allow.*\$XDG_DATA_HOME\/cavemem.*readwrite/,
     "missing-private-temp": /pi-managed.*filesystem\.allow.*\$TMPDIR\/pi-agent.*readwrite/,
   };
 

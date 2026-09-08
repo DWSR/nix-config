@@ -12,7 +12,7 @@ let
   openAiSentinel = "task-5-7-openai-sentinel";
   adminSentinel = "task-5-7-mcpproxy-admin-sentinel";
   extensionOrder = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -23,7 +23,7 @@ let
     "backgroundTasks"
   ];
   extensionVersions = {
-    cavemem = "0.1.0";
+    agentmemory = "0.9.29";
     mcp = "0.1.0";
     subagents = "0.40.0";
     plan = "0.49.2";
@@ -90,7 +90,6 @@ let
     "pi-undici-8.9.0.patch"
     "pi-context-recovery.patch"
     "pi-launch-redaction-bootstrap.patch"
-    "pi-cavemem-environment-bootstrap.patch"
   ];
   mkPiPackage =
     healthy:
@@ -247,8 +246,8 @@ let
     profile = "pi-audit";
     mcpEndpoint = "http://127.0.0.1:8080/mcp";
     mcpReady = true;
-    cavememDataDir = null;
-    cavememReady = true;
+    agentMemoryUrl = "http://127.0.0.1:3111";
+    agentMemoryReady = true;
     extensions = extensionVersions;
     drift = [ ];
     lsp = {
@@ -259,7 +258,7 @@ let
   };
   componentStatus = healthyStatus // {
     mcpReady = false;
-    cavememReady = false;
+    agentMemoryReady = false;
     extensions = unavailableExtensions;
     lsp = {
       nix = "missing";
@@ -267,7 +266,7 @@ let
     status = "degraded";
     issues = [
       {
-        component = "cavemem";
+        component = "agentmemory";
         state = "degraded";
         recovery = "fixture";
       }
@@ -311,6 +310,11 @@ let
     pkgs.writeText "pi-agent-task-5-7-managed-config.json" (
       builtins.toJSON {
         schemaVersion = 1;
+        agentDir = "pi-default";
+        agentMemory = {
+          url = "http://127.0.0.1:3111";
+          secretReference = "agentmemory-bearer";
+        };
         inherit generation extensionOrder;
         extensionManifest = "${selectedExtensionPackage}/share/pi-agent/extensions.json";
         providerSelection = {
@@ -388,7 +392,7 @@ let
           else
             ''
               const report = ${builtins.toJSON report};
-              report.cavememDataDir = input.cavememDataDir;
+               report.agentMemoryUrl = input.agentMemoryUrl;
               if (process.env.PI_NONO === "disabled") {
                 report.sandboxState = "disabled";
                 report.profile = null;

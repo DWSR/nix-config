@@ -7,8 +7,11 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '../..');
-const instructionsPath = path.join(repoRoot, 'home-manager/common/agents.md');
-const instructions = fs.readFileSync(instructionsPath, 'utf8');
+const instructions = fs.readFileSync(path.join(repoRoot, 'home-manager/common/agents.md'), 'utf8');
+const agentMemoryInstructions = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/common/agents-agentmemory.md'),
+  'utf8',
+);
 
 function renderOpenCodeContext() {
   const expression = `(let
@@ -26,9 +29,10 @@ function renderOpenCodeContext() {
       "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
       {
         home.username = "brandonmcnama";
-        home.homeDirectory = "/Users/brandonmcnama";
-        home.stateVersion = "26.05";
-        programs.agentmemory.enable = false;
+         home.homeDirectory = "/Users/brandonmcnama";
+         home.stateVersion = "26.05";
+         home.opencode.memoryBackend = "agentmemory";
+         programs.agentmemory.enable = false;
       }
     ];
   }).config;
@@ -48,13 +52,13 @@ in builtins.toJSON {
 }
 
 test('AgentMemory instructions describe stock discovery, recall, sessions, and saves', () => {
-  assert.match(instructions, /# MANDATORY: AgentMemory \+ Obsidian/);
-  assert.match(instructions, /stock AgentMemory/i);
-  assert.match(instructions, /retrieve_tools\(query: "agentmemory/);
-  assert.match(instructions, /agentmemory:<tool>/);
-  assert.match(instructions, /AGENTMEMORY_TOOLS=core/);
-  assert.match(instructions, /call_tool_read/);
-  assert.match(instructions, /call_tool_write/);
+  assert.match(agentMemoryInstructions, /# MANDATORY: AgentMemory \+ Obsidian/);
+  assert.match(agentMemoryInstructions, /stock AgentMemory/i);
+  assert.match(agentMemoryInstructions, /retrieve_tools\(query: "agentmemory/);
+  assert.match(agentMemoryInstructions, /agentmemory:<tool>/);
+  assert.match(agentMemoryInstructions, /AGENTMEMORY_TOOLS=core/);
+  assert.match(agentMemoryInstructions, /call_tool_read/);
+  assert.match(agentMemoryInstructions, /call_tool_write/);
 
   for (const tool of [
     'memory_recall',
@@ -66,26 +70,26 @@ test('AgentMemory instructions describe stock discovery, recall, sessions, and s
     'memory_diagnose',
     'memory_reflect',
   ]) {
-    assert.match(instructions, new RegExp(`\\b${tool}\\b`));
+    assert.match(agentMemoryInstructions, new RegExp(`\\b${tool}\\b`));
   }
 
-  assert.match(instructions, /session (?:start|created)/i);
-  assert.match(instructions, /session (?:end|deleted)/i);
-  assert.match(instructions, /observ(?:e|ation)/i);
-  assert.match(instructions, /save|remember/i);
+  assert.match(agentMemoryInstructions, /session (?:start|created)/i);
+  assert.match(agentMemoryInstructions, /session (?:end|deleted)/i);
+  assert.match(agentMemoryInstructions, /observ(?:e|ation)/i);
+  assert.match(agentMemoryInstructions, /save|remember/i);
 });
 
 test('AgentMemory instructions preserve stock limitations and avoid custom claims', () => {
-  assert.match(instructions, /automatic context injection/i);
-  assert.match(instructions, /fallback/i);
-  assert.match(instructions, /bearer/i);
-  assert.match(instructions, /subprocess/i);
-  assert.match(instructions, /no (?:strict )?project selector|no project selector/i);
-  assert.match(instructions, /custom fallback guard/i);
-  assert.doesNotMatch(instructions, /All sessions MUST use BOTH Obsidian vault \+ cavemem/i);
-  assert.doesNotMatch(instructions, /Cavemem = ambient/i);
-  assert.match(instructions, /do not promise stable context/i);
-  assert.doesNotMatch(instructions, /custom (?:read|capture|retrieval) (?:facade|fallback|relay)/i);
+  assert.match(agentMemoryInstructions, /automatic context injection/i);
+  assert.match(agentMemoryInstructions, /fallback/i);
+  assert.match(agentMemoryInstructions, /bearer/i);
+  assert.match(agentMemoryInstructions, /subprocess/i);
+  assert.match(agentMemoryInstructions, /no (?:strict )?project selector|no project selector/i);
+  assert.match(agentMemoryInstructions, /custom fallback guard/i);
+  assert.doesNotMatch(agentMemoryInstructions, /All sessions MUST use BOTH Obsidian vault \+ cavemem/i);
+  assert.doesNotMatch(agentMemoryInstructions, /Cavemem = ambient/i);
+  assert.match(agentMemoryInstructions, /do not promise stable context/i);
+  assert.doesNotMatch(agentMemoryInstructions, /custom (?:read|capture|retrieval) (?:facade|fallback|relay)/i);
 });
 
 test('rendered OpenCode context carries AgentMemory guidance and disabled title/summary agents', () => {

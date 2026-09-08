@@ -17,7 +17,6 @@ const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "pi-plan-int
 const cwd = path.join(root, "workspace");
 const agentDir = path.join(root, "agent");
 const sessionsDir = path.join(root, "sessions");
-const dataDir = path.join(root, "cavemem");
 const subagentLaunchDir = path.join(root, "subagent-launches");
 const fakePiPackage = path.join(root, "fake-pi");
 const fakePiCli = path.join(fakePiPackage, "bin/pi.mjs");
@@ -26,7 +25,6 @@ for (const directory of [
   cwd,
   agentDir,
   sessionsDir,
-  dataDir,
   subagentLaunchDir,
   path.dirname(fakePiCli),
   effectsDir,
@@ -39,25 +37,6 @@ fs.writeFileSync(
   path.join(agentDir, "auth.json"),
   `${JSON.stringify({ anthropic: { type: "api_key", key: "task-4-13-model-stub" } })}\n`,
   { mode: 0o600 },
-);
-fs.writeFileSync(
-  path.join(dataDir, "settings.json"),
-  `${JSON.stringify({
-    dataDir,
-    workerPort: 37777,
-    logLevel: "error",
-    compression: { intensity: "full", expandForModel: true },
-    embedding: {
-      provider: "none",
-      model: "task-4-13-none",
-      batchSize: 16,
-      autoStart: false,
-      idleShutdownMs: 60_000,
-    },
-    search: { alpha: 0.5, defaultLimit: 20 },
-    privacy: { excludePatterns: [], redactSecrets: true },
-    ides: {},
-  }, null, 2)}\n`,
 );
 fs.writeFileSync(path.join(fakePiPackage, "package.json"), JSON.stringify({
   name: "@earendil-works/pi-coding-agent",
@@ -77,7 +56,6 @@ const refactorSource = "export const task413Original = true;\n";
 fs.writeFileSync(effectPaths.refactor, refactorSource);
 
 const environmentValues = {
-  CAVEMEM_DATA_DIR: dataDir,
   HOME: path.join(root, "home"),
   LANG: "C",
   LC_ALL: "C",
@@ -113,31 +91,6 @@ Object.defineProperty(globalThis, Symbol.for("dwsr.pi-agent.runtime-bootstrap.v1
   configurable: false,
   enumerable: false,
   value: bootstrap,
-  writable: false,
-});
-
-const cavememEnvironment = {};
-for (const [name, value] of Object.entries(environmentValues)) {
-  Object.defineProperty(cavememEnvironment, name, {
-    configurable: false,
-    enumerable: true,
-    value,
-    writable: false,
-  });
-}
-Object.freeze(cavememEnvironment);
-const cavememCapability = { schemaVersion: 1, environment: cavememEnvironment };
-Object.defineProperty(cavememCapability, "toJSON", {
-  configurable: false,
-  enumerable: false,
-  value: Object.freeze(() => { throw new Error("Cavemem environment is not serializable"); }),
-  writable: false,
-});
-Object.freeze(cavememCapability);
-Object.defineProperty(globalThis, Symbol.for("dwsr.pi-agent.cavemem-environment.v1"), {
-  configurable: false,
-  enumerable: false,
-  value: cavememCapability,
   writable: false,
 });
 

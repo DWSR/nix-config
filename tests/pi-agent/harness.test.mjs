@@ -36,8 +36,9 @@ const expectedProbeResponses = {
       "read_cache",
     ],
   },
-  cavemem: {
-    observationId: "fixture-observation-1",
+  agentmemory: {
+    status: "healthy",
+    sessionId: "fixture-agentmemory-session",
     stored: true,
   },
   nono: {

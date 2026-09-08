@@ -93,14 +93,15 @@ test("enabled common module exposes the complete immutable managed surface", () 
   ]);
   assert.deepEqual(config.statusInputs, {
     agentDir: "/tmp/pi-agent-integration/.pi/agent",
-    cavememDataDir: "/tmp/pi-agent-integration/cavemem",
+    agentMemoryUrl: "http://127.0.0.1:3111",
+    agentMemorySecretReference: "agentmemory-bearer",
     extensionManifest: config.extensionManifest,
     extensionIdentity: config.extensionIdentity,
     managedConfig: config.managedConfig,
   });
 
-  assert.equal(result.activation.some((name) => /pi-agent|cavemem/i.test(name)), false);
-  assert.equal(result.files.some((name) => /\/(?:pi-agent|pi-coding-agent|pi-agent-extensions|cavemem)(?:\/|$)/i.test(name)), false);
+  assert.equal(result.activation.some((name) => /pi-agent/i.test(name)), false);
+  assert.equal(result.files.some((name) => /\/(?:pi-agent|pi-coding-agent|pi-agent-extensions)(?:\/|$)/i.test(name)), false);
   assert.ok(result.packages.includes("pi-agent-launcher"));
   assert.ok(result.packages.includes("pi-agent-status"));
   assert.ok(result.packages.includes("pi-agent-validate"));
@@ -160,19 +161,17 @@ test("disabled common module emits no Pi commands, resources, or mutable activat
     validator: null,
   });
   assert.equal(result.packages.some((name) => /pi-agent|pi-coding-agent/.test(name)), false);
-  assert.equal(result.files.some((name) => /\/(?:pi-agent|pi-coding-agent|pi-agent-extensions|cavemem)(?:\/|$)/i.test(name)), false);
-  assert.equal(result.activation.some((name) => /pi-agent|cavemem/i.test(name)), false);
+  assert.equal(result.files.some((name) => /\/(?:pi-agent|pi-coding-agent|pi-agent-extensions)(?:\/|$)/i.test(name)), false);
+  assert.equal(result.activation.some((name) => /pi-agent/i.test(name)), false);
 });
 
 test("managed wrapper reports value-free launcher component and recovery diagnostics", () => {
   const result = evaluate("enabled");
   const agentDir = result.config.statusInputs.agentDir;
-  const cavememDataDir = result.config.statusInputs.cavememDataDir;
   const secret = "task-6-2-launch-secret";
 
   fs.rmSync(agentDir, { recursive: true, force: true });
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(cavememDataDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(agentDir, "settings.json"), "{invalid:\n", { mode: 0o600 });
 
   try {

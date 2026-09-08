@@ -21,7 +21,7 @@ let
   reconcilerModule = "${reconcilerPackage}/lib/pi-agent/reconcile.mjs";
   adminKey = "task-5-8-mcpproxy-admin-sentinel";
   extensionOrder = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -44,7 +44,7 @@ let
     "sandbox-profiles"
     "extension-inventory"
     "mcp-surface"
-    "cavemem"
+    "agentmemory"
     "pty"
     "lsp"
     "reconciliation-drift"
@@ -327,7 +327,7 @@ let
               && typeof process.env.PI_AGENT_LAUNCH_ID === "string",
             hasTimeoutBinding: Object.hasOwn(process.env, "PI_AGENT_BASH_TIMEOUT_MS"),
             timeoutBinding: process.env.PI_AGENT_BASH_TIMEOUT_MS,
-            cavememDataDir: process.env.CAVEMEM_DATA_DIR,
+             agentMemoryUrl: process.env.AGENTMEMORY_URL,
             agentDir: process.env.PI_CODING_AGENT_DIR,
             subagentBinaryOverride: process.env.PI_SUBAGENT_PI_BINARY,
             ambientOpenAi: process.env.OPENAI_API_KEY,
@@ -478,8 +478,8 @@ let
         profile = null;
         inherit (config) mcpEndpoint;
         mcpReady = true;
-        cavememDataDir = null;
-        cavememReady = true;
+        agentMemoryUrl = "http://127.0.0.1:3111";
+        agentMemoryReady = true;
         extensions =
           if failStage == "extensions" then
             builtins.mapAttrs (_name: _version: "unavailable") extensionVersions
@@ -511,7 +511,7 @@ let
              (selectedState === "enforced" ? "pi-managed" : "pi-audit");
            report.sandboxState = selectedState;
            report.profile = selectedState === "disabled" ? null : selectedProfile;
-          report.cavememDataDir = input.cavememDataDir;
+           report.agentMemoryUrl = input.agentMemoryUrl;
           process.stdout.write(JSON.stringify(report) + "\n");
         ''
       );
@@ -527,43 +527,23 @@ let
   mkKeychain = pkgs.writeShellApplication {
     name = "security";
     text = ''
-      if [[ "$#" -ne 6 || "$1" != find-generic-password || "$2" != -s || "$3" != mcpproxy || "$4" != -a || "$5" != mcpproxy-api-key || "$6" != -w ]]; then
-        exit 64
-      fi
+       if [[ "$#" -ne 6 || "$1" != find-generic-password || "$2" != -s || "$3" != mcpproxy || "$4" != -a || "$6" != -w ]]; then
+         exit 64
+       fi
       for name in SHOPIFY_PI_TOKEN PI_AGENT_LAUNCH_ID OPENAI_API_KEY ANTHROPIC_API_KEY MCPPROXY_API_KEY; do
         if [[ -v "$name" ]]; then
           exit 65
         fi
       done
-      printf '%s\n' ${lib.escapeShellArg adminKey}
+       if [[ "$5" == mcpproxy-api-key ]]; then
+         printf '%s\n' ${lib.escapeShellArg adminKey}
+       elif [[ "$5" == agentmemory-bearer ]]; then
+         printf '%s\n' agentmemory-secret
+       else
+         exit 64
+       fi
     '';
   };
-
-  mkCavemem =
-    failStage:
-    pkgs.writeShellApplication {
-      name = "cavemem";
-      text = ''
-        if [[ "$#" -ne 2 || "$1" != worker || "$2" != status ]]; then
-          exit 64
-        fi
-        for name in SHOPIFY_PI_TOKEN PI_AGENT_LAUNCH_ID OPENAI_API_KEY ANTHROPIC_API_KEY MCPPROXY_API_KEY; do
-          if [[ -v "$name" ]]; then
-            exit 65
-          fi
-        done
-        test -d "''${CAVEMEM_DATA_DIR:?}"
-        test -f "''${TMPDIR:?}/agent/ownership.json"
-        test "$(jq -r .transaction "''${TMPDIR:?}/agent/ownership.json")" = committed
-        test ! -d "''${TMPDIR:?}/agent/.pi-agent-reconcile.lock"
-        test ! -d "''${TMPDIR:?}/agent/settings.json.lock"
-        printf '%s\n' cavemem:committed >> "''${TMPDIR:?}/pi-agent-launcher-trace.log"
-        ${
-          if failStage == "cavemem" then "printf '%s\\n' stopped" else "printf '%s\\n' 'running (pid 5800)'"
-        }
-      '';
-      runtimeInputs = [ pkgs.jq ];
-    };
 
   mkValidator =
     managedConfig: mode: failStage:
@@ -589,7 +569,7 @@ let
           if (
             input.schemaVersion !== 1
             || input.agentDir !== path.join(process.env.TMPDIR, "agent")
-            || input.cavememDataDir !== path.join(process.env.TMPDIR, "cavemem")
+             || input.agentMemoryUrl !== "http://127.0.0.1:3111"
           ) process.exit(65);
           assertCommitted();
           assertScrubbed();
@@ -621,12 +601,10 @@ let
       sandboxResolverPackage = mkSandboxResolver failStage;
       statusPackage = mkStatusPackage managedConfig failStage;
       validatorPackage = mkValidator managedConfig mode failStage;
-      cavememPackage = mkCavemem failStage;
       sandboxExecutorPackage = mkSandboxExecutor piPackage;
     in
     import (repoRoot + "/scripts/pi-agent-launcher.nix") {
       inherit
-        cavememPackage
         managedConfig
         piPackage
         pkgs
@@ -652,7 +630,7 @@ let
     profile-failure = mkLauncher "shopify-gateway" "profile";
     profile-validation-failure = mkLauncher "shopify-gateway" "profile-validation";
     mcpproxy-failure = mkLauncher "shopify-gateway" "mcpproxy";
-    cavemem-failure = mkLauncher "shopify-gateway" "cavemem";
+    agentmemory-failure = mkLauncher "shopify-gateway" "agentmemory";
     extensions-failure = mkLauncher "shopify-gateway" "extensions";
     extensions-one-unavailable = mkLauncher "shopify-gateway" "extensions-one";
     validator-failure = mkLauncher "shopify-gateway" "validator";

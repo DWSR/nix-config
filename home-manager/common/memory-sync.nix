@@ -6,6 +6,12 @@
 }:
 let
   cfg = config.programs.memory-sync;
+  memoryBackend =
+    if config.home ? opencode && config.home.opencode ? memoryBackend then
+      config.home.opencode.memoryBackend
+    else
+      "cavemem";
+  isCavemem = memoryBackend == "cavemem";
 
   # Build the script derivation once, reference twice (programs.memory-sync.package
   # for downstream consumers, home.packages for PATH installation).
@@ -39,7 +45,7 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
+  config = lib.mkIf (cfg.enable && isCavemem) {
     home.packages = [ cfg.package ];
 
     assertions = [

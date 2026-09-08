@@ -20,6 +20,7 @@ const MANAGED_CONFIG_KEYS = [
   "schemaVersion",
   "generation",
   "agentDir",
+  "agentMemory",
   "settings",
   "timeouts",
   "providerCatalog",
@@ -499,6 +500,14 @@ function validateManagedConfig(managedConfig) {
   );
   if (managedConfig.agentDir !== "pi-default") {
     invalidInput("managedConfig.agentDir");
+  }
+  requireExactKeys(managedConfig.agentMemory, ["secretReference", "url"], "managedConfig.agentMemory");
+  if (
+    managedConfig.agentMemory.url !== "http://127.0.0.1:3111"
+    || typeof managedConfig.agentMemory.secretReference !== "string"
+    || managedConfig.agentMemory.secretReference.length === 0
+  ) {
+    invalidInput("managedConfig.agentMemory");
   }
   requireExactKeys(
     managedConfig.settings,

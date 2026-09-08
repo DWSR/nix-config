@@ -273,7 +273,7 @@ test("built guidance tree, bytes, modes, and empty runtime closure are exact", {
     .join("\n");
   assert.doesNotMatch(
     combined,
-    /\/nix\/store\/|sk-proj-task-6-1|Bearer\s+\S+|token\s*[:=]\s*\S+/i,
+    /\/nix\/store\/|sk-proj-task-6-1|Bearer\s+[A-Za-z0-9_-]{20,}|token\s*[:=]\s*\S+/i,
   );
   assert.deepEqual(queryStore(first, "--references"), []);
   assert.deepEqual(queryStore(first, "--requisites"), [first]);
@@ -293,18 +293,18 @@ test("Pi instructions encode memory, MCP, package, Plan, subprocess, and rollbac
   const rollbackProse = normalizeProse(rollback);
   const memoryProse = normalizeProse(memory);
 
-  assert.match(memory, /Before any work, verify both Obsidian and Cavemem through mcpproxy/i);
+  assert.match(memory, /Before any work, verify Obsidian through mcpproxy/i);
   assert.match(memory, /`\{"query":"obsidian list-notes"\}`/);
   assert.match(memoryProse, /returned `name` must begin with `obsidian:`/i);
   assert.match(
     memory,
     /`\{"name":"obsidian:list-notes","args":\{"directory":"memories","limit":1\}\}`/,
   );
-  assert.match(memory, /`\{"query":"cavemem list sessions"\}`/);
-  assert.match(memoryProse, /returned `name` must begin with `cavemem:`/i);
+  assert.match(memory, /bundled `memory_health` tool/);
+  assert.match(memoryProse, /standard authenticated AgentMemory routes/i);
   assert.match(
     memory,
-    /`\{"name":"cavemem:list_sessions","args":\{"limit":1\}\}`/,
+    /`memory_search` to recall prior Pi memory/,
   );
   assert.match(memoryProse, /pass the exact returned name unchanged/i);
   assert.match(memoryProse, /never guess a tool name/i);
@@ -337,7 +337,7 @@ test("Pi instructions encode memory, MCP, package, Plan, subprocess, and rollbac
 
   assert.match(subprocessProse, /Provider values belong only to root Pi and foreground child Pi/i);
   assert.match(subprocessProse, /credential-scrubbed environment/i);
-  assert.match(subprocessProse, /Bash, background tasks, language servers, and Cavemem/i);
+  assert.match(subprocessProse, /Bash, background tasks, and language servers/i);
   assert.match(subprocessProse, /bounded process-group cleanup/i);
 
   assert.match(rollbackProse, /`PI_NONO=disabled pi`/);
@@ -373,6 +373,8 @@ test("operator guide covers setup, status, overrides, recovery, updates, and rol
     /final managed launcher.*`pi --managed-status`.*after downstream wiring is complete/i,
   );
   assert.match(statusProse, /redacted/i);
+  assert.match(statusProse, /AgentMemory URL, health, and readiness/i);
+  assert.doesNotMatch(statusProse, /Cavemem/i);
   for (const field of [
     /generation/i,
     /Pi version/i,
@@ -380,7 +382,7 @@ test("operator guide covers setup, status, overrides, recovery, updates, and rol
     /sandbox state/i,
     /active profile/i,
     /MCP endpoint and readiness/i,
-    /Cavemem data directory and readiness/i,
+    /AgentMemory (?:URL|health|readiness)/i,
     /extension versions/i,
     /LSP state/i,
     /configuration drift/i,

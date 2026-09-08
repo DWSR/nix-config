@@ -20,7 +20,7 @@ export const MANIFEST_ALTERATIONS = [
     kind: "duplicate",
     component: "extension manifest",
     alter({ manifest }) {
-      manifest.extensionOrder[8] = "cavemem";
+       manifest.extensionOrder[8] = "agentmemory";
     },
   },
   {
@@ -28,7 +28,7 @@ export const MANIFEST_ALTERATIONS = [
     kind: "duplicate",
     component: "extension manifest",
     alter({ provenance }) {
-      provenance.extensions.mcp.package = provenance.extensions.cavemem.package;
+       provenance.extensions.mcp.package = provenance.extensions.agentmemory.package;
     },
   },
   {
@@ -36,7 +36,7 @@ export const MANIFEST_ALTERATIONS = [
     kind: "duplicate",
     component: "extension manifest",
     alter({ manifest }) {
-      manifest.extensions.mcp.entryPath = manifest.extensions.cavemem.entryPath;
+       manifest.extensions.mcp.entryPath = manifest.extensions.agentmemory.entryPath;
     },
   },
   {

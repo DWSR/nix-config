@@ -13,7 +13,7 @@ let
   expectedPiVersion = "0.83.0";
   expectedNonoVersion = "0.69.0";
   expectedExtensionOrder = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -24,20 +24,12 @@ let
     "backgroundTasks"
   ];
   requiredPatchNames = [
-    "pi-cavemem-environment-bootstrap.patch"
     "pi-context-recovery.patch"
     "pi-launch-redaction-bootstrap.patch"
     "pi-undici-8.9.0.patch"
   ];
   selectedPatchNames = map (
-    patch:
-    let
-      name = builtins.baseNameOf (builtins.unsafeDiscardStringContext (toString patch));
-    in
-    if builtins.match "[0-9a-z]{32}-pi-cavemem-environment-bootstrap\\.patch" name != null then
-      "pi-cavemem-environment-bootstrap.patch"
-    else
-      name
+    patch: builtins.baseNameOf (builtins.unsafeDiscardStringContext (toString patch))
   ) (piPackage.patches or [ ]);
   hasRequiredPatches = builtins.all (
     name: builtins.length (builtins.filter (candidate: candidate == name) selectedPatchNames) == 1

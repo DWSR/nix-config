@@ -24,6 +24,10 @@ let
       modules = [
         personalHomeModule
         homeDefaults
+        {
+          home.mcp.keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
+          programs.agentmemory.enable = true;
+        }
       ]
       ++ extraModules;
     };
@@ -64,8 +68,8 @@ let
       ;
     package = toString personalConfig.package;
     packageVersion = personalConfig.package.version;
-    cavememDataDir = if personalConfig.enable then personalConfig.internal.cavememDataDir else null;
-    hostCavememDataDir = toString personal.config.home.cavemem.dataDir;
+    agentMemoryUrl = personalConfig.internal.agentMemoryUrl;
+    agentMemorySecretReference = personalConfig.internal.agentMemorySecretReference;
     inherit extensionRefs;
     extensionManifest = pathOrNull personalConfig.internal.extensionManifest;
     extensionIdentity = pathOrNull personalConfig.internal.extensionIdentity;

@@ -13,7 +13,7 @@ let
   launchSentinel = "a56aa56a-5a56-456a-856a-a56aa56aa56a";
   openAiSentinel = "task-5-6-openai-sentinel";
   extensionOrder = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -24,7 +24,7 @@ let
     "backgroundTasks"
   ];
   extensionVersions = {
-    cavemem = "0.1.0";
+    agentmemory = "0.9.29";
     mcp = "0.1.0";
     subagents = "0.40.0";
     plan = "0.49.2";
@@ -35,10 +35,10 @@ let
     backgroundTasks = "2.0.0";
   };
   manifestExtensions = {
-    cavemem = {
-      version = extensionVersions.cavemem;
-      entryPath = "lib/pi-agent/extensions/cavemem/index.ts";
-      license = "MIT";
+    agentmemory = {
+      version = extensionVersions.agentmemory;
+      entryPath = "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
+      license = "Apache-2.0";
     };
     mcp = {
       version = extensionVersions.mcp;
@@ -93,6 +93,22 @@ let
   canonicalIdentity = pkgs.pi-agent-extensions.identity;
   provenanceFixture =
     repoRoot + "/tests/pi-agent/fixtures/extension-manifest/provenance-fixtures.mjs";
+  extensionFiles = [
+    "lib/pi-agent/extensions/managed-loader.ts"
+    "lib/pi-agent/extensions/managed-manifest.ts"
+    "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts"
+    "lib/pi-agent/extensions/mcpproxy/index.ts"
+    "lib/node_modules/pi-subagents/index.ts"
+    "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts"
+    "lib/node_modules/@narumitw/pi-stamp/src/index.ts"
+    "lib/node_modules/@mrclrchtr/supi-bash-timeout/src/extension.ts"
+    "lib/node_modules/@mrclrchtr/supi-ask-user/src/extension.ts"
+    "lib/node_modules/@mrclrchtr/supi-code-intelligence/src/extension.ts"
+    "lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts"
+  ];
+  copyExtensionFiles = lib.concatMapStringsSep "\n" (
+    relativePath: "install -Dm444 ${pkgs.pi-agent-extensions}/${relativePath} \"$out/${relativePath}\""
+  ) extensionFiles;
   degradedManifest = pkgs.writeText "pi-agent-task-5-6-degraded-extensions.json" (
     builtins.toJSON {
       schemaVersion = 1;
@@ -123,8 +139,14 @@ let
         unsafeDiscardReferences.identity = true;
       }
       ''
-        mkdir -p "$out"
-        cp -R ${pkgs.pi-agent-extensions}/. "$out/"
+         mkdir -p "$out"
+         if [ "$operation" = hardlink ]; then
+           cp -R ${pkgs.pi-agent-extensions}/. "$out/"
+         else
+           install -Dm444 ${pkgs.pi-agent-extensions}/share/pi-agent/extensions.json "$out/share/pi-agent/extensions.json"
+           install -Dm444 ${pkgs.pi-agent-extensions}/share/pi-agent/extensions-provenance.json "$out/share/pi-agent/extensions-provenance.json"
+           ${copyExtensionFiles}
+         fi
         chmod -R u+w "$out"
         node ${provenanceFixture} prepare \
           "$out" \
@@ -217,41 +239,6 @@ let
     openAiSentinel
     adminSentinel
   ];
-  fakeCavemem = pkgs.writeTextFile {
-    name = "pi-agent-task-5-6-cavemem";
-    destination = "/bin/cavemem";
-    executable = true;
-    text = ''
-      #!${pkgs.nodejs}/bin/node
-      import fs from "node:fs";
-      import path from "node:path";
-
-       const forbidden = ${builtins.toJSON forbiddenProbeValues};
-       const dataDir = process.env.CAVEMEM_DATA_DIR;
-       if (
-        process.argv.length !== 4
-        || process.argv[2] !== "worker"
-         || process.argv[3] !== "status"
-         || typeof dataDir !== "string"
-         || forbidden.some((secret) => process.cwd().includes(secret))
-       ) {
-        process.exit(64);
-      }
-      if (
-        Object.values(process.env).some((value) =>
-          forbidden.some((secret) => value.includes(secret)),
-        )
-      ) {
-        fs.writeFileSync(path.join(dataDir, "probe-secret-observed"), "observed\n");
-        process.exit(71);
-      }
-      process.stdout.write(
-        fs.existsSync(path.join(dataDir, "worker-ready"))
-          ? "running (pid 4242)\n"
-          : "not running\n",
-      );
-    '';
-  };
   fakeSecurity = pkgs.writeTextFile {
     name = "pi-agent-task-5-6-security";
     destination = "/bin/security";
@@ -344,7 +331,7 @@ let
       }
       if (
         options.adminApiKey !== ADMIN_KEY
-        || JSON.stringify(options.mandatoryUpstreams) !== '["obsidian","cavemem"]'
+         || JSON.stringify(options.mandatoryUpstreams) !== '["obsidian","agentmemory"]'
       ) {
         throw new Error("credential-bearing MCP fixture input rejected");
       }
@@ -388,6 +375,10 @@ let
         schemaVersion = 1;
         inherit generation;
         agentDir = "pi-default";
+        agentMemory = {
+          url = "http://127.0.0.1:3111";
+          secretReference = "agentmemory-bearer";
+        };
         settings = managedSettings;
         timeouts.bashDefaultMs = 120000;
         providerSelection =
@@ -447,12 +438,10 @@ let
       mode,
       mcpPreflightModule ? null,
       piPackage ? fakePi,
-      cavememPackage ? fakeCavemem,
       keychainExecutable ? "${fakeSecurity}/bin/security",
     }:
     import (repoRoot + "/scripts/pi-agent-status.nix") {
       inherit
-        cavememPackage
         extensionIdentity
         extensionManifest
         keychainExecutable
@@ -563,7 +552,6 @@ let
     extensionManifest = completeManifest;
     mode = "personal";
     piPackage = pkgs.pi-agent;
-    cavememPackage = pkgs.cavemem;
     keychainExecutable = "/usr/bin/security";
   };
   packages = pkgs.linkFarm "pi-agent-task-5-6-status-fixtures" [

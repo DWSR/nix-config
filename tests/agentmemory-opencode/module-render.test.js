@@ -25,13 +25,15 @@ function renderModule({ enable }) {
   hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
     inherit pkgs;
     modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
-      {
+       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+       "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+       {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
-        programs.agentmemory = {
-          enable = ${nixBoolean};
+         programs.agentmemory = {
+           enable = ${nixBoolean};
           dataDir = "/tmp/agentmemory/data";
           runtimeDir = "/tmp/agentmemory/runtime";
           logDir = "/tmp/agentmemory/logs";
@@ -40,8 +42,9 @@ function renderModule({ enable }) {
           viewerPort = 35113;
           enginePort = 61134;
           bearerReference = "agentmemory-bearer";
-          backupDestination = "/tmp/agentmemory/backups";
-        };
+           backupDestination = "/tmp/agentmemory/backups";
+         };
+         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
       }
     ];
   }).config;
@@ -89,8 +92,9 @@ function renderStockMcpModule({ enable }) {
   hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
     inherit pkgs;
     modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
+       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+       ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
       "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
       {
         home.username = "brandonmcnama";
@@ -101,10 +105,11 @@ function renderStockMcpModule({ enable }) {
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
           keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
         };
-        programs.agentmemory = {
-          enable = ${nixBoolean};
-          restPort = 35111;
-        };
+         programs.agentmemory = {
+           enable = ${nixBoolean};
+           restPort = 35111;
+         };
+         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
         programs.opencode.settings.mcp.mcpproxy = {
           type = "remote";
           url = "http://127.0.0.1:8080/mcp";
@@ -155,7 +160,8 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
-        programs.agentmemory.enable = ${nixBoolean};
+         programs.agentmemory.enable = ${nixBoolean};
+         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
         programs.session-compaction = {
           enable = true;
           thresholdTokens = 123456;
@@ -218,7 +224,7 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   );
   assert.match(first.plugin.sourceText, /export const AgentmemoryCapturePlugin/);
   assert.doesNotMatch(first.configTexts.join('\n'), /connect opencode/);
-  assert.doesNotMatch(first.configTexts.join('\n'), /@agentmemory\/mcp|agentmemory.*mcp/i);
+  assert.doesNotMatch(first.configTexts.join('\n'), /@agentmemory\/mcp/i);
   assert.doesNotMatch(agentMemoryModuleSource, /programs\.opencode/);
 });
 
@@ -349,6 +355,9 @@ test('ConsumerCutover removes synthesis and sync consumers only in AgentMemory m
   for (const rendered of [agentMemory, cavemem]) {
     assert.match(rendered.context, /## Obsidian Memory Recall/);
     assert.match(rendered.context, /## Obsidian Tool Reference/);
-    assert.match(rendered.context, /automatic AgentMemory-to-Obsidian promotion is not provided/);
+    assert.match(
+      rendered.context,
+      /automatic (?:AgentMemory|ambient-backend)-to-Obsidian promotion is not provided/,
+    );
   }
 });

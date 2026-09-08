@@ -23,9 +23,10 @@ function responseFor(probe, request) {
       };
     case "mcpproxy":
       return { tools: directTools };
-    case "cavemem":
+    case "agentmemory":
       return {
-        observationId: request?.observationId ?? "fixture-observation-1",
+        status: request?.status ?? "healthy",
+        sessionId: request?.sessionId ?? "fixture-agentmemory-session",
         stored: true,
       };
     case "nono":

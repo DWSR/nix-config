@@ -17,6 +17,7 @@ let
     "shopify-gateway-base"
   ];
   sensitiveNames = lib.sort builtins.lessThan [
+    "AGENTMEMORY_SECRET"
     "AI_GATEWAY_API_KEY"
     "ANTHROPIC_API_KEY"
     "ANTHROPIC_AUTH_TOKEN"
@@ -92,15 +93,6 @@ let
       "SSL_CERT_FILE"
     ]
   );
-  cavememEnvironmentAllowlist = lib.sort builtins.lessThan (
-    lib.filter (
-      name:
-      !builtins.elem name sensitiveNames
-      && name != bashTimeoutBinding.environmentName
-      && name != "CAVEMEM_NO_AUTOSTART"
-      && !lib.hasPrefix "PI_SUBAGENT_" name
-    ) (lib.unique (shellAllowlist ++ [ "CAVEMEM_DATA_DIR" ]))
-  );
   shellRemoveNames = lib.sort builtins.lessThan (
     lib.unique (sensitiveNames ++ [ bashTimeoutBinding.environmentName ])
   );
@@ -116,8 +108,6 @@ let
     backgroundPipe = "scrubbedEnvironment";
     backgroundPty = "scrubbedEnvironment";
     languageServer = "scrubbedEnvironment";
-    cavememHook = "scrubbedEnvironment";
-    cavememWorker = "scrubbedEnvironment";
     statusProbe = "scrubbedEnvironment";
     validatorProbe = "scrubbedEnvironment";
   };
@@ -165,7 +155,6 @@ let
       text = ''
         const MODE = ${builtins.toJSON mode};
         const BASH_TIMEOUT_BINDING_VALUE = ${builtins.toJSON bashTimeoutBinding};
-        const CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES = ${builtins.toJSON cavememEnvironmentAllowlist};
         const ROOT_PI_ENVIRONMENT_ALLOWLIST_VALUES = ${builtins.toJSON rootPiEnvironmentAllowlist};
         const RESOLVER_PLAN_VALUES = ${builtins.toJSON resolverPlans};
         const SENSITIVE_NAME_VALUES = ${builtins.toJSON sensitiveNames};
@@ -319,7 +308,6 @@ let
         }
 
         export const bashTimeoutBinding = deepFreeze(BASH_TIMEOUT_BINDING_VALUE);
-        export const cavememEnvironmentAllowlist = deepFreeze(CAVEMEM_ENVIRONMENT_ALLOWLIST_VALUES);
         export const rootPiEnvironmentAllowlist = deepFreeze(ROOT_PI_ENVIRONMENT_ALLOWLIST_VALUES);
         export const resolverPlans = deepFreeze(RESOLVER_PLAN_VALUES);
         export const sensitiveNames = deepFreeze(SENSITIVE_NAME_VALUES);
@@ -467,7 +455,6 @@ in
 {
   inherit
     bashTimeoutBinding
-    cavememEnvironmentAllowlist
     managedShell
     resolverKinds
     shellAllowlist

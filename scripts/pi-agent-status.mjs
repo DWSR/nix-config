@@ -18,7 +18,6 @@ const EXTENSION_PROBE_MODULE = fileURLToPath(
 const NODE_EXECUTABLE = "__PI_AGENT_STATUS_NODE__";
 const EXTENSION_PACKAGE_ROOT = "__PI_AGENT_STATUS_EXTENSION_PACKAGE_ROOT__";
 const PROBE_CWD = "__PI_AGENT_STATUS_PROBE_CWD__";
-const CAVEMEM_EXECUTABLE = "__PI_AGENT_STATUS_CAVEMEM__";
 const KEYCHAIN_EXECUTABLE = "__PI_AGENT_STATUS_KEYCHAIN__";
 const EXPECTED_PI_VERSION = "__PI_AGENT_STATUS_PI_VERSION__";
 const EXPECTED_SANDBOX_DEFAULT = "__PI_AGENT_STATUS_SANDBOX_DEFAULT__";
@@ -31,8 +30,8 @@ const MANAGED_SETTING_KEYS = Object.freeze([
   "unmanagedPackages",
 ]);
 const MCP_RECOVERY = "restart mcpproxy or repair the declared upstream";
-const CAVEMEM_RECOVERY =
-  "restart the Cavemem worker and verify the managed data directory";
+const AGENTMEMORY_RECOVERY =
+  "restart the AgentMemory daemon and verify its authenticated health route";
 const EXTENSION_RECOVERY =
   "rebuild pi-agent-extensions and activate the managed generation";
 const LSP_RECOVERY =
@@ -57,8 +56,8 @@ const STATUS_KEYS = Object.freeze([
   "profile",
   "mcpEndpoint",
   "mcpReady",
-  "cavememDataDir",
-  "cavememReady",
+  "agentMemoryUrl",
+  "agentMemoryReady",
   "extensions",
   "drift",
   "lsp",
@@ -112,7 +111,7 @@ const AUTHORITATIVE_SENSITIVE_NAMES = snapshotSensitiveNames(
   CREDENTIAL_POLICY.sensitiveNames,
 );
 
-function statusError() {
+function statusError(message = "status rejection") {
   return STATUS_REJECTION;
 }
 
@@ -325,10 +324,10 @@ function snapshotIssue(value) {
       failStatusOutput();
   } else if (component === "mcp") {
     if (state !== "degraded" || recovery !== MCP_RECOVERY) failStatusOutput();
-  } else if (component === "cavemem") {
+  } else if (component === "agentmemory") {
     if (
       !["degraded", "missing"].includes(state) ||
-      recovery !== CAVEMEM_RECOVERY
+       recovery !== AGENTMEMORY_RECOVERY
     ) {
       failStatusOutput();
     }
@@ -376,12 +375,12 @@ function snapshotStatusV1(value, expected = {}) {
         status.mcpEndpoint,
       ) ||
       typeof status.mcpReady !== "boolean" ||
-      typeof status.cavememDataDir !== "string" ||
-      status.cavememDataDir.length === 0 ||
-      status.cavememDataDir.length > STATUS_STRING_LIMIT ||
-      !path.isAbsolute(status.cavememDataDir) ||
-      HUMAN_CONTROL.test(status.cavememDataDir) ||
-      typeof status.cavememReady !== "boolean" ||
+       typeof status.agentMemoryUrl !== "string" ||
+       status.agentMemoryUrl.length === 0 ||
+       status.agentMemoryUrl.length > STATUS_STRING_LIMIT ||
+       !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(status.agentMemoryUrl) ||
+       HUMAN_CONTROL.test(status.agentMemoryUrl) ||
+       typeof status.agentMemoryReady !== "boolean" ||
       !["complete", "degraded", "drifted"].includes(status.status)
     ) {
       failStatusOutput();
@@ -436,7 +435,7 @@ function snapshotStatusV1(value, expected = {}) {
       .sort(compareText);
     if (
       hasIssue("mcp") === status.mcpReady ||
-      hasIssue("cavemem") === status.cavememReady ||
+       hasIssue("agentmemory") === status.agentMemoryReady ||
       hasIssue("extensions") === extensionReady ||
       !sameStrings(lspIssues, missingLsp) ||
       hasIssue("reconciliation") !== (drift.length !== 0)
@@ -459,8 +458,8 @@ function snapshotStatusV1(value, expected = {}) {
       profile: status.profile,
       mcpEndpoint: status.mcpEndpoint,
       mcpReady: status.mcpReady,
-      cavememDataDir: status.cavememDataDir,
-      cavememReady: status.cavememReady,
+       agentMemoryUrl: status.agentMemoryUrl,
+       agentMemoryReady: status.agentMemoryReady,
       extensions,
       drift,
       lsp,
@@ -500,11 +499,15 @@ function validateManagedConfig(config) {
     new Set(config.extensionOrder).size !== config.extensionOrder.length ||
     config.extensionManifest !== EXTENSION_MANIFEST_PATH ||
     !isPlainObject(config.lspExecutables) ||
-    typeof config.mcpEndpoint !== "string" ||
+     typeof config.mcpEndpoint !== "string" ||
     !/^http:\/\/127\.0\.0\.1:(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])\/mcp$/.test(
       config.mcpEndpoint,
-    ) ||
-    config.sandboxDefault !== EXPECTED_SANDBOX_DEFAULT
+     ) ||
+     !isPlainObject(config.agentMemory) ||
+     config.agentMemory.url !== "http://127.0.0.1:3111" ||
+     typeof config.agentMemory.secretReference !== "string" ||
+     config.agentMemory.secretReference.length === 0 ||
+     config.sandboxDefault !== EXPECTED_SANDBOX_DEFAULT
   ) {
     throw statusError("managed status contract invalid");
   }
@@ -537,19 +540,19 @@ function validateManagedConfig(config) {
 function snapshotInput(input) {
   const snapshot = snapshotClosedDataObject(
     input,
-    ["schemaVersion", "agentDir", "cavememDataDir"],
+     ["schemaVersion", "agentDir", "agentMemoryUrl", "agentMemorySecretReference"],
     "managed status input invalid",
   );
   if (snapshot.schemaVersion !== 1) {
     throw statusError("managed status input invalid");
   }
-  for (const key of ["agentDir", "cavememDataDir"]) {
+   for (const key of ["agentDir", "agentMemoryUrl", "agentMemorySecretReference"]) {
     const value = snapshot[key];
     if (
       typeof value !== "string" ||
       value.length === 0 ||
       value.length > 4_096 ||
-      !path.isAbsolute(value) ||
+       (key === "agentDir" && !path.isAbsolute(value)) ||
       HUMAN_CONTROL.test(value)
     ) {
       throw statusError("managed status input invalid");
@@ -557,7 +560,8 @@ function snapshotInput(input) {
   }
   return Object.freeze({
     agentDir: snapshot.agentDir,
-    cavememDataDir: snapshot.cavememDataDir,
+     agentMemoryUrl: snapshot.agentMemoryUrl,
+     agentMemorySecretReference: snapshot.agentMemorySecretReference,
   });
 }
 
@@ -725,40 +729,21 @@ function containsExactValue(value, redactionValues) {
   return redactionValues.some((secret) => value.includes(secret));
 }
 
-function cavememState(dataDir, probeEnvironment, redactionValues) {
-  if (containsExactValue(dataDir, redactionValues)) {
+async function agentMemoryState(url, secret, redactionValues) {
+  if (containsExactValue(url, redactionValues) || typeof secret !== "string" || secret.length === 0) {
     return { ready: false, state: "degraded" };
   }
   try {
-    if (!fs.statSync(dataDir).isDirectory())
-      return { ready: false, state: "missing" };
-  } catch {
-    return { ready: false, state: "missing" };
-  }
-
-  let result;
-  try {
-    const environment = {
-      ...probeEnvironment,
-      CAVEMEM_DATA_DIR: dataDir,
-    };
-    if (!containsExactValue("1", redactionValues)) environment.NO_COLOR = "1";
-    result = runProbe(CAVEMEM_EXECUTABLE, ["worker", "status"], {
-      environment: Object.freeze(environment),
-      timeout: PROBE_TIMEOUT_MS,
+    const response = await fetch(`${url}/agentmemory/health`, {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
     });
+    const body = await response.json();
+    const ready = response.ok && isPlainObject(body) && ["ok", "healthy"].includes(body.status);
+    return { ready, state: ready ? "ready" : "degraded" };
   } catch {
     return { ready: false, state: "degraded" };
   }
-  return {
-    ready:
-      result.error === undefined &&
-      result.signal === null &&
-      result.status === 0 &&
-      result.stderr === "" &&
-      /^running \(pid [1-9][0-9]*\)\n$/.test(result.stdout),
-    state: "degraded",
-  };
 }
 
 function extensionState(config, probeEnvironment) {
@@ -1114,8 +1099,8 @@ function redactStatusReport(status, redactionValues) {
         : redactExact(status.profile, redactionValues),
     mcpEndpoint: redactExact(status.mcpEndpoint, redactionValues),
     mcpReady: status.mcpReady,
-    cavememDataDir: redactExact(status.cavememDataDir, redactionValues),
-    cavememReady: status.cavememReady,
+    agentMemoryUrl: redactExact(status.agentMemoryUrl, redactionValues),
+    agentMemoryReady: status.agentMemoryReady,
     extensions: redactStatusMap(status.extensions, redactionValues),
     drift: status.drift.map((label) => redactExact(label, redactionValues)),
     lsp: redactStatusMap(status.lsp, redactionValues),
@@ -1152,8 +1137,9 @@ async function createManagedStatusInternal(input, captureRedactionValues) {
   }
 
   const environment = environmentSnapshot(process.env, [
-    ...credentialPolicy.sensitiveNames,
-    "PI_NONO",
+      ...credentialPolicy.sensitiveNames,
+      "AGENTMEMORY_SECRET",
+      "PI_NONO",
     "PI_NONO_PROFILE",
     "PI_NONO_LISTEN_PORTS",
   ]);
@@ -1177,9 +1163,9 @@ async function createManagedStatusInternal(input, captureRedactionValues) {
   );
   captureRedactionValues(Object.freeze([...redactionValues]));
   const mcpReady = mcpIsReady(config.mcpEndpoint, adminKey, probeEnvironment);
-  const cavemem = cavememState(
-    request.cavememDataDir,
-    probeEnvironment,
+  const agentMemory = await agentMemoryState(
+    request.agentMemoryUrl,
+    environment.AGENTMEMORY_SECRET,
     redactionValues,
   );
   const extension = extensionState(config, probeEnvironment);
@@ -1189,8 +1175,8 @@ async function createManagedStatusInternal(input, captureRedactionValues) {
   if (!extension.ready)
     addIssue(issues, "extensions", "degraded", EXTENSION_RECOVERY);
   if (!mcpReady) addIssue(issues, "mcp", "degraded", MCP_RECOVERY);
-  if (!cavemem.ready)
-    addIssue(issues, "cavemem", cavemem.state, CAVEMEM_RECOVERY);
+  if (!agentMemory.ready)
+    addIssue(issues, "agentmemory", agentMemory.state, AGENTMEMORY_RECOVERY);
   for (const [name, state] of Object.entries(lsp)) {
     if (state !== "ready")
       addIssue(issues, `lsp:${name}`, "missing", LSP_RECOVERY);
@@ -1222,8 +1208,8 @@ async function createManagedStatusInternal(input, captureRedactionValues) {
       profile: sandbox.profile,
       mcpEndpoint: config.mcpEndpoint,
       mcpReady,
-      cavememDataDir: request.cavememDataDir,
-      cavememReady: cavemem.ready,
+      agentMemoryUrl: request.agentMemoryUrl,
+      agentMemoryReady: agentMemory.ready,
       extensions: extension.extensions,
       drift,
       lsp,
@@ -1258,7 +1244,7 @@ function renderManagedStatus(report) {
     `Provider: ${report.providerMode}`,
     `Sandbox: ${report.sandboxState} (${sandboxProfile})`,
     `MCP: ${report.mcpReady ? "ready" : "not ready"} (${report.mcpEndpoint})`,
-    `Cavemem: ${report.cavememReady ? "ready" : "not ready"} (${report.cavememDataDir})`,
+    `AgentMemory: ${report.agentMemoryReady ? "ready" : "not ready"} (${report.agentMemoryUrl})`,
     `Extensions: ${extensions || "none"}`,
     `LSP: ${lsp || "none"}`,
     `Drift: ${report.drift.length === 0 ? "none" : report.drift.join(", ")}`,

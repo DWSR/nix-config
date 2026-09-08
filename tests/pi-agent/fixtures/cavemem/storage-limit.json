@@ -1,7 +1,0 @@
-{
-  "sqliteMaxLength": 65536,
-  "sessionId": "pi-full-storage-limit",
-  "toolCallId": "call-pi-full-storage-limit",
-  "toolName": "StorageLimitProbe",
-  "searchTerm": "activelimitbm25marker"
-}

@@ -27,7 +27,6 @@ let root;
 let cwd;
 let agentDir;
 let sessionsDir;
-let dataDir;
 let timeoutEffects;
 let ptyScript;
 let timeoutProbeObservationPath;
@@ -84,10 +83,9 @@ async function setup() {
   cwd = path.join(root, "workspace");
   agentDir = path.join(root, "agent");
   sessionsDir = path.join(root, "sessions");
-  dataDir = path.join(root, "cavemem");
   timeoutEffects = path.join(root, "timeout-effects.log");
   ptyScript = path.join(root, "interactive-pty.cjs");
-  for (const directory of [cwd, agentDir, sessionsDir, dataDir, path.dirname(ptyScript)]) {
+  for (const directory of [cwd, agentDir, sessionsDir, path.dirname(ptyScript)]) {
     fs.mkdirSync(directory, { recursive: true });
   }
 
@@ -105,19 +103,6 @@ async function setup() {
   fs.mkdirSync(path.join(cwd, ".pi"), { recursive: true });
   fs.writeFileSync(path.join(cwd, ".pi/settings.json"), "{}\n");
   fs.writeFileSync(
-    path.join(dataDir, "settings.json"),
-    `${JSON.stringify({
-      dataDir,
-      workerPort: 37777,
-      logLevel: "error",
-      compression: { intensity: "full", expandForModel: true },
-      embedding: { provider: "none", model: "interactive", batchSize: 16, autoStart: false, idleShutdownMs: 60_000 },
-      search: { alpha: 0.5, defaultLimit: 20 },
-      privacy: { excludePatterns: [], redactSecrets: true },
-      ides: {},
-    }, null, 2)}\n`,
-  );
-  fs.writeFileSync(
     ptyScript,
     [
       "const readline = require('node:readline');",
@@ -130,7 +115,6 @@ async function setup() {
   timeoutProbeObservationPath = path.join(root, "timeout-descendant-observation.json");
 
   environmentValues = {
-    CAVEMEM_DATA_DIR: dataDir,
     HOME: path.join(root, "home"),
     LANG: "C",
     LC_ALL: "C",
@@ -205,25 +189,6 @@ function installCapabilitySymbols() {
     writable: false,
   });
 
-  const environment = {};
-  for (const [name, value] of Object.entries(environmentValues)) {
-    Object.defineProperty(environment, name, { configurable: false, enumerable: true, value, writable: false });
-  }
-  Object.freeze(environment);
-  const capability = { schemaVersion: 1, environment };
-  Object.defineProperty(capability, "toJSON", {
-    configurable: false,
-    enumerable: false,
-    value: Object.freeze(() => { throw new Error("Cavemem environment is not serializable"); }),
-    writable: false,
-  });
-  Object.freeze(capability);
-  Object.defineProperty(globalThis, Symbol.for("dwsr.pi-agent.cavemem-environment.v1"), {
-    configurable: false,
-    enumerable: false,
-    value: capability,
-    writable: false,
-  });
 }
 function createUi() {
   const notifications = [];

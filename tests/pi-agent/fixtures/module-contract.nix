@@ -68,7 +68,7 @@ let
   };
 
   extensionNames = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -288,7 +288,7 @@ let
   invalidPath =
     relativePath:
     forceModule (overridePi {
-      extensions.cavemem = {
+      extensions.agentmemory = {
         package = extensionPackage;
         inherit relativePath;
       };
@@ -468,10 +468,10 @@ let
     });
 
     extension-store-root = forceModule (overridePi {
-      extensions.cavemem.storeRoot = "/nix/store/fixture-root";
+      extensions.agentmemory.storeRoot = "/nix/store/fixture-root";
     });
     extension-raw-package-string = forceModule (overridePi {
-      extensions.cavemem.package = "/nix/store/fixture-package";
+      extensions.agentmemory.package = "/nix/store/fixture-package";
     });
     root-forged-package = forceModule (overridePi {
       package = forgedPackage;

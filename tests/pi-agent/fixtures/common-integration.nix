@@ -8,13 +8,11 @@ let
   home-manager = flake.inputs.home-manager;
 
   commonModule = repoRoot + "/home-manager/common";
-  cavememModule = repoRoot + "/home-manager/common/cavemem.nix";
   homeDefaults = {
     home = {
       username = "pi-agent-integration";
       homeDirectory = "/tmp/pi-agent-integration";
       stateVersion = "26.05";
-      cavemem.dataDir = "/tmp/pi-agent-integration/cavemem";
     };
   };
 
@@ -27,7 +25,6 @@ let
       };
       modules = [
         commonModule
-        cavememModule
         homeDefaults
         module
       ];
@@ -44,6 +41,7 @@ let
         };
       };
     };
+    programs.agentmemory.enable = true;
   };
   disabled = mkConfiguration { };
   shopify = mkConfiguration {
@@ -64,6 +62,7 @@ let
         };
       };
     };
+    programs.agentmemory.enable = true;
   };
 
   packageNames =

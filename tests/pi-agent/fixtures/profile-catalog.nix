@@ -69,19 +69,6 @@ else if fixture == "missing-pi-state" then
       };
     }
   )
-else if fixture == "missing-cavemem-state" then
-  validate (
-    profiles
-    // {
-      pi-managed = profiles.pi-managed // {
-        filesystem = profiles.pi-managed.filesystem // {
-          allow = builtins.filter (
-            path: path != "$XDG_DATA_HOME/cavemem"
-          ) profiles.pi-managed.filesystem.allow;
-        };
-      };
-    }
-  )
 else if fixture == "missing-private-temp" then
   validate (
     profiles

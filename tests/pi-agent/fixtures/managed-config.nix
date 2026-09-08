@@ -6,9 +6,29 @@ let
   flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString repoRoot));
   supportedPkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
   modulePath = repoRoot + "/home-manager/common/pi-agent/default.nix";
+  agentMemoryModule =
+    { lib, pkgs, ... }:
+    {
+      options.programs.agentmemory = {
+        enable = lib.mkEnableOption "fixture AgentMemory";
+        package = lib.mkOption {
+          type = lib.types.package;
+          default = pkgs.agentmemory;
+        };
+        restPort = lib.mkOption {
+          type = lib.types.port;
+          default = 3111;
+        };
+        bearerReference = lib.mkOption {
+          type = lib.types.str;
+          default = "agentmemory-bearer";
+        };
+      };
+      config.programs.agentmemory.enable = false;
+    };
 
   extensionNames = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -123,6 +143,7 @@ let
       sandbox.defaultState = "audit";
       timeouts.bashDefaultMs = 543210;
     };
+    programs.agentmemory.enable = false;
   };
 
   mkEvaluation =
@@ -130,6 +151,7 @@ let
     pkgs.lib.evalModules {
       modules = [
         modulePath
+        agentMemoryModule
       ]
       ++ (if builtins.isList moduleConfig then moduleConfig else [ moduleConfig ]);
       specialArgs = {

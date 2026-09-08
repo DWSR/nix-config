@@ -6,7 +6,7 @@
 let
   supportedSystem = "aarch64-darwin";
   extensionNames = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -471,6 +471,10 @@ let
             enabledRoles = selectedRoles;
             inherit defaultModel;
           };
+      agentMemory = {
+        url = "http://127.0.0.1:${toString cfg.agentMemory.restPort}";
+        secretReference = cfg.agentMemory.secretReference;
+      };
       managedConfigValue = {
         schemaVersion = 1;
         inherit (cfg.state) generation;
@@ -488,6 +492,7 @@ let
         };
         timeouts.bashDefaultMs = cfg.timeouts.bashDefaultMs;
         inherit providerCatalog providerSelection;
+        inherit agentMemory;
         extensionManifest =
           if builtins.length manifests == 1 then
             builtins.head manifests

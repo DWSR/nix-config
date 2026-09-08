@@ -16,8 +16,8 @@ shell profiles, or generated files.
 This guidance package does not install this command. The final managed launcher
 will provide `pi --managed-status` only after downstream wiring is complete; it
 does not start Pi. Its redacted output covers generation, Pi version, provider
-mode, sandbox state, active profile, MCP endpoint and readiness, Cavemem data
-directory and readiness, extension versions, LSP state, and configuration drift.
+mode, sandbox state, active profile, MCP endpoint and readiness, AgentMemory URL,
+health, and readiness, extension versions, LSP state, and configuration drift.
 
 ## Sandbox overrides
 

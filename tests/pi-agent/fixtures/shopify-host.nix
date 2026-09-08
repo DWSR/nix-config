@@ -24,6 +24,10 @@ let
       modules = [
         shopifyHomeModule
         homeDefaults
+        {
+          home.mcp.keychainSecrets."agentmemory-bearer" = "op://Employee/AgentMemory/Bearer";
+          programs.agentmemory.enable = true;
+        }
       ]
       ++ extraModules;
     };
@@ -78,8 +82,8 @@ let
       ;
     package = toString shopifyConfig.package;
     packageVersion = shopifyConfig.package.version;
-    cavememDataDir = shopifyConfig.internal.cavememDataDir;
-    hostCavememDataDir = toString shopify.config.home.cavemem.dataDir;
+    agentMemoryUrl = shopifyConfig.internal.agentMemoryUrl;
+    agentMemorySecretReference = shopifyConfig.internal.agentMemorySecretReference;
     extensionRefs = builtins.mapAttrs (_name: packageReference) shopifyConfig.extensions;
     instructionRefs = map packageReference (shopifyConfig.instructions ++ shopifyConfig.resources);
     extensionManifest = pathOrNull shopifyConfig.internal.extensionManifest;

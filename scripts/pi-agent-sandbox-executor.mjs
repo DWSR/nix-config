@@ -184,7 +184,6 @@ const RECOVERY_BY_COMPONENT = Object.freeze({
   mcpproxy: "restore the profile localhost port 8080 grant and rebuild",
   "package-read": "restore read access to the immutable package closure and rebuild",
   "pi-state": "restore writable Pi agent state access and rebuild",
-  "cavemem-state": "restore writable Cavemem state access and rebuild",
   "temp-state": "restore writable private Pi temporary state access and rebuild",
   workspace: "select a profile with the required current-workspace access",
   environment: "restore the admitted root-Pi environment-name contract and rebuild",
@@ -925,7 +924,7 @@ function validateResolvedGrants(
   ) {
     fail("provider-network", "grant");
   }
-  if (!exactNumberArray(resolved.network.open_port, [contract.mcpPort])) {
+   if (!exactNumberArray(resolved.network.open_port, [contract.mcpPort, 3111])) {
     fail("mcpproxy", "grant");
   }
   if (resolved.workdir.access !== contract.workspaceAccess) {
@@ -989,20 +988,10 @@ function absoluteEnvironmentPath(name, fallback, component) {
 function runtimePaths() {
   const home = absoluteEnvironmentPath("HOME", null, "pi-state");
   const tmp = absoluteEnvironmentPath("TMPDIR", null, "temp-state");
-  const data = absoluteEnvironmentPath(
-    "XDG_DATA_HOME",
-    path.join(home, ".local/share"),
-    "cavemem-state",
-  );
   const agent = absoluteEnvironmentPath(
     "PI_CODING_AGENT_DIR",
     path.join(home, ".pi/agent"),
     "pi-state",
-  );
-  const cavemem = absoluteEnvironmentPath(
-    "CAVEMEM_DATA_DIR",
-    path.join(data, "cavemem"),
-    "cavemem-state",
   );
   let workspace;
   try {
@@ -1012,7 +1001,6 @@ function runtimePaths() {
   }
   return Object.freeze({
     agent,
-    cavemem,
     temp: path.join(tmp, "pi-agent"),
     workspace,
   });
@@ -1197,7 +1185,7 @@ function validateManifest(
         : networkPolicy === "unrestricted-audit"
           ? "unrestricted"
           : "blocked") ||
-    !exactNumberArray(manifest.network.ports.localhost, [contract.mcpPort]) ||
+     !exactNumberArray(manifest.network.ports.localhost, [contract.mcpPort, 3111]) ||
     (listenPorts.length > 0 &&
       !exactNumberArray(manifest.network.ports.bind, listenPorts)) ||
     (providerHost !== null &&
@@ -1205,7 +1193,7 @@ function validateManifest(
   ) {
     if (
       !exactDataObject(manifest.network?.ports, expectedPortKeys) ||
-      !exactNumberArray(manifest.network?.ports?.localhost, [contract.mcpPort])
+       !exactNumberArray(manifest.network?.ports?.localhost, [contract.mcpPort, 3111])
     ) {
       fail("mcpproxy", "grant");
     }
@@ -1234,7 +1222,6 @@ function validateManifest(
   const canonicalPaths = {};
   for (const [name, component] of [
     ["agent", "pi-state"],
-    ["cavemem", "cavemem-state"],
     ["temp", "temp-state"],
     ["workspace", "workspace"],
   ]) {
@@ -1245,7 +1232,6 @@ function validateManifest(
   }
   for (const [component, expectedPath, access] of [
     ["pi-state", canonicalPaths.agent, contract.agentDirAccess],
-    ["cavemem-state", canonicalPaths.cavemem, contract.cavememDirAccess],
     ["temp-state", canonicalPaths.temp, contract.tempDirAccess],
     ["workspace", canonicalPaths.workspace, contract.workspaceAccess],
   ]) {
@@ -1263,7 +1249,6 @@ function validateManifest(
   if (contract.workspaceAccess === "read") {
     for (const statePath of [
       canonicalPaths.agent,
-      canonicalPaths.cavemem,
       canonicalPaths.temp,
     ]) {
       if (pathContains(statePath, canonicalPaths.workspace)) {
@@ -1337,7 +1322,7 @@ function prepareEnabledExecution(input, selection, catalog) {
     !isDeepStrictEqual(entry, expectedEntry) ||
     !exactDataObject(entry.grantContract, [
       "agentDirAccess",
-      "cavememDirAccess",
+      "agentMemoryUrl",
       "mcpPort",
       "processMode",
       "providerHost",

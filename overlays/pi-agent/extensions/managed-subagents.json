@@ -16,7 +16,7 @@
       "read_cache"
     ],
     "extensions": [
-      "cavemem",
+      "agentmemory",
       "mcp"
     ],
     "mcp": "read-only"
@@ -36,7 +36,7 @@
       "write"
     ],
     "extensions": [
-      "cavemem"
+      "agentmemory"
     ],
     "mcp": "none"
   }

@@ -73,7 +73,6 @@ let
   ];
   statePaths = [
     "$HOME/.pi/agent"
-    "$XDG_DATA_HOME/cavemem"
     "$TMPDIR/pi-agent"
   ];
   sensitiveDirectories = [
@@ -92,7 +91,8 @@ let
     "$HOME/Library/Keychains"
   ];
   requiredEnvironmentNames = [
-    "CAVEMEM_DATA_DIR"
+    "AGENTMEMORY_SECRET"
+    "AGENTMEMORY_URL"
     "COLORTERM"
     "HOME"
     "LANG"
@@ -184,7 +184,10 @@ let
       network = {
         block = posture.networkBlock;
         allow_domain = [ ];
-        open_port = [ 8080 ];
+        open_port = [
+          8080
+          3111
+        ];
         listen_port = [ ];
       };
       environment = {
@@ -297,13 +300,10 @@ let
         (require name "filesystem.allow must grant $HOME/.pi/agent readwrite" (
           builtins.elem "$HOME/.pi/agent" filesystemAllow
         ))
-        (require name "filesystem.allow must grant $XDG_DATA_HOME/cavemem readwrite" (
-          builtins.elem "$XDG_DATA_HOME/cavemem" filesystemAllow
-        ))
         (require name "filesystem.allow must grant $TMPDIR/pi-agent readwrite" (
           builtins.elem "$TMPDIR/pi-agent" filesystemAllow
         ))
-        (require name "filesystem.allow must contain only writable Pi, Cavemem, and private-temp state" (
+        (require name "filesystem.allow must contain only writable Pi and private-temp state" (
           filesystemAllow == statePaths
         ))
         (require name "filesystem.read must be explicitly empty" (filesystemRead == [ ]))
@@ -314,7 +314,12 @@ let
         (require name "network.allow_domain must remain empty until runtime host validation" (
           networkAllowDomain == [ ]
         ))
-        (require name "network.open_port must be exactly [8080]" (networkOpenPort == [ 8080 ]))
+        (require name "network.open_port must be exactly [8080 3111]" (
+          networkOpenPort == [
+            8080
+            3111
+          ]
+        ))
         (require name "network.listen_port must be empty" (networkListenPort == [ ]))
         (require name "environment.allow_vars must match the root-Pi contract" (
           environmentAllowVars == requiredEnvironmentNames
@@ -340,7 +345,7 @@ let
     mcpPort = 8080;
     providerHost = null;
     agentDirAccess = "readwrite";
-    cavememDirAccess = "readwrite";
+    agentMemoryUrl = "http://127.0.0.1:3111";
     tempDirAccess = "readwrite";
     workspaceAccess = postures.${name}.workspaceAccess;
     processMode = postures.${name}.processMode;
@@ -390,7 +395,7 @@ let
           and .security.ipc_mode == "shared_memory_only"
           and .security.capability_elevation == false
           and .network.block == $network_block
-          and .network.open_port == [8080]
+           and .network.open_port == [8080, 3111]
           and .network.listen_port == []
           and .workdir.access == $workspace_access
           and (.groups.include | index("git_config") | not)
@@ -410,11 +415,10 @@ let
           and .process.process_info_mode == $process_mode
           and .process.ipc_mode == "shared_memory_only"
           and any(.filesystem.grants[]; .path == ($home + "/.pi/agent") and .access == "readwrite")
-          and any(.filesystem.grants[]; .path == ($data + "/cavemem") and .access == "readwrite")
-          and any(.filesystem.grants[]; .path == ($tmp + "/pi-agent") and .access == "readwrite")
+           and any(.filesystem.grants[]; .path == ($tmp + "/pi-agent") and .access == "readwrite")
           and any(.filesystem.grants[]; .path == $workspace and .access == $workspace_access)
           and any(.filesystem.grants[]; .path == "/nix/store" and .access == "read")
-          and .network.ports.localhost == [8080]' \
+           and .network.ports.localhost == [8080, 3111]' \
         "$manifest" >/dev/null
 
     ''
@@ -464,7 +468,6 @@ let
           "$out/share/pi-agent/nono/profiles" \
           "$out/share/pi-agent/nono/resolved" \
           "$XDG_CONFIG_HOME/nono/profiles" \
-          "$XDG_DATA_HOME/cavemem" \
           "$HOME/.pi/agent" \
           "$TMPDIR/pi-agent" \
           "$workspace" \

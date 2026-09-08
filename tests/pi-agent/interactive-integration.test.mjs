@@ -12,7 +12,7 @@ const repoRoot = path.resolve(testsDir, "../..");
 const probePath = path.join(testsDir, "fixtures/interactive-integration/runtime-probe.mjs");
 const mcpServerFixture = path.join(testsDir, "fixtures/mcpproxy-server.mjs");
 const expectedExtensionOrder = [
-  "cavemem",
+  "agentmemory",
   "mcp",
   "subagents",
   "plan",

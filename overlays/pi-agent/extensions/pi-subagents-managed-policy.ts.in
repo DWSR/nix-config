@@ -184,7 +184,7 @@ interface ManagedRole {
   maxToolCalls: number;
   workspace: "parent-read" | "parent-readwrite";
   tools: string[];
-  extensions: Array<"cavemem" | "mcp">;
+  extensions: Array<"agentmemory" | "mcp">;
   mcp: "none" | "read-only";
 }
 interface ManagedCatalog {
@@ -382,8 +382,13 @@ export function resolveManagedMcpDirectToolSelections(selectors: string[] | unde
   });
 }
 
-function extensionPath(name: "cavemem" | "mcp"): string {
-  return path.join(EXTENSION_ROOT, name === "cavemem" ? "cavemem/index.ts" : "mcpproxy/index.ts");
+function extensionPath(name: "agentmemory" | "mcp"): string {
+  return path.join(
+    EXTENSION_ROOT,
+    name === "agentmemory"
+      ? "node_modules/@agentmemory/agentmemory/integrations/pi/index.ts"
+      : "mcpproxy/index.ts",
+  );
 }
 
 export function createManagedAgents(): ManagedAgentConfig[] {

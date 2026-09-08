@@ -9,6 +9,12 @@ let
   inherit (lib) mkOption types;
 
   cfg = config.programs.agentmemory;
+  memoryBackend =
+    if config.home ? opencode && config.home.opencode ? memoryBackend then
+      config.home.opencode.memoryBackend
+    else
+      "cavemem";
+  isAgentMemory = memoryBackend == "agentmemory";
 
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
     inherit (cfg)
@@ -83,7 +89,7 @@ let
 in
 {
   options.programs.agentmemory = {
-    enable = lib.mkEnableOption "AgentMemory runtime for the OpenCode harness";
+    enable = lib.mkEnableOption "AgentMemory runtime for OpenCode and Pi";
 
     package = mkOption {
       type = types.package;
@@ -161,60 +167,67 @@ in
     };
   };
 
-  config = lib.mkIf cfg.enable {
-    assertions = lib.optional (options.home ? mcp) {
-      assertion = builtins.hasAttr cfg.bearerReference config.home.mcp.keychainSecrets;
-      message = "programs.agentmemory.bearerReference must name a home.mcp.keychainSecrets entry.";
-    };
+  config = lib.mkIf (cfg.enable && options ? home) (
+    {
+      home = {
+        packages = [
+          cfg.package
+          cfg.statusPackage
+        ]
+        ++ lib.optional (cfg.backupDestination != null) backupPackage;
 
-    home = {
-      packages = [
-        cfg.package
-        cfg.statusPackage
-      ]
-      ++ lib.optional (cfg.backupDestination != null) backupPackage;
+        file."${cfg.runtimeDir}/.env".text = settingsText;
 
-      file."${cfg.runtimeDir}/.env".text = settingsText;
+        activation.agentmemoryLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+          run mkdir -p "${cfg.logDir}"
+        '';
+      }
+      // lib.optionalAttrs (options ? home && options.home ? mcp) {
+        mcp.extraServers.agentmemory = {
+          command = "${cfg.package}/bin/agentmemory-mcp";
+          env = {
+            AGENTMEMORY_URL = "http://127.0.0.1:${toString cfg.restPort}";
+            AGENTMEMORY_TOOLS = "core";
+            AGENTMEMORY_SECRET = config.home.mcp.readKeychainSecret cfg.bearerReference;
+          };
+        };
+      };
 
-      activation.agentmemoryLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-        run mkdir -p "${cfg.logDir}"
-      '';
+      xdg.configFile = lib.mkIf isAgentMemory {
+        "opencode/plugins/agentmemory-capture.ts".source =
+          "${cfg.package}/lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts";
+      };
+
+      launchd.agents.agentmemory = {
+        enable = true;
+        config = {
+          Label = "dev.dwsr.agentmemory";
+          ProgramArguments = [ "${agentmemoryLauncher}/bin/agentmemory" ];
+          RunAtLoad = true;
+          KeepAlive = true;
+          WorkingDirectory = cfg.runtimeDir;
+          EnvironmentVariables = {
+            AGENTMEMORY_DATA_DIR = toString cfg.dataDir;
+            AGENTMEMORY_RUNTIME_DIR = toString cfg.runtimeDir;
+            AGENTMEMORY_SECRET_REFERENCE = cfg.bearerReference;
+            AGENTMEMORY_TOOLS = "core";
+            III_REST_PORT = toString cfg.restPort;
+            III_STREAM_PORT = toString cfg.streamPort;
+            III_VIEWER_PORT = toString cfg.viewerPort;
+            III_ENGINE_PORT = toString cfg.enginePort;
+          };
+          StandardOutPath = "${cfg.logDir}/agentmemory.log";
+          StandardErrorPath = "${cfg.logDir}/agentmemory.error.log";
+        };
+      };
     }
-    // lib.optionalAttrs (options.home ? mcp) {
-      mcp.extraServers.agentmemory = {
-        command = "${cfg.package}/bin/agentmemory-mcp";
-        env = {
-          AGENTMEMORY_URL = "http://127.0.0.1:${toString cfg.restPort}";
-          AGENTMEMORY_TOOLS = "core";
-          AGENTMEMORY_SECRET = config.home.mcp.readKeychainSecret cfg.bearerReference;
-        };
-      };
-    };
-
-    xdg.configFile."opencode/plugins/agentmemory-capture.ts".source =
-      "${cfg.package}/lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts";
-
-    launchd.agents.agentmemory = {
-      enable = true;
-      config = {
-        Label = "dev.dwsr.agentmemory";
-        ProgramArguments = [ "${agentmemoryLauncher}/bin/agentmemory" ];
-        RunAtLoad = true;
-        KeepAlive = true;
-        WorkingDirectory = cfg.runtimeDir;
-        EnvironmentVariables = {
-          AGENTMEMORY_DATA_DIR = toString cfg.dataDir;
-          AGENTMEMORY_RUNTIME_DIR = toString cfg.runtimeDir;
-          AGENTMEMORY_SECRET_REFERENCE = cfg.bearerReference;
-          AGENTMEMORY_TOOLS = "core";
-          III_REST_PORT = toString cfg.restPort;
-          III_STREAM_PORT = toString cfg.streamPort;
-          III_VIEWER_PORT = toString cfg.viewerPort;
-          III_ENGINE_PORT = toString cfg.enginePort;
-        };
-        StandardOutPath = "${cfg.logDir}/agentmemory.log";
-        StandardErrorPath = "${cfg.logDir}/agentmemory.error.log";
-      };
-    };
-  };
+    // lib.optionalAttrs (options ? assertions && options ? home && options.home ? mcp) {
+      assertions = [
+        {
+          assertion = builtins.hasAttr cfg.bearerReference config.home.mcp.keychainSecrets;
+          message = "programs.agentmemory.bearerReference must name a home.mcp.keychainSecrets entry.";
+        }
+      ];
+    }
+  );
 }

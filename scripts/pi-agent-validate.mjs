@@ -39,8 +39,8 @@ const STATUS_KEYS = Object.freeze([
   "profile",
   "mcpEndpoint",
   "mcpReady",
-  "cavememDataDir",
-  "cavememReady",
+  "agentMemoryUrl",
+  "agentMemoryReady",
   "extensions",
   "drift",
   "lsp",
@@ -73,7 +73,7 @@ const RECOVERY = Object.freeze({
   extensions:
     "update the pinned extension set, rebuild pi-agent-extensions, and reactivate the generation",
   mcp: "restart mcpproxy or repair the declared upstream",
-  cavemem: "restart the Cavemem worker and verify the managed data directory",
+  agentmemory: "restart the AgentMemory daemon and verify its authenticated health route",
   pty: "rebuild pi-agent-extensions with the Darwin ARM node-pty prebuild",
   lsp: "rebuild the configured language server and activate the managed generation",
   drift: "repair managed Pi state and rerun reconciliation",
@@ -235,20 +235,20 @@ function environmentSnapshot(environment, names) {
 
 function snapshotInput(input) {
   if (
-    !hasExactDataKeys(input, ["schemaVersion", "agentDir", "cavememDataDir"]) ||
+    !hasExactDataKeys(input, ["schemaVersion", "agentDir", "agentMemoryUrl", "agentMemorySecretReference"]) ||
     input.schemaVersion !== 1
   ) {
     reject();
   }
   const result = { schemaVersion: 1 };
-  for (const key of ["agentDir", "cavememDataDir"]) {
+  for (const key of ["agentDir", "agentMemoryUrl", "agentMemorySecretReference"]) {
     const value = input[key];
     if (
       typeof value !== "string" ||
       value.length === 0 ||
       value.length > 4096 ||
-      !path.isAbsolute(value) ||
-      path.normalize(value) !== value ||
+       (key === "agentDir" &&
+         (!path.isAbsolute(value) || path.normalize(value) !== value)) ||
       CONTROL.test(value)
     ) {
       reject();
@@ -277,6 +277,10 @@ function validateManagedConfig(value) {
       path.join(EXTENSION_PACKAGE_ROOT, "share/pi-agent/extensions.json") ||
     !["disabled", "audit", "enforced"].includes(value.sandboxDefault) ||
     value.mcpEndpoint !== "http://127.0.0.1:8080/mcp" ||
+    !isPlainObject(value.agentMemory) ||
+    value.agentMemory.url !== "http://127.0.0.1:3111" ||
+    typeof value.agentMemory.secretReference !== "string" ||
+    value.agentMemory.secretReference.length === 0 ||
     !isPlainObject(value.lspExecutables)
   ) {
     reject();
@@ -388,7 +392,6 @@ function packageArtifactsReady() {
       PACKAGE_CONTRACT.undiciVersion !== "8.9.0" ||
       PACKAGE_CONTRACT.gondolinUndiciVersion !== "6.28.0" ||
       !isDeepStrictEqual(PACKAGE_CONTRACT.requiredPatches, [
-        "pi-cavemem-environment-bootstrap.patch",
         "pi-context-recovery.patch",
         "pi-launch-redaction-bootstrap.patch",
         "pi-undici-8.9.0.patch",
@@ -573,10 +576,10 @@ function snapshotStatus(value, config) {
         : !PROFILE_CONTRACT.profileNames.includes(value.profile)) ||
       value.mcpEndpoint !== "http://127.0.0.1:8080/mcp" ||
       typeof value.mcpReady !== "boolean" ||
-      typeof value.cavememDataDir !== "string" ||
-      !path.isAbsolute(value.cavememDataDir) ||
-      CONTROL.test(value.cavememDataDir) ||
-      typeof value.cavememReady !== "boolean" ||
+      typeof value.agentMemoryUrl !== "string" ||
+      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(value.agentMemoryUrl) ||
+      CONTROL.test(value.agentMemoryUrl) ||
+      typeof value.agentMemoryReady !== "boolean" ||
       !isPlainObject(value.extensions) ||
       !isPlainObject(value.lsp) ||
       !["complete", "degraded", "drifted"].includes(value.status) ||
@@ -617,7 +620,7 @@ function snapshotStatus(value, config) {
       providerMode: value.providerMode,
       sandboxState: value.sandboxState,
       mcpReady: value.mcpReady,
-      cavememReady: value.cavememReady,
+      agentMemoryReady: value.agentMemoryReady,
       extensions: Object.freeze({ ...value.extensions }),
       drift: Object.freeze([...drift]),
       lsp: Object.freeze({ ...value.lsp }),
@@ -768,10 +771,10 @@ function createReport(config, status) {
       RECOVERY.mcp,
     ),
     createGate(
-      "cavemem",
-      statusReady && status.cavememReady ? "pass" : "fail",
-      ["cavemem-worker-status:v1"],
-      RECOVERY.cavemem,
+      "agentmemory",
+      statusReady && status.agentMemoryReady ? "pass" : "fail",
+      ["agentmemory-health:v1"],
+      RECOVERY.agentmemory,
     ),
     createGate(
       "pty",

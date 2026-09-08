@@ -16,7 +16,7 @@ const hostFixturePaths = {
 };
 const expectedShopifyRoles = ["anthropic", "openai", "google", "groq", "xai"];
 const expectedExtensionOrder = [
-  "cavemem",
+  "agentmemory",
   "mcp",
   "subagents",
   "plan",
@@ -60,7 +60,7 @@ export const PROBE_NAMES = Object.freeze([
   "pi",
   "provider",
   "mcpproxy",
-  "cavemem",
+  "agentmemory",
   "nono",
   "language-server",
   "subprocess",

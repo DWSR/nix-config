@@ -61,6 +61,9 @@
 let
   cfg = config.programs.opencode-nono;
   agentmemory = config.programs.agentmemory;
+  memoryBackend = config.home.opencode.memoryBackend;
+  isAgentMemory = memoryBackend == "agentmemory";
+  isCavemem = memoryBackend == "cavemem";
 
   # The runtime paths granted under `filesystem.allow` (managed + audit) and
   # `filesystem.read` (review). The OpenCode paths and `$TMPDIR` are the
@@ -84,10 +87,10 @@ let
     "$HOME/.local/state/opencode"
     "$HOME/.opencode"
     "$HOME/.local/share/opentui"
-    "$HOME/.local/share/cavemem"
     "$HOME/.local/logs"
     "$TMPDIR"
-  ];
+  ]
+  ++ lib.optional isCavemem "$HOME/.local/share/cavemem";
 
   # The confirmed groups (Task 2.1) that all exist on nono 0.61.1.
   # `git_config` is intentionally excluded: agents run git through the
@@ -136,15 +139,13 @@ let
     "XDG_CACHE_HOME"
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
-    # cavemem capture: the opencode cavemem plugin's `cavemem hook run`
-    # child must inherit CAVEMEM_DATA_DIR (exported host-side by
-    # cavemem.nix's wrapperCommands) so it writes the same SQLite DB the
-    # mcpproxy-launched cavemem MCP server reads. nono 0.61.1 env is
-    # default-deny, so the NAME must be admitted here or it is stripped at
-    # the sandbox boundary.
+  ]
+  ++ lib.optionals isCavemem [
+    # The cavemem capture plugin exports this host-side path so its hook child
+    # and mcpproxy upstream use the same SQLite database.
     "CAVEMEM_DATA_DIR"
   ]
-  ++ lib.optionals agentmemory.enable [
+  ++ lib.optionals (isAgentMemory && agentmemory.enable) [
     "AGENTMEMORY_SECRET"
     "AGENTMEMORY_URL"
   ];
@@ -651,7 +652,9 @@ in
         workdir.access = lib.mkDefault "readwrite";
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
+        network.openPort = lib.mkDefault (
+          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
+        );
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -672,7 +675,9 @@ in
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.block = lib.mkDefault false;
-        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
+        network.openPort = lib.mkDefault (
+          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
+        );
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -689,7 +694,9 @@ in
         workdir.access = lib.mkDefault "read";
         filesystem.read = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
+        network.openPort = lib.mkDefault (
+          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
+        );
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
     };

@@ -29,7 +29,7 @@ const validatedStages = [
   "package",
   "profile",
   "mcpproxy",
-  "cavemem",
+  "agentmemory",
   "extensions",
   "validator",
 ];
@@ -41,7 +41,7 @@ const successfulShopifyTrace = [
   "profile:committed",
   "profile:validated",
   "mcpproxy:committed",
-  "cavemem:committed",
+  "agentmemory:committed",
   "extensions:committed",
   "validator:committed",
 ];
@@ -111,7 +111,7 @@ before(
       "profile-failure",
       "profile-validation-failure",
       "mcpproxy-failure",
-      "cavemem-failure",
+      "agentmemory-failure",
       "extensions-failure",
       "extensions-one-unavailable",
       "validator-failure",
@@ -138,9 +138,7 @@ function writePrivateJson(file, value) {
 function createState(t, options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-agent-launcher-"));
   const agentDir = path.join(root, "agent");
-  const cavememDataDir = path.join(root, "cavemem");
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(cavememDataDir, { recursive: true, mode: 0o700 });
   const settings = {
     theme: "user-theme",
     packages: ["user-package"],
@@ -177,7 +175,8 @@ function createState(t, options = {}) {
   return {
     root,
     agentDir,
-    cavememDataDir,
+    agentMemoryUrl: "http://127.0.0.1:3111",
+    agentMemorySecretReference: "agentmemory-bearer",
     settings,
     models,
     traceFile: path.join(root, "pi-agent-launcher-trace.log"),
@@ -201,6 +200,7 @@ async function withLaunchEnvironment(state, operation, overrides = {}) {
     ...overrides,
   };
   const previous = new Map();
+  const previousFetch = globalThis.fetch;
   for (const [name, value] of Object.entries(values)) {
     previous.set(
       name,
@@ -208,9 +208,23 @@ async function withLaunchEnvironment(state, operation, overrides = {}) {
     );
     process.env[name] = value;
   }
+  globalThis.fetch = async () => {
+    if (process.env.PI_AGENT_TEST_AGENTMEMORY_FAIL === "1") {
+      return new Response(JSON.stringify({ status: "degraded" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    fs.appendFileSync(state.traceFile, "agentmemory:committed\n", { mode: 0o600 });
+    return new Response(JSON.stringify({ status: "healthy" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
   try {
     return await operation();
   } finally {
+    globalThis.fetch = previousFetch;
     for (const [name, value] of previous) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
@@ -221,7 +235,8 @@ async function withLaunchEnvironment(state, operation, overrides = {}) {
 function launchInput(state, extra = {}) {
   return {
     agentDir: state.agentDir,
-    cavememDataDir: state.cavememDataDir,
+    agentMemoryUrl: state.agentMemoryUrl,
+    agentMemorySecretReference: state.agentMemorySecretReference,
     ...extra,
   };
 }
@@ -509,7 +524,7 @@ test("final launch executes each selected sandbox posture once with the managed 
       } else assert.deepEqual(execution.argv.slice(-4), managedDiscoverySuffix);
       assert.equal(execution.hasTimeoutBinding, true);
       assert.equal(execution.timeoutBinding, "543210");
-      assert.equal(execution.cavememDataDir, state.cavememDataDir);
+      assert.equal(execution.agentMemoryUrl, state.agentMemoryUrl);
       assert.equal(execution.agentDir, state.agentDir);
       assert.equal(execution.hasProviderRuntime, true);
       assert.equal(execution.subagentBinaryOverride, undefined);
@@ -551,7 +566,8 @@ test("Shopify success follows the exact fail-before-TUI order and returns a clos
   assert.deepEqual(readTrace(state), successfulShopifyTrace);
   assert.deepEqual(Object.keys(handoff).sort(), [
     "agentDir",
-    "cavememDataDir",
+    "agentMemorySecretReference",
+    "agentMemoryUrl",
     "generation",
     "providerMode",
     "reconciliation",
@@ -563,7 +579,7 @@ test("Shopify success follows the exact fail-before-TUI order and returns a clos
   assert.equal(handoff.schemaVersion, 1);
   assert.equal(handoff.providerMode, "shopify-gateway");
   assert.equal(handoff.agentDir, state.agentDir);
-  assert.equal(handoff.cavememDataDir, state.cavememDataDir);
+  assert.equal(handoff.agentMemoryUrl, state.agentMemoryUrl);
   assert.deepEqual(handoff.validatedStages, validatedStages);
   assert.deepEqual(handoff.reconciliation.changed, [
     "models.json",
@@ -641,7 +657,7 @@ test("personal mode permits Pi-owned authentication and invokes no Shopify proje
     "profile:committed",
     "profile:validated",
     "mcpproxy:committed",
-    "cavemem:committed",
+    "agentmemory:committed",
     "extensions:committed",
     "validator:committed",
   ]);
@@ -752,10 +768,11 @@ test("every stage failure suppresses all later probes, the handoff, and Pi", asy
       trace: successfulShopifyTrace.slice(0, 7),
     },
     {
-      name: "cavemem",
-      launcher: "cavemem-failure",
-      component: "cavemem",
-      trace: successfulShopifyTrace.slice(0, 8),
+      name: "agentmemory",
+      launcher: "agentmemory-failure",
+      component: "agentmemory",
+      trace: successfulShopifyTrace.slice(0, 7),
+      overrides: { PI_AGENT_TEST_AGENTMEMORY_FAIL: "1" },
     },
     {
       name: "extensions",
@@ -780,6 +797,7 @@ test("every stage failure suppresses all later probes, the handoff, and Pi", asy
       const error = await captureFailure(
         launchers[fixtureCase.launcher],
         state,
+        fixtureCase.overrides,
       );
 
       assertSafeFailure(error, fixtureCase.component);

@@ -394,7 +394,12 @@ function readPackageJson(directory: string, component: string): Record<string, u
   }
 }
 
-function validateMitLicense(packageRoot: string, logicalName: string, component: string): void {
+function validateLicense(
+  packageRoot: string,
+  logicalName: string,
+  component: string,
+  license: string,
+): void {
   let text: string;
   try {
     text = readFileSync(
@@ -404,7 +409,13 @@ function validateMitLicense(packageRoot: string, logicalName: string, component:
   } catch {
     fail("missing", component);
   }
-  if (!text.includes("Permission is hereby granted, free of charge") || !text.includes('THE SOFTWARE IS PROVIDED "AS IS"')) {
+  const valid = license === "MIT"
+    ? text.includes("Permission is hereby granted, free of charge")
+      && text.includes('THE SOFTWARE IS PROVIDED "AS IS"')
+    : license === "Apache-2.0"
+      ? text.includes("Apache License") && text.includes("Version 2.0")
+      : false;
+  if (!valid) {
     fail("incompatible", component);
   }
 }
@@ -691,7 +702,7 @@ function validate(
     ) {
       fail("incompatible", component);
     }
-    validateMitLicense(packageRoot, logicalName, component);
+    validateLicense(packageRoot, logicalName, component, manifestEntry.license);
     entries.push({
       absoluteEntryPath,
       entryPath: manifestEntry.entryPath,

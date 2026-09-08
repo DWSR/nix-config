@@ -149,10 +149,6 @@ in
       ./cavemem-39-session-start-cwd-filter.patch
       ./cavemem-25-search-alpha-doc.patch
       ./cavemem-data-dir-env.patch
-      ./cavemem-pi-full-payload-v1.patch
-      ./cavemem-pi-full-privacy-v1.patch
-      ./cavemem-pi-full-storage-policy-v1.patch
-      ./cavemem-pi-full-storage-limit-v1.patch
     ];
 
     pnpmDeps = final.fetchPnpmDeps {

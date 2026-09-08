@@ -61,10 +61,10 @@ const evidence = Object.freeze({
   extensions: [
     "extension-provenance:v2",
     "extension-order:v1",
-    "extensions:backgroundTasks@2.0.0,bashTimeout@4.6.0,cavemem@0.1.0,codeIntelligence@4.6.0,mcp@0.1.0,plan@0.49.2,questions@4.6.0,subagents@0.40.0,timestamps@0.49.3",
+     "extensions:agentmemory@0.9.29,backgroundTasks@2.0.0,bashTimeout@4.6.0,codeIntelligence@4.6.0,mcp@0.1.0,plan@0.49.2,questions@4.6.0,subagents@0.40.0,timestamps@0.49.3",
   ],
   mcp: ["mcp-preflight:v1", "transport:/mcp", "direct-tools:v1"],
-  cavemem: ["cavemem-worker-status:v1"],
+  agentmemory: ["agentmemory-health:v1"],
   pty: ["node-pty:1.2.0-beta.14", "darwin-arm64-prebuild:v1"],
   lsp: ["lsp-inventory:v1"],
   drift: ["reconciliation-drift:v1"],
@@ -82,7 +82,7 @@ const recovery = Object.freeze({
   extensions:
     "update the pinned extension set, rebuild pi-agent-extensions, and reactivate the generation",
   mcp: "restart mcpproxy or repair the declared upstream",
-  cavemem: "restart the Cavemem worker and verify the managed data directory",
+  agentmemory: "restart the AgentMemory daemon and verify its authenticated health route",
   pty: "rebuild pi-agent-extensions with the Darwin ARM node-pty prebuild",
   lsp: "rebuild the configured language server and activate the managed generation",
   drift: "repair managed Pi state and rerun reconciliation",
@@ -99,7 +99,7 @@ const defaultStatuses = Object.freeze({
   profiles: "pass",
   extensions: "pass",
   mcp: "pass",
-  cavemem: "pass",
+  agentmemory: "pass",
   pty: "pass",
   lsp: "pass",
   drift: "pass",
@@ -176,9 +176,7 @@ function createState(t, suffix = "state") {
     path.join(os.tmpdir(), `pi-agent-validator-${suffix}-`),
   );
   const agentDir = path.join(root, "agent");
-  const cavememDataDir = path.join(root, "cavemem");
   fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(cavememDataDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(path.join(agentDir, "settings.json"), "{}\n", {
     mode: 0o600,
   });
@@ -189,7 +187,12 @@ function createState(t, suffix = "state") {
     mode: 0o600,
   });
   t.after(() => fs.rmSync(root, { force: true, recursive: true }));
-  return { root, agentDir, cavememDataDir };
+  return {
+    root,
+    agentDir,
+    agentMemoryUrl: "http://127.0.0.1:3111",
+    agentMemorySecretReference: "agentmemory-bearer",
+  };
 }
 
 function snapshotTree(root) {
@@ -246,7 +249,8 @@ function runValidator(packageRoot, state, options = {}) {
         `${JSON.stringify({
           schemaVersion: 1,
           agentDir: state.agentDir,
-          cavememDataDir: state.cavememDataDir,
+           agentMemoryUrl: state.agentMemoryUrl,
+           agentMemorySecretReference: state.agentMemorySecretReference,
         })}\n`,
       stdio: ["pipe", "pipe", "pipe"],
     },
@@ -296,7 +300,7 @@ function expectedReport(overrides = {}, options = {}) {
         recovery.extensions,
       ),
       gate("mcp-surface", statuses.mcp, evidence.mcp, recovery.mcp),
-      gate("cavemem", statuses.cavemem, evidence.cavemem, recovery.cavemem),
+      gate("agentmemory", statuses.agentmemory, evidence.agentmemory, recovery.agentmemory),
       gate("pty", statuses.pty, evidence.pty, recovery.pty),
       gate("lsp", statuses.lsp, evidence.lsp, recovery.lsp),
       gate(
@@ -499,7 +503,7 @@ test("component failures identify every affected gate with finite recovery", (t)
       profiles: "fail",
       extensions: "fail",
       mcp: "fail",
-      cavemem: "fail",
+      agentmemory: "fail",
       pty: "fail",
       lsp: "fail",
     }),
@@ -546,7 +550,7 @@ test("raw child diagnostics and request content never enter validator output", (
     "sandbox-profiles": "fail",
     "extension-inventory": "fail",
     "mcp-surface": "fail",
-    cavemem: "fail",
+    agentmemory: "fail",
     pty: "pass",
     lsp: "fail",
     "reconciliation-drift": "fail",
@@ -555,7 +559,6 @@ test("raw child diagnostics and request content never enter validator output", (
   });
   assertNoSentinels(result);
   assert.equal(result.stdout.includes(state.agentDir), false);
-  assert.equal(result.stdout.includes(state.cavememDataDir), false);
 });
 
 test("invalid invocations reject before probes with one value-free diagnostic", (t) => {
@@ -569,7 +572,8 @@ test("invalid invocations reject before probes with one value-free diagnostic", 
       input: `${JSON.stringify({
         schemaVersion: 1,
         agentDir: "relative",
-        cavememDataDir: state.cavememDataDir,
+         agentMemoryUrl: state.agentMemoryUrl,
+         agentMemorySecretReference: state.agentMemorySecretReference,
       })}\n`,
     },
   ]) {

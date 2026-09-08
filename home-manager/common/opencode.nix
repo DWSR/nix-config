@@ -12,9 +12,30 @@ let
     hash = "sha256-uKMCItuqK7JXeGeXvG3RiUg7xWLzlO93K3XMbVEn8ZI=";
   };
   agentmemory = config.programs.agentmemory;
+  memoryBackend = config.home.opencode.memoryBackend;
+  isAgentMemory = memoryBackend == "agentmemory";
+  isCavemem = memoryBackend == "cavemem";
+  vaultCurator =
+    if isAgentMemory then
+      builtins.toFile "vault-curator-agentmemory.md" (
+        lib.replaceStrings [ "cavemem" ] [ "ambient memory backend" ] (
+          builtins.readFile ./agents/vault-curator.md
+        )
+      )
+    else
+      ./agents/vault-curator.md;
 in
 {
   options.home.opencode = {
+    memoryBackend = lib.mkOption {
+      type = lib.types.enum [
+        "cavemem"
+        "agentmemory"
+      ];
+      default = "cavemem";
+      description = "OpenCode ambient memory backend. Pi remains on AgentMemory.";
+    };
+
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.opencode-pinned;
@@ -253,7 +274,7 @@ in
     # AgentMemory preflight deliberately follows the independent Obsidian
     # check above. The authenticated health route is the full-daemon gate;
     # standalone MCP fallback has no healthy daemon response and is rejected.
-    ++ lib.optional agentmemory.enable ''
+    ++ lib.optional (isAgentMemory && agentmemory.enable) ''
       agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
         echo "ERROR: AgentMemory daemon preflight failed: bearer unavailable from macOS Keychain." >&2
@@ -337,9 +358,10 @@ in
       # preflight-inside wrapper; `opencode-nono` overrides `finalPackage`
       # with the outer launcher. See `home.opencode.finalPackage` above.
       package = config.home.opencode.finalPackage;
-      # AGENTS.md is composed from two vendored chunks:
-      #   1. ./agents.md            — AgentMemory/Obsidian memory rules + commit conventions
-      #   2. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
+      # AGENTS.md is composed from three vendored chunks:
+      #   1. selected backend fragment — one ambient memory backend's rules
+      #   2. ./agents.md            — manual Obsidian rules + commit conventions
+      #   3. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
       #                               two-memory-system distinction + the kiro
       #                               skills catalog + workflow summary
       # The upstream cc-sdd quickstart (pkgs.cc-sdd-skills/agents-md) is
@@ -349,6 +371,7 @@ in
       # verbatim into ./agents-cc-sdd.md. See
       # memories/2026-05-20-agents-md-compression.md for the rationale.
       context = lib.concatStringsSep "\n\n" [
+        (builtins.readFile (if isAgentMemory then ./agents-agentmemory.md else ./agents-cavemem.md))
         (builtins.readFile ./agents.md)
         (builtins.readFile ./agents-cc-sdd.md)
       ];
@@ -367,9 +390,9 @@ in
         kiro-spec-orchestrator = config.home.opencode.agentWithCaveman ./agents/kiro-spec-orchestrator.md;
         nvim-tailor = config.home.opencode.agentWithCaveman ./agents/nvim-tailor.md;
         security-auditor = config.home.opencode.agentWithCaveman ./agents/security-auditor.md;
-        vault-curator = config.home.opencode.agentWithCaveman ./agents/vault-curator.md;
+        vault-curator = config.home.opencode.agentWithCaveman vaultCurator;
       }
-      // lib.optionalAttrs (!agentmemory.enable) {
+      // lib.optionalAttrs isCavemem {
         vault-synthesizer = config.home.opencode.agentWithCaveman ./agents/vault-synthesizer.md;
       };
 
@@ -401,7 +424,7 @@ in
         # are hidden internal agents that run extra LLM calls (title on
         # every new session, summary on every compaction). We don't rely
         # on either: session titles aren't used in our workflow, and
-        # AgentMemory's ambient capture already preserves the context that
+        # the selected ambient capture backend preserves the context that
         # `summary` would otherwise regenerate. Schema: see `agent.*.disable`
         # at https://opencode.ai/config.json.
         agent.title.disable = true;

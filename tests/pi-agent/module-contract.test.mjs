@@ -61,9 +61,9 @@ test("valid Shopify options deep-force every closed contract category", () => {
   assert.equal(config.packageHasOutputContext, true);
   assert.equal(config.packageOutputName, "out");
   assert.deepEqual(Object.keys(config.extensions).sort(), [
+    "agentmemory",
     "backgroundTasks",
     "bashTimeout",
-    "cavemem",
     "codeIntelligence",
     "mcp",
     "plan",
@@ -197,7 +197,7 @@ test("package resource references reject every non-canonical relative path", asy
   for (const fixture of invalidPaths) {
     await t.test(fixture, () => {
       rejectedFixture(fixture, [
-        /programs\.pi-agent\.extensions\.cavemem\.relativePath/,
+        /programs\.pi-agent\.extensions\.agentmemory\.relativePath/,
         /canonical package-relative path/,
       ]);
     });
@@ -243,11 +243,11 @@ test("former provider bypass fields are native unknown options", async (t) => {
 test("resource and policy contracts reject raw store strings and executable text", async (t) => {
   const cases = {
     "extension-store-root": [
-      /programs\.pi-agent\.extensions\.cavemem\.storeRoot/,
+        /programs\.pi-agent\.extensions\.agentmemory\.storeRoot/,
       /does not exist/,
     ],
     "extension-raw-package-string": [
-      /programs\.pi-agent\.extensions\.cavemem\.package/,
+        /programs\.pi-agent\.extensions\.agentmemory\.package/,
       /package/,
     ],
     "extension-arbitrary-name": [

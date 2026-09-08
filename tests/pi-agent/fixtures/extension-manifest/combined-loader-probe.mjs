@@ -14,9 +14,8 @@ Reflect.set(globalThis, Symbol.for("dwsr.pi-agent.managed-loader-trace.v1"), tra
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "pi-combined-loader-probe-"));
 const workspace = path.join(root, "workspace");
 const agentDir = path.join(root, "agent");
-const dataDir = path.join(root, "cavemem");
 const sessionsDir = path.join(root, "sessions");
-for (const directory of [workspace, agentDir, dataDir, sessionsDir]) {
+for (const directory of [workspace, agentDir, sessionsDir]) {
   fs.mkdirSync(directory, { recursive: true });
 }
 fs.writeFileSync(path.join(agentDir, "settings.json"), "{}\n");
@@ -24,25 +23,6 @@ fs.writeFileSync(
   path.join(agentDir, "auth.json"),
   `${JSON.stringify({ anthropic: { type: "api_key", key: "combined-loader-model-stub" } })}\n`,
   { mode: 0o600 },
-);
-fs.writeFileSync(
-  path.join(dataDir, "settings.json"),
-  `${JSON.stringify({
-    dataDir,
-    workerPort: 37777,
-    logLevel: "error",
-    compression: { intensity: "full", expandForModel: true },
-    embedding: {
-      provider: "none",
-      model: "combined-loader-probe",
-      batchSize: 16,
-      autoStart: false,
-      idleShutdownMs: 60_000,
-    },
-    search: { alpha: 0.5, defaultLimit: 20 },
-    privacy: { excludePatterns: [], redactSecrets: true },
-    ides: {},
-  })}\n`,
 );
 
 const bootstrap = {
@@ -65,7 +45,6 @@ Object.defineProperty(globalThis, Symbol.for("dwsr.pi-agent.runtime-bootstrap.v1
 });
 
 const environmentValues = {
-  CAVEMEM_DATA_DIR: dataDir,
   HOME: root,
   LANG: "C",
   LC_ALL: "C",
@@ -101,21 +80,6 @@ for (const [name, value] of Object.entries(environmentValues)) {
   });
 }
 Object.freeze(environment);
-const environmentCapability = { schemaVersion: 1, environment };
-Object.defineProperty(environmentCapability, "toJSON", {
-  configurable: false,
-  enumerable: false,
-  value: Object.freeze(() => { throw new Error("Cavemem process environment is not serializable"); }),
-  writable: false,
-});
-Object.freeze(environmentCapability);
-Object.defineProperty(globalThis, Symbol.for("dwsr.pi-agent.cavemem-environment.v1"), {
-  configurable: false,
-  enumerable: false,
-  value: environmentCapability,
-  writable: false,
-});
-
 Object.assign(process.env, {
   ...environmentValues,
   PI_CODING_AGENT_DIR: agentDir,

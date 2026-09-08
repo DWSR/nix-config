@@ -115,14 +115,13 @@
   - _Requirements: 5.3, 5.5, 5.6, 7.8_
   - _Boundary: ConsumerCutover_
 
-- [ ] 3.5 Split OpenCode ownership from current Pi cavemem
-  - Gate cavemem's OpenCode plugin, preflight, instructions, and consumers behind the backend selector.
-  - Retain the cavemem package, patches, settings, data, MCP upstream, and backup required by Pi.
-  - Keep every Pi-owned implementation path unchanged.
-  - Either backend renders one OpenCode capture plugin while Pi remains on cavemem.
+- [x] 3.5 Split OpenCode rollback from AgentMemory Pi ownership
+  - Gate OpenCode cavemem rollback plugin, preflight, instructions, and consumers behind the backend selector.
+  - Configure the bundled AgentMemory Pi integration with standard credentials and REST routes.
+  - Remove Pi-specific cavemem packages, patches, settings, MCP, backup, and host wiring.
+  - Each backend renders one OpenCode capture plugin while Pi remains on AgentMemory.
   - _Requirements: 5.1, 5.4, 7.1, 7.2, 7.6, 7.8_
-  - _Boundary: CavememBoundary, ConsumerCutover_
-  - _Blocked: pre-existing Pi/Cavemem infrastructure failures: Node 24 better-sqlite3 teardown assertion and missing generated bootstrap patch artifact; fixing them would cross the Pi-owned boundary._
+  - _Boundary: PiAgentMemoryIntegration, ConsumerCutover_
 
 - [ ] 4. Add basic operations and host rollout
 - [x] 4.1 Add best-effort stopped-runtime backup
@@ -133,24 +132,25 @@
   - _Requirements: 6.5, 6.6, 6.7_
   - _Boundary: SimpleBackup_
 
-- [ ] 4.2 Enable AgentMemory for OpenCode on both hosts
+- [ ] 4.2 Enable AgentMemory for OpenCode and Pi on both hosts
   - Import the module, select AgentMemory as OpenCode's backend, and configure managed paths and secret references.
-  - Keep current Pi cavemem enabled on each host.
-  - Enable simple backup only where a destination already exists.
+  - Configure the bundled AgentMemory Pi integration and its host credentials on each host.
+  - Remove Pi cavemem enablement and configure simple backup only where an AgentMemory destination exists.
   - Both host evaluations produce the same OpenCode behavior with declared host-specific values.
   - _Requirements: 1.7, 6.5, 7.1, 7.2, 7.7_
-  - _Boundary: AgentMemoryModule, CavememBoundary_
+  - _Boundary: AgentMemoryModule, PiAgentMemoryIntegration_
 
-- [ ] 4.3 Preserve an explicit cavemem rollback selection
+- [ ] 4.3 Preserve an explicit OpenCode cavemem rollback selection
   - Keep the backend selector capable of rendering the prior OpenCode cavemem plugin, checks, consumers, and instructions.
-  - Avoid deleting or transforming source cavemem data during activation.
-  - Document the retained generation as the rollback target in status output.
-  - Rollback evaluation contains no AgentMemory OpenCode plugin or direct dependency.
+  - Keep Pi on AgentMemory in both normal and rollback selections.
+  - Avoid deleting or transforming source cavemem data during OpenCode rollback.
+  - Document the retained OpenCode rollback generation in status output.
+  - Rollback evaluation contains no AgentMemory OpenCode capture path and no Pi cavemem path.
   - _Requirements: 5.1, 7.7, 7.8_
-  - _Boundary: CavememBoundary_
+  - _Boundary: PiAgentMemoryIntegration_
 
 - [ ] 4.4 Register the focused host-render validation matrix
-  - Evaluate AgentMemory enabled, disabled, personal, Shopify, and cavemem rollback configurations.
+  - Evaluate AgentMemory enabled, disabled, personal, Shopify, and OpenCode cavemem rollback configurations.
   - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, and consumer selection.
   - Scan generated files for literal bearer values and unintended Pi-path changes.
   - The matrix runs as one flake check.
@@ -182,29 +182,29 @@
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
   - _Boundary: ValidationSuite, ConsumerCutover_
 
-- [ ] 5.4 Run the unchanged current Pi cavemem suite
-  - Execute existing Pi capture, recall, startup, resume, and shutdown tests unchanged.
-  - Compare its cavemem package, patches, data path, MCP upstream, and backup with baseline.
-  - Confirm AgentMemory host changes do not activate or configure Pi.
-  - The Pi suite passes with no Pi-owned source changes.
+- [ ] 5.4 Run the AgentMemory Pi suite
+  - Execute Pi capture, recall, startup, resume, and shutdown tests against AgentMemory.
+  - Verify the bundled Pi integration, standard routes, credentials, and AgentMemory data path.
+  - Confirm no Pi cavemem package, patch, MCP upstream, backup, or data path is activated.
+  - The Pi suite passes without Pi cavemem functionality.
   - _Requirements: 7.1, 7.2, 7.6_
-  - _Boundary: ValidationSuite, CavememBoundary_
+  - _Boundary: ValidationSuite, PiAgentMemoryIntegration_
 
-- [ ] 5.5 Validate future AgentMemory Pi plugin compatibility
-  - Load the unchanged bundled Pi factory and security helper through the selected Pi extension API.
+- [ ] 5.5 Validate the active AgentMemory Pi integration
+  - Load the bundled Pi factory and security helper through the selected Pi extension API.
   - Mock standard authenticated health, session, observe, smart-search, remember, end, and consolidate responses.
-  - Verify the packaged relative layout and expected request/response shapes.
-  - Compatibility passes without Pi host wiring, credentials, or history migration.
+  - Verify the packaged relative layout, host wiring, credentials, and expected request/response shapes.
+  - Compatibility passes without a second history migration or Pi cavemem dependency.
   - _Requirements: 7.3, 7.4, 7.5, 7.6_
-  - _Boundary: ValidationSuite, Package_
+  - _Boundary: ValidationSuite, PiAgentMemoryIntegration_
 
 - [ ] 5.6 Validate cutover and rollback without dual writes
-  - Start OpenCode under the AgentMemory backend and prove cavemem receives no new OpenCode capture.
-  - Keep Pi cavemem active during the same validation.
-  - Activate the rollback selection and capture one OpenCode cavemem event.
+  - Start OpenCode and Pi under AgentMemory and prove neither writes new ambient history to cavemem.
+  - Activate the OpenCode-only rollback selection and capture one OpenCode cavemem event.
+  - Keep Pi on AgentMemory during rollback and verify its store remains unchanged.
   - Both stores remain intact and no migration is reversed.
   - _Requirements: 7.1, 7.2, 7.7, 7.8_
-  - _Boundary: ValidationSuite, CavememBoundary_
+  - _Boundary: ValidationSuite, PiAgentMemoryIntegration_
 
 ## Implementation Notes
 

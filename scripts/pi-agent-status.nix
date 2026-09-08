@@ -1,5 +1,4 @@
 {
-  cavememPackage,
   credentialRuntimeModule,
   defaultState,
   extensionIdentity,
@@ -116,7 +115,7 @@ let
       }
       const result = await module.preflightMcpproxy({
         adminApiKey: input.adminApiKey,
-        mandatoryUpstreams: ["obsidian", "cavemem"],
+         mandatoryUpstreams: ["obsidian", "agentmemory"],
         timeoutMs: 2000,
       });
       ready = isRecord(result) && sameStrings(result.toolNames, DIRECT_TOOL_NAMES);
@@ -197,7 +196,6 @@ let
         "__PI_AGENT_STATUS_NODE__"
         "__PI_AGENT_STATUS_EXTENSION_PACKAGE_ROOT__"
         "__PI_AGENT_STATUS_PROBE_CWD__"
-        "__PI_AGENT_STATUS_CAVEMEM__"
         "__PI_AGENT_STATUS_KEYCHAIN__"
         "__PI_AGENT_STATUS_PI_VERSION__"
         "__PI_AGENT_STATUS_SANDBOX_DEFAULT__"
@@ -211,7 +209,6 @@ let
         "${pkgs.nodejs}/bin/node"
         (toString extensionPackage)
         (toString probeWorkingDirectory)
-        "${cavememPackage}/bin/cavemem"
         (toString keychainExecutable)
         expectedPiVersion
         defaultState

@@ -1063,7 +1063,7 @@ test("host-side preflight orders probes and projects required tools from raw ext
   await withFixtureServer("preflight-tools-extra", async (server) => {
     const result = await wrapper.preflightMcpproxy({
       adminApiKey: fixtureAdminApiKey,
-      mandatoryUpstreams: ["obsidian", "cavemem"],
+      mandatoryUpstreams: ["obsidian", "agentmemory"],
       timeoutMs: 5_000,
     });
     assert.deepEqual(result.toolNames, directToolNames);
@@ -1111,7 +1111,7 @@ test("host-side preflight fails closed with value-free component and recovery di
       await assert.rejects(
         () => wrapper.preflightMcpproxy({
           adminApiKey: fixtureAdminApiKey,
-          mandatoryUpstreams: ["obsidian", "cavemem"],
+      mandatoryUpstreams: ["obsidian", "agentmemory"],
           timeoutMs: 5_000,
         }),
         (error) => {

@@ -176,8 +176,7 @@ let
         "$out/share/pi-agent/nono/profiles" \
         "$out/share/pi-agent/nono/resolved" \
         "$XDG_CONFIG_HOME/nono/profiles" \
-        "$XDG_DATA_HOME/cavemem" \
-        "$HOME/.pi/agent" \
+         "$HOME/.pi/agent" \
         "$TMPDIR/pi-agent"
       ${installProfiles}
       cp ${catalogFile} "$out/share/pi-agent/nono/catalog.json"
@@ -221,17 +220,6 @@ let
         filesystem = managed.filesystem // {
           allow = builtins.filter (value: value != "$HOME/.pi/agent") managed.filesystem.allow;
           deny = managed.filesystem.deny ++ [ "$HOME/.pi/agent" ];
-        };
-      }
-    )
-  );
-  missingCavememCatalog = mkCatalog "missing-cavemem" (
-    replaceManaged (
-      managed
-      // {
-        filesystem = managed.filesystem // {
-          allow = builtins.filter (value: value != "$XDG_DATA_HOME/cavemem") managed.filesystem.allow;
-          deny = managed.filesystem.deny ++ [ "$XDG_DATA_HOME/cavemem" ];
         };
       }
     )
@@ -390,10 +378,6 @@ let
     {
       name = "missing-agent";
       path = mkExecutor { profileCatalog = missingAgentCatalog; };
-    }
-    {
-      name = "missing-cavemem";
-      path = mkExecutor { profileCatalog = missingCavememCatalog; };
     }
     {
       name = "missing-temp";

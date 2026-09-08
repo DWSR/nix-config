@@ -13,7 +13,7 @@ const probePath = path.join(testsDir, "fixtures/plan-integration/runtime-probe.m
 const mcpServerFixture = path.join(testsDir, "fixtures/mcpproxy-server.mjs");
 const fakePiFixture = path.join(testsDir, "fixtures/subagents/fake-pi.mjs");
 const expectedExtensionOrder = [
-  "cavemem",
+  "agentmemory",
   "mcp",
   "subagents",
   "plan",
@@ -39,6 +39,9 @@ const expectedRegisteredTools = [
   "grep",
   "find",
   "ls",
+  "memory_health",
+  "memory_search",
+  "memory_save",
   "retrieve_tools",
   "describe_tool",
   "call_tool_read",

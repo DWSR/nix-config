@@ -41,13 +41,16 @@ function renderIntegration() {
   };
   hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
     inherit pkgs;
-    modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
-      {
+      modules = [
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+        ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
+        "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+        {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
+        home.opencode.memoryBackend = "agentmemory";
         home.mcp = {
           obsidianVaultPath = "/tmp/agentmemory/vault";
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];

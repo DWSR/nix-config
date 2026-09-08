@@ -196,7 +196,7 @@ function expectedCatalog() {
       maxToolCalls: 32,
       workspace: "parent-read",
       tools: expectedReaderTools,
-      extensions: ["cavemem", "mcp"],
+      extensions: ["agentmemory", "mcp"],
       mcp: "read-only",
     },
     worker: {
@@ -205,7 +205,7 @@ function expectedCatalog() {
       maxToolCalls: 64,
       workspace: "parent-readwrite",
       tools: expectedWorkerTools,
-      extensions: ["cavemem"],
+      extensions: ["agentmemory"],
       mcp: "none",
     },
   };
@@ -285,7 +285,7 @@ test("managed launch plans impose exact tool and extension ceilings", async () =
     mcpDirectTools: agent.mcpDirectTools,
     cwd: repoRoot,
   })]));
-  const cavemem = path.join(runtime.extensions, "lib/pi-agent/extensions/cavemem/index.ts");
+  const agentmemory = path.join(runtime.extensions, "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts");
   const mcp = path.join(runtime.extensions, "lib/pi-agent/extensions/mcpproxy/index.ts");
   assert.deepEqual(plans.reader.effectiveToolAllowlist, expectedReaderTools);
   assert.deepEqual(plans.worker.effectiveToolAllowlist, expectedWorkerTools);
@@ -293,9 +293,9 @@ test("managed launch plans impose exact tool and extension ceilings", async () =
     selector,
     name: expectedReaderTools[index + 4],
   })));
-  assert.ok(plans.reader.extensionArgs.includes(cavemem));
+  assert.ok(plans.reader.extensionArgs.includes(agentmemory));
   assert.ok(plans.reader.extensionArgs.includes(mcp));
-  assert.ok(plans.worker.extensionArgs.includes(cavemem));
+  assert.ok(plans.worker.extensionArgs.includes(agentmemory));
   assert.equal(plans.worker.extensionArgs.includes(mcp), false);
   for (const plan of Object.values(plans)) {
     assert.equal(plan.disableAmbientExtensions, true);
@@ -697,21 +697,21 @@ test("executor rejects hostile overrides before child or artifact creation", asy
   });
 });
 
-test("reader loads Cavemem and read-only MCP while worker loads Cavemem only", async () => {
+test("reader loads AgentMemory and read-only MCP while worker loads AgentMemory only", async () => {
   await withExecutor(async ({ executor, ctx, logDir }) => {
     await executor.execute("resources", {
       tasks: [{ agent: "reader", task: "reader-resources" }, { agent: "worker", task: "worker-resources" }],
       agentContract: { version: 1 },
     }, new AbortController().signal, undefined, ctx);
     const runtime = buildRuntimePaths();
-    const cavemem = path.join(runtime.extensions, "lib/pi-agent/extensions/cavemem/index.ts");
+    const agentmemory = path.join(runtime.extensions, "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts");
     const mcp = path.join(runtime.extensions, "lib/pi-agent/extensions/mcpproxy/index.ts");
     const [reader, worker] = readLaunches(logDir);
     assert.equal(reader.noAmbientExtensions, true);
     assert.equal(worker.noAmbientExtensions, true);
-    assert.ok(reader.extensions.includes(cavemem));
+    assert.ok(reader.extensions.includes(agentmemory));
     assert.ok(reader.extensions.includes(mcp));
-    assert.ok(worker.extensions.includes(cavemem));
+    assert.ok(worker.extensions.includes(agentmemory));
     assert.equal(worker.extensions.includes(mcp), false);
     assert.equal(reader.tools, expectedReaderTools.join(","));
     assert.equal(worker.tools, expectedWorkerTools.join(","));

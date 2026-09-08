@@ -387,14 +387,14 @@ const httpServer = http.createServer((request, response) => {
       }
       let servers = [
         { name: "obsidian", enabled: true, connected: true, quarantined: false },
-        { name: "cavemem", enabled: true, connected: true, quarantined: false },
+        { name: "agentmemory", enabled: true, connected: true, quarantined: false },
       ];
       if (variant === "preflight-upstream-missing") {
-        servers = servers.filter(({ name }) => name !== "cavemem");
+        servers = servers.filter(({ name }) => name !== "agentmemory");
       }
       if (variant === "preflight-upstream-disconnected") {
         servers = servers.map((server) => (
-          server.name === "cavemem" ? { ...server, connected: false } : server
+          server.name === "agentmemory" ? { ...server, connected: false } : server
         ));
       }
       sendJson(response, 200, { success: true, data: { servers } });

@@ -79,8 +79,9 @@ function validateResolvedProfile(profileName) {
     value.extends.length !== 1 ||
     value.extends[0] !== "default" ||
     !Array.isArray(value.network?.open_port) ||
-    value.network.open_port.length !== 1 ||
-    value.network.open_port[0] !== 8080
+     value.network.open_port.length !== 2 ||
+     value.network.open_port[0] !== 8080 ||
+     value.network.open_port[1] !== 3111
   ) {
     fail();
   }

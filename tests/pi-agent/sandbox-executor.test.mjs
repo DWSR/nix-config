@@ -151,7 +151,6 @@ before(
       "missing-mcp",
       "missing-package",
       "missing-agent",
-      "missing-cavemem",
       "missing-temp",
       "wrong-workspace",
       "denied-workspace",
@@ -255,7 +254,6 @@ function capture(packageName, options = {}) {
   const writeMarker = path.join(root, "write-ran");
   const xdgData = path.join(home, ".local/share");
   const agentDir = path.join(home, ".pi/agent");
-  const cavememDir = path.join(xdgData, "cavemem");
   const workspace =
     options.workspace === "pi-state"
       ? path.join(agentDir, "workspace")
@@ -270,7 +268,6 @@ function capture(packageName, options = {}) {
     xdgData,
     path.join(home, ".local/state"),
     agentDir,
-    cavememDir,
     workspace,
   ]) {
     fs.mkdirSync(directory, { recursive: true });
@@ -283,7 +280,6 @@ function capture(packageName, options = {}) {
     XDG_CONFIG_HOME: path.join(home, ".config"),
     XDG_DATA_HOME: xdgData,
     XDG_STATE_HOME: path.join(home, ".local/state"),
-    CAVEMEM_DATA_DIR: cavememDir,
     PI_CODING_AGENT_DIR: agentDir,
     SHOPIFY_PI_TOKEN: secretSentinel,
     PI_AGENT_LAUNCH_ID: "11111111-1111-4111-8111-111111111111",
@@ -365,7 +361,6 @@ function captureFresh(packageName, options = {}) {
   const nodeOptionsTripwire = path.join(root, "node-options-tripwire.mjs");
   const xdgData = path.join(home, ".local/share");
   const agentDir = path.join(home, ".pi/agent");
-  const cavememDir = path.join(xdgData, "cavemem");
   const workspace =
     options.workspace === "pi-state"
       ? path.join(agentDir, "workspace")
@@ -380,7 +375,6 @@ function captureFresh(packageName, options = {}) {
     xdgData,
     path.join(home, ".local/state"),
     agentDir,
-    cavememDir,
     workspace,
     poisonPackageDir,
   ]) {
@@ -402,7 +396,6 @@ function captureFresh(packageName, options = {}) {
     XDG_CONFIG_HOME: path.join(home, ".config"),
     XDG_DATA_HOME: xdgData,
     XDG_STATE_HOME: path.join(home, ".local/state"),
-    CAVEMEM_DATA_DIR: cavememDir,
     PI_CODING_AGENT_DIR: agentDir,
     SHOPIFY_PI_TOKEN: secretSentinel,
     PI_AGENT_LAUNCH_ID: "11111111-1111-4111-8111-111111111111",
@@ -1260,7 +1253,6 @@ test("every required resolved grant fails closed before Pi", () => {
     "missing-mcp": "mcpproxy",
     "missing-package": "package-read",
     "missing-agent": "pi-state",
-    "missing-cavemem": "cavemem-state",
     "missing-temp": "temp-state",
     "wrong-workspace": "workspace",
     "denied-workspace": "workspace",

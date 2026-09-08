@@ -29,7 +29,7 @@ let
   guidance = import ./guidance.nix { inherit pkgs; };
 
   extensionNames = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -41,7 +41,7 @@ let
   ];
   extensionPackage = pkgs.pi-agent-extensions;
   extensionEntryPaths = {
-    cavemem = "lib/pi-agent/extensions/cavemem/index.ts";
+    agentmemory = "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
     mcp = "lib/pi-agent/extensions/mcpproxy/index.ts";
     subagents = "lib/node_modules/pi-subagents/index.ts";
     plan = "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts";
@@ -82,11 +82,8 @@ let
       extensionManifest = renderReference (builtins.head cfg.manifests);
       extensionIdentity = "${integrationExtensionPackage.identity}/extensions-provenance.json";
       homeDirectory = toString outerConfig.home.homeDirectory;
-      cavememDataDir =
-        if outerConfig.home ? cavemem && outerConfig.home.cavemem ? dataDir then
-          toString outerConfig.home.cavemem.dataDir
-        else
-          "${homeDirectory}/.local/share/cavemem";
+      agentMemoryUrl = "http://127.0.0.1:${toString cfg.agentMemory.restPort}";
+      agentMemorySecretReference = cfg.agentMemory.secretReference;
       agentDir = "${homeDirectory}/.pi/agent";
       profilePaths = lib.mapAttrs (
         name: _profile: "${profileCatalog.package}/share/pi-agent/nono/profiles/${name}.json"
@@ -101,7 +98,6 @@ let
       };
       reconciler = pkgs.pi-agent-reconcile;
       status = pkgs.callPackage ../../../scripts/pi-agent-status.nix {
-        cavememPackage = pkgs.cavemem;
         credentialRuntimeModule = credentialArtifacts.runtimeModule;
         defaultState = cfg.sandbox.defaultState;
         extensionIdentity = integrationExtensionPackage.identity;
@@ -118,7 +114,6 @@ let
         statusPackage = status;
       };
       launcher = pkgs.callPackage ../../../scripts/pi-agent-launcher.nix {
-        cavememPackage = pkgs.cavemem;
         credentialResolverPackage = credentialArtifacts.resolverExecutor;
         credentialRuntimeModule = credentialArtifacts.runtimeModule;
         inherit managedConfig;
@@ -135,7 +130,8 @@ let
 
         const args = process.argv.slice(2);
         const agentDir = ${builtins.toJSON agentDir};
-        const cavememDataDir = ${builtins.toJSON cavememDataDir};
+         const agentMemoryUrl = ${builtins.toJSON agentMemoryUrl};
+         const agentMemorySecretReference = ${builtins.toJSON agentMemorySecretReference};
 
         if (args[0] === "--managed-status") {
           const { spawnSync } = await import("node:child_process");
@@ -147,7 +143,7 @@ let
               statusArgs,
               {
                 encoding: "utf8",
-                input: JSON.stringify({ schemaVersion: 1, agentDir, cavememDataDir }) + "\\n",
+               input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, agentMemoryUrl: ${builtins.toJSON agentMemoryUrl}, agentMemorySecretReference: ${builtins.toJSON agentMemorySecretReference} }) + "\\n",
                 stdio: ["pipe", "pipe", "pipe"],
               },
             );
@@ -157,7 +153,7 @@ let
           }
         } else {
           try {
-            const result = await executeManagedLaunch({ agentDir, cavememDataDir, userArguments: args });
+             const result = await executeManagedLaunch({ agentDir, agentMemoryUrl, agentMemorySecretReference, userArguments: args });
             process.exitCode = result?.status ?? 0;
           } catch (error) {
             const component =
@@ -192,11 +188,13 @@ let
         executable = true;
         text = ''
           #!${pkgs.runtimeShell}
+          export AGENTMEMORY_URL=${lib.escapeShellArg agentMemoryUrl}
+          export AGENTMEMORY_SECRET="$(/usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentMemorySecretReference} -w 2>/dev/null)"
           exec ${pkgs.nodejs}/bin/node -e ${lib.escapeShellArg ''
             const { spawnSync } = require("node:child_process");
             const result = spawnSync(${builtins.toJSON "${status}/bin/pi-agent-status"}, process.argv.slice(1), {
               encoding: "utf8",
-              input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, cavememDataDir: ${builtins.toJSON cavememDataDir} }) + "\\n",
+               input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, agentMemoryUrl: ${builtins.toJSON agentMemoryUrl}, agentMemorySecretReference: ${builtins.toJSON agentMemorySecretReference} }) + "\\n",
               stdio: ["pipe", "inherit", "inherit"],
             });
             process.exitCode = result.status ?? 2;
@@ -209,11 +207,13 @@ let
         executable = true;
         text = ''
           #!${pkgs.runtimeShell}
+          export AGENTMEMORY_URL=${lib.escapeShellArg agentMemoryUrl}
+          export AGENTMEMORY_SECRET="$(/usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentMemorySecretReference} -w 2>/dev/null)"
           exec ${pkgs.nodejs}/bin/node -e ${lib.escapeShellArg ''
             const { spawnSync } = require("node:child_process");
             const result = spawnSync(${builtins.toJSON "${validator}/bin/pi-agent-validate"}, process.argv.slice(1), {
               encoding: "utf8",
-              input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, cavememDataDir: ${builtins.toJSON cavememDataDir} }) + "\\n",
+               input: JSON.stringify({ schemaVersion: 1, agentDir: ${builtins.toJSON agentDir}, agentMemoryUrl: ${builtins.toJSON agentMemoryUrl}, agentMemorySecretReference: ${builtins.toJSON agentMemorySecretReference} }) + "\\n",
               stdio: ["pipe", "inherit", "inherit"],
             });
             process.exitCode = result.status ?? 2;
@@ -224,7 +224,8 @@ let
     {
       inherit
         agentDir
-        cavememDataDir
+        agentMemoryUrl
+        agentMemorySecretReference
         extensionIdentity
         extensionManifest
         managedCommand
@@ -246,7 +247,8 @@ let
       statusInputs = {
         inherit
           agentDir
-          cavememDataDir
+          agentMemoryUrl
+          agentMemorySecretReference
           extensionIdentity
           extensionManifest
           ;
@@ -661,7 +663,8 @@ let
           managedCommand = integrated.managedCommand or null;
           managedStatusCommand = integrated.statusCommand or null;
           managedValidatorCommand = integrated.validatorCommand or null;
-          cavememDataDir = integrated.cavememDataDir or null;
+          agentMemoryUrl = integrated.agentMemoryUrl or null;
+          agentMemorySecretReference = integrated.agentMemorySecretReference or null;
           extensionManifest = integrated.extensionManifest or null;
           extensionIdentity = integrated.extensionIdentity or null;
           instructionResources = integrated.instructionResources or [ ];
@@ -757,6 +760,25 @@ in
           };
           default = { };
           description = "Typed local mcpproxy selection without a host-authored endpoint.";
+        };
+
+        agentMemory = mkOption {
+          type = closedSubmodule {
+            options = {
+              restPort = mkOption {
+                type = types.port;
+                default = config.programs.agentmemory.restPort;
+                description = "Loopback AgentMemory REST port used by the bundled Pi integration.";
+              };
+              secretReference = mkOption {
+                type = types.str;
+                default = config.programs.agentmemory.bearerReference;
+                description = "Keychain account reference for the AgentMemory bearer.";
+              };
+            };
+          };
+          default = { };
+          description = "Standard AgentMemory REST and credential contract for Pi.";
         };
 
         sandbox = mkOption {
@@ -977,11 +999,17 @@ in
           readOnly = true;
           description = "Repository-owned validator command package.";
         };
-        internal.cavememDataDir = mkOption {
+        internal.agentMemoryUrl = mkOption {
           type = types.nullOr types.str;
           internal = true;
           readOnly = true;
-          description = "Read-back Cavemem data directory passed to managed runtime probes.";
+          description = "Read-back AgentMemory REST URL passed to the bundled Pi integration.";
+        };
+        internal.agentMemorySecretReference = mkOption {
+          type = types.nullOr types.str;
+          internal = true;
+          readOnly = true;
+          description = "Read-back Keychain account reference for the AgentMemory bearer.";
         };
         internal.extensionManifest = mkOption {
           type = types.nullOr types.path;

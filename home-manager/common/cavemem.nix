@@ -50,6 +50,12 @@ let
   inherit (lib) mkOption types;
 
   cfg = config.home.cavemem;
+  memoryBackend =
+    if config.home ? opencode && config.home.opencode ? memoryBackend then
+      config.home.opencode.memoryBackend
+    else
+      "cavemem";
+  isCavemem = memoryBackend == "cavemem";
 in
 {
   options.home.cavemem = {
@@ -375,7 +381,9 @@ in
       # `./opencode-plugins/cavemem.js` resolves against this module
       # file's directory (`home-manager/common/`), which is where the
       # vendored plugin lives (committed in 4e868a7).
-      xdg.configFile."opencode/plugins/cavemem.js".source = ./opencode-plugins/cavemem.js;
+      xdg.configFile = lib.mkIf isCavemem {
+        "opencode/plugins/cavemem.js".source = ./opencode-plugins/cavemem.js;
+      };
 
       # Register cavemem with the mcpproxy orchestrator via the
       # `home.mcp.extraServers` extension surface (defined in
@@ -478,10 +486,9 @@ in
       #      these shapes depending on the server's stdio state). The
       #      probe exits 1 if neither pattern matches.
       #
-      # Gating: the entire `config = lib.mkIf cfg.enable { ... }`
-      # block is enable-gated, so disabled hosts contribute nothing
-      # to `wrapperCommands` and this probe is absent from the
-      # rendered wrapper (cavemem-integration Req 5.4).
+      # The plugin and wrapper probe are gated by the selected OpenCode
+      # backend in addition to `cfg.enable`; the package, settings, data
+      # path, and MCP upstream above remain enabled for Pi.
       #
       # Quoting note: this snippet is composed into the opencode
       # wrapper via `wrapProgram ... --run STR`. The joined
@@ -491,7 +498,7 @@ in
       # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
       # and design.md L673). Use double quotes (with backslash-escaped
       # inner double quotes where needed) for runtime shell values.
-      home.opencode.wrapperCommands = [
+      home.opencode.wrapperCommands = lib.mkIf isCavemem [
         # Pin CAVEMEM_DATA_DIR for opencode and every process it spawns —
         # notably the cavemem capture plugin's `cavemem hook run <event>`
         # child (home-manager/common/opencode-plugins/cavemem.js). cavemem's

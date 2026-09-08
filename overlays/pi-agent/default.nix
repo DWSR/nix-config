@@ -14,9 +14,6 @@ let
   contextRecoveryParent = "e56893f4cd6545ab1498b72ae4e1e2241a0926f4";
   contextRecoveryPatch = ./pi-context-recovery.patch;
   piRuntimeBootstrapPatch = ./pi-launch-redaction-bootstrap.patch;
-  piCavememEnvironmentBootstrapPatch = final.replaceVars ./pi-cavemem-environment-bootstrap.patch {
-    cavememEnvironmentAllowlist = builtins.toJSON credentialPolicy.cavememEnvironmentAllowlist;
-  };
   contextRecoveryTestFiles = [
     "packages/ai/test/openai-responses-terminal-event.test.ts"
     "packages/ai/test/overflow.test.ts"
@@ -105,7 +102,7 @@ let
   extensionRoot = ./extensions;
   extensionNpmDepsHash = "sha256-bSn4YVPB1qGfOAGXYzl9Oq3XmQ0G9rNCsk+coNgTFTM=";
   managedExtensionOrder = [
-    "cavemem"
+    "agentmemory"
     "mcp"
     "subagents"
     "plan"
@@ -157,10 +154,7 @@ let
   managedSubagentWorker = ./extensions/pi-subagents-worker.md;
   managedSubagentsPatch = ./extensions/patches/pi-subagents-managed-children.patch;
   managedSubagentsLifecyclePatch = ./extensions/patches/pi-subagents-managed-lifecycle.patch;
-  cavememBridgeSource = final.replaceVars ./extensions/cavemem/index.ts.in {
-    cavemem = "${final.cavemem}/bin/cavemem";
-  };
-  cavememBridgePackage = builtins.fromJSON (builtins.readFile ./extensions/cavemem/package.json);
+  agentmemoryPackage = final.agentmemory;
   mcpproxyAdapterPackage = builtins.fromJSON (builtins.readFile ./extensions/mcpproxy/package.json);
   managedMcpAdapterPatch = ./extensions/patches/pi-mcp-adapter-managed-direct-tools.patch;
   privateMcpCachePatch = ./extensions/patches/pi-mcp-adapter-private-cache.patch;
@@ -230,7 +224,7 @@ let
         "ask-user/src/extension.ts"
         "background-tasks/dist/managed-environment.ts"
         "bash-timeout/src/extension.ts"
-        "cavemem/index.ts"
+        "agentmemory/index.ts"
         "code-intelligence/src/extension.ts"
         "managed-loader.ts"
         "managed-manifest.ts"
@@ -325,12 +319,12 @@ let
     }
   '';
   extensionInventory = {
-    cavemem = {
-      package = cavememBridgePackage.name;
-      inherit (cavememBridgePackage) version;
-      sourceRef = "repository";
-      entryPath = "lib/pi-agent/extensions/cavemem/index.ts";
-      license = "MIT";
+    agentmemory = {
+      package = "@agentmemory/agentmemory";
+      version = "0.9.29";
+      sourceRef = "e04ba88819c365c9acf9d6661ea802143e728bd6";
+      entryPath = "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
+      license = "Apache-2.0";
     };
     mcp = {
       package = mcpproxyAdapterPackage.name;
@@ -581,7 +575,6 @@ in
           undiciPatch
           contextRecoveryPatch
           piRuntimeBootstrapPatch
-          piCavememEnvironmentBootstrapPatch
         ];
         postPatch = (old.postPatch or "") + ''
           cp ${piLock} package-lock.json
@@ -767,8 +760,14 @@ in
         ln -s "$PWD/node_modules/node-pty" "$typecheckDir/node-pty"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-bash-timeout" "$typecheckDir/bash-timeout"
         ln -s "$PWD/node_modules/@mrclrchtr/supi-code-intelligence" "$typecheckDir/code-intelligence"
-        install -Dm444 ${cavememBridgeSource} "$typecheckDir/cavemem/index.ts"
-        install -Dm444 ${./extensions/cavemem/package.json} "$typecheckDir/cavemem/package.json"
+         install -Dm444 ${agentmemoryPackage}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts \
+           "$typecheckDir/agentmemory/index.ts"
+         install -Dm444 ${agentmemoryPackage}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/security.ts \
+           "$typecheckDir/agentmemory/security.ts"
+         install -Dm444 ${agentmemoryPackage}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/package.json \
+           "$typecheckDir/agentmemory/package.json"
+         substituteInPlace "$typecheckDir/agentmemory/index.ts" \
+           --replace-fail 'details: health,' 'details: { ok: true },'
         install -Dm444 ${managedExtensionLoaderSource} "$typecheckDir/managed-loader.ts"
         install -Dm444 ${managedExtensionManifestSource} "$typecheckDir/managed-manifest.ts"
         install -Dm444 ${managedExtensionTypecheckPackage} "$typecheckDir/package.json"
@@ -813,9 +812,11 @@ in
 
         mkdir -p "$out/lib/node_modules" "$identity"
         cp -R node_modules/. "$out/lib/node_modules/"
-        install -Dm444 ${cavememBridgeSource} "$out/lib/pi-agent/extensions/cavemem/index.ts"
-        install -Dm444 ${./extensions/cavemem/package.json} \
-          "$out/lib/pi-agent/extensions/cavemem/package.json"
+         mkdir -p "$out/lib/node_modules/@agentmemory"
+         cp -R ${agentmemoryPackage}/lib/node_modules/@agentmemory/agentmemory \
+           "$out/lib/node_modules/@agentmemory/"
+         substituteInPlace "$out/lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts" \
+           --replace-fail 'details: health,' 'details: { ok: true },'
         install -Dm444 ${./extensions/mcpproxy/index.ts} \
           "$out/lib/pi-agent/extensions/mcpproxy/index.ts"
         install -Dm444 ${./extensions/mcpproxy/package.json} \
@@ -838,8 +839,8 @@ in
 
         install -Dm444 node_modules/pi-mcp-adapter/LICENSE \
           "$out/share/licenses/pi-agent-extensions/mcpAdapter/LICENSE"
-        install -Dm444 ${./extensions/licenses/repository-LICENSE} \
-          "$out/share/licenses/pi-agent-extensions/cavemem/LICENSE"
+         install -Dm444 ${agentmemoryPackage}/lib/node_modules/@agentmemory/agentmemory/LICENSE \
+           "$out/share/licenses/pi-agent-extensions/agentmemory/LICENSE"
         install -Dm444 ${./extensions/licenses/repository-LICENSE} \
           "$out/share/licenses/pi-agent-extensions/mcp/LICENSE"
         install -Dm444 node_modules/@modelcontextprotocol/client/LICENSE \

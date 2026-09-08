@@ -18,7 +18,6 @@ const STATUS_MANAGED_CONFIG_PATH = "__PI_AGENT_LAUNCHER_STATUS_CONFIG__";
 const STATUS_EXECUTABLE = "__PI_AGENT_LAUNCHER_STATUS__";
 const MCP_PROBE_MODULE = "__PI_AGENT_LAUNCHER_MCP_PROBE__";
 const VALIDATOR_EXECUTABLE = "__PI_AGENT_LAUNCHER_VALIDATOR__";
-const CAVEMEM_EXECUTABLE = "__PI_AGENT_LAUNCHER_CAVEMEM__";
 const SANDBOX_VALIDATOR_MODULE = "__PI_AGENT_LAUNCHER_SANDBOX_VALIDATOR__";
 const KEYCHAIN_EXECUTABLE = "__PI_AGENT_LAUNCHER_KEYCHAIN__";
 const NODE_EXECUTABLE = "__PI_AGENT_LAUNCHER_NODE__";
@@ -54,7 +53,7 @@ const VALIDATED_STAGES = Object.freeze([
   "package",
   "profile",
   "mcpproxy",
-  "cavemem",
+  "agentmemory",
   "extensions",
   "validator",
 ]);
@@ -65,7 +64,7 @@ const VALIDATOR_GATE_NAMES = Object.freeze([
   "sandbox-profiles",
   "extension-inventory",
   "mcp-surface",
-  "cavemem",
+  "agentmemory",
   "pty",
   "lsp",
   "reconciliation-drift",
@@ -84,7 +83,7 @@ const RECOVERY = Object.freeze({
     "rebuild the managed generation or reactivate the previous generation",
   profile: "select a valid managed profile or use the documented rollback",
   mcpproxy: "restart mcpproxy or repair the declared upstream",
-  cavemem: "restart the Cavemem worker and verify the managed data directory",
+  agentmemory: "restart the AgentMemory daemon and verify its authenticated health route",
   extensions: "rebuild pi-agent-extensions and activate the managed generation",
   validator:
     "repair the failed runtime compatibility gate and retry the launch",
@@ -102,7 +101,7 @@ const GATE_RECOVERY = Object.freeze({
   "sandbox-profiles": RECOVERY.profile,
   "extension-inventory": RECOVERY.extensions,
   "mcp-surface": RECOVERY.mcpproxy,
-  cavemem: RECOVERY.cavemem,
+  agentmemory: RECOVERY.agentmemory,
   pty: RECOVERY.extensions,
   lsp: RECOVERY.extensions,
   "reconciliation-drift": RECOVERY.state,
@@ -259,18 +258,18 @@ function exactEnumerableDataKeys(value, expected) {
 
 function snapshotInvocation(input) {
   try {
-    if (!exactDataKeys(input, ["agentDir", "cavememDataDir"])) {
+    if (!exactDataKeys(input, ["agentDir", "agentMemoryUrl", "agentMemorySecretReference"])) {
       throw PRIVATE_REJECTION;
     }
     const result = {};
-    for (const key of ["agentDir", "cavememDataDir"]) {
+    for (const key of ["agentDir", "agentMemoryUrl", "agentMemorySecretReference"]) {
       const value = input[key];
       if (
         typeof value !== "string" ||
         value.length === 0 ||
         value.length > 4096 ||
-        !path.isAbsolute(value) ||
-        path.normalize(value) !== value ||
+        (key === "agentDir" && (!path.isAbsolute(value) || path.normalize(value) !== value)) ||
+        (key !== "agentDir" && CONTROL.test(value)) ||
         CONTROL.test(value)
       ) {
         throw PRIVATE_REJECTION;
@@ -323,20 +322,24 @@ function snapshotArguments(value) {
 function snapshotExecutionInvocation(input) {
   try {
     if (
-      !exactDataKeys(input, ["agentDir", "cavememDataDir", "userArguments"])
+      !exactDataKeys(input, ["agentDir", "agentMemoryUrl", "agentMemorySecretReference", "userArguments"])
     ) {
       throw PRIVATE_REJECTION;
     }
     const agentDir = Object.getOwnPropertyDescriptor(input, "agentDir").value;
-    const cavememDataDir = Object.getOwnPropertyDescriptor(
+    const agentMemoryUrl = Object.getOwnPropertyDescriptor(
       input,
-      "cavememDataDir",
+      "agentMemoryUrl",
+    ).value;
+    const agentMemorySecretReference = Object.getOwnPropertyDescriptor(
+      input,
+      "agentMemorySecretReference",
     ).value;
     const userArguments = Object.getOwnPropertyDescriptor(
       input,
       "userArguments",
     ).value;
-    const directories = snapshotInvocation({ agentDir, cavememDataDir });
+    const directories = snapshotInvocation({ agentDir, agentMemoryUrl, agentMemorySecretReference });
     return Object.freeze({
       ...directories,
       userArguments: snapshotArguments(userArguments),
@@ -428,7 +431,12 @@ function loadManagedConfig() {
       !isPlainObject(value.providerSelection) ||
       value.providerSelection.mode !== EXPECTED_PROVIDER_MODE ||
       !Array.isArray(value.extensionOrder) ||
-      value.mcpEndpoint !== "http://127.0.0.1:8080/mcp"
+      value.mcpEndpoint !== "http://127.0.0.1:8080/mcp" ||
+      !isPlainObject(value.agentMemory) ||
+      typeof value.agentMemory.url !== "string" ||
+      value.agentMemory.url !== "http://127.0.0.1:3111" ||
+      typeof value.agentMemory.secretReference !== "string" ||
+      value.agentMemory.secretReference.length === 0
     ) {
       throw PRIVATE_REJECTION;
     }
@@ -578,6 +586,7 @@ function createRootPiEnvironment(
   credentialPolicy,
   runtimeSecrets,
   redactionValues,
+  agentMemorySecret,
 ) {
   try {
     if (
@@ -628,7 +637,8 @@ function createRootPiEnvironment(
       bashInputs.rootPiEnvironment,
       {
         PI_CODING_AGENT_DIR: request.agentDir,
-        CAVEMEM_DATA_DIR: request.cavememDataDir,
+        AGENTMEMORY_URL: request.agentMemoryUrl,
+        AGENTMEMORY_SECRET: agentMemorySecret,
       },
     );
     const selectionEnvironment = sandboxEnvironment(redactionValues);
@@ -1084,10 +1094,10 @@ function throwSandboxFailure(error, redactionValues) {
   throwFailure("profile", RECOVERY.profile, {}, redactionValues);
 }
 
-function readAdminKey(probeEnvironment, redactionValues) {
+function readKeychainSecret(reference, probeEnvironment, redactionValues, component, recovery) {
   const result = runProbe(
     KEYCHAIN_EXECUTABLE,
-    ["find-generic-password", "-s", "mcpproxy", "-a", "mcpproxy-api-key", "-w"],
+    ["find-generic-password", "-s", "mcpproxy", "-a", reference, "-w"],
     probeEnvironment,
     undefined,
     5_000,
@@ -1096,9 +1106,19 @@ function readAdminKey(probeEnvironment, redactionValues) {
     !probeSucceeded(result) ||
     !/^[^\0\r\n]+(?:\r?\n)?$/.test(result.stdout)
   ) {
-    throwFailure("mcpproxy", RECOVERY.mcpproxy, {}, redactionValues);
+    throwFailure(component, recovery, {}, redactionValues);
   }
   return result.stdout.replace(/\r?\n$/, "");
+}
+
+function readAdminKey(probeEnvironment, redactionValues) {
+  return readKeychainSecret(
+    "mcpproxy-api-key",
+    probeEnvironment,
+    redactionValues,
+    "mcpproxy",
+    RECOVERY.mcpproxy,
+  );
 }
 
 function mcpPreflight(config, probeEnvironment, redactionValues) {
@@ -1127,31 +1147,27 @@ function mcpPreflight(config, probeEnvironment, redactionValues) {
   return adminKey;
 }
 
-function cavememPreflight(request, probeEnvironment, redactionValues) {
+async function agentMemoryPreflight(config, probeEnvironment, redactionValues) {
+  const secret = readKeychainSecret(
+    config.agentMemory.secretReference,
+    probeEnvironment,
+    redactionValues,
+    "agentmemory",
+    RECOVERY.agentmemory,
+  );
   try {
-    if (!fs.statSync(request.cavememDataDir).isDirectory()) {
+    const response = await fetch(`${config.agentMemory.url}/agentmemory/health`, {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(2_000),
+    });
+    const body = await response.json();
+    if (!response.ok || !isPlainObject(body) || !["ok", "healthy"].includes(body.status)) {
       throw PRIVATE_REJECTION;
     }
   } catch {
-    throwFailure("cavemem", RECOVERY.cavemem, {}, redactionValues);
+    throwFailure("agentmemory", RECOVERY.agentmemory, {}, [...redactionValues, secret]);
   }
-  const environment = Object.freeze({
-    ...probeEnvironment,
-    CAVEMEM_DATA_DIR: request.cavememDataDir,
-    ...(containsExactValue("1", redactionValues) ? {} : { NO_COLOR: "1" }),
-  });
-  const result = runProbe(
-    CAVEMEM_EXECUTABLE,
-    ["worker", "status"],
-    environment,
-  );
-  if (
-    !probeOutputIsSafe(result, redactionValues) ||
-    !probeSucceeded(result) ||
-    !/^running \(pid [1-9][0-9]*\)\n$/.test(result.stdout)
-  ) {
-    throwFailure("cavemem", RECOVERY.cavemem, {}, redactionValues);
-  }
+  return secret;
 }
 
 function extensionPreflight(
@@ -1169,7 +1185,8 @@ function extensionPreflight(
     `${JSON.stringify({
       schemaVersion: 1,
       agentDir: request.agentDir,
-      cavememDataDir: request.cavememDataDir,
+       agentMemoryUrl: request.agentMemoryUrl,
+       agentMemorySecretReference: request.agentMemorySecretReference,
     })}\n`,
     45_000,
   );
@@ -1187,8 +1204,8 @@ function extensionPreflight(
         "profile",
         "mcpEndpoint",
         "mcpReady",
-        "cavememDataDir",
-        "cavememReady",
+        "agentMemoryUrl",
+        "agentMemoryReady",
         "extensions",
         "drift",
         "lsp",
@@ -1201,7 +1218,7 @@ function extensionPreflight(
       response.sandboxState !== sandboxSelection.state ||
       response.profile !== sandboxSelection.profile ||
       response.mcpEndpoint !== config.mcpEndpoint ||
-      response.cavememDataDir !== request.cavememDataDir ||
+      response.agentMemoryUrl !== request.agentMemoryUrl ||
       !Array.isArray(response.drift) ||
       !isPlainObject(response.lsp) ||
       !Array.isArray(response.issues) ||
@@ -1232,8 +1249,8 @@ function extensionPreflight(
     if (response.mcpReady !== true) {
       throwFailure("mcpproxy", RECOVERY.mcpproxy, {}, redactionValues);
     }
-    if (response.cavememReady !== true) {
-      throwFailure("cavemem", RECOVERY.cavemem, {}, redactionValues);
+    if (response.agentMemoryReady !== true) {
+      throwFailure("agentmemory", RECOVERY.agentmemory, {}, redactionValues);
     }
   } catch (error) {
     if (error instanceof ManagedLaunchError) throw error;
@@ -1287,7 +1304,8 @@ function validatorPreflight(
     `${JSON.stringify({
       schemaVersion: 1,
       agentDir: request.agentDir,
-      cavememDataDir: request.cavememDataDir,
+      agentMemoryUrl: request.agentMemoryUrl,
+      agentMemorySecretReference: request.agentMemorySecretReference,
     })}\n`,
     45_000,
   );
@@ -1330,11 +1348,13 @@ function closedHandoff(
   providerOrigin,
   managedArguments,
   bashDefaultMs,
+  agentMemorySecret,
 ) {
   const result = {
     schemaVersion: 1,
     agentDir: request.agentDir,
-    cavememDataDir: request.cavememDataDir,
+    agentMemoryUrl: request.agentMemoryUrl,
+    agentMemorySecretReference: request.agentMemorySecretReference,
     generation: reconciliation.generation,
     providerMode: EXPECTED_PROVIDER_MODE,
     reconciliation,
@@ -1363,6 +1383,12 @@ function closedHandoff(
       enumerable: false,
       writable: false,
       value: bashDefaultMs,
+    },
+    agentMemorySecret: {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: agentMemorySecret,
     },
   });
   Object.defineProperty(result, "toJSON", {
@@ -1450,7 +1476,7 @@ export async function prepareManagedLaunch(input) {
   );
   if (
     containsExactValue(request.agentDir, redactionValues) ||
-    containsExactValue(request.cavememDataDir, redactionValues)
+    containsExactValue(request.agentMemoryUrl, redactionValues)
   ) {
     throw PRIVATE_REJECTION;
   }
@@ -1536,7 +1562,11 @@ export async function prepareManagedLaunch(input) {
     redactionValues,
   );
   const probeRedactionValues = Object.freeze([...redactionValues, adminKey]);
-  cavememPreflight(request, probeEnvironment, probeRedactionValues);
+  const agentMemorySecret = await agentMemoryPreflight(
+    configArtifact.value,
+    probeEnvironment,
+    probeRedactionValues,
+  );
   extensionPreflight(
     request,
     configArtifact.value,
@@ -1560,6 +1590,7 @@ export async function prepareManagedLaunch(input) {
     providerOrigin,
     managedArguments,
     configArtifact.value.timeouts.bashDefaultMs,
+    agentMemorySecret,
   );
 }
 
@@ -1568,7 +1599,8 @@ export async function executeManagedLaunch(input) {
   rejectManagedArgumentOverrides(request.userArguments);
   const handoff = await prepareManagedLaunch({
     agentDir: request.agentDir,
-    cavememDataDir: request.cavememDataDir,
+    agentMemoryUrl: request.agentMemoryUrl,
+    agentMemorySecretReference: request.agentMemorySecretReference,
   });
   const runtimeSecrets = handoff.runtimeSecrets;
   const redactionValues = snapshotSensitiveValues(runtimeSecrets);
@@ -1596,6 +1628,7 @@ export async function executeManagedLaunch(input) {
     credentialPolicy,
     runtimeSecrets,
     redactionValues,
+    handoff.agentMemorySecret,
   );
   const userArguments = Object.freeze([
     ...request.userArguments,

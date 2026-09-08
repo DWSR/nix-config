@@ -15,7 +15,7 @@ const commandOptions = {
   timeout: 600_000,
 };
 const extensionOrder = [
-  "cavemem",
+  "agentmemory",
   "mcp",
   "subagents",
   "plan",
@@ -28,7 +28,7 @@ const extensionOrder = [
 const extensionRelativePaths = {
   backgroundTasks: "lib/node_modules/@99percentpeople/pi-background-tasks/dist/index.ts",
   bashTimeout: "lib/node_modules/@mrclrchtr/supi-bash-timeout/src/extension.ts",
-  cavemem: "lib/pi-agent/extensions/cavemem/index.ts",
+  agentmemory: "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts",
   codeIntelligence: "lib/node_modules/@mrclrchtr/supi-code-intelligence/src/extension.ts",
   mcp: "lib/pi-agent/extensions/mcpproxy/index.ts",
   plan: "lib/node_modules/@narumitw/pi-plan-mode/src/index.ts",
@@ -101,8 +101,8 @@ test("personal host renders the exact common managed surface", () => {
   });
   assert.deepEqual(result.sandbox, { defaultState: "audit" });
   assert.deepEqual(result.mcp, { cacheTtlDays: 7, port: 8080 });
-  assert.equal(result.cavememDataDir, result.hostCavememDataDir);
-  assert.equal(result.cavememDataDir, "/tmp/pi-agent-personal-host/.local/share/cavemem");
+  assert.equal(result.agentMemoryUrl, "http://127.0.0.1:3111");
+  assert.equal(result.agentMemorySecretReference, "agentmemory-bearer");
   assert.equal(result.providerHandoff, null);
   assert.deepEqual(result.resolverPlans, [{ kind: "pi-auth" }]);
   assert.deepEqual(Object.keys(result.extensionRefs).sort(), [...extensionOrder].sort());

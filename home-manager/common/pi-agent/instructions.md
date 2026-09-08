@@ -2,16 +2,17 @@
 
 ## Memory startup
 
-Before any work, verify both Obsidian and Cavemem through mcpproxy:
+Before any work, verify Obsidian through mcpproxy. The bundled AgentMemory Pi
+integration performs its authenticated health check and provides memory tools
+directly in Pi.
 
 1. Invoke `retrieve_tools` with `{"query":"obsidian list-notes"}`. The returned
    `name` must begin with `obsidian:`. Pass the exact returned name unchanged to
    `call_tool_read`; when it returns `obsidian:list-notes`, invoke with
    `{"name":"obsidian:list-notes","args":{"directory":"memories","limit":1}}`.
-2. Invoke `retrieve_tools` with `{"query":"cavemem list sessions"}`. The returned
-   `name` must begin with `cavemem:`. Pass the exact returned name unchanged to
-   `call_tool_read`; when it returns `cavemem:list_sessions`, invoke with
-   `{"name":"cavemem:list_sessions","args":{"limit":1}}`.
+2. Use the bundled `memory_health` tool when you need to verify AgentMemory,
+   `memory_search` to recall prior Pi memory, and `memory_save` for durable
+   facts. These tools use the standard authenticated AgentMemory routes.
 
 Never guess a tool name. A missing expected prefix or any failed discovery or
 invocation stops all work.
@@ -50,8 +51,8 @@ approval before restoring implementation tools.
 ## Subprocesses
 
 Provider values belong only to root Pi and foreground child Pi. Bash,
-background tasks, language servers, and Cavemem hooks and workers receive a
-credential-scrubbed environment. Every managed subprocess uses bounded
+background tasks, and language servers receive a credential-scrubbed
+environment. The AgentMemory bearer remains in the root Pi process. Every managed subprocess uses bounded
 process-group cleanup for cancellation, timeout, and session shutdown.
 
 ## Sandbox rollback

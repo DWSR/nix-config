@@ -1,5 +1,4 @@
 {
-  cavememPackage,
   credentialResolverPackage,
   credentialRuntimeModule,
   managedConfig,
@@ -43,7 +42,6 @@ let
         "__PI_AGENT_LAUNCHER_STATUS__"
         "__PI_AGENT_LAUNCHER_MCP_PROBE__"
         "__PI_AGENT_LAUNCHER_VALIDATOR__"
-        "__PI_AGENT_LAUNCHER_CAVEMEM__"
         "__PI_AGENT_LAUNCHER_SANDBOX_VALIDATOR__"
         "__PI_AGENT_LAUNCHER_KEYCHAIN__"
         "__PI_AGENT_LAUNCHER_NODE__"
@@ -65,7 +63,6 @@ let
         "${statusPackage}/bin/pi-agent-status"
         "${statusPackage}/lib/pi-agent/mcp-status-probe.mjs"
         "${validatorPackage}/bin/pi-agent-validate"
-        "${cavememPackage}/bin/cavemem"
         "${sandboxResolverPackage}/lib/pi-agent/sandbox-validator.mjs"
         keychainExecutable
         "${pkgs.nodejs}/bin/node"

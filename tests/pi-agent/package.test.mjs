@@ -19,13 +19,17 @@ const nixHosts = `[ ${hosts.map((host) => JSON.stringify(host)).join(" ")} ]`;
 const expectedExtensionVersions = {
   backgroundTasks: "2.0.0",
   bashTimeout: "4.6.0",
-  cavemem: "0.1.0",
+  agentmemory: "0.9.29",
   codeIntelligence: "4.6.0",
   mcp: "0.1.0",
   plan: "0.49.2",
   questions: "4.6.0",
   subagents: "0.40.0",
   timestamps: "0.49.3",
+};
+const expectedExtensionLicenses = {
+  ...Object.fromEntries(Object.keys(expectedExtensionVersions).map((name) => [name, "MIT"])),
+  agentmemory: "Apache-2.0",
 };
 const commandOptions = {
   cwd: repoRoot,
@@ -341,12 +345,14 @@ test("both hosts resolve the same uninstalled Pi package skeleton", () => {
       expectedExtensionVersions,
     );
     for (const [name, extension] of Object.entries(rendered[host].extensions.manifest.extensions)) {
-      assert.equal(extension.license, "MIT");
-      if (name === "cavemem" || name === "mcp") {
+      assert.equal(extension.license, expectedExtensionLicenses[name]);
+      if (name === "agentmemory") {
         assert.equal(
           extension.entryPath,
-          `lib/pi-agent/extensions/${name === "mcp" ? "mcpproxy" : name}/index.ts`,
+          "lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts",
         );
+      } else if (name === "mcp") {
+        assert.equal(extension.entryPath, "lib/pi-agent/extensions/mcpproxy/index.ts");
       } else {
         assert.match(extension.entryPath, /^lib\/node_modules\//);
       }
