@@ -64,13 +64,19 @@ function fixtureSummary() {
   ));
 }
 
-function buildAdmin() {
+function buildAdmin(nativeOverrides = {}) {
+  const overrideEntries = Object.entries(nativeOverrides)
+    .map(([name, value]) => `${name} = ${JSON.stringify(value)};`)
+    .join('\n         ');
+  const nativeArgs = overrideEntries
+    ? `fixture.nativeToolArgs // {\n         ${overrideEntries}\n       }`
+    : 'fixture.nativeToolArgs';
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
-      admin = pkgs.callPackage (import ${JSON.stringify(adminPath)}) fixture.nativeToolArgs;
+      admin = pkgs.callPackage (import ${JSON.stringify(adminPath)}) (${nativeArgs});
     in admin
   `);
 }
@@ -133,6 +139,68 @@ function activeMarkerPath(root) {
   );
 }
 
+function installEnrollment(root, scenario, options = {}) {
+  const identity = options.identity || scenario.identitySnapshots.after[0];
+  const residentExport = options.residentExport
+    || scenario.residentExports.find((candidate) => candidate.publicKey === identity.publicKey)
+    || scenario.residentExports[0];
+  const hash = options.hash || identity.hash;
+  const stateDir = options.stateDir
+    || path.join(root.stateHome, 'git-mcp-secure-enclave-signing');
+  const identityDir = path.join(stateDir, 'identities', hash);
+  const marker = {
+    stateDir,
+    identityLabel: options.identityLabel || identity.label,
+    ctkPublicKeyHash: hash,
+    sshPublicKey: options.sshPublicKey || identity.publicKey,
+    sshFingerprint: options.sshFingerprint || identity.sshFingerprint || residentExport.fingerprint,
+    githubSigningKeyRegistered: true,
+  };
+
+  fs.mkdirSync(path.dirname(activeMarkerPath(root)), { recursive: true });
+  fs.writeFileSync(activeMarkerPath(root), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+  fs.writeFileSync(path.join(root.root, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+
+  if (options.writeArtifacts !== false) {
+    fs.mkdirSync(identityDir, { recursive: true });
+    if (options.writeStub !== false) {
+      fs.writeFileSync(
+        path.join(identityDir, 'id_ecdsa_sk_rk'),
+        `${options.artifactStub || residentExport.stub}\n`,
+        { mode: 0o600 },
+      );
+    }
+    if (options.writePublic !== false) {
+      fs.writeFileSync(
+        path.join(identityDir, 'id_ecdsa_sk_rk.pub'),
+        `${options.artifactPublicKey || residentExport.publicKey}\n`,
+        { mode: 0o644 },
+      );
+    }
+  }
+
+  return {
+    identity,
+    residentExport,
+    marker,
+    stateDir,
+    identityDir,
+    stubPath: path.join(identityDir, 'id_ecdsa_sk_rk'),
+    publicPath: path.join(identityDir, 'id_ecdsa_sk_rk.pub'),
+  };
+}
+
+function cloneScenario(scenario, changes = {}) {
+  return {
+    ...JSON.parse(JSON.stringify(scenario)),
+    ...changes,
+  };
+}
+
+function quoteRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function declarationFrom(result) {
   const lines = result.stdout.trim().split('\n').filter(Boolean);
   return JSON.parse(lines.at(-1));
@@ -144,10 +212,456 @@ function fileMode(filePath) {
 
 let adminCommand;
 let summary;
+let missingAdminCommands;
 
 test.before(() => {
   summary = fixtureSummary();
   adminCommand = path.join(buildAdmin(), 'bin/git-mcp-secure-enclave-admin');
+  missingAdminCommands = {
+    provider: path.join(
+      buildAdmin({ providerPath: '/nonexistent/git-mcp-admin-provider' }),
+      'bin/git-mcp-secure-enclave-admin',
+    ),
+    scAuth: path.join(
+      buildAdmin({ scAuthPath: '/nonexistent/git-mcp-admin-sc-auth' }),
+      'bin/git-mcp-secure-enclave-admin',
+    ),
+    sshKeygen: path.join(
+      buildAdmin({ sshKeygenPath: '/nonexistent/git-mcp-admin-ssh-keygen' }),
+      'bin/git-mcp-secure-enclave-admin',
+    ),
+  };
+});
+
+test('doctor and probe reject duplicate CTK rows for the active label before signing', () => {
+  const scenario = summary.scenarios.staleSameLabel;
+  const activeIdentity = scenario.identitySnapshots.after.at(-1);
+  const staleIdentity = scenario.identitySnapshots.before[0];
+  const expectedDiagnostic = [
+    `[git-mcp-secure-enclave-admin] CTK identity label ${activeIdentity.label} has duplicate rows;`,
+    `expected exactly one p-256-ne/none row for hash ${activeIdentity.hash},`,
+    `observed rows: ${staleIdentity.hash}/p-256-ne/none/${activeIdentity.label};`,
+    `${activeIdentity.hash}/p-256-ne/none/${activeIdentity.label}`,
+  ].join(' ');
+
+  for (const command of ['doctor', 'probe']) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const enrollment = installEnrollment(root, scenario, { identity: activeIdentity });
+      const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+      const identityEntriesBefore = fs.readdirSync(enrollment.identityDir).sort();
+      const result = runAdmin(
+        adminCommand,
+        [command, '--hash', activeIdentity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, `${command} must fail closed`);
+      assert.equal(result.stderr.trim(), expectedDiagnostic, `${command} diagnostic`);
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${command} leaves no temporary output`);
+      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+      assert.deepEqual(
+        fs.readdirSync(enrollment.identityDir).sort(),
+        identityEntriesBefore,
+        `${command} leaves managed identity state unchanged`,
+      );
+
+      const calls = readCalls(root.root);
+      assert.equal(
+        calls.some((call) => call.tool === 'ssh-keygen'),
+        false,
+        `${command} fails before ssh-keygen stub/sign/verify calls`,
+      );
+      assert.equal(
+        calls.some((call) => call.tool === 'provider'),
+        false,
+        `${command} fails before provider calls`,
+      );
+      assert.deepEqual(
+        calls.map((call) => [call.tool, call.operation]),
+        [['sc_auth', 'list']],
+        `${command} validates the full CTK row set before downstream calls`,
+      );
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('doctor and probe validate a matching active enrollment without persistent probe data', () => {
+  for (const command of ['doctor', 'probe']) {
+    const scenario = summary.scenarios.oneResidentExport;
+    const root = createScenarioRoot(scenario);
+    const enrollment = installEnrollment(root, scenario);
+    const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+    const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
+    const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+    try {
+      const result = runAdmin(
+        adminCommand,
+        [command, '--hash', enrollment.identity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, new RegExp(`${command}.*${enrollment.identity.hash}`));
+      assert.match(result.stdout, /verified|healthy/i);
+      assert.doesNotMatch(result.stdout, /BEGIN OPENSSH PRIVATE KEY|Zml4dHVyZS1yZXNpZGVudC1oYW5kbGU/);
+      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+      assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
+      assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], 'temporary probe files are cleaned');
+      assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), [
+        'id_ecdsa_sk_rk',
+        'id_ecdsa_sk_rk.pub',
+      ]);
+
+      const calls = readCalls(root.root);
+      assert.ok(calls.some((call) => call.tool === 'sc_auth' && call.operation === 'list'));
+      assert.ok(calls.some((call) => call.tool === 'sc_auth' && call.operation === 'list-ssh'));
+      const signCalls = calls.filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign');
+      const verifyCalls = calls.filter((call) => call.tool === 'ssh-keygen' && call.operation === 'verify');
+      assert.equal(signCalls.length, 1, `${command} has one local sign call`);
+      assert.equal(verifyCalls.length, 1, `${command} has one local verify call`);
+      assert.equal(signCalls[0].signingStub, enrollment.stubPath);
+      assert.equal(signCalls[0].signingPublicKey, enrollment.marker.sshPublicKey);
+      assert.match(
+        verifyCalls[0].allowedSigners,
+        new RegExp(`${quoteRegex(enrollment.marker.sshPublicKey)}\\s*$`),
+      );
+      for (const call of calls.filter((entry) => ['ssh-keygen', 'provider'].includes(entry.tool))) {
+        assert.equal(call.selector, enrollment.identity.hash, `${call.tool}/${call.operation} selector`);
+      }
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('doctor and probe require githubSigningKeyRegistered to be boolean true', () => {
+  for (const markerCase of [
+    { name: 'false', value: false },
+    { name: 'string', value: 'true' },
+    { name: 'missing' },
+  ]) {
+    for (const command of ['doctor', 'probe']) {
+      const scenario = summary.scenarios.oneResidentExport;
+      const root = createScenarioRoot(scenario);
+      try {
+        const enrollment = installEnrollment(root, scenario);
+        const marker = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
+        if (markerCase.name === 'missing') {
+          delete marker.githubSigningKeyRegistered;
+        } else {
+          marker.githubSigningKeyRegistered = markerCase.value;
+        }
+        fs.writeFileSync(activeMarkerPath(root), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+
+        const result = runAdmin(
+          adminCommand,
+          [command, '--hash', enrollment.identity.hash],
+          fixtureEnvironment(root),
+        );
+
+        assert.equal(result.status, 1, `${command}/${markerCase.name}`);
+        assert.equal(
+          result.stderr.trim(),
+          `[git-mcp-secure-enclave-admin] active enrollment marker ${activeMarkerPath(root)} has invalid githubSigningKeyRegistered; expected boolean true`,
+          `${command}/${markerCase.name} diagnostic`,
+        );
+        assert.deepEqual(readCalls(root.root), []);
+      } finally {
+        fs.rmSync(root.root, { recursive: true, force: true });
+      }
+    }
+  }
+});
+
+test('diagnosis reports the exact missing active marker and leaves state untouched', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', scenario.identitySnapshots.after[0].hash],
+      fixtureEnvironment(root),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(
+      result.stderr,
+      new RegExp(`active enrollment marker ${quoteRegex(activeMarkerPath(root))} is missing`),
+    );
+    assert.deepEqual(managedIdentities(root), []);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.deepEqual(readCalls(root.root), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('diagnosis rejects an active marker selecting the wrong hash with expected and observed values', () => {
+  const scenario = summary.scenarios.multipleResidentExports;
+  const root = createScenarioRoot(scenario);
+  const requestedHash = scenario.identitySnapshots.after[0].hash;
+  const observedHash = '2222222222222222222222222222222222222222';
+  try {
+    installEnrollment(root, scenario, { hash: observedHash });
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', requestedHash],
+      fixtureEnvironment(root),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(
+      `active enrollment marker .* selects CTK hash ${observedHash}.*expected ${requestedHash}`,
+    ));
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.equal(readCalls(root.root).length, 0);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('diagnosis reports a missing state directory, resident stub, or public key by exact path', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const missingStateDir = path.join(os.tmpdir(), 'git-mcp-admin-missing-state');
+  for (const setup of [
+    { name: 'state directory', options: { stateDir: missingStateDir, writeArtifacts: false } },
+    { name: 'resident stub', options: { writeStub: false } },
+    { name: 'resident public key', options: { writePublic: false } },
+  ]) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const enrollment = installEnrollment(root, scenario, setup.options);
+      const result = runAdmin(
+        adminCommand,
+        ['doctor', '--hash', enrollment.identity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.notEqual(result.status, 0, setup.name);
+      const expectedPath = setup.name === 'state directory'
+        ? setup.options.stateDir
+        : setup.name === 'resident stub' ? enrollment.stubPath : enrollment.publicPath;
+      assert.match(result.stderr, new RegExp(quoteRegex(expectedPath)));
+      assert.match(result.stderr, /absent|missing|directory/i);
+      assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('diagnosis reports public-key, fingerprint, and CTK identity mismatches exactly', () => {
+  const primaryScenario = summary.scenarios.multipleResidentExports;
+  const primaryIdentity = primaryScenario.identitySnapshots.after[0];
+  const alternateExport = primaryScenario.residentExports.find(
+    (residentExport) => residentExport.publicKey !== primaryIdentity.publicKey,
+  );
+  const cases = [
+    {
+      name: 'public key',
+      scenario: primaryScenario,
+      options: {
+        artifactPublicKey: alternateExport.publicKey,
+        artifactStub: alternateExport.stub,
+      },
+      pattern: /resident public key .*expected .*observed/i,
+    },
+    {
+      name: 'malformed public key',
+      scenario: primaryScenario,
+      options: { artifactPublicKey: 'not-an-openssh-public-key' },
+      pattern: /resident public key .*malformed.*expected/i,
+    },
+    {
+      name: 'fingerprint',
+      scenario: primaryScenario,
+      options: { sshFingerprint: 'SHA256:fixturewrong' },
+      pattern: /fingerprint.*expected SHA256:fixturewrong.*observed SHA256:fixtureprimary/i,
+    },
+    {
+      name: 'malformed fingerprint',
+      scenario: primaryScenario,
+      options: { sshFingerprint: 'not-a-fingerprint' },
+      pattern: /active enrollment marker .*malformed sshFingerprint.*observed not-a-fingerprint/i,
+    },
+    {
+      name: 'CTK identity',
+      scenario: summary.scenarios.biometricConfiguredIdentity,
+      options: {},
+      pattern: /CTK identity .*expected p-256-ne\/none.*observed .*bio/i,
+    },
+    {
+      name: 'identity label',
+      scenario: primaryScenario,
+      options: { identityLabel: 'wrong-label' },
+      pattern: /CTK identity .*expected p-256-ne\/none label wrong-label.*observed .*fixture-primary/i,
+    },
+    {
+      name: 'malformed resident stub',
+      scenario: primaryScenario,
+      options: { artifactStub: 'not-a-resident-stub' },
+      pattern: /ssh-keygen rejected resident stub/i,
+    },
+  ];
+
+  for (const mismatch of cases) {
+    const root = createScenarioRoot(mismatch.scenario);
+    try {
+      const enrollment = installEnrollment(root, mismatch.scenario, mismatch.options);
+      const result = runAdmin(
+        adminCommand,
+        ['doctor', '--hash', enrollment.identity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.notEqual(result.status, 0, mismatch.name);
+      assert.match(result.stderr, mismatch.pattern, mismatch.name);
+      assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+
+  const selectorScenario = summary.scenarios.selectorMismatch;
+  const selectorRoot = createScenarioRoot(selectorScenario);
+  try {
+    const enrollment = installEnrollment(selectorRoot, selectorScenario);
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(selectorRoot),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(
+      `selector mismatch: expected ${selectorScenario.expectedSelector}, observed ${enrollment.identity.hash}`,
+    ));
+    assert.deepEqual(fs.readdirSync(selectorRoot.tempHome), []);
+  } finally {
+    fs.rmSync(selectorRoot.root, { recursive: true, force: true });
+  }
+
+  const missingIdentityScenario = cloneScenario(summary.scenarios.oneResidentExport, {
+    identitySnapshots: { before: [], after: [] },
+  });
+  const root = createScenarioRoot(missingIdentityScenario);
+  try {
+    const enrollment = installEnrollment(root, missingIdentityScenario, {
+      identity: summary.scenarios.oneResidentExport.identitySnapshots.after[0],
+    });
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(root),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(`CTK identity ${enrollment.identity.hash}.*missing`));
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('diagnosis identifies missing native tools by their fixed paths', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const cases = [
+    ['provider', missingAdminCommands.provider, '/nonexistent/git-mcp-admin-provider'],
+    ['sc_auth', missingAdminCommands.scAuth, '/nonexistent/git-mcp-admin-sc-auth'],
+    ['ssh-keygen', missingAdminCommands.sshKeygen, '/nonexistent/git-mcp-admin-ssh-keygen'],
+  ];
+
+  for (const [tool, command, missingPath] of cases) {
+    const root = createScenarioRoot(scenario);
+    try {
+      const enrollment = installEnrollment(root, scenario);
+      const result = runAdmin(
+        command,
+        ['doctor', '--hash', enrollment.identity.hash],
+        fixtureEnvironment(root),
+      );
+
+      assert.notEqual(result.status, 0, tool);
+      assert.match(result.stderr, new RegExp(`${quoteRegex(missingPath)}.*absent|not executable|unreadable`));
+      assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('diagnosis refuses duplicate SSH identity rows for the active label', () => {
+  const scenario = summary.scenarios.duplicateSshIdentity;
+  const root = createScenarioRoot(scenario);
+  try {
+    const enrollment = installEnrollment(root, scenario);
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 1);
+    assert.equal(
+      result.stderr.trim(),
+      `[git-mcp-secure-enclave-admin] CTK SSH identity ${enrollment.identity.label} has duplicate rows; expected exactly one p-256-ne/none fingerprint ${enrollment.marker.sshFingerprint}`,
+    );
+    assert.equal(
+      readCalls(root.root).some((call) => call.tool === 'ssh-keygen' && call.operation === 'sign'),
+      false,
+      'duplicate rows fail before local signing',
+    );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('diagnosis reports first-unlock listing failure and provider rejection, cleaning probe data on failure', () => {
+  const firstUnlockScenario = cloneScenario(summary.scenarios.oneResidentExport, {
+    failures: {
+      sc_auth: { list: 'fixture sc_auth unavailable before first unlock' },
+    },
+  });
+  const firstUnlockRoot = createScenarioRoot(firstUnlockScenario);
+  try {
+    const enrollment = installEnrollment(firstUnlockRoot, firstUnlockScenario);
+    const result = runAdmin(
+      adminCommand,
+      ['doctor', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(firstUnlockRoot),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /first unlock/i);
+    assert.deepEqual(fs.readdirSync(firstUnlockRoot.tempHome), []);
+  } finally {
+    fs.rmSync(firstUnlockRoot.root, { recursive: true, force: true });
+  }
+
+  const providerScenario = summary.scenarios.providerFailure;
+  const providerRoot = createScenarioRoot(providerScenario);
+  try {
+    const enrollment = installEnrollment(providerRoot, providerScenario);
+    const result = runAdmin(
+      adminCommand,
+      ['probe', '--hash', enrollment.identity.hash],
+      fixtureEnvironment(providerRoot),
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /fixture provider rejected signing/i);
+    assert.match(result.stderr, /first unlock/i);
+    assert.deepEqual(fs.readdirSync(providerRoot.tempHome), []);
+    assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), [
+      'id_ecdsa_sk_rk',
+      'id_ecdsa_sk_rk.pub',
+    ]);
+  } finally {
+    fs.rmSync(providerRoot.root, { recursive: true, force: true });
+  }
 });
 
 test('bootstraps one CTK identity and atomically installs verified public artifacts', () => {

@@ -34,7 +34,7 @@
   - _Boundary: Lifecycle CLI_
   - _Depends: 1.1_
 
-- [ ] 2.3 Add diagnosis and local probes
+- [x] 2.3 Add diagnosis and local probes
   - Validate platform paths, active enrollment, selector, identity, stub, public key, fingerprint, and local sign/verify.
   - Keep doctor read-only and probe output temporary.
   - Complete when both commands identify exact mismatches and prove a matching enrollment without persistent probe data.

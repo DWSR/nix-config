@@ -30,6 +30,8 @@ let
      fixture_log_call() {
        local argv_json
        local allowed_signers="''${fixture_allowed_signers:-}"
+       local signing_stub="''${fixture_signing_stub:-}"
+       local signing_public_key="''${fixture_signing_public_key:-}"
        local export_empty="null"
        local -a export_entries=()
 
@@ -51,12 +53,14 @@ let
          --argjson argv "$argv_json" \
          --arg pid "''${BASHPID:-$$}" \
          --arg provider "''${SSH_SK_PROVIDER:-}" \
-         --arg selector "''${KEYCHAIN_CERTIFICATES:-}" \
-         --arg cwd "$PWD" \
-         --arg allowed_signers "$allowed_signers" \
-         --argjson export_empty "$export_empty" \
-         '{kind: "call", tool: $tool, operation: $operation, argv: $argv, pid: $pid, provider: $provider, selector: $selector, cwd: $cwd, allowedSigners: (if $allowed_signers == "" then null else $allowed_signers end), exportEmpty: $export_empty}' \
-         >> "$fixture_calls"
+          --arg selector "''${KEYCHAIN_CERTIFICATES:-}" \
+          --arg cwd "$PWD" \
+          --arg allowed_signers "$allowed_signers" \
+          --arg signing_stub "$signing_stub" \
+          --arg signing_public_key "$signing_public_key" \
+          --argjson export_empty "$export_empty" \
+          '{kind: "call", tool: $tool, operation: $operation, argv: $argv, pid: $pid, provider: $provider, selector: $selector, cwd: $cwd, allowedSigners: (if $allowed_signers == "" then null else $allowed_signers end), signingStub: (if $signing_stub == "" then null else $signing_stub end), signingPublicKey: (if $signing_public_key == "" then null else $signing_public_key end), exportEmpty: $export_empty}' \
+          >> "$fixture_calls"
      }
 
     fixture_log_result() {
@@ -108,9 +112,9 @@ let
       return 1
     }
 
-    fixture_hang() {
-      local phase="$1"
-      shift
+     fixture_hang() {
+       local phase="$1"
+       shift
 
       if ! fixture_has_phase "$phase" "$@"; then
         return 0
@@ -128,8 +132,18 @@ let
       trap ':' TERM INT HUP
       while :; do
         sleep 1
-      done
-    }
+       done
+     }
+
+     fixture_check_selector() {
+       local expected_selector
+       expected_selector="$(jq -r '.expectedSelector // empty' "$fixture_scenario")"
+       if [[ -n "$expected_selector" && "''${KEYCHAIN_CERTIFICATES:-}" != "$expected_selector" ]]; then
+         printf 'fixture selector mismatch: expected %s, observed %s\n' \
+           "$expected_selector" "''${KEYCHAIN_CERTIFICATES:-<unset>}" >&2
+         return 43
+       fi
+     }
 
     fixture_identity_snapshot() {
       local snapshot="before"
@@ -316,6 +330,9 @@ let
       fixture_setup
       fixture_log_call "$@"
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
+      if ! fixture_check_selector; then
+        exit 43
+      fi
       case "$fixture_operation" in
         sign)
           fixture_hang "provider-sign" "preflight-provider" "preflight-provider-sign"
@@ -362,7 +379,7 @@ let
         esac
       done
        fixture_allowed_signers=""
-       if [[ "$fixture_operation" == "verify" ]]; then
+        if [[ "$fixture_operation" == "verify" ]]; then
          fixture_allowed_signers_path=""
          next_value=""
          for argument in "$@"; do
@@ -381,6 +398,58 @@ let
          done
          if [[ -n "$fixture_allowed_signers_path" && -r "$fixture_allowed_signers_path" ]]; then
            fixture_allowed_signers="$(<"$fixture_allowed_signers_path")"
+          fi
+        fi
+       fixture_signing_stub=""
+       fixture_signing_public_key=""
+       fixture_prepare_signing_request() {
+         local signing_stub_path=""
+         local next_value=""
+         local argument
+         local stub_content
+         local public_key
+         local declared_public_key
+
+         for argument in "$@"; do
+           if [[ -n "$next_value" ]]; then
+             signing_stub_path="$argument"
+             next_value=""
+             continue
+           fi
+           case "$argument" in
+             -f)
+               next_value="-f"
+               ;;
+             -f*)
+               signing_stub_path="''${argument#-f}"
+               ;;
+           esac
+         done
+         if [[ -z "$signing_stub_path" || ! -f "$signing_stub_path" \
+           || ! -r "$signing_stub_path" || ! -s "$signing_stub_path" ]]; then
+           printf 'fixture missing resident stub: %s\n' "$signing_stub_path" >&2
+           return 45
+         fi
+         if [[ ! -f "$signing_stub_path.pub" || ! -r "$signing_stub_path.pub" \
+           || ! -s "$signing_stub_path.pub" ]]; then
+           printf 'fixture missing resident public key: %s.pub\n' "$signing_stub_path" >&2
+           return 45
+         fi
+         stub_content="$(<"$signing_stub_path")"
+         public_key="$(<"$signing_stub_path.pub")"
+         declared_public_key="$(jq -r --arg stub "$stub_content" \
+           '[.residentExports[]? | select(.stub == $stub) | .publicKey] |
+             if length == 1 then .[0] else empty end' "$fixture_scenario")"
+         if [[ -z "$declared_public_key" || "$public_key" != "$declared_public_key" ]]; then
+           printf 'fixture resident stub/public key does not match one declared resident export: %s\n' "$signing_stub_path" >&2
+           return 45
+         fi
+         fixture_signing_stub="$signing_stub_path"
+         fixture_signing_public_key="$public_key"
+       }
+       if [[ "$fixture_operation" == "sign" ]]; then
+         if ! fixture_prepare_signing_request "$@"; then
+           exit 45
          fi
        fi
        fixture_log_call "$@"
@@ -443,10 +512,10 @@ let
            if [[ "''${SSH_SK_PROVIDER:-}" != ${builtins.toJSON providerPath} ]]; then
              printf 'fixture refused non-fixture provider: %s\n' "''${SSH_SK_PROVIDER:-<unset>}" >&2
              exit 43
-           fi
-           "''${SSH_SK_PROVIDER}" sign "$@"
-           printf 'fixture-ssh-signature\n'
-           ;;
+            fi
+            "''${SSH_SK_PROVIDER}" sign "$@"
+            printf 'fixture-ssh-signature:%s\n' "$fixture_signing_public_key"
+            ;;
          fingerprint)
            fixture_hang "preflight-ssh-keygen" "ssh-keygen-fingerprint" "preflight-fingerprint"
            fixture_maybe_fail
@@ -474,14 +543,20 @@ let
            fi
            printf '256 %s fixture-key\n' "$fingerprint"
            ;;
-         verify)
-           fixture_maybe_fail
-           signature_path=""
-           allowed_signers_path=""
-           signer_identity=""
-           namespace=""
-           has_signature=0
-           next_value=""
+          verify)
+            fixture_maybe_fail
+            signature_path=""
+            allowed_signers_path=""
+            signer_identity=""
+            namespace=""
+            allowed_identity=""
+            allowed_options=""
+            allowed_key_type=""
+            allowed_key_data=""
+            allowed_public_key=""
+            signature_content=""
+            has_signature=0
+            next_value=""
            for argument in "$@"; do
              if [[ -n "$next_value" ]]; then
                case "$next_value" in
@@ -514,12 +589,25 @@ let
              printf 'fixture rejected incomplete local verification request\n' >&2
              exit 44
            fi
-           if (( has_signature != 0 )) && [[ ! "$(<"$allowed_signers_path")" == *"$signer_identity"* \
-             || ! -s "$signature_path" ]]; then
-             printf 'fixture rejected local verification artifacts\n' >&2
-             exit 44
-           fi
-           printf 'fixture-ssh-keygen-verified\n'
+            if (( has_signature != 0 )) && [[ ! "$(<"$allowed_signers_path")" == *"$signer_identity"* \
+              || ! -s "$signature_path" ]]; then
+              printf 'fixture rejected local verification artifacts\n' >&2
+              exit 44
+            fi
+            if (( has_signature != 0 )); then
+              read -r allowed_identity allowed_options allowed_key_type allowed_key_data _ <<< "$fixture_allowed_signers"
+              allowed_public_key="$allowed_key_type $allowed_key_data"
+              signature_content="$(<"$signature_path")"
+              if [[ "$allowed_identity" != "$signer_identity" \
+                || "$allowed_options" != 'namespaces="git"' \
+                || "$allowed_key_type" != "sk-ecdsa-sha2-nistp256@openssh.com" \
+                || -z "$allowed_key_data" \
+                || "$signature_content" != *"fixture-ssh-signature:$allowed_public_key"* ]]; then
+                printf 'fixture rejected key-bound local verification artifacts\n' >&2
+                exit 44
+              fi
+            fi
+            printf 'fixture-ssh-keygen-verified\n'
            ;;
          passthrough)
            fixture_maybe_fail
@@ -611,6 +699,15 @@ let
       "p-256-ne ${fingerprint} none ${identity.label} ssh 23.11.26, 17:09 YES"
     ];
 
+  sshIdentityTableRows =
+    rows:
+    rawIdentityTable (
+      [
+        "Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid"
+      ]
+      ++ rows
+    );
+
   rawTableVariants = baseScenario // {
     rawIdentityListings = {
       before = rawIdentityTable [
@@ -678,6 +775,9 @@ let
       residentExports = [ ];
     };
     oneResidentExport = baseScenario;
+    selectorMismatch = baseScenario // {
+      expectedSelector = alternateIdentity.hash;
+    };
     multipleResidentExports = baseScenario // {
       residentExports = [
         primaryExport
@@ -716,6 +816,14 @@ let
       };
       sshIdentityListings = {
         after = sshIdentityTable primaryIdentity primaryIdentity.sshFingerprint;
+      };
+    };
+    duplicateSshIdentity = baseScenario // {
+      sshIdentityListings = {
+        after = sshIdentityTableRows [
+          "p-256-ne ${primaryIdentity.sshFingerprint} none ${primaryIdentity.label} ssh 23.11.26, 17:09 YES"
+          "p-256-ne ${staleSameLabelIdentity.sshFingerprint} none ${primaryIdentity.label} ssh 23.11.26, 17:09 YES"
+        ];
       };
     };
     ambiguousIdentity = baseScenario // {

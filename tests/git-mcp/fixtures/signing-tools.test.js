@@ -221,6 +221,14 @@ function createScenarioRoot(scenario) {
   return root;
 }
 
+function installResidentExport(root, scenario, residentExport = scenario.residentExports[0]) {
+  assert.ok(residentExport, 'scenario has a resident export');
+  const stubPath = path.join(root, residentExport.stubName);
+  fs.writeFileSync(stubPath, `${residentExport.stub}\n`, { mode: 0o600 });
+  fs.writeFileSync(`${stubPath}.pub`, `${residentExport.publicKey}\n`, { mode: 0o644 });
+  return { stubPath, publicPath: `${stubPath}.pub` };
+}
+
 function fixtureEnvironment(root) {
   return {
     ...process.env,
@@ -429,6 +437,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'ambiguousResidentFingerprint',
     'mismatchedExpectedFingerprint',
     'staleSameLabel',
+    'duplicateSshIdentity',
     'ambiguousIdentity',
     'biometricConfiguredIdentity',
     'rawBiometricConfiguredIdentity',
@@ -437,6 +446,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'invalidStatusIdentity',
     'rawInvalidStatusIdentity',
     'rawDuplicateIdentity',
+    'selectorMismatch',
     'hangCtkListing',
     'hangPreflightProvider',
     'hangPreflightSshKeygen',
@@ -598,10 +608,14 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
 
   const providerFailureRoot = createScenarioRoot(summary.scenarios.providerFailure);
   try {
+    const { stubPath } = installResidentExport(
+      providerFailureRoot,
+      summary.scenarios.providerFailure,
+    );
     assert.throws(
       () => childProcess.execFileSync(
         sshKeygen,
-        ['-Y', 'sign', '-n', 'git', '-f', 'fixture-stub'],
+        ['-Y', 'sign', '-n', 'git', '-f', stubPath],
         {
           env: {
             ...fixtureEnvironment(providerFailureRoot),
@@ -695,13 +709,81 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
   for (const { scenario, command, args, calls } of hangExecutions) {
     const scenarioRoot = createScenarioRoot(scenario);
     try {
+      let invocationArgs = args;
+      if (command === sshKeygen && args.includes('sign')) {
+        const { stubPath } = installResidentExport(scenarioRoot, scenario);
+        invocationArgs = args.map((argument) => (argument === 'fixture-stub' ? stubPath : argument));
+      }
       const scenarioEnv = fixtureEnvironment(scenarioRoot);
       if (command === sshKeygen) scenarioEnv.SSH_SK_PROVIDER = providerNativePath;
-      await terminateHungFixture(command, args, scenarioEnv, scenarioRoot);
+      await terminateHungFixture(command, invocationArgs, scenarioEnv, scenarioRoot);
       for (const [tool, operation] of calls) assertLoggedCall(scenarioRoot, tool, operation);
       assertHarnessResult(scenarioRoot);
     } finally {
       fs.rmSync(scenarioRoot, { recursive: true, force: true });
     }
+  }
+});
+
+test('fake signing binds the stub, public key, and allowed-signers artifact', () => {
+  const scenario = fixtureSummary().scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const residentExport = scenario.residentExports[0];
+  const identity = scenario.identitySnapshots.after[0];
+  try {
+    const { stubPath } = installResidentExport(root, scenario);
+    const env = {
+      ...fixtureEnvironment(root),
+      SSH_SK_PROVIDER: fixtureSummary().nativeToolPaths.provider,
+    };
+    const signature = childProcess.execFileSync(
+      path.join(fixtureSummary().nativeToolPaths.sshKeygen),
+      ['-Y', 'sign', '-n', 'git', '-f', stubPath],
+      { env, encoding: 'utf8' },
+    );
+    const signCall = readJsonLines(root, 'calls.jsonl').find(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
+    );
+    assert.equal(signCall.signingStub, stubPath);
+    assert.equal(signCall.signingPublicKey, residentExport.publicKey);
+    assert.match(signature, new RegExp(`fixture-ssh-signature:${residentExport.publicKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+
+    const allowedSignersPath = path.join(root, 'allowed-signers');
+    const allowedSigners = `${identity.label} namespaces="git" ${residentExport.publicKey}\n`;
+    fs.writeFileSync(allowedSignersPath, allowedSigners, { mode: 0o600 });
+    const signaturePath = path.join(root, 'signature');
+    fs.writeFileSync(signaturePath, signature, { mode: 0o600 });
+    childProcess.execFileSync(
+      path.join(fixtureSummary().nativeToolPaths.sshKeygen),
+      [
+        '-Y',
+        'verify',
+        '-f',
+        allowedSignersPath,
+        '-I',
+        identity.label,
+        '-n',
+        'git',
+        '-s',
+        signaturePath,
+      ],
+      { env, encoding: 'utf8' },
+    );
+    const verifyCall = readJsonLines(root, 'calls.jsonl').find(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'verify',
+    );
+    assert.equal(verifyCall.allowedSigners, allowedSigners.trim());
+
+    fs.writeFileSync(`${stubPath}.pub`, `${scenario.residentExports[0].publicKey} wrong\n`, { mode: 0o644 });
+    assert.throws(
+      () => childProcess.execFileSync(
+        path.join(fixtureSummary().nativeToolPaths.sshKeygen),
+        ['-Y', 'sign', '-n', 'git', '-f', stubPath],
+        { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      ),
+      (error) => error.status === 45,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
