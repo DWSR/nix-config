@@ -132,7 +132,7 @@
   - _Requirements: 6.5, 6.6, 6.7_
   - _Boundary: SimpleBackup_
 
-- [ ] 4.2 Enable AgentMemory for OpenCode and Pi on both hosts
+- [x] 4.2 Enable AgentMemory for OpenCode and Pi on both hosts
   - Import the module, select AgentMemory as OpenCode's backend, and configure managed paths and secret references.
   - Configure the bundled AgentMemory Pi integration and its host credentials on each host.
   - Remove Pi cavemem enablement and configure simple backup only where an AgentMemory destination exists.

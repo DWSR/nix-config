@@ -13,6 +13,8 @@ in
     source = "${architectureDiagramSkill}/architecture-diagram";
   };
 
+  home.opencode.memoryBackend = "agentmemory";
+
   # Enable caveman-lite output style on personal-host opencode subagents.
   # Trims filler/hedging from nix-pkg, nvim-tailor, security-auditor, and
   # vault-curator output. Off on Shopify hosts (kept verbose for

@@ -14,6 +14,11 @@ in
   programs.pi-agent = {
     enable = true;
 
+    agentMemory = {
+      restPort = 3111;
+      secretReference = "agentmemory-bearer";
+    };
+
     provider = {
       mode = "shopify-gateway";
       enabledRoles = [

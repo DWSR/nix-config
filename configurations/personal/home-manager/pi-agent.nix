@@ -2,6 +2,11 @@
   programs.pi-agent = {
     enable = true;
 
+    agentMemory = {
+      restPort = 3111;
+      secretReference = "agentmemory-bearer";
+    };
+
     provider = {
       mode = "personal";
       defaultModel = {

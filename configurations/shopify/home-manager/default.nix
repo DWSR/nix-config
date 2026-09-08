@@ -7,6 +7,7 @@ let
   gcloud = pkgs.unstable.google-cloud-sdk.withExtraComponents [
     pkgs.unstable.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
+  agentMemoryBackupDestination = "${config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/agentmemory-backup";
   inherit (config.home.mcp) readKeychainSecret;
   gitCloneIsolation = config.programs.git-clone-isolation;
 in
@@ -31,8 +32,6 @@ in
   home = {
     stateVersion = "26.05";
 
-    cavemem.enable = true;
-
     packages = with pkgs; [
       gcloud
       mitmproxy
@@ -48,6 +47,7 @@ in
         "mcp-github-token" = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
         "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
         "mcp-buildkite-token" = "op://Employee/buildkite mcp api token/password";
+        "agentmemory-bearer" = "op://Employee/AgentMemory/Bearer";
       };
 
       fileSourcedEnv.TOOL_GATEWAY_TOKEN = {
@@ -136,6 +136,15 @@ in
         };
       };
     };
+  };
+
+  programs.agentmemory = {
+    enable = true;
+    dataDir = "${config.xdg.dataHome}/agentmemory";
+    runtimeDir = "${config.home.homeDirectory}/.agentmemory";
+    logDir = "${config.home.homeDirectory}/Library/Logs/agentmemory";
+    bearerReference = "agentmemory-bearer";
+    backupDestination = agentMemoryBackupDestination;
   };
 
   xdg.dataFile."orangemonkey/github-pr-review-chords.user.js".source =

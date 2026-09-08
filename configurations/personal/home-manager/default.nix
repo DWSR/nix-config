@@ -33,8 +33,6 @@ in
   home = {
     stateVersion = "26.05";
 
-    cavemem.enable = true;
-
     packages = with pkgs; [
       butane
       fastmail-mcp
@@ -62,6 +60,7 @@ in
         "mcp-beeper-token" = "op://Private/Beeper/Desktop API Access Tokens/mcphub";
         "mcp-hangops-xoxc" = "op://Private/HangOps/Tokens/xoxc";
         "mcp-hangops-xoxd" = "op://Private/HangOps/Tokens/xoxd";
+        "agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
       };
 
       # gh CLI auth token. Reuses the same PAT as mcp-github-token because
@@ -133,6 +132,14 @@ in
         };
       };
     };
+  };
+
+  programs.agentmemory = {
+    enable = true;
+    dataDir = "${config.xdg.dataHome}/agentmemory";
+    runtimeDir = "${config.home.homeDirectory}/.agentmemory";
+    logDir = "${config.home.homeDirectory}/Library/Logs/agentmemory";
+    bearerReference = "agentmemory-bearer";
   };
 
   programs.ssh = {
