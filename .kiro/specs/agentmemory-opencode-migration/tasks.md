@@ -191,7 +191,7 @@
   - _Requirements: 7.1, 7.2, 7.6_
   - _Boundary: ValidationSuite, PiAgentMemoryIntegration_
 
-- [ ] 5.5 Validate the active AgentMemory Pi integration
+- [x] 5.5 Validate the active AgentMemory Pi integration
   - Load the bundled Pi factory and security helper through the selected Pi extension API.
   - Mock standard authenticated health, session, observe, smart-search, remember, end, and consolidate responses.
   - Verify the packaged relative layout, host wiring, credentials, and expected request/response shapes.
