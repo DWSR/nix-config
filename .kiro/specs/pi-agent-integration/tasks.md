@@ -565,7 +565,7 @@
   - _Boundary: Acceptance Harness — Process Integration_
   - _Depends: 7.3_
 
-- [ ] 7.5 Prove provider credential isolation end to end
+- [x] 7.5 Prove provider credential isolation end to end
   - Inject unique sentinels and verify root and foreground child provider requests succeed.
   - Assert built-in Bash, background pipe and PTY, fake LSP, Cavemem hook and worker, status, and validator receive no sentinel.
   - Scan logs, temporary files, Pi session JSONL, Cavemem rows, and nono audit output for every sentinel.
