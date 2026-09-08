@@ -33,6 +33,9 @@ let
     };
   personal = mkConfiguration [ ];
   personalConfig = personal.config.programs.pi-agent;
+  packageNames =
+    configuration:
+    map (package: package.pname or package.name or "unknown") configuration.config.home.packages;
   discardContexts =
     value:
     if builtins.isString value then
@@ -66,6 +69,10 @@ let
       sandbox
       mcp
       ;
+    agentMemoryDataDir = toString personal.config.programs.agentmemory.dataDir;
+    agentMemoryBackupDestination = personal.config.programs.agentmemory.backupDestination;
+    mcpServers = builtins.attrNames personal.config.home.mcp.extraServers;
+    packages = packageNames personal;
     package = toString personalConfig.package;
     packageVersion = personalConfig.package.version;
     agentMemoryUrl = personalConfig.internal.agentMemoryUrl;

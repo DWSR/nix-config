@@ -33,6 +33,9 @@ let
     };
   shopify = mkConfiguration [ ];
   shopifyConfig = shopify.config.programs.pi-agent;
+  packageNames =
+    configuration:
+    map (package: package.pname or package.name or "unknown") configuration.config.home.packages;
   withProviderInjection =
     injection:
     mkConfiguration [
@@ -80,6 +83,10 @@ let
       sandbox
       mcp
       ;
+    agentMemoryDataDir = toString shopify.config.programs.agentmemory.dataDir;
+    agentMemoryBackupDestination = shopify.config.programs.agentmemory.backupDestination;
+    mcpServers = builtins.attrNames shopify.config.home.mcp.extraServers;
+    packages = packageNames shopify;
     package = toString shopifyConfig.package;
     packageVersion = shopifyConfig.package.version;
     agentMemoryUrl = shopifyConfig.internal.agentMemoryUrl;

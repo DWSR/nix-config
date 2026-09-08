@@ -306,9 +306,28 @@ function instructionHashes(host) {
 }
 
 function assertHostRender(host, mode) {
+  const piOwnedFiles = closureText([
+    path.join(repoRoot, "home-manager/common/pi-agent"),
+    path.join(repoRoot, "overlays/pi-agent"),
+  ]);
+  for (const { file } of piOwnedFiles) {
+    assert.doesNotMatch(file, /cavemem/i, "Pi-owned paths must not retain Cavemem assets");
+  }
+  assertNoPatternMatches(piOwnedFiles, [/cavemem/i], "Pi-owned Cavemem wiring");
+
   assert.equal(host.enable, true);
   assert.equal(host.packageVersion, "0.83.0");
   assert.match(host.package, /^\/nix\/store\//);
+  assert.match(host.agentMemoryDataDir, /\/agentmemory$/);
+  assert.doesNotMatch(host.agentMemoryDataDir, /cavemem/i);
+  assert.ok(
+    host.agentMemoryBackupDestination === null
+      || /\/agentmemory-backup$/.test(host.agentMemoryBackupDestination),
+  );
+  assert.doesNotMatch(host.agentMemoryBackupDestination ?? "", /cavemem/i);
+  assert.ok(host.mcpServers.includes("agentmemory"));
+  assert.equal(host.mcpServers.includes("cavemem"), false);
+  assert.equal(host.packages.some((name) => /cavemem/i.test(name)), false);
   assert.deepEqual(Object.keys(host.profilePaths).sort(), ["pi-audit", "pi-managed", "pi-review"]);
   assert.deepEqual(Object.keys(host.extensionRefs).sort(), [...expectedExtensionOrder].sort());
   assert.deepEqual(host.commands, ["pi", "pi-agent-status", "pi-agent-validate", "pi-agent-reconcile"]);

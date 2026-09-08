@@ -183,7 +183,7 @@
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
   - _Boundary: ValidationSuite, ConsumerCutover_
 
-- [ ] 5.4 Run the AgentMemory Pi suite
+- [x] 5.4 Run the AgentMemory Pi suite
   - Execute Pi capture, recall, startup, resume, and shutdown tests against AgentMemory.
   - Verify the bundled Pi integration, standard routes, credentials, and AgentMemory data path.
   - Confirm no Pi cavemem package, patch, MCP upstream, backup, or data path is activated.
