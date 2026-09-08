@@ -165,7 +165,11 @@ function installEnrollment(root, scenario, options = {}) {
 
   fs.mkdirSync(path.dirname(activeMarkerPath(root)), { recursive: true });
   fs.writeFileSync(activeMarkerPath(root), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
-  fs.writeFileSync(path.join(root.root, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+  fs.writeFileSync(
+    path.join(root.root, 'identity-snapshot'),
+    `${options.identitySnapshot || 'after'}\n`,
+    { mode: 0o600 },
+  );
 
   if (options.writeArtifacts !== false) {
     fs.mkdirSync(identityDir, { recursive: true });
@@ -782,6 +786,129 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
     );
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('stages additive rotation as a distinct unregistered candidate without changing the active enrollment', () => {
+  const scenario = summary.scenarios.rotation;
+  const root = createScenarioRoot(scenario);
+  const activeIdentity = scenario.identitySnapshots.after[0];
+  const candidateIdentity = scenario.identitySnapshots.after[1];
+  const active = installEnrollment(root, scenario, { identitySnapshot: 'before' });
+  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+  const activeStubBefore = fs.readFileSync(active.stubPath, 'utf8');
+  const activePublicBefore = fs.readFileSync(active.publicPath, 'utf8');
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['rotate', '--label', candidateIdentity.label],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(declarationFrom(result), {
+      identityLabel: candidateIdentity.label,
+      ctkPublicKeyHash: candidateIdentity.hash,
+      sshPublicKey: candidateIdentity.publicKey,
+      sshFingerprint: candidateIdentity.sshFingerprint,
+      githubSigningKeyRegistered: false,
+    });
+    assert.notEqual(candidateIdentity.hash, activeIdentity.hash, 'rotation uses a new CTK hash');
+    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.equal(fs.readFileSync(active.stubPath, 'utf8'), activeStubBefore);
+    assert.equal(fs.readFileSync(active.publicPath, 'utf8'), activePublicBefore);
+
+    const candidateDir = path.join(
+      root.stateHome,
+      'git-mcp-secure-enclave-signing',
+      'identities',
+      candidateIdentity.hash,
+    );
+    assert.equal(fs.readFileSync(path.join(candidateDir, 'id_ecdsa_sk_rk'), 'utf8').trim(), scenario.residentExports[1].stub);
+    assert.equal(
+      fs.readFileSync(path.join(candidateDir, 'id_ecdsa_sk_rk.pub'), 'utf8').trim(),
+      candidateIdentity.publicKey,
+    );
+    assert.deepEqual(managedIdentities(root), [activeIdentity.hash, candidateIdentity.hash].sort());
+    assert.equal(fileMode(candidateDir), 0o700);
+    assert.equal(fileMode(path.join(candidateDir, 'id_ecdsa_sk_rk')), 0o600);
+    assert.equal(fileMode(path.join(candidateDir, 'id_ecdsa_sk_rk.pub')), 0o644);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+
+    const calls = readCalls(root.root);
+    const createCall = calls.find((call) => call.tool === 'sc_auth' && call.operation === 'create');
+    assert.deepEqual(createCall.argv, [
+      'create-ctk-identity',
+      '-l',
+      candidateIdentity.label,
+      '-k',
+      'p-256-ne',
+      '-t',
+      'none',
+    ]);
+    const exportCall = calls.find((call) => call.operation === 'resident-export');
+    assert.equal(exportCall.selector, candidateIdentity.hash);
+    assert.equal(exportCall.exportEmpty, true);
+    assert.ok(
+      calls.some((call) => call.tool === 'ssh-keygen' && call.operation === 'verify'),
+      'rotation verifies the candidate locally before emitting its declaration',
+    );
+    for (const call of calls.filter((entry) => ['ssh-keygen', 'provider'].includes(entry.tool))) {
+      assert.equal(call.selector, candidateIdentity.hash, `${call.tool}/${call.operation} selector`);
+    }
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rotation preserves the active enrollment when candidate creation or verification fails', () => {
+  const cases = [
+    {
+      name: 'candidate creation failure',
+      scenario: summary.scenarios.rotationCreateFailure,
+      pattern: /create|candidate|rotation/i,
+    },
+    {
+      name: 'candidate verification failure',
+      scenario: summary.scenarios.rotationVerificationFailure,
+      pattern: /local signing|verification|orphan/i,
+    },
+  ];
+
+  for (const rotationCase of cases) {
+    const root = createScenarioRoot(rotationCase.scenario);
+    const active = installEnrollment(root, rotationCase.scenario, { identitySnapshot: 'before' });
+    const candidateIdentity = rotationCase.scenario.identitySnapshots.after[1];
+    const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
+    const activeStubBefore = fs.readFileSync(active.stubPath, 'utf8');
+    const activePublicBefore = fs.readFileSync(active.publicPath, 'utf8');
+    try {
+      const result = runAdmin(
+        adminCommand,
+        ['rotate', '--label', candidateIdentity.label],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, rotationCase.name);
+      assert.match(result.stderr, rotationCase.pattern, rotationCase.name);
+      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+      assert.equal(fs.readFileSync(active.stubPath, 'utf8'), activeStubBefore);
+      assert.equal(fs.readFileSync(active.publicPath, 'utf8'), activePublicBefore);
+      assert.deepEqual(managedIdentities(root), [active.identity.hash]);
+      assert.equal(
+        fs.existsSync(path.join(
+          root.stateHome,
+          'git-mcp-secure-enclave-signing',
+          'identities',
+          candidateIdentity.hash,
+        )),
+        false,
+        `${rotationCase.name} does not install candidate artifacts`,
+      );
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${rotationCase.name} cleans temporary data`);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
   }
 });
 

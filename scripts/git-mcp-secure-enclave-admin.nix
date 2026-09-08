@@ -1214,10 +1214,392 @@ writeShellApplication {
         '{identityLabel: $label, ctkPublicKeyHash: $hash, sshPublicKey: $public_key, sshFingerprint: $fingerprint, githubSigningKeyRegistered: false}'
     }
 
+    rotate() {
+      local label=""
+      local home
+      local xdg_config_home
+      local active_marker
+      local marker_values
+      local marker_state_dir
+      local marker_hash
+      local marker_label
+      local marker_public_key
+      local marker_fingerprint
+      local expected_active_public_key
+      local actual_active_public_key
+      local state_dir
+      local identities_dir
+      local active_identity_dir
+      local active_stub_path
+      local active_public_path
+      local before_listing
+      local after_listing
+      local ssh_listing
+      local before_rows
+      local after_rows
+      local ssh_rows
+      local retry_listing
+      local create_status
+      local hash
+      local key_type
+      local protection
+      local identity_label
+      local candidate_identity_count=0
+      local active_identity_count=0
+      local active_label_count=0
+      local observed_active_type=""
+      local observed_active_protection=""
+      local observed_active_label=""
+      local candidate_fingerprint=""
+      local ssh_key_type
+      local ssh_protection
+      local ssh_label
+      local selected_public=""
+      local selected_stub=""
+      local selected_public_key=""
+      local derived_public_key=""
+      local fingerprint_listing
+      local fingerprint
+      local selected_fingerprint=""
+      local probe_file
+      local signature_file
+      local allowed_signers_file
+      local temp_parent
+      local identity_dir
+      local -a export_entries
+      local -a public_candidates
+      local -a matching_candidates
+      local -a matching_fingerprints
+      local -a new_hashes
+      local -a expected_fingerprints
+      local -A before_hashes=()
+      local -A before_labels=()
+      local -A after_hashes=()
+      local -A after_labels=()
+      local -A new_key_types=()
+      local -A new_protections=()
+      local -A new_labels=()
+
+      if [[ "''${1:-}" != "--label" || -z "''${2:-}" || -n "''${3:-}" ]]; then
+        fail 'usage: rotate --label <label>'
+      fi
+      label="$2"
+      if [[ "$label" == *$'\n'* || "$label" == *$'\r'* ]]; then
+        fail 'identity label must not contain newline characters'
+      fi
+
+      home="''${HOME:-}"
+      if [[ -z "$home" ]]; then
+        fail 'HOME is required to locate the active enrollment marker'
+      fi
+      xdg_config_home="''${XDG_CONFIG_HOME:-$home/.config}"
+      active_marker="$xdg_config_home/git-mcp-secure-enclave-signing/active.json"
+      if [[ ! -f "$active_marker" || ! -r "$active_marker" ]]; then
+        fail "active enrollment marker $active_marker is missing or unreadable; bootstrap an enrollment before rotating"
+      fi
+      if ! jq -e '
+        ((.githubSigningKeyRegistered? | type) == "boolean")
+        and (.githubSigningKeyRegistered == true)
+      ' "$active_marker" >/dev/null 2>&1; then
+        fail "active enrollment marker $active_marker has invalid githubSigningKeyRegistered; expected boolean true"
+      fi
+      if ! marker_values="$(jq -er '
+        [.stateDir, .identityLabel, .ctkPublicKeyHash, .sshPublicKey, .sshFingerprint]
+        | if all(.[]; type == "string") then @tsv else error("missing enrollment field") end
+      ' "$active_marker" 2>/dev/null)"; then
+        fail "active enrollment marker $active_marker is malformed; expected stateDir, identityLabel, ctkPublicKeyHash, sshPublicKey, and sshFingerprint"
+      fi
+      IFS=$'\t' read -r marker_state_dir marker_label marker_hash marker_public_key marker_fingerprint <<< "$marker_values"
+
+      if [[ ! "$marker_hash" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "active enrollment marker $active_marker has malformed CTK hash $marker_hash; expected 40 lowercase hexadecimal characters"
+      fi
+      if [[ -z "$marker_state_dir" || "$marker_state_dir" != /* \
+        || "$marker_state_dir" == *$'\n'* || "$marker_state_dir" == *$'\r'* ]]; then
+        fail "active enrollment marker $active_marker has invalid stateDir; expected an absolute path, observed $marker_state_dir"
+      fi
+      if [[ -z "$marker_label" || "$marker_label" == *$'\n'* || "$marker_label" == *$'\r'* ]]; then
+        fail "active enrollment marker $active_marker has invalid identityLabel; expected a non-empty label, observed $marker_label"
+      fi
+      if ! expected_active_public_key="$(normalize_public_key "$marker_public_key")"; then
+        fail "active enrollment marker $active_marker has malformed sshPublicKey; expected sk-ecdsa-sha2-nistp256@openssh.com, observed $marker_public_key"
+      fi
+      if [[ ! "$marker_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
+        fail "active enrollment marker $active_marker has malformed sshFingerprint; expected SHA256:<base64>, observed $marker_fingerprint"
+      fi
+
+      state_dir="$marker_state_dir"
+      identities_dir="$state_dir/identities"
+      active_identity_dir="$identities_dir/$marker_hash"
+      active_stub_path="$active_identity_dir/id_ecdsa_sk_rk"
+      active_public_path="$active_stub_path.pub"
+      if [[ -L "$state_dir" || -L "$identities_dir" || -L "$active_identity_dir" ]]; then
+        fail "active enrollment state for CTK hash $marker_hash is symlinked; recover state before retrying rotation"
+      fi
+      if [[ ! -d "$state_dir" || ! -d "$identities_dir" || ! -d "$active_identity_dir" ]]; then
+        fail "active enrollment state for CTK hash $marker_hash is missing; recover the active enrollment before rotating"
+      fi
+      if [[ ! -f "$active_stub_path" || ! -r "$active_stub_path" || ! -s "$active_stub_path" \
+        || ! -f "$active_public_path" || ! -r "$active_public_path" || ! -s "$active_public_path" ]]; then
+        fail "active enrollment artifacts for CTK hash $marker_hash are missing or unreadable; recover the active enrollment before rotating"
+      fi
+      if ! actual_active_public_key="$(<"$active_public_path")" \
+        || ! actual_active_public_key="$(normalize_public_key "$actual_active_public_key")"; then
+        fail "active resident public key $active_public_path is malformed; recover the active enrollment before rotating"
+      fi
+      if [[ "$actual_active_public_key" != "$expected_active_public_key" ]]; then
+        fail "active resident public key $active_public_path does not match the active marker; preserve the active enrollment and recover it before rotating"
+      fi
+
+      if [[ ! -x "$sc_auth_path" ]]; then
+        fail "CTK identity tool $sc_auth_path is absent or not executable"
+      fi
+      if [[ ! -r "$provider_path" ]]; then
+        fail "signing provider $provider_path is absent or unreadable"
+      fi
+      if [[ ! -x "$ssh_keygen_path" ]]; then
+        fail "ssh-keygen $ssh_keygen_path is absent or not executable"
+      fi
+
+      mkdir -p -- "$identities_dir" \
+        || fail "cannot access managed identities directory $identities_dir; prior enrollment was preserved"
+      temp_parent="''${TMPDIR:-/tmp}"
+      work_dir="$(mktemp -d "$temp_parent/git-mcp-secure-enclave-admin-rotation.XXXXXX")" \
+        || fail "cannot create a temporary rotation directory under $temp_parent"
+      before_rows="$work_dir/before-identity-rows"
+      after_rows="$work_dir/after-identity-rows"
+      ssh_rows="$work_dir/ssh-identity-rows"
+
+      if ! before_listing="$("$sc_auth_path" list-ctk-identities -t sha1 -e hex)"; then
+        fail "cannot list CTK identities before rotation; complete the first unlock and retry; prior enrollment was preserved"
+      fi
+      if ! identity_rows "$before_listing" > "$before_rows"; then
+        fail 'sc_auth returned malformed CTK identity state before rotation; prior enrollment was preserved'
+      fi
+      while IFS=$'\t' read -r hash key_type protection identity_label; do
+        if [[ -z "$hash" ]]; then
+          continue
+        fi
+        before_hashes["$hash"]=1
+        before_labels["$hash"]="$identity_label"
+        if [[ "$hash" == "$marker_hash" ]]; then
+          active_identity_count=$((active_identity_count + 1))
+          observed_active_type="$key_type"
+          observed_active_protection="$protection"
+          observed_active_label="$identity_label"
+        fi
+        if [[ "$identity_label" == "$marker_label" ]]; then
+          active_label_count=$((active_label_count + 1))
+        fi
+        if [[ "$identity_label" == "$label" ]]; then
+          candidate_identity_count=$((candidate_identity_count + 1))
+        fi
+      done < "$before_rows"
+      if (( active_identity_count != 1 )) \
+        || [[ "$observed_active_type" != "p-256-ne" \
+          || "$observed_active_protection" != "none" \
+          || "$observed_active_label" != "$marker_label" ]]; then
+        fail "active CTK identity $marker_hash is not exactly one p-256-ne/none row for label $marker_label; prior enrollment was preserved"
+      fi
+      if (( active_label_count != 1 )); then
+        fail "active CTK identity label $marker_label is ambiguous; prior enrollment was preserved"
+      fi
+      if (( candidate_identity_count != 0 )); then
+        fail "CTK identity label $label already exists; choose a new label for additive rotation; prior enrollment was preserved"
+      fi
+
+      if "$sc_auth_path" create-ctk-identity -l "$label" -k p-256-ne -t none >/dev/null; then
+        create_status=0
+      else
+        create_status=$?
+      fi
+
+      after_listing=""
+      if ! after_listing="$("$sc_auth_path" list-ctk-identities -t sha1 -e hex)" \
+        || ! identity_rows "$after_listing" > "$after_rows"; then
+        retry_listing=""
+        if retry_listing="$("$sc_auth_path" list-ctk-identities -t sha1 -e hex)" \
+          && identity_rows "$retry_listing" > "$after_rows"; then
+          after_listing="$retry_listing"
+        else
+          recover_orphan_hashes "$after_listing\n$retry_listing"
+          if [[ -n "$orphan_hashes" ]]; then
+            fail 'post-creation CTK identity state could not be parsed or listed; inspect the rotation orphan before retrying'
+          fi
+          orphan_unknown=1
+          fail 'post-creation CTK identity state remains unavailable; inspect sc_auth for an unknown rotation orphan before retrying'
+        fi
+      fi
+
+      new_hashes=()
+      while IFS=$'\t' read -r hash key_type protection identity_label; do
+        if [[ -z "$hash" ]]; then
+          continue
+        fi
+        after_hashes["$hash"]=1
+        after_labels["$hash"]="$identity_label"
+        if [[ -z "''${before_hashes[$hash]+present}" ]]; then
+          new_hashes+=("$hash")
+          new_key_types["$hash"]="$key_type"
+          new_protections["$hash"]="$protection"
+          new_labels["$hash"]="$identity_label"
+        fi
+      done < "$after_rows"
+      orphan_hashes="''${new_hashes[*]}"
+      for hash in "''${!before_hashes[@]}"; do
+        if [[ -z "''${after_hashes[$hash]+present}" ]]; then
+          fail "the CTK identity set lost active hash $hash during rotation; prior enrollment was preserved"
+        fi
+        if [[ "''${after_labels[$hash]-}" != "''${before_labels[$hash]}" ]]; then
+          fail "the CTK identity label changed for existing hash $hash during rotation; prior enrollment was preserved"
+        fi
+      done
+      if (( ''${#new_hashes[@]} != 1 )); then
+        fail 'CTK identity rotation must produce exactly one new identity hash; prior enrollment was preserved'
+      fi
+      if (( create_status != 0 )); then
+        fail 'CTK identity candidate creation failed; prior enrollment was preserved'
+      fi
+
+      hash="''${new_hashes[0]}"
+      if [[ "''${new_key_types[$hash]}" != "p-256-ne" \
+        || "''${new_protections[$hash]}" != "none" \
+        || "''${new_labels[$hash]}" != "$label" ]]; then
+        fail "created CTK identity $hash is not p-256-ne with protection none and label $label; prior enrollment was preserved"
+      fi
+      orphan_hashes="$hash"
+
+      if ! ssh_listing="$("$sc_auth_path" list-ctk-identities -t ssh)" \
+        || ! ssh_identity_rows "$ssh_listing" > "$ssh_rows"; then
+        fail "cannot obtain the independent SSH fingerprint for rotation candidate $hash; prior enrollment was preserved"
+      fi
+      expected_fingerprints=()
+      while IFS=$'\t' read -r candidate_fingerprint ssh_key_type ssh_protection ssh_label; do
+        if [[ -n "$candidate_fingerprint" \
+          && "$ssh_key_type" == "p-256-ne" \
+          && "$ssh_protection" == "none" \
+          && "$ssh_label" == "$label" ]]; then
+          expected_fingerprints+=("$candidate_fingerprint")
+        fi
+      done < "$ssh_rows"
+      if (( ''${#expected_fingerprints[@]} != 1 )); then
+        fail "CTK SSH identity listing must yield exactly one p-256-ne/none/YES row for rotation label $label and hash $hash; prior enrollment was preserved"
+      fi
+      candidate_fingerprint="''${expected_fingerprints[0]}"
+
+      export_dir="$(mktemp -d "$work_dir/export.XXXXXX")" \
+        || fail "cannot create a temporary resident-export directory under $work_dir; prior enrollment was preserved"
+      shopt -s nullglob dotglob
+      export_entries=("$export_dir"/*)
+      shopt -u nullglob dotglob
+      if (( ''${#export_entries[@]} != 0 )); then
+        fail 'resident-export directory was not empty before rotation export; prior enrollment was preserved'
+      fi
+      if ! (
+        cd "$export_dir" &&
+          native_ssh_keygen -K >/dev/null
+      ); then
+        fail "resident-key export failed for rotation candidate $hash; prior enrollment was preserved"
+      fi
+
+      shopt -s nullglob
+      public_candidates=("$export_dir"/*.pub)
+      shopt -u nullglob
+      matching_candidates=()
+      matching_fingerprints=()
+      for selected_public in "''${public_candidates[@]}"; do
+        selected_stub="''${selected_public%.pub}"
+        if [[ ! -f "$selected_public" || ! -r "$selected_public" \
+          || ! -f "$selected_stub" || ! -r "$selected_stub" ]]; then
+          fail 'rotation export produced an unreadable public/stub pair; prior enrollment was preserved'
+        fi
+        if ! selected_public_key="$(<"$selected_public")"; then
+          fail "cannot read exported rotation public key $selected_public; prior enrollment was preserved"
+        fi
+        if ! selected_public_key="$(normalize_public_key "$selected_public_key")"; then
+          fail "rotation export public key $selected_public is malformed; prior enrollment was preserved"
+        fi
+        if ! derived_public_key="$(native_ssh_keygen -y -f "$selected_stub")"; then
+          fail "ssh-keygen rejected exported rotation stub $selected_stub; prior enrollment was preserved"
+        fi
+        if ! derived_public_key="$(normalize_public_key "$derived_public_key")"; then
+          fail "ssh-keygen returned a malformed public key for exported rotation stub $selected_stub; prior enrollment was preserved"
+        fi
+        if [[ "$derived_public_key" != "$selected_public_key" ]]; then
+          fail "rotation stub $selected_stub does not match its public key; prior enrollment was preserved"
+        fi
+        if ! fingerprint_listing="$(native_ssh_keygen -lf "$selected_public")" \
+          || ! fingerprint="$(fingerprint_from_listing "$fingerprint_listing")"; then
+          fail "ssh-keygen returned a malformed fingerprint for exported rotation public key $selected_public; prior enrollment was preserved"
+        fi
+        if [[ "$fingerprint" == "$candidate_fingerprint" ]]; then
+          matching_candidates+=("$selected_stub")
+          matching_fingerprints+=("$fingerprint")
+        fi
+      done
+
+      if (( ''${#matching_candidates[@]} != 1 )); then
+        fail "rotation export must yield exactly one public-key fingerprint match for $hash (found ''${#matching_candidates[@]}); prior enrollment was preserved"
+      fi
+      selected_stub="''${matching_candidates[0]}"
+      selected_public="''${selected_stub}.pub"
+      selected_fingerprint="''${matching_fingerprints[0]}"
+      selected_public_key="$(normalize_public_key "$(<"$selected_public")")" \
+        || fail 'selected rotation public key is malformed; prior enrollment was preserved'
+      if [[ "$selected_public_key" == "$expected_active_public_key" \
+        || "$selected_fingerprint" == "$marker_fingerprint" ]]; then
+        fail "rotation candidate $hash is not distinct from active CTK identity $marker_hash; prior enrollment was preserved"
+      fi
+
+      probe_file="$work_dir/rotation-probe"
+      signature_file="$work_dir/rotation-probe.sig"
+      allowed_signers_file="$work_dir/rotation-allowed-signers"
+      printf '%s\n' 'git-mcp-secure-enclave-signing rotation probe' > "$probe_file"
+      printf '%s namespaces="git" %s\n' "$label" "$selected_public_key" > "$allowed_signers_file"
+      if ! native_ssh_keygen -Y sign -n git -f "$selected_stub" < "$probe_file" > "$signature_file"; then
+        fail "local signing verification failed for rotation candidate $hash; prior enrollment was preserved"
+      fi
+      if [[ ! -s "$signature_file" ]]; then
+        fail "local signing produced an empty disposable signature for rotation candidate $hash; prior enrollment was preserved"
+      fi
+      if ! native_ssh_keygen -Y verify -f "$allowed_signers_file" -I "$label" -n git -s "$signature_file" < "$probe_file" >/dev/null; then
+        fail "local signature verification failed for rotation candidate $hash; prior enrollment was preserved"
+      fi
+
+      identity_dir="$identities_dir/$hash"
+      if [[ -e "$identity_dir" || -L "$identity_dir" ]]; then
+        fail "managed identity directory $identity_dir appeared during rotation; prior enrollment was preserved"
+      fi
+      install_dir="$(mktemp -d "$identities_dir/.rotate.XXXXXX")" \
+        || fail "cannot create an atomic rotation staging directory under $identities_dir; prior enrollment was preserved"
+      chmod 700 "$install_dir"
+      if ! cp -- "$selected_stub" "$install_dir/id_ecdsa_sk_rk" \
+        || ! cp -- "$selected_public" "$install_dir/id_ecdsa_sk_rk.pub"; then
+        fail "cannot stage verified rotation artifacts for CTK identity $hash; prior enrollment was preserved"
+      fi
+      chmod 600 "$install_dir/id_ecdsa_sk_rk"
+      chmod 644 "$install_dir/id_ecdsa_sk_rk.pub"
+      if ! mv -- "$install_dir" "$identity_dir"; then
+        fail "cannot atomically install rotation artifacts for CTK identity $hash; prior enrollment was preserved"
+      fi
+      install_dir=""
+
+      jq -cn \
+        --arg label "$label" \
+        --arg hash "$hash" \
+        --arg public_key "$selected_public_key" \
+        --arg fingerprint "$selected_fingerprint" \
+        '{identityLabel: $label, ctkPublicKeyHash: $hash, sshPublicKey: $public_key, sshFingerprint: $fingerprint, githubSigningKeyRegistered: false}'
+    }
+
     case "''${1:-}" in
       bootstrap)
         shift
         bootstrap "$@"
+        ;;
+      rotate)
+        shift
+        rotate "$@"
         ;;
       doctor|probe)
         if [[ "$#" != 3 || "$2" != "--hash" || -z "$3" ]]; then
@@ -1232,7 +1614,7 @@ writeShellApplication {
         recover_stub "$3"
         ;;
       *)
-        fail 'usage: bootstrap --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>'
+        fail 'usage: bootstrap|rotate --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>'
         ;;
     esac
   '';

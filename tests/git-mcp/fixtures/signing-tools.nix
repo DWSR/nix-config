@@ -634,6 +634,14 @@ let
     sshFingerprint = "SHA256:fixturealternate";
   };
 
+  rotationIdentity = {
+    hash = "3333333333333333333333333333333333333333";
+    label = "fixture-rotation";
+    publicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAfixturerotation";
+    fingerprint = "SHA256:fixturerotation";
+    sshFingerprint = "SHA256:fixturerotation";
+  };
+
   staleSameLabelIdentity = alternateIdentity // {
     hash = "1111111111111111111111111111111111111111";
     inherit (primaryIdentity) label;
@@ -670,6 +678,13 @@ let
     fingerprint = alternateIdentity.sshFingerprint;
     stubName = "id_ecdsa_sk_rk-alternate";
     stub = "-----BEGIN OPENSSH PRIVATE KEY-----\nZml4dHVyZS1yZXNpZGVudC1oYW5kbGUtYWx0ZXJuYXRl\n-----END OPENSSH PRIVATE KEY-----";
+  };
+
+  rotationExport = {
+    inherit (rotationIdentity) publicKey;
+    fingerprint = rotationIdentity.sshFingerprint;
+    stubName = "id_ecdsa_sk_rk-rotation";
+    stub = "-----BEGIN OPENSSH PRIVATE KEY-----\nZml4dHVyZS1yZXNpZGVudC1oYW5kbGUtb3RhdGlvbg==\n-----END OPENSSH PRIVATE KEY-----";
   };
 
   baseScenario = {
@@ -761,6 +776,20 @@ let
     };
   };
 
+  rotationScenario = baseScenario // {
+    identitySnapshots = {
+      before = [ primaryIdentity ];
+      after = [
+        primaryIdentity
+        rotationIdentity
+      ];
+    };
+    residentExports = [
+      primaryExport
+      rotationExport
+    ];
+  };
+
   scenarios = {
     identitySnapshots = baseScenario // {
       identitySnapshots = {
@@ -789,6 +818,21 @@ let
         alternateExport
         primaryExport
       ];
+    };
+    rotation = rotationScenario;
+    rotationCreateFailure = rotationScenario // {
+      failures = {
+        sc_auth = {
+          create = "fixture rotation candidate creation failed";
+        };
+      };
+    };
+    rotationVerificationFailure = rotationScenario // {
+      failures = {
+        provider = {
+          sign = "fixture rotation candidate verification failed; first unlock is required";
+        };
+      };
     };
     ambiguousResidentFingerprint = baseScenario // {
       residentExports = [

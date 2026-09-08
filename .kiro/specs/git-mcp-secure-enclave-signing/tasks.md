@@ -48,7 +48,7 @@
   - _Requirements: 6.4, 6.5, 6.6, 8.3, 8.5, 8.6_
   - _Boundary: Lifecycle CLI_
 
-- [ ] 2.5 Add additive rotation
+- [x] 2.5 Add additive rotation
   - Stage rotation under a new hash with registration attestation disabled and leave the selected identity unchanged.
   - Preserve the previous enrollment on candidate creation or verification failure.
   - Complete when rotation emits a distinct replacement declaration without changing or deleting the active identity.
