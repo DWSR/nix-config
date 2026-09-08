@@ -120,6 +120,50 @@ in builtins.toJSON {
   );
 }
 
+function renderShopifyValidator(backend) {
+  const rollbackOverride =
+    backend === 'cavemem'
+      ? 'home.opencode.memoryBackend = pkgs.lib.mkForce "cavemem";'
+      : '';
+  const expression = `(let
+  flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+  pkgs = import flake.inputs.nixpkgs {
+    system = "aarch64-darwin";
+    overlays = [
+      flake.outputs.overlays.unstable-packages
+      flake.outputs.overlays.custom-packages
+    ];
+    config.allowUnfree = true;
+  };
+  hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
+    inherit pkgs;
+    extraSpecialArgs = { inherit (flake) inputs; };
+    modules = [
+      ${JSON.stringify(path.join(repoRoot, 'configurations/shopify/home-manager/default.nix'))}
+      {
+        home.username = "brandonmcnama";
+        home.homeDirectory = "/Users/brandonmcnama";
+        home.stateVersion = "26.05";
+        ${rollbackOverride}
+      }
+    ];
+  }).config;
+   validator = hm.programs.opencode.agents."yb-issue-validator";
+   validationSkill = hm.xdg.configFile."opencode/skills/validate-yb-issue";
+ in builtins.toJSON {
+   validator = if builtins.typeOf validator == "path" then builtins.readFile validator else validator;
+   skill = builtins.readFile (validationSkill.source + "/SKILL.md");
+ })\n`;
+
+  return JSON.parse(
+    execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024,
+    }),
+  );
+}
+
 test('the selector defaults to the retained cavemem OpenCode backend', () => {
   const rendered = renderBackend(undefined);
 
@@ -227,4 +271,18 @@ test('cavemem mode owns OpenCode capture and restores its consumers without Agen
   assert.match(rendered.context, /## Tag Guidelines/);
   assert.deepEqual(rendered.pi.managedConfig.extensionOrder[0], 'agentmemory');
   assert.match(rendered.pi.managedConfig.agentMemory.url, /127\.0\.0\.1:3111/);
+});
+
+test('Shopify host instructions follow the selected backend and preserve rollback text', () => {
+  const agentMemory = renderShopifyValidator('agentmemory');
+  const cavemem = renderShopifyValidator('cavemem');
+
+  assert.match(agentMemory.validator, /Search Obsidian memories and AgentMemory/);
+  assert.doesNotMatch(agentMemory.validator, /cavemem/i);
+  assert.doesNotMatch(agentMemory.skill, /cavemem/i);
+  assert.match(agentMemory.skill, /AgentMemory:.*search/i);
+  assert.match(cavemem.validator, /Search Obsidian memories and cavemem/);
+  assert.doesNotMatch(cavemem.validator, /Search Obsidian memories and AgentMemory/);
+  assert.match(cavemem.skill, /Cavemem:.*search/);
+  assert.doesNotMatch(cavemem.skill, /AgentMemory:.*search/i);
 });

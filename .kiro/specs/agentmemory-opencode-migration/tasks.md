@@ -175,7 +175,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8_
   - _Boundary: ValidationSuite, BestEffortImporter_
 
-- [ ] 5.3 Validate simplified consumer and Obsidian behavior
+- [x] 5.3 Validate simplified consumer and Obsidian behavior
   - Run compaction without cavemem augmentation under AgentMemory.
   - Verify vault-synthesizer and memory-sync are absent while manual Obsidian memory and curator remain.
   - Render global and subagent instructions with no OpenCode cavemem direction.

@@ -29,6 +29,34 @@ let
       headers = proxyHeader;
     };
   };
+
+  ybIssueValidator =
+    if config.home.opencode.memoryBackend == "agentmemory" then
+      builtins.toFile "yb-issue-validator-agentmemory.md" (
+        lib.replaceStrings
+          [
+            "Search Obsidian memories and cavemem"
+          ]
+          [
+            "Search Obsidian memories and AgentMemory through mcpproxy"
+          ]
+          (builtins.readFile ./agents/yb-issue-validator.md)
+      )
+    else
+      ./agents/yb-issue-validator.md;
+
+  ybIssueValidationSkill =
+    if config.home.opencode.memoryBackend == "agentmemory" then
+      pkgs.writeTextDir "SKILL.md" (
+        lib.replaceStrings
+          [ "2. Cavemem: `search` with the issue number and symptom keywords." ]
+          [
+            "2. AgentMemory: use the stock memory search tool through mcpproxy with the issue number and symptom keywords."
+          ]
+          (builtins.readFile ./skills/validate-yb-issue/SKILL.md)
+      )
+    else
+      ./skills/validate-yb-issue;
 in
 {
   home.opencode.memoryBackend = "agentmemory";
@@ -57,7 +85,7 @@ in
   };
 
   xdg.configFile."opencode/skills/validate-yb-issue" = {
-    source = ./skills/validate-yb-issue;
+    source = ybIssueValidationSkill;
   };
 
   # Private Shopify Playground skill, exposed under the requested OpenCode
@@ -271,7 +299,7 @@ in
     yb-fix-pr-author = config.home.opencode.agentWithCaveman ./agents/yb-fix-pr-author.md;
     yb-backlog-validator = config.home.opencode.agentWithCaveman ./agents/yb-backlog-validator.md;
     yb-issue-oneshot = config.home.opencode.agentWithCaveman ./agents/yb-issue-oneshot.md;
-    yb-issue-validator = config.home.opencode.agentWithCaveman ./agents/yb-issue-validator.md;
+    yb-issue-validator = config.home.opencode.agentWithCaveman ybIssueValidator;
   };
 
   programs.opencode.settings = {
