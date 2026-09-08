@@ -25,7 +25,7 @@
   - _Boundary: Signer Adapter_
   - _Depends: 1.1_
 
-- [ ] 2.2 (P) Build safe identity bootstrap
+- [x] 2.2 (P) Build safe identity bootstrap
   - Require no active marker and an empty managed identities directory before creating one `p-256-ne` identity with protection `none`.
   - Compare identity sets, require one new hash, export under one selector into an empty temporary directory, and select by fingerprint.
   - Locally sign and verify before atomically installing the resident stub and public key.

@@ -425,6 +425,10 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'zeroResidentExports',
     'oneResidentExport',
     'multipleResidentExports',
+    'multipleResidentExportsExpectedSecond',
+    'ambiguousResidentFingerprint',
+    'mismatchedExpectedFingerprint',
+    'staleSameLabel',
     'ambiguousIdentity',
     'biometricConfiguredIdentity',
     'rawBiometricConfiguredIdentity',
@@ -439,6 +443,8 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'hangPreflightSshKeygenStub',
     'hangProviderSigning',
     'hangAllPreflightPhases',
+    'postCreateListFailure',
+    'postCreateMalformedIdentity',
     'workerTree',
   ];
 
@@ -517,6 +523,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     ['zeroResidentExports', 0],
     ['oneResidentExport', 1],
     ['multipleResidentExports', 2],
+    ['multipleResidentExportsExpectedSecond', 2],
   ]) {
     const scenarioRoot = createScenarioRoot(summary.scenarios[scenarioName]);
     try {
