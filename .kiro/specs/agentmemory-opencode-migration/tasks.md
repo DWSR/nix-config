@@ -167,7 +167,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 3.1, 3.2, 3.4, 3.5_
   - _Boundary: ValidationSuite_
 
-- [ ] 5.2 Validate one-shot import and rerun behavior
+- [x] 5.2 Validate one-shot import and rerun behavior
   - Import a fixture with normal, unknown, Pi, importer, malformed, and failed-batch records.
   - Rerun the command and verify deterministic IDs are skipped rather than duplicated.
   - Compare source and report counts without testing crash recovery or rollback.

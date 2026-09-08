@@ -95,6 +95,26 @@ async function startMockAgentMemory({ failOnce = false } = {}) {
         return;
       }
 
+      if (request.url === '/agentmemory/smart-search') {
+        const query = typeof payload.query === 'string'
+          ? payload.query.trim().toLowerCase()
+          : '';
+        const results = [...stored.observations.values()]
+          .filter((record) => record.narrative.toLowerCase().includes(query))
+          .map((record) => ({
+            obsId: record.id,
+            sessionId: record.sessionId,
+            title: record.title,
+            type: record.type,
+            score: 1,
+            timestamp: record.timestamp,
+          }))
+          .slice(0, payload.limit || 20);
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ mode: 'compact', results, lessons: [] }));
+        return;
+      }
+
       const exportData = payload.exportData;
       const observations = Object.values(exportData.observations || {}).flat();
       const records = [
@@ -248,6 +268,8 @@ test('imports deterministic standard batches, reports failures, and continues', 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-http-'));
   const sourcePath = path.join(directory, 'data.db');
   createCavememImportFixture(sourcePath, { extended: true });
+  const sourceBefore = fs.readFileSync(sourcePath);
+  const directoryBefore = digestDirectory(directory);
   const mock = await startMockAgentMemory({ failOnce: true });
 
   try {
@@ -270,6 +292,7 @@ test('imports deterministic standard batches, reports failures, and continues', 
     assert.deepEqual(report.failed, { sessions: 0, observations: 1, summaries: 0 });
     assert.equal(report.batches.failed, 1);
     assert.ok(report.batches.submitted > report.batches.failed);
+    assert.ok(report.batches.sizes.every((size) => size < 1000));
     assert.ok(report.batches.sizes.every((size) => size < 8 * 1024 * 1024));
     assert.ok(mock.requests.some(({ payload }) => payload.strategy === 'skip'));
     assert.ok(mock.requests.every(({ payload }) => payload.exportData.version === '0.9.29'));
@@ -313,6 +336,8 @@ test('imports deterministic standard batches, reports failures, and continues', 
     assert.equal(importedSummaries.length, 4);
     assert.ok(importedSummaries.every(({ record }) => record.origin.channel === 'import'));
     assert.ok(mock.requests.every(({ raw }) => raw.byteLength < 8 * 1024 * 1024));
+    assert.deepEqual(fs.readFileSync(sourcePath), sourceBefore);
+    assert.deepEqual(digestDirectory(directory), directoryBefore);
 
     const dryRun = JSON.parse(runDryRun(sourcePath).stdout);
     const ids = dryRun.records.map((record) => record.id);
@@ -331,6 +356,19 @@ test('imports deterministic standard batches, reports failures, and continues', 
     assert.deepEqual(rerunReport.imported, { sessions: 0, observations: 1, summaries: 0 });
     assert.deepEqual(rerunReport.existing, { sessions: 4, observations: 6, summaries: 4 });
     assert.deepEqual(rerunReport.failed, { sessions: 0, observations: 0, summaries: 0 });
+    assert.deepEqual(fs.readFileSync(sourcePath), sourceBefore);
+    assert.deepEqual(digestDirectory(directory), directoryBefore);
+
+    const searchResponse = await fetch(`${mock.url}/agentmemory/smart-search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: 'Inspect the unknown session.', limit: 10 }),
+    });
+    assert.equal(searchResponse.status, 200);
+    const searchReport = await searchResponse.json();
+    assert.ok(searchReport.results.some(({ obsId }) => (
+      obsId === 'cavemem:observations:unknown-session:3'
+    )));
   } finally {
     await mock.close();
     fs.rmSync(directory, { recursive: true, force: true });
