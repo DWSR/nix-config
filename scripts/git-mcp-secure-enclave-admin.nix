@@ -1,12 +1,14 @@
 {
   lib,
   coreutils,
+  git,
   gnugrep,
   jq,
   writeShellApplication,
   scAuthPath ? "/usr/sbin/sc_auth",
   providerPath ? "/usr/lib/ssh-keychain.dylib",
   sshKeygenPath ? "/usr/bin/ssh-keygen",
+  swVersPath ? "/usr/bin/sw_vers",
   ...
 }:
 
@@ -14,6 +16,7 @@ writeShellApplication {
   name = "git-mcp-secure-enclave-admin";
   runtimeInputs = [
     coreutils
+    git
     gnugrep
     jq
   ];
@@ -21,6 +24,7 @@ writeShellApplication {
     sc_auth_path=${lib.escapeShellArg scAuthPath}
     provider_path=${lib.escapeShellArg providerPath}
     ssh_keygen_path=${lib.escapeShellArg sshKeygenPath}
+    sw_vers_path=${lib.escapeShellArg swVersPath}
 
     work_dir=""
     export_dir=""
@@ -29,6 +33,7 @@ writeShellApplication {
     backup_retained=0
     orphan_hashes=""
     orphan_unknown=0
+    acceptance_temp=""
 
     fail() {
       local message="$1"
@@ -47,6 +52,9 @@ writeShellApplication {
     cleanup() {
       if [[ -n "$install_dir" && -e "$install_dir" ]]; then
         rm -rf -- "$install_dir"
+      fi
+      if [[ -n "$acceptance_temp" && -e "$acceptance_temp" ]]; then
+        rm -f -- "$acceptance_temp"
       fi
       if [[ "$backup_retained" == 0 && -n "$backup_dir" && -e "$backup_dir" ]]; then
         rm -rf -- "$backup_dir"
@@ -1592,6 +1600,276 @@ writeShellApplication {
         '{identityLabel: $label, ctkPublicKeyHash: $hash, sshPublicKey: $public_key, sshFingerprint: $fingerprint, githubSigningKeyRegistered: false}'
     }
 
+    verify_acceptance_commit() {
+      local state_name="$1"
+      local commit="$2"
+      local resolved_commit
+      local commit_body
+      local verification_output
+      local verification_diagnostic
+
+      if [[ ! "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "$state_name acceptance commit $commit is malformed; expected a 40-character lowercase commit SHA"
+      fi
+      if ! resolved_commit="$(git rev-parse --verify "$commit^{commit}" 2>/dev/null)"; then
+        fail "$state_name acceptance commit $commit is missing or does not name a commit"
+      fi
+      if [[ "$resolved_commit" != "$commit" ]]; then
+        fail "$state_name acceptance commit $commit resolved to $resolved_commit; refusing ambiguous evidence"
+      fi
+      commit_body="$work_dir/$state_name-commit"
+      if ! git cat-file commit "$commit" > "$commit_body" 2>/dev/null; then
+        fail "$state_name acceptance commit $commit could not be read from the repository"
+      fi
+      if ! grep -q '^gpgsig ' "$commit_body"; then
+        fail "$state_name acceptance commit $commit is unsigned; expected an SSH signature from the active enrollment"
+      fi
+
+      verification_output="$work_dir/$state_name-verify"
+      if ! GIT_CONFIG_NOSYSTEM=1 \
+        SSH_SK_PROVIDER="$provider_path" \
+        KEYCHAIN_CERTIFICATES="$hash" \
+        git \
+          -c gpg.format=ssh \
+          -c "gpg.ssh.program=$ssh_keygen_path" \
+          -c "gpg.ssh.allowedSignersFile=$allowed_signers_file" \
+          verify-commit --raw "$commit" > "$verification_output" 2>&1; then
+        verification_diagnostic="$(tr '\n' ' ' < "$verification_output" 2>/dev/null || true)"
+        fail "$state_name acceptance commit $commit is not verified against active public key $marker_fingerprint: $verification_diagnostic"
+      fi
+    }
+
+    record_acceptance() {
+      local hash="$1"
+      local unlocked_commit="$2"
+      local locked_commit="$3"
+      local sleep_commit="$4"
+      local reboot_commit="$5"
+      local github_commit="$6"
+      local home
+      local xdg_config_home
+      local active_marker
+      local marker_values
+      local marker_state_dir
+      local marker_hash
+      local marker_label
+      local marker_public_key
+      local marker_fingerprint
+      local expected_public_key
+      local state_dir
+      local acceptance_dir
+      local acceptance_record
+      local allowed_signers_file
+      local record_content
+      local timestamp
+      local host_name
+      local macos_version
+
+      if [[ ! "$hash" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "requested CTK identity hash $hash is malformed; expected 40 lowercase hexadecimal characters"
+      fi
+
+      diagnose record-acceptance "$hash"
+      if [[ -n "$work_dir" && -e "$work_dir" ]]; then
+        if ! rm -rf -- "$work_dir"; then
+          fail 'cannot clean the disposable diagnosis data before recording acceptance'
+        fi
+      fi
+      work_dir=""
+
+      home="''${HOME:-}"
+      if [[ -z "$home" ]]; then
+        fail 'HOME is required to locate the active enrollment marker'
+      fi
+      xdg_config_home="''${XDG_CONFIG_HOME:-$home/.config}"
+      active_marker="$xdg_config_home/git-mcp-secure-enclave-signing/active.json"
+      if ! marker_values="$(jq -er '
+        [.stateDir, .identityLabel, .ctkPublicKeyHash, .sshPublicKey, .sshFingerprint]
+        | if all(.[]; type == "string") then @tsv else error("missing enrollment field") end
+      ' "$active_marker" 2>/dev/null)"; then
+        fail "active enrollment marker $active_marker is malformed; expected stateDir, identityLabel, ctkPublicKeyHash, sshPublicKey, and sshFingerprint"
+      fi
+      IFS=$'\t' read -r marker_state_dir marker_label marker_hash marker_public_key marker_fingerprint <<< "$marker_values"
+      state_dir="$marker_state_dir"
+      expected_public_key="$(normalize_public_key "$marker_public_key")" \
+        || fail "active enrollment marker $active_marker has malformed sshPublicKey"
+      if [[ "$marker_hash" != "$hash" ]]; then
+        fail "active enrollment marker $active_marker changed while recording acceptance; refusing to write evidence"
+      fi
+
+      acceptance_dir="$state_dir/acceptance"
+      acceptance_record="$acceptance_dir/$hash.json"
+      if [[ -L "$state_dir" || -L "$acceptance_dir" || -L "$acceptance_record" ]]; then
+        fail "managed acceptance state for CTK hash $hash is symlinked; refusing to write evidence"
+      fi
+      if [[ ! -d "$state_dir" ]]; then
+        fail "active enrollment state directory $state_dir is absent or not a directory"
+      fi
+      if [[ -e "$acceptance_dir" && ! -d "$acceptance_dir" ]]; then
+        fail "managed acceptance directory $acceptance_dir is not a directory; prior evidence was preserved"
+      fi
+      if [[ -e "$acceptance_record" && ! -f "$acceptance_record" ]]; then
+        fail "managed acceptance record $acceptance_record is not a regular file; prior evidence was preserved"
+      fi
+      if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        fail 'record-acceptance must run inside the Git repository containing the probe commits'
+      fi
+
+      work_dir="$(mktemp -d "''${TMPDIR:-/tmp}/git-mcp-secure-enclave-admin-acceptance.XXXXXX")" \
+        || fail 'cannot create a temporary acceptance verification directory'
+      allowed_signers_file="$work_dir/acceptance-allowed-signers"
+      printf '%s namespaces="git" %s\n' "$marker_label" "$expected_public_key" > "$allowed_signers_file"
+
+      verify_acceptance_commit unlocked "$unlocked_commit"
+      verify_acceptance_commit locked "$locked_commit"
+      verify_acceptance_commit sleep "$sleep_commit"
+      verify_acceptance_commit reboot "$reboot_commit"
+      verify_acceptance_commit github "$github_commit"
+
+      timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+        || fail 'cannot determine the acceptance timestamp; prior evidence was preserved'
+      host_name="''${GIT_MCP_ACCEPTANCE_HOST:-}"
+      if [[ -z "$host_name" ]]; then
+        host_name="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+      fi
+      macos_version="''${GIT_MCP_ACCEPTANCE_OS_VERSION:-}"
+      if [[ -z "$macos_version" && -x "$sw_vers_path" ]]; then
+        macos_version="$($sw_vers_path -productVersion 2>/dev/null || true)"
+      fi
+      if [[ -z "$macos_version" ]]; then
+        macos_version="$(uname -sr 2>/dev/null || true)"
+      fi
+      if [[ -z "$host_name" || "$host_name" == *$'\n'* || "$host_name" == *$'\r'* ]]; then
+        fail 'acceptance host identity is empty or contains a newline; prior evidence was preserved'
+      fi
+      if [[ -z "$macos_version" || "$macos_version" == *$'\n'* || "$macos_version" == *$'\r'* ]]; then
+        fail 'macOS version is empty or contains a newline; prior evidence was preserved'
+      fi
+
+      record_content="$(jq -cn \
+        --arg host "$host_name" \
+        --arg macos_version "$macos_version" \
+        --arg hash "$hash" \
+        --arg fingerprint "$marker_fingerprint" \
+        --arg unlocked "$unlocked_commit" \
+        --arg locked "$locked_commit" \
+        --arg sleep "$sleep_commit" \
+        --arg reboot "$reboot_commit" \
+        --arg github "$github_commit" \
+        --arg timestamp "$timestamp" \
+        '{
+          schemaVersion: 1,
+          host: $host,
+          macOSVersion: $macos_version,
+          ctkPublicKeyHash: $hash,
+          sshFingerprint: $fingerprint,
+          probes: {
+            unlocked: {commit: $unlocked, result: "verified"},
+            locked: {commit: $locked, result: "verified"},
+            sleep: {commit: $sleep, result: "verified"},
+            reboot: {commit: $reboot, result: "verified"}
+          },
+          github: {commit: $github, verified: true, result: "verified"},
+          result: "pass",
+          recordedAt: $timestamp
+        }')" \
+        || fail 'cannot serialize acceptance evidence; prior evidence was preserved'
+
+      if ! mkdir -p -- "$acceptance_dir" || ! chmod 700 "$acceptance_dir"; then
+        fail "cannot prepare acceptance directory $acceptance_dir; prior evidence was preserved"
+      fi
+      acceptance_temp="$(mktemp "$acceptance_dir/.acceptance.XXXXXX")" \
+        || fail "cannot stage acceptance evidence in $acceptance_dir; prior evidence was preserved"
+      chmod 600 "$acceptance_temp" \
+        || fail "cannot protect staged acceptance evidence in $acceptance_dir; prior evidence was preserved"
+      if ! printf '%s\n' "$record_content" > "$acceptance_temp"; then
+        fail "cannot write staged acceptance evidence in $acceptance_dir; prior evidence was preserved"
+      fi
+      if ! mv -- "$acceptance_temp" "$acceptance_record"; then
+        fail "cannot atomically install acceptance record $acceptance_record; prior evidence was preserved"
+      fi
+      acceptance_temp=""
+      printf '%s\n' "record-acceptance: CTK identity $hash passed unlocked, locked, sleep, reboot, and GitHub verification"
+      printf '%s\n' "$record_content"
+    }
+
+    record_acceptance_command() {
+      local hash=""
+      local unlocked_commit=""
+      local locked_commit=""
+      local sleep_commit=""
+      local reboot_commit=""
+      local github_commit=""
+      local github_verified=0
+      local usage='usage: record-acceptance --hash <hash> --unlocked-commit <sha> --locked-commit <sha> --sleep-commit <sha> --reboot-commit <sha> --github-commit <sha> --github-verified'
+
+      while (( $# > 0 )); do
+        case "$1" in
+          --hash|--unlocked-commit|--locked-commit|--sleep-commit|--reboot-commit|--github-commit)
+            if [[ "$#" -lt 2 || -z "$2" || "$2" == --* ]]; then
+              fail "$usage"
+            fi
+            case "$1" in
+              --hash)
+                [[ -z "$hash" ]] || fail "$usage"
+                hash="$2"
+                ;;
+              --unlocked-commit)
+                [[ -z "$unlocked_commit" ]] || fail "$usage"
+                unlocked_commit="$2"
+                ;;
+              --locked-commit)
+                [[ -z "$locked_commit" ]] || fail "$usage"
+                locked_commit="$2"
+                ;;
+              --sleep-commit)
+                [[ -z "$sleep_commit" ]] || fail "$usage"
+                sleep_commit="$2"
+                ;;
+              --reboot-commit)
+                [[ -z "$reboot_commit" ]] || fail "$usage"
+                reboot_commit="$2"
+                ;;
+              --github-commit)
+                [[ -z "$github_commit" ]] || fail "$usage"
+                github_commit="$2"
+                ;;
+            esac
+            shift 2
+            ;;
+          --github-verified)
+            (( github_verified == 0 )) || fail "$usage"
+            github_verified=1
+            shift
+            ;;
+          *)
+            fail "$usage"
+            ;;
+        esac
+      done
+
+      if [[ -z "$hash" || -z "$unlocked_commit" || -z "$locked_commit" \
+        || -z "$sleep_commit" || -z "$reboot_commit" || -z "$github_commit" ]]; then
+        fail "$usage"
+      fi
+      if (( github_verified == 0 )); then
+        fail 'record-acceptance requires the explicit --github-verified GitHub Verified attestation'
+      fi
+      if [[ "$unlocked_commit" == "$locked_commit" \
+        || "$unlocked_commit" == "$sleep_commit" \
+        || "$unlocked_commit" == "$reboot_commit" \
+        || "$unlocked_commit" == "$github_commit" \
+        || "$locked_commit" == "$sleep_commit" \
+        || "$locked_commit" == "$reboot_commit" \
+        || "$locked_commit" == "$github_commit" \
+        || "$sleep_commit" == "$reboot_commit" \
+        || "$sleep_commit" == "$github_commit" \
+        || "$reboot_commit" == "$github_commit" ]]; then
+        fail 'record-acceptance requires five distinct commit references; duplicate references are not valid acceptance evidence'
+      fi
+      record_acceptance "$hash" "$unlocked_commit" "$locked_commit" "$sleep_commit" "$reboot_commit" "$github_commit"
+    }
+
     decommission() {
       local hash="$1"
       local requested_fingerprint="$2"
@@ -1821,6 +2099,10 @@ writeShellApplication {
         shift
         rotate "$@"
         ;;
+      record-acceptance)
+        shift
+        record_acceptance_command "$@"
+        ;;
       decommission)
         shift
         if [[ "$#" != 4 || "$1" != "--hash" || -z "$2" || "$3" != "--fingerprint" || -z "$4" ]]; then
@@ -1841,7 +2123,7 @@ writeShellApplication {
         recover_stub "$3"
         ;;
       *)
-        fail 'usage: bootstrap|rotate --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>; decommission --hash <hash> --fingerprint <fingerprint>'
+        fail 'usage: bootstrap|rotate --label <label>; doctor|probe --hash <hash>; recover-stub --hash <hash>; record-acceptance --hash <hash> --unlocked-commit <sha> --locked-commit <sha> --sleep-commit <sha> --reboot-commit <sha> --github-commit <sha> --github-verified; decommission --hash <hash> --fingerprint <fingerprint>'
         ;;
     esac
   '';

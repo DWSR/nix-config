@@ -110,15 +110,117 @@ function fixtureEnvironment(root) {
   };
 }
 
-function runAdmin(command, args, env) {
+function runAdmin(command, args, env, options = {}) {
   return childProcess.spawnSync(command, args, {
-    cwd: repoRoot,
+    cwd: options.cwd || repoRoot,
     env,
     encoding: 'utf8',
     input: '',
     maxBuffer: 64 * 1024 * 1024,
     timeout: 30_000,
   });
+}
+
+function runGit(args, options = {}) {
+  return childProcess.execFileSync('git', args, {
+    cwd: options.cwd,
+    env: { ...process.env, ...(options.env || {}) },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 30_000,
+  }).trim();
+}
+
+function acceptanceArgs(hash, commits, includeGithubVerified = true) {
+  const args = [
+    'record-acceptance',
+    '--hash', hash,
+    '--unlocked-commit', commits.unlocked,
+    '--locked-commit', commits.locked,
+    '--sleep-commit', commits.sleep,
+    '--reboot-commit', commits.reboot,
+    '--github-commit', commits.github,
+  ];
+  if (includeGithubVerified) args.push('--github-verified');
+  return args;
+}
+
+function acceptanceEnvironment(root) {
+  return {
+    ...fixtureEnvironment(root),
+    GIT_MCP_ACCEPTANCE_HOST: 'fixture-host',
+    GIT_MCP_ACCEPTANCE_OS_VERSION: '26.0.0-fixture',
+  };
+}
+
+function createAcceptanceRepository(root, enrollment, options = {}) {
+  const repository = path.join(root.root, 'acceptance-repository');
+  fs.mkdirSync(repository, { recursive: true });
+  runGit(['init', '--quiet', '--initial-branch=main'], { cwd: repository });
+  runGit(['config', 'user.name', 'Fixture Operator'], { cwd: repository });
+  runGit(['config', 'user.email', 'fixture@example.test'], { cwd: repository });
+
+  const environment = {
+    ...fixtureEnvironment(root),
+    GIT_CONFIG_NOSYSTEM: '1',
+    KEYCHAIN_CERTIFICATES: enrollment.identity.hash,
+    SSH_SK_PROVIDER: summary.nativeToolPaths.provider,
+  };
+  const states = ['unlocked', 'locked', 'sleep', 'reboot', 'github'];
+  const unsignedStates = new Set(options.unsignedStates || []);
+  const mismatchedStates = new Set(options.mismatchedStates || []);
+  let mismatchedStubPath;
+  if (mismatchedStates.size > 0) {
+    const mismatchedExport = (options.scenario || summary.scenarios.multipleResidentExports)
+      .residentExports.find((residentExport) => residentExport.publicKey !== enrollment.marker.sshPublicKey);
+    assert.ok(mismatchedExport, 'mismatch fixture has an alternate resident export');
+    mismatchedStubPath = path.join(root.root, 'mismatched-resident-stub');
+    fs.writeFileSync(mismatchedStubPath, `${mismatchedExport.stub}\n`, { mode: 0o600 });
+    fs.writeFileSync(`${mismatchedStubPath}.pub`, `${mismatchedExport.publicKey}\n`, { mode: 0o644 });
+  }
+
+  const commits = {};
+  let parent;
+  for (const state of states) {
+    const filePath = path.join(repository, `${state}.txt`);
+    fs.writeFileSync(filePath, `fixture ${state} acceptance probe\n`);
+    runGit(['add', `${state}.txt`], { cwd: repository, env: environment });
+    const tree = runGit(['write-tree'], { cwd: repository, env: environment });
+    const signingPublicKey = mismatchedStates.has(state)
+      ? fs.readFileSync(`${mismatchedStubPath}.pub`, 'utf8').trim()
+      : enrollment.marker.sshPublicKey;
+    const commitHeaders = [
+      `tree ${tree}`,
+      ...(parent ? [`parent ${parent}`] : []),
+      'author Fixture Operator <fixture@example.test> 1720000000 +0000',
+      'committer Fixture Operator <fixture@example.test> 1720000000 +0000',
+    ];
+    if (!unsignedStates.has(state)) {
+      commitHeaders.push(
+        'gpgsig -----BEGIN SSH SIGNATURE-----',
+        ` fixture-ssh-signature:${signingPublicKey}`,
+        ' -----END SSH SIGNATURE-----',
+      );
+    }
+    const rawCommit = `${commitHeaders.join('\n')}\n\nacceptance ${state}\n`;
+    const commit = childProcess.execFileSync(
+      'git',
+      ['hash-object', '-t', 'commit', '-w', '--stdin'],
+      {
+        cwd: repository,
+        env: environment,
+        input: rawCommit,
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    ).trim();
+    runGit(['update-ref', 'HEAD', commit], { cwd: repository, env: environment });
+    commits[state] = commit;
+    parent = commit;
+  }
+
+  return { repository, commits };
 }
 
 function readCalls(root) {
@@ -249,6 +351,7 @@ let adminCommand;
 let summary;
 let missingAdminCommands;
 let renameFailureAdminCommand;
+let acceptanceFailureAdminCommand;
 
 test.before(() => {
   summary = fixtureSummary();
@@ -273,6 +376,22 @@ test.before(() => {
           exit 75
         fi
         exec \${pkgs.coreutils}/bin/mv "$@"
+        EOF
+        chmod +x $out/bin/mv
+      ''`,
+    }),
+    'bin/git-mcp-secure-enclave-admin',
+  );
+  acceptanceFailureAdminCommand = path.join(
+    buildAdmin({}, {
+      coreutils: `pkgs.runCommand "git-mcp-admin-acceptance-failing-mv-coreutils" {} ''
+        mkdir -p $out/bin
+        cp -R \${pkgs.coreutils}/bin/. $out/bin/
+        rm -f $out/bin/mv
+        cat > $out/bin/mv <<'EOF'
+        #!/bin/sh
+        printf '%s\\n' 'fixture forced acceptance mv failure' >&2
+        exit 75
         EOF
         chmod +x $out/bin/mv
       ''`,
@@ -1688,6 +1807,294 @@ test('refuses a requested label that already existed before CTK creation', () =>
       'stale same-label state is rejected before CTK creation',
     );
     assert.equal(calls.some((call) => call.tool === 'ssh-keygen'), false);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('records complete acceptance evidence only after verifying every signed commit', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  try {
+    const enrollment = installEnrollment(root, scenario);
+    const { repository, commits } = createAcceptanceRepository(root, enrollment);
+    const result = runAdmin(
+      adminCommand,
+      acceptanceArgs(enrollment.identity.hash, commits),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(result.stdout.trim().split('\n').at(-1));
+    assert.deepEqual(record, {
+      schemaVersion: 1,
+      host: 'fixture-host',
+      macOSVersion: '26.0.0-fixture',
+      ctkPublicKeyHash: enrollment.identity.hash,
+      sshFingerprint: enrollment.marker.sshFingerprint,
+      probes: {
+        unlocked: { commit: commits.unlocked, result: 'verified' },
+        locked: { commit: commits.locked, result: 'verified' },
+        sleep: { commit: commits.sleep, result: 'verified' },
+        reboot: { commit: commits.reboot, result: 'verified' },
+      },
+      github: {
+        commit: commits.github,
+        verified: true,
+        result: 'verified',
+      },
+      result: 'pass',
+      recordedAt: record.recordedAt,
+    });
+    assert.match(record.recordedAt, /^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.equal(
+      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8').trim(),
+      JSON.stringify(record),
+    );
+    assert.equal(fileMode(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), 0o600);
+    assert.deepEqual(fs.readdirSync(path.dirname(acceptancePath(enrollment.stateDir, enrollment.identity.hash))), [
+      `${enrollment.identity.hash}.json`,
+    ]);
+    assert.deepEqual(fs.readdirSync(root.tempHome), [], 'diagnostic and verification artifacts are temporary');
+    const serialized = JSON.stringify(record);
+    assert.doesNotMatch(serialized, /BEGIN OPENSSH PRIVATE KEY/);
+    assert.doesNotMatch(serialized, /Zml4dHVyZS1yZXNpZGVudC1oYW5kbGU/);
+    assert.doesNotMatch(serialized, /id_ecdsa_sk_rk/);
+
+    const revalidated = runAdmin(
+      adminCommand,
+      acceptanceArgs(record.ctkPublicKeyHash, {
+        unlocked: record.probes.unlocked.commit,
+        locked: record.probes.locked.commit,
+        sleep: record.probes.sleep.commit,
+        reboot: record.probes.reboot.commit,
+        github: record.github.commit,
+      }),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+    assert.equal(revalidated.status, 0, revalidated.stderr);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects duplicate acceptance commit references before verification and preserves prior evidence', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  try {
+    const enrollment = installEnrollment(root, scenario);
+    const { repository, commits } = createAcceptanceRepository(root, enrollment);
+    const acceptanceDir = path.dirname(acceptancePath(enrollment.stateDir, enrollment.identity.hash));
+    const priorEvidence = '{"schemaVersion":1,"result":"previous"}\n';
+    fs.mkdirSync(acceptanceDir, { recursive: true });
+    fs.writeFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), priorEvidence, { mode: 0o600 });
+
+    const duplicateCommit = commits.unlocked;
+    const result = runAdmin(
+      adminCommand,
+      acceptanceArgs(enrollment.identity.hash, {
+        unlocked: duplicateCommit,
+        locked: duplicateCommit,
+        sleep: duplicateCommit,
+        reboot: duplicateCommit,
+        github: duplicateCommit,
+      }),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+
+    assert.equal(result.status, 1, 'duplicate commit references must fail');
+    assert.match(result.stderr, /duplicate|distinct/i);
+    assert.equal(
+      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8'),
+      priorEvidence,
+      'duplicate references preserve the previous acceptance record',
+    );
+    assert.deepEqual(fs.readdirSync(acceptanceDir), [`${enrollment.identity.hash}.json`]);
+    assert.deepEqual(fs.readdirSync(root.tempHome), [], 'duplicate references create no temporary artifacts');
+    assert.deepEqual(readCalls(root.root), [], 'duplicate references fail before native verification');
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects every incomplete acceptance command and requires explicit GitHub verification', () => {
+  const fields = [
+    ['--hash', '--unlocked-commit'],
+    ['--unlocked-commit', '--locked-commit'],
+    ['--locked-commit', '--sleep-commit'],
+    ['--sleep-commit', '--reboot-commit'],
+    ['--reboot-commit', '--github-commit'],
+    ['--github-commit', '--github-verified'],
+  ];
+  const commits = {
+    unlocked: 'a'.repeat(40),
+    locked: 'b'.repeat(40),
+    sleep: 'c'.repeat(40),
+    reboot: 'd'.repeat(40),
+    github: 'e'.repeat(40),
+  };
+
+  for (const [missingFlag, followingFlag] of fields) {
+    const root = createScenarioRoot(summary.scenarios.oneResidentExport);
+    try {
+      const args = acceptanceArgs('a'.repeat(40), commits);
+      const missingIndex = args.indexOf(missingFlag);
+      args.splice(missingIndex, followingFlag === '--github-verified' ? 1 : 2);
+      const result = runAdmin(adminCommand, args, acceptanceEnvironment(root));
+
+      assert.equal(result.status, 1, `missing ${missingFlag}`);
+      assert.match(result.stderr, /usage|missing|required|github-verified/i, missingFlag);
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${missingFlag} creates no staging output`);
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+
+  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
+  try {
+    const result = runAdmin(
+      adminCommand,
+      acceptanceArgs('a'.repeat(40), commits, false),
+      acceptanceEnvironment(root),
+    );
+    assert.equal(result.status, 1, 'GitHub attestation is mandatory');
+    assert.match(result.stderr, /usage|github-verified|explicit|attestation/i);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects missing state commits and inactive or mismatched active enrollment without writing evidence', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  try {
+    const enrollment = installEnrollment(root, scenario);
+    const { repository, commits } = createAcceptanceRepository(root, enrollment);
+    for (const state of ['unlocked', 'locked', 'sleep', 'reboot', 'github']) {
+      const missingCommit = { ...commits, [state]: 'f'.repeat(40) };
+      const result = runAdmin(
+        adminCommand,
+        acceptanceArgs(enrollment.identity.hash, missingCommit),
+        acceptanceEnvironment(root),
+        { cwd: repository },
+      );
+
+      assert.equal(result.status, 1, `${state} missing commit`);
+      assert.match(result.stderr, new RegExp(`${state}|missing|unsigned|verify`, 'i'), state);
+      assert.equal(
+        fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)),
+        false,
+        `${state} missing commit writes no evidence`,
+      );
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${state} missing commit cleans staging output`);
+    }
+
+    const wrongHash = '1'.repeat(40);
+    const inactive = runAdmin(
+      adminCommand,
+      acceptanceArgs(wrongHash, commits),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+    assert.equal(inactive.status, 1, 'requested hash must be active');
+    assert.match(inactive.stderr, /active enrollment marker .*selects CTK hash|expected/i);
+    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+
+    const marker = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
+    marker.githubSigningKeyRegistered = false;
+    fs.writeFileSync(activeMarkerPath(root), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+    const unregistered = runAdmin(
+      adminCommand,
+      acceptanceArgs(enrollment.identity.hash, commits),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+    assert.equal(unregistered.status, 1, 'unregistered enrollment is inactive');
+    assert.match(unregistered.stderr, /githubSigningKeyRegistered|registered/i);
+    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects unsigned and active-key-mismatched commits', () => {
+  const unsignedScenario = summary.scenarios.oneResidentExport;
+  const unsignedRoot = createScenarioRoot(unsignedScenario);
+  try {
+    const enrollment = installEnrollment(unsignedRoot, unsignedScenario);
+    const { repository, commits } = createAcceptanceRepository(unsignedRoot, enrollment, {
+      unsignedStates: ['locked'],
+    });
+    const result = runAdmin(
+      adminCommand,
+      acceptanceArgs(enrollment.identity.hash, commits),
+      acceptanceEnvironment(unsignedRoot),
+      { cwd: repository },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /locked|unsigned|signature|verify/i);
+    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+    assert.deepEqual(fs.readdirSync(unsignedRoot.tempHome), []);
+  } finally {
+    fs.rmSync(unsignedRoot.root, { recursive: true, force: true });
+  }
+
+  const mismatchScenario = summary.scenarios.multipleResidentExports;
+  const mismatchRoot = createScenarioRoot(mismatchScenario);
+  try {
+    const enrollment = installEnrollment(mismatchRoot, mismatchScenario);
+    const { repository, commits } = createAcceptanceRepository(mismatchRoot, enrollment, {
+      mismatchedStates: ['sleep'],
+      scenario: mismatchScenario,
+    });
+    const result = runAdmin(
+      adminCommand,
+      acceptanceArgs(enrollment.identity.hash, commits),
+      acceptanceEnvironment(mismatchRoot),
+      { cwd: repository },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /sleep|active|signature|verify|allowed/i);
+    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+    assert.deepEqual(fs.readdirSync(mismatchRoot.tempHome), []);
+  } finally {
+    fs.rmSync(mismatchRoot.root, { recursive: true, force: true });
+  }
+});
+
+test('preserves prior acceptance evidence when atomic replacement fails and leaves no staging artifact', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  try {
+    const enrollment = installEnrollment(root, scenario);
+    const { repository, commits } = createAcceptanceRepository(root, enrollment);
+    const acceptanceDir = path.dirname(acceptancePath(enrollment.stateDir, enrollment.identity.hash));
+    fs.mkdirSync(acceptanceDir, { recursive: true });
+    const priorEvidence = '{"schemaVersion":1,"result":"previous"}\n';
+    fs.writeFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), priorEvidence, { mode: 0o600 });
+
+    const result = runAdmin(
+      acceptanceFailureAdminCommand,
+      acceptanceArgs(enrollment.identity.hash, commits),
+      acceptanceEnvironment(root),
+      { cwd: repository },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /atomic|acceptance|staging|failure/i);
+    assert.equal(
+      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8'),
+      priorEvidence,
+      'the previous acceptance record survives a failed replacement',
+    );
+    assert.deepEqual(fs.readdirSync(acceptanceDir), [`${enrollment.identity.hash}.json`]);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }

@@ -62,7 +62,7 @@
   - _Requirements: 8.4, 8.6, 8.7_
   - _Boundary: Lifecycle CLI_
 
-- [ ] 2.7 Add acceptance evidence recording
+- [x] 2.7 Add acceptance evidence recording
   - Verify unlocked, locked, sleep, reboot, and GitHub-referenced commits against the active public identity.
   - Require explicit GitHub `Verified` attestation and atomically write the versioned host, OS, fingerprint, probe, and result record.
   - Reject incomplete, unsigned, mismatched, or inactive enrollment evidence.
