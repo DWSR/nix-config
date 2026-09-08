@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -40,6 +41,7 @@ function fixtureSummary() {
       bundle = builtins.unsafeDiscardStringContext "\${fixture.packages}";
       nativeToolNames = builtins.mapAttrs (_: package: package.name) fixture.nativeTools;
       nativeToolPaths = fixture.nativeToolPaths;
+      interceptorPaths = fixture.interceptorPaths;
       scenarios = fixture.scenarios;
     }
   `);
@@ -436,6 +438,9 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'multipleResidentExportsExpectedSecond',
     'ambiguousResidentFingerprint',
     'mismatchedExpectedFingerprint',
+    'stubKeyMismatch',
+    'fingerprintOutputMismatch',
+    'ctkListingFailure',
     'staleSameLabel',
     'duplicateSshIdentity',
     'ambiguousIdentity',
@@ -466,11 +471,19 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
   for (const nativePath of Object.values(summary.nativeToolPaths)) {
     assert.match(nativePath, /^\/nix\/store\//);
   }
+  for (const interceptorPath of Object.values(summary.interceptorPaths)) {
+    assert.match(interceptorPath, /^\/nix\/store\//);
+  }
 
   const bundle = buildFixtureBundle();
   const scAuth = path.join(bundle, 'native/sc-auth/bin/fixture-sc-auth');
   const sshKeygen = path.join(bundle, 'native/ssh-keygen/bin/fixture-ssh-keygen');
   const provider = path.join(bundle, 'native/provider/bin/fixture-provider');
+  const agentSocketTrap = path.join(
+    bundle,
+    'interceptors/agent-socket-trap/bin/fixture-agent-socket-trap',
+  );
+  const fallback = path.join(bundle, 'interceptors/fallback/bin/fixture-fallback-signer');
   const providerNativePath = summary.nativeToolPaths.provider;
   const expectedNativePaths = [
     summary.nativeToolPaths.scAuth,
@@ -479,6 +492,8 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
   ];
   const root = createScenarioRoot(summary.scenarios.oneResidentExport);
   try {
+    assert.ok(fs.existsSync(agentSocketTrap), 'fixture bundle contains the agent socket trap');
+    assert.ok(fs.existsSync(fallback), 'fixture bundle contains the fallback endpoint');
     const env = fixtureEnvironment(root);
     for (const packageName of ['signer', 'admin']) {
       const output = childProcess.execFileSync(
@@ -725,6 +740,67 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
   }
 });
 
+test('agent and fallback interceptors record only controlled fixture attempts', async () => {
+  buildFixtureBundle();
+  const summary = fixtureSummary();
+  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
+  const socketPath = path.join(root, 'agent.sock');
+  const agentRecordPath = path.join(root, 'agent-calls.jsonl');
+  const readyPath = path.join(root, 'agent-ready');
+  let trap;
+
+  try {
+    trap = childProcess.spawn(
+      summary.interceptorPaths.agentSocketTrap,
+      [socketPath, agentRecordPath, readyPath],
+      {
+        env: fixtureEnvironment(root),
+        stdio: 'ignore',
+      },
+    );
+    await waitForFile(readyPath);
+
+    await new Promise((resolve, reject) => {
+      const client = net.createConnection({ path: socketPath });
+      client.once('connect', () => client.end());
+      client.once('close', resolve);
+      client.once('error', reject);
+    });
+    await waitForFile(agentRecordPath);
+
+    const fallbackResult = childProcess.spawnSync(
+      summary.interceptorPaths.fallback,
+      ['fallback-argument'],
+      {
+        env: fixtureEnvironment(root),
+        encoding: 'utf8',
+      },
+    );
+    assert.equal(fallbackResult.status, 97);
+    assert.match(fallbackResult.stderr, /fixture fallback signer invoked/);
+
+    const agentAttempts = readJsonLines(root, 'agent-calls.jsonl');
+    const fallbackAttempts = readJsonLines(root, 'fallback-calls.jsonl');
+    assert.equal(agentAttempts.length, 1);
+    assert.equal(agentAttempts[0].kind, 'agent-attempt');
+    assert.equal(fallbackAttempts.length, 1);
+    assert.deepEqual(fallbackAttempts[0].argv, ['fallback-argument']);
+    assert.equal(agentAttempts[0].pid === process.pid, false);
+  } finally {
+    if (trap) {
+      if (trap.exitCode === null) trap.kill('SIGTERM');
+      await new Promise((resolve) => {
+        if (trap.exitCode !== null) {
+          resolve();
+          return;
+        }
+        trap.once('close', resolve);
+      });
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('fake signing binds the stub, public key, and allowed-signers artifact', () => {
   const scenario = fixtureSummary().scenarios.oneResidentExport;
   const root = createScenarioRoot(scenario);
@@ -739,7 +815,7 @@ test('fake signing binds the stub, public key, and allowed-signers artifact', ()
     const signature = childProcess.execFileSync(
       path.join(fixtureSummary().nativeToolPaths.sshKeygen),
       ['-Y', 'sign', '-n', 'git', '-f', stubPath],
-      { env, encoding: 'utf8' },
+      { env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const signCall = readJsonLines(root, 'calls.jsonl').find(
       (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
@@ -767,7 +843,7 @@ test('fake signing binds the stub, public key, and allowed-signers artifact', ()
         '-s',
         signaturePath,
       ],
-      { env, encoding: 'utf8' },
+      { env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
     );
     const verifyCall = readJsonLines(root, 'calls.jsonl').find(
       (call) => call.tool === 'ssh-keygen' && call.operation === 'verify',

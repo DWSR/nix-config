@@ -261,6 +261,69 @@ let
     }
   '';
 
+  fakeAgentSocketTrap = pkgs.writeShellApplication {
+    name = "fixture-agent-socket-trap";
+    runtimeInputs = [ pkgs.python3 ];
+    text = ''
+            socket_path="''${1:?socket path is required}"
+            record_path="''${2:?agent record path is required}"
+            ready_path="''${3:?ready path is required}"
+
+            exec python3 - "$socket_path" "$record_path" "$ready_path" <<'PY'
+      import json
+      import os
+      import socket
+      import sys
+      from pathlib import Path
+
+      socket_path, record_path, ready_path = sys.argv[1:]
+      Path(socket_path).unlink(missing_ok=True)
+      Path(record_path).parent.mkdir(parents=True, exist_ok=True)
+      Path(ready_path).parent.mkdir(parents=True, exist_ok=True)
+
+      server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+      server.bind(socket_path)
+      os.chmod(socket_path, 0o600)
+      server.listen(8)
+      Path(ready_path).touch()
+
+      while True:
+          connection, _ = server.accept()
+          with connection:
+              connection.settimeout(0.1)
+              try:
+                  payload = connection.recv(65536)
+              except TimeoutError:
+                  payload = b""
+          with Path(record_path).open("a", encoding="utf-8") as record:
+              json.dump({
+                  "kind": "agent-attempt",
+                  "pid": os.getpid(),
+                  "bytesReceived": len(payload),
+              }, record)
+              record.write("\n")
+      PY
+    '';
+  };
+
+  fakeFallback = pkgs.writeShellApplication {
+    name = "fixture-fallback-signer";
+    inherit runtimeInputs;
+    text = ''
+      fixture_root="''${GIT_MCP_SIGNING_FIXTURE_ROOT:?GIT_MCP_SIGNING_FIXTURE_ROOT is required}"
+      mkdir -p "$fixture_root"
+      argv_json="$(printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]')"
+      jq -cn \
+        --argjson argv "$argv_json" \
+        --arg command "$(basename "$0")" \
+        --arg pid "''${BASHPID:-$$}" \
+        '{kind: "fallback-attempt", command: $command, argv: $argv, pid: $pid}' \
+        >> "$fixture_root/fallback-calls.jsonl"
+      printf 'fixture fallback signer invoked\n' >&2
+      exit 97
+    '';
+  };
+
   fakeScAuth = pkgs.writeShellApplication {
     name = "fixture-sc-auth";
     inherit runtimeInputs;
@@ -405,6 +468,10 @@ let
        fi
       fixture_signing_stub=""
       fixture_signing_public_key=""
+      fixture_emit_native_stderr() {
+        jq -j '.nativeOutput.stderr // empty' "$fixture_scenario" >&2
+      }
+
       fixture_prepare_signing_request() {
         local signing_stub_path=""
         local next_value=""
@@ -508,7 +575,11 @@ let
             printf 'fixture missing resident public key: %s.pub\n' "$stub_path" >&2
             exit 45
           fi
-          printf '%s\n' "$(<"$stub_path.pub")"
+          stub_public_key="$(jq -r '.stubPublicKey // empty' "$fixture_scenario")"
+          if [[ -z "$stub_public_key" ]]; then
+            stub_public_key="$(<"$stub_path.pub")"
+          fi
+          printf '%s\n' "$stub_public_key"
           ;;
         sign)
           fixture_hang "preflight-ssh-keygen" "ssh-keygen-sign"
@@ -538,16 +609,19 @@ let
           fi
           public_key="$(<"$public_key_path")"
           fingerprint="$(jq -r --arg public_key "$public_key" \
-            '[.residentExports[]? | select(.publicKey == $public_key) | .fingerprint] |
-              if length == 1 then .[0] else empty end' "$fixture_scenario")"
+            'if .fingerprintOutput then .fingerprintOutput
+             else [.residentExports[]? | select(.publicKey == $public_key) | .fingerprint] |
+               if length == 1 then .[0] else empty end
+             end' "$fixture_scenario")"
           if [[ -z "$fingerprint" ]]; then
             printf 'fixture has no unique fingerprint for public-key artifact: %s\n' "$public_key_path" >&2
             exit 44
           fi
           printf '256 %s fixture-key\n' "$fingerprint"
           ;;
-         verify)
-           fixture_maybe_fail
+        verify)
+          fixture_emit_native_stderr
+          fixture_maybe_fail
            signature_path=""
            allowed_signers_path=""
            signer_identity=""
@@ -629,9 +703,10 @@ let
            fi
            printf '%s\n' "$signer_identity"
            ;;
-         passthrough)
-          fixture_maybe_fail
-          printf 'fixture-ssh-keygen-passthrough\n'
+          passthrough)
+           fixture_emit_native_stderr
+           fixture_maybe_fail
+           printf 'fixture-ssh-keygen-passthrough\n'
           ;;
       esac
 
@@ -718,6 +793,9 @@ let
     residentExports = [ primaryExport ];
     hangs = [ ];
     failures = { };
+    nativeOutput = {
+      stderr = "fixture-native-stderr\n";
+    };
     workerTree = {
       enabled = false;
       descendantsFile = "descendants";
@@ -870,6 +948,19 @@ let
         after = sshIdentityTable primaryIdentity "SHA256:fixturewrong";
       };
     };
+    stubKeyMismatch = baseScenario // {
+      stubPublicKey = alternateIdentity.publicKey;
+    };
+    fingerprintOutputMismatch = baseScenario // {
+      fingerprintOutput = "SHA256:fixturewrong";
+    };
+    ctkListingFailure = baseScenario // {
+      failures = {
+        sc_auth = {
+          list = "fixture CTK listing rejected; first unlock is required";
+        };
+      };
+    };
     staleSameLabel = baseScenario // {
       identitySnapshots = {
         before = [ staleSameLabelIdentity ];
@@ -990,8 +1081,14 @@ let
     sshKeygen = "${fakeSshKeygen}/bin/fixture-ssh-keygen";
   };
 
+  interceptorPaths = {
+    agentSocketTrap = "${fakeAgentSocketTrap}/bin/fixture-agent-socket-trap";
+    fallback = "${fakeFallback}/bin/fixture-fallback-signer";
+  };
+
   nativeToolArgs = nativeTools // {
     inherit nativeToolPaths;
+    inherit interceptorPaths;
     scAuthPath = nativeToolPaths.scAuth;
     providerPath = nativeToolPaths.provider;
     sshKeygenPath = nativeToolPaths.sshKeygen;
@@ -1016,7 +1113,7 @@ let
 
   manifest = pkgs.writeText "git-mcp-signing-fixture-manifest.json" (
     builtins.toJSON {
-      inherit nativeToolPaths scenarios;
+      inherit interceptorPaths nativeToolPaths scenarios;
       scenarioFiles = lib.mapAttrs (_: path: builtins.unsafeDiscardStringContext "${path}") scenarioFiles;
     }
     + "\n"
@@ -1034,6 +1131,14 @@ let
     {
       name = "native/ssh-keygen";
       path = fakeSshKeygen;
+    }
+    {
+      name = "interceptors/agent-socket-trap";
+      path = fakeAgentSocketTrap;
+    }
+    {
+      name = "interceptors/fallback";
+      path = fakeFallback;
     }
     {
       name = "manifest.json";
@@ -1062,6 +1167,7 @@ in
     nativeToolArgs
     nativeToolPaths
     nativeTools
+    interceptorPaths
     packages
     scenarioFiles
     scenarios

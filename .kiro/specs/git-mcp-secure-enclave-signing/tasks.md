@@ -71,7 +71,7 @@
   - _Boundary: Lifecycle CLI_
 
 - [ ] 3. Verify native tool contracts
-- [ ] 3.1 Test signer validation and passthrough
+- [x] 3.1 Test signer validation and passthrough
   - Cover signing success, non-sign passthrough, every preflight mismatch, missing state/provider/identity, provider rejection, first-unlock guidance, and no-agent execution.
   - Verify original arguments and native output remain intact for supported non-signing operations.
   - Complete when immediate signer paths pass without Secure Enclave access or 1Password fallback.
