@@ -7,14 +7,15 @@
   - Free-form provider URLs, headers, commands, and store paths make credential
     exclusion depend on incomplete string heuristics. Closed role and resolver
     contracts remove those channels.
-  - Universal parsing of Cavemem string leaves alternated between leaks and
-    corruption. Structured recursion plus finite lexical rules provides an
-    enforceable privacy and false-positive boundary.
   - Provider behavior and per-launch values need separate explicit contracts:
     one closed catalog, one stable persisted projection, and one memory-only
     token/UUID object.
-  - Completed package Tasks 1.1–1.5 and canonical-envelope Task 3.1 remain valid;
-    blocked Task 2.1 and 3.2 partial implementations are not design evidence.
+  - `agentmemory-opencode-migration` now owns the shared AgentMemory package,
+    daemon, core MCP upstream, backup, and secret reference. Pi should consume
+    those contracts rather than retain its repository-owned Cavemem bridge.
+  - AgentMemory's bundled Pi integration is intentionally stock: 8,000-character
+    observation slices, fire-and-forget capture, standard REST routes, and no
+    full-payload/FIFO/sticky-error guarantees.
 
 ## Research Log
 
@@ -26,8 +27,10 @@
   Pi configuration, and the repository's static OpenCode provider configuration
 - `shopify-playground/shop-pi-fy` at `dff77f78`
 - Public Pi extension repositories, manifests, releases, and compatibility data
-- Current nix-config OpenCode, nono, mcpproxy, Cavemem, overlay, host, and test
-  modules
+- Current nix-config OpenCode, nono, mcpproxy, AgentMemory, Pi overlay, host,
+  launcher, sandbox, status, validation, and test modules
+- `agentmemory-opencode-migration` requirements, design, implementation, and
+  bundled AgentMemory `integrations/pi/` sources
 
 ## External Findings
 
@@ -78,12 +81,28 @@
   temporarily expose its generic proxy. Direct mode therefore needs an explicit
   allowlist, eager connection, proxy/script disablement, and a surface check.
 
-### Cavemem payload limits
-- Cavemem `v0.2.1` remains the newest release. Unpublished `0.3.0` main retains
-  the 500-character per-input/per-output cap and lossy grammar compression.
-- The SQLite schema and insertion API accept full text without migration. The
-  selected design adds an opt-in Pi hook mode that bypasses truncation and
-  compression after privacy redaction; default non-Pi hook behavior is unchanged.
+### AgentMemory Pi integration
+- AgentMemory `v0.9.29` plus commit `e04ba888` packages
+  `integrations/pi/index.ts`, adjacent `security.ts`, metadata, and its complete
+  relative source layout.
+- The factory subscribes to `session_start`, `before_agent_start`,
+  `tool_result`, `agent_end`, and `session_shutdown`; it exposes
+  `memory_health`, `memory_search`, `memory_save`, and `/agentmemory-status`.
+- It calls authenticated health, session start, observe, smart-search, remember,
+  session end, and consolidate routes using `AGENTMEMORY_URL` and
+  `AGENTMEMORY_SECRET`.
+- The packaged Pi copy changes only successful `memory_health` tool details from
+  the raw health object to `{ ok: true }`; visible text and standard lifecycle
+  behavior remain unchanged.
+- Conversation and tool text is sliced to 8,000 characters. Most observations
+  are fire-and-forget, failures return `null`, and only session end has a bounded
+  timeout. There is no FIFO, pre-mutation snapshot, full-payload mode, durable
+  retry, sticky error, or shutdown flush guarantee.
+- Project selection uses `AGENTMEMORY_PROJECT_NAME`, then Git-root basename,
+  then cwd basename. Existing same-basename limitations remain accepted.
+- Managed `/agentmemory/health` treats `healthy` and `degraded` as operational
+  HTTP 200 states and reserves HTTP 503 for `critical`; Pi must match that
+  bounded-index runtime contract rather than reject degraded service.
 
 ### Selected public extensions
 | Capability | Source pin | Notes |
@@ -96,7 +115,7 @@
 | Questions | `@mrclrchtr/supi-ask-user@4.6.0` (`98b80f6d`) | MIT; normal TUI mode |
 | Code intelligence | `@mrclrchtr/supi-code-intelligence@4.6.0` (`98b80f6d`) | MIT; LSP children and guarded apply |
 | Background tasks | `@99percentpeople/pi-background-tasks@2.0.0` (`0d231ab3`) | MIT; Pi 0.83; native `node-pty`; new major |
-| Cavemem | Repository-owned bridge | No maintained native Pi bridge exists |
+| AgentMemory | Bundled `integrations/pi/index.ts` at `e04ba888` | Apache-2.0; retain stock behavior with the enumerated value-free health-details substitution |
 - The extension matrix has not been run together on Darwin. Load order, tool
   collisions, sub-agent inheritance, PTY cleanup, and sandbox behavior need
   integration tests.
@@ -104,8 +123,8 @@
   material-savings, and full-output recovery. `pi-lean-ctx` was the strongest
   alternative but was not selected.
 - `shop-pi-fy` informed the selected capabilities but is not a dependency. Its
-  private bundle has no root license grant, overlaps Cavemem and existing SDD
-  behavior, and introduces mutable `/pkg` state.
+  private bundle has no root license grant, overlaps AgentMemory and existing
+  SDD behavior, and introduces mutable `/pkg` state.
 
 ## Gap Analysis
 
@@ -117,7 +136,7 @@
 | Shopify providers | Static OpenCode catalog and `devx llm-gateway` preflight | Pi base-URL composition and provider smoke tests are missing |
 | Sandbox | `pkgs.nono`, OpenCode profile renderer and tests | Existing renderer is OpenCode-specific; Pi profiles are missing |
 | MCP | Shared mcpproxy module and endpoint | Pi adapter config, direct surface gate, and Pi instructions are missing |
-| Cavemem | Package, data directory, MCP upstream, OpenCode plugin | Pi lifecycle bridge and capture smoke tests are missing |
+| AgentMemory | Managed package/runtime, bundled Pi source, secret reference, REST and core MCP upstream | Pi launcher, manifest, child inheritance, sandbox, status, and acceptance contracts must consume the shared runtime |
 | Extensions | Nix package/overlay and Node test conventions | Every selected extension closure and combined load test is missing |
 | Subprocess safety | nono audit/enforced rollout pattern | Credential inheritance, PTY/LSP/child cleanup need new controls |
 | Acceptance | HM render tests and launcher stub tests | Pi provider, TUI, MCP, lifecycle, and two-host runtime tests are missing |
@@ -125,7 +144,7 @@
 ### Implementation options
 - **Extend pi.nix**: contribute wrapper/config fixes upstream and consume them.
   Small local surface, but blocked by upstream cadence and project-specific
-  provider, sandbox, and Cavemem behavior.
+  provider, sandbox, and AgentMemory behavior.
 - **Own the complete Pi stack**: package Pi and all resources in this repository.
   Maximum control, but duplicates pi.nix packaging and update work.
 - **Hybrid**: consume pi.nix's package/module resource surface while owning the
@@ -162,29 +181,29 @@
   `ProviderRuntimeSecretsV1` owns token/UUID process state. The reconciler accepts
   only a deterministic persisted projection.
 
-### Cavemem privacy blocker
-- **Context**: Task 3.2 tried to redact secrets from arbitrary free text by
-  recognizing JSON, YAML, environment, shell, URI, PEM, and source-like forms.
-- **Findings**: Added grammars repeatedly fixed one leak while creating another
-  false positive. Leaks included short authorization values, URL userinfo,
-  escaped/unquoted keys, shell assignments, and malformed regions. False
-  positives included TypeScript declarations, path-adjacent URL text, and benign
-  code. The blocked patch also coupled redaction, retrieval, and embedding work.
-- **Implications**: The Pi bridge removes exact runtime values before transport.
-  Cavemem recurses over real objects, strips private regions, and applies only a
-  finite lexical rule set to opaque strings. It does not parse string leaves as
-  embedded languages. Raw retrieval and embedding exclusion form an independent
-  storage-policy unit.
+### Memory backend correction
+- **Context**: The original Pi design created a repository-owned Cavemem bridge,
+  full-payload mode, privacy grammar, raw retrieval path, and worker fencing.
+- **Finding**: `agentmemory-opencode-migration` replaced Cavemem for both
+  harnesses and preserved AgentMemory's bundled Pi integration specifically for
+  managed activation. Keeping the old bridge would create live dual writes and
+  retain a package, database, MCP upstream, backup, sandbox grant, and test
+  matrix that the migration removed.
+- **Implication**: Pi accepts stock AgentMemory fidelity and lifecycle semantics.
+  Credential protection is enforced at launch and subprocess environment
+  boundaries; this feature does not recreate payload-level Cavemem guarantees.
 
 ### Implementation continuity
 - Package Tasks 1.1–1.5 already establish the pinned Pi package, deterministic
   harness, Undici remediation, context recovery, and extension closure.
-- Cavemem Task 3.1 already establishes the closed canonical envelope, explicit
-  `pi-full-v1` mode, uncompressed insertion flags, and default-mode byte parity.
-- The uncommitted Task 2.1 and 3.2 implementations demonstrate why the old
-  contracts failed; their scanner details do not constrain the replacement.
-- No requirement, Cavemem schema, default hook path, provider count, or extension
-  scope changes in this revision.
+- Completed provider, reconciliation, nono, MCP, and non-memory extension work
+  remains valid.
+- Completed Cavemem-specific implementation is superseded and removed. Its
+  payload, privacy, storage, process-capability, and worker contracts do not
+  constrain AgentMemory.
+- The AgentMemory migration already establishes package/runtime ownership,
+  secret references, standard routes, core MCP registration, bounded BM25
+  behavior, backup, and explicit OpenCode-only Cavemem rollback.
 
 ## Architecture Pattern Evaluation
 
@@ -194,9 +213,9 @@
 | Closed provider-role and resolver catalogs | Invalid credential-bearing forms have no input shape | New roles require reviewed module changes | Selected |
 | Opaque role contract | Closed names with hidden behavior | Tasks must invent routes, headers, and model policy | Rejected |
 | Explicit catalog plus persisted/runtime split | Complete behavior and stable concurrent files | Catalog changes require review | Selected |
-| Universal free-text privacy parser | Attempts broad leak coverage | Unbounded language ambiguity and false positives | Rejected |
-| Structured recursion plus finite lexical rules | Testable leak and false-positive boundary | Opaque embedded languages are intentionally not parsed | Selected |
-| Combined redaction/retrieval/embedding patch | One delivery unit | Hides independent failure and review seams | Split by responsibility |
+| Preserve Pi Cavemem bridge | Retains stronger full-payload contracts | Duplicates the migrated backend and reintroduces dual-write/runtime ownership | Rejected |
+| Patch AgentMemory Pi capture for parity | Recovers selected Cavemem guarantees | Creates a second custom integration and contradicts the migration's upstream-first boundary | Rejected |
+| Use bundled AgentMemory Pi integration | Reuses the managed runtime and existing upstream API | Accepts stock truncation, capture-loss, scoping, and lifecycle limits | Selected |
 
 ## Design Decisions
 - **Package seam**: use `pi.nix` only as the pinned base-package source. The
@@ -217,38 +236,44 @@
 - **Projection seam**: managed `models.json` contains concrete joined URLs plus
   `${SHOPIFY_PI_TOKEN}`/`${PI_AGENT_LAUNCH_ID}` templates. Token and UUID live in
   `ProviderRuntimeSecretsV1`; concurrent launches retain byte-identical files.
-- **Credential seam**: root/child Pi alone receive actual provider values;
-  other subprocesses are scrubbed and the Capture Bridge redacts exact values.
-- **Capture seam**: Cavemem recurses over canonical object values by normalized
-  sensitive keys, strips private regions, and applies finite authorization,
-  provider-token, JWT, PEM, and lexical URL-userinfo rules to opaque strings.
-- **Storage seam**: full-mode raw retrieval and embedding exclusion are separate
-  from redaction. Compression state remains the embedding eligibility boundary.
+- **Credential seam**: root/child Pi alone receive actual provider values and
+  the AgentMemory bearer; model-invoked subprocesses are scrubbed.
+- **Memory seam**: the Pi module supplies the managed AgentMemory URL and secret
+  reference, while the bundled integration owns hooks, tools, REST calls,
+  observation limits, context injection, and consolidation.
+- **Storage seam**: Pi receives no AgentMemory data-directory access. Package,
+  persistence, indexing, backup, and core MCP ownership remain in
+  `agentmemory-opencode-migration`.
 - **Preserved seams**: the six-tool mcpproxy adapter, standalone nono profiles,
   fixed-lock extension closure, and provenance-aware reconciliation remain as
   previously designed.
 - **Simplifications**: no arbitrary providers, headers, resolver plugins,
-  extension ecosystem, embedded-language privacy parser, Sieve, private Shopify
-  extension, exact `devx pi` parity, schema change, or cross-host state sync.
+  extension ecosystem, custom memory bridge, Sieve, private Shopify extension,
+  exact `devx pi` parity, memory schema change, or cross-host state sync.
 
 ## Risks & Mitigations
 - A fixed Shopify route or request policy drifts: revalidate every role against
   the switched-host protocol gate before rollout.
 - Concurrent base resolution disagrees under one generation: fail projection
   reconciliation rather than allow last-writer-wins provider state.
-- A runtime credential has no known lexical form: bridge exact-value redaction
-  remains authoritative before transport.
-- An opaque string contains an unrelated secret in embedded syntax: callers must
-  send structured data or use `<private>`; tests lock this documented boundary.
-- A new provider, resolver, or lexical rule is needed: require a module/design
+- A runtime credential reaches a model-invoked subprocess: keep the closed
+  spawn partition and sentinel tests authoritative rather than relying on
+  payload-text heuristics.
+- A trusted in-process extension can inspect the AgentMemory bearer: retain the
+  fixed reviewed extension inventory and scrub every model-invoked subprocess.
+- AgentMemory drops or truncates an observation: accept stock behavior and make
+  it visible in compatibility tests rather than adding a retry or raw-event path.
+- A new provider, resolver, or memory behavior is needed: require a module/design
   review and explicit revalidation rather than an escape hatch.
-- Full rows approach SQLite limits and duplicate into FTS: expose database growth
-  and active limits in status and validation.
+- AgentMemory health is degraded by bounded-index or persistence conditions:
+  accept degraded readiness, report it, and reject only critical/unavailable,
+  unauthenticated, or fallback startup states.
 
 ## References
 - Pi `v0.83.0` and `pi.nix` `1d37b586` provider/configuration contracts.
-- Cavemem `v0.2.1` hook, storage, retrieval, worker, and MCP paths.
+- AgentMemory `e04ba888` `integrations/pi/index.ts`, `security.ts`, standard REST
+  routes, and managed Home Manager runtime from `agentmemory-opencode-migration`.
 - Repository `configurations/shopify/home-manager/opencode.nix` for current
   gateway integration roles.
-- `tasks.md` implementation notes for completed Tasks 1.1–1.5 and 3.1; blocked
-  partial code is failure evidence only.
+- `tasks.md` implementation notes for completed package work and the AgentMemory
+  cutover tasks.

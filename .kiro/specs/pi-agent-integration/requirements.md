@@ -7,15 +7,18 @@ scope decisions.
 
 ## Boundary Context
 - **In scope**: managed Pi launches, host-specific providers, sandbox profiles,
-  mcpproxy, Cavemem capture, sub-agents, plan mode, timestamps, Bash timeout,
-  user questions, code intelligence, and background tasks on both hosts.
+  mcpproxy, AgentMemory capture and recall, sub-agents, plan mode, timestamps,
+  Bash timeout, user questions, code intelligence, and background tasks on both
+  hosts.
 - **Out of scope**: Sieve, exact `devx pi` parity, private Shopify extension
-  source, Pi self-updates, changes to mcpproxy or Cavemem storage/MCP APIs,
+  source, Pi self-updates, changes to mcpproxy or AgentMemory storage/query APIs,
+  custom capture fidelity or retry semantics, Pi history re-migration,
   adversarial isolation among managed Pi extensions, immutable provider-tool
   payload enforcement, and crash-atomic plan-state transitions.
-- **Adjacent expectations**: mcpproxy remains the only MCP entrypoint, Cavemem
-  remains the session store, existing OpenCode launch behavior is unchanged,
-  and the managed in-process Pi extension set is trusted.
+- **Adjacent expectations**: mcpproxy remains the only MCP entrypoint,
+  AgentMemory remains the shared memory runtime, existing OpenCode launch
+  behavior is unchanged, Pi-specific Cavemem behavior remains removed, and the
+  managed in-process Pi extension set is trusted.
 - **Personal fixture exception**: the personal hermetic runtime gate may be
   reported as `manual-required` when the fixed mcpproxy endpoint cannot be
   isolated from the live host service; validation shall not use an alternate
@@ -62,10 +65,10 @@ scope decisions.
 **Objective:** As the operator, I want launch failures detected before entering the TUI, so that Pi never starts with silently degraded required integrations.
 
 #### Acceptance Criteria
-1. When the managed command starts, the Pi integration shall validate its package, managed configuration, required extensions, selected sandbox state, mcpproxy, and Cavemem prerequisites before opening Pi.
+1. When the managed command starts, the Pi integration shall validate its package, managed configuration, required extensions, selected sandbox state, mcpproxy, and full AgentMemory daemon prerequisites before opening Pi.
 2. If a required preflight check fails, the Pi integration shall exit non-zero and name the failed component and recovery action.
 3. When all preflight checks pass, the Pi integration shall launch the direct managed Pi executable exactly once.
-4. When the operator requests managed status, the Pi integration shall report the Pi version, host provider mode, sandbox state, active profile, mcpproxy endpoint, Cavemem state, and required extension versions without revealing secrets.
+4. When the operator requests managed status, the Pi integration shall report the Pi version, host provider mode, sandbox state, active profile, mcpproxy endpoint, AgentMemory endpoint and health, and required extension versions without revealing secrets.
 5. If a launch override is invalid, the Pi integration shall stop and list the accepted values.
 
 ### Requirement 5: Pi-specific nono sandbox profiles
@@ -78,7 +81,7 @@ scope decisions.
 4. When the audit profile is selected, the Pi integration shall preserve required Pi workflows while exposing the profile identity to the operator.
 5. When the operator supplies a per-launch sandbox override, the Pi integration shall apply it without requiring a host rebuild.
 6. If nono or the selected profile is unavailable while sandboxing is requested, the Pi integration shall refuse to launch Pi unsandboxed.
-7. If a selected profile blocks a required provider, mcpproxy, Cavemem, language-server, sub-agent, or background-task capability, the Pi integration shall fail with an actionable error.
+7. If a selected profile blocks a required provider, mcpproxy, AgentMemory REST, language-server, sub-agent, or background-task capability, the Pi integration shall fail with an actionable error.
 8. The Pi integration shall provide an explicit documented rollback launch that bypasses sandbox enforcement.
 9. The Pi integration shall not include provider credentials or MCP secrets in a sandbox profile.
 10. When the selected nono backend cannot enforce per-port loopback bind restrictions while granting required mcpproxy access, the Pi integration shall report that backend limitation in validation evidence and shall not represent `PI_NONO_LISTEN_PORTS` as an enforced denial guarantee.
@@ -89,17 +92,17 @@ scope decisions.
 #### Acceptance Criteria
 1. When Pi starts on either host, the Pi integration shall register exactly one managed remote MCP server pointing to that host's local mcpproxy endpoint.
 2. When the MCP extension loads, the Pi integration shall expose only the approved direct mcpproxy discovery and invocation tools.
-3. The Pi integration shall not expose an additional generic MCP proxy tool, script-execution tool, direct Cavemem server, or direct Shopify Tool Gateway server.
+3. The Pi integration shall not expose an additional generic MCP proxy tool, script-execution tool, direct AgentMemory MCP server, direct Cavemem server, or direct Shopify Tool Gateway server.
 4. When Pi invokes an approved mcpproxy read operation, the Pi integration shall return the selected upstream result through the discover-then-invoke flow.
 5. When Pi invokes `call_tool_write` or `call_tool_destructive`, the Pi integration shall require the configured explicit approval before forwarding it.
-6. If mcpproxy or a mandatory upstream is unavailable during preflight, the Pi integration shall refuse to launch Pi and identify the unavailable service.
+6. If mcpproxy, its mandatory AgentMemory upstream, or another mandatory upstream is unavailable during preflight, the Pi integration shall refuse to launch Pi and identify the unavailable service.
 7. When Pi invokes `call_tool_read`, the Pi integration shall rely on mcpproxy's routing decision without an additional target-effect approval gate.
 
 ### Requirement 7: Declarative required-extension inventory
 **Objective:** As the operator, I want one reviewed extension inventory on both hosts, so that Pi capabilities do not depend on mutable package installation.
 
 #### Acceptance Criteria
-1. The Pi integration shall provide the approved MCP, sub-agent, plan-mode, Cavemem, timestamp, Bash-timeout, user-question, code-intelligence, and background-task extensions on both hosts.
+1. The Pi integration shall provide the approved AgentMemory, MCP, sub-agent, plan-mode, timestamp, Bash-timeout, user-question, code-intelligence, and background-task extensions on both hosts.
 2. When Pi starts, the Pi integration shall load every required extension from a version-pinned managed source.
 3. If a required extension is missing, fails to load, or is incompatible with the managed Pi version, the Pi integration shall stop before accepting a prompt and identify the extension.
 4. The Pi integration shall not require `pi install`, `/pkg`, or another networked package mutation to make a required extension available.
@@ -131,21 +134,23 @@ scope decisions.
 6. When a plan-mode session resumes with valid recorded state, the Pi integration shall restore the recorded workflow mode and captured pre-plan tool names.
 7. If recorded plan-mode state is unavailable or invalid during resume, the Pi integration shall start in normal mode and report that the state was not restored.
 
-### Requirement 10: Cavemem ambient capture
-**Objective:** As the operator, I want Pi sessions captured by the existing memory system, so that Pi activity is searchable alongside OpenCode activity.
+### Requirement 10: AgentMemory ambient integration
+**Objective:** As the operator, I want Pi sessions captured and recalled through the shared AgentMemory runtime, so that Pi and OpenCode use one active memory backend.
 
 #### Acceptance Criteria
-1. When a Pi session starts, the Pi integration shall record a Pi-identified session in the configured Cavemem data store.
-2. When the operator submits a prompt, the Pi integration shall record the non-empty prompt against the active Pi session.
-3. When a tool succeeds or fails, the Pi integration shall record the complete Pi-exposed input and output or error before later extension mutation, after secret and private-content redaction, up to the active SQLite maximum value length.
-4. When an assistant turn or Pi session ends, the Pi integration shall flush the corresponding completion or shutdown event.
-5. When a Pi session resumes, the Pi integration shall continue capture under the correct session identity.
-6. If a capture event fails, the Pi integration shall surface the failure during the active session rather than silently discard it.
-7. When the operator searches Cavemem through mcpproxy, the Pi integration shall make the captured Pi session and events discoverable from the existing data store.
-8. The Pi integration shall not create a second Cavemem database or direct Pi MCP registration.
-9. When the Pi bridge requests full-payload capture, the Pi integration shall bypass Cavemem tool-payload truncation and grammar compression for that event.
-10. While existing non-Pi integrations use the default Cavemem hook path, the Pi integration shall preserve their current capture behavior.
-11. If a redacted Pi payload exceeds the active SQLite maximum value length, the Pi integration shall reject it without storing a partial observation and shall surface the storage limit.
+1. When Pi loads managed extensions, the Pi integration shall load AgentMemory's bundled `integrations/pi/index.ts` entrypoint from the pinned managed package; the only allowed compatibility substitution shall replace successful `memory_health` tool details with `{ ok: true }` while preserving visible text, hooks, routes, limits, and failure behavior.
+2. Before Pi starts, the launcher shall resolve the managed AgentMemory bearer reference and provide `AGENTMEMORY_URL` and `AGENTMEMORY_SECRET` to root Pi without persisting the bearer.
+3. When a Pi session starts, the bundled integration shall use AgentMemory's standard authenticated session-start route with the available project and working-directory metadata.
+4. Before an eligible agent turn starts, the bundled integration shall use AgentMemory's standard smart-search route and stock context-injection behavior.
+5. When Pi receives a tool result or completes an agent turn, the bundled integration shall submit the stock bounded observation to AgentMemory's standard observe route.
+6. When Pi shuts down normally, the bundled integration shall invoke AgentMemory's standard session-end and consolidation behavior.
+7. The bundled integration shall expose its stock `memory_health`, `memory_search`, and `memory_save` tools plus `/agentmemory-status` command.
+8. When the operator searches through the bundled memory tool or AgentMemory core tools through mcpproxy, captured Pi observations shall be discoverable from the shared runtime.
+9. The Pi integration shall use the managed AgentMemory endpoint selected by `programs.agentmemory` and shall not hard-code a divergent REST port.
+10. Pi preflight shall accept AgentMemory `healthy`, `degraded`, and legacy `ok` states and reject unavailable, unauthenticated, standalone-fallback, and `critical` states.
+11. The Pi integration shall accept AgentMemory's stock 8,000-character Pi observation bounds, fire-and-forget capture failures, session identity, project attribution, compression, indexing, and consolidation semantics without adding a custom queue, retry path, full-payload mode, or sticky capture error.
+12. The Pi integration shall not create a direct AgentMemory MCP registration, access AgentMemory's data directory, restore Pi Cavemem wiring, or live-dual-write to Cavemem.
+13. When Pi invokes the bundled `memory_save` tool, the integration shall write through AgentMemory's authenticated REST route without claiming that mcpproxy write approval applies.
 
 ### Requirement 11: Interactive session aids
 **Objective:** As the operator, I want consistent timing and interaction controls, so that long-running commands and clarification loops remain visible and bounded.
@@ -186,8 +191,8 @@ scope decisions.
 **Objective:** As the operator, I want runtime credentials constrained to provider use, so that model-invoked tools do not receive secret material unnecessarily.
 
 #### Acceptance Criteria
-1. The Pi integration shall keep provider credential values out of the environment inherited by Bash commands, background tasks, Cavemem hooks, and language servers.
-2. Where a child Pi process requires provider access, the Pi integration shall resolve credentials through the same host-specific provider contract without persisting them.
+1. The Pi integration shall keep provider and AgentMemory credential values out of the environment inherited by Bash commands, background tasks, language servers, status probes, and validator probes.
+2. Where a child Pi process requires provider and AgentMemory access, the Pi integration shall resolve credentials through the same host-specific provider and memory contracts without persisting them.
 3. The Pi integration shall keep personal and Shopify credentials in separate host-specific state.
 4. If a diagnostic or status command prints provider configuration, the Pi integration shall redact credential values and credential-bearing headers.
 5. When a managed subprocess exits, the Pi integration shall not leave a credential-bearing temporary file behind.
@@ -199,7 +204,7 @@ scope decisions.
 1. If a selected production dependency closure contains a known critical or high-severity advisory without an explicit approved exception, the Pi integration shall reject that release.
 2. When managed release validation runs, the Pi integration shall verify recovery from an incomplete context-limit response.
 3. When repository checks run, the Pi integration shall evaluate both host configurations and validate managed configuration, profiles, wrappers, extension inventory, and license notices.
-4. When integration smoke tests run, the Pi integration shall cover provider startup, mcpproxy invocation, sandbox enforcement, sub-agents, plan mode, Cavemem capture, timestamps, Bash timeout, user questions, code intelligence, and background-task cleanup. If the personal hermetic fixture cannot safely isolate the fixed mcpproxy endpoint, the gate shall report `manual-required` rather than substitute an endpoint or bypass managed launch.
+4. When integration smoke tests run, the Pi integration shall cover provider startup, mcpproxy invocation, sandbox enforcement, sub-agents, plan mode, AgentMemory capture and recall, timestamps, Bash timeout, user questions, code intelligence, and background-task cleanup. If the personal hermetic fixture cannot safely isolate the fixed mcpproxy endpoint, the gate shall report `manual-required` rather than substitute an endpoint or bypass managed launch.
 5. If a compatibility or security gate fails, the Pi integration shall prevent rollout and identify the failed gate.
 6. The Pi integration shall keep private Shopify source and runtime secrets out of publishable Nix closures.
 7. The Pi integration shall provide operator guidance for provider setup, sandbox selection, launch overrides, status inspection, configuration recovery, extension updates, and rollback.

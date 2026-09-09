@@ -10,17 +10,21 @@ and reproducibility model.
 ## Current State
 OpenCode already separates static Home Manager configuration from dynamic
 wrapper values, launches through managed nono profiles, reaches upstream tools
-through local mcpproxy, and records sessions through Cavemem. Pi has no
-equivalent module or wrapper. Shopify's `devx pi` supplies additional managed
-behavior, but this feature intentionally targets direct Pi on both hosts.
+through local mcpproxy, and uses the managed AgentMemory runtime introduced by
+`agentmemory-opencode-migration`. That migration also packages AgentMemory's
+bundled Pi integration and standard authenticated REST routes. Pi has no
+equivalent managed module or wrapper in this spec's baseline. Shopify's
+`devx pi` supplies additional managed behavior, but this feature intentionally
+targets direct Pi on both hosts.
 
 ## Desired Outcome
 Both hosts expose a direct, Nix-managed `pi` command. A host-aware wrapper
 reconciles managed configuration, resolves runtime-only values, validates
 dependencies, and launches Pi under a managed nono profile. Pi uses the local
-mcpproxy endpoint, captures sessions in the existing Cavemem database, and
-loads a pinned extension set for sub-agents, plan mode, timestamps, Bash
-timeouts, user questions, code intelligence, and background tasks.
+mcpproxy endpoint, captures and recalls sessions through the existing
+AgentMemory daemon, and loads a pinned extension set for sub-agents, plan mode,
+timestamps, Bash timeouts, user questions, code intelligence, and background
+tasks. Pi has no Cavemem runtime dependency or live dual-write path.
 
 ## Approach
 Use the `pi.nix` package surface with a repository-owned Home Manager module and
@@ -39,8 +43,14 @@ wrapper modeled on the OpenCode split:
 - Both hosts launch bare Pi through Pi-specific profiles adapted from the
   public `nolabs-ai/nono-packs` Pi policy.
 - Public, pinned extensions provide MCP, sub-agents, plan mode, timestamps,
-  Bash timeout, user questions, code intelligence, and background tasks. A
-  small repository-owned extension maps Pi lifecycle events to Cavemem hooks.
+  Bash timeout, user questions, code intelligence, and background tasks.
+- AgentMemory's packaged `integrations/pi/` extension, with only reviewed
+  Pi-API compatibility substitutions, provides stock lifecycle capture,
+  automatic pre-agent recall, memory tools, session end, and consolidation
+  against the managed authenticated REST endpoint.
+- The wrapper resolves the AgentMemory bearer from the existing managed secret
+  reference and gives it only to provider-capable root and foreground child Pi
+  processes. Model-invoked subprocesses receive scrubbed environments.
 
 ## Scope
 - **In**:
@@ -53,8 +63,9 @@ wrapper modeled on the OpenCode split:
   - One remote Pi MCP connection to the existing local mcpproxy service
   - Pinned public extensions for sub-agents, plan mode, timestamps, Bash
     timeout, user questions, code intelligence, and background tasks
-  - A repository-owned Pi-to-Cavemem ambient-capture extension and an opt-in
-    Cavemem hook patch that preserves complete redacted Pi tool payloads
+  - Pi-harness consumption of the bundled AgentMemory extension, managed REST
+    endpoint and bearer, full-daemon preflight, status, sandbox grants, child
+    inheritance, and acceptance evidence
   - Dependency security fixes and compatibility patches required by the pinned
     Pi release
   - Evaluation, wrapper, extension, sandbox, provider, and two-host smoke tests
@@ -66,14 +77,19 @@ wrapper modeled on the OpenCode split:
     closure
   - A second direct Shopify Tool Gateway connection alongside mcpproxy
   - Pi self-updates or imperative `pi install`, `/pkg`, and `nono pull` flows
-  - Changes to mcpproxy, the Cavemem storage schema or MCP surface, or the
-    existing OpenCode nono module
+  - Changes to mcpproxy, AgentMemory persistence/query contracts, the existing
+    OpenCode plugin, or the OpenCode nono module
+  - AgentMemory package/runtime, Pi activation, Cavemem removal, backup, import,
+    or OpenCode rollback owned by `agentmemory-opencode-migration`
+  - Custom AgentMemory capture, retry, queue, raw-event, project-isolation,
+    truncation, consolidation, or fallback behavior
+  - Re-migration of Pi history from Cavemem
 
 ## Boundary Candidates
 - Pi package, extension closure, and Home Manager option surface
 - Managed configuration ownership and per-host provider composition
 - Preflight, rollout resolution, and nono launcher topology
-- MCP, sub-agent, plan, Cavemem, LSP, and background-task contracts
+- MCP, AgentMemory, sub-agent, plan, LSP, and background-task contracts
 - Cross-host evaluation and runtime acceptance evidence
 
 ## Out of Boundary
@@ -85,22 +101,24 @@ wrapper modeled on the OpenCode split:
 - Adversarial isolation among the managed in-process Pi extensions
 - Arbitrary subprocesses that create a new session or process group outside a
   registered managed child process group
-- Changing mcpproxy routing or Cavemem storage
+- Changing mcpproxy routing or AgentMemory storage
+- Restoring Pi-specific Cavemem behavior in an OpenCode rollback generation
 
 ## Upstream / Downstream
 - **Upstream**: `pi.nix`, upstream Pi, the public nono Pi pack, `pkgs.nono`,
-  local mcpproxy, the existing Cavemem installation, and Shopify's
-  `devx llm-gateway` commands
+  local mcpproxy, `agentmemory-opencode-migration`, the managed AgentMemory
+  package/runtime, and Shopify's `devx llm-gateway` commands
 - **Downstream**: a future Sieve/output-compression spec and later curated Pi
   extension additions
 
 ## Existing Spec Touchpoints
-- **Extends**: `cavemem-integration` hook ingestion with an opt-in full-payload
-  mode used only by the managed Pi bridge
+- **Extends**: none; this spec consumes the migration's Pi activation and owns
+  only harness composition around the managed runtime and bundled integration
 - **Adjacent**: `opencode-nono-sandbox` owns OpenCode-only launch profiles;
-  `mcpproxy-migration` owns the local MCP service; `cavemem-integration` owns
-  Cavemem packaging and storage. This feature consumes those live surfaces
-  without reopening their specifications.
+  `mcpproxy-migration` owns the local MCP service;
+  `agentmemory-opencode-migration` owns AgentMemory packaging, daemon, core MCP
+  registration, data, and backup. This feature consumes those surfaces without
+  reopening them. Cavemem is an OpenCode-only rollback backend.
 
 ## Constraints
 - Target `aarch64-darwin` on `ShopifyLaptop` and
@@ -113,13 +131,19 @@ wrapper modeled on the OpenCode split:
   managed keys.
 - Plan mode must select read-only tools by default and block non-allowlisted
   model tool calls before execution.
-- Background jobs, LSP servers, sub-agents, and Cavemem hooks must operate
-  inside the active nono profile and clean up their registered process groups
-  plus ordinary descendants that remain in those groups.
+- Background jobs, LSP servers, sub-agents, and the AgentMemory integration must
+  operate inside the active nono profile. Managed child processes must clean up
+  their registered process groups plus ordinary descendants that remain in
+  those groups.
 - A known high-severity dependency advisory and the required context-limit
   recovery behavior must be resolved before either host enables Pi.
-- Full Pi tool payloads remain subject to secret/private-content redaction; the
-  patch removes truncation and grammar compression, not privacy controls.
+- Accept AgentMemory's stock Pi observation limits, fire-and-forget capture,
+  project attribution, context injection, consolidation, and failure behavior.
+  This feature does not restore Cavemem's full-payload guarantees.
+- Keep the AgentMemory bearer out of managed JSON, Nix store literals, logs,
+  status output, Bash, background tasks, language servers, and validator probes.
 
 ## Source Request
 > Write a spec to add Pi to both hosts' configurations. Use a similar approach to Opencode: Wrap Pi in order to be able to inject configuration values for things like the mcp server configurations and nono. There is a nono profile here that can be used. https://github.com/nolabs-ai/nono-packs/tree/main/pi. Also inspect the Shopify Pi configuration (details in this Slack thread) https://shopify.slack.com/archives/C0ASWCJ0Y6M/p1785896169075539 for any Shopify-specific things. There is a Home Manager Pi flake here: https://github.com/lukasl-dev/pi.nix. Include extensions for sub-agents, mcp servers, plan mode, cavemem, sieve. Also inspect shop-pi-fy to see what extensions might be useful: https://github.com/shopify-playground/shop-pi-fy
+The source request predates `agentmemory-opencode-migration`; AgentMemory now
+supersedes its Cavemem request, while Sieve remains deferred.

@@ -3,19 +3,19 @@
 ## Overview
 This feature adds one direct, Nix-managed Pi runtime to each supported Mac while
 preserving host-specific provider boundaries. The repository owns Pi's wrapper,
-configuration reconciliation, sandbox profiles, extension surface, Cavemem
-capture path, and acceptance evidence; existing mcpproxy and Cavemem storage
-remain shared services.
+configuration reconciliation, sandbox profiles, extension surface, AgentMemory
+Pi wiring, and acceptance evidence; existing mcpproxy and the AgentMemory
+runtime remain shared services.
 
 ### Goals
 - Provide the same managed Pi command and required extension baseline on both
   hosts.
 - Keep declarative configuration authoritative without replacing unrelated Pi
   state.
-- Fail before the TUI when provider, sandbox, MCP, Cavemem, or extension
+- Fail before the TUI when provider, sandbox, MCP, AgentMemory, or extension
   prerequisites are invalid.
 - Keep provider credentials out of model-invoked subprocess environments.
-- Make sandbox, child-process, and full-payload capture behavior testable.
+- Make sandbox, child-process, and stock AgentMemory behavior testable.
 
 ### Non-Goals
 - Sieve or another output compressor.
@@ -36,15 +36,19 @@ remain shared services.
 - Immutable desired-state rendering and launch-time mutable-state reconciliation.
 - Provider preflight, direct Pi launch, status, validation, and rollout controls.
 - Standalone Pi nono profiles adapted from the pinned public Pi pack.
-- Pi-to-mcpproxy and Pi-to-Cavemem client contracts.
-- The opt-in Cavemem `pi-full-v1` hook mode and its compatibility tests.
+- Pi-to-mcpproxy contracts and Pi-harness consumption of the migration-owned
+  AgentMemory integration.
+- AgentMemory managed-config readback, launch credential handoff, health,
+  child inheritance, sandbox/status behavior, and Pi acceptance tests.
 - Pi-specific package, render, security, and runtime acceptance checks.
 
 ### Out of Boundary
 - mcpproxy upstream registration, daemon lifecycle, secret bridge, and routing
   implementation.
-- Cavemem database schema, MCP tools, existing OpenCode bridge behavior, and
-  default hook compression behavior.
+- AgentMemory packaging, daemon lifecycle, persistence/query contracts, stock
+  core MCP tools, and existing OpenCode plugin behavior.
+- AgentMemory Pi activation, Cavemem removal, import, backup, and OpenCode
+  rollback owned by `agentmemory-opencode-migration`.
 - OpenCode package, wrapper, profiles, plugins, and host settings.
 - Pi-core reference-monitor changes, hostile managed extensions, immutable provider payloads, or crash-atomic Plan state.
 - Arbitrary subprocesses that call `setsid()`, double-fork, or otherwise leave a
@@ -56,7 +60,8 @@ remain shared services.
 - `pi.nix` as the pinned base-package source; its mutable settings/model wrapper
   and jail are not used.
 - Existing `pkgs.nono`, mcpproxy at the configured local endpoint, and the
-  existing Cavemem package, data directory, and upstream server.
+  managed AgentMemory package, launchd runtime, REST endpoint, secret reference,
+  and core MCP upstream from `agentmemory-opencode-migration`.
 - The Shopify host's managed `devx` package only through the fixed
   `shopify-gateway-token` and `shopify-gateway-base` resolvers. Resolver argv is
   launcher-owned.
@@ -72,8 +77,8 @@ remain shared services.
   package.
 - mcpproxy changes the standard MCP transport at `/mcp`, its six approved tools, strict mutation
   validation, health endpoints, or authentication posture.
-- Cavemem changes hook input, compression flags, privacy processing, storage
-  schema, or uncompressed retrieval.
+- AgentMemory changes its bundled Pi entrypoint, hook inventory, REST routes,
+  authentication, observation limits, context injection, or health semantics.
 - nono changes profile schema, Darwin process signaling, environment filtering,
   network policy, or `--allow-cwd` semantics.
 - Shopify or Pi changes a fixed route/API, built-in model catalog, resolver CLI,
@@ -81,16 +86,15 @@ remain shared services.
   concurrent provider-file semantics.
 - The Pi Home Manager module exposes a new provider, header, URL, resolver, or
   user-supplied store-path surface.
-- Cavemem changes the canonical envelope, sensitive-key normalization, private
-  region syntax, finite string-rule vocabulary, uncompressed retrieval, or
-  embedding eligibility.
+- `programs.agentmemory` changes the REST endpoint, bearer-reference, service,
+  MCP registration, data-directory, or backup ownership consumed by Pi.
 
 ## Architecture
 
 ### Existing Architecture Analysis
 - Both hosts compose common/host Home Manager modules, pinned overlays, and flake checks.
 - Pi follows OpenCode's preflight-to-nono pattern without sharing its wrapper.
-- mcpproxy and Cavemem retain their existing endpoint, data, and ownership boundaries.
+- mcpproxy and AgentMemory retain their existing endpoint and ownership boundaries.
 
 ### Architecture Pattern & Boundary Map
 
@@ -109,7 +113,7 @@ flowchart TB
     Reconciler --> PiState[Mutable Pi state]
     Launcher --> Preflight[Runtime preflight]
     Preflight --> McpProxy[mcpproxy]
-    Preflight --> Cavemem[Cavemem]
+    Preflight --> AgentMemory[AgentMemory daemon]
     Launcher --> Nono[nono supervisor]
     Profiles --> Nono
     Nono --> PiRuntime[Direct Pi runtime]
@@ -118,21 +122,10 @@ flowchart TB
     PiRuntime --> RuntimeBootstrap[CLI runtime bootstrap]
     PiRuntime --> McpBridge[MCP bridge]
     McpBridge --> McpProxy
-    RuntimeBootstrap --> CaptureBridge[Cavemem bridge]
-    CaptureBridge --> FullModeRedactor[Bounded full mode redactor]
-    FullModeRedactor --> Cavemem
+    PiRuntime --> AgentMemoryPlugin[Bundled AgentMemory integration]
+    AgentMemoryPlugin --> AgentMemory
     PiRuntime --> ManagedChildren[Managed child processes]
 ```
-
-**Architecture Integration**
-- Selected pattern: hybrid package adoption with repository-owned runtime control.
-- Dependency direction: external pins → packages → closed catalogs and typed
-  host selection → immutable desired state → reconciliation/preflight →
-  supervised Pi runtime → external services.
-- Host modules provide values only; they do not import scripts or mutate state.
-- Provider routes, header bindings, resolver argv, and rendered store roots flow
-  from module-owned catalogs; hosts can only select compatible references.
-- OpenCode patterns are reused as contracts, not shared implementation.
 
 ### Technology Stack
 
@@ -144,7 +137,7 @@ flowchart TB
 | Reconciliation | Node ESM, JSON Schema, `proper-lockfile` | Atomic managed-key updates | Runtime only; provenance-aware |
 | Sandbox | Existing nono package and Pi pack `0.2.0` policy | Darwin filesystem, network, and process boundary | Standalone rendered profiles |
 | MCP | mcpproxy `0.52.1`, `pi-mcp-adapter@2.20.1` | Six direct tools over the standard local MCP transport | No ambient MCP config merge |
-| Memory | Cavemem `0.2.1` plus scoped patches | Canonical capture, bounded privacy, raw retrieval | Existing schema and MCP surface retained |
+| Memory | AgentMemory `e04ba888` bundled Pi integration | Stock capture, recall, save, and consolidation over authenticated REST | Managed runtime is owned upstream; stock limits apply |
 | Extensions | Pins in `research.md` | Required Pi capabilities | Fixed lock; no nested Pi dependencies |
 | Native process | `node-pty@1.2.0-beta.14` | Interactive background tasks | Preserve Darwin ARM prebuild |
 
@@ -162,12 +155,8 @@ overlays/
 │   └── extensions/
 │       ├── package.json                  # Exact extension inventory
 │       ├── package-lock.json             # Fixed extension closure
-│       ├── cavemem.ts                    # First-loaded lifecycle bridge
 │       ├── mcpproxy.ts                   # Isolated MCP adapter configuration
 │       └── patches/                      # Scoped upstream extension patches
-├── cavemem-pi-full-payload-v1.patch      # Opt-in full capture mode
-├── cavemem-pi-full-privacy-v1.patch      # Bounded structured and lexical redaction
-├── cavemem-pi-full-storage-policy-v1.patch # Raw retrieval, embedding exclusion, worker lease
 └── default.nix                           # Adds the Pi overlay
 
 home-manager/common/pi-agent/
@@ -185,8 +174,7 @@ scripts/
 ├── pi-agent-reconcile.nix                # Reconciler package
 ├── pi-agent-shell.nix                    # Credential-scrubbed command shell
 ├── pi-agent-status.nix                   # Redacted machine and human status
-├── pi-agent-validate.nix                 # Runtime compatibility validation
-└── cavemem-smoke-test.nix                # Legacy and full-mode capture checks
+└── pi-agent-validate.nix                 # Runtime compatibility validation
 
 configurations/personal/home-manager/
 └── pi-agent.nix                          # Personal OpenAI selection and default
@@ -200,9 +188,7 @@ tests/pi-agent/
 ├── reconcile.test.mjs                    # Ownership, drift, and concurrency
 ├── launcher.test.mjs                     # States, preflight, and fail-closed launch
 ├── extensions.test.mjs                   # Inventory, tools, plan, LSP, background
-├── cavemem.test.mjs                      # Canonical write mode and legacy parity
-├── cavemem-privacy.test.mjs              # Leak, false-positive, and bound corpus
-├── cavemem-storage.test.mjs              # Raw retrieval and embedding policy
+├── agentmemory.test.mjs                  # Bundled integration, routes, and limits
 ├── hm-render.test.mjs                    # Both host render contracts
 ├── runtime-personal.test.mjs             # Personal runtime smoke path
 ├── runtime-shopify.test.mjs              # Shopify stub and live-gate path
@@ -213,14 +199,18 @@ tests/pi-agent/
 
 ### Modified Files
 - `flake.nix` and `flake.lock` — add the pinned `pi-nix` input and Pi checks.
-- `overlays/mcp-servers.nix` — apply the scoped Cavemem payload, privacy, and
-  storage-policy patches in order.
+- `overlays/pi-agent/default.nix` — consume the bundled AgentMemory Pi
+  integration from the managed package and remove the repository Cavemem bridge.
 - `home-manager/common/default.nix` — import the Pi module.
+- `home-manager/common/pi-agent/**` and `scripts/pi-agent-*` — replace
+  Pi-specific Cavemem configuration, launch, status, sandbox, and validation
+  contracts with AgentMemory endpoint and bearer wiring.
 - `configurations/personal/home-manager/default.nix` — import personal Pi values.
 - `configurations/shopify/home-manager/default.nix` — import Shopify Pi values.
 
 No Pi production component writes outside the paths listed above and Pi's
-existing mutable agent directory.
+existing mutable agent directory. Pi receives no AgentMemory data-directory
+grant.
 
 ## System Flows
 
@@ -249,7 +239,7 @@ sequenceDiagram
     Launcher->>Reconciler: Apply persisted projection only
     Reconciler-->>Launcher: Stable provider bytes and ownership
     Launcher->>Validator: Validate package profiles and extensions
-    Validator->>Services: Probe mcpproxy and Cavemem
+    Validator->>Services: Probe mcpproxy and AgentMemory
     Services-->>Validator: Required contracts ready
     Validator-->>Launcher: Ready
     Launcher->>Nono: Start selected profile
@@ -262,29 +252,28 @@ never their values. For equal generation and validated base, concurrent launches
 produce byte-identical provider JSON and the second locked reconcile is a no-op;
 their root/child Pi environments still contain distinct token and UUID values.
 
-### Tool Capture
+### AgentMemory Capture and Recall
 ```mermaid
 sequenceDiagram
     participant Pi
-    participant Capture
-    participant BridgeRedactor
-    participant Cavemem
-    participant LaterExtensions
+    participant Plugin as Bundled integration
+    participant AgentMemory
 
-    Pi->>Capture: Tool result event
-    Capture->>Capture: Snapshot before first await
-    Capture->>BridgeRedactor: Remove exact runtime values in memory
-    BridgeRedactor->>Cavemem: Canonical pi full v1 envelope
-    Cavemem->>Cavemem: Redact structured values and finite string forms
-    Cavemem->>Cavemem: Stringify and store without embedding
-    Capture-->>Pi: Capture result
-    Pi->>LaterExtensions: Continue event chain
+    Pi->>Plugin: session_start
+    Plugin->>AgentMemory: authenticated session/start
+    Pi->>Plugin: before_agent_start
+    Plugin->>AgentMemory: smart-search
+    AgentMemory-->>Plugin: stock context
+    Pi->>Plugin: tool_result or agent_end
+    Plugin->>AgentMemory: bounded observe
+    Pi->>Plugin: session_shutdown
+    Plugin->>AgentMemory: session/end and consolidate
 ```
 
-Full mode applies no application-level payload cap. SQLite accepts one complete
-redacted row up to its active maximum value length; larger, malformed, or
-storage-failed events produce no partial observation and surface a sticky Pi
-capture error.
+The bundled integration retains AgentMemory's stock 8,000-character slices,
+fire-and-forget observation calls, project attribution, context injection,
+session identity, and consolidation behavior. This spec adds no full-payload
+transport, FIFO, retry queue, sticky capture error, or raw-event store.
 
 ### Sandbox Selection
 `PI_NONO` selects `disabled`, `audit`, or `enforced`; `PI_NONO_PROFILE` selects
@@ -303,11 +292,11 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6 | Extension inventory | Package Set, Extension Runtime | ExtensionManifestV1 |
 | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8 | Sub-agents | Extension Runtime, Sandbox Catalog | ChildPolicyV1, ManagedChildAgentCatalogV1 |
 | 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | Plan mode | Extension Runtime, Sandbox Catalog | Active tool names, Plan session state |
-| 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.9, 10.10, 10.11 | Cavemem capture | Capture Bridge, Cavemem Full Mode | PiFullToolObservationV1, PiFullPrivacyPolicyV1, Tool Capture |
+| 10.1–10.13 | AgentMemory integration | AgentMemory Pi Integration, Runtime Control | AgentMemoryConfigV1, AgentMemory Capture and Recall |
 | 11.1, 11.2, 11.3, 11.4, 11.5, 11.6, 11.7 | Session aids | Extension Runtime | ExtensionManifestV1 |
 | 12.1, 12.2, 12.3, 12.4, 12.5, 12.6 | Code intelligence | Extension Runtime, Sandbox Catalog | ExtensionManifestV1, SandboxSelection |
 | 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7 | Background tasks | Extension Runtime, Sandbox Catalog | ChildPolicyV1, SandboxSelection |
-| 14.1, 14.2, 14.3, 14.4, 14.5 | Credential isolation | Provider Composition, Credential Boundary, Capture Bridge, Cavemem Full Mode | PersistedProviderV1, ProviderRuntimeSecretsV1, CredentialBoundaryV1, PiFullPrivacyPolicyV1 |
+| 14.1, 14.2, 14.3, 14.4, 14.5 | Credential isolation | Provider Composition, Credential Boundary, AgentMemory Pi Integration | PersistedProviderV1, ProviderRuntimeSecretsV1, AgentMemoryRuntimeSecretsV1, CredentialBoundaryV1 |
 | 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7 | Release gates | Package Set, Acceptance Harness | ValidationReportV1 |
 
 ## Components and Interfaces
@@ -322,8 +311,7 @@ the managed profile. Review appends its read-only tool ceiling after user args.
 | Sandbox Catalog | Security | Define OS profiles and the launch-time review ceiling | 5, 8, 9, 12, 13 | nono P0 | State |
 | MCP Bridge | Integration | Expose six governed mcpproxy tools | 6 | mcpproxy P0, adapter P0 | Service |
 | Extension Runtime | Agent | Supply required tools and controlled subprocesses | 7, 8, 9, 11, 12, 13, 14 | Extension bundle P0 | Service, State |
-| Capture Bridge | Memory | Snapshot events and remove exact runtime values before transport | 8, 10, 14 | Cavemem P0 | Event, Batch, State |
-| Cavemem Full Mode | Memory | Apply bounded privacy, uncompressed storage, and fenced worker cleanup | 10, 14 | Canonical envelope P0 | Batch, State |
+| AgentMemory Consumption | Memory | Compose the migration-owned integration into Pi launch, children, sandbox, status, and validation | 8, 10, 14 | agentmemory-opencode-migration P0 | Service, State |
 | Acceptance Harness | Validation | Prove package, host, runtime, and security contracts | 4, 15 | Both host outputs P0 | Batch |
 
 ### Build and Configuration
@@ -384,7 +372,7 @@ runtimes, missing license texts, wrong `undici`, or absent recovery markers.
 **Dependencies**
 - Inbound P0: common and host module values.
 - Outbound P0: Runtime Control reads immutable rendered paths.
-- External P1: existing mcpproxy and Cavemem option read-backs.
+- External P1: existing mcpproxy and AgentMemory option read-backs.
 
 **Contracts**: State.
 
@@ -431,7 +419,13 @@ interface ManagedConfigV1 {
   readonly instructionResources: readonly RenderedStorePath[];
   readonly lspExecutables: Readonly<Record<string, RenderedStorePath>>;
   readonly mcpEndpoint: string;
+  readonly agentMemory: AgentMemoryConfigV1;
   readonly sandboxDefault: "disabled" | "audit" | "enforced";
+}
+
+interface AgentMemoryConfigV1 {
+  readonly url: `http://127.0.0.1:${number}`;
+  readonly secretReference: string;
 }
 ```
 
@@ -474,14 +468,17 @@ Heuristic secret scans may reject suspicious output, but the closed option graph
 - Canonically sort persisted providers/keys and skip writes when bytes match.
   Concurrent same-generation projections with different joined URLs fail as
   `provider-projection-conflict` instead of overwriting each other.
-- Validate manifests, closure membership, provider materialization, extensions, profiles, MCP, Cavemem, and credentials; then exec patched bare Pi through nono exactly once; its CLI installs the bootstrap before importing Pi modules.
+- Validate manifests, closure membership, provider materialization, extensions,
+  profiles, MCP, AgentMemory, and credentials; then exec patched bare Pi through
+  nono exactly once; its CLI installs the provider redaction bootstrap before
+  importing Pi modules.
 - Add validated `bashDefaultMs` to root and foreground child Pi as `PI_AGENT_BASH_TIMEOUT_MS`, outside `ProviderRuntimeSecretsV1`.
 - Expose the same checks through dry-run, status, and validation modes.
 
 **Dependencies**
 - Inbound P0: ManagedConfigV1, PersistedProviderProjectionV1, and Package Set.
 - Outbound P0: nono and direct Pi executable.
-- External P0: Shopify gateway in Shopify mode; mcpproxy and Cavemem on both.
+- External P0: Shopify gateway in Shopify mode; mcpproxy and AgentMemory on both.
 
 **Contracts**: Service, State.
 
@@ -513,7 +510,8 @@ interface StatusV1 {
   readonly providerMode: "personal" | "shopify-gateway";
   readonly sandboxState: "disabled" | "audit" | "enforced"; readonly profile: string | null;
   readonly mcpEndpoint: string; readonly mcpReady: boolean;
-  readonly cavememDataDir: string; readonly cavememReady: boolean;
+  readonly agentMemoryUrl: string;
+  readonly agentMemoryHealth: "healthy" | "degraded" | "critical" | "unavailable";
   readonly extensions: Readonly<Record<string, string>>;
   readonly drift: readonly string[];
 }
@@ -631,9 +629,10 @@ templates only. Pi expands both refs at request time; token/UUID values are forb
 | Requirements | 3.5, 3.6, 3.7, 14.1–14.5 |
 
 **Responsibilities & Constraints**
-- `credential-policy.nix` is the sole source of resolver dispatch, generated
-  environment names, `ProviderRuntimeSecretsV1`, exact-redaction values, and
-  spawn-boundary mappings.
+- `credential-policy.nix` is the sole source of provider resolver dispatch,
+  generated environment names, `ProviderRuntimeSecretsV1`, and spawn-boundary
+  mappings. AgentMemory endpoint and bearer resolution remain a separate
+  launcher-owned runtime input.
 - `pi-auth` leaves resolution to Pi and has no executable. Shopify uses exactly
   `shopify-gateway-token` and `shopify-gateway-base`; both reference the managed
   gateway package, while the launcher derives fixed argv from resolver kind.
@@ -642,18 +641,25 @@ templates only. Pi expands both refs at request time; token/UUID values are forb
 - The token resolver returns one bounded value; each launch generates a fresh
   UUID. Only root and foreground child Pi receive `SHOPIFY_PI_TOKEN` and
   `PI_AGENT_LAUNCH_ID`; Pi expands persisted templates against that process env.
-- Every non-provider process uses the policy's `scrubbedEnvironment` result,
-  built from an allowlist plus removal of all declared and standard provider
-  credential names.
+- Root and foreground child Pi also receive `AGENTMEMORY_URL` and the bearer
+  resolved from `AgentMemoryConfigV1.secretReference`. The bearer is not part of
+  managed JSON or `ProviderRuntimeSecretsV1`.
+- Every model-invoked subprocess uses the policy's `scrubbedEnvironment`
+  result, built from an allowlist plus removal of all declared provider names
+  and `AGENTMEMORY_SECRET`.
 - `pi-agent-shell` may receive root Pi's environment, but removes sensitive names and `PI_AGENT_BASH_TIMEOUT_MS` before executing the model-controlled shell under the fixed allowlist.
-- The patched CLI installs immutable process-global `PiRuntimeBootstrapV1` and `CavememProcessEnvironmentV1` capabilities before imports; the latter snapshots only policy-approved own string environment values, including `CAVEMEM_DATA_DIR`.
-- Each Jiti-loaded Capture Bridge consumes both capabilities; reload reuses them and process exit destroys them. Exact values never enter Cavemem input, argv, files, logs, or child environments.
+- The patched CLI installs only the immutable process-global
+  `PiRuntimeBootstrapV1` provider-redaction capability before imports. The
+  Cavemem process-environment capability is removed.
+- The bundled AgentMemory integration reads its managed URL and bearer from the
+  trusted root or foreground-child Pi environment. Those values never enter
+  managed files, status, diagnostics, or model-invoked child environments.
 - `ProviderRuntimeSecretsV1` is never reconciler input and has no JSON encoder,
   ownership entry, status representation, or persisted rollback form.
 
 **Dependencies**
 - Inbound P0: HostProviderSelection and resolver outputs.
-- Outbound P0: Runtime Control, Extension Runtime, and Capture Bridge spawn sites.
+- Outbound P0: Runtime Control, Extension Runtime, status, and validator spawn sites.
 - External P0: managed Shopify `devx` package in Shopify mode.
 
 **Contracts**: Service, State.
@@ -675,7 +681,10 @@ type ProviderRuntimeSecretsV1 =
       readonly childPiEnvironment: Readonly<{ SHOPIFY_PI_TOKEN: RuntimeToken; PI_AGENT_LAUNCH_ID: RuntimeLaunchUuid }>;
       readonly exactRedactionValues: InMemorySecretSet };
 interface PiRuntimeBootstrapV1 { readonly schemaVersion: 1; readonly mode: "personal" | "shopify-gateway"; readonly redactExact: (value: string) => string; }
-interface CavememProcessEnvironmentV1 { readonly schemaVersion: 1; readonly environment: Readonly<Record<string, string>>; }
+interface AgentMemoryRuntimeSecretsV1 {
+  readonly url: string;
+  readonly secret: Opaque<string, "AgentMemoryBearer">;
+}
 
 interface CredentialBoundaryV1 {
   readonly resolvers: readonly ResolverPlan[];
@@ -696,12 +705,11 @@ derived from a package plus the fixed `bin/devx` relative path.
 
 | Spawn site | Environment owner | Credential result |
 |---|---|---|
-| Root Pi | Launcher | Declared provider values only |
-| Foreground child Pi | Patched sub-agent spawn | Same provider contract as parent |
+| Root Pi | Launcher | Declared provider values plus managed AgentMemory URL and bearer |
+| Foreground child Pi | Patched sub-agent spawn | Same provider and AgentMemory contracts as parent |
 | Built-in Bash | `pi-agent-shell` through Pi `shellPath` | Scrubbed |
 | Background pipe and PTY | Patched background extension | Scrubbed |
 | Language server | Managed LSP wrapper and patched spawn | Scrubbed |
-| Cavemem hook and worker | Cavemem bridge explicit environment | Scrubbed |
 | Status and validator probes | Owning script | Scrubbed and redacted |
 
 The blocked review bypasses are impossible at the public boundary: there is no
@@ -723,17 +731,18 @@ field is an unknown-option error rather than a value that a scanner must judge.
   derived from the pinned public policy; runtime pack installation is absent.
 - Exclude git config, credential, LaunchServices, profile-draft, and package
   wiring grants. Deny sensitive credential directories explicitly.
-- Grant Pi/Cavemem state, private temp, immutable closures, current workspace,
-  required caches, local mcpproxy port 8080, and same-sandbox process signaling.
+- Grant Pi state, private temp, immutable closures, current workspace, required
+  caches, local mcpproxy and AgentMemory REST ports, and same-sandbox process
+  signaling. Do not grant AgentMemory's data directory.
 - Managed uses provider-host allowlisting when validated. Audit permits outbound
   network for compatibility diagnosis. Review makes the workspace read-only.
 - `PI_NONO=disabled|audit|enforced` and `PI_NONO_PROFILE` are one-launch
   overrides. Unknown values and missing profiles fail closed.
 - `PI_NONO_LISTEN_PORTS` admits only validated explicit numeric ports for one
   launch. No wildcard listen range exists. On macOS with nono 0.69.0,
-  `open_port: 8080` also grants blanket localhost bind/inbound access because
-  the backend cannot filter bind by port; validation records this limitation
-  instead of claiming per-port denial enforcement.
+  granting the required local service ports also grants blanket localhost
+  bind/inbound access because the backend cannot filter bind by port; validation
+  records this limitation instead of claiming per-port denial enforcement.
 - Review appends a managed Pi allowlist after user arguments. Plan selects `read`,
   `grep`, `find`, `ls`, and interaction tools, then blocks other calls before execution.
 - Before sandbox launch, resolve the profile with
@@ -757,8 +766,9 @@ interface SandboxSelection {
 }
 
 interface SandboxGrantContractV1 {
-  readonly mcpPort: 8080; readonly providerHost: string | null;
-  readonly agentDirAccess: "readwrite"; readonly cavememDirAccess: "readwrite";
+  readonly mcpPort: number; readonly agentMemoryUrl: string;
+  readonly providerHost: string | null;
+  readonly agentDirAccess: "readwrite";
   readonly tempDirAccess: "readwrite";
   readonly workspaceAccess: "read" | "readwrite";
   readonly processMode: "isolated" | "allow_same_sandbox";
@@ -766,13 +776,14 @@ interface SandboxGrantContractV1 {
 }
 ```
 
-Grant validation requires port 8080, the resolved provider host or unrestricted
-audit egress, declared agent/Cavemem/temp/workspace access, readable package and
-extension closures, admitted root-Pi environment names, and same-sandbox process
-control whenever sub-agents, LSP, or background tasks are enabled. It validates
-and materializes explicit listen ports, then reports backend limitations when
-the selected nono version cannot enforce them. Review requires read-only
-workspace access and no execution tools.
+Grant validation requires the managed mcpproxy port, the managed AgentMemory
+REST port, the resolved provider host or unrestricted audit egress, declared
+Pi/temp/workspace access, readable package and extension closures, admitted
+root-Pi environment names including `AGENTMEMORY_URL` and
+`AGENTMEMORY_SECRET`, and same-sandbox process control whenever sub-agents, LSP,
+or background tasks are enabled. It validates and materializes explicit listen
+ports, then reports backend limitations when the selected nono version cannot
+enforce them. Review requires read-only workspace access and no execution tools.
 
 Sandbox execution is exactly:
 
@@ -835,11 +846,12 @@ transitions; the Plan call gate blocks non-allowlisted execution.
 | Requirements | 7.1–7.6, 8.1–8.8, 9.1–9.7, 11.1–11.7, 12.1–12.6, 13.1–13.7, 14.1, 14.2 |
 
 **Responsibilities & Constraints**
-- Disable ambient extension, skill, and prompt discovery. Load the closed manifest
-  as Cavemem, MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence,
-  and background tasks; hosts cannot add extensions.
+- Disable ambient extension, skill, and prompt discovery. Load the closed
+  manifest as AgentMemory, MCP, sub-agents, plan, timestamps, timeout, questions,
+  code intelligence, and background tasks; hosts cannot add extensions.
 - Keep sub-agent artifacts in the parent session and give children explicit
-  extensions. Children load Cavemem/provider resources and MCP only when declared.
+  extensions. Children load AgentMemory/provider resources and MCP only when
+  declared.
 - Preserve single, parallel, and chain semantics, independent failures, and
   predecessor-only chain input. Managed agent definitions own child ceilings.
 - Expose only the fixed `reader` and `worker` definitions. Reject user/project
@@ -897,119 +909,62 @@ interface ManagedChildAgentCatalogV1 {
 
 | Role | Budget | Workspace | Tools | Extensions / MCP |
 |---|---|---|---|---|
-| `reader` | 8 turns, 32 tool calls | Parent workspace read-only | `read`, `grep`, `find`, `ls`, `retrieve_tools`, `describe_tool`, `call_tool_read`, `read_cache` | Cavemem and MCP; read-only direct tools only |
-| `worker` | 12 turns, 64 tool calls | Parent workspace read-write | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | Cavemem; no MCP |
+| `reader` | 8 turns, 32 tool calls | Parent workspace read-only | `read`, `grep`, `find`, `ls`, `retrieve_tools`, `describe_tool`, `call_tool_read`, `read_cache` | AgentMemory and MCP; read-only direct MCP tools only |
+| `worker` | 12 turns, 64 tool calls | Parent workspace read-write | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | AgentMemory; no MCP |
 
 Both roles inherit the host-managed default model and provider runtime contract,
 use the module-owned maximum depth, write artifacts only to the parent session,
 and receive no caller-controlled resource override.
 
 Root and child Pi are trusted credential consumers. Bash, background, LSP,
-Cavemem, status, and validation processes receive no provider credential value.
-Managed in-process extensions and their load order remain trusted; plan mode does not seal provider payloads.
+status, and validation processes receive no provider or AgentMemory credential
+value. Managed in-process extensions and their load order remain trusted; plan
+mode does not seal provider or memory payloads.
 
-#### Capture Bridge
+#### AgentMemory Pi Integration
 
 | Field | Detail |
 |---|---|
-| Intent | Snapshot ordered Pi events and remove exact runtime values before transport |
-| Requirements | 8.6, 10.1–10.9, 14.1, 14.4, 14.5 |
+| Intent | Connect the bundled Pi integration to the managed AgentMemory daemon |
+| Requirements | 8.6, 10.1–10.13, 14.1, 14.2, 14.4, 14.5 |
 
 **Responsibilities & Constraints**
-- Load first and snapshot each event synchronously before the first `await`.
-- Map session start, prompt input, tool completion/failure, assistant turn end,
-  resume/fork, compaction barriers, and shutdown to existing Cavemem hooks.
-- Use the Pi session UUID with `ide=pi`; compaction retains identity, resume
-  reuses it, and fork creates a new ID.
-- Consume both runtime capabilities during each factory load, remove exact values
-  while the snapshot is still in bridge memory, then construct the closed
-  `PiFullToolObservationV1`. Exact values never enter JSON, stdin, argv, files,
-  logs, diagnostics, or the Cavemem process environment.
-- Queue hooks FIFO and await the queue from event handlers. Startup and stdin
-  use no-progress deadlines; shutdown waits for the active write. Ambiguous
-  writes are not retried.
-- Load the bridge in enabled children, emit bounded child attribution, and pass
-  only the managed scrubbed environment to Cavemem.
-- Surface nonzero, timeout, overflow, malformed, privacy, and storage failures
-  as sticky value-free Pi errors.
+- Load AgentMemory's packaged `integrations/pi/index.ts` entrypoint with its
+  adjacent `security.ts`, metadata, license, and relative layout intact. The
+  only compatibility substitution replaces successful `memory_health` details
+  with `{ ok: true }`; visible text, hooks, routes, limits, and failures remain.
+- Resolve `AgentMemoryConfigV1.secretReference` through the existing bounded
+  Keychain bridge and supply `AGENTMEMORY_URL` plus `AGENTMEMORY_SECRET` only to
+  root and foreground child Pi.
+- Use the standard authenticated health, session start, observe, smart-search,
+  remember, session end, and consolidate routes.
+- Preserve the bundled `session_start`, `before_agent_start`, `tool_result`,
+  `agent_end`, and `session_shutdown` hook behavior; expose `memory_health`,
+  `memory_search`, `memory_save`, and `/agentmemory-status`.
+- Require full-daemon startup readiness. Accept `healthy`, `degraded`, and
+  legacy `ok`; reject critical, unavailable, unauthenticated, and standalone
+  fallback states.
+- Preserve stock project selection, context injection, 8,000-character
+  observation slicing, fire-and-forget observation failures, session handling,
+  compression, indexing, and consolidation.
+- Do not add a replacement capture bridge, exact-value payload rewriter, FIFO,
+  retry queue, full-payload mode, raw-event store, or direct AgentMemory MCP.
+- Remove Pi-specific Cavemem extension, process capability, package patches,
+  settings, data-directory grant, MCP upstream, backup, and live writes.
 
-**Contracts**: Event, Batch, State.
-
-| Pi event | Cavemem action |
-|---|---|
-| `session_start` | `session-start` with stable Pi identity |
-| `input` | `user-prompt-submit` before input transformation |
-| `tool_result` | exact-redacted full-mode snapshot |
-| `tool_execution_end` | fallback error when no result exists |
-| `turn_end` | `stop` with visible assistant result |
-| `session_before_compact` | FIFO flush barrier |
-| `session_shutdown` | flush and `session-end`, except reload |
-
-#### Cavemem Full Mode
-
-| Field | Detail |
-|---|---|
-| Intent | Enforce bounded privacy, canonical serialization, and full-row storage policy |
-| Requirements | 10.3, 10.6, 10.7, 10.9, 10.10, 10.11, 14.4, 14.5 |
-
-The completed `pi-full-v1` write contract remains authoritative: transport,
-envelope, and output objects are closed; unknown fields fail before insertion;
-default-mode parsing and bytes are unchanged.
+**Contracts**: Service, State.
 
 ```typescript
-interface PiFullToolObservationV1 {
-  readonly schemaVersion: 1; readonly toolCallId: string; readonly toolName: string;
-  readonly input: unknown;
-  readonly output: {
-    readonly content: unknown; readonly details: unknown; readonly isError: boolean;
-    readonly usage?: Readonly<Record<string, number>>;
-  };
-}
-
-interface PiFullPrivacyPolicyV1 {
-  readonly structuredRule: "normalized-sensitive-object-keys-v1";
-  readonly stringRules: readonly [
-    "private-region-v1", "complete-authorization-v1", "known-provider-token-v1",
-    "jwt-v1", "private-pem-v1", "url-authority-userinfo-v1",
+interface AgentMemoryPiSurfaceV1 {
+  readonly hooks: readonly [
+    "session_start", "before_agent_start", "tool_result", "agent_end",
+    "session_shutdown",
   ];
-  readonly malformedRegionPolicy: "redact-through-eof";
-  readonly opaqueStringFormats: readonly ["json", "yaml", "shell", "source"];
+  readonly tools: readonly ["memory_health", "memory_search", "memory_save"];
+  readonly command: "/agentmemory-status";
+  readonly observationLimit: 8000;
 }
 ```
-
-**Redaction Boundary**
-- Before stringify, recurse through envelope objects and arrays. Normalize object
-  keys by ASCII lowercase plus removal of ASCII whitespace, `_`, `-`, and `.`;
-  replace the complete value when the result is one of: `accesskey`,
-  `accesskeyid`, `accesstoken`, `apikey`, `authtoken`, `authorization`,
-  `clientsecret`, `credential`, `credentials`, `idtoken`, `passphrase`,
-  `passwd`, `password`, `privatekey`, `proxyauthorization`, `refreshtoken`,
-  `secret`, or `token`.
-- Strip `<private>...</private>` regions. An unmatched opener redacts through
-  end of string.
-- Apply only the documented string rules: a complete trimmed Basic/Bearer value;
-  `gh[pousr]_[A-Za-z0-9]{20,}`, `github_pat_[A-Za-z0-9_]{20,}`,
-  `shpat_[A-Za-z0-9]{20,}`, `xox[baprs]-[A-Za-z0-9-]{20,}`,
-  `glpat-[A-Za-z0-9_-]{20,}`, `sk-(proj-)?[A-Za-z0-9_-]{20,}`, and
-  `AKIA[0-9A-Z]{16}`; three-segment JWTs; private-key PEM blocks; and URL
-  authority userinfo at a lexical URL boundary. A malformed PEM opener redacts
-  through end of string.
-- Do not parse an arbitrary string leaf as embedded JSON, YAML, environment or
-  shell assignment, or source code. Such content must arrive as structured
-  objects to receive key recursion and otherwise remains byte-identical except
-  for the finite string rules. This is the explicit false-positive boundary.
-- Each scanner advances monotonically over the original string with fixed rule
-  count and bounded lookahead. It never reparses replacements. Diagnostics name
-  rule and structural location only and contain no source value.
-
-**Storage Policy and Worker Lifecycle**
-- Redaction and raw storage remain separate. Storage inserts one redacted canonical row with `compressed=0` and `intensity=NULL`.
-- Full rows bypass expansion; embedding selection, writes, backfill, and vector enumeration accept only `compressed=1`, and stale full-row vectors are removed.
-- The worker child binds its TCP listener before PID-file access, cleanup, or provider initialization. The listener is the exclusive startup lease and serves `503 Starting` until ready.
-- `worker.pid` is an atomic readiness receipt `{ pid, nonce, port }`, published only after cleanup and initialization. Start succeeds only after IPC or health reports the same nonce.
-- Bind losers never mutate the receipt: matching ready health means already running; any other owner is a port conflict. Shutdown compare-removes its receipt while holding the listener; restart waits bounded port release and escalates before spawning a successor.
-- Startup failure closes store and listener and leaves no readiness receipt. SQLite's active maximum remains the full-row limit; overflow stores no partial row and FTS/BM25 remains available.
-- No table, column, index, schema version, default hook, or default embedding behavior changes.
 
 ### Validation
 
@@ -1024,8 +979,8 @@ interface PiFullPrivacyPolicyV1 {
 - Separate pure package/render/unit checks from credential-bearing switched-host
   validation.
 - Verify both host outputs and reject personal/Shopify provider leakage.
-- Use deterministic fake providers, mcpproxy, Cavemem, nono, language servers,
-  PTYs, and subprocess sentinels for hermetic behavior.
+- Use deterministic fake providers, mcpproxy, AgentMemory, nono, language
+  servers, PTYs, and subprocess sentinels for hermetic behavior.
 - Report each gate as pass, fail, or manual-required with package generation and
   version evidence.
 - Permit the personal hermetic gate to report manual-required when the fixed
@@ -1056,7 +1011,8 @@ interface PiFullPrivacyPolicyV1 {
 
 ### Runtime-Only State
 - The resolved base is ephemeral until route joining. Token and launch UUID live
-  only in provider-capable state; the separate process-lifetime Cavemem capability contains only approved non-provider environment values.
+  only in provider-capable state. The AgentMemory bearer is resolved separately
+  and exists only in root and foreground child Pi environments.
 - `PI_AGENT_BASH_TIMEOUT_MS` is a public launcher binding for root and foreground
   child Pi. It is not provider-secret state and is removed by `pi-agent-shell`.
 - `${PI_AGENT_LAUNCH_ID}` is persisted as an env-reference template, not a UUID;
@@ -1064,11 +1020,12 @@ interface PiFullPrivacyPolicyV1 {
 - Adapter metadata, extension settings, sub-agent artifacts, and background
   snapshots remain under the Pi agent/session directories with owner-only modes.
 
-### Cavemem Observation State
-- `PiFullToolObservationV1` uses existing storage with `compressed=0` and
-  `intensity=NULL`; bridge and Cavemem redaction precede one stringify.
-- No schema changes occur. Default rows remain compressed; full rows skip
-  embedding and remain BM25/FTS searchable.
+### AgentMemory Observation State
+- Pi uses AgentMemory's standard session and observation records through the
+  shared daemon. The Pi harness does not read or write the managed data
+  directory directly.
+- Stock compression, bounded BM25 indexing, project attribution, consolidation,
+  and persistence behavior remain owned by `agentmemory-opencode-migration`.
 
 ## Error Handling
 
@@ -1081,13 +1038,13 @@ interface PiFullPrivacyPolicyV1 {
 | MCP | Health, upstream, handshake, cache, or direct-surface failure | Exit before TUI | Restart mcpproxy or repair declared upstream |
 | Sandbox | Missing profile, validation failure, blocked prerequisite | Refuse unsandboxed fallback | Select valid profile or explicit documented rollback |
 | Extension | Load failure or unexpected tool surface | Stop before accepting a prompt | Fix package/config and validate again |
-| Capture privacy | Exact-value, canonical-envelope, private-region, or bounded-rule failure | Transport/store nothing; sticky value-free error | Repair bridge or redactor; retry the turn |
-| Capture storage/worker | SQLite limit, storage-policy failure, stale receipt, readiness mismatch, port conflict, or shutdown timeout | No partial row or false readiness; close owned resources with a value-free error | Repair storage or worker lifecycle; retry |
+| AgentMemory startup | Unavailable, unauthenticated, fallback, critical, endpoint mismatch, or missing bearer | Exit before TUI with a value-free recovery action | Restore the managed daemon or secret reference; rerun |
+| AgentMemory capture | Stock observe, search, end, or consolidation failure after startup | Preserve bundled integration behavior; do not add custom durable retries or sticky errors | Inspect AgentMemory logs and daemon status |
 | Child process | A registered process group does not finish cancellation or shutdown gracefully | Group TERM then group KILL | Report final process-group state and fail cleanup gate |
 
 Errors use component, resolver/rule kind, safe path, and recovery action only.
-Credential values, raw pre-redaction payloads, and materialized headers never
-enter diagnostics, logs, or status output.
+Credential values and materialized headers never enter diagnostics, logs, or
+status output.
 
 ## Security Considerations
 - The public extension bundle is trusted in-process code; only fixed reviewed
@@ -1096,7 +1053,8 @@ enter diagnostics, logs, or status output.
   stale-lock recovery, and detected compromise fail safely; external lock
   deletion or replacement before heartbeat detection is host compromise and is
   not a fencing guarantee provided by this integration.
-- Shopify token and launch UUID reach root Pi, its redaction bootstrap, and foreground child Pi only. The separate Cavemem environment capability is allowlisted, immutable, and credential-free; sentinel tests scan output and persisted state.
+- Shopify token, launch UUID, and AgentMemory bearer reach root and foreground
+  child Pi only. Sentinel tests scan subprocess output and persisted Pi state.
 - The trusted managed shell wrapper receives root Pi's environment only to build
   the allowlisted environment used by the model-controlled shell command.
 - `PersistedProviderV1` admits only joined URLs, finite metadata, public literals,
@@ -1107,9 +1065,9 @@ enter diagnostics, logs, or status output.
 - `call_tool_write` and `call_tool_destructive` require adapter approval.
   `call_tool_read` relies on mcpproxy routing. Code execution and
   server-management tools are absent from Pi.
-- The Capture Bridge removes exact runtime values before transport. Cavemem then
-  applies normalized structured-key, private-region, and finite lexical rules;
-  opaque JSON/YAML/shell/source strings receive no universal parsing.
+- The bundled AgentMemory extension is trusted in-process and can read the
+  bearer. Model-invoked Bash, background tasks, language servers, status, and
+  validation receive environments scrubbed of `AGENTMEMORY_SECRET`.
 - Personal configuration contains no Shopify role, resolver, endpoint, header,
   or credential binding. Closure scans cover both host outputs and publication.
 - Review mode combines a read-only filesystem profile and a final Pi tool
@@ -1120,19 +1078,21 @@ Residual accepted exposure:
 - A mutation accepted by mcpproxy through `call_tool_read` bypasses Pi's
   write/destructive approval prompt.
 - Trusted in-process Pi extensions can inspect secrets and alter Plan-visible tools or payloads.
+- The bundled `memory_save` tool writes through direct authenticated REST and
+  does not pass through mcpproxy's write approval.
 - Provider retries may reuse a pre-transition tool payload because payload hooks run once per logical request.
 - A crash before session-entry flush may lose Plan state; resume reports fallback to normal mode.
 - Audit mode permits unrestricted egress.
 - On macOS with nono 0.69.0, granting localhost mcpproxy access also permits
   localhost bind/inbound access beyond `PI_NONO_LISTEN_PORTS`; validation
   reports this backend limitation and does not claim per-port enforcement.
-- Managed mode writes the current repository and Pi/Cavemem state.
+- Managed mode writes the current repository and Pi state.
 - Same-sandbox process signaling lets supervised sibling processes signal each
   other.
 - A child-created session or process group is outside the registered process
   group's cleanup ownership.
-- A full redacted observation can approach SQLite's active maximum value length
-  and is duplicated by FTS indexing.
+- AgentMemory's bundled Pi integration truncates observation fields to 8,000
+  characters and may silently lose fire-and-forget observations after startup.
 
 ## Performance and Limits
 - Reconciliation performs one bounded transaction per launch and no activation
@@ -1142,25 +1102,23 @@ Residual accepted exposure:
 - Managed Bash timeout input is bounded to Node's 2147483647 millisecond timer
   ceiling before launch.
 - MCP cold-cache startup waits for six direct tool schemas before agent start.
-- Cavemem serializes accepted events through a backpressured FIFO. Full rows skip
-  embedding and use SQLite's active maximum; worker startup holds one listener
-  lease, and restart waits bounded port release before spawning a successor.
-- Privacy work is linear in payload size times a fixed rule count. Malformed
-  private/PEM regions terminate at EOF without rescanning consumed text.
+- AgentMemory observation payloads use the bundled integration's fixed
+  8,000-character slices. Capture adds no Pi-owned queue or persistence work.
 - Background output remains extension-bounded; session exit enforces process
   group cleanup.
-- Database growth is operator-visible in managed status and runtime validation.
+- AgentMemory endpoint and health are operator-visible in managed status and
+  runtime validation; its data directory remains inaccessible to Pi.
 
 ## Rollout and Migration
-- Completed package Tasks 1.1–1.5 and canonical-envelope Task 3.1 remain valid.
-  Blocked Task 2.1 and 3.2 partial implementations are replaced, not migrated or
-  treated as contracts.
+- Completed package and non-memory harness tasks remain valid. The AgentMemory
+  migration supersedes the Pi-specific Cavemem bridge, full-payload patches,
+  process capability, and tests; they are removed rather than adapted.
 - Existing Pi settings, providers, auth, trust, package entries, and sessions are
   imported in place by preservation, not copied or rewritten wholesale.
 - First activation installs immutable artifacts only. First launch runs
   reconciliation, records ownership, and starts in host-default audit mode.
 - Promotion to enforced requires both-host render checks and host-local provider,
-  MCP, Cavemem, PTY, LSP, sub-agent, and credential-sentinel validation.
+  MCP, AgentMemory, PTY, LSP, sub-agent, and credential-sentinel validation.
 - `PI_NONO=disabled pi` is the one-launch rollback. Disabling the module removes
   managed commands/artifacts on the next generation and leaves mutable Pi state.
 - A Pi or extension upgrade changes pins and generation together; no runtime
@@ -1196,37 +1154,33 @@ Residual accepted exposure:
 - Run single, parallel, and chained sub-agents; reject async mode, verify child
   extension ceilings and artifacts, then cancel and scan registered groups for
   surviving ordinary descendants.
-- Exercise Pi bridge prompts, successes, failures, parallel tools, resume, fork,
-  compact, child attribution, later mutation, shutdown, and visible failures.
-- Keep Task 3.1's closed-envelope and default-mode golden tests byte-identical.
-  Test bounded privacy independently from raw retrieval, SQLite limits,
-  embedding exclusion, stale-vector cleanup, listener fencing, nonce-matched
-  readiness, concurrent start, failed publication, and slow restart.
+- Exercise the bundled AgentMemory factory against authenticated health, session,
+  observe, smart-search, remember, end, and consolidate routes.
+- Verify session start, context injection, tool and assistant observation,
+  shutdown, memory tools, status command, 8,000-character bounds, and stock
+  fire-and-forget failure behavior.
+- Assert no Pi Cavemem bridge, package patch, process capability, data-directory
+  grant, MCP upstream, backup, or write remains.
 
 ### Security Tests
-- Inject token and UUID sentinels. Root/child requests expand templates correctly;
-  managed files, ownership, Bash, PTY, LSP, Cavemem, status, logs, JSONL, and temp
-  files contain neither actual value.
-- Leak corpus: nested object/array sensitive keys, complete Basic/Bearer values,
-  every documented provider token form, JWT, closed and malformed private/PEM
-  regions, and lexical DNS/IPv4/bracketed-IPv6 URL userinfo. Bridge-only random
-  short and long runtime values must be absent from stdin, DB, WAL, and errors.
-- False-positive corpus: embedded JSON/YAML/shell/source strings, TypeScript
-  declarations, ordinary prose and query parameters, path-adjacent URL-like
-  text, and non-sensitive structured keys remain byte-identical. Run malformed
-  inputs at scaled sizes under a timeout to verify monotonic bounds.
+- Inject provider, launch UUID, and AgentMemory bearer sentinels. Root/child
+  provider and AgentMemory requests succeed; managed files, ownership, Bash,
+  PTY, LSP, status, logs, JSONL, and temp files contain no actual value.
+- Verify Pi has no direct AgentMemory data-directory access and no direct
+  AgentMemory MCP registration. The bundled extension's direct authenticated
+  REST access and `memory_save` write are explicit trusted in-process behavior.
 - Deny a direct MCP write/destructive call and assert zero upstream calls;
   approve once and assert exactly one. A mutation accepted by mcpproxy through
   `call_tool_read` receives no additional Pi-side approval.
-- Under nono, allow mcpproxy port 8080 and declared provider hosts while blocking
-  unlisted ports, credential directories, Keychain, and workspace writes in
-  review mode.
+- Under nono, allow the managed mcpproxy and AgentMemory REST ports plus declared
+  provider hosts while blocking unlisted ports, credential directories,
+  Keychain, and workspace writes in review mode.
 - Scan publishable closures for tokens, private Shopify source, mutable URLs,
   and missing license notices.
 
 ### End-to-End Acceptance
 - Personal host: launch with a deterministic personal provider, complete one
-  tool turn, query mcpproxy, capture/retrieve Cavemem events, delegate a child,
+  tool turn, query mcpproxy, capture/recall AgentMemory events, delegate a child,
   use plan mode, start/stop a PTY task, and exit with no surviving owned process
   group.
 - Shopify host: validate gateway preflight and every managed provider/model API

@@ -12,7 +12,7 @@
 
 - [x] 1.2 Create the deterministic test and flake-check harness
   - Add the Node test runner, isolated fixtures, writable copied-source setup, and check result conventions.
-  - Provide fake Pi, provider, mcpproxy, Cavemem, nono, language-server, and subprocess probes for later tests.
+  - Provide fake Pi, provider, mcpproxy, AgentMemory, nono, language-server, and subprocess probes for later tests.
   - Keep credential-bearing and switched-host tests outside pure derivations.
   - Done when a deterministic smoke fixture runs through the repository check harness on `aarch64-darwin`.
   - _Requirements: 15.3, 15.4_
@@ -98,7 +98,7 @@
   - Derive only the three closed resolver plans from host selection; Shopify plans use the package-rendered `devx` executable and launcher-owned fixed argv, while personal Pi auth has no executable.
   - Keep plan derivation pure and execute no resolver process in this task.
   - Define a pure constructor that accepts injected validated resolver results and a fresh launch UUID, then partitions root-Pi, child-Pi, and scrubbed subprocess environments into `ProviderRuntimeSecretsV1`.
-  - Expose in-memory `exactRedactionValues` through `ProviderRuntimeSecretsV1` without registering or consuming them in the unimplemented Capture Bridge.
+  - Expose in-memory `exactRedactionValues` through `ProviderRuntimeSecretsV1` for value-free launcher and status diagnostics; do not use them to create a custom AgentMemory payload path.
   - Provide the scrubbed shell contract and expose no JSON encoder, ownership record, status form, rollback form, host-supplied environment name, or host-supplied argv.
   - Exercise plan derivation and constructor behavior with injected results, real derivations, and relative paths rather than fabricated store strings.
   - Done when pure fixtures produce exact plans and environment partitions, retain provider values only for root and child Pi, and keep every serializable surface sentinel-free.
@@ -109,7 +109,7 @@
 - [x] 2.6 (P) Render the standalone Pi nono profile catalog
   - Pin and adapt the public Pi policy without runtime pack wiring, credential routes, git config, LaunchServices, or profile drafts.
   - Render managed, audit, and review profiles with explicit filesystem, network, environment, process, signal, and metadata deltas.
-  - Preserve writable Pi/Cavemem/private-temp state and make review workspace access read-only.
+  - Preserve writable Pi/private-temp state, grant the managed AgentMemory REST port without its data directory, and make review workspace access read-only.
   - Validate source and resolved profile JSON strictly against the selected nono version.
   - Done when all three profiles resolve with the expected grants and deliberately incomplete fixtures fail validation.
   - _Requirements: 5.1, 5.3, 5.4, 5.9_
@@ -122,100 +122,87 @@
   - Install one immutable, non-serializable capability on a versioned process-global symbol for the process lifetime; reload reuses it and each foreground child Pi creates its own capability.
   - Add no file, argv, stdin, `NODE_OPTIONS`, custom-entrypoint, or wrapper secret transport.
   - Done when personal, Shopify, partial-environment, duplicate-install, real-Jiti-load, reload, child-Pi, serialization, value-free-error, version, and direct-executable fixtures pass.
-  - _Requirements: 1.2, 3.7, 4.3, 7.2, 10.3, 14.1, 14.2, 14.3, 14.4, 14.5_
+  - _Requirements: 1.2, 3.7, 4.3, 7.2, 14.1, 14.2, 14.3, 14.4, 14.5_
   - _Boundary: Package Set, Credential Boundary — Runtime Bootstrap Integration_
   - _Depends: 1.4, 2.5_
 
-- [x] 2.8 (P) Expose the loader-stable Cavemem subprocess environment
-  - Extend the patched CLI with a separate immutable `CavememProcessEnvironmentV1` capability while preserving the closed Task 2.7 redaction capability and direct `bin/pi` entrypoint.
-  - Generate its allowlist from Credential Boundary policy, preserve required runtime paths and `CAVEMEM_DATA_DIR`, and snapshot only own string data properties whose values contain no exact provider value.
-  - Exclude provider credentials, undeclared variables, accessors, and test-only `CAVEMEM_NO_AUTOSTART`; reload reuses the process snapshot and each foreground child Pi creates its own.
-  - Done when direct/reload/child fixtures prove exact allowed names, shared data-dir propagation, value-free rejection, immutability, non-serialization, and zero credential inheritance.
-  - _Requirements: 3.7, 10.1, 10.6, 10.8, 14.1, 14.2, 14.3, 14.4, 14.5_
-  - _Boundary: Package Set, Credential Boundary — Cavemem Environment Integration_
+- [x] 2.8 (P) Remove the superseded Cavemem process capability
+  - Retain the loader-stable `PiRuntimeBootstrapV1` provider-redaction capability and direct `bin/pi` entrypoint.
+  - Remove `CavememProcessEnvironmentV1`, its process-global symbol, `CAVEMEM_DATA_DIR`, and Cavemem-specific allowlist construction.
+  - Keep provider, launch, and AgentMemory secrets out of serializable bootstrap state and model-invoked subprocess environments.
+  - Done when direct, reload, and child fixtures expose no Cavemem capability or environment while preserving provider bootstrap behavior.
+  - _Requirements: 3.7, 10.2, 10.12, 14.1, 14.2, 14.4, 14.5_
+  - _Boundary: Package Set, Credential Boundary - AgentMemory Cutover_
   - _Depends: 2.5, 2.7_
 
-- [ ] 3. Add MCP and Cavemem integration contracts
+- [ ] 3. Add MCP and AgentMemory integration contracts
 
-- [x] 3.1 (P) Add the versioned Cavemem full-payload write mode
-  - Add the explicit `pi-full-v1` control path only for canonical post-tool events; reject unknown modes and invalid canonical fields.
-  - Store one versioned input/output envelope without the default truncation or grammar compression.
-  - Preserve default hook parsing, content, metadata, compression, and exit behavior byte-for-byte.
-  - Set uncompressed storage flags through the existing schema and insert path.
-  - Done when a long full-mode fixture persists beyond legacy limits while the legacy golden fixture remains identical.
-  - _Requirements: 10.3, 10.9, 10.10_
-  - _Boundary: Cavemem Full Mode_
-  - _Depends: 1.2_
+- [x] 3.1 (P) Record the inherited AgentMemory package and Pi integration
+  - Inherited complete from `agentmemory-opencode-migration`; this task is a prerequisite record, not duplicate implementation ownership.
+  - Select AgentMemory `e04ba888` from `agentmemory-opencode-migration` and package its existing `integrations/pi/index.ts`, `security.ts`, metadata, and license in the fixed Pi extension closure.
+  - Preserve the standard authenticated health, session, observe, smart-search, remember, end, and consolidate route shapes.
+  - Apply only the enumerated successful `memory_health` details substitution and do not fork a repository-owned Pi memory bridge or invoke an imperative AgentMemory connector.
+  - Done when the bundled factory loads through the selected Pi extension API from the managed package-relative path.
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 10.1, 10.12_
+  - _Boundary: Package Set, AgentMemory Pi Integration_
+  - _Depends: 1.2, 1.5_
 
-- [x] 3.2 Implement context-bounded full-mode privacy
-  - Own the focused privacy patch and privacy corpus without changing retrieval, embedding, or package-overlay wiring.
-  - Recursively walk actual envelope objects and arrays before stringify, normalize structured keys as specified, and replace complete values only for the finite sensitive-key vocabulary.
-  - Apply only private regions, complete authorization values, the finite provider-token forms, JWTs, private-key PEM blocks, and URL-authority userinfo beginning at lexical URL boundaries; malformed private or PEM openers redact through EOF.
-  - Treat arbitrary string leaves as opaque and explicitly prohibit parsing embedded JSON, YAML, shell assignments, environment text, or source code.
-  - Keep exact runtime-value removal bridge-owned; Cavemem diagnostics report only rule and structural location and never include a source value.
-  - Add a leak corpus, a byte-identical false-positive corpus, and scaled malformed-input cases proving monotonic scanning under a timeout.
-  - Done when every finite leak class is absent from persisted data and WAL evidence, every false-positive fixture is unchanged, and malformed inputs complete within the bound with value-free errors.
-  - _Requirements: 10.3, 10.6, 10.9, 10.10, 14.4_
-  - _Boundary: Cavemem Full Mode - Privacy_
-  - _Depends: 3.1_
+- [x] 3.2 Record the inherited AgentMemory endpoint and bearer wiring
+  - Inherited complete from `agentmemory-opencode-migration`; this task is a prerequisite record, not duplicate implementation ownership.
+  - Render `AgentMemoryConfigV1` from `programs.agentmemory.restPort` and bearer reference without materializing the bearer in managed JSON or the Nix store.
+  - Resolve the bearer through the existing bounded Keychain bridge and provide `AGENTMEMORY_URL` plus `AGENTMEMORY_SECRET` only to root and foreground child Pi.
+  - Add `AGENTMEMORY_SECRET` to the scrubbed sensitive-name set for Bash, background, LSP, status, and validator processes.
+  - Done when personal and Shopify launch fixtures reach the configured REST endpoint and no non-Pi process or persisted artifact contains the bearer.
+  - _Requirements: 4.1, 4.4, 10.2, 10.9, 14.1, 14.2, 14.4, 14.5_
+  - _Boundary: Credential Boundary, AgentMemory Pi Integration_
+  - _Depends: 2.5, 3.1_
 
-- [x] 3.3 (P) Implement raw retrieval and embedding exclusion for full rows
-  - Own a separate storage-policy patch plus worker-lifecycle fixtures without changing privacy logic or package-overlay wiring.
-  - Use already-redacted canonical fixtures from Task 3.1 and select behavior only from persisted compression and embedding state; this task does not own redaction.
-  - Bypass expansion for `compressed=0` observations on every retrieval path and return the exact persisted bytes.
-  - Restrict missing-embedding selection, live embedding, backfill, and vector enumeration to `compressed=1`, and remove stale vectors attached to full rows.
-  - Bind the worker listener before PID-file access, stale-vector cleanup, or provider initialization; serve deterministic pre-ready health from the same listener.
-  - Publish `worker.pid` atomically as a nonce-bearing readiness receipt only after cleanup and initialization; report started only after matching IPC or health readiness.
-  - Let bind losers mutate no state: matching ready health means already running, while any other port owner fails as a conflict.
-  - Compare-remove the receipt during shutdown while retaining the listener; restart waits bounded port release and escalates before spawning a successor.
-  - Close store and listener on every startup failure and leave no receipt, child, listener, or partial vector cleanup.
-  - Preserve all retrieval, expansion, embedding, and backfill behavior for default compressed observations.
-  - Done when storage fixtures pass and lifecycle probes cover dead, malformed, live-unrelated, and failed-publication receipts; concurrent starts; cleanup failure; unrelated port ownership; and slow restart without false readiness or stale vectors.
-  - _Requirements: 10.3, 10.7, 10.9, 10.10_
-  - _Boundary: Cavemem Full Mode - Storage Policy_
-  - _Depends: 3.1_
+- [x] 3.3 Record inherited AgentMemory hooks, tools, and child inheritance
+  - Inherited complete from `agentmemory-opencode-migration`; this task is a prerequisite record, not duplicate implementation ownership.
+  - Preserve the bundled `session_start`, `before_agent_start`, `tool_result`, `agent_end`, and `session_shutdown` hook behavior.
+  - Expose `memory_health`, `memory_search`, `memory_save`, and `/agentmemory-status` without adding a direct AgentMemory MCP server.
+  - Load AgentMemory in both managed child roles and add MCP only where the role declares it.
+  - Done when root and child fixtures capture, recall, save, end, and consolidate through standard routes with the exact managed tool surface.
+  - _Requirements: 8.6, 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.12, 10.13_
+  - _Boundary: AgentMemory Pi Integration, Extension Runtime_
+  - _Depends: 3.2_
 
-- [x] 3.4 Verify Cavemem storage limits and package compatibility
-  - Wire the independently reviewed privacy and storage-policy patches into the Cavemem package before running combined compatibility checks.
-  - Exercise a complete full-mode row at the active SQLite maximum fixture and a maximum-plus-one failure.
-  - Assert limit failure stores no partial observation and reports the active storage boundary.
-  - Verify `compressed=0`, null intensity, raw retrieval, embedding exclusion, FTS/BM25 discovery, and an unmodified schema version.
-  - Extend package smoke coverage for default-mode parity and invalid-mode failure.
-  - Done when the patched Cavemem package, smoke suite, raw retrieval, and legacy regressions all pass.
-  - _Requirements: 10.3, 10.6, 10.7, 10.9, 10.10, 10.11, 15.3, 15.4_
-  - _Boundary: Cavemem Full Mode - Integration_
-  - _Depends: 3.2, 3.3_
+- [x] 3.4 Record inherited Pi-specific Cavemem removal
+  - Inherited complete from `agentmemory-opencode-migration`; this task is a prerequisite record, not duplicate implementation ownership.
+  - Remove the repository Cavemem extension, full-payload/privacy/storage patches, package injection, data-directory settings, process environment, MCP upstream, backup, sandbox grants, and runtime probes used only by Pi.
+  - Preserve Cavemem only as an explicit OpenCode rollback backend owned by `agentmemory-opencode-migration`.
+  - Done when enabled and OpenCode-rollback host renders contain no Pi Cavemem path or live dual-write behavior.
+  - _Requirements: 10.11, 10.12, 15.3, 15.4_
+  - _Boundary: AgentMemory Pi Integration - Cavemem Removal_
+  - _Depends: 3.3_
 
-- [x] 3.5 Implement Pi session lifecycle capture and backpressure
-  - Load the bridge first and map session start, user input, assistant turn end, and session shutdown to existing Cavemem hooks.
-  - Use Pi's stable session identity, `ide=pi`, configured working directory, and shared Cavemem data directory.
-  - Serialize hook work through a FIFO and await it from event handlers instead of dropping accepted events.
-  - Flush active work before compaction and shutdown, while treating reload as flush without session end.
-  - Done when ordered session, prompt, stop, shutdown, reload, and failure fixtures produce searchable observations in one data store.
-  - _Requirements: 10.1, 10.2, 10.4, 10.6, 10.8_
-  - _Boundary: Capture Bridge_
-  - _Depends: 1.5, 3.4_
+- [ ] 3.5 Align AgentMemory preflight, status, and sandbox grants
+  - Probe the full daemon at the managed URL before Pi starts and require authenticated standard routes plus the mandatory mcpproxy AgentMemory upstream.
+  - Accept `healthy`, `degraded`, and legacy `ok`; reject critical, unavailable, unauthenticated, and standalone-fallback states.
+  - Report endpoint and health without the bearer, grant the managed REST port and environment names under nono, and grant no AgentMemory data-directory access.
+  - Done when configurable-port, healthy, degraded, critical, fallback, missing-secret, status-redaction, and sandbox fixtures produce the specified result.
+  - _Requirements: 4.1, 4.2, 4.4, 5.7, 6.6, 10.9, 10.10, 10.12_
+  - _Boundary: Runtime Control, Sandbox Catalog, AgentMemory Pi Integration_
+  - _Depends: 2.6, 3.2_
 
-- [x] 3.6 Capture complete pre-mutation tool results and failures
-  - Snapshot tool events synchronously before the first await and before later extension mutation.
-  - Consume the immutable `PiRuntimeBootstrapV1` capability during every Jiti factory load and remove each exact value from the snapshot before constructing JSON or spawning Cavemem.
-  - Record successful and failed tool name, call identity, validated input, complete bounded-redacted content/details, usage, and outcome.
-  - Use tool-execution completion as the fallback for validation, unavailable-tool, or blocked calls without a result event.
-  - Invoke `pi-full-v1` and surface malformed, storage, redaction, and process failures as sticky sanitized Pi errors.
-  - Done when real-loader/reload, later-mutator, success, tool-error, blocked-tool, unavailable-tool, stale-ID reuse, end-before-start, and sticky-error fixtures retain exactly one expected pre-mutation payload.
-  - _Requirements: 10.3, 10.6, 10.9, 14.1, 14.4, 14.5_
-  - _Boundary: Capture Bridge_
-  - _Depends: 2.7, 3.5_
+- [x] 3.6 Verify stock AgentMemory capture limits and failure semantics
+  - Exercise session start, pre-agent recall, tool result, agent end, shutdown, direct memory tools, and the status command against deterministic standard-route fixtures.
+  - Lock the bundled 8,000-character observation slices, fire-and-forget observation failures, project selection, and session/consolidation behavior as accepted compatibility contracts.
+  - Assert no FIFO, durable retry, full-payload mode, pre-mutation snapshot, sticky capture error, or custom raw-event store is introduced.
+  - Done when success, truncation, route-failure, reload/resume, and shutdown fixtures match the bundled integration behavior exactly.
+  - _Requirements: 10.3, 10.4, 10.5, 10.6, 10.7, 10.8, 10.11_
+  - _Boundary: AgentMemory Pi Integration - Compatibility_
+  - _Depends: 3.3_
 
-- [x] 3.7 Complete session lineage, child attribution, and hook isolation
-  - Preserve identity on resume and compaction, create a distinct fork identity, and flush each transition in order.
-  - Define child-attribution observations containing parent session, run, agent, and child index without changing Cavemem schema.
-  - Pass only the managed scrubbed environment to Cavemem hook and worker processes.
-  - Validate shutdown flush, no-secret logs/status, and discovery through the existing mcpproxy-routed Cavemem server.
-  - Done when resume, fork, compact, attribution-fixture, scrubbed-environment, shutdown, and mcpproxy-search tests pass.
-  - _Requirements: 8.6, 10.4, 10.5, 10.6, 10.7, 10.8, 14.1, 14.4, 14.5_
-  - _Boundary: Capture Bridge_
-  - _Depends: 2.8, 3.6_
+- [x] 3.7 Record inherited shared-runtime and no-dual-write validation
+  - Inherited complete from `agentmemory-opencode-migration`; this task is a prerequisite record, not duplicate implementation ownership.
+  - Capture one Pi session and recall it through the bundled memory search plus stock AgentMemory core tools routed by mcpproxy.
+  - Verify Pi and OpenCode use the same managed daemon while Pi has no direct AgentMemory MCP registration or data-directory access.
+  - Activate the OpenCode Cavemem rollback generation and prove Pi remains on AgentMemory with no Cavemem write.
+  - Done when shared recall and rollback fixtures preserve both stores without Pi live dual writes or a second history migration.
+  - _Requirements: 6.1, 6.3, 10.8, 10.12_
+  - _Boundary: AgentMemory Pi Integration - Integration_
+  - _Depends: 3.4, 3.6_
 
 - [x] 3.8 (P) Implement the isolated six-tool mcpproxy adapter
   - Create one in-memory adapter configuration for the standard local `/mcp` transport endpoint without ambient MCP-file merging.
@@ -231,7 +218,7 @@
   - Cover cold, stale, partial, malformed, and concurrent metadata-cache starts with private atomic cache files.
   - Require allow-once/session approval for `call_tool_write` and `call_tool_destructive` and fail headless approval closed.
   - Preserve mcpproxy routing for `call_tool_read` without an additional Pi-side target-effect approval gate.
-  - Probe health, readiness, mandatory upstream state, initialize, and exact tools before Pi starts.
+  - Probe health, readiness, mandatory upstream state including AgentMemory, initialize, and exact tools before Pi starts.
   - Done when denied direct mutations reach upstream zero times, approved calls reach it once, routed reads remain usable, and every cache/preflight fixture converges on the six-tool surface.
   - _Requirements: 4.1, 4.2, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7_
   - _Boundary: MCP Bridge_
@@ -241,10 +228,10 @@
 
 - [x] 4.1 Configure bounded sub-agent workflows and child resources
   - Support single, parallel, and chain execution with independent failures and predecessor-only chain input.
-  - Expose only `reader` (host model, 8 turns, 32 tool calls, read-only parent workspace, local read tools plus read-only MCP, Cavemem) and `worker` (host model, 12 turns, 64 tool calls, read-write parent workspace, local read/write/command tools, Cavemem without MCP).
+  - Expose only `reader` (host model, 8 turns, 32 tool calls, read-only parent workspace, local read tools plus read-only MCP, AgentMemory) and `worker` (host model, 12 turns, 64 tool calls, read-write parent workspace, local read/write/command tools, AgentMemory without MCP).
   - Apply the module-owned depth and reject call-level overrides of model, budget, tools, workspace/cwd, extensions, MCP, depth, output, or agent scope.
   - Store artifacts under the owning parent session and return results to the parent.
-  - Load the Cavemem bridge and provider resources in every child; add MCP only when the agent declares it.
+  - Load the bundled AgentMemory integration and provider resources in every child; add MCP only when the agent declares it.
   - Done when single, parallel, chain, budget, hostile-override, tool-ceiling, child-capture, and session-artifact fixtures pass.
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6, 8.8, 14.2_
   - _Boundary: Extension Runtime — Subagents_
@@ -349,10 +336,10 @@
   - _Depends: 4.10_
 
 - [x] 4.12 Assemble the exact extension manifest and load order
-  - Publish entry paths and versions for the two repository-owned and all approved public extensions.
+  - Publish entry paths and versions for the bundled AgentMemory integration, the repository-owned MCP extension, and all approved public extensions.
   - Publish one closed, versioned provenance inventory with the immutable package root, canonical relative entry paths, and build-time content digests. Make the loader validate and expose this inventory so status consumes the same identity contract instead of re-deriving path rules.
   - Reject symlinked path components, package escapes, and digest mismatches before import or readiness reporting while accepting regular Nix-store files that are legitimately hardlinked by store optimization.
-  - Order Cavemem first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
+  - Order AgentMemory first, then MCP, sub-agents, plan, timestamps, timeout, questions, code intelligence, and background tasks.
   - Disable ambient extension/skill/prompt discovery and omit Sieve, package-manager, telemetry, and nested Pi resources.
   - Run the MCP reserved-name and exact direct-surface validator after every managed extension has registered.
   - Fail validation on a missing, duplicate, incompatible, reordered, or unexpected extension.
@@ -414,7 +401,7 @@
 
 - [x] 5.5 Integrate resolved grant checks with exact nono execution
   - Resolve and strictly validate the selected profile before launch.
-  - Require mcpproxy port, provider network, package reads, writable Pi/Cavemem/temp state, workspace mode, admitted root-Pi variables, and same-sandbox process control for enabled capabilities.
+  - Require mcpproxy and managed AgentMemory REST ports, provider network, package reads, writable Pi/temp state, workspace mode, admitted root-Pi variables, and same-sandbox process control for enabled capabilities; grant no AgentMemory data-directory access.
   - Append review tool restrictions after user arguments so excluded tools cannot be restored.
   - Validate review arguments with a package-owned parse-only helper that statically imports `parseArgs` from the exact `piPackage` that supplies runtime `bin/pi`; run it with an empty environment and fixed working directory, and verify the reviewed Pi version and parser bytes before spawning it.
   - Do not accept a separate parser package or extract, transmit, or dynamically evaluate parser source. Reject parser errors, managed-suffix consumption, changed non-tool parse fields, or any effective review tool set other than `read`, `grep`, `find`, and `ls` before starting nono or Pi.
@@ -427,7 +414,7 @@
   - _Depends: 2.5, 3.7, 3.9, 4.2, 4.9, 4.11, 4.12, 4.13, 5.1, 5.3, 5.4_
 
 - [x] 5.6 Implement redacted managed status
-  - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, Cavemem directory/readiness, LSP state, and drift.
+  - Report generation, Pi and extension versions, provider mode, sandbox state/profile, MCP endpoint/readiness, AgentMemory endpoint/health, LSP state, and drift.
   - Support stable human and JSON formats without starting Pi.
   - Redact sensitive values and credential-bearing headers using the shared policy.
   - Identify missing or failed components with actionable recovery hints.
@@ -437,7 +424,7 @@
   - _Depends: 2.4, 3.7, 3.9, 4.12, 4.13, 5.1, 5.3, 5.4, 5.5_
 
 - [x] 5.7 Implement the runtime compatibility validator
-  - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, Cavemem, PTY, LSP, and reconciliation drift.
+  - Validate package patches, desired/current JSON, ownership, profiles, extension inventory/order, MCP surface, AgentMemory, PTY, LSP, and reconciliation drift.
   - Run check and dry-run modes without mutating Pi state or exposing credentials.
   - Classify each gate as pass, fail, or manual-required with versioned evidence.
   - Include recovery guidance for provider setup, profile selection, state repair, extension updates, and rollback.
@@ -448,7 +435,7 @@
 
 - [x] 5.8 Compose the fail-before-TUI launch pipeline
   - Orchestrate Task 5.2 resolver execution and Task 5.3 projection handoff, reject authentication-precedence conflicts, and hold one integration lock across reconciliation and every managed JSON update.
-  - Reconcile one complete generation before probing package, profile, mcpproxy, Cavemem, extensions, and runtime compatibility.
+  - Reconcile one complete generation before probing package, profile, mcpproxy, AgentMemory, extensions, and runtime compatibility.
   - Stop before Pi on every provider, state, service, profile, extension, or validator failure and name its recovery action.
   - Exercise concurrent launches through the complete provider-and-reconciliation pipeline.
   - Done when ordered call traces match the design and concurrent fixtures commit one complete generation without opening the TUI on failure.
@@ -461,7 +448,7 @@
   - Reject explicit extension, skill, prompt, and package paths; disable ambient resource discovery and append exact managed extension, instruction, skill, prompt, tool, and review arguments in authoritative order.
   - Clear sub-agent binary overrides so children use the underlying managed Pi runtime inside the same sandbox.
   - Export the immutable managed timeout binding to root and foreground child Pi, execute Bash through the reconciled managed shell path, and keep that binding out of the model-controlled shell environment.
-  - Export the managed `CAVEMEM_DATA_DIR` before invoking Pi so hook and mcpproxy search paths share one store.
+  - Resolve the managed AgentMemory bearer and export `AGENTMEMORY_URL` plus `AGENTMEMORY_SECRET` only to root Pi; preserve those bindings for foreground child Pi and scrub them from model-invoked subprocesses.
   - Invoke only patched `bin/pi`; do not import or call Pi `main()` from a launcher wrapper.
   - Execute the bare or nono-wrapped Pi package exactly once after successful preflight.
   - Done when mutation-command, normal, review, disabled, audit, and enforced fixtures capture one expected executable invocation and no alternate package path.
@@ -483,19 +470,19 @@
 
 - [x] 6.2 Integrate all managed artifacts in the common module
   - Connect package outputs, closed selections, catalog rendering, credential policy, profiles, reconciler, launcher, status, validator, instructions, and help through the managed contracts.
-  - Connect the package-owned scrubbed shell, managed timeout binding, Cavemem data-directory binding, timeout extension, and shell-path ownership through their approved boundaries.
+  - Connect the package-owned scrubbed shell, managed timeout binding, AgentMemory endpoint/secret-reference binding, timeout extension, and shell-path ownership through their approved boundaries.
   - Install only repository-owned managed commands while retaining the base Pi package as a closure dependency.
   - Render exact profiles and resource paths only when enabled.
   - Keep activation free of mutable Pi-state writes and secrets.
   - Done when common enabled/disabled evaluations expose the complete intended surface, activation artifacts are immutable, and all read-back options match status inputs.
-  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 2.8, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 11.3, 14.1, 15.7_
+  - _Requirements: 1.1, 1.3, 1.4, 2.6, 2.7, 4.4, 7.1, 7.2, 7.3, 7.4, 7.5, 11.3, 14.1, 15.7_
   - _Boundary: Home Module — Integration_
   - _Depends: 2.2, 2.4, 2.5, 2.6, 3.7, 3.9, 4.13, 5.6, 5.7, 5.8, 5.9, 6.1_
 
 - [x] 6.3 (P) Enable and verify the personal host contract
   - Enable the common Pi module with personal provider mode and audit sandbox default.
   - Select the catalog-owned `openai/gpt-5.6-sol` default at `xhigh` and leave Pi authentication plus built-in OpenAI provider state unoverridden.
-  - Reuse the local mcpproxy endpoint, Cavemem directory, and common extension inventory.
+  - Reuse the local mcpproxy endpoint, managed AgentMemory runtime, and common extension inventory.
   - Add a dedicated render fixture that structurally rejects Shopify roles, resolvers, provider objects, and runtime values; retain a closure scan only as defense-in-depth.
   - Done when the personal host evaluates to the exact usable managed surface with no Shopify configuration.
   - _Requirements: 1.3, 3.4, 3.5, 3.7_
@@ -505,7 +492,7 @@
 - [x] 6.4 (P) Enable and verify the Shopify host contract
   - Enable the common Pi module with Shopify gateway mode and audit sandbox default.
   - Select the five catalog roles and catalog-owned `openai/gpt-5.6-sol` default at `xhigh` without supplying routes, APIs, headers, resolver argv, or store paths.
-  - Reuse the local mcpproxy endpoint, Cavemem directory, and Shopify-specific instruction addendum.
+  - Reuse the local mcpproxy endpoint, managed AgentMemory runtime, and Shopify-specific instruction addendum.
   - Add a dedicated render fixture using real package references and canonical relative paths, with no resolved token or launch UUID; retain generated-artifact scans only as defense-in-depth.
   - Done when the Shopify host evaluates to the exact closed role selection, managed catalog/default, and secret-free projection templates.
   - _Requirements: 1.3, 3.1, 3.2, 3.3, 3.6, 3.7_
@@ -546,7 +533,7 @@
 
 - [x] 7.3 Verify nono filesystem, network, and review enforcement
   - Run managed, audit, and review profiles against allowed and denied workspace, state, cache, credential, Keychain, and mcpproxy paths.
-  - Allow declared provider hosts and port 8080 while enforcing review writes and the backend's resolved network behavior.
+  - Allow declared provider hosts plus the managed mcpproxy and AgentMemory REST ports while enforcing review writes and the backend's resolved network behavior.
   - Exercise explicit listen-port exceptions and malformed/wildcard rejection; report the pinned nono backend limitation when localhost mcpproxy access also permits unlisted loopback listeners.
   - Assert a missing required grant fails before Pi and never falls back unsandboxed.
   - Done when every probe matches the resolved profile or records the fixed backend limitation with value-free evidence, and review leaves the workspace unchanged.
@@ -567,8 +554,8 @@
 
 - [x] 7.5 Prove provider credential isolation end to end
   - Inject unique sentinels and verify root and foreground child provider requests succeed.
-  - Assert built-in Bash, background pipe and PTY, fake LSP, Cavemem hook and worker, status, and validator receive no sentinel.
-  - Scan logs, temporary files, Pi session JSONL, Cavemem rows, and nono audit output for every sentinel.
+  - Assert built-in Bash, background pipe and PTY, fake LSP, status, and validator receive no provider, launch, or AgentMemory bearer sentinel.
+  - Scan logs, temporary files, Pi session JSONL, managed artifacts, and nono audit output for every sentinel; root and foreground child Pi alone may use the AgentMemory bearer.
   - Exercise normal, error, timeout, cancellation, and shutdown paths.
   - Done when all provider calls succeed and every non-provider process and persisted/logged artifact is sentinel-free.
   - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 15.4_
@@ -577,7 +564,7 @@
 
 - [x] 7.6 (P) Run the personal hermetic end-to-end path
   - Launch the personal configuration with deterministic Pi authentication and provider fixtures when the fixed mcpproxy endpoint can be isolated; otherwise record the gate as `manual-required`.
-  - Complete a prompt/tool turn, MCP discovery/read, Cavemem capture/search, child task, plan approval, PTY lifecycle, and status query.
+  - Complete a prompt/tool turn, MCP discovery/read, AgentMemory capture/search, child task, plan approval, PTY lifecycle, and status query.
   - Verify the personal default and absence of Shopify state throughout the flow.
   - Exit the session and scan for process, config, credential, and temporary-file residue.
   - Done when the full personal flow exits zero with searchable memory, exact status, no orphan process, and no Shopify artifact, or the validation report records the isolated-endpoint prerequisite as `manual-required` without claiming an automated pass.
@@ -589,7 +576,7 @@
 - [ ] 7.7 (P) Run the Shopify hermetic provider and runtime matrix
   - Exercise text, tool calls, reasoning, affinity headers, token failure, token expiry, and context recovery for every managed provider/API fixture.
   - Verify concrete route composition, model metadata, default selection, and auth-conflict failures.
-  - Repeat the common prompt/MCP/Cavemem/child/plan/PTY path under audit and enforced profiles.
+  - Repeat the common prompt/MCP/AgentMemory/child/plan/PTY path under audit and enforced profiles.
   - Keep all fixture tokens synthetic and assert redacted reports.
   - Done when all five provider/API modes and both sandbox states pass the complete hermetic matrix.
   - _Requirements: 3.1, 3.2, 3.3, 4.3, 15.2, 15.4, 15.5_
@@ -608,18 +595,19 @@
 
 - [ ] 7.9 Register final checks and emit the readiness report
   - Register package, extension, unit, host-render, security, personal-runtime, and Shopify-runtime runners in the flake check graph.
-  - Run pure regression and security checks and verify existing OpenCode plus default Cavemem behavior remains unchanged.
-  - Recheck advisory status, licenses, private-source/secret closure scans, full-mode compatibility, and both host evaluations.
+  - Run pure regression and security checks and verify existing OpenCode AgentMemory behavior plus its explicit Cavemem rollback remains unchanged.
+  - Recheck advisory status, licenses, private-source/secret closure scans, bundled AgentMemory compatibility, no Pi Cavemem path, and both host evaluations.
+  - Remove or convert every stale Cavemem bridge, environment, process, storage, privacy, and security test still discovered by the Pi runner.
   - Aggregate pure pass/fail and live `manual-required` evidence into the versioned validation report.
   - Done when all pure checks pass and the report accurately blocks rollout until every mandatory live gate passes.
   - _Requirements: 10.10, 15.1, 15.2, 15.3, 15.4, 15.5, 15.6, 15.7_
   - _Boundary: Acceptance Harness — Integration_
-  - _Depends: 7.6, 7.7, 7.8_
+  - _Depends: 3.5, 7.6, 7.7, 7.8_
 
 ## Implementation Notes
 - Task 1.3: When patches or `postPatch` replace an npm lock, override both `npmDepsHash` and `npmDeps`; inheriting the original fixed-output `npmDeps` leaves the old dependency graph in place.
 - Task 1.4: Nix test derivations must install sorted semantic manifests, not raw runner logs containing paths, timestamps, durations, or execution order, so `nix build --rebuild` remains reproducible.
-- Task 3.1: Versioned canonical envelopes use closed transport, envelope, and output key allowlists; unknown keys fail before any database insertion.
+- Task 3.1: Copy the complete bundled relative source layout from the managed AgentMemory package and permit only reviewed Pi-API compatibility substitutions with explicit provenance.
 - Task 2.1: `types.package` and `lib.isDerivation` are structurally spoofable; bind package text/context to the selected output and force every public submodule's `_module.freeformType` to null.
 - Task 2.2: Render exact schema fields and validated `package.outPath` values; never serialize broad option attrsets or coerce packages through host-controlled `__toString`.
 - Task 2.3: Never claim an unowned same-ID provider, even when bytes match; same-generation projections must preserve the complete owned provider set and joined URLs.
@@ -627,8 +615,8 @@
 - Task 2.5: Bind package-backed `devx` through a trusted module-owned lexical output; inspecting arbitrary Nix `drvAttrs` to authenticate a package can trigger IFD or recursion.
 - Task 2.5: Frozen method-only views still stringify as `{}`; exact-redaction membership must define a non-enumerable throwing `toJSON`.
 - Task 2.6: Real nono child-environment probes require an unsandboxed macOS process because nested OpenCode/Nix Seatbelt cannot apply another profile; the selected-nono host probe passed with zero failures or skips.
-- Task 3.2: Redaction must produce another valid `PiFullToolObservationV1`; a sensitive normalized key inside finite-number-only `output.usage` rejects the entire event with no row and a constant value-free privacy error.
-- Task 3.3: The listener is the worker startup lease; `worker.pid` is only a nonce-bearing readiness receipt published after cleanup and initialization.
+- Task 3.2: Resolve the bearer by managed secret reference at launch; never render it into `AgentMemoryConfigV1`, profiles, status, logs, or Nix closures.
+- Task 3.3: The bundled `memory_save` tool writes through direct authenticated REST and intentionally bypasses mcpproxy's write approval.
 - Task 3.8: Use the standard MCP transport at `/mcp`; `/mcp/call` is not an adapter transport endpoint.
 - Task 3.9: Direct write/destructive tools remain approval-gated; the operator accepted that mutations routed through `call_tool_read` rely on mcpproxy and may bypass Pi approval.
 - Task 4.1: The fixed `reader`/`worker` catalog inherits the host model, rejects all call-level resource overrides, and never discovers mutable user/project agents.
@@ -641,11 +629,11 @@
 - Task 4.5: Sign the native Darwin scrubber with hardened runtime and no DYLD environment entitlement; ordinary ad-hoc signing permits inherited `DYLD_PRINT_*` leakage before `main()`.
 - Task 4.6: Normalize raw Bash `timeout: null` before Pi validation and use a round-trip-safe seconds value satisfying `Math.trunc(seconds * 1000) == bashDefaultMs`.
 - Task 4.7: Capture free text before the production editor trims it, ignore ambient Supi prompt config, and recheck cancellation immediately before constructing or persisting any answer.
-- Task 3.5: Keep hook TERM/KILL and quiescence timers referenced until the owned process group is confirmed gone; unresolved promises and unref'd timers do not keep Node alive.
-- Task 3.6: Consume the process bootstrap on each Jiti load; retain bounded strong redacted snapshots, use validated fallback input after `tool_call`, and ignore unknown ends or stale pre-validation results.
+- Task 3.5: Derive every Pi AgentMemory URL, status message, sandbox port, and validator expectation from the managed REST port; align readiness with healthy/degraded/legacy-ok runtime semantics.
+- Task 3.6: Compatibility tests must lock stock truncation and fire-and-forget loss behavior without turning those limitations into custom reliability work.
 - Task 2.7: Install the immutable capability in patched `bin/pi` before dynamic Pi imports; read only own environment data properties, and select a replacement marker that contains neither exact value.
-- Task 2.8: Keep Cavemem subprocess state in a separate policy-generated capability; include `CAVEMEM_DATA_DIR`, omit test-only and credential variables, and drop allowed values changed by exact redaction.
-- Task 3.7: Keep canonical envelope keys trusted, bound dynamic data after redaction, emit deterministic once-per-child attribution, never reopen parent session paths, and end sessions only on terminal quit.
+- Task 2.8: Remove the Cavemem process capability completely; AgentMemory uses only managed root/foreground-child Pi environment bindings and receives no data-directory grant.
+- Task 3.7: OpenCode Cavemem rollback never restores Pi Cavemem paths; Pi remains on AgentMemory and performs no second history migration.
 - Task 4.8: Apply the managed LSP patch with zero fuzz; refactor apply is one-shot, single-file, raw-byte/inode-stale, and metadata-verified before atomic rename.
 - Task 4.9: LSP restart and session lifecycle must be single-flight and generation-fenced; retain every owned client until cleanup succeeds, and make lease release transactional and retryable.
 - Task 4.10: An empty implementer handoff is a controller retry condition, not a repository blocker; restart the full RED/GREEN cycle in a fresh context.
