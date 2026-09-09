@@ -56,6 +56,11 @@ function renderModule({ enable }) {
     sourceText = builtins.readFile hm.xdg.configFile.${JSON.stringify("opencode/plugins/agentmemory-capture.ts")}.source;
   } else null;
   configTexts = builtins.attrValues (builtins.mapAttrs (_: value: value.text or "") hm.xdg.configFile);
+  agentmemoryCliPackages = builtins.filter (
+    package: (package.name or "") == "agentmemory"
+  ) hm.home.packages;
+  agentmemoryCliPackage =
+    if agentmemoryCliPackages == [ ] then null else builtins.head agentmemoryCliPackages;
 in builtins.toJSON {
   files = builtins.attrNames hm.home.file;
   configFiles = builtins.attrNames hm.xdg.configFile;
@@ -63,6 +68,11 @@ in builtins.toJSON {
   plugin = plugin;
   activation = builtins.attrNames hm.home.activation;
   packages = map (package: package.name or "") hm.home.packages;
+  agentmemoryCli = if agentmemoryCliPackage == null then null else {
+    source = builtins.unsafeDiscardStringContext (
+      builtins.readFile "\${agentmemoryCliPackage}/bin/agentmemory"
+    );
+  };
   settings = if builtins.hasAttr settingsPath hm.home.file then hm.home.file.${JSON.stringify(settingsPath)}.text else null;
   launchd = if agent == null then null else {
     label = agent.config.Label;
@@ -201,6 +211,9 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.ok(first.activation.includes('agentmemoryLogDir'));
   assert.ok(first.packages.some((name) => name.startsWith('agentmemory-')));
   assert.ok(first.packages.includes('agentmemory-import-cavemem'));
+  assert.match(first.agentmemoryCli.source, /AGENTMEMORY_SECURITY_BIN/);
+  assert.match(first.agentmemoryCli.source, /find-generic-password -s mcpproxy -a agentmemory-bearer -w/);
+  assert.match(first.agentmemoryCli.source, /agentmemory-0\.9\.29\/bin\/agentmemory/);
   assert.equal(first.launchd.label, 'dev.dwsr.agentmemory');
   assert.match(first.launchd.programArguments.at(-1), /\/bin\/agentmemory$/);
   assert.equal(first.launchd.environment.AGENTMEMORY_DATA_DIR, '/tmp/agentmemory/data');
@@ -240,6 +253,7 @@ test('disabled AgentMemory rendering contributes no runtime files, package, or s
   assert.equal(rendered.activation.includes('agentmemoryLogDir'), false);
   assert.equal(rendered.settings, null);
   assert.equal(rendered.launchd, null);
+  assert.equal(rendered.agentmemoryCli, null);
   assert.equal(rendered.packages.some((name) => name.startsWith('agentmemory-')), false);
   assert.equal(rendered.plugin, null);
   assert.deepEqual(

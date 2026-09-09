@@ -85,7 +85,8 @@ let
     text = ''
       set -eu
 
-      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      security_bin="''${AGENTMEMORY_SECURITY_BIN:-/usr/bin/security}"
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
         echo "ERROR: AgentMemory bearer unavailable from macOS Keychain; daemon not started." >&2
         echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
@@ -193,7 +194,7 @@ in
     {
       home = {
         packages = [
-          cfg.package
+          agentmemoryLauncher
           cfg.statusPackage
           importPackage
         ]
