@@ -387,13 +387,14 @@ test.before(() => {
         #!/bin/sh
         counter="$GIT_MCP_SIGNING_FIXTURE_ROOT/mv-count"
         fail_at="''\${GIT_MCP_SIGNING_FAIL_MV_AT:-2}"
+        fail_once="''\${GIT_MCP_SIGNING_FAIL_MV_ONCE:-0}"
         count=0
         if [ -r "$counter" ]; then
           count="$(cat "$counter")"
         fi
         count=$((count + 1))
         printf '%s\\n' "$count" > "$counter"
-        if [ "$count" -ge "$fail_at" ]; then
+        if [ "$count" -eq "$fail_at" ] || { [ "$fail_once" != 1 ] && [ "$count" -gt "$fail_at" ]; }; then
           printf '%s\\n' 'fixture forced mv failure' >&2
           exit 75
         fi
@@ -496,9 +497,8 @@ test('doctor and probe validate a matching active enrollment without persistent 
     const scenario = summary.scenarios.oneResidentExport;
     const root = createScenarioRoot(scenario);
     const enrollment = installEnrollment(root, scenario);
-    const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-    const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
-    const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+    const stateTreeBefore = snapshotTree(root.stateHome);
+    const configTreeBefore = snapshotTree(root.configHome);
     try {
       const result = runAdmin(
         adminCommand,
@@ -510,9 +510,8 @@ test('doctor and probe validate a matching active enrollment without persistent 
       assert.match(result.stdout, new RegExp(`${command}.*${enrollment.identity.hash}`));
       assert.match(result.stdout, /verified|healthy/i);
       assert.doesNotMatch(result.stdout, /BEGIN OPENSSH PRIVATE KEY|Zml4dHVyZS1yZXNpZGVudC1oYW5kbGU/);
-      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-      assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
-      assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
+      assert.deepEqual(snapshotTree(root.stateHome), stateTreeBefore, `${command} is state read-only`);
+      assert.deepEqual(snapshotTree(root.configHome), configTreeBefore, `${command} is config read-only`);
       assert.deepEqual(fs.readdirSync(root.tempHome), [], 'temporary probe files are cleaned');
       assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), [
         'id_ecdsa_sk_rk',
@@ -831,6 +830,8 @@ test('diagnosis reports first-unlock listing failure and provider rejection, cle
   const firstUnlockRoot = createScenarioRoot(firstUnlockScenario);
   try {
     const enrollment = installEnrollment(firstUnlockRoot, firstUnlockScenario);
+    const stateTreeBefore = snapshotTree(firstUnlockRoot.stateHome);
+    const configTreeBefore = snapshotTree(firstUnlockRoot.configHome);
     const result = runAdmin(
       adminCommand,
       ['doctor', '--hash', enrollment.identity.hash],
@@ -839,6 +840,8 @@ test('diagnosis reports first-unlock listing failure and provider rejection, cle
 
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /first unlock/i);
+    assert.deepEqual(snapshotTree(firstUnlockRoot.stateHome), stateTreeBefore);
+    assert.deepEqual(snapshotTree(firstUnlockRoot.configHome), configTreeBefore);
     assert.deepEqual(fs.readdirSync(firstUnlockRoot.tempHome), []);
   } finally {
     fs.rmSync(firstUnlockRoot.root, { recursive: true, force: true });
@@ -848,6 +851,8 @@ test('diagnosis reports first-unlock listing failure and provider rejection, cle
   const providerRoot = createScenarioRoot(providerScenario);
   try {
     const enrollment = installEnrollment(providerRoot, providerScenario);
+    const stateTreeBefore = snapshotTree(providerRoot.stateHome);
+    const configTreeBefore = snapshotTree(providerRoot.configHome);
     const result = runAdmin(
       adminCommand,
       ['probe', '--hash', enrollment.identity.hash],
@@ -857,6 +862,8 @@ test('diagnosis reports first-unlock listing failure and provider rejection, cle
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /fixture provider rejected signing/i);
     assert.match(result.stderr, /first unlock/i);
+    assert.deepEqual(snapshotTree(providerRoot.stateHome), stateTreeBefore);
+    assert.deepEqual(snapshotTree(providerRoot.configHome), configTreeBefore);
     assert.deepEqual(fs.readdirSync(providerRoot.tempHome), []);
     assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), [
       'id_ecdsa_sk_rk',
@@ -1729,12 +1736,17 @@ test('reports the created orphan and installs nothing when local verification fa
   }
 });
 
-test('recovers a missing resident stub only for the active hash and exact selector', () => {
-  const scenario = summary.scenarios.oneResidentExport;
+test('recovers only the matching resident stub for the active hash and exact selector', () => {
+  const scenario = summary.scenarios.multipleResidentExportsExpectedSecond;
   const root = createScenarioRoot(scenario);
   const enrollment = installEnrollment(root, scenario, { writeArtifacts: false });
   const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-  const residentExport = scenario.residentExports[0];
+  const residentExport = scenario.residentExports.find(
+    (candidate) => candidate.publicKey === enrollment.marker.sshPublicKey,
+  );
+  const rejectedExport = scenario.residentExports.find(
+    (candidate) => candidate.publicKey !== enrollment.marker.sshPublicKey,
+  );
   try {
     const result = runAdmin(
       adminCommand,
@@ -1743,7 +1755,10 @@ test('recovers a missing resident stub only for the active hash and exact select
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /recovered|restored/i);
+    assert.equal(
+      result.stdout,
+      `recover-stub: enrollment ${enrollment.identity.hash} (${enrollment.identity.label}) restored the verified resident stub\n`,
+    );
     assert.equal(
       fs.readFileSync(enrollment.stubPath, 'utf8').trim(),
       residentExport.stub,
@@ -1756,6 +1771,11 @@ test('recovers a missing resident stub only for the active hash and exact select
     assert.equal(fileMode(enrollment.identityDir), 0o700);
     assert.equal(fileMode(enrollment.stubPath), 0o600);
     assert.equal(fileMode(enrollment.publicPath), 0o644);
+    assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), [
+      'id_ecdsa_sk_rk',
+      'id_ecdsa_sk_rk.pub',
+    ]);
+    assert.notEqual(residentExport.stub, rejectedExport.stub);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
 
     const calls = readCalls(root.root);
@@ -1773,12 +1793,31 @@ test('recovers a missing resident stub only for the active hash and exact select
       calls.some((call) => call.tool === 'ssh-keygen' && call.operation === 'fingerprint'),
       'recovery verifies the exported public-key fingerprint',
     );
+    const signCalls = calls.filter(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
+    );
+    const verifyCalls = calls.filter(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'verify',
+    );
+    assert.equal(signCalls.length, 1, 'recovery signs once with the selected exported stub');
+    assert.equal(signCalls[0].signingPublicKey, enrollment.marker.sshPublicKey);
+    assert.equal(verifyCalls.length, 1, 'recovery verifies the disposable signature once');
+    assert.match(
+      verifyCalls[0].allowedSigners,
+      new RegExp(`${quoteRegex(enrollment.marker.sshPublicKey)}\\s*$`),
+    );
+    for (const call of calls.filter((entry) => ['ssh-keygen', 'provider'].includes(entry.tool))) {
+      assert.equal(call.selector, enrollment.identity.hash, `${call.tool}/${call.operation} selector`);
+    }
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }
 });
 
 test('recover-stub preserves valid state on missing, ambiguous, and failed recovery', () => {
+  const missingIdentityScenario = cloneScenario(summary.scenarios.oneResidentExport, {
+    identitySnapshots: { before: [], after: [] },
+  });
   const failedExportScenario = cloneScenario(summary.scenarios.oneResidentExport, {
     failures: {
       'ssh-keygen': {
@@ -1786,7 +1825,44 @@ test('recover-stub preserves valid state on missing, ambiguous, and failed recov
       },
     },
   });
+  const verificationFailureScenario = cloneScenario(summary.scenarios.oneResidentExport, {
+    failures: {
+      'ssh-keygen': {
+        verify: 'fixture recovery verification failed',
+      },
+    },
+  });
   const cases = [
+    {
+      name: 'missing non-exportable identity',
+      scenario: missingIdentityScenario,
+      options: {
+        identity: summary.scenarios.oneResidentExport.identitySnapshots.after[0],
+      },
+      pattern: /non-exportable identity must be recreated/i,
+      expectExport: false,
+    },
+    {
+      name: 'duplicate active label',
+      scenario: summary.scenarios.staleSameLabel,
+      options: {
+        identity: summary.scenarios.staleSameLabel.identitySnapshots.after.at(-1),
+      },
+      pattern: /identity label.*duplicate rows/i,
+      expectExport: false,
+    },
+    {
+      name: 'duplicate SSH identity',
+      scenario: summary.scenarios.duplicateSshIdentity,
+      pattern: /SSH identity.*duplicate rows/i,
+      expectExport: false,
+    },
+    {
+      name: 'independent SSH fingerprint mismatch',
+      scenario: summary.scenarios.mismatchedExpectedFingerprint,
+      pattern: /SSH identity.*fingerprint mismatch.*expected.*observed/i,
+      expectExport: false,
+    },
     {
       name: 'missing export',
       scenario: summary.scenarios.zeroResidentExports,
@@ -1811,6 +1887,16 @@ test('recover-stub preserves valid state on missing, ambiguous, and failed recov
       },
       pattern: /identity mismatch|public key/i,
     },
+    {
+      name: 'provider failure',
+      scenario: summary.scenarios.providerFailure,
+      pattern: /provider rejected signing|local signing verification failed/i,
+    },
+    {
+      name: 'local verification failure',
+      scenario: verificationFailureScenario,
+      pattern: /recovery verification failed|local signature verification failed/i,
+    },
   ];
 
   for (const recoveryCase of cases) {
@@ -1820,10 +1906,9 @@ test('recover-stub preserves valid state on missing, ambiguous, and failed recov
         residentExport: recoveryCase.residentExport,
         ...recoveryCase.options,
       });
-      const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-      const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
-      const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
-      const identityEntriesBefore = fs.readdirSync(enrollment.identityDir).sort();
+      installAcceptance(enrollment.stateDir, enrollment.identity.hash);
+      const stateTreeBefore = snapshotTree(enrollment.stateDir);
+      const configTreeBefore = snapshotTree(root.configHome);
 
       const result = runAdmin(
         adminCommand,
@@ -1833,21 +1918,25 @@ test('recover-stub preserves valid state on missing, ambiguous, and failed recov
 
       assert.equal(result.status, 1, recoveryCase.name);
       assert.match(result.stderr, recoveryCase.pattern, recoveryCase.name);
-      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-      assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
-      assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
       assert.deepEqual(
-        fs.readdirSync(enrollment.identityDir).sort(),
-        identityEntriesBefore,
-        `${recoveryCase.name} leaves the managed pair unchanged`,
+        snapshotTree(enrollment.stateDir),
+        stateTreeBefore,
+        `${recoveryCase.name} leaves the complete managed state unchanged`,
       );
+      assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
       assert.deepEqual(fs.readdirSync(root.tempHome), []);
 
-      const exportCall = readCalls(root.root).find(
+      const exportCalls = readCalls(root.root).filter(
         (call) => call.tool === 'ssh-keygen' && call.operation === 'resident-export',
       );
-      if (exportCall) {
-        assert.equal(exportCall.selector, enrollment.identity.hash, recoveryCase.name);
+      assert.equal(
+        exportCalls.length,
+        recoveryCase.expectExport === false ? 0 : 1,
+        `${recoveryCase.name} resident export count`,
+      );
+      if (exportCalls.length === 1) {
+        assert.equal(exportCalls[0].selector, enrollment.identity.hash, recoveryCase.name);
+        assert.equal(exportCalls[0].exportEmpty, true, recoveryCase.name);
       }
     } finally {
       fs.rmSync(root.root, { recursive: true, force: true });
@@ -1855,13 +1944,53 @@ test('recover-stub preserves valid state on missing, ambiguous, and failed recov
   }
 });
 
+test('restores exact prior state when atomic recovery installation fails', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const enrollment = installEnrollment(root, scenario);
+  const unrelatedIdentity = summary.scenarios.rotation.identitySnapshots.after[1];
+  const unrelatedExport = summary.scenarios.rotation.residentExports[1];
+  installLocalIdentity(enrollment.stateDir, unrelatedIdentity, unrelatedExport);
+  installAcceptance(enrollment.stateDir, enrollment.identity.hash);
+  installAcceptance(enrollment.stateDir, unrelatedIdentity.hash);
+  const stateTreeBefore = snapshotTree(enrollment.stateDir);
+  const configTreeBefore = snapshotTree(root.configHome);
+
+  try {
+    const result = runAdmin(
+      renameFailureAdminCommand,
+      ['recover-stub', '--hash', enrollment.identity.hash],
+      {
+        ...fixtureEnvironment(root),
+        GIT_MCP_SIGNING_FAIL_MV_AT: '2',
+        GIT_MCP_SIGNING_FAIL_MV_ONCE: '1',
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /cannot atomically install resident artifacts.*prior resident state was preserved/i);
+    assert.deepEqual(snapshotTree(enrollment.stateDir), stateTreeBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
+    assert.equal(fs.readFileSync(path.join(root.root, 'mv-count'), 'utf8').trim(), '3');
+    assert.deepEqual(
+      fs.readdirSync(path.dirname(enrollment.identityDir)).filter((entry) => entry.startsWith('.recover')),
+      [],
+      'successful rollback leaves no recovery backup or staging directory',
+    );
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
 test('retains the valid backup when installation and rollback renames both fail', () => {
   const scenario = summary.scenarios.oneResidentExport;
   const root = createScenarioRoot(scenario);
   const enrollment = installEnrollment(root, scenario);
-  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-  const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
-  const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+  installAcceptance(enrollment.stateDir, enrollment.identity.hash);
+  const identityTreeBefore = snapshotTree(enrollment.identityDir);
+  const acceptanceTreeBefore = snapshotTree(path.join(enrollment.stateDir, 'acceptance'));
+  const configTreeBefore = snapshotTree(root.configHome);
   const identitiesDir = path.dirname(enrollment.identityDir);
 
   try {
@@ -1872,7 +2001,11 @@ test('retains the valid backup when installation and rollback renames both fail'
     );
 
     assert.equal(result.status, 1, result.stderr);
-    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
+    assert.deepEqual(
+      snapshotTree(path.join(enrollment.stateDir, 'acceptance')),
+      acceptanceTreeBefore,
+    );
     assert.equal(fs.existsSync(enrollment.identityDir), false, 'failed rollback does not invent a replacement');
 
     const entries = fs.readdirSync(identitiesDir).sort();
@@ -1890,15 +2023,10 @@ test('retains the valid backup when installation and rollback renames both fail'
       ),
       'double-rename failure gives exact recovery guidance',
     );
-    assert.equal(
-      fs.readFileSync(path.join(backupDir, 'id_ecdsa_sk_rk'), 'utf8'),
-      stubBefore,
-      'the old resident stub remains recoverable in the retained backup',
-    );
-    assert.equal(
-      fs.readFileSync(path.join(backupDir, 'id_ecdsa_sk_rk.pub'), 'utf8'),
-      publicBefore,
-      'the old public key remains recoverable in the retained backup',
+    assert.deepEqual(
+      snapshotTree(backupDir),
+      identityTreeBefore,
+      'the exact prior identity tree remains recoverable in the retained backup',
     );
     assert.equal(fs.readFileSync(path.join(root.root, 'mv-count'), 'utf8').trim(), '3');
     assert.deepEqual(fs.readdirSync(root.tempHome), [], 'temporary and untracked staging artifacts are cleaned');
@@ -1912,9 +2040,9 @@ test('recover-stub refuses a requested hash that differs from the active marker'
   const root = createScenarioRoot(scenario);
   const enrollment = installEnrollment(root, scenario);
   const requestedHash = '2222222222222222222222222222222222222222';
-  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-  const stubBefore = fs.readFileSync(enrollment.stubPath, 'utf8');
-  const publicBefore = fs.readFileSync(enrollment.publicPath, 'utf8');
+  installAcceptance(enrollment.stateDir, enrollment.identity.hash);
+  const stateTreeBefore = snapshotTree(enrollment.stateDir);
+  const configTreeBefore = snapshotTree(root.configHome);
   try {
     const result = runAdmin(
       adminCommand,
@@ -1926,9 +2054,8 @@ test('recover-stub refuses a requested hash that differs from the active marker'
     assert.match(result.stderr, new RegExp(
       `active enrollment marker .* selects CTK hash ${enrollment.identity.hash}.*expected ${requestedHash}`,
     ));
-    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-    assert.equal(fs.readFileSync(enrollment.stubPath, 'utf8'), stubBefore);
-    assert.equal(fs.readFileSync(enrollment.publicPath, 'utf8'), publicBefore);
+    assert.deepEqual(snapshotTree(enrollment.stateDir), stateTreeBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
     assert.deepEqual(readCalls(root.root), []);
   } finally {

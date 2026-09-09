@@ -95,7 +95,7 @@
   - _Boundary: Test Harness_
   - _Depends: 1.1, 1.2, 2.2_
 
-- [ ] 3.4 Test diagnosis and recovery safety
+- [x] 3.4 Test diagnosis and recovery safety
   - Cover read-only diagnosis, temporary probes, active-marker matching, exact re-export, and recovery rollback.
   - Complete when failed recovery preserves prior state and successful recovery restores only a matching stub.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.4, 8.3, 8.5, 8.6, 9.3_
@@ -266,3 +266,4 @@
 
 - Task 3.2: Enforce timeout contracts with both an exact packaged `--kill-after=1s 20s` assertion and a 22-second wall-clock ceiling; timing tolerance alone cannot prove the configured deadline.
 - Task 3.3: Lifecycle refusal tests snapshot the complete managed-state tree, including entry type, mode, bytes, and symlink target; CTK fixtures preserve each identity's declared key type so incompatible identities cannot masquerade as `p-256-ne`.
+- Task 3.4: Atomic recovery needs distinct fixtures for install-only rename failure versus install-and-rollback failure; selector, exported key, complete state tree, and retained backup are verified independently.
