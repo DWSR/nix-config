@@ -18,6 +18,7 @@ let
 
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
     inherit (cfg)
+      bearerReference
       dataDir
       enginePort
       logDir

@@ -70,6 +70,12 @@ function writeExecutable(directory, name, source) {
 
 function createFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-status-'));
+  const securityLog = path.join(directory, 'security.log');
+  const security = writeExecutable(
+    directory,
+    'security',
+    '#!/bin/sh\nprintf "%s" "$*" > "$STATUS_SECURITY_LOG"\nprintf "%s" "$STATUS_SECURITY_RESPONSE"\nexit "${STATUS_SECURITY_EXIT:-0}"\n',
+  );
   const curl = writeExecutable(
     directory,
     'curl',
@@ -93,6 +99,8 @@ function createFixture() {
 
   return {
     directory,
+    security,
+    securityLog,
     curl,
     launchctl,
     lsof,
@@ -112,7 +120,9 @@ function runStatus(fixture, state, backend = 'agentmemory') {
       AGENTMEMORY_STATUS_CURL_BIN: fixture.curl,
       AGENTMEMORY_STATUS_LAUNCHCTL_BIN: fixture.launchctl,
       AGENTMEMORY_STATUS_LSOF_BIN: fixture.lsof,
+      AGENTMEMORY_STATUS_SECURITY_BIN: fixture.security,
       AGENTMEMORY_STATUS_LAUNCHD_DOMAIN: 'gui/test-user',
+      STATUS_SECURITY_LOG: fixture.securityLog,
       ...state,
     },
   });
@@ -152,6 +162,53 @@ test('status reports a healthy stock daemon without exposing its bearer', () => 
       status: 'healthy',
     });
     assert.match(result.stdout, /^health=healthy$/m);
+    assert.match(result.stdout, /^action=none$/m);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('status resolves the configured bearer from Keychain when the environment is empty', () => {
+  const fixture = createFixture();
+  try {
+    const result = runStatus(fixture, {
+      AGENTMEMORY_SECRET: '',
+      STATUS_SECURITY_RESPONSE: secret,
+      STATUS_LIVEZ_RESPONSE: '{"ok":true}\n200',
+      STATUS_HEALTH_RESPONSE: '{"status":"healthy","version":"0.9.29"}\n200',
+      STATUS_LAUNCHCTL_RESPONSE: 'state = running\nlast exit code = 0\n',
+      STATUS_LISTENERS: 'all',
+    });
+
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 0,
+      listenerState: 'listening',
+      status: 'healthy',
+    });
+    assert.match(fs.readFileSync(fixture.securityLog, 'utf8'), /-s mcpproxy -a status-bearer-reference -w/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('status reports a degraded full daemon as usable', () => {
+  const fixture = createFixture();
+  try {
+    const result = runStatus(fixture, {
+      STATUS_LIVEZ_RESPONSE: '{"ok":true}\n200',
+      STATUS_HEALTH_RESPONSE: '{"status":"degraded","version":"0.9.29"}\n200',
+      STATUS_LAUNCHCTL_RESPONSE: 'state = running\nlast exit code = 0\n',
+      STATUS_LISTENERS: 'all',
+    });
+
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 0,
+      listenerState: 'listening',
+      status: 'degraded',
+    });
+    assert.match(result.stdout, /^health=degraded$/m);
     assert.match(result.stdout, /^action=none$/m);
   } finally {
     fixture.cleanup();

@@ -99,6 +99,8 @@ case "$url" in
     fi
     if [ "\${PREFLIGHT_MODE:-healthy}" = healthy ]; then
       printf '%s' '{"status":"healthy"}'
+    elif [ "$PREFLIGHT_MODE" = degraded ]; then
+      printf '%s' '{"status":"degraded"}'
     else
       printf '%s' '{"status":"fallback"}'
     fi
@@ -170,6 +172,15 @@ test('AgentMemory preflight rejects standalone fallback and does not launch Open
   assert.match(result.stderr, /AgentMemory daemon preflight failed/);
   assert.equal((result.stderr.match(/Recover AgentMemory with:/g) || []).length, 1);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
+});
+
+test('AgentMemory preflight accepts a degraded but available full daemon', () => {
+  const rendered = renderIntegration();
+  const result = runPreflight(rendered.preflight, 'degraded');
+
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.match(result.stdout, /launched/);
+  assert.doesNotMatch(result.stderr, /AgentMemory daemon preflight failed/);
 });
 
 test('the preserved Obsidian preflight still stops before AgentMemory when upstream is disconnected', () => {

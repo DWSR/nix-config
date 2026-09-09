@@ -1,9 +1,11 @@
 {
   coreutils,
+  bearerReference,
   curl,
   dataDir,
   enginePort,
   iiiRevision,
+  lib,
   lsof,
   logDir,
   opencodeBackend,
@@ -40,7 +42,15 @@ writeShellApplication {
     curl_bin="''${AGENTMEMORY_STATUS_CURL_BIN:-curl}"
     launchctl_bin="''${AGENTMEMORY_STATUS_LAUNCHCTL_BIN:-/bin/launchctl}"
     lsof_bin="''${AGENTMEMORY_STATUS_LSOF_BIN:-lsof}"
+    security_bin="''${AGENTMEMORY_STATUS_SECURITY_BIN:-/usr/bin/security}"
     launchd_domain="''${AGENTMEMORY_STATUS_LAUNCHD_DOMAIN:-gui/$(id -u)}"
+
+    if [ -z "''${AGENTMEMORY_SECRET:-}" ]; then
+      agentmemory_secret=$(${coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      if [ -n "$agentmemory_secret" ]; then
+        export AGENTMEMORY_SECRET="$agentmemory_secret"
+      fi
+    fi
 
     probe_endpoint() {
       local endpoint="$1"
@@ -80,6 +90,9 @@ writeShellApplication {
     if [ "$health_code" = 200 ] \
       && printf '%s\n' "$health_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"(healthy|ok)"'; then
       health=healthy
+    elif [ "$health_code" = 200 ] \
+      && printf '%s\n' "$health_body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"degraded"'; then
+      health=degraded
     elif [ "$health_code" = 000 ]; then
       health=unreachable
     else
@@ -106,8 +119,10 @@ writeShellApplication {
     status=failed-startup
     action="inspect $log_file"
     exit_code=2
-    if [ "$livez_code" = 200 ] && [ "$health" = healthy ] && [ "$all_listeners" = listening ]; then
-      status=healthy
+    if [ "$livez_code" = 200 ] \
+      && { [ "$health" = healthy ] || [ "$health" = degraded ]; } \
+      && [ "$all_listeners" = listening ]; then
+      status="$health"
       action=none
       exit_code=0
     elif [ "$livez_code" = 000 ] && [ "$launchd_loaded" -eq 0 ] && [ "$all_listeners" = not-listening ]; then
