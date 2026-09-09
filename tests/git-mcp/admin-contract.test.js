@@ -111,7 +111,7 @@ function fixtureEnvironment(root) {
 }
 
 function runAdmin(command, args, env, options = {}) {
-  return childProcess.spawnSync(command, args, {
+  const result = childProcess.spawnSync(command, args, {
     cwd: options.cwd || repoRoot,
     env,
     encoding: 'utf8',
@@ -119,6 +119,8 @@ function runAdmin(command, args, env, options = {}) {
     maxBuffer: 64 * 1024 * 1024,
     timeout: 30_000,
   });
+  assertGeneratedOutputPolicy(result.stdout, result.stderr);
+  return result;
 }
 
 function runGit(args, options = {}) {
@@ -151,6 +153,49 @@ function acceptanceEnvironment(root) {
     GIT_MCP_ACCEPTANCE_HOST: 'fixture-host',
     GIT_MCP_ACCEPTANCE_OS_VERSION: '26.0.0-fixture',
   };
+}
+
+function expectedAcceptanceRecord(enrollment, commits, recordedAt) {
+  return {
+    schemaVersion: 1,
+    host: 'fixture-host',
+    macOSVersion: '26.0.0-fixture',
+    ctkPublicKeyHash: enrollment.identity.hash,
+    sshFingerprint: enrollment.marker.sshFingerprint,
+    probes: {
+      unlocked: { commit: commits.unlocked, result: 'verified' },
+      locked: { commit: commits.locked, result: 'verified' },
+      sleep: { commit: commits.sleep, result: 'verified' },
+      reboot: { commit: commits.reboot, result: 'verified' },
+    },
+    github: {
+      commit: commits.github,
+      verified: true,
+      result: 'verified',
+    },
+    result: 'pass',
+    recordedAt,
+  };
+}
+
+function assertAcceptanceVerificationCalls(calls, enrollment) {
+  const gitVerificationCalls = calls.filter(
+    (call) => call.tool === 'ssh-keygen'
+      && (call.operation === 'find-principals'
+        || (call.operation === 'verify' && call.argv.some((argument) => argument.startsWith('-Overify-time=')))),
+  );
+  assert.deepEqual(
+    gitVerificationCalls.map((call) => call.operation),
+    Array.from({ length: 5 }, () => ['find-principals', 'verify']).flat(),
+    'each of the five distinct references performs a fresh find-principals/verify pair',
+  );
+
+  const expectedAllowedSigners = `${enrollment.marker.identityLabel} namespaces="git" ${enrollment.marker.sshPublicKey}`;
+  for (const call of gitVerificationCalls) {
+    assert.equal(call.allowedSigners, expectedAllowedSigners, `${call.operation} uses only the active public key`);
+    assert.equal(call.selector, enrollment.identity.hash, `${call.operation} uses the active CTK selector`);
+    assert.equal(call.provider, summary.nativeToolPaths.provider, `${call.operation} uses the fixture provider`);
+  }
 }
 
 function createAcceptanceRepository(root, enrollment, options = {}) {
@@ -289,6 +334,40 @@ function installAcceptance(stateDir, hash) {
   fs.writeFileSync(acceptancePath(stateDir, hash), '{"schemaVersion":1}\n', { mode: 0o600 });
 }
 
+function snapshotAcceptanceSurfaces(root, stateDir) {
+  return {
+    state: snapshotTree(stateDir),
+    config: snapshotTree(root.configHome),
+    temp: snapshotTree(root.tempHome),
+  };
+}
+
+function installAcceptanceRejectionSentinels(root, stateDir, hash) {
+  const acceptanceDir = path.dirname(acceptancePath(stateDir, hash));
+  fs.mkdirSync(acceptanceDir, { recursive: true });
+  fs.chmodSync(acceptanceDir, 0o700);
+  fs.writeFileSync(
+    acceptancePath(stateDir, hash),
+    '{"schemaVersion":1,"host":"prior-fixture","result":"previous"}\n',
+    { mode: 0o600 },
+  );
+  fs.writeFileSync(
+    path.join(root.configHome, 'acceptance-config-sentinel'),
+    'preserve config sentinel\n',
+    { mode: 0o640 },
+  );
+  fs.writeFileSync(
+    path.join(root.tempHome, 'acceptance-temp-sentinel'),
+    'preserve temp sentinel\n',
+    { mode: 0o600 },
+  );
+  return snapshotAcceptanceSurfaces(root, stateDir);
+}
+
+function assertAcceptanceRejectionPreserves(root, stateDir, before, name) {
+  assert.deepEqual(snapshotAcceptanceSurfaces(root, stateDir), before, `${name} preserves state, config, and temp`);
+}
+
 function installEnrollment(root, scenario, options = {}) {
   const identity = options.identity || scenario.identitySnapshots.after[0];
   const residentExport = options.residentExport
@@ -384,6 +463,319 @@ function snapshotTree(entryPath) {
 function fileMode(filePath) {
   return fs.statSync(filePath).mode & 0o777;
 }
+
+function assertGeneratedOutputPolicy(...outputs) {
+  const generatedOutput = outputs
+    .map((output) => String(output ?? ''))
+    .join('\n')
+    .normalize('NFKC')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/\r\n?/g, '\n');
+  const clauses = generatedOutput
+    .split('\n')
+    .flatMap((line) => line.replace(/\s+/g, ' ').trim().split(
+      /\s*(?:;|&&|\|\||[.!?](?=\s)|\bbut\b|\binstead\b|\bthen\b)\s*/i,
+    ))
+    .filter(Boolean);
+  const reject = (name) => assert.fail(`${name} is prohibited in generated output`);
+  const quotedAction = String.raw`(?:"[^"]*"|'[^']*'|\x60[^\x60]*\x60)`;
+  const prohibitionPrefix = String.raw`(?:do not|must not|shall not|never)`;
+  const actionVerb = String.raw`(?:run|start|configure|install|use|add|execute)`;
+  const prohibitionPostfix = String.raw`(?:(?:is|are|remain|must remain)\s+(?:prohibited|forbidden|not allowed|absent|unchanged|unmodified)|(?:must|shall)\s+not\s+be\s+used)`;
+  const prohibitionNoun = String.raw`["'\x60]?(?:identity[-_.]?(?:file|agent)|ssh-(?:add|agent)|authorized[-_.]?keys)["'\x60]?`;
+  const allowedProhibitionClauses = [
+    new RegExp(
+      `^${prohibitionPrefix}\\s+${actionVerb}\\s+${quotedAction}(?:\\s+(?:and|or)\\s+(?:(?:${prohibitionPrefix})\\s+${actionVerb}\\s+|${actionVerb}\\s+)?${quotedAction})*[.!?]?$`,
+      'i',
+    ),
+    new RegExp(
+      `^(?:the\\s+(?:command|option)\\s+)?${quotedAction}\\s+${prohibitionPostfix}[.!?]?$`,
+      'i',
+    ),
+    new RegExp(
+      `^${prohibitionNoun}(?:\\s*,\\s*${prohibitionNoun})*\\s*,?\\s+(?:and|or)\\s+${prohibitionNoun}(?:\\s+additions?)?\\s+${prohibitionPostfix}[.!?]?$`,
+      'i',
+    ),
+    new RegExp(
+      `^${prohibitionPrefix}\\s+(?:run\\s+ssh-add|start\\s+ssh-agent)(?:\\s+(?:and|or)\\s+(?:run\\s+ssh-add|start\\s+ssh-agent))+[.!?]?$`,
+      'i',
+    ),
+  ];
+  const actionPatterns = [
+    ['githubSsh', /\bgh\s+ssh-key\s+add\b/gi],
+    ['githubApi', /\b(?:gh\s+api|curl)\b/gi],
+    ['sshClient', /\bidentity[-_.]?(?:file|agent)\b/gi],
+    ['sshAgent', /\bssh-(?:add|agent)\b/gi],
+    ['sshServerRedirect', />>?\s*["'`]?(?:~\/)?\.ssh\/authorized[-_.]?keys\b/gi],
+    ['sshServerTee', /\btee\b/gi],
+    ['sshServerInstall', /\binstall\b/gi],
+    ['sshServerConfig', /\bauthorized[-_.]?keys\b["'`]?(?:\s*[:={]|\s*\.\s*keys\s*=)/gi],
+    [
+      'sshServerNoun',
+      /\bauthorized[-_.]?keys\b(?=["'`]?(?:\s+additions?)?\s+(?:is|are)\s+(?:prohibited|forbidden|not allowed)\b)/gi,
+    ],
+    ['sops', /\bsops\b/gi],
+    ['genericPassword', /\bsecurity\s+add-generic-password\b/gi],
+  ];
+
+  if (/-----BEGIN(?: [^-\r\n]+)? PRIVATE KEY-----/i.test(generatedOutput)) {
+    reject('private key');
+  }
+
+  for (const clause of clauses) {
+    const compact = clause.replace(/[\s"'`_.-]/g, '').toLowerCase();
+    const allowsProhibitedActions = allowedProhibitionClauses.some((pattern) => pattern.test(clause));
+    const actionSeeds = actionPatterns
+      .flatMap(([kind, pattern]) => [...clause.matchAll(pattern)].map((match) => ({
+        kind,
+        start: match.index,
+        seedEnd: match.index + match[0].length,
+        seedText: match[0],
+      })))
+      .sort((left, right) => left.start - right.start || right.seedEnd - left.seedEnd)
+      .filter((action, index, actions) => index === 0 || action.start !== actions[index - 1].start);
+    const actions = actionSeeds.map((action, index) => {
+      const next = actionSeeds[index + 1];
+      let scopeEnd = next?.start ?? clause.length;
+      if (next) {
+        const between = clause.slice(action.seedEnd, next.start);
+        const boundary = between.match(
+          /(?:,\s*|\s+(?:and|or)\s+|:\s*)(?:(?:do not|must not|shall not|never|not allowed)\s+)?(?:run|start|configure|install|use|add|execute)?\s*["'`]?\s*$/i,
+        );
+        if (boundary) {
+          scopeEnd = action.seedEnd + boundary.index;
+        }
+      }
+
+      const openingQuote = /["'`]/.test(clause[action.start - 1])
+        ? clause[action.start - 1]
+        : undefined;
+      const quoteEnd = openingQuote
+        ? clause.lastIndexOf(openingQuote, scopeEnd - 1)
+        : -1;
+      const end = quoteEnd > action.start ? quoteEnd : scopeEnd;
+      return {
+        ...action,
+        text: clause.slice(action.start, end).trimEnd(),
+      };
+    });
+
+    for (const action of actions) {
+      let prohibitedName;
+      if (action.kind === 'githubSsh') {
+        const types = [...action.text.matchAll(/--type(?:=|\s+)["'`]?([a-z-]+)/gi)]
+          .map((match) => match[1].toLowerCase());
+        if (types.length !== 1 || types[0] !== 'signing') {
+          prohibitedName = 'GitHub authentication registration';
+        }
+      } else if (action.kind === 'githubApi') {
+        const registersAuthenticationKey = /(?:^|[\s/])user\/keys(?:\b|[?#])/i.test(action.text)
+          && /(?:--method|-X|--request)\s+POST\b|(?:^|\s)(?:-f|--field|-d|--data)(?:=|\s)/i.test(action.text);
+        if (registersAuthenticationKey) prohibitedName = 'GitHub authentication registration';
+      } else if (action.kind === 'sshClient') {
+        const suffix = action.text.slice(action.seedText.length);
+        if (/^["'`]?(?:\s*[:=]|\s+\S+)/.test(suffix)) prohibitedName = 'SSH client key addition';
+      } else if (action.kind === 'sshAgent') {
+        prohibitedName = 'SSH agent key addition';
+      } else if (action.kind === 'sshServerRedirect'
+        || action.kind === 'sshServerConfig'
+        || action.kind === 'sshServerNoun') {
+        prohibitedName = 'SSH server key addition';
+      } else if (action.kind === 'sshServerTee') {
+        if (/(?:^|\s)(?:-a\b|--append\b)/i.test(action.text)
+          && /authorized[-_.]?keys\b/i.test(action.text)) {
+          prohibitedName = 'SSH server key addition';
+        }
+      } else if (action.kind === 'sshServerInstall') {
+        if (/authorized[-_.]?keys\b/i.test(action.text)) prohibitedName = 'SSH server key addition';
+      } else if (action.kind === 'sops') {
+        if (/(?:^|\s)(?:-e|-d|--encrypt|--decrypt)\b/i.test(action.text)) {
+          prohibitedName = 'secret-pipeline material';
+        }
+      } else if (action.kind === 'genericPassword') {
+        prohibitedName = 'secret-pipeline material';
+      }
+      if (prohibitedName && !allowsProhibitedActions) reject(prohibitedName);
+    }
+
+    if (/githubauthenticationkeyregistered[:=](?:true|1)/.test(compact)
+      || /github.{0,120}authenticationkeys?[:={]/.test(compact)
+      || /github.{0,120}(?:ssh)?key.{0,20}(?:type|purpose|usage)[:=]authentication/.test(compact)
+      || /(?:type|purpose|usage)[:=]authentication.{0,20}(?:ssh)?key.{0,120}github/.test(compact)) {
+      reject('GitHub authentication registration');
+    }
+
+    if (/sshagentkeys[:=]/.test(compact)
+      || /addkeystoagent(?:[:=]|(?:yes|confirm|ask)$)/.test(compact)) {
+      reject('SSH agent key addition');
+    }
+    if (/op:\/\/[^/\s]+\/[^/\r\n]+\/[^"'\r\n]+/i.test(clause)
+      || /sops.{0,40}secrets[^:=]{0,80}[:={]/.test(compact)
+      || /(?:sopsfile|defaultsopsfile)[^:=]{0,80}[:=]/.test(compact)
+      || /genericpassword[^:=]{0,80}[:=]/.test(compact)
+      || /(?:keychain(?:item)?(?:class|kind)|secretstore)[:=]genericpassword/.test(compact)
+      || /secretpipeline[:=]sops/.test(compact)) {
+      reject('secret-pipeline material');
+    }
+  }
+}
+
+test('generated-output policy allows signing-only commands and explicit prohibition guidance', () => {
+  const allowedOutputs = [
+    'Do not run "gh ssh-key add dedicated.pub --type authentication"; use --type signing only.',
+    'Never run "gh api --method POST user/keys -f key=@dedicated.pub"; use the signing-key endpoint.',
+    'Do not run "tee -a ~/.ssh/authorized_keys < dedicated.pub"; preserve authorized_keys unchanged.',
+    'Do not run "install dedicated.pub ~/.ssh/authorized_keys"; preserve authorized_keys unchanged.',
+    'Never configure "IdentityFile ~/.ssh/dedicated" or "IdentityAgent ~/.ssh/agent.sock".',
+    'Do not run "ssh-add ~/.ssh/dedicated"; never start "ssh-agent -s".',
+    'Never run "sops -e dedicated-private-key > signing.yaml"; secret-pipeline storage is prohibited.',
+    'Do not run "security add-generic-password -s signing -w key"; generic-password storage is prohibited.',
+    'GitHub cleanup: remove the corresponding SSH signing key; do not remove authentication keys',
+    'Run “gh ssh-key add dedicated.pub --type \'signing\'” after local verification.',
+    'GitHub authentication-key registration is prohibited; signing-only registration is required.',
+    'The option "--type authentication" is prohibited; require "--type signing".',
+    'The command "gh api --method POST user/keys -f key=@dedicated.pub" is prohibited',
+    '"ssh-add ~/.ssh/dedicated" must not be used',
+    '`IdentityFile`, `IdentityAgent`, `ssh-agent`, and `authorized_keys` additions are prohibited.',
+    'Never run ssh-add or start ssh-agent; authorized_keys must remain unchanged.',
+    'SOPS and generic-password secret-pipeline storage are prohibited.',
+    'Actual op:// secret references are prohibited.',
+    '{"github":{"sshKeyType":"signing"}}',
+    'gh api --method POST /user/ssh_signing_keys -f key=@dedicated.pub',
+    'Run "gh ssh-key add --type=\"signing\" dedicated.pub" only after verification.',
+  ];
+
+  for (const output of allowedOutputs) {
+    assert.doesNotThrow(() => assertGeneratedOutputPolicy(output), output);
+  }
+});
+
+test('generated-output policy rejects normalized private, authentication, SSH, and secret-pipeline material', () => {
+  const prohibitedActionPairs = [
+    [
+      'SSH agent key addition',
+      'Do not run ssh-add old-key',
+      'run ssh-add ~/.ssh/dedicated',
+    ],
+    [
+      'GitHub authentication registration',
+      'Do not run gh api --method POST user/keys -f key=@old.pub',
+      'run gh api --method POST user/keys -f key=@dedicated.pub',
+    ],
+    [
+      'GitHub authentication registration',
+      'Do not run gh ssh-key add old.pub --type authentication',
+      'run gh ssh-key add dedicated.pub --type authentication',
+    ],
+    [
+      'SSH client key addition',
+      'IdentityFile old-key is prohibited',
+      'IdentityFile ~/.ssh/dedicated',
+    ],
+    [
+      'SSH server key addition',
+      'Do not install old.pub in authorized_keys',
+      'install dedicated.pub ~/.ssh/authorized_keys',
+    ],
+    [
+      'secret-pipeline material',
+      'Do not run sops -e old-key > old.yaml',
+      'run sops -e dedicated-private-key > secrets/signing.yaml',
+    ],
+  ];
+  const coordinationSeparators = [', ', ' and ', ': '];
+
+  for (const [name, prohibitedAction, activeAction] of prohibitedActionPairs) {
+    for (const separator of coordinationSeparators) {
+      const output = `${prohibitedAction}${separator}${activeAction}`;
+      assert.throws(() => assertGeneratedOutputPolicy(output), new RegExp(name, 'i'), `${name}: ${output}`);
+    }
+  }
+
+  const prohibitedOutputs = [
+    [
+      'SSH agent key addition',
+      'The command "rm old-key" is prohibited before run ssh-add ~/.ssh/dedicated',
+    ],
+    [
+      'SSH agent key addition',
+      'Authentication-key registration is prohibited while run ssh-add ~/.ssh/dedicated',
+    ],
+    [
+      'SSH agent key addition',
+      'Run ssh-add ~/.ssh/dedicated while password authentication is prohibited',
+    ],
+    [
+      'SSH agent key addition',
+      'Run ssh-add ~/.ssh/dedicated while the command "rm old-key" is prohibited',
+    ],
+    ['GitHub authentication registration', 'gh api --method POST user/keys -f key=@dedicated.pub'],
+    ['SSH server key addition', 'tee -a ~/.ssh/authorized_keys < dedicated.pub'],
+    ['SSH server key addition', 'install -m 600 dedicated.pub ~/.ssh/authorized_keys'],
+    ['secret-pipeline material', 'sops -e dedicated-private-key > secrets/signing.yaml'],
+    [
+      'GitHub authentication registration',
+      'Do not run "gh api --method POST user/keys -f key=@old.pub"; gh api --method POST user/keys -f key=@dedicated.pub',
+    ],
+    ['SSH client key addition', 'IdentityFile use is prohibited; IdentityFile ~/.ssh/dedicated_signer'],
+    ['SSH client key addition', 'IdentityAgent use is prohibited; IdentityAgent ~/.ssh/agent.sock'],
+    ['SSH agent key addition', 'Do not run ssh-add old-key; ssh-add ~/.ssh/dedicated_signer'],
+    ['SSH agent key addition', 'Never start ssh-agent for signing; ssh-agent -s'],
+    ['SSH agent key addition', 'Do not run ssh-add old-key, but ssh-add ~/.ssh/dedicated_signer'],
+    [
+      'SSH server key addition',
+      'authorized_keys additions are prohibited; tee -a ~/.ssh/authorized_keys < dedicated.pub',
+    ],
+    [
+      'SSH server key addition',
+      'Do not install old-key in authorized_keys; install dedicated.pub ~/.ssh/authorized_keys',
+    ],
+    [
+      'secret-pipeline material',
+      'Do not run sops -e old-key > old.yaml; sops -e dedicated-private-key > secrets/signing.yaml',
+    ],
+    ['private key', '-----BEGIN OPENSSH PRIVATE KEY-----'],
+    ['private key', '-----BEGIN PRIVATE KEY-----'],
+    ['private key', '-----BEGIN ENCRYPTED PRIVATE KEY-----'],
+    ['private key', '-----BEGIN RSA PRIVATE KEY-----'],
+    ['private key', '-----BEGIN DSA PRIVATE KEY-----'],
+    ['private key', '-----BEGIN EC PRIVATE KEY-----'],
+    ['private key', '-----BEGIN SSH2 ENCRYPTED PRIVATE KEY-----'],
+    ['GitHub authentication registration', 'gh ssh-key add dedicated.pub --type authentication'],
+    ['GitHub authentication registration', 'gh ssh-key add dedicated.pub'],
+    ['GitHub authentication registration', 'gh ssh-key add dedicated.pub --type signing --type authentication'],
+    ['GitHub authentication registration', 'gh ssh-key add dedicated.pub --type=authentication --type=signing'],
+    ['GitHub authentication registration', 'gh api --method POST /user/keys -f key=@dedicated.pub'],
+    ['GitHub authentication registration', 'curl -X POST https://api.github.com/user/keys -d @dedicated.json'],
+    ['GitHub authentication registration', '{"githubAuthenticationKeyRegistered":true}'],
+    ['GitHub authentication registration', '{"github":{"sshKeyPurpose":"authentication"}}'],
+    ['GitHub authentication registration', '{"github":{"key":{"type":"authentication"}}}'],
+    ['GitHub authentication registration', '{"github":{"authenticationKeys":["dedicated.pub"]}}'],
+    ['GitHub authentication registration', 'ＧＨ SSH-KEY ADD dedicated.pub --TYPE "authentication"'],
+    ['SSH client key addition', 'IdentityFile ~/.ssh/dedicated_signer'],
+    ['SSH client key addition', '{"identity_file":"~/.ssh/dedicated_signer"}'],
+    ['SSH client key addition', '{"ssh":{"identityAgent":"~/.ssh/agent.sock"}}'],
+    ['SSH agent key addition', 'ssh-add ~/.ssh/dedicated_signer'],
+    ['SSH agent key addition', '{"sshAgentKeys":["dedicated.pub"]}'],
+    ['SSH agent key addition', 'AddKeysToAgent yes'],
+    ['SSH server key addition', 'cat dedicated.pub >> ~/.ssh/authorized_keys'],
+    ['SSH server key addition', '{"openssh":{"authorizedKeys":{"keys":["dedicated.pub"]}}}'],
+    ['SSH server key addition', 'users.users.me.openssh.authorizedKeys.keys = [ dedicatedPublicKey ];'],
+    ['secret-pipeline material', 'sops.secrets.git-mcp-signing-key = {};'],
+    ['secret-pipeline material', '{"sops":{"secrets":{"git-mcp-signing-key":{}}}}'],
+    ['secret-pipeline material', 'defaultSopsFile = ./secrets/git-mcp-signing.yaml;'],
+    ['secret-pipeline material', '{"secretPipeline":"sops"}'],
+    ['secret-pipeline material', '{"keychainItemClass":"generic-password"}'],
+    ['secret-pipeline material', 'sops --encrypt dedicated-private-key > secrets/signing.yaml'],
+    ['secret-pipeline material', 'security add-generic-password -s git-mcp-signing -w private-key'],
+    ['secret-pipeline material', 'signingKey = "op://Engineering/Git signing/private key"'],
+  ];
+
+  for (const [name, output] of prohibitedOutputs) {
+    assert.throws(() => assertGeneratedOutputPolicy(output), new RegExp(name, 'i'), `${name}: ${output}`);
+  }
+});
 
 let adminCommand;
 let summary;
@@ -945,6 +1337,28 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
     assert.equal(fileMode(path.join(identityDir, `${residentExport.stubName}.pub`)), 0o644);
     assert.equal(fs.existsSync(activeMarkerPath(root)), false, 'bootstrap does not activate declaration');
     assert.deepEqual(fs.readdirSync(root.tempHome), [], 'temporary export data is cleaned up');
+
+    const stateDir = path.join(root.stateHome, 'git-mcp-secure-enclave-signing');
+    const beforeRegistrationSurfaces = installAcceptanceRejectionSentinels(root, stateDir, identity.hash);
+    const beforeRegistration = runAdmin(
+      adminCommand,
+      acceptanceArgs(identity.hash, {
+        unlocked: 'a'.repeat(40),
+        locked: 'b'.repeat(40),
+        sleep: 'c'.repeat(40),
+        reboot: 'd'.repeat(40),
+        github: 'e'.repeat(40),
+      }),
+      acceptanceEnvironment(root),
+    );
+    assert.equal(beforeRegistration.status, 1, 'acceptance cannot precede registration and selection');
+    assert.match(beforeRegistration.stderr, /active enrollment marker .* missing|registration/i);
+    assertAcceptanceRejectionPreserves(
+      root,
+      stateDir,
+      beforeRegistrationSurfaces,
+      'pre-registration acceptance',
+    );
 
     const calls = readCalls(root.root);
     assert.deepEqual(
@@ -2323,27 +2737,9 @@ test('records complete acceptance evidence only after verifying every signed com
     );
 
     assert.equal(result.status, 0, result.stderr);
+    assert.equal(new Set(Object.values(commits)).size, 5, 'acceptance references are distinct');
     const record = JSON.parse(result.stdout.trim().split('\n').at(-1));
-    assert.deepEqual(record, {
-      schemaVersion: 1,
-      host: 'fixture-host',
-      macOSVersion: '26.0.0-fixture',
-      ctkPublicKeyHash: enrollment.identity.hash,
-      sshFingerprint: enrollment.marker.sshFingerprint,
-      probes: {
-        unlocked: { commit: commits.unlocked, result: 'verified' },
-        locked: { commit: commits.locked, result: 'verified' },
-        sleep: { commit: commits.sleep, result: 'verified' },
-        reboot: { commit: commits.reboot, result: 'verified' },
-      },
-      github: {
-        commit: commits.github,
-        verified: true,
-        result: 'verified',
-      },
-      result: 'pass',
-      recordedAt: record.recordedAt,
-    });
+    assert.deepEqual(record, expectedAcceptanceRecord(enrollment, commits, record.recordedAt));
     assert.match(record.recordedAt, /^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
     assert.equal(
       fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8').trim(),
@@ -2358,7 +2754,10 @@ test('records complete acceptance evidence only after verifying every signed com
     assert.doesNotMatch(serialized, /BEGIN OPENSSH PRIVATE KEY/);
     assert.doesNotMatch(serialized, /Zml4dHVyZS1yZXNpZGVudC1oYW5kbGU/);
     assert.doesNotMatch(serialized, /id_ecdsa_sk_rk/);
+    assertGeneratedOutputPolicy(serialized);
+    assertAcceptanceVerificationCalls(readCalls(root.root), enrollment);
 
+    const callCountBeforeRevalidation = readCalls(root.root).length;
     const revalidated = runAdmin(
       adminCommand,
       acceptanceArgs(record.ctkPublicKeyHash, {
@@ -2372,6 +2771,19 @@ test('records complete acceptance evidence only after verifying every signed com
       { cwd: repository },
     );
     assert.equal(revalidated.status, 0, revalidated.stderr);
+    const revalidatedRecord = JSON.parse(revalidated.stdout.trim().split('\n').at(-1));
+    assert.deepEqual(
+      revalidatedRecord,
+      expectedAcceptanceRecord(enrollment, commits, revalidatedRecord.recordedAt),
+      'revalidation regenerates the exact current schema and passing results',
+    );
+    assert.match(revalidatedRecord.recordedAt, /^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ$/);
+    assert.equal(
+      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8').trim(),
+      JSON.stringify(revalidatedRecord),
+      'revalidation atomically replaces evidence with the regenerated record',
+    );
+    assertAcceptanceVerificationCalls(readCalls(root.root).slice(callCountBeforeRevalidation), enrollment);
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }
@@ -2383,10 +2795,7 @@ test('rejects duplicate acceptance commit references before verification and pre
   try {
     const enrollment = installEnrollment(root, scenario);
     const { repository, commits } = createAcceptanceRepository(root, enrollment);
-    const acceptanceDir = path.dirname(acceptancePath(enrollment.stateDir, enrollment.identity.hash));
-    const priorEvidence = '{"schemaVersion":1,"result":"previous"}\n';
-    fs.mkdirSync(acceptanceDir, { recursive: true });
-    fs.writeFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), priorEvidence, { mode: 0o600 });
+    const before = installAcceptanceRejectionSentinels(root, enrollment.stateDir, enrollment.identity.hash);
 
     const duplicateCommit = commits.unlocked;
     const result = runAdmin(
@@ -2404,13 +2813,7 @@ test('rejects duplicate acceptance commit references before verification and pre
 
     assert.equal(result.status, 1, 'duplicate commit references must fail');
     assert.match(result.stderr, /duplicate|distinct/i);
-    assert.equal(
-      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8'),
-      priorEvidence,
-      'duplicate references preserve the previous acceptance record',
-    );
-    assert.deepEqual(fs.readdirSync(acceptanceDir), [`${enrollment.identity.hash}.json`]);
-    assert.deepEqual(fs.readdirSync(root.tempHome), [], 'duplicate references create no temporary artifacts');
+    assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, 'duplicate references');
     assert.deepEqual(readCalls(root.root), [], 'duplicate references fail before native verification');
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
@@ -2437,14 +2840,16 @@ test('rejects every incomplete acceptance command and requires explicit GitHub v
   for (const [missingFlag, followingFlag] of fields) {
     const root = createScenarioRoot(summary.scenarios.oneResidentExport);
     try {
-      const args = acceptanceArgs('a'.repeat(40), commits);
+      const enrollment = installEnrollment(root, summary.scenarios.oneResidentExport);
+      const before = installAcceptanceRejectionSentinels(root, enrollment.stateDir, enrollment.identity.hash);
+      const args = acceptanceArgs(enrollment.identity.hash, commits);
       const missingIndex = args.indexOf(missingFlag);
       args.splice(missingIndex, followingFlag === '--github-verified' ? 1 : 2);
       const result = runAdmin(adminCommand, args, acceptanceEnvironment(root));
 
       assert.equal(result.status, 1, `missing ${missingFlag}`);
       assert.match(result.stderr, /usage|missing|required|github-verified/i, missingFlag);
-      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${missingFlag} creates no staging output`);
+      assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, `missing ${missingFlag}`);
     } finally {
       fs.rmSync(root.root, { recursive: true, force: true });
     }
@@ -2452,25 +2857,28 @@ test('rejects every incomplete acceptance command and requires explicit GitHub v
 
   const root = createScenarioRoot(summary.scenarios.oneResidentExport);
   try {
+    const enrollment = installEnrollment(root, summary.scenarios.oneResidentExport);
+    const before = installAcceptanceRejectionSentinels(root, enrollment.stateDir, enrollment.identity.hash);
     const result = runAdmin(
       adminCommand,
-      acceptanceArgs('a'.repeat(40), commits, false),
+      acceptanceArgs(enrollment.identity.hash, commits, false),
       acceptanceEnvironment(root),
     );
     assert.equal(result.status, 1, 'GitHub attestation is mandatory');
     assert.match(result.stderr, /usage|github-verified|explicit|attestation/i);
-    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, 'missing GitHub attestation');
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }
 });
 
-test('rejects missing state commits and inactive or mismatched active enrollment without writing evidence', () => {
+test('rejects missing state commits and inactive or mismatched active enrollment while preserving prior evidence', () => {
   const scenario = summary.scenarios.oneResidentExport;
   const root = createScenarioRoot(scenario);
   try {
     const enrollment = installEnrollment(root, scenario);
     const { repository, commits } = createAcceptanceRepository(root, enrollment);
+    const before = installAcceptanceRejectionSentinels(root, enrollment.stateDir, enrollment.identity.hash);
     for (const state of ['unlocked', 'locked', 'sleep', 'reboot', 'github']) {
       const missingCommit = { ...commits, [state]: 'f'.repeat(40) };
       const result = runAdmin(
@@ -2482,12 +2890,7 @@ test('rejects missing state commits and inactive or mismatched active enrollment
 
       assert.equal(result.status, 1, `${state} missing commit`);
       assert.match(result.stderr, new RegExp(`${state}|missing|unsigned|verify`, 'i'), state);
-      assert.equal(
-        fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)),
-        false,
-        `${state} missing commit writes no evidence`,
-      );
-      assert.deepEqual(fs.readdirSync(root.tempHome), [], `${state} missing commit cleans staging output`);
+      assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, `${state} missing commit`);
     }
 
     const wrongHash = '1'.repeat(40);
@@ -2499,11 +2902,12 @@ test('rejects missing state commits and inactive or mismatched active enrollment
     );
     assert.equal(inactive.status, 1, 'requested hash must be active');
     assert.match(inactive.stderr, /active enrollment marker .*selects CTK hash|expected/i);
-    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+    assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, 'inactive hash');
 
     const marker = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
     marker.githubSigningKeyRegistered = false;
     fs.writeFileSync(activeMarkerPath(root), `${JSON.stringify(marker)}\n`, { mode: 0o600 });
+    const beforeUnregistered = snapshotAcceptanceSurfaces(root, enrollment.stateDir);
     const unregistered = runAdmin(
       adminCommand,
       acceptanceArgs(enrollment.identity.hash, commits),
@@ -2512,7 +2916,12 @@ test('rejects missing state commits and inactive or mismatched active enrollment
     );
     assert.equal(unregistered.status, 1, 'unregistered enrollment is inactive');
     assert.match(unregistered.stderr, /githubSigningKeyRegistered|registered/i);
-    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
+    assertAcceptanceRejectionPreserves(
+      root,
+      enrollment.stateDir,
+      beforeUnregistered,
+      'unregistered enrollment',
+    );
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }
@@ -2526,6 +2935,11 @@ test('rejects unsigned and active-key-mismatched commits', () => {
     const { repository, commits } = createAcceptanceRepository(unsignedRoot, enrollment, {
       unsignedStates: ['locked'],
     });
+    const before = installAcceptanceRejectionSentinels(
+      unsignedRoot,
+      enrollment.stateDir,
+      enrollment.identity.hash,
+    );
     const result = runAdmin(
       adminCommand,
       acceptanceArgs(enrollment.identity.hash, commits),
@@ -2535,8 +2949,7 @@ test('rejects unsigned and active-key-mismatched commits', () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /locked|unsigned|signature|verify/i);
-    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
-    assert.deepEqual(fs.readdirSync(unsignedRoot.tempHome), []);
+    assertAcceptanceRejectionPreserves(unsignedRoot, enrollment.stateDir, before, 'unsigned commit');
   } finally {
     fs.rmSync(unsignedRoot.root, { recursive: true, force: true });
   }
@@ -2549,6 +2962,11 @@ test('rejects unsigned and active-key-mismatched commits', () => {
       mismatchedStates: ['sleep'],
       scenario: mismatchScenario,
     });
+    const before = installAcceptanceRejectionSentinels(
+      mismatchRoot,
+      enrollment.stateDir,
+      enrollment.identity.hash,
+    );
     const result = runAdmin(
       adminCommand,
       acceptanceArgs(enrollment.identity.hash, commits),
@@ -2558,8 +2976,7 @@ test('rejects unsigned and active-key-mismatched commits', () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /sleep|active|signature|verify|allowed/i);
-    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), false);
-    assert.deepEqual(fs.readdirSync(mismatchRoot.tempHome), []);
+    assertAcceptanceRejectionPreserves(mismatchRoot, enrollment.stateDir, before, 'wrong-key commit');
   } finally {
     fs.rmSync(mismatchRoot.root, { recursive: true, force: true });
   }
@@ -2571,10 +2988,7 @@ test('preserves prior acceptance evidence when atomic replacement fails and leav
   try {
     const enrollment = installEnrollment(root, scenario);
     const { repository, commits } = createAcceptanceRepository(root, enrollment);
-    const acceptanceDir = path.dirname(acceptancePath(enrollment.stateDir, enrollment.identity.hash));
-    fs.mkdirSync(acceptanceDir, { recursive: true });
-    const priorEvidence = '{"schemaVersion":1,"result":"previous"}\n';
-    fs.writeFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), priorEvidence, { mode: 0o600 });
+    const before = installAcceptanceRejectionSentinels(root, enrollment.stateDir, enrollment.identity.hash);
 
     const result = runAdmin(
       acceptanceFailureAdminCommand,
@@ -2585,13 +2999,7 @@ test('preserves prior acceptance evidence when atomic replacement fails and leav
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /atomic|acceptance|staging|failure/i);
-    assert.equal(
-      fs.readFileSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash), 'utf8'),
-      priorEvidence,
-      'the previous acceptance record survives a failed replacement',
-    );
-    assert.deepEqual(fs.readdirSync(acceptanceDir), [`${enrollment.identity.hash}.json`]);
-    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assertAcceptanceRejectionPreserves(root, enrollment.stateDir, before, 'failed atomic replacement');
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
   }

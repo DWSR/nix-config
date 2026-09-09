@@ -109,7 +109,7 @@
   - _Boundary: Test Harness_
   - _Depends: 2.5, 2.6, 3.4_
 
-- [ ] 3.6 Test acceptance evidence and generated-output policy
+- [x] 3.6 Test acceptance evidence and generated-output policy
   - Validate registration ordering, evidence schema, active-identity matching, and rejection of incomplete, unsigned, or mismatched commits.
   - Assert generated outputs contain no private key, GitHub authentication registration, SSH client/agent/server key addition, or secret-pipeline material.
   - Complete when accepted evidence is revalidatable and every rejected input leaves prior evidence unchanged.
@@ -268,3 +268,4 @@
 - Task 3.3: Lifecycle refusal tests snapshot the complete managed-state tree, including entry type, mode, bytes, and symlink target; CTK fixtures preserve each identity's declared key type so incompatible identities cannot masquerade as `p-256-ne`.
 - Task 3.4: Atomic recovery needs distinct fixtures for install-only rename failure versus install-and-rollback failure; selector, exported key, complete state tree, and retained backup are verified independently.
 - Task 3.5: Mutable CTK fixtures must filter exact deletions within raw SHA1/SSH listings rather than regenerate structured tables, or unrelated native identities disappear and target-only deletion tests become false positives.
+- Task 3.6: Generated-output policy is fail-closed: only anchored whole-clause prohibition templates exempt otherwise prohibited actions; broad natural-language negation lets unrelated guidance mask active key/secret commands.
