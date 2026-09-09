@@ -201,6 +201,15 @@ function expectedIdentityTableRows(identities) {
   }));
 }
 
+function withoutRawListingSelector(listing, selector, caseInsensitive = false) {
+  const expected = caseInsensitive ? selector.toLowerCase() : selector;
+  return listing.split(/(?<=\n)/).filter((line) => {
+    const observed = line.trim().split(/\s+/)[1];
+    if (!observed) return true;
+    return (caseInsensitive ? observed.toLowerCase() : observed) !== expected;
+  }).join('');
+}
+
 function assertHarnessResult(root) {
   const results = readJsonLines(root, harnessResultsFile);
   assert.equal(results.length, 1, 'one harness result is recorded per hang execution');
@@ -429,6 +438,91 @@ test('worker-tree cleanup tolerates a process group reaped between repeated clea
   assert.equal(groupKillCount, 2, 'cleanup remains idempotent when the group disappears');
 });
 
+test('raw identity deletion preserves every unrelated SHA1 and SSH listing row', () => {
+  const summary = fixtureSummary();
+  const bundle = buildFixtureBundle();
+  const scAuth = path.join(bundle, 'native/sc-auth/bin/fixture-sc-auth');
+  const identityListArgs = ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'];
+  const sshListArgs = ['list-ctk-identities', '-t', 'ssh'];
+  const target = summary.scenarios.rawTableVariants.identitySnapshots.after[0];
+  const rawSshListing = [
+    '  Key Type  Public Key Hash Prot Label Common Name Email Address Valid To Valid  ',
+    '  p-384-ne SHA256:fixturep384ne bio fixture-p384 ssh p384@example.test 23.11.26, 17:09 YES  ',
+    ' p-384 SHA256:fixturep384 none fixture-p384 ssh 23.11.26, 17:09 YES ',
+    ' p-521 SHA256:fixturep521 none fixture-p521 ssh 23.11.26, 17:09 YES ',
+    ' p-256 SHA256:fixturep256 none fixture-p256 ssh 23.11.26, 17:09 YES ',
+    ` p-256-ne ${target.sshFingerprint} none ${target.label} ssh 23.11.26, 17:09 YES `,
+  ].join('\r\n') + '\r\n';
+  const expectedSha1 = withoutRawListingSelector(
+    summary.scenarios.rawTableVariants.rawIdentityListings.after,
+    target.hash,
+    true,
+  );
+  const expectedSsh = withoutRawListingSelector(rawSshListing, target.sshFingerprint);
+
+  for (const sshListingSource of ['rawSshIdentityListings', 'sshIdentityListings']) {
+    const scenario = {
+      ...summary.scenarios.rawTableVariants,
+      rawSshIdentityListings: {},
+      sshIdentityListings: {},
+      [sshListingSource]: { after: rawSshListing },
+    };
+    const root = createScenarioRoot(scenario);
+    try {
+      const env = fixtureEnvironment(root);
+      fs.writeFileSync(path.join(root, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+      assert.equal(childProcess.execFileSync(scAuth, identityListArgs, { env, encoding: 'utf8' }), scenario.rawIdentityListings.after);
+      assert.equal(childProcess.execFileSync(scAuth, sshListArgs, { env, encoding: 'utf8' }), rawSshListing);
+
+      childProcess.execFileSync(
+        scAuth,
+        ['delete-ctk-identity', '-h', target.hash],
+        { env, encoding: 'utf8' },
+      );
+
+      assert.equal(
+        childProcess.execFileSync(scAuth, identityListArgs, { env, encoding: 'utf8' }),
+        expectedSha1,
+        `${sshListingSource} deletion preserves unrelated raw SHA1 rows byte-for-byte`,
+      );
+      assert.equal(
+        childProcess.execFileSync(scAuth, sshListArgs, { env, encoding: 'utf8' }),
+        expectedSsh,
+        `${sshListingSource} deletion preserves unrelated SSH rows byte-for-byte`,
+      );
+      const deleteCall = readJsonLines(root, 'calls.jsonl')
+        .find((call) => call.tool === 'sc_auth' && call.operation === 'delete');
+      assert.deepEqual(deleteCall.argv, ['delete-ctk-identity', '-h', target.hash]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const ambiguousRoot = createScenarioRoot({
+    ...summary.scenarios.rawTableVariants,
+    rawSshIdentityListings: { after: rawSshListing },
+  });
+  try {
+    const env = fixtureEnvironment(ambiguousRoot);
+    fs.writeFileSync(path.join(ambiguousRoot, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+    childProcess.execFileSync(
+      scAuth,
+      ['delete-ctk-identity', '-h', '3333333333333333333333333333333333333333'],
+      { env, encoding: 'utf8' },
+    );
+    const ambiguousSshListing = childProcess.spawnSync(
+      scAuth,
+      sshListArgs,
+      { env, encoding: 'utf8' },
+    );
+    assert.notEqual(ambiguousSshListing.status, 0, 'duplicate labels cannot guess a hash-to-fingerprint mapping');
+    assert.equal(ambiguousSshListing.stdout, '');
+    assert.match(ambiguousSshListing.stderr, /deleted CTK hash label is ambiguous/);
+  } finally {
+    fs.rmSync(ambiguousRoot, { recursive: true, force: true });
+  }
+});
+
 test('signing fixtures expose isolated native scenarios and inspectable calls', async () => {
   const summary = fixtureSummary();
   const identityListArgs = ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'];
@@ -439,6 +533,7 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     'oneResidentExport',
     'multipleResidentExports',
     'multipleResidentExportsExpectedSecond',
+    'rotation',
     'ambiguousResidentFingerprint',
     'mismatchedExpectedFingerprint',
     'stubKeyMismatch',
@@ -622,6 +717,54 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     );
   } finally {
     fs.rmSync(identityRoot, { recursive: true, force: true });
+  }
+
+  const deletionRoot = createScenarioRoot(summary.scenarios.rotation);
+  try {
+    const deletionEnv = fixtureEnvironment(deletionRoot);
+    const [targetIdentity, replacementIdentity] = summary.scenarios.rotation.identitySnapshots.after;
+    fs.writeFileSync(path.join(deletionRoot, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+    const beforeDeletion = parseIdentityTable(childProcess.execFileSync(
+      scAuth,
+      identityListArgs,
+      { env: deletionEnv, encoding: 'utf8' },
+    ));
+    assert.deepEqual(
+      beforeDeletion,
+      expectedIdentityTableRows([targetIdentity, replacementIdentity]),
+    );
+
+    const deleteAll = childProcess.spawnSync(
+      scAuth,
+      ['delete-all-ctk-identities'],
+      { env: deletionEnv, encoding: 'utf8' },
+    );
+    assert.equal(deleteAll.status, 64, 'fixture refuses delete-all instead of masking unsafe callers');
+
+    childProcess.execFileSync(
+      scAuth,
+      ['delete-ctk-identity', '-h', targetIdentity.hash],
+      { env: deletionEnv, encoding: 'utf8' },
+    );
+    const afterDeletion = parseIdentityTable(childProcess.execFileSync(
+      scAuth,
+      identityListArgs,
+      { env: deletionEnv, encoding: 'utf8' },
+    ));
+    assert.deepEqual(
+      afterDeletion,
+      expectedIdentityTableRows([replacementIdentity]),
+      'exact deletion removes only the requested CTK identity from subsequent listings',
+    );
+    const deleteCalls = readJsonLines(deletionRoot, 'calls.jsonl')
+      .filter((call) => call.tool === 'sc_auth' && call.operation === 'delete');
+    assert.deepEqual(deleteCalls.at(-1).argv, [
+      'delete-ctk-identity',
+      '-h',
+      targetIdentity.hash,
+    ]);
+  } finally {
+    fs.rmSync(deletionRoot, { recursive: true, force: true });
   }
 
   const incompatibleIdentity = {

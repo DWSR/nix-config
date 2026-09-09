@@ -102,7 +102,7 @@
   - _Boundary: Test Harness_
   - _Depends: 2.3, 2.4, 3.3_
 
-- [ ] 3.5 Test rotation and decommission safety
+- [x] 3.5 Test rotation and decommission safety
   - Cover additive candidates, registration-before-selection state, failed-rotation rollback, exact deletion, active-identity refusal, and delete-all prohibition.
   - Complete when rotation never changes the active declaration and decommission removes only a confirmed inactive target.
   - _Requirements: 7.3, 8.1, 8.2, 8.3, 8.4, 8.6, 8.7, 9.3_
@@ -267,3 +267,4 @@
 - Task 3.2: Enforce timeout contracts with both an exact packaged `--kill-after=1s 20s` assertion and a 22-second wall-clock ceiling; timing tolerance alone cannot prove the configured deadline.
 - Task 3.3: Lifecycle refusal tests snapshot the complete managed-state tree, including entry type, mode, bytes, and symlink target; CTK fixtures preserve each identity's declared key type so incompatible identities cannot masquerade as `p-256-ne`.
 - Task 3.4: Atomic recovery needs distinct fixtures for install-only rename failure versus install-and-rollback failure; selector, exported key, complete state tree, and retained backup are verified independently.
+- Task 3.5: Mutable CTK fixtures must filter exact deletions within raw SHA1/SSH listings rather than regenerate structured tables, or unrelated native identities disappear and target-only deletion tests become false positives.

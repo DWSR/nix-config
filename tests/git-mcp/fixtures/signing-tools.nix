@@ -17,6 +17,7 @@ let
        fixture_scenario="$fixture_root/scenario.json"
        fixture_calls="$fixture_root/calls.jsonl"
        fixture_events="$fixture_root/events.jsonl"
+       fixture_deleted_hashes="$fixture_root/deleted-ctk-hashes"
        fixture_allowed_signers=""
 
       if [[ ! -r "$fixture_scenario" ]]; then
@@ -112,6 +113,115 @@ let
       return 1
     }
 
+    fixture_deleted_hashes_json() {
+      if [[ -r "$fixture_deleted_hashes" ]]; then
+        jq -Rsc 'split("\n") | map(select(length > 0) | ascii_downcase) | unique' \
+          "$fixture_deleted_hashes"
+      else
+        printf '[]\n'
+      fi
+    }
+
+    fixture_deleted_ssh_fingerprints_json() {
+      local snapshot="$1"
+      local deleted_hashes="$2"
+      local listing_field="$3"
+
+      jq -ce \
+        --arg snapshot "$snapshot" \
+        --argjson deleted_hashes "$deleted_hashes" \
+        --arg listing_field "$listing_field" '
+        def table_rows:
+          split("\n")
+          | map(
+              try capture(
+                "^[[:space:]]*(?<keyType>[^[:space:]]+)[[:space:]]+(?<selector>[^[:space:]\\r]+)[[:space:]]+(?<protection>[^[:space:]]+)[[:space:]]+(?<label>[^[:space:]]+)"
+              ) catch null
+            )
+          | map(select(. != null));
+        (if (.rawIdentityListings[$snapshot] // null) != null
+          then [
+            .rawIdentityListings[$snapshot]
+            | table_rows[]
+            | select(.selector | test("^[0-9A-Fa-f]{40}$"))
+            | {hash: (.selector | ascii_downcase), label}
+          ]
+          else [
+            .identitySnapshots[$snapshot] // []
+            | .[]
+            | {hash: (.hash | ascii_downcase), label}
+          ]
+          end) as $hash_rows
+        | [
+            .[$listing_field][$snapshot]
+            | table_rows[]
+            | select(.selector | test("^SHA256:[A-Za-z0-9+/=]+$"))
+            | {fingerprint: .selector, label}
+          ] as $ssh_rows
+        | [
+            $deleted_hashes[] as $deleted_hash
+            | [$hash_rows[] | select(.hash == $deleted_hash)] as $target_hash_rows
+            | if ($target_hash_rows | length) != 1
+              then error("deleted CTK hash must have exactly one SHA1 row")
+              else $target_hash_rows[0].label
+              end as $target_label
+            | if ([$hash_rows[] | select(.label == $target_label)] | length) != 1
+              then error("deleted CTK hash label is ambiguous in the SHA1 listing")
+              else .
+              end
+            | [$ssh_rows[] | select(.label == $target_label)] as $target_ssh_rows
+            | if ($target_ssh_rows | length) != 1
+              then error("deleted CTK hash label must have exactly one SSH row")
+              else $target_ssh_rows[0].fingerprint
+              end as $target_fingerprint
+            | if ([$ssh_rows[] | select(.fingerprint == $target_fingerprint)] | length) != 1
+              then error("deleted CTK hash fingerprint is ambiguous in the SSH listing")
+              else $target_fingerprint
+              end
+          ]
+      ' "$fixture_scenario"
+    }
+
+    fixture_filter_raw_listing() {
+      local listing_field="$1"
+      local snapshot="$2"
+      local selectors="$3"
+      local selector_kind="$4"
+
+      jq -j \
+        --arg listing_field "$listing_field" \
+        --arg snapshot "$snapshot" \
+        --argjson selectors "$selectors" \
+        --arg selector_kind "$selector_kind" '
+        def row_selector:
+          (try capture("^[[:space:]]*[^[:space:]]+[[:space:]]+(?<selector>[^[:space:]\\r]+)").selector catch null)
+          | if . == null then null
+            elif $selector_kind == "hash" then ascii_downcase
+            else .
+            end;
+        .[$listing_field][$snapshot]
+        | endswith("\n") as $has_trailing_newline
+        | split("\n") as $lines
+        | [
+            $lines[]
+            | row_selector as $selector
+            | select($selector != null and (($selectors | index($selector)) != null))
+            | $selector
+          ] as $matches
+        | if ($matches | length) != ($selectors | length)
+          then error("raw identity listing does not contain exactly one row per deleted selector")
+          else
+            $lines
+            | map(
+                . as $line
+                | ($line | row_selector) as $selector
+                | select($selector == null or (($selectors | index($selector)) == null))
+              )
+            | join("\n") + (if $has_trailing_newline then "\n" else "" end)
+          end
+      ' "$fixture_scenario"
+    }
+
      fixture_hang() {
        local phase="$1"
        shift
@@ -147,20 +257,27 @@ let
 
     fixture_identity_snapshot() {
       local snapshot="before"
+      local deleted_hashes="[]"
       if [[ -r "$fixture_root/identity-snapshot" ]]; then
         snapshot="$(<"$fixture_root/identity-snapshot")"
       fi
+      deleted_hashes="$(fixture_deleted_hashes_json)"
 
       if jq -e --arg snapshot "$snapshot" \
         '.rawIdentityListings // {} | .[$snapshot] != null' "$fixture_scenario" >/dev/null; then
-        jq -j --arg snapshot "$snapshot" \
-          '.rawIdentityListings[$snapshot]' "$fixture_scenario"
+        if [[ "$deleted_hashes" == "[]" ]]; then
+          jq -j --arg snapshot "$snapshot" \
+            '.rawIdentityListings[$snapshot]' "$fixture_scenario"
+        else
+          fixture_filter_raw_listing rawIdentityListings "$snapshot" "$deleted_hashes" hash
+        fi
         return
       fi
 
       printf '%s\n' 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid'
-      jq -r --arg snapshot "$snapshot" \
-        '.identitySnapshots[$snapshot] // [] | .[] |
+      jq -r --arg snapshot "$snapshot" --argjson deleted_hashes "$deleted_hashes" \
+        '.identitySnapshots[$snapshot] // [] | .[] | . as $identity |
+          select(($deleted_hashes | index(($identity.hash | ascii_downcase))) == null) |
           ([
             (.keyType // "p-256-ne"),
             (.hash | ascii_upcase),
@@ -177,27 +294,49 @@ let
 
     fixture_ssh_identity_snapshot() {
       local snapshot="before"
+      local deleted_hashes="[]"
+      local deleted_fingerprints="[]"
       if [[ -r "$fixture_root/identity-snapshot" ]]; then
         snapshot="$(<"$fixture_root/identity-snapshot")"
       fi
+      deleted_hashes="$(fixture_deleted_hashes_json)"
 
       if jq -e --arg snapshot "$snapshot" \
         '.sshIdentityListings // {} | .[$snapshot] != null' "$fixture_scenario" >/dev/null; then
-        jq -j --arg snapshot "$snapshot" \
-          '.sshIdentityListings[$snapshot]' "$fixture_scenario"
+        if [[ "$deleted_hashes" == "[]" ]]; then
+          jq -j --arg snapshot "$snapshot" \
+            '.sshIdentityListings[$snapshot]' "$fixture_scenario"
+        else
+          deleted_fingerprints="$(
+            fixture_deleted_ssh_fingerprints_json \
+              "$snapshot" "$deleted_hashes" sshIdentityListings
+          )"
+          fixture_filter_raw_listing \
+            sshIdentityListings "$snapshot" "$deleted_fingerprints" fingerprint
+        fi
         return
       fi
 
       if jq -e --arg snapshot "$snapshot" \
         '.rawSshIdentityListings // {} | .[$snapshot] != null' "$fixture_scenario" >/dev/null; then
-        jq -j --arg snapshot "$snapshot" \
-          '.rawSshIdentityListings[$snapshot]' "$fixture_scenario"
+        if [[ "$deleted_hashes" == "[]" ]]; then
+          jq -j --arg snapshot "$snapshot" \
+            '.rawSshIdentityListings[$snapshot]' "$fixture_scenario"
+        else
+          deleted_fingerprints="$(
+            fixture_deleted_ssh_fingerprints_json \
+              "$snapshot" "$deleted_hashes" rawSshIdentityListings
+          )"
+          fixture_filter_raw_listing \
+            rawSshIdentityListings "$snapshot" "$deleted_fingerprints" fingerprint
+        fi
         return
       fi
 
       printf '%s\n' 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid'
-      jq -r --arg snapshot "$snapshot" \
-        '.identitySnapshots[$snapshot] // [] | .[] |
+      jq -r --arg snapshot "$snapshot" --argjson deleted_hashes "$deleted_hashes" \
+        '.identitySnapshots[$snapshot] // [] | .[] | . as $identity |
+          select(($deleted_hashes | index(($identity.hash | ascii_downcase))) == null) |
           ([
             (.keyType // "p-256-ne"),
             (.sshFingerprint // ""),
@@ -371,6 +510,12 @@ let
           printf 'after\n' > "$fixture_root/identity-snapshot"
           ;;
         delete)
+          if (( $# != 3 )) || [[ "$1" != "delete-ctk-identity" || "$2" != "-h" \
+            || ! "$3" =~ ^[0-9a-f]{40}$ ]]; then
+            printf 'fixture-sc-auth: deletion requires delete-ctk-identity -h <hash>\n' >&2
+            exit 64
+          fi
+          printf '%s\n' "$3" >> "$fixture_deleted_hashes"
           printf 'delete-complete\n'
           ;;
         *)

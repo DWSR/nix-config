@@ -233,6 +233,23 @@ function readCalls(root) {
     .map((line) => JSON.parse(line));
 }
 
+function fixtureIdentityHashes(root) {
+  const listing = childProcess.execFileSync(
+    summary.nativeToolPaths.scAuth,
+    ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
+    {
+      env: fixtureEnvironment(root),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+  return listing.trim().split('\n').slice(1)
+    .filter(Boolean)
+    .map((line) => line.trim().split(/\s+/)[1].toLowerCase())
+    .sort();
+}
+
 function managedIdentities(root) {
   const identities = path.join(root.stateHome, 'git-mcp-secure-enclave-signing', 'identities');
   if (!fs.existsSync(identities)) return [];
@@ -1154,9 +1171,11 @@ test('stages additive rotation as a distinct unregistered candidate without chan
   const activeIdentity = scenario.identitySnapshots.after[0];
   const candidateIdentity = scenario.identitySnapshots.after[1];
   const active = installEnrollment(root, scenario, { identitySnapshot: 'before' });
+  installAcceptance(active.stateDir, active.identity.hash);
   const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-  const activeStubBefore = fs.readFileSync(active.stubPath, 'utf8');
-  const activePublicBefore = fs.readFileSync(active.publicPath, 'utf8');
+  const configTreeBefore = snapshotTree(root.configHome);
+  const activeTreeBefore = snapshotTree(active.identityDir);
+  const activeAcceptanceBefore = snapshotTree(acceptancePath(active.stateDir, active.identity.hash));
   try {
     const result = runAdmin(
       adminCommand,
@@ -1174,8 +1193,16 @@ test('stages additive rotation as a distinct unregistered candidate without chan
     });
     assert.notEqual(candidateIdentity.hash, activeIdentity.hash, 'rotation uses a new CTK hash');
     assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-    assert.equal(fs.readFileSync(active.stubPath, 'utf8'), activeStubBefore);
-    assert.equal(fs.readFileSync(active.publicPath, 'utf8'), activePublicBefore);
+    const markerAfter = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
+    assert.equal(markerAfter.ctkPublicKeyHash, activeIdentity.hash, 'active identity remains selected');
+    assert.equal(markerAfter.githubSigningKeyRegistered, true, 'active declaration remains registered');
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore, 'rotation never changes active config');
+    assert.deepEqual(snapshotTree(active.identityDir), activeTreeBefore, 'rotation preserves the complete active identity tree');
+    assert.deepEqual(
+      snapshotTree(acceptancePath(active.stateDir, active.identity.hash)),
+      activeAcceptanceBefore,
+      'rotation preserves active acceptance evidence',
+    );
 
     const candidateDir = path.join(
       root.stateHome,
@@ -1231,6 +1258,7 @@ test('rotation preserves the active enrollment when candidate creation or verifi
       name: 'candidate verification failure',
       scenario: summary.scenarios.rotationVerificationFailure,
       pattern: /local signing|verification|orphan/i,
+      reportsOrphan: true,
     },
   ];
 
@@ -1238,9 +1266,9 @@ test('rotation preserves the active enrollment when candidate creation or verifi
     const root = createScenarioRoot(rotationCase.scenario);
     const active = installEnrollment(root, rotationCase.scenario, { identitySnapshot: 'before' });
     const candidateIdentity = rotationCase.scenario.identitySnapshots.after[1];
-    const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-    const activeStubBefore = fs.readFileSync(active.stubPath, 'utf8');
-    const activePublicBefore = fs.readFileSync(active.publicPath, 'utf8');
+    installAcceptance(active.stateDir, active.identity.hash);
+    const stateTreeBefore = snapshotTree(active.stateDir);
+    const configTreeBefore = snapshotTree(root.configHome);
     try {
       const result = runAdmin(
         adminCommand,
@@ -1249,11 +1277,21 @@ test('rotation preserves the active enrollment when candidate creation or verifi
       );
 
       assert.equal(result.status, 1, rotationCase.name);
+      assert.equal(result.stdout, '', `${rotationCase.name} emits no replacement declaration`);
       assert.match(result.stderr, rotationCase.pattern, rotationCase.name);
-      assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-      assert.equal(fs.readFileSync(active.stubPath, 'utf8'), activeStubBefore);
-      assert.equal(fs.readFileSync(active.publicPath, 'utf8'), activePublicBefore);
-      assert.deepEqual(managedIdentities(root), [active.identity.hash]);
+      if (rotationCase.reportsOrphan) {
+        assert.match(result.stderr, new RegExp(`orphan.*${candidateIdentity.hash}`));
+      }
+      assert.deepEqual(
+        snapshotTree(active.stateDir),
+        stateTreeBefore,
+        `${rotationCase.name} preserves the complete managed state tree`,
+      );
+      assert.deepEqual(
+        snapshotTree(root.configHome),
+        configTreeBefore,
+        `${rotationCase.name} preserves the active declaration tree`,
+      );
       assert.equal(
         fs.existsSync(path.join(
           root.stateHome,
@@ -1271,13 +1309,61 @@ test('rotation preserves the active enrollment when candidate creation or verifi
   }
 });
 
+test('rotation atomic-install failure cleans staging and preserves the complete active enrollment', () => {
+  const scenario = summary.scenarios.rotation;
+  const root = createScenarioRoot(scenario);
+  const active = installEnrollment(root, scenario, { identitySnapshot: 'before' });
+  const candidateIdentity = scenario.identitySnapshots.after[1];
+  installAcceptance(active.stateDir, active.identity.hash);
+  const stateTreeBefore = snapshotTree(active.stateDir);
+  const configTreeBefore = snapshotTree(root.configHome);
+  try {
+    const result = runAdmin(
+      renameFailureAdminCommand,
+      ['rotate', '--label', candidateIdentity.label],
+      {
+        ...fixtureEnvironment(root),
+        GIT_MCP_SIGNING_FAIL_MV_AT: '1',
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '', 'failed atomic install emits no replacement declaration');
+    assert.match(result.stderr, /cannot atomically install rotation artifacts/i);
+    assert.match(result.stderr, new RegExp(`orphan.*${candidateIdentity.hash}`));
+    assert.deepEqual(snapshotTree(active.stateDir), stateTreeBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
+    assert.deepEqual(
+      fs.readdirSync(path.join(active.stateDir, 'identities'))
+        .filter((entry) => entry.startsWith('.rotate.')),
+      [],
+      'failed rotation leaves no staging directory',
+    );
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.deepEqual(
+      fixtureIdentityHashes(root),
+      [active.identity.hash, candidateIdentity.hash].sort(),
+      'created but uninstalled candidate remains visible for explicit orphan cleanup',
+    );
+    assert.equal(
+      readCalls(root.root).filter(
+        (call) => call.tool === 'ssh-keygen' && call.operation === 'verify',
+      ).length,
+      1,
+      'atomic install is attempted only after candidate verification',
+    );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
 test('decommission refuses the identity selected by the active marker before native deletion', () => {
   const scenario = summary.scenarios.oneResidentExport;
   const root = createScenarioRoot(scenario);
   const enrollment = installEnrollment(root, scenario);
   installAcceptance(enrollment.stateDir, enrollment.identity.hash);
-  const markerBefore = fs.readFileSync(activeMarkerPath(root), 'utf8');
-  const identityEntriesBefore = fs.readdirSync(enrollment.identityDir).sort();
+  const stateTreeBefore = snapshotTree(enrollment.stateDir);
+  const configTreeBefore = snapshotTree(root.configHome);
   try {
     const result = runAdmin(
       adminCommand,
@@ -1288,9 +1374,8 @@ test('decommission refuses the identity selected by the active marker before nat
     assert.equal(result.status, 1);
     assert.match(result.stderr, /active enrollment marker .* selects target|refus/i);
     assert.deepEqual(readCalls(root.root), [], 'active target is refused before native calls');
-    assert.equal(fs.readFileSync(activeMarkerPath(root), 'utf8'), markerBefore);
-    assert.deepEqual(fs.readdirSync(enrollment.identityDir).sort(), identityEntriesBefore);
-    assert.equal(fs.existsSync(acceptancePath(enrollment.stateDir, enrollment.identity.hash)), true);
+    assert.deepEqual(snapshotTree(enrollment.stateDir), stateTreeBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
@@ -1321,6 +1406,11 @@ test('decommission removes only an exact inactive identity with an absent or rep
       if (markerMode === 'absent') fs.rmSync(activeMarkerPath(root));
       installAcceptance(stateDir, target.hash);
       installAcceptance(stateDir, replacement.hash);
+      const replacementDir = path.join(stateDir, 'identities', replacement.hash);
+      const replacementAcceptance = acceptancePath(stateDir, replacement.hash);
+      const configTreeBefore = snapshotTree(root.configHome);
+      const replacementTreeBefore = snapshotTree(replacementDir);
+      const replacementAcceptanceBefore = snapshotTree(replacementAcceptance);
 
       const result = runAdmin(
         adminCommand,
@@ -1333,16 +1423,19 @@ test('decommission removes only an exact inactive identity with an absent or rep
       assert.match(result.stdout, /platform.*identity|CTK.*identity.*cleanup/i, `${markerMode} platform guidance`);
       assert.equal(fs.existsSync(targetDir), false, `${markerMode} removes the requested identity directory`);
       assert.equal(fs.existsSync(acceptancePath(stateDir, target.hash)), false, `${markerMode} removes target acceptance`);
-      assert.equal(
-        fs.existsSync(path.join(stateDir, 'identities', replacement.hash)),
-        true,
-        `${markerMode} preserves the replacement identity directory`,
+      assert.deepEqual(
+        snapshotTree(replacementDir),
+        replacementTreeBefore,
+        `${markerMode} preserves the complete replacement identity tree`,
       );
-      assert.equal(
-        fs.existsSync(acceptancePath(stateDir, replacement.hash)),
-        true,
-        `${markerMode} preserves the replacement acceptance record`,
+      assert.deepEqual(
+        snapshotTree(replacementAcceptance),
+        replacementAcceptanceBefore,
+        `${markerMode} preserves the exact replacement acceptance record`,
       );
+      assert.deepEqual(fs.readdirSync(path.join(stateDir, 'identities')), [replacement.hash]);
+      assert.deepEqual(fs.readdirSync(path.join(stateDir, 'acceptance')), [`${replacement.hash}.json`]);
+      assert.deepEqual(snapshotTree(root.configHome), configTreeBefore, `${markerMode} marker state is unchanged`);
       if (markerMode === 'replacement') {
         const marker = JSON.parse(fs.readFileSync(activeMarkerPath(root), 'utf8'));
         assert.equal(marker.ctkPublicKeyHash, replacement.hash, 'replacement remains selected');
@@ -1350,6 +1443,11 @@ test('decommission removes only an exact inactive identity with an absent or rep
         assert.equal(fs.existsSync(activeMarkerPath(root)), false, 'absent marker remains absent');
       }
       assert.deepEqual(fs.readdirSync(root.tempHome), [], `${markerMode} cleans temporary data`);
+      assert.deepEqual(
+        fixtureIdentityHashes(root),
+        [replacement.hash],
+        `${markerMode} removes only the confirmed native CTK identity`,
+      );
 
       const calls = readCalls(root.root);
       const deleteCalls = calls.filter((call) => call.tool === 'sc_auth' && call.operation === 'delete');
@@ -1400,8 +1498,8 @@ test('decommission rejects malformed or mismatched hash/fingerprint confirmation
       );
       installLocalIdentity(active.stateDir, target, targetExport);
       installAcceptance(active.stateDir, target.hash);
-      const stateBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
-      const acceptanceBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+      const stateTreeBefore = snapshotTree(active.stateDir);
+      const configTreeBefore = snapshotTree(root.configHome);
 
       const result = runAdmin(
         adminCommand,
@@ -1412,14 +1510,14 @@ test('decommission rejects malformed or mismatched hash/fingerprint confirmation
       assert.equal(result.status, 1, decommissionCase.name);
       assert.match(result.stderr, decommissionCase.pattern, decommissionCase.name);
       assert.deepEqual(
-        fs.readdirSync(path.join(active.stateDir, 'identities')).sort(),
-        stateBefore,
-        `${decommissionCase.name} preserves identity state`,
+        snapshotTree(active.stateDir),
+        stateTreeBefore,
+        `${decommissionCase.name} preserves the complete managed state tree`,
       );
       assert.deepEqual(
-        fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(),
-        acceptanceBefore,
-        `${decommissionCase.name} preserves acceptance state`,
+        snapshotTree(root.configHome),
+        configTreeBefore,
+        `${decommissionCase.name} preserves the active declaration tree`,
       );
       assert.deepEqual(fs.readdirSync(root.tempHome), [], `${decommissionCase.name} cleans temporary data`);
       assert.equal(
@@ -1451,8 +1549,8 @@ test('decommission preserves valid local state when exact native deletion fails'
     );
     installLocalIdentity(active.stateDir, target, targetExport);
     installAcceptance(active.stateDir, target.hash);
-    const identitiesBefore = fs.readdirSync(path.join(active.stateDir, 'identities')).sort();
-    const acceptanceBefore = fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort();
+    const stateTreeBefore = snapshotTree(active.stateDir);
+    const configTreeBefore = snapshotTree(root.configHome);
 
     const result = runAdmin(
       adminCommand,
@@ -1462,8 +1560,8 @@ test('decommission preserves valid local state when exact native deletion fails'
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, /deletion failed|local state was preserved/i);
-    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'identities')).sort(), identitiesBefore);
-    assert.deepEqual(fs.readdirSync(path.join(active.stateDir, 'acceptance')).sort(), acceptanceBefore);
+    assert.deepEqual(snapshotTree(active.stateDir), stateTreeBefore);
+    assert.deepEqual(snapshotTree(root.configHome), configTreeBefore);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
     assert.equal(
       readCalls(root.root).filter((call) => call.tool === 'sc_auth' && call.operation === 'delete').length,
