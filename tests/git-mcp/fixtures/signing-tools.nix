@@ -17,6 +17,7 @@ let
        fixture_scenario="$fixture_root/scenario.json"
        fixture_calls="$fixture_root/calls.jsonl"
        fixture_events="$fixture_root/events.jsonl"
+       fixture_owned_processes="$fixture_root/owned-processes.jsonl"
        fixture_deleted_hashes="$fixture_root/deleted-ctk-hashes"
        fixture_allowed_signers=""
 
@@ -27,6 +28,44 @@ let
 
       mkdir -p "$fixture_root"
     }
+
+     fixture_record_ownership() {
+       local role="$1"
+       local pid="$2"
+       local expected_executable="$3"
+       local identity
+       local observed_pid
+       local process_group
+       local start_seconds
+       local start_microseconds
+       local executable
+       local identity_helper="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
+       local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+
+       if [[ -z "$identity_helper" || -z "$session_token" ]]; then
+         return 0
+       fi
+       if ! identity="$("$identity_helper" "$pid")"; then
+         printf 'failed to capture fixture process identity for %s pid %s\n' "$role" "$pid" >&2
+         return 70
+       fi
+       IFS=$'\t' read -r observed_pid process_group start_seconds start_microseconds executable <<< "$identity"
+       if [[ "$observed_pid" != "$pid" || "$executable" != "$expected_executable" ]]; then
+         printf 'fixture process identity mismatch for %s pid %s\n' "$role" "$pid" >&2
+         return 70
+       fi
+       jq -cn \
+         --argjson pid "$observed_pid" \
+         --argjson process_group "$process_group" \
+         --argjson start_seconds "$start_seconds" \
+         --argjson start_microseconds "$start_microseconds" \
+         --arg executable "$executable" \
+         --arg expected_executable "$expected_executable" \
+         --arg role "$role" \
+         --arg session_token "$session_token" \
+         '{pid: $pid, processGroup: $process_group, startSeconds: $start_seconds, startMicroseconds: $start_microseconds, executable: $executable, expectedExecutable: $expected_executable, role: $role, sessionToken: $session_token}' \
+         >> "$fixture_owned_processes"
+     }
 
      fixture_log_call() {
        local argv_json
@@ -47,6 +86,7 @@ let
          fi
        fi
 
+       fixture_record_ownership "$fixture_tool:$fixture_operation" "''${BASHPID:-$$}" "$BASH"
        argv_json="$(printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]')"
        jq -cn \
          --arg tool "$fixture_tool" \
@@ -236,10 +276,11 @@ let
         while :; do
           sleep 1
         done
-      ) &
-      child_pid="$!"
-      printf '%s %s\n' "$$" "$child_pid" >> "$fixture_root/process-tree"
-      trap ':' TERM INT HUP
+       ) &
+       child_pid="$!"
+       printf '%s %s\n' "$$" "$child_pid" >> "$fixture_root/process-tree"
+       fixture_record_ownership "$fixture_tool:$fixture_operation:descendant" "$child_pid" "$BASH"
+       trap ':' TERM INT HUP
       while :; do
         sleep 1
        done

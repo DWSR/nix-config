@@ -117,7 +117,7 @@
   - _Boundary: Test Harness_
   - _Depends: 2.7, 3.5_
 
-- [ ] 3.7 Test failed-signing upstream isolation
+- [x] 3.7 Test failed-signing upstream isolation
   - Start a local mcpproxy fixture with a failing signing-backed Git upstream and an independent sibling upstream.
   - Trigger signing failure, then prove mcpproxy remains healthy and the sibling still answers.
   - Complete when the regression test observes a Git error without daemon or sibling interruption.
