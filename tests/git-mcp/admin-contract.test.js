@@ -343,6 +343,27 @@ function declarationFrom(result) {
   return JSON.parse(lines.at(-1));
 }
 
+function snapshotTree(entryPath) {
+  const stat = fs.lstatSync(entryPath);
+  const mode = stat.mode & 0o777;
+  if (stat.isSymbolicLink()) {
+    return { type: 'symlink', mode, target: fs.readlinkSync(entryPath) };
+  }
+  if (stat.isFile()) {
+    return { type: 'file', mode, contents: fs.readFileSync(entryPath).toString('base64') };
+  }
+  if (stat.isDirectory()) {
+    const entries = Object.fromEntries(
+      fs.readdirSync(entryPath).sort().map((entry) => [
+        entry,
+        snapshotTree(path.join(entryPath, entry)),
+      ]),
+    );
+    return { type: 'directory', mode, entries };
+  }
+  return { type: 'other', mode };
+}
+
 function fileMode(filePath) {
   return fs.statSync(filePath).mode & 0o777;
 }
@@ -365,13 +386,14 @@ test.before(() => {
         cat > $out/bin/mv <<'EOF'
         #!/bin/sh
         counter="$GIT_MCP_SIGNING_FIXTURE_ROOT/mv-count"
+        fail_at="''\${GIT_MCP_SIGNING_FAIL_MV_AT:-2}"
         count=0
         if [ -r "$counter" ]; then
           count="$(cat "$counter")"
         fi
         count=$((count + 1))
         printf '%s\\n' "$count" > "$counter"
-        if [ "$count" -ge 2 ]; then
+        if [ "$count" -ge "$fail_at" ]; then
           printf '%s\\n' 'fixture forced mv failure' >&2
           exit 75
         fi
@@ -850,6 +872,13 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
   const root = createScenarioRoot(scenario);
   const identity = scenario.identitySnapshots.after[0];
   const residentExport = scenario.residentExports[0];
+  const expectedDeclaration = {
+    identityLabel: identity.label,
+    ctkPublicKeyHash: identity.hash,
+    sshPublicKey: residentExport.publicKey,
+    sshFingerprint: residentExport.fingerprint,
+    githubSigningKeyRegistered: false,
+  };
   try {
     const result = runAdmin(
       adminCommand,
@@ -858,13 +887,20 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(declarationFrom(result), {
-      identityLabel: identity.label,
-      ctkPublicKeyHash: identity.hash,
-      sshPublicKey: residentExport.publicKey,
-      sshFingerprint: residentExport.fingerprint,
-      githubSigningKeyRegistered: false,
-    });
+    assert.equal(
+      result.stdout,
+      `${JSON.stringify(expectedDeclaration)}\n`,
+      'bootstrap emits only the expected public enrollment declaration',
+    );
+    assert.equal(
+      result.stderr,
+      scenario.nativeOutput.stderr,
+      'bootstrap preserves the fixture native diagnostic on stderr',
+    );
+    assert.deepEqual(declarationFrom(result), expectedDeclaration);
+    const prohibitedOutput = /BEGIN OPENSSH PRIVATE KEY|id_ecdsa_sk_rk|Zml4dHVyZS1yZXNpZGVudC1oYW5kbGU|fixture-resident-handle|generic-password|op:\/\//i;
+    assert.doesNotMatch(result.stdout, prohibitedOutput, 'stdout contains only public declaration data');
+    assert.doesNotMatch(result.stderr, prohibitedOutput, 'stderr contains no private, stub, or secret material');
 
     const identityDir = path.join(
       root.stateHome,
@@ -897,6 +933,7 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
         ['ssh-keygen', 'resident-export'],
         ['provider', 'load'],
         ['ssh-keygen', 'stub'],
+        ['provider', 'load'],
         ['ssh-keygen', 'fingerprint'],
         ['ssh-keygen', 'sign'],
         ['provider', 'sign'],
@@ -927,6 +964,177 @@ test('bootstraps one CTK identity and atomically installs verified public artifa
     assert.ok(
       verifyCall.allowedSigners.includes(residentExport.publicKey),
       'local verification receives an allowed-signers artifact tied to the selected public key',
+    );
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('bootstraps the requested identity while preserving an unrelated CTK identity', () => {
+  const baseScenario = summary.scenarios.oneResidentExport;
+  const identity = baseScenario.identitySnapshots.after[0];
+  const unrelatedIdentity = summary.scenarios.rotation.identitySnapshots.after[1];
+  const scenario = cloneScenario(baseScenario, {
+    identitySnapshots: {
+      before: [unrelatedIdentity],
+      after: [unrelatedIdentity, identity],
+    },
+  });
+  const root = createScenarioRoot(scenario);
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['bootstrap', '--label', identity.label],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(declarationFrom(result).ctkPublicKeyHash, identity.hash);
+    assert.deepEqual(managedIdentities(root), [identity.hash]);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+
+    const calls = readCalls(root.root);
+    assert.equal(
+      calls.filter((call) => call.tool === 'sc_auth' && call.operation === 'create').length,
+      1,
+    );
+    assert.equal(
+      calls.some((call) => call.tool === 'sc_auth' && call.operation === 'delete'),
+      false,
+      'bootstrap never deletes the unrelated CTK identity',
+    );
+    const exportCall = calls.find(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'resident-export',
+    );
+    assert.equal(exportCall.selector, identity.hash, 'bootstrap selects only the new requested identity');
+    assert.notEqual(exportCall.selector, unrelatedIdentity.hash);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
+test('rejects unsafe CTK identity-set transitions before resident export', () => {
+  const baseScenario = summary.scenarios.oneResidentExport;
+  const identity = baseScenario.identitySnapshots.after[0];
+  const existingIdentity = summary.scenarios.rotation.identitySnapshots.after[1];
+  const cases = [
+    {
+      name: 'no new identity',
+      identitySnapshots: { before: [], after: [] },
+      diagnostic: /exactly one new identity hash/i,
+      orphanHashes: [],
+    },
+    {
+      name: 'multiple new identities',
+      identitySnapshots: { before: [], after: [identity, existingIdentity] },
+      diagnostic: /exactly one new identity hash/i,
+      orphanHashes: [identity.hash, existingIdentity.hash],
+    },
+    {
+      name: 'existing identity removed',
+      identitySnapshots: { before: [existingIdentity], after: [identity] },
+      diagnostic: /lost an existing identity/i,
+      orphanHashes: [identity.hash],
+    },
+    {
+      name: 'existing label changed',
+      identitySnapshots: {
+        before: [existingIdentity],
+        after: [{ ...existingIdentity, label: 'fixture-renamed-existing' }, identity],
+      },
+      diagnostic: /label changed for existing hash/i,
+      orphanHashes: [identity.hash],
+    },
+    {
+      name: 'wrong protection',
+      identitySnapshots: { before: [], after: [{ ...identity, protection: 'bio' }] },
+      diagnostic: /not p-256-ne with protection none/i,
+      orphanHashes: [identity.hash],
+    },
+    {
+      name: 'wrong key type',
+      identitySnapshots: { before: [], after: [{ ...identity, keyType: 'p-384-ne' }] },
+      diagnostic: /not p-256-ne with protection none/i,
+      orphanHashes: [identity.hash],
+    },
+    {
+      name: 'wrong new label',
+      identitySnapshots: {
+        before: [],
+        after: [{ ...identity, label: 'fixture-unrequested-label' }],
+      },
+      diagnostic: /instead of requested label/i,
+      orphanHashes: [identity.hash],
+    },
+  ];
+
+  for (const identitySetCase of cases) {
+    const scenario = cloneScenario(baseScenario, {
+      identitySnapshots: identitySetCase.identitySnapshots,
+    });
+    const root = createScenarioRoot(scenario);
+    try {
+      const result = runAdmin(
+        adminCommand,
+        ['bootstrap', '--label', identity.label],
+        fixtureEnvironment(root),
+      );
+
+      assert.equal(result.status, 1, identitySetCase.name);
+      assert.equal(result.stdout, '', `${identitySetCase.name} emits no declaration`);
+      assert.match(result.stderr, identitySetCase.diagnostic, identitySetCase.name);
+      for (const orphanHash of identitySetCase.orphanHashes) {
+        assert.match(result.stderr, new RegExp(`orphan.*${orphanHash}`), identitySetCase.name);
+      }
+      assert.deepEqual(managedIdentities(root), [], identitySetCase.name);
+      assert.equal(fs.existsSync(activeMarkerPath(root)), false, identitySetCase.name);
+      assert.deepEqual(fs.readdirSync(root.tempHome), [], identitySetCase.name);
+      const calls = readCalls(root.root);
+      assert.equal(
+        calls.filter((call) => call.tool === 'sc_auth' && call.operation === 'create').length,
+        1,
+        `${identitySetCase.name} performs one CTK create operation`,
+      );
+      assert.equal(
+        calls.some((call) => call.tool === 'ssh-keygen'),
+        false,
+        `${identitySetCase.name} fails before resident export`,
+      );
+    } finally {
+      fs.rmSync(root.root, { recursive: true, force: true });
+    }
+  }
+});
+
+test('reports a created orphan and leaves no partial state when atomic bootstrap installation fails', () => {
+  const scenario = summary.scenarios.oneResidentExport;
+  const root = createScenarioRoot(scenario);
+  const identity = scenario.identitySnapshots.after[0];
+  try {
+    const result = runAdmin(
+      renameFailureAdminCommand,
+      ['bootstrap', '--label', identity.label],
+      {
+        ...fixtureEnvironment(root),
+        GIT_MCP_SIGNING_FAIL_MV_AT: '1',
+      },
+    );
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '', 'failed bootstrap emits no enrollment declaration');
+    assert.match(result.stderr, /cannot atomically install resident artifacts/i);
+    assert.match(result.stderr, new RegExp(`orphan.*${identity.hash}`));
+    assert.deepEqual(managedIdentities(root), []);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
+    assert.equal(fs.readFileSync(path.join(root.root, 'mv-count'), 'utf8').trim(), '1');
+    assert.equal(
+      readCalls(root.root).filter(
+        (call) => call.tool === 'ssh-keygen' && call.operation === 'verify',
+      ).length,
+      1,
+      'atomic installation is attempted only after local verification',
     );
   } finally {
     fs.rmSync(root.root, { recursive: true, force: true });
@@ -1405,22 +1613,53 @@ test('decommission reports an absent target with bootstrap and recovery guidance
   }
 });
 
-test('refuses active or non-empty managed state before creating a CTK identity', () => {
-  for (const setup of ['active-marker', 'non-empty-identities']) {
+test('refuses active, symlinked, or non-empty managed state before creating a CTK identity', () => {
+  for (const setup of ['active-marker', 'symlinked-state', 'non-empty-identities']) {
     const root = createScenarioRoot(summary.scenarios.oneResidentExport);
     try {
-      const identities = path.join(
+      const stateDir = path.join(
         root.stateHome,
         'git-mcp-secure-enclave-signing',
+      );
+      const identities = path.join(
+        stateDir,
         'identities',
       );
+      let preservedBytes;
+      let preservedDirectory;
+      let preservedPath;
+      let preservedMode;
+      let symlinkTarget;
       if (setup === 'active-marker') {
+        preservedBytes = '{"identityLabel":"active"}\n';
+        preservedPath = activeMarkerPath(root);
+        preservedMode = 0o600;
         fs.mkdirSync(path.dirname(activeMarkerPath(root)), { recursive: true });
-        fs.writeFileSync(activeMarkerPath(root), '{"identityLabel":"active"}\n', { mode: 0o600 });
+        fs.writeFileSync(preservedPath, preservedBytes, { mode: preservedMode });
+        fs.chmodSync(preservedPath, preservedMode);
+      } else if (setup === 'symlinked-state') {
+        symlinkTarget = path.join(root.root, 'outside-state');
+        preservedDirectory = symlinkTarget;
+        preservedBytes = 'preserve symlink target\n';
+        preservedPath = path.join(symlinkTarget, 'existing-state');
+        preservedMode = 0o640;
+        fs.mkdirSync(symlinkTarget, { mode: 0o750 });
+        fs.chmodSync(symlinkTarget, 0o750);
+        fs.writeFileSync(preservedPath, preservedBytes, { mode: preservedMode });
+        fs.chmodSync(preservedPath, preservedMode);
+        fs.symlinkSync(symlinkTarget, stateDir, 'dir');
       } else {
-        fs.mkdirSync(identities, { recursive: true });
-        fs.writeFileSync(path.join(identities, 'existing-state'), 'preserve\n', { mode: 0o600 });
+        preservedDirectory = identities;
+        preservedBytes = 'preserve managed identity state\n';
+        preservedPath = path.join(identities, 'existing-state');
+        preservedMode = 0o640;
+        fs.mkdirSync(identities, { recursive: true, mode: 0o750 });
+        fs.chmodSync(identities, 0o750);
+        fs.writeFileSync(preservedPath, preservedBytes, { mode: preservedMode });
+        fs.chmodSync(preservedPath, preservedMode);
       }
+      const stateTreeBefore = snapshotTree(root.stateHome);
+      const symlinkTargetTreeBefore = symlinkTarget ? snapshotTree(symlinkTarget) : null;
 
       const result = runAdmin(
         adminCommand,
@@ -1429,14 +1668,34 @@ test('refuses active or non-empty managed state before creating a CTK identity',
       );
 
       assert.notEqual(result.status, 0, setup);
-      assert.match(result.stderr, /active marker|managed identities|decommission|recover/i);
-      assert.equal(readCalls(root.root).some((call) => call.operation === 'create'), false);
+      assert.equal(result.stdout, '', `${setup} emits no declaration`);
+      assert.match(result.stderr, /active.*marker|symlinked|managed identities|decommission|recover/i);
+      assert.deepEqual(readCalls(root.root), [], `${setup} refuses before all native calls`);
+      assert.deepEqual(
+        snapshotTree(root.stateHome),
+        stateTreeBefore,
+        `${setup} preserves the complete managed state tree`,
+      );
       assert.equal(fs.existsSync(activeMarkerPath(root)), setup === 'active-marker');
+      assert.equal(fs.readFileSync(preservedPath, 'utf8'), preservedBytes, `${setup} preserves exact bytes`);
+      assert.equal(fileMode(preservedPath), preservedMode, `${setup} preserves file mode`);
       if (setup === 'non-empty-identities') {
         assert.deepEqual(fs.readdirSync(identities), ['existing-state']);
+        assert.equal(fileMode(preservedDirectory), 0o750, 'managed identities mode is unchanged');
+      } else if (setup === 'symlinked-state') {
+        assert.equal(fs.lstatSync(stateDir).isSymbolicLink(), true);
+        assert.equal(fs.readlinkSync(stateDir), symlinkTarget, 'managed state symlink target is unchanged');
+        assert.equal(fileMode(preservedDirectory), 0o750, 'symlink target directory mode is unchanged');
+        assert.deepEqual(
+          snapshotTree(symlinkTarget),
+          symlinkTargetTreeBefore,
+          'symlink target tree is unchanged',
+        );
       } else {
+        assert.equal(fs.existsSync(stateDir), false, 'active-marker refusal does not create stateDir');
         assert.deepEqual(managedIdentities(root), []);
       }
+      assert.deepEqual(fs.readdirSync(root.tempHome), []);
     } finally {
       fs.rmSync(root.root, { recursive: true, force: true });
     }
@@ -1455,9 +1714,11 @@ test('reports the created orphan and installs nothing when local verification fa
     );
 
     assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, '', 'failed local verification emits no declaration');
     assert.match(result.stderr, new RegExp(`orphan.*${identity.hash}`));
     assert.match(result.stderr, /recover|delete|identity/i);
     assert.deepEqual(managedIdentities(root), []);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
     assert.equal(
       readCalls(root.root).some((call) => call.tool === 'ssh-keygen' && call.operation === 'verify'),
@@ -1705,6 +1966,12 @@ test('selects the export matching the independently listed CTK SSH fingerprint',
       expectedExport.stub,
     );
     assert.equal(fs.existsSync(path.join(identityDir, rejectedExport.stubName)), false);
+    assert.deepEqual(fs.readdirSync(identityDir).sort(), [
+      'id_ecdsa_sk_rk',
+      'id_ecdsa_sk_rk.pub',
+    ]);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
+    assert.deepEqual(fs.readdirSync(root.tempHome), []);
 
     const calls = readCalls(root.root);
     const fingerprintCalls = calls.filter((call) => call.operation === 'fingerprint');
@@ -1735,9 +2002,11 @@ test('rejects zero, mismatched, or ambiguous resident-public-key matches and pre
       );
 
       assert.notEqual(result.status, 0, scenarioName);
+      assert.equal(result.stdout, '', `${scenarioName} emits no declaration`);
       assert.match(result.stderr, /exactly one|ambiguous|resident.*public|export/i);
       assert.match(result.stderr, new RegExp(`orphan.*${identity.hash}`));
       assert.deepEqual(managedIdentities(root), []);
+      assert.equal(fs.existsSync(activeMarkerPath(root)), false);
       assert.deepEqual(fs.readdirSync(root.tempHome), []);
     } finally {
       fs.rmSync(root.root, { recursive: true, force: true });
@@ -1758,6 +2027,7 @@ test('reports a known or unknown orphan when post-create CTK state cannot be con
       );
 
       assert.notEqual(result.status, 0, scenarioName);
+      assert.equal(result.stdout, '', `${scenarioName} emits no declaration`);
       assert.match(result.stderr, /orphan CTK identity hash|unknown CTK orphan/i);
       assert.match(result.stderr, /sc_auth.*inspect|decommission|recover/i);
       assert.deepEqual(managedIdentities(root), []);
@@ -1797,8 +2067,10 @@ test('refuses a requested label that already existed before CTK creation', () =>
     );
 
     assert.notEqual(result.status, 0, result.stderr);
+    assert.equal(result.stdout, '', 'pre-existing label refusal emits no declaration');
     assert.match(result.stderr, /label.*already existed|existing.*label/i);
     assert.deepEqual(managedIdentities(root), []);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
     assert.deepEqual(fs.readdirSync(root.tempHome), []);
     const calls = readCalls(root.root);
     assert.equal(

@@ -162,7 +162,7 @@ let
       jq -r --arg snapshot "$snapshot" \
         '.identitySnapshots[$snapshot] // [] | .[] |
           ([
-            "p-256-ne",
+            (.keyType // "p-256-ne"),
             (.hash | ascii_upcase),
             (.protection // "none"),
             (.label // "ssh"),
@@ -199,7 +199,7 @@ let
       jq -r --arg snapshot "$snapshot" \
         '.identitySnapshots[$snapshot] // [] | .[] |
           ([
-            "p-256-ne",
+            (.keyType // "p-256-ne"),
             (.sshFingerprint // ""),
             (.protection // "none"),
             (.label // "ssh"),

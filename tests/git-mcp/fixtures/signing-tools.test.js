@@ -164,7 +164,10 @@ function parseIdentityTable(output) {
     const fields = line.split(/\s+/);
     assert.equal(fields.length, 8, `documented CTK row has eight populated fields: ${line}`);
     const [keyType, hash, protection, label, commonName, validToDate, validToTime, valid] = fields;
-    assert.equal(keyType, 'p-256-ne');
+    assert.ok(
+      ['p-256', 'p-256-ne', 'p-384', 'p-384-ne', 'p-521'].includes(keyType),
+      `documented CTK row has a supported key type: ${line}`,
+    );
     assert.match(hash, /^[0-9A-F]{40}$/);
     assert.ok(['bio', 'none'].includes(protection));
     assert.ok(label);
@@ -187,7 +190,7 @@ function parseIdentityTable(output) {
 
 function expectedIdentityTableRows(identities) {
   return identities.map((identity) => ({
-    keyType: 'p-256-ne',
+    keyType: identity.keyType || 'p-256-ne',
     hash: identity.hash,
     protection: identity.protection || 'none',
     label: identity.label,
@@ -619,6 +622,30 @@ test('signing fixtures expose isolated native scenarios and inspectable calls', 
     );
   } finally {
     fs.rmSync(identityRoot, { recursive: true, force: true });
+  }
+
+  const incompatibleIdentity = {
+    ...summary.scenarios.oneResidentExport.identitySnapshots.after[0],
+    keyType: 'p-384-ne',
+  };
+  const incompatibleRoot = createScenarioRoot({
+    ...summary.scenarios.oneResidentExport,
+    identitySnapshots: { before: [], after: [incompatibleIdentity] },
+  });
+  try {
+    fs.writeFileSync(path.join(incompatibleRoot, 'identity-snapshot'), 'after\n', { mode: 0o600 });
+    const incompatibleRows = parseIdentityTable(childProcess.execFileSync(
+      scAuth,
+      identityListArgs,
+      { env: fixtureEnvironment(incompatibleRoot), encoding: 'utf8' },
+    ));
+    assert.deepEqual(
+      incompatibleRows,
+      expectedIdentityTableRows([incompatibleIdentity]),
+      'structured fixture identities preserve incompatible key types for fail-closed tests',
+    );
+  } finally {
+    fs.rmSync(incompatibleRoot, { recursive: true, force: true });
   }
 
   const providerFailureRoot = createScenarioRoot(summary.scenarios.providerFailure);

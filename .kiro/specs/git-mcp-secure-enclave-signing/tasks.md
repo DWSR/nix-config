@@ -87,7 +87,7 @@
   - _Boundary: Test Harness_
   - _Depends: 3.1_
 
-- [ ] 3.3 Test bootstrap selection and refusal
+- [x] 3.3 Test bootstrap selection and refusal
   - Cover identity-set comparison, zero/one/multiple exports, fingerprint selection, atomic installation, active-marker refusal, and non-empty-state refusal.
   - Verify bootstrap reports a created orphan after later failure and emits only the expected public declaration.
   - Complete when every bootstrap outcome leaves an observable safe state.
@@ -265,3 +265,4 @@
 ## Implementation Notes
 
 - Task 3.2: Enforce timeout contracts with both an exact packaged `--kill-after=1s 20s` assertion and a 22-second wall-clock ceiling; timing tolerance alone cannot prove the configured deadline.
+- Task 3.3: Lifecycle refusal tests snapshot the complete managed-state tree, including entry type, mode, bytes, and symlink target; CTK fixtures preserve each identity's declared key type so incompatible identities cannot masquerade as `p-256-ne`.
