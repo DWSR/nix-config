@@ -2,27 +2,27 @@
 
 ## Problem
 
-The OpenCode harness uses cavemem for ambient memory, while AgentMemory now
-ships an existing OpenCode capture plugin and a broader memory runtime. The
-operator wants OpenCode to use AgentMemory without changing current Pi behavior
-or blocking use of AgentMemory's Pi plugin later.
+The OpenCode and Pi harnesses use cavemem for ambient memory, while AgentMemory
+ships existing OpenCode and Pi integrations plus a broader memory runtime. The
+operator wants both harnesses to use AgentMemory, with cavemem retained only as
+an explicit OpenCode rollback backend.
 
 ## Current State
 
 Both hosts declaratively enable cavemem capture, startup checks, compaction
 augmentation, vault synthesis, memory-sync, and backup. Pi separately uses the
-same cavemem package. AgentMemory v0.9.29 plus commit `e04ba888` provides a
-daemon, MCP shim, `plugin/opencode/agentmemory-capture.ts`, and
-`integrations/pi/`, but its stock behavior has known capture, persistence,
-scoping, and lifecycle limitations.
+same cavemem package and its Pi-specific patches. AgentMemory v0.9.29 plus
+commit `e04ba888` provides a daemon, MCP shim,
+`plugin/opencode/agentmemory-capture.ts`, and `integrations/pi/`, but its stock
+behavior has known capture, persistence, scoping, and lifecycle limitations.
 
 ## Desired Outcome
 
-OpenCode uses a declaratively packaged AgentMemory runtime, its patched existing
-OpenCode plugin, stock automatic context injection, and AgentMemory's core MCP
-tools through mcpproxy. Existing OpenCode cavemem history receives a one-shot
-best-effort import. Pi stays on cavemem, and AgentMemory's bundled Pi integration
-remains packaged and compatible for future activation.
+OpenCode and Pi use a declaratively packaged AgentMemory runtime. OpenCode uses
+its patched existing plugin, stock automatic context injection, and core MCP
+tools through mcpproxy. Existing cavemem history is imported into AgentMemory
+before Pi activation. Pi uses AgentMemory's bundled integration and no longer
+requires cavemem packages, patches, settings, MCP registration, or backup.
 
 ## Approach
 
@@ -35,22 +35,22 @@ capability descriptor, read facade, raw-event store, materialization ledger, or
 iii persistence patch.
 
 Migrate non-importer cavemem sessions once with deterministic IDs and bounded
-batches. Disable cavemem-specific compaction augmentation, vault synthesis, and
-memory-sync instead of porting them. Keep manual Obsidian memory curation and
-the vault curator.
+batches before activating AgentMemory for Pi. Disable cavemem-specific
+compaction augmentation, vault synthesis, and memory-sync instead of porting
+them. Keep manual Obsidian memory curation and the vault curator.
 
 ## Scope
 
 - **In**: Reproducible AgentMemory and iii packages; existing OpenCode plugin
   patch and declarative install; standard daemon and core MCP wiring; startup
   health check; nono loopback/env changes; one-shot history import; simple
-  stopped-runtime backup; host cutover and rollback; current/future Pi
-  compatibility checks.
+  stopped-runtime backup; host cutover; explicit OpenCode cavemem rollback; Pi
+  AgentMemory integration, credentials, and compatibility checks.
 - **Out**: Custom capture transport; raw transcript fidelity beyond stock
   AgentMemory; exact worktree/same-basename project isolation; crash-resumable
   migration; transactional import; proven iii flush semantics; exhaustive
   backup restore; porting session-compaction memory augmentation, vault
-  synthesis, or memory-sync; AgentMemory activation for Pi.
+  synthesis, or memory-sync; Pi cavemem migration or Pi cavemem rollback.
 
 ## Boundary Candidates
 
@@ -62,14 +62,15 @@ the vault curator.
   AgentMemory guidance.
 - Migration and cutover: one-shot import, host selection, rollback, and removal
   of OpenCode-owned cavemem behavior.
-- Pi compatibility: current cavemem remains unchanged; bundled AgentMemory Pi
-  sources and standard routes remain available for a future spec.
+- Pi cutover: bundled AgentMemory Pi sources, standard routes, host wiring, and
+  credentials become active; Pi cavemem functionality is removed.
 
 ## Out of Boundary
 
-- Changes under Pi-owned implementation paths except compatibility and
-  non-regression tests.
-- Migration of Pi cavemem data or AgentMemory credentials/configuration for Pi.
+- Re-migration of Pi history; the cavemem-to-AgentMemory import completes before
+  Pi activation.
+- Cavemem packages, patches, settings, MCP registration, backup, or runtime
+  wiring for Pi.
 - Security isolation between the in-process OpenCode plugin and model-invoked
   OpenCode subprocesses.
 - Recovery of an import interrupted after AgentMemory accepts only part of a
@@ -79,10 +80,10 @@ the vault curator.
 ## Upstream / Downstream
 
 - **Upstream**: AgentMemory `e04ba888`, iii-engine v0.11.2, existing AgentMemory
-  OpenCode and Pi plugins, pinned OpenCode, mcpproxy, nono, cavemem, and
-  Obsidian.
-- **Downstream**: OpenCode startup and recall, manual Obsidian curation, simple
-  backup, rollback, and a possible future Pi AgentMemory spec.
+  OpenCode and Pi plugins, pinned OpenCode, mcpproxy, nono, cavemem rollback
+  assets, and Obsidian.
+- **Downstream**: OpenCode and Pi startup/recall, manual Obsidian curation,
+  simple backup, OpenCode rollback, and AgentMemory Pi operations.
 
 ## Existing Spec Touchpoints
 
@@ -104,4 +105,5 @@ the vault curator.
 - Accept stock AgentMemory compression, indexing, project naming, session
   consolidation, MCP fallback, and persistence behavior.
 - Preserve AgentMemory's `integrations/pi/` layout and standard Pi REST routes.
-- Keep current Pi cavemem data and behavior unchanged.
+- Configure the bundled Pi integration with standard AgentMemory credentials.
+- Remove Pi cavemem packages, patches, settings, MCP, backup, and host wiring.

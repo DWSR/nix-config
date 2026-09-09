@@ -2,21 +2,24 @@
 
 ## Introduction
 
-`agentmemory-opencode-migration` replaces cavemem only for the OpenCode harness
-using AgentMemory's existing plugin and standard runtime behavior. See
-`brief.md` for the selected balanced simplification and removed guarantees.
+`agentmemory-opencode-migration` replaces cavemem for OpenCode and Pi using
+AgentMemory's existing integrations and standard runtime behavior. Cavemem is
+retained only as an explicit OpenCode rollback backend. See `brief.md` for the
+selected balanced simplification and removed guarantees.
 
 ## Boundary Context
 
 - **In scope**: Declarative AgentMemory packaging, the patched existing OpenCode
   plugin, stock core MCP tools, automatic context, best-effort history import,
-  simple backup, consumer disablement, host cutover, and rollback.
+  simple backup, consumer disablement, OpenCode rollback, and AgentMemory Pi
+  activation.
 - **Out of scope**: Custom capture or retrieval services, raw-event storage,
   hardened credential separation, exact project isolation, resilient migration,
-  proven flush/restore semantics, consumer parity, and Pi activation.
-- **Adjacent expectations**: Pi remains on cavemem; AgentMemory's bundled Pi
-  extension and standard REST routes remain available for later use; Obsidian
-  remains available for manual curated memories.
+  proven flush/restore semantics, consumer parity, and re-migration of Pi
+  history.
+- **Adjacent expectations**: Pi uses AgentMemory's bundled integration after
+  the cavemem history import; cavemem remains available only for explicit
+  OpenCode rollback; Obsidian remains available for manual curated memories.
 
 ## Requirements
 
@@ -166,31 +169,31 @@ durability machinery.
 8. The integration shall not isolate the AgentMemory bearer from every
    model-invoked subprocess inside the OpenCode process boundary.
 
-### Requirement 7: Pi Preservation and Reversible Cutover
+### Requirement 7: AgentMemory Pi Cutover and OpenCode Rollback
 
-**Objective:** As the operator, I want current Pi behavior preserved and future
-AgentMemory Pi use left open, so that the OpenCode cutover does not constrain the
-separate harness.
+**Objective:** As the operator, I want Pi to use the same AgentMemory runtime
+after history migration, while retaining an explicit cavemem rollback for
+OpenCode only.
 
 #### Acceptance Criteria
 
-1. While Pi remains enabled, Pi shall continue to capture and retrieve through
-   its existing cavemem integration.
-2. When OpenCode selects AgentMemory, the host generation shall retain the
-   cavemem package, patches, settings, data, MCP upstream, and backup required by
-   Pi.
+1. While Pi remains enabled, Pi shall capture and retrieve through AgentMemory's
+   bundled Pi integration.
+2. When the AgentMemory backend activates, the host generation shall configure
+   Pi's AgentMemory integration and shall not retain Pi-specific cavemem runtime
+   functionality.
 3. The managed AgentMemory package shall retain the bundled
    `integrations/pi/` entrypoint, security helper, metadata, and relative layout.
 4. The AgentMemory runtime shall preserve the standard authenticated health,
    session, observe, smart-search, remember, end, and consolidate routes used by
    the bundled Pi plugin.
-5. When compatibility validation runs, the unchanged bundled Pi plugin shall
-   load against the selected Pi extension API and standard AgentMemory routes
-   without host activation.
-6. The feature shall not create AgentMemory Pi credentials, host wiring, or
-   history migration.
-7. When the cutover generation activates, AgentMemory shall become OpenCode's
-   ambient memory source without live dual writes to cavemem.
+5. When compatibility validation runs, the bundled Pi plugin shall load against
+   the selected Pi extension API and standard AgentMemory routes with its
+   declared host credentials.
+6. The feature shall not migrate Pi history during activation; cavemem history
+   is assumed to have been imported into AgentMemory beforehand.
+7. When the cutover generation activates, AgentMemory shall be the ambient
+   memory source for OpenCode and Pi without live dual writes to cavemem.
 8. When the operator activates the retained rollback generation, OpenCode shall
-   restore its prior cavemem capture and instructions without modifying source
-   cavemem data.
+   restore its prior cavemem capture and instructions while Pi remains on
+   AgentMemory and no Pi cavemem functionality is restored.

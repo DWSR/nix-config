@@ -75,9 +75,10 @@ Research date: 2026-09-05.
 - The Pi factory subscribes to session start, pre-agent, tool result, agent end,
   and shutdown hooks. It expects standard authenticated health, session start,
   observe, smart-search, remember, session end, and consolidate REST routes.
-- Future compatibility requires retaining those standard routes and the bundled
-  source layout. It does not require enabling the Pi extension, changing
-  Pi-owned Nix files, or migrating Pi data in this spec.
+- The amended cutover enables the Pi extension, configures its standard bearer
+  and REST endpoint, and validates its host wiring. Pi history migration is not
+  repeated here because the cavemem-to-AgentMemory import completes before Pi
+  activation.
 
 ### Retrieval, Isolation, and Privacy
 
@@ -114,16 +115,17 @@ Research date: 2026-09-05.
 ## Current OpenCode Assets
 
 - `home-manager/common/cavemem.nix` owns package installation, settings,
-  OpenCode plugin, mcpproxy upstream, environment, and preflight. Its single
-  enable flag currently mixes OpenCode and Pi-adjacent responsibilities.
+  OpenCode rollback plugin, mcpproxy upstream, environment, and rollback
+  preflight. Its current single enable flag must no longer imply Pi runtime
+  ownership.
 - `home-manager/common/opencode-plugins/cavemem.js` captures session lifecycle
   and tools through detached child commands. It does not capture prompts,
   assistant text, or hook failures.
 - `home-manager/common/opencode.nix` and
   `scripts/opencode-nono-launcher.nix` compose the OpenCode launch, global
   instructions, preflight, and agent inventory.
-- `home-manager/common/opencode-nono.nix` grants the existing cavemem state and
-  environment access but not agentmemory's runtime ports or state.
+- `home-manager/common/opencode-nono.nix` must grant cavemem state only for the
+  OpenCode rollback backend and AgentMemory ports/env only for AgentMemory.
 - `home-manager/common/session-compaction.nix` and
   `home-manager/common/session-compaction-internal/session-compaction-impl.ts`
   invoke `cavemem search` for compaction context.
@@ -132,8 +134,9 @@ Research date: 2026-09-05.
   health, and `cavemem-session-*` provenance.
 - `configurations/shopify/home-manager/sqlite-backup.nix` protects SQLite files;
   it cannot snapshot agentmemory's directory store consistently.
-- `overlays/mcp-servers.nix` packages cavemem with general and Pi-specific
-  patches. Pi embeds the same package through `overlays/pi-agent/default.nix`.
+- `overlays/mcp-servers.nix` currently packages cavemem with general and
+  Pi-specific patches. The amended design removes Pi-specific patch use and
+  retains cavemem assets only for explicit OpenCode rollback.
 - Existing tests cover cavemem CLI/MCP patches and selected consumer behavior,
   but not the installed OpenCode plugin's prompt, response, cwd, or failure path.
 
@@ -147,7 +150,7 @@ Research date: 2026-09-05.
 | 4 | Cavemem snapshot/importer patterns | **Missing** bounded deterministic best-effort importer |
 | 5 | Compaction, synthesizer, memory-sync, AGENTS rules | **Change** disable unported consumers and update instructions |
 | 6 | Nono, Keychain, and backup patterns | **Change** allow stock REST/bearer and add simple stopped-state copy |
-| 7 | Shared cavemem module and Pi bridge | **Constraint** preserve current Pi and bundled future Pi assets |
+| 7 | AgentMemory package and bundled Pi bridge | **Change** activate AgentMemory for Pi and remove Pi cavemem wiring |
 
 ## Implementation Options
 
@@ -200,8 +203,9 @@ balanced reduction to stock AgentMemory behavior and roughly half as many tasks.
 - Use stock automatic context and the stock MCP shim in core-tool mode through
   mcpproxy.
 - Import cavemem history with deterministic IDs and bounded batches.
-- Keep current Pi on cavemem and retain AgentMemory's bundled Pi extension and
-  standard REST compatibility.
+- Activate AgentMemory's bundled Pi extension with standard REST compatibility
+  and host credentials. Remove Pi-specific cavemem functionality after the
+  pre-cutover history import.
 
 ### Removed
 
