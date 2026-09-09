@@ -1028,6 +1028,9 @@ interface PiFullPrivacyPolicyV1 {
   PTYs, and subprocess sentinels for hermetic behavior.
 - Report each gate as pass, fail, or manual-required with package generation and
   version evidence.
+- Permit the personal hermetic gate to report manual-required when the fixed
+  mcpproxy endpoint cannot be isolated from the live host service; do not
+  substitute an endpoint or bypass managed launch.
 - Keep live Shopify model/protocol tests outside publishable derivations.
 
 **Contracts**: Batch.

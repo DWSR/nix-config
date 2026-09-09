@@ -16,6 +16,10 @@ scope decisions.
 - **Adjacent expectations**: mcpproxy remains the only MCP entrypoint, Cavemem
   remains the session store, existing OpenCode launch behavior is unchanged,
   and the managed in-process Pi extension set is trusted.
+- **Personal fixture exception**: the personal hermetic runtime gate may be
+  reported as `manual-required` when the fixed mcpproxy endpoint cannot be
+  isolated from the live host service; validation shall not use an alternate
+  endpoint or bypass the managed launch path.
 
 ## Requirements
 
@@ -195,7 +199,7 @@ scope decisions.
 1. If a selected production dependency closure contains a known critical or high-severity advisory without an explicit approved exception, the Pi integration shall reject that release.
 2. When managed release validation runs, the Pi integration shall verify recovery from an incomplete context-limit response.
 3. When repository checks run, the Pi integration shall evaluate both host configurations and validate managed configuration, profiles, wrappers, extension inventory, and license notices.
-4. When integration smoke tests run, the Pi integration shall cover provider startup, mcpproxy invocation, sandbox enforcement, sub-agents, plan mode, Cavemem capture, timestamps, Bash timeout, user questions, code intelligence, and background-task cleanup.
+4. When integration smoke tests run, the Pi integration shall cover provider startup, mcpproxy invocation, sandbox enforcement, sub-agents, plan mode, Cavemem capture, timestamps, Bash timeout, user questions, code intelligence, and background-task cleanup. If the personal hermetic fixture cannot safely isolate the fixed mcpproxy endpoint, the gate shall report `manual-required` rather than substitute an endpoint or bypass managed launch.
 5. If a compatibility or security gate fails, the Pi integration shall prevent rollout and identify the failed gate.
 6. The Pi integration shall keep private Shopify source and runtime secrets out of publishable Nix closures.
 7. The Pi integration shall provide operator guidance for provider setup, sandbox selection, launch overrides, status inspection, configuration recovery, extension updates, and rollback.
