@@ -575,6 +575,11 @@ let
             printf 'fixture missing resident public key: %s.pub\n' "$stub_path" >&2
             exit 45
           fi
+          if [[ "''${SSH_SK_PROVIDER:-}" != ${builtins.toJSON providerPath} ]]; then
+            printf 'fixture refused non-fixture provider: %s\n' "''${SSH_SK_PROVIDER:-<unset>}" >&2
+            exit 43
+          fi
+          "''${SSH_SK_PROVIDER}" load >/dev/null
           stub_public_key="$(jq -r '.stubPublicKey // empty' "$fixture_scenario")"
           if [[ -z "$stub_public_key" ]]; then
             stub_public_key="$(<"$stub_path.pub")"
@@ -586,10 +591,20 @@ let
           if [[ "''${SSH_SK_PROVIDER:-}" != ${builtins.toJSON providerPath} ]]; then
             printf 'fixture refused non-fixture provider: %s\n' "''${SSH_SK_PROVIDER:-<unset>}" >&2
             exit 43
-           fi
-           "''${SSH_SK_PROVIDER}" sign "$@"
-           printf 'fixture-ssh-signature:%s\n' "$fixture_signing_public_key"
-           ;;
+          fi
+          "''${SSH_SK_PROVIDER}" sign "$@"
+          signature_content="fixture-ssh-signature:$fixture_signing_public_key"
+          signing_input_path=""
+          for argument in "$@"; do
+            if [[ "$argument" != "$fixture_signing_stub" && -f "$argument" && "$argument" != -* ]]; then
+              signing_input_path="$argument"
+            fi
+          done
+          if [[ -n "$signing_input_path" ]]; then
+            printf '%s\n' "$signature_content" > "$signing_input_path.sig"
+          fi
+          printf '%s\n' "$signature_content"
+          ;;
         fingerprint)
           fixture_hang "preflight-ssh-keygen" "ssh-keygen-fingerprint" "preflight-fingerprint"
           fixture_maybe_fail

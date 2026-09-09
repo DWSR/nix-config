@@ -11,6 +11,9 @@ const repoRoot = path.resolve(__dirname, '../..');
 const fixturePath = path.join(repoRoot, 'tests/git-mcp/fixtures/signing-tools.nix');
 const signerPath = path.join(repoRoot, 'scripts/git-mcp-secure-enclave-signer.nix');
 const nixTimeoutMs = 600_000;
+const signingDeadlineMs = 20_000;
+const forcedCleanupGraceMs = 1_000;
+const schedulingGraceMs = 1_000;
 
 function nixBuild(expression) {
   return childProcess.execFileSync(
@@ -312,7 +315,7 @@ async function assertPidGone(pid) {
   assert.fail(`signer worker descendant ${pid} survived timeout cleanup`);
 }
 
-async function assertWorkerTreeGone(root) {
+async function assertWorkerTreeGone(root, expectedWorkers = 1) {
   const treePath = path.join(root, 'process-tree');
   await waitForFile(treePath);
   const pids = fs.readFileSync(treePath, 'utf8')
@@ -320,8 +323,132 @@ async function assertWorkerTreeGone(root) {
     .split('\n')
     .filter(Boolean)
     .flatMap((line) => line.split(' ').map(Number));
-  assert.ok(pids.length >= 2, 'fixture recorded the worker and descendant');
+  assert.ok(
+    pids.length >= expectedWorkers * 2,
+    `fixture recorded at least ${expectedWorkers} workers and descendants`,
+  );
   for (const pid of pids) await assertPidGone(pid);
+}
+
+function runGit(args, cwd, env, timeout = 35_000) {
+  return childProcess.spawnSync('git', args, {
+    cwd,
+    env,
+    encoding: 'utf8',
+    input: '',
+    maxBuffer: 64 * 1024 * 1024,
+    timeout,
+  });
+}
+
+function createGitGlobalConfig(root, fallbackSigner) {
+  const globalConfig = path.join(root, 'global.gitconfig');
+  fs.writeFileSync(
+    globalConfig,
+    [
+      '[commit]',
+      '  gpgSign = false',
+      '[gpg]',
+      '  format = openpgp',
+      '[gpg "ssh"]',
+      `  program = ${fallbackSigner}`,
+      '[user]',
+      '  signingKey = /tmp/global-conflicting-signing-key',
+      '',
+    ].join('\n'),
+    { mode: 0o600 },
+  );
+  return globalConfig;
+}
+
+function globalGitEnvironment(root, state, globalConfig, agentSocketPath) {
+  const tempDir = path.join(root, 'git-tmp');
+  fs.mkdirSync(tempDir, { recursive: true, mode: 0o700 });
+  return {
+    ...interceptionEnvironment(root, summary, state, agentSocketPath),
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
+    TMPDIR: tempDir,
+  };
+}
+
+function scopedGitEnvironment(environment, state) {
+  return {
+    ...environment,
+    GIT_CONFIG_COUNT: '4',
+    GIT_CONFIG_KEY_0: 'commit.gpgSign',
+    GIT_CONFIG_VALUE_0: 'true',
+    GIT_CONFIG_KEY_1: 'gpg.format',
+    GIT_CONFIG_VALUE_1: 'ssh',
+    GIT_CONFIG_KEY_2: 'gpg.ssh.program',
+    GIT_CONFIG_VALUE_2: signerCommand,
+    GIT_CONFIG_KEY_3: 'user.signingKey',
+    GIT_CONFIG_VALUE_3: state.stubPath,
+  };
+}
+
+function createGitRepository(root, environment) {
+  const repository = path.join(root, 'repository');
+  fs.mkdirSync(repository, { mode: 0o700 });
+  for (const args of [
+    ['init', '--quiet', '--initial-branch=main'],
+    ['config', 'user.name', 'Fixture Git MCP'],
+    ['config', 'user.email', 'fixture-git-mcp@example.test'],
+  ]) {
+    const result = runGit(args, repository, environment);
+    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+  }
+
+  fs.writeFileSync(path.join(repository, 'initial.txt'), 'initial\n');
+  for (const args of [
+    ['add', 'initial.txt'],
+    ['commit', '--quiet', '--no-gpg-sign', '-m', 'initial'],
+  ]) {
+    const result = runGit(args, repository, environment);
+    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
+  }
+  return repository;
+}
+
+function stageGitChange(repository, fileName, environment) {
+  fs.writeFileSync(path.join(repository, fileName), `${fileName}\n`);
+  const result = runGit(['add', fileName], repository, environment);
+  assert.equal(result.status, 0, `git add ${fileName}: ${result.stderr}`);
+}
+
+function gitHead(repository, environment) {
+  const result = runGit(['rev-parse', 'HEAD'], repository, environment);
+  assert.equal(result.status, 0, `git rev-parse HEAD: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+function gitCommitObject(repository, environment) {
+  const result = runGit(['cat-file', 'commit', 'HEAD'], repository, environment);
+  assert.equal(result.status, 0, `git cat-file commit HEAD: ${result.stderr}`);
+  return result.stdout;
+}
+
+function runGitCommitAttempt(repository, environment, explicitSigning, message) {
+  const args = ['commit'];
+  if (explicitSigning) args.push('--gpg-sign');
+  args.push('--quiet', '-m', message);
+  const startedAt = Date.now();
+  const result = runGit(args, repository, environment);
+  return {
+    ...result,
+    args,
+    elapsedMs: Date.now() - startedAt,
+  };
+}
+
+function assertSignedGitCommit(repository, environment, publicKey) {
+  const commitObject = gitCommitObject(repository, environment);
+  assert.match(commitObject, /^gpgsig /m, 'Git commit contains an SSH signature header');
+  assert.match(
+    commitObject,
+    new RegExp(`fixture-ssh-signature:${publicKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    'Git commit signature is bound to the configured resident public key',
+  );
 }
 
 let signerCommand;
@@ -337,6 +464,14 @@ test.before(() => {
   );
   buildFixtureBundle();
   summary = fixtureSummary();
+});
+
+test('packages the exact 20-second supervisor with one-second forced cleanup', () => {
+  const packagedSigner = fs.readFileSync(signerCommand, 'utf8');
+  assert.match(
+    packagedSigner,
+    /^timeout --signal=TERM --kill-after=1s 20s "\$0" --signing-worker "\$@" \|\| timeout_status=\$\?$/m,
+  );
 });
 
 test('accepts valid unrelated key types and raw CTK table variants before delegated signing', async () => {
@@ -381,6 +516,7 @@ test('accepts valid unrelated key types and raw CTK table variants before delega
       [
         ['sc_auth', 'list'],
         ['ssh-keygen', 'stub'],
+        ['provider', 'load'],
         ['ssh-keygen', 'fingerprint'],
         ['ssh-keygen', 'sign'],
         ['provider', 'sign'],
@@ -1090,12 +1226,226 @@ async function assertSignerTimeout(scenarioName, delegatedSignExpected) {
 test('contains every signing preflight and provider timeout within one worker deadline', async () => {
   for (const [scenarioName, delegatedSignExpected] of [
     ['hangCtkListing', false],
-    ['hangPreflightProvider', true],
+    ['hangPreflightProvider', false],
     ['hangPreflightSshKeygen', false],
     ['hangPreflightSshKeygenStub', false],
     ['hangProviderSigning', true],
     ['hangAllPreflightPhases', false],
   ]) {
     await assertSignerTimeout(scenarioName, delegatedSignExpected);
+  }
+});
+
+test('Git uses the scoped signer for explicit and retry-shaped commit attempts', async () => {
+  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
+  let agentTrap;
+  try {
+    const state = createSigningState(root, summary);
+    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
+    agentTrap = await startAgentSocketTrap(root, summary);
+    const unrelatedEnvironment = globalGitEnvironment(
+      root,
+      state,
+      globalConfig,
+      agentTrap.socketPath,
+    );
+    const environment = scopedGitEnvironment(unrelatedEnvironment, state);
+    const unrelatedResult = runGit(
+      ['config', '--global', '--get', 'gpg.ssh.program'],
+      root,
+      unrelatedEnvironment,
+    );
+    assert.equal(unrelatedResult.status, 0, unrelatedResult.stderr);
+    assert.equal(
+      unrelatedResult.stdout.trim(),
+      summary.interceptorPaths.fallback,
+      'an unrelated Git process retains the global signer',
+    );
+    const repository = createGitRepository(root, environment);
+
+    for (const [explicitSigning, fileName] of [
+      [true, 'explicit-sign.txt'],
+      [false, 'retry-shaped-sign.txt'],
+    ]) {
+      const headBefore = gitHead(repository, environment);
+      stageGitChange(repository, fileName, environment);
+      const result = runGitCommitAttempt(
+        repository,
+        environment,
+        explicitSigning,
+        `signed ${fileName}`,
+      );
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.ok(result.elapsedMs < 5_000, `successful commit was unexpectedly slow: ${result.elapsedMs}ms`);
+      const headAfter = gitHead(repository, environment);
+      assert.notEqual(headAfter, headBefore, `${fileName} advances HEAD`);
+      assertSignedGitCommit(repository, environment, state.residentExport.publicKey);
+    }
+
+    await agentTrap.stop();
+    agentTrap = null;
+    assertNoAgentOrFallback(root);
+    const signCalls = readCalls(root).filter(
+      (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
+    );
+    assert.equal(signCalls.length, 2, 'both Git command forms invoke the dedicated signer');
+  } finally {
+    if (agentTrap) await agentTrap.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Git signing rejection fails both upstream attempts without creating an unsigned commit', async () => {
+  const root = createScenarioRoot(summary.scenarios.providerFailure);
+  let agentTrap;
+  try {
+    const state = createSigningState(root, summary);
+    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
+    agentTrap = await startAgentSocketTrap(root, summary);
+    const environment = scopedGitEnvironment(
+      globalGitEnvironment(root, state, globalConfig, agentTrap.socketPath),
+      state,
+    );
+    const repository = createGitRepository(root, environment);
+    const headBefore = gitHead(repository, environment);
+    stageGitChange(repository, 'rejected-sign.txt', environment);
+
+    for (const explicitSigning of [true, false]) {
+      const result = runGitCommitAttempt(
+        repository,
+        environment,
+        explicitSigning,
+        explicitSigning ? 'rejected explicit sign' : 'rejected retry sign',
+      );
+      const diagnostics = `${result.stdout}\n${result.stderr}`;
+
+      assert.notEqual(result.status, 0, `${result.args.join(' ')} must fail closed`);
+      assert.ok(result.elapsedMs < 5_000, `provider rejection waited too long: ${result.elapsedMs}ms`);
+      assert.match(diagnostics, /provider rejected|first unlock/i);
+      assert.equal(gitHead(repository, environment), headBefore, 'rejected signing leaves HEAD unchanged');
+    }
+
+    assert.equal(
+      gitCommitObject(repository, environment).includes('rejected explicit sign'),
+      false,
+      'the failed explicit attempt did not create a commit',
+    );
+    await agentTrap.stop();
+    agentTrap = null;
+    assertNoAgentOrFallback(root);
+    assert.equal(
+      readCalls(root).filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length,
+      2,
+      'both upstream attempts reached the dedicated signer',
+    );
+    assert.equal(
+      readCalls(root).filter((call) => call.tool === 'provider' && call.operation === 'sign').length,
+      2,
+      'both upstream attempts reached the rejecting provider',
+    );
+  } finally {
+    if (agentTrap) await agentTrap.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+async function assertGitTimeoutAttempts({
+  scenarioName,
+  terminalTool,
+  terminalOperation,
+  delegatedSignExpected,
+}) {
+  const root = createScenarioRoot(summary.scenarios[scenarioName]);
+  let agentTrap;
+  try {
+    const state = createSigningState(root, summary);
+    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
+    agentTrap = await startAgentSocketTrap(root, summary);
+    const environment = scopedGitEnvironment(
+      globalGitEnvironment(root, state, globalConfig, agentTrap.socketPath),
+      state,
+    );
+    const repository = createGitRepository(root, environment);
+    const headBefore = gitHead(repository, environment);
+    stageGitChange(repository, `${scenarioName}.txt`, environment);
+
+    for (const explicitSigning of [true, false]) {
+      const result = runGitCommitAttempt(
+        repository,
+        environment,
+        explicitSigning,
+        `${scenarioName} timeout`,
+      );
+      const diagnostics = `${result.stdout}\n${result.stderr}`;
+
+      assert.notEqual(result.status, 0, `${scenarioName} attempt must fail nonzero`);
+      assert.ok(
+        result.elapsedMs < signingDeadlineMs + forcedCleanupGraceMs + schedulingGraceMs,
+        `${scenarioName} ${explicitSigning ? 'explicit' : 'retry'} attempt exceeded the 20-second deadline plus cleanup and scheduling grace: ${result.elapsedMs}ms`,
+      );
+      assert.match(diagnostics, /timed out.*20 seconds|20-second.*timed out/i);
+      assert.equal(gitHead(repository, environment), headBefore, `${scenarioName} leaves HEAD unchanged`);
+    }
+
+    const calls = readCalls(root);
+    assert.equal(
+      calls.filter((call) => (
+        call.tool === terminalTool && call.operation === terminalOperation
+      )).length,
+      2,
+      `${scenarioName} reaches ${terminalTool} ${terminalOperation} in both attempts`,
+    );
+    assert.equal(
+      calls.filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length,
+      delegatedSignExpected ? 2 : 0,
+      `${scenarioName} ${delegatedSignExpected ? 'reaches' : 'stops before'} delegated signing`,
+    );
+    await assertWorkerTreeGone(root, 2);
+    await agentTrap.stop();
+    agentTrap = null;
+    assertNoAgentOrFallback(root);
+  } finally {
+    if (agentTrap) await agentTrap.stop();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+test('Git timeout paths stay bounded and descendant-free across both upstream attempts', {
+  timeout: 600_000,
+}, async () => {
+  for (const scenario of [
+    {
+      scenarioName: 'hangCtkListing',
+      terminalTool: 'sc_auth',
+      terminalOperation: 'list',
+      delegatedSignExpected: false,
+    },
+    {
+      scenarioName: 'hangPreflightProvider',
+      terminalTool: 'provider',
+      terminalOperation: 'load',
+      delegatedSignExpected: false,
+    },
+    {
+      scenarioName: 'hangPreflightSshKeygen',
+      terminalTool: 'ssh-keygen',
+      terminalOperation: 'fingerprint',
+      delegatedSignExpected: false,
+    },
+    {
+      scenarioName: 'hangPreflightSshKeygenStub',
+      terminalTool: 'ssh-keygen',
+      terminalOperation: 'stub',
+      delegatedSignExpected: false,
+    },
+    {
+      scenarioName: 'hangProviderSigning',
+      terminalTool: 'provider',
+      terminalOperation: 'sign',
+      delegatedSignExpected: true,
+    },
+  ]) {
+    await assertGitTimeoutAttempts(scenario);
   }
 });

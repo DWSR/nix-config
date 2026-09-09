@@ -79,7 +79,7 @@
   - _Boundary: Test Harness_
   - _Depends: 1.1, 1.2, 2.1_
 
-- [ ] 3.2 Test Git fail-closed and complete-worker timeout behavior
+- [x] 3.2 Test Git fail-closed and complete-worker timeout behavior
   - Use temporary repositories with conflicting global settings to prove both upstream attempts sign or fail without moving `HEAD`.
   - Hang CTK listing, each preflight native call, and provider signing across both attempts; verify each complete worker stays within 20 seconds and leaves no descendant.
   - Complete when timeout and rejection paths return nonzero diagnostics without an unsigned commit or upstream 60-second wait.
@@ -261,3 +261,7 @@
   - _Requirements: 3.3, 3.4, 3.5, 3.6, 3.7, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.8, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 11.1, 11.2, 11.3, 11.4_
   - _Boundary: Cross-component Validation_
   - _Depends: 3.8, 7.4, 8.3, 8.4_
+
+## Implementation Notes
+
+- Task 3.2: Enforce timeout contracts with both an exact packaged `--kill-after=1s 20s` assertion and a 22-second wall-clock ceiling; timing tolerance alone cannot prove the configured deadline.
