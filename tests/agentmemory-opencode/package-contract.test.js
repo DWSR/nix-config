@@ -10,6 +10,7 @@ const overlayPath = path.join(repoRoot, 'overlays', 'agentmemory.nix');
 const manifestPath = path.join(repoRoot, 'overlays', 'agentmemory-deps', 'package.json');
 const lockPath = path.join(repoRoot, 'overlays', 'agentmemory-deps', 'package-lock.json');
 const overlaysPath = path.join(repoRoot, 'overlays', 'default.nix');
+const bm25PatchPath = path.join(repoRoot, 'overlays', 'agentmemory-patches', 'bm25-index-cap.patch');
 
 function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -96,9 +97,20 @@ test('runtime package keeps upstream configurable loopback configuration and sto
   assert.match(overlay, /grep -q 'host: 127\.0\.0\.1'/);
   assert.doesNotMatch(overlay, /--set III_(?:REST|STREAM|VIEWER|ENGINE)_PORT/);
   assert.match(overlay, /plugin\/opencode\/agentmemory-capture\.ts/);
-  assert.match(overlay, /patches = \[ \.\/agentmemory-patches\/opencode-capture\.patch \];/);
+  assert.match(overlay, /agentmemory-patches\/opencode-capture\.patch/);
+  assert.match(overlay, /agentmemory-patches\/bm25-index-cap\.patch/);
   assert.match(overlay, /integrations\/pi\/index\.ts/);
   assert.match(overlay, /! grep -q 'host: 0\.0\.0\.0'/);
+});
+
+test('BM25 patch bounds live indexing and rejects unsafe persistence', () => {
+  const patch = fs.readFileSync(bm25PatchPath, 'utf8');
+
+  assert.match(patch, /AGENTMEMORY_BM25_MAX_ENTRIES/);
+  assert.match(patch, /AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES/);
+  assert.match(patch, /this\.entries\.size >= this\.maxEntries/);
+  assert.match(patch, /persistence limit/);
+  assert.match(patch, /evicts the oldest entries/);
 });
 
 test('runtime wrapper keeps a high REST port valid without overriding engine endpoints', () => {

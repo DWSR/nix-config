@@ -50,6 +50,10 @@ let
         timeoutSeconds = 30;
       };
 
+  importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
+    inherit (cfg) bearerReference;
+  };
+
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";
 
   settingsText =
@@ -61,6 +65,8 @@ let
         (envLine "AGENTMEMORY_VIEWER_URL" "http://127.0.0.1:${toString cfg.viewerPort}")
         (envLine "AGENTMEMORY_SECRET_REFERENCE" cfg.bearerReference)
         (envLine "AGENTMEMORY_TOOLS" "core")
+        (envLine "AGENTMEMORY_BM25_MAX_ENTRIES" cfg.bm25MaxEntries)
+        (envLine "AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES" cfg.bm25PersistMaxEntries)
         (envLine "III_REST_PORT" cfg.restPort)
         (envLine "III_STREAM_PORT" cfg.streamPort)
         (envLine "III_VIEWER_PORT" cfg.viewerPort)
@@ -153,6 +159,18 @@ in
       description = "Loopback iii engine WebSocket port.";
     };
 
+    bm25MaxEntries = mkOption {
+      type = types.ints.positive;
+      default = 100000;
+      description = "Maximum observations retained in the in-memory BM25 index.";
+    };
+
+    bm25PersistMaxEntries = mkOption {
+      type = types.ints.positive;
+      default = 50000;
+      description = "Maximum BM25 entries serialized for persistence.";
+    };
+
     bearerReference = mkOption {
       type = types.str;
       default = "agentmemory-bearer";
@@ -176,6 +194,7 @@ in
         packages = [
           cfg.package
           cfg.statusPackage
+          importPackage
         ]
         ++ lib.optional (cfg.backupDestination != null) backupPackage;
 
@@ -192,6 +211,8 @@ in
             AGENTMEMORY_URL = "http://127.0.0.1:${toString cfg.restPort}";
             AGENTMEMORY_TOOLS = "core";
             AGENTMEMORY_SECRET = config.home.mcp.readKeychainSecret cfg.bearerReference;
+            AGENTMEMORY_BM25_MAX_ENTRIES = toString cfg.bm25MaxEntries;
+            AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES = toString cfg.bm25PersistMaxEntries;
           };
         };
       };
@@ -214,6 +235,8 @@ in
             AGENTMEMORY_RUNTIME_DIR = toString cfg.runtimeDir;
             AGENTMEMORY_SECRET_REFERENCE = cfg.bearerReference;
             AGENTMEMORY_TOOLS = "core";
+            AGENTMEMORY_BM25_MAX_ENTRIES = toString cfg.bm25MaxEntries;
+            AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES = toString cfg.bm25PersistMaxEntries;
             III_REST_PORT = toString cfg.restPort;
             III_STREAM_PORT = toString cfg.streamPort;
             III_VIEWER_PORT = toString cfg.viewerPort;

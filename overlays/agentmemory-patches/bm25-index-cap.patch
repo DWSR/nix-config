@@ -1,0 +1,101 @@
+From: nix-config <noreply@local>
+Subject: [PATCH] agentmemory: bound the in-memory BM25 index
+
+Source: src/state/search-index.ts
+Upstream: https://github.com/rohitg00/agentmemory/issues/309
+
+Large imported corpora exhaust the Node heap because SearchIndex retains an
+unbounded Map/Set graph and serialize() duplicates it into arrays. Keep the
+newest configured entries and reject unsafe persistence before allocating the
+serialization copies.
+
+diff --git a/src/state/search-index.ts b/src/state/search-index.ts
+--- a/src/state/search-index.ts
++++ b/src/state/search-index.ts
+@@ -9,6 +9,22 @@ interface IndexEntry {
+   termCount: number;
+ }
+ 
++const DEFAULT_MAX_ENTRIES = 100_000;
++const DEFAULT_MAX_PERSISTED_ENTRIES = 50_000;
++
++function positiveIntegerEnv(name: string, fallback: number): number {
++  const parsed = Number.parseInt(process.env[name] || "", 10);
++  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
++}
++
++function configuredMaxEntries(): number {
++  return positiveIntegerEnv("AGENTMEMORY_BM25_MAX_ENTRIES", DEFAULT_MAX_ENTRIES);
++}
++
++function configuredMaxPersistedEntries(): number {
++  return positiveIntegerEnv("AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES", DEFAULT_MAX_PERSISTED_ENTRIES);
++}
++
+ export class SearchIndex {
+   private entries: Map<string, IndexEntry> = new Map();
+   private invertedIndex: Map<string, Set<string>> = new Map();
+@@ -19,7 +35,16 @@ export class SearchIndex {
+   private readonly k1 = 1.2;
+   private readonly b = 0.75;
+ 
++  constructor(private readonly maxEntries = configuredMaxEntries()) {}
++
+   add(obs: CompressedObservation): void {
++    if (this.entries.has(obs.id)) this.remove(obs.id);
++    while (this.entries.size >= this.maxEntries) {
++      const oldestId = this.entries.keys().next().value;
++      if (!oldestId) break;
++      this.remove(oldestId);
++    }
++
+     const terms = this.extractTerms(obs);
+     const termFreq = new Map<string, number>();
+     let termCount = 0;
+@@ -191,7 +216,12 @@ export class SearchIndex {
+     this.sortedTerms = null;
+   }
+ 
+-  serialize(): string {
++  serialize(
++    maxEntries = configuredMaxPersistedEntries(),
++  ): string {
++    if (this.entries.size > maxEntries) {
++      throw new Error(`BM25 index has ${this.entries.size} entries; persistence limit is ${maxEntries}`);
++    }
+     const entries = Array.from(this.entries.entries());
+     const inverted = Array.from(this.invertedIndex.entries()).map(
+       ([term, ids]) => [term, Array.from(ids)] as [string, string[]],
+diff --git a/test/search-index.test.ts b/test/search-index.test.ts
+--- a/test/search-index.test.ts
++++ b/test/search-index.test.ts
+@@ -82,6 +82,29 @@ describe("SearchIndex", () => {
+     expect(index.search("auth", 5).length).toBe(5);
+   });
+ 
++  it("evicts the oldest entries at the configured capacity", () => {
++    const bounded = new SearchIndex(2);
++    bounded.add(makeObs({ id: "obs_a", title: "alpha" }));
++    bounded.add(makeObs({ id: "obs_b", title: "beta" }));
++    bounded.add(makeObs({ id: "obs_c", title: "gamma" }));
++
++    expect(bounded.size).toBe(2);
++    expect(bounded.search("alpha")).toEqual([]);
++    expect(bounded.search("beta")[0].obsId).toBe("obs_b");
++    expect(bounded.search("gamma")[0].obsId).toBe("obs_c");
++  });
++
++  it("refuses persistence above the configured serialization limit", () => {
++    const bounded = new SearchIndex(3);
++    bounded.add(makeObs({ id: "obs_a", title: "alpha" }));
++    bounded.add(makeObs({ id: "obs_b", title: "beta" }));
++    bounded.add(makeObs({ id: "obs_c", title: "gamma" }));
++
++    expect(() => bounded.serialize(2)).toThrow(
++      "BM25 index has 3 entries; persistence limit is 2",
++    );
++  });
++
+   it("clears the index", () => {
+     index.add(makeObs());
+     index.clear();

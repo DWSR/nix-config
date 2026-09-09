@@ -363,11 +363,14 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.agentMemory.ports.viewer, 3113);
   assert.equal(rendered.agentMemory.ports.engine, 49134);
   assert.ok(rendered.agentMemory.packageNames.length >= 2);
+  assert.ok(rendered.agentMemory.packageNames.includes('agentmemory-import-cavemem'));
   assert.equal(rendered.agentMemory.launchd.Label, 'dev.dwsr.agentmemory');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_REST_PORT, '3111');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_STREAM_PORT, '3112');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_VIEWER_PORT, '3113');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_ENGINE_PORT, '49134');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET, undefined);
   assert.equal(
     rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET_REFERENCE,

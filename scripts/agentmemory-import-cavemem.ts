@@ -13,6 +13,7 @@ const Database = require('better-sqlite3');
 type SourceTable = 'sessions' | 'observations' | 'summaries';
 type RecordTable = 'observations' | 'summaries';
 type CountSet = Record<SourceTable, number>;
+type ProgressReporter = (message: string) => void;
 
 const AGENTMEMORY_IMPORT_VERSION = '0.9.29';
 const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
@@ -452,6 +453,7 @@ function closeDatabase(db: InstanceType<typeof Database>): void {
 function readFilteredSnapshot(
   db: InstanceType<typeof Database>,
   sourcePath: string,
+  progress: ProgressReporter = () => {},
 ): SnapshotReport {
   for (const table of ['sessions', 'observations', 'summaries'] as SourceTable[]) {
     if (!hasTable(db, table)) throw new Error(`cavemem snapshot is missing table: ${table}`);
@@ -473,10 +475,14 @@ function readFilteredSnapshot(
     SELECT id, ide, cwd, started_at, ended_at, metadata
     FROM sessions
     ORDER BY started_at, id
-  `).all() as SessionRow[];
+  `).iterate() as IterableIterator<SessionRow>;
   const sessionInfos = new Map<string, SessionInfo>();
 
+  progress('scanning sessions');
+  let sessionRows = 0;
   for (const row of sessions) {
+    sessionRows += 1;
+    if (sessionRows % 10_000 === 0) progress(`sessions: ${sessionRows} rows`);
     const session = requiredSessionInfo(row, report.malformed);
     if (!session) continue;
     sessionInfos.set(session.id, session);
@@ -490,13 +496,18 @@ function readFilteredSnapshot(
       report.selectedSessions.push(session);
     }
   }
+  progress(`sessions: ${sessionRows} rows total`);
 
   const observations = db.prepare(`
     SELECT id, session_id, kind, content, ts, metadata
     FROM observations
     ORDER BY id
-  `).all() as ObservationRow[];
+  `).iterate() as IterableIterator<ObservationRow>;
+  progress('scanning observations');
+  let observationRows = 0;
   for (const row of observations) {
+    observationRows += 1;
+    if (observationRows % 10_000 === 0) progress(`observations: ${observationRows} rows`);
     const sessionId = rowId(row.session_id);
     const session = sessionId ? sessionInfos.get(sessionId) : undefined;
     const timestamp = timestampValue(row.ts);
@@ -531,13 +542,18 @@ function readFilteredSnapshot(
     increment(report.selected, 'observations');
     report.records.push(record);
   }
+  progress(`observations: ${observationRows} rows total`);
 
   const summaries = db.prepare(`
     SELECT id, session_id, scope, content, ts
     FROM summaries
     ORDER BY id
-  `).all() as SummaryRow[];
+  `).iterate() as IterableIterator<SummaryRow>;
+  progress('scanning summaries');
+  let summaryRows = 0;
   for (const row of summaries) {
+    summaryRows += 1;
+    if (summaryRows % 10_000 === 0) progress(`summaries: ${summaryRows} rows`);
     const sessionId = rowId(row.session_id);
     const session = sessionId ? sessionInfos.get(sessionId) : undefined;
     const timestamp = timestampValue(row.ts);
@@ -566,6 +582,7 @@ function readFilteredSnapshot(
     increment(report.selected, 'summaries');
     report.records.push(record);
   }
+  progress(`summaries: ${summaryRows} rows total`);
 
   report.records.sort((left, right) => {
     const timestampOrder = left.timestamp.localeCompare(right.timestamp);
@@ -590,14 +607,19 @@ async function createSnapshot(sourcePath: string, snapshotPath: string): Promise
   }
 }
 
-async function readCavememSnapshot(sourcePath: string): Promise<SnapshotReport> {
+async function readCavememSnapshot(
+  sourcePath: string,
+  progress: ProgressReporter = () => {},
+): Promise<SnapshotReport> {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-snapshot-'));
   const snapshotPath = path.join(temporaryDirectory, 'data.db');
   try {
+    progress('creating read-only SQLite snapshot');
     await createSnapshot(sourcePath, snapshotPath);
+    progress('SQLite snapshot created');
     const snapshot = new Database(snapshotPath, { readonly: true, fileMustExist: true });
     try {
-      return readFilteredSnapshot(snapshot, sourcePath);
+      return readFilteredSnapshot(snapshot, sourcePath, progress);
     } finally {
       closeDatabase(snapshot);
     }
@@ -699,31 +721,44 @@ type PreparedItem = {
   record: AgentMemorySession | AgentMemoryObservation | AgentMemorySummary;
 };
 
-function prepareImportRecords(snapshot: SnapshotReport): PreparedImportRecords {
+function prepareImportRecords(
+  snapshot: SnapshotReport,
+  progress: ProgressReporter = () => {},
+): PreparedImportRecords {
   const observationCounts = new Map<string, number>();
+  const observations: PreparedImportRecords['observations'] = [];
+  const summaryRecordsBySession = new Map<string, LegacyImportRecord[]>();
+  let exportedAt = '1970-01-01T00:00:00.000Z';
+  for (const session of snapshot.selectedSessions) {
+    if (session.startedAt > exportedAt) exportedAt = session.startedAt;
+  }
+
+  progress(`record preparation: 0/${snapshot.records.length} records`);
+  let processedRecords = 0;
   for (const record of snapshot.records) {
+    processedRecords += 1;
+    if (processedRecords % 10_000 === 0) {
+      progress(`record preparation: ${processedRecords}/${snapshot.records.length} records`);
+    }
+    if (record.timestamp > exportedAt) exportedAt = record.timestamp;
     if (sourceTableForRecord(record) === 'observations') {
       observationCounts.set(
         record.sessionId,
         (observationCounts.get(record.sessionId) || 0) + 1,
       );
+      observations.push({ id: record.id, record: toAgentMemoryObservation(record) });
+    } else {
+      const records = summaryRecordsBySession.get(record.sessionId) || [];
+      records.push(record);
+      summaryRecordsBySession.set(record.sessionId, records);
     }
   }
+  progress(`record preparation: ${processedRecords}/${snapshot.records.length} records complete`);
 
   const sessions = snapshot.selectedSessions.map((session) => ({
     id: targetSessionId(session.id),
     record: toAgentMemorySession(session, observationCounts.get(session.id) || 0),
   }));
-  const observations = snapshot.records
-    .filter((record) => sourceTableForRecord(record) === 'observations')
-    .map((record) => ({ id: record.id, record: toAgentMemoryObservation(record) }));
-  const summaryRecordsBySession = new Map<string, LegacyImportRecord[]>();
-  for (const record of snapshot.records) {
-    if (sourceTableForRecord(record) !== 'summaries') continue;
-    const records = summaryRecordsBySession.get(record.sessionId) || [];
-    records.push(record);
-    summaryRecordsBySession.set(record.sessionId, records);
-  }
   const summaries = snapshot.selectedSessions.flatMap((session) => {
     const records = summaryRecordsBySession.get(session.id);
     if (!records || records.length === 0) return [];
@@ -733,10 +768,6 @@ function prepareImportRecords(snapshot: SnapshotReport): PreparedImportRecords {
     );
     return [{ id: record.id, record }];
   });
-  const timestamps = [
-    ...snapshot.selectedSessions.map((session) => session.startedAt),
-    ...snapshot.records.map((record) => record.timestamp),
-  ].sort();
 
   return {
     sessions,
@@ -747,7 +778,7 @@ function prepareImportRecords(snapshot: SnapshotReport): PreparedImportRecords {
       observations: observations.length,
       summaries: summaries.length,
     },
-    exportedAt: timestamps.at(-1) || '1970-01-01T00:00:00.000Z',
+    exportedAt,
   };
 }
 
@@ -789,12 +820,13 @@ interface BatchBuildResult {
 function buildImportBatches(
   snapshot: SnapshotReport,
   maxBytes = MAX_IMPORT_BYTES,
+  progress: ProgressReporter = () => {},
 ): BatchBuildResult {
   if (!Number.isInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_IMPORT_BYTES) {
     throw new Error(`batch size must be an integer between 1 and ${MAX_IMPORT_BYTES}`);
   }
 
-  const prepared = prepareImportRecords(snapshot);
+  const prepared = prepareImportRecords(snapshot, progress);
   const batches: ImportBatch[] = [];
   const oversized: Array<{ type: SourceTable; id: string }> = [];
   const byType: Array<{
@@ -805,38 +837,59 @@ function buildImportBatches(
     { type: 'observations', records: prepared.observations },
     { type: 'summaries', records: prepared.summaries },
   ];
+  const totalRecords = byType.reduce((total, item) => total + item.records.length, 0);
+  let processedRecords = 0;
 
   for (const { type, records } of byType) {
     let current: PreparedItem[] = [];
+    const emptyPayloadBytes = payloadBytes(createImportPayload(type, [], prepared.exportedAt));
+    let currentBytes = emptyPayloadBytes;
     const flush = () => {
       if (current.length === 0) return;
       const payload = createImportPayload(type, current, prepared.exportedAt);
+      const bytes = payloadBytes(payload);
+      if (bytes >= maxBytes) throw new Error(`internal batch sizing error for ${type}`);
       batches.push({
         type,
         records: current.map(({ id }) => id),
         payload,
-        bytes: payloadBytes(payload),
+        bytes,
       });
       current = [];
+      currentBytes = emptyPayloadBytes;
     };
 
     for (const record of records) {
-      const candidate = [...current, record];
-      const candidatePayload = createImportPayload(type, candidate, prepared.exportedAt);
-      if (payloadBytes(candidatePayload) < maxBytes) {
-        current = candidate;
+      processedRecords += 1;
+      if (processedRecords % 10_000 === 0) {
+        progress(`batch sizing: ${processedRecords}/${totalRecords} records`);
+      }
+      const recordBytes = Buffer.byteLength(JSON.stringify(record.record), 'utf8');
+      const contribution = type === 'observations'
+        ? recordBytes
+          + Buffer.byteLength(JSON.stringify((record.record as AgentMemoryObservation).sessionId), 'utf8')
+          + 4
+        : recordBytes + 1;
+
+      if (current.length > 0 && currentBytes + contribution >= maxBytes) flush();
+      if (currentBytes + contribution < maxBytes) {
+        current.push(record);
+        currentBytes += contribution;
         continue;
       }
-      flush();
+
       const singlePayload = createImportPayload(type, [record], prepared.exportedAt);
-      if (payloadBytes(singlePayload) < maxBytes) {
+      const singleBytes = payloadBytes(singlePayload);
+      if (singleBytes < maxBytes) {
         current = [record];
+        currentBytes = singleBytes;
       } else {
         oversized.push({ type, id: record.id });
       }
     }
     flush();
   }
+  progress(`batch sizing: ${processedRecords}/${totalRecords} records complete`);
 
   return { batches, oversized, target: prepared.target };
 }
@@ -909,8 +962,11 @@ async function importSnapshot(
   endpoint: string,
   secret: string | undefined,
   maxBatchBytes = MAX_IMPORT_BYTES,
+  progress: ProgressReporter = () => {},
 ): Promise<ImportReport> {
-  const built = buildImportBatches(snapshot, maxBatchBytes);
+  progress('preparing import batches');
+  const built = buildImportBatches(snapshot, maxBatchBytes, progress);
+  progress(`prepared ${built.batches.length} batches; ${built.oversized.length} oversized records`);
   const importEndpoint = normalizeImportUrl(endpoint);
   const report: ImportReport = {
     sourcePath: snapshot.sourcePath,
@@ -943,7 +999,11 @@ async function importSnapshot(
     });
   }
 
-  for (const batch of built.batches) {
+  for (let index = 0; index < built.batches.length; index += 1) {
+    const batch = built.batches[index];
+    progress(
+      `submitting batch ${index + 1}/${built.batches.length}: ${batch.type}, ${batch.records.length} records, ${batch.bytes} bytes`,
+    );
     report.batches.submitted += 1;
     report.batches.sizes.push(batch.bytes);
     try {
@@ -956,6 +1016,7 @@ async function importSnapshot(
       report.imported[batch.type] += imported;
       report.existing[batch.type] += existing;
       report.batches.succeeded += 1;
+      progress(`batch ${index + 1}/${built.batches.length} succeeded`);
     } catch (error: unknown) {
       report.failed[batch.type] += batch.records.length;
       report.batches.failed += 1;
@@ -964,6 +1025,7 @@ async function importSnapshot(
         records: batch.records,
         error: error instanceof Error ? error.message : String(error),
       });
+      progress(`batch ${index + 1}/${built.batches.length} failed`);
     }
   }
 
@@ -1086,6 +1148,22 @@ function humanReport(report: SnapshotReport | ImportReport): string {
   return lines.join('\n') + '\n';
 }
 
+function writeJsonReport(report: SnapshotReport | ImportReport): void {
+  if (!report.dryRun) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    return;
+  }
+
+  const { records, ...header } = report;
+  const headerJson = JSON.stringify(header, null, 2);
+  fs.writeSync(process.stdout.fd, `${headerJson.slice(0, -2)},\n  "records": [`);
+  for (let index = 0; index < records.length; index += 1) {
+    const recordJson = JSON.stringify(records[index], null, 2).replace(/^/gm, '    ');
+    fs.writeSync(process.stdout.fd, `${index === 0 ? '\n' : ',\n'}${recordJson}`);
+  }
+  fs.writeSync(process.stdout.fd, records.length === 0 ? ']\n}\n' : '\n  ]\n}\n');
+}
+
 async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   const options = parseArguments(argv);
   if (options.help) {
@@ -1094,7 +1172,13 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   }
   if (!options.sourcePath) throw new Error('a cavemem database is required via --source or CAVEMEM_DATA_DB');
 
-  const snapshot = await readCavememSnapshot(options.sourcePath);
+  const progress: ProgressReporter = process.stderr.isTTY || process.env.AGENTMEMORY_IMPORT_PROGRESS === '1'
+    ? (message) => process.stderr.write(`agentmemory-import-cavemem: ${message}\n`)
+    : () => {};
+  const snapshot = await readCavememSnapshot(options.sourcePath, progress);
+  progress(
+    `selected ${snapshot.selected.sessions} sessions, ${snapshot.selected.observations} observations, ${snapshot.selected.summaries} summaries`,
+  );
   const report = options.dryRun
     ? snapshot
     : await importSnapshot(
@@ -1102,8 +1186,15 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
       normalizeImportUrl(options.url || process.env.AGENTMEMORY_URL || DEFAULT_IMPORT_URL),
       process.env.AGENTMEMORY_SECRET,
       options.maxBatchBytes,
+      progress,
     );
-  process.stdout.write(options.json ? `${JSON.stringify(report, null, 2)}\n` : humanReport(report));
+  progress(options.json ? 'writing JSON report' : 'writing report');
+  if (options.json) {
+    writeJsonReport(report);
+  } else {
+    process.stdout.write(humanReport(report));
+  }
+  progress('complete');
 }
 
 if (require.main === module) {

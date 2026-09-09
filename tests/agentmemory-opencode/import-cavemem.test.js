@@ -13,7 +13,10 @@ const { createCavememImportFixture } = require('./fixtures/cavemem-import-fixtur
 
 const repoRoot = path.resolve(__dirname, '../..');
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.ts');
+const importerPackageNixPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.nix');
 let cachedDependencyNodePath;
+let cachedImporterPackagePath;
+let cachedImporterNodeBin;
 
 function dependencyNodePath() {
   if (cachedDependencyNodePath) return cachedDependencyNodePath;
@@ -34,13 +37,57 @@ function dependencyNodePath() {
   return cachedDependencyNodePath;
 }
 
-function runImporter(sourcePath, args = []) {
+function importerNodeBin() {
+  if (cachedImporterNodeBin) return cachedImporterNodeBin;
+  const configured = process.env.AGENTMEMORY_IMPORTER_NODE_BIN;
+  if (configured) {
+    cachedImporterNodeBin = configured;
+    return cachedImporterNodeBin;
+  }
+  const nodePackage = execFileSync(
+    'nix',
+    ['eval', '--raw', '.#darwinConfigurations.ShopifyLaptop.pkgs.nodejs_22'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  ).trim();
+  cachedImporterNodeBin = path.join(nodePackage, 'bin', 'node');
+  return cachedImporterNodeBin;
+}
+
+function importerPackagePath() {
+  if (cachedImporterPackagePath) return cachedImporterPackagePath;
+  const configured = process.env.AGENTMEMORY_IMPORTER_BIN;
+  if (configured) {
+    cachedImporterPackagePath = configured;
+    return cachedImporterPackagePath;
+  }
+
+  const expression = `(let
+    flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+    pkgs = import flake.inputs.nixpkgs {
+      system = "aarch64-darwin";
+      overlays = [ flake.outputs.overlays.custom-packages ];
+    };
+  in (pkgs.callPackage ${JSON.stringify(importerPackageNixPath)} {
+    bearerReference = "fixture-bearer";
+  }).drvPath)`;
+  const drvPath = execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim();
+  cachedImporterPackagePath = execFileSync('nix-store', ['--realise', drvPath], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim().split('\n').at(-1) + '/bin/agentmemory-import-cavemem';
+  return cachedImporterPackagePath;
+}
+
+function runImporter(sourcePath, args = [], extraEnv = {}) {
   return spawnSync(
-    process.execPath,
+    importerNodeBin(),
     ['--experimental-strip-types', '--expose-gc', importerPath, '--source', sourcePath, '--json', ...args],
     {
       cwd: repoRoot,
-      env: { ...process.env, NODE_PATH: dependencyNodePath() },
+      env: { ...process.env, ...extraEnv, NODE_PATH: dependencyNodePath() },
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
     },
@@ -54,7 +101,7 @@ function runDryRun(sourcePath) {
 function runImporterAsync(sourcePath, args = []) {
   return new Promise((resolve) => {
     const child = spawn(
-      process.execPath,
+      importerNodeBin(),
       ['--experimental-strip-types', '--expose-gc', importerPath, '--source', sourcePath, '--json', ...args],
       {
         cwd: repoRoot,
@@ -259,6 +306,175 @@ test('dry-run JSON is deterministic and does not contact AgentMemory', () => {
     assert.equal(first.stdout, second.stdout);
     assert.equal(first.stderr, '');
     assert.equal(second.stderr, '');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('progress stays on stderr and leaves JSON stdout parseable', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-progress-'));
+  const sourcePath = path.join(directory, 'data.db');
+  createCavememImportFixture(sourcePath);
+
+  try {
+    const result = runImporter(sourcePath, ['--dry-run'], { AGENTMEMORY_IMPORT_PROGRESS: '1' });
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(JSON.parse(result.stdout).records.length, 9);
+    assert.match(result.stderr, /creating read-only SQLite snapshot/);
+    assert.match(result.stderr, /observations: 9 rows total/);
+    assert.match(result.stderr, /writing JSON report/);
+    assert.match(result.stderr, /complete/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('dry-run JSON emits records without serializing the aggregate report', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-streaming-'));
+  const sourcePath = path.join(directory, 'data.db');
+  const preloadPath = path.join(directory, 'reject-aggregate-json.cjs');
+  createCavememImportFixture(sourcePath);
+  fs.writeFileSync(preloadPath, `
+    const stringify = JSON.stringify;
+    JSON.stringify = function (value, ...args) {
+      if (value?.dryRun === true && Array.isArray(value.records)) {
+        throw new Error('aggregate dry-run serialization forbidden');
+      }
+      return stringify.call(this, value, ...args);
+    };
+  `);
+
+  try {
+    const nodeOptions = [process.env.NODE_OPTIONS, `--require=${preloadPath}`]
+      .filter(Boolean)
+      .join(' ');
+    const result = runImporter(sourcePath, ['--dry-run'], { NODE_OPTIONS: nodeOptions });
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.equal(JSON.parse(result.stdout).records.length, 9);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('batch sizing serializes payloads per batch instead of per record', () => {
+  const recordCount = 20_000;
+  const probe = spawnSync(
+    importerNodeBin(),
+    ['--experimental-strip-types', '--expose-gc', '-e', `
+      const { buildImportBatches } = require(${JSON.stringify(importerPath)});
+      const recordCount = ${recordCount};
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      const records = Array.from({ length: recordCount }, (_, index) => ({
+        id: 'cavemem:observations:session:' + index,
+        sessionId: 'session',
+        project: 'project',
+        timestamp,
+        narrative: 'observation ' + index,
+        type: 'prompt',
+        origin: { channel: 'import', detail: 'fixture', capturedAt: timestamp },
+      }));
+      const snapshot = {
+        sourcePath: '/tmp/fixture.db',
+        dryRun: true,
+        selected: { sessions: 1, observations: recordCount, summaries: 0 },
+        skipped: { sessions: 0, observations: 0, summaries: 0 },
+        malformed: { sessions: 0, observations: 0, summaries: 0 },
+        skippedByReason: { sessions: {}, observations: {}, summaries: {} },
+        sessions: { selected: ['session'], skipped: [] },
+        selectedSessions: [{
+          id: 'session',
+          project: 'project',
+          cwd: '/tmp/project',
+          startedAt: timestamp,
+          endedAt: timestamp,
+          skipReason: null,
+        }],
+        records,
+      };
+      const stringify = JSON.stringify;
+      let payloadSerializations = 0;
+      JSON.stringify = function (value, ...args) {
+        if (value?.strategy === 'skip' && value.exportData) {
+          payloadSerializations += 1;
+          if (payloadSerializations > 20) throw new Error('payload serialized per record');
+        }
+        return stringify.call(this, value, ...args);
+      };
+      const progress = [];
+      const built = buildImportBatches(snapshot, 8 * 1024 * 1024, (message) => progress.push(message));
+      process.stdout.write(stringify({
+        payloadSerializations,
+        batches: built.batches.length,
+        oversized: built.oversized.length,
+        target: built.target,
+        bounded: built.batches.every((batch) => batch.bytes < 8 * 1024 * 1024),
+        progress,
+      }));
+    `],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_PATH: dependencyNodePath() },
+    },
+  );
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.ok(result.payloadSerializations <= 20);
+  assert.ok(result.batches > 0);
+  assert.equal(result.oversized, 0);
+  assert.deepEqual(result.target, { sessions: 1, observations: recordCount, summaries: 0 });
+  assert.equal(result.bounded, true);
+  assert.ok(result.progress.includes(`record preparation: ${recordCount}/${recordCount} records`));
+  assert.ok(result.progress.includes(`batch sizing: ${recordCount}/${recordCount + 1} records`));
+});
+
+test('packaged importer resolves the configured bearer and keeps dry-runs credential-free', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-auth-'));
+  const securityPath = path.join(directory, 'security');
+  const securityLog = path.join(directory, 'security.log');
+  const sourcePath = path.join(directory, 'missing.db');
+  fs.writeFileSync(
+    securityPath,
+    '#!/bin/sh\nprintf "%s\\n" "$*" >> "$AGENTMEMORY_IMPORT_SECURITY_LOG"\n' +
+      'if [ "${SECURITY_FAIL:-0}" = 1 ]; then exit 1; fi\n' +
+      'printf "fixture-bearer\\n"\n',
+    { mode: 0o755 },
+  );
+  fs.chmodSync(securityPath, 0o755);
+  const runPackaged = (args, extraEnv = {}) => spawnSync(
+    importerPackagePath(),
+    ['--source', sourcePath, ...args],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        AGENTMEMORY_SECRET: '',
+        AGENTMEMORY_IMPORT_SECURITY_BIN: securityPath,
+        AGENTMEMORY_IMPORT_SECURITY_LOG: securityLog,
+        ...extraEnv,
+      },
+    },
+  );
+
+  try {
+    assert.match(fs.readFileSync(importerPackagePath(), 'utf8'), /nodejs-22\.[^/]*\/bin\/node/);
+    const missingBearer = runPackaged([], { SECURITY_FAIL: '1' });
+    assert.equal(missingBearer.status, 1);
+    assert.match(missingBearer.stderr, /bearer unavailable from macOS Keychain/);
+    assert.match(fs.readFileSync(securityLog, 'utf8'), /-s mcpproxy -a fixture-bearer -w/);
+
+    fs.rmSync(securityLog);
+    const authenticated = runPackaged([]);
+    assert.equal(authenticated.status, 1);
+    assert.match(authenticated.stderr, /(?:Cannot open database|unable to open database file)/);
+    assert.match(fs.readFileSync(securityLog, 'utf8'), /-s mcpproxy -a fixture-bearer -w/);
+
+    fs.rmSync(securityLog);
+    createCavememImportFixture(sourcePath);
+    const dryRun = runPackaged(['--dry-run', '--json'], { SECURITY_FAIL: '1' });
+    assert.equal(dryRun.status, 0, `${dryRun.stderr}\n${dryRun.stdout}`);
+    assert.equal(JSON.parse(dryRun.stdout).records.length, 9);
+    assert.equal(fs.existsSync(securityLog), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

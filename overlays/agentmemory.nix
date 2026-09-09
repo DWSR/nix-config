@@ -75,7 +75,10 @@ in
       version = "0.9.29";
       src = agentmemorySrc;
 
-      patches = [ ./agentmemory-patches/opencode-capture.patch ];
+      patches = [
+        ./agentmemory-patches/opencode-capture.patch
+        ./agentmemory-patches/bm25-index-cap.patch
+      ];
 
       postPatch = ''
         cp ${./agentmemory-deps/package.json} package.json

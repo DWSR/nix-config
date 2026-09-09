@@ -386,15 +386,26 @@ in
   cavemem-importer-deps = final.buildNpmPackage {
     pname = "cavemem-importer-deps";
     version = "0.0.1";
+    # buildNpmPackage uses this for npm, hooks, build inputs, and native ABI.
+    nodejs = final.nodejs_22;
 
     src = ./cavemem-importer-deps;
 
     npmDeps = final.importNpmLock { npmRoot = ./cavemem-importer-deps; };
-    inherit (final.importNpmLock) npmConfigHook;
+    inherit
+      (final.callPackage (final.path + "/pkgs/build-support/node/import-npm-lock/hooks") {
+        nodejs = final.nodejs_22;
+      })
+      npmConfigHook
+      ;
     dontNpmBuild = true;
+    # npmConfigHook installs native dependencies during configurePhase, so
+    # build-from-source must be a derivation env var, not a preBuild export.
+    env.npm_config_build_from_source = "true";
 
     nativeBuildInputs = [
-      final.nodejs
+      # Node 24.19.0 aborts when better-sqlite3 v12 statements are finalized
+      # (nodejs/node#65446). Keep the native build and runtime on Node 22.
       final.python3
     ]
     ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
@@ -404,16 +415,6 @@ in
       # package above.
       final.cctools
     ];
-
-    preBuild = ''
-      # Force better-sqlite3 to compile from source instead of letting
-      # `prebuild-install` reach out to GitHub for a prebuilt binary;
-      # `npm_config_nodedir` points node-gyp at the local nodejs which
-      # already ships the headers it needs (otherwise node-gyp would
-      # try to fetch them from nodejs.org).
-      export npm_config_build_from_source=true
-      export npm_config_nodedir=${final.nodejs}
-    '';
 
     # The default `buildNpmPackage` install phase assumes the package
     # ships a `bin` field and copies the project under

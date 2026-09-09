@@ -638,8 +638,9 @@ in
       # 1Password vault (e.g., `op://Employee/...` on Shopify-managed
       # hosts) should override here in their per-host scaffold.
       home.mcp.keychainSecrets = {
-        ${cfg.archivePassphraseSecret} = "op://Private/sqlite-backup-archive/passphrase";
-        ${cfg.rcloneConfigPassphraseSecret} = "op://Private/sqlite-backup-rclone-config/passphrase";
+        ${cfg.archivePassphraseSecret} = lib.mkDefault "op://Private/sqlite-backup-archive/passphrase";
+        ${cfg.rcloneConfigPassphraseSecret} =
+          lib.mkDefault "op://Private/sqlite-backup-rclone-config/passphrase";
       };
     }
   );

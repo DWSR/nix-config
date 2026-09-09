@@ -46,14 +46,14 @@
 {
   lib,
   writeShellApplication,
-  nodejs,
+  nodejs_22,
   cavemem-importer-deps,
   vaultPath,
   dataDir,
 }:
 writeShellApplication {
   name = "cavemem-import-vault";
-  runtimeInputs = [ nodejs ];
+  runtimeInputs = [ nodejs_22 ];
   text = ''
     # Baked at HM build time from `config.home.mcp.obsidianVaultPath`
     # (Shopify: Google Drive path; personal: iCloud path) and
@@ -70,6 +70,6 @@ writeShellApplication {
     # specifically for this kind of NODE_PATH-based consumption.
     export NODE_PATH=${cavemem-importer-deps}/lib/node_modules
 
-    exec ${nodejs}/bin/node ${./cavemem-import-vault.js} "$@"
+    exec ${nodejs_22}/bin/node ${./cavemem-import-vault.js} "$@"
   '';
 }

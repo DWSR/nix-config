@@ -200,6 +200,7 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.match(first.files.join('\n'), /\/tmp\/agentmemory\/runtime\/\.env/);
   assert.ok(first.activation.includes('agentmemoryLogDir'));
   assert.ok(first.packages.some((name) => name.startsWith('agentmemory-')));
+  assert.ok(first.packages.includes('agentmemory-import-cavemem'));
   assert.equal(first.launchd.label, 'dev.dwsr.agentmemory');
   assert.match(first.launchd.programArguments.at(-1), /\/bin\/agentmemory$/);
   assert.equal(first.launchd.environment.AGENTMEMORY_DATA_DIR, '/tmp/agentmemory/data');
@@ -208,12 +209,16 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.III_STREAM_PORT, '35112');
   assert.equal(first.launchd.environment.III_VIEWER_PORT, '35113');
   assert.equal(first.launchd.environment.III_ENGINE_PORT, '61134');
+  assert.equal(first.launchd.environment.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
+  assert.equal(first.launchd.environment.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET, undefined);
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
   assert.match(first.settings, /AGENTMEMORY_DATA_DIR=\/tmp\/agentmemory\/data/);
   assert.match(first.settings, /AGENTMEMORY_URL=http:\/\/127\.0\.0\.1:35111/);
   assert.match(first.settings, /AGENTMEMORY_BACKUP_DESTINATION=\/tmp\/agentmemory\/backups/);
   assert.match(first.settings, /AGENTMEMORY_SECRET_REFERENCE=agentmemory-bearer/);
+  assert.match(first.settings, /AGENTMEMORY_BM25_MAX_ENTRIES=100000/);
+  assert.match(first.settings, /AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES=50000/);
   assert.doesNotMatch(first.settings, /connect opencode/);
   const pluginFiles = first.configFiles.filter((file) => file.startsWith('opencode/plugins/') && file.includes('agentmemory'));
   assert.deepEqual(pluginFiles, ['opencode/plugins/agentmemory-capture.ts']);
@@ -252,6 +257,8 @@ test('enabled AgentMemory registers the stock core shim through mcpproxy only', 
   assert.match(server.command, /\/bin\/agentmemory-mcp$/);
   assert.deepEqual(server.args, []);
   assert.deepEqual(server.env, {
+    AGENTMEMORY_BM25_MAX_ENTRIES: '100000',
+    AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES: '50000',
     AGENTMEMORY_URL: 'http://127.0.0.1:35111',
     AGENTMEMORY_SECRET: '${env:AGENTMEMORY_BEARER}',
     AGENTMEMORY_TOOLS: 'core',
