@@ -94,7 +94,8 @@ Mirror the vault-curator subagent pattern exactly. Specifically:
 2. **Frontmatter**:
    - `description`: concise one-liner that mentions cavemem, time range,
      and "complement vault-curator" so opencode's task router picks it up
-   - `mode: subagent`
+   - `mode: all` so both Task delegation and direct `opencode run --agent`
+     invocation work
    - `model: anthropic/claude-sonnet-4-5` (heavier than vault-curator's
      haiku because synthesis requires judgment about content; selectivity
      is the value add)

@@ -570,11 +570,10 @@ pkgs.writeShellApplication {
     # documented seven required fields.
     #
     # On parse failure (no event stream, no matching fenced block, or
-    # missing required fields), sets SYNTH_SUMMARY="(parse failed)" and
-    # leaves the count vars empty / unset. For task 4.1 a parse failure
-    # is non-fatal — only the synthesizer's exit code drives the
-    # success / fail branch; the parsed values feed task 4.2 (curator
-    # prompt) and task 5.1 (log-footer summary line).
+    # missing required fields), sets SYNTH_SUMMARY="(parse failed)", leaves
+    # the count vars empty / unset, and returns non-zero. The caller treats
+    # this as a synthesizer failure so curator is not invoked and the marker
+    # remains untouched.
     #
     # Inputs (read from caller scope):
     #   SYNTH_CAPTURE — path to the per-run event-stream tempfile
@@ -623,7 +622,7 @@ pkgs.writeShellApplication {
 
       if [ -z "$report" ]; then
         SYNTH_SUMMARY="(parse failed)"
-        return 0
+        return 1
       fi
 
       SYNTH_OBS_SCANNED=$(printf '%s' "$report" | jq -r '.observations_scanned')
@@ -1060,10 +1059,24 @@ pkgs.writeShellApplication {
         exit 1
       fi
 
-      # Synth succeeded. Parse the structured return so the parsed
-      # shell vars are available to task 4.2 (curator prompt) and
-      # task 5.1 (log-footer summary).
-      parse_synth_report
+      # A zero opencode exit is not sufficient: selecting an unavailable or
+      # subagent-only agent falls back to the default agent and still exits
+      # zero. Require the synthesizer's structured report before curator or
+      # marker mutation so a fallback cannot silently skip a sync window.
+      if ! parse_synth_report; then
+        EXIT_CODE=1
+        MARKER_AFTER="<unchanged>"
+        if [ -f "$LOG_FILE" ]; then
+          printf -- '--- last 20 lines of %s (invalid synthesizer report) ---\n' "$LOG_FILE" >&2
+          tail -n 20 "$LOG_FILE" >&2
+          printf -- '--- end of log tail ---\n' >&2
+        fi
+        log_footer
+        rm -f "$SYNTH_CAPTURE"
+        printf 'memory-sync: synthesizer returned no valid structured report. Re-run memory-sync to retry the same window (marker untouched).\n' >&2
+        release_lock
+        exit 1
+      fi
 
       rm -f "$SYNTH_CAPTURE"
 

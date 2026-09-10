@@ -124,14 +124,16 @@ no schema. The agent loads on next rebuild via the established
 
 ### Existing Architecture Analysis
 
-**Subagent definition pattern** (the closest precedents are vault-curator,
+**Agent definition pattern** (the closest precedents are vault-curator,
 nix-pkg, nvim-tailor, security-auditor): a single Markdown file under
 `home-manager/common/agents/` with a YAML frontmatter block (`description`,
-`mode: subagent`, `model`, `temperature`, `permission`) and a Markdown body
+`mode: all`, `model`, `temperature`, `permission`) and a Markdown body
 defining mission, invariants, workflow, tool usage notes, and success
 criteria. The agent body inlines whatever rules / examples / case studies
 make the agent specific to this repo so it works without loading the global
-AGENTS.md.
+AGENTS.md. `mode: all` is required because the agent is both delegated through
+the Task tool and selected directly by `memory-sync` through
+`opencode run --agent`.
 
 **Wiring pattern** (the entire opencode agents attrset lives at lines
 142-157 of `home-manager/common/opencode.nix`): the `agents` block reads
@@ -328,7 +330,7 @@ graph TD
 |-------------|---------|------------|------------|-------|
 | 1.1 | Agent file at canonical path | AgentDefinitionFile | (file existence) | n/a |
 | 1.2 | Frontmatter has required keys | AgentDefinitionFile | YAML frontmatter | n/a |
-| 1.3 | `mode: subagent` | AgentDefinitionFile | YAML frontmatter | n/a |
+| 1.3 | `mode: all` | AgentDefinitionFile | YAML frontmatter | n/a |
 | 1.4 | description names cavemem + time-range + alias | AgentDefinitionFile | YAML frontmatter | n/a |
 | 1.5 | opencode.nix wires the agent in | OpencodeAgentsWiring | `programs.opencode.agents.vault-synthesizer` | n/a |
 | 1.6 | `@vault-synthesizer` recognized after rebuild | OpencodeAgentsWiring | (runtime via opencode) | Synthesizer invocation |

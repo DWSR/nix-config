@@ -11,9 +11,10 @@
     `@vault-synthesizer` invocation alias, and includes delegation
     phrases like "synthesize my recent sessions" / "draft memories from
     cavemem" so opencode's task router picks it up.
-  - Set `mode: subagent`, `model: anthropic/claude-sonnet-4-5`,
+  - Set `mode: all`, `model: anthropic/claude-sonnet-4-5`,
     `temperature: 0.2`. Do not declare `top_p`, `max_tokens`, or any
-    `options.thinking` block.
+    `options.thinking` block. `all` preserves Task delegation and permits the
+    direct `opencode run --agent` invocation used by `memory-sync`.
   - Populate the `permission` block: `edit: deny`, `write: deny`,
     `webfetch: deny`, and a `bash` table with wildcard `"*": ask` plus
     explicit `allow` entries only for `ls *`, `find *`, `rg *`,

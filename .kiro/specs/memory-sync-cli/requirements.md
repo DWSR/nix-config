@@ -386,7 +386,8 @@ and auth handling rather than re-implementing them.
    `observations_scanned`, `clusters_identified`,
    `clusters_promoted`, `clusters_skipped`,
    `drafts_written`, and `draft_paths`.
-4. While the synthesizer invocation exits non-zero,
+4. While the synthesizer invocation exits non-zero OR exits zero without a
+   valid structured summary containing all fields from 7.AC3,
    `memory-sync` shall print the synthesizer's stderr to
    the operator's stderr verbatim, append the same content
    to the per-run log, and exit with code 1 (synthesizer
@@ -452,7 +453,8 @@ vs. agent failure) without parsing stderr.
 2. Exit code 1 shall mean "synthesizer failed": the
    pre-flight passed and the lock was acquired, but the
    `opencode run --agent vault-synthesizer` invocation
-   exited non-zero. The marker is untouched.
+   exited non-zero or returned no valid structured summary.
+   The marker is untouched.
 3. Exit code 2 shall mean "curator failed": the synthesizer
    succeeded, but the `opencode run --agent vault-curator`
    invocation exited non-zero. The marker is untouched.

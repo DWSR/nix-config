@@ -1,6 +1,6 @@
 ---
 description: Audit and curate the Obsidian vault. Deduplicate memories, consolidate overlapping notes, enforce tag guidelines, propose MOCs when clusters grow large. Uses only mcpproxy's call_tool_* verbs against the obsidian upstream for vault writes — never touches repo source. Invoke with @vault-curator or delegate when the user says "clean up my vault" / "dedupe my memories" / "review my notes".
-mode: subagent
+mode: all
 model: openai/gpt-5.6
 variant: xhigh
 temperature: 0.1

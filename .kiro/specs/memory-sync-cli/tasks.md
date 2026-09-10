@@ -308,11 +308,12 @@
     can be parsed after the run completes. Use
     `set -o pipefail` so the synthesizer's exit code propagates
     correctly past the `tee`.
-  - On synthesizer non-zero exit: write `log_footer` with
-    exit code 1 and `(none)` summary, print the synthesizer's
-    stderr to the operator's stderr verbatim (already done by
+  - On synthesizer non-zero exit or a missing/invalid structured report:
+    write `log_footer` with exit code 1 and `(none)` summary, print the
+    synthesizer's stderr to the operator's stderr verbatim (already done by
     the `tee` to log if stdout/stderr are merged via `2>&1`),
-    `release_lock`, exit 1. The marker is NOT updated.
+    `release_lock`, exit 1. The marker is NOT updated and the curator is not
+    invoked.
   - On success, parse the captured event stream via `jq` to
     extract the synthesizer's final structured-return block.
     The jq filter selects events of the assistant-message

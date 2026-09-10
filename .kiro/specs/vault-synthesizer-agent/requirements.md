@@ -76,7 +76,8 @@ as `@vault-synthesizer` from any opencode session without imperative setup.
    `vault-synthesizer` subagent.
 2. The file shall begin with a YAML frontmatter block whose top-level keys
    include `description`, `mode`, `model`, `temperature`, and `permission`.
-3. The frontmatter `mode` value shall be `subagent`.
+3. The frontmatter `mode` value shall be `all` so the agent is available both
+   for in-session Task delegation and direct `opencode run --agent` execution.
 4. The frontmatter `description` shall be a one-line natural-language summary
    that names cavemem, names the time-range argument, and names the
    `@vault-synthesizer` invocation alias so opencode's task router can pick
