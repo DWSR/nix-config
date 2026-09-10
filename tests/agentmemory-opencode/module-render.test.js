@@ -185,6 +185,7 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
 in builtins.toJSON {
   wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
   command = toString hm.programs.opencode.commands.compact;
+  augmentationEnabled = hm.programs.session-compaction.augmentationEnabled;
   agents = builtins.attrNames hm.programs.opencode.agents;
   context = hm.programs.opencode.context;
   memorySync = {
@@ -333,7 +334,7 @@ test('ConsumerCutover selects compaction source without changing native compacti
   );
 });
 
-test('ConsumerCutover preserves explicit augmentation overrides', () => {
+test('ConsumerCutover forces AgentMemory augmentation off without changing cavemem overrides', () => {
   const agentMemoryOverride = renderConsumerCutover({
     enable: true,
     augmentationEnabled: true,
@@ -345,12 +346,14 @@ test('ConsumerCutover preserves explicit augmentation overrides', () => {
 
   assert.match(
     agentMemoryOverride.wrapper,
-    /SESSION_COMPACTION_AUGMENTATION_ENABLED="1"/,
+    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
   );
+  assert.equal(agentMemoryOverride.augmentationEnabled, false);
   assert.match(
     cavememOverride.wrapper,
     /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
   );
+  assert.equal(cavememOverride.augmentationEnabled, false);
 });
 
 test('ConsumerCutover removes synthesis and sync consumers only in AgentMemory mode', () => {

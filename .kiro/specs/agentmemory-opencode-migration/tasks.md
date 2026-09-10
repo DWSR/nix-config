@@ -102,7 +102,7 @@
   - _Requirements: 4.2, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9, 4.10, 4.11_
   - _Boundary: BestEffortImporter_
 
-- [ ] 3.3 Remove cavemem augmentation from session compaction
+- [x] 3.3 Remove cavemem augmentation from session compaction
   - Force normal OpenCode compaction without the cavemem search source under AgentMemory.
   - Leave compaction thresholds, manual command, and continuation behavior unchanged.
   - Retain the prior source in cavemem rollback mode.

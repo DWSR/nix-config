@@ -104,7 +104,8 @@ in
     augmentationEnabled = lib.mkOption {
       type = lib.types.bool;
       default = config.home.opencode.memoryBackend == "cavemem";
-      description = "Whether to augment opencode's continuation prompt with cavemem context. Defaults off for AgentMemory and on for cavemem rollback; explicit values override the backend default. When false, compaction still fires on threshold but no cavemem query is made (R3.6).";
+      apply = enabled: config.home.opencode.memoryBackend == "cavemem" && enabled;
+      description = "Whether to augment opencode's continuation prompt with cavemem context. AgentMemory forces this off even when explicitly enabled. Cavemem rollback defaults this on and honors explicit values. When false, compaction still fires on threshold but no cavemem query is made (R3.6).";
     };
 
     watchSubagents = lib.mkOption {
