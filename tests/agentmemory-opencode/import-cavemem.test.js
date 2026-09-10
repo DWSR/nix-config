@@ -145,7 +145,7 @@ function runCommandAsync(command, args, extraEnv = {}) {
   });
 }
 
-async function startMockAgentMemory({ failOnce = false } = {}) {
+async function startMockAgentMemory({ failOnce = false, port = 0 } = {}) {
   const requests = [];
   const stored = {
     sessions: new Map(),
@@ -226,7 +226,7 @@ async function startMockAgentMemory({ failOnce = false } = {}) {
       response.end(JSON.stringify({ success: true, strategy: 'skip', ...counts }));
     });
   });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
   const address = server.address();
   return {
     url: `http://127.0.0.1:${address.port}`,
@@ -262,10 +262,9 @@ test('dry-run snapshots cavemem, filters only positive provenance, and emits imp
 
     assert.equal(report.dryRun, true);
     assert.deepEqual(report.selected, { sessions: 4, observations: 5, summaries: 4 });
-    assert.deepEqual(report.skipped, { sessions: 3, observations: 4, summaries: 3 });
+    assert.deepEqual(report.skipped, { sessions: 2, observations: 3, summaries: 2 });
     assert.deepEqual(report.malformed, { sessions: 1, observations: 1, summaries: 0 });
     assert.deepEqual(report.skippedByReason.sessions, {
-      pi: 1,
       'obsidian-migration': 1,
       importer: 1,
     });
@@ -281,7 +280,6 @@ test('dry-run snapshots cavemem, filters only positive provenance, and emits imp
     assert.deepEqual(
       report.sessions.skipped.map(({ id, reason }) => [id, reason]),
       [
-        ['pi-session', 'pi'],
         ['obsidian-session', 'obsidian-migration'],
         ['imported-session', 'importer'],
       ],
@@ -346,7 +344,7 @@ test('progress stays on stderr and leaves JSON stdout parseable', () => {
     assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
     assert.equal(JSON.parse(result.stdout).records.length, 9);
     assert.match(result.stderr, /creating read-only SQLite snapshot/);
-    assert.match(result.stderr, /observations: 9 rows total/);
+    assert.match(result.stderr, /observations: 8 rows total/);
     assert.match(result.stderr, /writing JSON report/);
     assert.match(result.stderr, /complete/);
   } finally {
@@ -636,10 +634,17 @@ test('packaged importer bakes the configured AgentMemory REST endpoint', async (
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-endpoint-'));
   const sourcePath = path.join(directory, 'data.db');
   createCavememImportFixture(sourcePath);
-  const mock = await startMockAgentMemory();
+  const configuredImporter = process.env.AGENTMEMORY_CONFIGURED_IMPORTER_BIN;
+  const configuredEndpoint = process.env.AGENTMEMORY_CONFIGURED_IMPORTER_ENDPOINT;
+  if (configuredImporter) {
+    assert.ok(configuredEndpoint, 'configured importer endpoint is required with its package');
+  }
+  const endpoint = configuredImporter ? new URL(configuredEndpoint) : null;
+  if (endpoint) assert.equal(endpoint.hostname, '127.0.0.1');
+  const mock = await startMockAgentMemory({ port: endpoint ? Number(endpoint.port) : 0 });
 
   try {
-    const importerBin = importerPackagePath(mock.url);
+    const importerBin = configuredImporter || importerPackagePath(mock.url);
     const packageText = fs.readFileSync(importerBin, 'utf8');
     assert.match(packageText, new RegExp(`AGENTMEMORY_URL=.*${mock.url.replaceAll('.', '\\.')}`));
     const moduleText = fs.readFileSync(agentmemoryModuleNixPath, 'utf8');
@@ -739,7 +744,7 @@ test('imports deterministic standard batches, reports failures, and continues', 
     assert.deepEqual(report.target, { sessions: 4, observations: 7, summaries: 4 });
     assert.deepEqual(report.imported, { sessions: 4, observations: 6, summaries: 4 });
     assert.deepEqual(report.existing, { sessions: 0, observations: 0, summaries: 0 });
-    assert.deepEqual(report.skipped, { sessions: 3, observations: 4, summaries: 3 });
+    assert.deepEqual(report.skipped, { sessions: 2, observations: 3, summaries: 2 });
     assert.deepEqual(report.malformed, { sessions: 1, observations: 2, summaries: 0 });
     assert.deepEqual(report.failed, { sessions: 0, observations: 1, summaries: 0 });
     assert.equal(report.batches.failed, 1);
@@ -858,7 +863,7 @@ test('merges source summaries into one deterministic target per session', async 
         'cavemem:summaries:malformed-session:3',
         'cavemem:summaries:opencode-session:1',
         'cavemem:summaries:unknown-session:2',
-        'cavemem:summaries:unknown-session:8',
+        'cavemem:summaries:unknown-session:7',
       ],
     );
     const unknownSummary = summaries.find((record) => (
@@ -866,7 +871,7 @@ test('merges source summaries into one deterministic target per session', async 
     ));
     assert.deepEqual(unknownSummary.sourceSummaryIds, [
       'cavemem:summaries:unknown-session:2',
-      'cavemem:summaries:unknown-session:8',
+      'cavemem:summaries:unknown-session:7',
     ]);
     assert.deepEqual(unknownSummary.sourceSummaries.map(({ id, narrative }) => ({ id, narrative })), [
       {
@@ -874,7 +879,7 @@ test('merges source summaries into one deterministic target per session', async 
         narrative: 'Mystery session summary.',
       },
       {
-        id: 'cavemem:summaries:unknown-session:8',
+        id: 'cavemem:summaries:unknown-session:7',
         narrative: 'Mystery turn summary.',
       },
     ]);

@@ -147,7 +147,6 @@ function assertCommonStatus(result, expected) {
   } else {
     assert.doesNotMatch(result.stdout, /^opencode_rollback_/m);
   }
-  assert.match(result.stdout, /^pi_backend=agentmemory$/m);
   assert.match(result.stdout, /^agentmemory_revision=e04ba88819c365c9acf9d6661ea802143e728bd6$/m);
   assert.match(result.stdout, /^iii_revision=iii\/v0\.11\.2$/m);
   assert.match(result.stdout, /^data_dir=\/tmp\/agentmemory\/status-data$/m);
@@ -278,7 +277,7 @@ test('status reports a loaded job that failed startup with one diagnostic action
   }
 });
 
-test('status documents the explicit OpenCode cavemem rollback while Pi stays on AgentMemory', () => {
+test('status documents the explicit OpenCode cavemem rollback', () => {
   const fixture = createFixture();
   try {
     const result = runStatus(

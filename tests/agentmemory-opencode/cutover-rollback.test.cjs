@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -10,8 +10,6 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const repoRoot = path.resolve(__dirname, '../..');
-const agentMemoryEntry =
-  'lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts';
 const agentMemorySecret = 'cutover-rollback-secret';
 
 function renderSelection(backend) {
@@ -29,7 +27,12 @@ function renderSelection(backend) {
     inherit pkgs;
     extraSpecialArgs = { inherit (flake) inputs; };
     modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/default.nix'))}
+      "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/memory-sync.nix'))}
       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
       ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
       {
@@ -53,16 +56,6 @@ function renderSelection(backend) {
           logDir = "/tmp/cutover-rollback/logs";
           bearerReference = "agentmemory-bearer";
         };
-        programs.pi-agent = {
-          enable = true;
-          provider = {
-            mode = "personal";
-            defaultModel = {
-              provider = "openai";
-              modelId = "gpt-5.6-sol";
-            };
-          };
-        };
       }
     ];
   }).config;
@@ -72,9 +65,6 @@ function renderSelection(backend) {
 in builtins.toJSON {
   inherit (hm.home.opencode) memoryBackend;
   capturePlugins = capturePlugins;
-  piExtension = hm.programs.pi-agent.extensions.agentmemory.relativePath;
-  piUrl = hm.programs.pi-agent.internal.agentMemoryUrl;
-  piSecretReference = hm.programs.pi-agent.internal.agentMemorySecretReference;
 })`;
 
   return JSON.parse(
@@ -207,7 +197,7 @@ function createCavememFixture(directory, store) {
   const executablePath = path.join(binDirectory, 'cavemem');
   fs.writeFileSync(
     executablePath,
-    `#!/usr/bin/env node
+    `#!${process.execPath}
 const fs = require('node:fs');
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -260,8 +250,8 @@ await hooks.dispose();
   return harnessPath;
 }
 
-function runOpenCodeAgentMemoryCapture(directory, sourcePath, baseUrl, cavememEnv) {
-  const result = spawnSync(
+async function runOpenCodeAgentMemoryCapture(directory, sourcePath, baseUrl, cavememEnv) {
+  const child = spawn(
     process.execPath,
     [
       '--experimental-strip-types',
@@ -278,84 +268,29 @@ function runOpenCodeAgentMemoryCapture(directory, sourcePath, baseUrl, cavememEn
         AGENTMEMORY_SECRET: agentMemorySecret,
         AGENTMEMORY_PROJECT_NAME: 'cutover-rollback',
       },
-      encoding: 'utf8',
-      timeout: 30_000,
     },
   );
-  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-}
-
-async function buildPiRuntime() {
-  const outputs = execFileSync(
-    'nix',
-    [
-      'build',
-      '--no-link',
-      '--print-out-paths',
-      '--impure',
-      '--expr',
-      `let
-        flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-        pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-      in [ pkgs.pi-agent pkgs.pi-agent-extensions ]`,
-    ],
-    { cwd: repoRoot, encoding: 'utf8', timeout: 600_000 },
-  ).trim().split('\n');
-  return {
-    pi: outputs.find((output) => fs.existsSync(path.join(output, 'bin/pi'))),
-    extensions: outputs.find((output) => fs.existsSync(path.join(output, 'share/pi-agent/extensions.json'))),
-  };
-}
-
-async function loadPiFactory(runtime) {
-  const { createJiti } = await import(
-    pathToFileURL(`${runtime.pi}/lib/node_modules/jiti/lib/jiti.mjs`).href,
-  );
-  const jiti = createJiti(pathToFileURL(__filename).href, {
-    moduleCache: false,
-    alias: {
-      typebox: `${runtime.pi}/lib/node_modules/typebox/build/index.mjs`,
-    },
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const status = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`OpenCode capture fixture timed out\n${stderr}\n${stdout}`));
+    }, 30_000);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
   });
-  const module = await jiti.import(`${runtime.extensions}/${agentMemoryEntry}`);
-  return module.default;
-}
-
-async function runPiAgentMemoryCapture(runtime, baseUrl, cavememEnv) {
-  const env = {
-    ...cavememEnv,
-    AGENTMEMORY_SECRET: agentMemorySecret,
-    AGENTMEMORY_URL: baseUrl,
-  };
-  const previous = Object.fromEntries(
-    Object.keys(env).map((key) => [key, process.env[key]]),
-  );
-  Object.assign(process.env, env);
-  assert.equal(process.env.CAVEMEM_STORE, cavememEnv.CAVEMEM_STORE);
-
-  try {
-    const events = new Map();
-    const pi = {
-      on(name, handler) {
-        events.set(name, handler);
-      },
-      registerCommand() {},
-      registerTool() {},
-    };
-    const factory = await loadPiFactory(runtime);
-    factory(pi);
-    const context = {
-      sessionManager: { getSessionFile: () => '/tmp/cutover-rollback/session.jsonl' },
-      ui: { notify() {}, setStatus() {} },
-    };
-    await events.get('session_start')({ reason: 'startup' }, context);
-    await events.get('session_shutdown')({ reason: 'quit' }, context);
-  } finally {
-    for (const key of Object.keys(previous)) {
-      if (previous[key] === undefined) delete process.env[key];
-      else process.env[key] = previous[key];
-    }
-  }
+  assert.equal(status, 0, `${stderr}\n${stdout}`);
 }
 
 async function loadCavememPlugin() {
@@ -378,11 +313,7 @@ test('cutover and OpenCode-only rollback preserve ownership without dual writes'
   const cutover = renderSelection('agentmemory');
   const rollback = renderSelection('cavemem');
   assert.deepEqual(cutover.capturePlugins, ['opencode/plugins/agentmemory-capture.ts']);
-  assert.equal(cutover.piExtension, agentMemoryEntry);
-  assert.equal(cutover.piUrl, 'http://127.0.0.1:3111');
   assert.deepEqual(rollback.capturePlugins, ['opencode/plugins/cavemem.js']);
-  assert.equal(rollback.piExtension, agentMemoryEntry);
-  assert.equal(rollback.piSecretReference, 'agentmemory-bearer');
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cutover-rollback-'));
   const agentMemorySeed = [{ id: 'imported-agentmemory', source: 'cavemem-import' }];
@@ -400,29 +331,22 @@ test('cutover and OpenCode-only rollback preserve ownership without dual writes'
     );
     const packagedSourcePath = path.join(directory, 'agentmemory-capture.ts');
     fs.copyFileSync(sourcePath, packagedSourcePath);
-    const runtime = await buildPiRuntime();
-    runOpenCodeAgentMemoryCapture(
+    await runOpenCodeAgentMemoryCapture(
       directory,
       packagedSourcePath,
       agentMemory.url,
       cavemem.env,
     );
-    await runPiAgentMemoryCapture(runtime, agentMemory.url, cavemem.env);
-
     const afterCutoverAgentMemory = agentMemoryStore.read();
     assert.ok(
       afterCutoverAgentMemory.length > agentMemorySeed.length,
-      'OpenCode and Pi must write ambient records to the AgentMemory fixture during cutover',
+      'OpenCode must write ambient records to the AgentMemory fixture during cutover',
     );
     assert.ok(
       afterCutoverAgentMemory.some(
         (record) => record.body?.sessionId === 'cutover-opencode-session',
       ),
       'the OpenCode AgentMemory session must be present in the fixture',
-    );
-    assert.ok(
-      afterCutoverAgentMemory.some((record) => record.body?.sessionId === 'session'),
-      'the Pi AgentMemory session must be present in the fixture',
     );
     assert.deepEqual(
       cavememStore.read(),
@@ -455,7 +379,7 @@ test('cutover and OpenCode-only rollback preserve ownership without dual writes'
     assert.deepEqual(
       agentMemoryStore.read(),
       rollbackAgentMemorySnapshot,
-      'OpenCode rollback must leave the Pi-owned AgentMemory store unchanged',
+      'OpenCode rollback must leave the AgentMemory store unchanged',
     );
     const afterRollbackCavemem = cavememStore.read();
     assert.deepEqual(afterRollbackCavemem[0], cavememSeed[0]);

@@ -27,27 +27,29 @@ function targetFiles(patch) {
 }
 
 function createPatchedFixture() {
-  const upstreamSource = execFileSync(
+  const packagePath = process.env.AGENTMEMORY_PACKAGE_PATH || execFileSync(
     'nix',
     [
-      'eval',
-      '--raw',
-      '--impure',
-      '.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory.passthru.agentmemorySrc',
+      'build',
+      '--no-link',
+      '--print-out-paths',
+      'path:.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory',
     ],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim();
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-opencode-source-'));
-  fs.cpSync(upstreamSource, tempDir, { recursive: true });
-  fs.chmodSync(path.join(tempDir, 'plugin/opencode/agentmemory-capture.ts'), 0o644);
-  execFileSync('patch', ['--batch', '--forward', '-p1', '-i', patchPath], {
-    cwd: tempDir,
-    encoding: 'utf8',
-  });
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-opencode-plugin-'));
+  const sourcePath = path.join(tempDir, 'agentmemory-capture.ts');
+  fs.copyFileSync(
+    path.join(
+      packagePath,
+      'lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts',
+    ),
+    sourcePath,
+  );
   return {
     root: tempDir,
-    sourcePath: path.join(tempDir, 'plugin/opencode/agentmemory-capture.ts'),
-    source: fs.readFileSync(path.join(tempDir, 'plugin/opencode/agentmemory-capture.ts'), 'utf8'),
+    sourcePath,
+    source: fs.readFileSync(sourcePath, 'utf8'),
   };
 }
 

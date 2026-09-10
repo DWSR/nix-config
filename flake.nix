@@ -234,6 +234,7 @@
           # switched host.
           pkgs = import nixpkgs {
             inherit system;
+            config.allowUnfree = true;
             overlays = [
               outputs.overlays.unstable-packages
               outputs.overlays.custom-packages
@@ -1719,6 +1720,32 @@
             inherit pkgs self;
           };
 
+          agentMemoryPersonalSecretValidation =
+            import ./tests/agentmemory-opencode/personal-secret-validation.nix
+              {
+                inherit pkgs self;
+              };
+
+          agentMemorySecretActivator = pkgs.callPackage ./scripts/mcp-secrets-activate.nix { };
+
+          agentMemoryMissingSecretActivation =
+            import ./tests/agentmemory-opencode/missing-secret-activation.nix
+              {
+                activator = agentMemorySecretActivator;
+                inherit pkgs;
+              };
+
+          agentMemoryImporter = pkgs.callPackage ./scripts/agentmemory-import-cavemem.nix {
+            bearerReference = "fixture-bearer";
+            restEndpoint = "http://127.0.0.1:3111";
+          };
+
+          agentMemoryConfiguredImporterEndpoint = "http://127.0.0.1:35114";
+          agentMemoryConfiguredImporter = pkgs.callPackage ./scripts/agentmemory-import-cavemem.nix {
+            bearerReference = "fixture-bearer";
+            restEndpoint = agentMemoryConfiguredImporterEndpoint;
+          };
+
           agentMemoryChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
             agentmemory-opencode-matrix =
               pkgs.runCommand "agentmemory-opencode-matrix"
@@ -1727,8 +1754,20 @@
                     pkgs.git
                     pkgs.nix
                     pkgs.nodejs
+                    pkgs.nodejs_22
+                    pkgs.sqlite
+                    pkgs.which
                   ];
                   inherit agentMemoryHostMatrix;
+                  AGENTMEMORY_MISSING_SECRET_ACTIVATION_PROOF = agentMemoryMissingSecretActivation;
+                  AGENTMEMORY_PERSONAL_SECRET_VALIDATION = agentMemoryPersonalSecretValidation;
+                  AGENTMEMORY_CONFIGURED_IMPORTER_BIN = "${agentMemoryConfiguredImporter}/bin/agentmemory-import-cavemem";
+                  AGENTMEMORY_CONFIGURED_IMPORTER_ENDPOINT = agentMemoryConfiguredImporterEndpoint;
+                  AGENTMEMORY_IMPORTER_BIN = "${agentMemoryImporter}/bin/agentmemory-import-cavemem";
+                  AGENTMEMORY_IMPORTER_NODE_BIN = "${pkgs.nodejs_22}/bin/node";
+                  AGENTMEMORY_IMPORTER_NODE_PATH = "${pkgs.cavemem-importer-deps}/lib/node_modules";
+                  AGENTMEMORY_PACKAGE_PATH = pkgs.agentmemory;
+                  MCPPROXY_PACKAGE_PATH = pkgs.mcpproxy-go;
                 }
                 ''
                   export HOME=$(mktemp -d)
@@ -1737,7 +1776,7 @@
                   cp -R ${./.} source
                   chmod -R u+w source
                   cd source
-                  node --test tests/agentmemory-opencode/matrix.test.js
+                  node tests/agentmemory-opencode/index.js
                   touch $out
                 '';
           };

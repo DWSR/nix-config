@@ -22,7 +22,6 @@ function renderHosts() {
       summarizeConfig = hm:
         let
           agentmemory = hm.programs.agentmemory;
-          pi = hm.programs.pi-agent;
           agentmemoryJob = hm.launchd.agents.agentmemory;
           settingsPath = "\${agentmemory.runtimeDir}/.env";
           mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile."mcpproxy/mcp_config.json".text);
@@ -74,14 +73,6 @@ function renderHosts() {
             memorySync = hm.programs.memory-sync.enable;
             sessionCompactionAugmentation = hm.programs.session-compaction.augmentationEnabled;
           };
-          pi = {
-            inherit (pi) enable agentMemory;
-            internal = {
-              url = pi.internal.agentMemoryUrl;
-              secretReference = pi.internal.agentMemorySecretReference;
-              extension = pi.extensions.agentmemory.relativePath;
-            };
-          };
           secretUri = builtins.getAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets;
           rollbackCommand =
             if agentmemory.rollbackPackage == null then
@@ -118,7 +109,7 @@ function renderHosts() {
   return renderedHosts;
 }
 
-test('both hosts cut OpenCode and Pi over to equivalent AgentMemory runtime wiring', () => {
+test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', () => {
   const rendered = renderHosts();
   const personal = rendered.personal;
   const shopify = rendered.shopify;
@@ -141,12 +132,6 @@ test('both hosts cut OpenCode and Pi over to equivalent AgentMemory runtime wiri
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
     assert.match(config.agentmemory.settings, /AGENTMEMORY_DATA_DIR=/);
     assert.doesNotMatch(config.agentmemory.settings, /AGENTMEMORY_SECRET=/);
-    assert.equal(config.pi.enable, true, `${host} enables Pi`);
-    assert.equal(config.pi.agentMemory.restPort, 3111);
-    assert.equal(config.pi.agentMemory.secretReference, 'agentmemory-bearer');
-    assert.equal(config.pi.internal.url, 'http://127.0.0.1:3111');
-    assert.equal(config.pi.internal.secretReference, 'agentmemory-bearer');
-    assert.equal(config.pi.internal.extension, 'lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts');
     assert.deepEqual(config.capturePlugins, ['opencode/plugins/agentmemory-capture.ts']);
     assert.match(config.secretUri, /^op:\/\/(Private|Employee)\/AgentMemory\/Bearer$/);
     assert.doesNotMatch(JSON.stringify(config), /bearer-value|test-secret|sk-[A-Za-z0-9]/i);
@@ -168,13 +153,11 @@ test('both hosts cut OpenCode and Pi over to equivalent AgentMemory runtime wiri
   assert.deepEqual(personal.backend, shopify.backend);
   assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);
   assert.deepEqual(equivalentAgentMemory(personal), equivalentAgentMemory(shopify));
-  for (const field of ['pi', 'capturePlugins']) {
-    assert.deepEqual(
-      personal[field],
-      shopify[field],
-      `${field} is equivalent across hosts except declared secret and backup destination values`,
-    );
-  }
+  assert.deepEqual(
+    personal.capturePlugins,
+    shopify.capturePlugins,
+    'capture plugins are equivalent across hosts',
+  );
 });
 
 test('both real hosts render a complete data-preserving cavemem OpenCode rollback specialisation', () => {

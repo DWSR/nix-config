@@ -66,7 +66,6 @@ function createCavememImportFixture(databasePath, options = {}) {
       ('unknown-session', 'unknown', '/work/mystery', 1700000010000, 1700000011000, '{"project":"mystery"}'),
       ('malformed-session', 'unknown', '/work/broken', 1700000020000, 1700000021000, '{"project":"broken"'),
       ('ambiguous-session', 'unknown', '/work/ambiguous', 1700000030000, 1700000031000, '{"note":"possibly imported"}'),
-      ('pi-session', 'pi', '/work/pi', 1700000040000, 1700000041000, '{"project":"pi"}'),
       ('obsidian-session', 'obsidian-migration', '/work/obsidian', 1700000050000, 1700000051000, '{"project":"obsidian"}'),
       ('imported-session', 'unknown', '/work/imported', 1700000060000, 1700000061000, '{"importer":"agentmemory","import_hash":"fixture-hash","source_path":"legacy/session"}');
 
@@ -77,7 +76,6 @@ function createCavememImportFixture(databasePath, options = {}) {
       ('malformed-session', 'response', 'Keep this row despite malformed metadata.', 0, NULL, 1700000020010, '{"fixture":true'),
       ('ambiguous-session', 'prompt', 'Do not discard ambiguous provenance.', 0, NULL, 1700000030010, '{"note":"possibly imported"}'),
       ('unknown-session', 'response', 'This row has an explicit importer marker.', 0, NULL, 1700000010020, '{"imported":true}'),
-      ('pi-session', 'prompt', 'Pi history.', 0, NULL, 1700000040010, '{"fixture":true}'),
       ('obsidian-session', 'response', 'Obsidian history.', 0, NULL, 1700000050010, '{"fixture":true}'),
       ('imported-session', 'response', 'Already imported history.', 0, NULL, 1700000060010, '{"importer":"agentmemory"}');
 
@@ -86,7 +84,6 @@ function createCavememImportFixture(databasePath, options = {}) {
       ('unknown-session', 'session', 'Mystery session summary.', 0, NULL, 1700000010030),
       ('malformed-session', 'session', 'Broken session summary.', 0, NULL, 1700000020030),
       ('ambiguous-session', 'session', 'Ambiguous session summary.', 0, NULL, 1700000030030),
-      ('pi-session', 'session', 'Pi session summary.', 0, NULL, 1700000040030),
       ('obsidian-session', 'session', 'Obsidian session summary.', 0, NULL, 1700000050030),
       ('imported-session', 'session', 'Imported session summary.', 0, NULL, 1700000060030);
 

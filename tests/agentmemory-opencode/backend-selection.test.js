@@ -9,6 +9,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 function renderBackend(backend) {
   const backendOption = backend === undefined ? '' : `home.opencode.memoryBackend = "${backend}";`;
+  const memorySyncEnabled = backend !== 'agentmemory';
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
@@ -23,7 +24,12 @@ function renderBackend(backend) {
     inherit pkgs;
     extraSpecialArgs = { inherit (flake) inputs; };
     modules = [
-      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/default.nix'))}
+      "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
+      ${JSON.stringify(path.join(repoRoot, 'home-manager/common/memory-sync.nix'))}
       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
       ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
       {
@@ -47,16 +53,8 @@ function renderBackend(backend) {
            logDir = "/tmp/backend-selection/agentmemory-logs";
            bearerReference = "agentmemory-bearer";
          };
-         programs.pi-agent = {
-           enable = true;
-           provider = {
-             mode = "personal";
-             defaultModel = {
-               provider = "openai";
-               modelId = "gpt-5.6-sol";
-             };
-           };
-         };
+         programs.opencode-nono.enable = true;
+         programs.memory-sync.enable = ${memorySyncEnabled};
       }
     ];
   }).config;
@@ -71,12 +69,6 @@ function renderBackend(backend) {
   agentMemoryServer = builtins.filter (server: server.name == "agentmemory") mcpConfig.mcpServers;
    agentMemoryJob = if builtins.hasAttr "agentmemory" hm.launchd.agents then hm.launchd.agents.agentmemory else null;
    cavememSettings = builtins.hasAttr "/tmp/backend-selection/cavemem/settings.json" hm.home.file;
-   piManagedConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext (builtins.readFile hm.programs.pi-agent.internal.managedConfig));
-   piProfiles = {
-     audit = builtins.readFile hm.programs.pi-agent.internal.profilePaths.pi-audit;
-     managed = builtins.readFile hm.programs.pi-agent.internal.profilePaths.pi-managed;
-     review = builtins.readFile hm.programs.pi-agent.internal.profilePaths.pi-review;
-   };
    nonoProfiles = builtins.mapAttrs (_: file: file.text) {
     managed = hm.xdg.configFile."nono/profiles/opencode-managed.json";
     audit = hm.xdg.configFile."nono/profiles/opencode-audit.json";
@@ -102,11 +94,6 @@ in builtins.toJSON {
      packageNames = map (package: package.name or "") hm.home.packages;
      serverCount = builtins.length agentMemoryServer;
      job = agentMemoryJob;
-   };
-   pi = {
-     extensionNames = builtins.attrNames hm.programs.pi-agent.extensions;
-     managedConfig = piManagedConfig;
-     profiles = piProfiles;
    };
    nonoProfiles = nonoProfiles;
 })`;
@@ -173,11 +160,9 @@ test('the selector defaults to the retained cavemem OpenCode backend', () => {
   assert.equal(rendered.agentMemory.serverCount, 1);
   assert.ok(rendered.agentMemory.packageNames.some((name) => name.startsWith('agentmemory')));
   assert.equal(rendered.memorySync.enable, true);
-  assert.deepEqual(rendered.pi.managedConfig.extensionOrder[0], 'agentmemory');
-  assert.match(rendered.pi.managedConfig.agentMemory.url, /127\.0\.0\.1:3111/);
 });
 
-test('AgentMemory mode owns OpenCode capture while Pi owns AgentMemory', () => {
+test('AgentMemory mode owns OpenCode capture and consumers', () => {
   const rendered = renderBackend('agentmemory');
   const agentText = Object.values(rendered.agentTexts).join('\n');
 
@@ -199,35 +184,6 @@ test('AgentMemory mode owns OpenCode capture while Pi owns AgentMemory', () => {
   assert.equal(rendered.cavemem.settings, true);
   assert.equal(rendered.cavemem.serverCount, 1);
   assert.ok(rendered.cavemem.packageNames.some((name) => name.startsWith('cavemem')));
-  assert.deepEqual(rendered.pi.extensionNames, [
-    'agentmemory',
-    'backgroundTasks',
-    'bashTimeout',
-    'codeIntelligence',
-    'mcp',
-    'plan',
-    'questions',
-    'subagents',
-    'timestamps',
-  ]);
-  assert.deepEqual(rendered.pi.managedConfig.extensionOrder, [
-    'agentmemory',
-    'mcp',
-    'subagents',
-    'plan',
-    'timestamps',
-    'bashTimeout',
-    'questions',
-    'codeIntelligence',
-    'backgroundTasks',
-  ]);
-  assert.equal(rendered.pi.managedConfig.mcpEndpoint, 'http://127.0.0.1:8080/mcp');
-  assert.match(rendered.pi.managedConfig.agentMemory.url, /127\.0\.0\.1:3111/);
-  assert.equal(rendered.pi.managedConfig.agentMemory.secretReference, 'agentmemory-bearer');
-  for (const text of Object.values(rendered.pi.profiles)) {
-    assert.doesNotMatch(text, /CAVEMEM_DATA_DIR|cavemem/);
-    assert.match(text, /3111/);
-  }
   for (const text of Object.values(rendered.nonoProfiles)) {
     const profile = JSON.parse(text);
     assert.ok(profile.network.open_port.includes(3111));
@@ -269,8 +225,6 @@ test('cavemem mode owns OpenCode capture and restores its consumers without Agen
   }
   assert.match(rendered.context, /## Obsidian Memory Recall/);
   assert.match(rendered.context, /## Tag Guidelines/);
-  assert.deepEqual(rendered.pi.managedConfig.extensionOrder[0], 'agentmemory');
-  assert.match(rendered.pi.managedConfig.agentMemory.url, /127\.0\.0\.1:3111/);
 });
 
 test('Shopify host instructions follow the selected backend and preserve rollback text', () => {

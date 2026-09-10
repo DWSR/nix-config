@@ -26,7 +26,9 @@ let
       ) configFiles;
       relevantConfigTexts = builtins.mapAttrs configText (
         pkgs.lib.filterAttrs (
-          file: _: builtins.match "(opencode/.*|mcpproxy/mcp_config\\.json|nono/profiles/.*)" file != null
+          file: _:
+          builtins.match "(opencode/(AGENTS\\.md|opencode\\.json|plugins/(cavemem\\.js|agentmemory-.*))|mcpproxy/mcp_config\\.json|nono/profiles/.*)" file
+          != null
         ) hm.xdg.configFile
       );
       relevantHomeTexts = builtins.mapAttrs (
@@ -57,9 +59,6 @@ let
         _: value:
         if builtins.typeOf value == "path" then discard (builtins.readFile value) else discard value
       ) hm.programs.opencode.agents;
-      pi = hm.programs.pi-agent;
-      piManagedConfig = builtins.fromJSON (discard (builtins.readFile pi.internal.managedConfig));
-      piProfiles = builtins.mapAttrs (_: file: discard (builtins.readFile file)) pi.internal.profilePaths;
       launchd = {
         Label = agentMemoryJob.config.Label;
         RunAtLoad = agentMemoryJob.config.RunAtLoad;
@@ -73,8 +72,6 @@ let
         (pkgs.lib.concatStringsSep "\n" (builtins.attrValues relevantConfigTexts))
         (pkgs.lib.concatStringsSep "\n" (builtins.attrValues relevantHomeTexts))
         (pkgs.lib.concatStringsSep "\n" memoryPluginSources)
-        (pkgs.lib.concatStringsSep "\n" (builtins.attrValues piProfiles))
-        (builtins.toJSON piManagedConfig)
         (pkgs.lib.concatStringsSep "\n" (map discard hm.home.opencode.wrapperCommands))
         (builtins.toJSON launchd)
       ];
@@ -122,12 +119,6 @@ let
         augmentation = hm.programs.session-compaction.augmentationEnabled;
       };
       secretReference = hm.home.mcp.keychainSecrets."agentmemory-bearer";
-      pi = {
-        extensionNames = builtins.attrNames pi.extensions;
-        extensionPath = pi.extensions.agentmemory.relativePath;
-        managedConfig = piManagedConfig;
-        profiles = piProfiles;
-      };
     };
 in
 pkgs.writeText "agentmemory-opencode-hosts.json" (

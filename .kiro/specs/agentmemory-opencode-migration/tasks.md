@@ -152,7 +152,7 @@
   - _Requirements: 5.1, 7.1, 7.2, 7.3_
   - _Boundary: HostRollback_
 
-- [ ] 4.4 Register the complete feature validation suite
+- [x] 4.4 Register the complete feature validation suite
   - Evaluate AgentMemory enabled, disabled, personal, Shopify, and OpenCode cavemem rollback configurations.
   - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, consumers, and rollback.
   - Register package, plugin, status, import, backup, host, and rollback tests under `nix flake check`.

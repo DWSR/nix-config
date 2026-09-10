@@ -417,9 +417,11 @@ async function startProxyHarness(rendered) {
 test('healthy mcpproxy tools/list exposes exactly the daemon core inventory', async () => {
   const rendered = renderIntegration();
   assert.deepEqual(rendered.agentmemoryServer.env, {
-    AGENTMEMORY_URL: 'http://127.0.0.1:35111',
+    AGENTMEMORY_BM25_MAX_ENTRIES: '100000',
+    AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES: '50000',
     AGENTMEMORY_SECRET: '${env:AGENTMEMORY_BEARER}',
     AGENTMEMORY_TOOLS: 'core',
+    AGENTMEMORY_URL: 'http://127.0.0.1:35111',
   });
   assert.match(rendered.settings, /AGENTMEMORY_TOOLS=core/);
 

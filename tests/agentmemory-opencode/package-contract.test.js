@@ -25,10 +25,9 @@ test('dependency manifest and lock retain the selected upstream package contract
   assert.equal(manifest.type, 'module');
   assert.equal(manifest.license, 'Apache-2.0');
   assert.equal(manifest.dependencies['iii-sdk'], '0.11.2');
-  assert.deepEqual(manifest.files, [
+  for (const requiredFile of [
     'dist/',
     'plugin/',
-    'integrations/pi/',
     'iii-config.yaml',
     'iii-config.docker.yaml',
     'docker-compose.yml',
@@ -36,7 +35,9 @@ test('dependency manifest and lock retain the selected upstream package contract
     'LICENSE',
     'README.md',
     'AGENTS.md',
-  ]);
+  ]) {
+    assert.ok(manifest.files.includes(requiredFile), `${requiredFile} is missing from the package manifest`);
+  }
 
   assert.equal(lock.lockfileVersion, 3);
   const lockRoot = lock.packages[''];
@@ -64,7 +65,6 @@ test('overlay pins both Darwin dependency revisions and preserves upstream asset
   assert.match(overlay, /buildNpmPackage/);
   assert.match(overlay, /importNpmLock/);
   assert.match(overlay, /plugin/);
-  assert.match(overlay, /integrations\/pi/);
   assert.match(overlay, /iii-config\.yaml/);
   assert.match(overlay, /docker-compose\.yml/);
   assert.match(overlay, /LICENSE/);
@@ -99,7 +99,6 @@ test('runtime package keeps upstream configurable loopback configuration and sto
   assert.match(overlay, /plugin\/opencode\/agentmemory-capture\.ts/);
   assert.match(overlay, /agentmemory-patches\/opencode-capture\.patch/);
   assert.match(overlay, /agentmemory-patches\/bm25-index-cap\.patch/);
-  assert.match(overlay, /integrations\/pi\/index\.ts/);
   assert.match(overlay, /! grep -q 'host: 0\.0\.0\.0'/);
 });
 
