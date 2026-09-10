@@ -134,7 +134,7 @@
   - _Depends: 3.2, 3.6, 3.7_
 
 - [ ] 4. Integrate signing into Home Manager
-- [ ] 4.1 Define enrollment options, tools, and the active marker
+- [x] 4.1 Define enrollment options, tools, and the active marker
   - Add typed enable, state, identity, public metadata, registration-attestation, and package options with a disabled signing default.
   - Install signer and admin tools whenever MCP is enabled, derive the hash-keyed stub path, and render the active marker only for a complete enabled declaration.
   - Reject malformed metadata and enabled declarations without completed GitHub registration.
@@ -269,3 +269,4 @@
 - Task 3.4: Atomic recovery needs distinct fixtures for install-only rename failure versus install-and-rollback failure; selector, exported key, complete state tree, and retained backup are verified independently.
 - Task 3.5: Mutable CTK fixtures must filter exact deletions within raw SHA1/SSH listings rather than regenerate structured tables, or unrelated native identities disappear and target-only deletion tests become false positives.
 - Task 3.6: Generated-output policy is fail-closed: only anchored whole-clause prohibition templates exempt otherwise prohibited actions; broad natural-language negation lets unrelated guidance mask active key/secret commands.
+- Task 4.1: Force every enabled signing option outside the parent MCP gate; parse SSH-SK metadata with bounded, constant-stack pure Nix decoding that rejects NULs and noncanonical Base64 while accepting valid large application fields.

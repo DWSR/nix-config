@@ -12,6 +12,385 @@ let
       config.home.mcp.githubToken;
 
   cfg = config.home.mcp;
+  signingCfg = cfg.gitMcpSigning;
+
+  nonEmptySingleLineString = lib.types.addCheck lib.types.str (
+    value: value != "" && !lib.hasInfix "\n" value && !lib.hasInfix "\r" value
+  );
+  absolutePath = lib.types.addCheck lib.types.str (
+    value: lib.hasPrefix "/" value && !lib.hasInfix "\n" value && !lib.hasInfix "\r" value
+  );
+  ctkPublicKeyHash = lib.types.addCheck lib.types.str (
+    value: builtins.match "[0-9a-f]{40}" value != null
+  );
+  maxSshPublicKeyLineLength = 64 * 1024;
+  isCanonicalBase64 =
+    value:
+    builtins.match "([A-Za-z0-9+/]{4})*" value != null
+    || builtins.match "([A-Za-z0-9+/]{4})*[A-Za-z0-9+/][AQgw]==" value != null
+    || builtins.match "([A-Za-z0-9+/]{4})*[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=" value != null;
+
+  reverse = values: builtins.foldl' (reversed: value: [ value ] ++ reversed) [ ] values;
+
+  base64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  base64Values = builtins.listToAttrs (
+    builtins.genList (index: {
+      name = builtins.substring index 1 base64Alphabet;
+      value = index;
+    }) (builtins.stringLength base64Alphabet)
+  );
+  base64Value = character: builtins.getAttr character base64Values;
+  base64DecodedLength =
+    value:
+    let
+      paddingLength =
+        if lib.hasSuffix "==" value then
+          2
+        else if lib.hasSuffix "=" value then
+          1
+        else
+          0;
+    in
+    (builtins.div (builtins.stringLength value) 4) * 3 - paddingLength;
+  base64ByteAt =
+    value: offset:
+    let
+      quantumOffset = (builtins.div offset 3) * 4;
+      byteOffset = offset - (builtins.div offset 3) * 3;
+      a = base64Value (builtins.substring quantumOffset 1 value);
+      b = base64Value (builtins.substring (quantumOffset + 1) 1 value);
+      c = base64Value (builtins.substring (quantumOffset + 2) 1 value);
+      d = base64Value (builtins.substring (quantumOffset + 3) 1 value);
+    in
+    if byteOffset == 0 then
+      a * 4 + builtins.div b 16
+    else if byteOffset == 1 then
+      (b - builtins.div b 16 * 16) * 16 + builtins.div c 4
+    else
+      (c - builtins.div c 4 * 4) * 64 + d;
+  readUint32At =
+    value: offset:
+    base64ByteAt value offset * 16777216
+    + base64ByteAt value (offset + 1) * 65536
+    + base64ByteAt value (offset + 2) * 256
+    + base64ByteAt value (offset + 3);
+  parseSshStringAt =
+    value: offset:
+    let
+      decodedLength = base64DecodedLength value;
+      valueOffset = offset + 4;
+    in
+    if valueOffset > decodedLength then
+      null
+    else
+      let
+        valueLength = readUint32At value offset;
+        nextOffset = valueOffset + valueLength;
+      in
+      if valueLength > decodedLength - valueOffset then
+        null
+      else
+        {
+          offset = valueOffset;
+          length = valueLength;
+          inherit nextOffset;
+        };
+  bytesAt =
+    value: offset: count:
+    builtins.genList (index: base64ByteAt value (offset + index)) count;
+  matchesBytesAt =
+    value: offset: expected:
+    builtins.foldl' (
+      matches: index: matches && (base64ByteAt value (offset + index) == builtins.elemAt expected index)
+    ) true (builtins.genList (index: index) (builtins.length expected));
+  hasNul =
+    value: parsedString:
+    builtins.foldl' (
+      found: index: found || base64ByteAt value (parsedString.offset + index) == 0
+    ) false (builtins.genList (index: index) parsedString.length);
+
+  sshSkAlgorithmBytes = [
+    115
+    107
+    45
+    101
+    99
+    100
+    115
+    97
+    45
+    115
+    104
+    97
+    50
+    45
+    110
+    105
+    115
+    116
+    112
+    50
+    53
+    54
+    64
+    111
+    112
+    101
+    110
+    115
+    115
+    104
+    46
+    99
+    111
+    109
+  ];
+  nistP256Bytes = [
+    110
+    105
+    115
+    116
+    112
+    50
+    53
+    54
+  ];
+
+  wordBase = 65536;
+  p256Prime = [
+    65535
+    65535
+    65535
+    65535
+    65535
+    65535
+    0
+    0
+    0
+    0
+    0
+    0
+    1
+    0
+    65535
+    65535
+  ];
+  p256PrimeExtended = p256Prime ++ [ 0 ];
+  p256B = [
+    24651
+    10194
+    15422
+    15310
+    45302
+    52307
+    1712
+    25885
+    34492
+    30360
+    48469
+    46059
+    37863
+    43578
+    13784
+    23238
+  ];
+  zeroP256 = builtins.genList (_: 0) 16;
+  compareP256 =
+    left: right:
+    let
+      compare =
+        leftRemaining: rightRemaining:
+        if leftRemaining == [ ] then
+          0
+        else if builtins.head leftRemaining > builtins.head rightRemaining then
+          1
+        else if builtins.head leftRemaining < builtins.head rightRemaining then
+          -1
+        else
+          compare (builtins.tail leftRemaining) (builtins.tail rightRemaining);
+    in
+    compare (reverse left) (reverse right);
+  addP256Words =
+    left: right:
+    let
+      add =
+        leftRemaining: rightRemaining: carry:
+        if leftRemaining == [ ] then
+          {
+            words = [ ];
+            inherit carry;
+          }
+        else
+          let
+            sum = builtins.head leftRemaining + builtins.head rightRemaining + carry;
+            next = add (builtins.tail leftRemaining) (builtins.tail rightRemaining) (builtins.div sum wordBase);
+          in
+          {
+            words = [ (sum - builtins.div sum wordBase * wordBase) ] ++ next.words;
+            inherit (next) carry;
+          };
+    in
+    add left right 0;
+  subtractP256Words =
+    left: right:
+    let
+      subtract =
+        leftRemaining: rightRemaining: borrow:
+        if leftRemaining == [ ] then
+          {
+            words = [ ];
+            inherit borrow;
+          }
+        else
+          let
+            difference = builtins.head leftRemaining - builtins.head rightRemaining - borrow;
+            next = subtract (builtins.tail leftRemaining) (builtins.tail rightRemaining) (
+              if difference < 0 then 1 else 0
+            );
+          in
+          {
+            words = [ (if difference < 0 then difference + wordBase else difference) ] ++ next.words;
+            inherit (next) borrow;
+          };
+    in
+    subtract left right 0;
+  addP256 =
+    left: right:
+    let
+      sum = addP256Words left right;
+      extended = sum.words ++ [ sum.carry ];
+      reduced =
+        if compareP256 extended p256PrimeExtended >= 0 then
+          (subtractP256Words extended p256PrimeExtended).words
+        else
+          extended;
+    in
+    builtins.genList (index: builtins.elemAt reduced index) 16;
+  subtractP256 =
+    left: right:
+    if compareP256 left right >= 0 then
+      (subtractP256Words left right).words
+    else
+      (subtractP256Words p256Prime (subtractP256Words right left).words).words;
+  multiplyP256 =
+    left: right:
+    let
+      multiplyWord =
+        bitCount: word: accumulator: addend:
+        if bitCount == 0 then
+          {
+            inherit accumulator addend;
+          }
+        else
+          let
+            bit = word - builtins.div word 2 * 2;
+            nextAccumulator = if bit == 0 then accumulator else addP256 accumulator addend;
+            nextAddend = addP256 addend addend;
+          in
+          multiplyWord (bitCount - 1) (builtins.div word 2) nextAccumulator nextAddend;
+      multiplyWords =
+        words: accumulator: addend:
+        if words == [ ] then
+          accumulator
+        else
+          let
+            next = multiplyWord 16 (builtins.head words) accumulator addend;
+          in
+          multiplyWords (builtins.tail words) next.accumulator next.addend;
+    in
+    multiplyWords right zeroP256 left;
+  bytesToP256 =
+    bytes:
+    reverse (
+      builtins.genList (
+        index: builtins.elemAt bytes (index * 2) * 256 + builtins.elemAt bytes (index * 2 + 1)
+      ) (builtins.div (builtins.length bytes) 2)
+    );
+  isP256UncompressedPoint =
+    point:
+    if builtins.length point != 65 || builtins.head point != 4 then
+      false
+    else
+      let
+        x = bytesToP256 (builtins.genList (index: builtins.elemAt point (index + 1)) 32);
+        y = bytesToP256 (builtins.genList (index: builtins.elemAt point (index + 33)) 32);
+        xSquared = multiplyP256 x x;
+        xCubed = multiplyP256 xSquared x;
+      in
+      compareP256 x p256Prime < 0
+      && compareP256 y p256Prime < 0
+      && multiplyP256 y y == subtractP256 (addP256 xCubed p256B) (addP256 x (addP256 x x));
+
+  sshSkPublicKeyParts =
+    value:
+    builtins.match "sk-ecdsa-sha2-nistp256@openssh\\.com[[:blank:]]+([A-Za-z0-9+/=]+)([[:blank:]]+([^[:blank:]].*[^[:blank:]]|[^[:blank:]]))?" value;
+  isSshSkEcdsaP256PublicKeyBlob =
+    keyData:
+    let
+      algorithm = parseSshStringAt keyData 0;
+    in
+    if
+      algorithm == null
+      || algorithm.length != builtins.length sshSkAlgorithmBytes
+      || !(matchesBytesAt keyData algorithm.offset sshSkAlgorithmBytes)
+    then
+      false
+    else
+      let
+        curve = parseSshStringAt keyData algorithm.nextOffset;
+      in
+      if
+        curve == null
+        || curve.length != builtins.length nistP256Bytes
+        || !(matchesBytesAt keyData curve.offset nistP256Bytes)
+      then
+        false
+      else
+        let
+          point = parseSshStringAt keyData curve.nextOffset;
+        in
+        if point == null || point.length != 65 then
+          false
+        else
+          let
+            pointBytes = bytesAt keyData point.offset 65;
+          in
+          if !(isP256UncompressedPoint pointBytes) then
+            false
+          else
+            let
+              application = parseSshStringAt keyData point.nextOffset;
+            in
+            application != null
+            && application.nextOffset == base64DecodedLength keyData
+            && !(hasNul keyData application);
+  sshPublicKey = lib.types.addCheck lib.types.str (
+    value:
+    builtins.stringLength value <= maxSshPublicKeyLineLength
+    && !lib.hasInfix "\n" value
+    && !lib.hasInfix "\r" value
+    && (
+      let
+        parts = sshSkPublicKeyParts value;
+        keyData = if parts == null then "" else builtins.head parts;
+      in
+      parts != null && isCanonicalBase64 keyData && isSshSkEcdsaP256PublicKeyBlob keyData
+    )
+  );
+  sshFingerprint = lib.types.addCheck lib.types.str (
+    value: builtins.match "SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]" value != null
+  );
+
+  signerPackage = pkgs.callPackage ../../scripts/git-mcp-secure-enclave-signer.nix { };
+  adminPackage = pkgs.callPackage ../../scripts/git-mcp-secure-enclave-admin.nix { };
+
+  hasCompleteSigningDeclaration =
+    signingCfg.enable
+    && signingCfg.identityLabel != null
+    && signingCfg.ctkPublicKeyHash != null
+    && signingCfg.sshPublicKey != null
+    && signingCfg.sshFingerprint != null
+    && signingCfg.githubSigningKeyRegistered;
 
   # Convert a SOPS-bridged keychain secret name (e.g. `mcp-github-token`)
   # to the env-var name the launchd wrapper exports for it
@@ -369,6 +748,69 @@ in
       description = "Absolute path to the Obsidian vault for agent memory and conversation logs";
     };
 
+    gitMcpSigning = {
+      enable = lib.mkEnableOption "git-mcp Secure Enclave signing";
+
+      stateDir = lib.mkOption {
+        type = absolutePath;
+        default = "${config.xdg.stateHome}/git-mcp-secure-enclave-signing";
+        description = "Absolute XDG state directory for non-secret git-mcp signing artifacts.";
+      };
+
+      identityLabel = lib.mkOption {
+        type = lib.types.nullOr nonEmptySingleLineString;
+        default = null;
+        description = "Non-empty CTK identity label for the active git-mcp signing enrollment.";
+      };
+
+      ctkPublicKeyHash = lib.mkOption {
+        type = lib.types.nullOr ctkPublicKeyHash;
+        default = null;
+        description = "Lowercase 40-character CTK public-key hash for the active signing enrollment.";
+      };
+
+      sshPublicKey = lib.mkOption {
+        type = lib.types.nullOr sshPublicKey;
+        default = null;
+        description = "OpenSSH sk-ecdsa-sha2-nistp256 public key for the active signing enrollment.";
+      };
+
+      sshFingerprint = lib.mkOption {
+        type = lib.types.nullOr sshFingerprint;
+        default = null;
+        description = "SHA256 OpenSSH fingerprint for the active signing enrollment.";
+      };
+
+      githubSigningKeyRegistered = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = "Whether this exact public key has been registered through GitHub's signing-key surface.";
+      };
+
+      signerPackage = lib.mkOption {
+        type = lib.types.package;
+        default = signerPackage;
+        description = "Signer package for git-mcp Secure Enclave signing.";
+      };
+
+      adminPackage = lib.mkOption {
+        type = lib.types.package;
+        default = adminPackage;
+        description = "Lifecycle administration package for git-mcp Secure Enclave signing.";
+      };
+
+      stubPath = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default =
+          if signingCfg.ctkPublicKeyHash == null then
+            null
+          else
+            "${signingCfg.stateDir}/identities/${signingCfg.ctkPublicKeyHash}/id_ecdsa_sk_rk";
+        readOnly = true;
+        description = "Derived resident-key stub path for the configured CTK public-key hash.";
+      };
+    };
+
     extraServers = lib.mkOption {
       type = lib.types.attrsOf lib.types.attrs;
       default = { };
@@ -501,114 +943,165 @@ in
     '';
   };
 
-  config = lib.mkIf config.home.mcp.enable {
-    assertions = [
-      {
-        assertion = lib.all (
-          name: builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null
-        ) fileSourcedEnvNames;
-        message = "home.mcp.fileSourcedEnv attribute names must be valid shell environment variable names.";
-      }
-      {
-        assertion = fileSourcedEnvNameCollisions == [ ];
-        message = "home.mcp.fileSourcedEnv names conflict with Keychain-sourced env vars: ${lib.concatStringsSep ", " fileSourcedEnvNameCollisions}";
-      }
-      {
-        assertion = renderedConfig.api_key == readKeychainSecret "mcpproxy-api-key";
-        message = ''
-          home.mcp rendered source config must reference mcpproxy-api-key
-          through the launchd-wrapper ${"\${env:MCPPROXY_API_KEY}"} flow.
-        '';
-      }
-      {
-        assertion = lib.hasPrefix "\${env:" githubToken && lib.hasSuffix "}" githubToken;
-        message = ''
-          home.mcp.githubToken must be supplied as a launchd-wrapper
-          ${"\${env:...}"} placeholder, not as a literal token.
-        '';
-      }
-      {
-        assertion = !(renderedConfig ? tools_limit);
-        message = "home.mcp rendered source config must not set tools_limit; retrieve_tools mode relies on mcpproxy defaults.";
-      }
-      {
-        assertion = builtins.match ".*\\$\\{keyring.*" renderedConfigText == null;
-        message = "home.mcp rendered source config must use launchd-wrapper env placeholders, not mcpproxy keyring placeholders.";
-      }
-      {
-        assertion = builtins.match ".*op://.*" renderedConfigText == null;
-        message = "home.mcp rendered source config must not contain literal 1Password secret source references.";
-      }
-    ];
+  config = lib.mkMerge [
+    {
+      assertions = [
+        {
+          assertion = !signingCfg.enable || signingCfg.identityLabel != null;
+          message = "home.mcp.gitMcpSigning.enable requires identityLabel to be set.";
+        }
+        {
+          assertion = !signingCfg.enable || signingCfg.ctkPublicKeyHash != null;
+          message = "home.mcp.gitMcpSigning.enable requires ctkPublicKeyHash to be set.";
+        }
+        {
+          assertion = !signingCfg.enable || signingCfg.sshPublicKey != null;
+          message = "home.mcp.gitMcpSigning.enable requires sshPublicKey to be set.";
+        }
+        {
+          assertion = !signingCfg.enable || signingCfg.sshFingerprint != null;
+          message = "home.mcp.gitMcpSigning.enable requires sshFingerprint to be set.";
+        }
+        {
+          assertion = !signingCfg.enable || signingCfg.githubSigningKeyRegistered;
+          message = "home.mcp.gitMcpSigning.enable requires githubSigningKeyRegistered = true.";
+        }
+        {
+          assertion =
+            !signingCfg.enable
+            || builtins.seq signingCfg.stateDir (
+              builtins.seq signingCfg.signerPackage (builtins.seq signingCfg.adminPackage true)
+            );
+          message = "home.mcp.gitMcpSigning.enable requires valid stateDir, signerPackage, and adminPackage values.";
+        }
+      ];
+    }
+    (lib.mkIf config.home.mcp.enable {
+      assertions = [
+        {
+          assertion = lib.all (
+            name: builtins.match "[A-Za-z_][A-Za-z0-9_]*" name != null
+          ) fileSourcedEnvNames;
+          message = "home.mcp.fileSourcedEnv attribute names must be valid shell environment variable names.";
+        }
+        {
+          assertion = fileSourcedEnvNameCollisions == [ ];
+          message = "home.mcp.fileSourcedEnv names conflict with Keychain-sourced env vars: ${lib.concatStringsSep ", " fileSourcedEnvNameCollisions}";
+        }
+        {
+          assertion = renderedConfig.api_key == readKeychainSecret "mcpproxy-api-key";
+          message = ''
+            home.mcp rendered source config must reference mcpproxy-api-key
+            through the launchd-wrapper ${"\${env:MCPPROXY_API_KEY}"} flow.
+          '';
+        }
+        {
+          assertion = lib.hasPrefix "\${env:" githubToken && lib.hasSuffix "}" githubToken;
+          message = ''
+            home.mcp.githubToken must be supplied as a launchd-wrapper
+            ${"\${env:...}"} placeholder, not as a literal token.
+          '';
+        }
+        {
+          assertion = !(renderedConfig ? tools_limit);
+          message = "home.mcp rendered source config must not set tools_limit; retrieve_tools mode relies on mcpproxy defaults.";
+        }
+        {
+          assertion = builtins.match ".*\\$\\{keyring.*" renderedConfigText == null;
+          message = "home.mcp rendered source config must use launchd-wrapper env placeholders, not mcpproxy keyring placeholders.";
+        }
+        {
+          assertion = builtins.match ".*op://.*" renderedConfigText == null;
+          message = "home.mcp rendered source config must not contain literal 1Password secret source references.";
+        }
+      ];
 
-    home.packages = [
-      pkgs.mcpproxy-go
-      pkgs.github-mcp-server
-      # pkgs.mcp-nixos
-      pkgs.mcp-obsidian
-      pkgs.mcp-server-time
-      pkgs.git-mcp-server
-      (pkgs.writeScriptBin "restart-mcpproxy" ''
-        #!/bin/sh
-        exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"
-      '')
-    ];
+      home.packages = [
+        pkgs.mcpproxy-go
+        pkgs.github-mcp-server
+        # pkgs.mcp-nixos
+        pkgs.mcp-obsidian
+        pkgs.mcp-server-time
+        pkgs.git-mcp-server
+        signingCfg.signerPackage
+        signingCfg.adminPackage
+        (pkgs.writeScriptBin "restart-mcpproxy" ''
+          #!/bin/sh
+          exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"
+        '')
+      ];
 
-    xdg.configFile."mcpproxy/mcp_config.json" = {
-      enable = true;
-      text = renderedConfigText;
-    };
-
-    # launchd refuses to auto-create StandardOutPath / StandardErrorPath
-    # parent directories; ensure ~/Library/Logs/mcpproxy exists before
-    # the agent starts.
-    home.activation.mcpproxyLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-      run mkdir -p "${config.home.homeDirectory}/Library/Logs/mcpproxy"
-    '';
-
-    launchd.agents.mcpproxy = {
-      enable = true;
-      config = {
-        Label = "com.smart-mcp-proxy.mcpproxy";
-        ProgramArguments = [
-          # The wrapper reads every MCP secret from the macOS Keychain
-          # (via Apple's signed `/usr/bin/security`) and exports each as
-          # an env var BEFORE exec'ing mcpproxy. This bypasses two
-          # mcpproxy v0.33.1 quirks: the top-level `api_key` field is
-          # not run through the native secret-resolution pipeline, and
-          # the daemon's own macOS Keychain backend is unreliable under
-          # Nix packaging.
-          # See the `mcpproxyWrapper` definition in this file for the
-          # full rationale.
-          (lib.getExe mcpproxyWrapper)
-          "serve"
-          "--config=${runtimeConfigPath}"
-          "--log-to-file=false"
-          # Prevent runtime mutation of mcp_config.json. mcpproxy
-          # v0.33.1's DELETE /api/v1/servers/{id} and POST
-          # /api/v1/servers paths persist their changes back to the
-          # config file, detaching home-manager's symlink and turning
-          # the file into a regular operator-writable copy. Disabling
-          # the add/remove paths leaves the runtime API read-only for
-          # server inventory while keeping OAuth login, quarantine
-          # approval, and per-server enable/disable available.
-          "--allow-server-add=false"
-          "--allow-server-remove=false"
-        ];
-        RunAtLoad = true;
-        KeepAlive = true;
-        EnvironmentVariables.PATH =
-          lib.makeBinPath [
-            pkgs.unstable.google-cloud-sdk
-            pkgs.git-lfs
-          ]
-          + ":/usr/bin:/bin";
-        StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.log";
-        StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.error.log";
-      }
-      // lib.optionalAttrs (fileSourcedEnvWatchPaths != [ ]) {
-        WatchPaths = fileSourcedEnvWatchPaths;
+      xdg.configFile."mcpproxy/mcp_config.json" = {
+        enable = true;
+        text = renderedConfigText;
       };
-    };
-  };
+
+      xdg.configFile."git-mcp-secure-enclave-signing/active.json" =
+        lib.mkIf hasCompleteSigningDeclaration
+          {
+            text = builtins.toJSON {
+              inherit (signingCfg)
+                stateDir
+                identityLabel
+                ctkPublicKeyHash
+                sshPublicKey
+                sshFingerprint
+                githubSigningKeyRegistered
+                ;
+            };
+          };
+
+      # launchd refuses to auto-create StandardOutPath / StandardErrorPath
+      # parent directories; ensure ~/Library/Logs/mcpproxy exists before
+      # the agent starts.
+      home.activation.mcpproxyLogDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        run mkdir -p "${config.home.homeDirectory}/Library/Logs/mcpproxy"
+      '';
+
+      launchd.agents.mcpproxy = {
+        enable = true;
+        config = {
+          Label = "com.smart-mcp-proxy.mcpproxy";
+          ProgramArguments = [
+            # The wrapper reads every MCP secret from the macOS Keychain
+            # (via Apple's signed `/usr/bin/security`) and exports each as
+            # an env var BEFORE exec'ing mcpproxy. This bypasses two
+            # mcpproxy v0.33.1 quirks: the top-level `api_key` field is
+            # not run through the native secret-resolution pipeline, and
+            # the daemon's own macOS Keychain backend is unreliable under
+            # Nix packaging.
+            # See the `mcpproxyWrapper` definition in this file for the
+            # full rationale.
+            (lib.getExe mcpproxyWrapper)
+            "serve"
+            "--config=${runtimeConfigPath}"
+            "--log-to-file=false"
+            # Prevent runtime mutation of mcp_config.json. mcpproxy
+            # v0.33.1's DELETE /api/v1/servers/{id} and POST
+            # /api/v1/servers paths persist their changes back to the
+            # config file, detaching home-manager's symlink and turning
+            # the file into a regular operator-writable copy. Disabling
+            # the add/remove paths leaves the runtime API read-only for
+            # server inventory while keeping OAuth login, quarantine
+            # approval, and per-server enable/disable available.
+            "--allow-server-add=false"
+            "--allow-server-remove=false"
+          ];
+          RunAtLoad = true;
+          KeepAlive = true;
+          EnvironmentVariables.PATH =
+            lib.makeBinPath [
+              pkgs.unstable.google-cloud-sdk
+              pkgs.git-lfs
+            ]
+            + ":/usr/bin:/bin";
+          StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.log";
+          StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.error.log";
+        }
+        // lib.optionalAttrs (fileSourcedEnvWatchPaths != [ ]) {
+          WatchPaths = fileSourcedEnvWatchPaths;
+        };
+      };
+    })
+  ];
 }
