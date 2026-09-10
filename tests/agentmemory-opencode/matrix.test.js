@@ -148,7 +148,11 @@ function evalMatrix() {
             file: _: builtins.match "nono/profiles/.*\\\\.json" file != null
           ) hm.xdg.configFile);
           agentTexts = builtins.mapAttrs (
-            _: value: if builtins.typeOf value == "path" then discardText (builtins.readFile value) else discardText value
+            _: value:
+            if builtins.typeOf value == "path" || pkgs.lib.hasPrefix "/nix/store/" value then
+              discardText (builtins.readFile value)
+            else
+              discardText value
           ) hm.programs.opencode.agents;
           launchd =
             if agentMemoryJob == null then
@@ -208,6 +212,8 @@ function evalMatrix() {
           };
           consumers = {
             memorySync = hm.programs.memory-sync.enable;
+            memorySyncPackages = builtins.filter (package: pkgs.lib.hasPrefix "memory-sync" package) packageNames;
+            vaultCurator = builtins.hasAttr "vault-curator" hm.programs.opencode.agents;
             vaultSynthesizer = builtins.hasAttr "vault-synthesizer" hm.programs.opencode.agents;
             augmentation = hm.programs.session-compaction.augmentationEnabled;
           };
@@ -304,6 +310,25 @@ function assertLoopbackEndpointContract(rendered) {
   assert.doesNotMatch(runtimeLauncher, /\bhost:\s*(?!127\.0\.0\.1\b)[^\s#]+/);
 }
 
+function assertManualObsidianContract(rendered) {
+  const context = rendered.instructions.context;
+  const curator = rendered.instructions.agents['vault-curator'];
+
+  assert.equal(rendered.consumers.vaultCurator, true, `${rendered.name} retains vault-curator`);
+  assert.match(context, /## Obsidian Memory Recall/);
+  assert.match(context, /retrieve_tools\(query: "obsidian search vault"\)/);
+  assert.match(context, /retrieve_tools\(query: "obsidian search by tags"\)/);
+  assert.match(context, /retrieve_tools\(query: "obsidian read note"\)/);
+  assert.match(context, /retrieve_tools\(query: "obsidian write note"\)/);
+  assert.match(context, /### Deduplication/);
+  assert.match(context, /## Tag Guidelines/);
+  assert.match(context, /automatic ambient-backend-to-Obsidian promotion is not provided/);
+  assert.match(curator, /Deduplicate memories/);
+  assert.match(curator, /write-note/);
+  assert.match(curator, /Tag guidelines/);
+  assert.match(curator, /MOC threshold/);
+}
+
 function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.agentMemory.enable, true, `${rendered.name} enables AgentMemory`);
   assert.equal(rendered.agentMemory.ports.rest, 3111);
@@ -350,8 +375,10 @@ test('the focused AgentMemory host-render matrix is registered and validates all
     assert.equal(row.backend, 'agentmemory');
     assert.equal(row.mcp.cavememCount, 0);
     assert.equal(row.consumers.memorySync, false);
+    assert.deepEqual(row.consumers.memorySyncPackages, []);
     assert.equal(row.consumers.vaultSynthesizer, false);
     assert.equal(row.consumers.augmentation, false);
+    assertManualObsidianContract(row);
     assert.match(row.instructions.context, /stock AgentMemory/i);
     assert.doesNotMatch(row.instructions.context, /Ambient capture \(cavemem\)/i);
     assert.doesNotMatch(row.instructions.agents['vault-curator'], /cavemem/i);
@@ -385,6 +412,8 @@ test('the focused AgentMemory host-render matrix is registered and validates all
   assert.equal(rollback.backend, 'cavemem');
   assert.equal(rollback.mcp.cavememCount, 1);
   assert.equal(rollback.consumers.memorySync, true);
+  assert.deepEqual(rollback.consumers.memorySyncPackages, ['memory-sync']);
+  assertManualObsidianContract(rollback);
   assert.equal(rollback.consumers.vaultSynthesizer, true);
   assert.equal(rollback.consumers.augmentation, true);
   assert.match(rollback.instructions.context, /Ambient capture \(cavemem\)/i);

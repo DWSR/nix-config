@@ -57,7 +57,10 @@ let
       );
       agentTexts = builtins.mapAttrs (
         _: value:
-        if builtins.typeOf value == "path" then discard (builtins.readFile value) else discard value
+        if builtins.typeOf value == "path" || pkgs.lib.hasPrefix "/nix/store/" value then
+          discard (builtins.readFile value)
+        else
+          discard value
       ) hm.programs.opencode.agents;
       launchd = {
         Label = agentMemoryJob.config.Label;
@@ -115,6 +118,10 @@ let
       };
       consumers = {
         memorySync = hm.programs.memory-sync.enable;
+        memorySyncPackages = builtins.filter (
+          package: pkgs.lib.hasPrefix "memory-sync" package
+        ) packageNames;
+        vaultCurator = builtins.hasAttr "vault-curator" hm.programs.opencode.agents;
         vaultSynthesizer = builtins.hasAttr "vault-synthesizer" hm.programs.opencode.agents;
         augmentation = hm.programs.session-compaction.augmentationEnabled;
       };

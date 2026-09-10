@@ -77,6 +77,15 @@ test('the canonical flake check runs the complete suite with packaged runtimes',
   );
 });
 
+test('the feature gate runs compaction without cavemem augmentation', () => {
+  const runner = fs.readFileSync(runnerPath, 'utf8');
+
+  assert.match(
+    runner,
+    /tests\/session-compaction\/integration\/augmentation-disabled\.test\.ts/,
+  );
+});
+
 test('the local feature runner detaches linked worktrees before resolving flakes', () => {
   const runner = fs.readFileSync(runnerPath, 'utf8');
 

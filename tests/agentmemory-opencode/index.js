@@ -25,6 +25,9 @@ const featureTests = [
   'status.test.js',
   'validation-suite.test.js',
 ];
+const integrationTests = [
+  'tests/session-compaction/integration/augmentation-disabled.test.ts',
+];
 
 function detachedSource() {
   if (!fs.existsSync(path.join(repoRoot, '.git'))) {
@@ -58,6 +61,7 @@ try {
       '--test',
       '--test-concurrency=1',
       ...featureTests.map((testFile) => path.join('tests', 'agentmemory-opencode', testFile)),
+      ...integrationTests,
     ],
     {
       cwd: source.root,
