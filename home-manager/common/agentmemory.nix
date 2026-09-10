@@ -53,6 +53,7 @@ let
 
   importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
     inherit (cfg) bearerReference;
+    restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
   };
 
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";

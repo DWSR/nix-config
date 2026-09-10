@@ -17,6 +17,11 @@ type ProgressReporter = (message: string) => void;
 
 const AGENTMEMORY_IMPORT_VERSION = '0.9.29';
 const MAX_IMPORT_BYTES = 8 * 1024 * 1024;
+const MAX_IMPORT_SESSIONS = 10_000;
+const MAX_IMPORT_SUMMARIES = 10_000;
+const MAX_IMPORT_OBSERVATION_BUCKETS = 10_000;
+const MAX_IMPORT_OBSERVATIONS_PER_SESSION = 5_000;
+const MAX_IMPORT_TOTAL_OBSERVATIONS = 500_000;
 const DEFAULT_IMPORT_URL = 'http://127.0.0.1:3111';
 
 interface LegacyImportRecord {
@@ -172,7 +177,7 @@ type ImportPayload = {
 interface ImportBatch {
   type: SourceTable;
   records: string[];
-  payload: ImportPayload;
+  body: string;
   bytes: number;
 }
 
@@ -657,17 +662,20 @@ function toAgentMemorySession(
 }
 
 function toAgentMemoryObservation(record: LegacyImportRecord): AgentMemoryObservation {
+  const narrative = record.narrative.length < 10
+    ? `Cavemem: ${record.narrative}`
+    : record.narrative;
   return {
     id: record.id,
     sessionId: targetSessionId(record.sessionId),
     timestamp: record.timestamp,
     type: standardObservationType(record.type),
-    title: `cavemem ${record.type}`,
+    title: `cavemem ${record.type}`.slice(0, 120),
     facts: [record.narrative],
-    narrative: record.narrative,
+    narrative,
     concepts: [],
     files: [],
-    importance: 0.5,
+    importance: 5,
     origin: record.origin,
   };
 }
@@ -807,8 +815,9 @@ function createImportPayload(
   return { exportData, strategy: 'skip' };
 }
 
-function payloadBytes(payload: ImportPayload): number {
-  return Buffer.byteLength(JSON.stringify(payload), 'utf8');
+function serializeImportPayload(payload: ImportPayload): { body: string; bytes: number } {
+  const body = JSON.stringify(payload);
+  return { body, bytes: Buffer.byteLength(body, 'utf8') };
 }
 
 interface BatchBuildResult {
@@ -842,21 +851,38 @@ function buildImportBatches(
 
   for (const { type, records } of byType) {
     let current: PreparedItem[] = [];
-    const emptyPayloadBytes = payloadBytes(createImportPayload(type, [], prepared.exportedAt));
+    const currentObservationCounts = new Map<string, number>();
+    const emptyPayloadBytes = serializeImportPayload(
+      createImportPayload(type, [], prepared.exportedAt),
+    ).bytes;
     let currentBytes = emptyPayloadBytes;
     const flush = () => {
       if (current.length === 0) return;
       const payload = createImportPayload(type, current, prepared.exportedAt);
-      const bytes = payloadBytes(payload);
+      const { body, bytes } = serializeImportPayload(payload);
       if (bytes >= maxBytes) throw new Error(`internal batch sizing error for ${type}`);
       batches.push({
         type,
         records: current.map(({ id }) => id),
-        payload,
+        body,
         bytes,
       });
       current = [];
+      currentObservationCounts.clear();
       currentBytes = emptyPayloadBytes;
+    };
+    const exceedsCardinalityLimit = (record: PreparedItem): boolean => {
+      if (type === 'sessions') return current.length >= MAX_IMPORT_SESSIONS;
+      if (type === 'summaries') return current.length >= MAX_IMPORT_SUMMARIES;
+
+      const sessionId = (record.record as AgentMemoryObservation).sessionId;
+      const sessionCount = currentObservationCounts.get(sessionId) || 0;
+      return current.length >= MAX_IMPORT_TOTAL_OBSERVATIONS
+        || sessionCount >= MAX_IMPORT_OBSERVATIONS_PER_SESSION
+        || (
+          sessionCount === 0
+          && currentObservationCounts.size >= MAX_IMPORT_OBSERVATION_BUCKETS
+        );
     };
 
     for (const record of records) {
@@ -871,18 +897,27 @@ function buildImportBatches(
           + 4
         : recordBytes + 1;
 
-      if (current.length > 0 && currentBytes + contribution >= maxBytes) flush();
+      if (
+        current.length > 0
+        && (currentBytes + contribution >= maxBytes || exceedsCardinalityLimit(record))
+      ) flush();
       if (currentBytes + contribution < maxBytes) {
         current.push(record);
+        if (type === 'observations') {
+          const sessionId = (record.record as AgentMemoryObservation).sessionId;
+          currentObservationCounts.set(
+            sessionId,
+            (currentObservationCounts.get(sessionId) || 0) + 1,
+          );
+        }
         currentBytes += contribution;
         continue;
       }
 
       const singlePayload = createImportPayload(type, [record], prepared.exportedAt);
-      const singleBytes = payloadBytes(singlePayload);
-      if (singleBytes < maxBytes) {
-        current = [record];
-        currentBytes = singleBytes;
+      const { body, bytes } = serializeImportPayload(singlePayload);
+      if (bytes < maxBytes) {
+        batches.push({ type, records: [record.id], body, bytes });
       } else {
         oversized.push({ type, id: record.id });
       }
@@ -917,7 +952,7 @@ function normalizeImportUrl(rawUrl: string): string {
 
 async function submitImportBatch(
   endpoint: string,
-  payload: ImportPayload,
+  requestBody: string,
   secret: string | undefined,
 ): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -925,7 +960,7 @@ async function submitImportBatch(
   const response = await fetch(endpoint, {
     method: 'POST',
     headers,
-    body: JSON.stringify(payload),
+    body: requestBody,
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`AgentMemory import returned HTTP ${response.status}`);
@@ -1007,9 +1042,9 @@ async function importSnapshot(
     report.batches.submitted += 1;
     report.batches.sizes.push(batch.bytes);
     try {
-      const body = await submitImportBatch(importEndpoint, batch.payload, secret);
-      const imported = responseCount(body, batch.type);
-      const existing = responseSkipped(body);
+      const response = await submitImportBatch(importEndpoint, batch.body, secret);
+      const imported = responseCount(response, batch.type);
+      const existing = responseSkipped(response);
       if (imported + existing !== batch.records.length) {
         throw new Error(`AgentMemory import returned counts that do not cover the ${batch.type} batch`);
       }

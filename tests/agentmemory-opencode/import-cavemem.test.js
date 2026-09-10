@@ -14,8 +14,9 @@ const { createCavememImportFixture } = require('./fixtures/cavemem-import-fixtur
 const repoRoot = path.resolve(__dirname, '../..');
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.ts');
 const importerPackageNixPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.nix');
+const agentmemoryModuleNixPath = path.join(repoRoot, 'home-manager', 'common', 'agentmemory.nix');
 let cachedDependencyNodePath;
-let cachedImporterPackagePath;
+const cachedImporterPackagePaths = new Map();
 let cachedImporterNodeBin;
 
 function dependencyNodePath() {
@@ -53,14 +54,19 @@ function importerNodeBin() {
   return cachedImporterNodeBin;
 }
 
-function importerPackagePath() {
-  if (cachedImporterPackagePath) return cachedImporterPackagePath;
+function importerPackagePath(restEndpoint = 'http://127.0.0.1:3111') {
+  const cacheKey = restEndpoint;
+  if (cachedImporterPackagePaths.has(cacheKey)) return cachedImporterPackagePaths.get(cacheKey);
   const configured = process.env.AGENTMEMORY_IMPORTER_BIN;
-  if (configured) {
-    cachedImporterPackagePath = configured;
-    return cachedImporterPackagePath;
+  if (configured && restEndpoint === 'http://127.0.0.1:3111') {
+    cachedImporterPackagePaths.set(cacheKey, configured);
+    return configured;
   }
 
+  const importerOptions = [
+    'bearerReference = "fixture-bearer";',
+    `restEndpoint = ${JSON.stringify(restEndpoint)};`,
+  ].join('\n    ');
   const expression = `(let
     flake = builtins.getFlake ${JSON.stringify(repoRoot)};
     pkgs = import flake.inputs.nixpkgs {
@@ -68,17 +74,18 @@ function importerPackagePath() {
       overlays = [ flake.outputs.overlays.custom-packages ];
     };
   in (pkgs.callPackage ${JSON.stringify(importerPackageNixPath)} {
-    bearerReference = "fixture-bearer";
+    ${importerOptions}
   }).drvPath)`;
   const drvPath = execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim();
-  cachedImporterPackagePath = execFileSync('nix-store', ['--realise', drvPath], {
+  const packagePath = execFileSync('nix-store', ['--realise', drvPath], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim().split('\n').at(-1) + '/bin/agentmemory-import-cavemem';
-  return cachedImporterPackagePath;
+  cachedImporterPackagePaths.set(cacheKey, packagePath);
+  return packagePath;
 }
 
 function runImporter(sourcePath, args = [], extraEnv = {}) {
@@ -98,16 +105,34 @@ function runDryRun(sourcePath) {
   return runImporter(sourcePath, ['--dry-run']);
 }
 
-function runImporterAsync(sourcePath, args = []) {
+function runImporterAsync(sourcePath, args = [], extraEnv = {}) {
   return new Promise((resolve) => {
     const child = spawn(
       importerNodeBin(),
       ['--experimental-strip-types', '--expose-gc', importerPath, '--source', sourcePath, '--json', ...args],
       {
         cwd: repoRoot,
-        env: { ...process.env, NODE_PATH: dependencyNodePath() },
+        env: { ...process.env, ...extraEnv, NODE_PATH: dependencyNodePath() },
       },
     );
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('close', (status) => resolve({
+      status,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }));
+  });
+}
+
+function runCommandAsync(command, args, extraEnv = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      env: { ...process.env, ...extraEnv },
+    });
     const stdout = [];
     const stderr = [];
     child.stdout.on('data', (chunk) => stdout.push(chunk));
@@ -426,6 +451,217 @@ test('batch sizing serializes payloads per batch instead of per record', () => {
   assert.equal(result.bounded, true);
   assert.ok(result.progress.includes(`record preparation: ${recordCount}/${recordCount} records`));
   assert.ok(result.progress.includes(`batch sizing: ${recordCount}/${recordCount + 1} records`));
+});
+
+test('splits batches at every pinned AgentMemory import cardinality limit', () => {
+  const probe = spawnSync(
+    importerNodeBin(),
+    ['--experimental-strip-types', '--expose-gc', '-e', `
+      const { buildImportBatches } = require(${JSON.stringify(importerPath)});
+      const timestamp = '2026-01-01T00:00:00.000Z';
+      const selectedSessions = Array.from({ length: 10_001 }, (_, index) => ({
+        id: 'session-' + index,
+        project: 'project',
+        cwd: '/tmp/project',
+        startedAt: timestamp,
+        endedAt: timestamp,
+        skipReason: null,
+      }));
+      const observations = [
+        ...Array.from({ length: 5_001 }, (_, index) => ({
+          id: 'cavemem:observations:session-0:' + index,
+          sessionId: 'session-0',
+          project: 'project',
+          timestamp,
+          narrative: 'valid text',
+          type: 'prompt',
+          origin: { channel: 'import', detail: 'fixture', capturedAt: timestamp },
+        })),
+        ...selectedSessions.slice(1).map((session, index) => ({
+          id: 'cavemem:observations:' + session.id + ':' + index,
+          sessionId: session.id,
+          project: 'project',
+          timestamp,
+          narrative: 'valid text',
+          type: 'prompt',
+          origin: { channel: 'import', detail: 'fixture', capturedAt: timestamp },
+        })),
+      ];
+      const summaries = selectedSessions.map((session, index) => ({
+        id: 'cavemem:summaries:' + session.id + ':' + index,
+        sessionId: session.id,
+        project: 'project',
+        timestamp,
+        narrative: 'valid summary narrative',
+        type: 'summary',
+        origin: { channel: 'import', detail: 'fixture', capturedAt: timestamp },
+      }));
+      const snapshot = {
+        sourcePath: '/tmp/fixture.db',
+        dryRun: true,
+        selected: {
+          sessions: selectedSessions.length,
+          observations: observations.length,
+          summaries: summaries.length,
+        },
+        skipped: { sessions: 0, observations: 0, summaries: 0 },
+        malformed: { sessions: 0, observations: 0, summaries: 0 },
+        skippedByReason: { sessions: {}, observations: {}, summaries: {} },
+        sessions: { selected: selectedSessions.map(({ id }) => id), skipped: [] },
+        selectedSessions,
+        records: [...observations, ...summaries],
+      };
+      const batches = buildImportBatches(snapshot).batches.map((batch) => ({
+        type: batch.type,
+        exportData: JSON.parse(batch.body).exportData,
+      }));
+      const sessionBatches = batches.filter(({ type }) => type === 'sessions');
+      const observationBatches = batches.filter(({ type }) => type === 'observations');
+      const summaryBatches = batches.filter(({ type }) => type === 'summaries');
+      process.stdout.write(JSON.stringify({
+        batchCounts: {
+          sessions: sessionBatches.length,
+          observations: observationBatches.length,
+          summaries: summaryBatches.length,
+        },
+        maxSessions: Math.max(...sessionBatches.map(({ exportData }) => exportData.sessions.length)),
+        maxSummaries: Math.max(...summaryBatches.map(({ exportData }) => exportData.summaries.length)),
+        maxObservationBuckets: Math.max(...observationBatches.map(({ exportData }) => Object.keys(exportData.observations).length)),
+        maxObservationsPerSession: Math.max(...observationBatches.flatMap(({ exportData }) => Object.values(exportData.observations).map((records) => records.length))),
+        maxTotalObservations: Math.max(...observationBatches.map(({ exportData }) => Object.values(exportData.observations).reduce((total, records) => total + records.length, 0))),
+      }));
+    `],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_PATH: dependencyNodePath() },
+      maxBuffer: 10 * 1024 * 1024,
+    },
+  );
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.ok(result.batchCounts.sessions > 1);
+  assert.ok(result.batchCounts.observations > 1);
+  assert.ok(result.batchCounts.summaries > 1);
+  assert.ok(result.maxSessions <= 10_000);
+  assert.ok(result.maxSummaries <= 10_000);
+  assert.ok(result.maxObservationBuckets <= 10_000);
+  assert.ok(result.maxObservationsPerSession <= 5_000);
+  assert.ok(result.maxTotalObservations <= 500_000);
+});
+
+test('normalizes imported observations to the pinned standard contract', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-contract-'));
+  const sourcePath = path.join(directory, 'data.db');
+  const longKind = 'x'.repeat(140);
+  createCavememImportFixture(sourcePath);
+  execFileSync('sqlite3', [sourcePath], {
+    input: `
+      INSERT INTO observations (session_id, kind, content, compressed, intensity, ts, metadata)
+      VALUES ('opencode-session', '${longKind}', 'short', 0, NULL, 1700000000040, '{"fixture":true}');
+    `,
+  });
+  const mock = await startMockAgentMemory();
+
+  try {
+    const result = await runImporterAsync(sourcePath, ['--url', mock.url]);
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const observations = mock.requests
+      .flatMap(({ records }) => records)
+      .filter(({ type }) => type === 'observations')
+      .map(({ record }) => record);
+    const violations = observations.flatMap((record) => [
+      ...(
+        Number.isInteger(record.importance)
+        && record.importance >= 1
+        && record.importance <= 10
+          ? []
+          : [`${record.id}:importance`]
+      ),
+      ...(record.title.length >= 1 && record.title.length <= 120 ? [] : [`${record.id}:title`]),
+      ...(record.narrative.length >= 10 ? [] : [`${record.id}:narrative`]),
+      ...(Array.isArray(record.facts) && record.facts.length >= 1 ? [] : [`${record.id}:facts`]),
+    ]);
+    assert.deepEqual(violations, []);
+    const shortObservation = observations.find((record) => record.facts.includes('short'));
+    assert.ok(shortObservation);
+    assert.match(shortObservation.narrative, /short/);
+  } finally {
+    await mock.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('serializes each completed batch once across sizing and submission', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-serialization-'));
+  const sourcePath = path.join(directory, 'data.db');
+  const preloadPath = path.join(directory, 'reject-repeated-payload-json.cjs');
+  createCavememImportFixture(sourcePath);
+  fs.writeFileSync(preloadPath, `
+    const stringify = JSON.stringify;
+    const serializedPayloads = new WeakSet();
+    JSON.stringify = function (value, ...args) {
+      if (value?.strategy === 'skip' && value.exportData) {
+        if (serializedPayloads.has(value)) {
+          throw new Error('completed import batch serialized more than once');
+        }
+        serializedPayloads.add(value);
+      }
+      return stringify.call(this, value, ...args);
+    };
+  `);
+  const mock = await startMockAgentMemory();
+
+  try {
+    const nodeOptions = [process.env.NODE_OPTIONS, `--require=${preloadPath}`]
+      .filter(Boolean)
+      .join(' ');
+    const result = await runImporterAsync(
+      sourcePath,
+      ['--url', mock.url, '--batch-bytes', '1000'],
+      { NODE_OPTIONS: nodeOptions },
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.failed, { sessions: 0, observations: 0, summaries: 0 });
+    assert.deepEqual(report.imported, report.target);
+    assert.ok(mock.requests.length > 1);
+  } finally {
+    await mock.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('packaged importer bakes the configured AgentMemory REST endpoint', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-endpoint-'));
+  const sourcePath = path.join(directory, 'data.db');
+  createCavememImportFixture(sourcePath);
+  const mock = await startMockAgentMemory();
+
+  try {
+    const importerBin = importerPackagePath(mock.url);
+    const packageText = fs.readFileSync(importerBin, 'utf8');
+    assert.match(packageText, new RegExp(`AGENTMEMORY_URL=.*${mock.url.replaceAll('.', '\\.')}`));
+    const moduleText = fs.readFileSync(agentmemoryModuleNixPath, 'utf8');
+    assert.match(
+      moduleText,
+      /importPackage[\s\S]*restEndpoint\s*=\s*"http:\/\/127\.0\.0\.1:\$\{toString cfg\.restPort\}"/,
+    );
+
+    const result = await runCommandAsync(
+      importerBin,
+      ['--source', sourcePath, '--json'],
+      { AGENTMEMORY_SECRET: 'fixture-bearer' },
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.failed, { sessions: 0, observations: 0, summaries: 0 });
+    assert.deepEqual(report.imported, report.target);
+    assert.ok(mock.requests.length > 0);
+  } finally {
+    await mock.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('packaged importer resolves the configured bearer and keeps dry-runs credential-free', () => {
