@@ -1,5 +1,18 @@
-{ lib, ... }:
+{ pkgs, lib, ... }:
+let
+  architectureDiagramSkill = pkgs.fetchFromGitHub {
+    owner = "Cocoon-AI";
+    repo = "architecture-diagram-generator";
+    rev = "4b9087d55268c79a935105439dbcd37b630fc3f3";
+    hash = "sha256-r1ABUPDqT1SEe9QSEsA/GcN2J5PQmhuxlXMl4EBi9Ro=";
+  };
+in
 {
+  # Personal-only skill for generating self-contained architecture diagrams.
+  xdg.configFile."opencode/skills/architecture-diagram" = {
+    source = "${architectureDiagramSkill}/architecture-diagram";
+  };
+
   # Enable caveman-lite output style on personal-host opencode subagents.
   # Trims filler/hedging from nix-pkg, nvim-tailor, security-auditor, and
   # vault-curator output. Off on Shopify hosts (kept verbose for
