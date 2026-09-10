@@ -19,7 +19,7 @@
   - The catalog drives deterministic fake processes and contains no live credential or host path.
   - _Requirements: 7.1, 7.2, 7.3, 7.4_
   - _Boundary: Test Harness_
-- [ ] 1.4 Define typed remote-builder options and defaults
+- [x] 1.4 Define typed remote-builder options and defaults
   - Define mutually exclusive roles, endpoint/trust, repositories, source CIDRs, interface, bounds, public caches, SSH, and lease settings.
   - Declare exact initial nixpkgs repository, public-cache keys, `en0`, UID, heartbeat, and inactivity defaults.
   - Valid module fixtures expose the complete option contract while leaving both roles disabled.
