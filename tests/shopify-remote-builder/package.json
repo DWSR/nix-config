@@ -1,0 +1,7 @@
+{
+  "name": "shopify-remote-builder-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "run.js",
+  "description": "Test harness contract suite for the shopify-remote-builder spec."
+}

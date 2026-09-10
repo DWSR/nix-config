@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Establish configuration contracts and test infrastructure
-- [ ] 1.1 Build isolated module and script test helpers
+- [x] 1.1 Build isolated module and script test helpers
   - Add reusable module evaluation, dependency-injected executable, temporary-state, and cleanup helpers.
   - Provide fake Nix, SSH, cache, proxy, route, and process controls without touching live host state.
   - A baseline fixture evaluates both disabled roles and cleans all processes/directories on success, error, and signal.
@@ -281,3 +281,7 @@
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 7.6_
   - _Boundary: Cache Integration, Test Harness_
   - _Depends: 7.3_
+
+## Implementation Notes
+
+- Nix-backed test fixtures must isolate `NIX_CONF_DIR`, `NIX_USER_CONF_FILES`, `NIX_CONFIG_HOME`, HOME/XDG paths, and Nix state, cache, and log paths so host configuration cannot leak into tests.
