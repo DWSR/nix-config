@@ -3,9 +3,3 @@
 .direnv/
 result
 .ruff_cache
-
-# cc-sdd: templates regen via `cc-sdd-init`; steering is created on-demand
-# by /kiro-steering. Specs (.kiro/specs/) ARE committed — they're the
-# project's spec history.
-.kiro/settings/
-.kiro/steering/
