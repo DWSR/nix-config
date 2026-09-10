@@ -30,6 +30,10 @@ in
 
       tab name="stats" cwd="${home}" {
         pane split_direction="vertical" {
+          pane name="gh dash" {
+            command "gh"
+            args "dash"
+          }
           pane split_direction="horizontal" {
             pane name="tokscale" {
               command "tokscale"
@@ -38,10 +42,6 @@ in
               command "mcpproxy"
               args "tui"
             }
-          }
-          pane name="gh dash" {
-            command "gh"
-            args "dash"
           }
         }
       }
