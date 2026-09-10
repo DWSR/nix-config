@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Establish configuration contracts and test infrastructure
+- [x] 1. Establish configuration contracts and test infrastructure
 - [x] 1.1 Build isolated module and script test helpers
   - Add reusable module evaluation, dependency-injected executable, temporary-state, and cleanup helpers.
   - Provide fake Nix, SSH, cache, proxy, route, and process controls without touching live host state.
@@ -25,7 +25,7 @@
   - Valid module fixtures expose the complete option contract while leaving both roles disabled.
   - _Requirements: 1.4, 5.3, 5.4, 5.6, 7.1, 7.2_
   - _Boundary: Configuration Module_
-- [ ] 1.5 Enforce role assertions and injectable package surfaces
+- [x] 1.5 Enforce role assertions and injectable package surfaces
   - Reject unsupported Nix/Lix versions, unsafe UID/path/key/cache values, missing cache publishers, and global personal builders.
   - Expose validator, lease, dispatcher, guarded-build, diagnostics, and policy-proxy package injection points.
   - Invalid fixtures fail with exact assertions and valid role fixtures render no secret value.
@@ -285,3 +285,4 @@
 ## Implementation Notes
 
 - Nix-backed test fixtures must isolate `NIX_CONF_DIR`, `NIX_USER_CONF_FILES`, `NIX_CONFIG_HOME`, HOME/XDG paths, and Nix state, cache, and log paths so host configuration cannot leak into tests.
+- For task 1.5, behavior-level negative fixtures and exact rendered-structure assertions are sufficient; mutation tests proving each package-identity guard independently are not required.
