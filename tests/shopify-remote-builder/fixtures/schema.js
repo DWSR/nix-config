@@ -7,6 +7,18 @@ const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 const NAR_HASH_RE = /^sha256-[A-Za-z0-9+/]{43}=$/;
 const STORE_PATH_RE = /^\/nix\/store\/[a-z0-9]{32}-[A-Za-z0-9._+-]+$/;
 const STORE_EXECUTABLE_RE = /^\/nix\/store\/[a-z0-9]{32}-[A-Za-z0-9._+-]+(?:\/[^\s]+)+$/;
+const CASE_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const HOSTNAME_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.example\.test$/;
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV6_RE = /^[0-9a-f:]+$/i;
+const CIDR_RE = /^(?:\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+const PUBLIC_KEY_RE = /^ssh-ed25519 ([A-Za-z0-9+/]+={0,2}) (fixture-[a-z0-9-]+)$/;
+const TOKEN_RE = /^fixture-[a-z0-9-]+$/;
+const SIGNAL_RE = /^SIG(?:HUP|INT|TERM)$/;
+const HOST_PATH_RE = /(?:^|[\\/])(?:Users|home|Volumes|Applications|private[\\/]var|var[\\/]db|run[\\/]secrets)(?:[\\/]|$)/;
+const SYNTHETIC_ABSOLUTE_PATH_RE = /^\/(?:nix\/store\/|run\/current-system\/|dev\/null(?:$|\/))/;
+const LIVE_VALUE_RE = /(?:live-secret|real-secret|AKIA[0-9A-Z]{16}|sk_live_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+)/i;
+const FIXTURE_PATH_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 
 function fail(message) {
   throw new Error(`invalid shopify-remote-builder fixture: ${message}`);
@@ -57,6 +69,49 @@ function assertString(value, label) {
   if (typeof value !== 'string' || value.length === 0) {
     fail(`${label} must be a non-empty string`);
   }
+}
+
+function isSafeFixtureRelativePath(value) {
+  if (typeof value !== 'string' || value.startsWith('/') || value.includes('\\')) {
+    return false;
+  }
+  const segments = value.split('/');
+  return /^fixture-[A-Za-z0-9._-]+$/.test(segments[0])
+    && segments.slice(1).every(segment => (
+      segment !== ''
+      && segment !== '.'
+      && segment !== '..'
+      && FIXTURE_PATH_SEGMENT_RE.test(segment)
+    ));
+}
+
+function isValidFixturePublicKey(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const match = PUBLIC_KEY_RE.exec(value);
+  if (!match) {
+    return false;
+  }
+  const encoded = match[1];
+  if (encoded.length % 4 !== 0) {
+    return false;
+  }
+  const blob = Buffer.from(encoded, 'base64');
+  if (blob.toString('base64') !== encoded || blob.length < 8) {
+    return false;
+  }
+  const keyTypeLength = blob.readUInt32BE(0);
+  const keyLengthOffset = 4 + keyTypeLength;
+  if (keyTypeLength === 0 || keyLengthOffset + 4 > blob.length) {
+    return false;
+  }
+  const keyType = blob.subarray(4, keyLengthOffset).toString('ascii');
+  const keyLength = blob.readUInt32BE(keyLengthOffset);
+  const keyDataOffset = keyLengthOffset + 4;
+  return keyType === 'ssh-ed25519'
+    && keyLength === 32
+    && blob.length === keyDataOffset + keyLength;
 }
 
 function assertInteger(value, label) {
@@ -606,6 +661,479 @@ function validateCacheCase(cacheCase, caseName, catalog, graphResults) {
   }
 }
 
+function assertCase(value, caseName, allowedKeys, label) {
+  assertKeys(value, new Set(allowedKeys), label);
+  if (value.schemaVersion !== SCHEMA_VERSION) {
+    fail(`${label}.schemaVersion must be ${SCHEMA_VERSION}`);
+  }
+  if (value.caseName !== caseName || !CASE_NAME_RE.test(caseName)) {
+    fail(`${label}.caseName must equal its catalog name`);
+  }
+}
+
+function assertCaseName(value, label) {
+  assertString(value, label);
+  if (!CASE_NAME_RE.test(value)) {
+    fail(`${label} must be a fixture case name`);
+  }
+}
+
+function assertIpAddress(value, label) {
+  assertString(value, label);
+  const validIpv4 = IPV4_RE.test(value)
+    && value.split('.').every(part => Number(part) >= 0 && Number(part) <= 255);
+  if (!validIpv4 && !IPV6_RE.test(value)) {
+    fail(`${label} must be an IP address`);
+  }
+}
+
+function assertHostname(value, label) {
+  assertString(value, label);
+  if (!HOSTNAME_RE.test(value)) {
+    fail(`${label} must be a synthetic example.test hostname`);
+  }
+}
+
+function assertHttpsUrl(value, label) {
+  assertString(value, label);
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    fail(`${label} must be a valid HTTPS URL`);
+  }
+  if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
+    fail(`${label} must be HTTPS without credentials`);
+  }
+}
+
+function assertProcessCase(value, label) {
+  assertCaseName(value, label);
+}
+
+function assertDecision(value, label) {
+  if (!['accept', 'allow', 'cut', 'expire', 'reject', 'retain', 'traverse'].includes(value)) {
+    fail(`${label} has an unsupported fixture decision`);
+  }
+}
+
+function assertFixtureResponse(response, label) {
+  assertKeys(response, new Set(['status', 'signal', 'stdout', 'stderr']), label);
+  assertInteger(response.status, `${label}.status`);
+  if (response.status > 255) {
+    fail(`${label}.status must be an integer from 0 through 255`);
+  }
+  if (response.signal !== undefined && response.signal !== null) {
+    if (typeof response.signal !== 'string' || !SIGNAL_RE.test(response.signal)) {
+      fail(`${label}.signal must be a supported signal name`);
+    }
+  }
+  if (typeof response.stdout !== 'string' || typeof response.stderr !== 'string') {
+    fail(`${label} output must be a string`);
+  }
+}
+
+function validateNetworkCase(networkCase, caseName) {
+  const label = `networkCases.${caseName}`;
+  assertCase(
+    networkCase,
+    caseName,
+    ['schemaVersion', 'caseName', 'dnsRecords', 'redirects', 'destinations', 'expectedDecision', 'reason', 'processCase'],
+    label,
+  );
+  if (!Array.isArray(networkCase.dnsRecords) || networkCase.dnsRecords.length === 0) {
+    fail(`${label}.dnsRecords must be a non-empty array`);
+  }
+  const dnsNames = [];
+  for (const [index, record] of networkCase.dnsRecords.entries()) {
+    const recordLabel = `${label}.dnsRecords[${index}]`;
+    assertKeys(record, new Set(['hostname', 'recordType', 'answers', 'target']), recordLabel);
+    assertHostname(record.hostname, `${recordLabel}.hostname`);
+    if (!['A', 'AAAA', 'CNAME'].includes(record.recordType)) {
+      fail(`${recordLabel}.recordType is unsupported`);
+    }
+    assertSortedUnique(record.answers, `${recordLabel}.answers`, assertIpAddress);
+    if (record.recordType === 'CNAME') {
+      assertHostname(record.target, `${recordLabel}.target`);
+    } else if (record.target !== undefined) {
+      fail(`${recordLabel}.target is only valid for CNAME records`);
+    }
+    dnsNames.push(record.hostname);
+  }
+  assertSortedUnique(dnsNames, `${label}.dnsRecords hostnames`);
+
+  if (!Array.isArray(networkCase.destinations) || networkCase.destinations.length === 0) {
+    fail(`${label}.destinations must be a non-empty array`);
+  }
+  for (const [index, destination] of networkCase.destinations.entries()) {
+    const destinationLabel = `${label}.destinations[${index}]`;
+    assertKeys(destination, new Set(['hostname', 'addresses', 'classification']), destinationLabel);
+    assertHostname(destination.hostname, `${destinationLabel}.hostname`);
+    assertSortedUnique(destination.addresses, `${destinationLabel}.addresses`, assertIpAddress);
+    if (!['private', 'public'].includes(destination.classification)) {
+      fail(`${destinationLabel}.classification is unsupported`);
+    }
+  }
+
+  if (!Array.isArray(networkCase.redirects)) {
+    fail(`${label}.redirects must be an array`);
+  }
+  for (const [index, redirect] of networkCase.redirects.entries()) {
+    const redirectLabel = `${label}.redirects[${index}]`;
+    assertKeys(redirect, new Set(['from', 'to', 'destinationClass']), redirectLabel);
+    assertHttpsUrl(redirect.from, `${redirectLabel}.from`);
+    assertHttpsUrl(redirect.to, `${redirectLabel}.to`);
+    if (!['private', 'public'].includes(redirect.destinationClass)) {
+      fail(`${redirectLabel}.destinationClass is unsupported`);
+    }
+  }
+  assertDecision(networkCase.expectedDecision, `${label}.expectedDecision`);
+  if (networkCase.expectedDecision === 'allow' && (
+    networkCase.destinations.some(destination => destination.classification !== 'public')
+    || networkCase.redirects.some(redirect => redirect.destinationClass !== 'public')
+  )) {
+    fail(`${label}: allowed network fixture contains a private destination`);
+  }
+  if (networkCase.reason !== null) {
+    assertString(networkCase.reason, `${label}.reason`);
+  }
+  assertProcessCase(networkCase.processCase, `${label}.processCase`);
+}
+
+function validateRouteCase(routeCase, caseName) {
+  const label = `routeCases.${caseName}`;
+  assertCase(
+    routeCase,
+    caseName,
+    [
+      'schemaVersion',
+      'caseName',
+      'declaredInterface',
+      'observedInterface',
+      'declaredGateway',
+      'observedGateway',
+      'vpn',
+      'expectedDecision',
+      'reason',
+      'processCase',
+    ],
+    label,
+  );
+  for (const field of ['declaredInterface', 'observedInterface']) {
+    if (typeof routeCase[field] !== 'string' || !/^[a-z][a-z0-9]+$/.test(routeCase[field])) {
+      fail(`${label}.${field} must be an interface name`);
+    }
+  }
+  assertIpAddress(routeCase.declaredGateway, `${label}.declaredGateway`);
+  assertIpAddress(routeCase.observedGateway, `${label}.observedGateway`);
+  if (typeof routeCase.vpn !== 'boolean') {
+    fail(`${label}.vpn must be a boolean`);
+  }
+  assertDecision(routeCase.expectedDecision, `${label}.expectedDecision`);
+  if (routeCase.expectedDecision === 'allow'
+    && (routeCase.vpn || routeCase.declaredInterface !== routeCase.observedInterface
+      || routeCase.declaredGateway !== routeCase.observedGateway)) {
+    fail(`${label}: allowed route fixture is not the declared route`);
+  }
+  if (routeCase.reason !== null) {
+    assertString(routeCase.reason, `${label}.reason`);
+  }
+  assertProcessCase(routeCase.processCase, `${label}.processCase`);
+}
+
+function validateTrustCase(trustCase, caseName) {
+  const label = `trustCases.${caseName}`;
+  assertCase(
+    trustCase,
+    caseName,
+    ['schemaVersion', 'caseName', 'client', 'host', 'sourceCidrs', 'expectedDecision', 'reason', 'processCase'],
+    label,
+  );
+  assertKeys(trustCase.client, new Set(['publicKey', 'privateKey']), `${label}.client`);
+  assertKeys(trustCase.host, new Set(['publicKey']), `${label}.host`);
+  assertString(trustCase.client.publicKey, `${label}.client.publicKey`);
+  assertString(trustCase.host.publicKey, `${label}.host.publicKey`);
+  if (trustCase.client.privateKey !== '<redacted>') {
+    fail(`${label}.client.privateKey must be redacted fixture material`);
+  }
+  const clientKeyValid = isValidFixturePublicKey(trustCase.client.publicKey);
+  const hostKeyValid = isValidFixturePublicKey(trustCase.host.publicKey);
+  if (trustCase.expectedDecision === 'accept' && (!clientKeyValid || !hostKeyValid)) {
+    fail(`${label}.client.publicKey or host.publicKey is not valid fixture key material`);
+  }
+  if (trustCase.expectedDecision === 'reject' && caseName === 'malformed-client-key' && clientKeyValid) {
+    fail(`${label}.client.publicKey must be malformed`);
+  }
+  if (trustCase.expectedDecision === 'reject' && caseName === 'malformed-host-key' && hostKeyValid) {
+    fail(`${label}.host.publicKey must be malformed`);
+  }
+  if (!Array.isArray(trustCase.sourceCidrs) || trustCase.sourceCidrs.length === 0) {
+    fail(`${label}.sourceCidrs must be a non-empty array`);
+  }
+  assertSortedUnique(trustCase.sourceCidrs, `${label}.sourceCidrs`);
+  for (const [index, cidr] of trustCase.sourceCidrs.entries()) {
+    if (!CIDR_RE.test(cidr)) {
+      fail(`${label}.sourceCidrs[${index}] must be an IPv4 CIDR`);
+    }
+  }
+  assertDecision(trustCase.expectedDecision, `${label}.expectedDecision`);
+  if (trustCase.reason !== null) {
+    assertString(trustCase.reason, `${label}.reason`);
+  }
+  assertProcessCase(trustCase.processCase, `${label}.processCase`);
+}
+
+function validateCommandCase(commandCase, caseName) {
+  const label = `commandCases.${caseName}`;
+  assertCase(
+    commandCase,
+    caseName,
+    ['schemaVersion', 'caseName', 'argv', 'expectedDecision', 'reason', 'processCase'],
+    label,
+  );
+  assertStringArray(commandCase.argv, `${label}.argv`);
+  if (commandCase.argv.length === 0) {
+    fail(`${label}.argv must not be empty`);
+  }
+  assertDecision(commandCase.expectedDecision, `${label}.expectedDecision`);
+  if (caseName === 'forced-stdio' && JSON.stringify(commandCase.argv) !== JSON.stringify([
+    '/run/current-system/sw/bin/nix-daemon',
+    '--stdio',
+    '--store',
+    'daemon',
+  ])) {
+    fail(`${label}.argv must be the exact forced stdio command`);
+  }
+  if (caseName === 'lease-command' && (
+    commandCase.argv.length !== 2
+    || !['ready', 'keepalive', 'prepare', 'release'].includes(commandCase.argv[0])
+    || !TOKEN_RE.test(commandCase.argv[1])
+  )) {
+    fail(`${label}.argv must contain one lease operation and fixture token`);
+  }
+  if (commandCase.reason !== null) {
+    assertString(commandCase.reason, `${label}.reason`);
+  }
+  assertProcessCase(commandCase.processCase, `${label}.processCase`);
+}
+
+function validateLeaseCase(leaseCase, caseName) {
+  const label = `leaseCases.${caseName}`;
+  assertCase(
+    leaseCase,
+    caseName,
+    [
+      'schemaVersion',
+      'caseName',
+      'token',
+      'graphDigest',
+      'rootedPaths',
+      'selectedInputOutputs',
+      'expectedOutputs',
+      'idleTtlSeconds',
+      'heartbeatAgeSeconds',
+      'lock',
+      'expectedDecision',
+      'reason',
+      'processCase',
+    ],
+    label,
+  );
+  if (!TOKEN_RE.test(leaseCase.token)) {
+    fail(`${label}.token must be a fixture token`);
+  }
+  assertDigest(leaseCase.graphDigest, `${label}.graphDigest`);
+  assertSortedUnique(leaseCase.rootedPaths, `${label}.rootedPaths`, assertStorePath);
+  assertSortedUnique(leaseCase.selectedInputOutputs, `${label}.selectedInputOutputs`, assertStorePath);
+  assertSortedUnique(leaseCase.expectedOutputs, `${label}.expectedOutputs`, assertStorePath);
+  for (const selectedPath of [...leaseCase.selectedInputOutputs, ...leaseCase.expectedOutputs]) {
+    if (!leaseCase.rootedPaths.includes(selectedPath)) {
+      fail(`${label}: selected path is not rooted: ${selectedPath}`);
+    }
+  }
+  for (const field of ['idleTtlSeconds', 'heartbeatAgeSeconds']) {
+    assertInteger(leaseCase[field], `${label}.${field}`);
+    if (leaseCase[field] === 0) {
+      fail(`${label}.${field} must be positive`);
+    }
+  }
+  assertKeys(leaseCase.lock, new Set(['state', 'active', 'ageSeconds']), `${label}.lock`);
+  if (!['active', 'stale'].includes(leaseCase.lock.state)) {
+    fail(`${label}.lock.state is unsupported`);
+  }
+  if (typeof leaseCase.lock.active !== 'boolean') {
+    fail(`${label}.lock.active must be a boolean`);
+  }
+  assertInteger(leaseCase.lock.ageSeconds, `${label}.lock.ageSeconds`);
+  if (leaseCase.lock.ageSeconds <= leaseCase.idleTtlSeconds) {
+    fail(`${label}.lock.ageSeconds must exceed idle TTL`);
+  }
+  if (leaseCase.lock.state === 'active' && !leaseCase.lock.active) {
+    fail(`${label}: active lease fixture must have an active lock`);
+  }
+  if (leaseCase.lock.state === 'stale' && leaseCase.lock.active) {
+    fail(`${label}: stale lease fixture cannot have an active lock`);
+  }
+  assertDecision(leaseCase.expectedDecision, `${label}.expectedDecision`);
+  if ((leaseCase.lock.state === 'active' && leaseCase.expectedDecision !== 'retain')
+    || (leaseCase.lock.state === 'stale' && leaseCase.expectedDecision !== 'expire')) {
+    fail(`${label}.expectedDecision does not match lock state`);
+  }
+  if (leaseCase.reason !== null) {
+    assertString(leaseCase.reason, `${label}.reason`);
+  }
+  assertProcessCase(leaseCase.processCase, `${label}.processCase`);
+}
+
+function validateSignalCase(signalCase, caseName) {
+  const label = `signalCases.${caseName}`;
+  assertCase(
+    signalCase,
+    caseName,
+    ['schemaVersion', 'caseName', 'signal', 'expectedCleanup', 'expectedExit', 'processCase'],
+    label,
+  );
+  if (typeof signalCase.signal !== 'string' || !SIGNAL_RE.test(signalCase.signal)) {
+    fail(`${label}.signal is unsupported`);
+  }
+  if (signalCase.expectedCleanup !== 'remove-state-and-processes') {
+    fail(`${label}.expectedCleanup is unsupported`);
+  }
+  if (signalCase.expectedExit !== 'signal') {
+    fail(`${label}.expectedExit is unsupported`);
+  }
+  assertProcessCase(signalCase.processCase, `${label}.processCase`);
+}
+
+function validateEnvironmentCase(environmentCase, caseName) {
+  const label = `environmentCases.${caseName}`;
+  assertCase(
+    environmentCase,
+    caseName,
+    [
+      'schemaVersion',
+      'caseName',
+      'poisonedSettings',
+      'pathKeys',
+      'pathKinds',
+      'poisonedKeys',
+      'remoteForbiddenKeys',
+      'expectedRemoteExposure',
+      'processCase',
+    ],
+    label,
+  );
+  if (!isObject(environmentCase.poisonedSettings)
+    || Object.keys(environmentCase.poisonedSettings).length === 0) {
+    fail(`${label}.poisonedSettings must be a non-empty object`);
+  }
+  const pathKeys = new Set(Array.isArray(environmentCase.pathKeys) ? environmentCase.pathKeys : []);
+  for (const [key, value] of Object.entries(environmentCase.poisonedSettings)) {
+    if (typeof value !== 'string' || (!value.startsWith('fixture-') && value !== '<redacted>')) {
+      fail(`${label}.poisonedSettings.${key} must be disposable fixture value`);
+    }
+    if (pathKeys.has(key) && !isSafeFixtureRelativePath(value)) {
+      fail(`${label}.poisonedSettings.${key} must be a safe fixture-relative path`);
+    }
+  }
+  assertSortedUnique(environmentCase.pathKeys, `${label}.pathKeys`);
+  assertKeys(environmentCase.pathKinds, new Set(environmentCase.pathKeys), `${label}.pathKinds`);
+  for (const pathKey of environmentCase.pathKeys) {
+    if (!['file', 'directory'].includes(environmentCase.pathKinds[pathKey] ?? 'directory')) {
+      fail(`${label}.pathKinds.${pathKey} is unsupported`);
+    }
+    if (environmentCase.poisonedSettings[pathKey] === undefined) {
+      fail(`${label}.pathKeys contains an unknown setting: ${pathKey}`);
+    }
+  }
+  assertSortedUnique(environmentCase.poisonedKeys, `${label}.poisonedKeys`);
+  if (JSON.stringify(environmentCase.poisonedKeys)
+    !== JSON.stringify(Object.keys(environmentCase.poisonedSettings).sort())) {
+    fail(`${label}.poisonedKeys must cover poisonedSettings exactly`);
+  }
+  assertSortedUnique(environmentCase.remoteForbiddenKeys, `${label}.remoteForbiddenKeys`);
+  for (const key of environmentCase.remoteForbiddenKeys) {
+    if (!environmentCase.poisonedKeys.includes(key)) {
+      fail(`${label}.remoteForbiddenKeys contains an unpoisoned setting: ${key}`);
+    }
+  }
+  if (environmentCase.expectedRemoteExposure !== 'sanitized') {
+    fail(`${label}.expectedRemoteExposure must be sanitized`);
+  }
+  assertProcessCase(environmentCase.processCase, `${label}.processCase`);
+}
+
+function validateProcessCase(processCase, caseName) {
+  const label = `processCases.${caseName}`;
+  assertCase(processCase, caseName, ['schemaVersion', 'caseName', 'controls'], label);
+  if (!isObject(processCase.controls) || Object.keys(processCase.controls).length === 0) {
+    fail(`${label}.controls must be a non-empty object`);
+  }
+  for (const [commandName, control] of Object.entries(processCase.controls)) {
+    const controlLabel = `${label}.controls.${commandName}`;
+    if (!/^[A-Za-z0-9._-]+$/.test(commandName)) {
+      fail(`${controlLabel} has an invalid command name`);
+    }
+    assertKeys(control, new Set(['defaultResponse', 'responses']), controlLabel);
+    assertFixtureResponse(control.defaultResponse, `${controlLabel}.defaultResponse`);
+    if (!Array.isArray(control.responses)) {
+      fail(`${controlLabel}.responses must be an array`);
+    }
+    for (const [index, response] of control.responses.entries()) {
+      assertFixtureResponse(response, `${controlLabel}.responses[${index}]`);
+    }
+  }
+}
+
+function validateCaseCollection(collection, label, validator) {
+  if (!isObject(collection) || Object.keys(collection).length === 0) {
+    fail(`${label} must be a non-empty object`);
+  }
+  for (const [caseName, value] of Object.entries(collection)) {
+    validator(value, caseName);
+  }
+}
+
+function validateProcessReferences(catalog) {
+  const collections = [
+    ['networkCases', catalog.networkCases],
+    ['routeCases', catalog.routeCases],
+    ['trustCases', catalog.trustCases],
+    ['commandCases', catalog.commandCases],
+    ['leaseCases', catalog.leaseCases],
+    ['signalCases', catalog.signalCases],
+    ['environmentCases', catalog.environmentCases],
+  ];
+  for (const [collectionName, collection] of collections) {
+    for (const [caseName, value] of Object.entries(collection)) {
+      if (!catalog.processCases[value.processCase]) {
+        fail(`${collectionName}.${caseName}.processCase does not name a process fixture`);
+      }
+    }
+  }
+}
+
+function validateCatalogSafety(value, label = 'catalog') {
+  if (typeof value === 'string') {
+    if (HOST_PATH_RE.test(value) || (value.startsWith('/') && !SYNTHETIC_ABSOLUTE_PATH_RE.test(value))) {
+      fail(`${label} contains a host path rather than a disposable fixture value`);
+    }
+    if (LIVE_VALUE_RE.test(value)) {
+      fail(`${label} contains a non-disposable fixture value`);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => validateCatalogSafety(entry, `${label}[${index}]`));
+    return;
+  }
+  if (isObject(value)) {
+    for (const [key, entry] of Object.entries(value)) {
+      validateCatalogSafety(entry, `${label}.${key}`);
+    }
+  }
+}
+
 function validateFixtureCatalog(catalog) {
   assertKeys(
     catalog,
@@ -617,9 +1145,23 @@ function validateFixtureCatalog(catalog) {
       'narinfoSets',
       'contentSets',
       'cacheCases',
+      'networkSchemaVersion',
+      'trustSchemaVersion',
+      'leaseSchemaVersion',
+      'environmentSchemaVersion',
+      'processSchemaVersion',
+      'networkCases',
+      'routeCases',
+      'trustCases',
+      'commandCases',
+      'leaseCases',
+      'signalCases',
+      'environmentCases',
+      'processCases',
     ]),
     'catalog',
   );
+  validateCatalogSafety(catalog);
   if (catalog.schemaVersion !== SCHEMA_VERSION) {
     fail(`catalog.schemaVersion must be ${SCHEMA_VERSION}`);
   }
@@ -656,6 +1198,26 @@ function validateFixtureCatalog(catalog) {
   for (const [caseName, cacheCase] of Object.entries(catalog.cacheCases)) {
     validateCacheCase(cacheCase, caseName, catalog, graphResults);
   }
+  for (const [versionName, version] of Object.entries({
+    networkSchemaVersion: catalog.networkSchemaVersion,
+    trustSchemaVersion: catalog.trustSchemaVersion,
+    leaseSchemaVersion: catalog.leaseSchemaVersion,
+    environmentSchemaVersion: catalog.environmentSchemaVersion,
+    processSchemaVersion: catalog.processSchemaVersion,
+  })) {
+    if (version !== SCHEMA_VERSION) {
+      fail(`catalog.${versionName} must be ${SCHEMA_VERSION}`);
+    }
+  }
+  validateCaseCollection(catalog.networkCases, 'catalog.networkCases', validateNetworkCase);
+  validateCaseCollection(catalog.routeCases, 'catalog.routeCases', validateRouteCase);
+  validateCaseCollection(catalog.trustCases, 'catalog.trustCases', validateTrustCase);
+  validateCaseCollection(catalog.commandCases, 'catalog.commandCases', validateCommandCase);
+  validateCaseCollection(catalog.leaseCases, 'catalog.leaseCases', validateLeaseCase);
+  validateCaseCollection(catalog.signalCases, 'catalog.signalCases', validateSignalCase);
+  validateCaseCollection(catalog.environmentCases, 'catalog.environmentCases', validateEnvironmentCase);
+  validateCaseCollection(catalog.processCases, 'catalog.processCases', validateProcessCase);
+  validateProcessReferences(catalog);
   return catalog;
 }
 

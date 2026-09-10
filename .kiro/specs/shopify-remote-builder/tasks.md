@@ -13,7 +13,7 @@
   - Fixture schema validation rejects ambiguous graph/cache cases under the shared harness.
   - _Requirements: 7.3, 7.4, 7.5_
   - _Boundary: Test Harness_
-- [ ] 1.3 Add network, trust, lease, and environment fixtures
+- [x] 1.3 Add network, trust, lease, and environment fixtures
   - Add DNS/redirect, route, key, command, lease, signal, and poisoned-environment cases.
   - Cover public/private/mixed destinations, active/stale locks, malformed keys, and private Shopify settings.
   - The catalog drives deterministic fake processes and contains no live credential or host path.

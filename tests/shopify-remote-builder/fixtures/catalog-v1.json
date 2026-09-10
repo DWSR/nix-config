@@ -399,5 +399,616 @@
       "freshnessStatus": "fresh",
       "contentStatus": "mismatch"
     }
+  },
+  "networkSchemaVersion": 1,
+  "trustSchemaVersion": 1,
+  "leaseSchemaVersion": 1,
+  "environmentSchemaVersion": 1,
+  "processSchemaVersion": 1,
+  "networkCases": {
+    "mixed-destination": {
+      "schemaVersion": 1,
+      "caseName": "mixed-destination",
+      "dnsRecords": [
+        {
+          "hostname": "mixed-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "10.42.0.7",
+            "93.184.216.34"
+          ]
+        }
+      ],
+      "redirects": [],
+      "destinations": [
+        {
+          "hostname": "mixed-source.example.test",
+          "addresses": [
+            "10.42.0.7",
+            "93.184.216.34"
+          ],
+          "classification": "private"
+        },
+        {
+          "hostname": "mixed-source.example.test",
+          "addresses": [
+            "93.184.216.34"
+          ],
+          "classification": "public"
+        }
+      ],
+      "expectedDecision": "reject",
+      "reason": "mixed public and private DNS answers",
+      "processCase": "network-probe"
+    },
+    "private-cname": {
+      "schemaVersion": 1,
+      "caseName": "private-cname",
+      "dnsRecords": [
+        {
+          "hostname": "alias-source.example.test",
+          "recordType": "CNAME",
+          "answers": [
+            "10.42.0.9"
+          ],
+          "target": "private-source.example.test"
+        },
+        {
+          "hostname": "private-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "10.42.0.9"
+          ]
+        }
+      ],
+      "redirects": [],
+      "destinations": [
+        {
+          "hostname": "alias-source.example.test",
+          "addresses": [
+            "10.42.0.9"
+          ],
+          "classification": "private"
+        }
+      ],
+      "expectedDecision": "reject",
+      "reason": "private CNAME destination",
+      "processCase": "network-probe"
+    },
+    "private-destination": {
+      "schemaVersion": 1,
+      "caseName": "private-destination",
+      "dnsRecords": [
+        {
+          "hostname": "private-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "10.42.0.7"
+          ]
+        }
+      ],
+      "redirects": [],
+      "destinations": [
+        {
+          "hostname": "private-source.example.test",
+          "addresses": [
+            "10.42.0.7"
+          ],
+          "classification": "private"
+        }
+      ],
+      "expectedDecision": "reject",
+      "reason": "private destination",
+      "processCase": "network-probe"
+    },
+    "private-redirect": {
+      "schemaVersion": 1,
+      "caseName": "private-redirect",
+      "dnsRecords": [
+        {
+          "hostname": "private-redirect.example.test",
+          "recordType": "A",
+          "answers": [
+            "10.42.0.8"
+          ]
+        },
+        {
+          "hostname": "public-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "93.184.216.34"
+          ]
+        }
+      ],
+      "redirects": [
+        {
+          "from": "https://public-source.example.test/source",
+          "to": "https://private-redirect.example.test/source",
+          "destinationClass": "private"
+        }
+      ],
+      "destinations": [
+        {
+          "hostname": "private-redirect.example.test",
+          "addresses": [
+            "10.42.0.8"
+          ],
+          "classification": "private"
+        },
+        {
+          "hostname": "public-source.example.test",
+          "addresses": [
+            "93.184.216.34"
+          ],
+          "classification": "public"
+        }
+      ],
+      "expectedDecision": "reject",
+      "reason": "redirected to private destination",
+      "processCase": "network-probe"
+    },
+    "public-destination": {
+      "schemaVersion": 1,
+      "caseName": "public-destination",
+      "dnsRecords": [
+        {
+          "hostname": "public-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "93.184.216.34"
+          ]
+        }
+      ],
+      "redirects": [],
+      "destinations": [
+        {
+          "hostname": "public-source.example.test",
+          "addresses": [
+            "93.184.216.34"
+          ],
+          "classification": "public"
+        }
+      ],
+      "expectedDecision": "allow",
+      "reason": null,
+      "processCase": "network-probe"
+    },
+    "public-redirect": {
+      "schemaVersion": 1,
+      "caseName": "public-redirect",
+      "dnsRecords": [
+        {
+          "hostname": "public-mirror.example.test",
+          "recordType": "A",
+          "answers": [
+            "93.184.216.35"
+          ]
+        },
+        {
+          "hostname": "public-source.example.test",
+          "recordType": "A",
+          "answers": [
+            "93.184.216.34"
+          ]
+        }
+      ],
+      "redirects": [
+        {
+          "from": "https://public-source.example.test/source",
+          "to": "https://public-mirror.example.test/source",
+          "destinationClass": "public"
+        }
+      ],
+      "destinations": [
+        {
+          "hostname": "public-mirror.example.test",
+          "addresses": [
+            "93.184.216.35"
+          ],
+          "classification": "public"
+        },
+        {
+          "hostname": "public-source.example.test",
+          "addresses": [
+            "93.184.216.34"
+          ],
+          "classification": "public"
+        }
+      ],
+      "expectedDecision": "allow",
+      "reason": null,
+      "processCase": "network-probe"
+    }
+  },
+  "routeCases": {
+    "declared-en0": {
+      "schemaVersion": 1,
+      "caseName": "declared-en0",
+      "declaredInterface": "en0",
+      "observedInterface": "en0",
+      "declaredGateway": "192.168.1.1",
+      "observedGateway": "192.168.1.1",
+      "vpn": false,
+      "expectedDecision": "allow",
+      "reason": null,
+      "processCase": "network-probe"
+    },
+    "unexpected-default": {
+      "schemaVersion": 1,
+      "caseName": "unexpected-default",
+      "declaredInterface": "en0",
+      "observedInterface": "en0",
+      "declaredGateway": "192.168.1.1",
+      "observedGateway": "10.64.0.1",
+      "vpn": false,
+      "expectedDecision": "reject",
+      "reason": "unexpected default route",
+      "processCase": "network-probe"
+    },
+    "unexpected-vpn": {
+      "schemaVersion": 1,
+      "caseName": "unexpected-vpn",
+      "declaredInterface": "en0",
+      "observedInterface": "utun0",
+      "declaredGateway": "192.168.1.1",
+      "observedGateway": "100.64.0.1",
+      "vpn": true,
+      "expectedDecision": "reject",
+      "reason": "unexpected VPN route",
+      "processCase": "network-probe"
+    }
+  },
+  "trustCases": {
+    "malformed-client-key": {
+      "schemaVersion": 1,
+      "caseName": "malformed-client-key",
+      "client": {
+        "publicKey": "ssh-ed25519 not-base64! fixture-client",
+        "privateKey": "<redacted>"
+      },
+      "host": {
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZpeHR1cmUtaG9zdC1rZXktZGF0YQ== fixture-host"
+      },
+      "sourceCidrs": [
+        "192.168.1.0/24"
+      ],
+      "expectedDecision": "reject",
+      "reason": "malformed client key",
+      "processCase": "remote-command"
+    },
+    "malformed-host-key": {
+      "schemaVersion": 1,
+      "caseName": "malformed-host-key",
+      "client": {
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGZpeHR1cmUtY2xpZW50LWtleS1kYXRh fixture-client",
+        "privateKey": "<redacted>"
+      },
+      "host": {
+        "publicKey": "not-a-public-key"
+      },
+      "sourceCidrs": [
+        "192.168.1.0/24"
+      ],
+      "expectedDecision": "reject",
+      "reason": "malformed host key",
+      "processCase": "remote-command"
+    },
+    "valid": {
+      "schemaVersion": 1,
+      "caseName": "valid",
+      "client": {
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8g fixture-client",
+        "privateKey": "<redacted>"
+      },
+      "host": {
+        "publicKey": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj9A fixture-host"
+      },
+      "sourceCidrs": [
+        "192.168.1.0/24"
+      ],
+      "expectedDecision": "accept",
+      "reason": null,
+      "processCase": "remote-command"
+    }
+  },
+  "commandCases": {
+    "forced-stdio": {
+      "schemaVersion": 1,
+      "caseName": "forced-stdio",
+      "argv": [
+        "/run/current-system/sw/bin/nix-daemon",
+        "--stdio",
+        "--store",
+        "daemon"
+      ],
+      "expectedDecision": "accept",
+      "reason": null,
+      "processCase": "remote-command"
+    },
+    "lease-command": {
+      "schemaVersion": 1,
+      "caseName": "lease-command",
+      "argv": [
+        "keepalive",
+        "fixture-lease-token-active-0001"
+      ],
+      "expectedDecision": "accept",
+      "reason": null,
+      "processCase": "remote-command"
+    },
+    "malformed-command": {
+      "schemaVersion": 1,
+      "caseName": "malformed-command",
+      "argv": [
+        "keepalive"
+      ],
+      "expectedDecision": "reject",
+      "reason": "malformed command",
+      "processCase": "remote-command"
+    },
+    "unknown-command": {
+      "schemaVersion": 1,
+      "caseName": "unknown-command",
+      "argv": [
+        "shell",
+        "fixture-shell-command"
+      ],
+      "expectedDecision": "reject",
+      "reason": "unknown command",
+      "processCase": "remote-command"
+    }
+  },
+  "leaseCases": {
+    "active-lock": {
+      "schemaVersion": 1,
+      "caseName": "active-lock",
+      "token": "fixture-lease-token-active-0001",
+      "graphDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "rootedPaths": [
+        "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shopify-remote-top.drv",
+        "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top",
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "selectedInputOutputs": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency"
+      ],
+      "expectedOutputs": [
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top"
+      ],
+      "idleTtlSeconds": 3600,
+      "heartbeatAgeSeconds": 15,
+      "lock": {
+        "state": "active",
+        "active": true,
+        "ageSeconds": 7200
+      },
+      "expectedDecision": "retain",
+      "reason": null,
+      "processCase": "signal-keeper"
+    },
+    "stale-lock": {
+      "schemaVersion": 1,
+      "caseName": "stale-lock",
+      "token": "fixture-lease-token-stale-0001",
+      "graphDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "rootedPaths": [
+        "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shopify-remote-top.drv",
+        "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top",
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "selectedInputOutputs": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency"
+      ],
+      "expectedOutputs": [
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top"
+      ],
+      "idleTtlSeconds": 3600,
+      "heartbeatAgeSeconds": 7200,
+      "lock": {
+        "state": "stale",
+        "active": false,
+        "ageSeconds": 7200
+      },
+      "expectedDecision": "expire",
+      "reason": "inactive lease exceeded idle TTL",
+      "processCase": "signal-keeper"
+    }
+  },
+  "signalCases": {
+    "sigint": {
+      "schemaVersion": 1,
+      "caseName": "sigint",
+      "signal": "SIGINT",
+      "expectedCleanup": "remove-state-and-processes",
+      "expectedExit": "signal",
+      "processCase": "signal-keeper-sigint"
+    },
+    "sigterm": {
+      "schemaVersion": 1,
+      "caseName": "sigterm",
+      "signal": "SIGTERM",
+      "expectedCleanup": "remove-state-and-processes",
+      "expectedExit": "signal",
+      "processCase": "signal-keeper"
+    }
+  },
+  "environmentCases": {
+    "private-shopify-settings": {
+      "schemaVersion": 1,
+      "caseName": "private-shopify-settings",
+      "poisonedSettings": {
+        "ALL_PROXY": "fixture-poison-all-proxy",
+        "AWS_ACCESS_KEY_ID": "fixture-poison-aws-access-key",
+        "AWS_SECRET_ACCESS_KEY": "fixture-poison-aws-secret-key",
+        "AWS_SESSION_TOKEN": "fixture-poison-aws-session-token",
+        "GITHUB_TOKEN": "<redacted>",
+        "HOME": "fixture-poison-home",
+        "HTTP_PROXY": "fixture-poison-http-proxy",
+        "HTTPS_PROXY": "fixture-poison-https-proxy",
+        "NIX_CACHE_DIR": "fixture-poison-nix-cache",
+        "NIX_CONFIG": "fixture-poison-nix-config",
+        "NIX_CONFIG_HOME": "fixture-poison-nix-config-home",
+        "NIX_CONF_DIR": "fixture-poison-nix-conf",
+        "NIX_LOG_DIR": "fixture-poison-nix-log",
+        "NIX_PATH": "fixture-poison-nix-path",
+        "NIX_REMOTE": "fixture-poison-nix-remote",
+        "NIX_STATE_DIR": "fixture-poison-nix-state",
+        "NIX_SUBSTITUTERS": "fixture-poison-private-substituter",
+        "NIX_USER_CONF_FILES": "fixture-poison-nix-user-conf",
+        "POST_BUILD_HOOK": "fixture-poison-private-hook",
+        "SSH_AUTH_SOCK": "fixture-poison-ssh-agent",
+        "SSH_OPTIONS": "fixture-poison-ssh-options",
+        "XDG_CACHE_HOME": "fixture-poison-xdg-cache",
+        "XDG_CONFIG_HOME": "fixture-poison-xdg-config",
+        "XDG_DATA_HOME": "fixture-poison-xdg-data",
+        "XDG_STATE_HOME": "fixture-poison-xdg-state"
+      },
+      "pathKeys": [
+        "HOME",
+        "NIX_CACHE_DIR",
+        "NIX_CONFIG_HOME",
+        "NIX_CONF_DIR",
+        "NIX_LOG_DIR",
+        "NIX_STATE_DIR",
+        "NIX_USER_CONF_FILES",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME"
+      ],
+      "pathKinds": {
+        "NIX_USER_CONF_FILES": "file"
+      },
+      "poisonedKeys": [
+        "ALL_PROXY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "HOME",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NIX_CACHE_DIR",
+        "NIX_CONFIG",
+        "NIX_CONFIG_HOME",
+        "NIX_CONF_DIR",
+        "NIX_LOG_DIR",
+        "NIX_PATH",
+        "NIX_REMOTE",
+        "NIX_STATE_DIR",
+        "NIX_SUBSTITUTERS",
+        "NIX_USER_CONF_FILES",
+        "POST_BUILD_HOOK",
+        "SSH_AUTH_SOCK",
+        "SSH_OPTIONS",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME"
+      ],
+      "remoteForbiddenKeys": [
+        "ALL_PROXY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "GITHUB_TOKEN",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NIX_PATH",
+        "NIX_REMOTE",
+        "NIX_SUBSTITUTERS",
+        "POST_BUILD_HOOK",
+        "SSH_AUTH_SOCK",
+        "SSH_OPTIONS"
+      ],
+      "expectedRemoteExposure": "sanitized",
+      "processCase": "remote-command"
+    }
+  },
+  "processCases": {
+    "network-probe": {
+      "schemaVersion": 1,
+      "caseName": "network-probe",
+      "controls": {
+        "dns": {
+          "defaultResponse": {
+            "status": 0,
+            "stdout": "{\"answers\":[\"93.184.216.34\"]}\n",
+            "stderr": ""
+          },
+          "responses": []
+        },
+        "proxy": {
+          "defaultResponse": {
+            "status": 0,
+            "stdout": "{\"decision\":\"allow\",\"destinationClass\":\"public\"}\n",
+            "stderr": ""
+          },
+          "responses": []
+        },
+        "route": {
+          "defaultResponse": {
+            "status": 0,
+            "stdout": "{\"interface\":\"en0\",\"vpn\":false}\n",
+            "stderr": ""
+          },
+          "responses": []
+        }
+      }
+    },
+    "remote-command": {
+      "schemaVersion": 1,
+      "caseName": "remote-command",
+      "controls": {
+        "dispatcher": {
+          "defaultResponse": {
+            "status": 0,
+            "stdout": "{\"decision\":\"accept\",\"detail\":\"fixture-command\"}\n",
+            "stderr": ""
+          },
+          "responses": []
+        }
+      }
+    },
+    "signal-keeper": {
+      "schemaVersion": 1,
+      "caseName": "signal-keeper",
+      "controls": {
+        "keeper": {
+          "defaultResponse": {
+            "status": 0,
+            "stdout": "fixture-keeper-ready\n",
+            "stderr": ""
+          },
+          "responses": [
+            {
+              "status": 0,
+              "signal": "SIGTERM",
+              "stdout": "",
+              "stderr": ""
+            }
+          ]
+        }
+      }
+    },
+    "signal-keeper-sigint": {
+      "schemaVersion": 1,
+      "caseName": "signal-keeper-sigint",
+      "controls": {
+        "keeper": {
+          "defaultResponse": {
+            "status": 0,
+            "signal": "SIGINT",
+            "stdout": "",
+            "stderr": ""
+          },
+          "responses": []
+        }
+      }
+    }
   }
 }
