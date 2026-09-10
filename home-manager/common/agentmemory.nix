@@ -15,6 +15,14 @@ let
     else
       "cavemem";
   isAgentMemory = memoryBackend == "agentmemory";
+  rollbackSpecialisationName = "opencode-cavemem-rollback";
+  rollbackConfigured =
+    options ? specialisation && builtins.hasAttr rollbackSpecialisationName config.specialisation;
+  rollbackPackage =
+    if !rollbackConfigured then
+      null
+    else
+      pkgs.callPackage ../../scripts/opencode-cavemem-rollback.nix { };
 
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
     inherit (cfg)
@@ -28,7 +36,8 @@ let
       ;
     iiiRevision = cfg.package.iiiRevision or "unknown";
     opencodeBackend = memoryBackend;
-    opencodeRollbackBackend = "cavemem";
+    opencodeRollbackBackend = if cfg.rollbackPackage == null then null else "cavemem";
+    opencodeRollbackCommand = if cfg.rollbackPackage == null then null else "opencode-cavemem-rollback";
     piBackend = "agentmemory";
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
@@ -108,6 +117,14 @@ in
       readOnly = true;
       default = pkgs.agentmemory;
       description = "Pinned AgentMemory runtime package.";
+    };
+
+    rollbackPackage = mkOption {
+      type = types.nullOr types.package;
+      readOnly = true;
+      internal = true;
+      default = rollbackPackage;
+      description = "Generation-bound OpenCode cavemem rollback activator, when configured.";
     };
 
     statusPackage = mkOption {
@@ -199,6 +216,7 @@ in
           cfg.statusPackage
           importPackage
         ]
+        ++ lib.optional (cfg.rollbackPackage != null) cfg.rollbackPackage
         ++ lib.optional (cfg.backupDestination != null) backupPackage;
 
         file."${cfg.runtimeDir}/.env".text = settingsText;

@@ -9,7 +9,8 @@
   lsof,
   logDir,
   opencodeBackend,
-  opencodeRollbackBackend,
+  opencodeRollbackBackend ? null,
+  opencodeRollbackCommand ? null,
   piBackend,
   restPort,
   sourceRevision,
@@ -31,7 +32,10 @@ writeShellApplication {
     source_revision=${builtins.toJSON sourceRevision}
     iii_revision=${builtins.toJSON iiiRevision}
     opencode_backend=${builtins.toJSON opencodeBackend}
-    opencode_rollback_backend=${builtins.toJSON opencodeRollbackBackend}
+    ${lib.optionalString (opencodeRollbackCommand != null) ''
+      opencode_rollback_backend=${builtins.toJSON opencodeRollbackBackend}
+      opencode_rollback_command=${builtins.toJSON opencodeRollbackCommand}
+    ''}
     pi_backend=${builtins.toJSON piBackend}
     rest_port=${builtins.toJSON (toString restPort)}
     stream_port=${builtins.toJSON (toString streamPort)}
@@ -136,7 +140,10 @@ writeShellApplication {
     printf 'agentmemory_revision=%s\n' "$source_revision"
     printf 'iii_revision=%s\n' "$iii_revision"
     printf 'opencode_backend=%s\n' "$opencode_backend"
-    printf 'opencode_rollback_backend=%s\n' "$opencode_rollback_backend"
+    ${lib.optionalString (opencodeRollbackCommand != null) ''
+      printf 'opencode_rollback_backend=%s\n' "$opencode_rollback_backend"
+      printf 'opencode_rollback_command=%s\n' "$opencode_rollback_command"
+    ''}
     printf 'pi_backend=%s\n' "$pi_backend"
     printf 'data_dir=%s\n' "$data_dir"
     printf 'listener_rest=%s\n' "$listener_rest"

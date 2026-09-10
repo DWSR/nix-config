@@ -127,6 +127,7 @@
 
 - [ ] 4. Add basic operations and host rollout
 - [ ] 4.1 Add best-effort stopped-runtime backup
+  - _Blocked: debug attempted twice, still failing — launchd cleanup has reproducible signal races between clearing EXIT and entering cleanup state, and between deferred first-signal capture and normal trap installation._
   - Suspend the launchd KeepAlive job before invoking stock stop and waiting for all known processes/listeners.
   - Copy the complete managed data directory to the configured backup destination and restart the service.
   - Restore launchd after the copy and report suspend, stop, copy, and restart failures.
@@ -142,7 +143,7 @@
   - _Requirements: 1.7, 6.5, 6.10, 7.1_
   - _Boundary: AgentMemoryModule_
 
-- [ ] 4.3 Preserve an explicit OpenCode cavemem rollback selection
+- [x] 4.3 Preserve an explicit OpenCode cavemem rollback selection
   - Keep the backend selector capable of rendering the prior OpenCode cavemem plugin, checks, consumers, and instructions.
   - Make backend selection enable every required cavemem module contribution on each real host.
   - Avoid deleting or transforming source cavemem data during OpenCode rollback.
@@ -210,3 +211,4 @@
 - AgentMemory persists summaries by target session, so the importer merges all source summaries per session, retains source IDs and narratives in provenance, and reports source `selected` counts separately from target import counts.
 - Pi is explicitly outside this specification. Pi findings do not affect this feature's validation decision.
 - Pre-activation validation must prove the personal configuration tolerates absent bearer ciphertext without requiring the ciphertext itself.
+- Backup cleanup must atomically enter restoration before clearing EXIT and preserve the first deferred signal before reinstalling normal traps; otherwise launchd restoration or signal status can race.

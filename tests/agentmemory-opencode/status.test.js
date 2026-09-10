@@ -10,7 +10,13 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const repoRoot = path.resolve(__dirname, '../..');
 const secret = 'status-test-bearer-value';
 
-function statusPackageDerivation(backend = 'agentmemory') {
+function statusPackageDerivation(backend = 'agentmemory', rollbackConfigured = true) {
+  const rollbackConfiguration = rollbackConfigured
+    ? `specialisation."opencode-cavemem-rollback".configuration = {
+            home.opencode.memoryBackend = pkgs.lib.mkForce "cavemem";
+            home.cavemem.enable = true;
+          };`
+    : '';
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
@@ -26,6 +32,7 @@ function statusPackageDerivation(backend = 'agentmemory') {
         options.home.opencode.memoryBackend = pkgs.lib.mkOption {
           type = pkgs.lib.types.enum [ "cavemem" "agentmemory" ];
         };
+        options.home.cavemem.enable = pkgs.lib.mkEnableOption "fixture cavemem";
         config = {
           home.username = "brandonmcnama";
           home.homeDirectory = "/Users/brandonmcnama";
@@ -42,6 +49,7 @@ function statusPackageDerivation(backend = 'agentmemory') {
             enginePort = 61134;
             bearerReference = "status-bearer-reference";
           };
+          ${rollbackConfiguration}
         };
       }
     ];
@@ -54,8 +62,8 @@ in hm.programs.agentmemory.statusPackage.drvPath)`;
   }).trim();
 }
 
-function statusCommandPath(backend = 'agentmemory') {
-  return execFileSync('nix-store', ['--realise', statusPackageDerivation(backend)], {
+function statusCommandPath(backend = 'agentmemory', rollbackConfigured = true) {
+  return execFileSync('nix-store', ['--realise', statusPackageDerivation(backend, rollbackConfigured)], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim().split('\n').at(-1) + '/bin/agentmemory-status';
@@ -110,8 +118,8 @@ function createFixture() {
   };
 }
 
-function runStatus(fixture, state, backend = 'agentmemory') {
-  const result = spawnSync(statusCommandPath(backend), [], {
+function runStatus(fixture, state, backend = 'agentmemory', rollbackConfigured = true) {
+  const result = spawnSync(statusCommandPath(backend, rollbackConfigured), [], {
     cwd: repoRoot,
     encoding: 'utf8',
     env: {
@@ -133,7 +141,12 @@ function assertCommonStatus(result, expected) {
   assert.equal(result.status, expected.exitCode, result.error?.message || result.stderr);
   assert.match(result.stdout, new RegExp(`^status=${expected.status}$`, 'm'));
   assert.match(result.stdout, new RegExp(`^opencode_backend=${expected.backend}$`, 'm'));
-  assert.match(result.stdout, /^opencode_rollback_backend=cavemem$/m);
+  if (expected.rollbackAvailable ?? true) {
+    assert.match(result.stdout, /^opencode_rollback_backend=cavemem$/m);
+    assert.match(result.stdout, /^opencode_rollback_command=opencode-cavemem-rollback$/m);
+  } else {
+    assert.doesNotMatch(result.stdout, /^opencode_rollback_/m);
+  }
   assert.match(result.stdout, /^pi_backend=agentmemory$/m);
   assert.match(result.stdout, /^agentmemory_revision=e04ba88819c365c9acf9d6661ea802143e728bd6$/m);
   assert.match(result.stdout, /^iii_revision=iii\/v0\.11\.2$/m);
@@ -283,6 +296,33 @@ test('status documents the explicit OpenCode cavemem rollback while Pi stays on 
       backend: 'cavemem',
       exitCode: 0,
       listenerState: 'listening',
+      status: 'healthy',
+    });
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('status does not advertise an OpenCode rollback when no specialisation is configured', () => {
+  const fixture = createFixture();
+  try {
+    const result = runStatus(
+      fixture,
+      {
+        STATUS_LIVEZ_RESPONSE: '{"ok":true}\n200',
+        STATUS_HEALTH_RESPONSE: '{"status":"healthy","version":"0.9.29"}\n200',
+        STATUS_LAUNCHCTL_RESPONSE: 'state = running\nlast exit code = 0\n',
+        STATUS_LISTENERS: 'all',
+      },
+      'agentmemory',
+      false,
+    );
+
+    assertCommonStatus(result, {
+      backend: 'agentmemory',
+      exitCode: 0,
+      listenerState: 'listening',
+      rollbackAvailable: false,
       status: 'healthy',
     });
   } finally {
