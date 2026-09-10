@@ -125,7 +125,7 @@
   - _Boundary: Test Harness_
   - _Depends: 1.1, 1.2, 2.1_
 
-- [ ] 3.8 Wire and run the native contract suites
+- [x] 3.8 Wire and run the native contract suites
   - Register signer, lifecycle, and upstream-isolation suites through the existing git-mcp test entry point.
   - Prevent fixtures from invoking host CTK or Keychain paths.
   - Complete when the existing git-mcp check runs the current render test and all native contract suites successfully.
