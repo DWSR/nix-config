@@ -1,0 +1,403 @@
+{
+  "schemaVersion": 1,
+  "graphSchemaVersion": 1,
+  "cacheSchemaVersion": 1,
+  "graphs": {
+    "public-v1": {
+      "schemaVersion": 1,
+      "id": "public-v1",
+      "system": "aarch64-darwin",
+      "topDerivation": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shopify-remote-top.drv",
+      "topOutput": "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top",
+      "cacheRoot": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "graphIdentity": {
+        "schemaVersion": 1,
+        "topDerivation": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shopify-remote-top.drv",
+        "evaluatorConfigDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+      },
+      "derivations": [
+        {
+          "path": "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-shopify-remote-top.drv",
+          "system": "aarch64-darwin",
+          "builder": "/nix/store/11111111111111111111111111111111-fixture-bash/bin/bash",
+          "args": [
+            "-e",
+            "build-top"
+          ],
+          "environment": {
+            "name": "shopify-remote-top",
+            "system": "aarch64-darwin"
+          },
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top",
+              "hash": {
+                "algorithm": "sha256",
+                "mode": "recursive",
+                "value": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+              }
+            }
+          ],
+          "inputDerivations": [
+            {
+              "path": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+              "outputs": [
+                "out"
+              ]
+            }
+          ],
+          "inputSources": []
+        },
+        {
+          "path": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+          "system": "aarch64-darwin",
+          "builder": "/nix/store/11111111111111111111111111111111-fixture-bash/bin/bash",
+          "args": [
+            "-e",
+            "build-dependency"
+          ],
+          "environment": {
+            "name": "shopify-remote-dependency",
+            "source": "fixture-source"
+          },
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+              "hash": {
+                "algorithm": "sha256",
+                "mode": "recursive",
+                "value": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+              }
+            }
+          ],
+          "inputDerivations": [],
+          "inputSources": [
+            "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+          ]
+        }
+      ],
+      "references": {
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top": [
+          "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency"
+        ],
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source": []
+      },
+      "referenceClosures": {
+        "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top": [
+          "/nix/store/cccccccccccccccccccccccccccccccc-shopify-remote-top",
+          "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency": [
+          "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ]
+      }
+    }
+  },
+  "narinfoSets": {
+    "complete-signed-fresh": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "narHash": "sha256-pOOwdbRF5pHZdpssHFNbKPVQlX325xuhHTBB5q2Etnw=",
+        "narSize": 112,
+        "references": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "deriver": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "lastModified": 1735689540,
+        "signatures": [
+          "cache.nixos.org-1:fixture-signature-dependency-v1"
+        ]
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "narHash": "sha256-E4gGSbbilVxvIyouufODdJqWeoBew7rDCsS7zKVQyZI=",
+        "narSize": 104,
+        "references": [],
+        "deriver": null,
+        "lastModified": 1735689540,
+        "signatures": [
+          "cache.nixos.org-1:fixture-signature-source-v1"
+        ]
+      }
+    ],
+    "complete-private-signed-fresh": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "narHash": "sha256-pOOwdbRF5pHZdpssHFNbKPVQlX325xuhHTBB5q2Etnw=",
+        "narSize": 112,
+        "references": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "deriver": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "lastModified": 1735689540,
+        "signatures": [
+          "shopify-attic-1:fixture-private-signature-dependency-v1"
+        ]
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "narHash": "sha256-E4gGSbbilVxvIyouufODdJqWeoBew7rDCsS7zKVQyZI=",
+        "narSize": 104,
+        "references": [],
+        "deriver": null,
+        "lastModified": 1735689540,
+        "signatures": [
+          "shopify-attic-1:fixture-private-signature-source-v1"
+        ]
+      }
+    ],
+    "partial-signed-fresh": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "narHash": "sha256-pOOwdbRF5pHZdpssHFNbKPVQlX325xuhHTBB5q2Etnw=",
+        "narSize": 112,
+        "references": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "deriver": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "lastModified": 1735689540,
+        "signatures": [
+          "cache.nixos.org-1:fixture-signature-dependency-v1"
+        ]
+      }
+    ],
+    "complete-unsigned-fresh": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "narHash": "sha256-pOOwdbRF5pHZdpssHFNbKPVQlX325xuhHTBB5q2Etnw=",
+        "narSize": 112,
+        "references": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "deriver": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "lastModified": 1735689540,
+        "signatures": []
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "narHash": "sha256-E4gGSbbilVxvIyouufODdJqWeoBew7rDCsS7zKVQyZI=",
+        "narSize": 104,
+        "references": [],
+        "deriver": null,
+        "lastModified": 1735689540,
+        "signatures": []
+      }
+    ],
+    "complete-signed-stale": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "narHash": "sha256-pOOwdbRF5pHZdpssHFNbKPVQlX325xuhHTBB5q2Etnw=",
+        "narSize": 112,
+        "references": [
+          "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+        ],
+        "deriver": "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-shopify-remote-dependency.drv",
+        "lastModified": 1735682400,
+        "signatures": [
+          "cache.nixos.org-1:fixture-signature-dependency-v1"
+        ]
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "narHash": "sha256-E4gGSbbilVxvIyouufODdJqWeoBew7rDCsS7zKVQyZI=",
+        "narSize": 104,
+        "references": [],
+        "deriver": null,
+        "lastModified": 1735682400,
+        "signatures": [
+          "cache.nixos.org-1:fixture-signature-source-v1"
+        ]
+      }
+    ]
+  },
+  "contentSets": {
+    "matching": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "encoding": "base64",
+        "data": "DQAAAAAAAABuaXgtYXJjaGl2ZS0xAAAABAAAAAAAAAB0eXBlAAAAAAcAAAAAAAAAcmVndWxhcgAIAAAAAAAAAGNvbnRlbnRzGgAAAAAAAABmaXh0dXJlIGRlcGVuZGVuY3kgb3V0cHV0CgAAAAAAAA=="
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "encoding": "base64",
+        "data": "DQAAAAAAAABuaXgtYXJjaGl2ZS0xAAAABAAAAAAAAAB0eXBlAAAAAAcAAAAAAAAAcmVndWxhcgAIAAAAAAAAAGNvbnRlbnRzFQAAAAAAAABmaXh0dXJlIHNvdXJjZSBpbnB1dAoAAAA="
+      }
+    ],
+    "mismatching": [
+      {
+        "storePath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "encoding": "base64",
+        "data": "DQAAAAAAAABuaXgtYXJjaGl2ZS0xAAAABAAAAAAAAAB0eXBlAAAAAAcAAAAAAAAAcmVndWxhcgAIAAAAAAAAAGNvbnRlbnRzGgAAAAAAAABmaXh0dXJlIGRlcGVuZGVuY3kgb3V0cHV0CgAAAAAAAA=="
+      },
+      {
+        "storePath": "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source",
+        "encoding": "base64",
+        "data": "DQAAAAAAAABuaXgtYXJjaGl2ZS0xAAAABAAAAAAAAAB0eXBlAAAAAAcAAAAAAAAAcmVndWxhcgAIAAAAAAAAAGNvbnRlbnRzHgAAAAAAAABmaXh0dXJlIHRhbXBlcmVkIHNvdXJjZSBpbnB1dAoAAA=="
+      }
+    ]
+  },
+  "cacheCases": {
+    "public": {
+      "schemaVersion": 1,
+      "caseName": "public",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://cache.nixos.org",
+      "cacheClass": "public",
+      "approvalStatus": "approved",
+      "trustedKeyId": "cache.nixos.org-1",
+      "narinfoSet": "complete-signed-fresh",
+      "contentSet": "matching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [],
+      "expectedDecision": "cut",
+      "reason": null,
+      "closureStatus": "complete",
+      "signatureStatus": "trusted",
+      "freshnessStatus": "fresh",
+      "contentStatus": "matching"
+    },
+    "private": {
+      "schemaVersion": 1,
+      "caseName": "private",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://attic.shopify.invalid/private",
+      "cacheClass": "private",
+      "approvalStatus": "private",
+      "trustedKeyId": "shopify-attic-1",
+      "narinfoSet": "complete-private-signed-fresh",
+      "contentSet": "matching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [],
+      "expectedDecision": "traverse",
+      "reason": "private cache endpoint",
+      "closureStatus": "complete",
+      "signatureStatus": "trusted",
+      "freshnessStatus": "fresh",
+      "contentStatus": "matching"
+    },
+    "partial": {
+      "schemaVersion": 1,
+      "caseName": "partial",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://cache.nixos.org",
+      "cacheClass": "public",
+      "approvalStatus": "approved",
+      "trustedKeyId": "cache.nixos.org-1",
+      "narinfoSet": "partial-signed-fresh",
+      "contentSet": "matching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "expectedDecision": "traverse",
+      "reason": "incomplete reference closure",
+      "closureStatus": "partial",
+      "signatureStatus": "trusted",
+      "freshnessStatus": "fresh",
+      "contentStatus": "matching"
+    },
+    "unsigned": {
+      "schemaVersion": 1,
+      "caseName": "unsigned",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://cache.nixos.org",
+      "cacheClass": "public",
+      "approvalStatus": "approved",
+      "trustedKeyId": "cache.nixos.org-1",
+      "narinfoSet": "complete-unsigned-fresh",
+      "contentSet": "matching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [],
+      "expectedDecision": "traverse",
+      "reason": "unsigned narinfo",
+      "closureStatus": "complete",
+      "signatureStatus": "unsigned",
+      "freshnessStatus": "fresh",
+      "contentStatus": "matching"
+    },
+    "stale": {
+      "schemaVersion": 1,
+      "caseName": "stale",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://cache.nixos.org",
+      "cacheClass": "public",
+      "approvalStatus": "approved",
+      "trustedKeyId": "cache.nixos.org-1",
+      "narinfoSet": "complete-signed-stale",
+      "contentSet": "matching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [],
+      "expectedDecision": "traverse",
+      "reason": "stale narinfo",
+      "closureStatus": "complete",
+      "signatureStatus": "trusted",
+      "freshnessStatus": "stale",
+      "contentStatus": "matching"
+    },
+    "content-mismatch": {
+      "schemaVersion": 1,
+      "caseName": "content-mismatch",
+      "graphId": "public-v1",
+      "rootPath": "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+      "endpoint": "https://cache.nixos.org",
+      "cacheClass": "public",
+      "approvalStatus": "approved",
+      "trustedKeyId": "cache.nixos.org-1",
+      "narinfoSet": "complete-signed-fresh",
+      "contentSet": "mismatching",
+      "observedAt": 1735689600,
+      "maxAgeSeconds": 3600,
+      "referenceClosure": [
+        "/nix/store/dddddddddddddddddddddddddddddddd-shopify-remote-dependency",
+        "/nix/store/ffffffffffffffffffffffffffffffff-shopify-remote-source"
+      ],
+      "missingPaths": [],
+      "expectedDecision": "traverse",
+      "reason": "NAR content mismatch",
+      "closureStatus": "complete",
+      "signatureStatus": "trusted",
+      "freshnessStatus": "fresh",
+      "contentStatus": "mismatch"
+    }
+  }
+}

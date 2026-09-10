@@ -7,7 +7,7 @@
   - A baseline fixture evaluates both disabled roles and cleans all processes/directories on success, error, and signal.
   - _Requirements: 7.1, 7.2, 7.4_
   - _Boundary: Test Harness_
-- [ ] 1.2 Add derivation and public-cache fixtures
+- [x] 1.2 Add derivation and public-cache fixtures
   - Add versioned derivation graphs, narinfos, reference closures, and matching/mismatching NAR content.
   - Keep public, private, partial, unsigned, stale, and content-mismatch cases independently reusable.
   - Fixture schema validation rejects ambiguous graph/cache cases under the shared harness.
