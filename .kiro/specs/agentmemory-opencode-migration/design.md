@@ -44,8 +44,7 @@ migrated corpus.
 - Subprocess-proof bearer isolation inside OpenCode.
 - Automatic AgentMemory-to-Obsidian promotion.
 - Runtime backup and restore workflows.
-- OpenCode rollback activation and validation; existing rollback assets remain
-  adjacent state and are not modified by this feature.
+- OpenCode rollback activation and validation.
 - All Pi configuration, integrations, credentials, runtime behavior, and tests.
 - Recovery beyond stock AgentMemory behavior and rerunning failed imports.
 
@@ -153,8 +152,8 @@ tests/agentmemory-opencode/                  # Package, plugin, HM, and import c
 ### Preserved Paths
 
 - All Pi harness, package, integration, credential, and test paths.
-- Existing OpenCode cavemem assets and source data remain adjacent state and are
-  not modified by this feature.
+- Existing non-rollback Cavemem assets remain available only for the retained
+  legacy backend path.
 
 ## System Flows
 
@@ -206,7 +205,7 @@ Rerunning with deterministic IDs and stock `skip` behavior is the recovery path.
 | Component | Intent | Requirements | Dependencies |
 |---|---|---|---|
 | Package | Build pinned AgentMemory, iii, and integration assets | 1.1, 1.5 | Nix, npm |
-| AgentMemoryModule | Render settings, launchd, plugin, MCP, health, and CLI wrappers | 1.2-1.7, 3.1-3.5, 6.1-6.4, 6.7-6.8 | Package, HM |
+| AgentMemoryModule | Render settings, launchd, plugin, MCP, health, and CLI wrappers | 1.2-1.7, 3.1-3.5, 6.1-6.4, 6.6-6.8 | Package, HM |
 | ExistingPluginPatch | Correct high-value current OpenCode capture gaps | 1.4-1.5, 2.1-2.8 | Upstream plugin, REST |
 | StockMcpIntegration | Register core stock tools through mcpproxy | 3.1-3.7 | Stock MCP shim |
 | BestEffortImporter | Transform and batch cavemem rows | 4.1-4.12 | SQLite snapshot, import route |

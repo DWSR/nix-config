@@ -19,9 +19,9 @@ managed and is not part of this spec.
 OpenCode uses a declaratively packaged AgentMemory runtime, patched upstream
 plugin, automatic context injection, and core MCP tools through mcpproxy.
 Cavemem history remains stored for later processing while BM25 recall is bounded.
-Both hosts render the normal AgentMemory generation. Existing rollback assets
-remain adjacent but are not part of this feature's rollout or validation. Pi
-behavior remains outside this feature.
+Both hosts render the normal AgentMemory generation. This feature does not
+render an OpenCode rollback activation or validation path. Pi behavior remains
+outside this feature.
 
 ## Approach
 

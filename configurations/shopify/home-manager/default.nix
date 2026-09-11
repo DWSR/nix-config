@@ -1,7 +1,6 @@
 {
   pkgs,
   config,
-  lib,
   ...
 }:
 let
@@ -144,11 +143,6 @@ in
     runtimeDir = "${config.home.homeDirectory}/.agentmemory";
     logDir = "${config.home.homeDirectory}/Library/Logs/agentmemory";
     bearerReference = "agentmemory-bearer";
-  };
-
-  specialisation."opencode-cavemem-rollback".configuration = {
-    home.opencode.memoryBackend = lib.mkForce "cavemem";
-    home.cavemem.enable = true;
   };
 
   xdg.dataFile."orangemonkey/github-pr-review-chords.user.js".source =

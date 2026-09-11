@@ -1,13 +1,13 @@
 # Plan: Cache-Stable AgentMemory Context
 
 Status: implemented with expedited validation at the user's request. No new
-regression suite, fake-provider harness, or canary. Existing spec approvals were
-not rewritten; the user explicitly authorized immediate implementation.
+regression suite, fake-provider harness, or canary was added by this addendum.
+The parent spec approvals remain current.
 
 Implementation baseline: `/Users/brandonmcnama/scratch/agentmemory-opencode-migration`.
-The main checkout does not yet contain that worktree's AgentMemory package and
-tests. Integrate this addendum with the current worktree without overwriting its
-concurrent spec, backup, or rollback changes.
+The AgentMemory package and tests are present in this worktree. Integrate this
+addendum with the current parent spec without adding a separate rollback or
+backup workflow.
 
 ## Goal And Boundary
 
@@ -149,7 +149,7 @@ is not evidence of post-fix improvement.
 No regression tests, feature matrix, or canary were run, as explicitly requested.
 Only package build/load and validator syntax/help/read-only execution were checked.
 
-## Activation And Rollback
+## Emergency Plugin Recovery
 
 The emergency leaf symlink bypasses the old Home Manager link chain to avoid
 activating unrelated in-flight configuration. The declarative overlay has the
@@ -159,8 +159,10 @@ matches; a differing target can require restoring the old managed leaf first.
 Original leaf target:
 `/nix/store/xyqrd416ns3kpjjiwz8r73l4qwb3jazm-home-manager-files/.config/opencode/plugins/agentmemory-capture.ts`.
 
-Roll back the plugin link/package only if needed, then restart OpenCode. Do not
-delete or migrate the memory store or rewrite session histories.
+If the emergency plugin link/package must be removed, restore the managed plugin
+link and restart OpenCode. Do not delete or migrate the memory store or rewrite
+session histories. This recovery path does not activate a host rollback
+specialisation or stop AgentMemory for backup.
 
 ## Alternatives Not Selected
 

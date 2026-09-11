@@ -84,6 +84,7 @@ test('AgentMemory instructions preserve stock limitations and avoid custom claim
   assert.match(agentMemoryInstructions, /fallback/i);
   assert.match(agentMemoryInstructions, /bearer/i);
   assert.match(agentMemoryInstructions, /subprocess/i);
+  assert.match(agentMemoryInstructions, /subprocesses may inherit that bearer/i);
   assert.match(agentMemoryInstructions, /no (?:strict )?project selector|no project selector/i);
   assert.match(agentMemoryInstructions, /custom fallback guard/i);
   assert.doesNotMatch(agentMemoryInstructions, /All sessions MUST use BOTH Obsidian vault \+ cavemem/i);

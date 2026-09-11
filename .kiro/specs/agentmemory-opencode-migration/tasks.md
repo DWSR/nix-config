@@ -63,8 +63,9 @@
   - Load the standard bearer into the OpenCode process and AgentMemory MCP shim through existing secret plumbing.
   - Allow OpenCode's sandbox to reach the loopback REST endpoint without granting the data directory.
   - Accept authenticated healthy/degraded full-daemon state and preserve the independent Obsidian check.
+  - Keep the accepted bearer process-boundary limitation explicit without adding subprocess isolation.
   - Failed preflight stops OpenCode with one recovery action; success prints no secret.
-  - _Requirements: 3.4, 3.5, 6.1, 6.2, 6.3, 6.4, 6.8_
+  - _Requirements: 3.4, 3.5, 6.1, 6.2, 6.3, 6.4, 6.6, 6.8_
   - _Boundary: AgentMemoryModule, StockMcpIntegration_
 
 - [x] 2.4 Verify standard plugin capture behavior
@@ -175,5 +176,5 @@
 - AgentMemory persists summaries by target session, so the importer merges all source summaries per session, retains source IDs and narratives in provenance, and reports source `selected` counts separately from target import counts.
 - Pi is explicitly outside this specification. Pi findings do not affect this feature's validation decision.
 - Pre-activation validation must prove the personal configuration tolerates absent bearer ciphertext without requiring the ciphertext itself.
-- OpenCode rollback activation and validation were removed from this feature; existing cavemem assets remain adjacent and are not completion criteria.
+- OpenCode rollback activation and validation are not part of this feature.
 - Stopping the AgentMemory runtime for a backup is not an accepted operation; this feature provides no backup command or destination.

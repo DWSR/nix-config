@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn, spawnSync } = require('node:child_process');
@@ -12,12 +13,121 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 const { createCavememImportFixture } = require('./fixtures/cavemem-import-fixture.js');
 
 const repoRoot = path.resolve(__dirname, '../..');
+const realDaemonSecret = 'agentmemory-import-daemon-secret';
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.ts');
 const importerPackageNixPath = path.join(repoRoot, 'scripts', 'agentmemory-import-cavemem.nix');
 const agentmemoryModuleNixPath = path.join(repoRoot, 'home-manager', 'common', 'agentmemory.nix');
 let cachedDependencyNodePath;
 const cachedImporterPackagePaths = new Map();
 let cachedImporterNodeBin;
+
+function agentMemoryPackagePath() {
+  if (process.env.AGENTMEMORY_PACKAGE_PATH) return process.env.AGENTMEMORY_PACKAGE_PATH;
+  return execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  ).trim().split('\n').at(-1);
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      assert.ok(address && typeof address === 'object');
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
+    });
+  });
+}
+
+async function startPackagedAgentMemory() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-import-daemon-'));
+  const dataDir = path.join(directory, 'data');
+  const runtimeDir = path.join(directory, 'runtime');
+  const [restPort, streamPort, viewerPort, enginePort] = await Promise.all(
+    Array.from({ length: 4 }, () => freePort()),
+  );
+  const output = { stderr: '' };
+  const daemon = spawn(
+    path.join(agentMemoryPackagePath(), 'bin/agentmemory'),
+    ['--port', String(restPort), '--data-dir', dataDir],
+    {
+      cwd: directory,
+      env: {
+        ...process.env,
+        HOME: directory,
+        AGENTMEMORY_PROVIDER: 'noop',
+        AGENTMEMORY_SECRET: realDaemonSecret,
+        AGENTMEMORY_DATA_DIR: dataDir,
+        AGENTMEMORY_RUNTIME_DIR: runtimeDir,
+        AGENTMEMORY_AUTO_COMPRESS: 'false',
+        CONSOLIDATION_ENABLED: 'false',
+        GRAPH_EXTRACTION_ENABLED: 'false',
+        III_REST_PORT: String(restPort),
+        III_STREAM_PORT: String(streamPort),
+        III_VIEWER_PORT: String(viewerPort),
+        III_ENGINE_PORT: String(enginePort),
+      },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  );
+  daemon.stderr.setEncoding('utf8');
+  daemon.stderr.on('data', (chunk) => { output.stderr += chunk; });
+  const baseUrl = `http://127.0.0.1:${restPort}`;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${baseUrl}/agentmemory/health`, {
+        headers: { Authorization: `Bearer ${realDaemonSecret}` },
+      });
+      if (response.ok) {
+        const body = await response.json();
+        if (['healthy', 'degraded'].includes(body.status)) {
+          return {
+            baseUrl,
+            dataDir,
+            directory,
+            daemon,
+            async close() {
+              spawnSync(
+                path.join(agentMemoryPackagePath(), 'bin/agentmemory'),
+                ['stop', '--force', '--port', String(restPort)],
+                {
+                  cwd: directory,
+                  env: { ...process.env, HOME: directory, AGENTMEMORY_SECRET: realDaemonSecret, AGENTMEMORY_DATA_DIR: dataDir },
+                  stdio: 'ignore',
+                  timeout: 5_000,
+                },
+              );
+              if (daemon.exitCode === null) daemon.kill('SIGTERM');
+              await new Promise((resolve) => {
+                if (daemon.exitCode !== null) return resolve();
+                daemon.once('exit', resolve);
+              });
+              fs.rmSync(directory, { recursive: true, force: true });
+            },
+          };
+        }
+      }
+    } catch {
+      // Retry until the daemon exposes authenticated health.
+    }
+    if (daemon.exitCode !== null) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  if (daemon.exitCode === null) daemon.kill('SIGKILL');
+  fs.rmSync(directory, { recursive: true, force: true });
+  throw new Error(`packaged AgentMemory daemon did not become healthy\n${output.stderr}`);
+}
+
+async function getRealAgentMemoryJson(url, options = {}) {
+  const response = await fetch(url, options);
+  const text = await response.text();
+  assert.equal(response.ok, true, `${url} returned HTTP ${response.status}: ${text}`);
+  return text ? JSON.parse(text) : null;
+}
 
 function dependencyNodePath() {
   if (cachedDependencyNodePath) return cachedDependencyNodePath;
@@ -665,6 +775,68 @@ test('packaged importer bakes the configured AgentMemory REST endpoint', async (
     assert.ok(mock.requests.length > 0);
   } finally {
     await mock.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('packaged importer retains records in a real daemon and keeps them searchable', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-cavemem-import-daemon-'));
+  const sourcePath = path.join(directory, 'data.db');
+  createCavememImportFixture(sourcePath);
+  const daemon = await startPackagedAgentMemory();
+
+  try {
+    const importer = importerPackagePath(daemon.baseUrl);
+    const result = await runCommandAsync(
+      importer,
+      ['--source', sourcePath, '--json'],
+      { AGENTMEMORY_SECRET: realDaemonSecret },
+    );
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.failed, { sessions: 0, observations: 0, summaries: 0 });
+    assert.deepEqual(report.imported, report.target);
+
+    const headers = { Authorization: `Bearer ${realDaemonSecret}` };
+    const targetSessionId = 'cavemem:session:opencode-session';
+    const sessions = await getRealAgentMemoryJson(
+      `${daemon.baseUrl}/agentmemory/sessions?agentId=*`,
+      { headers },
+    );
+    assert.ok(
+      sessions.sessions.some((session) => session.id === targetSessionId),
+      `imported session missing: ${JSON.stringify(sessions)}`,
+    );
+
+    const observations = await getRealAgentMemoryJson(
+      `${daemon.baseUrl}/agentmemory/observations?sessionId=${encodeURIComponent(targetSessionId)}`,
+      { headers },
+    );
+    assert.ok(
+      observations.observations.some((observation) => observation.narrative.includes('Set up the project')),
+      `imported observation missing: ${JSON.stringify(observations)}`,
+    );
+
+    const deadline = Date.now() + 30_000;
+    let search = null;
+    while (Date.now() < deadline) {
+      search = await getRealAgentMemoryJson(`${daemon.baseUrl}/agentmemory/smart-search`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ query: 'Set up the project', limit: 20 }),
+      });
+      if (search.results?.some((result) => result.sessionId === targetSessionId)) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.ok(
+      search?.results?.some((result) => result.sessionId === targetSessionId),
+      `imported observation was not indexed: ${JSON.stringify(search)}`,
+    );
+    assert.ok(fs.readdirSync(daemon.dataDir).length > 0, 'the real daemon must retain persisted KV state');
+    const health = await getRealAgentMemoryJson(`${daemon.baseUrl}/agentmemory/health`, { headers });
+    assert.ok(['healthy', 'degraded'].includes(health.status), JSON.stringify(health));
+  } finally {
+    await daemon.close();
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

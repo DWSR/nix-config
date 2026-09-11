@@ -88,8 +88,8 @@ Validation date: 2026-09-09.
   wrappers. The personal encrypted bearer is deferred until personal activation.
 - Stopping the runtime for a backup is not an acceptable operator workflow, so
   this feature does not provide a backup command or destination.
-- Existing rollback assets are host-specific adjacent state. This feature does
-  not add a rollback specialization or validate migration reversal.
+- This feature does not add an OpenCode rollback specialization or validate
+  migration reversal.
 
 ### Retrieval, Isolation, and Privacy
 

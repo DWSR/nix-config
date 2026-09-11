@@ -142,11 +142,6 @@ in
     bearerReference = "agentmemory-bearer";
   };
 
-  specialisation."opencode-cavemem-rollback".configuration = {
-    home.opencode.memoryBackend = lib.mkForce "cavemem";
-    home.cavemem.enable = true;
-  };
-
   programs.ssh = {
     includes = [ "~/.orbstack/ssh/config" ];
 
