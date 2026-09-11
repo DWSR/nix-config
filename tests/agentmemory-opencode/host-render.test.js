@@ -48,7 +48,6 @@ function renderHosts() {
               viewerPort
               enginePort
               bearerReference
-              backupDestination
               ;
             settings = hm.home.file.\${settingsPath}.text;
             launchd = {
@@ -74,24 +73,14 @@ function renderHosts() {
             sessionCompactionAugmentation = hm.programs.session-compaction.augmentationEnabled;
           };
           secretUri = builtins.getAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets;
-          rollbackCommand =
-            if agentmemory.rollbackPackage == null then
-              null
-            else
-              "\${agentmemory.rollbackPackage}/bin/opencode-cavemem-rollback";
-          rollbackCommandInstalled =
-            agentmemory.rollbackPackage != null && builtins.elem agentmemory.rollbackPackage hm.home.packages;
-          capturePlugins = builtins.filter (name:
+           capturePlugins = builtins.filter (name:
             builtins.match "opencode/plugins/(cavemem\\.js|agentmemory-.*)" name != null
           ) (builtins.attrNames hm.xdg.configFile);
         };
       summarize = host:
         let
           hm = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
-        in
-        summarizeConfig hm // {
-          rollback = summarizeConfig hm.specialisation."opencode-cavemem-rollback".configuration;
-        };
+         in summarizeConfig hm;
     in builtins.toJSON {
       personal = summarize "${HOSTS.personal}";
       shopify = summarize "${HOSTS.shopify}";
@@ -139,59 +128,12 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
 
   assert.equal(personal.secretUri, 'op://Private/AgentMemory/Bearer');
   assert.equal(shopify.secretUri, 'op://Employee/AgentMemory/Bearer');
-  assert.equal(personal.agentmemory.backupDestination, null);
-  assert.equal(
-    shopify.agentmemory.backupDestination,
-    `${shopify.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/agentmemory-backup`,
-  );
-
-  const equivalentAgentMemory = config => ({
-    ...config.agentmemory,
-    backupDestination: null,
-    settings: config.agentmemory.settings.replace(/^AGENTMEMORY_BACKUP_DESTINATION=.*\n/m, ''),
-  });
   assert.deepEqual(personal.backend, shopify.backend);
   assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);
-  assert.deepEqual(equivalentAgentMemory(personal), equivalentAgentMemory(shopify));
+  assert.deepEqual(personal.agentmemory, shopify.agentmemory);
   assert.deepEqual(
     personal.capturePlugins,
     shopify.capturePlugins,
     'capture plugins are equivalent across hosts',
   );
-});
-
-test('both real hosts render a complete data-preserving cavemem OpenCode rollback specialisation', () => {
-  const rendered = renderHosts();
-
-  for (const [host, normal] of Object.entries(rendered)) {
-    const rollback = normal.rollback;
-
-    assert.equal(rollback.backend, 'cavemem', `${host} rollback selects cavemem`);
-    assert.equal(rollback.cavememEnabled, true, `${host} rollback enables the cavemem module`);
-    assert.equal(rollback.cavemem.settings, true, `${host} rollback renders cavemem settings`);
-    assert.equal(rollback.cavemem.serverCount, 1, `${host} rollback registers cavemem with mcpproxy`);
-    assert.ok(
-      rollback.cavemem.packageNames.some((name) => name.startsWith('cavemem')),
-      `${host} rollback installs cavemem`,
-    );
-    assert.ok(
-      rollback.cavemem.packageNames.some((name) => name.startsWith('cavemem-smoke-test')),
-      `${host} rollback installs the cavemem check`,
-    );
-    assert.deepEqual(rollback.capturePlugins, ['opencode/plugins/cavemem.js']);
-    assert.equal(rollback.opencode.wrapperHasCavememPreflight, true);
-    assert.equal(rollback.opencode.wrapperHasAgentMemoryPreflight, false);
-    assert.equal(rollback.opencode.contextHasCavemem, true);
-    assert.equal(rollback.opencode.contextHasStockAgentMemory, false);
-    assert.equal(rollback.opencode.agents.includes('vault-synthesizer'), true);
-    assert.equal(rollback.opencode.agentTextHasCavemem, true);
-    assert.equal(rollback.consumers.memorySync, true);
-    assert.equal(rollback.consumers.sessionCompactionAugmentation, true);
-    assert.equal(rollback.agentmemory.dataDir, normal.agentmemory.dataDir);
-    assert.equal(rollback.cavemem.dataDir, normal.cavemem.dataDir);
-    assert.match(normal.rollbackCommand, /^\/nix\/store\/.*\/bin\/opencode-cavemem-rollback$/);
-    assert.equal(normal.rollbackCommandInstalled, true);
-    assert.equal(rollback.rollbackCommand, null);
-    assert.equal(rollback.rollbackCommandInstalled, false);
-  }
 });

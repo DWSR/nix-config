@@ -8,7 +8,6 @@ let
   gcloud = pkgs.unstable.google-cloud-sdk.withExtraComponents [
     pkgs.unstable.google-cloud-sdk.components.gke-gcloud-auth-plugin
   ];
-  agentMemoryBackupDestination = "${config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/agentmemory-backup";
   inherit (config.home.mcp) readKeychainSecret;
   gitCloneIsolation = config.programs.git-clone-isolation;
 in
@@ -145,7 +144,6 @@ in
     runtimeDir = "${config.home.homeDirectory}/.agentmemory";
     logDir = "${config.home.homeDirectory}/Library/Logs/agentmemory";
     bearerReference = "agentmemory-bearer";
-    backupDestination = agentMemoryBackupDestination;
   };
 
   specialisation."opencode-cavemem-rollback".configuration = {

@@ -9,10 +9,8 @@ const repoRoot = path.resolve(__dirname, '../..');
 const featureTests = [
   'activation-secret.test.js',
   'backend-selection.test.js',
-  'backup.test.js',
   'capture-smoke.test.js',
   'core-surface.test.js',
-  'cutover-rollback.test.cjs',
   'host-render.test.js',
   'import-cavemem.test.js',
   'instructions-contract.test.js',
@@ -21,7 +19,6 @@ const featureTests = [
   'package-contract.test.js',
   'plugin-contract.test.js',
   'preflight.test.js',
-  'rollback-wrapper.test.js',
   'status.test.js',
   'validation-suite.test.js',
 ];

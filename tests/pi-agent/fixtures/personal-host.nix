@@ -70,7 +70,6 @@ let
       mcp
       ;
     agentMemoryDataDir = toString personal.config.programs.agentmemory.dataDir;
-    agentMemoryBackupDestination = personal.config.programs.agentmemory.backupDestination;
     mcpServers = builtins.attrNames personal.config.home.mcp.extraServers;
     packages = packageNames personal;
     package = toString personalConfig.package;

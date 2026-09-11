@@ -4,10 +4,10 @@
 
 - **Feature**: `agentmemory-opencode-migration`
 - **Discovery scope**: Complex brownfield integration.
-- **Key findings**: AgentMemory supplies usable OpenCode and Pi integrations but
-  has known capture, project, persistence, fallback, and credential limitations.
-  The selected design accepts stock behavior, patches only high-value OpenCode
-  events, and removes cavemem consumers that require bespoke adapters.
+- **Key findings**: AgentMemory supplies a usable OpenCode integration but has
+  known capture, project, persistence, fallback, credential, and large-corpus
+  limitations. The amended design adds bounded operational exceptions and keeps
+  Pi outside this feature.
 
 ## External Findings
 
@@ -65,20 +65,31 @@ Research date: 2026-09-05.
   [issue #720](https://github.com/rohitg00/agentmemory/issues/720)
   [issue #1184](https://github.com/rohitg00/agentmemory/issues/1184)
 
-### Pi Compatibility Surface
+### Post-Import Operational Findings
 
-- AgentMemory already bundles an official Pi extension at
-  `integrations/pi/index.ts` with `security.ts` and a private nested manifest.
-  The root npm package publishes the complete relative source layout.
-  [entrypoint](https://github.com/rohitg00/agentmemory/blob/e04ba88819c365c9acf9d6661ea802143e728bd6/integrations/pi/index.ts)
-  [security helper](https://github.com/rohitg00/agentmemory/blob/e04ba88819c365c9acf9d6661ea802143e728bd6/integrations/pi/security.ts)
-- The Pi factory subscribes to session start, pre-agent, tool result, agent end,
-  and shutdown hooks. It expects standard authenticated health, session start,
-  observe, smart-search, remember, session end, and consolidate REST routes.
-- The amended cutover enables the Pi extension, configures its standard bearer
-  and REST endpoint, and validates its host wiring. Pi history migration is not
-  repeated here because the cavemem-to-AgentMemory import completes before Pi
-  activation.
+Validation date: 2026-09-09.
+
+- Importing 7,515 sessions and roughly 650,000 observations exhausted the 4 GiB
+  Node heap because AgentMemory keeps BM25 term maps and posting sets in memory,
+  then duplicates them during persistence serialization. Upstream issue #309
+  identifies the unresolved in-memory architecture.
+- The selected local policy retains every observation in KV, keeps the newest
+  100,000 BM25 entries, and refuses persistence serialization above 50,000.
+- Node 24.19.0 aborts `better-sqlite3` statement cleanup. The importer and its
+  native dependency closure use Node 22 with one ABI-aligned `importNpmLock`
+  hook.
+- Aggregate dry-run JSON exceeded V8's string limit, and candidate batch sizing
+  was quadratic. Streaming output, SQLite iterators, linear preparation, and
+  conservative incremental byte accounting are required.
+- AgentMemory health uses authenticated `healthy`, `degraded`, and `critical`
+  states. HTTP-200 degraded is usable; fallback, critical, unauthenticated, and
+  unavailable states are not.
+- The user-facing CLI and managed status command require Keychain-backed bearer
+  wrappers. The personal encrypted bearer is deferred until personal activation.
+- Stopping the runtime for a backup is not an acceptable operator workflow, so
+  this feature does not provide a backup command or destination.
+- Existing rollback assets are host-specific adjacent state. This feature does
+  not add a rollback specialization or validate migration reversal.
 
 ### Retrieval, Isolation, and Privacy
 
@@ -114,18 +125,16 @@ Research date: 2026-09-05.
 
 ## Current OpenCode Assets
 
-- `home-manager/common/cavemem.nix` owns package installation, settings,
-  OpenCode rollback plugin, mcpproxy upstream, environment, and rollback
-  preflight. Its current single enable flag must no longer imply Pi runtime
-  ownership.
+- `home-manager/common/cavemem.nix` owns the existing adjacent cavemem package,
+  settings, mcpproxy upstream, environment, and preflight.
 - `home-manager/common/opencode-plugins/cavemem.js` captures session lifecycle
   and tools through detached child commands. It does not capture prompts,
   assistant text, or hook failures.
 - `home-manager/common/opencode.nix` and
   `scripts/opencode-nono-launcher.nix` compose the OpenCode launch, global
   instructions, preflight, and agent inventory.
-- `home-manager/common/opencode-nono.nix` must grant cavemem state only for the
-  OpenCode rollback backend and AgentMemory ports/env only for AgentMemory.
+- `home-manager/common/opencode-nono.nix` grants AgentMemory ports/env only for
+  the AgentMemory backend; existing cavemem access remains adjacent state.
 - `home-manager/common/session-compaction.nix` and
   `home-manager/common/session-compaction-internal/session-compaction-impl.ts`
   invoke `cavemem search` for compaction context.
@@ -134,23 +143,21 @@ Research date: 2026-09-05.
   health, and `cavemem-session-*` provenance.
 - `configurations/shopify/home-manager/sqlite-backup.nix` protects SQLite files;
   it cannot snapshot agentmemory's directory store consistently.
-- `overlays/mcp-servers.nix` currently packages cavemem with general and
-  Pi-specific patches. The amended design removes Pi-specific patch use and
-  retains cavemem assets only for explicit OpenCode rollback.
-- Existing tests cover cavemem CLI/MCP patches and selected consumer behavior,
-  but not the installed OpenCode plugin's prompt, response, cwd, or failure path.
+- Pi-owned overlays and harness files are adjacent and excluded from this
+  feature's gap analysis.
+- Existing AgentMemory tests cover package, plugin, importer, health, and
+  consumer behavior but are not all registered under the flake check.
 
 ## Requirement-to-Asset Gap Map
 
 | Requirements | Existing assets | Gap |
 |---|---|---|
-| 1 | Nix overlay, HM and launchd patterns | **Missing** pinned package, lock, module, and existing-plugin install |
-| 2 | Upstream AgentMemory plugin and OpenCode hooks | **Missing** current event names, assistant text, tool states, idle, and dispose patch |
-| 3 | Mcpproxy and launcher preflight | **Missing** stock core MCP registration and full-daemon health check |
-| 4 | Cavemem snapshot/importer patterns | **Missing** bounded deterministic best-effort importer |
-| 5 | Compaction, synthesizer, memory-sync, AGENTS rules | **Change** disable unported consumers and update instructions |
-| 6 | Nono, Keychain, and backup patterns | **Change** allow stock REST/bearer and add simple stopped-state copy |
-| 7 | AgentMemory package and bundled Pi bridge | **Change** activate AgentMemory for Pi and remove Pi cavemem wiring |
+| 1 | Pinned package, lock, module, plugin install | **Implemented** |
+| 2 | Patched OpenCode plugin and bounded BM25 | **Implemented** |
+| 3 | Core MCP registration and authenticated preflight | **Implemented** |
+| 4 | Bounded/scalable importer | **Remaining** configured endpoint wiring |
+| 5 | Compaction, synthesizer, memory-sync, instructions | **Remaining** force compaction augmentation off |
+| 6 | Nono, Keychain, wrappers, health | **Implemented** |
 
 ## Implementation Options
 
@@ -159,7 +166,7 @@ Research date: 2026-09-05.
 Package the standard runtime, patch the existing OpenCode plugin, use stock core
 MCP tools, and disable unported cavemem consumers.
 
-- Pros: 25 tasks, small patch surface, straightforward upgrades.
+- Pros: thin integration with explicit, measured operational bounds.
 - Cons: accepts stock credential, compression, fallback, project, and durability
   limitations. **Selected.**
 
@@ -181,10 +188,10 @@ Delay the migration until persistence, lifecycle, and OpenCode issues land.
 
 ## Complexity and Risk
 
-- Effort: **L**. The remaining work is packaging, one plugin patch, standard
-  runtime/MCP wiring, best-effort import, consumer disablement, and host tests.
-- Risk: **High**. The smaller implementation intentionally accepts documented
-  upstream persistence, fallback, credential, and data-fidelity limitations.
+- Effort: **M**. Remaining work is endpoint wiring, forced compaction cutover,
+  and complete validation registration.
+- Risk: **High**. The implementation retains upstream fallback, project, and
+  data-fidelity limitations while carrying a local BM25 policy.
 
 ## Simplification Decision
 
@@ -203,9 +210,8 @@ balanced reduction to stock AgentMemory behavior and roughly half as many tasks.
 - Use stock automatic context and the stock MCP shim in core-tool mode through
   mcpproxy.
 - Import cavemem history with deterministic IDs and bounded batches.
-- Activate AgentMemory's bundled Pi extension with standard REST compatibility
-  and host credentials. Remove Pi-specific cavemem functionality after the
-  pre-cutover history import.
+- Bound large-history indexing and persistence without pruning stored records.
+- Keep Pi outside the implementation and validation boundary.
 
 ### Removed
 
@@ -214,7 +220,7 @@ balanced reduction to stock AgentMemory behavior and roughly half as many tasks.
   ledger, repair route, and custom read-only MCP facade.
 - Exact worktree/same-basename isolation and session-stable custom injection.
 - Durable migration journal, transactional reconciliation, and crash recovery.
-- Patched iii flush barrier, exhaustive physical backup, and automated restore.
+- Patched iii flush barrier and automated restore.
 - AgentMemory adapters for session-compaction augmentation, vault synthesis, and
   memory-sync. Those cavemem-dependent features are disabled at cutover.
 
@@ -222,16 +228,14 @@ balanced reduction to stock AgentMemory behavior and roughly half as many tasks.
 
 - The OpenCode process receives the standard AgentMemory bearer; subprocess
   isolation is not guaranteed.
-- Stock observation compression, truncation, indexing, consolidation, project
-  naming, fallback, and persistence semantics apply.
+- Stock observation compression, truncation, consolidation, project naming, and
+  fallback apply. BM25 capacity and persistence are explicit local exceptions.
 - Import recovery is rerun-with-skip, not transactional resume.
-- Backup is a best-effort stopped-runtime directory copy.
 - Obsidian remains manually curated; automatic cavemem-to-Obsidian promotion is
   removed.
 
 ## Residual Validation Items
 
-- Generate and audit the repository-owned npm lock and Darwin engine hashes.
-- Verify the existing patched OpenCode plugin loads exactly once.
-- Smoke-test full-daemon preflight, core MCP tools, capture, import reruns, and
-  both current and future Pi compatibility.
+- Wire the configured importer endpoint and enforce compaction cutover.
+- Validate both host AgentMemory renderings.
+- Register the complete feature suite and remove linked-worktree assumptions.

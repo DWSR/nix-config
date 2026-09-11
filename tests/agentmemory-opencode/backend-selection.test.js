@@ -107,50 +107,6 @@ in builtins.toJSON {
   );
 }
 
-function renderShopifyValidator(backend) {
-  const rollbackOverride =
-    backend === 'cavemem'
-      ? 'home.opencode.memoryBackend = pkgs.lib.mkForce "cavemem";'
-      : '';
-  const expression = `(let
-  flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-  pkgs = import flake.inputs.nixpkgs {
-    system = "aarch64-darwin";
-    overlays = [
-      flake.outputs.overlays.unstable-packages
-      flake.outputs.overlays.custom-packages
-    ];
-    config.allowUnfree = true;
-  };
-  hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
-    inherit pkgs;
-    extraSpecialArgs = { inherit (flake) inputs; };
-    modules = [
-      ${JSON.stringify(path.join(repoRoot, 'configurations/shopify/home-manager/default.nix'))}
-      {
-        home.username = "brandonmcnama";
-        home.homeDirectory = "/Users/brandonmcnama";
-        home.stateVersion = "26.05";
-        ${rollbackOverride}
-      }
-    ];
-  }).config;
-   validator = hm.programs.opencode.agents."yb-issue-validator";
-   validationSkill = hm.xdg.configFile."opencode/skills/validate-yb-issue";
- in builtins.toJSON {
-   validator = if builtins.typeOf validator == "path" then builtins.readFile validator else validator;
-   skill = builtins.readFile (validationSkill.source + "/SKILL.md");
- })\n`;
-
-  return JSON.parse(
-    execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      maxBuffer: 10 * 1024 * 1024,
-    }),
-  );
-}
-
 test('the selector defaults to the retained cavemem OpenCode backend', () => {
   const rendered = renderBackend(undefined);
 
@@ -192,51 +148,4 @@ test('AgentMemory mode owns OpenCode capture and consumers', () => {
   }
   assert.match(rendered.context, /## Obsidian Memory Recall/);
   assert.match(rendered.context, /## Tag Guidelines/);
-});
-
-test('cavemem mode owns OpenCode capture and restores its consumers without AgentMemory capture', () => {
-  const rendered = renderBackend('cavemem');
-  const agentText = Object.values(rendered.agentTexts).join('\n');
-
-  assert.deepEqual(rendered.capturePlugins, ['opencode/plugins/cavemem.js']);
-  assert.match(rendered.wrapper, /cavemem MCP server not reachable/);
-  assert.doesNotMatch(rendered.wrapper, /AgentMemory daemon preflight failed/);
-  assert.match(rendered.context, /Ambient capture \(cavemem\)/);
-  assert.doesNotMatch(rendered.context, /stock AgentMemory/i);
-  assert.match(agentText, /cavemem/);
-  assert.equal(rendered.agents.includes('vault-synthesizer'), true);
-  assert.equal(rendered.memorySync.enable, true);
-  assert.equal(
-    rendered.memorySync.packageNames.filter((name) => /memory-sync/.test(name)).length,
-    1,
-  );
-  assert.equal(rendered.agentMemory.job.config.Label, 'dev.dwsr.agentmemory');
-  assert.equal(rendered.agentMemory.serverCount, 1);
-  assert.ok(rendered.agentMemory.packageNames.some((name) => name.startsWith('agentmemory')));
-  assert.equal(rendered.cavemem.settings, true);
-  assert.equal(rendered.cavemem.serverCount, 1);
-  assert.ok(rendered.cavemem.packageNames.some((name) => name.startsWith('cavemem')));
-  for (const text of Object.values(rendered.nonoProfiles)) {
-    const profile = JSON.parse(text);
-    assert.equal(profile.network.open_port.includes(3111), false);
-    assert.ok(profile.environment.allow_vars.includes('CAVEMEM_DATA_DIR'));
-    assert.doesNotMatch(text, /AGENTMEMORY_SECRET|local\/share\/agentmemory/);
-    assert.match(text, /local\/share\/cavemem/);
-  }
-  assert.match(rendered.context, /## Obsidian Memory Recall/);
-  assert.match(rendered.context, /## Tag Guidelines/);
-});
-
-test('Shopify host instructions follow the selected backend and preserve rollback text', () => {
-  const agentMemory = renderShopifyValidator('agentmemory');
-  const cavemem = renderShopifyValidator('cavemem');
-
-  assert.match(agentMemory.validator, /Search Obsidian memories and AgentMemory/);
-  assert.doesNotMatch(agentMemory.validator, /cavemem/i);
-  assert.doesNotMatch(agentMemory.skill, /cavemem/i);
-  assert.match(agentMemory.skill, /AgentMemory:.*search/i);
-  assert.match(cavemem.validator, /Search Obsidian memories and cavemem/);
-  assert.doesNotMatch(cavemem.validator, /Search Obsidian memories and AgentMemory/);
-  assert.match(cavemem.skill, /Cavemem:.*search/);
-  assert.doesNotMatch(cavemem.skill, /AgentMemory:.*search/i);
 });

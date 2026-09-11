@@ -43,11 +43,13 @@ behavior, not manual agent steps. The plugin sends standard `session/start`,
 `memory_sessions` to recall session listings and `memory_save` when an explicit
 agent-authored save is needed.
 
-Keep the stock automatic context injection enabled. The plugin supplies
-AgentMemory context on the first eligible model request and uses stock file
-enrichment where applicable. Its compression, truncation, indexing,
-consolidation, project attribution, and session behavior remain upstream
-behavior; do not promise stable context or exact project/worktree isolation.
+Keep the stock automatic context injection enabled. The plugin freezes startup context
+for each session in a loaded OpenCode process and includes it on every request.
+File enrichment is appended to new persisted tool results or incoming attachment
+messages, never regenerated in the system prefix. A process restart may select a
+new startup snapshot. Compression, indexing, consolidation, project attribution,
+and session behavior remain upstream behavior. Apart from the per-runtime snapshot,
+do not promise stable context or exact project/worktree isolation.
 AgentMemory recall has no project selector; stock project attribution and
 basename collisions remain accepted behavior.
 

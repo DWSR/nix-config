@@ -2,24 +2,22 @@
 
 ## Introduction
 
-`agentmemory-opencode-migration` replaces cavemem for OpenCode and Pi using
-AgentMemory's existing integrations and standard runtime behavior. Cavemem is
-retained only as an explicit OpenCode rollback backend. See `brief.md` for the
-selected balanced simplification and removed guarantees.
+`agentmemory-opencode-migration` replaces cavemem for OpenCode using
+AgentMemory's existing integration plus bounded operational exceptions proven
+necessary by the migrated corpus. See `brief.md` for scope and rationale.
 
 ## Boundary Context
 
 - **In scope**: Declarative AgentMemory packaging, the patched existing OpenCode
   plugin, stock core MCP tools, automatic context, best-effort history import,
-  simple backup, consumer disablement, OpenCode rollback, and AgentMemory Pi
-  activation.
+  bounded BM25 indexing, consumer disablement, and both-host configuration.
 - **Out of scope**: Custom capture or retrieval services, raw-event storage,
   hardened credential separation, exact project isolation, resilient migration,
-  proven flush/restore semantics, consumer parity, and re-migration of Pi
-  history.
-- **Adjacent expectations**: Pi uses AgentMemory's bundled integration after
-  the cavemem history import; cavemem remains available only for explicit
-  OpenCode rollback; Obsidian remains available for manual curated memories.
+  proven flush/restore semantics, consumer parity, runtime backup and restore
+  workflows, OpenCode rollback activation and validation, and every Pi concern.
+- **Adjacent expectations**: Pi is independently managed and excluded from this
+  feature's requirements and validation. Obsidian remains available for manual
+  curated memories.
 
 ## Requirements
 
@@ -73,7 +71,13 @@ without a new capture implementation.
    shall record the failure in OpenCode logs without retrying through a custom
    durable queue.
 8. The OpenCode integration shall use AgentMemory's stock observation limits,
-   compression, indexing, and consolidation semantics.
+   compression, and consolidation semantics.
+9. When the BM25 index reaches its configured 100,000-entry capacity, the
+   integration shall evict the oldest indexed entry without deleting its KV
+   observation.
+10. When the BM25 index exceeds the configured 50,000-entry persistence limit,
+    the integration shall reject index serialization before allocating the
+    serialization copy.
 
 ### Requirement 3: Standard MCP Recall Through Mcpproxy
 
@@ -88,8 +92,8 @@ routing.
 2. OpenCode shall continue to register mcpproxy as its only MCP endpoint.
 3. When the stock core tool set includes a write operation, mcpproxy shall apply
    its normal write-operation policy.
-4. When OpenCode preflight runs, it shall verify the full AgentMemory daemon is
-   healthy rather than accepting standalone fallback as startup readiness.
+4. When OpenCode preflight runs, it shall accept a full AgentMemory daemon whose
+   authenticated health status is `healthy`, `degraded`, or legacy `ok`.
 5. If full-daemon preflight fails, the launcher shall stop before OpenCode and
    print one AgentMemory recovery action.
 6. When AgentMemory becomes unavailable after startup, the integration may use
@@ -108,8 +112,8 @@ into AgentMemory, so that useful prior context remains searchable after cutover.
    cavemem without modifying the source database.
 2. When the source contains non-importer sessions, the importer shall transform
    them into AgentMemory's standard import shape.
-3. When a source session is positively marked as Pi or Obsidian migration, the
-   importer shall skip it.
+3. When a source session is positively marked as non-OpenCode or
+   importer-generated provenance, the importer shall skip it.
 4. When the importer creates target records, it shall derive deterministic IDs
    from source session and row identities.
 5. When a batch approaches the configured size ceiling, the importer shall
@@ -120,6 +124,15 @@ into AgentMemory, so that useful prior context remains searchable after cutover.
    affected counts and continue with later independent batches where possible.
 8. The importer shall not provide a durable journal, transactional rollback, or
    automatic crash resume beyond rerunning the command.
+9. The packaged importer shall run its native SQLite dependency and JavaScript
+   runtime on Node 22.
+10. When processing records, the importer shall serialize each record at most
+    once for sizing, serialize each completed batch once, and emit dry-run JSON
+    without serializing the aggregate report.
+11. The packaged importer shall use the configured AgentMemory REST endpoint and
+    resolve its bearer through the managed Keychain reference for non-dry runs.
+12. The importer shall preserve all accepted records in AgentMemory KV even when
+    older records are outside the bounded BM25 index.
 
 ### Requirement 5: Simplified Consumer Cutover
 
@@ -131,9 +144,8 @@ for every prior workflow.
 
 1. When AgentMemory is selected, OpenCode shall not install the cavemem capture
    plugin or require cavemem during startup.
-2. While AgentMemory is selected, session compaction shall run without the
-   cavemem memory-augmentation source and shall rely on normal conversation
-   state plus AgentMemory's automatic context.
+2. While AgentMemory is selected, the host generation shall force session
+   compaction's cavemem augmentation off.
 3. While AgentMemory is selected, the host generation shall disable the
    cavemem-based vault synthesizer and memory-sync command.
 4. While AgentMemory is selected, global and subagent instructions shall not
@@ -145,9 +157,9 @@ for every prior workflow.
 
 ### Requirement 6: Basic Runtime Operations and Accepted Limitations
 
-**Objective:** As the operator, I want basic health, security, and backup
-behavior, so that the simplified runtime remains operable without custom
-durability machinery.
+**Objective:** As the operator, I want basic health and security behavior, so
+that the simplified runtime remains operable without custom durability
+machinery.
 
 #### Acceptance Criteria
 
@@ -160,40 +172,13 @@ durability machinery.
    direct AgentMemory state-directory access.
 4. When OpenCode preflight succeeds, it shall report AgentMemory daemon health
    without revealing the bearer.
-5. When simple backup runs, it shall stop AgentMemory through its stock stop
-   path, copy the managed data directory, and restart the service.
-6. The backup workflow shall not claim transactional consistency, a patched iii
-   flush barrier, or automated restore validation.
-7. The integration shall not block activation on known iii-engine memory,
+5. The integration shall not block activation on known iii-engine memory,
    orphan-process, shutdown, or persistence issues accepted by the operator.
-8. The integration shall not isolate the AgentMemory bearer from every
+6. The integration shall not isolate the AgentMemory bearer from every
    model-invoked subprocess inside the OpenCode process boundary.
-
-### Requirement 7: AgentMemory Pi Cutover and OpenCode Rollback
-
-**Objective:** As the operator, I want Pi to use the same AgentMemory runtime
-after history migration, while retaining an explicit cavemem rollback for
-OpenCode only.
-
-#### Acceptance Criteria
-
-1. While Pi remains enabled, Pi shall capture and retrieve through AgentMemory's
-   bundled Pi integration.
-2. When the AgentMemory backend activates, the host generation shall configure
-   Pi's AgentMemory integration and shall not retain Pi-specific cavemem runtime
-   functionality.
-3. The managed AgentMemory package shall retain the bundled
-   `integrations/pi/` entrypoint, security helper, metadata, and relative layout.
-4. The AgentMemory runtime shall preserve the standard authenticated health,
-   session, observe, smart-search, remember, end, and consolidate routes used by
-   the bundled Pi plugin.
-5. When compatibility validation runs, the bundled Pi plugin shall load against
-   the selected Pi extension API and standard AgentMemory routes with its
-   declared host credentials.
-6. The feature shall not migrate Pi history during activation; cavemem history
-   is assumed to have been imported into AgentMemory beforehand.
-7. When the cutover generation activates, AgentMemory shall be the ambient
-   memory source for OpenCode and Pi without live dual writes to cavemem.
-8. When the operator activates the retained rollback generation, OpenCode shall
-   restore its prior cavemem capture and instructions while Pi remains on
-   AgentMemory and no Pi cavemem functionality is restored.
+7. When the user invokes the managed `agentmemory` or `agentmemory-status`
+   command, the wrapper shall resolve the configured Keychain bearer without
+   printing it.
+8. Before personal host activation, evaluation and pre-activation validation
+   shall not fail solely because encrypted `agentmemory-bearer` material is
+   absent; personal activation shall require that key to be provisioned.

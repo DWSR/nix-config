@@ -84,7 +84,6 @@ let
       mcp
       ;
     agentMemoryDataDir = toString shopify.config.programs.agentmemory.dataDir;
-    agentMemoryBackupDestination = shopify.config.programs.agentmemory.backupDestination;
     mcpServers = builtins.attrNames shopify.config.home.mcp.extraServers;
     packages = packageNames shopify;
     package = toString shopifyConfig.package;

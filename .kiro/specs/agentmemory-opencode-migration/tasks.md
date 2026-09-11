@@ -14,7 +14,7 @@
   - Preserve upstream start, stop, storage, fallback, and consolidation behavior while applying the approved BM25 bounds.
   - Keep all service endpoints configurable and loopback by default.
   - The package starts, reports healthy, and stops through stock commands.
-  - _Requirements: 1.1, 2.9, 2.10, 6.1, 6.7_
+  - _Requirements: 1.1, 2.9, 2.10, 6.1, 6.5_
   - _Boundary: Package_
 
 - [x] 1.3 Patch the existing upstream OpenCode plugin
@@ -26,7 +26,7 @@
   - _Boundary: ExistingPluginPatch_
 
 - [x] 1.4 Add the basic Home Manager runtime module
-  - Define enablement, package, managed paths, ports, bearer, BM25 bounds, and backup destination options.
+  - Define enablement, package, managed paths, ports, bearer, and BM25 bounds options.
   - Render AgentMemory settings and launchd service without running `connect opencode`.
   - Remove all files and services when disabled.
   - Module tests show deterministic enabled and disabled output.
@@ -39,7 +39,7 @@
   - Install Keychain-backed wrappers for managed `agentmemory` and `agentmemory-status` commands.
   - Use stock process behavior rather than orphan cleanup or memory monitoring.
   - Status tests produce one actionable result for each state.
-  - _Requirements: 3.4, 3.5, 6.4, 6.7, 6.9_
+  - _Requirements: 3.4, 3.5, 6.4, 6.5, 6.7_
   - _Boundary: AgentMemoryModule_
 
 - [x] 2. Connect AgentMemory to OpenCode
@@ -83,7 +83,7 @@
   - _Requirements: 2.6, 3.3, 3.6, 3.7_
   - _Boundary: StockMcpIntegration, ConsumerCutover_
 
-- [ ] 3. Import history and simplify consumers
+- [x] 3. Import history and simplify consumers
 - [x] 3.1 Read and filter a cavemem snapshot
   - Create a SQLite Online Backup snapshot without modifying cavemem.
   - Select OpenCode sessions and skip positive non-OpenCode/importer provenance.
@@ -105,63 +105,35 @@
 - [x] 3.3 Remove cavemem augmentation from session compaction
   - Force normal OpenCode compaction without the cavemem search source under AgentMemory.
   - Leave compaction thresholds, manual command, and continuation behavior unchanged.
-  - Retain the prior source in cavemem rollback mode.
-  - Compaction tests pass in both backend selections.
-  - _Requirements: 5.1, 5.2, 7.2_
+  - Compaction tests pass for the AgentMemory selection.
+  - _Requirements: 5.1, 5.2_
   - _Boundary: ConsumerCutover_
 
 - [x] 3.4 Disable unported synthesis and sync consumers
   - Remove vault-synthesizer registration and memory-sync packaging in AgentMemory mode.
-  - Preserve both features in cavemem rollback mode.
   - Keep manual Obsidian memory and vault-curator behavior unchanged.
   - Render tests show no automatic AgentMemory-to-Obsidian promotion.
-  - _Requirements: 5.3, 5.5, 5.6, 7.2_
+  - _Requirements: 5.3, 5.5, 5.6_
   - _Boundary: ConsumerCutover_
 
-- [x] 3.5 Isolate OpenCode rollback ownership
-  - Gate OpenCode cavemem rollback plugin, preflight, instructions, and consumers behind the backend selector.
-  - Exclude Pi packages, configuration, credentials, behavior, and tests from the feature boundary.
-  - Each backend renders one OpenCode capture plugin without evaluating Pi ownership.
-  - _Requirements: 5.1, 5.4, 7.1, 7.4_
-  - _Boundary: ConsumerCutover_
-
-- [ ] 4. Add basic operations and host rollout
-- [ ] 4.1 Add best-effort stopped-runtime backup
-  - _Blocked: debug attempted twice, still failing — launchd cleanup has reproducible signal races between clearing EXIT and entering cleanup state, and between deferred first-signal capture and normal trap installation._
-  - Suspend the launchd KeepAlive job before invoking stock stop and waiting for all known processes/listeners.
-  - Copy the complete managed data directory to the configured backup destination and restart the service.
-  - Restore launchd after the copy and report suspend, stop, copy, and restart failures.
-  - Backup tests model KeepAlive restart pressure and verify the archived inventory.
-  - _Requirements: 6.5, 6.6, 6.7_
-  - _Boundary: SimpleBackup_
-
+- [x] 4. Add basic operations and host rollout
 - [x] 4.2 Enable AgentMemory for OpenCode on both hosts
   - Import the module, select AgentMemory as OpenCode's backend, and configure managed paths and secret references.
-  - Configure simple backup only where an AgentMemory destination exists.
   - Defer the personal encrypted bearer until personal activation without blocking evaluation.
   - Both host evaluations produce the same OpenCode behavior with declared host-specific values.
-  - _Requirements: 1.7, 6.5, 6.10, 7.1_
+  - _Requirements: 1.7, 6.8_
   - _Boundary: AgentMemoryModule_
 
-- [x] 4.3 Preserve an explicit OpenCode cavemem rollback selection
-  - Keep the backend selector capable of rendering the prior OpenCode cavemem plugin, checks, consumers, and instructions.
-  - Make backend selection enable every required cavemem module contribution on each real host.
-  - Avoid deleting or transforming source cavemem data during OpenCode rollback.
-  - Document the retained OpenCode rollback generation in status output.
-  - Rollback evaluation contains no AgentMemory OpenCode capture path.
-  - _Requirements: 5.1, 7.1, 7.2, 7.3_
-  - _Boundary: HostRollback_
-
 - [x] 4.4 Register the complete feature validation suite
-  - Evaluate AgentMemory enabled, disabled, personal, Shopify, and OpenCode cavemem rollback configurations.
-  - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, consumers, and rollback.
-  - Register package, plugin, status, import, backup, host, and rollback tests under `nix flake check`.
+  - Evaluate AgentMemory enabled, disabled, personal, and Shopify configurations.
+  - Inspect packages, plugin count, launchd, loopback endpoints, MCP topology, instructions, and consumers.
+  - Register package, plugin, status, import, and host tests under `nix flake check`.
   - Validate configured importer endpoint/bearer wiring while allowing the personal encrypted bearer to remain absent before activation.
   - Remove stale environment assertions and make test-local flake access independent of linked-worktree metadata.
-  - _Requirements: 1.2, 1.6, 1.7, 3.2, 4.11, 5.4, 6.1, 6.10, 7.1, 7.2_
+  - _Requirements: 1.2, 1.6, 1.7, 3.2, 4.11, 5.4, 6.1, 6.8_
   - _Boundary: ValidationSuite_
 
-- [ ] 5. Validate migration and rollback
+- [x] 5. Validate migration and consumers
 - [x] 5.1 Validate daemon, capture, MCP, and automatic context end to end
   - Start the managed daemon and OpenCode, capture one prompt/assistant/tool session, and stop normally.
   - Recall the session through stock core MCP tools via mcpproxy.
@@ -173,7 +145,7 @@
 - [x] 5.2 Validate one-shot import and rerun behavior
   - Import a fixture with normal, unknown, non-OpenCode, importer, malformed, and failed-batch records.
   - Rerun the command and verify deterministic IDs are skipped rather than duplicated.
-  - Compare source and report counts without testing crash recovery or rollback.
+  - Compare source and report counts without testing crash recovery or migration reversal.
   - Accepted records remain in KV; indexed records are searchable through AgentMemory tools.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.12_
   - _Boundary: ValidationSuite, BestEffortImporter_
@@ -182,7 +154,6 @@
   - Run compaction without cavemem augmentation under AgentMemory.
   - Verify vault-synthesizer and memory-sync are absent while manual Obsidian memory and curator remain.
   - Render global and subagent instructions with no OpenCode cavemem direction.
-  - Cavemem rollback restores the prior consumers and instructions.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
   - _Boundary: ValidationSuite, ConsumerCutover_
 
@@ -190,25 +161,19 @@
   - Exercise BM25 FIFO capacity and persistence refusal without deleting KV observations.
   - Exercise Node 22 native importer ABI, streaming JSON, linear batch sizing, and progress.
   - The bounded daemon remains available after rebuilding the migrated corpus.
-  - _Requirements: 2.9, 2.10, 4.9, 4.10, 4.12, 6.7_
+  - _Requirements: 2.9, 2.10, 4.9, 4.10, 4.12, 6.5_
   - _Boundary: ValidationSuite, OperationalBounds_
 
 - [x] 5.5 Validate authenticated CLI and health behavior
   - Verify the managed CLI and status wrappers resolve the bearer without printing it.
   - Accept HTTP-200 healthy/degraded full-daemon responses and reject fallback/critical states.
-  - _Requirements: 3.4, 3.5, 6.4, 6.9_
+  - _Requirements: 3.4, 3.5, 6.4, 6.7_
   - _Boundary: ValidationSuite, AgentMemoryModule_
-
-- [ ] 5.6 Validate cutover and rollback without dual writes
-  - Start OpenCode under AgentMemory and prove it does not write new ambient history to cavemem.
-  - Activate each real host's rollback selection and capture one OpenCode cavemem event.
-  - Both stores remain intact and no migration is reversed.
-  - _Requirements: 7.1, 7.2, 7.3, 7.4_
-  - _Boundary: ValidationSuite, HostRollback_
 
 ## Implementation Notes
 
 - AgentMemory persists summaries by target session, so the importer merges all source summaries per session, retains source IDs and narratives in provenance, and reports source `selected` counts separately from target import counts.
 - Pi is explicitly outside this specification. Pi findings do not affect this feature's validation decision.
 - Pre-activation validation must prove the personal configuration tolerates absent bearer ciphertext without requiring the ciphertext itself.
-- Backup cleanup must atomically enter restoration before clearing EXIT and preserve the first deferred signal before reinstalling normal traps; otherwise launchd restoration or signal status can race.
+- OpenCode rollback activation and validation were removed from this feature; existing cavemem assets remain adjacent and are not completion criteria.
+- Stopping the AgentMemory runtime for a backup is not an accepted operation; this feature provides no backup command or destination.

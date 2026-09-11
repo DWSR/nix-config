@@ -41,8 +41,7 @@ function renderModule({ enable }) {
           streamPort = 35112;
           viewerPort = 35113;
           enginePort = 61134;
-          bearerReference = "agentmemory-bearer";
-           backupDestination = "/tmp/agentmemory/backups";
+           bearerReference = "agentmemory-bearer";
          };
          home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
       }
@@ -229,7 +228,6 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
   assert.match(first.settings, /AGENTMEMORY_DATA_DIR=\/tmp\/agentmemory\/data/);
   assert.match(first.settings, /AGENTMEMORY_URL=http:\/\/127\.0\.0\.1:35111/);
-  assert.match(first.settings, /AGENTMEMORY_BACKUP_DESTINATION=\/tmp\/agentmemory\/backups/);
   assert.match(first.settings, /AGENTMEMORY_SECRET_REFERENCE=agentmemory-bearer/);
   assert.match(first.settings, /AGENTMEMORY_BM25_MAX_ENTRIES=100000/);
   assert.match(first.settings, /AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES=50000/);

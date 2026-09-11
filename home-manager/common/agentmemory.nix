@@ -42,24 +42,6 @@ let
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
 
-  backupPackage =
-    if cfg.backupDestination == null then
-      null
-    else
-      pkgs.callPackage ../../scripts/agentmemory-backup.nix {
-        inherit (cfg)
-          backupDestination
-          dataDir
-          enginePort
-          restPort
-          runtimeDir
-          streamPort
-          viewerPort
-          ;
-        agentmemoryPackage = cfg.package;
-        timeoutSeconds = 30;
-      };
-
   importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
     inherit (cfg) bearerReference;
     restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
@@ -68,25 +50,20 @@ let
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";
 
   settingsText =
-    lib.concatStringsSep "\n" (
-      [
-        (envLine "AGENTMEMORY_DATA_DIR" cfg.dataDir)
-        (envLine "AGENTMEMORY_RUNTIME_DIR" cfg.runtimeDir)
-        (envLine "AGENTMEMORY_URL" "http://127.0.0.1:${toString cfg.restPort}")
-        (envLine "AGENTMEMORY_VIEWER_URL" "http://127.0.0.1:${toString cfg.viewerPort}")
-        (envLine "AGENTMEMORY_SECRET_REFERENCE" cfg.bearerReference)
-        (envLine "AGENTMEMORY_TOOLS" "core")
-        (envLine "AGENTMEMORY_BM25_MAX_ENTRIES" cfg.bm25MaxEntries)
-        (envLine "AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES" cfg.bm25PersistMaxEntries)
-        (envLine "III_REST_PORT" cfg.restPort)
-        (envLine "III_STREAM_PORT" cfg.streamPort)
-        (envLine "III_VIEWER_PORT" cfg.viewerPort)
-        (envLine "III_ENGINE_PORT" cfg.enginePort)
-      ]
-      ++ lib.optional (cfg.backupDestination != null) (
-        envLine "AGENTMEMORY_BACKUP_DESTINATION" cfg.backupDestination
-      )
-    )
+    lib.concatStringsSep "\n" [
+      (envLine "AGENTMEMORY_DATA_DIR" cfg.dataDir)
+      (envLine "AGENTMEMORY_RUNTIME_DIR" cfg.runtimeDir)
+      (envLine "AGENTMEMORY_URL" "http://127.0.0.1:${toString cfg.restPort}")
+      (envLine "AGENTMEMORY_VIEWER_URL" "http://127.0.0.1:${toString cfg.viewerPort}")
+      (envLine "AGENTMEMORY_SECRET_REFERENCE" cfg.bearerReference)
+      (envLine "AGENTMEMORY_TOOLS" "core")
+      (envLine "AGENTMEMORY_BM25_MAX_ENTRIES" cfg.bm25MaxEntries)
+      (envLine "AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES" cfg.bm25PersistMaxEntries)
+      (envLine "III_REST_PORT" cfg.restPort)
+      (envLine "III_STREAM_PORT" cfg.streamPort)
+      (envLine "III_VIEWER_PORT" cfg.viewerPort)
+      (envLine "III_ENGINE_PORT" cfg.enginePort)
+    ]
     + "\n";
 
   agentmemoryLauncher = pkgs.writeShellApplication {
@@ -201,11 +178,6 @@ in
       '';
     };
 
-    backupDestination = mkOption {
-      type = types.nullOr types.path;
-      default = null;
-      description = "Optional destination for the stopped-runtime backup command.";
-    };
   };
 
   config = lib.mkIf (cfg.enable && options ? home) (
@@ -215,9 +187,9 @@ in
           agentmemoryLauncher
           cfg.statusPackage
           importPackage
+          (pkgs.callPackage ../../scripts/opencode-cache-validate.nix { })
         ]
-        ++ lib.optional (cfg.rollbackPackage != null) cfg.rollbackPackage
-        ++ lib.optional (cfg.backupDestination != null) backupPackage;
+        ++ lib.optional (cfg.rollbackPackage != null) cfg.rollbackPackage;
 
         file."${cfg.runtimeDir}/.env".text = settingsText;
 

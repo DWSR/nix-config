@@ -83,11 +83,6 @@ function evalMatrix() {
           agentMemoryEnable = false;
           cavememEnable = true;
         };
-        rollback = mkSynthetic {
-          backend = "cavemem";
-          agentMemoryEnable = true;
-          cavememEnable = true;
-        };
         personal =
           if builtins.hasAttr "personal" hostRows then hostRows.personal else hostConfig "Brandons-MacBook-Pro";
         shopify = if builtins.hasAttr "shopify" hostRows then hostRows.shopify else hostConfig "ShopifyLaptop";
@@ -227,7 +222,6 @@ function evalMatrix() {
     builtins.toJSON {
       enabled = summarize "enabled" scenarios.enabled;
       disabled = summarize "disabled" scenarios.disabled;
-      rollback = summarize "rollback" scenarios.rollback;
       personal =
         if builtins.hasAttr "personal" hostRows then scenarios.personal else summarize "personal" scenarios.personal;
       shopify =
@@ -401,32 +395,6 @@ test('the focused AgentMemory host-render matrix is registered and validates all
   assert.equal(rendered.shopify.secretReference, 'op://Employee/AgentMemory/Bearer');
   assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
   assert.equal(rendered.shopify.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
-  assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BACKUP_DESTINATION, undefined);
-  assert.equal(
-    rendered.shopify.agentMemory.settings.includes('AGENTMEMORY_BACKUP_DESTINATION='),
-    true,
-  );
-
-  const rollback = rendered.rollback;
-  assertAgentMemoryRuntime(rollback, { selected: 'cavemem', cavememEnabled: true });
-  assert.equal(rollback.backend, 'cavemem');
-  assert.equal(rollback.mcp.cavememCount, 1);
-  assert.equal(rollback.consumers.memorySync, true);
-  assert.deepEqual(rollback.consumers.memorySyncPackages, ['memory-sync']);
-  assertManualObsidianContract(rollback);
-  assert.equal(rollback.consumers.vaultSynthesizer, true);
-  assert.equal(rollback.consumers.augmentation, true);
-  assert.match(rollback.instructions.context, /Ambient capture \(cavemem\)/i);
-  assert.doesNotMatch(rollback.instructions.context, /stock AgentMemory/i);
-  assert.match(rollback.instructions.agents['vault-curator'], /cavemem/i);
-  assert.match(rollback.instructions.agents['vault-synthesizer'], /cavemem/i);
-  assert.deepEqual(rollback.memoryPluginFiles, ['opencode/plugins/cavemem.js']);
-  for (const profile of Object.values(rollback.nonoProfiles)) {
-    assert.deepEqual(profile.network.open_port, [8080]);
-    assert.ok(profile.environment.allow_vars.includes('CAVEMEM_DATA_DIR'));
-    assert.equal(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'), false);
-  }
-
   const disabled = rendered.disabled;
   assert.equal(disabled.agentMemory.enable, false);
   assert.equal(disabled.agentMemory.launchd, null);
