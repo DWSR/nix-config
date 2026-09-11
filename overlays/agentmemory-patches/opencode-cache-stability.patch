@@ -1,0 +1,285 @@
+From: nix-config integration <noreply@local>
+Subject: [PATCH] agentmemory: stabilize context and persist file enrichment
+
+Applies after opencode-capture.patch to AgentMemory e04ba888.
+Keep startup context fixed for a loaded session. Attach fresh enrichment to
+new persisted results rather than replacing the prefix before all history.
+Standard capture routes, timeouts, retrieval, and compaction remain intact.
+
+--- a/plugin/opencode/agentmemory-capture.ts
++++ b/plugin/opencode/agentmemory-capture.ts
+@@ -2,1 +2,2 @@
+ import { execFileSync } from "node:child_process";
++import { createHash, randomUUID } from "node:crypto";
+@@ -110,1 +111,3 @@
+-const stashedFiles = new Map<string, Set<string>>();
++type EnrichmentGeneration = { claimed: boolean; files: Set<string> };
++const enrichmentGenerations = new Map<string, EnrichmentGeneration>();
++const enrichmentCalls = new Map<string, Map<string, EnrichmentGeneration>>();
+@@ -118,7 +121,1 @@
+-const contextInjectedSessions = new Set<string>();
+-// cache the context returned by POST /session/start so the chat
+-// system-transform hook can inject it without a second /context fetch.
+-// Auto-injection now happens at session.created (immediately) AND at
+-// the first prompt_submit (fallback for older OpenCode builds that
+-// don't implement experimental.chat.system.transform).
+-const startContextCache = new Map<string, string>();
++const startContextCache = new Map<string, Promise<string>>();
+@@ -126,5 +123,21 @@
+-function stashFor(sid: string): Set<string> {
+-  let s = stashedFiles.get(sid);
+-  if (!s) { s = new Set<string>(); stashedFiles.set(sid, s); }
+-  return s;
++function contextText(result: unknown): string {
++  const text = (result as any)?.context;
++  return typeof text === "string" ? text : "";
++}
++
++function enrichmentText(result: unknown): string {
++  const text = contextText(result).slice(0, 4000);
++  return text ? `\n\n<agentmemory-enrichment>\nSupplemental memory, not file contents:\n${text}\n</agentmemory-enrichment>` : "";
++}
++
++function capturedToolOutput(output: unknown, metadata: any): unknown {
++  const span = metadata?.agentmemory_enrichment;
++  if (typeof output !== "string" || !span) return output;
++  if (Number.isSafeInteger(span.offset) && Number.isSafeInteger(span.length)
++    && span.offset >= 0 && span.length > 0 && span.offset + span.length <= output.length
++    && createHash("sha256").update(output.slice(span.offset, span.offset + span.length)).digest("hex") === span.sha256) {
++    return output.slice(0, span.offset) + output.slice(span.offset + span.length);
++  }
++  console.error("[agentmemory] Invalid enrichment span; preserving captured tool output");
++  return output;
+ }
+@@ -170,2 +183,4 @@
+ function pruneSessionMaps(sid: string): void {
+-  stashedFiles.delete(sid);
++  enrichmentGenerations.delete(sid);
++  enrichmentCalls.delete(sid);
++  startContextCache.delete(sid);
+@@ -256,1 +271,2 @@
+   defaultProjectName = resolveProjectName(defaultProjectCwd);
++  const ownedSessionIds = new Set<string>();
+@@ -268,2 +284,2 @@
+         startedSessionIds.add(activeSessionId);
+-        stashedFiles.set(activeSessionId, new Set());
++        ownedSessionIds.add(activeSessionId);
+@@ -276,1 +291,0 @@
+-        contextInjectedSessions.delete(activeSessionId);
+@@ -296,1 +311,1 @@
+-        const startResult = await postJson("/session/start", {
++        const startResult = postJson("/session/start", {
+@@ -304,6 +319,4 @@
+-        // cache the context returned at session/start so the
+-        // chat.system.transform hook injects it without a second fetch.
+-        const startCtx = (startResult as any)?.context;
+-        if (typeof startCtx === "string" && startCtx.length > 0) {
+-          startContextCache.set(sessionId, startCtx);
++        if (!startContextCache.has(sessionId)) {
++          startContextCache.set(sessionId, startResult.then(contextText));
+         }
++        await startResult;
+@@ -377,1 +390,4 @@
+         startedSessionIds.delete(sid);
++        ownedSessionIds.delete(sid);
++        enrichmentGenerations.delete(sid);
++        enrichmentCalls.delete(sid);
+@@ -384,1 +399,0 @@
+-        contextInjectedSessions.delete(sid);
+@@ -452,1 +467,2 @@
+         if (part.type === "text") {
++          if (part.synthetic && (part.metadata as any)?.agentmemory_enrichment) return;
+@@ -508,1 +524,4 @@
+           const toolName = part.tool as string;
++          if (state.status === "completed" || state.status === "error") {
++            enrichmentCalls.get(sid)?.delete(callId);
++          }
+@@ -532,1 +551,1 @@
+-              tool_output: safeSlice(st.output, 8000),
++              tool_output: safeSlice(capturedToolOutput(st.output, st.metadata), 8000),
+@@ -579,6 +597,0 @@
+-        if (part.type === "file") {
+-          const filename = (part as any).filename || (part as any).url || null;
+-          if (filename) stashFor(sid).add(filename);
+-          return;
+-        }
+-
+@@ -620,13 +632,0 @@
+-      // ── file.edited ──
+-      if (type === "file.edited") {
+-        const sid = props.sessionID || activeSessionId;
+-        if (sid && typeof props.file === "string" && props.file.length > 0) {
+-          const stash = stashFor(sid);
+-          stash.add(props.file);
+-          if (stash.size > MAX_STASHED_FILES) {
+-            const keep = [...stash].slice(-MAX_STASHED_FILES);
+-            stash.clear();
+-            for (const f of keep) stash.add(f);
+-          }
+-        }
+-      }
+@@ -686,10 +686,8 @@
+     dispose: async () => {
+-      for (const sid of [...startedSessionIds]) {
+-        await post("/session/end", { sessionId: sid });
++      for (const sid of ownedSessionIds) {
++        if (startedSessionIds.has(sid)) await post("/session/end", { sessionId: sid });
+         if (sid === activeSessionId) activeSessionId = null;
+         pruneSessionMaps(sid);
+-        startContextCache.delete(sid);
+-        contextInjectedSessions.delete(sid);
+       }
+-      startedSessionIds.clear();
++      ownedSessionIds.clear();
+     },
+@@ -706,9 +703,0 @@
+-      for (const f of files) {
+-        const stash = stashFor(sid);
+-        stash.add(f);
+-        if (stash.size > MAX_STASHED_FILES) {
+-          const keep = [...stash].slice(-MAX_STASHED_FILES);
+-          stash.clear();
+-          for (const k of keep) stash.add(k);
+-        }
+-      }
+@@ -725,3 +714,21 @@
+         parts_summary: parts.map((p: any) => p.type).filter(Boolean),
+       });
++      if (input.sessionID && files.length > 0) {
++        const text = enrichmentText(await postJson("/enrich", {
++          sessionId: input.sessionID,
++          files: [...new Set(files)].slice(0, 10),
++          toolName: "attachment",
++        }));
++        if (text) {
++          // OpenCode sorts persisted parts by ID; extend the last assigned ID.
++          const lastId = parts.map((part: any) => part.id).sort().at(-1) || "prt";
++          output.parts.push({
++            id: `${lastId}_am_${randomUUID()}`,
++            sessionID: input.sessionID,
++            messageID: output.message.id,
++            type: "text", text, synthetic: true,
++            metadata: { agentmemory_enrichment: true },
++          });
++        }
++      }
+     },
+@@ -732,2 +739,4 @@
+-      const sid = input.sessionID || activeSessionId;
++      const sid = input.sessionID;
+       if (!sid) return;
++      ownedSessionIds.add(sid);
++      enrichmentGenerations.set(sid, { claimed: false, files: new Set() });
+@@ -747,63 +756,64 @@
+     // ── tool.execute.before ──
+     "tool.execute.before": async (input, output) => {
+       if (!FILE_TOOLS.has(String(input.tool ?? "").toLowerCase())) return;
+-      const sid = input.sessionID || activeSessionId;
++      const sid = input.sessionID;
+       if (!sid) return;
+       const args = output.args as Record<string, unknown> | undefined;
+       if (!args) return;
+-      const stash = stashFor(sid);
++      const generation = enrichmentGenerations.get(sid);
++      if (!generation || toolCallSetFor(sid).has(input.callID)) return;
++      let calls = enrichmentCalls.get(sid);
++      if (!calls) { calls = new Map(); enrichmentCalls.set(sid, calls); }
++      if (calls.has(input.callID)) return;
++      calls.set(input.callID, generation);
+       for (const fp of extractFilePaths(args)) {
+-        stash.add(fp);
++        generation.files.add(fp);
+       }
+-      if (stash.size > MAX_STASHED_FILES) {
+-        const keep = [...stash].slice(-MAX_STASHED_FILES);
+-        stash.clear();
+-        for (const f of keep) stash.add(f);
++      if (generation.files.size > MAX_STASHED_FILES) {
++        const keep = [...generation.files].slice(-MAX_STASHED_FILES);
++        generation.files.clear();
++        for (const f of keep) generation.files.add(f);
+       }
+     },
+ 
++    "tool.execute.after": async (input, output) => {
++      const sid = input.sessionID;
++      const calls = enrichmentCalls.get(sid);
++      const generation = calls?.get(input.callID);
++      if (!generation || generation !== enrichmentGenerations.get(sid) || generation.claimed
++        || typeof output.output !== "string" || output.metadata?.agentmemory_enrichment) return;
++      generation.claimed = true;
++      const files = [...generation.files].slice(0, 10);
++      if (files.length === 0) return;
++      const text = enrichmentText(await postJson("/enrich", {
++        sessionId: sid, files, toolName: input.tool,
++      }));
++      if (!text || generation !== enrichmentGenerations.get(sid)
++        || calls?.get(input.callID) !== generation) return;
++      const offset = output.output.length;
++      output.output += text;
++      output.metadata = {
++        ...output.metadata,
++        agentmemory_enrichment: {
++          offset, length: text.length,
++          sha256: createHash("sha256").update(text).digest("hex"),
++        },
++      };
++    },
++
+     // ── experimental.chat.system.transform ──
+     "experimental.chat.system.transform": async (input, output) => {
+-      const sid = input.sessionID || activeSessionId;
+-      if (!sid) return;
+-
+-      if (!contextInjectedSessions.has(sid)) {
+-        if (!Array.isArray(output.system)) return;
+-        output.system.push(AGENTMEMORY_INSTRUCTIONS);
+-        // prefer the context already fetched at session.created;
+-        // fall back to a fresh /context call if the cache missed (e.g.
+-        // session resumed across plugin reloads).
+-        let ctx = startContextCache.get(sid);
+-        if (typeof ctx !== "string" || ctx.length === 0) {
+-          const result = await postJson("/context", {
+-            sessionId: sid,
+-            project: projectFor(sid).name,
+-          });
+-          ctx = (result as any)?.context;
+-        } else {
+-          startContextCache.delete(sid);
+-        }
+-        if (typeof ctx === "string" && ctx.length > 0) {
+-          output.system.push(ctx);
+-        }
+-        contextInjectedSessions.add(sid);
+-      }
+-
+-      const stash = stashFor(sid);
+-      if (stash.size === 0) return;
+-      const files = [...stash].slice(0, 10);
+-
+-      const enrichResult = await postJson("/enrich", {
+-        sessionId: sid,
+-        files,
+-        toolName: "enrich_inject",
+-      });
+-
+-      const enrichCtx = (enrichResult as any)?.context;
+-      if (typeof enrichCtx === "string" && enrichCtx.length > 0) {
+-        if (Array.isArray(output.system)) {
+-          output.system.push(enrichCtx);
+-        }
+-        for (const f of files) stash.delete(f);
++      const sid = input.sessionID;
++      if (!sid || !Array.isArray(output.system)) return;
++      ownedSessionIds.add(sid);
++      output.system.push(AGENTMEMORY_INSTRUCTIONS);
++      let snapshot = startContextCache.get(sid);
++      if (!snapshot) {
++        snapshot = postJson("/context", {
++          sessionId: sid, project: projectFor(sid).name,
++        }).then(contextText);
++        startContextCache.set(sid, snapshot);
+       }
++      const text = await snapshot;
++      if (text) output.system.push(text);
+     },
