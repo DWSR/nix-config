@@ -40,8 +40,9 @@
   - Equal graphs produce one exact identity; every mismatch is redacted and fail-closed.
   - _Requirements: 1.5, 2.1, 2.4, 2.7, 2.9_
   - _Boundary: Eligibility Validator_
-- [ ] 2.2 Manage the transient public-destination proxy
-  - Start Dante on loopback and the declared non-VPN interface with port 443 and IANA non-global IPv4/IPv6 denials.
+  - _Blocked: debug attempted twice, still failing — validator still rejects valid Tecnix native v4 forms and lacks complete evaluator-policy and graph-topology binding._
+- [x] 2.2 Manage the transient public-destination proxy
+  - Start Dante on unprivileged listener port 1080, loopback, and the declared non-VPN interface; allow only outbound HTTPS port 443 and deny IANA non-global IPv4/IPv6 destinations.
   - Reject unexpected default/VPN routes and expose a bounded proxy endpoint only to one validation run.
   - Public-route fixtures connect; private/mixed/CNAME/route cases fail and leave no proxy process.
   - _Requirements: 2.2, 2.5, 5.5, 7.3_
@@ -52,6 +53,8 @@
   - Fresh public evaluation succeeds; credential-bearing, private-redirected, or proxy-bypass evaluation fails cleanly.
   - _Requirements: 2.1, 2.2, 2.4, 2.5, 2.6, 7.3_
   - _Boundary: Eligibility Validator_
+  - _Depends: 2.1, 2.2_
+  - _Blocked: task depends on the unresolved 2.1 graph/policy contract; retry after 2.1 is repaired and 2.2 is approved._
 - [ ] 2.4 Classify the supported source-fetcher profiles
   - Match only pinned standard HTTPS `fetchurl`/`fetchzip` and constrained full-revision `fetchgit` shapes.
   - Reject custom options, hooks, mirrors, userinfo/query credentials, submodules, LFS, tags, and unknown builders.
@@ -286,3 +289,5 @@
 
 - Nix-backed test fixtures must isolate `NIX_CONF_DIR`, `NIX_USER_CONF_FILES`, `NIX_CONFIG_HOME`, HOME/XDG paths, and Nix state, cache, and log paths so host configuration cannot leak into tests.
 - For task 1.5, behavior-level negative fixtures and exact rendered-structure assertions are sufficient; mutation tests proving each package-identity guard independently are not required.
+- Task 2.1 remains blocked after two debug rounds: valid Tecnix native v4 basename/`nar` output forms, complete evaluator-policy digest binding, and graph reachability/acyclicity still require remediation before dependent eligibility work can proceed.
+- Task 2.2 uses unprivileged Dante listener port 1080; outbound source connections remain restricted to HTTPS port 443.

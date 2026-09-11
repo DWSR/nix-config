@@ -136,8 +136,9 @@ component choices.
   record; that Base64 value is percent-encoded in the URI. Hostname and comment
   are not part of the stored artifact.
 - Recognized source replays use a transient Dante SOCKS5h policy proxy. The
-  proxy binds a declared non-VPN interface, permits only TCP port 443, and
-  rejects IANA non-global IPv4/IPv6 destinations for every connection.
+  proxy listens on unprivileged port 1080, binds a declared non-VPN interface,
+  permits only outbound TCP port 443, and rejects IANA non-global IPv4/IPv6
+  destinations for every connection.
 - Standard pinned `fetchurl`, `fetchzip`, and constrained HTTPS `fetchgit`
   profiles receive an explicit proxy configuration in validator-owned replay
   derivations. Unknown or modified fetcher shapes remain local.

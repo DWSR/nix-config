@@ -285,7 +285,7 @@ services.shopifyRemoteBuilder = {
          publicHostKey, sourceCidrs };
   validation: { timeoutSeconds, maxDerivations, maxInputSources,
                 maxFixedOutputs, maxWorkspaceBytes,
-                publicInterface, maxRedirects,
+                 publicInterface, maxRedirects,
                 stateDirectory, leaseIdleTtlSeconds, heartbeatSeconds,
                 publicCaches: list of endpoint and trusted-key sets };
 };
@@ -308,8 +308,10 @@ Invariants:
 - Approved public caches initially contain `cache.nixos.org` and
   `nix-community.cachix.org` with their committed signing keys. Local Attic and
   Shopify-managed caches are invalid entries.
-- Validation requires one declared non-VPN outbound interface and rejects an
-  unexpected default/VPN route rather than weakening destination policy. The
+- Validation requires one declared non-VPN outbound interface and an
+  unprivileged policy-proxy listener port, and rejects an unexpected default/VPN
+  route rather than weakening destination policy. The listener defaults to
+  `1080`; outbound source fetches remain limited to HTTPS port `443`. The
   personal host initially declares `en0`; the typed option permits correction.
 - Validation defaults are 30 minutes, 10,000 derivations, 1,000 input sources,
   256 fixed-output derivations, and 20 GiB of temporary workspace. Exceeding a
@@ -395,9 +397,10 @@ Invariants:
 
 - Recheck the direct repository allowlist, immutable revision, system, nonce,
   and limits on the personal host.
-- Start a transient Dante SOCKS5h policy proxy bound to loopback and the
-  declared non-VPN outbound interface. Permit only TCP port 443 and reject all
-  IANA non-global IPv4 and IPv6 destinations before each connection.
+- Start a transient Dante SOCKS5h policy proxy on unprivileged port `1080`,
+  bound to loopback and the declared non-VPN outbound interface. Permit only
+  outbound TCP port 443 and reject all IANA non-global IPv4 and IPv6
+  destinations before each connection.
 - Evaluate with a fresh credential-free HOME/XDG/Nix state and a diverted
   canonical `/nix/store`; disable registries, flake config, tokens, netrc,
   ambient proxies, plugins, substituters, IFD, and unsafe native evaluation.
