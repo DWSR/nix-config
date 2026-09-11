@@ -47,6 +47,7 @@ function loadPolicyProxy(fixture, proxyExecutable, options = {}) {
     helperTimeoutSeconds: options.helperTimeoutSeconds,
     maxRedirectsLimit: options.maxRedirectsLimit,
     maxRequestBytes: options.maxRequestBytes,
+    helperOutputBytesLimit: options.helperOutputBytesLimit,
     maxWorkspaceBytesLimit: options.maxWorkspaceBytesLimit,
     policyPort: options.policyPort,
     startupGraceMilliseconds: options.startupGraceMilliseconds,
@@ -1165,6 +1166,42 @@ test('held-open oversized route helper is bounded and cannot block validation', 
     assert.equal(result.decision, 'ineligible');
     assert.equal(result.reason, 'unexpected route');
     await waitForClose(session.child);
+  } finally {
+    if (session?.child.exitCode === null && session?.child.signalCode === null) {
+      session.child.kill('SIGKILL');
+      await waitForClose(session.child).catch(() => {});
+    }
+    fixture.cleanup();
+  }
+});
+
+test('finite oversized route helper output is rejected before Dante startup', async () => {
+  const fixture = createRemoteBuilderFixture();
+  let session;
+  try {
+    const routeCase = getRouteFixture('declared-en0');
+    const oversizedRoute = fixture.createExecutable('finite-oversized-route', `
+      const routeOutput = ${JSON.stringify(JSON.stringify(makeRouteResponse(routeCase)))};
+      process.stdout.write(routeOutput + ' '.repeat(512));
+    `);
+    const dante = createDanteBridge(fixture, { name: 'finite-oversized-route' });
+    const executable = loadPolicyProxy(fixture, dante.executable, {
+      helperOutputBytesLimit: 256,
+      routeExecutable: oversizedRoute,
+    });
+    session = startProxy(executable, fixture, makeRequest({
+      network: networkRequest('public-destination'),
+    }));
+    const result = await session.firstLine;
+
+    if (result.decision === 'ready') {
+      await stopProxy(session);
+    } else {
+      await waitForClose(session.child);
+    }
+    assert.equal(result.decision, 'ineligible');
+    assert.equal(result.reason, 'resource limit');
+    assert.equal(fixture.controls.proxy.calls().length, 0);
   } finally {
     if (session?.child.exitCode === null && session?.child.signalCode === null) {
       session.child.kill('SIGKILL');

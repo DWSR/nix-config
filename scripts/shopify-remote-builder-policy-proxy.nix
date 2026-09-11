@@ -211,7 +211,7 @@ writeShellApplication {
       local duration="$2"
       shift 2
       run_bounded "$duration" "$@" \
-        | run_clean "$head" -c "$helper_output_bytes_limit" >"$output_file"
+        | run_clean "$head" -c "$((helper_output_bytes_limit + 1))" >"$output_file"
     }
 
     check_bounded_file() {
