@@ -55,7 +55,7 @@
   - _Boundary: Eligibility Validator_
   - _Depends: 2.1, 2.2_
   - _Blocked: task depends on the unresolved 2.1 graph/policy contract; retry after 2.1 is repaired and 2.2 is approved._
-- [ ] 2.4 Classify the supported source-fetcher profiles
+- [x] 2.4 Classify the supported source-fetcher profiles
   - Match only pinned standard HTTPS `fetchurl`/`fetchzip` and constrained full-revision `fetchgit` shapes.
   - Reject custom options, hooks, mirrors, userinfo/query credentials, submodules, LFS, tags, and unknown builders.
   - Every source fixture receives one deterministic supported or ineligible classification.
@@ -291,3 +291,4 @@
 - For task 1.5, behavior-level negative fixtures and exact rendered-structure assertions are sufficient; mutation tests proving each package-identity guard independently are not required.
 - Task 2.1 remains blocked after two debug rounds: valid Tecnix native v4 basename/`nar` output forms, complete evaluator-policy digest binding, and graph reachability/acyclicity still require remediation before dependent eligibility work can proceed.
 - Task 2.2 uses unprivileged Dante listener port 1080; outbound source connections remain restricted to HTTPS port 443.
+- Source-profile validation must use explicit length/character checks because jq's `$` regex anchor accepts a trailing newline.
