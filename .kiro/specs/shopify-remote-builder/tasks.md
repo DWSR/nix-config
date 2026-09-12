@@ -61,7 +61,7 @@
   - Every source fixture receives one deterministic supported or ineligible classification.
   - _Requirements: 2.1, 2.2, 2.5, 2.6, 7.3_
   - _Boundary: Eligibility Validator_
-- [ ] 2.5 Replay and compare classified sources
+- [x] 2.5 Replay and compare classified sources
   - Generate validator-owned replay derivations with explicit proxy/CA inputs, sandboxing, and no substitute, remote builder, or cache hook.
   - Prime absent source outputs and always run final Check with refresh and exact hash comparison.
   - Supported sources produce fresh matching evidence; failures leave no queue entry or proof process.
@@ -292,3 +292,4 @@
 - Task 2.1 remains blocked after two debug rounds: valid Tecnix native v4 basename/`nar` output forms, complete evaluator-policy digest binding, and graph reachability/acyclicity still require remediation before dependent eligibility work can proceed.
 - Task 2.2 uses unprivileged Dante listener port 1080; outbound source connections remain restricted to HTTPS port 443.
 - Source-profile validation must use explicit length/character checks because jq's `$` regex anchor accepts a trailing newline.
+- Flat fixed-output fetches compare the classified SRI against `ca`; recursive fetches compare the NAR hash and recursive `ca` metadata.
