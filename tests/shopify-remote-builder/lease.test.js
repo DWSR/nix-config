@@ -174,6 +174,9 @@ function loadLease(fixture, options = {}) {
       `expectedOutputPrimerExecutable = ${nixString(options.expectedOutputPrimerExecutable)};`,
     );
   }
+  if (options.nowExecutable !== undefined) {
+    packageArguments.push(`nowExecutable = ${nixString(options.nowExecutable)};`);
+  }
   const expression = `
     let
       flake = builtins.getFlake (toString ${nixString(repoRoot)});
@@ -190,6 +193,93 @@ function loadLease(fixture, options = {}) {
   }), { mode: 0o700 });
   fs.chmodSync(executable, 0o700);
   return { executable, rootAdder, stateDirectory };
+}
+
+function createLeaseClock(fixture, initialSeconds = 1000) {
+  const clockPath = path.join(fixture.paths.control, 'lease-clock.txt');
+  fs.writeFileSync(clockPath, `${initialSeconds}\n`, { mode: 0o600 });
+  const executable = fixture.createExecutable('lease-clock', `
+    const fs = require('node:fs');
+    process.stdout.write(fs.readFileSync(${JSON.stringify(clockPath)}, 'utf8').trim());
+  `);
+  return {
+    executable,
+    set(seconds) {
+      fs.writeFileSync(clockPath, `${seconds}\n`, { mode: 0o600 });
+    },
+  };
+}
+
+function spawnLease(lease, fixture, args) {
+  const child = childProcess.spawn(lease.executable, args, {
+    cwd: fixture.root,
+    env: fixture.environment(),
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', chunk => {
+    stdout += chunk;
+  });
+  child.stderr.on('data', chunk => {
+    stderr += chunk;
+  });
+  const closed = new Promise(resolve => {
+    child.once('close', (status, signal) => resolve({ status, signal }));
+  });
+  fixture.registerCleanup(() => {
+    if (child.exitCode === null && !child.killed) {
+      child.kill('SIGKILL');
+    }
+  });
+  return {
+    child,
+    closed,
+    stderr: () => stderr,
+    stdout: () => stdout,
+  };
+}
+
+async function waitForLeaseJson(keeper, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const line = keeper.stdout().split('\n').find(value => value.trim() !== '');
+    if (line !== undefined) {
+      return JSON.parse(line);
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for lease output: ${keeper.stderr()}`);
+}
+
+async function waitForCondition(condition, timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (condition()) {
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for lease state transition');
+}
+
+function writeLeaseHeartbeat(request, lastHeartbeat, options = {}) {
+  const metadata = JSON.stringify({
+    schemaVersion: 1,
+    nonce: request.nonce,
+    token: request.token,
+    graphDigest: request.graphDigest,
+  });
+  const serializedHeartbeat = options.raw
+    ? String(lastHeartbeat)
+    : JSON.stringify(lastHeartbeat);
+  fs.writeFileSync(
+    path.join(requestRoot(request), 'heartbeat.json'),
+    `${metadata.slice(0, -1)},"lastHeartbeat":${serializedHeartbeat}}\n`,
+    { mode: 0o600 },
+  );
 }
 
 function buildLeasePackage(fixture) {
@@ -979,4 +1069,330 @@ test('prepare requires an opaque lease token', () => {
 test('lease requests reject non-store root values before any filesystem mutation', () => {
   assert.equal(STORE_PATH_RE.test('/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-valid'), true);
   assert.equal(STORE_PATH_RE.test('/nix/store/../escape'), false);
+});
+
+test('keepalive acknowledges ownership, refreshes heartbeat, and protects active roots past TTL', async () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const clock = createLeaseClock(fixture);
+    const lease = loadLease(fixture, {
+      nowExecutable: clock.executable,
+      numericOptions: {
+        heartbeatSeconds: 1,
+        idleTtlSeconds: 10,
+      },
+    });
+    const request = makeRequest(fixture);
+    const created = runLease(lease, fixture, request);
+    assert.equal(created.status, 0, created.stderr);
+
+    const keeper = spawnLease(lease, fixture, ['keepalive', request.token]);
+    const acknowledgement = await waitForLeaseJson(keeper);
+    assert.equal(acknowledgement.operation, 'keepalive');
+    assert.equal(acknowledgement.decision, 'active');
+    assert.equal(acknowledgement.nonce, request.nonce);
+    assert.equal(acknowledgement.leaseToken, request.token);
+    assert.equal(acknowledgement.graphDigest, request.graphDigest);
+    assert.ok(fs.existsSync(path.join(requestRoot(request), 'active.lock')));
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(requestRoot(request), 'heartbeat.json'), 'utf8')),
+      {
+        graphDigest: request.graphDigest,
+        lastHeartbeat: 1000,
+        nonce: request.nonce,
+        schemaVersion: 1,
+        token: request.token,
+      },
+    );
+
+    clock.set(1015);
+    keeper.child.stdin.write('\n');
+    await waitForCondition(() => {
+      const heartbeat = JSON.parse(
+        fs.readFileSync(path.join(requestRoot(request), 'heartbeat.json'), 'utf8'),
+      );
+      return heartbeat.lastHeartbeat === 1015;
+    });
+
+    const cleanupWhileActive = runLease(lease, fixture, {}, ['cleanup']);
+    assert.equal(cleanupWhileActive.status, 0, cleanupWhileActive.stderr);
+    assert.equal(cleanupWhileActive.output.decision, 'cleaned');
+    assert.equal(cleanupWhileActive.output.removed, 0);
+    assert.equal(cleanupWhileActive.output.skippedActive, 1);
+    assert.equal(fs.existsSync(requestRoot(request)), true);
+
+    keeper.child.stdin.end();
+    await keeper.closed;
+    assert.equal(fs.existsSync(path.join(requestRoot(request), 'active.lock')), false);
+    assert.equal(fs.existsSync(path.join(requestRoot(request), 'heartbeat.json')), true);
+    assert.equal(fs.existsSync(requestRoot(request)), true);
+
+    clock.set(2000);
+    const cleanupAfterKeeperLoss = runLease(lease, fixture, {}, ['cleanup']);
+    assert.equal(cleanupAfterKeeperLoss.status, 0, cleanupAfterKeeperLoss.stderr);
+    assert.equal(cleanupAfterKeeperLoss.output.removed, 1);
+    assert.equal(fs.existsSync(requestRoot(request)), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('a second keeper and release cannot take over an active lease', async () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const clock = createLeaseClock(fixture);
+    const lease = loadLease(fixture, {
+      nowExecutable: clock.executable,
+      numericOptions: {
+        heartbeatSeconds: 1,
+        idleTtlSeconds: 10,
+      },
+    });
+    const request = makeRequest(fixture);
+    assert.equal(runLease(lease, fixture, request).status, 0);
+
+    const firstKeeper = spawnLease(lease, fixture, ['keepalive', request.token]);
+    await waitForLeaseJson(firstKeeper);
+
+    const secondKeeper = spawnLease(lease, fixture, ['keepalive', request.token]);
+    const secondResult = await waitForLeaseJson(secondKeeper);
+    const secondExit = await secondKeeper.closed;
+    assert.equal(secondExit.status, 0);
+    assert.equal(secondResult.decision, 'ineligible');
+    assert.equal(secondResult.reason, 'lease active');
+    assert.ok(fs.existsSync(path.join(requestRoot(request), 'active.lock')));
+
+    const release = runLease(lease, fixture, {}, ['release', request.token]);
+    assert.equal(release.status, 0, release.stderr);
+    assert.equal(release.output.decision, 'ineligible');
+    assert.equal(release.output.reason, 'lease active');
+    assert.equal(fs.existsSync(requestRoot(request)), true);
+
+    firstKeeper.child.stdin.end();
+    await firstKeeper.closed;
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('keeper EOF and signal cleanup clear only active state and retain lease roots', async () => {
+  for (const termination of ['eof', 'signal']) {
+    const fixture = createRemoteBuilderFixture();
+    try {
+      const clock = createLeaseClock(fixture);
+      const lease = loadLease(fixture, {
+        nowExecutable: clock.executable,
+        numericOptions: {
+          heartbeatSeconds: 1,
+          idleTtlSeconds: 10,
+        },
+      });
+      const request = makeRequest(fixture, { nonce: `fixture-${termination}-0001` });
+      assert.equal(runLease(lease, fixture, request).status, 0);
+      const keeper = spawnLease(lease, fixture, ['keepalive', request.token]);
+      await waitForLeaseJson(keeper);
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'active.lock')), true);
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'heartbeat.json')), true);
+
+      if (termination === 'eof') {
+        keeper.child.stdin.end();
+      } else {
+        keeper.child.kill('SIGTERM');
+      }
+      await keeper.closed;
+
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'active.lock')), false);
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'heartbeat.json')), true);
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'manifest.json')), true);
+      assert.equal(fs.existsSync(path.join(requestRoot(request), 'roots')), true);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+});
+
+test('release removes only the feature lease after validating the persisted state', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const lease = loadLease(fixture);
+    const request = makeRequest(fixture);
+    assert.equal(runLease(lease, fixture, request).status, 0);
+    const unrelatedState = path.join(request.requestParent, 'unrelated-state');
+    fs.mkdirSync(unrelatedState, { mode: 0o700 });
+    fs.writeFileSync(path.join(unrelatedState, 'keep.txt'), 'keep\n', { mode: 0o600 });
+
+    const result = runLease(lease, fixture, {}, ['release', request.token]);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output.operation, 'release');
+    assert.equal(result.output.decision, 'released');
+    assert.equal(result.output.nonce, request.nonce);
+    assert.equal(result.output.leaseToken, request.token);
+    assert.equal(fs.existsSync(requestRoot(request)), false);
+    assert.equal(fs.existsSync(path.join(unrelatedState, 'keep.txt')), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('cleanup removes stale inactive state but skips live locks regardless of age', async () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const clock = createLeaseClock(fixture, 2000);
+    const lease = loadLease(fixture, {
+      nowExecutable: clock.executable,
+      numericOptions: {
+        heartbeatSeconds: 1,
+        idleTtlSeconds: 10,
+      },
+    });
+    const staleRequest = makeRequest(fixture, { nonce: 'fixture-stale-0001' });
+    assert.equal(runLease(lease, fixture, staleRequest).status, 0);
+    assert.equal(fs.existsSync(path.join(requestRoot(staleRequest), 'heartbeat.json')), false);
+    clock.set(2020);
+
+    const staleCleanup = runLease(lease, fixture, {}, ['cleanup']);
+    assert.equal(staleCleanup.status, 0, staleCleanup.stderr);
+    assert.equal(staleCleanup.output.removed, 1);
+    assert.equal(fs.existsSync(requestRoot(staleRequest)), false);
+
+    const activeRequest = makeRequest(fixture, { nonce: 'fixture-active-0001' });
+    assert.equal(runLease(lease, fixture, activeRequest).status, 0);
+    const keeper = spawnLease(lease, fixture, ['keepalive', activeRequest.token]);
+    await waitForLeaseJson(keeper);
+    clock.set(100000);
+
+    const activeCleanup = runLease(lease, fixture, {}, ['cleanup']);
+    assert.equal(activeCleanup.status, 0, activeCleanup.stderr);
+    assert.equal(activeCleanup.output.removed, 0);
+    assert.equal(activeCleanup.output.skippedActive, 1);
+    assert.equal(fs.existsSync(requestRoot(activeRequest)), true);
+
+    keeper.child.stdin.end();
+    await keeper.closed;
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('cleanup retains state when heartbeat or clock timestamps are unsafe', () => {
+  const cases = [
+    {
+      name: 'oversized future heartbeat',
+      heartbeat: '9223372036854775808',
+      rawHeartbeat: true,
+      now: '2000',
+    },
+    {
+      name: 'oversized clock timestamp',
+      heartbeat: 1000,
+      now: '9223372036854775808',
+    },
+    {
+      name: 'negative heartbeat',
+      heartbeat: -1,
+      now: '2000',
+    },
+    {
+      name: 'malformed heartbeat',
+      heartbeat: 'not-a-timestamp',
+      now: '2000',
+    },
+    {
+      name: 'future heartbeat',
+      heartbeat: 2001,
+      now: '2000',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createRemoteBuilderFixture();
+    try {
+      const clock = createLeaseClock(fixture, 2000);
+      const lease = loadLease(fixture, {
+        nowExecutable: clock.executable,
+        numericOptions: {
+          idleTtlSeconds: 10,
+        },
+      });
+      const request = makeRequest(fixture, {
+        nonce: `fixture-unsafe-${testCase.name.replaceAll(' ', '-')}`,
+      });
+      assert.equal(runLease(lease, fixture, request).status, 0, testCase.name);
+      clock.set(testCase.now);
+      writeLeaseHeartbeat(request, testCase.heartbeat, {
+        raw: testCase.rawHeartbeat,
+      });
+
+      const result = runLease(lease, fixture, {}, ['cleanup']);
+      assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+      assert.equal(result.output.removed, 0, testCase.name);
+      assert.equal(result.output.skippedInvalid, 1, testCase.name);
+      assert.equal(fs.existsSync(requestRoot(request)), true, testCase.name);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+});
+
+test('cleanup rejects symlink and foreign state without leaving the configured parent', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const clock = createLeaseClock(fixture, 1000);
+    const lease = loadLease(fixture, {
+      nowExecutable: clock.executable,
+      numericOptions: {
+        idleTtlSeconds: 10,
+      },
+    });
+    const request = makeRequest(fixture, { nonce: 'fixture-fresh-0001' });
+    assert.equal(runLease(lease, fixture, request).status, 0);
+    writeLeaseHeartbeat(request, 995);
+
+    const outside = path.join(fixture.paths.data, 'outside-state');
+    fs.mkdirSync(outside, { mode: 0o700 });
+    fs.writeFileSync(path.join(outside, 'sentinel'), 'must remain\n', { mode: 0o600 });
+    fs.symlinkSync(outside, path.join(request.requestParent, 'foreign-link'));
+    const foreignDirectory = path.join(request.requestParent, 'foreign-state');
+    fs.mkdirSync(foreignDirectory, { mode: 0o700 });
+    fs.writeFileSync(path.join(foreignDirectory, 'manifest.json'), '{}\n', { mode: 0o600 });
+
+    const result = runLease(lease, fixture, {}, ['cleanup']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output.removed, 0);
+    assert.ok(result.output.skippedInvalid >= 2);
+    assert.equal(fs.existsSync(requestRoot(request)), true);
+    assert.equal(fs.existsSync(path.join(request.requestParent, 'foreign-link')), true);
+    assert.equal(fs.existsSync(path.join(outside, 'sentinel')), true);
+    assert.equal(fs.existsSync(foreignDirectory), true);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('keepalive and release reject malformed or forged tokens before mutation', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const lease = loadLease(fixture);
+    const request = makeRequest(fixture);
+    assert.equal(runLease(lease, fixture, request).status, 0);
+    const tokens = [
+      'not-a-lease-token',
+      `srb1-${request.nonce}-${'b'.repeat(64)}`,
+    ];
+    for (const operation of ['keepalive', 'release']) {
+      for (const token of tokens) {
+        const result = runLease(lease, fixture, {}, [operation, token]);
+        assert.equal(result.status, 0, `${operation} ${token}: ${result.stderr}`);
+        assert.equal(result.output.operation, operation);
+        assert.equal(result.output.decision, 'ineligible');
+        assert.match(result.output.reason, /invalid token|token mismatch/);
+        assert.equal(fs.existsSync(path.join(requestRoot(request), 'active.lock')), false);
+        assert.equal(fs.existsSync(path.join(requestRoot(request), 'heartbeat.json')), false);
+        assert.equal(fs.existsSync(requestRoot(request)), true);
+        assert.ok(result.stdout.length <= 1024);
+      }
+    }
+  } finally {
+    fixture.cleanup();
+  }
 });

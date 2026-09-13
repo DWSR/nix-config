@@ -86,7 +86,7 @@
   - Prepared fixtures expose all selected inputs/outputs as valid and rooted for Check.
   - _Requirements: 3.1, 3.2, 7.4_
   - _Boundary: Invocation Lease Manager_
-- [ ] 2.9 Keep active leases and reap only inactive state
+- [x] 2.9 Keep active leases and reap only inactive state
   - Hold a lock/heartbeat for the full active stream, release roots explicitly, and expire by inactivity.
   - Make cleanup skip live locks regardless of age and remove only canonical inactive state beyond TTL.
   - TTL-crossing fixtures preserve active leases and remove interrupted stale leases.
@@ -297,3 +297,4 @@
 - Task 2.6 uses a fixed validator-owned temporary root and encoded file URIs; redirect, curl configuration, and same-path cache contamination fixtures must exercise the native verification seam.
 - Task 2.7 must reject any lease whose selected inputs or expected outputs are not all rooted before creating provisional state.
 - Task 2.8 uses `nix-store --add-root ROOT --indirect --realise STORE_PATH`; dangling expected-output markers must be repaired before Check.
+- Task 2.9 treats malformed, future, or overflow-prone heartbeat timestamps as retained state; live locks always win over TTL cleanup.
