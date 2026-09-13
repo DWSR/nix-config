@@ -17,6 +17,7 @@ const {
   getDerivationGraph,
   getPublicCacheFixture,
 } = require('./fixtures');
+const { digestValue } = require('./fixtures/schema');
 
 const LEASE_PATH = path.join(repoRoot, 'scripts/shopify-remote-builder-lease.nix');
 const STORE_PATH_RE = /^\/nix\/store\/[a-z0-9]{32}-[A-Za-z0-9._+-]+$/;
@@ -49,16 +50,29 @@ function leaseStateDirectory(fixture) {
 function createRootAdder(fixture, options = {}) {
   const logPath = path.join(fixture.paths.logs, options.name ?? 'lease-root-adder.jsonl');
   fs.writeFileSync(logPath, '', { mode: 0o600 });
+  const orderLogPath = options.orderLogPath ?? null;
+  if (orderLogPath !== null) {
+    fs.writeFileSync(orderLogPath, '', { mode: 0o600 });
+  }
   const failOnCall = options.failOnCall ?? null;
   const wrongTarget = options.wrongTarget ?? null;
   const executable = fixture.createExecutable(options.name ?? 'lease-root-adder', `
     const fs = require('node:fs');
     const path = require('node:path');
     const logPath = ${JSON.stringify(logPath)};
+    const orderLogPath = ${JSON.stringify(orderLogPath)};
     const args = process.argv.slice(2);
     const calls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean);
     fs.appendFileSync(logPath, JSON.stringify({ args, cwd: process.cwd() }) + '\\n');
-    if (args.length !== 4 || args[0] !== '--add-root' || args[2] !== '--indirect') {
+    if (orderLogPath !== null) {
+      fs.appendFileSync(orderLogPath, JSON.stringify({ name: 'root-adder', args }) + '\\n');
+    }
+    if (
+      args.length !== 5
+      || args[0] !== '--add-root'
+      || args[2] !== '--indirect'
+      || args[3] !== '--realise'
+    ) {
       process.stderr.write('invalid root invocation\\n');
       process.exit(64);
     }
@@ -66,7 +80,65 @@ function createRootAdder(fixture, options = {}) {
       process.exit(1);
     }
     fs.mkdirSync(path.dirname(args[1]), { recursive: true });
-    fs.symlinkSync(${JSON.stringify(wrongTarget)} ?? args[3], args[1]);
+    fs.symlinkSync(${JSON.stringify(wrongTarget)} ?? args[4], args[1]);
+  `);
+  return {
+    calls() {
+      return fs.readFileSync(logPath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line));
+    },
+    executable,
+    logPath,
+  };
+}
+
+function createPrepareSeam(fixture, options = {}) {
+  const name = options.name ?? 'lease-prepare-seam';
+  const logPath = path.join(fixture.paths.logs, `${name}.jsonl`);
+  const orderLogPath = options.orderLogPath ?? null;
+  fs.writeFileSync(logPath, '', { mode: 0o600 });
+  const failOnCall = options.failOnCall ?? null;
+  const mode = options.mode ?? 'realize';
+  const executable = fixture.createExecutable(name, `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const logPath = ${JSON.stringify(logPath)};
+    const orderLogPath = ${JSON.stringify(orderLogPath)};
+    const args = process.argv.slice(2);
+    const calls = fs.readFileSync(logPath, 'utf8').split('\\n').filter(Boolean);
+    fs.appendFileSync(logPath, JSON.stringify({ args, cwd: process.cwd() }) + '\\n');
+    if (orderLogPath !== null) {
+      fs.appendFileSync(orderLogPath, JSON.stringify({ name: ${JSON.stringify(name)}, args }) + '\\n');
+    }
+    if (${JSON.stringify(mode)} === 'realize') {
+      if (args.length < 2 || args[0] !== '--realise') {
+        process.stderr.write('invalid realize invocation\\n');
+        process.exit(64);
+      }
+    } else if (
+      args.length !== 4
+      || args[0] !== '--add-root'
+      || args[2] !== '--realise'
+    ) {
+      process.stderr.write('invalid prime invocation\\n');
+      process.exit(64);
+    }
+    if (${JSON.stringify(failOnCall)} !== null && calls.length + 1 === ${JSON.stringify(failOnCall)}) {
+      process.exit(1);
+    }
+    if (${JSON.stringify(mode)} === 'prime') {
+      fs.mkdirSync(path.dirname(args[1]), { recursive: true });
+      try {
+        fs.unlinkSync(args[1]);
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          throw error;
+        }
+      }
+      fs.symlinkSync(args[3], args[1]);
+    }
   `);
   return {
     calls() {
@@ -91,6 +163,16 @@ function loadLease(fixture, options = {}) {
   ];
   for (const [name, value] of Object.entries(options.numericOptions ?? {})) {
     packageArguments.push(`${name} = ${Number(value)};`);
+  }
+  if (options.selectedInputRealizerExecutable !== undefined) {
+    packageArguments.push(
+      `selectedInputRealizerExecutable = ${nixString(options.selectedInputRealizerExecutable)};`,
+    );
+  }
+  if (options.expectedOutputPrimerExecutable !== undefined) {
+    packageArguments.push(
+      `expectedOutputPrimerExecutable = ${nixString(options.expectedOutputPrimerExecutable)};`,
+    );
   }
   const expression = `
     let
@@ -136,24 +218,33 @@ function buildLeasePackage(fixture) {
 }
 
 function makeRequest(fixture, overrides = {}) {
+  const { danglingExpectedOutput = false, ...requestOverrides } = overrides;
   const graph = getDerivationGraph('public-v1');
   const cache = getPublicCacheFixture('public');
   const stateDirectory = leaseStateDirectory(fixture);
   const nonce = overrides.nonce ?? 'fixture-lease-create-0001';
   const token = overrides.token
     ?? `srb1-${nonce}-${'a'.repeat(64)}`;
-  const graphPaths = [
+  const sourceGraphPaths = [
     ...graph.derivations.map(derivation => derivation.path),
     ...Object.keys(graph.references),
     ...Object.values(graph.references).flat(),
   ]
     .filter((storePath, index, values) => values.indexOf(storePath) === index)
     .sort();
+  const storePathMap = existingStorePathMap(sourceGraphPaths);
+  const danglingOutput = '/nix/store/99999999999999999999999999999999-dangling-top-output';
+  const mapStorePath = storePath => storePath === graph.topOutput && danglingExpectedOutput
+    ? danglingOutput
+    : storePathMap.get(storePath) ?? storePath;
+  const graphPaths = sourceGraphPaths.map(mapStorePath).sort();
   const outputPaths = graph.derivations
     .flatMap(derivation => derivation.outputs.map(output => output.path))
+    .map(mapStorePath)
     .sort();
   const rootedPaths = graphPaths;
   const requestRoot = path.join(stateDirectory, nonce);
+  const cacheClosure = cache.publicCacheCut.closure.map(mapStorePath).sort();
   const rootDestinations = rootedPaths.map(storePath => ({
     destination: path.join(requestRoot, 'roots', path.basename(storePath)),
     storePath,
@@ -177,28 +268,33 @@ function makeRequest(fixture, overrides = {}) {
       digest: graph.graphIdentity.graphDigest,
       outputPaths,
       paths: graphPaths,
-      referenceClosures: graph.referenceClosures,
-      topOutput: graph.topOutput,
+      referenceClosures: Object.fromEntries(
+        Object.entries(graph.referenceClosures).map(([storePath, references]) => [
+          mapStorePath(storePath),
+          references.map(mapStorePath).sort(),
+        ]),
+      ),
+      topOutput: mapStorePath(graph.topOutput),
     },
     rootedPaths,
     rootDestinations,
-    selectedInputOutputs: [graph.cacheRoot],
-    expectedOutputs: [graph.topOutput],
+    selectedInputOutputs: [mapStorePath(graph.cacheRoot)],
+    expectedOutputs: [mapStorePath(graph.topOutput)],
     publicCacheCuts: [{
-      closure: cache.publicCacheCut.closure,
-      closureDigest: cache.publicCacheCut.closureDigest,
-      rootPath: cache.publicCacheCut.rootPath,
+      closure: cacheClosure,
+      closureDigest: digestValue(cacheClosure),
+      rootPath: mapStorePath(cache.publicCacheCut.rootPath),
     }],
   };
   const merged = {
     ...request,
-    ...overrides,
-    graph: { ...request.graph, ...(overrides.graph ?? {}) },
-    ownership: { ...request.ownership, ...(overrides.ownership ?? {}) },
-    authorization: { ...request.authorization, ...(overrides.authorization ?? {}) },
+    ...requestOverrides,
+    graph: { ...request.graph, ...(requestOverrides.graph ?? {}) },
+    ownership: { ...request.ownership, ...(requestOverrides.ownership ?? {}) },
+    authorization: { ...request.authorization, ...(requestOverrides.authorization ?? {}) },
   };
   delete merged.rootDestinations;
-  merged.rootDestinations = overrides.rootDestinations ?? rootDestinations;
+  merged.rootDestinations = requestOverrides.rootDestinations ?? rootDestinations;
   return merged;
 }
 
@@ -217,6 +313,17 @@ function requestRoot(request) {
 
 function modeOf(filePath) {
   return fs.statSync(filePath).mode & 0o777;
+}
+
+function existingStorePathMap(storePaths) {
+  const entries = fs.readdirSync('/nix/store')
+    .filter(entry => /^[a-z0-9]{32}-[A-Za-z0-9._+-]+$/.test(entry))
+    .sort();
+  assert.ok(entries.length >= storePaths.length, 'fixture requires enough existing Nix store paths');
+  return new Map(storePaths.map((storePath, index) => [
+    storePath,
+    path.join('/nix/store', entries[index]),
+  ]));
 }
 
 function assertNoLeaseState(lease, request) {
@@ -272,6 +379,7 @@ test('create roots exactly the validated graph paths and persists mode-0700 stat
         '--add-root',
         path.join(root, 'roots', path.basename(storePath)),
         '--indirect',
+        '--realise',
         storePath,
       ],
     }));
@@ -489,7 +597,368 @@ test('create fails closed when the request nonce already has lease state', () =>
   }
 });
 
-test('lease command exposes only the provisional create operation', () => {
+test('prepare realizes selected inputs before priming absent expected outputs', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const orderLogPath = path.join(fixture.paths.logs, 'lease-prepare-order.jsonl');
+    const selectedRealizer = createPrepareSeam(fixture, {
+      name: 'lease-selected-realizer',
+      orderLogPath,
+    });
+    const outputPrimer = createPrepareSeam(fixture, {
+      mode: 'prime',
+      name: 'lease-output-primer',
+      orderLogPath,
+    });
+    const lease = loadLease(fixture, {
+      expectedOutputPrimerExecutable: outputPrimer.executable,
+      rootAdderOptions: { orderLogPath },
+      selectedInputRealizerExecutable: selectedRealizer.executable,
+    });
+    const request = makeRequest(fixture);
+    const created = runLease(lease, fixture, request);
+    assert.equal(created.status, 0, created.stderr);
+
+    const root = requestRoot(request);
+    for (const storePath of [...request.selectedInputOutputs, ...request.expectedOutputs]) {
+      fs.unlinkSync(path.join(root, 'roots', path.basename(storePath)));
+    }
+    fs.writeFileSync(orderLogPath, '', { mode: 0o600 });
+
+    const result = runLease(lease, fixture, { injected: 'input ignored' }, [
+      'prepare',
+      request.token,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.output, {
+      decision: 'prepared',
+      detail: null,
+      expectedOutputs: request.expectedOutputs,
+      graphDigest: request.graphDigest,
+      leaseToken: request.token,
+      nonce: request.nonce,
+      operation: 'prepare',
+      rootedPaths: request.rootedPaths,
+      schemaVersion: 1,
+      selectedInputOutputs: request.selectedInputOutputs,
+    });
+    assert.deepEqual(selectedRealizer.calls().map(call => call.args), [[
+      '--realise',
+      ...request.selectedInputOutputs,
+    ]]);
+    assert.deepEqual(lease.rootAdder.calls().at(-1).args, [
+      '--add-root',
+      path.join(root, 'roots', path.basename(request.selectedInputOutputs[0])),
+      '--indirect',
+      '--realise',
+      request.selectedInputOutputs[0],
+    ]);
+    assert.deepEqual(outputPrimer.calls().map(call => call.args), [[
+      '--add-root',
+      path.join(root, 'roots', path.basename(request.expectedOutputs[0])),
+      '--realise',
+      request.expectedOutputs[0],
+    ]]);
+    assert.deepEqual(
+      fs.readFileSync(orderLogPath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map(line => JSON.parse(line).name),
+      ['lease-selected-realizer', 'root-adder', 'lease-output-primer'],
+    );
+    for (const storePath of [...request.selectedInputOutputs, ...request.expectedOutputs]) {
+      const marker = path.join(root, 'roots', path.basename(storePath));
+      assert.equal(fs.lstatSync(marker).isSymbolicLink(), true, marker);
+      assert.equal(fs.readlinkSync(marker), storePath, marker);
+    }
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('prepare skips an already-valid expected output root and ignores caller-selected paths', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const selectedRealizer = createPrepareSeam(fixture, { name: 'lease-selected-realizer' });
+    const outputPrimer = createPrepareSeam(fixture, {
+      mode: 'prime',
+      name: 'lease-output-primer',
+    });
+    const lease = loadLease(fixture, {
+      expectedOutputPrimerExecutable: outputPrimer.executable,
+      selectedInputRealizerExecutable: selectedRealizer.executable,
+    });
+    const request = makeRequest(fixture);
+    const created = runLease(lease, fixture, request);
+    assert.equal(created.status, 0, created.stderr);
+
+    const result = runLease(
+      lease,
+      fixture,
+      {
+        selectedInputOutputs: ['/nix/store/99999999999999999999999999999999-injected'],
+      },
+      ['prepare', request.token],
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output.decision, 'prepared');
+    assert.deepEqual(selectedRealizer.calls().map(call => call.args), [[
+      '--realise',
+      ...request.selectedInputOutputs,
+    ]]);
+    assert.deepEqual(outputPrimer.calls(), []);
+    assert.equal(fs.readlinkSync(
+      path.join(requestRoot(request), 'roots', path.basename(request.expectedOutputs[0])),
+    ), request.expectedOutputs[0]);
+    assert.doesNotMatch(result.stdout, /99999999999999999999999999999999-injected/);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('prepare re-primes a dangling expected output root before returning a valid marker', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const outputPrimer = createPrepareSeam(fixture, {
+      mode: 'prime',
+      name: 'lease-output-primer-dangling',
+    });
+    const lease = loadLease(fixture, {
+      expectedOutputPrimerExecutable: outputPrimer.executable,
+    });
+    const request = makeRequest(fixture, { danglingExpectedOutput: true });
+    const created = runLease(lease, fixture, request);
+    assert.equal(created.status, 0, created.stderr);
+
+    const marker = path.join(
+      requestRoot(request),
+      'roots',
+      path.basename(request.expectedOutputs[0]),
+    );
+    assert.equal(fs.existsSync(marker), false);
+
+    const result = runLease(lease, fixture, { caller: 'ignored' }, [
+      'prepare',
+      request.token,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output.decision, 'prepared');
+    assert.deepEqual(outputPrimer.calls().map(call => call.args), [[
+      '--add-root',
+      marker,
+      '--realise',
+      request.expectedOutputs[0],
+    ]]);
+    assert.equal(fs.lstatSync(marker).isSymbolicLink(), true);
+    assert.equal(fs.readlinkSync(marker), request.expectedOutputs[0]);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('prepare rejects forged or corrupt persisted state before invoking realization seams', () => {
+  const cases = [
+    {
+      name: 'invalid token grammar',
+      mutate: () => {},
+      token: () => 'not-a-lease-token',
+    },
+    {
+      name: 'forged token',
+      mutate: () => {},
+      token: request => `srb1-${request.nonce}-${'b'.repeat(64)}`,
+    },
+    {
+      name: 'unlisted manifest path',
+      mutate: request => {
+        request.selectedInputOutputs = [
+          '/nix/store/99999999999999999999999999999999-unlisted',
+        ];
+      },
+    },
+    {
+      name: 'graph digest mismatch',
+      mutate: request => {
+        request.graph.digest = `sha256:${'b'.repeat(64)}`;
+      },
+    },
+    {
+      name: 'root destination outside request root',
+      mutate: request => {
+        request.rootDestinations[0].destination = path.join(
+          path.dirname(request.requestParent),
+          'outside-root',
+          path.basename(request.rootDestinations[0].destination),
+        );
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const fixture = createRemoteBuilderFixture();
+    try {
+      const selectedRealizer = createPrepareSeam(fixture, { name: 'lease-selected-realizer' });
+      const outputPrimer = createPrepareSeam(fixture, {
+        mode: 'prime',
+        name: 'lease-output-primer',
+      });
+      const lease = loadLease(fixture, {
+        expectedOutputPrimerExecutable: outputPrimer.executable,
+        selectedInputRealizerExecutable: selectedRealizer.executable,
+      });
+      const request = makeRequest(fixture);
+      const created = runLease(lease, fixture, request);
+      assert.equal(created.status, 0, `${testCase.name}: ${created.stderr}`);
+      const manifestPath = path.join(requestRoot(request), 'manifest.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+      testCase.mutate(manifest);
+      fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+      const token = testCase.token?.(request) ?? request.token;
+
+      const result = runLease(lease, fixture, { caller: 'ignored' }, ['prepare', token]);
+      const serialized = JSON.stringify(result.output);
+
+      assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+      assert.equal(result.output.operation, 'prepare', testCase.name);
+      assert.equal(result.output.decision, 'ineligible', testCase.name);
+      assert.equal(result.output.nonce, null, testCase.name);
+      assert.equal(result.output.leaseToken, null, testCase.name);
+      assert.doesNotMatch(serialized, /fixture-lease-create-0001|\/nix\/store|outside-root/);
+      assert.ok(result.stdout.length <= 1024, testCase.name);
+      assert.equal(selectedRealizer.calls().length, 0, testCase.name);
+      assert.equal(outputPrimer.calls().length, 0, testCase.name);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+
+  const missingFixture = createRemoteBuilderFixture();
+  try {
+    const selectedRealizer = createPrepareSeam(missingFixture, {
+      name: 'lease-selected-realizer-missing',
+    });
+    const outputPrimer = createPrepareSeam(missingFixture, {
+      mode: 'prime',
+      name: 'lease-output-primer-missing',
+    });
+    const lease = loadLease(missingFixture, {
+      expectedOutputPrimerExecutable: outputPrimer.executable,
+      selectedInputRealizerExecutable: selectedRealizer.executable,
+    });
+    const request = makeRequest(missingFixture);
+    const result = runLease(lease, missingFixture, { forged: true }, [
+      'prepare',
+      request.token,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.output.operation, 'prepare');
+    assert.equal(result.output.decision, 'ineligible');
+    assert.doesNotMatch(JSON.stringify(result.output), /fixture-lease-create-0001|\/nix\/store/);
+    assert.ok(result.stdout.length <= 1024);
+    assert.equal(selectedRealizer.calls().length, 0);
+    assert.equal(outputPrimer.calls().length, 0);
+  } finally {
+    missingFixture.cleanup();
+  }
+});
+
+test('prepare rejects a poisoned root or roots directory before any mutation', () => {
+  for (const poison of ['target', 'directory']) {
+    const fixture = createRemoteBuilderFixture();
+    try {
+      const selectedRealizer = createPrepareSeam(fixture, { name: `lease-selected-${poison}` });
+      const outputPrimer = createPrepareSeam(fixture, {
+        mode: 'prime',
+        name: `lease-primer-${poison}`,
+      });
+      const lease = loadLease(fixture, {
+        expectedOutputPrimerExecutable: outputPrimer.executable,
+        selectedInputRealizerExecutable: selectedRealizer.executable,
+      });
+      const request = makeRequest(fixture);
+      const created = runLease(lease, fixture, request);
+      assert.equal(created.status, 0, `${poison}: ${created.stderr}`);
+      const rootsDirectory = path.join(requestRoot(request), 'roots');
+      if (poison === 'target') {
+        const marker = path.join(rootsDirectory, path.basename(request.expectedOutputs[0]));
+        fs.unlinkSync(marker);
+        fs.symlinkSync(
+          '/nix/store/99999999999999999999999999999999-poisoned',
+          marker,
+        );
+      } else {
+        fs.rmSync(rootsDirectory, { recursive: true });
+        const outsideRoots = path.join(fixture.paths.data, `outside-roots-${poison}`);
+        fs.mkdirSync(outsideRoots, { mode: 0o700 });
+        fs.symlinkSync(outsideRoots, rootsDirectory);
+      }
+
+      const result = runLease(lease, fixture, { caller: 'ignored' }, [
+        'prepare',
+        request.token,
+      ]);
+
+      assert.equal(result.status, 0, `${poison}: ${result.stderr}`);
+      assert.equal(result.output.operation, 'prepare', poison);
+      assert.equal(result.output.decision, 'ineligible', poison);
+      assert.doesNotMatch(JSON.stringify(result.output), /fixture-lease-create-0001|\/nix\/store/);
+      assert.ok(result.stdout.length <= 1024, poison);
+      assert.equal(selectedRealizer.calls().length, 0, poison);
+      assert.equal(outputPrimer.calls().length, 0, poison);
+    } finally {
+      fixture.cleanup();
+    }
+  }
+});
+
+test('prepare removes roots created before a later realization or priming failure', () => {
+  const fixture = createRemoteBuilderFixture();
+  try {
+    const selectedRealizer = createPrepareSeam(fixture, { name: 'lease-selected-realizer' });
+    const outputPrimer = createPrepareSeam(fixture, {
+      failOnCall: 1,
+      mode: 'prime',
+      name: 'lease-output-primer-fails',
+    });
+    const lease = loadLease(fixture, {
+      expectedOutputPrimerExecutable: outputPrimer.executable,
+      selectedInputRealizerExecutable: selectedRealizer.executable,
+    });
+    const request = makeRequest(fixture);
+    const created = runLease(lease, fixture, request);
+    assert.equal(created.status, 0, created.stderr);
+    const root = requestRoot(request);
+    const selectedMarker = path.join(root, 'roots', path.basename(request.selectedInputOutputs[0]));
+    const expectedMarker = path.join(root, 'roots', path.basename(request.expectedOutputs[0]));
+    fs.unlinkSync(selectedMarker);
+    fs.unlinkSync(expectedMarker);
+
+    const result = runLease(lease, fixture, { caller: 'ignored' }, [
+      'prepare',
+      request.token,
+    ]);
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.output.operation, 'prepare');
+    assert.equal(result.output.decision, 'error');
+    assert.equal(result.output.reason, 'top output priming failed');
+    assert.doesNotMatch(JSON.stringify(result.output), /fixture-lease-create-0001|\/nix\/store/);
+    assert.equal(fs.existsSync(selectedMarker), false);
+    assert.equal(fs.existsSync(expectedMarker), false);
+    assert.equal(fs.existsSync(path.join(root, 'manifest.json')), true);
+    assert.equal(modeOf(root), 0o700);
+    assert.equal(selectedRealizer.calls().length, 1);
+    assert.equal(outputPrimer.calls().length, 1);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
+test('prepare requires an opaque lease token', () => {
   const fixture = createRemoteBuilderFixture();
   try {
     const lease = loadLease(fixture);

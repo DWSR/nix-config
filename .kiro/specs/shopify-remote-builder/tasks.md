@@ -80,7 +80,7 @@
   - _Requirements: 2.9, 6.5, 7.4_
   - _Boundary: Invocation Lease Manager_
   - _Depends: 1.5_
-- [ ] 2.8 Prepare selected inputs and top outputs
+- [x] 2.8 Prepare selected inputs and top outputs
   - Realize and root every manifest-listed input-derivation output before the top output.
   - Prime/root absent expected outputs atomically without permitting caller-selected paths.
   - Prepared fixtures expose all selected inputs/outputs as valid and rooted for Check.
@@ -296,3 +296,4 @@
 - Flat fixed-output fetches compare the classified SRI against `ca`; recursive fetches compare the NAR hash and recursive `ca` metadata.
 - Task 2.6 uses a fixed validator-owned temporary root and encoded file URIs; redirect, curl configuration, and same-path cache contamination fixtures must exercise the native verification seam.
 - Task 2.7 must reject any lease whose selected inputs or expected outputs are not all rooted before creating provisional state.
+- Task 2.8 uses `nix-store --add-root ROOT --indirect --realise STORE_PATH`; dangling expected-output markers must be repaired before Check.
