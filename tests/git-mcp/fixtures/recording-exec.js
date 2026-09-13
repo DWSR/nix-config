@@ -1,14 +1,13 @@
 'use strict';
 
 const childProcess = require('node:child_process');
-const fs = require('node:fs');
 const os = require('node:os');
 
 function parameters() {
   if (process.env.RECORDING_EXEC_MODE === 'environment') {
     return {
       recordPath: process.env.RECORDING_EXEC_RECORD_PATH,
-      identityCommand: process.env.RECORDING_EXEC_IDENTITY_COMMAND,
+      processControlCommand: process.env.RECORDING_EXEC_PROCESS_CONTROL,
       sessionToken: process.env.RECORDING_EXEC_SESSION_TOKEN,
       wrapperRole: process.env.RECORDING_EXEC_WRAPPER_ROLE,
       childRole: process.env.RECORDING_EXEC_CHILD_ROLE,
@@ -21,7 +20,7 @@ function parameters() {
 
   const [
     recordPath,
-    identityCommand,
+    processControlCommand,
     sessionToken,
     wrapperRole,
     childRole,
@@ -31,7 +30,7 @@ function parameters() {
   ] = process.argv.slice(2);
   return {
     recordPath,
-    identityCommand,
+    processControlCommand,
     sessionToken,
     wrapperRole,
     childRole,
@@ -42,58 +41,22 @@ function parameters() {
   };
 }
 
-function inspect(identityCommand, pid) {
-  const result = childProcess.spawnSync(identityCommand, [String(pid)], { encoding: 'utf8' });
+function recordOwnership(config, pid, expectedExecutable, role, truncate = false) {
+  const result = childProcess.spawnSync(config.processControlCommand, [
+    'record',
+    '--file', config.recordPath,
+    '--token', config.sessionToken,
+    '--pid', String(pid),
+    '--expected-executable', expectedExecutable,
+    '--role', role,
+    ...(truncate ? ['--truncate'] : []),
+    ...(pid === process.pid ? [] : ['--wait-ms', '3_000']),
+  ], { encoding: 'utf8' });
   if (result.status !== 0) {
-    throw new Error(`cannot inspect process ${pid}: ${result.stderr || `status ${result.status}`}`);
-  }
-  const [observedPid, processGroup, startSeconds, startMicroseconds, executable] = result.stdout
-    .trim()
-    .split('\t');
-  return {
-    pid: Number(observedPid),
-    processGroup: Number(processGroup),
-    startSeconds: Number(startSeconds),
-    startMicroseconds: Number(startMicroseconds),
-    executable,
-  };
-}
-
-function ownershipRecord(identityCommand, pid, expectedExecutable, role, sessionToken) {
-  const identity = inspect(identityCommand, pid);
-  if (identity.executable !== expectedExecutable) {
     throw new Error(
-      `${role} executable mismatch: expected ${expectedExecutable}, observed ${identity.executable}`,
+      `process-control could not record ${role} ${pid}: ${result.stderr || `status ${result.status}`}`,
     );
   }
-  return { ...identity, expectedExecutable, role, sessionToken };
-}
-
-function appendRecord(recordPath, record, truncate = false) {
-  fs.writeFileSync(
-    recordPath,
-    `${JSON.stringify(record)}\n`,
-    { encoding: 'utf8', flag: truncate ? 'w' : 'a', mode: 0o600 },
-  );
-}
-
-async function waitForChildIdentity(config, child) {
-  let lastError;
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    try {
-      return ownershipRecord(
-        config.identityCommand,
-        child.pid,
-        config.expectedChildExecutable,
-        config.childRole,
-        config.sessionToken,
-      );
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw lastError;
 }
 
 void (async () => {
@@ -104,17 +67,7 @@ void (async () => {
     }
   }
 
-  appendRecord(
-    config.recordPath,
-    ownershipRecord(
-      config.identityCommand,
-      process.pid,
-      process.execPath,
-      config.wrapperRole,
-      config.sessionToken,
-    ),
-    config.truncate,
-  );
+  recordOwnership(config, process.pid, process.execPath, config.wrapperRole, config.truncate);
   const child = childProcess.spawn(config.command, config.args, { stdio: 'inherit' });
   child.once('error', (error) => {
     process.stderr.write(`${error.stack || error.message}\n`);
@@ -123,7 +76,7 @@ void (async () => {
   const childExit = new Promise((resolve) => {
     child.once('exit', (code, signal) => resolve({ code, signal }));
   });
-  appendRecord(config.recordPath, await waitForChildIdentity(config, child));
+  recordOwnership(config, child.pid, config.expectedChildExecutable, config.childRole);
   const { code, signal } = await childExit;
   if (signal) {
     const signalNumber = os.constants.signals[signal];

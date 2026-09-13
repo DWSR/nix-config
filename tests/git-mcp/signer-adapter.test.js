@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -11,9 +12,18 @@ const repoRoot = path.resolve(__dirname, '../..');
 const fixturePath = path.join(repoRoot, 'tests/git-mcp/fixtures/signing-tools.nix');
 const signerPath = path.join(repoRoot, 'scripts/git-mcp-secure-enclave-signer.nix');
 const nixTimeoutMs = 600_000;
-const signingDeadlineMs = 20_000;
-const forcedCleanupGraceMs = 1_000;
-const schedulingGraceMs = 1_000;
+const commandTimeoutMs = 30_000;
+const maxBuffer = 64 * 1024 * 1024;
+const fixtureOwnershipTimeoutMs = 2_000;
+const fixtureCleanupTimeoutMs = 2_000;
+const publicSignerName = 'git-mcp-secure-enclave-signer';
+const privateWorkerName = 'git-mcp-secure-enclave-signer-worker';
+
+let fixture;
+let signerPackage;
+let signerCommand;
+let workerCommand;
+let fixtureProcessControlCommand;
 
 function nixBuild(expression) {
   return childProcess.execFileSync(
@@ -31,37 +41,13 @@ function nixBuild(expression) {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: nixTimeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer,
       env: {
         ...process.env,
         NIX_CONFIG: 'experimental-features = nix-command flakes',
       },
     },
   ).trim();
-}
-
-function buildSigner() {
-  return nixBuild(`
-    let
-      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-      fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
-      signer = pkgs.callPackage (import ${JSON.stringify(signerPath)}) fixture.nativeToolArgs;
-    in signer
-  `);
-}
-
-function buildSignerWithProviderPath(providerPath) {
-  return nixBuild(`
-    let
-      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-      fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
-      signer = pkgs.callPackage (import ${JSON.stringify(signerPath)}) (
-        fixture.nativeToolArgs // { providerPath = ${JSON.stringify(providerPath)}; }
-      );
-    in signer
-  `);
 }
 
 function buildFixtureBundle() {
@@ -74,6 +60,19 @@ function buildFixtureBundle() {
   `);
 }
 
+function buildSigner() {
+  return nixBuild(`
+    let
+      flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      fixture = import ${JSON.stringify(fixturePath)} {
+        inherit pkgs;
+        signerPackage = import ${JSON.stringify(signerPath)};
+      };
+    in fixture.signerPackage
+  `);
+}
+
 function fixtureSummary() {
   return JSON.parse(childProcess.execFileSync(
     'nix',
@@ -83,6 +82,7 @@ function fixtureSummary() {
         pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
         fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
       in {
+        agentTrapExecutable = fixture.agentTrapExecutable;
         nativeToolPaths = fixture.nativeToolPaths;
         interceptorPaths = fixture.interceptorPaths;
         scenarios = fixture.scenarios;
@@ -93,7 +93,7 @@ function fixtureSummary() {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: nixTimeoutMs,
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer,
       env: {
         ...process.env,
         NIX_CONFIG: 'experimental-features = nix-command flakes',
@@ -104,82 +104,450 @@ function fixtureSummary() {
 
 function createScenarioRoot(scenario) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-signer-'));
-  fs.writeFileSync(path.join(root, 'scenario.json'), JSON.stringify(scenario), { mode: 0o600 });
+  fs.writeFileSync(path.join(root, 'scenario.json'), `${JSON.stringify(scenario)}\n`, { mode: 0o600 });
   return root;
 }
 
-function createSigningState(root, summary) {
-  const identity = summary.scenarios.oneResidentExport.identitySnapshots.after[0];
-  const residentExport = summary.scenarios.oneResidentExport.residentExports[0];
+function withScenario(scenario, callback) {
+  const root = createScenarioRoot(scenario);
+  try {
+    return callback(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function createSigningState(root) {
+  const identity = fixture.scenarios.oneResidentExport.identitySnapshots.after[0];
+  const residentExport = fixture.scenarios.oneResidentExport.residentExports[0];
   const identityDir = path.join(root, 'identities', identity.hash);
   const stubPath = path.join(identityDir, residentExport.stubName);
 
   fs.mkdirSync(identityDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(stubPath, `${residentExport.stub}\n`, { mode: 0o600 });
   fs.writeFileSync(`${stubPath}.pub`, `${residentExport.publicKey}\n`, { mode: 0o644 });
-  fs.writeFileSync(
-    path.join(root, 'identity-snapshot'),
-    'after\n',
-    { mode: 0o600 },
-  );
+  fs.writeFileSync(path.join(root, 'identity-snapshot'), 'after\n', { mode: 0o600 });
 
-  return {
-    identity,
-    residentExport,
-    stubPath,
-  };
+  return { identity, residentExport, stubPath };
 }
 
-function fixtureEnvironment(root, summary, state) {
+function fixtureEnvironment(root, state, additional = {}) {
   return {
     ...process.env,
     GIT_MCP_SIGNING_FIXTURE_ROOT: root,
-    SSH_SK_PROVIDER: summary.nativeToolPaths.provider,
+    SSH_SK_PROVIDER: fixture.nativeToolPaths.provider,
     KEYCHAIN_CERTIFICATES: state.identity.hash,
     GIT_MCP_SIGNING_CTK_HASH: state.identity.hash,
     GIT_MCP_SIGNING_PUBLIC_KEY: state.identity.publicKey,
     GIT_MCP_SIGNING_FINGERPRINT: state.identity.fingerprint,
     GIT_MCP_SIGNING_STUB: state.stubPath,
+    ...additional,
   };
 }
 
-function withoutEnvironment(environment, ...names) {
-  const result = { ...environment };
-  for (const name of names) delete result[name];
-  return result;
-}
-
-function runSigner(command, args, env) {
-  return childProcess.spawnSync(command, args, {
-    cwd: repoRoot,
+function runCommand(command, arguments_, { cwd = repoRoot, env = process.env } = {}) {
+  return childProcess.spawnSync(command, arguments_, {
+    cwd,
     env,
     encoding: 'utf8',
     input: '',
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: 30_000,
+    maxBuffer,
+    timeout: commandTimeoutMs,
   });
 }
 
-function runBareInterceptedCommand(command, args, env) {
-  return childProcess.spawnSync(command, args, {
-    cwd: repoRoot,
-    env,
-    encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+function childExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+function waitForChildExit(child, timeoutMilliseconds) {
+  if (childExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (exited) => {
+      clearTimeout(timer);
+      child.off('close', onClose);
+      child.off('error', onError);
+      resolve(exited);
+    };
+    const onClose = () => finish(true);
+    const onError = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMilliseconds);
+    child.once('close', onClose);
+    child.once('error', onError);
+    if (childExited(child)) finish(true);
   });
 }
 
-function readCalls(root) {
-  const callsPath = path.join(root, 'calls.jsonl');
-  if (!fs.existsSync(callsPath)) return [];
-  return fs.readFileSync(callsPath, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+function executeFixtureProcessControl(arguments_) {
+  return new Promise((resolve) => {
+    childProcess.execFile(
+      fixtureProcessControlCommand,
+      arguments_,
+      { encoding: 'utf8', maxBuffer },
+      (error, stdout, stderr) => resolve({ error, stdout, stderr }),
+    );
+  });
 }
 
-function readOptionalJsonLines(root, fileName) {
+function commandFailure(result) {
+  return result.stderr.trim() || result.error?.message || `status ${result.error?.code ?? 'unknown'}`;
+}
+
+function trapDiagnostics(trap) {
+  const details = [`pid=${trap.child.pid ?? 'unavailable'}`];
+  if (trap.diagnostics.error) details.push(`spawn-error=${trap.diagnostics.error.message}`);
+  if (trap.diagnostics.exit) {
+    details.push(
+      `exit=${trap.diagnostics.exit.code ?? 'null'}/${trap.diagnostics.exit.signal ?? 'none'}`,
+    );
+  }
+  if (trap.diagnostics.stderr.trim()) details.push(`stderr=${trap.diagnostics.stderr.trim()}`);
+  if (trap.diagnostics.stdout.trim()) details.push(`stdout=${trap.diagnostics.stdout.trim()}`);
+  return details.join('; ');
+}
+
+function trapStartupError(trap, message) {
+  return new Error(`fixture agent socket trap startup failed: ${message}; ${trapDiagnostics(trap)}`);
+}
+
+function spawnAgentSocketTrap({ root, sessionToken, socketPath, recordPath, readyPath, environment }) {
+  const expectedExecutable = fs.realpathSync(fixture.agentTrapExecutable);
+  const child = childProcess.spawn(
+    fixture.interceptorPaths.agentSocketTrap,
+    [socketPath, recordPath, readyPath],
+    { cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const diagnostics = {
+    error: null,
+    exit: null,
+    close: null,
+    stderr: '',
+    stdout: '',
+  };
+  let resolveTerminal;
+  const terminal = new Promise((resolve) => {
+    resolveTerminal = resolve;
+  });
+  let terminalRecorded = false;
+  const recordTerminal = (event) => {
+    if (terminalRecorded) return;
+    terminalRecorded = true;
+    resolveTerminal(event);
+  };
+
+  child.stdout?.on('data', (chunk) => { diagnostics.stdout += chunk; });
+  child.stderr?.on('data', (chunk) => { diagnostics.stderr += chunk; });
+  child.once('error', (error) => {
+    diagnostics.error = error;
+    recordTerminal({ type: 'error', error });
+  });
+  child.once('exit', (code, signal) => {
+    diagnostics.exit = { code, signal };
+    recordTerminal({ type: 'exit', code, signal });
+  });
+  child.once('close', (code, signal) => { diagnostics.close = { code, signal }; });
+
+  const lifecycleRecord = child.pid
+    ? executeFixtureProcessControl([
+      'record', '--root', root, '--token', sessionToken,
+      '--pid', String(child.pid), '--expected-executable', expectedExecutable,
+      '--role', 'agent-socket-trap-lifecycle', '--wait-ms', String(fixtureOwnershipTimeoutMs),
+    ])
+    : Promise.resolve({
+      error: new Error('fixture agent socket trap did not provide a PID'),
+      stdout: '',
+      stderr: '',
+    });
+
+  return {
+    child,
+    diagnostics,
+    expectedExecutable,
+    lifecycleRecord,
+    ownershipAttestationPath: `${readyPath}.ownership.json`,
+    readyPath,
+    recordPath,
+    root,
+    sessionToken,
+    socketPath,
+    terminal,
+  };
+}
+
+async function awaitTrapOperation(trap, operation, result) {
+  const outcome = await Promise.race([
+    result.then((commandResult) => ({ type: 'command', commandResult })),
+    trap.terminal.then((terminal) => ({ type: 'terminal', terminal })),
+  ]);
+  if (outcome.type === 'terminal') {
+    throw trapStartupError(trap, `child ended before ${operation}`);
+  }
+  if (outcome.commandResult.error) {
+    throw trapStartupError(trap, `${operation} failed: ${commandFailure(outcome.commandResult)}`);
+  }
+  if (trap.diagnostics.error || trap.diagnostics.exit) {
+    throw trapStartupError(trap, `child ended during ${operation}`);
+  }
+  return outcome.commandResult;
+}
+
+function waitForTrapReadiness(trap) {
+  const state = () => {
+    const ready = fs.existsSync(trap.readyPath);
+    const ownershipAttested = fs.existsSync(trap.ownershipAttestationPath);
+    if (ready && !ownershipAttested) {
+      return 'socket readiness appeared before durable Go ownership attestation';
+    }
+    return ready && ownershipAttested ? 'ready' : null;
+  };
+  const initialState = state();
+  if (initialState === 'ready') return Promise.resolve();
+  if (initialState) return Promise.reject(trapStartupError(trap, initialState));
+  if (trap.diagnostics.error || trap.diagnostics.exit) {
+    return Promise.reject(trapStartupError(trap, 'child ended before startup readiness'));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer;
+    let watcher;
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      watcher?.close();
+      trap.child.off('error', onTerminal);
+      trap.child.off('exit', onTerminal);
+      if (error) reject(error);
+      else resolve();
+    };
+    const check = () => {
+      const currentState = state();
+      if (currentState === 'ready') finish();
+      else if (currentState) finish(trapStartupError(trap, currentState));
+    };
+    const onTerminal = () => finish(trapStartupError(trap, 'child ended before startup readiness'));
+
+    try {
+      watcher = fs.watch(path.dirname(trap.readyPath), { persistent: false }, check);
+    } catch (error) {
+      finish(trapStartupError(trap, `cannot watch startup directory: ${error.message}`));
+      return;
+    }
+    trap.child.once('error', onTerminal);
+    trap.child.once('exit', onTerminal);
+    timer = setTimeout(
+      () => finish(trapStartupError(
+        trap,
+        `timed out after ${fixtureOwnershipTimeoutMs}ms waiting for socket readiness and durable Go ownership attestation`,
+      )),
+      fixtureOwnershipTimeoutMs,
+    );
+    check();
+  });
+}
+
+function parseOwnershipStates(trap, result, phase) {
+  if (result.error) {
+    throw trapStartupError(trap, `${phase} failed: ${commandFailure(result)}`);
+  }
+  try {
+    const states = JSON.parse(result.stdout);
+    if (!Array.isArray(states)) throw new Error('process-control returned a non-array state document');
+    return states;
+  } catch (error) {
+    throw trapStartupError(trap, `${phase} returned invalid JSON: ${error.message}`);
+  }
+}
+
+function requireLiveAgentRecord(trap, states, role) {
+  const matches = states.filter((entry) => entry.record?.role === role);
+  if (matches.length !== 1) {
+    throw trapStartupError(
+      trap,
+      `expected one ${role} record, found ${matches.length} in [${states.map((entry) => entry.record?.role).join(', ')}]`,
+    );
+  }
+  const [{ record, state }] = matches;
+  if (
+    state !== 'live'
+    || record.pid !== trap.child.pid
+    || record.sessionToken !== trap.sessionToken
+    || record.executable !== trap.expectedExecutable
+    || record.expectedExecutable !== trap.expectedExecutable
+  ) {
+    throw trapStartupError(
+      trap,
+      `${role} record did not match the live expected identity: ${JSON.stringify({ record, state })}`,
+    );
+  }
+  return record;
+}
+
+async function attestAgentSocketTrap(trap) {
+  await awaitTrapOperation(
+    trap,
+    'durable lifecycle ownership capture',
+    trap.lifecycleRecord,
+  );
+  await waitForTrapReadiness(trap);
+
+  let attestation;
+  try {
+    attestation = JSON.parse(fs.readFileSync(trap.ownershipAttestationPath, 'utf8'));
+  } catch (error) {
+    throw trapStartupError(trap, `cannot read ownership attestation: ${error.message}`);
+  }
+  if (
+    attestation.pid !== trap.child.pid
+    || attestation.sessionToken !== trap.sessionToken
+    || attestation.expectedExecutable !== trap.expectedExecutable
+  ) {
+    throw trapStartupError(
+      trap,
+      `ownership attestation did not match expected identity: ${JSON.stringify(attestation)}`,
+    );
+  }
+
+  let socket;
+  try {
+    socket = fs.lstatSync(trap.socketPath);
+  } catch (error) {
+    throw trapStartupError(trap, `socket readiness file did not name a socket: ${error.message}`);
+  }
+  if (!socket.isSocket()) {
+    throw trapStartupError(trap, `startup path is not a Unix socket: ${trap.socketPath}`);
+  }
+
+  const states = parseOwnershipStates(
+    trap,
+    await executeFixtureProcessControl([
+      'states', '--root', trap.root, '--token', trap.sessionToken,
+    ]),
+    'durable ownership verification',
+  );
+  return {
+    lifecycleRecord: requireLiveAgentRecord(trap, states, 'agent-socket-trap-lifecycle'),
+    trapRecord: requireLiveAgentRecord(trap, states, 'agent-socket-trap'),
+  };
+}
+
+async function finalizeAgentSocketTrap(trap) {
+  const finalizationErrors = [];
+  let initialStates = [];
+  let finalStates = [];
+  let ownsTrap = false;
+
+  try {
+    const lifecycleResult = await trap.lifecycleRecord;
+    if (lifecycleResult.error) {
+      finalizationErrors.push(new Error(`lifecycle ownership capture failed: ${commandFailure(lifecycleResult)}`));
+    }
+  } catch (error) {
+    finalizationErrors.push(error);
+  }
+
+  try {
+    initialStates = parseOwnershipStates(
+      trap,
+      await executeFixtureProcessControl([
+        'states', '--root', trap.root, '--token', trap.sessionToken,
+      ]),
+      'pre-cleanup ownership verification',
+    );
+    ownsTrap = initialStates.some(({ record }) => (
+      record.pid === trap.child.pid
+      && record.sessionToken === trap.sessionToken
+      && record.executable === trap.expectedExecutable
+      && record.expectedExecutable === trap.expectedExecutable
+    ));
+    if (!ownsTrap && !childExited(trap.child) && !trap.diagnostics.error) {
+      finalizationErrors.push(new Error(
+        `fixture agent socket trap ${trap.child.pid} lacks a durable Go ownership record; refusing raw-PID cleanup`,
+      ));
+    }
+  } catch (error) {
+    finalizationErrors.push(error);
+  }
+
+  const cleanup = await executeFixtureProcessControl([
+    'cleanup', '--root', trap.root, '--token', trap.sessionToken,
+    '--timeout-ms', String(fixtureCleanupTimeoutMs),
+  ]);
+  if (cleanup.error) {
+    finalizationErrors.push(new Error(`Go fixture cleanup failed: ${commandFailure(cleanup)}`));
+  }
+
+  const exited = await waitForChildExit(trap.child, fixtureCleanupTimeoutMs);
+  if (!exited) {
+    finalizationErrors.push(new Error(
+      `fixture agent socket trap ${trap.child.pid} did not exit after Go fixture cleanup`,
+    ));
+  }
+
+  try {
+    finalStates = parseOwnershipStates(
+      trap,
+      await executeFixtureProcessControl([
+        'states', '--root', trap.root, '--token', trap.sessionToken,
+      ]),
+      'post-cleanup ownership verification',
+    );
+    const remaining = finalStates.filter((entry) => entry.state !== 'gone');
+    if (remaining.length > 0) {
+      finalizationErrors.push(new Error(
+        `Go fixture cleanup left owned processes: ${JSON.stringify(remaining)}`,
+      ));
+    }
+  } catch (error) {
+    finalizationErrors.push(error);
+  }
+
+  if (finalizationErrors.length > 0) {
+    throw new AggregateError(finalizationErrors, 'fixture agent socket trap finalization failed');
+  }
+  fs.rmSync(trap.root, { recursive: true, force: true });
+  return {
+    childExited: exited,
+    finalStates,
+    initialStates,
+    ownsTrap,
+  };
+}
+
+async function withFixtureFinalization(operation, finalizers) {
+  let primaryError;
+  try {
+    return await operation();
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    const finalizationErrors = [];
+    for (const finalize of finalizers) {
+      try {
+        await finalize();
+      } catch (error) {
+        finalizationErrors.push(error);
+      }
+    }
+    if (primaryError) {
+      if (finalizationErrors.length > 0) {
+        primaryError.fixtureFinalization = finalizationErrors.map((error) => error.message).join('\n');
+      }
+    } else if (finalizationErrors.length === 1) {
+      throw finalizationErrors[0];
+    } else if (finalizationErrors.length > 1) {
+      throw new AggregateError(finalizationErrors, 'fixture finalization failed');
+    }
+  }
+}
+
+function assertNoSpawnError(result) {
+  assert.equal(result.error, undefined, result.error?.message);
+}
+
+function readJsonLines(root, fileName) {
   const filePath = path.join(root, fileName);
   if (!fs.existsSync(filePath)) return [];
   return fs.readFileSync(filePath, 'utf8')
@@ -189,192 +557,94 @@ function readOptionalJsonLines(root, fileName) {
     .map((line) => JSON.parse(line));
 }
 
-function assertNoDelegatedSign(root) {
-  assert.equal(
-    readCalls(root).some((call) => call.tool === 'ssh-keygen' && call.operation === 'sign'),
-    false,
-    'preflight failure must happen before delegated signing',
-  );
+function readCalls(root) {
+  return readJsonLines(root, 'calls.jsonl');
 }
 
-function assertNoAgentOrFallback(root) {
-  const calls = readCalls(root);
-  assert.deepEqual(
-    readOptionalJsonLines(root, 'agent-calls.jsonl'),
-    [],
-    'signing must not connect to the controlled SSH agent socket',
-  );
-  assert.deepEqual(
-    readOptionalJsonLines(root, 'fallback-calls.jsonl'),
-    [],
-    'signing must not invoke the controlled fallback endpoint',
-  );
-  assert.equal(
-    calls.some((call) => call.tool === 'agent' || call.tool === 'fallback'),
-    false,
-    'signing failure must not invoke an agent or fallback signer',
-  );
-  assert.equal(
-    calls.some((call) => call.provider === '/Applications/1Password.app/Contents/MacOS/op-ssh-sign'),
-    false,
-    'signing failure must not invoke the global 1Password signer',
-  );
-}
-
-function interceptionEnvironment(root, summary, state, socketPath) {
-  const interceptorBin = path.join(root, 'interceptor-bin');
-  fs.mkdirSync(interceptorBin, { mode: 0o700 });
-  for (const command of ['fixture-fallback-signer', 'op-ssh-sign', 'ssh-add', 'ssh-agent']) {
-    fs.symlinkSync(summary.interceptorPaths.fallback, path.join(interceptorBin, command));
-  }
-
-  return {
-    ...fixtureEnvironment(root, summary, state),
-    SSH_AUTH_SOCK: socketPath,
-    SSH_AGENT_PID: 'fixture-agent-socket-trap',
-    GIT_MCP_SIGNING_FALLBACK: summary.interceptorPaths.fallback,
-    PATH: `${interceptorBin}:${path.dirname(summary.interceptorPaths.fallback)}:${process.env.PATH}`,
-  };
-}
-
-async function runSignerWithInterception(
-  command,
-  args,
-  root,
-  summary,
-  state,
-  modifyEnvironment = (environment) => environment,
-) {
-  const agentTrap = await startAgentSocketTrap(root, summary);
-  let stopped = false;
-  try {
-    const environment = modifyEnvironment(
-      interceptionEnvironment(root, summary, state, agentTrap.socketPath),
-    );
-    const result = runSigner(command, args, environment);
-    await agentTrap.stop();
-    stopped = true;
-    assertNoAgentOrFallback(root);
-    return result;
-  } finally {
-    if (!stopped) await agentTrap.stop();
+function resetFixtureRecords(root) {
+  for (const fileName of ['calls.jsonl', 'events.jsonl', 'fallback-calls.jsonl']) {
+    fs.rmSync(path.join(root, fileName), { force: true });
   }
 }
 
-function wait(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function callsWithoutPids(calls) {
+  return calls.map(({ pid, ...call }) => call);
 }
 
-async function waitForFile(filePath) {
-  const deadline = Date.now() + 2_000;
-  while (!fs.existsSync(filePath) && Date.now() < deadline) await wait(10);
-  assert.ok(fs.existsSync(filePath), `expected fixture file ${filePath}`);
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-async function startAgentSocketTrap(root, summary) {
-  const socketPath = path.join(root, 'agent.sock');
-  const recordPath = path.join(root, 'agent-calls.jsonl');
-  const readyPath = path.join(root, 'agent-ready');
-  const trap = childProcess.spawn(
-    summary.interceptorPaths.agentSocketTrap,
-    [socketPath, recordPath, readyPath],
-    {
-      cwd: repoRoot,
-      env: { ...process.env, GIT_MCP_SIGNING_FIXTURE_ROOT: root },
-      stdio: 'ignore',
-    },
-  );
-
-  await waitForFile(readyPath);
-  return {
-    socketPath,
-    async stop() {
-      if (trap.exitCode === null) trap.kill('SIGTERM');
-      await new Promise((resolve) => {
-        if (trap.exitCode !== null) {
-          resolve();
-          return;
-        }
-        trap.once('close', resolve);
-      });
-    },
-  };
-}
-
-async function assertPidGone(pid) {
-  const deadline = Date.now() + 3_000;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if (error.code === 'ESRCH') return;
-      throw error;
-    }
-    await wait(10);
-  }
-  assert.fail(`signer worker descendant ${pid} survived timeout cleanup`);
-}
-
-async function assertWorkerTreeGone(root, expectedWorkers = 1) {
-  const treePath = path.join(root, 'process-tree');
-  await waitForFile(treePath);
-  const pids = fs.readFileSync(treePath, 'utf8')
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .flatMap((line) => line.split(' ').map(Number));
-  assert.ok(
-    pids.length >= expectedWorkers * 2,
-    `fixture recorded at least ${expectedWorkers} workers and descendants`,
-  );
-  for (const pid of pids) await assertPidGone(pid);
-}
-
-function runGit(args, cwd, env, timeout = 35_000) {
-  return childProcess.spawnSync('git', args, {
+function assertPassthroughMatchesNative(root, arguments_, environment, cwd, description) {
+  const nativeResult = runCommand(fixture.nativeToolPaths.sshKeygen, arguments_, {
     cwd,
-    env,
-    encoding: 'utf8',
-    input: '',
-    maxBuffer: 64 * 1024 * 1024,
-    timeout,
+    env: environment,
   });
-}
+  assertNoSpawnError(nativeResult);
+  assert.equal(nativeResult.status, 0, `${description}: fixture ssh-keygen failed: ${nativeResult.stderr}`);
+  const nativeCalls = readCalls(root);
 
-function createGitGlobalConfig(root, fallbackSigner) {
-  const globalConfig = path.join(root, 'global.gitconfig');
-  fs.writeFileSync(
-    globalConfig,
-    [
-      '[commit]',
-      '  gpgSign = false',
-      '[gpg]',
-      '  format = openpgp',
-      '[gpg "ssh"]',
-      `  program = ${fallbackSigner}`,
-      '[user]',
-      '  signingKey = /tmp/global-conflicting-signing-key',
-      '',
-    ].join('\n'),
-    { mode: 0o600 },
+  resetFixtureRecords(root);
+  const signerResult = runCommand(signerCommand, arguments_, { cwd, env: environment });
+  assertNoSpawnError(signerResult);
+  assert.equal(signerResult.status, nativeResult.status, `${description}: exit status`);
+  assert.equal(signerResult.stdout, nativeResult.stdout, `${description}: stdout`);
+  assert.equal(signerResult.stderr, nativeResult.stderr, `${description}: stderr`);
+
+  const signerCalls = readCalls(root);
+  assert.deepEqual(
+    callsWithoutPids(signerCalls),
+    callsWithoutPids(nativeCalls),
+    `${description}: public signer must make the same native calls as direct ssh-keygen`,
   );
-  return globalConfig;
+  const sshKeygenCall = signerCalls.find((call) => call.tool === 'ssh-keygen');
+  assert.ok(sshKeygenCall, `${description}: fixture ssh-keygen call`);
+  assert.deepEqual(sshKeygenCall.argv, arguments_, `${description}: argv`);
+  assert.equal(sshKeygenCall.provider, environment.SSH_SK_PROVIDER, `${description}: SSH_SK_PROVIDER`);
+  assert.equal(
+    sshKeygenCall.selector,
+    environment.KEYCHAIN_CERTIFICATES,
+    `${description}: KEYCHAIN_CERTIFICATES`,
+  );
+  assert.equal(sshKeygenCall.cwd, cwd, `${description}: cwd`);
 }
 
-function globalGitEnvironment(root, state, globalConfig, agentSocketPath) {
-  const tempDir = path.join(root, 'git-tmp');
-  fs.mkdirSync(tempDir, { recursive: true, mode: 0o700 });
+function controlledFallbackEnvironment(root, state) {
+  const fallbackBin = path.join(root, 'controlled-fallback-bin');
+  const agentSocket = path.join(root, 'unavailable-agent.sock');
+  fs.mkdirSync(fallbackBin, { mode: 0o700 });
+  fs.symlinkSync(
+    fixture.interceptorPaths.fallback,
+    path.join(fallbackBin, 'op-ssh-sign'),
+  );
+
   return {
-    ...interceptionEnvironment(root, summary, state, agentSocketPath),
-    GIT_CONFIG_GLOBAL: globalConfig,
-    GIT_CONFIG_NOSYSTEM: '1',
-    TMPDIR: tempDir,
+    agentSocket,
+    environment: fixtureEnvironment(root, state, {
+      SSH_AUTH_SOCK: agentSocket,
+      GIT_MCP_SIGNING_FALLBACK: fixture.interceptorPaths.fallback,
+      PATH: `${fallbackBin}:${process.env.PATH || ''}`,
+    }),
   };
 }
 
-function scopedGitEnvironment(environment, state) {
+function gitSigningEnvironment(root, state, globalConfig, additional = {}) {
+  const environment = fixtureEnvironment(root, state);
+  for (const name of Object.keys(environment)) {
+    if (
+      name === 'GIT_CONFIG_GLOBAL'
+      || name === 'GIT_CONFIG_NOSYSTEM'
+      || name === 'GIT_SIGN_COMMITS'
+      || /^GIT_CONFIG_(?:COUNT|KEY_|VALUE_)/.test(name)
+    ) {
+      delete environment[name];
+    }
+  }
+
   return {
     ...environment,
+    GIT_CONFIG_GLOBAL: globalConfig,
+    GIT_CONFIG_NOSYSTEM: '1',
     GIT_CONFIG_COUNT: '4',
     GIT_CONFIG_KEY_0: 'commit.gpgSign',
     GIT_CONFIG_VALUE_0: 'true',
@@ -384,136 +654,520 @@ function scopedGitEnvironment(environment, state) {
     GIT_CONFIG_VALUE_2: signerCommand,
     GIT_CONFIG_KEY_3: 'user.signingKey',
     GIT_CONFIG_VALUE_3: state.stubPath,
+    SSH_AUTH_SOCK: path.join(root, 'unavailable-agent.sock'),
+    ...additional,
   };
 }
 
-function createGitRepository(root, environment) {
-  const repository = path.join(root, 'repository');
-  fs.mkdirSync(repository, { mode: 0o700 });
-  for (const args of [
-    ['init', '--quiet', '--initial-branch=main'],
-    ['config', 'user.name', 'Fixture Git MCP'],
-    ['config', 'user.email', 'fixture-git-mcp@example.test'],
-  ]) {
-    const result = runGit(args, repository, environment);
-    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
-  }
-
-  fs.writeFileSync(path.join(repository, 'initial.txt'), 'initial\n');
-  for (const args of [
-    ['add', 'initial.txt'],
-    ['commit', '--quiet', '--no-gpg-sign', '-m', 'initial'],
-  ]) {
-    const result = runGit(args, repository, environment);
-    assert.equal(result.status, 0, `${args.join(' ')}: ${result.stderr}`);
-  }
-  return repository;
+function runGit(arguments_, cwd, env) {
+  return runCommand('git', arguments_, { cwd, env });
 }
 
-function stageGitChange(repository, fileName, environment) {
-  fs.writeFileSync(path.join(repository, fileName), `${fileName}\n`);
-  const result = runGit(['add', fileName], repository, environment);
-  assert.equal(result.status, 0, `git add ${fileName}: ${result.stderr}`);
-}
-
-function gitHead(repository, environment) {
-  const result = runGit(['rev-parse', 'HEAD'], repository, environment);
-  assert.equal(result.status, 0, `git rev-parse HEAD: ${result.stderr}`);
+function gitOutput(arguments_, cwd, env) {
+  const result = runGit(arguments_, cwd, env);
+  assertNoSpawnError(result);
+  assert.equal(result.status, 0, `git ${arguments_.join(' ')}: ${result.stderr}`);
   return result.stdout.trim();
 }
 
-function gitCommitObject(repository, environment) {
-  const result = runGit(['cat-file', 'commit', 'HEAD'], repository, environment);
-  assert.equal(result.status, 0, `git cat-file commit HEAD: ${result.stderr}`);
-  return result.stdout;
+function createGitRepository(root, env) {
+  const repository = path.join(root, 'repository');
+  fs.mkdirSync(repository, { mode: 0o700 });
+  gitOutput(['init', '--quiet', '--initial-branch=main'], repository, env);
+  gitOutput(['config', 'user.name', 'Fixture Git MCP'], repository, env);
+  gitOutput(['config', 'user.email', 'fixture-git-mcp@example.test'], repository, env);
+  fs.writeFileSync(path.join(repository, 'initial.txt'), 'initial\n');
+  gitOutput(['add', 'initial.txt'], repository, env);
+  gitOutput(['commit', '--quiet', '--no-gpg-sign', '-m', 'initial'], repository, env);
+  fs.writeFileSync(path.join(repository, 'commit.txt'), 'signed fixture commit\n');
+  gitOutput(['add', 'commit.txt'], repository, env);
+  return repository;
 }
 
-function runGitCommitAttempt(repository, environment, explicitSigning, message) {
-  const args = ['commit'];
-  if (explicitSigning) args.push('--gpg-sign');
-  args.push('--quiet', '-m', message);
-  const startedAt = Date.now();
-  const result = runGit(args, repository, environment);
-  return {
-    ...result,
-    args,
-    elapsedMs: Date.now() - startedAt,
-  };
+function writeConflictingGlobalConfig(root) {
+  const globalConfig = path.join(root, 'global.gitconfig');
+  fs.writeFileSync(globalConfig, [
+    '[user]',
+    '  name = Conflicting Global Signer',
+    '  email = conflicting-global@example.test',
+    '  signingKey = ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGlobalConflict',
+    '[commit]',
+    '  gpgSign = false',
+    '[gpg]',
+    '  format = openpgp',
+    `  program = ${fixture.interceptorPaths.fallback}`,
+    '[gpg "ssh"]',
+    `  program = ${fixture.interceptorPaths.fallback}`,
+    '',
+  ].join('\n'), { mode: 0o600 });
+  return globalConfig;
 }
-
-function assertSignedGitCommit(repository, environment, publicKey) {
-  const commitObject = gitCommitObject(repository, environment);
-  assert.match(commitObject, /^gpgsig /m, 'Git commit contains an SSH signature header');
-  assert.match(
-    commitObject,
-    new RegExp(`fixture-ssh-signature:${publicKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-    'Git commit signature is bound to the configured resident public key',
-  );
-}
-
-let signerCommand;
-let missingProviderSignerCommand;
-let summary;
-const missingProviderPath = '/definitely-missing-git-mcp-signing-provider';
 
 test.before(() => {
-  signerCommand = path.join(buildSigner(), 'bin/git-mcp-secure-enclave-signer');
-  missingProviderSignerCommand = path.join(
-    buildSignerWithProviderPath(missingProviderPath),
-    'bin/git-mcp-secure-enclave-signer',
+  const fixtureBundle = buildFixtureBundle();
+  fixtureProcessControlCommand = path.join(
+    fixtureBundle,
+    'process-control',
+    'bin',
+    'process-control',
   );
-  buildFixtureBundle();
-  summary = fixtureSummary();
+  fs.accessSync(fixtureProcessControlCommand, fs.constants.X_OK);
+  fixture = fixtureSummary();
+  signerPackage = buildSigner();
+  signerCommand = path.join(signerPackage, 'bin', publicSignerName);
+  workerCommand = path.join(signerPackage, 'libexec', privateWorkerName);
 });
 
-test('packages the exact 20-second supervisor with one-second forced cleanup', () => {
-  const packagedSigner = fs.readFileSync(signerCommand, 'utf8');
-  assert.match(
-    packagedSigner,
-    /^timeout --signal=TERM --kill-after=1s 20s "\$0" --signing-worker "\$@" \|\| timeout_status=\$\?$/m,
-  );
+test('packages only the public Go signer and fixed private worker entrypoints', () => {
+  const binDirectory = path.join(signerPackage, 'bin');
+  const libexecDirectory = path.join(signerPackage, 'libexec');
+
+  assert.deepEqual(fs.readdirSync(binDirectory).sort(), [publicSignerName]);
+  assert.deepEqual(fs.readdirSync(libexecDirectory).sort(), [privateWorkerName]);
+  fs.accessSync(signerCommand, fs.constants.X_OK);
+  fs.accessSync(workerCommand, fs.constants.X_OK);
+
+  for (const forbiddenPublicEntry of [
+    'git-mcp-secure-enclave-signer-launcher',
+    'git-mcp-secure-enclave-signer-supervisor',
+    privateWorkerName,
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(binDirectory, forbiddenPublicEntry)),
+      false,
+      `package must not expose legacy ${forbiddenPublicEntry} in bin`,
+    );
+  }
 });
 
-test('accepts valid unrelated key types and raw CTK table variants before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.rawTableVariants);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const rawIdentityRows = summary.scenarios.rawTableVariants.rawIdentityListings.after
-      .split('\r\n')
-      .slice(1, -1)
-      .filter(Boolean)
-      .map((row) => row.trim().split(/\s+/));
-    const exactMatches = rawIdentityRows.filter(([keyType, hash, protection]) => (
-      keyType === 'p-256-ne'
-      && protection === 'none'
-      && hash.toLowerCase() === state.identity.hash
-    ));
+test('rejects direct private-worker execution before any fixture native call', () => {
+  withScenario(fixture.scenarios.oneResidentExport, (root) => {
+    const state = createSigningState(root);
+    const result = runCommand(
+      workerCommand,
+      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath, 'payload'],
+      { env: fixtureEnvironment(root, state) },
+    );
 
-    assert.equal(state.identity.hash, state.identity.hash.toLowerCase());
-    assert.match(state.identity.hash, /[a-f]/, 'configured hash exercises alphabetic hex normalization');
-    assert.equal(exactMatches.length, 1, 'raw CTK table has exactly one eligible configured identity');
-    assert.equal(exactMatches[0][1], state.identity.hash.toUpperCase());
+    assertNoSpawnError(result);
+    assert.notEqual(result.status, 0, 'direct private worker execution must fail closed');
+    assert.match(result.stderr, /one-shot capability.*public signer/i);
+    assert.deepEqual(readCalls(root), [], 'direct private worker execution must not reach native preflight');
+  });
+});
 
-    const args = ['-Y', 'sign', '-n', 'git', '-f', state.stubPath];
-    const result = runSigner(
+test('passes every non-signing form through with native argv, output, environment, and cwd', () => {
+  withScenario(fixture.scenarios.oneResidentExport, (root) => {
+    const state = createSigningState(root);
+    const cwd = path.join(root, 'working-directory');
+    const allowedSigners = path.join(root, 'allowed-signers');
+    fs.mkdirSync(cwd, { mode: 0o700 });
+    fs.writeFileSync(
+      allowedSigners,
+      `fixture namespaces="git" ${state.residentExport.publicKey}\n`,
+      { mode: 0o600 },
+    );
+    const environment = fixtureEnvironment(root, state, {
+      GIT_MCP_SIGNER_TEST_PASSTHROUGH: 'preserve-this-environment-exactly',
+    });
+    const cases = [
+      {
+        name: 'verification marker values',
+        arguments: [
+          '-Y', 'verify', '-n', '--signing-worker',
+          '-I', '--git-mcp-secure-enclave-signer-worker', '-f', allowedSigners,
+        ],
+      },
+      {
+        name: 'unsupported equals sign form',
+        arguments: ['-Y=sign', '-n', 'git', '-f', state.stubPath, 'payload'],
+      },
+      {
+        name: 'end-of-options sign-looking values',
+        arguments: ['--', '-Y', 'sign', '-n', 'git', '-f', state.stubPath, 'payload'],
+      },
+      {
+        name: 'another Y operation',
+        arguments: ['-Y', 'find-principals', '-f', allowedSigners],
+      },
+      {
+        name: 'selector-looking option values',
+        arguments: [
+          '-n', '-Ysign', '-I', '--signing-worker',
+          '-f', '--git-mcp-secure-enclave-signer-worker', '-O', '-Y', '-Q', 'cipher',
+        ],
+      },
+    ];
+
+    for (const testCase of cases) {
+      resetFixtureRecords(root);
+      assertPassthroughMatchesNative(
+        root,
+        testCase.arguments,
+        environment,
+        fs.realpathSync(cwd),
+        testCase.name,
+      );
+    }
+  });
+});
+
+test('routes supported signing forms through the fixed injected provider without fallback', () => {
+  const forms = [
+    { name: '-Y sign', arguments: ['-Y', 'sign'], namespace: '--signing-worker' },
+    { name: '-Ysign', arguments: ['-Ysign'], namespace: 'sign' },
+  ];
+
+  for (const form of forms) {
+    withScenario(fixture.scenarios.oneResidentExport, (root) => {
+      const state = createSigningState(root);
+      const { agentSocket, environment } = controlledFallbackEnvironment(root, state);
+      const arguments_ = [
+        ...form.arguments,
+        '-n', form.namespace,
+        '-f', state.stubPath,
+        'payload',
+      ];
+      const result = runCommand(signerCommand, arguments_, { env: environment });
+
+      assertNoSpawnError(result);
+      assert.equal(result.status, 0, `${form.name}: ${result.stderr}`);
+      assert.match(result.stdout, /fixture-provider-sign/);
+      assert.match(
+        result.stdout,
+        new RegExp(`fixture-ssh-signature:${escapeRegExp(state.residentExport.publicKey)}`),
+      );
+
+      const calls = readCalls(root);
+      assert.deepEqual(
+        calls.map((call) => [call.tool, call.operation]),
+        [
+          ['sc_auth', 'list'],
+          ['ssh-keygen', 'stub'],
+          ['provider', 'load'],
+          ['ssh-keygen', 'fingerprint'],
+          ['ssh-keygen', 'sign'],
+          ['provider', 'sign'],
+        ],
+        `${form.name}: fixed preflight and signing sequence`,
+      );
+      const [signingCall] = calls.filter(
+        (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
+      );
+      assert.deepEqual(signingCall.argv, arguments_, `${form.name}: signing argv`);
+      assert.equal(
+        signingCall.provider,
+        fixture.nativeToolPaths.provider,
+        `${form.name}: fixed provider`,
+      );
+      assert.equal(signingCall.selector, state.identity.hash, `${form.name}: configured selector`);
+      assert.equal(fs.existsSync(agentSocket), false, `${form.name}: does not require an agent socket`);
+      assert.deepEqual(
+        readJsonLines(root, 'fallback-calls.jsonl'),
+        [],
+        `${form.name}: controlled fallback path was not invoked`,
+      );
+    });
+  }
+});
+
+test('fails a public preflight before delegated signing with an actionable non-secret diagnostic', () => {
+  withScenario(fixture.scenarios.oneResidentExport, (root) => {
+    const state = createSigningState(root);
+    const result = runCommand(
       signerCommand,
-      args,
-      interceptionEnvironment(root, summary, state, agentTrap.socketPath),
+      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath, 'payload'],
+      {
+        env: fixtureEnvironment(root, state, {
+          SSH_SK_PROVIDER: '/controlled/wrong-provider',
+        }),
+      },
     );
 
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /fixture-provider-sign/);
-    assert.match(
-      result.stdout,
-      new RegExp(`fixture-ssh-signature:${state.residentExport.publicKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-    );
+    assertNoSpawnError(result);
+    assert.notEqual(result.status, 0, 'invalid provider configuration must fail closed');
+    assert.match(result.stderr, /SSH_SK_PROVIDER.*restore.*retry/i);
+    assert.doesNotMatch(result.stderr, /BEGIN OPENSSH PRIVATE KEY|fixture-resident-handle/i);
+    assert.deepEqual(readCalls(root), [], 'preflight failure must happen before delegated signing');
+  });
+});
 
-    const calls = readCalls(root);
-    assert.deepEqual(
-      calls.map((call) => [call.tool, call.operation]),
-      [
+test('Git command-scoped Go signing overrides conflicting global values and records a matching SSH signature', () => {
+  withScenario(fixture.scenarios.oneResidentExport, (root) => {
+    const state = createSigningState(root);
+    const globalConfig = writeConflictingGlobalConfig(root);
+    const environment = gitSigningEnvironment(root, state, globalConfig, {
+      GIT_MCP_SIGNING_FIXTURE_GIT_SSH_SIGNATURE: '1',
+    });
+    const repository = createGitRepository(root, environment);
+    const headBefore = gitOutput(['rev-parse', 'HEAD'], repository, environment);
+
+    assert.equal(gitOutput(['config', '--get', 'commit.gpgSign'], repository, environment), 'true');
+    assert.equal(gitOutput(['config', '--get', 'gpg.format'], repository, environment), 'ssh');
+    assert.equal(gitOutput(['config', '--get', 'gpg.ssh.program'], repository, environment), signerCommand);
+    assert.equal(gitOutput(['config', '--get', 'user.signingKey'], repository, environment), state.stubPath);
+
+    const attempts = [
+      { name: 'explicit', arguments: ['commit', '--gpg-sign', '-m', 'signed fixture commit'] },
+      { name: 'retry-shaped', arguments: ['commit', '-m', 'retry-shaped signed fixture commit'] },
+    ];
+    for (const [index, attempt] of attempts.entries()) {
+      if (index > 0) {
+        fs.writeFileSync(path.join(repository, 'retry.txt'), 'retry-shaped signed fixture commit\n');
+        gitOutput(['add', 'retry.txt'], repository, environment);
+      }
+
+      const attemptHead = index === 0 ? headBefore : gitOutput(['rev-parse', 'HEAD'], repository, environment);
+      resetFixtureRecords(root);
+      const commit = runGit(attempt.arguments, repository, environment);
+      assertNoSpawnError(commit);
+      assert.equal(commit.status, 0, `${attempt.name}: ${commit.stderr}`);
+      assert.notEqual(gitOutput(['rev-parse', 'HEAD'], repository, environment), attemptHead);
+
+      const publicKey = escapeRegExp(state.residentExport.publicKey);
+      const rawCommit = gitOutput(['cat-file', '-p', 'HEAD'], repository, environment);
+      assert.match(
+        rawCommit,
+        new RegExp(
+          `gpgsig -----BEGIN SSH SIGNATURE-----\\n fixture-ssh-signature:${publicKey}\\n -----END SSH SIGNATURE-----`,
+        ),
+        `${attempt.name}: commit carries the fixture SSH signature for the configured public key`,
+      );
+      assert.deepEqual(
+        readCalls(root).map((call) => [call.tool, call.operation]),
+        [
+          ['sc_auth', 'list'],
+          ['ssh-keygen', 'stub'],
+          ['provider', 'load'],
+          ['ssh-keygen', 'fingerprint'],
+          ['ssh-keygen', 'sign'],
+          ['provider', 'sign'],
+        ],
+        `${attempt.name}: Git must reach the public Go signer and its fixed native signing path`,
+      );
+
+      const signature = rawCommit.match(
+        /gpgsig (-----BEGIN SSH SIGNATURE-----)\n ([^\n]+)\n (-----END SSH SIGNATURE-----)/,
+      );
+      assert.ok(signature, `${attempt.name}: Git commit contains an SSH signature payload`);
+      const signaturePath = path.join(root, `${attempt.name}.sig`);
+      const allowedSignersPath = path.join(root, `${attempt.name}.allowed-signers`);
+      fs.writeFileSync(signaturePath, `${signature[1]}\n${signature[2]}\n${signature[3]}\n`, { mode: 0o600 });
+      fs.writeFileSync(
+        allowedSignersPath,
+        `${state.identity.label} namespaces="git" ${state.residentExport.publicKey}\n`,
+        { mode: 0o600 },
+      );
+      const verification = runCommand(
+        fixture.nativeToolPaths.sshKeygen,
+        ['-Y', 'verify', '-f', allowedSignersPath, '-I', state.identity.label, '-n', 'git', '-s', signaturePath],
+        { cwd: repository, env: environment },
+      );
+      assertNoSpawnError(verification);
+      assert.equal(verification.status, 0, `${attempt.name}: fixture SSH verification: ${verification.stderr}`);
+    }
+    assert.deepEqual(readJsonLines(root, 'fallback-calls.jsonl'), []);
+    assert.equal(fs.existsSync(environment.SSH_AUTH_SOCK), false, 'Git signing does not require an agent socket');
+  });
+});
+
+test('Git explicit and retry-shaped signing rejection attempts fail closed without fallback', async () => {
+  const root = createScenarioRoot(fixture.scenarios.providerFailure);
+  const state = createSigningState(root);
+  const globalConfig = writeConflictingGlobalConfig(root);
+  const sessionToken = crypto.randomUUID();
+  const agentSocket = path.join(root, 'agent.sock');
+  const agentRecords = path.join(root, 'agent-calls.jsonl');
+  const agentReady = path.join(root, 'agent-ready');
+  const environment = gitSigningEnvironment(root, state, globalConfig, {
+    GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
+    GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
+    SSH_AUTH_SOCK: agentSocket,
+  });
+  let agent;
+
+  await withFixtureFinalization(
+    async () => {
+      agent = spawnAgentSocketTrap({
+        root,
+        sessionToken,
+        socketPath: agentSocket,
+        recordPath: agentRecords,
+        readyPath: agentReady,
+        environment,
+      });
+      assert.ok(agent.child.pid, 'fixture agent socket trap has a PID');
+      await attestAgentSocketTrap(agent);
+
+      const repository = createGitRepository(root, environment);
+      const headBefore = gitOutput(['rev-parse', 'HEAD'], repository, environment);
+      const attempts = [
+        { name: 'explicit', arguments: ['commit', '--gpg-sign', '-m', 'rejected fixture commit'] },
+        { name: 'retry-shaped', arguments: ['commit', '-m', 'retry-shaped rejected fixture commit'] },
+      ];
+
+      for (const attempt of attempts) {
+        resetFixtureRecords(root);
+        const result = runGit(attempt.arguments, repository, environment);
+        assertNoSpawnError(result);
+        assert.notEqual(result.status, 0, `${attempt.name}: signing rejection must fail Git`);
+        assert.match(
+          `${result.stdout}\n${result.stderr}`,
+          /fixture provider rejected signing; first unlock is required/i,
+          `${attempt.name}: Git preserves the actionable native rejection`,
+        );
+        assert.match(
+          `${result.stdout}\n${result.stderr}`,
+          /Apple signing provider rejected the request; complete the first unlock after reboot and retry/i,
+          `${attempt.name}: public signer adds actionable recovery guidance`,
+        );
+        assert.equal(gitOutput(['rev-parse', 'HEAD'], repository, environment), headBefore);
+        assert.equal(gitOutput(['status', '--short'], repository, environment), 'A  commit.txt');
+        assert.deepEqual(
+          readCalls(root).map((call) => [call.tool, call.operation]),
+          [
+            ['sc_auth', 'list'],
+            ['ssh-keygen', 'stub'],
+            ['provider', 'load'],
+            ['ssh-keygen', 'fingerprint'],
+            ['ssh-keygen', 'sign'],
+            ['provider', 'sign'],
+          ],
+          `${attempt.name}: public Go signer reaches the configured provider instead of a fallback`,
+        );
+      }
+
+      assert.deepEqual(readJsonLines(root, 'fallback-calls.jsonl'), []);
+      assert.deepEqual(readJsonLines(root, 'agent-calls.jsonl'), [], 'Git signing rejection does not contact the agent socket');
+    },
+    [async () => {
+      if (agent) await finalizeAgentSocketTrap(agent);
+      else fs.rmSync(root, { recursive: true, force: true });
+    }],
+  );
+});
+
+test('agent trap startup rejects unowned or delayed registration and finalizes through Go', async (t) => {
+  const cases = [
+    {
+      mode: 'raw-pid-before-ready',
+      diagnostic: /socket readiness appeared before durable Go ownership attestation/,
+      trapDiagnostic: /intentionally skipped durable ownership registration/,
+    },
+    {
+      mode: 'delay-ownership-record',
+      diagnostic: /timed out after 2000ms waiting for socket readiness and durable Go ownership attestation/,
+      trapDiagnostic: /intentionally delaying durable ownership registration/,
+    },
+  ];
+
+  for (const testCase of cases) {
+    await t.test(testCase.mode, async () => {
+      const root = createScenarioRoot({
+        ...fixture.scenarios.providerFailure,
+        agentSocketTrap: testCase.mode,
+      });
+      const sessionToken = crypto.randomUUID();
+      const agentSocket = path.join(root, 'agent.sock');
+      const agentRecords = path.join(root, 'agent-calls.jsonl');
+      const agentReady = path.join(root, 'agent-ready');
+      const environment = fixtureEnvironment(root, createSigningState(root), {
+        GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
+        GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
+      });
+      let agent;
+      let cleanupEvidence;
+      let primaryError;
+
+      await assert.rejects(
+        withFixtureFinalization(
+          async () => {
+            agent = spawnAgentSocketTrap({
+              root,
+              sessionToken,
+              socketPath: agentSocket,
+              recordPath: agentRecords,
+              readyPath: agentReady,
+              environment,
+            });
+            await attestAgentSocketTrap(agent);
+          },
+          [async () => {
+            cleanupEvidence = await finalizeAgentSocketTrap(agent);
+          }],
+        ),
+        (error) => {
+          primaryError = error;
+          assert.match(error.message, testCase.diagnostic);
+          assert.match(error.message, testCase.trapDiagnostic);
+          return true;
+        },
+      );
+
+      assert.equal(primaryError.fixtureFinalization, undefined, 'primary startup error remains intact');
+      assert.equal(cleanupEvidence.ownsTrap, true, 'finalizer uses a durable Go-owned trap identity');
+      assert.equal(cleanupEvidence.childExited, true, 'Go cleanup terminates the failed startup trap');
+      assert.deepEqual(
+        cleanupEvidence.finalStates.filter((entry) => entry.state !== 'gone'),
+        [],
+        'Go cleanup verifies that no owned trap record remains live',
+      );
+      assert.equal(fs.existsSync(root), false, 'fixture root is removed only after verified Go cleanup');
+    });
+  }
+});
+
+test('Git bounds every fixture-native hang for explicit and retry-shaped signing attempts', {
+  timeout: 360_000,
+}, () => {
+  const hangCases = [
+    {
+      name: 'CTK listing',
+      scenario: fixture.scenarios.hangCtkListing,
+      calls: [['sc_auth', 'list']],
+    },
+    {
+      name: 'resident stub preflight',
+      scenario: fixture.scenarios.hangPreflightSshKeygenStub,
+      calls: [
+        ['sc_auth', 'list'],
+        ['ssh-keygen', 'stub'],
+      ],
+    },
+    {
+      name: 'provider preflight',
+      scenario: fixture.scenarios.hangPreflightProvider,
+      calls: [
+        ['sc_auth', 'list'],
+        ['ssh-keygen', 'stub'],
+        ['provider', 'load'],
+      ],
+    },
+    {
+      name: 'public-key fingerprint preflight',
+      scenario: fixture.scenarios.hangPreflightSshKeygen,
+      calls: [
+        ['sc_auth', 'list'],
+        ['ssh-keygen', 'stub'],
+        ['provider', 'load'],
+        ['ssh-keygen', 'fingerprint'],
+      ],
+    },
+    {
+      name: 'SSH signing invocation',
+      scenario: fixture.scenarios.workerTree,
+      calls: [
+        ['sc_auth', 'list'],
+        ['ssh-keygen', 'stub'],
+        ['provider', 'load'],
+        ['ssh-keygen', 'fingerprint'],
+        ['ssh-keygen', 'sign'],
+      ],
+    },
+    {
+      name: 'provider signing',
+      scenario: fixture.scenarios.hangProviderSigning,
+      calls: [
         ['sc_auth', 'list'],
         ['ssh-keygen', 'stub'],
         ['provider', 'load'],
@@ -521,931 +1175,174 @@ test('accepts valid unrelated key types and raw CTK table variants before delega
         ['ssh-keygen', 'sign'],
         ['provider', 'sign'],
       ],
-    );
-    assert.deepEqual(
-      calls.find((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').argv,
-      args,
-    );
-    assert.deepEqual(
-      calls.find((call) => call.tool === 'sc_auth' && call.operation === 'list').argv,
-      ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
-    );
-    assert.equal(
-      calls.find((call) => call.tool === 'provider' && call.operation === 'sign').provider,
-      summary.nativeToolPaths.provider,
-    );
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('records a bare PATH fallback attempt while signer paths remain fallback-free', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const environment = interceptionEnvironment(root, summary, state, agentTrap.socketPath);
-    const fallbackResult = runBareInterceptedCommand(
-      'op-ssh-sign',
-      ['bare-fallback-contract'],
-      environment,
-    );
-
-    assert.equal(fallbackResult.status, 97);
-    assert.match(fallbackResult.stderr, /fixture fallback signer invoked/);
-    const [fallbackAttempt] = readOptionalJsonLines(root, 'fallback-calls.jsonl');
-    assert.equal(fallbackAttempt.kind, 'fallback-attempt');
-    assert.equal(fallbackAttempt.command, 'op-ssh-sign');
-    assert.deepEqual(fallbackAttempt.argv, ['bare-fallback-contract']);
-    assert.match(fallbackAttempt.pid, /^\d+$/);
-
-    fs.rmSync(path.join(root, 'fallback-calls.jsonl'));
-    const signerResult = runSigner(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      environment,
-    );
-
-    assert.equal(signerResult.status, 0, signerResult.stderr);
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('does not treat a biometric row for the configured hash as usable identity', async () => {
-  const root = createScenarioRoot(summary.scenarios.rawBiometricConfiguredIdentity);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /does not match exactly one resident identity/);
-    assert.doesNotMatch(result.stderr, /malformed CTK identity state/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a malformed CTK identity row before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.rawMalformedIdentity);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /malformed CTK identity state/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a CTK identity row without usable status before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.rawInvalidStatusIdentity);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /malformed CTK identity state/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('passes non-signing ssh-keygen operations through unchanged', () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const args = ['-Y', 'verify', '-n', 'git', '-f', 'verification-key'];
-    const result = runSigner(
-      signerCommand,
-      args,
-      {
-        ...process.env,
-        GIT_MCP_SIGNING_FIXTURE_ROOT: root,
-        SSH_SK_PROVIDER: '/agent-must-not-be-used',
-      },
-    );
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, 'fixture-ssh-keygen-verified\n');
-    assert.equal(result.stderr, 'fixture-native-stderr\n');
-    const [call] = readCalls(root);
-    assert.equal(readCalls(root).length, 1);
-    assert.equal(call.tool, 'ssh-keygen');
-    assert.equal(call.operation, 'verify');
-    assert.deepEqual(call.argv, args);
-    assert.equal(call.provider, '/agent-must-not-be-used');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('preserves native output and every argument for a non-signing passthrough operation', () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const args = ['-Q', 'cipher', '-f', '/tmp/key with spaces', '--', 'literal-value'];
-    const result = runSigner(
-      signerCommand,
-      args,
-      {
-        ...process.env,
-        GIT_MCP_SIGNING_FIXTURE_ROOT: root,
-        SSH_SK_PROVIDER: '/agent-must-not-be-used',
-      },
-    );
-
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, 'fixture-ssh-keygen-passthrough\n');
-    assert.equal(result.stderr, 'fixture-native-stderr\n');
-    const [call] = readCalls(root);
-    assert.equal(readCalls(root).length, 1);
-    assert.equal(call.tool, 'ssh-keygen');
-    assert.equal(call.operation, 'passthrough');
-    assert.deepEqual(call.argv, args);
-    assert.equal(call.provider, '/agent-must-not-be-used');
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('fails closed when signer state or provider configuration is missing', async () => {
-  const cases = [
-    {
-      name: 'provider',
-      remove: 'SSH_SK_PROVIDER',
-      diagnostic: /SSH_SK_PROVIDER/,
-    },
-    {
-      name: 'selector',
-      remove: 'KEYCHAIN_CERTIFICATES',
-      diagnostic: /KEYCHAIN_CERTIFICATES/,
-    },
-    {
-      name: 'CTK hash',
-      remove: 'GIT_MCP_SIGNING_CTK_HASH',
-      diagnostic: /CTK identity hash/,
-    },
-    {
-      name: 'public key',
-      remove: 'GIT_MCP_SIGNING_PUBLIC_KEY',
-      diagnostic: /public key/,
-    },
-    {
-      name: 'fingerprint',
-      remove: 'GIT_MCP_SIGNING_FINGERPRINT',
-      diagnostic: /fingerprint/,
-    },
-    {
-      name: 'resident stub path',
-      remove: 'GIT_MCP_SIGNING_STUB',
-      diagnostic: /resident stub path/,
     },
   ];
+  const coveredHangs = new Set(hangCases.flatMap(({ scenario }) => scenario.hangs));
+  const supportedHangs = new Set(
+    Object.values(fixture.scenarios).flatMap((scenario) => scenario.hangs || []),
+  );
+  assert.deepEqual([...coveredHangs].sort(), [...supportedHangs].sort());
 
-  for (const { name, remove, diagnostic } of cases) {
-    const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-    try {
-      const state = createSigningState(root, summary);
-      const result = await runSignerWithInterception(
-        signerCommand,
-        ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-        root,
-        summary,
-        state,
-        (environment) => withoutEnvironment(environment, remove),
-      );
-
-      assert.notEqual(result.status, 0, `${name} must fail nonzero`);
-      assert.match(result.stderr, diagnostic, `${name} diagnostic`);
-      assertNoDelegatedSign(root);
-      assertNoAgentOrFallback(root);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  }
-});
-
-test('rejects malformed configured identity metadata before delegated signing', async () => {
-  const cases = [
-    {
-      name: 'CTK hash',
-      change: (environment) => {
-        environment.GIT_MCP_SIGNING_CTK_HASH = 'not-a-hash';
-      },
-      diagnostic: /CTK identity hash.*malformed/,
-    },
-    {
-      name: 'public key',
-      change: (environment) => {
-        environment.GIT_MCP_SIGNING_PUBLIC_KEY = 'not-a-public-key';
-      },
-      diagnostic: /public key.*malformed/,
-    },
-    {
-      name: 'fingerprint',
-      change: (environment) => {
-        environment.GIT_MCP_SIGNING_FINGERPRINT = 'not-a-fingerprint';
-      },
-      diagnostic: /fingerprint.*malformed/,
-    },
-  ];
-
-  for (const { name, change, diagnostic } of cases) {
-    const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-    try {
-      const state = createSigningState(root, summary);
-      const result = await runSignerWithInterception(
-        signerCommand,
-        ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-        root,
-        summary,
-        state,
-        (environment) => {
-          change(environment);
-          return environment;
-        },
-      );
-
-      assert.notEqual(result.status, 0, `${name} must fail nonzero`);
-      assert.match(result.stderr, diagnostic, `${name} diagnostic`);
-      assertNoDelegatedSign(root);
-      assertNoAgentOrFallback(root);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  }
-});
-
-test('rejects missing or ambiguous resident-stub arguments before delegated signing', async () => {
-  const cases = [
-    ['-Y', 'sign', '-n', 'git'],
-    ['-Y', 'sign', '-n', 'git', '-f'],
-    ['-Y', 'sign', '-n', 'git', '-f', 'first-stub', '-f', 'second-stub'],
-  ];
-
-  for (const args of cases) {
-    const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-    try {
-      const state = createSigningState(root, summary);
-      const result = await runSignerWithInterception(
-        signerCommand,
-        args,
-        root,
-        summary,
-        state,
-      );
-
-      assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /exactly one -f|requires the configured resident stub/);
-      assertNoDelegatedSign(root);
-      assertNoAgentOrFallback(root);
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  }
-});
-
-test('rejects a missing resident public key before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    fs.rmSync(`${state.stubPath}.pub`);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /resident public key/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a malformed resident public key before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    fs.writeFileSync(`${state.stubPath}.pub`, 'not-a-public-key\n', { mode: 0o644 });
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /resident public key .* malformed/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a provider path that is not the packaged provider', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-      (environment) => ({ ...environment, SSH_SK_PROVIDER: '/wrong/provider' }),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /SSH_SK_PROVIDER/);
-    assert.match(result.stderr, new RegExp(summary.nativeToolPaths.provider.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects an absent packaged provider path before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      missingProviderSignerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-      (environment) => ({ ...environment, SSH_SK_PROVIDER: missingProviderPath }),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(`signing provider ${missingProviderPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is absent`));
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a selector that does not equal the configured CTK hash', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-      (environment) => ({ ...environment, KEYCHAIN_CERTIFICATES: '2'.repeat(40) }),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /KEYCHAIN_CERTIFICATES/);
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects an ssh-keygen -f path that differs from the configured stub', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', `${state.stubPath}.other`],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /-f/);
-    assert.match(result.stderr, new RegExp(state.stubPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a missing resident stub before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    fs.rmSync(state.stubPath);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, new RegExp(state.stubPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a non-empty malformed resident stub before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    fs.writeFileSync(state.stubPath, 'not-a-resident-stub\n', { mode: 0o600 });
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /resident stub|malformed/i);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a public-key mismatch before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-      (environment) => ({
-        ...environment,
-        GIT_MCP_SIGNING_PUBLIC_KEY: 'sk-ecdsa-sha2-nistp256@openssh.com AAAAwrong',
-      }),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /public key/i);
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a fingerprint mismatch before delegated signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-      (environment) => ({ ...environment, GIT_MCP_SIGNING_FINGERPRINT: 'SHA256:wrong' }),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /fingerprint/i);
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a resident stub whose native public key does not match the configured key', async () => {
-  const root = createScenarioRoot(summary.scenarios.stubKeyMismatch);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /resident stub .* does not match configured public key/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('rejects a native fingerprint that does not match the configured fingerprint', async () => {
-  const root = createScenarioRoot(summary.scenarios.fingerprintOutputMismatch);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /resident fingerprint .* does not match configured fingerprint/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('reports first-unlock guidance when CTK identity preflight is rejected', async () => {
-  const root = createScenarioRoot(summary.scenarios.ctkListingFailure);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /first unlock after reboot/);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('fails closed when the configured CTK identity is absent', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  try {
-    const state = createSigningState(root, summary);
-    fs.rmSync(path.join(root, 'identity-snapshot'));
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /identity|first unlock|bootstrap|recover/i);
-    assertNoDelegatedSign(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('fails closed when duplicate raw CTK rows match the configured hash', async () => {
-  const root = createScenarioRoot(summary.scenarios.rawDuplicateIdentity);
-  try {
-    const state = createSigningState(root, summary);
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /exactly one|ambiguous|identity/i);
-    assertNoDelegatedSign(root);
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('fails closed on provider rejection without fallback or agent signing', async () => {
-  const root = createScenarioRoot(summary.scenarios.providerFailure);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const startedAt = Date.now();
-    const result = runSigner(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      interceptionEnvironment(root, summary, state, agentTrap.socketPath),
-    );
-
-    assert.notEqual(result.status, 0);
-    assert.ok(Date.now() - startedAt < 5_000, 'provider rejection should fail without waiting for the deadline');
-    assert.match(result.stderr, /provider rejected|first unlock/i);
-    const calls = readCalls(root);
-    assert.equal(calls.filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length, 1);
-    assert.equal(calls.filter((call) => call.tool === 'provider' && call.operation === 'sign').length, 1);
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-async function assertSignerTimeout(scenarioName, delegatedSignExpected) {
-  const root = createScenarioRoot(summary.scenarios[scenarioName]);
-  try {
-    const state = createSigningState(root, summary);
-    const startedAt = Date.now();
-    const result = await runSignerWithInterception(
-      signerCommand,
-      ['-Y', 'sign', '-n', 'git', '-f', state.stubPath],
-      root,
-      summary,
-      state,
-    );
-    const elapsed = Date.now() - startedAt;
-
-    assert.notEqual(result.status, 0, `${scenarioName} must fail nonzero`);
-    assert.ok(elapsed < 25_000, `${scenarioName} exceeded bounded deadline: ${elapsed}ms`);
-    assert.match(result.stderr, /timed out.*20 seconds|20-second.*timed out/i);
-    await assertWorkerTreeGone(root);
-    if (delegatedSignExpected) {
-      assert.equal(
-        readCalls(root).filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length,
-        1,
-        `${scenarioName} reaches exactly one delegated sign before the provider timeout`,
-      );
-    } else {
-      assertNoDelegatedSign(root);
-    }
-    assertNoAgentOrFallback(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
-
-test('contains every signing preflight and provider timeout within one worker deadline', async () => {
-  for (const [scenarioName, delegatedSignExpected] of [
-    ['hangCtkListing', false],
-    ['hangPreflightProvider', false],
-    ['hangPreflightSshKeygen', false],
-    ['hangPreflightSshKeygenStub', false],
-    ['hangProviderSigning', true],
-    ['hangAllPreflightPhases', false],
-  ]) {
-    await assertSignerTimeout(scenarioName, delegatedSignExpected);
-  }
-});
-
-test('Git uses the scoped signer for explicit and retry-shaped commit attempts', async () => {
-  const root = createScenarioRoot(summary.scenarios.oneResidentExport);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const unrelatedEnvironment = globalGitEnvironment(
-      root,
-      state,
-      globalConfig,
-      agentTrap.socketPath,
-    );
-    const environment = scopedGitEnvironment(unrelatedEnvironment, state);
-    const unrelatedResult = runGit(
-      ['config', '--global', '--get', 'gpg.ssh.program'],
-      root,
-      unrelatedEnvironment,
-    );
-    assert.equal(unrelatedResult.status, 0, unrelatedResult.stderr);
-    assert.equal(
-      unrelatedResult.stdout.trim(),
-      summary.interceptorPaths.fallback,
-      'an unrelated Git process retains the global signer',
-    );
-    const repository = createGitRepository(root, environment);
-
-    for (const [explicitSigning, fileName] of [
-      [true, 'explicit-sign.txt'],
-      [false, 'retry-shaped-sign.txt'],
+  for (const hangCase of hangCases) {
+    for (const attempt of [
+      { name: 'explicit', arguments: ['commit', '--gpg-sign', '-m', 'timeout fixture commit'] },
+      { name: 'retry-shaped', arguments: ['commit', '-m', 'retry-shaped timeout fixture commit'] },
     ]) {
-      const headBefore = gitHead(repository, environment);
-      stageGitChange(repository, fileName, environment);
-      const result = runGitCommitAttempt(
-        repository,
-        environment,
-        explicitSigning,
-        `signed ${fileName}`,
-      );
+      withScenario(hangCase.scenario, (root) => {
+        const state = createSigningState(root);
+        const globalConfig = writeConflictingGlobalConfig(root);
+        const sessionToken = crypto.randomUUID();
+        const environment = gitSigningEnvironment(root, state, globalConfig, {
+          GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
+          GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
+        });
+        const repository = createGitRepository(root, environment);
+        const headBefore = gitOutput(['rev-parse', 'HEAD'], repository, environment);
+        let primaryError;
 
-      assert.equal(result.status, 0, result.stderr);
-      assert.ok(result.elapsedMs < 5_000, `successful commit was unexpectedly slow: ${result.elapsedMs}ms`);
-      const headAfter = gitHead(repository, environment);
-      assert.notEqual(headAfter, headBefore, `${fileName} advances HEAD`);
-      assertSignedGitCommit(repository, environment, state.residentExport.publicKey);
+        try {
+          resetFixtureRecords(root);
+          const started = process.hrtime.bigint();
+          const result = runGit(attempt.arguments, repository, environment);
+          const elapsedMilliseconds = Number(process.hrtime.bigint() - started) / 1_000_000;
+
+          assertNoSpawnError(result);
+          assert.notEqual(result.status, 0, `${hangCase.name}/${attempt.name}: timeout must fail Git`);
+          assert.match(
+            `${result.stdout}\n${result.stderr}`,
+            /immutable 20-second work deadline/i,
+            `${hangCase.name}/${attempt.name}: public signer reports its timeout taxonomy`,
+          );
+          assert.ok(
+            elapsedMilliseconds <= 22_000,
+            `${hangCase.name}/${attempt.name}: public Git attempt exceeded the 22-second ceiling (${elapsedMilliseconds.toFixed(1)}ms)`,
+          );
+          assert.equal(gitOutput(['rev-parse', 'HEAD'], repository, environment), headBefore);
+          assert.equal(gitOutput(['status', '--short'], repository, environment), 'A  commit.txt');
+          assert.deepEqual(
+            readCalls(root).map((call) => [call.tool, call.operation]),
+            hangCase.calls,
+            `${hangCase.name}/${attempt.name}: terminal fixture tools receive only the expected calls`,
+          );
+
+          const groupDirectory = path.join(root, 'worker-groups');
+          const manifests = fs.readdirSync(groupDirectory)
+            .filter((fileName) => fileName.endsWith('.json'))
+            .map((fileName) => JSON.parse(fs.readFileSync(path.join(groupDirectory, fileName), 'utf8')));
+          assert.equal(manifests.length, 1, `${hangCase.name}/${attempt.name}: one owned worker group`);
+          for (const manifest of manifests) {
+            assert.equal(manifest.kind, 'worker-group');
+            assert.equal(manifest.sessionToken, sessionToken);
+            assert.equal(manifest.session, manifest.processGroup);
+            assert.ok(manifest.members.length >= 2, 'fixture records worker and descendant ownership');
+            const group = runCommand(fixtureProcessControlCommand, ['group', String(manifest.processGroup)]);
+            assertNoSpawnError(group);
+            assert.equal(group.status, 3, `${hangCase.name}/${attempt.name}: owned worker group survives signer return: ${group.stderr}`);
+          }
+
+          const states = runCommand(fixtureProcessControlCommand, [
+            'states', '--root', root, '--token', sessionToken,
+          ]);
+          assertNoSpawnError(states);
+          assert.equal(states.status, 0, states.stderr);
+          assert.deepEqual(
+            JSON.parse(states.stdout).filter((entry) => entry.state !== 'gone'),
+            [],
+            `${hangCase.name}/${attempt.name}: no owned fixture process remains`,
+          );
+          assert.deepEqual(readJsonLines(root, 'fallback-calls.jsonl'), []);
+          assert.equal(fs.existsSync(environment.SSH_AUTH_SOCK), false, 'timeout path does not require an agent socket');
+        } catch (error) {
+          primaryError = error;
+          throw error;
+        } finally {
+          const cleanup = runCommand(fixtureProcessControlCommand, [
+            'cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000',
+          ]);
+          if (primaryError) {
+            if (cleanup.error || cleanup.status !== 0) {
+              primaryError.fixtureFinalization = cleanup.error?.message || cleanup.stderr;
+            }
+          } else {
+            assertNoSpawnError(cleanup);
+            assert.equal(cleanup.status, 0, cleanup.stderr);
+          }
+        }
+      });
     }
-
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-    const signCalls = readCalls(root).filter(
-      (call) => call.tool === 'ssh-keygen' && call.operation === 'sign',
-    );
-    assert.equal(signCalls.length, 2, 'both Git command forms invoke the dedicated signer');
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('Git signing rejection fails both upstream attempts without creating an unsigned commit', async () => {
-  const root = createScenarioRoot(summary.scenarios.providerFailure);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const environment = scopedGitEnvironment(
-      globalGitEnvironment(root, state, globalConfig, agentTrap.socketPath),
-      state,
-    );
-    const repository = createGitRepository(root, environment);
-    const headBefore = gitHead(repository, environment);
-    stageGitChange(repository, 'rejected-sign.txt', environment);
-
-    for (const explicitSigning of [true, false]) {
-      const result = runGitCommitAttempt(
-        repository,
-        environment,
-        explicitSigning,
-        explicitSigning ? 'rejected explicit sign' : 'rejected retry sign',
-      );
-      const diagnostics = `${result.stdout}\n${result.stderr}`;
-
-      assert.notEqual(result.status, 0, `${result.args.join(' ')} must fail closed`);
-      assert.ok(result.elapsedMs < 5_000, `provider rejection waited too long: ${result.elapsedMs}ms`);
-      assert.match(diagnostics, /provider rejected|first unlock/i);
-      assert.equal(gitHead(repository, environment), headBefore, 'rejected signing leaves HEAD unchanged');
-    }
-
-    assert.equal(
-      gitCommitObject(repository, environment).includes('rejected explicit sign'),
-      false,
-      'the failed explicit attempt did not create a commit',
-    );
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-    assert.equal(
-      readCalls(root).filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length,
-      2,
-      'both upstream attempts reached the dedicated signer',
-    );
-    assert.equal(
-      readCalls(root).filter((call) => call.tool === 'provider' && call.operation === 'sign').length,
-      2,
-      'both upstream attempts reached the rejecting provider',
-    );
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-async function assertGitTimeoutAttempts({
-  scenarioName,
-  terminalTool,
-  terminalOperation,
-  delegatedSignExpected,
-}) {
-  const root = createScenarioRoot(summary.scenarios[scenarioName]);
-  let agentTrap;
-  try {
-    const state = createSigningState(root, summary);
-    const globalConfig = createGitGlobalConfig(root, summary.interceptorPaths.fallback);
-    agentTrap = await startAgentSocketTrap(root, summary);
-    const environment = scopedGitEnvironment(
-      globalGitEnvironment(root, state, globalConfig, agentTrap.socketPath),
-      state,
-    );
-    const repository = createGitRepository(root, environment);
-    const headBefore = gitHead(repository, environment);
-    stageGitChange(repository, `${scenarioName}.txt`, environment);
-
-    for (const explicitSigning of [true, false]) {
-      const result = runGitCommitAttempt(
-        repository,
-        environment,
-        explicitSigning,
-        `${scenarioName} timeout`,
-      );
-      const diagnostics = `${result.stdout}\n${result.stderr}`;
-
-      assert.notEqual(result.status, 0, `${scenarioName} attempt must fail nonzero`);
-      assert.ok(
-        result.elapsedMs < signingDeadlineMs + forcedCleanupGraceMs + schedulingGraceMs,
-        `${scenarioName} ${explicitSigning ? 'explicit' : 'retry'} attempt exceeded the 20-second deadline plus cleanup and scheduling grace: ${result.elapsedMs}ms`,
-      );
-      assert.match(diagnostics, /timed out.*20 seconds|20-second.*timed out/i);
-      assert.equal(gitHead(repository, environment), headBefore, `${scenarioName} leaves HEAD unchanged`);
-    }
-
-    const calls = readCalls(root);
-    assert.equal(
-      calls.filter((call) => (
-        call.tool === terminalTool && call.operation === terminalOperation
-      )).length,
-      2,
-      `${scenarioName} reaches ${terminalTool} ${terminalOperation} in both attempts`,
-    );
-    assert.equal(
-      calls.filter((call) => call.tool === 'ssh-keygen' && call.operation === 'sign').length,
-      delegatedSignExpected ? 2 : 0,
-      `${scenarioName} ${delegatedSignExpected ? 'reaches' : 'stops before'} delegated signing`,
-    );
-    await assertWorkerTreeGone(root, 2);
-    await agentTrap.stop();
-    agentTrap = null;
-    assertNoAgentOrFallback(root);
-  } finally {
-    if (agentTrap) await agentTrap.stop();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
-
-test('Git timeout paths stay bounded and descendant-free across both upstream attempts', {
-  timeout: 600_000,
+test('a failed assertion finalizes a fixture-native worker group through Go process control', {
+  timeout: 30_000,
 }, async () => {
-  for (const scenario of [
-    {
-      scenarioName: 'hangCtkListing',
-      terminalTool: 'sc_auth',
-      terminalOperation: 'list',
-      delegatedSignExpected: false,
-    },
-    {
-      scenarioName: 'hangPreflightProvider',
-      terminalTool: 'provider',
-      terminalOperation: 'load',
-      delegatedSignExpected: false,
-    },
-    {
-      scenarioName: 'hangPreflightSshKeygen',
-      terminalTool: 'ssh-keygen',
-      terminalOperation: 'fingerprint',
-      delegatedSignExpected: false,
-    },
-    {
-      scenarioName: 'hangPreflightSshKeygenStub',
-      terminalTool: 'ssh-keygen',
-      terminalOperation: 'stub',
-      delegatedSignExpected: false,
-    },
-    {
-      scenarioName: 'hangProviderSigning',
-      terminalTool: 'provider',
-      terminalOperation: 'sign',
-      delegatedSignExpected: true,
-    },
-  ]) {
-    await assertGitTimeoutAttempts(scenario);
+  const root = createScenarioRoot(fixture.scenarios.hangCtkListing);
+  const state = createSigningState(root);
+  const sessionToken = crypto.randomUUID();
+  const environment = fixtureEnvironment(root, state, {
+    GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
+    GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
+  });
+  let child;
+  let cleanupSucceeded = false;
+
+  try {
+    await assert.rejects(
+      (async () => {
+        let primaryError;
+        try {
+          child = childProcess.spawn(
+            fixture.nativeToolPaths.scAuth,
+            ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
+            { detached: true, env: environment, stdio: 'ignore' },
+          );
+          assert.ok(child.pid, 'fixture-native CTK listing has a PID');
+          const groups = runCommand(fixtureProcessControlCommand, [
+            'wait-groups', '--root', root, '--token', sessionToken, '--count', '1', '--timeout-ms', '2_000',
+          ]);
+          assertNoSpawnError(groups);
+          assert.equal(groups.status, 0, groups.stderr);
+          assert.fail('deliberate assertion after fixture-native worker startup');
+        } catch (error) {
+          primaryError = error;
+          throw error;
+        } finally {
+          const cleanup = await new Promise((resolve) => {
+            childProcess.execFile(
+              fixtureProcessControlCommand,
+              ['cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000'],
+              { encoding: 'utf8' },
+              (error, stdout, stderr) => resolve({ error, stdout, stderr }),
+            );
+          });
+          cleanupSucceeded = cleanup.error === null;
+          if (primaryError && cleanup.error) {
+            primaryError.fixtureFinalization = cleanup.stderr || cleanup.error.message;
+          } else if (cleanup.error) {
+            throw cleanup.error;
+          }
+        }
+      })(),
+      /deliberate assertion after fixture-native worker startup/,
+    );
+    assert.equal(cleanupSucceeded, true, 'Go process-control cleanup runs after a failed assertion');
+    const states = runCommand(fixtureProcessControlCommand, [
+      'states', '--root', root, '--token', sessionToken,
+    ]);
+    assertNoSpawnError(states);
+    assert.equal(states.status, 0, states.stderr);
+    assert.deepEqual(JSON.parse(states.stdout).filter((entry) => entry.state !== 'gone'), []);
+  } finally {
+    if (!cleanupSucceeded && child) {
+      await new Promise((resolve) => {
+        childProcess.execFile(
+          fixtureProcessControlCommand,
+          ['cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000'],
+          { encoding: 'utf8' },
+          () => resolve(),
+        );
+      });
+    }
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

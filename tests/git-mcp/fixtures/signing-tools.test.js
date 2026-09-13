@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
+const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
@@ -9,6 +11,9 @@ const path = require('node:path');
 const test = require('node:test');
 
 const repoRoot = path.resolve(__dirname, '../../..');
+const legacyProcessIdentitySourcePath = path.join(__dirname, 'process-identity.c');
+const legacyProcessOwnershipPath = path.join(__dirname, 'process-ownership.js');
+const processControlSourcePath = path.join(__dirname, 'process-control_darwin.go');
 const nixTimeoutMs = 600_000;
 const harnessResultsFile = 'harness-results.jsonl';
 
@@ -28,6 +33,31 @@ function nixEvalJson(expression) {
       },
     },
   ));
+}
+
+function nixBuild(expression) {
+  return childProcess.execFileSync(
+    'nix',
+    [
+      'build',
+      '--no-link',
+      '--print-out-paths',
+      '--impure',
+      '--expr',
+      expression,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: nixTimeoutMs,
+      maxBuffer: 64 * 1024 * 1024,
+      env: {
+        ...process.env,
+        NIX_CONFIG: 'experimental-features = nix-command flakes',
+      },
+    },
+  ).trim();
 }
 
 function fixtureSummary() {
@@ -98,6 +128,179 @@ function buildFixtureBundle() {
     },
   ).trim();
 }
+
+function processControlCommand(bundle) {
+  return path.join(bundle, 'process-control', 'bin', 'process-control');
+}
+
+function runProcessControl(command, arguments_) {
+  const result = childProcess.spawnSync(command, arguments_, { encoding: 'utf8' });
+  assert.equal(result.error, undefined, result.error?.message);
+  return result;
+}
+
+function runProcessControlAsync(command, arguments_) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(command, arguments_, { encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+let fixtureProcessControlCommand;
+
+function createOwnershipContext() {
+  assert.ok(fixtureProcessControlCommand, 'process-control fixture is required');
+  return {
+    processControlCommand: fixtureProcessControlCommand,
+    sessionToken: crypto.randomUUID(),
+  };
+}
+
+test.before(() => {
+  fixtureProcessControlCommand = processControlCommand(buildFixtureBundle());
+  fs.accessSync(fixtureProcessControlCommand, fs.constants.X_OK);
+});
+
+test('exports a Go process-control fixture with validated group cleanup', {
+  timeout: 60_000,
+}, async () => {
+  const bundle = buildFixtureBundle();
+  const control = processControlCommand(bundle);
+  const root = createScenarioRoot({});
+  const sessionToken = crypto.randomUUID();
+  const expectedExecutable = fs.realpathSync(process.execPath);
+  let worker;
+  let primaryError;
+
+  try {
+    assert.equal(fs.existsSync(processControlSourcePath), true, 'fixture process control is Go source');
+    assert.ok(fs.existsSync(control), 'fixture bundle exports process-control');
+
+    worker = childProcess.spawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => process.exit(0), 10_000);'],
+      { detached: true, stdio: 'ignore' },
+    );
+    assert.ok(worker.pid, 'fixture worker has a PID');
+
+    const identity = runProcessControl(control, ['inspect', String(worker.pid)]);
+    assert.equal(identity.status, 0, identity.stderr);
+    const fields = identity.stdout.trim().split('\t');
+    assert.equal(fields.length, 5, identity.stdout);
+    assert.equal(Number(fields[0]), worker.pid);
+    assert.equal(fields[4], expectedExecutable);
+
+    const session = runProcessControl(control, ['session', String(worker.pid)]);
+    assert.equal(session.status, 0, session.stderr);
+    assert.equal(session.stdout.trim(), fields[1], 'detached fixture worker owns its session');
+
+    const group = runProcessControl(control, ['group', fields[1]]);
+    assert.equal(group.status, 0, group.stderr);
+    assert.ok(group.stdout.split('\n').includes(identity.stdout.trim()), 'group includes the exact worker identity');
+
+    const record = runProcessControl(control, [
+      'record',
+      '--root', root,
+      '--token', sessionToken,
+      '--pid', String(worker.pid),
+      '--expected-executable', expectedExecutable,
+      '--role', 'fixture-contract-worker',
+    ]);
+    assert.equal(record.status, 0, record.stderr);
+    const capture = runProcessControl(control, [
+      'capture-group',
+      '--root', root,
+      '--token', sessionToken,
+      '--anchor', String(worker.pid),
+      '--role', 'fixture-contract-group-member',
+    ]);
+    assert.equal(capture.status, 0, capture.stderr);
+
+    const foreignCleanup = runProcessControl(control, [
+      'cleanup', '--root', root, '--token', `${sessionToken}-foreign`, '--timeout-ms', '100',
+    ]);
+    assert.notEqual(foreignCleanup.status, 0, 'a foreign token must not clean an owned worker');
+    assert.match(foreignCleanup.stderr, /foreign .*token/i);
+    assert.equal(runProcessControl(control, ['inspect', String(worker.pid)]).status, 0);
+
+    const ownershipDirectory = path.join(root, 'owned-processes');
+    const staleRecordPath = fs.readdirSync(ownershipDirectory)
+      .map((fileName) => path.join(ownershipDirectory, fileName))
+      .find((filePath) => JSON.parse(fs.readFileSync(filePath, 'utf8')).role === 'fixture-contract-worker');
+    assert.ok(staleRecordPath, 'the Go CLI recorded the direct worker identity');
+    const staleRecord = JSON.parse(fs.readFileSync(staleRecordPath, 'utf8'));
+    staleRecord.startMicroseconds = (staleRecord.startMicroseconds + 1) % 1_000_000;
+    fs.writeFileSync(staleRecordPath, `${JSON.stringify(staleRecord)}\n`, { mode: 0o600 });
+
+    const staleCleanup = runProcessControl(control, [
+      'cleanup', '--root', root, '--token', sessionToken, '--pid', String(worker.pid), '--timeout-ms', '100',
+    ]);
+    assert.notEqual(staleCleanup.status, 0, 'stale identity metadata must not signal a reused PID');
+    assert.match(staleCleanup.stderr, /refusing to signal/i);
+    assert.equal(runProcessControl(control, ['inspect', String(worker.pid)]).status, 0);
+    fs.rmSync(staleRecordPath);
+
+    await runProcessControlAsync(control, [
+      'cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000',
+    ]);
+    const absent = await inspectAfterChildExit(
+      worker,
+      () => runProcessControl(control, ['inspect', String(worker.pid)]),
+    );
+    assert.equal(absent.status, 3, absent.stderr);
+    const absentGroup = runProcessControl(control, ['group', fields[1]]);
+    assert.equal(absentGroup.status, 3, absentGroup.stderr);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    const finalizationErrors = [];
+    if (worker) {
+      if (fs.existsSync(control)) {
+        try {
+          await runProcessControlAsync(control, [
+            'cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000',
+          ]);
+        } catch (error) {
+          finalizationErrors.push(error);
+        }
+      }
+      try {
+        assert.equal(
+          await waitForChildExit(worker, 2_000),
+          true,
+          'fixture worker child did not exit during finalization',
+        );
+      } catch (error) {
+        finalizationErrors.push(error);
+      }
+    }
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch (error) {
+      finalizationErrors.push(error);
+    }
+    if (primaryError) {
+      if (finalizationErrors.length > 0) primaryError.finalizationErrors = finalizationErrors;
+    } else if (finalizationErrors.length === 1) {
+      throw finalizationErrors[0];
+    } else if (finalizationErrors.length > 1) {
+      throw new AggregateError(finalizationErrors, 'fixture process-control finalization failed');
+    }
+  }
+});
+
+test('fixture process control leaves no legacy C or JavaScript ownership helper', () => {
+  assert.equal(fs.existsSync(legacyProcessIdentitySourcePath), false);
+  assert.equal(fs.existsSync(legacyProcessOwnershipPath), false);
+});
 
 function assertLoggedCall(root, tool, operation) {
   const calls = fs.readFileSync(path.join(root, 'calls.jsonl'), 'utf8')
@@ -243,10 +446,14 @@ function installResidentExport(root, scenario, residentExport = scenario.residen
   return { stubPath, publicPath: `${stubPath}.pub` };
 }
 
-function fixtureEnvironment(root) {
+function fixtureEnvironment(root, ownership) {
   return {
     ...process.env,
     GIT_MCP_SIGNING_FIXTURE_ROOT: root,
+    ...(ownership ? {
+      GIT_MCP_PROCESS_IDENTITY_HELPER: ownership.processControlCommand,
+      GIT_MCP_OWNERSHIP_TOKEN: ownership.sessionToken,
+    } : {}),
   };
 }
 
@@ -262,39 +469,140 @@ async function waitForFile(filePath) {
   assert.ok(fs.existsSync(filePath), `expected fixture file ${filePath}`);
 }
 
-async function waitForPidGone(pid) {
-  const deadline = Date.now() + 2_000;
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if (error.code === 'ESRCH') return;
-      throw error;
-    }
-    await wait(10);
-  }
-  assert.fail(`fixture descendant ${pid} survived process-group termination`);
+function readProcessTree(filePath) {
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => line.split(' ').map(Number))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
 }
 
-function cleanupProcessGroup(pid) {
-  try {
-    process.kill(-pid, 'SIGKILL');
-    return 'signalled';
-  } catch (error) {
-    if (error.code === 'ESRCH') return 'already-gone';
-    if (error.code === 'EPERM') return 'not-signalable';
-    throw error;
+async function waitForProcessTree(filePath, minimumPids) {
+  const deadline = Date.now() + 2_000;
+  let pids = [];
+  while (Date.now() < deadline) {
+    pids = readProcessTree(filePath);
+    if (pids.length >= minimumPids) return pids;
+    await wait(10);
   }
+  assert.fail(`expected ${minimumPids} process-tree PIDs in ${filePath}, got ${pids.length}`);
+}
+
+test('waits for complete process-tree records after the file is created', async () => {
+  const root = createScenarioRoot({});
+  const treePath = path.join(root, 'process-tree');
+  let writeTree;
+  try {
+    fs.writeFileSync(treePath, '', { mode: 0o600 });
+    writeTree = new Promise((resolve) => {
+      setTimeout(() => {
+        fs.writeFileSync(treePath, '41001 41002\n', { mode: 0o600 });
+        resolve();
+      }, 25);
+    });
+
+    assert.deepEqual(await waitForProcessTree(treePath, 2), [41001, 41002]);
+  } finally {
+    await writeTree;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function childExited(child) {
+  return child.exitCode != null || child.signalCode != null;
+}
+
+function waitForChildExit(child, timeoutMs) {
+  if (childExited(child)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const onClose = () => finish(true);
+    const onError = () => finish(true);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    function finish(exited) {
+      clearTimeout(timer);
+      child.off('close', onClose);
+      child.off('error', onError);
+      resolve(exited);
+    }
+    child.once('close', onClose);
+    child.once('error', onError);
+    if (childExited(child)) finish(true);
+  });
+}
+
+async function inspectAfterChildExit(child, inspect) {
+  assert.equal(
+    await waitForChildExit(child, 2_000),
+    true,
+    'fixture worker child did not exit before raw PID inspection',
+  );
+  return inspect();
+}
+
+test('raw process inspection waits for the child lifecycle', async () => {
+  const worker = new EventEmitter();
+  worker.exitCode = null;
+  worker.signalCode = null;
+  let inspected = false;
+
+  const status = inspectAfterChildExit(worker, () => {
+    inspected = true;
+    return 3;
+  });
+  assert.equal(inspected, false, 'raw PID inspection must wait for child lifecycle completion');
+
+  worker.exitCode = 0;
+  worker.emit('close', 0, null);
+  assert.equal(await status, 3);
+});
+
+async function waitForWorkerGroupOrChildExit(root, ownership, child, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = runProcessControl(ownership.processControlCommand, [
+      'wait-groups',
+      '--root', root,
+      '--token', ownership.sessionToken,
+      '--count', '1',
+      '--timeout-ms', '25',
+    ]);
+    if (result.status === 0) return JSON.parse(result.stdout);
+    if (childExited(child)) return [];
+    assert.match(result.stderr, /expected 1 complete worker-group records/);
+    await wait(10);
+  }
+  if (childExited(child)) return [];
+  assert.fail('hung fixture did not publish a complete worker-group record before cleanup');
+}
+
+async function waitForOwnedRecord(root, ownership, role, pid, timeoutMs = 2_000) {
+  const { stdout } = await runProcessControlAsync(ownership.processControlCommand, [
+    'wait-record',
+    '--root', root,
+    '--token', ownership.sessionToken,
+    '--pid', String(pid),
+    '--timeout-ms', String(timeoutMs),
+  ]);
+  const record = JSON.parse(stdout);
+  assert.equal(record.role, role, `expected durable ownership record for ${role} ${pid}`);
+  return record;
 }
 
 async function terminateHungFixture(command, args, env, root) {
+  const ownership = createOwnershipContext();
   const child = childProcess.spawn(command, args, {
     detached: true,
-    env,
+    env: {
+      ...env,
+      GIT_MCP_SIGNING_FIXTURE_ROOT: root,
+      GIT_MCP_PROCESS_IDENTITY_HELPER: ownership.processControlCommand,
+      GIT_MCP_OWNERSHIP_TOKEN: ownership.sessionToken,
+    },
     stdio: 'ignore',
   });
   assert.ok(child.pid, 'hung fixture has a process id');
-  const treeFile = path.join(root, 'process-tree');
   const lifecycle = ['spawned'];
   const exit = new Promise((resolve) => {
     child.once('error', (error) => {
@@ -321,27 +629,38 @@ async function terminateHungFixture(command, args, env, root) {
   let lifecycleResult;
   let failure;
   try {
-    await waitForFile(treeFile);
-    descendants = fs.readFileSync(treeFile, 'utf8')
-      .trim()
-      .split('\n')
-      .filter(Boolean)
-      .flatMap((line) => line.split(' ').map((value) => Number(value)));
-    assert.ok(descendants.length >= 2, 'hung fixture records a worker and descendant');
-
-    cleanupProcessGroup(child.pid);
+    const groups = await waitForWorkerGroupOrChildExit(root, ownership, child);
+    descendants = [...new Set(groups.flatMap((group) => group.members.map((member) => member.pid)))];
+    if (groups.length > 0) {
+      assert.ok(descendants.length >= 2, 'hung fixture records a worker and descendant');
+      await runProcessControlAsync(ownership.processControlCommand, [
+        'cleanup', '--root', root, '--token', ownership.sessionToken, '--timeout-ms', '2_000',
+      ]);
+      verifiedGonePids.push(...descendants);
+    }
     lifecycleResult = await childLifecycle;
     assert.equal(lifecycleResult.childExit.error, undefined, 'hung fixture child spawned successfully');
-    for (const pid of descendants) {
-      await waitForPidGone(pid);
-      verifiedGonePids.push(pid);
-    }
   } catch (error) {
     failure = error;
     throw error;
   } finally {
-    cleanupProcessGroup(child.pid);
-    if (!lifecycleResult) lifecycleResult = await childLifecycle;
+    try {
+      await runProcessControlAsync(ownership.processControlCommand, [
+        'cleanup', '--root', root, '--token', ownership.sessionToken, '--timeout-ms', '2_000',
+      ]);
+    } catch (cleanupError) {
+      if (!failure) failure = cleanupError;
+    }
+    if (!lifecycleResult) {
+      if (await waitForChildExit(child, 2_000)) {
+        lifecycleResult = await childLifecycle;
+      } else {
+        lifecycleResult = {
+          childExit: { code: null, signal: null, error: { message: 'child did not exit' } },
+          childClose: { code: null, signal: null },
+        };
+      }
+    }
     fs.appendFileSync(
       path.join(root, harnessResultsFile),
       `${JSON.stringify({
@@ -359,8 +678,59 @@ async function terminateHungFixture(command, args, env, root) {
       })}\n`,
       { mode: 0o600 },
     );
+    if (failure && !childExited(child)) {
+      throw new Error(
+        `${failure.message}\nfixture child ${child.pid} lacks a validated ownership record; refusing to signal`,
+      );
+    }
+    if (failure) throw failure;
   }
 }
+
+test('terminateHungFixture waits for a complete attested worker group before cleanup', {
+  timeout: 60_000,
+}, async () => {
+  const summary = fixtureSummary();
+  const bundle = buildFixtureBundle();
+  const scAuth = path.join(bundle, 'native/sc-auth/bin/fixture-sc-auth');
+  const root = createScenarioRoot(summary.scenarios.hangCtkListing);
+  try {
+    await terminateHungFixture(
+      scAuth,
+      ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
+      fixtureEnvironment(root),
+      root,
+    );
+    const groupDirectory = path.join(root, 'worker-groups');
+    assert.ok(fs.existsSync(groupDirectory), 'fixture publishes worker groups only after registration completes');
+    const manifests = fs.readdirSync(groupDirectory)
+      .filter((fileName) => fileName.endsWith('.json'))
+      .map((fileName) => JSON.parse(fs.readFileSync(path.join(groupDirectory, fileName), 'utf8')));
+    assert.equal(manifests.length, 1, 'one hanging native invocation owns one worker group');
+    const [manifest] = manifests;
+    assert.equal(manifest.kind, 'worker-group');
+    assert.ok(manifest.sessionToken, 'worker group has a nonempty ownership token');
+    assert.ok(manifest.members.length >= 2, 'worker group includes its worker and descendant');
+    for (const member of manifest.members) {
+      assert.equal(member.processGroup, manifest.processGroup, 'member remains scoped to its recorded group');
+      for (const field of [
+        'pid',
+        'processGroup',
+        'startSeconds',
+        'startMicroseconds',
+        'executable',
+        'expectedExecutable',
+        'role',
+        'sessionToken',
+      ]) {
+        assert.notEqual(member[field], undefined, `member records ${field}`);
+      }
+    }
+    assertHarnessResult(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('terminateHungFixture observes a child that exits before group cleanup', async () => {
   const root = createScenarioRoot({});
@@ -408,34 +778,6 @@ test('terminateHungFixture observes a child that exits before group cleanup', as
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
-});
-
-test('worker-tree cleanup tolerates a process group reaped between repeated cleanup calls', () => {
-  const originalKill = process.kill;
-  let groupKillCount = 0;
-
-  process.kill = (pid, signal) => {
-    if (pid === -1234 && signal === 'SIGKILL') {
-      groupKillCount += 1;
-      if (groupKillCount === 2) {
-        const error = new Error('process group was already reaped');
-        error.code = 'EPERM';
-        throw error;
-      }
-    }
-    return true;
-  };
-
-  try {
-    assert.doesNotThrow(() => {
-      cleanupProcessGroup(1234);
-      cleanupProcessGroup(1234);
-    });
-  } finally {
-    process.kill = originalKill;
-  }
-
-  assert.equal(groupKillCount, 2, 'cleanup remains idempotent when the group disappears');
 });
 
 test('raw identity deletion preserves every unrelated SHA1 and SSH listing row', () => {
@@ -917,18 +1259,26 @@ test('agent and fallback interceptors record only controlled fixture attempts', 
   const socketPath = path.join(root, 'agent.sock');
   const agentRecordPath = path.join(root, 'agent-calls.jsonl');
   const readyPath = path.join(root, 'agent-ready');
+  const ownership = createOwnershipContext();
   let trap;
+  let trapOwnership;
+  const lifecycle = { error: null, exit: null, close: null };
 
   try {
     trap = childProcess.spawn(
       summary.interceptorPaths.agentSocketTrap,
       [socketPath, agentRecordPath, readyPath],
       {
-        env: fixtureEnvironment(root),
+        env: fixtureEnvironment(root, ownership),
         stdio: 'ignore',
       },
     );
+    trap.on('error', (error) => { lifecycle.error = error; });
+    trap.on('exit', (code, signal) => { lifecycle.exit = { code, signal }; });
+    trap.on('close', (code, signal) => { lifecycle.close = { code, signal }; });
+    trapOwnership = await waitForOwnedRecord(root, ownership, 'agent-socket-trap', trap.pid);
     await waitForFile(readyPath);
+    assert.equal(lifecycle.error, null, 'agent socket trap spawned successfully');
 
     await new Promise((resolve, reject) => {
       const client = net.createConnection({ path: socketPath });
@@ -957,16 +1307,13 @@ test('agent and fallback interceptors record only controlled fixture attempts', 
     assert.deepEqual(fallbackAttempts[0].argv, ['fallback-argument']);
     assert.equal(agentAttempts[0].pid === process.pid, false);
   } finally {
-    if (trap) {
-      if (trap.exitCode === null) trap.kill('SIGTERM');
-      await new Promise((resolve) => {
-        if (trap.exitCode !== null) {
-          resolve();
-          return;
-        }
-        trap.once('close', resolve);
-      });
+    if (trapOwnership) {
+      await runProcessControlAsync(ownership.processControlCommand, [
+        'cleanup', '--root', root, '--token', ownership.sessionToken,
+        '--pid', String(trapOwnership.pid), '--timeout-ms', '2_000',
+      ]);
     }
+    if (trap && !childExited(trap)) await waitForChildExit(trap, 2_000);
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

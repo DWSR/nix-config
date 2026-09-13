@@ -11,13 +11,40 @@ let
     pkgs.jq
   ];
 
+  processControl = pkgs.buildGoModule {
+    pname = "git-mcp-signing-fixture-process-control";
+    version = "1";
+    src = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.unions [
+        ./go.mod
+        ./process-control_darwin.go
+      ];
+    };
+    vendorHash = null;
+    env.CGO_ENABLED = "1";
+    ldflags = [ "-extldflags=-Wl,-no_uuid" ];
+    doCheck = false;
+    buildPhase = ''
+      runHook preBuild
+      go build -trimpath -o process-control .
+      runHook postBuild
+    '';
+    installPhase = ''
+      runHook preInstall
+      install -Dm755 process-control "$out/bin/process-control"
+      runHook postInstall
+    '';
+  };
+
+  processControlPath = "${processControl}/bin/process-control";
+
   common = ''
     fixture_setup() {
       fixture_root="''${GIT_MCP_SIGNING_FIXTURE_ROOT:?GIT_MCP_SIGNING_FIXTURE_ROOT is required}"
        fixture_scenario="$fixture_root/scenario.json"
        fixture_calls="$fixture_root/calls.jsonl"
        fixture_events="$fixture_root/events.jsonl"
-       fixture_owned_processes="$fixture_root/owned-processes.jsonl"
        fixture_deleted_hashes="$fixture_root/deleted-ctk-hashes"
        fixture_allowed_signers=""
 
@@ -29,43 +56,95 @@ let
       mkdir -p "$fixture_root"
     }
 
-     fixture_record_ownership() {
-       local role="$1"
-       local pid="$2"
-       local expected_executable="$3"
-       local identity
-       local observed_pid
-       local process_group
-       local start_seconds
-       local start_microseconds
-       local executable
-       local identity_helper="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
-       local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+      fixture_ownership_enabled() {
+        [[ -n "''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}" \
+          && -n "''${GIT_MCP_OWNERSHIP_TOKEN:-}" ]]
+      }
 
-       if [[ -z "$identity_helper" || -z "$session_token" ]]; then
-         return 0
-       fi
-       if ! identity="$("$identity_helper" "$pid")"; then
-         printf 'failed to capture fixture process identity for %s pid %s\n' "$role" "$pid" >&2
-         return 70
-       fi
-       IFS=$'\t' read -r observed_pid process_group start_seconds start_microseconds executable <<< "$identity"
-       if [[ "$observed_pid" != "$pid" || "$executable" != "$expected_executable" ]]; then
-         printf 'fixture process identity mismatch for %s pid %s\n' "$role" "$pid" >&2
-         return 70
-       fi
-       jq -cn \
-         --argjson pid "$observed_pid" \
-         --argjson process_group "$process_group" \
-         --argjson start_seconds "$start_seconds" \
-         --argjson start_microseconds "$start_microseconds" \
-         --arg executable "$executable" \
-         --arg expected_executable "$expected_executable" \
-         --arg role "$role" \
-         --arg session_token "$session_token" \
-         '{pid: $pid, processGroup: $process_group, startSeconds: $start_seconds, startMicroseconds: $start_microseconds, executable: $executable, expectedExecutable: $expected_executable, role: $role, sessionToken: $session_token}' \
-         >> "$fixture_owned_processes"
-     }
+      fixture_ownership_failure_requested() {
+        local role="$1"
+
+        jq -e --arg role "$role" \
+          '.ownershipFailures // [] | index($role) != null' "$fixture_scenario" >/dev/null
+      }
+
+      fixture_record_ownership() {
+        local role="$1"
+        local pid="$2"
+        local expected_executable="$3"
+        local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
+        local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+
+        if ! fixture_ownership_enabled; then
+          return 0
+        fi
+        if fixture_ownership_failure_requested "$role"; then
+          printf 'fixture ownership record injection failed for %s pid %s\n' "$role" "$pid" >&2
+          return 70
+        fi
+        "$process_control" record \
+          --root "$fixture_root" \
+          --token "$session_token" \
+          --pid "$pid" \
+          --expected-executable "$expected_executable" \
+          --role "$role"
+      }
+
+      fixture_wait_for_durable_ownership() {
+        local pid="$1"
+        local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
+        local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+
+        if ! fixture_ownership_enabled; then
+          return 0
+        fi
+        "$process_control" wait-record \
+          --root "$fixture_root" \
+          --token "$session_token" \
+          --pid "$pid" \
+          --timeout-ms 2000 >/dev/null
+      }
+
+      fixture_reap_registered_child() {
+        local pid="$1"
+        local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
+        local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+
+        "$process_control" cleanup \
+          --root "$fixture_root" \
+          --token "$session_token" \
+          --pid "$pid" \
+          --timeout-ms 2000
+      }
+
+      fixture_prepare_hang_wait() {
+        local fifo="$fixture_root/.fixture-hang-''${BASHPID:-$$}-$RANDOM"
+
+        mkfifo "$fifo" || return 70
+        exec {fixture_hang_fd}<>"$fifo"
+        rm -f "$fifo"
+      }
+
+      fixture_wait_forever() {
+        while :; do
+          IFS= read -r -t 1 -u "$fixture_hang_fd" _ || :
+        done
+      }
+
+      fixture_capture_worker_group() {
+        local anchor_pid="$1"
+        local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
+        local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+
+        if ! fixture_ownership_enabled; then
+          return 0
+        fi
+        "$process_control" capture-group \
+          --root "$fixture_root" \
+          --token "$session_token" \
+          --anchor "$anchor_pid" \
+          --role "$fixture_tool:$fixture_operation:worker-group-member"
+      }
 
      fixture_log_call() {
        local argv_json
@@ -86,7 +165,7 @@ let
          fi
        fi
 
-       fixture_record_ownership "$fixture_tool:$fixture_operation" "''${BASHPID:-$$}" "$BASH"
+        fixture_record_ownership "$fixture_tool:$fixture_operation" "''${BASHPID:-$$}" "$BASH" || return $?
        argv_json="$(printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]')"
        jq -cn \
          --arg tool "$fixture_tool" \
@@ -262,29 +341,39 @@ let
       ' "$fixture_scenario"
     }
 
-     fixture_hang() {
-       local phase="$1"
-       shift
+      fixture_hang() {
+        local phase="$1"
+        local child_pid
+        shift
 
-      if ! fixture_has_phase "$phase" "$@"; then
-        return 0
-      fi
-
-      (
+        if ! fixture_has_phase "$phase" "$@"; then
+          return 0
+        fi
+        fixture_prepare_hang_wait || return $?
+        (
+          fixture_prepare_hang_wait || exit $?
+          fixture_record_ownership \
+            "$fixture_tool:$fixture_operation:descendant" \
+            "''${BASHPID:-$$}" "$BASH" || exit $?
+          printf '%s\n' "''${BASHPID:-$$}" >> "$fixture_root/descendants"
+          trap ':' TERM INT HUP
+          fixture_wait_forever
+        ) </dev/null >/dev/null 2>&1 &
+        child_pid="$!"
+        if ! fixture_wait_for_durable_ownership "$child_pid"; then
+          fixture_reap_registered_child "$child_pid"
+          printf 'fixture descendant failed to publish a durable ownership record before hang\n' >&2
+          return 70
+        fi
+        if ! fixture_capture_worker_group "''${BASHPID:-$$}"; then
+          fixture_reap_registered_child "$child_pid"
+          printf 'fixture worker group could not publish durable ownership records before hang\n' >&2
+          return 70
+        fi
+        printf '%s %s\n' "$$" "$child_pid" >> "$fixture_root/process-tree"
         trap ':' TERM INT HUP
-        printf '%s\n' "''${BASHPID:-$$}" >> "$fixture_root/descendants"
-        while :; do
-          sleep 1
-        done
-       ) &
-       child_pid="$!"
-       printf '%s %s\n' "$$" "$child_pid" >> "$fixture_root/process-tree"
-       fixture_record_ownership "$fixture_tool:$fixture_operation:descendant" "$child_pid" "$BASH"
-       trap ':' TERM INT HUP
-      while :; do
-        sleep 1
-       done
-     }
+        fixture_wait_forever
+      }
 
      fixture_check_selector() {
        local expected_selector
@@ -441,6 +530,8 @@ let
     }
   '';
 
+  agentTrapExecutable = "${pkgs.python3}/bin/python3";
+
   fakeAgentSocketTrap = pkgs.writeShellApplication {
     name = "fixture-agent-socket-trap";
     runtimeInputs = [ pkgs.python3 ];
@@ -452,11 +543,102 @@ let
             exec python3 - "$socket_path" "$record_path" "$ready_path" <<'PY'
       import json
       import os
+      import signal
       import socket
+      import subprocess
       import sys
+      import time
       from pathlib import Path
 
       socket_path, record_path, ready_path = sys.argv[1:]
+      fixture_root = Path(os.environ["GIT_MCP_SIGNING_FIXTURE_ROOT"])
+      scenario = json.loads((fixture_root / "scenario.json").read_text(encoding="utf-8"))
+      ownership_attestation_path = Path(f"{ready_path}.ownership.json")
+      expected_executable = os.path.realpath(sys.executable)
+      session_token = os.environ.get("GIT_MCP_OWNERSHIP_TOKEN", "")
+
+      def publish_ownership_attestation():
+          ownership_attestation_path.parent.mkdir(parents=True, exist_ok=True)
+          temporary_path = ownership_attestation_path.with_name(
+              f".{ownership_attestation_path.name}-{os.getpid()}"
+          )
+          temporary_path.write_text(
+              json.dumps({
+                  "pid": os.getpid(),
+                  "sessionToken": session_token,
+                  "expectedExecutable": expected_executable,
+              }) + "\n",
+              encoding="utf-8",
+          )
+          os.replace(temporary_path, ownership_attestation_path)
+
+      def record_spawn_ownership(record_mode):
+          process_control = os.environ.get("GIT_MCP_PROCESS_IDENTITY_HELPER", "")
+          if not process_control and not session_token:
+              return None
+          if not process_control or not session_token:
+              raise RuntimeError("fixture agent socket trap requires both ownership helper and session token")
+          command = [
+              process_control,
+              "record",
+              "--root", str(fixture_root),
+              "--token", session_token,
+              "--pid", str(os.getpid()),
+              "--expected-executable", expected_executable,
+              "--role", "agent-socket-trap",
+          ]
+          if record_mode in {"synthetic-ownership-record", "recycled-ownership-record"}:
+              command.extend(["--test-record-mode", record_mode])
+          result = subprocess.run(
+              command,
+              capture_output=True,
+              check=False,
+              encoding="utf-8",
+          )
+          if result.returncode != 0:
+              raise RuntimeError(
+                  f"fixture agent socket trap ownership capture failed with status {result.returncode}: {result.stderr.strip()}"
+              )
+
+      trap_mode = scenario.get("agentSocketTrap")
+      if trap_mode == "delay-ownership-record":
+          print("fixture agent socket trap intentionally delaying durable ownership registration", file=sys.stderr, flush=True)
+          time.sleep(4)
+      try:
+          if trap_mode != "raw-pid-before-ready":
+              record_spawn_ownership(trap_mode)
+              publish_ownership_attestation()
+          else:
+              print("fixture agent socket trap intentionally skipped durable ownership registration", file=sys.stderr, flush=True)
+      except RuntimeError as error:
+          print(str(error), file=sys.stderr, flush=True)
+          sys.exit(70)
+
+      if trap_mode in {"raw-pid-before-ready", "synthetic-ownership-record", "recycled-ownership-record"}:
+          (fixture_root / "agent-trap-pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+
+          def record_signal(signum, _frame):
+              (fixture_root / "agent-trap-signals").write_text(f"{signum}\n", encoding="utf-8")
+              sys.exit(128 + signum)
+
+          signal.signal(signal.SIGTERM, record_signal)
+          Path(ready_path).parent.mkdir(parents=True, exist_ok=True)
+          Path(ready_path).touch()
+          time.sleep(4)
+          sys.exit(74)
+
+      if trap_mode == "hang-before-ready":
+          (fixture_root / "agent-trap-pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+          print("fixture agent socket trap intentionally hung before readiness", file=sys.stderr, flush=True)
+          signal.signal(signal.SIGTERM, signal.SIG_IGN)
+          while True:
+              time.sleep(1)
+      if trap_mode == "exit-before-ready":
+          print("fixture agent socket trap exited before readiness", file=sys.stderr, flush=True)
+          sys.exit(73)
+      if trap_mode == "delay-ready":
+          time.sleep(4)
+
       Path(socket_path).unlink(missing_ok=True)
       Path(record_path).parent.mkdir(parents=True, exist_ok=True)
       Path(ready_path).parent.mkdir(parents=True, exist_ok=True)
@@ -532,7 +714,7 @@ let
       if [[ " $* " == *" -t ssh "* ]]; then
         fixture_operation="list-ssh"
       fi
-      fixture_log_call "$@"
+       fixture_log_call "$@" || exit $?
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
       fixture_hang "ctk-''${fixture_operation}" "preflight-ctk-''${fixture_operation}"
       fixture_maybe_fail
@@ -577,7 +759,7 @@ let
       ${common}
 
       fixture_setup
-      fixture_log_call "$@"
+       fixture_log_call "$@" || exit $?
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
       if ! fixture_check_selector; then
         exit 43
@@ -708,7 +890,7 @@ let
           exit 45
         fi
       fi
-      fixture_log_call "$@"
+       fixture_log_call "$@" || exit $?
       trap 'status=$?; set +e; fixture_log_result "$status"; exit "$status"' EXIT
       case "$fixture_operation" in
         resident-export)
@@ -778,9 +960,12 @@ let
             printf 'fixture refused non-fixture provider: %s\n' "''${SSH_SK_PROVIDER:-<unset>}" >&2
             exit 43
           fi
-          "''${SSH_SK_PROVIDER}" sign "$@"
-          signature_content="fixture-ssh-signature:$fixture_signing_public_key"
-          signing_input_path=""
+           "''${SSH_SK_PROVIDER}" sign "$@"
+           signature_content="fixture-ssh-signature:$fixture_signing_public_key"
+           if [[ "''${GIT_MCP_SIGNING_FIXTURE_GIT_SSH_SIGNATURE:-}" == "1" ]]; then
+             signature_content=$'-----BEGIN SSH SIGNATURE-----\n'"$signature_content"$'\n-----END SSH SIGNATURE-----'
+           fi
+           signing_input_path=""
           for argument in "$@"; do
             if [[ "$argument" != "$fixture_signing_stub" && -f "$argument" && "$argument" != -* ]]; then
               signing_input_path="$argument"
@@ -1290,6 +1475,7 @@ let
   nativeToolArgs = nativeTools // {
     inherit nativeToolPaths;
     inherit interceptorPaths;
+    inherit processControlPath;
     scAuthPath = nativeToolPaths.scAuth;
     providerPath = nativeToolPaths.provider;
     sshKeygenPath = nativeToolPaths.sshKeygen;
@@ -1321,6 +1507,10 @@ let
   );
 
   packageEntries = [
+    {
+      name = "process-control";
+      path = processControl;
+    }
     {
       name = "native/sc-auth";
       path = fakeScAuth;
@@ -1363,12 +1553,14 @@ let
 in
 {
   inherit
+    agentTrapExecutable
     injectPackage
     manifest
     nativeToolArgs
     nativeToolPaths
     nativeTools
     interceptorPaths
+    processControlPath
     packages
     scenarioFiles
     scenarios

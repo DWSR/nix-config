@@ -11,12 +11,16 @@ const test = require('node:test');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const fixturePath = path.join(repoRoot, 'tests/git-mcp/fixtures/signing-tools.nix');
-const processIdentitySourcePath = path.join(repoRoot, 'tests/git-mcp/fixtures/process-identity.c');
 const recordingExecPath = path.join(repoRoot, 'tests/git-mcp/fixtures/recording-exec.js');
 const siblingPath = path.join(repoRoot, 'tests/git-mcp/fixtures/sibling-mcp.js');
 const signerPath = path.join(repoRoot, 'scripts/git-mcp-secure-enclave-signer.nix');
 const nixTimeoutMs = 600_000;
 const requestTimeoutMs = 30_000;
+const goBuildInfoMarker = Buffer.from('Go buildinf:', 'ascii');
+const publicSignerBuildPath = Buffer.from(
+  'path\tgithub.com/brandonmcnama/git-mcp-secure-enclave-signer/cmd/signer',
+  'utf8',
+);
 
 function nixBuild(expression) {
   return childProcess.execFileSync(
@@ -54,22 +58,35 @@ function buildGitMcpServer() {
   `);
 }
 
-function buildProcessIdentity() {
-  return path.join(nixBuild(`
+function wrappedExecutable(command) {
+  const source = fs.readFileSync(command, 'utf8');
+  const match = source.match(/^exec "([^"]+)"/m);
+  assert.ok(match, `cannot determine wrapped executable for ${command}`);
+  return fs.realpathSync(match[1]);
+}
+
+function publicGoSignerExecutable(command) {
+  const executable = fs.realpathSync(command);
+  const binary = fs.readFileSync(executable);
+  assert.ok(
+    binary.includes(goBuildInfoMarker),
+    `signing route must execute the public Go signer, got ${executable}`,
+  );
+  assert.ok(
+    binary.includes(publicSignerBuildPath),
+    `signing route must execute the public signer entrypoint, got ${executable}`,
+  );
+  return executable;
+}
+
+function buildFixtureBundle() {
+  return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-      source = pkgs.writeText "git-mcp-process-identity.c" (
-        builtins.readFile ${JSON.stringify(processIdentitySourcePath)}
-      );
-    in pkgs.runCommand "git-mcp-process-identity" {
-      inherit source;
-      nativeBuildInputs = [ pkgs.stdenv.cc ];
-    } ''
-      mkdir -p "$out/bin"
-      $CC -std=c11 -Wall -Wextra -Werror "$source" -o "$out/bin/process-identity"
-    ''
-  `), 'bin/process-identity');
+      fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
+    in fixture.packages
+  `);
 }
 
 function fixtureSummary() {
@@ -98,6 +115,54 @@ function fixtureSummary() {
     },
   ));
 }
+
+let fixtureProcessControlCommand;
+
+function runProcessControl(command, arguments_) {
+  const result = childProcess.spawnSync(command, arguments_, { encoding: 'utf8' });
+  assert.equal(result.error, undefined, result.error?.message);
+  return result;
+}
+
+function runProcessControlAsync(command, arguments_) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(command, arguments_, { encoding: 'utf8' }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+function processControlRecords(sessionToken, { root, recordFiles = [], states = false }) {
+  const arguments_ = [states ? 'states' : 'records', '--token', sessionToken];
+  if (root) arguments_.push('--root', root);
+  for (const recordFile of recordFiles) arguments_.push('--record-file', recordFile);
+  const result = runProcessControl(fixtureProcessControlCommand, arguments_);
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+function processControlCleanupArguments(root, sessionToken, recordFiles = []) {
+  return [
+    'cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '3_000',
+    ...recordFiles.flatMap((recordFile) => ['--record-file', recordFile]),
+  ];
+}
+
+test.before(() => {
+  fixtureProcessControlCommand = path.join(
+    buildFixtureBundle(),
+    'process-control',
+    'bin',
+    'process-control',
+  );
+  fs.accessSync(fixtureProcessControlCommand, fs.constants.X_OK);
+});
 
 function resolveCommand(command) {
   for (const directory of (process.env.PATH || '').split(path.delimiter)) {
@@ -240,211 +305,6 @@ function waitForChildExit(child, timeoutMs) {
   });
 }
 
-function parseProcessIdentity(output, description) {
-  const fields = output.trim().split('\t');
-  assert.equal(fields.length, 5, `malformed process identity for ${description}: ${output}`);
-  return {
-    pid: Number(fields[0]),
-    processGroup: Number(fields[1]),
-    startSeconds: Number(fields[2]),
-    startMicroseconds: Number(fields[3]),
-    executable: fields[4],
-  };
-}
-
-function inspectProcessIdentity(identityCommand, pid) {
-  const result = childProcess.spawnSync(identityCommand, [String(pid)], { encoding: 'utf8' });
-  if (result.status === 3) return null;
-  assert.equal(result.status, 0, `cannot inspect process ${pid}: ${result.stderr}`);
-  return parseProcessIdentity(result.stdout, `process ${pid}`);
-}
-
-function inspectProcessGroup(identityCommand, processGroup) {
-  const result = childProcess.spawnSync(
-    identityCommand,
-    ['--group', String(processGroup)],
-    { encoding: 'utf8' },
-  );
-  if (result.status === 3) return [];
-  assert.equal(result.status, 0, `cannot inspect process group ${processGroup}: ${result.stderr}`);
-  if (result.stdout.trim() === '') return [];
-  return result.stdout
-    .trim()
-    .split('\n')
-    .map((line) => parseProcessIdentity(line, `process group ${processGroup}`));
-}
-
-function captureOwnershipRecord(identityCommand, pid, expectedExecutable, role, sessionToken) {
-  const identity = inspectProcessIdentity(identityCommand, pid);
-  assert.ok(identity, `${role} process ${pid} exited before ownership capture`);
-  assert.equal(identity.executable, expectedExecutable, `${role} executable identity`);
-  return { ...identity, expectedExecutable, role, sessionToken };
-}
-
-async function waitForOwnershipRecord(identityCommand, pid, expectedExecutable, role, sessionToken) {
-  let lastError;
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    try {
-      return captureOwnershipRecord(
-        identityCommand,
-        pid,
-        expectedExecutable,
-        role,
-        sessionToken,
-      );
-    } catch (error) {
-      lastError = error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw lastError;
-}
-
-function writeOwnershipRecord(filePath, record) {
-  fs.writeFileSync(filePath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-}
-
-function scriptInterpreter(scriptPath) {
-  const [shebang] = fs.readFileSync(scriptPath, 'utf8').split('\n');
-  assert.match(shebang, /^#!/, `${scriptPath} must have a shebang`);
-  return fs.realpathSync(shebang.slice(2).trim().split(/\s+/)[0]);
-}
-
-function hasProcessIdentity(identity) {
-  return identity !== null
-    && typeof identity === 'object'
-    && Number.isInteger(identity.pid)
-    && identity.pid > 0
-    && Number.isInteger(identity.processGroup)
-    && identity.processGroup > 0
-    && Number.isInteger(identity.startSeconds)
-    && identity.startSeconds >= 0
-    && Number.isInteger(identity.startMicroseconds)
-    && identity.startMicroseconds >= 0
-    && identity.startMicroseconds < 1_000_000
-    && typeof identity.executable === 'string'
-    && identity.executable !== '';
-}
-
-function ownershipMatches(record, observed, sessionToken) {
-  return typeof sessionToken === 'string'
-    && sessionToken !== ''
-    && typeof record?.sessionToken === 'string'
-    && record.sessionToken !== ''
-    && typeof record?.expectedExecutable === 'string'
-    && record.expectedExecutable !== ''
-    && hasProcessIdentity(record)
-    && hasProcessIdentity(observed)
-    && record.sessionToken === sessionToken
-    && record.executable === record.expectedExecutable
-    && record.pid === observed.pid
-    && record.processGroup === observed.processGroup
-    && record.startSeconds === observed.startSeconds
-    && record.startMicroseconds === observed.startMicroseconds
-    && record.executable === observed.executable;
-}
-
-function signalOwnedRecord(record, signal, options) {
-  const observed = options.inspect(record.pid);
-  if (!ownershipMatches(record, observed, options.sessionToken)) return false;
-  try {
-    options.kill(record.pid, signal);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH') return false;
-    throw error;
-  }
-}
-
-function liveOwnedRecords(records, options) {
-  return records.filter((record) => ownershipMatches(
-    record,
-    options.inspect(record.pid),
-    options.sessionToken,
-  ));
-}
-
-function signalOwnedGroup(records, processGroup, signal, options) {
-  if (!Number.isInteger(processGroup) || processGroup <= 0) return false;
-  const groupRecords = records.filter((record) => record.processGroup === processGroup);
-  let groupMembers;
-  try {
-    groupMembers = options.inspectGroup(processGroup);
-  } catch {
-    return false;
-  }
-  if (
-    groupRecords.length === 0
-    || groupRecords.length !== groupMembers.length
-    || !groupRecords.every((record) => (
-      ownershipMatches(record, options.inspect(record.pid), options.sessionToken)
-    ))
-    || !groupRecords.every((record) => groupMembers.some((member) => (
-      ownershipMatches(record, member, options.sessionToken)
-    )))
-    || !groupMembers.every((member) => groupRecords.some((record) => (
-      ownershipMatches(record, member, options.sessionToken)
-    )))
-  ) return false;
-  try {
-    options.kill(-processGroup, signal);
-    return true;
-  } catch (error) {
-    if (error.code === 'ESRCH' || error.code === 'EPERM') return false;
-    throw error;
-  }
-}
-
-async function waitForOwnedExit(records, options, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (liveOwnedRecords(records, options).length === 0) return true;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  return liveOwnedRecords(records, options).length === 0;
-}
-
-async function terminateOwnedProcesses(records, identityCommand, sessionToken) {
-  const options = {
-    inspect: (pid) => inspectProcessIdentity(identityCommand, pid),
-    inspectGroup: (processGroup) => inspectProcessGroup(identityCommand, processGroup),
-    kill: process.kill.bind(process),
-    sessionToken,
-  };
-  let survivors = liveOwnedRecords(records, options);
-  for (const processGroup of new Set(survivors.map((record) => record.processGroup))) {
-    if (!signalOwnedGroup(records, processGroup, 'SIGTERM', options)) {
-      for (const record of survivors.filter((entry) => entry.processGroup === processGroup)) {
-        signalOwnedRecord(record, 'SIGTERM', options);
-      }
-    }
-  }
-  if (!(await waitForOwnedExit(records, options, 3_000))) {
-    survivors = liveOwnedRecords(records, options);
-    for (const processGroup of new Set(survivors.map((record) => record.processGroup))) {
-      signalOwnedGroup(records, processGroup, 'SIGKILL', options);
-    }
-    for (const record of survivors) signalOwnedRecord(record, 'SIGKILL', options);
-  }
-  survivors = liveOwnedRecords(records, options);
-  assert.deepEqual(
-    survivors.map(({ pid, role }) => ({ pid, role })),
-    [],
-    'owned fixture processes survived cleanup',
-  );
-}
-
-function validateOwnershipRecord(record, filePath, sessionToken) {
-  assert.equal(record.sessionToken, sessionToken, `foreign ownership token in ${filePath}`);
-  for (const name of ['pid', 'processGroup', 'startSeconds', 'startMicroseconds']) {
-    assert.equal(Number.isInteger(record[name]), true, `invalid ${name} in ${filePath}`);
-  }
-  for (const name of ['executable', 'expectedExecutable', 'role']) {
-    assert.equal(typeof record[name] === 'string' && record[name] !== '', true, `invalid ${name} in ${filePath}`);
-  }
-  assert.equal(record.executable, record.expectedExecutable, `unexpected executable in ${filePath}`);
-}
-
 function fixtureReferencedPids(root) {
   const signingRoot = path.join(root, 'signing');
   const pids = [];
@@ -459,19 +319,21 @@ function fixtureReferencedPids(root) {
   return pids;
 }
 
-function discoverOwnershipRecords(root, sessionToken, validateReferences = true) {
+function ownershipRecordFiles(root) {
   const ownershipDirectory = path.join(root, 'ownership');
-  const paths = [
+  return [
     path.join(ownershipDirectory, 'proxy.jsonl'),
     path.join(ownershipDirectory, 'git-mcp.jsonl'),
     path.join(ownershipDirectory, 'sibling.jsonl'),
     path.join(ownershipDirectory, 'signer.jsonl'),
-    path.join(root, 'signing', 'owned-processes.jsonl'),
   ];
-  const records = paths.flatMap((filePath) => readJsonLines(filePath).map((record) => {
-    validateOwnershipRecord(record, filePath, sessionToken);
-    return record;
-  }));
+}
+
+function discoverOwnershipRecords(root, sessionToken, validateReferences = true) {
+  const records = processControlRecords(sessionToken, {
+    root: path.join(root, 'signing'),
+    recordFiles: ownershipRecordFiles(root),
+  });
   if (validateReferences) {
     const recordedPids = new Set(records.map((record) => record.pid));
     const unownedFixturePids = fixtureReferencedPids(root)
@@ -482,19 +344,17 @@ function discoverOwnershipRecords(root, sessionToken, validateReferences = true)
   return records;
 }
 
-async function cleanupOwnedFixture(root, sessionToken, identityCommand, proxy) {
-  const recordsByIdentity = new Map();
+async function cleanupOwnedFixture(root, sessionToken, proxy) {
+  const arguments_ = processControlCleanupArguments(
+    path.join(root, 'signing'),
+    sessionToken,
+    ownershipRecordFiles(root),
+  );
   for (let round = 0; round < 3; round += 1) {
-    for (const record of discoverOwnershipRecords(root, sessionToken, false)) {
-      recordsByIdentity.set(`${record.pid}:${record.startSeconds}:${record.startMicroseconds}`, record);
-    }
-    await terminateOwnedProcesses([...recordsByIdentity.values()], identityCommand, sessionToken);
+    await runProcessControlAsync(fixtureProcessControlCommand, arguments_);
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
-  for (const record of discoverOwnershipRecords(root, sessionToken)) {
-    recordsByIdentity.set(`${record.pid}:${record.startSeconds}:${record.startMicroseconds}`, record);
-  }
-  await terminateOwnedProcesses([...recordsByIdentity.values()], identityCommand, sessionToken);
+  discoverOwnershipRecords(root, sessionToken);
   if (proxy) {
     assert.equal(await waitForChildExit(proxy, 1_000), true, 'mcpproxy child handle did not close');
   }
@@ -661,149 +521,78 @@ test('fixture finalization removes temporary state without replacing the primary
   assert.equal(fs.existsSync(root), false);
 });
 
-test('targeted cleanup refuses stale process identity metadata', () => {
+test('Go fixture cleanup refuses foreign and stale ownership records before signaling', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-process-control-'));
+  const recordPath = path.join(root, 'owned-processes.jsonl');
   const sessionToken = crypto.randomUUID();
-  const observed = {
-    pid: 41_001,
-    processGroup: 41_001,
-    startSeconds: 1_000,
-    startMicroseconds: 20,
-    executable: '/nix/store/fixture/bin/node',
-  };
-  const staleRecord = {
-    ...observed,
-    startMicroseconds: observed.startMicroseconds - 1,
-    expectedExecutable: observed.executable,
-    role: 'unrelated-reused-process',
-    sessionToken,
-  };
-  const signals = [];
+  const expectedExecutable = fs.realpathSync(process.execPath);
+  let worker;
 
-  const signaled = signalOwnedRecord(staleRecord, 'SIGTERM', {
-    inspect: () => observed,
-    kill: (...args) => signals.push(args),
-    sessionToken,
-  });
+  try {
+    worker = childProcess.spawn(
+      process.execPath,
+      ['-e', 'setTimeout(() => process.exit(0), 10_000);'],
+      { detached: true, stdio: 'ignore' },
+    );
+    assert.ok(worker.pid, 'fixture worker has a PID');
+    const recordArguments = [
+      'record',
+      '--file', recordPath,
+      '--token', sessionToken,
+      '--pid', String(worker.pid),
+      '--expected-executable', expectedExecutable,
+      '--role', 'upstream-isolation-worker',
+      '--truncate',
+    ];
+    const record = runProcessControl(fixtureProcessControlCommand, recordArguments);
+    assert.equal(record.status, 0, record.stderr);
 
-  assert.equal(signaled, false);
-  assert.deepEqual(signals, []);
-});
+    const foreignCleanup = runProcessControl(fixtureProcessControlCommand, [
+      'cleanup', '--token', `${sessionToken}-foreign`, '--record-file', recordPath, '--timeout-ms', '100',
+    ]);
+    assert.notEqual(foreignCleanup.status, 0, 'foreign tokens cannot clean fixture workers');
+    assert.match(foreignCleanup.stderr, /foreign .*token/i);
+    assert.equal(
+      processControlRecords(sessionToken, { recordFiles: [recordPath], states: true })[0].state,
+      'live',
+    );
 
-test('targeted cleanup refuses a missing session token', () => {
-  const observed = {
-    pid: 41_001,
-    processGroup: 41_001,
-    startSeconds: 1_000,
-    startMicroseconds: 20,
-    executable: '/nix/store/fixture/bin/node',
-  };
-  const record = {
-    ...observed,
-    expectedExecutable: observed.executable,
-    role: 'unowned-process',
-  };
-  const signals = [];
+    const [staleRecord] = readJsonLines(recordPath);
+    staleRecord.startMicroseconds = (staleRecord.startMicroseconds + 1) % 1_000_000;
+    fs.writeFileSync(recordPath, `${JSON.stringify(staleRecord)}\n`, { mode: 0o600 });
+    const staleCleanup = runProcessControl(fixtureProcessControlCommand, [
+      'cleanup', '--token', sessionToken, '--record-file', recordPath, '--timeout-ms', '100',
+    ]);
+    assert.notEqual(staleCleanup.status, 0, 'stale ownership records cannot signal a reused PID');
+    assert.match(staleCleanup.stderr, /refusing to signal/i);
+    assert.equal(runProcessControl(fixtureProcessControlCommand, ['inspect', String(worker.pid)]).status, 0);
 
-  const signaled = signalOwnedRecord(record, 'SIGTERM', {
-    inspect: () => observed,
-    kill: (...args) => signals.push(args),
-  });
-  const groupSignaled = signalOwnedGroup(
-    [record],
-    observed.processGroup,
-    'SIGTERM',
-    {
-      inspect: () => observed,
-      inspectGroup: () => [observed],
-      kill: (...args) => signals.push(args),
-    },
-  );
-
-  assert.equal(signaled, false);
-  assert.equal(groupSignaled, false);
-  assert.deepEqual(signals, []);
-});
-
-test('targeted group cleanup refuses stale member identity metadata', () => {
-  const sessionToken = crypto.randomUUID();
-  const observed = {
-    pid: 41_001,
-    processGroup: 41_001,
-    startSeconds: 1_000,
-    startMicroseconds: 20,
-    executable: '/nix/store/fixture/bin/node',
-  };
-  const validRecord = {
-    ...observed,
-    expectedExecutable: observed.executable,
-    role: 'owned-group-member',
-    sessionToken,
-  };
-  const staleObserved = {
-    ...observed,
-    pid: 41_002,
-  };
-  const staleRecord = {
-    ...staleObserved,
-    startMicroseconds: staleObserved.startMicroseconds - 1,
-    expectedExecutable: staleObserved.executable,
-    role: 'stale-group-member',
-    sessionToken,
-  };
-  const signals = [];
-
-  const signaled = signalOwnedGroup(
-    [validRecord, staleRecord],
-    observed.processGroup,
-    'SIGTERM',
-    {
-      inspect: (pid) => (pid === observed.pid ? observed : staleObserved),
-      inspectGroup: () => [observed, staleObserved],
-      kill: (...args) => signals.push(args),
-      sessionToken,
-    },
-  );
-
-  assert.equal(signaled, false);
-  assert.deepEqual(signals, []);
-});
-
-test('targeted group cleanup refuses unrecorded group members', () => {
-  const sessionToken = crypto.randomUUID();
-  const observed = {
-    pid: 41_001,
-    processGroup: 41_001,
-    startSeconds: 1_000,
-    startMicroseconds: 20,
-    executable: '/nix/store/fixture/bin/node',
-  };
-  const validRecord = {
-    ...observed,
-    expectedExecutable: observed.executable,
-    role: 'owned-group-member',
-    sessionToken,
-  };
-  const unrecordedMember = {
-    ...observed,
-    pid: 41_002,
-    executable: '/nix/store/unrelated/bin/node',
-  };
-  const signals = [];
-
-  const signaled = signalOwnedGroup(
-    [validRecord],
-    observed.processGroup,
-    'SIGTERM',
-    {
-      inspect: () => observed,
-      inspectGroup: () => [observed, unrecordedMember],
-      kill: (...args) => signals.push(args),
-      sessionToken,
-    },
-  );
-
-  assert.equal(signaled, false);
-  assert.deepEqual(signals, []);
+    const restored = runProcessControl(fixtureProcessControlCommand, recordArguments);
+    assert.equal(restored.status, 0, restored.stderr);
+    await runProcessControlAsync(fixtureProcessControlCommand, [
+      'cleanup', '--token', sessionToken, '--record-file', recordPath, '--timeout-ms', '3_000',
+    ]);
+    assert.equal(await waitForChildExit(worker, 3_000), true);
+  } finally {
+    if (worker && worker.exitCode === null && worker.signalCode === null) {
+      const restore = runProcessControl(fixtureProcessControlCommand, [
+        'record',
+        '--file', recordPath,
+        '--token', sessionToken,
+        '--pid', String(worker.pid),
+        '--expected-executable', expectedExecutable,
+        '--role', 'upstream-isolation-worker',
+        '--truncate',
+      ]);
+      if (restore.status === 0) {
+        await runProcessControlAsync(fixtureProcessControlCommand, [
+          'cleanup', '--token', sessionToken, '--record-file', recordPath, '--timeout-ms', '3_000',
+        ]).catch(() => undefined);
+      }
+      await waitForChildExit(worker, 3_000);
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('recording exec converts a signaled wrapped child into a normal nonzero exit', {
@@ -813,7 +602,6 @@ test('recording exec converts a signaled wrapped child into a normal nonzero exi
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-recording-exec-signal-'));
   const recordPath = path.join(root, 'owned-processes.jsonl');
   const sessionToken = crypto.randomUUID();
-  const identityCommand = buildProcessIdentity();
   let wrapper;
   let records = [];
 
@@ -823,7 +611,7 @@ test('recording exec converts a signaled wrapped child into a normal nonzero exi
       [
         recordingExecPath,
         recordPath,
-        identityCommand,
+        fixtureProcessControlCommand,
         sessionToken,
         'recording-exec-wrapper',
         'recording-exec-child',
@@ -837,31 +625,25 @@ test('recording exec converts a signaled wrapped child into a normal nonzero exi
     records = await waitForRecords(recordPath, 2);
     const wrappedChild = records.find((record) => record.role === 'recording-exec-child');
     assert.ok(wrappedChild, 'recording exec did not capture its child identity');
-    assert.equal(
-      signalOwnedRecord(wrappedChild, 'SIGTERM', {
-        inspect: (pid) => inspectProcessIdentity(identityCommand, pid),
-        kill: process.kill.bind(process),
-        sessionToken,
-      }),
-      true,
-      'the test signal must target the recorded child identity',
-    );
+    await runProcessControlAsync(fixtureProcessControlCommand, [
+      'cleanup', '--token', sessionToken, '--record-file', recordPath,
+      '--pid', String(wrappedChild.pid), '--timeout-ms', '3_000',
+    ]);
     assert.equal(await waitForChildExit(wrapper, 3_000), true, 'recording exec did not exit');
     assert.equal(wrapper.signalCode, null, 'recording exec forwarded the child signal to itself');
     assert.equal(wrapper.exitCode, 128 + os.constants.signals.SIGTERM);
     assert.deepEqual(
-      liveOwnedRecords(records, {
-        inspect: (pid) => inspectProcessIdentity(identityCommand, pid),
-        sessionToken,
-      }),
+      processControlRecords(sessionToken, { recordFiles: [recordPath], states: true })
+        .filter((entry) => entry.state !== 'gone')
+        .map((entry) => entry.record),
       [],
       'recording exec left a wrapper or child process alive',
     );
   } finally {
-    const cleanupRecords = readJsonLines(recordPath);
-    for (const record of cleanupRecords) validateOwnershipRecord(record, recordPath, sessionToken);
-    if (cleanupRecords.length > 0) {
-      await terminateOwnedProcesses(cleanupRecords, identityCommand, sessionToken);
+    if (fs.existsSync(recordPath)) {
+      await runProcessControlAsync(fixtureProcessControlCommand, [
+        'cleanup', '--token', sessionToken, '--record-file', recordPath, '--timeout-ms', '3_000',
+      ]).catch(() => undefined);
     }
     if (wrapper) await waitForChildExit(wrapper, 3_000);
     fs.rmSync(root, { recursive: true, force: true });
@@ -874,45 +656,54 @@ test('early-failure finalization reaps a separately grouped signer/native worker
 }, async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-early-finalizer-regression-'));
   const signingRoot = path.join(root, 'signing');
-  const ownershipPath = path.join(signingRoot, 'owned-processes.jsonl');
   const primaryError = new Error('early task-body failure');
   const sessionToken = crypto.randomUUID();
-  const identityCommand = buildProcessIdentity();
-  fs.mkdirSync(signingRoot, { mode: 0o700 });
   const worker = childProcess.spawn(
     process.execPath,
-    ['-e', 'setInterval(() => {}, 1_000)'],
+    ['-e', 'setTimeout(() => process.exit(0), 10_000);'],
     { detached: true, stdio: 'ignore' },
   );
-  const ownershipRecord = await waitForOwnershipRecord(
-    identityCommand,
-    worker.pid,
-    fs.realpathSync(process.execPath),
-    'signer-native-early-failure',
-    sessionToken,
-  );
-  writeOwnershipRecord(ownershipPath, ownershipRecord);
+  const expectedExecutable = fs.realpathSync(process.execPath);
+  let states;
+  const record = runProcessControl(fixtureProcessControlCommand, [
+    'record',
+    '--root', signingRoot,
+    '--token', sessionToken,
+    '--pid', String(worker.pid),
+    '--expected-executable', expectedExecutable,
+    '--role', 'signer-native-early-failure',
+  ]);
+  assert.equal(record.status, 0, record.stderr);
+  const group = runProcessControl(fixtureProcessControlCommand, [
+    'capture-group',
+    '--root', signingRoot,
+    '--token', sessionToken,
+    '--anchor', String(worker.pid),
+    '--role', 'signer-native-early-failure-group-member',
+  ]);
+  assert.equal(group.status, 0, group.stderr);
 
   try {
     await assert.rejects(
       runFinalizers(primaryError, [
-        async () => cleanupOwnedFixture(root, sessionToken, identityCommand),
+        async () => {
+          await cleanupOwnedFixture(root, sessionToken);
+          states = processControlRecords(sessionToken, { root: signingRoot, states: true });
+        },
         async () => { fs.rmSync(root, { recursive: true, force: true }); },
       ]),
       (error) => error === primaryError,
     );
-    assert.equal(
-      ownershipMatches(
-        ownershipRecord,
-        inspectProcessIdentity(identityCommand, ownershipRecord.pid),
-        sessionToken,
-      ),
-      false,
+    assert.deepEqual(
+      states.filter((entry) => entry.state !== 'gone'),
+      [],
       'early finalization left a separately grouped signer/native worker alive',
     );
   } finally {
-    if (worker.exitCode === null && worker.signalCode === null) {
-      await terminateOwnedProcesses([ownershipRecord], identityCommand, sessionToken);
+    if ((worker.exitCode === null && worker.signalCode === null) && fs.existsSync(signingRoot)) {
+      await runProcessControlAsync(fixtureProcessControlCommand, [
+        'cleanup', '--root', signingRoot, '--token', sessionToken, '--timeout-ms', '3_000',
+      ]).catch(() => undefined);
     }
     await waitForChildExit(worker, 3_000);
     fs.rmSync(root, { recursive: true, force: true });
@@ -937,7 +728,6 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
 
   let proxy;
   let client;
-  let identityCommand;
   let stdout = '';
   let stderr = '';
   let primaryError;
@@ -953,10 +743,10 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
     fs.mkdirSync(dataDir, { mode: 0o700 });
     fs.mkdirSync(tempDir, { mode: 0o700 });
     fs.mkdirSync(ownershipDirectory, { mode: 0o700 });
-    identityCommand = buildProcessIdentity();
     const gitMcpServer = path.join(buildGitMcpServer(), 'bin/git-mcp-server');
+    const gitMcpExecutable = wrappedExecutable(gitMcpServer);
     const signerCommand = path.join(buildSigner(), 'bin/git-mcp-secure-enclave-signer');
-    const signerExecutable = scriptInterpreter(signerCommand);
+    const signerExecutable = publicGoSignerExecutable(signerCommand);
     fs.writeFileSync(
       signerLauncher,
       [
@@ -1006,10 +796,10 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
       GIT_MCP_SIGNING_FINGERPRINT: state.identity.fingerprint,
       GIT_MCP_SIGNING_STUB: state.stubPath,
       GIT_MCP_SIGNING_FIXTURE_ROOT: state.signingRoot,
-      GIT_MCP_PROCESS_IDENTITY_HELPER: identityCommand,
+      GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
       GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
       RECORDING_EXEC_RECORD_PATH: signerOwnershipPath,
-      RECORDING_EXEC_IDENTITY_COMMAND: identityCommand,
+      RECORDING_EXEC_PROCESS_CONTROL: fixtureProcessControlCommand,
       RECORDING_EXEC_SESSION_TOKEN: sessionToken,
       RECORDING_EXEC_WRAPPER_ROLE: 'signer-wrapper',
       RECORDING_EXEC_CHILD_ROLE: 'signer',
@@ -1035,11 +825,11 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
           args: [
             recordingExecPath,
             gitOwnershipPath,
-            identityCommand,
+            fixtureProcessControlCommand,
             sessionToken,
             'git-mcp-wrapper',
             'git-mcp-server',
-            fs.realpathSync(process.execPath),
+            gitMcpExecutable,
             gitMcpServer,
           ],
           env: gitMcpEnvironment,
@@ -1053,7 +843,7 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
           args: [
             recordingExecPath,
             siblingOwnershipPath,
-            identityCommand,
+            fixtureProcessControlCommand,
             sessionToken,
             'sibling-wrapper',
             'sibling-server',
@@ -1096,16 +886,17 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
         stdio: ['ignore', 'pipe', 'pipe'],
       },
     );
-    writeOwnershipRecord(
-      proxyOwnershipPath,
-      await waitForOwnershipRecord(
-        identityCommand,
-        proxy.pid,
-        fs.realpathSync(mcpproxyCommand),
-        'mcpproxy',
-        sessionToken,
-      ),
-    );
+    const proxyRecord = runProcessControl(fixtureProcessControlCommand, [
+      'record',
+      '--file', proxyOwnershipPath,
+      '--token', sessionToken,
+      '--pid', String(proxy.pid),
+      '--expected-executable', fs.realpathSync(mcpproxyCommand),
+      '--role', 'mcpproxy',
+      '--truncate',
+      '--wait-ms', '3_000',
+    ]);
+    assert.equal(proxyRecord.status, 0, proxyRecord.stderr);
     proxy.stdout.setEncoding('utf8');
     proxy.stderr.setEncoding('utf8');
     proxy.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -1182,25 +973,26 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
     ]) {
       assert.ok(
         ownershipRecords.some((record) => record.role === role),
-        `fixture did not capture ownership identity for ${role}`,
+        `fixture did not capture ownership identity for ${role}: ${ownershipRecords.map((record) => record.role).join(', ')}`,
       );
     }
-    const completedRecords = ownershipRecords
-      .filter((record) => !longLivedRoles.has(record.role));
-    const completedOptions = {
-      inspect: (pid) => inspectProcessIdentity(identityCommand, pid),
-      sessionToken,
-    };
+    const ownershipStates = processControlRecords(sessionToken, {
+      root: state.signingRoot,
+      recordFiles: ownershipRecordFiles(root),
+      states: true,
+    });
     assert.deepEqual(
-      liveOwnedRecords(completedRecords, completedOptions)
-        .map(({ pid, role }) => ({ pid, role })),
+      ownershipStates
+        .filter((entry) => !longLivedRoles.has(entry.record.role) && entry.state !== 'gone')
+        .map((entry) => ({ pid: entry.record.pid, role: entry.record.role, state: entry.state })),
       [],
       'signer and native fixture processes remain after Git failure',
     );
     assert.deepEqual(
-      liveOwnedRecords(continuityRecords, completedOptions)
-        .map(({ pid, role }) => ({ pid, role })),
-      continuityRecords.map(({ pid, role }) => ({ pid, role })),
+      ownershipStates
+        .filter((entry) => continuityRoles.has(entry.record.role) && entry.state !== 'live')
+        .map((entry) => ({ pid: entry.record.pid, role: entry.record.role, state: entry.state })),
+      [],
       'failed Git signing interrupted or replaced an original mcpproxy or sibling process',
     );
 
@@ -1227,8 +1019,8 @@ test('failed Git signing leaves mcpproxy and an independent sibling upstream ava
   await runFinalizers(primaryError, [
     async () => { if (client) await client.close(); },
     async () => {
-      if (identityCommand) {
-        await cleanupOwnedFixture(root, sessionToken, identityCommand, proxy);
+      if (proxy) {
+        await cleanupOwnedFixture(root, sessionToken, proxy);
       }
     },
     async () => { fs.rmSync(root, { recursive: true, force: true }); },
