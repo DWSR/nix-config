@@ -70,9 +70,10 @@
 - [ ] 2.6 Discover and verify public-cache cut candidates
   - Query approved endpoints through fresh state/proxy and collect complete recursive narinfo metadata below the top output.
   - Verify exact approved-key signatures, references, sizes, and closure completeness without trusting local validity.
-  - Complete candidates proceed to materialization; partial, unsigned, stale, unavailable, top-output, Attic, and Shopify-cache cases remain in traversal.
+  - Complete candidates proceed to materialization; partial, unsigned, unavailable, top-output, Attic, and Shopify-cache cases remain in traversal.
   - _Requirements: 2.1, 2.3, 2.4, 2.9, 7.3_
   - _Boundary: Eligibility Validator_
+  - _Blocked: spec/tooling conflict — cryptographic cache attestation and materialization require a pinned Nix/Lix verification seam._
 - [ ] 2.7 (P) Create provisional leases and root validated paths
   - Validate manifest/token grammar, request parents, graph digest, selected paths, ownership, and symlink targets.
   - Create mode-`0700` provisional state and roots only for graph-listed paths already proven valid.
@@ -94,7 +95,7 @@
   - _Boundary: Invocation Lease Manager_
 - [ ] 2.10 Materialize public-cache cuts under a provisional lease
   - Fetch absent paths only from the attesting cache, root them, and verify approved signatures plus recomputed local NAR hashes.
-  - Require `StorePath`, `NarHash`, `NarSize`, `References`, closure digest, and key identity to match the fresh attestation.
+  - Require `StorePath`, `NarHash`, `NarSize`, `References`, closure digest, and key identity to match the attestation.
   - Same-path local/Attic content mismatch and content-address-only trust fail before a cut is recorded.
   - _Requirements: 2.3, 2.4, 2.9, 7.3, 7.4_
   - _Boundary: Eligibility Validator, Invocation Lease Manager_

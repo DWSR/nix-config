@@ -143,13 +143,13 @@ component choices.
   profiles receive an explicit proxy configuration in validator-owned replay
   derivations. Unknown or modified fetcher shapes remain local.
 - Uncached branches receive source replay; dependency branches whose entire
-  closures have fresh trusted narinfos from an approved public cache are
+  closures have trusted narinfos from an approved public cache are
   recorded as invocation-scoped `PublicCacheCut` attestations.
 - Using Shopify's daemon as `--eval-store` would still upload the complete `.drv`
   and input-source closure beneath a cache cut. The selected flow independently
   evaluates and roots the graph in the personal daemon store, then invokes the
   remote `.drv` with primary and evaluation stores both set to that remote.
-- Existing personal paths under a cache cut must match freshly signed narinfo
+- Existing personal paths under a cache cut must match signed narinfo
   metadata and a recomputed local NAR hash. Generic copy success and
   content-addressed-path trust are insufficient.
 - A request-scoped personal lease roots the derivation/input-source graph,

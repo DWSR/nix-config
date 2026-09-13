@@ -409,7 +409,7 @@ Invariants:
   match the Shopify result.
 - Starting below the requested top output, query each approved public cache
   through fresh state and the policy proxy. A dependency becomes a
-  `PublicCacheCut` only when fresh narinfos cover its complete reference closure
+  `PublicCacheCut` only when retrieved narinfos cover its complete reference closure
   and every path validates against that cache's declared signing key.
 - Never cut the requested output, never consult local Attic or Shopify caches,
   and never use normal-store validity or persistent narinfo state. A missing,
@@ -432,7 +432,7 @@ Invariants:
   evidence.
 - Ask the Lease Manager to create a provisional invocation lease before
   public-cache prefetch. Fetch an absent cut
-  path only from its approved cache, root it, require fresh narinfo `StorePath`,
+  path only from its approved cache, root it, require native-verified narinfo `StorePath`,
   `NarHash`, `NarSize`, and `References`, verify a signature from that cache's
   exact approved key, and recompute the local NAR hash. Generic copy success or
   content-addressing never substitutes for the explicit checks.
@@ -581,7 +581,7 @@ ready.
 |---|---|---|
 | `LockedInstallable` | provider, owner, repository, revision, nar hash, attribute, outputs, system | Direct allowlisted repository and immutable revision |
 | `GraphIdentity` | schema, top derivation, sorted graph digest, evaluator config digest | Equal on Shopify clean evaluation and both personal evaluations |
-| `PublicCacheCut` | root path, sorted closure digest, endpoint, signing-key identity | Complete fresh trusted closure; never the top output |
+| `PublicCacheCut` | root path, sorted closure digest, endpoint, signing-key identity | Complete trusted closure; never the top output |
 | `EligibilityDecision` | nonce, identity, cache cuts, decision, reason, redacted detail | One invocation; no durable approval |
 | `InvocationLease` | token, graph digest, rooted paths, selected inputs, expected outputs, heartbeat, keeper state | Personal-only runtime state; inactivity expiry; no authorization beyond the restricted SSH key |
 | `BuildRun` | target, state, fallback reason, output paths, exit status | State transitions follow the commit boundary |
@@ -622,7 +622,7 @@ strings classified as credentials, or unredacted derivation environment data.
   repository entries, no global builder, and cache publisher prerequisites.
 - Exercise resolver and graph normalization with mutable, local, private,
   credential-bearing, unknown, oversized, and cross-version mismatch fixtures.
-- Exercise complete, partial, unsigned, stale, unavailable, local-Attic, and
+- Exercise complete, partial, unsigned, unavailable, local-Attic, and
   Shopify-cache closure attestations; only a complete approved signed public
   closure with matching recomputed local NAR content may cut traversal.
 - Stub fixed-output replays to verify sandbox, rebuild, hook suppression,
@@ -686,7 +686,7 @@ strings classified as credentials, or unredacted derivation environment data.
   Lix nor used during eligibility.
 - Only exact allowlisted repositories are evaluated. Evaluation is pure,
   restricted, credential-free, bounded, and isolated from normal proof state.
-- Dependency traversal may stop at a freshly queried, complete, signed closure
+- Dependency traversal may stop at a retrieved, complete, signed closure
   from an approved anonymous public cache. The top output, local Attic,
   Shopify caches, normal stores, and persistent narinfo state never qualify;
   existing personal paths must match the approved narinfo's recomputed NAR.
