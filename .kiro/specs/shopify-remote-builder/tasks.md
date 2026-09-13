@@ -67,7 +67,7 @@
   - Supported sources produce fresh matching evidence; failures leave no queue entry or proof process.
   - _Requirements: 2.2, 2.5, 2.6, 2.9, 7.3_
   - _Boundary: Eligibility Validator_
-- [ ] 2.6 Discover and verify public-cache cut candidates
+- [x] 2.6 Discover and verify public-cache cut candidates
   - Query approved endpoints through fresh isolated state/proxy and pass candidate paths through the pinned Nix/Lix cache-verification seam.
   - Verify native signatures and content, exact references, sizes, and closure completeness without trusting local validity.
   - Complete candidates proceed to materialization; partial, unsigned, unavailable, top-output, Attic, and Shopify-cache cases remain in traversal.
@@ -294,3 +294,4 @@
 - Source-profile validation must use explicit length/character checks because jq's `$` regex anchor accepts a trailing newline.
 - Cache age is not an eligibility condition; native Nix/Lix verification is the authority for cache signatures and NAR integrity.
 - Flat fixed-output fetches compare the classified SRI against `ca`; recursive fetches compare the NAR hash and recursive `ca` metadata.
+- Task 2.6 uses a fixed validator-owned temporary root and encoded file URIs; redirect, curl configuration, and same-path cache contamination fixtures must exercise the native verification seam.
