@@ -99,7 +99,7 @@ Option C best fits current ownership and limits regression risk. Design must def
 - **Export ambiguity**: Export into a temporary empty directory, enumerate all outputs, match by public-key fingerprint, and install exactly one selected stub atomically. Never depend on provider ordering or default filenames.
 - **Signer contract**: For Git's `-Y sign` path, start the bounded worker before CTK listing or any other preflight native call. Preserve direct passthrough for non-signing SSH program operations.
 - **Unsigned retry**: Render `commit.gpgSign=true` in addition to `gpg.format`, `gpg.ssh.program`, and `user.signingKey`.
-- **Timeout**: Apply one 20-second process-group deadline to preflight plus provider signing; hang each native phase in tests and assert bounded failure, no commit, and no surviving worker descendant.
+- **Timeout**: Capture immutable `T0 + 20s` work and `T0 + 22s` attempt deadlines. Cleanup uses the earlier of cleanup start plus one or two seconds and the attempt deadline. Hang each native phase in tests and assert a bounded result, no commit, and no surviving owned worker-group member.
 - **Process boundary**: Environment scoping constrains normal inheritance, not platform authorization. Any same-user process can reproduce the provider invocation.
 - **Rollout data**: Actual public keys and fingerprints do not exist until per-host enrollment. They are non-secret values to capture in host configuration only after probe success.
 - **Check portability**: Darwin flake checks need fake-provider coverage; physical Secure Enclave tests remain operator-gated and host-specific.
@@ -120,6 +120,13 @@ Option C best fits current ownership and limits regression risk. Design must def
 
 ## Design Validation Outcome
 
-The first review returned `NO-GO` for missing active-enrollment detection, declaration before GitHub registration, and unbounded provider descendants. The revision added a Home Manager-derived active marker, explicit pre-selection registration attestation, and a 20-second process-group timeout. This correction moves that deadline around the complete signing worker rather than only provider signing. CTK lock-state and GitHub verification remain physical-host gates.
+The first review returned `NO-GO` for missing active-enrollment detection, declaration before GitHub registration, and unbounded provider descendants. The revision added a Home Manager-derived active marker, explicit pre-selection registration attestation, and bounded worker-group cleanup. The later Go amendment defines immutable work, TERM, cleanup, and attempt deadlines around the direct worker and its owned group rather than promising control over arbitrary descendants. CTK lock-state and GitHub verification remain physical-host gates.
 
 The pre-task review also made the admin package available while signing is disabled and classified the runbook and physical probes as required interface and integration-test deliverables. No separate deployment workstream was added.
+
+## Amendment: Go Supervisor and Bounded Cleanup
+
+- Darwin permits a process to reap only its direct children. The signer can terminate and observe a dedicated worker process group, but it cannot truthfully promise to reap arbitrary grandchildren or a process that leaves the group.
+- The revised contract separates an immutable `T0 + 20s` work deadline from an immutable `T0 + 22s` attempt deadline. A successful worker result after the work deadline is a timeout, and every interrupted retry checks its absolute deadline before retrying.
+- `proc_pidinfo(..., PROC_PIDTBSDINFO, 1, ...)` with `pbi_pgid` is required to observe Darwin process-group members, including `SZOMB`. A zombie is cleanup evidence until it disappears; `getpgid` is not sufficient for that observation.
+- The signer runtime, worker, supervisor, and process-control helpers move to Go. The Darwin process inspection binding may use cgo inside the Go executable; it is not a standalone C helper. Node remains the repository's outer integration-test runner only.

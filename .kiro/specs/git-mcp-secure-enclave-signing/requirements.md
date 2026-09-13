@@ -9,6 +9,7 @@
 - **In scope**: Per-host signing identity lifecycle, git-mcp-only signing selection, failure diagnostics, operator procedures, automated isolation checks, and physical-host locked-screen acceptance.
 - **Out of scope**: Global signer changes, adding the dedicated key to SSH authentication configuration, private-key export or secret-pipeline storage, mcpproxy redesign, and restrictions that prevent other same-user processes from invoking the platform signer.
 - **Adjacent expectations**: Existing 1Password Git and SSH behavior, host author identities and signing keys, git-mcp stateless/in-memory posture, other mcpproxy upstreams, and adjacent specs remain unchanged.
+- **Runtime ownership boundary**: The signer controls ordinary descendants that remain in its dedicated worker process group. It reaps only its direct worker child and fails closed rather than claiming to reap a grandchild or a process that leaves that group.
 
 ## Requirements
 
@@ -87,8 +88,10 @@
 4. If the resident-key stub is absent, unreadable, or malformed, the Git MCP Signing System shall fail before commit creation and identify the stub path.
 5. If the stub, configured public key, fingerprint, and selected identity do not refer to the same key, the Git MCP Signing System shall fail before commit creation and report the mismatch without exposing private material.
 6. If identity export yields no matching artifact or multiple ambiguous artifacts, the Git MCP Signing System shall fail with recovery guidance and shall NOT select an arbitrary artifact.
-7. If a signing preflight or provider operation rejects or fails to complete within 20 seconds, the Git MCP Signing System shall terminate and reap the complete signing worker tree and propagate a non-zero diagnostic to the `git-mcp` caller.
+7. When the signer accepts a signing invocation, the Git MCP Signing System shall capture an absolute monotonic work deadline exactly 20 seconds later and an absolute attempt deadline exactly 22 seconds later. A successful worker result, worker-group observation, direct-worker reaping, and output relay completed before the work deadline shall return exit `0`. A worker result received at or after the work deadline, or a successful result whose cleanup or output relay completes at or after the work deadline, shall return exit `124` if cleanup completes by the cleanup deadline. At cleanup start, the system shall calculate one immutable TERM deadline as the earlier of cleanup start plus one second and the attempt deadline, and one immutable cleanup deadline as the earlier of cleanup start plus two seconds and the attempt deadline. No retry shall extend either deadline.
 8. If dedicated signing fails, mcpproxy and upstreams other than `git-mcp` shall remain available.
+9. When a signing worker reports a terminal result or the work deadline expires, the Git MCP Signing System shall terminate only its dedicated worker process group, reap its direct worker child, and return success only after observing no other member of that group and completing its bounded output relay before the work deadline. If group observation, direct-child reaping, or output completion cannot be established by the immutable cleanup deadline, the system shall return exit `125` with a cleanup-uncertain diagnostic.
+10. When the signer receives a parent interruption signal, the Git MCP Signing System shall begin the same bounded cleanup before returning any worker result. If cleanup completes by the cleanup deadline, it shall return exit `128` plus the received signal number. If cleanup is uncertain, it shall return exit `125`.
 
 ### Requirement 7: Per-host bootstrap and GitHub enrollment
 
@@ -126,11 +129,11 @@
 
 1. When the Home Manager render tests run, the test suite shall verify the dedicated signing configuration for both managed hosts.
 2. When the Home Manager render tests run, the test suite shall verify that both hosts retain distinct dedicated identity metadata and existing `git-mcp` hardening settings.
-3. When the signer contract tests run, the test suite shall verify successful signing, signature-key matching, and each specified fail-closed condition without requiring physical Secure Enclave access.
+3. When the signer contract tests run, the test suite shall verify successful signing, signature-key matching, each specified fail-closed condition, absolute work and cleanup deadlines, direct-worker reaping, worker-group absence or cleanup uncertainty, and bounded interrupted retries with their specified exit status without requiring physical Secure Enclave access.
 4. When the scope-isolation tests run, the test suite shall verify that `git-mcp` selects the dedicated signer and an unrelated Git process retains the global 1Password signer.
 5. When the upstream-isolation tests run, the test suite shall verify that no unrelated mcpproxy upstream receives the dedicated signing configuration.
 6. When repository checks run, the test suite shall verify that no private key, authentication-key registration, `authorized_keys` entry, or secret-pipeline declaration is introduced by the feature.
-7. When the existing `git-mcp` flake check runs, the test suite shall execute the new render and signer-contract coverage.
+7. When the existing `git-mcp` flake check runs, the test suite shall execute the render, signer-contract, and deterministic signer-supervisor coverage.
 
 ### Requirement 10: Physical-host acceptance evidence
 

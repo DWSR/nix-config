@@ -2,7 +2,7 @@
 
 ## Overview
 
-This feature gives the `git-mcp` upstream a dedicated CTK-backed SSH signer while leaving global Git and SSH behavior unchanged. It adds a thin signer adapter, an operator lifecycle CLI, typed Home Manager configuration, and staged physical-host acceptance.
+This feature gives the `git-mcp` upstream a dedicated CTK-backed SSH signer while leaving global Git and SSH behavior unchanged. It adds a Go signer runtime, an operator lifecycle CLI, typed Home Manager configuration, and staged physical-host acceptance.
 
 ### Goals
 
@@ -36,15 +36,16 @@ The per-host Nix declaration is authoritative for the active identity. Home Mana
 - `mcp-secrets-sops-nix`, secret activation, and generic-password Keychain records.
 - The mcpproxy launch wrapper, runtime config ownership, tool routing, and other upstreams.
 - GitHub repository selection for the acceptance commit.
+- Claiming control over a descendant that voluntarily creates another session or process group. The signer controls and verifies only members of its dedicated worker process group.
 
 ### Allowed Dependencies
 
 - macOS `/usr/sbin/sc_auth`, `/usr/lib/ssh-keychain.dylib`, `/usr/bin/ssh-keygen`, CryptoTokenKit, and Secure Enclave.
 - Git's SSH signing and process-runtime configuration interfaces.
-- The existing `home.mcp` module, `git-mcp-server`, Nix packaging including `pkgs.coreutils`, XDG state, Node test harness, and flake check.
+- The existing `home.mcp` module, `git-mcp-server`, Nix packaging through `pkgs.buildGoModule`, the Go toolchain, Darwin process inspection through an in-process Go binding, XDG state, the Node outer test runner, and the flake check.
 - GitHub's signing-key registration and commit-verification surfaces for operator acceptance.
 
-No third-party signer, persistent `ssh-agent`, new daemon, or secret pipeline is allowed.
+No third-party signer, persistent `ssh-agent`, new daemon, secret pipeline, Node or JavaScript signer runtime, shell signer wrapper, or standalone C signer helper is allowed.
 
 ### Revalidation Triggers
 
@@ -84,17 +85,17 @@ graph LR
 
 - Pattern: hybrid extension. Existing server ownership is extended; native signing and lifecycle behavior live in new tools.
 - Dependency direction: host declaration → mcpproxy rendering → Git environment → signer adapter → Apple tools. The lifecycle CLI writes state but never mutates the declarative host declaration.
-- Existing patterns preserved: `writeShellApplication`, typed Home Manager options, XDG state, Node contract tests, and the current flake check.
+- Existing patterns preserved: `buildGoModule`, typed Home Manager options, XDG state, Node integration tests, and the current flake check.
 
 ### Technology Stack
 
 | Layer | Choice | Role |
 |---|---|---|
 | Configuration | Nix and Home Manager | Validate enrollment and render git-mcp-only environment |
-| Runtime adapter | Nix-packaged shell application and GNU `timeout` | Enclose the complete signing worker in a 20-second bound and preserve Git's SSH signer CLI |
+| Runtime adapter | Nix-packaged Go binary | Public SSH signer dispatch, native preflight, fixed paths, and bounded worker-group cleanup |
 | Platform | macOS 26 CTK, Secure Enclave, Apple OpenSSH | Store the non-exportable key and produce SSH signatures |
 | State | XDG state files | Store resident handles, public keys, and acceptance evidence |
-| Verification | Node 22, Git, OpenSSH, Nix flake checks | Exercise render, contract, Git, and failure behavior |
+| Verification | Go, Node 22, Git, OpenSSH, Nix flake checks | Exercise deterministic supervision, render, contract, Git, and failure behavior |
 
 ## File Structure Plan
 
@@ -102,16 +103,26 @@ graph LR
 
 ```text
 scripts/
-├── git-mcp-secure-enclave-signer.nix   # Git-compatible signer adapter package
-└── git-mcp-secure-enclave-admin.nix    # Identity lifecycle and acceptance CLI package
+├── git-mcp-secure-enclave-signer.nix    # buildGoModule package and fixed native-path injection
+├── git-mcp-secure-enclave-signer/
+│   ├── go.mod                            # Isolated Darwin signer module
+│   ├── cmd/
+│   │   ├── signer/main_darwin.go          # Public SSH signer dispatch
+│   │   └── worker/main_darwin.go          # Private libexec worker entry
+│   └── internal/
+│       ├── signer/                        # Preflight validation and native execution
+│       ├── supervisor/                    # Deadline state machine and process-group teardown
+│       └── darwinproc/                    # In-process Darwin process inspection binding
+└── git-mcp-secure-enclave-admin.nix      # Identity lifecycle and acceptance CLI package
 tests/git-mcp/
-├── signer-contract.test.js              # Signer, Git config, failure, and timeout contracts
-├── admin-contract.test.js               # Lifecycle state-machine and export-selection contracts
+├── signer-adapter.test.js                # Black-box Git and public signer contracts
+├── admin-contract.test.js                # Lifecycle state-machine and export-selection contracts
 ├── upstream-isolation.test.js            # Failed-signing isolation across mcpproxy upstreams
-├── policy.test.js                        # Private/auth material and boundary regression scan
-└── fixtures/signing-tools.nix           # Fake native tools and injectable package builds
+└── fixtures/
+    ├── process-control_darwin.go          # Go process identity and cleanup fixture CLI
+    └── signing-tools.nix                  # Fake native tools and injectable package builds
 docs/
-└── git-mcp-secure-enclave-signing.md    # Operator runbook and accepted security boundary
+└── git-mcp-secure-enclave-signing.md     # Operator runbook and accepted security boundary
 ```
 
 ### Modified Files
@@ -154,7 +165,36 @@ sequenceDiagram
     end
 ```
 
-`commit.gpgSign=true` remains effective when upstream retries without `--gpg-sign`; the retry therefore cannot create an unsigned commit. For each signing attempt, the 20-second deadline starts before CTK identity listing or any preflight native call and ends only after provider signing exits and the worker tree is reaped.
+`commit.gpgSign=true` remains effective when upstream retries without `--gpg-sign`; the retry therefore cannot create an unsigned commit. For each signing attempt, the public Go signer captures `T0` before it starts its worker. The immutable work deadline is `T0 + 20 seconds` and covers worker startup, CTK identity listing, every preflight native call, Apple `ssh-keygen`, and delivery of the worker result. Cleanup begins on a terminal worker result, worker protocol failure, parent interruption, or work-deadline expiry. Its immutable deadline is the earlier of `cleanupStart + 2 seconds` and `T0 + 22 seconds`. A worker result at or after the work deadline is a timeout. A successful pre-deadline result is returned only after worker-group cleanup and direct-worker reaping finish before the work deadline.
+
+| Transition | Result |
+|---|---|
+| Successful worker result and complete cleanup before `T0 + 20s` | Return `0`. |
+| Nonzero worker result before `T0 + 20s` and complete cleanup by its cleanup deadline | Return the worker's nonzero status. |
+| No result by `T0 + 20s`, or successful result whose cleanup/reaping/output relay completes at or after `T0 + 20s` | Return `124` after cleanup succeeds by `cleanupDeadline`. |
+| Parent interruption with complete cleanup by `cleanupDeadline` | Return `128 + signal number`. |
+| Group observation, output completion, or direct-worker reaping cannot complete by `cleanupDeadline` | Return `125` with a cleanup-uncertain diagnostic. |
+
+`termDeadline` is the earlier of `cleanupStart + 1 second` and `T0 + 22 seconds`. `cleanupDeadline` is the earlier of `cleanupStart + 2 seconds` and `T0 + 22 seconds`. These values are calculated once when cleanup begins and are never extended.
+
+### Supervisor State Machine
+
+```text
+Start
+  -> Working
+  -> CleanupTerm       result, protocol failure, interrupt, or work deadline
+  -> CleanupKill       worker group remains at the TERM deadline
+  -> VerifyGroup       no non-worker group member remains
+  -> ReapDirectWorker
+  -> RelayOutput       bounded native output copy completes
+  -> Succeeded         successful result and cleanup before work deadline
+  -> Failed            nonzero result before work deadline
+  -> TimedOut          result absent or incomplete at work deadline
+  -> Interrupted       parent signal and complete cleanup
+  -> CleanupUncertain  group observation or direct-worker reaping missed cleanup deadline
+```
+
+Parent interruption takes precedence over a worker result. After clean bounded cleanup, it returns `128 + signal number`; cleanup uncertainty returns `125`. Every wait, read, process snapshot, signal retry, and sleep receives an immutable absolute deadline. An `EINTR` retry checks its deadline and pending parent signal before it retries. No retry may derive a new grace period.
 
 ### Enrollment and Rollout
 
@@ -222,21 +262,15 @@ Existing `MCP_SESSION_MODE` and `STORAGE_PROVIDER_TYPE` values are merged unchan
 
 ### Signer Adapter
 
-**Process contract**:
+The signer package is one Darwin-only Go module built with `buildGoModule`, `CGO_ENABLED=1`, and Darwin build tags. It installs a public signer executable and a private Go worker in its package `libexec` directory. Non-signing SSH-program operations `exec` the fixed Apple `ssh-keygen` path with the original argument vector. For each recognized `-Y sign` form, the public command starts the fixed private worker in a new session and process group before any validation or native operation.
 
-```text
-git-mcp-secure-enclave-signer <ssh-keygen-compatible arguments>
-exit 0: delegated Apple ssh-keygen operation succeeded
-exit nonzero: preflight or delegated operation failed; stderr is actionable
-```
+The worker ports the provider, selector, stub, public-key, fingerprint, and CTK identity checks to Go. Native paths are injected only at Nix build time. It invokes `sc_auth` and Apple `ssh-keygen` without a shell, preserves native stdout and stderr through bounded temporary capture, and never invokes an agent or fallback signer.
 
-- For `-Y sign`, start one isolated worker process group under a fixed 20-second supervisor before invoking any preflight or native command.
-- Inside that worker, require the exact production provider, expected selector, expected `-f` stub, a regular readable stub and `.pub`, matching public key/fingerprint, and a matching identity from `sc_auth list-ctk-identities`, then invoke `/usr/bin/ssh-keygen` with the original argument vector.
-- Delegate non-signing operations unchanged so Git verification subcommands remain compatible.
-- Never invoke, start, or depend on `ssh-agent`; never fall back to another signer.
-- Preserve native stdout and stderr. On every worker exit, reap its descendants; on timeout, terminate and reap the complete worker process group, return nonzero, and emit a specific timeout diagnostic.
-- Add one concise recovery line for first-unlock, missing state, mismatch, or provider failure.
-- Production native paths are fixed package parameters. Tests substitute fake tools at Nix build time, not through production runtime overrides.
+The public signer owns one direct worker child. The worker accepts only a one-shot random capability over an inherited anonymous socketpair and verifies that its direct parent is the fixed public signer executable. This prevents normal direct invocation of the private worker without claiming same-user platform authorization. While the direct child remains unreaped, the supervisor may signal only the negative worker process-group ID. It observes the group before it reaps the direct child, then returns the recorded worker result only if the work deadline permits it. It never sends another group signal after direct-worker reaping, so a reused PID cannot become a signal target.
+
+A Darwin-only in-process Go binding enumerates process records with `proc_listpids` and `proc_pidinfo(..., PROC_PIDTBSDINFO, 1, ...)`, uses `pbi_pgid` for membership, and treats `SZOMB` as present. The binding is compiled into the Go executable; it is not a standalone C helper or executable.
+
+The signer reaps only its direct worker child. It terminates and observes other worker-group members, including zombies, but does not claim to reap grandchildren. A process that voluntarily creates another session or process group is outside this ownership contract.
 
 ### Lifecycle CLI
 
@@ -256,7 +290,9 @@ Bootstrap checks the Home Manager-derived active marker and managed identities d
 
 ### Test Harness and Runbook
 
-The fixture builds signer/admin packages against deterministic fake `sc_auth`, provider, and `ssh-keygen` commands. Node tests own temporary directories and Git repositories. The runbook owns manual registration, per-host activation, actual locked/sleep probes, GitHub `Verified` confirmation, rollback, and lifecycle recovery.
+The fixture builds signer/admin packages against deterministic fake `sc_auth`, provider, and `ssh-keygen` commands. `tests/git-mcp/fixtures/process-control_darwin.go` is built through `signing-tools.nix` with the Go toolchain and retains the fixture process-control CLI contract. Go owns signer runtime, supervisor state, and process-control helper behavior. Node remains the outer test runner for black-box Git, render, lifecycle, and upstream integration contracts. The runbook owns manual registration, per-host activation, actual locked/sleep probes, GitHub `Verified` confirmation, rollback, and lifecycle recovery.
+
+The Go-port task rewrites the Node signer suite in the same change that removes legacy C/shell expectations. The suite exercises only the public Go package as an outer runner; deterministic deadline, signal, process-group, and `EINTR` behavior remains in Go tests. No approved task may intentionally leave the canonical signer suite red between these two representations.
 
 ## Data Models
 
@@ -299,7 +335,8 @@ The stub contains a provider credential handle, not private key material. Direct
 | Public key or fingerprint mismatch | Signer or CLI | Exit before signing; print expected and observed public identifiers |
 | Export returns zero or multiple candidates | Lifecycle CLI | Install nothing; report candidates and recovery steps |
 | Provider rejects signing | Signer | Preserve stderr and mention first unlock after reboot |
-| Signing worker exceeds 20 seconds during preflight or provider signing | Signer adapter | Terminate and reap the complete worker process group, return a timeout diagnostic, and leave Git to fail closed |
+| Work deadline expires before worker result | Signer adapter | Enter cleanup immediately, terminate the dedicated worker group, and return exit `124` only if group absence and direct-worker reaping are proven by the cleanup deadline. |
+| Cleanup deadline expires or group observation fails | Signer adapter | Return exit `125` with a cleanup-uncertain diagnostic. Never return signing success or claim descendant reaping. |
 | Any physical probe fails | Rollout workflow | Disable or retain disabled config; keep identity for diagnosis |
 
 Signer failure affects only the current Git command. It does not stop mcpproxy or modify another upstream.
@@ -318,7 +355,11 @@ Signer failure affects only the current Git command. It does not stop mcpproxy o
 - Inject fake native tools to cover success, non-sign passthrough, missing provider, missing identity, missing stub, malformed stub, hash/public-key/fingerprint mismatch, ambiguous identity, provider failure, and first-unlock guidance.
 - Verify the adapter preserves Git's `-Y sign` arguments and never invokes an agent or fallback signer.
 - Use temporary Git repositories to prove environment config overrides conflicting global signing settings, successful commits contain a signature, and both upstream attempts fail without moving `HEAD` when signing fails.
-- Hang CTK identity listing, each preflight native call, and provider signing across both upstream attempts; assert each complete worker stays within 20 seconds, `HEAD` is unchanged, and no worker descendant survives.
+- Move signer-supervisor tests into the Go package. Use a fake monotonic clock, result observer, process inspector, signaler, reaper, and output relay to test every state transition without wall-clock races.
+- Deterministically inject `EINTR` into result reads, worker observation, group inspection, termination waits, direct-worker reaping, and output relay. Every test advances the fake clock to prove retries stop at the work or cleanup deadline.
+- Replace the Node late-descendant fixture with a Go helper-process test using pipe barriers. The worker-group observation gains a member after `SIGTERM`; the test proves the bounded `SIGKILL` phase, group verification, and direct-worker reaping without deriving a fresh deadline.
+- Test an exact-deadline worker result, exact-deadline cleanup, incomplete output relay, persistent zombie, parent interruption, and repeated `EINTR`; none may return signing success.
+- Hang CTK identity listing, each preflight native call, and provider signing through the public signer; assert the work and cleanup deadlines, unchanged `HEAD`, no unsigned retry commit, and no surviving owned worker-group member.
 - Start mcpproxy with a failing signing fixture and an independent fake upstream; prove the failed Git call does not stop mcpproxy or the sibling upstream.
 
 ### Lifecycle CLI Tests
@@ -371,9 +412,9 @@ The versioned runbook is a required operator interface artifact. Physical-host p
 | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7 | Environment merge and unchanged global files | Dual-host render and upstream-isolation tests |
 | 4.1, 4.2, 4.3, 4.4, 4.5 | `-t none`, first-unlock diagnostics, host rollout | Unlocked, locked, sleep, and reboot checks |
 | 5.1, 5.2, 5.3, 5.4, 5.5, 5.6 | State model and security boundary | Repository scan, state inspection, runbook review |
-| 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8 | Selector, full-worker deadline, error isolation | Negative contract tests and upstream health check |
+| 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8, 6.9, 6.10 | Selector, absolute work and cleanup deadlines, interruption precedence, group observation, and error isolation | Deterministic supervisor tests, negative contracts, and upstream health check |
 | 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7 | Bootstrap and registration workflow | CLI tests and per-host enrollment |
 | 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7 | Hash-keyed candidate lifecycle | Rotation, recovery, and decommission tests |
-| 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | Git-mcp test harness and flake integration | Existing `git-mcp` flake check |
+| 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7 | Git-mcp test harness, Go supervisor tests, and flake integration | Existing `git-mcp` flake check |
 | 10.1, 10.2, 10.3, 10.4, 10.5, 10.6 | Per-host acceptance workflow and evidence | Physical probes and GitHub `Verified` result |
 | 11.1, 11.2, 11.3, 11.4 | Operator runbook | Documentation review against checklist |

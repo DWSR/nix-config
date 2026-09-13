@@ -18,7 +18,7 @@ Each host has a dedicated, non-exportable Secure Enclave identity that repositor
 
 ## Approach
 
-Use macOS CryptoTokenKit with a per-host `p-256-ne` identity created by `sc_auth ... -t none`. A git-mcp-specific signer invokes `/usr/bin/ssh-keygen` with `/usr/lib/ssh-keychain.dylib` and a local resident-key stub. Command-scoped Git configuration in the `git-mcp` upstream selects the signer and stub without changing global Git configuration.
+Use macOS CryptoTokenKit with a per-host `p-256-ne` identity created by `sc_auth ... -t none`. A git-mcp-specific Go signer invokes `/usr/bin/ssh-keygen` with `/usr/lib/ssh-keychain.dylib` and a local resident-key stub. Its monotonic work deadline and bounded process-group cleanup prevent one signing request from consuming git-mcp's 60-second upstream timeout. Command-scoped Git configuration in the `git-mcp` upstream selects the signer and stub without changing global Git configuration.
 
 Pin the intended CTK identity with `KEYCHAIN_CERTIFICATES` where supported. Fail closed with actionable diagnostics when the provider, stub, identity, or provider operation is unavailable or mismatched. Validate the undocumented locked-screen behavior empirically on every host.
 
@@ -28,7 +28,7 @@ Rejected alternatives are Secretive, exportable private keys, SOPS-managed signi
 
 - **In**:
   - A dedicated CTK identity configured and registered only for Git commit signing, plus a non-secret resident-key stub per host.
-  - A git-mcp-specific signer and command-scoped Git configuration.
+  - A git-mcp-specific Go signer and command-scoped Git configuration.
   - Per-host bootstrap, GitHub signing-key registration, validation, rotation, recovery, and decommission procedures.
   - Render, contract, failure-path, and physical-host locked-screen verification.
   - Clear documentation of the same-user process authorization boundary.
@@ -51,6 +51,7 @@ Rejected alternatives are Secretive, exportable private keys, SOPS-managed signi
 - The feature does not modify `mcp-secrets-sops-nix`, store signing material in Nix/SOPS/Keychain generic-password records, or extend the secrets pipeline.
 - The feature does not redesign the mcpproxy orchestrator or Git clone isolation.
 - The feature does not guarantee unattended signing before the first unlock after boot.
+- The signer reaps its direct worker child and verifies its dedicated worker process group. It does not claim to reap grandchildren or processes that leave that group.
 
 ## Upstream / Downstream
 
@@ -70,4 +71,5 @@ Rejected alternatives are Secretive, exportable private keys, SOPS-managed signi
 - The resident-key stub, key handle, public key, certificate selector, and fingerprints are non-secret per-host state.
 - Every new host and every rotation creates a new non-exportable identity and requires GitHub signing-key registration.
 - A reboot requires first unlock before unattended signing resumes.
+- Signer runtime wrappers and process-control helpers are Go programs. Node remains only the existing outer test runner.
 - The existing cost-reduction roadmap remains unchanged.
