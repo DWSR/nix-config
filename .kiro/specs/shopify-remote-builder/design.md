@@ -393,6 +393,25 @@ Invariants:
 | Intent | Prove anonymous refetchability for the bounded source-policy class. |
 | Requirements | 2.1–2.9, 6.2, 6.4, 6.5, 7.3 |
 
+**Native cache verification seam**
+
+- The Eligibility Validator shall delegate cache signature and NAR integrity
+  verification to the pinned Nix/Lix implementation rather than parsing
+  signature text or trusting caller-provided narinfo fields.
+- The adapter shall receive only a candidate path set and a statically
+  configured approved cache identity. Endpoint, full trusted public key,
+  substitution policy, and temporary store configuration come from host
+  configuration, not the validation request.
+- The adapter shall run Nix/Lix with fresh isolated state and the policy proxy,
+  materialize or verify the candidate closure in a validator-owned temporary
+  store, and return native path metadata plus the verified path set to policy
+  code.
+- The policy layer shall enforce closure completeness, endpoint identity,
+  top-output exclusion, local-cache exclusion, and bounded diagnostics. It
+  shall not reimplement cryptographic signature verification.
+- Cache age is not an eligibility condition. An old cache object with valid
+  native signatures and content remains eligible.
+
 **Validation pipeline**
 
 - Recheck the direct repository allowlist, immutable revision, system, nonce,
@@ -410,7 +429,8 @@ Invariants:
 - Starting below the requested top output, query each approved public cache
   through fresh state and the policy proxy. A dependency becomes a
   `PublicCacheCut` only when retrieved narinfos cover its complete reference closure
-  and every path validates against that cache's declared signing key.
+  and the native cache verification seam validates every path against that
+  cache's statically declared signing key.
 - Never cut the requested output, never consult local Attic or Shopify caches,
   and never use normal-store validity or persistent narinfo state. A missing,
   partial, unsigned, or unavailable public-cache closure remains in traversal;
@@ -434,8 +454,9 @@ Invariants:
   public-cache prefetch. Fetch an absent cut
   path only from its approved cache, root it, require native-verified narinfo `StorePath`,
   `NarHash`, `NarSize`, and `References`, verify a signature from that cache's
-  exact approved key, and recompute the local NAR hash. Generic copy success or
-  content-addressing never substitutes for the explicit checks.
+  exact approved key, and recompute the local NAR hash through the native
+  verification seam. Generic copy success or content-addressing never
+  substitutes for the explicit checks.
 - Root the personal top `.drv`, its recursive `.drv`/`inputSrc` closure, every
   replayed source path, every valid selected input output, and every cut closure
   path. Return the exact selected input/output paths and lease token with the

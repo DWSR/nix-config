@@ -68,12 +68,11 @@
   - _Requirements: 2.2, 2.5, 2.6, 2.9, 7.3_
   - _Boundary: Eligibility Validator_
 - [ ] 2.6 Discover and verify public-cache cut candidates
-  - Query approved endpoints through fresh state/proxy and collect complete recursive narinfo metadata below the top output.
-  - Verify exact approved-key signatures, references, sizes, and closure completeness without trusting local validity.
+  - Query approved endpoints through fresh isolated state/proxy and pass candidate paths through the pinned Nix/Lix cache-verification seam.
+  - Verify native signatures and content, exact references, sizes, and closure completeness without trusting local validity.
   - Complete candidates proceed to materialization; partial, unsigned, unavailable, top-output, Attic, and Shopify-cache cases remain in traversal.
   - _Requirements: 2.1, 2.3, 2.4, 2.9, 7.3_
   - _Boundary: Eligibility Validator_
-  - _Blocked: spec/tooling conflict — cryptographic cache attestation and materialization require a pinned Nix/Lix verification seam._
 - [ ] 2.7 (P) Create provisional leases and root validated paths
   - Validate manifest/token grammar, request parents, graph digest, selected paths, ownership, and symlink targets.
   - Create mode-`0700` provisional state and roots only for graph-listed paths already proven valid.
@@ -293,4 +292,5 @@
 - Task 2.1 remains blocked after two debug rounds: valid Tecnix native v4 basename/`nar` output forms, complete evaluator-policy digest binding, and graph reachability/acyclicity still require remediation before dependent eligibility work can proceed.
 - Task 2.2 uses unprivileged Dante listener port 1080; outbound source connections remain restricted to HTTPS port 443.
 - Source-profile validation must use explicit length/character checks because jq's `$` regex anchor accepts a trailing newline.
+- Cache age is not an eligibility condition; native Nix/Lix verification is the authority for cache signatures and NAR integrity.
 - Flat fixed-output fetches compare the classified SRI against `ca`; recursive fetches compare the NAR hash and recursive `ca` metadata.

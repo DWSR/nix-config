@@ -110,6 +110,20 @@ component choices.
   [Nix derivation JSON](https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-derivation-show),
   and [Nix configuration](https://nix.dev/manual/nix/2.34/command-ref/conf-file.html).
 
+### Native cache verification
+
+- Cache trust belongs to the pinned Nix/Lix binary-cache and store workflow.
+  The feature must not treat a parsed narinfo signature string or caller-provided
+  key identifier as cryptographic evidence.
+- A validator-owned adapter shall configure one approved endpoint and its full
+  trusted public key in fresh isolated Nix/Lix state, materialize or verify the
+  candidate closure, and return native path metadata to the policy layer.
+- The policy layer remains responsible for endpoint binding, complete-closure
+  traversal, top-output exclusion, local-cache exclusion, and bounded redacted
+  results. It does not duplicate Nix/Lix signature verification.
+- Cache age is not part of eligibility. Standard native signatures and verified
+  content remain valid regardless of object age.
+
 ### Cache handoff
 
 - The personal daemon runs its post-build hook for outputs it actually builds.
