@@ -73,7 +73,7 @@
   - Complete candidates proceed to materialization; partial, unsigned, unavailable, top-output, Attic, and Shopify-cache cases remain in traversal.
   - _Requirements: 2.1, 2.3, 2.4, 2.9, 7.3_
   - _Boundary: Eligibility Validator_
-- [ ] 2.7 (P) Create provisional leases and root validated paths
+- [x] 2.7 (P) Create provisional leases and root validated paths
   - Validate manifest/token grammar, request parents, graph digest, selected paths, ownership, and symlink targets.
   - Create mode-`0700` provisional state and roots only for graph-listed paths already proven valid.
   - Lease fixtures reject forged tokens, escapes, mismatches, and unlisted roots while exposing exact root coverage.
@@ -295,3 +295,4 @@
 - Cache age is not an eligibility condition; native Nix/Lix verification is the authority for cache signatures and NAR integrity.
 - Flat fixed-output fetches compare the classified SRI against `ca`; recursive fetches compare the NAR hash and recursive `ca` metadata.
 - Task 2.6 uses a fixed validator-owned temporary root and encoded file URIs; redirect, curl configuration, and same-path cache contamination fixtures must exercise the native verification seam.
+- Task 2.7 must reject any lease whose selected inputs or expected outputs are not all rooted before creating provisional state.
