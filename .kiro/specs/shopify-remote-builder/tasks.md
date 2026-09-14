@@ -92,7 +92,7 @@
   - TTL-crossing fixtures preserve active leases and remove interrupted stale leases.
   - _Requirements: 2.9, 6.5, 6.6, 7.4_
   - _Boundary: Invocation Lease Manager_
-- [ ] 2.10 Materialize public-cache cuts under a provisional lease
+- [x] 2.10 Materialize public-cache cuts under a provisional lease
   - Fetch absent paths only from the attesting cache, root them, and verify approved signatures plus recomputed local NAR hashes.
   - Require `StorePath`, `NarHash`, `NarSize`, `References`, closure digest, and key identity to match the attestation.
   - Same-path local/Attic content mismatch and content-address-only trust fail before a cut is recorded.
@@ -298,3 +298,4 @@
 - Task 2.7 must reject any lease whose selected inputs or expected outputs are not all rooted before creating provisional state.
 - Task 2.8 uses `nix-store --add-root ROOT --indirect --realise STORE_PATH`; dangling expected-output markers must be repaired before Check.
 - Task 2.9 treats malformed, future, or overflow-prone heartbeat timestamps as retained state; live locks always win over TTL cleanup.
+- Task 2.10 batches exact non-recursive cache paths for native dependency ordering, binds the complete multi-cut attestation to the lease, and preserves active lease state on cleanup failure.

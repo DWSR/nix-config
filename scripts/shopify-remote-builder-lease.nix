@@ -141,9 +141,7 @@ writeShellApplication {
              rootedPaths: $value.rootedPaths,
              selectedInputOutputs: $value.selectedInputOutputs,
              expectedOutputs: $value.expectedOutputs,
-             publicCacheCuts: ($value.publicCacheCuts
-               | map({ rootPath: .rootPath, closureDigest: .closureDigest })
-               | sort_by(.rootPath)),
+             publicCacheCuts: ($value.publicCacheCuts | sort_by(.rootPath)),
              detail: null
       }'
     }
@@ -638,7 +636,7 @@ writeShellApplication {
             def valid_digest:
               type == "string" and test("^sha256:[0-9a-f]{64}$");
             def valid_store_path:
-              type == "string" and test("^/nix/store/[a-z0-9]{32}-[A-Za-z0-9._+-]+$");
+              type == "string" and test("^/nix/store/[a-z0-9]{32}-[A-Za-z0-9._+?=-]+$");
             def valid_paths:
               type == "array" and . == (sort | unique) and all(.[]; valid_store_path);
             . as $request
@@ -957,7 +955,7 @@ writeShellApplication {
         def valid_store_path:
           type == "string"
           and utf8bytelength <= 266
-          and test("^/nix/store/[a-z0-9]{32}-[A-Za-z0-9._+-]+$");
+          and test("^/nix/store/[a-z0-9]{32}-[A-Za-z0-9._+?=-]+$");
         def sorted_unique:
           . == (sort | unique);
         def valid_path_array:
@@ -1076,20 +1074,54 @@ writeShellApplication {
               or (($request.rootedPaths | index($root.storePath)) == null)
               or ($root.destination != ($expectedRoot + "/roots/" + ($root.storePath | split("/") | .[-1])))
             ))
-            or ($request.publicCacheCuts | type != "array")
+             or ($request.publicCacheCuts | type != "array")
+             or ([ $request.publicCacheCuts[]?.closure[]? ]
+               | length != (unique | length))
             or ($request.publicCacheCuts | length > $maxPaths)
             or ($request.publicCacheCuts | map(.rootPath) != (map(.rootPath) | sort | unique))
             or ($request.publicCacheCuts | any(.[];
               . as $cut
-              | ($cut | exact_object(["rootPath", "closure", "closureDigest"];
-                ["rootPath", "closure", "closureDigest"]) | not)
+               | ($cut | exact_object(
+                   ["rootPath", "closure", "closureDigest", "endpoint", "signingKeyId", "narinfos"];
+                   ["rootPath", "closure", "closureDigest", "endpoint", "signingKeyId", "narinfos"]
+                 ) | not)
               or ($cut.rootPath | valid_store_path | not)
               or $cut.rootPath == $graph.topOutput
               or (($graph.paths | index($cut.rootPath)) == null)
-              or ($cut.closure | valid_path_array | not)
-              or ($cut.closureDigest | valid_digest | not)
-              or (($graph.referenceClosures[$cut.rootPath] // null) != $cut.closure)
-            or ($cut.closure | any(.[]; . as $path | ($request.rootedPaths | index($path)) == null))
+               or ($cut.closure | valid_path_array | not)
+               or (($cut.closure | index($cut.rootPath)) == null)
+               or (($cut.closure | index($graph.topOutput)) != null)
+               or ($cut.closureDigest | valid_digest | not)
+               or (($graph.referenceClosures[$cut.rootPath] // null) != $cut.closure)
+               or ($cut.endpoint | type != "string"
+                 or (test("^https://[A-Za-z0-9][A-Za-z0-9.-]*$") | not))
+               or ($cut.signingKeyId | type != "string"
+                 or (test("^[A-Za-z0-9._-]+$") | not))
+               or ($cut.closure | any(.[]; . as $path
+                 | ($request.rootedPaths | index($path)) == null))
+               or ($cut.narinfos | type != "array"
+                 or length != ($cut.closure | length)
+                 or (map(.storePath) != $cut.closure)
+                 or any(.[];
+                   . as $info
+                   | ($info | exact_object(
+                       ["storePath", "narHash", "narSize", "references", "signatures"];
+                       ["storePath", "narHash", "narSize", "references", "signatures"]
+                     ) | not)
+                    or ($info.storePath | valid_store_path | not)
+                   or (($cut.closure | index($info.storePath)) == null)
+                   or ($info.narHash | type != "string"
+                     or (test("^sha256-[A-Za-z0-9+/]{43}=$") | not))
+                   or ($info.narSize | type != "number"
+                     or (isfinite | not) or floor != . or . < 0)
+                   or ($info.references | valid_path_array | not)
+                   or ($info.references | any(.[]; . as $reference
+                     | ($cut.closure | index($reference)) == null))
+                   or ($info.signatures | type != "array" or length == 0
+                     or any(.[]; type != "string"
+                       or (test("^[A-Za-z0-9._-]+:[A-Za-z0-9+/=_-]+$") | not)
+                       or (split(":")[0] != $cut.signingKeyId)))
+                 ))
             ))
             then
               error("lease request schema rejected")

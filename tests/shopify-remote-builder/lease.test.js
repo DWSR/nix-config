@@ -373,7 +373,16 @@ function makeRequest(fixture, overrides = {}) {
     publicCacheCuts: [{
       closure: cacheClosure,
       closureDigest: digestValue(cacheClosure),
+      endpoint: cache.endpoint,
       rootPath: mapStorePath(cache.publicCacheCut.rootPath),
+      signingKeyId: cache.trustedKeyId,
+      narinfos: cache.narinfos.map(entry => ({
+        storePath: mapStorePath(entry.storePath),
+        narHash: entry.narHash,
+        narSize: entry.narSize,
+        references: entry.references.map(mapStorePath).sort(),
+        signatures: [...entry.signatures],
+      })),
     }],
   };
   const merged = {
@@ -449,10 +458,7 @@ test('create roots exactly the validated graph paths and persists mode-0700 stat
       leaseToken: request.token,
       nonce: request.nonce,
       operation: 'create',
-      publicCacheCuts: request.publicCacheCuts.map(cut => ({
-        closureDigest: cut.closureDigest,
-        rootPath: cut.rootPath,
-      })),
+      publicCacheCuts: request.publicCacheCuts,
       rootedPaths: request.rootedPaths,
       schemaVersion: 1,
       selectedInputOutputs: request.selectedInputOutputs,
