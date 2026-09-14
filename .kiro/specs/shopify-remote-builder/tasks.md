@@ -104,11 +104,12 @@
   - Return exact identity, cuts, selected paths, nonce, token, and redacted reason; release provisional state on every non-eligible exit.
   - The pinned public smoke graph becomes eligible; every negative fixture returns ineligible/error with no surviving lease.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.9, 6.2, 6.5, 7.3_
-  - _Boundary: Eligibility Validator, Invocation Lease Manager_
-  - _Depends: 2.5, 2.10_
+   - _Boundary: Eligibility Validator, Invocation Lease Manager_
+   - _Depends: 2.5, 2.10_
+   - _Blocked: depends on the unresolved task 2.1 graph/policy contract; repair task 2.1 before final eligibility integration._
 
 - [ ] 3. Implement restricted transport and guarded orchestration
-- [ ] 3.1 Route only declared remote protocol operations
+- [x] 3.1 Route only declared remote protocol operations
   - Accept validate, lease-bound ready/keepalive/prepare/release, and the exact Lix stdio command without shell evaluation.
   - Validate command grammar, token, source identity, original command, and executable paths.
   - Interactive, unknown, forwarded, PTY, environment, and malformed requests fail with exact diagnostics.
@@ -299,3 +300,4 @@
 - Task 2.8 uses `nix-store --add-root ROOT --indirect --realise STORE_PATH`; dangling expected-output markers must be repaired before Check.
 - Task 2.9 treats malformed, future, or overflow-prone heartbeat timestamps as retained state; live locks always win over TTL cleanup.
 - Task 2.10 batches exact non-recursive cache paths for native dependency ordering, binds the complete multi-cut attestation to the lease, and preserves active lease state on cleanup failure.
+- Task 3.1 must accept the full validator-issued `srb1-<nonce>-<64hex>` token length while keeping fixed argv dispatch and no shell evaluation.
