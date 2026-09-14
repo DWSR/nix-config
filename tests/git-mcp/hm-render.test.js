@@ -66,9 +66,16 @@ const ENROLLMENT = Object.freeze({
 });
 const PERSONAL_ENROLLMENT = Object.freeze({
   identityLabel: 'git-mcp-Brandons-MacBook-Pro',
-  ctkPublicKeyHash: 'b1e127793b64711c7559f1b6d5d41db292b6d96c',
-  sshPublicKey: 'sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBIiDRKcjop0g6wtGiK3xdz8HSUxkPKJgEmpAoouVF4EFDtcvXfkMtBmWNZJPb3K/455uE1X3JmIQpQMy1Lu8M5kAAAAEc3NoOg==',
-  sshFingerprint: 'SHA256:dFsOKcsaspDUGy0LbSIJbDZmb0kq8F5jx00LUjw8buo',
+  ctkPublicKeyHash: '1369125950525141027de79370edc83f4f38cd9a',
+  sshPublicKey: 'sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBLn2sYSgv7JkEHM8P9AiF/ol5L9TQRqyTT9VNoARiUNHFpuuxUmmXjkPHRM1bC/OaCUKFbK29Ew1I9G0ra7QyssAAAAEc3NoOg==',
+  sshFingerprint: 'SHA256:O5RAWRtioDIJp8b8X4276kiZNrqz2qTdszTfkk1cc8I',
+  githubSigningKeyRegistered: true,
+});
+const SHOPIFY_ENROLLMENT = Object.freeze({
+  identityLabel: 'git-mcp-ShopifyLaptop',
+  ctkPublicKeyHash: '7d5463f4d483485cbf90497702036e722ecb2271',
+  sshPublicKey: 'sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBB4WEp/Ag0LY6yYwzBCaDRjRU5qgIPMpBlCkGwf9ZL5+kbLvGq8sGOPJcijNU1iPzKeurg1m1p6LofslmCRiMtEAAAAEc3NoOg==',
+  sshFingerprint: 'SHA256:qhnFhZupVqXHi/o3gKYiI6oOa3d5JopIx/tERrIN/fQ',
   githubSigningKeyRegistered: true,
 });
 const MAX_SSH_PUBLIC_KEY_LINE_LENGTH = 64 * 1024;
@@ -415,7 +422,9 @@ function assertGitMcpServer(server, hostKey) {
     /\/[^/]*git-mcp-server-[^/]+\/bin\/git-mcp-server$/,
     `${hostKey} git-mcp command points at the git-mcp-server package binary`,
   );
-  assert.deepEqual(server.env, HARDENED_GIT_MCP_ENV, `${hostKey} git-mcp has only the hardened environment`);
+  for (const [name, value] of Object.entries(HARDENED_GIT_MCP_ENV)) {
+    assert.equal(server.env[name], value, `${hostKey} git-mcp preserves ${name}`);
+  }
   assert.equal(Object.hasOwn(server.env, 'SSH_AUTH_SOCK'), false, `${hostKey} git-mcp does not render SSH_AUTH_SOCK`);
 }
 
@@ -1246,50 +1255,40 @@ test('git-mcp check extraction accepts blank lines after the binding', () => {
   assert.doesNotMatch(check, /hammerspoon-keybindings/);
 });
 
-test('personal real-host signing renders its enrollment while Shopify remains disabled', () => {
+test('both real hosts render distinct signing enrollments', () => {
   const rendered = realHostRender();
   const personal = rendered.personal;
   const shopify = rendered.shopify;
-
-  assert.equal(personal.signing.enable, true, 'personal signing is enabled');
-  assert.equal(
-    personal.signing.stubPath,
-    `${personal.signing.stateDir}/identities/${PERSONAL_ENROLLMENT.ctkPublicKeyHash}/id_ecdsa_sk_rk`,
-    'personal signing derives the hash-keyed resident stub path',
-  );
-  assert.deepEqual(
-    JSON.parse(personal.activeMarkerText),
-    {
-      stateDir: personal.signing.stateDir,
-      ...PERSONAL_ENROLLMENT,
-    },
-    'personal signing renders the declared public enrollment marker',
-  );
-  assert.equal(personal.gitMcp.env.GIT_SIGN_COMMITS, 'true');
-  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_CTK_HASH, PERSONAL_ENROLLMENT.ctkPublicKeyHash);
-  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_PUBLIC_KEY, PERSONAL_ENROLLMENT.sshPublicKey);
-  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_FINGERPRINT, PERSONAL_ENROLLMENT.sshFingerprint);
-  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_STUB, personal.signing.stubPath);
-
-  assert.ok(
-    shopify.serverNames.includes('git-mcp'),
-    'Shopify mcpproxy servers must include git-mcp as a base server',
-  );
-  assert.equal(shopify.gitMcpCount, 1, 'Shopify git-mcp must be registered exactly once');
-  assertGitMcpServer(shopify.gitMcp, 'shopify');
-  assertNoSigningEnvironment(shopify.gitMcp.env, 'shopify disabled git-mcp');
-  for (const [serverName, environment] of Object.entries(shopify.otherServerEnvironments)) {
-    assertNoSigningEnvironment(environment, `shopify ${serverName}`);
-  }
-  assertAdjacentGitAndSshConfig(shopify.adjacent, 'shopify');
-  assert.equal(shopify.activeMarkerText, null, 'Shopify omits the inactive signing marker');
+  const enrollments = { personal: PERSONAL_ENROLLMENT, shopify: SHOPIFY_ENROLLMENT };
 
   for (const [hostKey, host] of Object.entries({ personal, shopify })) {
+    const enrollment = enrollments[hostKey];
+
     assert.ok(
       host.serverNames.includes('git-mcp'),
       `${hostKey} mcpproxy servers must include git-mcp as a base server`,
     );
     assert.equal(host.gitMcpCount, 1, `${hostKey} git-mcp must be registered exactly once`);
+    assertGitMcpServer(host.gitMcp, hostKey);
+    assert.equal(host.signing.enable, true, `${hostKey} signing is enabled`);
+    assert.equal(
+      host.signing.stubPath,
+      `${host.signing.stateDir}/identities/${enrollment.ctkPublicKeyHash}/id_ecdsa_sk_rk`,
+      `${hostKey} signing derives the hash-keyed resident stub path`,
+    );
+    assert.deepEqual(
+      JSON.parse(host.activeMarkerText),
+      { stateDir: host.signing.stateDir, ...enrollment },
+      `${hostKey} signing renders the declared public enrollment marker`,
+    );
+    assert.equal(host.gitMcp.env.GIT_SIGN_COMMITS, 'true');
+    assert.equal(host.gitMcp.env.GIT_MCP_SIGNING_CTK_HASH, enrollment.ctkPublicKeyHash);
+    assert.equal(host.gitMcp.env.GIT_MCP_SIGNING_PUBLIC_KEY, enrollment.sshPublicKey);
+    assert.equal(host.gitMcp.env.GIT_MCP_SIGNING_FINGERPRINT, enrollment.sshFingerprint);
+    assert.equal(host.gitMcp.env.GIT_MCP_SIGNING_STUB, host.signing.stubPath);
+    for (const [serverName, environment] of Object.entries(host.otherServerEnvironments)) {
+      assertNoSigningEnvironment(environment, `${hostKey} ${serverName}`);
+    }
     assertAdjacentGitAndSshConfig(host.adjacent, hostKey);
   }
 });
@@ -1298,7 +1297,7 @@ test('real-host signing installs production tools so admin is runnable before en
   const rendered = nixEvalJson(disabledSigningToolsExpr());
 
   for (const [hostKey, host] of Object.entries(rendered)) {
-    assert.equal(host.enable, hostKey === 'personal', `${hostKey} has the expected enrollment enablement`);
+    assert.equal(host.enable, true, `${hostKey} has the expected enrollment enablement`);
     assert.equal(host.signerPackageName, 'git-mcp-secure-enclave-signer', `${hostKey} uses the production signer default`);
     assert.equal(host.signerProviderPath, '/usr/lib/ssh-keychain.dylib', `${hostKey} uses the fixed Apple signing provider`);
     assert.equal(host.adminPackageName, 'git-mcp-secure-enclave-admin', `${hostKey} uses the production admin default`);

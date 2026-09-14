@@ -42,6 +42,15 @@ in
       obsidianVaultPath = "${config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/data-bank";
       githubToken = readKeychainSecret "mcp-github-token";
 
+      gitMcpSigning = {
+        enable = true;
+        identityLabel = "git-mcp-ShopifyLaptop";
+        ctkPublicKeyHash = "7d5463f4d483485cbf90497702036e722ecb2271";
+        sshPublicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBB4WEp/Ag0LY6yYwzBCaDRjRU5qgIPMpBlCkGwf9ZL5+kbLvGq8sGOPJcijNU1iPzKeurg1m1p6LofslmCRiMtEAAAAEc3NoOg==";
+        sshFingerprint = "SHA256:qhnFhZupVqXHi/o3gKYiI6oOa3d5JopIx/tERrIN/fQ";
+        githubSigningKeyRegistered = true;
+      };
+
       keychainSecrets = {
         "mcp-github-token" = "op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub";
         "mcp-infra-central-token" = "op://Employee/Infra Central API Token/password";
