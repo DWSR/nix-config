@@ -204,7 +204,7 @@
   - _Depends: 2.2, 4.1, 5.1, 6.1_
 
 - [ ] 7. Declare and verify both host enrollments
-- [ ] 7.1 (P) Add the personal enrollment declaration
+- [x] 7.1 (P) Add the personal enrollment declaration
   - Add only the generated public metadata, enablement, and explicit registration attestation under the personal MCP configuration.
   - Leave the personal global signing public key unchanged.
   - Complete when host evaluation derives the personal candidate's stub path and active marker.

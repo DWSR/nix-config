@@ -64,6 +64,13 @@ const ENROLLMENT = Object.freeze({
   sshFingerprint: 'SHA256:Sq6FPgsPWZc3RXSXKFq4uzEhPEwaHZCAoX46/7Q5024',
   githubSigningKeyRegistered: true,
 });
+const PERSONAL_ENROLLMENT = Object.freeze({
+  identityLabel: 'git-mcp-Brandons-MacBook-Pro',
+  ctkPublicKeyHash: 'b1e127793b64711c7559f1b6d5d41db292b6d96c',
+  sshPublicKey: 'sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBIiDRKcjop0g6wtGiK3xdz8HSUxkPKJgEmpAoouVF4EFDtcvXfkMtBmWNZJPb3K/455uE1X3JmIQpQMy1Lu8M5kAAAAEc3NoOg==',
+  sshFingerprint: 'SHA256:dFsOKcsaspDUGy0LbSIJbDZmb0kq8F5jx00LUjw8buo',
+  githubSigningKeyRegistered: true,
+});
 const MAX_SSH_PUBLIC_KEY_LINE_LENGTH = 64 * 1024;
 const SSH_SK_P256_POINT_OFFSET = 54;
 const SSH_SK_P256_POINT_LENGTH = 65;
@@ -225,6 +232,11 @@ function hostRenderExpr() {
               })
               (builtins.filter (server: server.name != "git-mcp") rendered.mcpServers)
           );
+          signing = {
+            enable = config.home.mcp.gitMcpSigning.enable;
+            stateDir = config.home.mcp.gitMcpSigning.stateDir;
+            stubPath = config.home.mcp.gitMcpSigning.stubPath;
+          };
           adjacent = {
             git = {
               authorName = config.programs.git.settings.user.name;
@@ -274,7 +286,7 @@ function signingFixtureBaseExpr(overrides = {}, mcpEnabled = true, rawPackageOve
       flake = builtins.getFlake (toString ${repoRoot});
       fixture = flake.darwinConfigurations."${HOSTS.personal}".extendModules {
         modules = [
-          ({ pkgs, ... }:
+          ({ pkgs, lib, ... }:
             let
               signingFixtures = import ${JSON.stringify(signingFixturePath)} {
                 inherit pkgs;
@@ -284,7 +296,7 @@ function signingFixtureBaseExpr(overrides = {}, mcpEnabled = true, rawPackageOve
             in
             {
               home-manager.users.brandonmcnama.home.mcp.enable = ${JSON.stringify(mcpEnabled)};
-              home-manager.users.brandonmcnama.home.mcp.gitMcpSigning = {
+              home-manager.users.brandonmcnama.home.mcp.gitMcpSigning = lib.mkForce {
                 ${signingDeclaration(overrides)}
                 ${packageDeclarations}
               };
@@ -1233,30 +1245,59 @@ test('git-mcp check extraction accepts blank lines after the binding', () => {
   assert.doesNotMatch(check, /hammerspoon-keybindings/);
 });
 
-test('disabled real-host signing leaves git-mcp unchanged and omits the active marker', () => {
+test('personal real-host signing renders its enrollment while Shopify remains disabled', () => {
   const rendered = realHostRender();
+  const personal = rendered.personal;
+  const shopify = rendered.shopify;
 
-  for (const [hostKey, host] of Object.entries(rendered)) {
+  assert.equal(personal.signing.enable, true, 'personal signing is enabled');
+  assert.equal(
+    personal.signing.stubPath,
+    `${personal.signing.stateDir}/identities/${PERSONAL_ENROLLMENT.ctkPublicKeyHash}/id_ecdsa_sk_rk`,
+    'personal signing derives the hash-keyed resident stub path',
+  );
+  assert.deepEqual(
+    JSON.parse(personal.activeMarkerText),
+    {
+      stateDir: personal.signing.stateDir,
+      ...PERSONAL_ENROLLMENT,
+    },
+    'personal signing renders the declared public enrollment marker',
+  );
+  assert.equal(personal.gitMcp.env.GIT_SIGN_COMMITS, 'true');
+  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_CTK_HASH, PERSONAL_ENROLLMENT.ctkPublicKeyHash);
+  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_PUBLIC_KEY, PERSONAL_ENROLLMENT.sshPublicKey);
+  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_FINGERPRINT, PERSONAL_ENROLLMENT.sshFingerprint);
+  assert.equal(personal.gitMcp.env.GIT_MCP_SIGNING_STUB, personal.signing.stubPath);
+
+  assert.ok(
+    shopify.serverNames.includes('git-mcp'),
+    'Shopify mcpproxy servers must include git-mcp as a base server',
+  );
+  assert.equal(shopify.gitMcpCount, 1, 'Shopify git-mcp must be registered exactly once');
+  assertGitMcpServer(shopify.gitMcp, 'shopify');
+  assertNoSigningEnvironment(shopify.gitMcp.env, 'shopify disabled git-mcp');
+  for (const [serverName, environment] of Object.entries(shopify.otherServerEnvironments)) {
+    assertNoSigningEnvironment(environment, `shopify ${serverName}`);
+  }
+  assertAdjacentGitAndSshConfig(shopify.adjacent, 'shopify');
+  assert.equal(shopify.activeMarkerText, null, 'Shopify omits the inactive signing marker');
+
+  for (const [hostKey, host] of Object.entries({ personal, shopify })) {
     assert.ok(
       host.serverNames.includes('git-mcp'),
       `${hostKey} mcpproxy servers must include git-mcp as a base server`,
     );
     assert.equal(host.gitMcpCount, 1, `${hostKey} git-mcp must be registered exactly once`);
-    assertGitMcpServer(host.gitMcp, hostKey);
-    assertNoSigningEnvironment(host.gitMcp.env, `${hostKey} disabled git-mcp`);
-    for (const [serverName, environment] of Object.entries(host.otherServerEnvironments)) {
-      assertNoSigningEnvironment(environment, `${hostKey} ${serverName}`);
-    }
     assertAdjacentGitAndSshConfig(host.adjacent, hostKey);
-    assert.equal(host.activeMarkerText, null, `${hostKey} omits the inactive signing marker`);
   }
 });
 
-test('disabled real-host signing installs production tools so admin is runnable before enrollment', () => {
+test('real-host signing installs production tools so admin is runnable before enrollment', () => {
   const rendered = nixEvalJson(disabledSigningToolsExpr());
 
   for (const [hostKey, host] of Object.entries(rendered)) {
-    assert.equal(host.enable, false, `${hostKey} leaves signing disabled by default`);
+    assert.equal(host.enable, hostKey === 'personal', `${hostKey} has the expected enrollment enablement`);
     assert.equal(host.signerPackageName, 'git-mcp-secure-enclave-signer', `${hostKey} uses the production signer default`);
     assert.equal(host.signerProviderPath, '/usr/lib/ssh-keychain.dylib', `${hostKey} uses the fixed Apple signing provider`);
     assert.equal(host.adminPackageName, 'git-mcp-secure-enclave-admin', `${hostKey} uses the production admin default`);

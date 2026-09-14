@@ -51,6 +51,15 @@ in
       obsidianVaultPath = "${config.home.homeDirectory}/Library/Mobile Documents/iCloud~md~obsidian/Documents/data-bank";
       githubToken = readKeychainSecret "mcp-github-token";
 
+      gitMcpSigning = {
+        enable = true;
+        identityLabel = "git-mcp-Brandons-MacBook-Pro";
+        ctkPublicKeyHash = "b1e127793b64711c7559f1b6d5d41db292b6d96c";
+        sshPublicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBIiDRKcjop0g6wtGiK3xdz8HSUxkPKJgEmpAoouVF4EFDtcvXfkMtBmWNZJPb3K/455uE1X3JmIQpQMy1Lu8M5kAAAAEc3NoOg==";
+        sshFingerprint = "SHA256:dFsOKcsaspDUGy0LbSIJbDZmb0kq8F5jx00LUjw8buo";
+        githubSigningKeyRegistered = true;
+      };
+
       keychainSecrets = {
         "mcp-github-token" = "op://Private/GitHub/Tokens/Full Control";
         "mcp-kagi-token" = "op://Private/Kagi/API Token";
