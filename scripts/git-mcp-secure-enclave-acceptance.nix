@@ -199,17 +199,21 @@ writeShellApplication {
       fi
       command -v git-mcp-secure-enclave-admin >/dev/null \
         || die 'git-mcp-secure-enclave-admin is not installed'
-      (
+      record_timeout="''${GIT_MCP_ACCEPTANCE_RECORD_TIMEOUT:-120s}"
+      if ! (
         cd "$repo"
-        git-mcp-secure-enclave-admin record-acceptance \
-          --hash "$enrollment_hash" \
-          --unlocked-commit "$unlocked_commit" \
-          --locked-commit "$locked_commit" \
-          --sleep-commit "$sleep_commit" \
-          --reboot-commit "$reboot_commit" \
-          --github-commit "$github_commit" \
-          --github-verified
-      )
+        timeout --foreground --signal=TERM --kill-after=5s "$record_timeout" \
+          git-mcp-secure-enclave-admin record-acceptance \
+            --hash "$enrollment_hash" \
+            --unlocked-commit "$unlocked_commit" \
+            --locked-commit "$locked_commit" \
+            --sleep-commit "$sleep_commit" \
+            --reboot-commit "$reboot_commit" \
+            --github-commit "$github_commit" \
+            --github-verified < /dev/null
+      ); then
+        die "record-acceptance failed or timed out after $record_timeout; no evidence was installed"
+      fi
       exit 0
     fi
 

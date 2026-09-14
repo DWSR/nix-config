@@ -1640,7 +1640,7 @@ writeShellApplication {
           -c gpg.format=ssh \
           -c "gpg.ssh.program=$ssh_keygen_path" \
           -c "gpg.ssh.allowedSignersFile=$allowed_signers_file" \
-          verify-commit --raw "$commit" > "$verification_output" 2>&1; then
+          verify-commit --raw "$commit" < /dev/null > "$verification_output" 2>&1; then
         verification_diagnostic="$(tr '\n' ' ' < "$verification_output" 2>/dev/null || true)"
         fail "$state_name acceptance commit $commit is not verified against active public key $marker_fingerprint: $verification_diagnostic"
       fi
