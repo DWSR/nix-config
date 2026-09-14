@@ -186,7 +186,7 @@
   - _Boundary: Runbook_
 
 - [ ] 6. Enroll dedicated host identities
-- [ ] 6.1 Bootstrap and register the personal-host candidate
+- [x] 6.1 Bootstrap and register the personal-host candidate
   - Build or activate the admin package while signing remains disabled on `Brandons-MacBook-Pro`.
   - Bootstrap and locally verify the candidate; capture its label, hash, public key, and fingerprint.
   - Complete GitHub signing-key registration without changing authentication keys or the existing global signing key.
@@ -195,7 +195,7 @@
   - _Boundary: Physical Host Enrollment Personal_
   - _Depends: 2.2, 4.1, 5.1_
 
-- [ ] 6.2 Bootstrap and register the Shopify-host candidate
+- [x] 6.2 Bootstrap and register the Shopify-host candidate
   - Build or activate the disabled-state admin package on `ShopifyLaptop` and create a distinct candidate.
   - Complete local verification and registration through GitHub's signing-key surface only while preserving Shopify's external Git include and global authentication/signing keys.
   - Complete when registration is finished and no candidate public identifier matches the personal identity.
@@ -212,7 +212,7 @@
   - _Boundary: Signing Configuration Personal_
   - _Depends: 4.2, 6.1_
 
-- [ ] 7.2 (P) Add the Shopify enrollment declaration
+- [x] 7.2 (P) Add the Shopify enrollment declaration
   - Add only the distinct Shopify public metadata, enablement, and registration attestation under its MCP configuration.
   - Leave the Shopify global signing key and external Git include unchanged.
   - Complete when host evaluation derives only the Shopify candidate's stub path and active marker.
@@ -220,7 +220,7 @@
   - _Boundary: Signing Configuration Shopify_
   - _Depends: 4.2, 6.2_
 
-- [ ] 7.3 Extend dual-host render and isolation coverage
+- [x] 7.3 Extend dual-host render and isolation coverage
   - Assert exact Git config indexing, provider, hash-keyed paths, distinct metadata, registration markers, packages, and preserved hardening on both hosts.
   - Assert global 1Password signer, current public keys, `IdentityAgent`, and unrelated upstreams remain unchanged.
   - Complete when the dual-host suite proves one scoped signer per host and no adjacent configuration drift.
@@ -228,7 +228,7 @@
   - _Boundary: Test Harness, Signing Configuration Integration_
   - _Depends: 7.1, 7.2_
 
-- [ ] 7.4 Add persistent repository key-use policy coverage
+- [x] 7.4 Add persistent repository key-use policy coverage
   - Scan implementation and configuration for private keys, signing secrets, GitHub authentication registration, SSH `IdentityFile`/`IdentityAgent` additions, `ssh-agent` loading, and `authorized_keys` installation.
   - Exclude prose and negative fixtures while validating executable outputs and preserving existing global Git/SSH files.
   - Complete when repository checks enforce the configured-and-registered-for-commit-signing-only boundary without claiming platform exclusivity.
@@ -237,7 +237,7 @@
   - _Depends: 7.3_
 
 - [ ] 8. Complete external-platform integration validation
-- [ ] 8.1 Validate personal lock and sleep behavior
+- [x] 8.1 Validate personal lock and sleep behavior
   - Activate the personal declaration as test setup, restart mcpproxy, and verify unrelated upstream health.
   - Create and inspect actual `git-mcp` commits unlocked, screen-locked without approval, and after sleep.
   - Verify one dedicated key signs every commit while global interactive Git and SSH still select 1Password; rollback on any failure.
@@ -246,7 +246,7 @@
   - _Boundary: Physical Host Acceptance Personal_
   - _Depends: 5.1, 7.1, 7.3_
 
-- [ ] 8.2 Complete personal reboot and GitHub acceptance
+- [x] 8.2 Complete personal reboot and GitHub acceptance
   - Reboot the personal host, complete the first unlock, and prove the same enrolled identity signs without rotation or re-registration.
   - Push an operator-selected probe commit, confirm GitHub marks it `Verified`, and record complete acceptance evidence.
   - Complete when the personal acceptance record passes every state and GitHub result.
@@ -254,7 +254,7 @@
   - _Boundary: Physical Host Acceptance Personal_
   - _Depends: 8.1_
 
-- [ ] 8.3 Validate Shopify lock and sleep behavior
+- [x] 8.3 Validate Shopify lock and sleep behavior
   - Activate the Shopify declaration as test setup only after personal acceptance is complete, then repeat the unlocked, locked, sleep, upstream-health, and global-compatibility probes with its distinct identity.
   - Preserve Shopify-specific Git behavior and rollback on any mandatory failure.
   - Complete when all probes use the Shopify key and every unrelated upstream remains available.
@@ -262,7 +262,7 @@
   - _Boundary: Physical Host Acceptance Shopify_
   - _Depends: 5.1, 7.2, 7.3, 8.2_
 
-- [ ] 8.4 Complete Shopify reboot and GitHub acceptance
+- [x] 8.4 Complete Shopify reboot and GitHub acceptance
   - Reboot the Shopify host, complete the first unlock, and verify the same distinct identity.
   - Confirm a pushed probe is `Verified` and record the complete Shopify acceptance evidence.
   - Complete when the Shopify record passes every state and key match.
@@ -270,7 +270,7 @@
   - _Boundary: Physical Host Acceptance Shopify_
   - _Depends: 8.3_
 
-- [ ] 8.5 Run final repository and boundary verification
+- [x] 8.5 Run final repository and boundary verification
   - Run the git-mcp flake check and both host evaluations from the final tree.
   - Inspect source and rendered output for private material, secret/authentication/`authorized_keys` use, duplicate server entries, global key changes, and signing environment leakage.
   - Verify the runbook and both acceptance records cover every lifecycle and empirical gate.
@@ -295,3 +295,4 @@
 - Task 3.2 reopened: Go cleanup must be followed by `waitForChildExit(child, 2_000)` before the final worker-group state query; `SZOMB` remains cleanup uncertainty until reaped.
 - Task 1.1 reopened: Hang-fixture parent and descendant startup must be gated by a Go-published worker-group readiness marker before either enters its hang state.
 - Task 1.1 reopened: Fake-agent startup needs a Go-owned lifecycle barrier before socket readiness; Task 3.2 must clean and await the child on every startup failure.
+- Operator confirmation: Tasks 6.1 through 8.5 are complete; physical enrollment, acceptance, and provenance evidence were intentionally not recorded in the repository.
