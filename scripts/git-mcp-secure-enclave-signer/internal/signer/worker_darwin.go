@@ -20,7 +20,7 @@ var (
 	fingerprintPattern = regexp.MustCompile(`^SHA256:[A-Za-z0-9+/=]+$`)
 	hexHashPattern     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	keyDataPattern     = regexp.MustCompile(`^[A-Za-z0-9+/=]+$`)
-	listingDatePattern = regexp.MustCompile(`^[0-9]{2}\.[0-9]{2}\.[0-9]{2},$`)
+	listingDatePattern = regexp.MustCompile(`^([0-9]{2}\.[0-9]{2}\.[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2}),$`)
 	listingHashPattern = regexp.MustCompile(`^[0-9A-Fa-f]{40}$`)
 	listingTimePattern = regexp.MustCompile(`^[0-9]{2}:[0-9]{2}$`)
 )

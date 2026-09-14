@@ -452,6 +452,18 @@ func TestListedFingerprintRejectsWhitespaceMalformedNativeOutput(t *testing.T) {
 	}
 }
 
+func TestCountConfiguredCTKIdentitiesAcceptsISOValidityDate(t *testing.T) {
+	listing := strings.Replace(validCTKListing(), "23.11.26,", "2026-09-14,", 1)
+
+	count, err := countConfiguredCTKIdentities(listing, fixtureHash)
+	if err != nil {
+		t.Fatalf("ISO validity date rejected: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("matching identity count = %d, want 1", count)
+	}
+}
+
 func buildRuntime(t *testing.T) runtime {
 	t.Helper()
 	root := t.TempDir()
