@@ -54,9 +54,9 @@ in
       gitMcpSigning = {
         enable = true;
         identityLabel = "git-mcp-Brandons-MacBook-Pro";
-        ctkPublicKeyHash = "b1e127793b64711c7559f1b6d5d41db292b6d96c";
-        sshPublicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBIiDRKcjop0g6wtGiK3xdz8HSUxkPKJgEmpAoouVF4EFDtcvXfkMtBmWNZJPb3K/455uE1X3JmIQpQMy1Lu8M5kAAAAEc3NoOg==";
-        sshFingerprint = "SHA256:dFsOKcsaspDUGy0LbSIJbDZmb0kq8F5jx00LUjw8buo";
+        ctkPublicKeyHash = "1369125950525141027de79370edc83f4f38cd9a";
+        sshPublicKey = "sk-ecdsa-sha2-nistp256@openssh.com AAAAInNrLWVjZHNhLXNoYTItbmlzdHAyNTZAb3BlbnNzaC5jb20AAAAIbmlzdHAyNTYAAABBBLn2sYSgv7JkEHM8P9AiF/ol5L9TQRqyTT9VNoARiUNHFpuuxUmmXjkPHRM1bC/OaCUKFbK29Ew1I9G0ra7QyssAAAAEc3NoOg==";
+        sshFingerprint = "SHA256:O5RAWRtioDIJp8b8X4276kiZNrqz2qTdszTfkk1cc8I";
         githubSigningKeyRegistered = true;
       };
 
