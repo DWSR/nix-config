@@ -392,6 +392,25 @@ let
     && signingCfg.sshFingerprint != null
     && signingCfg.githubSigningKeyRegistered;
 
+  gitMcpSigningEnvironment = lib.optionalAttrs hasCompleteSigningDeclaration {
+    GIT_SIGN_COMMITS = "true";
+    GIT_CONFIG_COUNT = "4";
+    GIT_CONFIG_KEY_0 = "commit.gpgSign";
+    GIT_CONFIG_VALUE_0 = "true";
+    GIT_CONFIG_KEY_1 = "gpg.format";
+    GIT_CONFIG_VALUE_1 = "ssh";
+    GIT_CONFIG_KEY_2 = "gpg.ssh.program";
+    GIT_CONFIG_VALUE_2 = lib.getExe signingCfg.signerPackage;
+    GIT_CONFIG_KEY_3 = "user.signingKey";
+    GIT_CONFIG_VALUE_3 = signingCfg.stubPath;
+    SSH_SK_PROVIDER = signingCfg.signerPackage.providerPath;
+    KEYCHAIN_CERTIFICATES = signingCfg.ctkPublicKeyHash;
+    GIT_MCP_SIGNING_CTK_HASH = signingCfg.ctkPublicKeyHash;
+    GIT_MCP_SIGNING_PUBLIC_KEY = signingCfg.sshPublicKey;
+    GIT_MCP_SIGNING_FINGERPRINT = signingCfg.sshFingerprint;
+    GIT_MCP_SIGNING_STUB = signingCfg.stubPath;
+  };
+
   # Convert a SOPS-bridged keychain secret name (e.g. `mcp-github-token`)
   # to the env-var name the launchd wrapper exports for it
   # (e.g. `MCP_GITHUB_TOKEN`). Uppercase + hyphen→underscore.
@@ -522,7 +541,8 @@ let
       env = {
         MCP_SESSION_MODE = "stateless";
         STORAGE_PROVIDER_TYPE = "in-memory";
-      };
+      }
+      // gitMcpSigningEnvironment;
     };
   };
 
