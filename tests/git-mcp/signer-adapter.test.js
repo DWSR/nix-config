@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -15,9 +16,11 @@ const nixTimeoutMs = 600_000;
 const commandTimeoutMs = 30_000;
 const maxBuffer = 64 * 1024 * 1024;
 const fixtureOwnershipTimeoutMs = 2_000;
+const fixtureLifecycleHandoffTimeoutMs = 5_000;
 const fixtureCleanupTimeoutMs = 2_000;
 const publicSignerName = 'git-mcp-secure-enclave-signer';
 const privateWorkerName = 'git-mcp-secure-enclave-signer-worker';
+const agentLifecycleRole = 'agent-socket-trap-lifecycle';
 
 let fixture;
 let signerPackage;
@@ -156,26 +159,66 @@ function runCommand(command, arguments_, { cwd = repoRoot, env = process.env } =
   });
 }
 
-function childExited(child) {
-  return child.exitCode !== null || child.signalCode !== null;
+function createChildClosePromise(child) {
+  return new Promise((resolve) => {
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
 }
 
-function waitForChildExit(child, timeoutMilliseconds) {
-  if (childExited(child)) return Promise.resolve(true);
+function waitForChildClose(close, timeoutMilliseconds) {
   return new Promise((resolve) => {
-    const finish = (exited) => {
+    let settled = false;
+    const finish = (closed) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      child.off('close', onClose);
-      child.off('error', onError);
-      resolve(exited);
+      resolve(closed);
     };
-    const onClose = () => finish(true);
-    const onError = () => finish(true);
     const timer = setTimeout(() => finish(false), timeoutMilliseconds);
-    child.once('close', onClose);
-    child.once('error', onError);
-    if (childExited(child)) finish(true);
+    close.then(() => finish(true));
   });
+}
+
+test('fixture cleanup invokes state inspection only after ChildProcess close', async () => {
+  const child = new EventEmitter();
+  child.on('error', () => {});
+  const close = createChildClosePromise(child);
+  let stateCallbackCalls = 0;
+  const states = waitForChildClose(close, 50).then((closed) => {
+    if (closed) stateCallbackCalls += 1;
+    return closed;
+  });
+
+  child.exitCode = 1;
+  child.signalCode = 'SIGTERM';
+  child.emit('exit', 1, 'SIGTERM');
+  child.emit('error', new Error('fixture child error'));
+  await new Promise(queueMicrotask);
+
+  assert.equal(stateCallbackCalls, 0, 'exit, status fields, and error do not permit state inspection');
+
+  child.emit('close', 1, 'SIGTERM');
+
+  assert.equal(await states, true, 'close permits state inspection');
+  assert.equal(stateCallbackCalls, 1, 'state inspection runs once after close');
+});
+
+test('fixture cleanup retains a close observed before its later bounded wait', async () => {
+  const child = new EventEmitter();
+  const close = createChildClosePromise(child);
+
+  child.emit('close', 0, null);
+
+  assert.equal(await waitForChildClose(close, 50), true);
+});
+
+async function waitForFile(filePath, timeoutMilliseconds = fixtureOwnershipTimeoutMs) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`timed out after ${timeoutMilliseconds}ms waiting for ${filePath}`);
 }
 
 function executeFixtureProcessControl(arguments_) {
@@ -210,6 +253,25 @@ function trapStartupError(trap, message) {
   return new Error(`fixture agent socket trap startup failed: ${message}; ${trapDiagnostics(trap)}`);
 }
 
+test('startup errors retain readiness evidence when fake-agent stderr arrives later', async () => {
+  const diagnostics = { error: null, exit: null, stderr: '', stdout: '' };
+  const trap = { child: { pid: 12345 }, diagnostics };
+  const startupError = trapStartupError(
+    trap,
+    'socket readiness appeared before durable Go ownership attestation',
+  );
+
+  await new Promise(queueMicrotask);
+  diagnostics.stderr = 'fixture agent socket trap intentionally skipped durable ownership registration\n';
+
+  assert.match(
+    startupError.message,
+    /socket readiness appeared before durable Go ownership attestation/,
+  );
+  assert.doesNotMatch(startupError.message, /intentionally skipped durable ownership registration/);
+  assert.match(diagnostics.stderr, /intentionally skipped durable ownership registration/);
+});
+
 function spawnAgentSocketTrap({ root, sessionToken, socketPath, recordPath, readyPath, environment }) {
   const expectedExecutable = fs.realpathSync(fixture.agentTrapExecutable);
   const child = childProcess.spawn(
@@ -217,6 +279,7 @@ function spawnAgentSocketTrap({ root, sessionToken, socketPath, recordPath, read
     [socketPath, recordPath, readyPath],
     { cwd: repoRoot, env: environment, stdio: ['ignore', 'pipe', 'pipe'] },
   );
+  const close = createChildClosePromise(child);
   const diagnostics = {
     error: null,
     exit: null,
@@ -245,13 +308,15 @@ function spawnAgentSocketTrap({ root, sessionToken, socketPath, recordPath, read
     diagnostics.exit = { code, signal };
     recordTerminal({ type: 'exit', code, signal });
   });
-  child.once('close', (code, signal) => { diagnostics.close = { code, signal }; });
+  child.once('close', (code, signal) => {
+    diagnostics.close = { code, signal };
+  });
 
   const lifecycleRecord = child.pid
     ? executeFixtureProcessControl([
       'record', '--root', root, '--token', sessionToken,
       '--pid', String(child.pid), '--expected-executable', expectedExecutable,
-      '--role', 'agent-socket-trap-lifecycle', '--wait-ms', String(fixtureOwnershipTimeoutMs),
+      '--role', agentLifecycleRole, '--wait-ms', String(fixtureLifecycleHandoffTimeoutMs),
     ])
     : Promise.resolve({
       error: new Error('fixture agent socket trap did not provide a PID'),
@@ -261,17 +326,27 @@ function spawnAgentSocketTrap({ root, sessionToken, socketPath, recordPath, read
 
   return {
     child,
+    close,
     diagnostics,
     expectedExecutable,
     lifecycleRecord,
+    lifecycleWaitPath: `${readyPath}.lifecycle-wait`,
     ownershipAttestationPath: `${readyPath}.ownership.json`,
     readyPath,
     recordPath,
     root,
     sessionToken,
     socketPath,
+    attested: false,
     terminal,
   };
+}
+
+function signalAgentSocketTrapLifecycleRelease(trap) {
+  return executeFixtureProcessControl([
+    'release-record', '--root', trap.root, '--token', trap.sessionToken,
+    '--pid', String(trap.child.pid), '--role', agentLifecycleRole,
+  ]);
 }
 
 async function awaitTrapOperation(trap, operation, result) {
@@ -310,11 +385,13 @@ function waitForTrapReadiness(trap) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer;
+    let poller;
     let watcher;
     const finish = (error) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      if (poller) clearInterval(poller);
       watcher?.close();
       trap.child.off('error', onTerminal);
       trap.child.off('exit', onTerminal);
@@ -343,9 +420,90 @@ function waitForTrapReadiness(trap) {
       )),
       fixtureOwnershipTimeoutMs,
     );
+    poller = setInterval(check, 10);
     check();
   });
 }
+
+test('agent trap withholds readiness until its Go lifecycle release is signaled', { concurrency: false }, async () => {
+  const root = createScenarioRoot(fixture.scenarios.oneResidentExport);
+  const state = createSigningState(root);
+  const sessionToken = crypto.randomUUID();
+  const agentSocket = path.join(root, 'agent.sock');
+  const agentRecords = path.join(root, 'agent-calls.jsonl');
+  const agentReady = path.join(root, 'agent-ready');
+  const environment = fixtureEnvironment(root, state, {
+    GIT_MCP_PROCESS_IDENTITY_HELPER: fixtureProcessControlCommand,
+    GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
+  });
+  let agent;
+
+  try {
+    agent = spawnAgentSocketTrap({
+      root,
+      sessionToken,
+      socketPath: agentSocket,
+      recordPath: agentRecords,
+      readyPath: agentReady,
+      environment,
+    });
+    await awaitTrapOperation(agent, 'durable lifecycle ownership capture', agent.lifecycleRecord);
+    await waitForFile(agent.lifecycleWaitPath, fixtureLifecycleHandoffTimeoutMs);
+
+    assert.equal(
+      fs.existsSync(agentReady),
+      false,
+      'fixture agent must not publish readiness before the lifecycle release',
+    );
+    assert.equal(fs.existsSync(agentSocket), false, 'fixture agent must not bind its socket before release');
+    assert.equal(
+      await waitForChildClose(agent.close, fixtureLifecycleHandoffTimeoutMs + fixtureCleanupTimeoutMs),
+      true,
+      'fixture agent must close after its bounded lifecycle-release wait expires',
+    );
+    assert.match(
+      agent.diagnostics.stderr,
+      /lifecycle release timed out after 5000ms/,
+      'fixture agent reports its bounded lifecycle-release failure',
+    );
+  } finally {
+    if (agent) await finalizeAgentSocketTrap(agent);
+    else fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('agent trap readiness survives a missed socket-ready directory event', { concurrency: false }, async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'git-mcp-agent-trap-readiness-'));
+  const readyPath = path.join(root, 'agent-ready');
+  const ownershipAttestationPath = `${readyPath}.ownership.json`;
+  const originalWatch = fs.watch;
+  let watcherClosed = false;
+  let onChange;
+
+  try {
+    fs.watch = (_directory, _options, listener) => {
+      onChange = listener;
+      return { close: () => { watcherClosed = true; } };
+    };
+    const readiness = waitForTrapReadiness({
+      child: new EventEmitter(),
+      diagnostics: { error: null, exit: null, stderr: '', stdout: '' },
+      ownershipAttestationPath,
+      readyPath,
+    });
+
+    assert.equal(typeof onChange, 'function', 'readiness installs a directory watcher');
+    fs.writeFileSync(ownershipAttestationPath, '{}\n');
+    onChange('rename', path.basename(ownershipAttestationPath));
+    fs.writeFileSync(readyPath, '');
+
+    await readiness;
+    assert.equal(watcherClosed, true, 'readiness closes its watcher after observing both files');
+  } finally {
+    fs.watch = originalWatch;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function parseOwnershipStates(trap, result, phase) {
   if (result.error) {
@@ -390,6 +548,11 @@ async function attestAgentSocketTrap(trap) {
     'durable lifecycle ownership capture',
     trap.lifecycleRecord,
   );
+  await awaitTrapOperation(
+    trap,
+    'durable lifecycle release',
+    signalAgentSocketTrapLifecycleRelease(trap),
+  );
   await waitForTrapReadiness(trap);
 
   let attestation;
@@ -426,10 +589,12 @@ async function attestAgentSocketTrap(trap) {
     ]),
     'durable ownership verification',
   );
-  return {
-    lifecycleRecord: requireLiveAgentRecord(trap, states, 'agent-socket-trap-lifecycle'),
+  const records = {
+    lifecycleRecord: requireLiveAgentRecord(trap, states, agentLifecycleRole),
     trapRecord: requireLiveAgentRecord(trap, states, 'agent-socket-trap'),
   };
+  trap.attested = true;
+  return records;
 }
 
 async function finalizeAgentSocketTrap(trap) {
@@ -452,18 +617,26 @@ async function finalizeAgentSocketTrap(trap) {
       trap,
       await executeFixtureProcessControl([
         'states', '--root', trap.root, '--token', trap.sessionToken,
+        '--role', agentLifecycleRole,
       ]),
       'pre-cleanup ownership verification',
     );
-    ownsTrap = initialStates.some(({ record }) => (
-      record.pid === trap.child.pid
+    const lifecycleRecords = initialStates.filter(({ record }) => (
+      record.role === agentLifecycleRole
+      && record.pid === trap.child.pid
       && record.sessionToken === trap.sessionToken
       && record.executable === trap.expectedExecutable
       && record.expectedExecutable === trap.expectedExecutable
     ));
-    if (!ownsTrap && !childExited(trap.child) && !trap.diagnostics.error) {
+    ownsTrap = lifecycleRecords.length === 1 && lifecycleRecords[0].state === 'live';
+    if (lifecycleRecords.length !== 1) {
       finalizationErrors.push(new Error(
-        `fixture agent socket trap ${trap.child.pid} lacks a durable Go ownership record; refusing raw-PID cleanup`,
+        `fixture agent socket trap ${trap.child.pid} has ${lifecycleRecords.length} exact lifecycle ownership records`,
+      ));
+    }
+    if (!ownsTrap && !trap.diagnostics.close) {
+      finalizationErrors.push(new Error(
+        `fixture agent socket trap ${trap.child.pid} lacks a live durable Go lifecycle ownership record; refusing raw-PID cleanup`,
       ));
     }
   } catch (error) {
@@ -472,35 +645,45 @@ async function finalizeAgentSocketTrap(trap) {
 
   const cleanup = await executeFixtureProcessControl([
     'cleanup', '--root', trap.root, '--token', trap.sessionToken,
-    '--timeout-ms', String(fixtureCleanupTimeoutMs),
+    '--role', agentLifecycleRole, '--timeout-ms', String(fixtureCleanupTimeoutMs),
   ]);
   if (cleanup.error) {
     finalizationErrors.push(new Error(`Go fixture cleanup failed: ${commandFailure(cleanup)}`));
   }
 
-  const exited = await waitForChildExit(trap.child, fixtureCleanupTimeoutMs);
-  if (!exited) {
+  const closed = await waitForChildClose(trap.close, fixtureCleanupTimeoutMs);
+  if (!closed) {
     finalizationErrors.push(new Error(
-      `fixture agent socket trap ${trap.child.pid} did not exit after Go fixture cleanup`,
+      `fixture agent socket trap ${trap.child.pid} did not close after Go fixture cleanup`,
     ));
   }
 
-  try {
-    finalStates = parseOwnershipStates(
-      trap,
-      await executeFixtureProcessControl([
+  if (closed) {
+    try {
+      const stateArguments = [
         'states', '--root', trap.root, '--token', trap.sessionToken,
-      ]),
-      'post-cleanup ownership verification',
-    );
-    const remaining = finalStates.filter((entry) => entry.state !== 'gone');
-    if (remaining.length > 0) {
-      finalizationErrors.push(new Error(
-        `Go fixture cleanup left owned processes: ${JSON.stringify(remaining)}`,
-      ));
+      ];
+      if (!trap.attested) stateArguments.push('--role', agentLifecycleRole);
+      finalStates = parseOwnershipStates(
+        trap,
+        await executeFixtureProcessControl(stateArguments),
+        'post-cleanup ownership verification',
+      );
+      const lifecycleRecords = finalStates.filter(({ record }) => record.role === agentLifecycleRole);
+      if (lifecycleRecords.length !== 1) {
+        finalizationErrors.push(new Error(
+          `Go fixture cleanup did not retain exactly one lifecycle ownership record: ${JSON.stringify(finalStates)}`,
+        ));
+      }
+      const remaining = finalStates.filter((entry) => entry.state !== 'gone');
+      if (remaining.length > 0) {
+        finalizationErrors.push(new Error(
+          `Go fixture cleanup left owned processes: ${JSON.stringify(remaining)}`,
+        ));
+      }
+    } catch (error) {
+      finalizationErrors.push(error);
     }
-  } catch (error) {
-    finalizationErrors.push(error);
   }
 
   if (finalizationErrors.length > 0) {
@@ -508,7 +691,7 @@ async function finalizeAgentSocketTrap(trap) {
   }
   fs.rmSync(trap.root, { recursive: true, force: true });
   return {
-    childExited: exited,
+    childClosed: closed,
     finalStates,
     initialStates,
     ownsTrap,
@@ -1059,6 +1242,14 @@ test('agent trap startup rejects unowned or delayed registration and finalizes t
       diagnostic: /timed out after 2000ms waiting for socket readiness and durable Go ownership attestation/,
       trapDiagnostic: /intentionally delaying durable ownership registration/,
     },
+    {
+      mode: 'synthetic-ownership-record',
+      diagnostic: /socket readiness file did not name a socket/,
+    },
+    {
+      mode: 'recycled-ownership-record',
+      diagnostic: /socket readiness file did not name a socket/,
+    },
   ];
 
   for (const testCase of cases) {
@@ -1099,19 +1290,25 @@ test('agent trap startup rejects unowned or delayed registration and finalizes t
         (error) => {
           primaryError = error;
           assert.match(error.message, testCase.diagnostic);
-          assert.match(error.message, testCase.trapDiagnostic);
           return true;
         },
       );
 
-      assert.equal(primaryError.fixtureFinalization, undefined, 'primary startup error remains intact');
-      assert.equal(cleanupEvidence.ownsTrap, true, 'finalizer uses a durable Go-owned trap identity');
-      assert.equal(cleanupEvidence.childExited, true, 'Go cleanup terminates the failed startup trap');
-      assert.deepEqual(
+       assert.equal(primaryError.fixtureFinalization, undefined, 'primary startup error remains intact');
+       assert.equal(cleanupEvidence.ownsTrap, true, 'finalizer uses a durable Go-owned trap identity');
+       assert.equal(cleanupEvidence.childClosed, true, 'Go cleanup awaits the failed startup trap close');
+       assert.deepEqual(
         cleanupEvidence.finalStates.filter((entry) => entry.state !== 'gone'),
         [],
         'Go cleanup verifies that no owned trap record remains live',
       );
+      if (testCase.trapDiagnostic) {
+        assert.match(
+          agent.diagnostics.stderr,
+          testCase.trapDiagnostic,
+          'fake-agent diagnostics arrive only after Go cleanup and ChildProcess close are proven',
+        );
+      }
       assert.equal(fs.existsSync(root), false, 'fixture root is removed only after verified Go cleanup');
     });
   }
@@ -1284,7 +1481,10 @@ test('a failed assertion finalizes a fixture-native worker group through Go proc
     GIT_MCP_OWNERSHIP_TOKEN: sessionToken,
   });
   let child;
+  let childClose;
   let cleanupSucceeded = false;
+  let finalStates = [];
+  let rootRemoved = false;
 
   try {
     await assert.rejects(
@@ -1296,9 +1496,11 @@ test('a failed assertion finalizes a fixture-native worker group through Go proc
             ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
             { detached: true, env: environment, stdio: 'ignore' },
           );
+          childClose = createChildClosePromise(child);
           assert.ok(child.pid, 'fixture-native CTK listing has a PID');
           const groups = runCommand(fixtureProcessControlCommand, [
-            'wait-groups', '--root', root, '--token', sessionToken, '--count', '1', '--timeout-ms', '2_000',
+            'wait-groups', '--root', root, '--token', sessionToken, '--count', '1',
+            '--timeout-ms', String(fixtureLifecycleHandoffTimeoutMs),
           ]);
           assertNoSpawnError(groups);
           assert.equal(groups.status, 0, groups.stderr);
@@ -1307,42 +1509,63 @@ test('a failed assertion finalizes a fixture-native worker group through Go proc
           primaryError = error;
           throw error;
         } finally {
-          const cleanup = await new Promise((resolve) => {
-            childProcess.execFile(
-              fixtureProcessControlCommand,
-              ['cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000'],
-              { encoding: 'utf8' },
-              (error, stdout, stderr) => resolve({ error, stdout, stderr }),
-            );
-          });
-          cleanupSucceeded = cleanup.error === null;
-          if (primaryError && cleanup.error) {
-            primaryError.fixtureFinalization = cleanup.stderr || cleanup.error.message;
-          } else if (cleanup.error) {
-            throw cleanup.error;
+          const cleanup = await executeFixtureProcessControl([
+            'cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000',
+          ]);
+          const finalizationErrors = [];
+          if (cleanup.error) finalizationErrors.push(cleanup.stderr || cleanup.error.message);
+
+          const closed = !child || await waitForChildClose(childClose, fixtureCleanupTimeoutMs);
+          if (!closed) {
+            finalizationErrors.push('fixture-native CTK listing did not close after Go process-control cleanup');
+          }
+
+          if (closed) {
+            try {
+              const states = runCommand(fixtureProcessControlCommand, [
+                'states', '--root', root, '--token', sessionToken,
+              ]);
+              assertNoSpawnError(states);
+              assert.equal(states.status, 0, states.stderr);
+              finalStates = JSON.parse(states.stdout);
+              assert.deepEqual(
+                finalStates.filter((entry) => entry.state !== 'gone'),
+                [],
+                'Go cleanup leaves no owned fixture process after the detached child closes',
+              );
+            } catch (error) {
+              finalizationErrors.push(error);
+            }
+          }
+
+          if (finalizationErrors.length === 0) {
+            try {
+              fs.rmSync(root, { recursive: true, force: true });
+              rootRemoved = true;
+            } catch (error) {
+              finalizationErrors.push(error);
+            }
+          }
+
+          cleanupSucceeded = finalizationErrors.length === 0;
+          if (finalizationErrors.length > 0) {
+            const finalization = finalizationErrors
+              .map((error) => error.message || String(error))
+              .join('; ');
+            if (primaryError) primaryError.fixtureFinalization = finalization;
+            else throw new Error(finalization);
           }
         }
       })(),
       /deliberate assertion after fixture-native worker startup/,
     );
     assert.equal(cleanupSucceeded, true, 'Go process-control cleanup runs after a failed assertion');
-    const states = runCommand(fixtureProcessControlCommand, [
-      'states', '--root', root, '--token', sessionToken,
-    ]);
-    assertNoSpawnError(states);
-    assert.equal(states.status, 0, states.stderr);
-    assert.deepEqual(JSON.parse(states.stdout).filter((entry) => entry.state !== 'gone'), []);
+    assert.deepEqual(finalStates.filter((entry) => entry.state !== 'gone'), []);
+    assert.equal(rootRemoved, true, 'fixture root is removed only after final state verification');
+    assert.equal(fs.existsSync(root), false, 'fixture root is removed after the child closes');
   } finally {
-    if (!cleanupSucceeded && child) {
-      await new Promise((resolve) => {
-        childProcess.execFile(
-          fixtureProcessControlCommand,
-          ['cleanup', '--root', root, '--token', sessionToken, '--timeout-ms', '2_000'],
-          { encoding: 'utf8' },
-          () => resolve(),
-        );
-      });
+    if (!child) {
+      fs.rmSync(root, { recursive: true, force: true });
     }
-    fs.rmSync(root, { recursive: true, force: true });
   }
 });

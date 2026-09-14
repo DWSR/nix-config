@@ -66,9 +66,10 @@ import (
 )
 
 const (
-	absentExitCode  = 3
-	usageExitCode   = 64
-	failureExitCode = 70
+	absentExitCode               = 3
+	usageExitCode                = 64
+	failureExitCode              = 70
+	agentSocketTrapLifecycleRole = "agent-socket-trap-lifecycle"
 )
 
 var processInfoSize = int(C.PROC_PIDTBSDINFO_SIZE)
@@ -122,6 +123,13 @@ type workerGroup struct {
 type ownershipState struct {
 	Record ownershipRecord `json:"record"`
 	State  string          `json:"state"`
+}
+
+type ownershipRelease struct {
+	PID                int    `json:"pid"`
+	SessionToken       string `json:"sessionToken"`
+	ExpectedExecutable string `json:"expectedExecutable"`
+	Role               string `json:"role"`
 }
 
 type stringList []string
@@ -633,6 +641,20 @@ func loadRecords(root, token string, recordFiles []string) ([]ownershipRecord, e
 		}
 	}
 	return unique, nil
+}
+
+func selectRecords(records []ownershipRecord, selected map[int]bool, role string) []ownershipRecord {
+	result := records[:0]
+	for _, record := range records {
+		if len(selected) > 0 && !selected[record.PID] {
+			continue
+		}
+		if role != "" && record.Role != role {
+			continue
+		}
+		result = append(result, record)
+	}
+	return result
 }
 
 func validateWorkerGroup(group workerGroup, token, location string) error {
@@ -1249,6 +1271,7 @@ func commandWaitRecord(arguments []string) error {
 	root := flags.String("root", "", "")
 	token := flags.String("token", "", "")
 	pidText := flags.String("pid", "", "")
+	role := flags.String("role", "", "")
 	timeoutMilliseconds := flags.Int("timeout-ms", 2_000, "")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -1274,6 +1297,9 @@ func commandWaitRecord(arguments []string) error {
 			if record.PID != pid {
 				continue
 			}
+			if *role != "" && record.Role != *role {
+				continue
+			}
 			state, err := observedOwnershipState(record)
 			if err != nil {
 				return err
@@ -1288,10 +1314,73 @@ func commandWaitRecord(arguments []string) error {
 			}
 		}
 		if !time.Now().Before(deadline) {
+			if *role != "" {
+				return fmt.Errorf("process %d did not publish a live durable ownership record for role %s", pid, *role)
+			}
 			return fmt.Errorf("process %d did not publish a live durable ownership record", pid)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+func commandReleaseRecord(arguments []string) error {
+	flags := newFlagSet("release-record")
+	root := flags.String("root", "", "")
+	token := flags.String("token", "", "")
+	pidText := flags.String("pid", "", "")
+	role := flags.String("role", "", "")
+	if err := parseFlags(flags, arguments); err != nil {
+		return err
+	}
+	if *root == "" || *token == "" || *pidText == "" || *role == "" {
+		return usageError("release-record requires --root, --token, --pid, and --role")
+	}
+	if *role != agentSocketTrapLifecycleRole {
+		return usageError("release-record role must be %s", agentSocketTrapLifecycleRole)
+	}
+	pid, err := parsePositiveInteger(*pidText, "process ID")
+	if err != nil {
+		return err
+	}
+	records, err := readRootRecords(*root, *token)
+	if err != nil {
+		return err
+	}
+	var matched *ownershipRecord
+	for index := range records {
+		record := &records[index]
+		if record.PID != pid || record.Role != *role {
+			continue
+		}
+		if matched != nil {
+			return fmt.Errorf("multiple durable ownership records match process %d and role %s", pid, *role)
+		}
+		matched = record
+	}
+	if matched == nil {
+		return fmt.Errorf("no durable ownership record matches process %d and role %s", pid, *role)
+	}
+	state, err := observedOwnershipState(*matched)
+	if err != nil {
+		return err
+	}
+	if state != "live" {
+		return fmt.Errorf("process %d is %s; refusing lifecycle release", pid, state)
+	}
+	contents, err := encodeJSON(ownershipRelease{
+		PID:                matched.PID,
+		SessionToken:       matched.SessionToken,
+		ExpectedExecutable: matched.ExpectedExecutable,
+		Role:               matched.Role,
+	})
+	if err != nil {
+		return err
+	}
+	return writeAtomic(
+		filepath.Join(*root, "ownership-releases", strconv.Itoa(pid)+".json"),
+		contents,
+		0o600,
+	)
 }
 
 func commandWaitGroups(arguments []string) error {
@@ -1343,6 +1432,7 @@ func commandRecords(arguments []string, states bool) error {
 	flags := newFlagSet("records")
 	root := flags.String("root", "", "")
 	token := flags.String("token", "", "")
+	role := flags.String("role", "", "")
 	var recordFiles stringList
 	flags.Var(&recordFiles, "record-file", "")
 	if err := parseFlags(flags, arguments); err != nil {
@@ -1351,10 +1441,18 @@ func commandRecords(arguments []string, states bool) error {
 	if *token == "" || (*root == "" && len(recordFiles) == 0) {
 		return usageError("records requires --token and --root or --record-file")
 	}
+	command := "records"
+	if states {
+		command = "states"
+	}
+	if *role != "" && *role != agentSocketTrapLifecycleRole {
+		return usageError("%s role must be %s", command, agentSocketTrapLifecycleRole)
+	}
 	records, err := loadRecords(*root, *token, recordFiles)
 	if err != nil {
 		return err
 	}
+	records = selectRecords(records, nil, *role)
 	if !states {
 		contents, err := encodeJSON(records)
 		if err != nil {
@@ -1383,6 +1481,7 @@ func commandCleanup(arguments []string) error {
 	flags := newFlagSet("cleanup")
 	root := flags.String("root", "", "")
 	token := flags.String("token", "", "")
+	role := flags.String("role", "", "")
 	timeoutMilliseconds := flags.Int("timeout-ms", 1_000, "")
 	var recordFiles stringList
 	var selectedPIDs stringList
@@ -1393,6 +1492,9 @@ func commandCleanup(arguments []string) error {
 	}
 	if *token == "" || (*root == "" && len(recordFiles) == 0) {
 		return usageError("cleanup requires --token and --root or --record-file")
+	}
+	if *role != "" && *role != agentSocketTrapLifecycleRole {
+		return usageError("cleanup role must be %s", agentSocketTrapLifecycleRole)
 	}
 	duration, err := parseTimeout(*timeoutMilliseconds)
 	if err != nil {
@@ -1410,15 +1512,15 @@ func commandCleanup(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if len(selected) > 0 {
-		filtered := records[:0]
-		for _, record := range records {
-			if selected[record.PID] {
-				filtered = append(filtered, record)
-			}
+	records = selectRecords(records, selected, *role)
+	if len(records) == 0 {
+		if *role != "" && len(selected) > 0 {
+			return fmt.Errorf("no durable ownership record matches requested process and role %s", *role)
 		}
-		records = filtered
-		if len(records) == 0 {
+		if *role != "" {
+			return fmt.Errorf("no durable ownership record matches requested role %s", *role)
+		}
+		if len(selected) > 0 {
 			return fmt.Errorf("no durable ownership record matches requested process")
 		}
 	}
@@ -1426,6 +1528,10 @@ func commandCleanup(arguments []string) error {
 		if _, err := observedOwnershipState(record); err != nil {
 			return err
 		}
+	}
+	if *role != "" {
+		// Lifecycle records name a direct fake-agent child, never a worker group.
+		return terminateOwnedRecords(records, time.Now().Add(duration))
 	}
 	allRecords, err := loadRecords(*root, *token, recordFiles)
 	if err != nil {
@@ -1458,7 +1564,7 @@ func commandCleanup(arguments []string) error {
 
 func run(arguments []string) error {
 	if len(arguments) == 0 {
-		return usageError("usage: process-control <inspect|group|session|record|capture-group|wait-record|wait-groups|records|states|cleanup> ...")
+		return usageError("usage: process-control <inspect|group|session|record|capture-group|wait-record|release-record|wait-groups|records|states|cleanup> ...")
 	}
 	switch arguments[0] {
 	case "inspect":
@@ -1473,6 +1579,8 @@ func run(arguments []string) error {
 		return commandCaptureGroup(arguments[1:])
 	case "wait-record":
 		return commandWaitRecord(arguments[1:])
+	case "release-record":
+		return commandReleaseRecord(arguments[1:])
 	case "wait-groups":
 		return commandWaitGroups(arguments[1:])
 	case "records":

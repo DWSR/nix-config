@@ -2028,6 +2028,9 @@
                 nativeBuildInputs = [
                   pkgs.nix
                   pkgs.nodejs
+                  pkgs.go
+                  pkgs.stdenv.cc
+                  pkgs.apple-sdk
                   pkgs.git
                   pkgs.openssh
                   pkgs.mcpproxy-go
@@ -2041,7 +2044,15 @@
                 cp -R ${./.} source
                 chmod -R u+w source
                 cd source
-                node --test tests/git-mcp/
+                go -C scripts/git-mcp-secure-enclave-signer test ./...
+                go -C tests/git-mcp/fixtures test ./...
+                # The signer suite owns a fixed real-time worker deadline, so
+                # run each contract suite in a fresh Node process.
+                node --test tests/git-mcp/fixtures/signing-tools.test.js
+                node --test tests/git-mcp/signer-adapter.test.js
+                node --test tests/git-mcp/hm-render.test.js
+                node --test tests/git-mcp/admin-contract.test.js
+                node --test tests/git-mcp/upstream-isolation.test.js
                 touch $out
               '';
 

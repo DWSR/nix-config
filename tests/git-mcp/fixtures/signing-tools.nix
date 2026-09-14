@@ -94,6 +94,7 @@ let
         local pid="$1"
         local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
         local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
+        local startup_timeout_ms="''${GIT_MCP_FIXTURE_STARTUP_TIMEOUT_MS:-2000}"
 
         if ! fixture_ownership_enabled; then
           return 0
@@ -102,7 +103,7 @@ let
           --root "$fixture_root" \
           --token "$session_token" \
           --pid "$pid" \
-          --timeout-ms 2000 >/dev/null
+          --timeout-ms "$startup_timeout_ms" >/dev/null
       }
 
       fixture_reap_registered_child() {
@@ -125,13 +126,55 @@ let
         rm -f "$fifo"
       }
 
+      fixture_prepare_startup_barrier() {
+        local fifo="$fixture_root/.fixture-startup-''${BASHPID:-$$}-$RANDOM"
+
+        mkfifo "$fifo" || return 70
+        exec {fixture_startup_fd}<>"$fifo"
+        rm -f "$fifo"
+      }
+
+      fixture_wait_for_startup_barrier() {
+        local value
+
+        IFS= read -r -u "$fixture_startup_fd" value || return 70
+        [[ "$value" == "ready" ]]
+      }
+
+      fixture_release_startup_barrier() {
+        printf '%s\n' ready >&"$fixture_startup_fd"
+      }
+
+      fixture_log_hang_entry() {
+        printf '%s\t%s\t%s\n' \
+          "$fixture_tool" "$fixture_operation" "''${BASHPID:-$$}" \
+          >> "$fixture_root/hang-entries"
+      }
+
       fixture_wait_forever() {
+        fixture_log_hang_entry || return $?
         while :; do
           IFS= read -r -t 1 -u "$fixture_hang_fd" _ || :
         done
       }
 
-      fixture_capture_worker_group() {
+      fixture_delay_worker_group_publication() {
+        local delay_ms
+        local delay_seconds
+
+        delay_ms="$(jq -r '.workerGroupPublicationDelayMs // 0' "$fixture_scenario")" || return $?
+        if [[ ! "$delay_ms" =~ ^[0-9]+$ ]]; then
+          printf 'fixture worker-group publication delay must be a nonnegative integer: %s\n' "$delay_ms" >&2
+          return 64
+        fi
+        if (( delay_ms == 0 )); then
+          return 0
+        fi
+        printf -v delay_seconds '%d.%03d' "$((delay_ms / 1000))" "$((delay_ms % 1000))"
+        IFS= read -r -t "$delay_seconds" -u "$fixture_hang_fd" _ || :
+      }
+
+      fixture_publish_worker_group_ready() {
         local anchor_pid="$1"
         local process_control="''${GIT_MCP_PROCESS_IDENTITY_HELPER:-}"
         local session_token="''${GIT_MCP_OWNERSHIP_TOKEN:-}"
@@ -350,12 +393,17 @@ let
           return 0
         fi
         fixture_prepare_hang_wait || return $?
+        fixture_prepare_startup_barrier || return $?
         (
           fixture_prepare_hang_wait || exit $?
           fixture_record_ownership \
             "$fixture_tool:$fixture_operation:descendant" \
             "''${BASHPID:-$$}" "$BASH" || exit $?
           printf '%s\n' "''${BASHPID:-$$}" >> "$fixture_root/descendants"
+          if ! fixture_wait_for_startup_barrier; then
+            printf 'fixture descendant did not observe Go-published worker-group readiness before hang\n' >&2
+            exit 70
+          fi
           trap ':' TERM INT HUP
           fixture_wait_forever
         ) </dev/null >/dev/null 2>&1 &
@@ -365,11 +413,17 @@ let
           printf 'fixture descendant failed to publish a durable ownership record before hang\n' >&2
           return 70
         fi
-        if ! fixture_capture_worker_group "''${BASHPID:-$$}"; then
+        if ! fixture_delay_worker_group_publication; then
+          fixture_reap_registered_child "$child_pid"
+          printf 'fixture worker group could not start durable publication before hang\n' >&2
+          return 70
+        fi
+        if ! fixture_publish_worker_group_ready "''${BASHPID:-$$}"; then
           fixture_reap_registered_child "$child_pid"
           printf 'fixture worker group could not publish durable ownership records before hang\n' >&2
           return 70
         fi
+        fixture_release_startup_barrier || return $?
         printf '%s %s\n' "$$" "$child_pid" >> "$fixture_root/process-tree"
         trap ':' TERM INT HUP
         fixture_wait_forever
@@ -554,6 +608,8 @@ let
       fixture_root = Path(os.environ["GIT_MCP_SIGNING_FIXTURE_ROOT"])
       scenario = json.loads((fixture_root / "scenario.json").read_text(encoding="utf-8"))
       ownership_attestation_path = Path(f"{ready_path}.ownership.json")
+      lifecycle_wait_path = Path(f"{ready_path}.lifecycle-wait")
+      lifecycle_release_path = fixture_root / "ownership-releases" / f"{os.getpid()}.json"
       expected_executable = os.path.realpath(sys.executable)
       session_token = os.environ.get("GIT_MCP_OWNERSHIP_TOKEN", "")
 
@@ -600,11 +656,63 @@ let
                   f"fixture agent socket trap ownership capture failed with status {result.returncode}: {result.stderr.strip()}"
               )
 
+      def lifecycle_release_timeout_ms():
+          timeout_ms = scenario.get("agentLifecycleReleaseTimeoutMs", 2000)
+          if (
+              isinstance(timeout_ms, bool)
+              or not isinstance(timeout_ms, int)
+              or timeout_ms <= 0
+              or timeout_ms > 600000
+          ):
+              raise RuntimeError(
+                  "fixture agent lifecycle release timeout must be an integer between 1 and 600000 milliseconds"
+              )
+          return timeout_ms
+
+      def wait_for_lifecycle_handoff():
+          process_control = os.environ.get("GIT_MCP_PROCESS_IDENTITY_HELPER", "")
+          if not process_control or not session_token:
+              raise RuntimeError(
+                  "fixture agent socket trap requires a Go lifecycle ownership record before socket readiness"
+              )
+
+          timeout_ms = lifecycle_release_timeout_ms()
+          deadline = time.monotonic() + timeout_ms / 1000
+          lifecycle_wait_path.parent.mkdir(parents=True, exist_ok=True)
+          lifecycle_wait_path.touch()
+          expected_release = {
+              "pid": os.getpid(),
+              "sessionToken": session_token,
+              "expectedExecutable": expected_executable,
+              "role": "agent-socket-trap-lifecycle",
+          }
+          while time.monotonic() < deadline:
+              try:
+                  release = json.loads(lifecycle_release_path.read_text(encoding="utf-8"))
+              except FileNotFoundError:
+                  time.sleep(0.01)
+                  continue
+              except (OSError, json.JSONDecodeError) as error:
+                  raise RuntimeError(
+                      f"fixture agent socket trap cannot read lifecycle release: {error}"
+                  )
+              if release != expected_release:
+                  raise RuntimeError(
+                      "fixture agent socket trap received a mismatched lifecycle release"
+                  )
+              return
+
+          raise RuntimeError(
+              f"fixture agent socket trap lifecycle release timed out after {timeout_ms}ms"
+          )
+
       trap_mode = scenario.get("agentSocketTrap")
-      if trap_mode == "delay-ownership-record":
-          print("fixture agent socket trap intentionally delaying durable ownership registration", file=sys.stderr, flush=True)
-          time.sleep(4)
       try:
+          if trap_mode != "raw-pid-before-ready":
+              wait_for_lifecycle_handoff()
+          if trap_mode == "delay-ownership-record":
+              print("fixture agent socket trap intentionally delaying durable ownership registration", file=sys.stderr, flush=True)
+              time.sleep(4)
           if trap_mode != "raw-pid-before-ready":
               record_spawn_ownership(trap_mode)
               publish_ownership_attestation()
@@ -1182,6 +1290,8 @@ let
     nativeOutput = {
       stderr = "fixture-native-stderr\n";
     };
+    agentLifecycleReleaseTimeoutMs = 5000;
+    workerGroupPublicationDelayMs = 0;
     workerTree = {
       enabled = false;
       descendantsFile = "descendants";

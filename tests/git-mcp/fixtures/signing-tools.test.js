@@ -16,6 +16,10 @@ const legacyProcessOwnershipPath = path.join(__dirname, 'process-ownership.js');
 const processControlSourcePath = path.join(__dirname, 'process-control_darwin.go');
 const nixTimeoutMs = 600_000;
 const harnessResultsFile = 'harness-results.jsonl';
+const fixtureStartupTimeoutMs = 5_000;
+const agentLifecycleRole = 'agent-socket-trap-lifecycle';
+let cachedFixtureBundle;
+let cachedFixtureSummary;
 
 function nixEvalJson(expression) {
   return JSON.parse(childProcess.execFileSync(
@@ -61,7 +65,8 @@ function nixBuild(expression) {
 }
 
 function fixtureSummary() {
-  return nixEvalJson(`
+  if (cachedFixtureSummary) return cachedFixtureSummary;
+  cachedFixtureSummary = nixEvalJson(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
       pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
@@ -72,12 +77,15 @@ function fixtureSummary() {
       nativeToolNames = builtins.mapAttrs (_: package: package.name) fixture.nativeTools;
       nativeToolPaths = fixture.nativeToolPaths;
       interceptorPaths = fixture.interceptorPaths;
+      agentTrapExecutable = fixture.agentTrapExecutable;
       scenarios = fixture.scenarios;
     }
   `);
+  return cachedFixtureSummary;
 }
 
 function buildFixtureBundle() {
+  if (cachedFixtureBundle) return cachedFixtureBundle;
   const expression = `
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
@@ -105,7 +113,7 @@ function buildFixtureBundle() {
       };
     in fixture.packages
   `;
-  return childProcess.execFileSync(
+  cachedFixtureBundle = childProcess.execFileSync(
     'nix',
     [
       'build',
@@ -127,6 +135,7 @@ function buildFixtureBundle() {
       },
     },
   ).trim();
+  return cachedFixtureBundle;
 }
 
 function processControlCommand(bundle) {
@@ -214,6 +223,26 @@ test('exports a Go process-control fixture with validated group cleanup', {
       '--role', 'fixture-contract-worker',
     ]);
     assert.equal(record.status, 0, record.stderr);
+    const arbitraryRoleRecord = runProcessControl(control, [
+      'record',
+      '--root', root,
+      '--token', sessionToken,
+      '--pid', String(worker.pid),
+      '--expected-executable', expectedExecutable,
+      '--role', 'arbitrary-role',
+    ]);
+    assert.equal(arbitraryRoleRecord.status, 0, arbitraryRoleRecord.stderr);
+    const arbitraryRoleRelease = runProcessControl(control, [
+      'release-record', '--root', root, '--token', sessionToken,
+      '--pid', String(worker.pid), '--role', 'arbitrary-role',
+    ]);
+    assert.equal(arbitraryRoleRelease.status, 64, arbitraryRoleRelease.stderr);
+    assert.match(arbitraryRoleRelease.stderr, /release-record role must be agent-socket-trap-lifecycle/);
+    assert.equal(
+      fs.existsSync(path.join(root, 'ownership-releases', `${worker.pid}.json`)),
+      false,
+      'ordinary roles cannot create lifecycle release artifacts',
+    );
     const capture = runProcessControl(control, [
       'capture-group',
       '--root', root,
@@ -222,6 +251,54 @@ test('exports a Go process-control fixture with validated group cleanup', {
       '--role', 'fixture-contract-group-member',
     ]);
     assert.equal(capture.status, 0, capture.stderr);
+
+    const unrelatedRoleCleanup = runProcessControl(control, [
+      'cleanup', '--root', root, '--token', sessionToken,
+      '--role', 'fixture-contract-worker', '--timeout-ms', '100',
+    ]);
+    assert.equal(unrelatedRoleCleanup.status, 64, unrelatedRoleCleanup.stderr);
+    assert.match(unrelatedRoleCleanup.stderr, /cleanup role must be agent-socket-trap-lifecycle/);
+    assert.equal(runProcessControl(control, ['inspect', String(worker.pid)]).status, 0);
+
+    const arbitraryRoleStates = runProcessControl(control, [
+      'states', '--root', root, '--token', sessionToken, '--role', 'arbitrary-role',
+    ]);
+    assert.equal(arbitraryRoleStates.status, 64, arbitraryRoleStates.stderr);
+    assert.match(arbitraryRoleStates.stderr, /states role must be agent-socket-trap-lifecycle/);
+
+    const unfilteredRecords = runProcessControl(control, [
+      'records', '--root', root, '--token', sessionToken,
+    ]);
+    assert.equal(unfilteredRecords.status, 0, unfilteredRecords.stderr);
+    assert.ok(
+      JSON.parse(unfilteredRecords.stdout).some((record_) => (
+        record_.pid === worker.pid && record_.role === 'fixture-contract-worker'
+      )),
+      'unfiltered records retain the worker ownership record',
+    );
+    assert.ok(
+      JSON.parse(unfilteredRecords.stdout).some((record_) => (
+        record_.pid === worker.pid && record_.role === 'arbitrary-role'
+      )),
+      'an invalid lifecycle release retains the ordinary ownership record',
+    );
+
+    const arbitraryRoleRecords = runProcessControl(control, [
+      'records', '--root', root, '--token', sessionToken, '--role', 'arbitrary-role',
+    ]);
+    assert.equal(arbitraryRoleRecords.status, 64, arbitraryRoleRecords.stderr);
+    assert.match(arbitraryRoleRecords.stderr, /records role must be agent-socket-trap-lifecycle/);
+
+    const retainedRecords = runProcessControl(control, [
+      'records', '--root', root, '--token', sessionToken,
+    ]);
+    assert.equal(retainedRecords.status, 0, retainedRecords.stderr);
+    assert.ok(
+      JSON.parse(retainedRecords.stdout).some((record_) => (
+        record_.pid === worker.pid && record_.role === 'fixture-contract-worker'
+      )),
+      'an invalid records role cannot hide the worker ownership record',
+    );
 
     const foreignCleanup = runProcessControl(control, [
       'cleanup', '--root', root, '--token', `${sessionToken}-foreign`, '--timeout-ms', '100',
@@ -320,6 +397,30 @@ function readJsonLines(root, fileName) {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function readHangEntries(root) {
+  const filePath = path.join(root, 'hang-entries');
+  if (!fs.existsSync(filePath)) return [];
+  return fs.readFileSync(filePath, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [tool, operation, pid] = line.split('\t');
+      return { tool, operation, pid: Number(pid) };
+    });
+}
+
+async function waitForHangEntries(root, minimumEntries) {
+  const deadline = Date.now() + 2_000;
+  let entries = [];
+  while (Date.now() < deadline) {
+    entries = readHangEntries(root);
+    if (entries.length >= minimumEntries) return entries;
+    await wait(10);
+  }
+  assert.fail(`expected ${minimumEntries} hang entries, got ${entries.length}`);
 }
 
 const identityTableHeader = 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid';
@@ -461,8 +562,8 @@ function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function waitForFile(filePath) {
-  const deadline = Date.now() + 2_000;
+async function waitForFile(filePath, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
   while (!fs.existsSync(filePath) && Date.now() < deadline) {
     await wait(10);
   }
@@ -532,6 +633,48 @@ function waitForChildExit(child, timeoutMs) {
   });
 }
 
+function waitForTrackedChildClose(child, lifecycle, timeoutMs) {
+  if (lifecycle.close || lifecycle.error) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const onClose = () => finish(true);
+    const onError = () => finish(true);
+    function finish(closed) {
+      clearTimeout(timer);
+      child.off('close', onClose);
+      child.off('error', onError);
+      resolve(closed);
+    }
+    child.once('close', onClose);
+    child.once('error', onError);
+    if (lifecycle.close || lifecycle.error) finish(true);
+  });
+}
+
+async function cleanupAgentSocketTrapLifecycle(root, ownership, trap, lifecycle) {
+  await runProcessControlAsync(ownership.processControlCommand, [
+    'cleanup', '--root', root, '--token', ownership.sessionToken,
+    '--role', agentLifecycleRole, '--timeout-ms', '2_000',
+  ]);
+  assert.equal(
+    await waitForTrackedChildClose(trap, lifecycle, 2_000),
+    true,
+    'agent socket trap emits close after Go lifecycle cleanup',
+  );
+  const { stdout } = await runProcessControlAsync(ownership.processControlCommand, [
+    'states', '--root', root, '--token', ownership.sessionToken,
+    '--role', agentLifecycleRole,
+  ]);
+  const states = JSON.parse(stdout);
+  assert.equal(states.length, 1, 'lifecycle cleanup verifies exactly one lifecycle record');
+  assert.deepEqual(
+    states.filter((entry) => entry.state !== 'gone'),
+    [],
+    'lifecycle cleanup leaves no non-gone lifecycle record',
+  );
+  return states;
+}
+
 async function inspectAfterChildExit(child, inspect) {
   assert.equal(
     await waitForChildExit(child, 2_000),
@@ -558,22 +701,30 @@ test('raw process inspection waits for the child lifecycle', async () => {
   assert.equal(await status, 3);
 });
 
-async function waitForWorkerGroupOrChildExit(root, ownership, child, timeoutMs = 2_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const result = runProcessControl(ownership.processControlCommand, [
-      'wait-groups',
-      '--root', root,
-      '--token', ownership.sessionToken,
-      '--count', '1',
-      '--timeout-ms', '25',
-    ]);
-    if (result.status === 0) return JSON.parse(result.stdout);
-    if (childExited(child)) return [];
-    assert.match(result.stderr, /expected 1 complete worker-group records/);
-    await wait(10);
+async function waitForWorkerGroupOrChildExit(root, ownership, child, timeoutMs = fixtureStartupTimeoutMs) {
+  const workerGroups = runProcessControlAsync(ownership.processControlCommand, [
+    'wait-groups',
+    '--root', root,
+    '--token', ownership.sessionToken,
+    '--count', '1',
+    '--timeout-ms', String(timeoutMs),
+  ]).then(
+    ({ stdout }) => ({ groups: JSON.parse(stdout) }),
+    (error) => ({ error }),
+  );
+  const childExit = new Promise((resolve) => {
+    if (childExited(child)) {
+      resolve({ exited: true });
+      return;
+    }
+    child.once('exit', () => resolve({ exited: true }));
+  });
+  const result = await Promise.race([workerGroups, childExit]);
+  if (result.groups) return result.groups;
+  if (result.exited || childExited(child)) return [];
+  if (result.error) {
+    assert.match(result.error.stderr, /expected 1 complete worker-group records/);
   }
-  if (childExited(child)) return [];
   assert.fail('hung fixture did not publish a complete worker-group record before cleanup');
 }
 
@@ -583,6 +734,7 @@ async function waitForOwnedRecord(root, ownership, role, pid, timeoutMs = 2_000)
     '--root', root,
     '--token', ownership.sessionToken,
     '--pid', String(pid),
+    '--role', role,
     '--timeout-ms', String(timeoutMs),
   ]);
   const record = JSON.parse(stdout);
@@ -590,7 +742,10 @@ async function waitForOwnedRecord(root, ownership, role, pid, timeoutMs = 2_000)
   return record;
 }
 
-async function terminateHungFixture(command, args, env, root) {
+async function terminateHungFixture(command, args, env, root, {
+  beforeWorkerGroupReady,
+  afterWorkerGroupReady,
+} = {}) {
   const ownership = createOwnershipContext();
   const child = childProcess.spawn(command, args, {
     detached: true,
@@ -599,6 +754,7 @@ async function terminateHungFixture(command, args, env, root) {
       GIT_MCP_SIGNING_FIXTURE_ROOT: root,
       GIT_MCP_PROCESS_IDENTITY_HELPER: ownership.processControlCommand,
       GIT_MCP_OWNERSHIP_TOKEN: ownership.sessionToken,
+      GIT_MCP_FIXTURE_STARTUP_TIMEOUT_MS: String(fixtureStartupTimeoutMs),
     },
     stdio: 'ignore',
   });
@@ -629,10 +785,12 @@ async function terminateHungFixture(command, args, env, root) {
   let lifecycleResult;
   let failure;
   try {
+    if (beforeWorkerGroupReady) await beforeWorkerGroupReady({ child, ownership, root });
     const groups = await waitForWorkerGroupOrChildExit(root, ownership, child);
     descendants = [...new Set(groups.flatMap((group) => group.members.map((member) => member.pid)))];
     if (groups.length > 0) {
       assert.ok(descendants.length >= 2, 'hung fixture records a worker and descendant');
+      if (afterWorkerGroupReady) await afterWorkerGroupReady({ child, groups, ownership, root });
       await runProcessControlAsync(ownership.processControlCommand, [
         'cleanup', '--root', root, '--token', ownership.sessionToken, '--timeout-ms', '2_000',
       ]);
@@ -726,6 +884,44 @@ test('terminateHungFixture waits for a complete attested worker group before cle
         assert.notEqual(member[field], undefined, `member records ${field}`);
       }
     }
+    assertHarnessResult(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('hang fixtures do not enter their hang before Go publishes worker-group readiness', {
+  timeout: 60_000,
+}, async () => {
+  const summary = fixtureSummary();
+  const bundle = buildFixtureBundle();
+  const scAuth = path.join(bundle, 'native/sc-auth/bin/fixture-sc-auth');
+  const root = createScenarioRoot({
+    ...summary.scenarios.hangCtkListing,
+    workerGroupPublicationDelayMs: 1_000,
+  });
+  try {
+    await terminateHungFixture(
+      scAuth,
+      ['list-ctk-identities', '-t', 'sha1', '-e', 'hex'],
+      fixtureEnvironment(root),
+      root,
+      {
+        beforeWorkerGroupReady: async () => {
+          await waitForFile(path.join(root, 'descendants'));
+          await wait(500);
+          assert.deepEqual(
+            readHangEntries(root),
+            [],
+            'fixture processes must not enter their hang before Go publishes the worker-group marker',
+          );
+        },
+        afterWorkerGroupReady: async () => {
+          const entries = await waitForHangEntries(root, 2);
+          assert.equal(entries.length, 2, 'both fixture processes enter their hang after Go publishes readiness');
+        },
+      },
+    );
     assertHarnessResult(root);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -1261,7 +1457,7 @@ test('agent and fallback interceptors record only controlled fixture attempts', 
   const readyPath = path.join(root, 'agent-ready');
   const ownership = createOwnershipContext();
   let trap;
-  let trapOwnership;
+  let lifecycleRecorded = false;
   const lifecycle = { error: null, exit: null, close: null };
 
   try {
@@ -1276,7 +1472,21 @@ test('agent and fallback interceptors record only controlled fixture attempts', 
     trap.on('error', (error) => { lifecycle.error = error; });
     trap.on('exit', (code, signal) => { lifecycle.exit = { code, signal }; });
     trap.on('close', (code, signal) => { lifecycle.close = { code, signal }; });
-    trapOwnership = await waitForOwnedRecord(root, ownership, 'agent-socket-trap', trap.pid);
+    const expectedExecutable = fs.realpathSync(summary.agentTrapExecutable);
+    await runProcessControlAsync(ownership.processControlCommand, [
+      'record', '--root', root, '--token', ownership.sessionToken,
+      '--pid', String(trap.pid), '--expected-executable', expectedExecutable,
+      '--role', agentLifecycleRole, '--wait-ms', String(fixtureStartupTimeoutMs),
+    ]);
+    lifecycleRecorded = true;
+    await waitForFile(`${readyPath}.lifecycle-wait`, fixtureStartupTimeoutMs);
+    assert.equal(fs.existsSync(readyPath), false, 'agent socket trap waits for its Go lifecycle release');
+    assert.equal(fs.existsSync(socketPath), false, 'agent socket trap does not bind before lifecycle release');
+    await runProcessControlAsync(ownership.processControlCommand, [
+      'release-record', '--root', root, '--token', ownership.sessionToken,
+      '--pid', String(trap.pid), '--role', agentLifecycleRole,
+    ]);
+    await waitForOwnedRecord(root, ownership, 'agent-socket-trap', trap.pid);
     await waitForFile(readyPath);
     assert.equal(lifecycle.error, null, 'agent socket trap spawned successfully');
 
@@ -1307,14 +1517,117 @@ test('agent and fallback interceptors record only controlled fixture attempts', 
     assert.deepEqual(fallbackAttempts[0].argv, ['fallback-argument']);
     assert.equal(agentAttempts[0].pid === process.pid, false);
   } finally {
-    if (trapOwnership) {
-      await runProcessControlAsync(ownership.processControlCommand, [
-        'cleanup', '--root', root, '--token', ownership.sessionToken,
-        '--pid', String(trapOwnership.pid), '--timeout-ms', '2_000',
-      ]);
+    if (lifecycleRecorded) {
+      await cleanupAgentSocketTrapLifecycle(root, ownership, trap, lifecycle);
     }
-    if (trap && !childExited(trap)) await waitForChildExit(trap, 2_000);
+    if (lifecycleRecorded) {
+      const { stdout } = await runProcessControlAsync(ownership.processControlCommand, [
+        'states', '--root', root, '--token', ownership.sessionToken,
+      ]);
+      assert.deepEqual(
+        JSON.parse(stdout).filter((entry) => entry.state !== 'gone'),
+        [],
+        'all valid owned records are gone after lifecycle cleanup',
+      );
+    }
+    if (trap && !lifecycle.close && !lifecycle.error) {
+      assert.equal(
+        await waitForTrackedChildClose(trap, lifecycle, fixtureStartupTimeoutMs),
+        true,
+        'agent socket trap closes before its fixture root is removed',
+      );
+    }
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('role-qualified lifecycle cleanup isolates stale agent startup records', {
+  timeout: 30_000,
+}, async (t) => {
+  buildFixtureBundle();
+  const summary = fixtureSummary();
+
+  for (const testCase of [
+    { mode: 'synthetic-ownership-record' },
+    { mode: 'recycled-ownership-record' },
+  ]) {
+    await t.test(testCase.mode, async () => {
+      const root = createScenarioRoot({
+        ...summary.scenarios.oneResidentExport,
+        agentSocketTrap: testCase.mode,
+      });
+      const socketPath = path.join(root, 'agent.sock');
+      const agentRecordPath = path.join(root, 'agent-calls.jsonl');
+      const readyPath = path.join(root, 'agent-ready');
+      const ownership = createOwnershipContext();
+      const lifecycle = { error: null, exit: null, close: null };
+      let trap;
+      let cleaned = false;
+
+      try {
+        trap = childProcess.spawn(
+          summary.interceptorPaths.agentSocketTrap,
+          [socketPath, agentRecordPath, readyPath],
+          { env: fixtureEnvironment(root, ownership), stdio: 'ignore' },
+        );
+        trap.on('error', (error) => { lifecycle.error = error; });
+        trap.on('exit', (code, signal) => { lifecycle.exit = { code, signal }; });
+        trap.on('close', (code, signal) => { lifecycle.close = { code, signal }; });
+        const expectedExecutable = fs.realpathSync(summary.agentTrapExecutable);
+        await runProcessControlAsync(ownership.processControlCommand, [
+          'record', '--root', root, '--token', ownership.sessionToken,
+          '--pid', String(trap.pid), '--expected-executable', expectedExecutable,
+          '--role', agentLifecycleRole, '--wait-ms', String(fixtureStartupTimeoutMs),
+        ]);
+        await waitForFile(`${readyPath}.lifecycle-wait`, fixtureStartupTimeoutMs);
+        await runProcessControlAsync(ownership.processControlCommand, [
+          'release-record', '--root', root, '--token', ownership.sessionToken,
+          '--pid', String(trap.pid), '--role', agentLifecycleRole,
+        ]);
+        await waitForFile(readyPath);
+
+        const records = JSON.parse((await runProcessControlAsync(ownership.processControlCommand, [
+          'records', '--root', root, '--token', ownership.sessionToken,
+        ])).stdout);
+        assert.equal(records.filter((record) => record.role === agentLifecycleRole).length, 1);
+        assert.equal(records.filter((record) => record.role === 'agent-socket-trap').length, 1);
+
+        const rootStates = runProcessControl(ownership.processControlCommand, [
+          'states', '--root', root, '--token', ownership.sessionToken,
+        ]);
+        if (rootStates.status === 0) {
+          const ordinaryState = JSON.parse(rootStates.stdout).find(
+            (entry) => entry.record.role === 'agent-socket-trap',
+          );
+          assert.notEqual(ordinaryState.state, 'live', 'synthetic ownership is not reclassified as live');
+        } else {
+          assert.match(rootStates.stderr, /refusing to signal process instance/);
+        }
+
+        await cleanupAgentSocketTrapLifecycle(root, ownership, trap, lifecycle);
+        cleaned = true;
+
+        const retainedRecords = JSON.parse((await runProcessControlAsync(ownership.processControlCommand, [
+          'records', '--root', root, '--token', ownership.sessionToken,
+        ])).stdout);
+        assert.equal(
+          retainedRecords.filter((record) => record.role === 'agent-socket-trap').length,
+          1,
+          'role-qualified cleanup neither deletes nor reclassifies the stale ordinary record',
+        );
+      } finally {
+        if (trap && !lifecycle.close && !lifecycle.error) {
+          assert.equal(
+            await waitForTrackedChildClose(trap, lifecycle, fixtureStartupTimeoutMs),
+            true,
+            'failed startup trap exits before its isolated root is removed',
+          );
+        }
+        if (cleaned || !trap || lifecycle.close || lifecycle.error) {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      }
+    });
   }
 });
 

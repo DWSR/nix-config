@@ -39,6 +39,10 @@ buildGoModule {
     mv "$out/bin/worker" "$out/libexec/git-mcp-secure-enclave-signer-worker"
   '';
 
+  passthru = {
+    inherit providerPath;
+  };
+
   meta = {
     mainProgram = "git-mcp-secure-enclave-signer";
     platforms = lib.platforms.darwin;
