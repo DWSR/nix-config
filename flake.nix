@@ -160,6 +160,10 @@
             overlays = [ outputs.overlays.custom-packages ];
           };
           gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
+          gitMcpAdmin = pkgs.callPackage ./scripts/git-mcp-secure-enclave-admin.nix { };
+          gitMcpAcceptance = pkgs.callPackage ./scripts/git-mcp-secure-enclave-acceptance.nix {
+            adminPackage = gitMcpAdmin;
+          };
         in
         {
           git-cache-clone = {
@@ -183,6 +187,10 @@
           mcp-verify-secrets = {
             type = "app";
             program = "${import ./scripts/mcp-verify-secrets.nix { inherit pkgs; }}/bin/mcp-verify-secrets";
+          };
+          git-mcp-secure-enclave-acceptance = {
+            type = "app";
+            program = "${gitMcpAcceptance}/bin/git-mcp-secure-enclave-acceptance";
           };
           # Phase B operator validator for the rtk-install spec (task 6.1).
           # The script discovers the rendered RTK metadata + plugin under
@@ -2053,6 +2061,7 @@
                 node --test tests/git-mcp/hm-render.test.js
                 node --test tests/git-mcp/admin-contract.test.js
                 node --test tests/git-mcp/upstream-isolation.test.js
+                node --test tests/git-mcp/acceptance-client.test.js
                 touch $out
               '';
 

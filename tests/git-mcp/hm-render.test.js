@@ -1210,6 +1210,7 @@ function assertGitMcpCheckWiring(source) {
     'node --test tests/git-mcp/hm-render.test.js',
     'node --test tests/git-mcp/admin-contract.test.js',
     'node --test tests/git-mcp/upstream-isolation.test.js',
+    'node --test tests/git-mcp/acceptance-client.test.js',
   ];
 
   assert.ok(
@@ -1303,6 +1304,10 @@ test('real-host signing installs production tools so admin is runnable before en
     assert.equal(host.adminPackageName, 'git-mcp-secure-enclave-admin', `${hostKey} uses the production admin default`);
     assert.ok(host.packageNames.includes('git-mcp-secure-enclave-signer'), `${hostKey} installs the signer before enrollment`);
     assert.ok(host.packageNames.includes('git-mcp-secure-enclave-admin'), `${hostKey} installs the admin before enrollment`);
+    assert.ok(
+      host.packageNames.includes('git-mcp-secure-enclave-acceptance'),
+      `${hostKey} installs the standalone acceptance client`,
+    );
   }
 
   const adminPath = path.join(nixBuildOutPath(disabledAdminPackageExpr()), 'bin', 'git-mcp-secure-enclave-admin');
@@ -1360,6 +1365,7 @@ test('an isolated enabled declaration overlays exact signing configuration only 
   );
   assert.ok(rendered.packageNames.includes('git-mcp-secure-enclave-signer'));
   assert.ok(rendered.packageNames.includes('git-mcp-secure-enclave-admin'));
+  assert.ok(rendered.packageNames.includes('git-mcp-secure-enclave-acceptance'));
 });
 
 test('fixture-injected signerPackage installs the selected Go signer package', () => {

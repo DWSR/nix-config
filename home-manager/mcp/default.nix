@@ -383,6 +383,9 @@ let
 
   signerPackage = pkgs.callPackage ../../scripts/git-mcp-secure-enclave-signer.nix { };
   adminPackage = pkgs.callPackage ../../scripts/git-mcp-secure-enclave-admin.nix { };
+  acceptancePackage = pkgs.callPackage ../../scripts/git-mcp-secure-enclave-acceptance.nix {
+    inherit adminPackage;
+  };
 
   hasCompleteSigningDeclaration =
     signingCfg.enable
@@ -1045,6 +1048,7 @@ in
         pkgs.git-mcp-server
         signingCfg.signerPackage
         signingCfg.adminPackage
+        acceptancePackage
         (pkgs.writeScriptBin "restart-mcpproxy" ''
           #!/bin/sh
           exec launchctl kickstart -k "gui/$(id -u)/com.smart-mcp-proxy.mcpproxy"

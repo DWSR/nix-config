@@ -257,6 +257,53 @@ acceptance repository, and send every commit request through the existing
 `git-mcp` upstream rather than local interactive Git. Make a new content change
 for every row and capture the complete 40-character commit SHA.
 
+### Standalone git-mcp probe client
+
+The Home Manager MCP module installs
+`git-mcp-secure-enclave-acceptance`. It calls mcpproxy's
+`git-mcp:git_commit` tool directly and does not require OpenCode or an agent
+session. It never creates a local Git commit as a fallback.
+
+Initialize a disposable repository without committing locally:
+
+```sh
+git-mcp-secure-enclave-acceptance init --repo "$HOME/git-mcp-acceptance"
+repo="$HOME/git-mcp-acceptance"
+git -C "$repo" config user.name "<author name>"
+git -C "$repo" config user.email "<author email>"
+```
+
+Run one probe for each physical state. The `locked`, `sleep`, and `reboot`
+commands must be run after the corresponding state transition; the script does
+not attempt to unlock, wake, or reboot the host:
+
+```sh
+git-mcp-secure-enclave-acceptance probe --repo "$repo" --state unlocked
+git-mcp-secure-enclave-acceptance probe --repo "$repo" --state locked
+git-mcp-secure-enclave-acceptance probe --repo "$repo" --state sleep
+git-mcp-secure-enclave-acceptance probe --repo "$repo" --state reboot
+git-mcp-secure-enclave-acceptance probe --repo "$repo" --state github
+git-mcp-secure-enclave-acceptance show
+```
+
+Each probe creates a distinct content change, sends the commit through
+`mcpproxy`, verifies the enrolled SSH public key and author, checks mcpproxy
+health, and stores only public evidence under
+`$XDG_STATE_HOME/git-mcp-secure-enclave-signing/acceptance-probes/`.
+The client refuses a repository with pre-staged files and refuses to run when
+the rendered `git-mcp` environment does not match the active enrollment. After
+changing host configuration, restart mcpproxy before probing.
+
+After pushing the `github` commit and confirming GitHub's `Verified` result,
+record the acceptance atomically:
+
+```sh
+git-mcp-secure-enclave-acceptance record --github-verified
+```
+
+Use `--dry-run` to inspect the exact `git-mcp:git_commit` request without
+creating a commit.
+
 Before the first probe, record the existing host author identity:
 
 ```sh
@@ -275,7 +322,9 @@ git -c gpg.format=ssh \
   -c gpg.ssh.allowedSignersFile="$allowed_signers" \
   verify-commit --raw <commit-sha>
 git show -s --format='%an <%ae>' <commit-sha>
-curl --fail --silent http://127.0.0.1:8080/healthz >/dev/null
+mcpproxy_config="${GIT_MCP_ACCEPTANCE_MCP_CONFIG:-$HOME/.mcpproxy/runtime-config/mcp_config.json}"
+mcpproxy_listen="$(jq -r .listen "$mcpproxy_config")"
+curl --fail --silent "http://$mcpproxy_listen/healthz" >/dev/null
 rm -f "$allowed_signers"
 ```
 
