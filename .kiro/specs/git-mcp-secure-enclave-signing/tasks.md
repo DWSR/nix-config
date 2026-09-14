@@ -168,7 +168,7 @@
   - _Depends: 2.8, 3.2, 4.1_
 
 - [ ] 5. Implement the versioned operator interface
-- [ ] 5.1 Add enrollment and acceptance procedures
+- [x] 5.1 Add enrollment and acceptance procedures
   - Cover bootstrap output, registration through GitHub's signing-key surface only, registration before selection, activation as test setup, rollback, and evidence recording.
   - Define unlocked, locked-without-approval, post-sleep, post-reboot, and GitHub `Verified` probes.
   - State the public/non-secret state model, prohibited private-material paths, and accepted same-user authorization boundary.
