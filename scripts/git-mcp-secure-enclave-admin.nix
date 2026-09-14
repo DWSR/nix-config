@@ -1676,20 +1676,18 @@ writeShellApplication {
         fail "requested CTK identity hash $hash is malformed; expected 40 lowercase hexadecimal characters"
       fi
 
-      diagnose record-acceptance "$hash"
-      if [[ -n "$work_dir" && -e "$work_dir" ]]; then
-        if ! rm -rf -- "$work_dir"; then
-          fail 'cannot clean the disposable diagnosis data before recording acceptance'
-        fi
-      fi
-      work_dir=""
-
       home="''${HOME:-}"
       if [[ -z "$home" ]]; then
         fail 'HOME is required to locate the active enrollment marker'
       fi
       xdg_config_home="''${XDG_CONFIG_HOME:-$home/.config}"
       active_marker="$xdg_config_home/git-mcp-secure-enclave-signing/active.json"
+      if [[ ! -f "$active_marker" || ! -r "$active_marker" ]]; then
+        fail "active enrollment marker $active_marker is missing or unreadable; complete GitHub registration and activate the enrollment before recording acceptance"
+      fi
+      if ! jq -e '.githubSigningKeyRegistered == true' "$active_marker" >/dev/null 2>&1; then
+        fail "active enrollment marker $active_marker is not registered through GitHub; refusing to record acceptance"
+      fi
       if ! marker_values="$(jq -er '
         [.stateDir, .identityLabel, .ctkPublicKeyHash, .sshPublicKey, .sshFingerprint]
         | if all(.[]; type == "string") then @tsv else error("missing enrollment field") end
@@ -1701,7 +1699,7 @@ writeShellApplication {
       expected_public_key="$(normalize_public_key "$marker_public_key")" \
         || fail "active enrollment marker $active_marker has malformed sshPublicKey"
       if [[ "$marker_hash" != "$hash" ]]; then
-        fail "active enrollment marker $active_marker changed while recording acceptance; refusing to write evidence"
+        fail "active enrollment marker $active_marker selects CTK hash $marker_hash; expected $hash; refusing to write evidence"
       fi
 
       acceptance_dir="$state_dir/acceptance"

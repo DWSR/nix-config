@@ -2788,6 +2788,11 @@ test('records complete acceptance evidence only after verifying every signed com
     assert.doesNotMatch(serialized, /id_ecdsa_sk_rk/);
     assertGeneratedOutputPolicy(serialized);
     assertAcceptanceVerificationCalls(readCalls(root.root), enrollment);
+    assert.equal(
+      readCalls(root.root).some((call) => call.tool === 'ssh-keygen' && call.operation === 'sign'),
+      false,
+      'record-acceptance revalidates existing commits without starting a new CTK signing operation',
+    );
 
     const callCountBeforeRevalidation = readCalls(root.root).length;
     const revalidated = runAdmin(
