@@ -66,6 +66,11 @@ let
   };
 in
 {
+  # These markers stop the root janitor from creating or pruning Shopify Nix
+  # drop-ins under /etc/nix.
+  home.file.".local/state/tec/janitor/configure-nix-shopify-dropin.disabled".text = "";
+  home.file.".local/state/tec/janitor/prune-old-shopify-nix-dropins.disabled".text = "";
+
   # Declarative pin file. home.file symlinks the relative path under $HOME
   # to a read-only file in the Nix store containing the JSON pin record.
   # `tec tools pin/unpin` (which write to or delete this path) both fail
