@@ -1452,6 +1452,38 @@ test('bootstraps the requested identity while preserving an unrelated CTK identi
   }
 });
 
+test('accepts macOS ISO CTK validity dates during bootstrap', () => {
+  const baseScenario = summary.scenarios.oneResidentExport;
+  const identity = baseScenario.identitySnapshots.after[0];
+  const header = 'Key Type Public Key Hash Prot Label Common Name Email Address Valid To Valid';
+  const identityRow = `p-256-ne ${identity.hash.toUpperCase()} none ${identity.label} ${identity.label} 2027-09-14, 07:38 YES`;
+  const sshRow = `p-256-ne ${identity.sshFingerprint} none ${identity.label} ${identity.label} 2027-09-14, 07:38 YES`;
+  const scenario = cloneScenario(baseScenario, {
+    rawIdentityListings: {
+      after: `${header}\n${identityRow}\n`,
+    },
+    sshIdentityListings: {
+      after: `${header}\n${sshRow}\n`,
+    },
+  });
+  const root = createScenarioRoot(scenario);
+
+  try {
+    const result = runAdmin(
+      adminCommand,
+      ['bootstrap', '--label', identity.label],
+      fixtureEnvironment(root),
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(declarationFrom(result).ctkPublicKeyHash, identity.hash);
+    assert.deepEqual(managedIdentities(root), [identity.hash]);
+    assert.equal(fs.existsSync(activeMarkerPath(root)), false);
+  } finally {
+    fs.rmSync(root.root, { recursive: true, force: true });
+  }
+});
+
 test('rejects unsafe CTK identity-set transitions before resident export', () => {
   const baseScenario = summary.scenarios.oneResidentExport;
   const identity = baseScenario.identitySnapshots.after[0];

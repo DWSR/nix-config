@@ -83,6 +83,13 @@ writeShellApplication {
       printf '%s %s\n' "$key_type" "$key_data"
     }
 
+    valid_ctk_date() {
+      local value="$1"
+
+      [[ "$value" =~ ^[0-9]{2}\.[0-9]{2}\.[0-9]{2},$ \
+        || "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2},$ ]]
+    }
+
     identity_rows() {
       local identity_listing="$1"
       local line
@@ -158,13 +165,13 @@ writeShellApplication {
         esac
 
         if [[ ! "$public_hash" =~ ^[[:xdigit:]]{40}$ \
-          || ( "$protection" != "bio" && "$protection" != "none" ) \
-          || -z "$label" \
-          || -z "$common_name" \
-          || ( -n "$email_address" && "$email_address" == "-" ) \
-          || ! "$valid_to_date" =~ ^[0-9]{2}\.[0-9]{2}\.[0-9]{2},$ \
-          || ! "$valid_to_time" =~ ^[0-9]{2}:[0-9]{2}$ \
-          || "$valid" != "YES" ]]; then
+           || ( "$protection" != "bio" && "$protection" != "none" ) \
+           || -z "$label" \
+           || -z "$common_name" \
+           || ( -n "$email_address" && "$email_address" == "-" ) \
+           || ! "$valid_to_time" =~ ^[0-9]{2}:[0-9]{2}$ \
+           || "$valid" != "YES" ]] \
+          || ! valid_ctk_date "$valid_to_date"; then
           return 1
         fi
 
@@ -256,13 +263,13 @@ writeShellApplication {
         esac
 
         if [[ ( "$protection" != "bio" && "$protection" != "none" ) \
-          || -z "$label" \
-          || -z "$common_name" \
-          || ( -n "$email_address" && "$email_address" == "-" ) \
-          || ! "$valid_to_date" =~ ^[0-9]{2}\.[0-9]{2}\.[0-9]{2},$ \
-          || ! "$valid_to_time" =~ ^[0-9]{2}:[0-9]{2}$ \
-          || "$valid" != "YES" \
-          || ! "$ssh_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]]; then
+           || -z "$label" \
+           || -z "$common_name" \
+           || ( -n "$email_address" && "$email_address" == "-" ) \
+           || ! "$valid_to_time" =~ ^[0-9]{2}:[0-9]{2}$ \
+           || "$valid" != "YES" \
+           || ! "$ssh_fingerprint" =~ ^SHA256:[A-Za-z0-9+/=]+$ ]] \
+          || ! valid_ctk_date "$valid_to_date"; then
           return 1
         fi
 
