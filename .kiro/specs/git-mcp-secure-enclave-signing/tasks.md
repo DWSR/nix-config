@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Build the deterministic test foundation
+- [x] 1. Build the deterministic test foundation
 - [x] 1.1 Create injectable native-signing fixtures
   - Model identity snapshots, zero/one/multiple resident exports, hangs in CTK listing and every preflight/provider phase, and worker-tree termination without touching host CTK state.
   - Expose signer and admin package builds whose native tool paths are replaced only at Nix build time.
@@ -17,7 +17,7 @@
   - _Requirements: 9.7_
   - _Boundary: Test Harness_
 
-- [ ] 2. Implement the native signing tools
+- [x] 2. Implement the native signing tools
 - [x] 2.1 Port the public signer and worker to Go
   - Replace the embedded shell/C runtime in `scripts/git-mcp-secure-enclave-signer.nix` with a Darwin-only `buildGoModule` package, public signer command, private worker command, one-shot capability handoff, and Go worker preflight contract while retaining Nix build-time native-path injection.
   - Preserve direct non-signing Apple `ssh-keygen` passthrough, original argument order, native output, provider/selector/stub/public-key/fingerprint validation, and no-agent/no-fallback behavior.
@@ -91,7 +91,7 @@
   - _Boundary: Test Harness_
   - _Depends: 2.1, 2.8_
 
-- [ ] 3. Verify native tool contracts
+- [x] 3. Verify native tool contracts
 - [x] 3.2 Test Git fail-closed and bounded supervisor behavior
   - Use deterministic Go state tests as the source of truth for the 20-second work deadline, one-second TERM phase, two-second cleanup limit, late members, zombies, and `EINTR` behavior.
   - Retain temporary Git repositories with conflicting global settings to prove explicit and retry-shaped commits sign or fail without moving `HEAD`.
@@ -150,7 +150,7 @@
   - _Depends: 2.9, 3.2, 3.6, 3.7_
   - _Accepted risk: The static source guard does not evaluate Nix interpolation output. An interpolation embedded in apparent source-comment text can synthesize shell heredoc control syntax and suppress a required Go suite. The canonical flake check remains required; the user accepted this residual static-analysis gap._
 
-- [ ] 4. Integrate signing into Home Manager
+- [x] 4. Integrate signing into Home Manager
 - [x] 4.1 Revalidate enrollment options, tools, and the active marker
   - Preserve the existing typed enablement, state, metadata, registration-attestation, active-marker, and disabled-signing option surface.
   - Revalidate the fixture-injected default Go signer package through the existing `signerPackage` option without changing lifecycle or configuration ownership.
@@ -167,7 +167,7 @@
   - _Boundary: Signing Configuration_
   - _Depends: 2.8, 3.2, 4.1_
 
-- [ ] 5. Implement the versioned operator interface
+- [x] 5. Implement the versioned operator interface
 - [x] 5.1 Add enrollment and acceptance procedures
   - Cover bootstrap output, registration through GitHub's signing-key surface only, registration before selection, activation as test setup, rollback, and evidence recording.
   - Define unlocked, locked-without-approval, post-sleep, post-reboot, and GitHub `Verified` probes.
@@ -185,7 +185,7 @@
   - _Requirements: 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 11.1, 11.2, 11.3, 11.4_
   - _Boundary: Runbook_
 
-- [ ] 6. Enroll dedicated host identities
+- [x] 6. Enroll dedicated host identities
 - [x] 6.1 Bootstrap and register the personal-host candidate
   - Build or activate the admin package while signing remains disabled on `Brandons-MacBook-Pro`.
   - Bootstrap and locally verify the candidate; capture its label, hash, public key, and fingerprint.
@@ -203,7 +203,7 @@
   - _Boundary: Physical Host Enrollment Shopify_
   - _Depends: 2.2, 4.1, 5.1, 6.1_
 
-- [ ] 7. Declare and verify both host enrollments
+- [x] 7. Declare and verify both host enrollments
 - [x] 7.1 (P) Add the personal enrollment declaration
   - Add only the generated public metadata, enablement, and explicit registration attestation under the personal MCP configuration.
   - Leave the personal global signing public key unchanged.
@@ -236,7 +236,7 @@
   - _Boundary: Test Harness_
   - _Depends: 7.3_
 
-- [ ] 8. Complete external-platform integration validation
+- [x] 8. Complete external-platform integration validation
 - [x] 8.1 Validate personal lock and sleep behavior
   - Activate the personal declaration as test setup, restart mcpproxy, and verify unrelated upstream health.
   - Create and inspect actual `git-mcp` commits unlocked, screen-locked without approval, and after sleep.
