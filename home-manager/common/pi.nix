@@ -1,8 +1,14 @@
 {
   config,
   inputs,
+  pkgs,
   ...
 }:
+let
+  piMcpproxyGo = pkgs.callPackage ../../scripts/pi-mcpproxy-go.nix {
+    src = ./extensions/pi-mcpproxy-go;
+  };
+in
 {
   imports = [ inputs.pi.homeModules.default ];
 
@@ -16,5 +22,7 @@
       PI_CODING_AGENT_SESSION_DIR.value = "${config.xdg.stateHome}/pi/sessions";
       PI_CACHE_RETENTION.value = "long";
     };
+
+    extensions = [ "${piMcpproxyGo}/index.ts" ];
   };
 }
