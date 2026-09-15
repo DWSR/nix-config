@@ -44,6 +44,30 @@ Given a URL or description of a tool the user wants installed, produce a working
 8. **Never add `fetchurl`/`fetchTarball`/`fetchGit` as `builtins.*` outside `configurations/shopify/default.nix`.** Use `pkgs.fetchurl` / `pkgs.fetchFromGitHub` / `inputs.<name>` instead. The pre-commit hook will fail the commit.
 9. **Don't commit on the user's behalf.** Produce the change, verify it, describe what you changed, and stop. The user commits.
 
+## AgentMemory workflow
+
+Use AgentMemory through mcpproxy when prior packaging decisions or pitfalls could
+change the implementation:
+
+1. Discover focused recall with `retrieve_tools(query: "agentmemory core recall")`
+   and hybrid search with `retrieve_tools(query: "agentmemory smart search")`.
+   Use the exact returned `name`, `call_with`, and `args` values; do not invent a
+   tool name or use raw MCP `arguments`.
+2. Use the discovered `agentmemory:memory_smart_search` with `call_tool_read` for
+   topic and title searches such as "Nix package builder selection Rust Go npm
+   hash discovery", "overlay composition", or the tool name. Use the discovered
+   `agentmemory:memory_recall` with `call_tool_read` for a focused prior decision.
+3. When the work establishes a reusable packaging decision or pitfall, discover
+   the write tools with `retrieve_tools(query: "agentmemory memory save lesson")`.
+   Use the exact discovered `agentmemory:memory_save` or
+   `agentmemory:memory_lesson_save` with `call_tool_write`, and save only when the
+   result is useful beyond this one change.
+4. If a save returns a record ID, include `MEMORY_ID: <id>` and
+   `MEMORY_QUERY: <distinctive title and concepts>` in the final handoff. A later
+   agent recalls by query and verifies the returned ID; it does not fetch by ID.
+
+Do not call AgentMemory REST endpoints directly or write memory data to files.
+
 ## Architecture primer (inlined — no need to go read these)
 
 ### Overlay composition (`overlays/default.nix`)
@@ -234,16 +258,16 @@ Use this explicitly at the start of every packaging task. Don't skip it.
 | `prev.<pkg>.overrideAttrs` with new `cargoHash` is silently ignored; build still uses parent's old cargoHash, hash-mismatch error shows the parent's hash on the `specified:` line | Package uses the modern `rustPlatform.buildRustPackage (finalAttrs: { ... })` callable form. `cargoDeps` is constructed by `buildRustPackage` BEFORE `overrideAttrs` runs against the resulting derivation, so `cargoHash` overrides never reach the vendor fetcher | Rewrite as a fresh `rustPlatform.buildRustPackage` call mirroring upstream's `pkgs/by-name/<a>/<pkg>/package.nix` with new `version` + `src.hash` + `cargoHash`. See `zellij` in `overlays/misc.nix` for the canonical example. The `prev.fzf.overrideAttrs` pattern in the same file works only because fzf is Go (`vendorHash` is on the parent attrs, not a separate `cargoDeps`) |
 | Rust build fails with `<pkg>@<ver> requires rustc <X>` even though the override looks correct | Stable nixpkgs ships an older rustc than the package needs (currently 25.11-darwin = rustc 1.91.1; unstable = rustc 1.94.1) | Switch to `final.unstable.rustPlatform.buildRustPackage`. Toolchain-agnostic `nativeBuildInputs` / `buildInputs` (`pkg-config`, `curl`, `openssl`, `mandown`, etc.) can stay on the stable channel |
 
-## Vault references (for deeper dives only — inlined content above is self-contained)
+## AgentMemory search hints
 
-- `memories/2026-04-16-tokscale-rust-binary-not-npm.md` — the canonical decision-tree anchor
-- `memories/2026-05-08-zellij-pin-rustplatform-buildrustpackage-pitfall.md` — the `cargoHash`-can't-be-overridden trap when the upstream package uses the `rustPlatform.buildRustPackage (finalAttrs: ...)` callable form. Worked example using zellij 0.44.1, including the cross-channel rustc-version gotcha
-- `memories/2026-04-11-overlays-default-nix-structure.md` — the three-overlay composition
-- `memories/2026-04-11-opencode-wrapper-stacking-pattern.md` — symlinkJoin + wrapProgram pattern
-- `memories/2026-04-11-builtins-fetchgit-vs-flake-inputs.md` — why private repos stay fetchGit
-- `memories/2026-04-11-useGlobalPkgs-overlay-inheritance.md` — darwin→HM overlay propagation
-- `memories/2026-04-11-nixfmt-official-formatter.md`, `treefmt-nix-pattern.md` — formatter setup
-- `memories/2026-04-11-statix-repeated-keys-false-positive.md` — known linter false positive to ignore
+For deeper dives, search AgentMemory by topic or title instead of relying on
+hardcoded references:
+
+- "tokscale Rust binary not npm" — the canonical builder decision tree.
+- "zellij rustPlatform buildRustPackage cargoHash" — the callable-form override pitfall and cross-channel toolchain constraint.
+- "overlays default composition", "opencode wrapper stacking", and "useGlobalPkgs overlay inheritance" — overlay and wrapper structure.
+- "builtins fetchGit private Shopify" — the private-source constraint.
+- "nixfmt official formatter" and "statix repeated keys" — formatting and linter guidance.
 
 ## Public inspirations
 

@@ -43,6 +43,32 @@ Given a change the user wants (add a plugin, add an LSP, rebind a key, debug a p
 7. **Gitsigns keybindings are buffer-local via `on_attach`, not global.** Any new gitsigns binding goes inside `settings.on_attach`, scoped to `{ buffer = bufnr }`. Hunk navigation (`]c`/`[c`) must fall back to built-in diff-mode navigation with `vim.wo.diff` check (see the memory for the exact pattern). Buffer-local bindings don't appear in `nvim_get_keymap` — test them via tier-3 integration tests, not tier-2 static checks.
 8. **`nix fmt` every time.** Before claiming done, always.
 
+## AgentMemory workflow
+
+Use AgentMemory through mcpproxy when prior nixvim architecture, plugin, or
+testing decisions could affect the implementation:
+
+1. Discover focused recall with `retrieve_tools(query: "agentmemory core recall")`
+   and hybrid search with `retrieve_tools(query: "agentmemory smart search")`.
+   Use the exact returned `name`, `call_with`, and `args` values; do not invent a
+   tool name or use raw MCP `arguments`.
+2. Use the discovered `agentmemory:memory_smart_search` with `call_tool_read` for
+   topic and title searches such as "nixvim plugin architecture", "treesitter
+   channel invariant", "blink cmp conform", "keymap conflict detector", or the
+   plugin name. Use the discovered `agentmemory:memory_recall` with
+   `call_tool_read` for a focused prior decision.
+3. When the work establishes a reusable configuration decision or debugging
+   lesson, discover the write tools with
+   `retrieve_tools(query: "agentmemory memory save lesson")`. Use the exact
+   discovered `agentmemory:memory_save` or `agentmemory:memory_lesson_save` with
+   `call_tool_write`, and save only when the result is useful beyond this one
+   change.
+4. If a save returns a record ID, include `MEMORY_ID: <id>` and
+   `MEMORY_QUERY: <distinctive title and concepts>` in the final handoff. A later
+   agent recalls by query and verifies the returned ID; it does not fetch by ID.
+
+Do not call AgentMemory REST endpoints directly or write memory data to files.
+
 ## Architecture (inlined — no need to go re-read)
 
 ### Layout of `home-manager/nixvim/`
@@ -157,25 +183,16 @@ Test harness patterns: use `assertions = [{ assertion = bool; message = str; }]`
 | Notification looks like a transparent bottom-right popup | noice "notify" view fell back to "mini" | Ensure `snacks.settings.notifier.enabled = true` so noice picks snacks as backend |
 | trim.nvim and conform both modify whitespace | Both run on BufWritePre | Remove trim.nvim — conform `_` fallback handles it |
 
-## Vault references (for deeper dives only — inlined content above is self-contained)
+## AgentMemory search hints
 
-- `memories/2026-04-12-nixvim-plugin-architecture.md` — overall architecture
-- `memories/2026-04-13-treesitter-grammar-query-version-mismatch.md` — the channel invariant
-- `memories/2026-04-12-blink-cmp-replaces-nvim-cmp.md`, `blink-cmp-llm-completion-sources.md`, `cmp-dap-blink-compat-error.md` — completion stack
-- `memories/2026-04-11-conform-nvim-format-on-save.md`, `conform-nvim-formatter-availability.md` — formatting stack
-- `memories/2026-04-12-noice-snacks-fidget-pipeline.md` — notifications
-- `memories/2026-04-12-gitsigns-buffer-local-on-attach.md`, `gitsigns-hunk-navigation-keybindings.md` — gitsigns pattern
-- `memories/2026-04-12-keymap-conflict-detection.md`, `neovim-keymap-conflict-detection.md` — the detector
-- `memories/2026-04-12-lsp-goto-bare-g-convention.md` — the `g*` decision
-- `memories/2026-04-14-nixvim-keybinding-catalog.md` — the full 133-binding catalog
-- `memories/2026-04-12-nixvim-testing-framework.md`, `nixvim-testing-integration.md`, `neovim-headless-lsp-testing.md` — test tiers
-- `memories/2026-04-12-nixvim-byte-compile-combine-plugins.md`, `nixvim-performance-byte-compilation-risks.md`, `nixvim-lazyload-architecture.md` — perf caveats
-- `memories/2026-06-09-buildvimplugin-require-check-test-files.md` — current AI stack (agentic.nvim) + the buildVimPlugin require-check gotcha
-- `memories/2026-04-12-codecompanion-opencode-acp.md`, `acp-codecompanion-avante-opencode-comparison.md` — prior AI stack (CodeCompanion, removed)
-- `memories/2026-04-12-navic-auto-attach-snake-case.md` — breadcrumbs quirk
-- `memories/2026-04-12-edgy-hide-for-gitcommit.md` — edgy filetype hide
-- `memories/2026-04-12-dap-rust-cpp-nixvim.md`, `nixvim-dap-debugging-plan.md` — DAP
-- `memories/2026-04-12-snacks-bigfile-not-standalone.md`, `snacks-nvim-bigfile-module.md` — bigfile is a snacks module
+For deeper dives, search AgentMemory by topic or title instead of relying on
+hardcoded references:
+
+- "nixvim plugin architecture" and "treesitter grammar query version mismatch" — core architecture and the channel invariant.
+- "blink cmp replaces nvim cmp", "conform format on save", and "noice snacks fidget" — completion, formatting, and notification behavior.
+- "gitsigns buffer local on attach", "keymap conflict detection", and "lsp goto bare g" — binding and detector patterns.
+- "nixvim testing framework", "neovim headless lsp testing", and "nixvim byte compile" — test and performance constraints.
+- "agentic.nvim buildVimPlugin require check" and "opencode acp" — the current AI integration.
 
 ## Public inspirations
 

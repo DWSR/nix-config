@@ -77,7 +77,7 @@
   - _Boundary: Prompt Contract Cutover: Vault Pipeline_
   - _Depends: 3.1_
 
-- [ ] 3.5 (P) Convert common specialist prompts
+- [x] 3.5 (P) Convert common specialist prompts
   - Replace vault paths and writes in the scoped common specialists with AgentMemory search and save behavior.
   - Emit searchable memory handoffs where a specialist previously returned a note path.
   - Preserve each specialist's source-code permission posture and non-memory output contract.
