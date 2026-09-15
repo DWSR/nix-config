@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Build the Obsidian memory importer
-- [ ] 1.1 Enforce the source-note boundary
+- [x] 1.1 Enforce the source-note boundary
   - Discover sorted direct Markdown children beneath the supplied `memories` directory.
   - Reject relative, missing, or unreadable roots before target access and report non-regular entries, symlinks, and path escapes without following them.
   - Verify source bytes and metadata remain unchanged after success, skip, and failure paths.
