@@ -5,6 +5,7 @@
   ...
 }:
 let
+  piAgentMemory = "${pkgs.agentmemory}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
   piMcpproxyGo = pkgs.callPackage ../../scripts/pi-mcpproxy-go.nix {
     src = ./extensions/pi-mcpproxy-go;
   };
@@ -23,6 +24,9 @@ in
       PI_CACHE_RETENTION.value = "long";
     };
 
-    extensions = [ "${piMcpproxyGo}/index.ts" ];
+    extensions = [
+      piAgentMemory
+      "${piMcpproxyGo}/index.ts"
+    ];
   };
 }
