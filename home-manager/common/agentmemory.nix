@@ -65,6 +65,8 @@ let
     text = ''
       set -eu
 
+      ${lib.concatStringsSep "\n" cfg.wrapperCommands}
+
       security_bin="''${AGENTMEMORY_SECURITY_BIN:-/usr/bin/security}"
       agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
@@ -160,6 +162,15 @@ in
         Runtime reference for the AgentMemory bearer. This is a secret
         reference, not the bearer value; later integration layers resolve it
         through the existing Keychain secret plumbing.
+      '';
+    };
+
+    wrapperCommands = mkOption {
+      type = types.listOf types.lines;
+      default = [ ];
+      description = ''
+        Shell snippets composed into the managed AgentMemory launcher before
+        it resolves the daemon bearer and starts the runtime.
       '';
     };
 

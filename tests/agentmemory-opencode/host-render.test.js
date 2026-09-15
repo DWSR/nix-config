@@ -27,6 +27,16 @@ function renderHosts() {
           settingsPath = "\${agentmemory.runtimeDir}/.env";
           mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile."mcpproxy/mcp_config.json".text);
           packageNames = map (package: package.name or "") hm.home.packages;
+          agentmemoryLaunchers = builtins.filter (
+            package: (package.name or "") == "agentmemory"
+          ) hm.home.packages;
+          agentmemoryLauncherText =
+            if agentmemoryLaunchers == [ ] then
+              ""
+            else
+              builtins.unsafeDiscardStringContext (
+                builtins.readFile "\${builtins.head agentmemoryLaunchers}/bin/agentmemory"
+              );
           cavememServers = builtins.filter (server: server.name == "cavemem") mcpConfig.mcpServers;
           agentTexts = builtins.mapAttrs (_: value:
             if builtins.typeOf value == "path" then builtins.readFile value else value
@@ -61,6 +71,7 @@ function renderHosts() {
               enginePort
               bearerReference
               ;
+            launcherText = agentmemoryLauncherText;
             hasObsidianImporter = builtins.any (
               package: (package.name or "") == "agentmemory-import-obsidian"
             ) hm.home.packages;
@@ -159,9 +170,16 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
 
   assert.equal(personal.secretUri, 'op://Private/AgentMemory/Bearer');
   assert.equal(shopify.secretUri, 'op://Employee/AgentMemory/Bearer');
+  assert.doesNotMatch(personal.agentmemory.launcherText, /OPENAI_(?:API_KEY|BASE_URL|MODEL|REASONING_EFFORT)/);
+  assert.match(shopify.agentmemory.launcherText, /devx llm-gateway print-token --key/);
+  assert.match(shopify.agentmemory.launcherText, /devx llm-gateway print-token --base/);
+  assert.match(shopify.agentmemory.launcherText, /OPENAI_MODEL="gpt-5\.6-sol"/);
+  assert.match(shopify.agentmemory.launcherText, /OPENAI_REASONING_EFFORT="xhigh"/);
   assert.deepEqual(personal.backend, shopify.backend);
   assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);
-  assert.deepEqual(personal.agentmemory, shopify.agentmemory);
+  const { launcherText: _personalLauncher, ...personalAgentMemory } = personal.agentmemory;
+  const { launcherText: _shopifyLauncher, ...shopifyAgentMemory } = shopify.agentmemory;
+  assert.deepEqual(personalAgentMemory, shopifyAgentMemory);
   assert.deepEqual(
     personal.capturePlugins,
     shopify.capturePlugins,

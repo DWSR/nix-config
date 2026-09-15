@@ -151,6 +151,27 @@ in
     runtimeDir = "${config.home.homeDirectory}/.agentmemory";
     logDir = "${config.home.homeDirectory}/Library/Logs/agentmemory";
     bearerReference = "agentmemory-bearer";
+    # AgentMemory's OpenAI-compatible provider appends /v1/chat/completions
+    # to OPENAI_BASE_URL. Mint the short-lived Shopify gateway credentials for
+    # each daemon launch rather than persisting them in launchd or Nix output.
+    wrapperCommands = [
+      ''
+        OPENAI_API_KEY="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --key 2>/dev/null)" || {
+          echo "Error: Failed to get OPENAI_API_KEY from devx llm-gateway print-token --key within 15 seconds" >&2
+          exit 1
+        }
+        export OPENAI_API_KEY
+
+        OPENAI_BASE_URL="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --base 2>/dev/null)" || {
+          echo "Error: Failed to get OPENAI_BASE_URL from devx llm-gateway print-token --base within 15 seconds" >&2
+          exit 1
+        }
+        export OPENAI_BASE_URL
+
+        export OPENAI_MODEL="gpt-5.6-sol"
+        export OPENAI_REASONING_EFFORT="xhigh"
+      ''
+    ];
   };
 
   xdg.dataFile."orangemonkey/github-pr-review-chords.user.js".source =
