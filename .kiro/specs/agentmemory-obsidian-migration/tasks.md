@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Build the Obsidian memory importer
+- [x] 1. Build the Obsidian memory importer
 - [x] 1.1 Enforce the source-note boundary
   - Discover sorted direct Markdown children beneath the supplied `memories` directory.
   - Reject relative, missing, or unreadable roots before target access and report non-regular entries, symlinks, and path escapes without following them.
@@ -41,7 +41,7 @@
   - _Requirements: 3.1, 3.3, 3.11_
   - _Boundary: Managed Import Command_
 
-- [ ] 3. Apply the Obsidian hard cut
+- [x] 3. Apply the Obsidian hard cut
 - [x] 3.1 (P) Remove Obsidian from managed MCP inventory
   - Remove the managed server, package, option, and both host vault-path values.
   - Add a rendered-config generation trigger so server-inventory changes alter the launchd definition and refresh the private runtime copy on the next managed start.
@@ -111,7 +111,7 @@
   - _Boundary: Prompt Contract Cutover: Shopify Wiring_
   - _Depends: 3.7_
 
-- [ ] 4. Integrate and validate the cutover
+- [x] 4. Integrate and validate the cutover
 - [x] 4.1 Build the isolated importer integration harness
   - Stage temporary vault fixtures, a fake Keychain helper, and a mock authenticated import endpoint without reading the real vault.
   - Add explicit daemon process ownership, authenticated health and readiness waits, bounded teardown, and isolated data and port paths for packaged-daemon tests.

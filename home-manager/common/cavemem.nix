@@ -403,7 +403,7 @@ in
       # settings.json that this module renders at
       # `${"$"}{cfg.dataDir}/settings.json` and writes its SQLite
       # database under the same directory the sqlite-backup extension
-      # and the one-shot vault importer target.
+      # targets.
       #
       # The `home.mcp.extraServers` option type (defined in
       # `home-manager/mcp/default.nix` as `attrsOf attrs`) accepts
@@ -436,8 +436,8 @@ in
       # R8.3, R8.4; design.md §Domain D). The opencode wrapper
       # composition appends this snippet to the list contributed by
       # `home-manager/common/opencode.nix`, which performs the
-      # mcpproxy liveness probe and the obsidian per-upstream probe
-      # first; this snippet then re-probes liveness defensively and
+      # mcpproxy liveness and AgentMemory health checks first; this
+      # snippet then re-probes liveness defensively and
       # checks cavemem's per-upstream connection state. Any failure
       # exits 1 with a stderr message naming "cavemem" / "mcpproxy"
       # and a recovery hint referencing the new launchd label

@@ -68,8 +68,8 @@ in
   };
 
   # Apply the vendored caveman-lite output style to every common subagent
-  # (nix-pkg, nvim-tailor, security-auditor, vault-curator,
-  # vault-synthesizer). The withCaveman helper in
+  # (nix-pkg, nvim-tailor, security-auditor, and Shopify agents). The
+  # withCaveman helper in
   # home-manager/common/opencode.nix appends ./opencode/caveman-lite.md to
   # each agent's system prompt at Nix-eval time. Drops filler / hedging /
   # pleasantries while preserving code, paths, identifiers, and error
