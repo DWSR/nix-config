@@ -128,6 +128,49 @@ type NoteOutcome =
 
 type Frontmatter = Record<string, unknown>;
 
+type SourceOptions = {
+  vaultPath: string;
+};
+
+type ImportMode =
+  | { kind: 'dry-run' }
+  | { kind: 'live'; endpoint: string; bearer: string };
+
+type ImportCounts = {
+  discovered: number;
+  eligible: number;
+  imported: number;
+  alreadyPresent: number;
+  skipped: number;
+  failed: number;
+};
+
+type ImportIssue = {
+  relativePath: string;
+  reason: string;
+};
+
+type ObsidianImportReport = {
+  sourcePath: string;
+  dryRun: boolean;
+  counts: ImportCounts;
+  batches: {
+    submitted: number;
+    succeeded: number;
+    failed: number;
+  };
+  skipped: ImportIssue[];
+  failures: ImportIssue[];
+};
+
+type PreparedSource = {
+  sourcePath: string;
+  discovered: number;
+  capturedAt: string;
+  outcomes: NoteOutcome[];
+  memories: ImportedMemory[];
+};
+
 type FrontmatterResult =
   | { frontmatter: Frontmatter; body: string }
   | { error: string };
@@ -993,12 +1036,399 @@ function discoverSourceNotes(vaultPath: string): SourceDiscovery {
   };
 }
 
+function prepareSource(options: SourceOptions): PreparedSource {
+  const capturedAt = new Date().toISOString();
+  const discovery = discoverSourceNotes(options.vaultPath);
+  const mapped = mapSourceNotes(discovery.notes, capturedAt);
+  const outcomes: NoteOutcome[] = [
+    ...discovery.skipped.map((issue) => ({ kind: 'skipped' as const, ...issue })),
+    ...mapped,
+  ];
+  outcomes.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const memories = outcomes.flatMap((outcome) => (
+    outcome.kind === 'prepared' ? [outcome.memory] : []
+  ));
+  return {
+    sourcePath: discovery.sourcePath,
+    discovered: discovery.discovered,
+    capturedAt,
+    outcomes,
+    memories,
+  };
+}
+
+function prepare(options: SourceOptions): readonly NoteOutcome[] {
+  return prepareSource(options).outcomes;
+}
+
+function normalizeObsidianImportUrl(rawUrl: string): string {
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    throw new Error('AgentMemory endpoint is required');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('AgentMemory endpoint must be a valid absolute URL');
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('AgentMemory endpoint must use http or https');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('AgentMemory endpoint must not contain credentials');
+  }
+  const pathname = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = pathname.endsWith('/agentmemory/import')
+    ? pathname
+    : `${pathname}/agentmemory/import`;
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+type ImportSubmissionErrorCode =
+  | 'invalid submitted memory count'
+  | 'transport failure'
+  | 'unreadable response'
+  | 'authentication rejection'
+  | 'http failure'
+  | 'invalid JSON'
+  | 'invalid response counts'
+  | 'logical rejection';
+
+function submissionErrorMessage(
+  code: ImportSubmissionErrorCode,
+  status?: number,
+): string {
+  if (code === 'http failure') {
+    return typeof status === 'number'
+      && Number.isSafeInteger(status)
+      && status >= 100
+      && status <= 599
+      ? `AgentMemory import returned HTTP ${status}`
+      : 'AgentMemory import returned an HTTP error';
+  }
+  switch (code) {
+    case 'invalid submitted memory count':
+      return 'invalid submitted memory count';
+    case 'transport failure':
+      return 'transport failure';
+    case 'unreadable response':
+      return 'AgentMemory import returned an unreadable response';
+    case 'authentication rejection':
+      return 'authentication rejected by AgentMemory';
+    case 'invalid JSON':
+      return 'AgentMemory import returned invalid JSON';
+    case 'invalid response counts':
+      return 'AgentMemory import returned invalid response counts';
+    case 'logical rejection':
+      return 'AgentMemory import rejected the batch';
+  }
+}
+
+class ImportSubmissionError extends Error {
+  code: ImportSubmissionErrorCode;
+  status?: number;
+  terminalAuthentication: boolean;
+
+  constructor(code: ImportSubmissionErrorCode, status?: number) {
+    super(submissionErrorMessage(code, status));
+    this.name = 'ImportSubmissionError';
+    this.code = code;
+    this.status = status;
+    this.terminalAuthentication = code === 'authentication rejection';
+  }
+}
+
+function isAuthenticationRejection(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  return /\b(?:auth|authentication|authorization|unauthorized|forbidden)\b/i.test(value)
+    || /\b(?:access\s+denied|authentication\s+failed)\b/i.test(value)
+    || /\b(?:invalid|missing|expired)\s+(?:bearer|token|credential|api\s*key)s?\b/i.test(value);
+}
+
+function responseSignalsAuthentication(responseText: string): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch {
+    return false;
+  }
+  if (!isObject(parsed)) return false;
+  return ['error', 'message', 'reason'].some((key) => isAuthenticationRejection(parsed[key]));
+}
+
+function safeSubmissionMessage(error: unknown): string {
+  if (!(error instanceof ImportSubmissionError)) return 'transport failure';
+  switch (error.code) {
+    case 'invalid submitted memory count':
+    case 'transport failure':
+    case 'unreadable response':
+    case 'authentication rejection':
+    case 'http failure':
+    case 'invalid JSON':
+    case 'invalid response counts':
+    case 'logical rejection':
+      return submissionErrorMessage(error.code, error.status);
+    default:
+      return 'transport failure';
+  }
+}
+
+async function submitObsidianImportBatch(
+  endpoint: string,
+  requestBody: string,
+  bearer: string,
+  submittedMemoryCount: number,
+): Promise<ImportSuccess> {
+  if (!Number.isSafeInteger(submittedMemoryCount) || submittedMemoryCount < 0) {
+    throw new ImportSubmissionError('invalid submitted memory count');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${bearer}`,
+        'Content-Type': 'application/json',
+      },
+      body: requestBody,
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch {
+    throw new ImportSubmissionError('transport failure');
+  }
+
+  let responseText: string;
+  try {
+    responseText = await response.text();
+  } catch {
+    throw new ImportSubmissionError('unreadable response');
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    throw new ImportSubmissionError('authentication rejection', response.status);
+  }
+  if (!response.ok) {
+    if (responseSignalsAuthentication(responseText)) {
+      throw new ImportSubmissionError('authentication rejection');
+    }
+    throw new ImportSubmissionError('http failure', response.status);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(responseText);
+  } catch {
+    throw new ImportSubmissionError('invalid JSON');
+  }
+  if (
+    isObject(parsed)
+    && ['error', 'message', 'reason'].some((key) => isAuthenticationRejection(parsed[key]))
+  ) {
+    throw new ImportSubmissionError('authentication rejection');
+  }
+  if (!isImportResponse(parsed, submittedMemoryCount)) {
+    throw new ImportSubmissionError('invalid response counts');
+  }
+  if (parsed.success === false) {
+    throw new ImportSubmissionError('logical rejection');
+  }
+  return parsed;
+}
+
+function baseImportReport(source: PreparedSource, dryRun: boolean): ObsidianImportReport {
+  const skipped = source.outcomes.flatMap((outcome) => (
+    outcome.kind === 'skipped'
+      ? [{ relativePath: outcome.relativePath, reason: outcome.reason }]
+      : []
+  ));
+  return {
+    sourcePath: source.sourcePath,
+    dryRun,
+    counts: {
+      discovered: source.discovered,
+      eligible: source.memories.length,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: skipped.length,
+      failed: 0,
+    },
+    batches: { submitted: 0, succeeded: 0, failed: 0 },
+    skipped,
+    failures: [],
+  };
+}
+
+function addFailure(
+  report: ObsidianImportReport,
+  seen: Set<string>,
+  relativePath: string,
+  reason: string,
+): void {
+  if (seen.has(relativePath)) return;
+  seen.add(relativePath);
+  report.failures.push({ relativePath, reason });
+  report.counts.failed += 1;
+}
+
+async function execute(
+  options: SourceOptions,
+  mode: ImportMode,
+): Promise<ObsidianImportReport> {
+  const source = prepareSource(options);
+  const report = baseImportReport(source, mode.kind === 'dry-run');
+  const built = buildImportBatches(source.memories, source.capturedAt);
+  const failedPaths = new Set<string>();
+
+  for (const oversized of built.oversized) {
+    addFailure(report, failedPaths, oversized.relativePath, oversized.reason);
+  }
+
+  if (mode.kind === 'dry-run') return report;
+  if (
+    mode.kind !== 'live'
+    || typeof mode.endpoint !== 'string'
+    || mode.endpoint.trim() === ''
+    || typeof mode.bearer !== 'string'
+    || mode.bearer === ''
+  ) {
+    throw new Error('live mode requires a non-empty endpoint and bearer');
+  }
+
+  const endpoint = normalizeObsidianImportUrl(mode.endpoint);
+  for (let index = 0; index < built.batches.length; index += 1) {
+    const batch = built.batches[index];
+    report.batches.submitted += 1;
+    try {
+      const response = await submitObsidianImportBatch(
+        endpoint,
+        batch.body,
+        mode.bearer,
+        batch.records.length,
+      );
+      report.counts.imported += response.memories;
+      report.counts.alreadyPresent += response.skipped;
+      report.batches.succeeded += 1;
+    } catch (error: unknown) {
+      const terminalAuthentication = error instanceof ImportSubmissionError
+        && error.terminalAuthentication;
+      const reason = terminalAuthentication
+        ? 'authentication rejected by AgentMemory'
+        : safeSubmissionMessage(error);
+      report.batches.failed += 1;
+      for (const record of batch.records) {
+        addFailure(report, failedPaths, record.files[0], reason);
+      }
+      if (terminalAuthentication) {
+        for (let remainingIndex = index + 1; remainingIndex < built.batches.length; remainingIndex += 1) {
+          for (const record of built.batches[remainingIndex].records) {
+            addFailure(
+              report,
+              failedPaths,
+              record.files[0],
+              'authentication rejected before this batch was submitted',
+            );
+          }
+        }
+        break;
+      }
+    }
+  }
+
+  return report;
+}
+
+type ObsidianCliOptions = {
+  vaultPath: string | null;
+  dryRun: boolean;
+  endpoint: string | null;
+  help: boolean;
+};
+
+function parseObsidianArguments(argv: string[]): ObsidianCliOptions {
+  let vaultPath: string | null = null;
+  let dryRun = false;
+  let endpoint: string | null = null;
+  let help = false;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument === '--help' || argument === '-h') {
+      help = true;
+    } else if (argument === '--dry-run') {
+      dryRun = true;
+    } else if (argument === '--json') {
+      // JSON is the only report format; keep the flag compatible with import scripts.
+    } else if (argument === '--endpoint' || argument === '--url') {
+      endpoint = argv[index + 1] || null;
+      index += 1;
+      if (!endpoint) throw new Error('an endpoint is required after --endpoint');
+    } else if (argument.startsWith('-')) {
+      throw new Error(`unknown argument: ${argument}`);
+    } else if (vaultPath === null) {
+      vaultPath = argument;
+    } else {
+      throw new Error('only one vault path may be supplied');
+    }
+  }
+
+  if (!help && vaultPath === null) throw new Error('an absolute vault path is required');
+  if (vaultPath?.includes('\0')) throw new Error('vault path contains a NUL byte');
+  return { vaultPath, dryRun, endpoint, help };
+}
+
+function obsidianHelpText(): string {
+  return [
+    'Usage: agentmemory-import-obsidian <absolute-vault-path> [--dry-run]',
+    '',
+    'Import direct Markdown memory notes from an Obsidian vault into AgentMemory.',
+    'Live imports use AGENTMEMORY_URL and AGENTMEMORY_SECRET without printing the bearer.',
+    '',
+    'Options:',
+    '  --dry-run       validate and report notes without contacting AgentMemory',
+    '  --endpoint URL  override AGENTMEMORY_URL for a live import',
+    '  --help          show this help text',
+  ].join('\n') + '\n';
+}
+
+async function obsidianMain(argv: string[] = process.argv.slice(2)): Promise<ObsidianImportReport | undefined> {
+  const options = parseObsidianArguments(argv);
+  if (options.help) {
+    process.stdout.write(obsidianHelpText());
+    return undefined;
+  }
+  if (options.vaultPath === null) throw new Error('an absolute vault path is required');
+
+  const mode: ImportMode = options.dryRun
+    ? { kind: 'dry-run' }
+    : {
+        kind: 'live',
+        endpoint: options.endpoint
+          || process.env.AGENTMEMORY_URL
+          || process.env.AGENTMEMORY_IMPORT_ENDPOINT
+          || '',
+        bearer: process.env.AGENTMEMORY_SECRET || process.env.AGENTMEMORY_BEARER || '',
+      };
+  const report = await execute({ vaultPath: options.vaultPath }, mode);
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (report.counts.failed > 0) process.exitCode = 1;
+  return report;
+}
+
 module.exports = {
   MAX_IMPORT_BYTES: OBSIDIAN_MAX_IMPORT_BYTES,
   MAX_IMPORT_MEMORIES: OBSIDIAN_MAX_IMPORT_MEMORIES,
   buildImportBatches,
   createImportRequest,
   discoverSourceNotes,
+  execute,
+  main: obsidianMain,
+  normalizeImportUrl: normalizeObsidianImportUrl,
+  parseArguments: parseObsidianArguments,
+  prepare,
+  submitImportBatch: submitObsidianImportBatch,
   isContained,
   isImportRequest,
   isImportResponse,
@@ -1008,3 +1438,15 @@ module.exports = {
   mapSourceNotes,
   serializeImportRequest,
 };
+
+if (require.main === module) {
+  obsidianMain()
+    .then(() => {
+      if (process.exitCode === undefined) process.exitCode = 0;
+    })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`agentmemory-import-obsidian: ${message}\n`);
+      process.exitCode = 1;
+    });
+}

@@ -25,7 +25,7 @@
   - _Requirements: 3.4, 3.5, 3.6_
   - _Boundary: Importer Core: Wire and Batching_
 
-- [ ] 1.4 Execute dry-run, live import, and rerun reporting
+- [x] 1.4 Execute dry-run, live import, and rerun reporting
   - Implement dry-run without target mutation and live authenticated submission with terminal auth handling and independent-batch continuation.
   - Aggregate discovered, eligible, imported, already-present, skipped, failed, and batch counts into the redacted JSON report and final exit status.
   - Keep the operation stateless; reruns retry missing IDs, leave existing same-path content unchanged, and create no rollback or journal state.

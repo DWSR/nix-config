@@ -4,9 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync, spawnSync } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-obsidian.ts');
@@ -168,6 +169,103 @@ function runImporterProbe(script) {
       maxBuffer: 20 * 1024 * 1024,
     },
   );
+}
+
+function runObsidianImporter(vaultPath, args = [], extraEnv = {}) {
+  return spawnSync(
+    importerNodeBin(),
+    ['--experimental-strip-types', importerPath, vaultPath, '--json', ...args],
+    {
+      cwd: repoRoot,
+      env: { ...importerEnvironment(), ...extraEnv },
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+}
+
+function runObsidianImporterAsync(vaultPath, args = [], extraEnv = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      importerNodeBin(),
+      ['--experimental-strip-types', importerPath, vaultPath, '--json', ...args],
+      {
+        cwd: repoRoot,
+        env: { ...importerEnvironment(), ...extraEnv },
+      },
+    );
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('close', (status) => resolve({
+      status,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }));
+  });
+}
+
+async function startObsidianMock(handler) {
+  const requests = [];
+  const server = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', async () => {
+      const raw = Buffer.concat(chunks);
+      let payload = null;
+      try {
+        payload = JSON.parse(raw.toString('utf8'));
+      } catch {
+        // The importer only sends JSON; leave malformed test responses to the handler.
+      }
+      const requestInfo = {
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+        raw,
+        payload,
+      };
+      requests.push(requestInfo);
+      try {
+        const result = await handler(requestInfo);
+        const body = typeof result.body === 'string' ? result.body : JSON.stringify(result.body);
+        response.writeHead(result.status || 200, { 'content-type': 'application/json' });
+        response.end(body);
+      } catch (error) {
+        response.writeHead(500, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      }
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    requests,
+    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
+  };
+}
+
+function writeObsidianNote(vaultPath, name, body) {
+  fs.writeFileSync(path.join(vaultPath, 'memories', name), body);
+}
+
+function successfulImportResponse(payload, stored) {
+  const counts = { success: true, strategy: 'skip', sessions: 0, observations: 0, memories: 0, summaries: 0, skipped: 0 };
+  for (const memory of payload.exportData.memories) {
+    if (stored.has(memory.id)) {
+      counts.skipped += 1;
+    } else {
+      stored.set(memory.id, JSON.parse(JSON.stringify(memory)));
+      counts.memories += 1;
+    }
+  }
+  return counts;
+}
+
+function largeNoteBody(title, size = 4_300_000) {
+  return `# ${title}\n\n${'x'.repeat(size)}\n`;
 }
 
 function importedMemoryFixture(sourcePath = 'memories/fixture.md', content = 'fixture body') {
@@ -1009,4 +1107,348 @@ test('accepts only exact successful counts or the exact logical failure shape', 
   assert.equal(result.logicalFailureWithExtraFields, false);
   assert.equal(result.missingLogicalError, false);
   assert.equal(result.nonStringLogicalError, false);
+});
+
+test('executes a dry-run without endpoint or bearer access and reports target counts as zero', () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'valid.md', '# Valid\n\nvalid body\n');
+  writeObsidianNote(vaultPath, 'malformed.md', '---\ntags: not-an-array\n---\nbody\n');
+  const before = snapshotTree(vaultPath);
+
+  try {
+    const result = runObsidianImporter(vaultPath, ['--dry-run'], {
+      AGENTMEMORY_URL: 'not an endpoint',
+      AGENTMEMORY_SECRET: 'dry-run-secret-must-not-be-used',
+    });
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.equal(report.dryRun, true);
+    assert.deepEqual(report.counts, {
+      discovered: 2,
+      eligible: 1,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: 1,
+      failed: 0,
+    });
+    assert.deepEqual(report.batches, { submitted: 0, succeeded: 0, failed: 0 });
+    assert.equal(report.skipped.length, 1);
+    assert.match(report.skipped[0].relativePath, /malformed\.md$/);
+    assert.deepEqual(report.failures, []);
+    assert.equal(result.stdout.includes('dry-run-secret-must-not-be-used'), false);
+    assert.deepEqual(snapshotTree(vaultPath), before);
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('supports help without a vault path or bearer', () => {
+  const result = runObsidianImporter('/tmp/help-does-not-read', ['--help'], {
+    AGENTMEMORY_SECRET: 'help-secret-must-not-be-read',
+  });
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  assert.match(result.stdout, /Usage: agentmemory-import-obsidian <absolute-vault-path>/);
+  assert.match(result.stdout, /--dry-run/);
+  assert.match(result.stdout, /--help/);
+  assert.equal(result.stdout.includes('help-secret-must-not-be-read'), false);
+  assert.equal(result.stderr, '');
+});
+
+test('submits the exact authenticated envelope and keeps same-path reruns already-present', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'a.md', '# A\n\ninitial a body\n');
+  writeObsidianNote(vaultPath, 'b.md', '# B\n\ninitial b body\n');
+  const sourceBefore = snapshotTree(vaultPath);
+  const secret = 'obsidian-live-secret';
+  const stored = new Map();
+  const mock = await startObsidianMock(({ payload, authorization, url }) => {
+    assert.equal(url, '/agentmemory/import');
+    assert.equal(authorization, `Bearer ${secret}`);
+    assert.equal(payload.strategy, 'skip');
+    assert.deepEqual(payload.exportData.sessions, []);
+    assert.deepEqual(payload.exportData.observations, {});
+    assert.deepEqual(payload.exportData.summaries, []);
+    assert.ok(payload.exportData.memories.length > 0);
+    return { body: successfulImportResponse(payload, stored) };
+  });
+
+  try {
+    const first = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: secret,
+    });
+    assert.equal(first.status, 0, `${first.stderr}\n${first.stdout}`);
+    const firstReport = JSON.parse(first.stdout);
+    assert.deepEqual(firstReport.counts, {
+      discovered: 2,
+      eligible: 2,
+      imported: 2,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.deepEqual(firstReport.batches, { submitted: 1, succeeded: 1, failed: 0 });
+    assert.equal(first.stdout.includes(secret), false);
+    assert.equal(first.stdout.includes('initial a body'), false);
+    assert.equal(mock.requests.length, 1);
+    assert.equal(mock.requests[0].raw.byteLength, Buffer.byteLength(JSON.stringify(mock.requests[0].payload)));
+
+    writeObsidianNote(vaultPath, 'a.md', '# A changed\n\nchanged same-path body\n');
+    const rerun = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: secret,
+    });
+    assert.equal(rerun.status, 0, `${rerun.stderr}\n${rerun.stdout}`);
+    const rerunReport = JSON.parse(rerun.stdout);
+    assert.deepEqual(rerunReport.counts, {
+      discovered: 2,
+      eligible: 2,
+      imported: 0,
+      alreadyPresent: 2,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.deepEqual(rerunReport.batches, { submitted: 1, succeeded: 1, failed: 0 });
+    assert.equal(stored.get([...stored.keys()][0]).content, '# A\n\ninitial a body\n');
+    assert.equal(rerun.stdout.includes(secret), false);
+    const sourceAfterChange = snapshotTree(vaultPath);
+    assert.notDeepEqual(
+      sourceAfterChange.map(({ relativePath, digest }) => ({ relativePath, digest })),
+      sourceBefore.map(({ relativePath, digest }) => ({ relativePath, digest })),
+    );
+    assert.deepEqual(
+      snapshotTree(vaultPath).map(({ relativePath, digest }) => ({ relativePath, digest })),
+      sourceAfterChange.map(({ relativePath, digest }) => ({ relativePath, digest })),
+    );
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('continues after an independent batch failure and reruns only missing identities', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'a-large.md', largeNoteBody('A large'));
+  writeObsidianNote(vaultPath, 'b-large.md', largeNoteBody('B large'));
+  writeObsidianNote(vaultPath, 'c.md', '# C\n\nsmall c body\n');
+  const sourceBefore = snapshotTree(vaultPath);
+  const stored = new Map();
+  let failOnce = true;
+  const mock = await startObsidianMock(({ payload }) => {
+    if (failOnce) {
+      failOnce = false;
+      return { status: 503, body: { error: 'temporary batch failure' } };
+    }
+    return { body: successfulImportResponse(payload, stored) };
+  });
+
+  try {
+    const first = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: 'partial-secret',
+    });
+    assert.equal(first.status, 1, `${first.stderr}\n${first.stdout}`);
+    const firstReport = JSON.parse(first.stdout);
+    assert.deepEqual(firstReport.counts, {
+      discovered: 3,
+      eligible: 3,
+      imported: 2,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 1,
+    });
+    assert.deepEqual(firstReport.batches, { submitted: 2, succeeded: 1, failed: 1 });
+    assert.deepEqual(firstReport.failures.map(({ relativePath }) => relativePath), ['memories/a-large.md']);
+    assert.equal(mock.requests.length, 2);
+    assert.equal(first.stdout.includes('x'.repeat(100)), false);
+
+    const rerun = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: 'partial-secret',
+    });
+    assert.equal(rerun.status, 0, `${rerun.stderr}\n${rerun.stdout}`);
+    const rerunReport = JSON.parse(rerun.stdout);
+    assert.deepEqual(rerunReport.counts, {
+      discovered: 3,
+      eligible: 3,
+      imported: 1,
+      alreadyPresent: 2,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.deepEqual(rerunReport.batches, { submitted: 2, succeeded: 2, failed: 0 });
+    assert.equal(mock.requests.length, 4);
+    assert.deepEqual(
+      snapshotTree(vaultPath).map(({ relativePath, digest }) => ({ relativePath, digest })),
+      sourceBefore.map(({ relativePath, digest }) => ({ relativePath, digest })),
+    );
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('records malformed response batches and continues with later batches', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'a-large.md', largeNoteBody('A large'));
+  writeObsidianNote(vaultPath, 'b-large.md', largeNoteBody('B large'));
+  const stored = new Map();
+  let malformedOnce = true;
+  const mock = await startObsidianMock(({ payload }) => {
+    if (malformedOnce) {
+      malformedOnce = false;
+      return { status: 200, body: '{not-json' };
+    }
+    return { body: successfulImportResponse(payload, stored) };
+  });
+
+  try {
+    const result = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: 'malformed-response-secret',
+    });
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.counts, {
+      discovered: 2,
+      eligible: 2,
+      imported: 1,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 1,
+    });
+    assert.deepEqual(report.batches, { submitted: 2, succeeded: 1, failed: 1 });
+    assert.deepEqual(report.failures.map(({ relativePath }) => relativePath), ['memories/a-large.md']);
+    assert.match(report.failures[0].reason, /invalid JSON/i);
+    assert.equal(result.stdout.includes('malformed-response-secret'), false);
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('redacts arbitrary transport errors from the report and CLI diagnostics', () => {
+  const vaultPath = createVault();
+  const noteBody = 'distinctive-transport-note-body-7c9e';
+  const bearer = 'distinctive-transport-bearer-4f2a';
+  writeObsidianNote(vaultPath, 'transport.md', `# Transport\n\n${noteBody}\n`);
+
+  const probe = runImporterProbe(`
+    const { main } = require(${JSON.stringify(importerPath)});
+    const noteBody = ${JSON.stringify(noteBody)};
+    const bearer = ${JSON.stringify(bearer)};
+    process.env.AGENTMEMORY_URL = 'http://agentmemory.invalid';
+    process.env.AGENTMEMORY_SECRET = bearer;
+    globalThis.fetch = async () => {
+      throw new Error('socket failed while sending ' + noteBody + ' with bearer ' + bearer);
+    };
+    main([${JSON.stringify(vaultPath)}, '--json']).catch((error) => {
+      process.stderr.write(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    });
+  `);
+
+  try {
+    assert.equal(probe.status, 1, `${probe.stderr}\n${probe.stdout}`);
+    const report = JSON.parse(probe.stdout);
+    assert.deepEqual(report.counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 1,
+    });
+    assert.deepEqual(report.batches, { submitted: 1, succeeded: 0, failed: 1 });
+    assert.deepEqual(report.failures, [{
+      relativePath: 'memories/transport.md',
+      reason: 'transport failure',
+    }]);
+    assert.equal(probe.stdout.includes(noteBody), false);
+    assert.equal(probe.stderr.includes(noteBody), false);
+    assert.equal(probe.stdout.includes(bearer), false);
+    assert.equal(probe.stderr.includes(bearer), false);
+  } finally {
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('stops after terminal authentication failure and marks unsent eligible notes failed', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'a-large.md', largeNoteBody('A large'));
+  writeObsidianNote(vaultPath, 'b-large.md', largeNoteBody('B large'));
+  const secret = 'terminal-auth-secret';
+  const mock = await startObsidianMock(() => ({
+    status: 401,
+    body: { success: false, error: 'authentication rejected' },
+  }));
+
+  try {
+    const result = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: secret,
+    });
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.counts, {
+      discovered: 2,
+      eligible: 2,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 2,
+    });
+    assert.deepEqual(report.batches, { submitted: 1, succeeded: 0, failed: 1 });
+    assert.deepEqual(
+      report.failures.map(({ relativePath }) => relativePath),
+      ['memories/a-large.md', 'memories/b-large.md'],
+    );
+    assert.match(report.failures[0].reason, /authentication/i);
+    assert.equal(mock.requests.length, 1);
+    assert.equal(mock.requests[0].authorization, `Bearer ${secret}`);
+    assert.equal(result.stdout.includes(secret), false);
+    assert.equal(result.stderr.includes(secret), false);
+    assert.equal(result.stdout.includes('x'.repeat(100)), false);
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('isolates a record above the strict request ceiling and submits later records', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'oversized.md', largeNoteBody('Oversized', 8 * 1024 * 1024));
+  writeObsidianNote(vaultPath, 'small.md', '# Small\n\nsmall body\n');
+  const stored = new Map();
+  const mock = await startObsidianMock(({ payload }) => ({
+    body: successfulImportResponse(payload, stored),
+  }));
+
+  try {
+    const result = await runObsidianImporterAsync(vaultPath, [], {
+      AGENTMEMORY_URL: mock.url,
+      AGENTMEMORY_SECRET: 'oversized-secret',
+    });
+    assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
+    const report = JSON.parse(result.stdout);
+    assert.deepEqual(report.counts, {
+      discovered: 2,
+      eligible: 2,
+      imported: 1,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 1,
+    });
+    assert.deepEqual(report.batches, { submitted: 1, succeeded: 1, failed: 0 });
+    assert.deepEqual(report.failures.map(({ relativePath }) => relativePath), ['memories/oversized.md']);
+    assert.match(report.failures[0].reason, /8 MiB/i);
+    assert.equal(mock.requests.length, 1);
+    assert.deepEqual(
+      mock.requests[0].payload.exportData.memories.map(({ files }) => files[0]),
+      ['memories/small.md'],
+    );
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
 });
