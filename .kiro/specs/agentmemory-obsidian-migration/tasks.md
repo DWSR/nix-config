@@ -17,7 +17,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 4.1, 4.5_
   - _Boundary: Importer Core: Mapping_
 
-- [ ] 1.3 Validate wire contracts and build bounded batches
+- [x] 1.3 Validate wire contracts and build bounded batches
   - Runtime-validate every memory, the complete request with `exportedAt`, and the exact success or logical-failure response union.
   - Produce lexical memory-only skip batches with no more than 10,000 records and serialized size strictly below 8 MiB.
   - Isolate a single oversized record and enforce memories-only response count invariants.

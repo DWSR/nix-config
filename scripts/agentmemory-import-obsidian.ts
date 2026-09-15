@@ -74,6 +74,54 @@ type ImportedMemory = {
   };
 };
 
+type ImportExportData = {
+  version: '0.9.29';
+  exportedAt: string;
+  sessions: [];
+  observations: Record<string, never[]>;
+  memories: ImportedMemory[];
+  summaries: [];
+};
+
+type ImportRequest = {
+  exportData: ImportExportData;
+  strategy: 'skip';
+};
+
+type ImportSuccess = {
+  success: true;
+  strategy: 'skip';
+  sessions: number;
+  observations: number;
+  memories: number;
+  summaries: number;
+  skipped: number;
+};
+
+type ImportLogicalFailure = {
+  success: false;
+  error: string;
+};
+
+type ImportResponse = ImportSuccess | ImportLogicalFailure;
+
+type MemoryImportBatch = {
+  request: ImportRequest;
+  records: ImportedMemory[];
+  body: string;
+  bytes: number;
+};
+
+type ImportBatchIssue = {
+  relativePath: string;
+  reason: string;
+};
+
+type MemoryBatchBuildResult = {
+  batches: MemoryImportBatch[];
+  oversized: ImportBatchIssue[];
+};
+
 type NoteOutcome =
   | { kind: 'prepared'; relativePath: string; memory: ImportedMemory }
   | { kind: 'skipped'; relativePath: string; reason: string };
@@ -97,6 +145,10 @@ const MEMORY_TYPES = new Set<string>([
   'workflow',
   'fact',
 ]);
+
+const OBSIDIAN_IMPORT_VERSION = '0.9.29';
+const OBSIDIAN_MAX_IMPORT_MEMORIES = 10_000;
+const OBSIDIAN_MAX_IMPORT_BYTES = 8 * 1024 * 1024;
 
 function fail(message: string): never {
   throw new Error(`agentmemory-import-obsidian: ${message}`);
@@ -604,6 +656,223 @@ function isImportedMemory(value: unknown): value is ImportedMemory {
   return true;
 }
 
+function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+  return actualKeys.length === sortedExpectedKeys.length
+    && actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+}
+
+function isEmptyObject(value: unknown): value is Record<string, never[]> {
+  return isObject(value) && Object.keys(value).length === 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isImportRequest(value: unknown): value is ImportRequest {
+  if (!isObject(value) || !hasExactKeys(value, ['exportData', 'strategy'])) return false;
+  if (value.strategy !== 'skip' || !isObject(value.exportData)) return false;
+
+  const exportData = value.exportData;
+  if (!hasExactKeys(exportData, [
+    'version',
+    'exportedAt',
+    'sessions',
+    'observations',
+    'memories',
+    'summaries',
+  ])) return false;
+
+  return exportData.version === OBSIDIAN_IMPORT_VERSION
+    && isIsoTimestamp(exportData.exportedAt)
+    && Array.isArray(exportData.sessions)
+    && exportData.sessions.length === 0
+    && isEmptyObject(exportData.observations)
+    && Array.isArray(exportData.memories)
+    && exportData.memories.length <= OBSIDIAN_MAX_IMPORT_MEMORIES
+    && exportData.memories.every(isImportedMemory)
+    && Array.isArray(exportData.summaries)
+    && exportData.summaries.length === 0;
+}
+
+function isImportSuccess(value: unknown, submittedMemoryCount: number): value is ImportSuccess {
+  if (!isObject(value) || !Number.isSafeInteger(submittedMemoryCount) || submittedMemoryCount < 0) {
+    return false;
+  }
+  if (!hasExactKeys(value, [
+    'success',
+    'strategy',
+    'sessions',
+    'observations',
+    'memories',
+    'summaries',
+    'skipped',
+  ])) return false;
+  if (value.success !== true || value.strategy !== 'skip') return false;
+
+  const sessions = value.sessions;
+  const observations = value.observations;
+  const memories = value.memories;
+  const summaries = value.summaries;
+  const skipped = value.skipped;
+  if (
+    !isNonNegativeSafeInteger(sessions)
+    || !isNonNegativeSafeInteger(observations)
+    || !isNonNegativeSafeInteger(memories)
+    || !isNonNegativeSafeInteger(summaries)
+    || !isNonNegativeSafeInteger(skipped)
+  ) return false;
+
+  return sessions === 0
+    && observations === 0
+    && summaries === 0
+    && memories + skipped === submittedMemoryCount;
+}
+
+function isImportResponse(value: unknown, submittedMemoryCount: number): value is ImportResponse {
+  if (!isObject(value)) return false;
+  if (value.success === false) {
+    return hasExactKeys(value, ['success', 'error']) && typeof value.error === 'string';
+  }
+  return isImportSuccess(value, submittedMemoryCount);
+}
+
+function createImportRequest(
+  memories: readonly ImportedMemory[],
+  exportedAt: string,
+): ImportRequest {
+  if (!Array.isArray(memories)) fail('import memories must be an array');
+  const request: ImportRequest = {
+    exportData: {
+      version: OBSIDIAN_IMPORT_VERSION,
+      exportedAt,
+      sessions: [],
+      observations: {},
+      memories: [...memories],
+      summaries: [],
+    },
+    strategy: 'skip',
+  };
+  if (!isImportRequest(request)) fail('constructed import request failed runtime validation');
+  return request;
+}
+
+function serializeImportRequest(request: ImportRequest): { body: string; bytes: number } {
+  if (!isImportRequest(request)) fail('import request failed runtime validation');
+  let body: string | undefined;
+  try {
+    body = JSON.stringify(request);
+  } catch (error: unknown) {
+    fail(`cannot serialize import request: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (body === undefined) fail('cannot serialize import request');
+  return { body, bytes: Buffer.byteLength(body, 'utf8') };
+}
+
+function serializedMemory(memory: ImportedMemory): { memory: ImportedMemory; bytes: number } {
+  let body: string | undefined;
+  try {
+    body = JSON.stringify(memory);
+  } catch (error: unknown) {
+    fail(`cannot serialize memory ${memory.files[0]}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (body === undefined) fail(`cannot serialize memory ${memory.files[0]}`);
+  return { memory, bytes: Buffer.byteLength(body, 'utf8') };
+}
+
+function importBodyEnvelope(exportedAt: string): { prefix: string; suffix: string; bytes: number } {
+  const version = JSON.stringify(OBSIDIAN_IMPORT_VERSION);
+  const timestamp = JSON.stringify(exportedAt);
+  if (version === undefined || timestamp === undefined) fail('cannot serialize import envelope');
+  const prefix = `{"exportData":{"version":${version},"exportedAt":${timestamp},"sessions":[],"observations":{},"memories":[`;
+  const suffix = `],"summaries":[]},"strategy":"skip"}`;
+  return {
+    prefix,
+    suffix,
+    bytes: Buffer.byteLength(prefix, 'utf8') + Buffer.byteLength(suffix, 'utf8'),
+  };
+}
+
+function buildImportBatches(
+  memories: readonly ImportedMemory[],
+  exportedAt: string,
+): MemoryBatchBuildResult {
+  if (!Array.isArray(memories)) fail('import memories must be an array');
+  if (!isIsoTimestamp(exportedAt)) fail('import exportedAt failed runtime validation');
+
+  const sortedMemories = [...memories];
+  for (let index = 0; index < sortedMemories.length; index += 1) {
+    if (!isImportedMemory(sortedMemories[index])) {
+      fail(`memory at index ${index} failed runtime validation`);
+    }
+  }
+  sortedMemories.sort((left, right) => {
+    const leftPath = left.files[0];
+    const rightPath = right.files[0];
+    if (leftPath === rightPath) return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
+    return leftPath < rightPath ? -1 : 1;
+  });
+
+  const serializedRecords = sortedMemories.map(serializedMemory);
+  const envelope = importBodyEnvelope(exportedAt);
+  const batches: MemoryImportBatch[] = [];
+  const oversized: ImportBatchIssue[] = [];
+  let currentRecords: ImportedMemory[] = [];
+  let currentBytes = envelope.bytes;
+
+  const flush = (): void => {
+    if (currentRecords.length === 0) return;
+    const request = createImportRequest(currentRecords, exportedAt);
+    const serialized = serializeImportRequest(request);
+    if (serialized.bytes >= OBSIDIAN_MAX_IMPORT_BYTES) {
+      fail('internal batch sizing error produced a request at or above the 8 MiB limit');
+    }
+    batches.push({
+      request,
+      records: [...currentRecords],
+      body: serialized.body,
+      bytes: serialized.bytes,
+    });
+    currentRecords = [];
+    currentBytes = envelope.bytes;
+  };
+
+  for (const item of serializedRecords) {
+    const contribution = item.bytes + (currentRecords.length === 0 ? 0 : 1);
+    if (
+      currentRecords.length > 0
+      && (
+        currentRecords.length >= OBSIDIAN_MAX_IMPORT_MEMORIES
+        || currentBytes + contribution >= OBSIDIAN_MAX_IMPORT_BYTES
+      )
+    ) flush();
+
+    const nextContribution = item.bytes + (currentRecords.length === 0 ? 0 : 1);
+    if (currentBytes + nextContribution < OBSIDIAN_MAX_IMPORT_BYTES) {
+      currentRecords.push(item.memory);
+      currentBytes += nextContribution;
+      continue;
+    }
+
+    const singleRequest = createImportRequest([item.memory], exportedAt);
+    const single = serializeImportRequest(singleRequest);
+    if (single.bytes < OBSIDIAN_MAX_IMPORT_BYTES) {
+      currentRecords.push(item.memory);
+      currentBytes += item.bytes;
+    } else {
+      oversized.push({
+        relativePath: item.memory.files[0],
+        reason: 'record cannot fit below the 8 MiB import limit',
+      });
+    }
+  }
+  flush();
+
+  return { batches, oversized };
+}
+
 function mapSourceNote(
   note: SourceNote,
   capturedAt = new Date().toISOString(),
@@ -725,9 +994,17 @@ function discoverSourceNotes(vaultPath: string): SourceDiscovery {
 }
 
 module.exports = {
+  MAX_IMPORT_BYTES: OBSIDIAN_MAX_IMPORT_BYTES,
+  MAX_IMPORT_MEMORIES: OBSIDIAN_MAX_IMPORT_MEMORIES,
+  buildImportBatches,
+  createImportRequest,
   discoverSourceNotes,
   isContained,
+  isImportRequest,
+  isImportResponse,
+  isImportSuccess,
   isImportedMemory,
   mapSourceNote,
   mapSourceNotes,
+  serializeImportRequest,
 };

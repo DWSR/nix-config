@@ -157,6 +157,42 @@ function validateMemory(memory) {
   );
 }
 
+function runImporterProbe(script) {
+  return spawnSync(
+    importerNodeBin(),
+    ['--experimental-strip-types', '-e', script],
+    {
+      cwd: repoRoot,
+      env: importerEnvironment(),
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+}
+
+function importedMemoryFixture(sourcePath = 'memories/fixture.md', content = 'fixture body') {
+  const timestamp = '2026-09-15T01:00:00.000Z';
+  return {
+    id: `mem_obsidian_${crypto.createHash('sha256').update(sourcePath).digest('hex')}`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    type: 'fact',
+    title: 'Fixture',
+    content,
+    concepts: [`obsidian-source:${sourcePath}`],
+    files: [sourcePath],
+    sessionIds: [],
+    strength: 1,
+    version: 1,
+    isLatest: true,
+    origin: {
+      channel: 'import',
+      detail: JSON.stringify({ sourcePath, tags: [], sessions: [] }),
+      capturedAt: timestamp,
+    },
+  };
+}
+
 function snapshotTree(root) {
   const entries = [];
   const visit = (currentPath) => {
@@ -619,4 +655,358 @@ test('keeps same-path identities across content changes and changes identity aft
   } finally {
     fs.rmSync(vaultPath, { recursive: true, force: true });
   }
+});
+
+test('validates every field of the complete memory-only import request', () => {
+  const memory = importedMemoryFixture();
+  const timestamp = '2026-09-15T01:00:00.000Z';
+  const probe = runImporterProbe(`
+    const { isImportRequest } = require(${JSON.stringify(importerPath)});
+    const memory = ${JSON.stringify(memory)};
+    const timestamp = ${JSON.stringify(timestamp)};
+    const request = {
+      exportData: {
+        version: '0.9.29',
+        exportedAt: timestamp,
+        sessions: [],
+        observations: {},
+        memories: [memory],
+        summaries: [],
+      },
+      strategy: 'skip',
+    };
+    const clone = () => JSON.parse(JSON.stringify(request));
+    const mutations = {
+      'top-level value': () => null,
+      'missing exportData': () => {
+        const candidate = clone();
+        delete candidate.exportData;
+        return candidate;
+      },
+      'invalid strategy': () => {
+        const candidate = clone();
+        candidate.strategy = 'merge';
+        return candidate;
+      },
+      'extra top-level field': () => {
+        const candidate = clone();
+        candidate.extra = true;
+        return candidate;
+      },
+      'invalid version': () => {
+        const candidate = clone();
+        candidate.exportData.version = '0.9.28';
+        return candidate;
+      },
+      'invalid exportedAt': () => {
+        const candidate = clone();
+        candidate.exportData.exportedAt = '2026-02-29';
+        return candidate;
+      },
+      'non-empty sessions': () => {
+        const candidate = clone();
+        candidate.exportData.sessions = [{}];
+        return candidate;
+      },
+      'non-empty observations': () => {
+        const candidate = clone();
+        candidate.exportData.observations = { session: [] };
+        return candidate;
+      },
+      'non-array memories': () => {
+        const candidate = clone();
+        candidate.exportData.memories = {};
+        return candidate;
+      },
+      'invalid memory': () => {
+        const candidate = clone();
+        candidate.exportData.memories[0].content = ' \\n\\t';
+        return candidate;
+      },
+      'non-empty summaries': () => {
+        const candidate = clone();
+        candidate.exportData.summaries = [{}];
+        return candidate;
+      },
+      'extra exportData field': () => {
+        const candidate = clone();
+        candidate.exportData.extra = true;
+        return candidate;
+      },
+    };
+    const result = {
+      valid: isImportRequest(request),
+      invalid: Object.fromEntries(
+        Object.entries(mutations).map(([label, mutate]) => [label, isImportRequest(mutate())]),
+      ),
+    };
+    process.stdout.write(JSON.stringify(result));
+  `);
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.equal(result.valid, true);
+  assert.deepEqual(
+    Object.keys(result.invalid).filter((label) => result.invalid[label]),
+    [],
+  );
+});
+
+test('builds lexical memory-only batches at the 10,000-record boundary', () => {
+  const probe = runImporterProbe(`
+    const crypto = require('node:crypto');
+    const { buildImportBatches, isImportRequest } = require(${JSON.stringify(importerPath)});
+    const timestamp = '2026-09-15T01:00:00.000Z';
+    function memory(index) {
+      const sourcePath = 'memories/' + String(index).padStart(5, '0') + '.md';
+      return {
+        id: 'mem_obsidian_' + crypto.createHash('sha256').update(sourcePath).digest('hex'),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        type: 'fact',
+        title: 'Fixture ' + index,
+        content: 'fixture body ' + index,
+        concepts: ['obsidian-source:' + sourcePath],
+        files: [sourcePath],
+        sessionIds: [],
+        strength: 1,
+        version: 1,
+        isLatest: true,
+        origin: {
+          channel: 'import',
+          detail: JSON.stringify({ sourcePath, tags: [], sessions: [] }),
+          capturedAt: timestamp,
+        },
+      };
+    }
+    function request(memories) {
+      return {
+        exportData: {
+          version: '0.9.29',
+          exportedAt: timestamp,
+          sessions: [],
+          observations: {},
+          memories,
+          summaries: [],
+        },
+        strategy: 'skip',
+      };
+    }
+    function inspect(built) {
+      const payloads = built.batches.map(({ body, bytes }) => ({
+        memoryCount: JSON.parse(body).exportData.memories.length,
+        paths: JSON.parse(body).exportData.memories.map((record) => record.files[0]),
+        bytes,
+        bodyBytes: Buffer.byteLength(body, 'utf8'),
+        requestValid: isImportRequest(JSON.parse(body)),
+      }));
+      return {
+        payloads,
+        oversized: built.oversized,
+      };
+    }
+    const tenThousand = Array.from({ length: 10_000 }, (_, index) => memory(index));
+    const tenThousandAndOne = Array.from({ length: 10_001 }, (_, index) => memory(index));
+    const lexical = buildImportBatches([memory(2), memory(0), memory(1)], timestamp);
+    process.stdout.write(JSON.stringify({
+      tenThousand: inspect(buildImportBatches(tenThousand, timestamp)),
+      tenThousandAndOne: inspect(buildImportBatches(tenThousandAndOne, timestamp)),
+      overLimitRequestValid: isImportRequest(request(tenThousandAndOne)),
+      lexical: inspect(lexical),
+    }));
+  `);
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.deepEqual(
+    result.tenThousand.payloads.map(({ memoryCount }) => memoryCount),
+    [10_000],
+  );
+  assert.deepEqual(result.tenThousand.oversized, []);
+  assert.equal(result.tenThousand.payloads[0].requestValid, true);
+  assert.equal(
+    result.tenThousand.payloads[0].bytes,
+    result.tenThousand.payloads[0].bodyBytes,
+  );
+  assert.ok(result.tenThousand.payloads[0].bytes < 8 * 1024 * 1024);
+  assert.deepEqual(
+    result.tenThousandAndOne.payloads.map(({ memoryCount }) => memoryCount),
+    [10_000, 1],
+  );
+  assert.deepEqual(result.tenThousandAndOne.oversized, []);
+  assert.equal(result.overLimitRequestValid, false);
+  assert.deepEqual(
+    result.lexical.payloads.flatMap(({ paths }) => paths),
+    ['memories/00000.md', 'memories/00001.md', 'memories/00002.md'],
+  );
+});
+
+test('uses UTF-8 byte sizing, rejects the ceiling, and isolates oversized singles', () => {
+  const probe = runImporterProbe(`
+    const crypto = require('node:crypto');
+    const {
+      MAX_IMPORT_BYTES,
+      buildImportBatches,
+    } = require(${JSON.stringify(importerPath)});
+    const timestamp = '2026-09-15T01:00:00.000Z';
+    function memory(sourcePath, content) {
+      return {
+        id: 'mem_obsidian_' + crypto.createHash('sha256').update(sourcePath).digest('hex'),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        type: 'fact',
+        title: 'Fixture',
+        content,
+        concepts: ['obsidian-source:' + sourcePath],
+        files: [sourcePath],
+        sessionIds: [],
+        strength: 1,
+        version: 1,
+        isLatest: true,
+        origin: {
+          channel: 'import',
+          detail: JSON.stringify({ sourcePath, tags: [], sessions: [] }),
+          capturedAt: timestamp,
+        },
+      };
+    }
+    function bodyFor(record) {
+      return JSON.stringify({
+        exportData: {
+          version: '0.9.29',
+          exportedAt: timestamp,
+          sessions: [],
+          observations: {},
+          memories: [record],
+          summaries: [],
+        },
+        strategy: 'skip',
+      });
+    }
+    function sized(target, sourcePath = 'memories/boundary.md') {
+      const fixedBytes = Buffer.byteLength(bodyFor(memory(sourcePath, 'x')), 'utf8');
+      const content = 'x'.repeat(target - fixedBytes + 1);
+      const record = memory(sourcePath, content);
+      const actualBytes = Buffer.byteLength(bodyFor(record), 'utf8');
+      const built = buildImportBatches([record], timestamp);
+      return {
+        target,
+        actualBytes,
+        batchBytes: built.batches.map(({ bytes }) => bytes),
+        oversized: built.oversized,
+      };
+    }
+    const under = sized(MAX_IMPORT_BYTES - 1);
+    const at = sized(MAX_IMPORT_BYTES);
+    const above = sized(MAX_IMPORT_BYTES + 1);
+    const oversized = sized(MAX_IMPORT_BYTES, 'memories/b.md');
+    const isolation = buildImportBatches([
+      memory('memories/c.md', 'later c'),
+      memory(
+        'memories/b.md',
+        'x'.repeat(
+          MAX_IMPORT_BYTES
+          - Buffer.byteLength(bodyFor(memory('memories/b.md', 'x')), 'utf8')
+          + 1,
+        ),
+      ),
+      memory('memories/a.md', 'earlier a'),
+    ], timestamp);
+    process.stdout.write(JSON.stringify({
+      maxBytes: MAX_IMPORT_BYTES,
+      under,
+      at,
+      above,
+      oversized,
+      isolation: {
+        batches: isolation.batches.map(({ body, bytes }) => ({
+          paths: JSON.parse(body).exportData.memories.map((record) => record.files[0]),
+          bytes,
+        })),
+        oversized: isolation.oversized,
+      },
+    }));
+  `);
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.equal(result.maxBytes, 8 * 1024 * 1024);
+  assert.equal(result.under.actualBytes, result.maxBytes - 1);
+  assert.deepEqual(result.under.batchBytes, [result.maxBytes - 1]);
+  assert.deepEqual(result.under.oversized, []);
+  assert.equal(result.at.actualBytes, result.maxBytes);
+  assert.deepEqual(result.at.batchBytes, []);
+  assert.equal(result.at.oversized.length, 1);
+  assert.equal(result.at.oversized[0].relativePath, 'memories/boundary.md');
+  assert.equal(result.above.actualBytes, result.maxBytes + 1);
+  assert.deepEqual(result.above.batchBytes, []);
+  assert.equal(result.above.oversized.length, 1);
+  assert.equal(result.oversized.oversized.length, 1);
+  assert.deepEqual(
+    result.isolation.batches.flatMap(({ paths }) => paths),
+    ['memories/a.md', 'memories/c.md'],
+  );
+  assert.deepEqual(result.isolation.oversized.map(({ relativePath }) => relativePath), ['memories/b.md']);
+  assert.ok(result.isolation.batches.every(({ bytes }) => bytes < result.maxBytes));
+});
+
+test('accepts only exact successful counts or the exact logical failure shape', () => {
+  const probe = runImporterProbe(`
+    const { isImportResponse } = require(${JSON.stringify(importerPath)});
+    const valid = {
+      success: true,
+      strategy: 'skip',
+      sessions: 0,
+      observations: 0,
+      memories: 1,
+      summaries: 0,
+      skipped: 1,
+    };
+    const clone = () => JSON.parse(JSON.stringify(valid));
+    const mutations = {
+      'missing success': () => {
+        const candidate = clone();
+        delete candidate.success;
+        return candidate;
+      },
+      'invalid success value': () => ({ ...clone(), success: 1 }),
+      'invalid strategy': () => ({ ...clone(), strategy: 'merge' }),
+      'negative sessions': () => ({ ...clone(), sessions: -1 }),
+      'fractional observations': () => ({ ...clone(), observations: 0.5 }),
+      'string memories': () => ({ ...clone(), memories: '1' }),
+      'non-zero sessions': () => ({ ...clone(), sessions: 1 }),
+      'non-zero observations': () => ({ ...clone(), observations: 1 }),
+      'non-zero summaries': () => ({ ...clone(), summaries: 1 }),
+      'negative skipped': () => ({ ...clone(), skipped: -1 }),
+      'count mismatch': () => ({ ...clone(), memories: 0, skipped: 0 }),
+      'extra success field': () => ({ ...clone(), extra: true }),
+      'not an object': () => null,
+    };
+    const invalid = Object.fromEntries(
+      Object.entries(mutations).map(([label, response]) => [label, isImportResponse(response(), 2)]),
+    );
+    const logicalFailure = isImportResponse({ success: false, error: 'rejected' }, 2);
+    const logicalFailureWithExtraFields = isImportResponse(
+      { success: false, error: 'rejected', details: { status: 400 } },
+      2,
+    );
+    const missingLogicalError = isImportResponse({ success: false }, 2);
+    const nonStringLogicalError = isImportResponse({ success: false, error: { message: 'rejected' } }, 2);
+    process.stdout.write(JSON.stringify({
+      valid: isImportResponse(valid, 2),
+      invalid,
+      logicalFailure,
+      logicalFailureWithExtraFields,
+      missingLogicalError,
+      nonStringLogicalError,
+    }));
+  `);
+  assert.equal(probe.status, 0, `${probe.stderr}\n${probe.stdout}`);
+  const result = JSON.parse(probe.stdout);
+  assert.equal(result.valid, true);
+  assert.deepEqual(
+    Object.keys(result.invalid).filter((label) => result.invalid[label]),
+    [],
+  );
+  assert.equal(result.logicalFailure, true);
+  assert.equal(result.logicalFailureWithExtraFields, false);
+  assert.equal(result.missingLogicalError, false);
+  assert.equal(result.nonStringLogicalError, false);
 });
