@@ -104,6 +104,11 @@
       url = "github:anomalyco/opencode/v1.18.26";
     };
 
+    pi = {
+      url = "github:lukasl-dev/pi.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
   };
 
   outputs =

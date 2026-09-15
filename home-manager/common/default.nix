@@ -31,6 +31,7 @@
     ./opencode-nono-audit.nix
     ./opencode-rtk.nix
     ./opencode.nix
+    ./pi.nix
     ./session-compaction.nix
     ./sqlite-backup.nix
     ./subagent-context-budget.nix
@@ -134,7 +135,7 @@
       viddy
       xz
 
-      raycast
+      unstable.raycast
     ];
 
     activation.createScratchDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -156,6 +157,7 @@
       "--help" = "--help 2>&1 | bat --language=help --style=plain";
       cat = "bat --paging=never --style=plain";
       e = "nvim .";
+      p = "pi";
       gd = "git diff";
     };
 

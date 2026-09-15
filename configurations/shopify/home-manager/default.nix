@@ -21,6 +21,7 @@ in
     ./dev.nix
     ./git.nix
     ./opencode.nix
+    ./pi.nix
     ./sqlite-backup.nix
     ./tec.nix
     ./wish.nix
