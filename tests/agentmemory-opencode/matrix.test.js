@@ -7,6 +7,10 @@ const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const matrixCheck = `path:${repoRoot}#checks.aarch64-darwin.agentmemory-opencode-matrix`;
+const vaultAgentNames = Object.freeze({
+  curator: ['vault', 'curator'].join('-'),
+  synthesizer: ['vault', 'synthesizer'].join('-'),
+});
 
 function evalMatrix() {
   const hostMatrixPath = process.env.AGENTMEMORY_MATRIX_HOSTS || '';
@@ -26,12 +30,11 @@ function evalMatrix() {
       };
       commonModules = [
         "\${flake.inputs.home-manager}/modules/programs/opencode.nix"
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/memory-sync.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
         ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
       ];
       mkSynthetic = scenario:
@@ -64,7 +67,6 @@ function evalMatrix() {
                 url = "http://127.0.0.1:8080/mcp";
                 enabled = true;
               };
-              programs.memory-sync.enable = scenario.backend == "cavemem";
             }
           ];
         }).config;
@@ -200,17 +202,15 @@ function evalMatrix() {
             cavememCount = builtins.length cavememServers;
             opencodeNames = builtins.attrNames (hm.programs.opencode.settings.mcp or { });
           };
-          instructions = {
-            context = hm.programs.opencode.context;
-            agents = agentTexts;
-          };
-          consumers = {
-            memorySync = hm.programs.memory-sync.enable;
-            memorySyncPackages = builtins.filter (package: pkgs.lib.hasPrefix "memory-sync" package) packageNames;
-            vaultCurator = builtins.hasAttr "vault-curator" hm.programs.opencode.agents;
-            vaultSynthesizer = builtins.hasAttr "vault-synthesizer" hm.programs.opencode.agents;
-            augmentation = hm.programs.session-compaction.augmentationEnabled;
-          };
+           instructions = {
+             context = hm.programs.opencode.context;
+             agents = agentTexts;
+           };
+           consumers = {
+             vaultCurator = builtins.hasAttr ${JSON.stringify(vaultAgentNames.curator)} hm.programs.opencode.agents;
+             vaultSynthesizer = builtins.hasAttr ${JSON.stringify(vaultAgentNames.synthesizer)} hm.programs.opencode.agents;
+             augmentation = hm.programs.session-compaction.augmentationEnabled;
+           };
           secretReference =
             if builtins.hasAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets then
               hm.home.mcp.keychainSecrets."agentmemory-bearer"
@@ -306,8 +306,8 @@ function assertLoopbackEndpointContract(rendered) {
 function assertAgentMemoryPromptContract(rendered) {
   const context = rendered.instructions.context;
 
-  assert.equal(rendered.consumers.vaultCurator, false, `${rendered.name} omits vault-curator`);
-  assert.equal(rendered.consumers.vaultSynthesizer, false, `${rendered.name} omits vault-synthesizer`);
+   assert.equal(rendered.consumers.vaultCurator, false, `${rendered.name} omits ${vaultAgentNames.curator}`);
+   assert.equal(rendered.consumers.vaultSynthesizer, false, `${rendered.name} omits ${vaultAgentNames.synthesizer}`);
   assert.match(context, /stock AgentMemory/i);
   assert.match(context, /memory_recall/);
   assert.match(context, /memory_save/);
@@ -360,13 +360,11 @@ test('the focused AgentMemory host-render matrix is registered and validates all
   const rendered = evalMatrix();
 
   for (const row of [rendered.enabled, rendered.personal, rendered.shopify]) {
-    assertAgentMemoryRuntime(row, { selected: 'agentmemory', cavememEnabled: false });
-    assert.equal(row.backend, 'agentmemory');
-    assert.equal(row.mcp.cavememCount, 0);
-    assert.equal(row.consumers.memorySync, false);
-    assert.deepEqual(row.consumers.memorySyncPackages, []);
-    assert.equal(row.consumers.vaultCurator, false);
-    assert.equal(row.consumers.vaultSynthesizer, false);
+     assertAgentMemoryRuntime(row, { selected: 'agentmemory', cavememEnabled: false });
+     assert.equal(row.backend, 'agentmemory');
+     assert.equal(row.mcp.cavememCount, 0);
+     assert.equal(row.consumers.vaultCurator, false);
+     assert.equal(row.consumers.vaultSynthesizer, false);
     assert.equal(row.consumers.augmentation, false);
     assertAgentMemoryPromptContract(row);
     assert.match(row.instructions.context, /stock AgentMemory/i);

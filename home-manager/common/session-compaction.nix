@@ -37,8 +37,7 @@
   evaluation time. Without it, the plugin file is dangling and the
   slash command points at nothing; the assertion fails the build
   instead. Mirrors the same assertion shape used by
-  `home-manager/common/opencode-cost-diagnosis.nix` and
-  `home-manager/common/memory-sync.nix`.
+  `home-manager/common/opencode-cost-diagnosis.nix`.
 
   Supported opencode version range: the plugin probes for
   `client.session.summarize` and `client.session.get` at startup

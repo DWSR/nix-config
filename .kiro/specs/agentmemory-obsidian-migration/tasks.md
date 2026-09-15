@@ -68,7 +68,7 @@
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.7_
   - _Boundary: Prompt Contract Cutover: Global and Pi_
 
-- [ ] 3.4 Retire Obsidian-dependent migration pipelines
+- [x] 3.4 Retire Obsidian-dependent migration pipelines
   - Remove memory-sync module loading, backend enablement, script, tests, and flake check wiring.
   - Remove the obsolete Obsidian-to-Cavemem importer from the Cavemem module and retire its source files after the vault option is gone.
   - Preserve Cavemem data and runtime behavior, historical specs, and unrelated cost-diagnosis references.

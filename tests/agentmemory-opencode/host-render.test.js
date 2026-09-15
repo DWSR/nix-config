@@ -80,7 +80,6 @@ function renderHosts() {
             wrapperHasObsidianImporter = lib.hasInfix "agentmemory-import-obsidian" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
           };
           consumers = {
-            memorySync = hm.programs.memory-sync.enable;
             sessionCompactionAugmentation = hm.programs.session-compaction.augmentationEnabled;
           };
           secretUri = builtins.getAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets;

@@ -927,7 +927,7 @@ in
       default = 8080;
       description = ''
         TCP port on which the mcpproxy daemon listens on 127.0.0.1.
-        Consumers (opencode wrapper, memory-sync CLI, cavemem wrapper)
+        Consumers (opencode wrapper, managed import commands, cavemem wrapper)
         derive their probe URLs from this value via the rendered
         mcp_config.json.
       '';

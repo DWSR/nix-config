@@ -433,7 +433,7 @@ mirrored from 1Password into `secrets/mcp.<host>.yaml` by
 ### Rotating `mcpproxy-api-key`
 
 `mcpproxy-api-key` is the bearer token that gates mcpproxy's local
-HTTP API (`/api/v1/*`). The opencode wrapper, the memory-sync CLI,
+HTTP API (`/api/v1/*`). The opencode wrapper, managed import commands,
 and any operator preflight commands authenticate against mcpproxy
 with this value. It is NOT mirrored from 1Password — it is
 generated locally and stored directly in the SOPS yaml. Rotate it
@@ -520,7 +520,7 @@ by replacing the value in the encrypted store and re-activating.
    `$source_config.bak`.
 
    The mcpproxy daemon should also still respond on `/healthz`;
-   clients that present the new key (opencode wrapper, memory-sync CLI)
+   clients that present the new key (opencode wrapper, managed import commands)
    should continue to authenticate successfully.
 
    If `mcp-verify-secrets` is wired to check the api-key entry,

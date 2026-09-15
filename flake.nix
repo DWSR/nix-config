@@ -1776,22 +1776,6 @@
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 
-          memory-sync-tests =
-            pkgs.runCommand "memory-sync-tests"
-              {
-                nativeBuildInputs = [ pkgs.nodejs ];
-              }
-              ''
-                mkdir -p source/tests/memory-sync source/home-manager/common/agents source/scripts
-                cp ${./tests/memory-sync/contract.test.js} source/tests/memory-sync/contract.test.js
-                cp ${./home-manager/common/agents/vault-synthesizer.md} source/home-manager/common/agents/vault-synthesizer.md
-                cp ${./home-manager/common/agents/vault-curator.md} source/home-manager/common/agents/vault-curator.md
-                cp ${./scripts/memory-sync.nix} source/scripts/memory-sync.nix
-                cd source
-                node --test tests/memory-sync/contract.test.js
-                touch $out
-              '';
-
           subagent-context-budget-tests =
             pkgs.runCommand "subagent-context-budget-tests"
               {

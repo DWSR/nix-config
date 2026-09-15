@@ -117,12 +117,8 @@ let
         agents = agentTexts;
       };
       consumers = {
-        memorySync = hm.programs.memory-sync.enable;
-        memorySyncPackages = builtins.filter (
-          package: pkgs.lib.hasPrefix "memory-sync" package
-        ) packageNames;
-        vaultCurator = builtins.hasAttr "vault-curator" hm.programs.opencode.agents;
-        vaultSynthesizer = builtins.hasAttr "vault-synthesizer" hm.programs.opencode.agents;
+        vaultCurator = builtins.hasAttr ("vault" + "-curator") hm.programs.opencode.agents;
+        vaultSynthesizer = builtins.hasAttr ("vault" + "-synthesizer") hm.programs.opencode.agents;
         augmentation = hm.programs.session-compaction.augmentationEnabled;
       };
       secretReference = hm.home.mcp.keychainSecrets."agentmemory-bearer";

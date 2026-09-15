@@ -362,13 +362,11 @@ in
     };
   });
 
-  # Vendored Node dependency tree for the `cavemem-import-vault`
-  # one-shot importer (task 7.1, requirements 8.1 and 8.6). The
-  # importer is a Node script that needs `require()`-able copies of
-  # `better-sqlite3` (to write directly to cavemem.db) and `js-yaml`
-  # (to parse the YAML frontmatter of existing transcription/summary
-  # `.md` notes). It deliberately does NOT reuse the cavemem
-  # package's bundled better-sqlite3 because cavemem packs its
+  # Vendored Node dependency tree for the AgentMemory importers. The
+  # Cavemem history importer needs a `require()`-able copy of
+  # `better-sqlite3`, while the Obsidian importer uses `js-yaml` to
+  # parse YAML frontmatter. The dependency tree deliberately does NOT
+  # reuse the cavemem package's bundled better-sqlite3 because cavemem packs its
   # runtime deps into a private `node_modules` under
   # `$out/lib/node_modules/cavemem/node_modules/` and they are not
   # discoverable from outside that tree.
@@ -430,7 +428,7 @@ in
     '';
 
     meta = with final.lib; {
-      description = "Vendored Node deps (better-sqlite3 + js-yaml) for the cavemem-import-vault one-shot importer";
+      description = "Vendored Node deps (better-sqlite3 + js-yaml) for the AgentMemory importers";
       homepage = "https://github.com/JuliusBrussee/cavemem";
       license = licenses.mit;
       platforms = platforms.darwin ++ platforms.linux;
@@ -444,7 +442,7 @@ in
   # `tiktoken` (WASM tokenizer used for proportional splits of
   # uncached input). It deliberately does NOT reuse the
   # cavemem-importer-deps tree because the dependency sets differ
-  # (cavemem-importer uses js-yaml; this diagnostic uses tiktoken),
+  # (the Obsidian importer uses js-yaml; this diagnostic uses tiktoken),
   # and keeping them separate avoids unrelated lockfile churn on
   # either side.
   #

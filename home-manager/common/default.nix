@@ -25,7 +25,6 @@
     ./hammerspoon-mic-mute
     ./hammerspoon-timezone-menubar
     ./launchd-activation.nix
-    ./memory-sync.nix
     ./opencode-cost-diagnosis.nix
     ./opencode-nono.nix
     ./opencode-nono-audit.nix
@@ -237,7 +236,6 @@
   programs.jq.enable = true;
   programs.jqp.enable = true;
   programs.k9s.enable = true;
-  programs.memory-sync.enable = config.home.opencode.memoryBackend == "cavemem";
   programs.opencode-cost-diagnosis.enable = true;
   programs.opencode-nono.enable = true;
   programs.opencode-nono-audit.enable = true;

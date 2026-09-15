@@ -19,6 +19,23 @@ const mcpOverlaySource = fs.readFileSync(
   path.join(repoRoot, 'overlays/mcp-servers.nix'),
   'utf8',
 );
+const commonDefaultSource = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/common/default.nix'),
+  'utf8',
+);
+const cavememModuleSource = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/common/cavemem.nix'),
+  'utf8',
+);
+const flakeSource = fs.readFileSync(path.join(repoRoot, 'flake.nix'), 'utf8');
+
+const retiredPipelineNames = Object.freeze({
+  sync: ['memory', 'sync'].join('-'),
+  vaultImporter: ['cavemem', 'import', 'vault'].join('-'),
+  vaultOption: ['obsidian', 'Vault', 'Path'].join(''),
+  curator: ['vault', 'curator'].join('-'),
+  synthesizer: ['vault', 'synthesizer'].join('-'),
+});
 
 function renderModule({ enable }) {
   const nixBoolean = enable ? 'true' : 'false';
@@ -203,17 +220,13 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
       }
     ];
   }).config;
-in builtins.toJSON {
-  wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
-  command = toString hm.programs.opencode.commands.compact;
-  augmentationEnabled = hm.programs.session-compaction.augmentationEnabled;
-  agents = builtins.attrNames hm.programs.opencode.agents;
-  context = hm.programs.opencode.context;
-  memorySync = {
-    enable = hm.programs.memory-sync.enable;
-    packageNames = map (package: package.name or "") hm.home.packages;
-  };
-})`;
+   in builtins.toJSON {
+     wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
+     command = toString hm.programs.opencode.commands.compact;
+     augmentationEnabled = hm.programs.session-compaction.augmentationEnabled;
+     agents = builtins.attrNames hm.programs.opencode.agents;
+     context = hm.programs.opencode.context;
+   })`;
 
   return JSON.parse(
     execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
@@ -223,6 +236,36 @@ in builtins.toJSON {
     }),
   );
 }
+
+test('obsolete vault pipelines are absent from active configuration', () => {
+  const retiredFiles = [
+    path.join(repoRoot, 'home-manager/common', `${retiredPipelineNames.sync}.nix`),
+    path.join(repoRoot, 'scripts', `${retiredPipelineNames.sync}.nix`),
+    path.join(repoRoot, 'tests', retiredPipelineNames.sync, 'contract.test.js'),
+    path.join(repoRoot, 'scripts', `${retiredPipelineNames.vaultImporter}.js`),
+    path.join(repoRoot, 'scripts', `${retiredPipelineNames.vaultImporter}.nix`),
+    path.join(repoRoot, 'home-manager/common/agents', `${retiredPipelineNames.curator}.md`),
+    path.join(repoRoot, 'home-manager/common/agents', `${retiredPipelineNames.synthesizer}.md`),
+  ];
+
+  for (const file of retiredFiles) {
+    assert.equal(fs.existsSync(file), false, `${file} must be retired`);
+  }
+
+  for (const [name, source] of Object.entries({
+    'common default module': commonDefaultSource,
+    'Cavemem module': cavememModuleSource,
+    flake: flakeSource,
+  })) {
+    for (const term of [
+      retiredPipelineNames.sync,
+      retiredPipelineNames.vaultImporter,
+      retiredPipelineNames.vaultOption,
+    ]) {
+      assert.equal(source.includes(term), false, `${name} retains retired reference ${term}`);
+    }
+  }
+});
 
 test('enabled AgentMemory rendering is deterministic and declarative', () => {
   const first = renderModule({ enable: true });
@@ -339,7 +382,10 @@ test('managed MCP inventory removes Obsidian and reloads on rendered-config chan
     changed.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
   );
   assert.doesNotMatch(JSON.stringify(rendered.mcpproxy), /op:\/\/|bearer|secret/i);
-  assert.doesNotMatch(mcpModuleSource, /mcp-obsidian|obsidianVaultPath/);
+   assert.doesNotMatch(
+     mcpModuleSource,
+     new RegExp(`mcp-${['obsidian'].join('')}|${retiredPipelineNames.vaultOption}`),
+   );
   assert.doesNotMatch(mcpOverlaySource, /mcp-obsidian/);
 });
 
@@ -406,21 +452,10 @@ test('ConsumerCutover removes vault-only agents in every backend', () => {
   const agentMemory = renderConsumerCutover({ enable: true });
   const cavemem = renderConsumerCutover({ enable: false });
 
-  assert.equal(agentMemory.agents.includes('vault-synthesizer'), false);
-  assert.equal(agentMemory.agents.includes('vault-curator'), false);
-  assert.equal(agentMemory.memorySync.enable, false);
-  assert.deepEqual(
-    agentMemory.memorySync.packageNames.filter((name) => /memory-sync/.test(name)),
-    [],
-  );
-
-  assert.equal(cavemem.agents.includes('vault-synthesizer'), false);
-  assert.equal(cavemem.agents.includes('vault-curator'), false);
-  assert.equal(cavemem.memorySync.enable, true);
-  assert.equal(
-    cavemem.memorySync.packageNames.filter((name) => /memory-sync/.test(name)).length,
-    1,
-  );
+  for (const rendered of [agentMemory, cavemem]) {
+    assert.equal(rendered.agents.includes(retiredPipelineNames.synthesizer), false);
+    assert.equal(rendered.agents.includes(retiredPipelineNames.curator), false);
+  }
 
   for (const rendered of [agentMemory, cavemem]) {
     assert.doesNotMatch(

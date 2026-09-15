@@ -9,13 +9,13 @@
   opencode wrapper's cavemem health check (Task 5.3). The option
   surface is the cross-task contract: per spec Req 10.1 and 10.5,
   `dataDir` and the `embedding.*` shape are read by the future
-  sqlite-backup extension and the one-shot importer (Task 8.x), and a
+  sqlite-backup extension and cavemem itself, and a
   rename here is treated as a breaking change.
 
   Locked downstream contracts (Req 10.1, 10.2, 10.5):
     * `home.cavemem.dataDir` — canonical SQLite database / pidfile /
-      logs location. Read by the importer, the future sqlite-backup
-      extension, and cavemem itself.
+      logs location. Read by the sqlite-backup extension and cavemem
+      itself.
     * `home.cavemem.embedding.{provider,model,endpoint,apiKey}` —
       consumed by the settings.json renderer (Task 4.1). The shape
       mirrors cavemem's `~/.cavemem/settings.json` `embedding` block.
@@ -24,8 +24,7 @@
       `compression.intensity` enum verbatim.
     * mcpproxy upstream server name (Task 5.1) — the literal string
       `cavemem`. Not an option; documented in the `dataDir` description
-      so the future synthesizer-agent's tool allow-list can target it
-      without ambiguity.
+      so cavemem MCP clients can target it without ambiguity.
 
   Tasks 3.1 and 4.1 of the spec land here:
 
@@ -72,16 +71,15 @@ in
 
         This path is the canonical, read-back-able cross-spec contract
         (Req 10.1): the future sqlite-backup extension targets the
-        SQLite file under this directory, the one-shot vault importer
-        (Task 8.x) reads the same database, and the cavemem CLI binary
+        SQLite file under this directory, and the cavemem CLI binary
         invoked by mcphub and by the opencode wrapper resolves
         `~/.cavemem`-relative paths against this value.
 
         The mcphub server registered for cavemem under
         `home.mcp.extraServers` (Task 5.1) is named with the literal
         string `cavemem` — that name is also a locked downstream
-        contract (Req 10.2) so the future vault-synthesizer-agent's
-        tool allow-list can target `hub_cavemem__*` without ambiguity.
+        contract (Req 10.2) so cavemem MCP clients can target the
+        upstream without ambiguity.
       '';
     };
 
@@ -224,22 +222,6 @@ in
     let
       e = cfg.embedding;
 
-      # Task 7.2 (Req 8.1-8.8; design.md §ImporterScript): the
-      # one-shot Obsidian → cavemem migration tool. The wrapper in
-      # `scripts/cavemem-import-vault.nix` bakes
-      # `home.mcp.obsidianVaultPath` and `cfg.dataDir` into the
-      # derivation at HM evaluation time so the operator runs
-      # `cavemem-import-vault` with no flags. callPackage feeds the
-      # standard `pkgs.cavemem-importer-deps` (Task 7.1) plus the
-      # two per-host parameters; the per-host vault path is read
-      # from `home.mcp.obsidianVaultPath` (defined in
-      # `home-manager/mcp/default.nix`) and differs between the
-      # Shopify Google-Drive vault and the personal iCloud vault.
-      cavememImportVault = pkgs.callPackage ../../scripts/cavemem-import-vault.nix {
-        vaultPath = config.home.mcp.obsidianVaultPath;
-        inherit (cfg) dataDir;
-      };
-
       # Task 8.1 (Req 9.1-9.6, 10.6; design.md §SmokeTestScript): the
       # runtime verifier for the four upstream patches carried by
       # `pkgs.cavemem`. Lives in scripts/ rather than overlays/ because
@@ -350,10 +332,6 @@ in
     {
       home.packages = [
         pkgs.cavemem
-        # Task 7.2: per-host wrapper around the Node importer; vault
-        # path and dataDir are baked in at HM build time so the
-        # operator just runs `cavemem-import-vault` (no flags).
-        cavememImportVault
         # Task 8.1: runtime verifier for the four upstream patches
         # (bugs #14, #25, #39, and the data-dir env override). Always
         # ships alongside cavemem so an operator can re-run it after
@@ -390,7 +368,7 @@ in
       # `home-manager/mcp/default.nix`). The orchestrator's translator
       # (mcpproxy-migration spec, task 5.1) renders this attrset into
       # mcpproxy's `~/.config/mcpproxy/mcp_config.json` array form
-      # alongside the obsidian, github, and nixos entries, preserving
+      # alongside the configured entries, preserving
       # the `CAVEMEM_DATA_DIR` env propagation below (R7.3 of the
       # mcpproxy-migration spec).
       #
