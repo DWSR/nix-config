@@ -11,6 +11,7 @@ let
   piMcpproxyGo = pkgs.callPackage ../../scripts/pi-mcpproxy-go.nix {
     src = ./extensions/pi-mcpproxy-go;
   };
+  piSubagents = pkgs.callPackage ../../scripts/pi-subagents.nix { };
 in
 {
   imports = [ inputs.pi.homeModules.default ];
@@ -51,6 +52,7 @@ in
     extensions = [
       piAgentMemory
       "${piMcpproxyGo}/index.ts"
+      "${piSubagents}/index.ts"
     ];
   };
 }
