@@ -20,7 +20,7 @@ The output is an analysis artifact that feeds directly into `create-yb-fix-pr`.
 
 **Inputs:** issue number/URL (required), target version(s) (optional).
 **Outputs:** verdict, `/tmp/claude/yb-issue-<NNNN>-analysis.md`, optional
-backlog attachment manifest, optional public issue comment, memory note.
+backlog attachment manifest, optional public issue comment, AgentMemory handoff.
 
 ## Execution model — dispatch the subagent
 
@@ -42,7 +42,7 @@ As the dispatcher:
    (`/tmp/claude/yb-issue-<NNNN>-analysis.md`), and the required return
    format (verdict, root cause file:line, trigger-matrix summary, repro
    commands, the complete supported-release matrix, backport provenance,
-   artifact path, memory-note path, pending questions).
+   artifact path, AgentMemory ID/query handoff, pending questions).
 3. When the subagent returns with pending questions (e.g. "may I post the
    repro comment?"), relay them to the user via the question tool, then
    resume the same task (pass the prior `task_id`) with the answers.
@@ -61,20 +61,27 @@ from an internal source (support case, Slack), reproduce with synthetic inputs
 and reference only public facts. When unsure whether a string is sensitive,
 ask the user.
 
-### Step 0: Memory recall first
+### Step 0: AgentMemory recall first
 
-Before touching the issue, search prior work (the issue may already be
-validated — e.g. #32549 was fully validated, fixed, and memorialized):
+Before touching the issue, search prior work through mcpproxy. Discover the
+stock tools with `retrieve_tools(query: "agentmemory core recall")` and
+`retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+`name`, its `call_with` class, and an `args` object; invoke the returned
+`agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+`call_tool_read` for the issue number and distinctive symptom terms. Use
+`agentmemory:memory_sessions` through `call_tool_read` only when recent session
+listings are needed.
 
-1. Obsidian: `search-vault` with the issue number (`"32549"`) and with symptom
-   keywords (`"snprintf CHECK failed"`), path `memories/`; `search-by-tags`
-   with `["yugabyte-db"]` / `["yugabytedb"]`.
-2. Cavemem: `search` with the issue number and symptom keywords.
+If a caller supplies `MEMORY_ID` and `MEMORY_QUERY`, recall by
+`MEMORY_QUERY` and verify the returned record ID equals `MEMORY_ID` before
+relying on the finding. Consumers recall by `MEMORY_QUERY` and verify the
+returned record ID equals `MEMORY_ID`; they never fetch by ID. Never call an
+AgentMemory REST endpoint or invent a tool name.
 
 Reuse a prior root cause and reproduction design, but first resolve today's
 required target versions. Skip execution only for cells whose prior evidence
-tested those exact versions; rerun every stale or missing cell. An older memory
-that predates the current support matrix is not a complete validation.
+tested those exact versions; rerun every stale or missing cell. An older
+finding that predates the current support matrix is not a complete validation.
 
 ### Step 1: Fetch and parse the issue
 
@@ -314,12 +321,26 @@ signature block per `src/AGENTS.md`:
 _automated · <agent>_
 ```
 
-### Step 7: Memory
+### Step 7: AgentMemory handoff
 
-Bug root cause identified → memory-worthy by definition. Dedup first (search
-tags + issue number), then create/update
-`memories/<date>-yb-<slug>.md` covering: signature, root cause file:line,
-trigger matrix, the complete supported-release runtime matrix, first-fixed
-release provenance, repro commands, verdict, and — if a fix follows — a pointer
-to the PR. Exemplar:
-`memories/2026-07-09-yb-master-negative-halfhour-tz-crash.md`.
+Bug root cause identified -> memory-worthy by definition. Discover the stock
+write tools with
+`retrieve_tools(query: "agentmemory memory save lesson")`. Use the exact
+returned `name`, its `call_with` class, and an `args` object; invoke the exact
+returned `agentmemory:memory_save` or `agentmemory:memory_lesson_save` through
+`call_tool_write`. Save a concise, confidentiality-checked summary covering
+the signature, root cause file:line, trigger matrix, supported-release runtime
+matrix, first-fixed release provenance, reproduction, verdict, and any fix
+pointer. Keep the analysis artifact and attachment paths in the existing
+workflow; do not replace them with a memory record. Never call an AgentMemory
+REST endpoint or invent a tool name.
+
+When the save succeeds, return the searchable handoff exactly:
+
+```text
+MEMORY_ID: <id>
+MEMORY_QUERY: <distinctive title and concepts>
+```
+
+Consumers recall by `MEMORY_QUERY` and verify the returned record ID equals
+`MEMORY_ID`; they do not fetch by ID.

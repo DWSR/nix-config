@@ -63,17 +63,27 @@ The confidentiality scrub is not weakened by any of this: branch name, commit
 messages, code, tests, PR title/body are all public. Scrub per
 `src/AGENTS.md` § Confidentiality before every publish step.
 
-## Step 0: Inputs and memory recall
+## Step 0: Inputs and AgentMemory recall
 
 - **Analysis** — `/tmp/claude/yb-issue-<NNNN>-analysis.md` from
-  `validate-yb-issue`, a memory note, or equivalent in-conversation
-  analysis. It must name the root cause (file:line), fix direction, and test
-  strategy. Verdict must be VALIDATED (or the user explicitly waives it).
+  `validate-yb-issue` or equivalent in-conversation analysis. It must name the
+  root cause (file:line), fix direction, and test strategy. Verdict must be
+  VALIDATED (or the user explicitly waives it).
 - **Issue number** — required for branch and title. If none exists, follow
   `.claude/skills/create-issue/SKILL.md` to file one first.
-- Search Obsidian memories for the issue number and for
-  `create-pr` / `feature-stack` tags — pushes or partial PRs may already
-  exist from a prior session. Check for an existing PR before doing anything:
+- **AgentMemory** — Search prior issue and workflow findings through mcpproxy
+  before doing anything. Discover the stock tools with
+  `retrieve_tools(query: "agentmemory core recall")` and
+  `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+  `name`, its `call_with` class, and an `args` object; invoke the returned
+  `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+  `call_tool_read` for the issue number and `create-pr` / `feature-stack`
+  concepts. Use `agentmemory:memory_sessions` through `call_tool_read` only
+  when recent session listings are needed.
+- If the caller supplies `MEMORY_ID` and `MEMORY_QUERY`, recall by
+  `MEMORY_QUERY` and verify the returned record ID equals `MEMORY_ID` before
+  relying on the finding. Never fetch by ID, call an AgentMemory REST endpoint,
+  or invent a tool name. Check for an existing PR before doing anything:
 
   ```bash
   gh api 'repos/yugabyte/yugabyte-db/pulls?state=all&head=yugabyte:feature-stack/<branch>' \
@@ -233,9 +243,25 @@ draft-vs-ready if it was created as a draft.
 - The consumer Gemini Code Assist reviewer is shut down — do not wait for
   `/gemini review` output; still re-fetch review threads after every push.
 
-## Step 8: Memory
+## Step 8: AgentMemory handoff
 
-Update `memories/2026-07-10-yugabyte-create-pr-workflow-gotchas.md` (or the
-feature-stack workflow memory) with anything new this run taught — new
-failure modes, ruleset changes, PR numbers validating the workflow — and add
-the session to its `sessions:` list.
+If this run establishes a reusable fix or publishing finding, discover the
+stock write tools with
+`retrieve_tools(query: "agentmemory memory save lesson")`. Use the exact
+returned `name`, its `call_with` class, and an `args` object; invoke the exact
+returned `agentmemory:memory_save` or `agentmemory:memory_lesson_save` through
+`call_tool_write`. Never call an AgentMemory REST endpoint or invent a tool
+name. Save a concise, confidentiality-checked summary of the issue, fix,
+verification, or workflow finding. Keep the analysis artifact, build logs, and
+PR data in their existing workflows rather than replacing them with a memory
+record.
+
+When a save succeeds, report the searchable handoff exactly:
+
+```text
+MEMORY_ID: <id>
+MEMORY_QUERY: <distinctive title and concepts>
+```
+
+Consumers recall by `MEMORY_QUERY` and verify the returned record ID equals
+`MEMORY_ID`; they do not fetch by ID.

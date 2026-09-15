@@ -103,7 +103,7 @@
   - _Boundary: Prompt Contract Cutover: Shopify Agents_
   - _Depends: 2_
 
-- [ ] 3.8 Align Shopify skills and host prompt wiring
+- [x] 3.8 Align Shopify skills and host prompt wiring
   - Convert the two memory-aware skills to AgentMemory recall and save behavior with the ID-plus-query handoff.
   - Remove host transformations that retained Obsidian and load the revised agent and skill sources directly.
   - Completion is observable when Shopify render tests use the revised sources, preserve skill and agent registration, and contain no active Obsidian workflow.
