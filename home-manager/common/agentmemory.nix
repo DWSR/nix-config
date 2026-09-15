@@ -35,6 +35,11 @@ let
     restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
   };
 
+  obsidianImportPackage = pkgs.callPackage ../../scripts/agentmemory-import-obsidian.nix {
+    inherit (cfg) bearerReference;
+    restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
+  };
+
   envLine = name: value: "${name}=${lib.escapeShellArg (toString value)}";
 
   settingsText =
@@ -167,6 +172,7 @@ in
           agentmemoryLauncher
           cfg.statusPackage
           importPackage
+          obsidianImportPackage
           (pkgs.callPackage ../../scripts/opencode-cache-validate.nix { })
         ];
 

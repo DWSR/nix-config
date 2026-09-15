@@ -1388,7 +1388,6 @@ function obsidianHelpText(): string {
     '',
     'Options:',
     '  --dry-run       validate and report notes without contacting AgentMemory',
-    '  --endpoint URL  override AGENTMEMORY_URL for a live import',
     '  --help          show this help text',
   ].join('\n') + '\n';
 }

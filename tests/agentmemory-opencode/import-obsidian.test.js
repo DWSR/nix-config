@@ -11,8 +11,10 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-obsidian.ts');
+const importerPackageNixPath = path.join(repoRoot, 'scripts', 'agentmemory-import-obsidian.nix');
 let cachedDependencyNodePath;
 let cachedImporterNodeBin;
+const cachedImporterPackagePaths = new Map();
 
 function runDiscovery(vaultPath) {
   const script = `
@@ -91,6 +93,73 @@ function importerNodeBin() {
   ).trim();
   cachedImporterNodeBin = path.join(nodePackage, 'bin', 'node');
   return cachedImporterNodeBin;
+}
+
+function importerPackagePath(restEndpoint = 'http://127.0.0.1:3111') {
+  if (cachedImporterPackagePaths.has(restEndpoint)) {
+    return cachedImporterPackagePaths.get(restEndpoint);
+  }
+  const configured = process.env.AGENTMEMORY_OBSIDIAN_IMPORTER_BIN;
+  if (configured && restEndpoint === 'http://127.0.0.1:3111') {
+    cachedImporterPackagePaths.set(restEndpoint, configured);
+    return configured;
+  }
+
+  const expression = `(let
+    flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+    pkgs = import flake.inputs.nixpkgs {
+      system = "aarch64-darwin";
+      overlays = [ flake.outputs.overlays.custom-packages ];
+    };
+  in (pkgs.callPackage ${JSON.stringify(importerPackageNixPath)} {
+    bearerReference = "fixture-bearer";
+    restEndpoint = ${JSON.stringify(restEndpoint)};
+  }).drvPath)`;
+  const drvPath = execFileSync('nix', ['eval', '--impure', '--raw', '--expr', expression], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim();
+  const packagePath = `${execFileSync('nix-store', ['--realise', drvPath], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  }).trim().split('\n').at(-1)}/bin/agentmemory-import-obsidian`;
+  cachedImporterPackagePaths.set(restEndpoint, packagePath);
+  return packagePath;
+}
+
+function runPackagedObsidianImporter(restEndpoint, args, extraEnv = {}) {
+  return spawnSync(
+    importerPackagePath(restEndpoint),
+    args,
+    {
+      cwd: repoRoot,
+      env: { ...process.env, ...extraEnv },
+      encoding: 'utf8',
+      maxBuffer: 20 * 1024 * 1024,
+    },
+  );
+}
+
+function runPackagedObsidianImporterAsync(restEndpoint, args, extraEnv = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      importerPackagePath(restEndpoint),
+      args,
+      {
+        cwd: repoRoot,
+        env: { ...process.env, ...extraEnv },
+      },
+    );
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    child.on('close', (status) => resolve({
+      status,
+      stdout: Buffer.concat(stdout).toString('utf8'),
+      stderr: Buffer.concat(stderr).toString('utf8'),
+    }));
+  });
 }
 
 function runMapping(vaultPath, capturedAt = '2026-09-15T01:00:00.000Z') {
@@ -1152,6 +1221,150 @@ test('supports help without a vault path or bearer', () => {
   assert.match(result.stdout, /--help/);
   assert.equal(result.stdout.includes('help-secret-must-not-be-read'), false);
   assert.equal(result.stderr, '');
+});
+
+test('packages the managed importer with Node 22, YAML dependencies, and no embedded bearer', () => {
+  const packagePath = importerPackagePath();
+  const packageText = fs.readFileSync(packagePath, 'utf8');
+
+  assert.match(packageText, /nodejs-22\.[^/]*\/bin\/node/);
+  assert.match(packageText, /--experimental-strip-types/);
+  assert.match(packageText, /agentmemory-import-obsidian\.ts/);
+  assert.match(packageText, /AGENTMEMORY_URL=.*http:\/\/127\.0\.0\.1:3111/);
+  assert.match(packageText, /cavemem-importer-deps-[^/]+\/lib\/node_modules/);
+  assert.match(packageText, /find-generic-password -s mcpproxy -a fixture-bearer -w/);
+  assert.doesNotMatch(packageText, /fixture-(?:secret|bearer-value)/);
+  assert.doesNotMatch(packageText, /memories\//);
+});
+
+test('packaged importer skips Keychain for help and dry-run and resolves bearer only for live mode', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'managed.md', '# Managed package\n\nmanaged package body\n');
+  const securityPath = path.join(vaultPath, 'security');
+  const securityLog = path.join(vaultPath, 'security.log');
+  fs.writeFileSync(
+    securityPath,
+    '#!/bin/sh\nprintf "%s\\n" "$*" >> "$AGENTMEMORY_IMPORT_SECURITY_LOG"\n' +
+      'if [ "${SECURITY_FAIL:-0}" = 1 ]; then exit 1; fi\n' +
+      'printf "managed-import-secret\\n"\n',
+    { mode: 0o755 },
+  );
+  fs.chmodSync(securityPath, 0o755);
+  const stored = new Map();
+  const secret = 'managed-import-secret';
+  const mock = await startObsidianMock(({ payload, authorization }) => {
+    assert.equal(authorization, `Bearer ${secret}`);
+    return { body: successfulImportResponse(payload, stored) };
+  });
+
+  const packageEnvironment = {
+    AGENTMEMORY_IMPORT_SECURITY_BIN: securityPath,
+    AGENTMEMORY_IMPORT_SECURITY_LOG: securityLog,
+    AGENTMEMORY_SECRET: '',
+    AGENTMEMORY_URL: 'http://invalid.example',
+  };
+
+  try {
+    const help = runPackagedObsidianImporter(mock.url, ['--help'], {
+      ...packageEnvironment,
+      SECURITY_FAIL: '1',
+    });
+    assert.equal(help.status, 0, `${help.stderr}\n${help.stdout}`);
+    assert.match(help.stdout, /Usage: agentmemory-import-obsidian/);
+    assert.doesNotMatch(help.stdout, /--(?:endpoint|url)/);
+    assert.equal(fs.existsSync(securityLog), false);
+
+    const dryRun = runPackagedObsidianImporter(mock.url, [vaultPath, '--dry-run'], {
+      ...packageEnvironment,
+      SECURITY_FAIL: '1',
+    });
+    assert.equal(dryRun.status, 0, `${dryRun.stderr}\n${dryRun.stdout}`);
+    assert.deepEqual(JSON.parse(dryRun.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.equal(fs.existsSync(securityLog), false);
+
+    const missingBearer = runPackagedObsidianImporter(mock.url, [vaultPath], {
+      ...packageEnvironment,
+      SECURITY_FAIL: '1',
+    });
+    assert.equal(missingBearer.status, 1);
+    assert.match(missingBearer.stderr, /bearer unavailable from macOS Keychain/);
+    assert.equal(missingBearer.stdout, '');
+    assert.match(fs.readFileSync(securityLog, 'utf8'), /-s mcpproxy -a fixture-bearer -w/);
+
+    fs.rmSync(securityLog);
+    const injected = await runPackagedObsidianImporterAsync(mock.url, [vaultPath], {
+      ...packageEnvironment,
+      AGENTMEMORY_SECRET: secret,
+    });
+    assert.equal(injected.status, 0, `${injected.stderr}\n${injected.stdout}`);
+    assert.equal(fs.existsSync(securityLog), false);
+    assert.equal(injected.stdout.includes(secret), false);
+    assert.equal(injected.stdout.includes('managed package body'), false);
+
+    const keychain = await runPackagedObsidianImporterAsync(mock.url, [vaultPath], packageEnvironment);
+    assert.equal(keychain.status, 0, `${keychain.stderr}\n${keychain.stdout}`);
+    assert.equal(keychain.stdout.includes('fixture-bearer'), false);
+    assert.equal(keychain.stdout.includes('managed package body'), false);
+    assert.equal(mock.requests.length, 2);
+  } finally {
+    await mock.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
+});
+
+test('managed importer rejects endpoint overrides before Keychain lookup or bearer transmission', async () => {
+  const vaultPath = createVault();
+  writeObsidianNote(vaultPath, 'managed.md', '# Managed package\n\nmanaged package body\n');
+  const securityPath = path.join(vaultPath, 'security');
+  const securityLog = path.join(vaultPath, 'security.log');
+  const bearer = 'managed-endpoint-bearer';
+  fs.writeFileSync(
+    securityPath,
+    '#!/bin/sh\nprintf "%s\\n" "$*" >> "$AGENTMEMORY_IMPORT_SECURITY_LOG"\n' +
+      `printf "${bearer}\\n"\n`,
+    { mode: 0o755 },
+  );
+  fs.chmodSync(securityPath, 0o755);
+  const external = await startObsidianMock(({ payload }) => ({
+    body: successfulImportResponse(payload, new Map()),
+  }));
+  const packageEnvironment = {
+    AGENTMEMORY_IMPORT_SECURITY_BIN: securityPath,
+    AGENTMEMORY_IMPORT_SECURITY_LOG: securityLog,
+    AGENTMEMORY_SECRET: '',
+    AGENTMEMORY_URL: 'http://invalid.example',
+  };
+
+  try {
+    for (const override of [
+      ['--endpoint', external.url],
+      ['--url', external.url],
+      [`--endpoint=${external.url}`],
+      [`--url=${external.url}`],
+    ]) {
+      const result = runPackagedObsidianImporter(
+        'http://127.0.0.1:1',
+        [vaultPath, ...override],
+        packageEnvironment,
+      );
+      assert.equal(result.status, 2, `${override[0]}: ${result.stderr}\n${result.stdout}`);
+      assert.match(result.stderr, /managed importer.*--endpoint.*--url.*configured AgentMemory/i);
+      assert.equal(result.stdout, '');
+      assert.equal(fs.existsSync(securityLog), false);
+      assert.equal(external.requests.length, 0);
+      assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(bearer));
+    }
+  } finally {
+    await external.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  }
 });
 
 test('submits the exact authenticated envelope and keeps same-path reruns already-present', async () => {

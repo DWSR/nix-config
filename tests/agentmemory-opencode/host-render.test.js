@@ -49,6 +49,9 @@ function renderHosts() {
               enginePort
               bearerReference
               ;
+            hasObsidianImporter = builtins.any (
+              package: (package.name or "") == "agentmemory-import-obsidian"
+            ) hm.home.packages;
             settings = hm.home.file.\${settingsPath}.text;
             launchd = {
               inherit (agentmemoryJob.config) Label EnvironmentVariables;
@@ -67,6 +70,7 @@ function renderHosts() {
             contextHasStockAgentMemory = lib.hasInfix "stock AgentMemory" hm.programs.opencode.context;
             wrapperHasAgentMemoryPreflight = lib.hasInfix "AgentMemory daemon preflight failed" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
             wrapperHasCavememPreflight = lib.hasInfix "cavemem MCP server not reachable" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
+            wrapperHasObsidianImporter = lib.hasInfix "agentmemory-import-obsidian" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
           };
           consumers = {
             memorySync = hm.programs.memory-sync.enable;
@@ -115,6 +119,8 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.viewerPort, 3113);
     assert.equal(config.agentmemory.enginePort, 49134);
     assert.equal(config.agentmemory.bearerReference, 'agentmemory-bearer');
+    assert.equal(config.agentmemory.hasObsidianImporter, true, `${host} exposes the managed Obsidian importer`);
+    assert.equal(config.opencode.wrapperHasObsidianImporter, false, `${host} does not invoke the importer at startup`);
     assert.equal(config.agentmemory.launchd.Label, 'dev.dwsr.agentmemory');
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR, config.agentmemory.dataDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_RUNTIME_DIR, config.agentmemory.runtimeDir);

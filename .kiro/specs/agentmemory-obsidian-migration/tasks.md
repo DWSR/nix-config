@@ -33,7 +33,7 @@
   - _Requirements: 3.2, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 4.2, 4.3, 4.4, 4.6_
   - _Boundary: Importer Core: Execution and Report_
 
-- [ ] 2. Package and expose the managed import command
+- [x] 2. Package and expose the managed import command
   - Package the importer with Node 22 and the existing YAML dependency, accepting one absolute vault path plus dry-run and help modes.
   - Resolve the configured loopback endpoint and Keychain bearer only for live runs, with no secret in arguments, output, or the Nix store.
   - Install the command with AgentMemory on both configured hosts without invoking it during activation or startup.

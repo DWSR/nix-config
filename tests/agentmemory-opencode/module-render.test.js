@@ -209,13 +209,16 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.deepEqual(first, second);
   assert.match(first.files.join('\n'), /\/tmp\/agentmemory\/runtime\/\.env/);
   assert.ok(first.activation.includes('agentmemoryLogDir'));
+  assert.equal(first.activation.includes('agentmemory-import-obsidian'), false);
   assert.ok(first.packages.some((name) => name.startsWith('agentmemory-')));
   assert.ok(first.packages.includes('agentmemory-import-cavemem'));
+  assert.ok(first.packages.includes('agentmemory-import-obsidian'));
   assert.match(first.agentmemoryCli.source, /AGENTMEMORY_SECURITY_BIN/);
   assert.match(first.agentmemoryCli.source, /find-generic-password -s mcpproxy -a agentmemory-bearer -w/);
   assert.match(first.agentmemoryCli.source, /agentmemory-0\.9\.29\/bin\/agentmemory/);
   assert.equal(first.launchd.label, 'dev.dwsr.agentmemory');
   assert.match(first.launchd.programArguments.at(-1), /\/bin\/agentmemory$/);
+  assert.doesNotMatch(JSON.stringify(first.launchd), /agentmemory-import-obsidian/);
   assert.equal(first.launchd.environment.AGENTMEMORY_DATA_DIR, '/tmp/agentmemory/data');
   assert.equal(first.launchd.environment.AGENTMEMORY_RUNTIME_DIR, '/tmp/agentmemory/runtime');
   assert.equal(first.launchd.environment.III_REST_PORT, '35111');
