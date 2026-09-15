@@ -12,11 +12,14 @@ const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const {
   assertPortAvailable,
+  assertNoSecretOnDisk,
   createObsidianImportHarness,
   isProcessAlive,
   isProcessGroupAlive,
   isProcessIdentityAlive,
+  listAllListeningProcesses,
   listListeningProcesses,
+  refreshOwnedProcessRecords,
   startMockImportEndpoint,
   startPackagedAgentMemory,
   stopOwnedDaemon,
@@ -30,6 +33,7 @@ let cachedDependencyNodePath;
 let cachedImporterNodeBin;
 const cachedImporterPackagePaths = new Map();
 let cachedAgentMemoryPackagePath;
+let cachedMcpProxyPackagePath;
 
 function agentMemoryPackagePath() {
   if (cachedAgentMemoryPackagePath) return cachedAgentMemoryPackagePath;
@@ -40,6 +44,189 @@ function agentMemoryPackagePath() {
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
   return cachedAgentMemoryPackagePath;
+}
+
+function mcpProxyPackagePath() {
+  if (cachedMcpProxyPackagePath) return cachedMcpProxyPackagePath;
+  const configured = process.env.MCPPROXY_PACKAGE_PATH;
+  cachedMcpProxyPackagePath = configured || execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.ShopifyLaptop.pkgs.mcpproxy-go'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  ).trim().split('\n').at(-1);
+  return cachedMcpProxyPackagePath;
+}
+
+async function freePort() {
+  const server = net.createServer();
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      assert.ok(address && typeof address === 'object');
+      server.close((error) => (error ? reject(error) : resolve(address.port)));
+    });
+  });
+}
+
+async function startStockCoreProxy(harness, daemon) {
+  const port = await freePort();
+  const configPath = path.join(harness.configDir, 'mcp-config.json');
+  const dataDir = path.join(harness.configDir, 'mcp-data');
+  const proxyBinary = path.join(mcpProxyPackagePath(), 'bin/mcpproxy');
+  fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(configPath, JSON.stringify({
+    listen: `127.0.0.1:${port}`,
+    routing_mode: 'retrieve_tools',
+    quarantine_enabled: false,
+    require_mcp_auth: false,
+    mcpServers: [{
+      name: 'agentmemory',
+      protocol: 'stdio',
+      command: path.join(agentMemoryPackagePath(), 'bin/agentmemory-mcp'),
+      args: [],
+      enabled: true,
+      quarantined: false,
+      env: {
+        AGENTMEMORY_BM25_MAX_ENTRIES: '100000',
+        AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES: '50000',
+        AGENTMEMORY_URL: daemon.baseUrl,
+        AGENTMEMORY_SECRET: '${env:AGENTMEMORY_BEARER}',
+        AGENTMEMORY_TOOLS: 'core',
+      },
+    }],
+  }));
+  const output = { stderr: '' };
+  const proxy = spawn(
+    proxyBinary,
+    [
+      'serve',
+      `--config=${configPath}`,
+      `--data-dir=${dataDir}`,
+      `--listen=127.0.0.1:${port}`,
+      '--log-to-file=false',
+      '--allow-server-add=false',
+      '--allow-server-remove=false',
+    ],
+    {
+      cwd: harness.root,
+      env: { ...process.env, HOME: harness.root, AGENTMEMORY_BEARER: harness.bearer },
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+    },
+  );
+  proxy.stderr.setEncoding('utf8');
+  proxy.stderr.on('data', (chunk) => { output.stderr += chunk; });
+
+  const record = {
+    child: proxy,
+    pid: proxy.pid,
+    processGroupId: proxy.pid,
+    identity: configPath,
+    identityMarkers: [configPath, dataDir],
+    processOwnership: 'anchored',
+    listenerIdentityMarkers: [proxyBinary, configPath, dataDir],
+    listenerOwnerPids: [proxy.pid],
+    listenerOwnerGroups: [proxy.pid],
+    ownedPids: [proxy.pid],
+    ownedProcessRecords: [{ pid: proxy.pid, processGroupId: proxy.pid, identity: configPath }],
+    ownedProcessGroups: [{ processGroupId: proxy.pid, identity: configPath }],
+    ownedListenerPids: [],
+    ownedListenerRecords: [],
+    ports: [port],
+    output,
+    cleanupTimeoutMs: harness.cleanupTimeoutMs,
+    closed: false,
+    async close() {
+      await stopOwnedDaemon(record);
+    },
+  };
+  harness.registerOwnedDaemon(record);
+  record.claimNewListeners = () => refreshOwnedProcessRecords(record, Date.now() + 5_000);
+
+  const deadline = Date.now() + 30_000;
+  let lastError = 'not attempted';
+  try {
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+        if (response.ok) {
+          const startupOwnership = record.claimNewListeners();
+          if (startupOwnership.probeErrors.length > 0) {
+            throw new Error(`mcpproxy ownership discovery failed: ${startupOwnership.probeErrors.join(' | ')}`);
+          }
+          return {
+            configPath,
+            dataDir,
+            port,
+            proxy: record,
+            output,
+            root: harness.root,
+            bearer: harness.bearer,
+          };
+        }
+        lastError = `HTTP ${response.status}`;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+      if (proxy.exitCode !== null) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error(`mcpproxy did not become ready (${lastError})\n${output.stderr}`);
+  } catch (error) {
+    try {
+      await stopOwnedDaemon(record);
+    } catch (cleanupError) {
+      const safeError = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; proxy cleanup failed: ${safeError}`.replaceAll(harness.bearer, '[REDACTED]'));
+    }
+    throw new Error((error instanceof Error ? error.message : String(error)).replaceAll(harness.bearer, '[REDACTED]'));
+  }
+}
+
+function callStockCore(proxyHarness, toolName, args) {
+  const result = spawnSync(
+    path.join(mcpProxyPackagePath(), 'bin/mcpproxy'),
+    [
+      'call',
+      'tool-read',
+      `--tool-name=agentmemory:${toolName}`,
+      `--json_args=${JSON.stringify(args)}`,
+      '--output=json',
+      '--reason=Validate imported AgentMemory recall',
+      '--sensitivity=internal',
+      `--config=${proxyHarness.configPath}`,
+      `--data-dir=${proxyHarness.dataDir}`,
+    ],
+    {
+      cwd: proxyHarness.root,
+      env: { ...process.env, HOME: proxyHarness.root, AGENTMEMORY_BEARER: proxyHarness.bearer },
+      encoding: 'utf8',
+      timeout: 30_000,
+    },
+  );
+  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+  proxyHarness.proxy.claimNewListeners?.();
+  return JSON.parse(result.stdout);
+}
+
+async function waitForStockRecall(proxyHarness, query, requiredTerms) {
+  const deadline = Date.now() + 30_000;
+  let lastResult;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      lastResult = callStockCore(proxyHarness, 'memory_recall', { query, limit: 20 });
+      const serialized = JSON.stringify(lastResult);
+      if (requiredTerms.every((term) => serialized.includes(term))) return lastResult;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(
+    `stock AgentMemory recall did not become ready: ${lastError?.message || JSON.stringify(lastResult)}`,
+  );
 }
 
 function runDiscovery(vaultPath) {
@@ -413,13 +600,17 @@ function spawnUnmarkedGroupDescendantFixture(marker, pidFile) {
   );
 }
 
-function spawnDetachedListenerFixture(readyFile) {
+function spawnDetachedListenerFixture(readyFile, { marker = '', port = 0, host = '127.0.0.1' } = {}) {
   const source = [
     "const fs = require('node:fs');",
     "const net = require('node:net');",
     'const readyFile = process.argv[1];',
+    'const marker = process.argv[2];',
+    'const port = Number(process.argv[3]);',
+    'const host = process.argv[4];',
+    'void marker;',
     'const server = net.createServer(() => {});',
-    "server.listen(0, '127.0.0.1', () => {",
+    'server.listen(port, host, () => {',
     '  fs.writeFileSync(readyFile, String(server.address().port));',
     '});',
     "process.on('SIGTERM', () => {});",
@@ -427,7 +618,7 @@ function spawnDetachedListenerFixture(readyFile) {
   ].join('\n');
   return spawn(
     process.execPath,
-    ['-e', source, readyFile],
+    ['-e', source, readyFile, marker, String(port), host],
     { detached: true, stdio: 'ignore' },
   );
 }
@@ -1448,12 +1639,28 @@ test('packaged importer skips Keychain for help and dry-run and resolves bearer 
       AGENTMEMORY_SECRET: secret,
     });
     assert.equal(injected.status, 0, `${injected.stderr}\n${injected.stdout}`);
+    assert.deepEqual(JSON.parse(injected.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 1,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
     assert.equal(fs.existsSync(securityLog), false);
     assert.equal(injected.stdout.includes(secret), false);
     assert.equal(injected.stdout.includes('managed package body'), false);
 
     const keychain = await runPackagedObsidianImporterAsync(mock.url, [vaultPath], packageEnvironment);
     assert.equal(keychain.status, 0, `${keychain.stderr}\n${keychain.stdout}`);
+    assert.deepEqual(JSON.parse(keychain.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 0,
+      alreadyPresent: 1,
+      skipped: 0,
+      failed: 0,
+    });
     assert.equal(keychain.stdout.includes('fixture-bearer'), false);
     assert.equal(keychain.stdout.includes('managed package body'), false);
     assert.equal(mock.requests.length, 2);
@@ -2300,4 +2507,452 @@ test('packaged daemon harness tears down its owned process group and temporary t
   assert.equal(fs.existsSync(evidence.dataDir), false);
   assert.equal(fs.existsSync(evidence.runtimeDir), false);
   assert.equal(fs.existsSync(evidence.logDir), false);
+});
+
+test('stock core proxy leaves an unrelated same-port lookalike listener alive', {
+  timeout: 120_000,
+}, async () => {
+  let proxyHarness;
+  let lookalike;
+  let lookalikeFixtureDir;
+  await withObsidianImportHarness(async (harness) => {
+    const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+    proxyHarness = await startStockCoreProxy(harness, daemon);
+    lookalikeFixtureDir = fs.mkdtempSync(path.join(harness.root, 'lookalike-'));
+    const readyFile = path.join(lookalikeFixtureDir, 'listener.port');
+    lookalike = spawnDetachedListenerFixture(readyFile, {
+      marker: proxyHarness.configPath,
+      port: proxyHarness.port,
+      host: '::1',
+    });
+
+    try {
+      await waitForFile(readyFile);
+      assert.equal(Number(fs.readFileSync(readyFile, 'utf8')), proxyHarness.port);
+      assert.ok(
+        listAllListeningProcesses(Date.now() + 2_000).some(({ pid, port }) => (
+          pid === lookalike.pid && port === proxyHarness.port
+        )),
+      );
+
+      proxyHarness.proxy.claimNewListeners();
+      assert.equal(
+        proxyHarness.proxy.ownedListenerPids.includes(lookalike.pid),
+        false,
+        'unrelated same-port lookalike listener was claimed as proxy-owned',
+      );
+      await stopOwnedDaemon(proxyHarness.proxy);
+      assert.equal(isProcessAlive(lookalike.pid), true, 'unrelated listener was killed with the proxy');
+    } finally {
+      if (proxyHarness?.proxy && !proxyHarness.proxy.closed) {
+        await stopOwnedDaemon(proxyHarness.proxy);
+      }
+      if (lookalike?.pid && isProcessAlive(lookalike.pid)) killProcessGroup(lookalike.pid);
+      if (lookalikeFixtureDir) fs.rmSync(lookalikeFixtureDir, { recursive: true, force: true });
+    }
+  });
+});
+
+test('harness retains its root until a registered proxy survives teardown failure handling', {
+  timeout: 120_000,
+}, async () => {
+  let evidence;
+  let originalListenerProbe;
+  await assert.rejects(
+    withObsidianImportHarness(async (harness) => {
+      const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+      const proxyHarness = await startStockCoreProxy(harness, daemon);
+      originalListenerProbe = proxyHarness.proxy.listenerProbe;
+      proxyHarness.proxy.listenerProbe = () => {
+        throw new Error('forced proxy listener teardown failure');
+      };
+      evidence = {
+        root: harness.root,
+        proxy: proxyHarness.proxy,
+        pid: proxyHarness.proxy.pid,
+        processGroupId: proxyHarness.proxy.processGroupId,
+        port: proxyHarness.port,
+      };
+      throw new Error('intentional callback failure after proxy start');
+    }),
+    /intentional callback failure|forced proxy listener teardown failure|listener discovery/i,
+  );
+
+  try {
+    assert.equal(fs.existsSync(evidence.root), true, 'harness deleted the root before proxy cleanup completed');
+    assert.equal(isProcessAlive(evidence.pid), false, 'registered proxy survived teardown failure handling');
+  } finally {
+    evidence.proxy.listenerProbe = originalListenerProbe;
+    if (!evidence.proxy.closed) {
+      await stopOwnedDaemon(evidence.proxy);
+    }
+    if (fs.existsSync(evidence.root)) fs.rmSync(evidence.root, { recursive: true, force: true });
+  }
+});
+
+test('packaged importer persists a fixture recalled through the stock AgentMemory core surface', {
+  timeout: 120_000,
+}, async () => {
+  let proxyEvidence;
+  await withObsidianImportHarness(async (harness) => {
+    const title = 'Task 4.2 distinctive imported title';
+    const bodyTerm = 'task-4-2-distinctive-body-7f3c';
+    const source = [
+      '---',
+      'project: agentmemory-enhancements',
+      'tags:',
+      '  - memory',
+      '  - architecture',
+      'sessions:',
+      '  - task-4-2-session',
+      '---',
+      `# ${title}`,
+      '',
+      `${bodyTerm} remains verbatim in the imported record.`,
+      '',
+    ].join('\n');
+    harness.writeNote('task-4-2-fixture.md', source);
+    const sourceBefore = snapshotTree(harness.vaultPath);
+    const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+    const result = await runPackagedObsidianImporterAsync(
+      daemon.baseUrl,
+      [harness.vaultPath],
+      {
+        ...harness.importerEnvironment(),
+        AGENTMEMORY_SECRET: '',
+      },
+    );
+
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    assert.deepEqual(JSON.parse(result.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 1,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.equal(result.stdout.includes(harness.bearer), false);
+    assert.equal(result.stderr.includes(harness.bearer), false);
+    assert.equal(result.stdout.includes(bodyTerm), false);
+    assert.equal(result.stderr.includes(bodyTerm), false);
+    assert.deepEqual(snapshotTree(harness.vaultPath), sourceBefore);
+
+    const proxyHarness = await startStockCoreProxy(harness, daemon);
+    proxyEvidence = {
+      root: harness.root,
+      pid: proxyHarness.proxy.pid,
+      processGroupId: proxyHarness.proxy.processGroupId,
+      identity: proxyHarness.proxy.identity,
+      port: proxyHarness.port,
+    };
+    try {
+      const originalPath = path.join(harness.memoriesPath, 'task-4-2-fixture.md');
+      const originalId = `mem_obsidian_${crypto.createHash('sha256').update('memories/task-4-2-fixture.md').digest('hex')}`;
+      const recalled = await waitForStockRecall(
+        proxyHarness,
+        title,
+        [
+          title,
+          bodyTerm,
+          originalId,
+          'memories/task-4-2-fixture.md',
+          'obsidian-source:memories/task-4-2-fixture.md',
+        ],
+      );
+      assert.match(JSON.stringify(recalled), /memories\/task-4-2-fixture\.md/);
+
+      const changedTitle = 'Task 4.2 changed same-path title';
+      const changedBodyTerm = 'task-4-2-changed-same-path-body-91bd';
+      fs.writeFileSync(
+        originalPath,
+        source.replaceAll(title, changedTitle).replaceAll(bodyTerm, changedBodyTerm),
+      );
+      const changedSourceBefore = snapshotTree(harness.vaultPath);
+      const rerun = await runPackagedObsidianImporterAsync(
+        daemon.baseUrl,
+        [harness.vaultPath],
+        {
+          ...harness.importerEnvironment(),
+          AGENTMEMORY_SECRET: '',
+        },
+      );
+      assert.equal(rerun.status, 0, `${rerun.stderr}\n${rerun.stdout}`);
+      assert.deepEqual(JSON.parse(rerun.stdout).counts, {
+        discovered: 1,
+        eligible: 1,
+        imported: 0,
+        alreadyPresent: 1,
+        skipped: 0,
+        failed: 0,
+      });
+      assert.equal(rerun.stdout.includes(harness.bearer), false);
+      assert.equal(rerun.stderr.includes(harness.bearer), false);
+      assert.equal(rerun.stdout.includes(changedBodyTerm), false);
+      assert.deepEqual(snapshotTree(harness.vaultPath), changedSourceBefore);
+
+      const unchanged = await waitForStockRecall(
+        proxyHarness,
+        title,
+        [title, bodyTerm, originalId, 'memories/task-4-2-fixture.md'],
+      );
+      assert.doesNotMatch(JSON.stringify(unchanged), new RegExp(changedBodyTerm));
+
+      const renamedPath = path.join(harness.memoriesPath, 'task-4-2-renamed.md');
+      fs.renameSync(originalPath, renamedPath);
+      const renamedSourceBefore = snapshotTree(harness.vaultPath);
+      const renamed = await runPackagedObsidianImporterAsync(
+        daemon.baseUrl,
+        [harness.vaultPath],
+        {
+          ...harness.importerEnvironment(),
+          AGENTMEMORY_SECRET: '',
+        },
+      );
+      assert.equal(renamed.status, 0, `${renamed.stderr}\n${renamed.stdout}`);
+      assert.deepEqual(JSON.parse(renamed.stdout).counts, {
+        discovered: 1,
+        eligible: 1,
+        imported: 1,
+        alreadyPresent: 0,
+        skipped: 0,
+        failed: 0,
+      });
+      assert.equal(renamed.stdout.includes(harness.bearer), false);
+      assert.equal(renamed.stderr.includes(harness.bearer), false);
+      assert.equal(renamed.stdout.includes(changedBodyTerm), false);
+      assert.deepEqual(snapshotTree(harness.vaultPath), renamedSourceBefore);
+
+      const renamedSourcePath = 'memories/task-4-2-renamed.md';
+      const renamedId = `mem_obsidian_${crypto.createHash('sha256').update(renamedSourcePath).digest('hex')}`;
+      assert.notEqual(renamedId, originalId);
+      const recalledRenamed = await waitForStockRecall(
+        proxyHarness,
+        changedTitle,
+        [
+          changedTitle,
+          changedBodyTerm,
+          renamedId,
+          renamedSourcePath,
+          `obsidian-source:${renamedSourcePath}`,
+        ],
+      );
+      assert.match(JSON.stringify(recalledRenamed), new RegExp(renamedId));
+      const recalledOriginalAfterRename = await waitForStockRecall(
+        proxyHarness,
+        title,
+        [
+          title,
+          bodyTerm,
+          originalId,
+          'memories/task-4-2-fixture.md',
+          'obsidian-source:memories/task-4-2-fixture.md',
+        ],
+      );
+      assert.match(JSON.stringify(recalledOriginalAfterRename), new RegExp(originalId));
+      assert.match(fs.readFileSync(harness.securityLog, 'utf8'), /find-generic-password -s mcpproxy -a fixture-bearer -w/);
+      assert.equal(fs.readFileSync(harness.securityLog, 'utf8').trim().split('\n').length, 3);
+      assert.doesNotMatch(fs.readFileSync(harness.securityLog, 'utf8'), new RegExp(harness.bearer));
+      assert.doesNotMatch(proxyHarness.output.stderr, new RegExp(harness.bearer));
+    } finally {
+      const teardownStartedAt = Date.now();
+      await stopOwnedDaemon(proxyHarness.proxy, {
+        deadline: teardownStartedAt + harness.cleanupTimeoutMs,
+      });
+      assert.ok(
+        Date.now() - teardownStartedAt <= harness.cleanupTimeoutMs,
+        'mcpproxy teardown exceeded the harness deadline',
+      );
+      assertNoSecretOnDisk(harness.root, harness.bearer);
+      assert.equal(proxyHarness.proxy.child.exitCode !== null, true);
+      assert.equal(isProcessAlive(proxyHarness.proxy.pid), false);
+      assert.equal(isProcessGroupAlive(proxyHarness.proxy.processGroupId), false);
+      assert.equal(isProcessIdentityAlive(proxyHarness.proxy.identity), false);
+      assert.deepEqual(proxyHarness.proxy.lastOwnershipSnapshot.groups, []);
+      assert.deepEqual(proxyHarness.proxy.lastOwnershipSnapshot.records, []);
+      assert.deepEqual(proxyHarness.proxy.lastOwnershipSnapshot.listeners, []);
+      assert.deepEqual(proxyHarness.proxy.lastOwnershipSnapshot.probeErrors, []);
+      assert.equal(fs.existsSync(harness.root), true);
+      const portDeadline = Date.now() + harness.cleanupTimeoutMs;
+      await Promise.all(
+        proxyHarness.proxy.ports.map((port) => assertPortAvailable(port, portDeadline)),
+      );
+    }
+  });
+  assert.equal(fs.existsSync(proxyEvidence.root), false);
+  await assertPortAvailable(proxyEvidence.port);
+});
+
+test('packaged wrapper reports exact mock outcomes and exits non-zero only for failed eligible notes', {
+  timeout: 120_000,
+}, async () => {
+  await withObsidianImportHarness(async (harness) => {
+    const firstBody = 'task-4-2-mock-first-body-3a1e';
+    const secondBody = 'task-4-2-mock-second-body-4b2f';
+    harness.writeNote('first.md', `# First mock note\n\n${firstBody}\n`);
+    harness.writeNote('second.md', `# Second mock note\n\n${secondBody}\n`);
+    const initialSource = snapshotTree(harness.vaultPath);
+    const stored = new Map();
+    let mode = 'success';
+    let failPartialBatch = true;
+    const endpoint = await startMockImportEndpoint(harness, ({ payload, authorization }) => {
+      if (authorization !== `Bearer ${harness.bearer}`) {
+        return { status: 401, body: { success: false, error: 'authentication rejected' } };
+      }
+      if (mode === 'auth') {
+        return { status: 401, body: { success: false, error: 'authentication rejected' } };
+      }
+      if (mode === 'malformed') return { status: 200, body: '{not-json' };
+      if (mode === 'invalid-counts') {
+        return {
+          body: {
+            success: true,
+            strategy: 'skip',
+            sessions: 0,
+            observations: 0,
+            memories: 0,
+            summaries: 0,
+            skipped: 0,
+          },
+        };
+      }
+      if (mode === 'partial' && failPartialBatch) {
+        failPartialBatch = false;
+        return { status: 503, body: { error: 'independent batch failure' } };
+      }
+      return { body: successfulImportResponse(payload, stored) };
+    });
+
+    const runPackaged = () => runPackagedObsidianImporterAsync(
+      endpoint.url,
+      [harness.vaultPath],
+      {
+        ...harness.importerEnvironment(),
+        AGENTMEMORY_SECRET: '',
+      },
+    );
+    const assertReport = (result, counts, batches) => {
+      assert.equal(result.stdout.includes(harness.bearer), false);
+      assert.equal(result.stderr.includes(harness.bearer), false);
+      assert.deepEqual(JSON.parse(result.stdout).counts, counts);
+      assert.deepEqual(JSON.parse(result.stdout).batches, batches);
+    };
+
+    try {
+      const dryRun = runPackagedObsidianImporter(endpoint.url, [harness.vaultPath, '--dry-run'], {
+        ...harness.importerEnvironment(),
+        AGENTMEMORY_SECRET: '',
+        AGENTMEMORY_IMPORT_SECURITY_FAIL: '1',
+      });
+      assert.equal(dryRun.status, 0, `${dryRun.stderr}\n${dryRun.stdout}`);
+      assert.deepEqual(JSON.parse(dryRun.stdout).counts, {
+        discovered: 2,
+        eligible: 2,
+        imported: 0,
+        alreadyPresent: 0,
+        skipped: 0,
+        failed: 0,
+      });
+      assert.deepEqual(JSON.parse(dryRun.stdout).batches, { submitted: 0, succeeded: 0, failed: 0 });
+      assert.equal(endpoint.requests.length, 0);
+      assert.equal(fs.existsSync(harness.securityLog), false);
+      assert.deepEqual(snapshotTree(harness.vaultPath), initialSource);
+
+      const first = await runPackaged();
+      assert.equal(first.status, 0, `${first.stderr}\n${first.stdout}`);
+      assertReport(
+        first,
+        { discovered: 2, eligible: 2, imported: 2, alreadyPresent: 0, skipped: 0, failed: 0 },
+        { submitted: 1, succeeded: 1, failed: 0 },
+      );
+      assert.equal(first.stdout.includes(firstBody), false);
+      assert.equal(first.stdout.includes(secondBody), false);
+      assert.deepEqual(snapshotTree(harness.vaultPath), initialSource);
+
+      const alreadyPresent = await runPackaged();
+      assert.equal(alreadyPresent.status, 0, `${alreadyPresent.stderr}\n${alreadyPresent.stdout}`);
+      assertReport(
+        alreadyPresent,
+        { discovered: 2, eligible: 2, imported: 0, alreadyPresent: 2, skipped: 0, failed: 0 },
+        { submitted: 1, succeeded: 1, failed: 0 },
+      );
+      assert.deepEqual(snapshotTree(harness.vaultPath), initialSource);
+
+      mode = 'auth';
+      const authFailure = await runPackaged();
+      assert.equal(authFailure.status, 1, `${authFailure.stderr}\n${authFailure.stdout}`);
+      assertReport(
+        authFailure,
+        { discovered: 2, eligible: 2, imported: 0, alreadyPresent: 0, skipped: 0, failed: 2 },
+        { submitted: 1, succeeded: 0, failed: 1 },
+      );
+      assert.match(JSON.parse(authFailure.stdout).failures[0].reason, /authentication/i);
+      assert.deepEqual(snapshotTree(harness.vaultPath), initialSource);
+
+      mode = 'invalid-counts';
+      const invalidCounts = await runPackaged();
+      assert.equal(invalidCounts.status, 1, `${invalidCounts.stderr}\n${invalidCounts.stdout}`);
+      assertReport(
+        invalidCounts,
+        { discovered: 2, eligible: 2, imported: 0, alreadyPresent: 0, skipped: 0, failed: 2 },
+        { submitted: 1, succeeded: 0, failed: 1 },
+      );
+      assert.match(JSON.parse(invalidCounts.stdout).failures[0].reason, /response counts/i);
+
+      mode = 'malformed';
+      const malformed = await runPackaged();
+      assert.equal(malformed.status, 1, `${malformed.stderr}\n${malformed.stdout}`);
+      assertReport(
+        malformed,
+        { discovered: 2, eligible: 2, imported: 0, alreadyPresent: 0, skipped: 0, failed: 2 },
+        { submitted: 1, succeeded: 0, failed: 1 },
+      );
+      assert.match(JSON.parse(malformed.stdout).failures[0].reason, /invalid JSON/i);
+
+      harness.writeNote('a-large.md', largeNoteBody('A packaged partial'));
+      harness.writeNote('b-large.md', largeNoteBody('B packaged partial'));
+      harness.writeNote('c.md', '# C packaged partial\n\nsmall later body\n');
+      const partialSource = snapshotTree(harness.vaultPath);
+      const requestsBeforePartial = endpoint.requests.length;
+      mode = 'partial';
+      const partial = await runPackaged();
+      assert.equal(partial.status, 1, `${partial.stderr}\n${partial.stdout}`);
+      assertReport(
+        partial,
+        { discovered: 5, eligible: 5, imported: 2, alreadyPresent: 2, skipped: 0, failed: 1 },
+        { submitted: 2, succeeded: 1, failed: 1 },
+      );
+      assert.deepEqual(JSON.parse(partial.stdout).failures.map(({ relativePath }) => [relativePath]), [
+        ['memories/a-large.md'],
+      ]);
+      assert.deepEqual(
+        endpoint.requests.slice(requestsBeforePartial).map(({ payload }) => (
+          payload.exportData.memories.map(({ files }) => files[0])
+        )),
+        [
+          ['memories/a-large.md'],
+          ['memories/b-large.md', 'memories/c.md', 'memories/first.md', 'memories/second.md'],
+        ],
+      );
+      assert.equal(partial.stdout.includes('x'.repeat(100)), false);
+      assert.deepEqual(snapshotTree(harness.vaultPath), partialSource);
+
+      mode = 'success';
+      const partialRerun = await runPackaged();
+      assert.equal(partialRerun.status, 0, `${partialRerun.stderr}\n${partialRerun.stdout}`);
+      assertReport(
+        partialRerun,
+        { discovered: 5, eligible: 5, imported: 1, alreadyPresent: 4, skipped: 0, failed: 0 },
+        { submitted: 2, succeeded: 2, failed: 0 },
+      );
+      assert.deepEqual(snapshotTree(harness.vaultPath), partialSource);
+
+      const securityInvocations = fs.readFileSync(harness.securityLog, 'utf8').trim().split('\n');
+      assert.equal(securityInvocations.length, 7);
+      assert.ok(securityInvocations.every((line) => /find-generic-password -s mcpproxy -a fixture-bearer -w/.test(line)));
+      assert.doesNotMatch(fs.readFileSync(harness.securityLog, 'utf8'), new RegExp(harness.bearer));
+    } finally {
+      assert.equal(endpoint.requests.every(({ authorization }) => authorization === `Bearer ${harness.bearer}`), true);
+    }
+  });
 });

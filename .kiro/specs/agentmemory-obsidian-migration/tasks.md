@@ -120,7 +120,7 @@
   - _Boundary: Importer and Managed Command Integration: Harness_
   - _Depends: 1.4, 2_
 
-- [ ] 4.2 Prove packaged import, rerun, and recall behavior
+- [x] 4.2 Prove packaged import, rerun, and recall behavior
   - Exercise the packaged wrapper against the mock endpoint for secret redaction, exact response counts, partial failures, and exit status.
   - Import a fixture into the isolated packaged AgentMemory daemon, wait for index readiness, and recall its title, body, source file, and provenance concept.
   - Rerun after changing same-path content and prove the existing memory remains unchanged; prove a renamed path receives a new identity.

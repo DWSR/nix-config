@@ -128,6 +128,41 @@ function listListeningProcesses(ports, deadline = Date.now() + PROCESS_PROBE_TIM
   return listeners;
 }
 
+function listAllListeningProcesses(deadline = Date.now() + PROCESS_PROBE_TIMEOUT_MS) {
+  const timeoutMs = remainingMs(deadline);
+  if (timeoutMs <= 0) throw deadlineError('listener discovery');
+  let output;
+  try {
+    output = execFileSync(
+      'lsof',
+      ['-nP', '-a', '-iTCP', '-sTCP:LISTEN', '-Fpn'],
+      {
+        encoding: 'utf8',
+        maxBuffer: 512 * 1024,
+        timeout: timeoutMs,
+      },
+    );
+  } catch (error) {
+    if (error?.status === 1) return [];
+    if (error?.code === 'ETIMEDOUT' || error?.signal === 'SIGTERM') {
+      throw deadlineError('listener discovery');
+    }
+    throw error;
+  }
+
+  let pid;
+  return output.split('\n').flatMap((line) => {
+    if (line.startsWith('p')) {
+      const candidate = Number(line.slice(1));
+      pid = Number.isInteger(candidate) && candidate > 1 ? candidate : undefined;
+      return [];
+    }
+    if (!line.startsWith('n') || !pid) return [];
+    const port = Number(/:(\d+)$/.exec(line.slice(1))?.[1]);
+    return Number.isInteger(port) && port > 0 ? [{ pid, port }] : [];
+  });
+}
+
 function processIdentityIsAlive(identity, deadline = Date.now() + PROCESS_PROBE_TIMEOUT_MS) {
   return listProcesses(deadline).some((process) => processMatchesIdentity(process, [identity]));
 }
@@ -296,6 +331,7 @@ function identityMarkersFor(daemon) {
 function discoverOwnedProcessRecords(daemon, processes, listeners) {
   const byPid = new Map(processes.map((processInfo) => [processInfo.pid, processInfo]));
   const identityMarkers = identityMarkersFor(daemon);
+  const anchoredOwnership = daemon.processOwnership === 'anchored';
   const ownedListenerPids = new Set([
     ...(daemon.ownedListenerPids || []),
     ...(daemon.ownedListenerRecords || []).map(({ pid }) => pid),
@@ -330,10 +366,16 @@ function discoverOwnedProcessRecords(daemon, processes, listeners) {
     daemon.processGroupId,
     ...(daemon.ownedProcessGroups || []).map(({ processGroupId: groupId }) => groupId),
     ...(daemon.ownedProcessRecords || []).map(({ processGroupId: groupId }) => groupId),
+    ...(daemon.listenerOwnerGroups || []),
   ]) {
     if (Number.isInteger(processGroupId) && processGroupId > 1 && processGroupId !== process.pid) {
       ownedGroups.add(processGroupId);
     }
+  }
+
+  for (const pid of daemon.listenerOwnerPids || []) {
+    const processInfo = byPid.get(pid);
+    if (processInfo) addProcess(processInfo);
   }
 
   for (const pid of daemon.ownedPids || []) {
@@ -341,11 +383,14 @@ function discoverOwnedProcessRecords(daemon, processes, listeners) {
     if (processInfo) addProcess(processInfo);
   }
 
-  for (const processInfo of processes) {
-    if (
-      processMatchesIdentity(processInfo, identityMarkers)
-    ) {
-      addProcess(processInfo);
+  for (const pid of ownedListenerPids) {
+    const processInfo = byPid.get(pid);
+    if (processInfo) addProcess(processInfo);
+  }
+
+  if (!anchoredOwnership) {
+    for (const processInfo of processes) {
+      if (processMatchesIdentity(processInfo, identityMarkers)) addProcess(processInfo);
     }
   }
 
@@ -366,12 +411,21 @@ function discoverOwnedProcessRecords(daemon, processes, listeners) {
   for (const listener of listenerRecords) {
     const processInfo = byPid.get(listener.pid);
     if (!processInfo) continue;
-    if (
-      ownedPids.has(listener.pid)
-      || processMatchesIdentity(processInfo, identityMarkers)
-      || ownedGroups.has(processInfo.processGroupId)
-      || ownedListenerPids.has(listener.pid)
-    ) {
+    const listenerIdentityMarkers = Array.isArray(daemon.listenerIdentityMarkers)
+      && daemon.listenerIdentityMarkers.length > 0
+      ? daemon.listenerIdentityMarkers
+      : identityMarkers;
+    const listenerIdentityMatches = processMatchesIdentity(processInfo, listenerIdentityMarkers);
+    const listenerIsOwned = anchoredOwnership
+      ? listenerIdentityMatches
+        && (ownedPids.has(listener.pid) || ownedGroups.has(processInfo.processGroupId))
+      : (
+        ownedPids.has(listener.pid)
+        || listenerIdentityMatches
+        || ownedGroups.has(processInfo.processGroupId)
+        || ownedListenerPids.has(listener.pid)
+      );
+    if (listenerIsOwned) {
       addProcess(processInfo);
     }
   }
@@ -456,10 +510,21 @@ function signalOwnedProcesses(daemon, snapshot, signal) {
   }
 }
 
+function closeChildStreams(child) {
+  for (const stream of [child?.stdin, child?.stdout, child?.stderr]) {
+    stream?.destroy();
+  }
+}
+
 async function waitForChildExit(child, deadline) {
   if (!child || child.exitCode !== null) return true;
   while (remainingMs(deadline) > 0) {
-    if (child.exitCode !== null || !processIsAlive(child.pid, deadline)) return true;
+    try {
+      if (child.exitCode !== null || !processIsAlive(child.pid, deadline)) return true;
+    } catch (error) {
+      if (!/teardown deadline exhausted/.test(error?.message || '')) throw error;
+      return false;
+    }
     await sleep(Math.min(CLEANUP_POLL_MS, remainingMs(deadline)));
   }
   return child.exitCode !== null;
@@ -554,9 +619,11 @@ async function stopOwnedDaemon(daemon, { deadline = undefined } = {}) {
         throw new Error(ownershipReport(daemon, snapshot, 'owned AgentMemory listener teardown incomplete'));
       }
     }
+    closeChildStreams(daemon.child);
     daemon.cleanupIncomplete = false;
     daemon.closed = true;
   } catch (error) {
+    closeChildStreams(daemon.child);
     daemon.cleanupIncomplete = true;
     daemon.lastOwnershipReport = ownershipReport(
       daemon,
@@ -640,7 +707,24 @@ function createObsidianImportHarness({ bearer, cleanupTimeoutMs = CLEANUP_TIMEOU
 
   let endpoint;
   let daemon;
+  const ownedDaemons = [];
   let closed = false;
+  const registerOwnedDaemon = (candidate) => {
+    if (!candidate || typeof candidate !== 'object') {
+      throw new TypeError('owned daemon record is required');
+    }
+    if (!ownedDaemons.includes(candidate)) ownedDaemons.push(candidate);
+    return candidate;
+  };
+  const daemonSurvived = (candidate) => Boolean(
+    candidate
+      && (
+        candidate.cleanupIncomplete
+        || candidate.lastOwnershipSnapshot?.records.length > 0
+        || candidate.lastOwnershipSnapshot?.listeners.length > 0
+        || candidate.lastOwnershipSnapshot?.probeErrors.length > 0
+      )
+  );
   const harness = {
     root,
     vaultPath,
@@ -654,6 +738,7 @@ function createObsidianImportHarness({ bearer, cleanupTimeoutMs = CLEANUP_TIMEOU
     securityLog,
     bearer: harnessBearer,
     cleanupTimeoutMs,
+    registerOwnedDaemon,
     writeNote(name, contents) {
       if (!name.endsWith('.md') || name.includes('/') || name.includes('\\')) {
         throw new Error(`fixture note must be a direct Markdown child: ${name}`);
@@ -674,40 +759,51 @@ function createObsidianImportHarness({ bearer, cleanupTimeoutMs = CLEANUP_TIMEOU
     async close() {
       if (closed) return;
       const deadline = Date.now() + cleanupTimeoutMs;
-      let firstError;
-      if (daemon) {
+      const cleanupErrors = [];
+      for (const ownedDaemon of [...ownedDaemons].reverse()) {
         try {
-          await stopOwnedDaemon(daemon, { deadline });
+          await stopOwnedDaemon(ownedDaemon, { deadline });
         } catch (error) {
-          firstError = error;
+          cleanupErrors.push(error);
         }
       }
       if (endpoint) {
         try {
           await endpoint.close(deadline);
         } catch (error) {
-          firstError ||= error;
+          cleanupErrors.push(error);
         }
       }
 
-      const daemonSurvived = daemon && (
-        daemon.cleanupIncomplete
-        || daemon.lastOwnershipSnapshot?.records.length > 0
-        || daemon.lastOwnershipSnapshot?.listeners.length > 0
-        || daemon.lastOwnershipSnapshot?.probeErrors.length > 0
-      );
-      if (!daemonSurvived) {
+      const survivingDaemons = ownedDaemons.filter(daemonSurvived);
+      if (survivingDaemons.length > 0) {
+        cleanupErrors.push(new Error(
+          survivingDaemons
+            .map((ownedDaemon) => ownedDaemon.lastOwnershipReport || 'owned process cleanup incomplete')
+            .join('; '),
+        ));
+      }
+
+      try {
+        assertNoSecretOnDisk(root, harnessBearer);
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+
+      if (cleanupErrors.length === 0) {
         try {
-          assertNoSecretOnDisk(root, harnessBearer);
+          fs.rmSync(root, { recursive: true, force: true });
         } catch (error) {
-          firstError ||= error;
+          cleanupErrors.push(error);
         }
       }
-      if (!firstError && !daemonSurvived) {
-        fs.rmSync(root, { recursive: true, force: true });
-        closed = true;
+      if (cleanupErrors.length === 0) closed = true;
+      if (cleanupErrors.length > 0) {
+        const details = cleanupErrors.map((error) => (
+          error instanceof Error ? error.message : String(error)
+        )).join('; ');
+        throw new AggregateError(cleanupErrors, `harness cleanup failed: ${details}`);
       }
-      if (firstError) throw firstError;
     },
   };
 
@@ -717,7 +813,10 @@ function createObsidianImportHarness({ bearer, cleanupTimeoutMs = CLEANUP_TIMEOU
   });
   Object.defineProperty(harness, 'daemon', {
     get: () => daemon,
-    set: (value) => { daemon = value; },
+    set: (value) => {
+      daemon = value;
+      if (value) registerOwnedDaemon(value);
+    },
   });
   return harness;
 }
@@ -879,25 +978,44 @@ async function withObsidianImportHarness(callback, options = {}) {
   harnessTurn = new Promise((resolve) => { releaseTurn = resolve; });
   await previousTurn;
   let harness;
+  let result;
+  let callbackError;
+  let cleanupError;
   try {
     harness = createObsidianImportHarness(options);
-    return await callback(harness);
-  } finally {
-    try {
-      if (harness) await harness.close();
-    } finally {
-      releaseTurn();
-    }
+    result = await callback(harness);
+  } catch (error) {
+    callbackError = error;
   }
+  try {
+    if (harness) await harness.close();
+  } catch (error) {
+    cleanupError = error;
+  } finally {
+    releaseTurn();
+  }
+  if (callbackError && cleanupError) {
+    throw new AggregateError(
+      [callbackError, cleanupError],
+      `${callbackError instanceof Error ? callbackError.message : String(callbackError)}; `
+        + `${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+    );
+  }
+  if (callbackError) throw callbackError;
+  if (cleanupError) throw cleanupError;
+  return result;
 }
 
 module.exports = {
   assertPortAvailable,
+  assertNoSecretOnDisk,
   createObsidianImportHarness,
   isProcessAlive: processIsAlive,
   isProcessGroupAlive: processGroupIsAlive,
   isProcessIdentityAlive: processIdentityIsAlive,
+  listAllListeningProcesses,
   listListeningProcesses,
+  refreshOwnedProcessRecords,
   startMockImportEndpoint,
   startPackagedAgentMemory,
   stopOwnedDaemon,
