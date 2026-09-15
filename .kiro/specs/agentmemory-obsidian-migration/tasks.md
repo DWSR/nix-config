@@ -9,7 +9,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
   - _Boundary: Importer Core: Source Selection_
 
-- [ ] 1.2 Map notes to complete AgentMemory records
+- [x] 1.2 Map notes to complete AgentMemory records
   - Parse optional frontmatter as untrusted input and report malformed or empty notes as skips.
   - Apply title, timestamp, type, project, topical-concept, source-file, origin-detail, and exact-body mapping from the design.
   - Derive stable path identities so changed content keeps its ID and a renamed path receives a new ID.
