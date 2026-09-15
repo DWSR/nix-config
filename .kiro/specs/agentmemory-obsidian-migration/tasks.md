@@ -138,7 +138,7 @@
   - _Boundary: Cross-Boundary Integration: Runtime_
   - _Depends: 3.1, 3.4, 4.2_
 
-- [ ] 4.4 (P) Reconcile startup and prompt integration checks
+- [x] 4.4 (P) Reconcile startup and prompt integration checks
   - Update OpenCode and Pi matrices for the shortened preflight and retained AgentMemory failure behavior.
   - Add active-artifact checks across global, common, context-budget, Shopify agent, and skill renders while excluding historical specs.
   - Verify producer and consumer prompts emit, search, and ID-check `MEMORY_ID` plus `MEMORY_QUERY` handoffs.
