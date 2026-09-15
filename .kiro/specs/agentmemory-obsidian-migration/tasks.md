@@ -94,7 +94,7 @@
   - _Boundary: Prompt Contract Cutover: Context Budget_
   - _Depends: 2_
 
-- [ ] 3.7 (P) Convert Shopify agent memory contracts
+- [x] 3.7 (P) Convert Shopify agent memory contracts
   - Replace Obsidian recall, note writes, vault references, and path outputs in the scoped Shopify agent prompts.
   - Emit `MEMORY_ID` plus a distinctive `MEMORY_QUERY`; consuming agents recall by query and verify the returned ID.
   - Preserve non-memory analysis artifacts, Quick handoffs, and read-only or source-mutation constraints.

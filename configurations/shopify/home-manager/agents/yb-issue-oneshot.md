@@ -15,6 +15,30 @@ analysis AND a verified upstream fix PR, or an honest halt at the validation
 gate. You orchestrate; the subagents do the heavy work. Do not re-do their
 work in your own context.
 
+## AgentMemory handoffs
+
+AgentMemory is the only active memory system for reusable issue and workflow
+findings. Route every memory operation through mcpproxy's discover-then-invoke
+surface.
+
+1. Discover focused recall with
+   `retrieve_tools(query: "agentmemory core recall")` and hybrid search with
+   `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+   `name`, its `call_with` class, and an `args` JSON object. Invoke the returned
+   `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+   `call_tool_read` when prior issue or workflow context is needed. Use
+   `agentmemory:memory_sessions` through `call_tool_read` only when recent
+   session listings are needed.
+2. Consumers recall by `MEMORY_QUERY` and verify the returned record ID equals
+   `MEMORY_ID`; they do not fetch by ID. A missing or mismatched handoff stops
+   the downstream dispatch.
+3. If this orchestration establishes a reusable workflow finding, discover the
+   write tools with
+   `retrieve_tools(query: "agentmemory memory save lesson")`, then invoke the
+   exact returned `agentmemory:memory_save` or
+   `agentmemory:memory_lesson_save` through `call_tool_write` with `args`.
+   Never call an AgentMemory REST endpoint directly or invent a tool name.
+
 ## Phase 0: Preflight
 
 1. **Protocol availability.** Confirm the `validate-yb-issue` and
@@ -67,6 +91,10 @@ Continue to Phase 2 ONLY when ALL of these hold:
   and follows the skill's template — read it and check.
 - The artifact contains a runnable reproduction and a root cause with a
   `file.cc:NNN` citation, and states whether master is affected.
+- The validator returns `MEMORY_ID: <id>` and
+  `MEMORY_QUERY: <distinctive title and concepts>`. Recall by `MEMORY_QUERY`
+  through AgentMemory via mcpproxy and verify the returned record ID equals
+  `MEMORY_ID` before dispatching the fix author.
 
 On **NOT-REPRODUCED**, **NOT-A-BUG**, **NEEDS-INFO**, a missing/malformed
 artifact, or a validator failure: STOP. Report the verdict, the evidence,
@@ -84,8 +112,9 @@ workflow.
 Load the `create-yb-fix-pr` skill and follow its "Execution model" section:
 dispatch `yb-fix-pr-author` with the issue reference, the analysis artifact
 path, the reproduction commands from Phase 1 (the fix author must prove
-red→green against them), and the authorization state from Phase 0. Relay
-pending authorizations and resume via `task_id`.
+red→green against them), the validator's verified `MEMORY_ID` and
+`MEMORY_QUERY`, and the authorization state from Phase 0. Relay pending
+authorizations and resume via `task_id`.
 
 If the fix author refuses (e.g. it detects the nono sandbox despite the
 preflight, or a gate goes unanswered), surface its refusal verbatim — do not
@@ -98,7 +127,9 @@ work around it in your own context.
 - Branch, commit SHAs, red→green and lint/test evidence.
 - PR URL + post-creation verification results.
 - Authorizations used vs granted.
-- Pending items and memory notes written.
+- Pending items and AgentMemory handoffs:
+  `MEMORY_ID: <id>` and `MEMORY_QUERY: <distinctive title and concepts>` when
+  a durable workflow finding was saved.
 
 Report failures at any phase exactly as they occurred; a halted run with a
 clear reason is a successful orchestration.

@@ -99,6 +99,39 @@ ready for human approval or merge". Do not merge PRs.
     topology and cascade operations. It still receives the complete status,
     CI, thread, mutation-review, re-sweep, Binks, and final-verification gates.
 
+## AgentMemory workflow
+
+AgentMemory is the only active memory system for reusable Stack, CI, and Binks
+findings. Route every memory operation through mcpproxy's discover-then-invoke
+surface.
+
+1. Before target mapping, discover focused recall with
+   `retrieve_tools(query: "agentmemory core recall")` and hybrid search with
+   `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+   `name`, its `call_with` class, and an `args` JSON object. Invoke the returned
+   `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+   `call_tool_read` for topics such as native Stack orchestration, Binks, or
+   Buildkite. Use `agentmemory:memory_sessions` through `call_tool_read` only
+   when recent session listings are needed.
+2. If a caller supplies a `MEMORY_ID` and `MEMORY_QUERY` handoff, recall by
+   `MEMORY_QUERY` and verify the returned record ID equals `MEMORY_ID`; never
+   fetch by ID.
+3. When the workflow establishes a reusable finding, discover the write tools
+   with `retrieve_tools(query: "agentmemory memory save lesson")`, then invoke
+   the exact returned `agentmemory:memory_save` or
+   `agentmemory:memory_lesson_save` through `call_tool_write` with `args`.
+   Never call an AgentMemory REST endpoint directly or invent a tool name.
+4. A durable save must be reported as:
+
+   ```text
+   MEMORY_ID: <id>
+   MEMORY_QUERY: <distinctive title and concepts>
+   ```
+
+   Keep code diffs, CI logs, and user-owned local command handoffs in their
+   existing workflow outputs; the AgentMemory record is only a searchable
+   summary.
+
 ## Dedicated helpers
 
 Use these subagents with the Task tool. Dispatch independent helpers together.
@@ -342,17 +375,7 @@ Include:
 - Remaining blockers: human review, approval-only gates, pending user-owned
   native Stack commands, standalone publish failures, large deferred decisions,
   or external flakes.
+- AgentMemory handoff when a durable finding was saved:
+  `MEMORY_ID: <id>` and `MEMORY_QUERY: <distinctive title and concepts>`.
 
 Do not claim the target is green unless the final verification criteria hold.
-
-## Vault references
-
-- `memories/2026-08-29-github-mcp-native-stacks.md` - native Stack API and
-  local CLI capability boundary.
-- `memories/2026-04-14-binks-bot-comment-resolution.md` - gated Binks check.
-- `memories/2026-04-11-binks-stacked-pr-false-positives.md` - cross-PR bot
-  false-positive pattern.
-- `memories/2026-04-14-buildkite-trigger-vs-downstream.md` - GitHub status
-  plumbing.
-- `memories/2026-04-17-github-resolve-review-thread-via-graphql.md` - GitHub
-  MCP review-thread get, reply, and resolve patterns.

@@ -25,10 +25,34 @@ deterministic reproduction a maintainer can rerun.
 3. If neither exists, stop and report that the protocol is unavailable —
    do not improvise the workflow.
 
+## AgentMemory workflow
+
+AgentMemory is the only active memory system. Route every memory operation
+through mcpproxy's discover-then-invoke surface.
+
+1. **Recall first.** Discover focused recall with
+   `retrieve_tools(query: "agentmemory core recall")` and hybrid search with
+   `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+   `name`, its `call_with` class, and an `args` JSON object. Invoke the returned
+   `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+   `call_tool_read` for the issue number and distinctive symptom terms. Use
+   `agentmemory:memory_sessions` through `call_tool_read` only when recent
+   session listings are needed.
+2. **Save durable findings.** Discover the write tools with
+   `retrieve_tools(query: "agentmemory memory save lesson")`, then invoke the
+   exact returned `agentmemory:memory_save` or `agentmemory:memory_lesson_save`
+   through `call_tool_write` with `args`. Never call an AgentMemory REST
+   endpoint directly or invent a tool name.
+3. Save a concise, confidentiality-checked summary of the validated finding,
+   not the `/tmp/claude/` analysis artifact or its attachment paths. A save
+   response must yield the searchable handoff below; never invent an ID.
+4. Consumers recall by `MEMORY_QUERY` and verify the returned record ID equals
+   `MEMORY_ID`; they do not fetch by ID.
+
 ## Non-negotiables
 
-- **Memory first.** Search Obsidian memories and cavemem for the issue number
-  and symptom keywords before any other research. Reuse prior root-cause and
+- **Memory first.** Search AgentMemory through mcpproxy for the issue number and
+  symptom keywords before any other research. Reuse prior root-cause and
   reproduction work, but skip a matrix run only when the prior evidence tested
   the versions that still resolve as the latest required targets.
 - **Public-artifact confidentiality.** Anything you post to GitHub is
@@ -77,6 +101,8 @@ Return a single message containing:
   and follow the skill's template).
 - **Backlog attachment manifest** when requested by the dispatcher, using its
   exact `## Quick Attachments` JSON contract.
-- **Memory note path** written/updated.
+- **AgentMemory handoff**:
+  - `MEMORY_ID: <id>`
+  - `MEMORY_QUERY: <distinctive title and concepts>`
 - **Pending items**: any question awaiting user authorization (e.g. posting
   the repro comment), with the drafted content ready to go.

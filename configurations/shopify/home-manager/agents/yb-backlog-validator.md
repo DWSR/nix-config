@@ -51,6 +51,24 @@ checkpoint file, or precomputed 100-issue plan. A successfully verified Quick
 record with `review.reviewed == true` is complete. An unreviewed record is
 eligible on the next invocation even if a prior session was interrupted.
 
+## AgentMemory handoffs
+
+AgentMemory is the only active memory system for reusable issue findings. Route
+every memory operation through mcpproxy's discover-then-invoke surface.
+
+1. Discover focused recall with
+   `retrieve_tools(query: "agentmemory core recall")` and hybrid search with
+   `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+   `name`, its `call_with` class, and an `args` JSON object.
+2. Invoke the returned `agentmemory:memory_recall` or
+   `agentmemory:memory_smart_search` through `call_tool_read` for issue-number
+   and symptom queries. Use `agentmemory:memory_sessions` through
+   `call_tool_read` only when recent session listings are needed.
+3. Consumers recall by `MEMORY_QUERY` and verify the returned record ID equals
+   `MEMORY_ID`; they do not fetch by ID. A missing or mismatched ID blocks the
+   handoff and must not be treated as worker success. Never call an AgentMemory
+   REST endpoint directly or invent a tool name.
+
 ## Hard boundaries
 
 1. Invoking this command authorizes writes only to the internal Quick review
@@ -59,8 +77,8 @@ eligible on the next invocation even if a prior session was interrupted.
 2. Pass `GitHub comments and pull requests are explicitly prohibited` to every
    worker. Do not ask the user for public-write authorization during this run.
 3. Do not modify the YugabyteDB source checkout. Workers may write their
-   required issue-specific artifacts under `/tmp/claude/` and curated Obsidian
-   memories under the existing `validate-yb-issue` protocol.
+   required issue-specific artifacts under `/tmp/claude/` and durable findings
+   through the existing AgentMemory protocol.
 4. Run only one backlog controller at a time. The Quick schema has no claim or
    lease field. If another controller is evidently reviewing the same records,
    stop rather than race it.
@@ -199,8 +217,8 @@ Every worker prompt must contain:
   `/tmp/claude/yb-issue-<number>-analysis.md`;
 - `GitHub comments and pull requests are explicitly prohibited`;
 - unique issue-number-prefixed scratch and podman names;
-- permission to reuse a complete prior memory instead of repeating the
-  reproduction only when that prior evidence includes the complete current
+- permission to reuse a complete prior AgentMemory finding instead of repeating
+  the reproduction only when that prior evidence includes the complete current
   support matrix, while recreating a missing handoff artifact from that
   evidence;
 - `SUPPORTED_TARGETS: 2024.2, 2025.1, 2025.2, 2026.1, master` and the complete
@@ -225,7 +243,8 @@ execution problem.
 - PROTOCOL_VERDICT: VALIDATED | NOT-REPRODUCED | NOT-A-BUG | NEEDS-INFO
 - QUICK_VERDICT: Fixed | Duplicate | Validated | Not Reproduced | Needs Info
 - ARTIFACT: /tmp/claude/yb-issue-<number>-analysis.md
-- MEMORY: memories/<note>.md
+- MEMORY_ID: <id>
+- MEMORY_QUERY: <distinctive title and concepts>
 
 ## Quick Reproduction
 <paste-ready field; use an explanatory N/A when no executable repro applies>
@@ -297,7 +316,9 @@ For `READY_FOR_QUICK`, require all of the following:
    The section's target versions, source revisions, resolution time, and
    freshness evidence must exactly match the controller's `resolved_targets`
    map. A stale memory relabeled as current is invalid.
-6. The memory path ends in `.md` and the Obsidian read-note tool can read it.
+6. Recall `MEMORY_QUERY` through AgentMemory via mcpproxy and verify the
+   returned record ID equals `MEMORY_ID`. Reject a missing or mismatched result;
+   never fetch by ID.
 7. Quick Reproduction and Quick Details must be supported by the artifact.
    Reject a handoff whose current-status, affected-version, root-cause, or
    reproduction claims contradict the artifact; do not choose the more

@@ -95,6 +95,37 @@ Do not attempt to work around, weaken, or disable the sandbox yourself.
   changed files, and draft state with fresh `gh` output. No claim without
   evidence.
 
+## AgentMemory handoffs
+
+AgentMemory is the only active memory system for reusable issue and fix
+findings. Route every memory operation through mcpproxy's discover-then-invoke
+surface.
+
+1. When the caller supplies a validator `MEMORY_ID` and `MEMORY_QUERY`,
+   discover focused recall with
+   `retrieve_tools(query: "agentmemory core recall")` and hybrid search with
+   `retrieve_tools(query: "agentmemory smart search")`. Use the exact returned
+   `name`, its `call_with` class, and an `args` JSON object. Invoke the returned
+   `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+   `call_tool_read`, recall by `MEMORY_QUERY`, and verify the returned record ID
+   equals `MEMORY_ID` before relying on the finding. Use
+   `agentmemory:memory_sessions` through `call_tool_read` only when recent
+   session listings are needed. Never fetch by ID.
+2. At completion, save a concise reusable fix finding when one was established.
+   Discover the write tools with
+   `retrieve_tools(query: "agentmemory memory save lesson")`, then invoke the
+   exact returned `agentmemory:memory_save` or
+   `agentmemory:memory_lesson_save` through `call_tool_write` with `args`.
+   Never call an AgentMemory REST endpoint directly or invent a tool name.
+3. Keep the analysis artifact, reproduction commands, build logs, and PR data
+   in their existing report and repository workflows. Do not replace those
+   artifacts with a memory record. If a save returns an ID, report exactly:
+
+   ```text
+   MEMORY_ID: <id>
+   MEMORY_QUERY: <distinctive title and concepts>
+   ```
+
 ## Required final report
 
 Return a single message containing:
@@ -109,4 +140,6 @@ Return a single message containing:
 - **Deviations**: anything the analysis proposed that you changed, and why.
 - **Pending items**: unanswered authorization gates (with exactly what needs
   approving), unresolved review threads, or follow-up work.
-- **Memory**: which memory note you updated/created.
+- **AgentMemory handoff**:
+  - `MEMORY_ID: <id>`
+  - `MEMORY_QUERY: <distinctive title and concepts>`
