@@ -12,6 +12,7 @@ let
     src = ./extensions/pi-mcpproxy-go;
   };
   piSubagents = pkgs.callPackage ../../scripts/pi-subagents.nix { };
+  rpivTodo = pkgs.callPackage ../../scripts/rpiv-todo.nix { };
   kiroSkillNames = builtins.filter (name: lib.hasPrefix "kiro-" name) (
     builtins.attrNames (builtins.readDir "${config.programs.cc-sdd.skillsPackage}/skills")
   );
@@ -85,6 +86,7 @@ in
       piAgentMemory
       "${piMcpproxyGo}/index.ts"
       "${piSubagents}/index.ts"
+      "${rpivTodo}/index.ts"
     ];
 
     skills = kiroSkillPaths;
