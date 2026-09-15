@@ -12,9 +12,41 @@ let
     src = ./extensions/pi-mcpproxy-go;
   };
   piSubagents = pkgs.callPackage ../../scripts/pi-subagents.nix { };
+  kiroSkillNames = builtins.filter (name: lib.hasPrefix "kiro-" name) (
+    builtins.attrNames (builtins.readDir "${config.programs.cc-sdd.skillsPackage}/skills")
+  );
+  piKiroAgent =
+    pkgs.runCommand "pi-kiro-agents"
+      {
+        nativeBuildInputs = [ pkgs.gawk ];
+      }
+      ''
+        mkdir -p "$out"
+        ${pkgs.gawk}/bin/awk '
+          NR == 1 {
+            print
+            print "name: kiro-spec-orchestrator"
+            print "systemPromptMode: replace"
+            print "inheritProjectContext: true"
+            print "inheritSkills: true"
+            next
+          }
+          /^mode:|^model:|^variant:|^temperature:/ { next }
+          /^permission:/ { skip = 1; next }
+          skip && /^---$/ { skip = 0; print; next }
+          skip { next }
+          { print }
+        ' ${./agents/kiro-spec-orchestrator.md} > "$out/kiro-spec-orchestrator.md"
+      '';
+  kiroSkillPaths = map (
+    name: "${config.programs.cc-sdd.skillsPackage}/skills/${name}"
+  ) kiroSkillNames;
 in
 {
   imports = [ inputs.pi.homeModules.default ];
+
+  xdg.configFile."pi/agent/agents/kiro-spec-orchestrator.md".source =
+    "${piKiroAgent}/kiro-spec-orchestrator.md";
 
   home.activation.piAgentMemorySecret = lib.mkIf config.programs.agentmemory.enable (
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -54,5 +86,7 @@ in
       "${piMcpproxyGo}/index.ts"
       "${piSubagents}/index.ts"
     ];
+
+    skills = kiroSkillPaths;
   };
 }
