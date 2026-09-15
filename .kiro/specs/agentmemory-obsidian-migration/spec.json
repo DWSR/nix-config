@@ -1,0 +1,22 @@
+{
+  "feature_name": "agentmemory-obsidian-migration",
+  "created_at": "2026-09-14T18:37:24-04:00",
+  "updated_at": "2026-09-14T19:31:59-04:00",
+  "language": "en",
+  "phase": "tasks-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}

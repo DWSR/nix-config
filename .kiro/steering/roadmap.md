@@ -286,4 +286,10 @@ session: 128 sessions, $6,128.06 real spend.)
   memory-sync-cli, sqlite-backup, and opencode-nono-sandbox. **Status**:
   tasks-generated 2026-09-05; immediate-cutover runtime risk accepted by the
   operator; simplified to 25 tasks using stock AgentMemory behavior and the
-  existing patched OpenCode plugin.
+  existing patched OpenCode plugin; Pi remains on cavemem with future
+  AgentMemory plugin compatibility preserved.
+- [ ] agentmemory-obsidian-migration -- Import curated `memories/*.md` notes
+  into each selected host-local AgentMemory store, then remove Obsidian from
+  mcpproxy, startup checks, and active agent prompts. Dependencies:
+  agentmemory-opencode-migration. **Status**: tasks-generated 2026-09-14; hard
+  cutover selected, with no rollback or bidirectional sync.
