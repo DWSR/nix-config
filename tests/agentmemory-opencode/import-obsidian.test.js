@@ -5,9 +5,23 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { execFileSync, spawn, spawnSync } = require('node:child_process');
+
+const {
+  assertPortAvailable,
+  createObsidianImportHarness,
+  isProcessAlive,
+  isProcessGroupAlive,
+  isProcessIdentityAlive,
+  listListeningProcesses,
+  startMockImportEndpoint,
+  startPackagedAgentMemory,
+  stopOwnedDaemon,
+  withObsidianImportHarness,
+} = require('./fixtures/obsidian-import-harness.js');
 
 const repoRoot = path.resolve(__dirname, '../..');
 const importerPath = path.join(repoRoot, 'scripts', 'agentmemory-import-obsidian.ts');
@@ -15,6 +29,18 @@ const importerPackageNixPath = path.join(repoRoot, 'scripts', 'agentmemory-impor
 let cachedDependencyNodePath;
 let cachedImporterNodeBin;
 const cachedImporterPackagePaths = new Map();
+let cachedAgentMemoryPackagePath;
+
+function agentMemoryPackagePath() {
+  if (cachedAgentMemoryPackagePath) return cachedAgentMemoryPackagePath;
+  const configured = process.env.AGENTMEMORY_PACKAGE_PATH;
+  cachedAgentMemoryPackagePath = configured || execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory'],
+    { cwd: repoRoot, encoding: 'utf8' },
+  ).trim().split('\n').at(-1);
+  return cachedAgentMemoryPackagePath;
+}
 
 function runDiscovery(vaultPath) {
   const script = `
@@ -335,6 +361,124 @@ function successfulImportResponse(payload, stored) {
 
 function largeNoteBody(title, size = 4_300_000) {
   return `# ${title}\n\n${'x'.repeat(size)}\n`;
+}
+
+function spawnDetachedDescendantFixture(marker, pidFile) {
+  const descendantSource = [
+    "const fs = require('node:fs');",
+    'const marker = process.argv[1];',
+    'const pidFile = process.argv[2];',
+    'void marker;',
+    'fs.writeFileSync(pidFile, String(process.pid));',
+    "process.on('SIGTERM', () => {});",
+    'setTimeout(() => process.exit(0), 30_000);',
+  ].join('\n');
+  const parentSource = [
+    "const { spawn } = require('node:child_process');",
+    'const marker = process.argv[1];',
+    'const descendantSource = process.argv[2];',
+    'const pidFile = process.argv[3];',
+    'process.on(\'SIGTERM\', () => {',
+    "  const child = spawn(process.execPath, ['-e', descendantSource, marker, pidFile], { detached: true, stdio: 'ignore' });",
+    '  child.unref();',
+    '});',
+    'setInterval(() => {}, 1000);',
+  ].join('\n');
+  return spawn(
+    process.execPath,
+    ['-e', parentSource, marker, descendantSource, pidFile],
+    { detached: true, stdio: 'ignore' },
+  );
+}
+
+function spawnUnmarkedGroupDescendantFixture(marker, pidFile) {
+  const childSource = [
+    "const fs = require('node:fs');",
+    'const pidFile = process.argv[1];',
+    'fs.writeFileSync(pidFile, String(process.pid));',
+    "process.on('SIGTERM', () => {});",
+    'setTimeout(() => process.exit(0), 30_000);',
+  ].join('\n');
+  const parentSource = [
+    "const { spawn } = require('node:child_process');",
+    'const childSource = process.argv[2];',
+    'const pidFile = process.argv[3];',
+    "spawn(process.execPath, ['-e', childSource, pidFile], { stdio: 'ignore' });",
+    'setInterval(() => {}, 1000);',
+  ].join('\n');
+  return spawn(
+    process.execPath,
+    ['-e', parentSource, marker, childSource, pidFile],
+    { detached: true, stdio: 'ignore' },
+  );
+}
+
+function spawnDetachedListenerFixture(readyFile) {
+  const source = [
+    "const fs = require('node:fs');",
+    "const net = require('node:net');",
+    'const readyFile = process.argv[1];',
+    'const server = net.createServer(() => {});',
+    "server.listen(0, '127.0.0.1', () => {",
+    '  fs.writeFileSync(readyFile, String(server.address().port));',
+    '});',
+    "process.on('SIGTERM', () => {});",
+    'setTimeout(() => process.exit(0), 30_000);',
+  ].join('\n');
+  return spawn(
+    process.execPath,
+    ['-e', source, readyFile],
+    { detached: true, stdio: 'ignore' },
+  );
+}
+
+async function waitForFile(filePath, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(filePath)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`file ${filePath} did not appear`);
+}
+
+function runIsolatedListenerProbe(fakeBinDir, ports, deadlineMs, timeoutMs = deadlineMs + 500) {
+  const script = `
+    const { listListeningProcesses } = require(${JSON.stringify(
+      path.join(__dirname, 'fixtures', 'obsidian-import-harness.js'),
+    )});
+    try {
+      process.stdout.write(JSON.stringify(listListeningProcesses(${JSON.stringify(ports)}, Date.now() + ${deadlineMs})));
+    } catch (error) {
+      process.stderr.write(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
+  `;
+  return spawnSync(
+    process.execPath,
+    ['-e', script],
+    {
+      env: { ...process.env, PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH || ''}` },
+      encoding: 'utf8',
+      timeout: timeoutMs,
+    },
+  );
+}
+
+async function waitForProcessGroup(processGroupId, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (isProcessGroupAlive(processGroupId)) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`process group ${processGroupId} did not become alive`);
+}
+
+function killProcessGroup(processGroupId) {
+  try {
+    process.kill(-processGroupId, 'SIGKILL');
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
 }
 
 function importedMemoryFixture(sourcePath = 'memories/fixture.md', content = 'fixture body') {
@@ -1664,4 +1808,496 @@ test('isolates a record above the strict request ceiling and submits later recor
     await mock.close();
     fs.rmSync(vaultPath, { recursive: true, force: true });
   }
+});
+
+function assertDaemonCleanup(evidence) {
+  const deadline = Date.now() + 5_000;
+  assert.equal(isProcessAlive(evidence.pid), false, `daemon PID ${evidence.pid} survived teardown`);
+  assert.equal(
+    isProcessGroupAlive(evidence.processGroupId),
+    false,
+    `daemon process group ${evidence.processGroupId} survived teardown`,
+  );
+  for (const pid of evidence.ownedPids) {
+    assert.equal(isProcessAlive(pid), false, `owned process PID ${pid} survived teardown`);
+  }
+  assert.equal(isProcessIdentityAlive(evidence.root), false, `owned process identity survived teardown: ${evidence.root}`);
+  return Promise.all(evidence.ports.map((port) => assertPortAvailable(port, deadline)));
+}
+
+test('isolated importer harness keeps source and target paths temporary and resolves Keychain only for live mode', async () => {
+  let evidence;
+  await withObsidianImportHarness(async (harness) => {
+    const body = '# Isolated harness fixture\n\nfixture body must stay out of reports\n';
+    harness.writeNote('fixture.md', body);
+    const endpoint = await startMockImportEndpoint(harness, ({ payload, authorization }) => {
+      if (authorization !== `Bearer ${harness.bearer}`) {
+        return { status: 401, body: { success: false, error: 'authentication rejected' } };
+      }
+      return { body: successfulImportResponse(payload, new Map()) };
+    });
+    evidence = {
+      root: harness.root,
+      endpointPort: endpoint.port,
+      securityLog: harness.securityLog,
+      sourcePath: harness.vaultPath,
+      dataDir: harness.dataDir,
+      runtimeDir: harness.runtimeDir,
+      logDir: harness.logDir,
+    };
+
+    assert.notEqual(harness.root, repoRoot);
+    assert.equal(harness.vaultPath, path.join(harness.root, 'vault'));
+    assert.equal(path.join(harness.vaultPath, 'memories'), harness.memoriesPath);
+    for (const directory of [harness.dataDir, harness.runtimeDir, harness.logDir]) {
+      assert.equal(path.relative(harness.root, directory).startsWith('..'), false);
+      assert.ok(fs.existsSync(directory));
+    }
+
+    const packageEnvironment = harness.importerEnvironment();
+    const help = runPackagedObsidianImporter(endpoint.url, ['--help'], {
+      ...packageEnvironment,
+      AGENTMEMORY_SECRET: '',
+      AGENTMEMORY_IMPORT_SECURITY_FAIL: '1',
+    });
+    assert.equal(help.status, 0, `${help.stderr}\n${help.stdout}`);
+    assert.equal(fs.existsSync(harness.securityLog), false);
+
+    const dryRun = runPackagedObsidianImporter(endpoint.url, [harness.vaultPath, '--dry-run'], {
+      ...packageEnvironment,
+      AGENTMEMORY_SECRET: '',
+      AGENTMEMORY_IMPORT_SECURITY_FAIL: '1',
+    });
+    assert.equal(dryRun.status, 0, `${dryRun.stderr}\n${dryRun.stdout}`);
+    assert.deepEqual(JSON.parse(dryRun.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 0,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.equal(fs.existsSync(harness.securityLog), false);
+
+    const live = await runPackagedObsidianImporterAsync(endpoint.url, [harness.vaultPath], {
+      ...packageEnvironment,
+      AGENTMEMORY_SECRET: '',
+    });
+    assert.equal(live.status, 0, `${live.stderr}\n${live.stdout}`);
+    assert.deepEqual(JSON.parse(live.stdout).counts, {
+      discovered: 1,
+      eligible: 1,
+      imported: 1,
+      alreadyPresent: 0,
+      skipped: 0,
+      failed: 0,
+    });
+    assert.equal(live.stdout.includes(harness.bearer), false);
+    assert.equal(live.stderr.includes(harness.bearer), false);
+    assert.equal(live.stdout.includes(body), false);
+    assert.equal(live.stderr.includes(body), false);
+    assert.equal(endpoint.requests.length, 1);
+    assert.equal(endpoint.requests[0].authorization, `Bearer ${harness.bearer}`);
+    assert.match(fs.readFileSync(harness.securityLog, 'utf8'), /find-generic-password -s mcpproxy -a fixture-bearer -w/);
+    assert.doesNotMatch(fs.readFileSync(harness.securityLog, 'utf8'), new RegExp(harness.bearer));
+    assert.deepEqual(fs.readFileSync(path.join(harness.memoriesPath, 'fixture.md'), 'utf8'), body);
+  });
+
+  assert.equal(fs.existsSync(evidence.root), false);
+  assert.equal(fs.existsSync(evidence.sourcePath), false);
+  assert.equal(fs.existsSync(evidence.dataDir), false);
+  assert.equal(fs.existsSync(evidence.runtimeDir), false);
+  assert.equal(fs.existsSync(evidence.logDir), false);
+  await assertPortAvailable(evidence.endpointPort);
+});
+
+test('packaged daemon harness owns an authenticated ready process group and removes all target state on success', {
+  timeout: 120_000,
+}, async () => {
+  let evidence;
+  await withObsidianImportHarness(async (harness) => {
+    harness.writeNote('daemon-fixture.md', '# Daemon fixture\n\nnot imported by task 4.1\n');
+    await startMockImportEndpoint(harness, () => ({ body: { ok: true } }));
+    const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+    evidence = {
+      root: harness.root,
+      pid: daemon.pid,
+      processGroupId: daemon.processGroupId,
+      ownedPids: daemon.ownedPids,
+      ports: daemon.ports,
+      restPort: daemon.restPort,
+      endpointPort: harness.endpoint.port,
+      dataDir: harness.dataDir,
+      runtimeDir: harness.runtimeDir,
+      logDir: harness.logDir,
+    };
+    assert.ok(daemon.pid > 0);
+    assert.equal(daemon.processGroupId, daemon.pid);
+    assert.ok(daemon.ownedPids.includes(daemon.pid));
+    assert.equal(fs.existsSync(harness.dataDir), true);
+    assert.equal(fs.existsSync(harness.runtimeDir), true);
+    assert.equal(fs.existsSync(harness.logDir), true);
+    assert.equal(
+      `${daemon.output.stdout}\n${daemon.output.stderr}`.includes(harness.bearer),
+      false,
+      'daemon output must not contain the bearer',
+    );
+
+    const health = await fetch(`${daemon.baseUrl}/agentmemory/health`, {
+      headers: { Authorization: `Bearer ${harness.bearer}` },
+    });
+    assert.equal(health.ok, true);
+    const healthBody = await health.json();
+    assert.ok(['healthy', 'degraded'].includes(healthBody.status), JSON.stringify(healthBody));
+  });
+
+  await assertDaemonCleanup(evidence);
+  await assertPortAvailable(evidence.endpointPort);
+  assert.equal(fs.existsSync(evidence.root), false);
+  assert.equal(fs.existsSync(evidence.dataDir), false);
+  assert.equal(fs.existsSync(evidence.runtimeDir), false);
+  assert.equal(fs.existsSync(evidence.logDir), false);
+});
+
+test('packaged daemon harness tracks and tears down a detached descendant group discovered during startup and escalation', {
+  timeout: 120_000,
+}, async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-detached-fixture-'));
+  const childPidFile = path.join(fixtureDir, 'child.pid');
+  let detached;
+  let evidence;
+
+  try {
+    await withObsidianImportHarness(async (harness) => {
+      harness.writeNote('detached-fixture.md', '# Detached fixture\n\nnot imported by task 4.1\n');
+      detached = spawnDetachedDescendantFixture(harness.root, childPidFile);
+      assert.ok(detached.pid);
+      await waitForProcessGroup(detached.pid);
+      await startMockImportEndpoint(harness, () => ({ body: { ok: true } }));
+      const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+      assert.ok(
+        daemon.ownedProcessRecords.some((record) => (
+          record.pid === detached.pid
+          && record.processGroupId !== daemon.processGroupId
+          && record.identity === harness.root
+        )),
+        'startup discovery must retain the detached descendant process group identity',
+      );
+      evidence = {
+        root: harness.root,
+        pid: daemon.pid,
+        processGroupId: daemon.processGroupId,
+        ownedPids: daemon.ownedPids,
+        ownedProcessRecords: daemon.ownedProcessRecords,
+        ports: daemon.ports,
+        detachedProcessGroupId: detached.pid,
+        childPidFile,
+        endpointPort: harness.endpoint.port,
+        dataDir: harness.dataDir,
+        runtimeDir: harness.runtimeDir,
+        logDir: harness.logDir,
+      };
+    });
+
+    await assertDaemonCleanup(evidence);
+    assert.equal(isProcessGroupAlive(evidence.detachedProcessGroupId), false);
+    assert.equal(isProcessIdentityAlive(evidence.root), false);
+    assert.equal(fs.existsSync(evidence.root), false);
+  } finally {
+    if (detached?.pid && isProcessAlive(detached.pid)) killProcessGroup(detached.pid);
+    if (fs.existsSync(childPidFile)) {
+      const childPid = Number(fs.readFileSync(childPidFile, 'utf8'));
+      if (Number.isInteger(childPid) && childPid > 1 && isProcessAlive(childPid)) killProcessGroup(childPid);
+    }
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('harness tracks an unmarked descendant in an owned process group', {
+  timeout: 10_000,
+}, async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-group-fixture-'));
+  const childPidFile = path.join(fixtureDir, 'child.pid');
+  const marker = path.join(fixtureDir, 'owned-marker');
+  const parent = spawnUnmarkedGroupDescendantFixture(marker, childPidFile);
+  assert.ok(parent.pid);
+
+  try {
+    await waitForFile(childPidFile);
+    const childPid = Number(fs.readFileSync(childPidFile, 'utf8'));
+    assert.ok(childPid > 1);
+    const daemon = {
+      child: parent,
+      pid: parent.pid,
+      processGroupId: parent.pid,
+      identity: marker,
+      identityMarkers: [marker],
+      ownedPids: [parent.pid],
+      ownedProcessRecords: [{ pid: parent.pid, processGroupId: parent.pid, identity: marker }],
+      ownedProcessGroups: [{ processGroupId: parent.pid, identity: marker }],
+      ownedListenerRecords: [],
+      ports: [],
+      cleanupTimeoutMs: 2_000,
+      closed: false,
+    };
+
+    const processKillCalls = [];
+    const originalProcessKill = process.kill;
+    try {
+      process.kill = (pid, signal) => {
+        processKillCalls.push({ pid, signal });
+        return originalProcessKill.call(process, pid, signal);
+      };
+      await stopOwnedDaemon(daemon);
+    } finally {
+      process.kill = originalProcessKill;
+    }
+    assert.equal(isProcessAlive(parent.pid), false);
+    assert.equal(isProcessAlive(childPid), false, 'unmarked same-group descendant survived teardown');
+    assert.ok(
+      processKillCalls.some(({ pid, signal }) => (
+        pid === -parent.pid
+        && signal !== undefined
+        && signal !== 0
+        && signal !== '0'
+      )),
+      `teardown must send a nonzero signal to -${parent.pid}; calls=${JSON.stringify(processKillCalls)}`,
+    );
+    assert.ok(
+      daemon.initialOwnershipSnapshot.records.some((record) => record.pid === childPid),
+      'ownership snapshot must include the unmarked same-group descendant',
+    );
+  } finally {
+    if (isProcessAlive(parent.pid)) killProcessGroup(parent.pid);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('harness discovers and tears down a detached listener through real listener probes', {
+  timeout: 10_000,
+}, async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-listener-fixture-'));
+  const readyFile = path.join(fixtureDir, 'listener.port');
+  const marker = path.join(fixtureDir, 'owned-listener');
+  const listener = spawnDetachedListenerFixture(readyFile);
+  assert.ok(listener.pid);
+
+  try {
+    await waitForFile(readyFile);
+    const port = Number(fs.readFileSync(readyFile, 'utf8'));
+    assert.ok(port > 0);
+    assert.ok(listListeningProcesses([port], Date.now() + 2_000).some(({ pid }) => pid === listener.pid));
+
+    const daemon = {
+      child: listener,
+      pid: listener.pid,
+      processGroupId: undefined,
+      identity: marker,
+      identityMarkers: [marker],
+      ownedPids: [],
+      ownedListenerPids: [listener.pid],
+      ownedProcessRecords: [],
+      ownedProcessGroups: [],
+      ownedListenerRecords: [],
+      ports: [port],
+      cleanupTimeoutMs: 2_000,
+      closed: false,
+    };
+
+    await stopOwnedDaemon(daemon);
+    assert.equal(isProcessAlive(listener.pid), false);
+    assert.equal(isProcessGroupAlive(listener.pid), false);
+    await assertPortAvailable(port, Date.now() + 2_000);
+  } finally {
+    if (isProcessAlive(listener.pid)) killProcessGroup(listener.pid);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('harness enforces one absolute deadline for occupied-port retries', {
+  timeout: 10_000,
+}, async () => {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const deadline = Date.now() + 250;
+  const startedAt = Date.now();
+  const resultPromise = assertPortAvailable(address.port, deadline).then(
+    () => ({ status: 'resolved' }),
+    (error) => ({ status: 'rejected', error }),
+  );
+
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    let result = await Promise.race([
+      resultPromise,
+      new Promise((resolve) => setTimeout(() => resolve({ status: 'timed-out' }), 100)),
+    ]);
+    if (result.status === 'timed-out') {
+      await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+      result = await resultPromise;
+    }
+    assert.equal(result.status, 'rejected', 'port retry ignored the absolute teardown deadline');
+    assert.match(result.error.message, /deadline|occupied/i);
+    assert.ok(Date.now() - startedAt < 2_000, 'port retry exceeded its shared deadline');
+  } finally {
+    if (server.listening) server.close();
+  }
+});
+
+test('listener discovery bounds sequential lsof probes by one absolute deadline', {
+  timeout: 10_000,
+}, () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-lsof-fixture-'));
+  const fakeBinDir = path.join(fixtureDir, 'bin');
+  const fakeLsof = path.join(fakeBinDir, 'lsof');
+  fs.mkdirSync(fakeBinDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(fakeLsof, '#!/bin/sh\nsleep 2\n', { mode: 0o700 });
+  const startedAt = Date.now();
+  try {
+    const result = runIsolatedListenerProbe(fakeBinDir, [31_001, 31_002, 31_003], 250);
+    assert.equal(result.status, 1, 'listener discovery returned after consuming separate per-port waits');
+    assert.match(result.stderr, /deadline|timed out/i);
+    assert.ok(Date.now() - startedAt < 1_500, 'listener discovery exceeded the shared absolute deadline');
+  } finally {
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('teardown returns a bounded ownership report when listener discovery exhausts its deadline', {
+  timeout: 10_000,
+}, async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-teardown-timeout-'));
+  const fakeBinDir = path.join(fixtureDir, 'bin');
+  const fakeLsof = path.join(fakeBinDir, 'lsof');
+  const marker = path.join(fixtureDir, 'owned-marker');
+  fs.mkdirSync(fakeBinDir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(fakeLsof, '#!/bin/sh\nsleep 2\n', { mode: 0o700 });
+  const owned = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000);', marker],
+    { detached: true, stdio: 'ignore' },
+  );
+  assert.ok(owned.pid);
+  await waitForProcessGroup(owned.pid);
+  const startedAt = Date.now();
+
+  try {
+    await assert.rejects(
+      stopOwnedDaemon({
+        child: owned,
+        pid: owned.pid,
+        processGroupId: owned.pid,
+        identity: marker,
+        identityMarkers: [marker],
+        ownedPids: [owned.pid],
+        ownedProcessRecords: [{ pid: owned.pid, processGroupId: owned.pid, identity: marker }],
+        ownedProcessGroups: [{ processGroupId: owned.pid, identity: marker }],
+        ownedListenerRecords: [],
+        ports: [31_004],
+        listenerProbe(deadline) {
+          const timeoutMs = Math.max(1, deadline - Date.now());
+          const result = runIsolatedListenerProbe(fakeBinDir, [31_004], timeoutMs, timeoutMs);
+          if (result.status !== 0) {
+            throw new Error(result.stderr || result.error?.message || 'isolated listener probe failed');
+          }
+          return JSON.parse(result.stdout);
+        },
+        cleanupTimeoutMs: 250,
+        closed: false,
+      }),
+      (error) => {
+        assert.match(error.message, /listener discovery|teardown deadline/i);
+        assert.ok(error.message.includes(marker));
+        return true;
+      },
+    );
+    assert.ok(Date.now() - startedAt < 1_500, 'teardown exceeded its absolute deadline');
+  } finally {
+    if (isProcessAlive(owned.pid)) killProcessGroup(owned.pid);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('harness does not kill an unrelated same-command lookalike process', {
+  timeout: 10_000,
+}, async () => {
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-identity-fixture-'));
+  const marker = path.join(fixtureDir, 'owned-marker');
+  const lookalikeMarker = `${marker}-lookalike`;
+  const owned = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000);', marker],
+    { detached: true, stdio: 'ignore' },
+  );
+  const unrelated = spawn(
+    process.execPath,
+    ['-e', 'setInterval(() => {}, 1000);', lookalikeMarker],
+    { detached: true, stdio: 'ignore' },
+  );
+  assert.ok(owned.pid && unrelated.pid);
+
+  try {
+    await Promise.all([waitForProcessGroup(owned.pid), waitForProcessGroup(unrelated.pid)]);
+    const daemon = {
+      child: owned,
+      pid: owned.pid,
+      processGroupId: owned.pid,
+      identity: marker,
+      identityMarkers: [marker],
+      ownedPids: [owned.pid],
+      ownedProcessRecords: [{ pid: owned.pid, processGroupId: owned.pid, identity: marker }],
+      ownedProcessGroups: [{ processGroupId: owned.pid, identity: marker }],
+      ownedListenerRecords: [],
+      ports: [],
+      cleanupTimeoutMs: 2_000,
+      closed: false,
+    };
+
+    await stopOwnedDaemon(daemon);
+    assert.equal(isProcessAlive(owned.pid), false);
+    assert.equal(isProcessAlive(unrelated.pid), true, 'lookalike process was treated as owned');
+  } finally {
+    if (isProcessAlive(owned.pid)) killProcessGroup(owned.pid);
+    if (isProcessAlive(unrelated.pid)) killProcessGroup(unrelated.pid);
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
+  }
+});
+
+test('packaged daemon harness tears down its owned process group and temporary target after callback failure', {
+  timeout: 120_000,
+}, async () => {
+  let evidence;
+  await assert.rejects(
+    withObsidianImportHarness(async (harness) => {
+      harness.writeNote('daemon-failure-fixture.md', '# Daemon failure fixture\n\nnot imported by task 4.1\n');
+      await startMockImportEndpoint(harness, () => ({ body: { ok: true } }));
+      const daemon = await startPackagedAgentMemory(harness, agentMemoryPackagePath());
+      evidence = {
+        root: harness.root,
+        pid: daemon.pid,
+        processGroupId: daemon.processGroupId,
+        ownedPids: daemon.ownedPids,
+        ports: daemon.ports,
+        restPort: daemon.restPort,
+        endpointPort: harness.endpoint.port,
+        dataDir: harness.dataDir,
+        runtimeDir: harness.runtimeDir,
+        logDir: harness.logDir,
+      };
+      throw new Error('intentional importer harness failure');
+    }),
+    /intentional importer harness failure/,
+  );
+
+  await assertDaemonCleanup(evidence);
+  await assertPortAvailable(evidence.endpointPort);
+  assert.equal(fs.existsSync(evidence.root), false);
+  assert.equal(fs.existsSync(evidence.dataDir), false);
+  assert.equal(fs.existsSync(evidence.runtimeDir), false);
+  assert.equal(fs.existsSync(evidence.logDir), false);
 });

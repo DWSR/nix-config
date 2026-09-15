@@ -112,7 +112,7 @@
   - _Depends: 3.7_
 
 - [ ] 4. Integrate and validate the cutover
-- [ ] 4.1 Build the isolated importer integration harness
+- [x] 4.1 Build the isolated importer integration harness
   - Stage temporary vault fixtures, a fake Keychain helper, and a mock authenticated import endpoint without reading the real vault.
   - Add explicit daemon process ownership, authenticated health and readiness waits, bounded teardown, and isolated data and port paths for packaged-daemon tests.
   - Completion is observable when setup and teardown tests prove no orphan process, port, secret, or persistent target data remains after success and failure.
