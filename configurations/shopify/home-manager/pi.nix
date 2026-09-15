@@ -29,12 +29,13 @@ let
           name="$(basename "$source" .md)"
           ${pkgs.gawk}/bin/awk -v agentName="$name" '
             NR == 1 {
-              print
-              print "name: " agentName
-              print "systemPromptMode: replace"
-              print "inheritProjectContext: true"
-              print "inheritSkills: true"
-              next
+          print
+          print "name: " agentName
+          print "model: inherit"
+          print "systemPromptMode: replace"
+          print "inheritProjectContext: true"
+          print "inheritSkills: true"
+          next
             }
             /^mode:|^model:|^variant:|^temperature:/ { next }
             /^permission:/ { skip = 1; next }
@@ -75,5 +76,11 @@ in
     package = piShopify;
     extensions = [ "${shopifyPiProxy}/index.ts" ];
     skills = shopifyPiSkills;
+    promptTemplates = [ ./commands ];
+    settings = {
+      defaultProvider = "openai";
+      defaultModel = "gpt-5.6-sol";
+      defaultThinkingLevel = "xhigh";
+    };
   };
 }

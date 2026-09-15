@@ -27,6 +27,7 @@ let
           NR == 1 {
             print
             print "name: kiro-spec-orchestrator"
+            print "model: inherit"
             print "systemPromptMode: replace"
             print "inheritProjectContext: true"
             print "inheritSkills: true"
@@ -90,5 +91,7 @@ in
     ];
 
     skills = kiroSkillPaths;
+    settings.subagents.defaultThinking = "xhigh";
+    settings.subagents.defaultExtensions = config.programs.pi.coding-agent.extensions;
   };
 }
