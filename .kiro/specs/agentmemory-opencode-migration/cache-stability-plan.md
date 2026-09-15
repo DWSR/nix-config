@@ -20,9 +20,9 @@ plugin changes system content between requests; file-tool-following requests
 had roughly 77% zero cache reads versus 2.7% without recent file tools.
 
 Keep the pinned AgentMemory/OpenCode versions, daemon, REST/MCP routes, database,
-importer, BM25 policy, Pi integration, provider settings, and native compaction
-policy unchanged. Do not add a second plugin, custom memory store, history
-rewriter, capture relay, or durable retry queue.
+importer, BM25 policy, provider settings, and native compaction policy unchanged.
+Do not add a second plugin, custom memory store, history rewriter, capture relay,
+or durable retry queue.
 
 ## Implemented Design
 

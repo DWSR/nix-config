@@ -21,7 +21,6 @@ in
     ./deskflow.nix
     ./git.nix
     ./opencode.nix
-    ./pi-agent.nix
     ./sqlite-backup.nix
   ];
 

@@ -488,7 +488,7 @@ in
       #
       # The plugin and wrapper probe are gated by the selected OpenCode
       # backend in addition to `cfg.enable`; the package, settings, data
-      # path, and MCP upstream above remain enabled for Pi.
+      # path, and MCP upstream above remain enabled for cavemem.
       #
       # Quoting note: this snippet is composed into the opencode
       # wrapper via `wrapProgram ... --run STR`. The joined

@@ -138,8 +138,8 @@ in
     };
 
     # Bug-fix patches cherry-picked from upstream PRs against the v0.2.1
-    # source tree, plus repository-owned data-dir and Pi full-mode patches.
-    # Keep the Pi stack ordered payload, privacy, storage policy, then the
+    # source tree, plus repository-owned data-dir patches.
+    # Keep the patch stack ordered payload, privacy, storage policy, then the
     # integration-owned storage-limit diagnostic. The data-dir patch is what
     # makes `home.cavemem.dataDir` in the home-manager module actually take
     # effect (cavemem v0.2.1 has no other override mechanism for the hardcoded

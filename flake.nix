@@ -104,11 +104,6 @@
       url = "github:anomalyco/opencode/v1.18.26";
     };
 
-    pi-nix = {
-      url = "github:lukasl-dev/pi.nix/1d37b58675b763ae6c9dc05d62321109066a4126";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
   };
 
   outputs =
@@ -1704,26 +1699,6 @@
             }
           );
 
-          piAgentChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
-            pi-agent-harness =
-              pkgs.runCommand "pi-agent-harness"
-                {
-                  nativeBuildInputs = [
-                    pkgs.nix
-                    pkgs.nodejs
-                  ];
-                }
-                ''
-                  export HOME=$(mktemp -d)
-                  export NIX_CONFIG="experimental-features = nix-command flakes"
-                  cp -R ${./.} source
-                  chmod -R u+w source
-                  cd source
-                  node --test tests/pi-agent/
-                  node tests/pi-agent/run.js --smoke > $out
-                '';
-          };
-
           agentMemoryHostMatrix = import ./tests/agentmemory-opencode/host-matrix.nix {
             inherit pkgs self;
           };
@@ -1792,7 +1767,6 @@
         nixvimTests
         // hammerspoonChecks
         // deskflowChecks
-        // piAgentChecks
         // agentMemoryChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;

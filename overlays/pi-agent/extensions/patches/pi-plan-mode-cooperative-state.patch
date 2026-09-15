@@ -1,6 +1,0 @@
-diff -ruN a/src/index.ts b/src/index.ts
---- a/src/index.ts	2026-08-11 00:00:00
-+++ b/src/index.ts	2026-08-11 00:00:00
-@@ -1 +1 @@
--export { default } from "./plan-mode.js";
-+export { default } from "./managed-plan-mode.js";

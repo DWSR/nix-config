@@ -11,8 +11,7 @@ health, and CLI behavior did not remain operable after real history migration.
 AgentMemory v0.9.29 plus commit `e04ba888` now provides OpenCode capture, MCP,
 launchd, and import paths. A 7,515-session migration exposed unbounded
 BM25 memory, unsafe index persistence, Node 24 native-addon failure, silent and
-quadratic import phases, and health/CLI authentication gaps. Pi is independently
-managed and is not part of this spec.
+quadratic import phases, and health/CLI authentication gaps.
 
 ## Desired Outcome
 
@@ -20,8 +19,7 @@ OpenCode uses a declaratively packaged AgentMemory runtime, patched upstream
 plugin, automatic context injection, and core MCP tools through mcpproxy.
 Cavemem history remains stored for later processing while BM25 recall is bounded.
 Both hosts render the normal AgentMemory generation. This feature does not
-render an OpenCode rollback activation or validation path. Pi behavior remains
-outside this feature.
+render an OpenCode rollback activation or validation path.
 
 ## Approach
 
@@ -33,8 +31,8 @@ bearers through the managed Keychain wrapper and accept HTTP-200 degraded health
 without accepting fallback or critical state.
 
 Disable cavemem-specific OpenCode consumers instead of porting them. Bake the
-configured REST endpoint into the importer. Keep manual Obsidian curation and
-all Pi behavior outside this boundary.
+configured REST endpoint into the importer. Keep manual Obsidian curation
+outside this boundary.
 
 ## Scope
 
@@ -46,9 +44,8 @@ all Pi behavior outside this boundary.
   AgentMemory; exact worktree/same-basename project isolation; crash-resumable
   migration; transactional import; proven iii flush semantics; exhaustive
   backup workflows; porting session-compaction memory augmentation, vault
-  synthesis, or memory-sync; OpenCode rollback activation and validation; every
-  Pi package, integration, credential, health, migration, and validation
-  concern.
+  synthesis, or memory-sync; OpenCode rollback activation and validation; and
+  other consumer integration concerns.
 
 ## Boundary Candidates
 
@@ -65,8 +62,6 @@ all Pi behavior outside this boundary.
 ## Out of Boundary
 
 - OpenCode rollback activation and validation.
-- Pi configuration, packages, integrations, credentials, runtime behavior,
-  migration, and compatibility validation.
 - Security isolation between the in-process OpenCode plugin and model-invoked
   OpenCode subprocesses.
 - Recovery of an import interrupted after AgentMemory accepts only part of a
@@ -86,7 +81,7 @@ all Pi behavior outside this boundary.
 - **Extends**: none.
 - **Adjacent**: `cavemem-integration`, `session-compaction`,
   `vault-synthesizer-agent`, `memory-sync-cli`, `sqlite-backup`,
-  `mcpproxy-migration`, `opencode-nono-sandbox`, and `pi-agent-integration`.
+  `mcpproxy-migration`, and `opencode-nono-sandbox`.
 
 ## Constraints
 

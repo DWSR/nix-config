@@ -9,31 +9,14 @@ const repoRoot = path.resolve(__dirname, '../..');
 const runnerPath = path.join(__dirname, 'index.js');
 const flakePath = path.join(repoRoot, 'flake.nix');
 
-test('the feature runner registers every AgentMemory test except Pi compatibility', () => {
+test('the feature runner registers every AgentMemory test', () => {
   const runner = fs.readFileSync(runnerPath, 'utf8');
   const expectedTests = fs.readdirSync(__dirname)
     .filter((name) => /\.test\.(?:js|cjs|mjs)$/.test(name))
-    .filter((name) => name !== 'pi-compatibility.test.mjs')
     .sort();
 
   for (const testFile of expectedTests) {
     assert.match(runner, new RegExp(`['"](?:\\./)?${testFile.replaceAll('.', '\\.')}['"]`));
-  }
-  assert.doesNotMatch(runner, /pi-compatibility\.test\.mjs/);
-});
-
-test('the feature gate contains no Pi acceptance criteria', () => {
-  const featureFiles = fs.readdirSync(__dirname)
-    .filter((name) => /\.test\.(?:js|cjs|mjs)$/.test(name))
-    .filter((name) => !['pi-compatibility.test.mjs', 'validation-suite.test.js'].includes(name));
-  featureFiles.push(
-    ...fs.readdirSync(__dirname).filter((name) => name.endsWith('.nix')),
-    'fixtures/cavemem-import-fixture.js',
-  );
-
-  for (const featureFile of featureFiles) {
-    const source = fs.readFileSync(path.join(__dirname, featureFile), 'utf8');
-    assert.doesNotMatch(source, /\bpi\b/i, `${featureFile} contains Pi acceptance logic`);
   }
 });
 

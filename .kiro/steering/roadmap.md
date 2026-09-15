@@ -280,11 +280,10 @@ session: 128 sessions, $6,128.06 real spend.)
 
 - [ ] agentmemory-opencode-migration -- Replace cavemem only for the OpenCode
   harness with a patched, declaratively managed agentmemory runtime; migrate
-  existing OpenCode history and adapt recall consumers while preserving Pi's
-  cavemem package, data, and behavior. Dependencies: mcpproxy-migration,
+  existing OpenCode history and adapt recall consumers. Dependencies:
+  mcpproxy-migration,
   cavemem-integration, session-compaction, vault-synthesizer-agent,
   memory-sync-cli, sqlite-backup, and opencode-nono-sandbox. **Status**:
   tasks-generated 2026-09-05; immediate-cutover runtime risk accepted by the
   operator; simplified to 25 tasks using stock AgentMemory behavior and the
-  existing patched OpenCode plugin; Pi remains on cavemem with future
-  AgentMemory plugin compatibility preserved.
+  existing patched OpenCode plugin.

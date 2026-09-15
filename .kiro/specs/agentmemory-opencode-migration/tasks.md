@@ -174,7 +174,6 @@
 ## Implementation Notes
 
 - AgentMemory persists summaries by target session, so the importer merges all source summaries per session, retains source IDs and narratives in provenance, and reports source `selected` counts separately from target import counts.
-- Pi is explicitly outside this specification. Pi findings do not affect this feature's validation decision.
 - Pre-activation validation must prove the personal configuration tolerates absent bearer ciphertext without requiring the ciphertext itself.
 - OpenCode rollback activation and validation are not part of this feature.
 - Stopping the AgentMemory runtime for a backup is not an accepted operation; this feature provides no backup command or destination.

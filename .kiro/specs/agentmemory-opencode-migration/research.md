@@ -6,8 +6,7 @@
 - **Discovery scope**: Complex brownfield integration.
 - **Key findings**: AgentMemory supplies a usable OpenCode integration but has
   known capture, project, persistence, fallback, credential, and large-corpus
-  limitations. The amended design adds bounded operational exceptions and keeps
-  Pi outside this feature.
+  limitations. The amended design adds bounded operational exceptions.
 
 ## External Findings
 
@@ -143,8 +142,6 @@ Validation date: 2026-09-09.
   health, and `cavemem-session-*` provenance.
 - `configurations/shopify/home-manager/sqlite-backup.nix` protects SQLite files;
   it cannot snapshot agentmemory's directory store consistently.
-- Pi-owned overlays and harness files are adjacent and excluded from this
-  feature's gap analysis.
 - Existing AgentMemory tests cover package, plugin, importer, health, and
   consumer behavior but are not all registered under the flake check.
 
@@ -211,7 +208,6 @@ balanced reduction to stock AgentMemory behavior and roughly half as many tasks.
   mcpproxy.
 - Import cavemem history with deterministic IDs and bounded batches.
 - Bound large-history indexing and persistence without pruning stored records.
-- Keep Pi outside the implementation and validation boundary.
 
 ### Removed
 

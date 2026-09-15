@@ -359,7 +359,6 @@ function classifySession(
   metadata: Record<string, unknown>,
 ): string | null {
   const normalizedIde = typeof ide === 'string' ? ide.trim().toLowerCase() : '';
-  if (normalizedIde === 'pi' || normalizedIde === 'pi-agent') return 'pi';
   if (normalizedIde === 'obsidian-migration') return 'obsidian-migration';
   if (IMPORTER_IDES.has(normalizedIde) || explicitImporterMarker(metadata)) return 'importer';
   return null;

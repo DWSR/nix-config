@@ -75,7 +75,7 @@ let
 in
 {
   options.programs.agentmemory = {
-    enable = lib.mkEnableOption "AgentMemory runtime for OpenCode and Pi";
+    enable = lib.mkEnableOption "AgentMemory runtime for OpenCode";
 
     package = mkOption {
       type = types.package;

@@ -33,7 +33,7 @@ in
         "agentmemory"
       ];
       default = "cavemem";
-      description = "OpenCode ambient memory backend. Pi remains on AgentMemory.";
+      description = "OpenCode ambient memory backend.";
     };
 
     package = lib.mkOption {

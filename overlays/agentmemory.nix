@@ -98,8 +98,6 @@ in
         test -f "$packageRoot/iii-config.yaml"
         test -f "$packageRoot/docker-compose.yml"
         test -f "$packageRoot/plugin/opencode/agentmemory-capture.ts"
-        test -f "$packageRoot/integrations/pi/index.ts"
-        test -f "$packageRoot/integrations/pi/security.ts"
 
         # Keep the upstream CLI as the runtime entrypoint, but make its
         # compatible iii binary available on PATH so it never falls back to

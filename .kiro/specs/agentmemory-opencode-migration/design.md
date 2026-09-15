@@ -11,7 +11,6 @@ migrated corpus.
 - Provide ambient capture, automatic context, and core MCP recall.
 - Import useful cavemem history with a rerunnable best-effort command.
 - Keep large-corpus indexing, import, and health operable.
-- Exclude Pi from this feature's implementation and validation boundary.
 
 ### Non-Goals
 
@@ -23,7 +22,6 @@ migrated corpus.
 - General replacement of AgentMemory's query or persistence architecture beyond
   the bounded BM25 safety policy.
 - OpenCode rollback activation, migration reversal, and rollback validation.
-- Pi packages, integration, credentials, migration, health, rollback, or tests.
 
 ## Boundary Commitments
 
@@ -45,7 +43,6 @@ migrated corpus.
 - Automatic AgentMemory-to-Obsidian promotion.
 - Runtime backup and restore workflows.
 - OpenCode rollback activation and validation.
-- All Pi configuration, integrations, credentials, runtime behavior, and tests.
 - Recovery beyond stock AgentMemory behavior and rerunning failed imports.
 
 ### Allowed Dependencies
@@ -75,7 +72,6 @@ migrated corpus.
 
 - OpenCode exposes only mcpproxy as MCP.
 - Cavemem currently owns OpenCode capture and several optional consumers.
-- Pi is independently managed outside this feature.
 - AgentMemory already supplies the OpenCode integration source.
 - The current title and summary agents are disabled, reducing the known
   first-turn automatic-context race.
@@ -151,7 +147,6 @@ tests/agentmemory-opencode/                  # Package, plugin, HM, and import c
 
 ### Preserved Paths
 
-- All Pi harness, package, integration, credential, and test paths.
 - Existing non-rollback Cavemem assets remain available only for the retained
   legacy backend path.
 
@@ -218,7 +213,7 @@ Rerunning with deterministic IDs and stock `skip` behavior is the recovery path.
 - `buildNpmPackage` uses a repository-owned lock for AgentMemory at `e04ba888`.
 - The package includes iii-engine v0.11.2 for both supported Darwin systems.
 - The package retains upstream `plugin/opencode/**`, metadata, commands, and
-  licenses. Bundled Pi files are incidental upstream package content.
+  licenses.
 - Home Manager renders the standard AgentMemory environment and launchd service
   with managed data/runtime directories and loopback ports.
 - The service uses upstream start, stop, storage, and consolidation.
@@ -289,12 +284,6 @@ interface LegacyImportRecord {
   cannot re-enable it.
 - Manual Obsidian recall/writes and vault-curator remain.
 
-### Pi Boundary
-
-Pi configuration, packages, integrations, credentials, runtime behavior, and
-tests are adjacent state. Feature validation neither requires nor rejects any Pi
-backend or health policy.
-
 ## Error Handling
 
 - Evaluation errors: unsupported system, missing package, invalid option.
@@ -340,4 +329,3 @@ backend or health policy.
 - Import rerun with skipped deterministic IDs and one malformed batch.
 - Complete feature suite registered under `nix flake check` without omitting
   package, plugin, status, import, or host tests.
-- Pi tests are excluded from this feature-level gate.

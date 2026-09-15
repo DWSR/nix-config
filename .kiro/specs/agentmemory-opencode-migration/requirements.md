@@ -14,10 +14,8 @@ necessary by the migrated corpus. See `brief.md` for scope and rationale.
 - **Out of scope**: Custom capture or retrieval services, raw-event storage,
   hardened credential separation, exact project isolation, resilient migration,
   proven flush/restore semantics, consumer parity, runtime backup and restore
-  workflows, OpenCode rollback activation and validation, and every Pi concern.
-- **Adjacent expectations**: Pi is independently managed and excluded from this
-  feature's requirements and validation. Obsidian remains available for manual
-  curated memories.
+  workflows, and OpenCode rollback activation and validation. Obsidian remains
+  available for manual curated memories.
 
 ## Requirements
 

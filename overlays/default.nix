@@ -4,7 +4,6 @@ let
   zellijPlugins = import ./zellij-plugins.nix { inherit inputs; };
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
-  piAgent = import ./pi-agent { inherit inputs; };
   agentmemory = import ./agentmemory.nix { };
 in
 {
@@ -95,6 +94,5 @@ in
     // (zellijPlugins final prev)
     // (misc final prev)
     // (litestream final prev)
-    // (piAgent final prev)
     // (agentmemory final prev);
 }
