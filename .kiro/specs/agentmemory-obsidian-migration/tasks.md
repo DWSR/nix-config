@@ -129,7 +129,7 @@
   - _Boundary: Importer and Managed Command Integration: Behavior_
   - _Depends: 4.1_
 
-- [ ] 4.3 Reconcile host and MCP runtime matrices
+- [x] 4.3 Reconcile host and MCP runtime matrices
   - Update AgentMemory and MCP inventory matrices for importer presence and removal of the Obsidian option, package, server, and dependent pipelines.
   - Validate the config-generation reload contract and start an isolated mcpproxy from the refreshed runtime copy to inspect live inventory without restarting the managed host service.
   - Preserve unrelated servers, both host evaluations, and the desktop cask assertion.

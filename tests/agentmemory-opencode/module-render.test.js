@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
@@ -278,6 +279,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.ok(first.packages.some((name) => name.startsWith('agentmemory-')));
   assert.ok(first.packages.includes('agentmemory-import-cavemem'));
   assert.ok(first.packages.includes('agentmemory-import-obsidian'));
+  assert.equal(first.packages.includes('memory-sync'), false);
+  assert.equal(first.packages.includes('cavemem-import-vault'), false);
   assert.match(first.agentmemoryCli.source, /AGENTMEMORY_SECURITY_BIN/);
   assert.match(first.agentmemoryCli.source, /find-generic-password -s mcpproxy -a agentmemory-bearer -w/);
   assert.match(first.agentmemoryCli.source, /agentmemory-0\.9\.29\/bin\/agentmemory/);
@@ -376,12 +379,17 @@ test('managed MCP inventory removes Obsidian and reloads on rendered-config chan
   assert.ok(serverNames.includes('instances-mcp'));
   assert.ok(serverNames.includes('git-mcp'));
   assert.match(rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH, /^[0-9a-f]{64}$/);
+  assert.equal(
+    rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
+    crypto.createHash('sha256').update(rendered.mcpConfigText).digest('hex'),
+  );
   assert.notEqual(rendered.mcpConfigText, changed.mcpConfigText);
   assert.notEqual(
     rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
     changed.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
   );
-  assert.doesNotMatch(JSON.stringify(rendered.mcpproxy), /op:\/\/|bearer|secret/i);
+  assert.doesNotMatch(rendered.mcpConfigText, /op:\/\/|test-secret|bearer-value/i);
+  assert.doesNotMatch(JSON.stringify(rendered.mcpproxy), /op:\/\/|test-secret|bearer-value/i);
    assert.doesNotMatch(
      mcpModuleSource,
      new RegExp(`mcp-${['obsidian'].join('')}|${retiredPipelineNames.vaultOption}`),

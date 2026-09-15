@@ -20,6 +20,17 @@ let
     let
       hm = self.darwinConfigurations.${hostName}.config.home-manager.users.brandonmcnama;
       packageNames = map (package: package.name or "") hm.home.packages;
+      obsidianVaultPathConfigured = builtins.hasAttr "obsidianVaultPath" hm.home.mcp;
+      obsidianPackageNames = builtins.filter (
+        package: pkgs.lib.hasInfix "mcp-obsidian" package
+      ) packageNames;
+      retiredPipelinePackageNames = builtins.filter (
+        package:
+        builtins.elem package [
+          "memory-sync"
+          "cavemem-import-vault"
+        ]
+      ) packageNames;
       configFiles = builtins.attrNames hm.xdg.configFile;
       memoryPluginFiles = builtins.filter (
         file: builtins.match "opencode/plugins/(cavemem\\.js|agentmemory-.*)" file != null
@@ -90,6 +101,7 @@ let
       backend = hm.home.opencode.memoryBackend;
       agentMemory = {
         enable = hm.programs.agentmemory.enable;
+        obsidianImporter = builtins.elem "agentmemory-import-obsidian" packageNames;
         packageNames = builtins.filter (package: pkgs.lib.hasPrefix "agentmemory" package) packageNames;
         settings = discard agentMemorySettings;
         runtimeConfig = agentMemoryRuntimeConfig;
@@ -110,6 +122,8 @@ let
         serverNames = map (server: server.name) mcpConfig.mcpServers;
         agentMemoryCount = builtins.length agentMemoryServers;
         cavememCount = builtins.length cavememServers;
+        configText = discard hm.xdg.configFile."mcpproxy/mcp_config.json".text;
+        inherit obsidianPackageNames obsidianVaultPathConfigured retiredPipelinePackageNames;
         opencodeNames = builtins.attrNames (hm.programs.opencode.settings.mcp or { });
       };
       instructions = {

@@ -39,6 +39,11 @@ function renderHosts() {
           mcp = {
             serverNames = map (server: server.name) mcpConfig.mcpServers;
             inherit packageNames;
+            obsidianPackageNames = builtins.filter (name: lib.hasInfix "mcp-obsidian" name) packageNames;
+            obsidianVaultPathConfigured = builtins.hasAttr "obsidianVaultPath" hm.home.mcp;
+            retiredPipelinePackages = builtins.filter (name:
+              builtins.elem name [ "memory-sync" "cavemem-import-vault" ]
+            ) packageNames;
             launchdEnvironment = mcpproxyJob.config.EnvironmentVariables;
           };
           expectedDataDir = "\${hm.xdg.dataHome}/agentmemory";
@@ -132,6 +137,9 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.opencode.wrapperHasObsidianImporter, false, `${host} does not invoke the importer at startup`);
     assert.equal(config.mcp.serverNames.includes('obsidian'), false, `${host} omits the Obsidian MCP server`);
     assert.equal(config.mcp.packageNames.some((name) => name.includes('mcp-obsidian')), false, `${host} omits the Obsidian MCP package`);
+    assert.deepEqual(config.mcp.obsidianPackageNames, [], `${host} omits Obsidian MCP packages`);
+    assert.equal(config.mcp.obsidianVaultPathConfigured, false, `${host} omits the Obsidian vault-path option`);
+    assert.deepEqual(config.mcp.retiredPipelinePackages, [], `${host} omits retired memory pipeline commands`);
     assert.ok(config.mcp.serverNames.includes('agentmemory'), `${host} retains AgentMemory MCP`);
     assert.ok(config.mcp.serverNames.includes('github'), `${host} retains GitHub MCP`);
     assert.ok(config.mcp.serverNames.includes('time'), `${host} retains time MCP`);

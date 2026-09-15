@@ -99,6 +99,10 @@ function evalMatrix() {
       summarize = name: hm:
         let
           packageNames = map (package: package.name or "") hm.home.packages;
+          obsidianPackageNames = builtins.filter (package: pkgs.lib.hasInfix "mcp-obsidian" package) packageNames;
+          retiredPipelinePackageNames = builtins.filter (
+            package: builtins.elem package [ "memory-sync" "cavemem-import-vault" ]
+          ) packageNames;
           configFiles = builtins.attrNames hm.xdg.configFile;
           pluginFiles = builtins.filter (
             file: builtins.match "opencode/plugins/.*" file != null
@@ -180,6 +184,7 @@ function evalMatrix() {
           backend = hm.home.opencode.memoryBackend;
           agentMemory = {
             enable = hm.programs.agentmemory.enable;
+            obsidianImporter = builtins.elem "agentmemory-import-obsidian" packageNames;
             packageNames = builtins.filter (package: pkgs.lib.hasPrefix "agentmemory" package) packageNames;
             settings = agentMemorySettings;
             runtimeConfig = agentMemoryRuntimeConfig;
@@ -200,6 +205,10 @@ function evalMatrix() {
             serverNames = map (server: server.name) mcpConfig.mcpServers;
             agentMemoryCount = builtins.length agentMemoryServers;
             cavememCount = builtins.length cavememServers;
+            configText = discardText hm.xdg.configFile."mcpproxy/mcp_config.json".text;
+            obsidianPackageNames = obsidianPackageNames;
+            obsidianVaultPathConfigured = builtins.hasAttr "obsidianVaultPath" hm.home.mcp;
+            retiredPipelinePackageNames = retiredPipelinePackageNames;
             opencodeNames = builtins.attrNames (hm.programs.opencode.settings.mcp or { });
           };
            instructions = {
@@ -320,6 +329,11 @@ function assertAgentMemoryPromptContract(rendered) {
 
 function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.agentMemory.enable, true, `${rendered.name} enables AgentMemory`);
+  assert.equal(
+    rendered.agentMemory.obsidianImporter,
+    true,
+    `${rendered.name} exposes the managed Obsidian-to-AgentMemory importer`,
+  );
   assert.equal(rendered.agentMemory.ports.rest, 3111);
   assert.equal(rendered.agentMemory.ports.stream, 3112);
   assert.equal(rendered.agentMemory.ports.viewer, 3113);
@@ -352,6 +366,14 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.cavemem.enable, cavememEnabled);
   assert.deepEqual(rendered.mcp.opencodeNames, ['mcpproxy']);
   assert.deepEqual(rendered.mcp.serverNames.includes('agentmemory'), true);
+  assert.equal(rendered.mcp.obsidianVaultPathConfigured, false);
+  assert.deepEqual(rendered.mcp.obsidianPackageNames, []);
+  assert.deepEqual(rendered.mcp.retiredPipelinePackageNames, []);
+  assert.equal(rendered.mcp.serverNames.includes('obsidian'), false);
+  assert.doesNotMatch(
+    rendered.mcp.configText,
+    /obsidianVaultPath|mcp-obsidian|memory-sync|cavemem-import-vault/i,
+  );
   assertNoBearerLiteral(rendered);
 }
 

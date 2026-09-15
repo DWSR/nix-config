@@ -150,8 +150,10 @@ test('both hosts render grep-app upstream through mcpproxy and preserve existing
   assert.equal(rendered.shopify.serverNames.includes('obsidian'), false);
   assertIncludesAll(rendered.personal.serverNames, [
     'github',
-    'mcp-nixos',
-    'cavemem',
+    'time',
+    'instances-mcp',
+    'git-mcp',
+    'agentmemory',
     'grep-app',
     'fastmail',
     'kagi',
@@ -160,8 +162,10 @@ test('both hosts render grep-app upstream through mcpproxy and preserve existing
   ], 'personal mcpproxy servers');
   assertIncludesAll(rendered.shopify.serverNames, [
     'github',
-    'mcp-nixos',
-    'cavemem',
+    'time',
+    'instances-mcp',
+    'git-mcp',
+    'agentmemory',
     'grep-app',
     'buildkite',
     'gcloud-mcp',
