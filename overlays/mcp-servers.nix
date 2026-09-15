@@ -125,7 +125,7 @@ in
   #     the Nix sandbox forbids.
   #   - `makeWrapper` exposes `bin/cavemem` as a stable absolute path
   #     so the daemon resolves the same Node + entry point on every
-  #     invocation (mirrors the `mcp-obsidian` block below).
+  #     invocation.
   cavemem = final.stdenv.mkDerivation (finalAttrs: {
     pname = "cavemem";
     version = "0.2.1";
@@ -510,43 +510,6 @@ in
       description = "Vendored Node deps (better-sqlite3 + tiktoken) for the opencode-cost-diagnosis CLI";
       license = licenses.mit;
       platforms = platforms.darwin ++ platforms.linux;
-    };
-  };
-
-  mcp-obsidian = final.buildNpmPackage {
-    pname = "mcp-obsidian";
-    version = "0.1.0";
-
-    src = final.fetchFromGitHub {
-      owner = "Piotr1215";
-      repo = "mcp-obsidian";
-      rev = "c99c0644b0229cd880c31ccd16a5fe1347e43078";
-      hash = "sha256-6zGlPO4w7iiLJluTvDVEnY7Z/R2pov9Xlu0Qp7xmy7Q=";
-    };
-
-    npmDeps = final.importNpmLock {
-      npmRoot = final.fetchFromGitHub {
-        owner = "Piotr1215";
-        repo = "mcp-obsidian";
-        rev = "c99c0644b0229cd880c31ccd16a5fe1347e43078";
-        hash = "sha256-6zGlPO4w7iiLJluTvDVEnY7Z/R2pov9Xlu0Qp7xmy7Q=";
-      };
-    };
-    inherit (final.importNpmLock) npmConfigHook;
-    dontNpmBuild = true;
-
-    postInstall = ''
-      makeWrapper ${final.nodejs}/bin/node $out/bin/mcp-obsidian \
-        --add-flags "$out/lib/node_modules/obsidian-mcp-filesystem/src/index.js"
-    '';
-
-    nativeBuildInputs = [ final.makeWrapper ];
-
-    meta = with final.lib; {
-      description = "MCP server for Obsidian vault filesystem operations";
-      homepage = "https://github.com/Piotr1215/mcp-obsidian";
-      license = licenses.mit;
-      mainProgram = "mcp-obsidian";
     };
   };
 

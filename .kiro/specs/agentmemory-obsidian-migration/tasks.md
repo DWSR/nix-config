@@ -42,7 +42,7 @@
   - _Boundary: Managed Import Command_
 
 - [ ] 3. Apply the Obsidian hard cut
-- [ ] 3.1 (P) Remove Obsidian from managed MCP inventory
+- [x] 3.1 (P) Remove Obsidian from managed MCP inventory
   - Remove the managed server, package, option, and both host vault-path values.
   - Add a rendered-config generation trigger so server-inventory changes alter the launchd definition and refresh the private runtime copy on the next managed start.
   - Preserve AgentMemory, unrelated MCP servers, source vaults, Cavemem data, and the Obsidian desktop cask.

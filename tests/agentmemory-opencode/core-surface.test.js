@@ -52,7 +52,6 @@ function renderIntegration() {
         home.stateVersion = "26.05";
         home.opencode.memoryBackend = "agentmemory";
         home.mcp = {
-          obsidianVaultPath = "/tmp/agentmemory/vault";
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
           keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
         };

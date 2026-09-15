@@ -171,8 +171,9 @@ test('ast-grep-mcp package exposes metadata, built executable output, and help s
 test('both hosts render ast-grep upstream through mcpproxy and preserve existing servers', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
+  assert.equal(rendered.personal.serverNames.includes('obsidian'), false);
+  assert.equal(rendered.shopify.serverNames.includes('obsidian'), false);
   assertIncludesAll(rendered.personal.serverNames, [
-    'obsidian',
     'github',
     'mcp-nixos',
     'cavemem',
@@ -184,7 +185,6 @@ test('both hosts render ast-grep upstream through mcpproxy and preserve existing
     'beeper',
   ], 'personal mcpproxy servers');
   assertIncludesAll(rendered.shopify.serverNames, [
-    'obsidian',
     'github',
     'mcp-nixos',
     'cavemem',

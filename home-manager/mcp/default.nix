@@ -491,17 +491,12 @@ let
     // httpFields
     // intervalFields;
 
-  # The base upstream MCP servers always present on every host (obsidian,
-  # github, mcp-nixos, time, instances-mcp). They flow through the same
+  # The base upstream MCP servers always present on every host (github,
+  # mcp-nixos, time, instances-mcp). They flow through the same
   # `renderServer` translator as `home.mcp.extraServers` entries so the
   # array-emission logic stays uniform. The `nixos` server in the legacy
   # mcphub config is renamed to `mcp-nixos` here (R2.1).
   baseServers = {
-    obsidian = {
-      command = "${pkgs.mcp-obsidian}/bin/mcp-obsidian";
-      args = [ cfg.obsidianVaultPath ];
-    };
-
     github = {
       command = "${pkgs.github-mcp-server}/bin/github-mcp-server";
       args = [
@@ -571,6 +566,7 @@ let
   };
 
   renderedConfigText = builtins.toJSON renderedConfig;
+  renderedConfigHash = builtins.hashString "sha256" renderedConfigText;
 
   sourceConfigPath = "${config.xdg.configHome}/mcpproxy/mcp_config.json";
   runtimeConfigDir = "${config.home.homeDirectory}/.mcpproxy/runtime-config";
@@ -764,11 +760,6 @@ in
         (`"mcp-github-token"`) avoids minting a second token; point this
         at a distinct secret if Nix needs different scopes.
       '';
-    };
-
-    obsidianVaultPath = lib.mkOption {
-      type = lib.types.str;
-      description = "Absolute path to the Obsidian vault for agent memory and conversation logs";
     };
 
     gitMcpSigning = {
@@ -1043,7 +1034,6 @@ in
         pkgs.mcpproxy-go
         pkgs.github-mcp-server
         # pkgs.mcp-nixos
-        pkgs.mcp-obsidian
         pkgs.mcp-server-time
         pkgs.git-mcp-server
         signingCfg.signerPackage
@@ -1119,6 +1109,7 @@ in
               pkgs.git-lfs
             ]
             + ":/usr/bin:/bin";
+          EnvironmentVariables.MCPPROXY_CONFIG_HASH = renderedConfigHash;
           StandardOutPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.log";
           StandardErrorPath = "${config.home.homeDirectory}/Library/Logs/mcpproxy/launchd.error.log";
         }

@@ -11,6 +11,14 @@ const agentMemoryModuleSource = fs.readFileSync(
   path.join(repoRoot, 'home-manager/common/agentmemory.nix'),
   'utf8',
 );
+const mcpModuleSource = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/mcp/default.nix'),
+  'utf8',
+);
+const mcpOverlaySource = fs.readFileSync(
+  path.join(repoRoot, 'overlays/mcp-servers.nix'),
+  'utf8',
+);
 
 function renderModule({ enable }) {
   const nixBoolean = enable ? 'true' : 'false';
@@ -89,13 +97,19 @@ in builtins.toJSON {
   );
 }
 
-function renderStockMcpModule({ enable }) {
+function renderStockMcpModule({ enable, addInventoryServer = false }) {
   const nixBoolean = enable ? 'true' : 'false';
+  const inventoryServer = addInventoryServer
+    ? `{ "inventory-change" = { command = "/bin/true"; }; }`
+    : `{ }`;
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
     system = "aarch64-darwin";
-    overlays = [ flake.outputs.overlays.custom-packages ];
+    overlays = [
+      flake.outputs.overlays.unstable-packages
+      flake.outputs.overlays.custom-packages
+    ];
     config.allowUnfree = true;
   };
   hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
@@ -110,9 +124,9 @@ function renderStockMcpModule({ enable }) {
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
         home.mcp = {
-          obsidianVaultPath = "/tmp/agentmemory/vault";
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
           keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
+          extraServers = ${inventoryServer};
         };
          programs.agentmemory = {
            enable = ${nixBoolean};
@@ -127,12 +141,20 @@ function renderStockMcpModule({ enable }) {
       }
     ];
   }).config;
-  mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile.${JSON.stringify("mcpproxy/mcp_config.json")}.text);
+  mcpConfigText = builtins.unsafeDiscardStringContext hm.xdg.configFile.${JSON.stringify("mcpproxy/mcp_config.json")}.text;
+  mcpConfig = builtins.fromJSON mcpConfigText;
   agentMemoryServers = builtins.filter (server: server.name == "agentmemory") mcpConfig.mcpServers;
+  mcpproxyJob = hm.launchd.agents.mcpproxy;
 in builtins.toJSON {
+  mcpConfigText = mcpConfigText;
   mcpConfig = mcpConfig;
   agentMemory = if agentMemoryServers == [ ] then null else builtins.head agentMemoryServers;
   opencodeMcp = hm.programs.opencode.settings.mcp or { };
+  packages = map (package: package.name or "") hm.home.packages;
+  mcpproxy = {
+    environment = mcpproxyJob.config.EnvironmentVariables;
+    programArguments = mcpproxyJob.config.ProgramArguments;
+  };
 })`;
 
   return JSON.parse(
@@ -296,6 +318,29 @@ test('enabled AgentMemory registers the stock core shim through mcpproxy only', 
   ]);
   assert.doesNotMatch(JSON.stringify(rendered.mcpConfig), /op:\/\/Private\/AgentMemory\/Bearer/);
   assert.doesNotMatch(JSON.stringify(rendered.mcpConfig), /test-secret/);
+});
+
+test('managed MCP inventory removes Obsidian and reloads on rendered-config changes', () => {
+  const rendered = renderStockMcpModule({ enable: true });
+  const changed = renderStockMcpModule({ enable: true, addInventoryServer: true });
+  const serverNames = rendered.mcpConfig.mcpServers.map((server) => server.name);
+
+  assert.equal(serverNames.includes('obsidian'), false);
+  assert.equal(rendered.packages.some((name) => name.includes('mcp-obsidian')), false);
+  assert.ok(serverNames.includes('agentmemory'));
+  assert.ok(serverNames.includes('github'));
+  assert.ok(serverNames.includes('time'));
+  assert.ok(serverNames.includes('instances-mcp'));
+  assert.ok(serverNames.includes('git-mcp'));
+  assert.match(rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH, /^[0-9a-f]{64}$/);
+  assert.notEqual(rendered.mcpConfigText, changed.mcpConfigText);
+  assert.notEqual(
+    rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
+    changed.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
+  );
+  assert.doesNotMatch(JSON.stringify(rendered.mcpproxy), /op:\/\/|bearer|secret/i);
+  assert.doesNotMatch(mcpModuleSource, /mcp-obsidian|obsidianVaultPath/);
+  assert.doesNotMatch(mcpOverlaySource, /mcp-obsidian/);
 });
 
 test('disabled AgentMemory contributes no stock MCP registration', () => {

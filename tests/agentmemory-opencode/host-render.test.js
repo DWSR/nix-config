@@ -23,8 +23,10 @@ function renderHosts() {
         let
           agentmemory = hm.programs.agentmemory;
           agentmemoryJob = hm.launchd.agents.agentmemory;
+          mcpproxyJob = hm.launchd.agents.mcpproxy;
           settingsPath = "\${agentmemory.runtimeDir}/.env";
           mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile."mcpproxy/mcp_config.json".text);
+          packageNames = map (package: package.name or "") hm.home.packages;
           cavememServers = builtins.filter (server: server.name == "cavemem") mcpConfig.mcpServers;
           agentTexts = builtins.mapAttrs (_: value:
             if builtins.typeOf value == "path" then builtins.readFile value else value
@@ -34,6 +36,11 @@ function renderHosts() {
           backend = hm.home.opencode.memoryBackend;
           cavememEnabled = hm.home.cavemem.enable;
           homeDirectory = hm.home.homeDirectory;
+          mcp = {
+            serverNames = map (server: server.name) mcpConfig.mcpServers;
+            inherit packageNames;
+            launchdEnvironment = mcpproxyJob.config.EnvironmentVariables;
+          };
           expectedDataDir = "\${hm.xdg.dataHome}/agentmemory";
           expectedRuntimeDir = "\${hm.home.homeDirectory}/.agentmemory";
           expectedLogDir = "\${hm.home.homeDirectory}/Library/Logs/agentmemory";
@@ -55,8 +62,8 @@ function renderHosts() {
             settings = hm.home.file.\${settingsPath}.text;
             launchd = {
               inherit (agentmemoryJob.config) Label EnvironmentVariables;
-              };
             };
+          };
           cavemem = {
             dataDir = hm.home.cavemem.dataDir;
             packageNames = map (package: package.name or "") hm.home.packages;
@@ -77,14 +84,17 @@ function renderHosts() {
             sessionCompactionAugmentation = hm.programs.session-compaction.augmentationEnabled;
           };
           secretUri = builtins.getAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets;
-           capturePlugins = builtins.filter (name:
+          capturePlugins = builtins.filter (name:
             builtins.match "opencode/plugins/(cavemem\\.js|agentmemory-.*)" name != null
           ) (builtins.attrNames hm.xdg.configFile);
         };
       summarize = host:
         let
+          darwin = flake.darwinConfigurations.\${host}.config;
           hm = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
-         in summarizeConfig hm;
+        in (summarizeConfig hm) // {
+          casks = map (cask: cask.name) darwin.homebrew.casks;
+        };
     in builtins.toJSON {
       personal = summarize "${HOSTS.personal}";
       shopify = summarize "${HOSTS.shopify}";
@@ -121,6 +131,14 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.bearerReference, 'agentmemory-bearer');
     assert.equal(config.agentmemory.hasObsidianImporter, true, `${host} exposes the managed Obsidian importer`);
     assert.equal(config.opencode.wrapperHasObsidianImporter, false, `${host} does not invoke the importer at startup`);
+    assert.equal(config.mcp.serverNames.includes('obsidian'), false, `${host} omits the Obsidian MCP server`);
+    assert.equal(config.mcp.packageNames.some((name) => name.includes('mcp-obsidian')), false, `${host} omits the Obsidian MCP package`);
+    assert.ok(config.mcp.serverNames.includes('agentmemory'), `${host} retains AgentMemory MCP`);
+    assert.ok(config.mcp.serverNames.includes('github'), `${host} retains GitHub MCP`);
+    assert.ok(config.mcp.serverNames.includes('time'), `${host} retains time MCP`);
+    assert.ok(config.mcp.serverNames.includes('git-mcp'), `${host} retains git-mcp`);
+    assert.ok(config.casks.includes('obsidian'), `${host} retains the Obsidian desktop cask`);
+    assert.match(config.mcp.launchdEnvironment.MCPPROXY_CONFIG_HASH, /^[0-9a-f]{64}$/);
     assert.equal(config.agentmemory.launchd.Label, 'dev.dwsr.agentmemory');
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR, config.agentmemory.dataDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_RUNTIME_DIR, config.agentmemory.runtimeDir);

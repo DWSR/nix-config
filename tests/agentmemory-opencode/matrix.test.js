@@ -44,7 +44,6 @@ function evalMatrix() {
               home.homeDirectory = "/Users/brandonmcnama";
               home.stateVersion = "26.05";
               home.mcp = {
-                obsidianVaultPath = "/tmp/agentmemory-matrix/vault";
                 githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
                 keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
               };
