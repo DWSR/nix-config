@@ -402,20 +402,20 @@ test('ConsumerCutover forces AgentMemory augmentation off without changing cavem
   assert.equal(cavememOverride.augmentationEnabled, false);
 });
 
-test('ConsumerCutover removes synthesis and sync consumers only in AgentMemory mode', () => {
+test('ConsumerCutover removes vault-only agents in every backend', () => {
   const agentMemory = renderConsumerCutover({ enable: true });
   const cavemem = renderConsumerCutover({ enable: false });
 
   assert.equal(agentMemory.agents.includes('vault-synthesizer'), false);
-  assert.equal(agentMemory.agents.includes('vault-curator'), true);
+  assert.equal(agentMemory.agents.includes('vault-curator'), false);
   assert.equal(agentMemory.memorySync.enable, false);
   assert.deepEqual(
     agentMemory.memorySync.packageNames.filter((name) => /memory-sync/.test(name)),
     [],
   );
 
-  assert.equal(cavemem.agents.includes('vault-synthesizer'), true);
-  assert.equal(cavemem.agents.includes('vault-curator'), true);
+  assert.equal(cavemem.agents.includes('vault-synthesizer'), false);
+  assert.equal(cavemem.agents.includes('vault-curator'), false);
   assert.equal(cavemem.memorySync.enable, true);
   assert.equal(
     cavemem.memorySync.packageNames.filter((name) => /memory-sync/.test(name)).length,
@@ -423,11 +423,9 @@ test('ConsumerCutover removes synthesis and sync consumers only in AgentMemory m
   );
 
   for (const rendered of [agentMemory, cavemem]) {
-    assert.match(rendered.context, /## Obsidian Memory Recall/);
-    assert.match(rendered.context, /## Obsidian Tool Reference/);
-    assert.match(
+    assert.doesNotMatch(
       rendered.context,
-      /automatic (?:AgentMemory|ambient-backend)-to-Obsidian promotion is not provided/,
+      /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i,
     );
   }
 });

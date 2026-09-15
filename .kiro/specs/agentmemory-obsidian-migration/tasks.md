@@ -60,7 +60,7 @@
   - _Boundary: Startup Cutover_
   - _Depends: 2_
 
-- [ ] 3.3 Replace global and Pi memory prompts
+- [x] 3.3 Replace global and Pi memory prompts
   - Make the AgentMemory fragment the sole active recall, save, lesson, and durable-memory policy; remove vault rules from global, Cavemem, cc-sdd, and Pi guidance.
   - Remove vault curator and synthesizer definitions, registrations, and common generated variants; do not modify Shopify host transformations in this task.
   - Convert hardcoded common memory paths to AgentMemory topic or title search hints.

@@ -45,31 +45,6 @@ the Nix-managed cc-sdd template tree. After that, all `/kiro-*` skills
 work end-to-end. Commit `.kiro/` to the project (recommended for
 shared specs) or `.gitignore` it (solo / experimental).
 
-## Two memory systems coexist
-
-This repo has two distinct "memory" notions; do not confuse them:
-
-- **Obsidian vault** (above): cross-project, cross-session knowledge —
-  decisions, patterns, framework research, debugging notes. Persistent
-  across machines via Google Drive sync. Always loaded.
-- **`.kiro/steering/`** (cc-sdd's notion): per-project steering
-  documents capturing project-wide conventions (`product.md`,
-  `tech.md`, `structure.md`, plus custom files). Created via
-  `/kiro-steering`. Project-local; commit to the project.
-
-Both useful for different scopes. Obsidian rules above take precedence
-— start every session with the vault startup check regardless of
-whether SDD is being used.
-
-## Vault references
-
-- `memories/2026-04-17-cc-sdd-framework.md` — full framework deep dive
-- `memories/2026-04-17-spec-driven-development-primer.md` — when SDD
-  helps, when it doesn't, framework comparison, Böckeler's critique
-- `memories/2026-05-10-cc-sdd-integration-plan.md` — how this Nix
-  integration is wired, the architectural choices made, the risk
-  register
-
 ## Skills Structure
 Skills are located in `.opencode/skills/kiro-*/SKILL.md`
 - Each skill is a directory with a `SKILL.md` file

@@ -1,4 +1,4 @@
-# MANDATORY: AgentMemory + Obsidian
+# MANDATORY: AgentMemory
 
 ## AgentMemory Ambient Memory
 
@@ -12,7 +12,24 @@ OpenCode reaches AgentMemory's MCP tools only through mcpproxy. Mcpproxy is the
 only MCP endpoint configured in OpenCode; do not add a direct AgentMemory MCP
 entry, custom facade, capture relay, or context relay.
 
-Automatic AgentMemory-to-Obsidian promotion is not provided.
+## Active memory policy
+
+AgentMemory is the only active memory system. Route every AgentMemory operation
+through mcpproxy using the exact discovered `name`, its `call_with` class, and an
+`args` JSON object.
+
+- Use `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through
+  `call_tool_read` when prior context is needed; search by distinctive topics,
+  titles, or body terms.
+- Use `agentmemory:memory_save` through `call_tool_write` for durable insights,
+  decisions, patterns, and facts.
+- Use `agentmemory:memory_lesson_save` through `call_tool_write` for reusable
+  lessons, with the applicable confidence and topic metadata.
+- Use `agentmemory:memory_sessions` through `call_tool_read` when recent session
+  listings are needed.
+
+Do not use another memory backend, direct service endpoint, or unregistered tool
+for recall or durable saves.
 
 ### Discover stock tools
 

@@ -303,23 +303,19 @@ function assertLoopbackEndpointContract(rendered) {
   assert.doesNotMatch(runtimeLauncher, /\bhost:\s*(?!127\.0\.0\.1\b)[^\s#]+/);
 }
 
-function assertManualObsidianContract(rendered) {
+function assertAgentMemoryPromptContract(rendered) {
   const context = rendered.instructions.context;
-  const curator = rendered.instructions.agents['vault-curator'];
 
-  assert.equal(rendered.consumers.vaultCurator, true, `${rendered.name} retains vault-curator`);
-  assert.match(context, /## Obsidian Memory Recall/);
-  assert.match(context, /retrieve_tools\(query: "obsidian search vault"\)/);
-  assert.match(context, /retrieve_tools\(query: "obsidian search by tags"\)/);
-  assert.match(context, /retrieve_tools\(query: "obsidian read note"\)/);
-  assert.match(context, /retrieve_tools\(query: "obsidian write note"\)/);
-  assert.match(context, /### Deduplication/);
-  assert.match(context, /## Tag Guidelines/);
-  assert.match(context, /automatic ambient-backend-to-Obsidian promotion is not provided/);
-  assert.match(curator, /Deduplicate memories/);
-  assert.match(curator, /write-note/);
-  assert.match(curator, /Tag guidelines/);
-  assert.match(curator, /MOC threshold/);
+  assert.equal(rendered.consumers.vaultCurator, false, `${rendered.name} omits vault-curator`);
+  assert.equal(rendered.consumers.vaultSynthesizer, false, `${rendered.name} omits vault-synthesizer`);
+  assert.match(context, /stock AgentMemory/i);
+  assert.match(context, /memory_recall/);
+  assert.match(context, /memory_save/);
+  assert.match(context, /memory_lesson_save/);
+  assert.doesNotMatch(
+    context,
+    /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i,
+  );
 }
 
 function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
@@ -369,19 +365,12 @@ test('the focused AgentMemory host-render matrix is registered and validates all
     assert.equal(row.mcp.cavememCount, 0);
     assert.equal(row.consumers.memorySync, false);
     assert.deepEqual(row.consumers.memorySyncPackages, []);
+    assert.equal(row.consumers.vaultCurator, false);
     assert.equal(row.consumers.vaultSynthesizer, false);
     assert.equal(row.consumers.augmentation, false);
-    assertManualObsidianContract(row);
+    assertAgentMemoryPromptContract(row);
     assert.match(row.instructions.context, /stock AgentMemory/i);
     assert.doesNotMatch(row.instructions.context, /Ambient capture \(cavemem\)/i);
-    assert.doesNotMatch(row.instructions.agents['vault-curator'], /cavemem/i);
-    for (const [agentName, instructions] of Object.entries(row.instructions.agents)) {
-      assert.doesNotMatch(
-        instructions,
-        /cavemem/i,
-        `${row.name}/${agentName} contains Cavemem instructions`,
-      );
-    }
     for (const profile of Object.values(row.nonoProfiles)) {
       assert.ok(profile.network.open_port.includes(8080));
       assert.ok(profile.network.open_port.includes(3111));

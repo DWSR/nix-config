@@ -12,6 +12,17 @@ const agentMemoryInstructions = fs.readFileSync(
   path.join(repoRoot, 'home-manager/common/agents-agentmemory.md'),
   'utf8',
 );
+const cavememInstructions = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/common/agents-cavemem.md'),
+  'utf8',
+);
+const ccSddInstructions = fs.readFileSync(
+  path.join(repoRoot, 'home-manager/common/agents-cc-sdd.md'),
+  'utf8',
+);
+
+const forbiddenVaultContract =
+  /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i;
 
 function renderOpenCodeContext() {
   const expression = `(let
@@ -52,7 +63,7 @@ in builtins.toJSON {
 }
 
 test('AgentMemory instructions describe stock discovery, recall, sessions, and saves', () => {
-  assert.match(agentMemoryInstructions, /# MANDATORY: AgentMemory \+ Obsidian/);
+  assert.match(agentMemoryInstructions, /# MANDATORY: AgentMemory/);
   assert.match(agentMemoryInstructions, /stock AgentMemory/i);
   assert.match(agentMemoryInstructions, /retrieve_tools\(query: "agentmemory/);
   assert.match(agentMemoryInstructions, /agentmemory:<tool>/);
@@ -76,7 +87,12 @@ test('AgentMemory instructions describe stock discovery, recall, sessions, and s
   assert.match(agentMemoryInstructions, /session (?:start|created)/i);
   assert.match(agentMemoryInstructions, /session (?:end|deleted)/i);
   assert.match(agentMemoryInstructions, /observ(?:e|ation)/i);
-  assert.match(agentMemoryInstructions, /save|remember/i);
+  assert.match(agentMemoryInstructions, /memory_recall/);
+  assert.match(agentMemoryInstructions, /memory_smart_search/);
+  assert.match(agentMemoryInstructions, /memory_save/);
+  assert.match(agentMemoryInstructions, /memory_lesson_save/);
+  assert.match(agentMemoryInstructions, /durable/i);
+  assert.doesNotMatch(agentMemoryInstructions, forbiddenVaultContract);
 });
 
 test('AgentMemory instructions preserve stock limitations and avoid custom claims', () => {
@@ -96,19 +112,28 @@ test('AgentMemory instructions preserve stock limitations and avoid custom claim
 test('rendered OpenCode context carries AgentMemory guidance and disabled title/summary agents', () => {
   const rendered = renderOpenCodeContext();
 
-  assert.match(rendered.context, /# MANDATORY: AgentMemory \+ Obsidian/);
+  assert.match(rendered.context, /# MANDATORY: AgentMemory/);
   assert.match(rendered.context, /memory_smart_search/);
+  assert.match(rendered.context, /memory_lesson_save/);
   assert.match(rendered.context, /automatic context injection/i);
+  assert.doesNotMatch(rendered.context, forbiddenVaultContract);
   assert.equal(rendered.titleDisabled, true);
   assert.equal(rendered.summaryDisabled, true);
 });
 
-test('manual Obsidian curation rules remain in the rendered instructions', () => {
-  assert.match(instructions, /## Obsidian Memory Recall/);
-  assert.match(instructions, /## Memories/);
-  assert.match(instructions, /## Obsidian Tool Reference/);
-  assert.match(instructions, /## Tag Guidelines/);
-  assert.match(instructions, /call_tool_destructive/);
-  assert.match(instructions, /(?:manually curated|curated agent-authored)/i);
-  assert.match(instructions, /vault-curator|manually curated/i);
+test('global and backend fragments contain no active vault memory contract', () => {
+  for (const [name, content] of [
+    ['global', instructions],
+    ['AgentMemory', agentMemoryInstructions],
+    ['Cavemem', cavememInstructions],
+    ['cc-sdd', ccSddInstructions],
+  ]) {
+    assert.doesNotMatch(content, forbiddenVaultContract, `${name} contains vault-only guidance`);
+  }
+
+  assert.match(instructions, /# Version control/);
+  assert.match(instructions, /# Time and dates/);
+  assert.match(cavememInstructions, /ambient memory backend/i);
+  assert.doesNotMatch(cavememInstructions, /synthesizer|curator|curated/i);
+  assert.match(ccSddInstructions, /## Workflow/);
 });

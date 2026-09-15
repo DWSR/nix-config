@@ -128,6 +128,7 @@ test('AgentMemory mode owns OpenCode capture and consumers', () => {
   assert.doesNotMatch(rendered.context, /cavemem/i);
   assert.doesNotMatch(agentText, /cavemem/i);
   assert.equal(rendered.agents.includes('vault-synthesizer'), false);
+  assert.equal(rendered.agents.includes('vault-curator'), false);
   assert.equal(rendered.memorySync.enable, false);
   assert.equal(
     rendered.memorySync.packageNames.some((name) => /memory-sync/.test(name)),
@@ -145,6 +146,9 @@ test('AgentMemory mode owns OpenCode capture and consumers', () => {
     assert.ok(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'));
     assert.doesNotMatch(text, /CAVEMEM_DATA_DIR|local\/share\/cavemem/);
   }
-  assert.match(rendered.context, /## Obsidian Memory Recall/);
-  assert.match(rendered.context, /## Tag Guidelines/);
+  assert.match(rendered.context, /memory_lesson_save/);
+  assert.doesNotMatch(
+    rendered.context,
+    /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i,
+  );
 });

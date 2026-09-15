@@ -14,16 +14,6 @@ let
   agentmemory = config.programs.agentmemory;
   memoryBackend = config.home.opencode.memoryBackend;
   isAgentMemory = memoryBackend == "agentmemory";
-  isCavemem = memoryBackend == "cavemem";
-  vaultCurator =
-    if isAgentMemory then
-      builtins.toFile "vault-curator-agentmemory.md" (
-        lib.replaceStrings [ "cavemem" ] [ "ambient memory backend" ] (
-          builtins.readFile ./agents/vault-curator.md
-        )
-      )
-    else
-      ./agents/vault-curator.md;
 in
 {
   options.home.opencode = {
@@ -223,9 +213,8 @@ in
       # via `wrapProgram ... --run STR`. The joined wrapperCommands value
       # is shell-escaped with `lib.escapeShellArg` before the builder shell
       # sees it, so apostrophes in snippet comments cannot break wrapper
-      # composition (see
-      # memories/2026-05-14-mcp-hub-api-surface-and-wrapper-quoting.md
-      # and design.md L711-713). Use double quotes (with backslash-
+      # composition (see the AgentMemory topic "mcp hub API surface and wrapper
+      # quoting" and design.md L711-713). Use double quotes (with backslash-
       # escaped inner double quotes where needed) for runtime shell values.
       ''
         if ! /usr/bin/curl -sf --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
@@ -271,8 +260,8 @@ in
         export OPENCODE_DISABLE_LSP_DOWNLOAD=true
       ''
       # Stop opencode auto-discovering Claude Code skills under ~/.claude/skills
-      # (a home read the nono sandbox denies; see
-      # memories/2026-06-02-opencode-nono-sandbox.md). The toggle drops `.claude`
+      # (a home read the nono sandbox denies; see the AgentMemory topic
+      # "opencode nono sandbox"). The toggle drops `.claude`
       # from skill auto-discovery for BOTH the global ~/.claude scan AND the
       # project up-tree scan, so the project-local .claude/skills is re-added
       # explicitly via `settings.skills.paths` below — that path is cwd-relative,
@@ -324,16 +313,15 @@ in
       package = config.home.opencode.finalPackage;
       # AGENTS.md is composed from three vendored chunks:
       #   1. selected backend fragment — one ambient memory backend's rules
-      #   2. ./agents.md            — manual Obsidian rules + commit conventions
-      #   3. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap +
-      #                               two-memory-system distinction + the kiro
-      #                               skills catalog + workflow summary
+      #   2. ./agents.md            — global non-memory rules + commit/time conventions
+      #   3. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap + the
+      #                               kiro skills catalog + workflow summary
       # The upstream cc-sdd quickstart (pkgs.cc-sdd-skills/agents-md) is
       # intentionally NOT included — its slash-command catalogue duplicates
       # what each kiro-* SKILL.md frontmatter already exposes to opencode at
       # session start, and its "Skills Structure" block is now inlined
-      # verbatim into ./agents-cc-sdd.md. See
-      # memories/2026-05-20-agents-md-compression.md for the rationale.
+      # verbatim into ./agents-cc-sdd.md. See the AgentMemory topic
+      # "agents md compression" for the rationale.
       context = lib.concatStringsSep "\n\n" [
         (builtins.readFile (if isAgentMemory then ./agents-agentmemory.md else ./agents-cavemem.md))
         (builtins.readFile ./agents.md)
@@ -354,10 +342,6 @@ in
         kiro-spec-orchestrator = config.home.opencode.agentWithCaveman ./agents/kiro-spec-orchestrator.md;
         nvim-tailor = config.home.opencode.agentWithCaveman ./agents/nvim-tailor.md;
         security-auditor = config.home.opencode.agentWithCaveman ./agents/security-auditor.md;
-        vault-curator = config.home.opencode.agentWithCaveman vaultCurator;
-      }
-      // lib.optionalAttrs isCavemem {
-        vault-synthesizer = config.home.opencode.agentWithCaveman ./agents/vault-synthesizer.md;
       };
 
       settings = {
