@@ -26,8 +26,6 @@ const budgetProfileNames = [
   'kiro-spec-orchestration',
   'nvim-config',
   'security-readonly',
-  'vault-curation',
-  'vault-synthesis',
   'shopify-stack',
   'shopify-yugabyte-readonly',
 ];
@@ -50,6 +48,51 @@ test('instruction fragment files exist for universal, memory, SDD, host, and rol
   }
 });
 
+test('retired vault fragments and profiles are absent', async () => {
+  const mod = await loadPlugin();
+
+  for (const relativePath of [
+    'role-fragments/vault-curation.md',
+    'role-fragments/vault-synthesis.md',
+  ]) {
+    assert.equal(
+      fs.existsSync(path.join(instructionsDir, relativePath)),
+      false,
+      `${relativePath} must be retired`,
+    );
+  }
+
+  for (const retiredName of ['vault-curation', 'vault-synthesis']) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(mod.SubagentContextBudgetPlugin.instructionFragments, retiredName),
+      false,
+      `${retiredName} must not be an instruction fragment`,
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(mod.SubagentContextBudgetPlugin.instructionProfiles, retiredName),
+      false,
+      `${retiredName} must not be an instruction profile`,
+    );
+    assert.deepEqual(
+      mod.SubagentContextBudgetPlugin.composeInstructionProfile(retiredName),
+      { kind: 'missing-profile', profileName: retiredName },
+    );
+  }
+});
+
+test('canonical memory fragment matches the plugin runtime copy', async () => {
+  const mod = await loadPlugin();
+  const source = fs.readFileSync(
+    path.join(instructionsDir, 'memory-mcpproxy.md'),
+    'utf8',
+  ).trim();
+
+  assert.equal(
+    mod.SubagentContextBudgetPlugin.instructionFragments['memory-mcpproxy'].text,
+    source,
+  );
+});
+
 test('composeInstructionProfile includes mandatory safety fragments for every budget profile', async () => {
   const mod = await loadPlugin();
 
@@ -62,9 +105,18 @@ test('composeInstructionProfile includes mandatory safety fragments for every bu
       profile.fragments.some((fragment) => fragment.name === 'memory-mcpproxy'),
       `${profileName} must include the memory/mcpproxy fragment`,
     );
-    assert.match(profile.systemText, /Obsidian/);
-    assert.match(profile.systemText, /cavemem/);
+    assert.match(profile.systemText, /AgentMemory/);
+    assert.match(profile.systemText, /memory_recall/);
+    assert.match(profile.systemText, /memory_smart_search/);
+    assert.match(profile.systemText, /memory_save/);
+    assert.match(profile.systemText, /memory_lesson_save/);
+    assert.match(profile.systemText, /retrieve_tools/);
+    assert.match(profile.systemText, /call_tool_read/);
+    assert.match(profile.systemText, /call_tool_write/);
+    assert.match(profile.systemText, /call_tool_destructive/);
+    assert.match(profile.systemText, /call_with/);
     assert.match(profile.systemText, /mcpproxy/);
+    assert.doesNotMatch(profile.systemText, /Obsidian|cavemem|vault/i);
   }
 });
 

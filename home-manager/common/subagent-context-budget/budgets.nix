@@ -23,15 +23,6 @@ let
     lsp = "allow";
   };
 
-  memoryReadBudget = readOnlyBudget // {
-    mcpproxy_call_tool_read = "allow";
-    mcpproxy_retrieve_tools = "allow";
-  };
-
-  memoryWriteBudget = memoryReadBudget // {
-    mcpproxy_call_tool_write = "allow";
-  };
-
   mcpReadOnlyBudget = readOnlyBudget // {
     mcpproxy_retrieve_tools = "allow";
     mcpproxy_call_tool_read = "allow";
@@ -133,24 +124,6 @@ let
       instructionProfile = "security-readonly";
       capabilityRationale = [ "repository history inspection and upstream advisory lookups" ];
       smokeClass = "security-fixture-audit";
-    })
-    (mkAgent {
-      name = "vault-curator";
-      source = "common-markdown";
-      permissionBudget = memoryWriteBudget;
-      instructionProfile = "vault-curation";
-      capabilityRationale = [ "curated Obsidian memory writes" ];
-      smokeClass = "vault-dedup-plan";
-    })
-    (mkAgent {
-      name = "vault-synthesizer";
-      source = "common-markdown";
-      permissionBudget = memoryWriteBudget // {
-        mcpproxy_call_tool_destructive = "ask";
-      };
-      instructionProfile = "vault-synthesis";
-      capabilityRationale = [ "cavemem reads and synthesized Obsidian memory writes" ];
-      smokeClass = "cavemem-to-memory-draft";
     })
   ];
 

@@ -645,6 +645,8 @@ test('both nix-darwin hosts evaluate runtime prerequisites for the Home Manager 
     assert.equal(host.smokeTestPackageInHomePackages, true, `${hostName} must install smoke wrapper`);
     assert.equal(host.metadataTextPresent, true, `${hostName} must render metadata text`);
     assert.equal(host.metadata.enforcementEnabled, true, `${hostName} metadata must reflect enforced config`);
+    assert.equal(host.agentNames.includes('vault-curator'), false, `${hostName} must not render the retired vault curator`);
+    assert.equal(host.agentNames.includes('vault-synthesizer'), false, `${hostName} must not render the retired vault synthesizer`);
     assert.equal(host.agentNames.includes('general'), true, `${hostName} must render general agent metadata`);
     assert.equal(host.agentNames.includes('explore'), true, `${hostName} must render explore agent metadata`);
     assert.equal(host.agentNames.includes('kiro-spec-orchestrator'), true, `${hostName} must render Kiro spec orchestrator metadata`);

@@ -2,31 +2,6 @@
   "schemaVersion": 1,
   "smokeDefinitions": [
     {
-      "class": "cavemem-to-memory-draft",
-      "agentName": "vault-synthesizer",
-      "hostScope": "all",
-      "representativeTask": "Discover the cavemem search/list tool via mcpproxy retrieve_tools, read the most recent cavemem session timeline, and emit a draft memory note (frontmatter + Context + Details) as response text. Do not invoke any vault write or destructive tool; produce only the draft.",
-      "expectations": {
-        "passCriteria": [
-          "response contains a markdown code block with a Memories-format frontmatter that includes `sessions: cavemem-session-<id>`",
-          "draft includes ## Context and ## Details sections referencing at least one observation pulled from the cavemem timeline",
-          "response names the cavemem tools it invoked (e.g. mcpproxy_retrieve_tools, mcpproxy_call_tool_read)"
-        ],
-        "failureSignals": [
-          "agent reports missing mcpproxy_call_tool_read permission",
-          "agent attempts mcpproxy_call_tool_destructive (which is ask-gated) and stalls awaiting permission",
-          "agent emits the draft without referencing any specific cavemem session id"
-        ],
-        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when vault-synthesizer.state.kind == 'unbudgeted'; ValidationComparator surfaces the skip only if the smoke result was marked required."
-      },
-      "nonInteractive": {
-        "strategy": "task-restricts-ask",
-        "details": "mcpproxy_call_tool_destructive is gated with ask but the smoke task explicitly forbids destructive calls; all required tools (mcpproxy_retrieve_tools, mcpproxy_call_tool_read, mcpproxy_call_tool_write) are allow rules. Smoke runner asserts the agent never reaches the ask-gated tool."
-      },
-      "directInvocation": "opencode run --agent vault-synthesizer -- 'Read latest cavemem session timeline and draft a memory note (text only, no vault write).'",
-      "notes": "Draft-only — the smoke must not write to the vault even though mcpproxy_call_tool_write is allow. Prevents pollution of the curated vault from automated smoke runs."
-    },
-    {
       "class": "general-research",
       "agentName": "general",
       "hostScope": "all",
@@ -400,31 +375,6 @@
       },
       "directInvocation": "opencode run --agent stack-status-sweeper -- 'Sweep status for supplied PRs using GitHub MCP only. Read-only.'",
       "notes": "Fan-out GitHub status helper for stack-captain."
-    },
-    {
-      "class": "vault-dedup-plan",
-      "agentName": "vault-curator",
-      "hostScope": "all",
-      "representativeTask": "Search the Obsidian vault for memories tagged `subagent-context-budget` via mcpproxy, retrieve their titles and paths, and emit a dedup plan as response text (which to merge, which to keep, with one-line rationale per pair). Do not write any note.",
-      "expectations": {
-        "passCriteria": [
-          "response lists the memory paths returned by the tag search, alphabetised",
-          "response gives a per-pair merge-or-keep decision with a one-sentence rationale",
-          "response confirms no vault write or destructive call was attempted"
-        ],
-        "failureSignals": [
-          "agent attempts mcpproxy_call_tool_write (which is allow but the smoke task forbids it)",
-          "agent reports missing mcpproxy_retrieve_tools or mcpproxy_call_tool_read permission",
-          "agent emits the plan without a list of actual memory paths returned by the search"
-        ],
-        "skippedUnbudgeted": "smoke runner emits skipped-unbudgeted without invoking the agent when vault-curator.state.kind == 'unbudgeted'."
-      },
-      "nonInteractive": {
-        "strategy": "task-restricts-ask",
-        "details": "mcpproxy_call_tool_write is allow on vault-curator (the agent does perform writes in non-smoke usage) but the smoke prompt explicitly restricts the agent to read-only mcpproxy calls; the smoke runner asserts no write call appears in the tool history. No ask-gated permission is present, so no indefinite prompt is possible regardless."
-      },
-      "directInvocation": "opencode run --agent vault-curator -- 'Dedup plan for memories tagged subagent-context-budget. Read-only; no writes.'",
-      "notes": "Vault read/dedup plan without bulk writes per design.md."
     }
   ]
 }

@@ -38,8 +38,6 @@ const BUDGETED_AGENTS = {
   'kiro-spec-orchestrator': { smokeClass: 'kiro-spec-orchestration', hostScope: 'all' },
   'nvim-tailor': { smokeClass: 'nvim-config-inspection', hostScope: 'all' },
   'security-auditor': { smokeClass: 'security-fixture-audit', hostScope: 'all' },
-  'vault-curator': { smokeClass: 'vault-dedup-plan', hostScope: 'all' },
-  'vault-synthesizer': { smokeClass: 'cavemem-to-memory-draft', hostScope: 'all' },
   'binks-overrider': { smokeClass: 'shopify-binks-override', hostScope: 'shopify' },
   'binks-reviewer': { smokeClass: 'shopify-binks-review', hostScope: 'shopify' },
   'bot-thread-triager': { smokeClass: 'shopify-bot-thread-triage', hostScope: 'shopify' },
@@ -104,6 +102,16 @@ test('smoke catalog covers every budgeted agent', () => {
   const expectedAgents = Object.keys(BUDGETED_AGENTS).sort();
   const actualAgents = result.value.smokeDefinitions.map((d) => d.agentName).sort();
   assert.deepEqual(actualAgents, expectedAgents);
+});
+
+test('smoke catalog omits retired vault roles', () => {
+  const result = loadSmokeCatalog(CATALOG_PATH);
+  assert.equal(result.ok, true);
+
+  const retired = new Set(['vault-curator', 'vault-synthesizer']);
+  for (const definition of result.value.smokeDefinitions) {
+    assert.equal(retired.has(definition.agentName), false);
+  }
 });
 
 test('smoke catalog covers every required smoke class', () => {

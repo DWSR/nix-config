@@ -177,11 +177,11 @@ test('buildSmokePlan: enforced entries include direct-invocation example and smo
 // -----------------------------------------------------------------
 
 test('buildSmokePlan: emits skipped-unbudgeted entry for operator escape hatch and omits smoke metadata (R7.5)', () => {
-  const metadata = fixtureWithAgent('vault-curator', {
+  const metadata = fixtureWithAgent('operator-escape', {
     state: { kind: 'unbudgeted', reason: 'operator-escape-hatch' },
     instructionProfile: '',
     permissionBudget: {},
-    smokeClass: 'vault-dedup-plan',
+    smokeClass: 'operator-escape',
     hostScope: 'all',
   });
   const catalog = loadRepoCatalog();
@@ -189,19 +189,19 @@ test('buildSmokePlan: emits skipped-unbudgeted entry for operator escape hatch a
   const result = buildSmokePlan(metadata, catalog);
   assert.equal(result.ok, true, `buildSmokePlan must succeed; got ${JSON.stringify(result.error)}`);
 
-  const vault = result.value.entries.find((e) => e.agentName === 'vault-curator');
-  assert.ok(vault, 'vault-curator entry must be present');
-  assert.equal(vault.state, 'skipped-unbudgeted');
-  assert.equal(vault.hostScope, 'all');
-  assert.equal(Object.prototype.hasOwnProperty.call(vault, 'smoke'), false,
+  const escapeHatch = result.value.entries.find((e) => e.agentName === 'operator-escape');
+  assert.ok(escapeHatch, 'operator-escape entry must be present');
+  assert.equal(escapeHatch.state, 'skipped-unbudgeted');
+  assert.equal(escapeHatch.hostScope, 'all');
+  assert.equal(Object.prototype.hasOwnProperty.call(escapeHatch, 'smoke'), false,
     'skipped-unbudgeted entry must omit smoke metadata');
-  assert.ok(vault.skip, 'skipped-unbudgeted entry must include skip block');
-  assert.equal(vault.skip.reason, 'operator-escape-hatch');
+  assert.ok(escapeHatch.skip, 'skipped-unbudgeted entry must include skip block');
+  assert.equal(escapeHatch.skip.reason, 'operator-escape-hatch');
   assert.ok(
-    typeof vault.skip.explanation === 'string' && vault.skip.explanation.length > 0,
+    typeof escapeHatch.skip.explanation === 'string' && escapeHatch.skip.explanation.length > 0,
     'skipped-unbudgeted entry must include an explanation citing the escape hatch',
   );
-  assert.match(vault.skip.explanation, /escape[- ]hatch|unbudgeted/i);
+  assert.match(escapeHatch.skip.explanation, /escape[- ]hatch|unbudgeted/i);
 
   assert.equal(result.value.summary.skippedUnbudgetedCount, 1);
   assert.equal(result.value.summary.enforcedCount, 2);
@@ -244,10 +244,10 @@ test('buildSmokePlan: skips catalog entries whose agent is not present in the me
   assert.equal(result.ok, true);
 
   const names = result.value.entries.map((e) => e.agentName);
-  // The repo catalog includes nix-pkg, vault-curator, stack-captain,
+  // The repo catalog includes nix-pkg, stack-captain,
   // yb-sleuth, etc. that are absent from the small fixture metadata.
   // The plan must not invent them.
-  for (const absent of ['nix-pkg', 'vault-curator', 'stack-captain', 'yb-sleuth']) {
+  for (const absent of ['nix-pkg', 'stack-captain', 'yb-sleuth']) {
     assert.equal(names.includes(absent), false, `plan must not include catalog-only agent ${absent}`);
   }
 });
@@ -368,11 +368,11 @@ test('renderSmokePlanJson: produces 2-space indented JSON with stable key order 
 // -----------------------------------------------------------------
 
 test('renderSmokePlanMarkdown: deterministic Markdown view enumerates enforced and skipped agents', () => {
-  const metadata = fixtureWithAgent('vault-curator', {
+  const metadata = fixtureWithAgent('operator-escape', {
     state: { kind: 'unbudgeted', reason: 'operator-escape-hatch' },
     instructionProfile: '',
     permissionBudget: {},
-    smokeClass: 'vault-dedup-plan',
+    smokeClass: 'operator-escape',
     hostScope: 'all',
   });
   const catalog = loadRepoCatalog();
@@ -386,7 +386,7 @@ test('renderSmokePlanMarkdown: deterministic Markdown view enumerates enforced a
   assert.match(md1, /# Subagent Context Budget — Smoke Plan/);
   assert.match(md1, /### explore/);
   assert.match(md1, /### general/);
-  assert.match(md1, /### vault-curator/);
+  assert.match(md1, /### operator-escape/);
   // Enforced agents must show direct invocation; skipped agents must
   // show the escape-hatch reason.
   assert.match(md1, /opencode run --agent explore/);

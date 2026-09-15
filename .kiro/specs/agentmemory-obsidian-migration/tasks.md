@@ -86,7 +86,7 @@
   - _Boundary: Prompt Contract Cutover: Common Specialists_
   - _Depends: 2_
 
-- [ ] 3.6 (P) Convert context-budget memory profiles
+- [x] 3.6 (P) Convert context-budget memory profiles
   - Replace the canonical memory fragment and mirrored plugin text with AgentMemory-only discovery, recall, save, and operation-class guidance.
   - Remove vault role fragments, budgets, profiles, and smoke entries while preserving source and plugin mirror invariants.
   - Completion is observable when every context-budget unit and catalog test passes and no vault-only role resolves from a profile or smoke catalog.

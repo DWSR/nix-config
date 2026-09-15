@@ -32,10 +32,15 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
     name: "memory-mcpproxy",
     category: "memory-mcpproxy",
     text: [
-      "# Mandatory memory and mcpproxy safety",
-      "Before work, verify Obsidian and cavemem through mcpproxy retrieve_tools plus call_tool_read.",
-      "Use mcpproxy only through retrieve_tools, call_tool_read, call_tool_write, and call_tool_destructive.",
-      "Preserve Obsidian curated memories, cavemem ambient capture, and mcpproxy destructive-operation safeguards.",
+      "# Mandatory AgentMemory and mcpproxy safety",
+      "",
+      "AgentMemory is the only active memory system. Route every memory operation through mcpproxy's discover-then-invoke surface.",
+      "",
+      "- Discover recall with `retrieve_tools(query: \"agentmemory core recall\")` and durable writes with `retrieve_tools(query: \"agentmemory memory save lesson\")`.",
+      "- Use the exact discovered `name`, `call_with` operation class, and `args` JSON object. Never invent tool names or use raw MCP `arguments`.",
+      "- Use `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through `call_tool_read` for prior context.",
+      "- Use `agentmemory:memory_save` or `agentmemory:memory_lesson_save` through `call_tool_write` for durable knowledge and reusable lessons.",
+      "- Use `call_tool_destructive` only for an explicitly discovered destructive operation after approval. Never call an AgentMemory REST endpoint directly or bypass mcpproxy.",
     ].join("\n"),
   }),
   "cc-sdd-minimal": Object.freeze({
@@ -98,16 +103,6 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
     category: "role-fragment",
     text: "# Security read-only role\nAudit fixture and repository paths for security concerns without mutation.",
   }),
-  "vault-curation": Object.freeze({
-    name: "vault-curation",
-    category: "role-fragment",
-    text: "# Vault curation role\nDeduplicate, read, and update curated Obsidian memories through mcpproxy only.",
-  }),
-  "vault-synthesis": Object.freeze({
-    name: "vault-synthesis",
-    category: "role-fragment",
-    text: "# Vault synthesis role\nRead cavemem observations and draft synthesized Obsidian memories through mcpproxy only.",
-  }),
   "shopify-stack": Object.freeze({
     name: "shopify-stack",
     category: "role-fragment",
@@ -127,8 +122,6 @@ const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object
   "kiro-spec-orchestration": Object.freeze(["universal", "memory-mcpproxy", "cc-sdd-minimal", "kiro-spec-orchestration"]),
   "nvim-config": Object.freeze(["universal", "memory-mcpproxy", "nvim-config"]),
   "security-readonly": Object.freeze(["universal", "memory-mcpproxy", "security-readonly"]),
-  "vault-curation": Object.freeze(["universal", "memory-mcpproxy", "vault-curation"]),
-  "vault-synthesis": Object.freeze(["universal", "memory-mcpproxy", "vault-synthesis"]),
   "shopify-stack": Object.freeze(["universal", "memory-mcpproxy", "github-native-stacks-minimal", "shopify-host", "shopify-stack"]),
   "shopify-yugabyte-readonly": Object.freeze(["universal", "memory-mcpproxy", "shopify-host", "shopify-yugabyte-readonly"]),
 })

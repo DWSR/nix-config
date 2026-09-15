@@ -20,8 +20,6 @@ const profileMap = Object.freeze({
   'nix-pkg': 'nix-package',
   'nvim-tailor': 'nvim-config',
   'security-auditor': 'security-readonly',
-  'vault-curator': 'vault-curation',
-  'vault-synthesizer': 'vault-synthesis',
   'stack-captain': 'shopify-stack',
   'yb-sleuth': 'shopify-yugabyte-readonly',
 });
@@ -39,9 +37,13 @@ test('decideProfile returns apply for known subagent with mapped profile', async
   assert.equal(decision.agentName, 'general');
   assert.equal(decision.profileName, 'general-research');
   assert.match(decision.systemText, /Universal subagent instructions/);
-  assert.match(decision.systemText, /Mandatory memory and mcpproxy safety/);
-  assert.match(decision.systemText, /Obsidian/);
-  assert.match(decision.systemText, /cavemem/);
+  assert.match(decision.systemText, /Mandatory AgentMemory and mcpproxy safety/);
+  assert.match(decision.systemText, /AgentMemory/);
+  assert.match(decision.systemText, /memory_recall/);
+  assert.match(decision.systemText, /memory_save/);
+  assert.match(decision.systemText, /memory_lesson_save/);
+  assert.match(decision.systemText, /call_tool_destructive/);
+  assert.doesNotMatch(decision.systemText, /Obsidian|cavemem|vault/i);
   assert.match(decision.systemText, /mcpproxy/);
   assert.match(decision.systemText, /General research role/);
 });
@@ -118,7 +120,7 @@ test('decideProfile apply outcomes always include mandatory universal + memory-m
     });
     assert.equal(decision.kind, 'apply', `${agentName} -> ${profileName} should apply`);
     assert.match(decision.systemText, /Universal subagent instructions/);
-    assert.match(decision.systemText, /Mandatory memory and mcpproxy safety/);
+    assert.match(decision.systemText, /Mandatory AgentMemory and mcpproxy safety/);
   }
 });
 

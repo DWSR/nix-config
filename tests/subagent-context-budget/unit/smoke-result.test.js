@@ -56,15 +56,15 @@ function metadata() {
         capabilityRationale: [],
         smokeClass: 'general-research',
       },
-      'vault-curator': {
-        name: 'vault-curator',
+      'operator-escape': {
+        name: 'operator-escape',
         source: 'builtin',
         hostScope: 'all',
         state: { kind: 'unbudgeted', reason: 'operator-escape-hatch' },
         instructionProfile: '',
         permissionBudget: {},
         capabilityRationale: [],
-        smokeClass: 'vault-dedup-plan',
+        smokeClass: 'operator-escape',
       },
     },
   };
@@ -76,7 +76,7 @@ function catalog() {
     smokeDefinitions: [
       { class: 'general-research', agentName: 'general', hostScope: 'all' },
       { class: 'readonly-codebase-question', agentName: 'explore', hostScope: 'all' },
-      { class: 'vault-dedup-plan', agentName: 'vault-curator', hostScope: 'all' },
+      { class: 'operator-escape', agentName: 'operator-escape', hostScope: 'all' },
     ],
   };
 }
@@ -139,8 +139,8 @@ test('validateSmokeResults: normalizes pass, fail, and skipped-unbudgeted result
       evidence: { missingTool: 'grep' },
     },
     {
-      agentName: 'vault-curator',
-      class: 'vault-dedup-plan',
+      agentName: 'operator-escape',
+      class: 'operator-escape',
       status: 'skipped-unbudgeted',
       skip: {
         reason: 'operator-escape-hatch',
@@ -156,7 +156,7 @@ test('validateSmokeResults: normalizes pass, fail, and skipped-unbudgeted result
     failCount: 1,
     skippedUnbudgetedCount: 1,
   });
-  assert.deepEqual(result.value.results.map((entry) => entry.agentName), ['explore', 'general', 'vault-curator']);
+  assert.deepEqual(result.value.results.map((entry) => entry.agentName), ['explore', 'general', 'operator-escape']);
   const failed = result.value.results.find((entry) => entry.agentName === 'explore');
   assert.deepEqual(failed.failure, {
     category: 'denied-required-tool',
@@ -171,7 +171,7 @@ test('validateSmokeResults: rejects unknown agent, class mismatch, unknown catal
     { agentName: 'explore', class: 'general-research', status: 'pass' },
     { agentName: 'general', class: 'not-in-catalog', status: 'pass' },
     { agentName: 'explore', class: 'readonly-codebase-question', status: 'fail', failure: { category: 'missing-instruction' } },
-    { agentName: 'vault-curator', class: 'vault-dedup-plan', status: 'skipped-unbudgeted', skip: { reason: 'manual' } },
+    { agentName: 'operator-escape', class: 'operator-escape', status: 'skipped-unbudgeted', skip: { reason: 'manual' } },
   ], catalog(), metadata());
 
   assert.equal(result.ok, false);
@@ -232,8 +232,8 @@ test('compareReports: smoke failures include category, missingCapability, and de
         },
       },
       {
-        agentName: 'vault-curator',
-        class: 'vault-dedup-plan',
+        agentName: 'operator-escape',
+        class: 'operator-escape',
         status: 'skipped-unbudgeted',
         skip: { reason: 'operator-escape-hatch', explanation: 'operator disabled budget enforcement' },
       },
