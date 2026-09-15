@@ -147,7 +147,7 @@
   - _Boundary: Cross-Boundary Integration: Startup and Prompts_
   - _Depends: 3.2, 3.3, 3.4, 3.5, 3.6, 3.8, 4.2_
 
-- [ ] 4.5 Wire and run focused feature validation
+- [x] 4.5 Wire and run focused feature validation
   - Register the new importer and aggregate cutover checks after obsolete memory-sync check wiring is removed.
   - Run importer unit and integration tests, both host matrices, isolated MCP inventory, OpenCode and Pi preflight, and prompt and catalog contracts.
   - Completion is observable when every focused check passes without adding source-vault deletion, desktop-cask removal, a rollback drill, or cross-host coordination.

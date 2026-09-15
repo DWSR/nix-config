@@ -1734,6 +1734,11 @@
             restEndpoint = agentMemoryConfiguredImporterEndpoint;
           };
 
+          agentMemoryObsidianImporter = pkgs.callPackage ./scripts/agentmemory-import-obsidian.nix {
+            bearerReference = "fixture-bearer";
+            restEndpoint = "http://127.0.0.1:3111";
+          };
+
           agentMemoryChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
             agentmemory-opencode-matrix =
               pkgs.runCommand "agentmemory-opencode-matrix"
@@ -1743,6 +1748,8 @@
                     pkgs.nix
                     pkgs.nodejs
                     pkgs.nodejs_22
+                    pkgs.lsof
+                    pkgs.ps
                     pkgs.sqlite
                     pkgs.which
                   ];
@@ -1754,6 +1761,7 @@
                   AGENTMEMORY_IMPORTER_BIN = "${agentMemoryImporter}/bin/agentmemory-import-cavemem";
                   AGENTMEMORY_IMPORTER_NODE_BIN = "${pkgs.nodejs_22}/bin/node";
                   AGENTMEMORY_IMPORTER_NODE_PATH = "${pkgs.cavemem-importer-deps}/lib/node_modules";
+                  AGENTMEMORY_OBSIDIAN_IMPORTER_BIN = "${agentMemoryObsidianImporter}/bin/agentmemory-import-obsidian";
                   AGENTMEMORY_PACKAGE_PATH = pkgs.agentmemory;
                   MCPPROXY_PACKAGE_PATH = pkgs.mcpproxy-go;
                 }

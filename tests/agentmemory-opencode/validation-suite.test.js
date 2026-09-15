@@ -8,15 +8,39 @@ const path = require('node:path');
 const repoRoot = path.resolve(__dirname, '../..');
 const runnerPath = path.join(__dirname, 'index.js');
 const flakePath = path.join(repoRoot, 'flake.nix');
+const piCompatibilityTest = 'pi-compatibility.test.mjs';
+const cutoverAggregateTest = 'cutover-contract.test.js';
 
-test('the feature runner registers every AgentMemory test', () => {
+test('the feature runner registers every AgentMemory test except Pi compatibility', () => {
   const runner = fs.readFileSync(runnerPath, 'utf8');
   const expectedTests = fs.readdirSync(__dirname)
     .filter((name) => /\.test\.(?:js|cjs|mjs)$/.test(name))
+    .filter((name) => name !== piCompatibilityTest)
     .sort();
 
   for (const testFile of expectedTests) {
     assert.match(runner, new RegExp(`['"](?:\\./)?${testFile.replaceAll('.', '\\.')}['"]`));
+  }
+  assert.doesNotMatch(runner, /pi-compatibility\.test\.mjs/);
+});
+
+test('the feature gate contains no Pi acceptance criteria', () => {
+  const featureFiles = fs.readdirSync(__dirname)
+    .filter((name) => /\.test\.(?:js|cjs|mjs)$/.test(name))
+    .filter((name) => ![
+      piCompatibilityTest,
+      'validation-suite.test.js',
+      // This aggregate contract intentionally covers both OpenCode and Pi.
+      cutoverAggregateTest,
+    ].includes(name));
+  featureFiles.push(
+    ...fs.readdirSync(__dirname).filter((name) => name.endsWith('.nix')),
+    'fixtures/cavemem-import-fixture.js',
+  );
+
+  for (const featureFile of featureFiles) {
+    const source = fs.readFileSync(path.join(__dirname, featureFile), 'utf8');
+    assert.doesNotMatch(source, /\bpi\b/i, `${featureFile} contains Pi acceptance logic`);
   }
 });
 
@@ -50,6 +74,7 @@ test('the canonical flake check runs the complete suite with packaged runtimes',
   assert.match(flake, /AGENTMEMORY_IMPORTER_NODE_BIN/);
   assert.match(flake, /AGENTMEMORY_IMPORTER_NODE_PATH/);
   assert.match(flake, /AGENTMEMORY_IMPORTER_BIN/);
+  assert.match(flake, /AGENTMEMORY_OBSIDIAN_IMPORTER_BIN/);
   assert.match(flake, /AGENTMEMORY_CONFIGURED_IMPORTER_BIN/);
   assert.match(flake, /AGENTMEMORY_CONFIGURED_IMPORTER_ENDPOINT/);
   assert.match(flake, /pkgs\.sqlite/);
