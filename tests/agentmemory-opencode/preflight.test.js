@@ -66,7 +66,12 @@ function makeFakeCommands(directory) {
   const curlPath = path.join(directory, 'curl');
   fs.writeFileSync(
     securityPath,
-    `#!/bin/sh\nprintf '%s' '${secret}'\n`,
+    `#!/bin/sh
+if [ -n "\${SECURITY_REQUEST_LOG:-}" ]; then
+  printf '%s\\n' "$@" >> "\${SECURITY_REQUEST_LOG}"
+fi
+printf '%s' '${secret}'
+`,
     { mode: 0o755 },
   );
   fs.writeFileSync(
@@ -75,7 +80,7 @@ function makeFakeCommands(directory) {
 url=""
 authorization=""
 if [ -n "\${CURL_REQUEST_LOG:-}" ]; then
-  printf '%s\n' "$@" > "\${CURL_REQUEST_LOG}"
+  printf '%s\n' "$@" >> "\${CURL_REQUEST_LOG}"
 fi
 for arg in "$@"; do
   case "$arg" in
@@ -84,12 +89,11 @@ for arg in "$@"; do
   esac
 done
 case "$url" in
-  */api/v1/servers)
-    if [ "\${PREFLIGHT_MODE:-healthy}" = obsidian-fail ]; then
-      printf '%s' '{"data":{"servers":[{"name":"obsidian","connected":false}]}}'
-    else
-      printf '%s' '{"data":{"servers":[{"name":"obsidian","connected":true}]}}'
+  */healthz)
+    if [ "\${PREFLIGHT_MODE:-healthy}" = mcpproxy-fail ]; then
+      exit 22
     fi
+    printf '%s' '{"status":"ok"}'
     ;;
   */agentmemory/health)
     if [ "$authorization" != 'Authorization: Bearer ${secret}' ]; then
@@ -116,32 +120,41 @@ function runPreflight(preflight, mode = 'healthy') {
   try {
     const fake = makeFakeCommands(directory);
     const requestLog = path.join(directory, 'curl-args');
+    const securityLog = path.join(directory, 'security-args');
     const script = preflight
       .replaceAll('/usr/bin/security', fake.securityPath)
       .replaceAll('/usr/bin/curl', fake.curlPath);
     const result = childProcess.spawnSync('/bin/bash', ['-c', `${script}\nprintf launched\n`], {
       cwd: repoRoot,
       encoding: 'utf8',
-      env: { ...process.env, CURL_REQUEST_LOG: requestLog, PREFLIGHT_MODE: mode },
+      env: {
+        ...process.env,
+        CURL_REQUEST_LOG: requestLog,
+        PREFLIGHT_MODE: mode,
+        SECURITY_REQUEST_LOG: securityLog,
+      },
       timeout: 30_000,
     });
     return {
       ...result,
       curlArgs: fs.existsSync(requestLog) ? fs.readFileSync(requestLog, 'utf8') : '',
+      securityArgs: fs.existsSync(securityLog) ? fs.readFileSync(securityLog, 'utf8') : '',
     };
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 }
 
-test('AgentMemory preflight follows the independent Obsidian check and exports no secret text', () => {
+test('AgentMemory preflight follows mcpproxy liveness and exports no secret text', () => {
   const rendered = renderIntegration();
-  const obsidianIndex = rendered.preflight.indexOf('obsidian MCP server not connected');
+  const healthIndex = rendered.preflight.indexOf('mcpproxy unreachable');
   const agentMemoryIndex = rendered.preflight.indexOf('AgentMemory daemon');
 
   assert.match(rendered.preflight, /export AGENTMEMORY_URL="http:\/\/127\.0\.0\.1:35111"/);
-  assert.ok(obsidianIndex >= 0, 'the existing Obsidian preflight must remain present');
-  assert.ok(agentMemoryIndex > obsidianIndex, 'AgentMemory health must run after the Obsidian check');
+  assert.ok(healthIndex >= 0, 'mcpproxy liveness must remain present');
+  assert.ok(agentMemoryIndex > healthIndex, 'AgentMemory health must run after mcpproxy liveness');
+  assert.doesNotMatch(rendered.preflight, /obsidian|api\/v1\/servers|mcpproxy-api-key|X-API-Key/i);
+  assert.doesNotMatch(rendered.preflight, new RegExp(secret));
 
   for (const [name, text] of Object.entries(rendered.profiles)) {
     const profile = JSON.parse(text);
@@ -149,6 +162,7 @@ test('AgentMemory preflight follows the independent Obsidian check and exports n
     assert.ok(profile.network.open_port.includes(35111), `${name} must allow AgentMemory REST access`);
     assert.ok(profile.environment.allow_vars.includes('AGENTMEMORY_SECRET'), `${name} must allow the bearer name`);
     assert.doesNotMatch(JSON.stringify(profile.filesystem), /agentmemory/i);
+    assert.doesNotMatch(text, /obsidian|mcpproxy-api-key|X-API-Key/i);
     assert.doesNotMatch(text, /\.agentmemory/i);
     assert.doesNotMatch(text, /op:\/\/Private\/AgentMemory\/Bearer/);
     assert.doesNotMatch(text, new RegExp(secret));
@@ -158,7 +172,16 @@ test('AgentMemory preflight follows the independent Obsidian check and exports n
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   assert.match(result.stdout, /launched/);
   assert.match(result.curlArgs, /Authorization: Bearer preflight-test-bearer-value/);
+  assert.ok(
+    result.curlArgs.indexOf('http://127.0.0.1:8080/healthz')
+      < result.curlArgs.indexOf('http://127.0.0.1:35111/agentmemory/health'),
+  );
   assert.match(result.curlArgs, /http:\/\/127\.0\.0\.1:35111\/agentmemory\/health/);
+  assert.equal(
+    result.securityArgs,
+    'find-generic-password\n-s\nmcpproxy\n-a\nagentmemory-bearer\n-w\n',
+  );
+  assert.doesNotMatch(result.securityArgs, /mcpproxy-api-key/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });
 
@@ -182,13 +205,15 @@ test('AgentMemory preflight accepts a degraded but available full daemon', () =>
   assert.doesNotMatch(result.stderr, /AgentMemory daemon preflight failed/);
 });
 
-test('the preserved Obsidian preflight still stops before AgentMemory when upstream is disconnected', () => {
+test('mcpproxy liveness failure stops before AgentMemory is attempted', () => {
   const rendered = renderIntegration();
-  const result = runPreflight(rendered.preflight, 'obsidian-fail');
+  const result = runPreflight(rendered.preflight, 'mcpproxy-fail');
 
   assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
   assert.doesNotMatch(result.stdout, /launched/);
-  assert.match(result.stderr, /obsidian MCP server not connected/);
+  assert.match(result.stderr, /mcpproxy unreachable/);
   assert.doesNotMatch(result.stderr, /AgentMemory daemon preflight failed/);
+  assert.equal(result.securityArgs, '');
+  assert.doesNotMatch(result.curlArgs, /agentmemory\/health/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });

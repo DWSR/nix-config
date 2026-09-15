@@ -51,7 +51,7 @@
   - _Boundary: MCP Inventory Cutover_
   - _Depends: 2_
 
-- [ ] 3.2 (P) Remove Obsidian from startup checks
+- [x] 3.2 (P) Remove Obsidian from startup checks
   - Simplify OpenCode preflight to mcpproxy liveness followed by authenticated AgentMemory health, without the admin-key server-list probe.
   - Make Pi require AgentMemory rather than Obsidian while preserving its four-tool adapter validation.
   - Keep nono on the composed preflight without widening permissions.

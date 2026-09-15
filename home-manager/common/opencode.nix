@@ -204,40 +204,20 @@ in
           cd "$opencode_git_root" || true
         fi
       ''
-      # mcpproxy preflight: verify the orchestrator itself is up and the
-      # obsidian upstream is connected before opencode starts. Replaces
-      # the pre-migration mcp-orchestrator health probe
-      # (mcpproxy-migration spec, R8.1, R8.2, R8.4; design.md §Domain E).
-      # The cavemem per-upstream probe lives in
-      # `home-manager/common/cavemem.nix` and appends after this snippet
-      # via HM list-merge on `wrapperCommands`.
+      # mcpproxy preflight: verify the orchestrator is live before OpenCode
+      # starts. AgentMemory's authenticated daemon check follows this snippet
+      # when the AgentMemory backend is enabled.
       #
       # Probe sequence:
-      #   1. Read mcpproxy's API key from the macOS Keychain via
-      #      `security find-generic-password -s mcpproxy -a
-      #      mcpproxy-api-key -w`, bounded so a locked Keychain cannot hang
-      #      OpenCode before the TUI appears. The keychain entry is provisioned
-      #      by the SOPS bridge during home-manager activation. An unavailable
-      #      key fails with a specific stderr message BEFORE attempting curl so
-      #      an operator distinguishes a keychain problem from a connectivity
-      #      problem.
-      #   2. `GET http://127.0.0.1:8080/healthz` (no auth) — mcpproxy
-      #      liveness probe (R8.1). Failure exits 1 naming "mcpproxy"
-      #      as the failing component.
-      #   3. `GET http://127.0.0.1:8080/api/v1/servers/obsidian` with
-      #      `X-API-Key` header. Greps the JSON body for an upstream
-      #      connection state matching either `"connected":true` or
-      #      `"status":"connected"` (mcpproxy v0.33.1 emits one of these
-      #      shapes depending on stdio state). Failure exits 1 naming
-      #      "obsidian" as the failing component (R8.2).
+      #   1. `GET http://127.0.0.1:8080/healthz` (no auth) checks mcpproxy
+      #      liveness.
+      #   2. The AgentMemory snippet below resolves its bearer and checks the
+      #      authenticated full-daemon health route.
       #
-      # Every failure stderr message includes the recovery hint
-      # `launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy`
-      # (R8.4) — the new mcpproxy launchd label.
-      #
-      # The `opencode-prewarm` launchd agent below (L237) invokes the
-      # UNWRAPPED `home.opencode.package` binary, so this preflight is
-      # bypassed at login (R8.5).
+      # Each mcpproxy failure includes the recovery hint
+      # `launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy`.
+      # The `opencode-prewarm` launchd agent below invokes the UNWRAPPED
+      # `home.opencode.package` binary, so this preflight is bypassed at login.
       #
       # Quoting note: this snippet is composed into the opencode wrapper
       # via `wrapProgram ... --run STR`. The joined wrapperCommands value
@@ -248,32 +228,16 @@ in
       # and design.md L711-713). Use double quotes (with backslash-
       # escaped inner double quotes where needed) for runtime shell values.
       ''
-        mcpproxy_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || mcpproxy_api_key=""
-        if [ -z "$mcpproxy_api_key" ]; then
-          echo "ERROR: mcpproxy unreachable: mcpproxy API key unavailable from macOS Keychain (missing, denied, or lookup timed out after 5 seconds; service=mcpproxy, account=mcpproxy-api-key)." >&2
-          echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
-          exit 1
-        fi
         if ! /usr/bin/curl -sf --max-time 2 http://127.0.0.1:8080/healthz >/dev/null 2>&1; then
           echo "ERROR: mcpproxy unreachable: liveness probe to http://127.0.0.1:8080/healthz failed." >&2
           echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
           exit 1
         fi
-        # mcpproxy v0.33.1 exposes per-upstream state only on the
-        # collection endpoint GET /api/v1/servers (the documented
-        # /api/v1/servers/{id} path only supports DELETE/PATCH, not
-        # GET). Fetch the whole list and filter for the obsidian entry.
-        servers_json=$(/usr/bin/curl -sf --max-time 2 -H "X-API-Key: $mcpproxy_api_key" http://127.0.0.1:8080/api/v1/servers 2>/dev/null) || servers_json=""
-        if ! printf "%s" "$servers_json" | ${pkgs.jq}/bin/jq -e ".data.servers[] | select(.name == \"obsidian\") | select(.connected == true)" >/dev/null 2>&1; then
-          echo "ERROR: obsidian MCP server not connected via mcpproxy." >&2
-          echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2
-          exit 1
-        fi
       ''
     ]
-    # AgentMemory preflight deliberately follows the independent Obsidian
-    # check above. The authenticated health route is the full-daemon gate;
-    # standalone MCP fallback has no healthy daemon response and is rejected.
+    # AgentMemory preflight follows mcpproxy liveness. The authenticated health
+    # route is the full-daemon gate; standalone MCP fallback has no healthy
+    # daemon response and is rejected.
     ++ lib.optional (isAgentMemory && agentmemory.enable) ''
       agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
