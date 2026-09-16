@@ -78,7 +78,7 @@ in
     skills = shopifyPiSkills;
     promptTemplates = [ ./commands ];
     settings = {
-      defaultProvider = "openai";
+      defaultProvider = "openai-1m";
       defaultModel = "gpt-5.6-sol";
       defaultThinkingLevel = "xhigh";
     };
