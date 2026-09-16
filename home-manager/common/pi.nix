@@ -13,6 +13,58 @@ let
   };
   piSubagents = pkgs.callPackage ../../scripts/pi-subagents.nix { };
   rpivTodo = pkgs.callPackage ../../scripts/rpiv-todo.nix { };
+  piLensLspPackages =
+    with pkgs;
+    [
+      typescript-language-server
+      typescript
+      deno
+      pyright
+      python3Packages.jedi-language-server
+      gopls
+      rust-analyzer
+      ruby-lsp
+      solargraph
+      rubocop
+      intelephense
+      powershell-editor-services
+      powershell
+      # csharp-ls is unavailable on Darwin; OmniSharp is pi-lens's fallback.
+      omnisharp-roslyn
+      fsautocomplete
+      dotnet-sdk
+      lua-language-server
+      clang-tools
+      zls
+      beamPackages.expert
+      gleam
+      tinymist
+      marksman
+      clojure-lsp
+      cue
+      terraform-ls
+      bash-language-server
+      fish-lsp
+      cmake-language-server
+      dockerfile-language-server-nodejs
+      yaml-language-server
+      vscode-langservers-extracted
+      taplo
+      prisma-language-server
+      vue-language-server
+      svelte-language-server
+      jdt-language-server
+      jdk
+      kotlin-language-server
+      sourcekit-lsp
+      swift
+      dart
+      haskell-language-server
+      elixir-ls
+      ocamlPackages.ocaml-lsp
+      nixd
+    ]
+    ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.csharp-ls ];
   kiroSkillNames = builtins.filter (name: lib.hasPrefix "kiro-" name) (
     builtins.attrNames (builtins.readDir "${config.programs.cc-sdd.skillsPackage}/skills")
   );
@@ -49,6 +101,8 @@ in
 
   xdg.configFile."pi/agent/agents/kiro-spec-orchestrator.md".source =
     "${piKiroAgent}/kiro-spec-orchestrator.md";
+
+  home.packages = piLensLspPackages;
 
   home.activation.piAgentMemorySecret = lib.mkIf config.programs.agentmemory.enable (
     lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -89,6 +143,7 @@ in
       "${piSubagents}/index.ts"
       "${rpivTodo}/index.ts"
       "git:github.com/DietrichGebert/ponytail"
+      "https://github.com/apmantza/pi-lens"
     ];
 
     skills = kiroSkillPaths;
