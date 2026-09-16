@@ -126,6 +126,7 @@ in
 
   programs.pi.coding-agent = {
     enable = true;
+    rules = ./pi-agent/instructions.md;
 
     environment = {
       PI_OFFLINE.value = "true";

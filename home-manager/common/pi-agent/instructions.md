@@ -39,6 +39,28 @@ Required extensions are immutable and version-pinned. Do not use `pi install`,
 mutation. Change Nix pins and managed generation together, then build and run
 managed validation before activating that generation.
 
+## Spec-driven implementation
+
+The `kiro-*` skills are authored for OpenCode but are also available in Pi.
+Use Pi's interfaces when running them:
+
+- Invoke `/skill:kiro-impl <feature>`; append task IDs for manual mode. A bare
+  invocation has no feature context.
+- In autonomous mode, use the `subagent` tool from `pi-subagents` with one
+  child at a time: `agent: "worker"` for implementation and `agent: "reviewer"`
+  for review. Set `async: false` so the parent receives the structured status
+  or verdict before continuing; the default background mode cannot drive the
+  Kiro iteration loop.
+- Pi children do not inherit ambient skills by default. Include the task,
+  spec paths, status format, and relevant protocol in each child prompt rather
+  than expecting a child to invoke a parent skill.
+- Nested Kiro skills use Pi command names: `/skill:kiro-review`,
+  `/skill:kiro-debug`, `/skill:kiro-verify-completion`, and
+  `/skill:kiro-validate-impl`.
+- The built-in reviewer is read-only. The parent runs tests and builds, passes
+  fresh evidence to the reviewer, updates `tasks.md`, commits, and performs
+  final validation.
+
 ## Plan mode
 
 Plan mode exposes exactly `read`, `grep`, `find`, `ls`, `plan_mode_question`,
