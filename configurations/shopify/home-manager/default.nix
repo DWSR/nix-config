@@ -171,7 +171,7 @@ in
         }
         export ANTHROPIC_BASE_URL
 
-        export ANTHROPIC_MODEL="claude-sonnet-5"
+        export ANTHROPIC_MODEL="claude-haiku-4-5"
 
         OPENAI_API_KEY="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --key 2>/dev/null)" || {
           echo "Error: Failed to get OPENAI_API_KEY for embeddings from devx llm-gateway print-token --key within 15 seconds" >&2

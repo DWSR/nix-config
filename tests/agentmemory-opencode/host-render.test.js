@@ -177,7 +177,7 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
   assert.match(shopify.agentmemory.launcherText, /toolchain\/base_profile\/share\/dev\/bin\/user:\$PATH/);
   assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_API_KEY=.*devx llm-gateway print-token --key/);
   assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_BASE_URL=.*devx llm-gateway print-token --base.*\/apis\/anthropic/);
-  assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_MODEL="claude-sonnet-5"/);
+  assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_MODEL="claude-haiku-4-5"/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_API_KEY=.*devx llm-gateway print-token --key/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_API_KEY_FOR_LLM="false"/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_EMBEDDING_BASE_URL=.*devx llm-gateway print-token --base.*\/vendors\/openai\/v1/);
