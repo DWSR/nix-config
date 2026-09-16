@@ -143,6 +143,7 @@ in
       "${piSubagents}/index.ts"
       "${rpivTodo}/index.ts"
       "git:github.com/DietrichGebert/ponytail"
+      "https://github.com/maddeye/pi-nord"
       "https://github.com/apmantza/pi-lens"
     ];
 
