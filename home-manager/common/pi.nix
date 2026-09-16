@@ -143,6 +143,7 @@ in
       "${piMcpproxyGo}/index.ts"
       "${piSubagents}/index.ts"
       "${rpivTodo}/index.ts"
+      "https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question"
       "git:github.com/DietrichGebert/ponytail"
       "https://github.com/maddeye/pi-nord"
       "https://github.com/apmantza/pi-lens"
