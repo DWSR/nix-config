@@ -30,6 +30,12 @@ let
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
 
+  restartPackage = pkgs.callPackage ../../scripts/agentmemory-restart.nix { };
+
+  sessionReaperPackage = pkgs.callPackage ../../scripts/agentmemory-reap-sessions.nix {
+    inherit (cfg) bearerReference restPort;
+  };
+
   importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
     inherit (cfg) bearerReference;
     restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
@@ -182,6 +188,8 @@ in
         packages = [
           agentmemoryLauncher
           cfg.statusPackage
+          restartPackage
+          sessionReaperPackage
           importPackage
           obsidianImportPackage
           (pkgs.callPackage ../../scripts/opencode-cache-validate.nix { })
@@ -233,6 +241,20 @@ in
           };
           StandardOutPath = "${cfg.logDir}/agentmemory.log";
           StandardErrorPath = "${cfg.logDir}/agentmemory.error.log";
+        };
+      };
+
+      launchd.agents.agentmemory-session-reaper = {
+        enable = true;
+        config = {
+          Label = "dev.dwsr.agentmemory.session-reaper";
+          ProgramArguments = [ "${sessionReaperPackage}/bin/agentmemory-reap-sessions" ];
+          StartCalendarInterval = {
+            Hour = 3;
+            Minute = 0;
+          };
+          StandardOutPath = "${cfg.logDir}/session-reaper.log";
+          StandardErrorPath = "${cfg.logDir}/session-reaper.error.log";
         };
       };
     }
