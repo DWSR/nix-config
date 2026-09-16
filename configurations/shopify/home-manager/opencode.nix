@@ -42,13 +42,6 @@ in
   # setting is preserved by moving it into the structured option.
   programs.opencode.tui.scroll_acceleration.enabled = true;
 
-  # Shopify-only skills, co-installed alongside the cc-sdd kiro-* skills
-  # under ~/.config/opencode/skills/ per the pattern documented in
-  # home-manager/common/cc-sdd.nix lines 64-68.
-  xdg.configFile."opencode/skills/graphite-pitfalls" = {
-    source = ./skills/graphite-pitfalls;
-  };
-
   xdg.configFile."opencode/skills/create-yb-fix-pr" = {
     source = ./skills/create-yb-fix-pr;
   };

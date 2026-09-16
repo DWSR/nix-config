@@ -30,7 +30,6 @@ const ACTIVE_SKILL_FILES = Object.freeze([
   'home-manager/common/skills/github-native-stacks/SKILL.md',
   'configurations/shopify/home-manager/skills/binks-pr-review/SKILL.md',
   'configurations/shopify/home-manager/skills/create-yb-fix-pr/SKILL.md',
-  'configurations/shopify/home-manager/skills/graphite-pitfalls/SKILL.md',
   'configurations/shopify/home-manager/skills/validate-yb-issue/SKILL.md',
 ]);
 const MEMORY_SKILL_FILES = Object.freeze([
@@ -62,7 +61,6 @@ const REPO_OWNED_RENDERED_SKILLS = Object.freeze({
     'opencode/skills/binks-pr-review',
     'opencode/skills/create-yb-fix-pr',
     'opencode/skills/github-native-stacks',
-    'opencode/skills/graphite-pitfalls',
     'opencode/skills/validate-yb-issue',
   ]),
 });
@@ -145,7 +143,7 @@ function renderActiveCutoverArtifacts() {
       hm = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
       mcpConfig = builtins.fromJSON (discard hm.xdg.configFile."mcpproxy/mcp_config.json".text);
       skillFiles = flake.inputs.nixpkgs.lib.filterAttrs (
-        name: _: builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|github-native-stacks|graphite-pitfalls|validate-yb-issue)" name != null
+         name: _: builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|github-native-stacks|validate-yb-issue)" name != null
       ) hm.xdg.configFile;
       skillNames = builtins.filter (
         name: builtins.match "opencode/skills/.+" name != null

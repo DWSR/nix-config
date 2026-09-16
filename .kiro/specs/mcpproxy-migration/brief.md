@@ -33,9 +33,8 @@ module (`home-manager/mcp/default.nix`), the secret bridge
 (`scripts/mcp-secrets-activate.nix` + `mcp-verify-secrets.nix`,
 13 secrets across both hosts), wrapper probes hitting `:37373`
 (`opencode.nix`, `cavemem.nix`, `memory-sync.nix`), the
-`hub_*`-prefixed tool-name contract (24 refs in agents.md, 67 in
-common subagent prompts, 13 in Shopify agents, 2 in
-graphite-pitfalls), nvim integration (3 plugin files + 2 flake
+`hub_*`-prefixed tool-name contract across agents.md, common subagent
+prompts, and Shopify agents, nvim integration (3 plugin files + 2 flake
 inputs), and sqlite-backup's opportunistic piggyback on the
 `mcp-hub` keychain account.
 

@@ -56,7 +56,6 @@ let
   shopifyPiSkills = [
     ./skills/binks-pr-review
     ./skills/create-yb-fix-pr
-    ./skills/graphite-pitfalls
     ybIssuePiSkill
     pkgs.quick-skills
     "${quickArchDiagramsSource}/skill"

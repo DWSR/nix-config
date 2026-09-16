@@ -90,9 +90,8 @@ of the plugin stays.
 - The cavemem split-brain closure: the direct
   `programs.opencode.settings.mcp.cavemem` block removed from
   `home-manager/common/cavemem.nix`.
-- The agent-contract rewrite: 109 `hub_*` references across
-  `agents.md`, all common subagents, all Shopify-host subagents +
-  the `graphite-pitfalls` skill rewritten for the four-tool surface.
+- The agent-contract rewrite across `agents.md`, all common subagents, and
+  all Shopify-host subagents for the four-tool surface.
 - The nvim teardown: deletion of `nixvim/plugins/mcphub.nix`,
   stripping of MCP-related blocks in `codecompanion.nix` and
   `lualine.nix`, removal of the imports entry, removal of the
@@ -376,8 +375,6 @@ graph TB
   13 refs rewritten.
 - `configurations/shopify/home-manager/agents-graphite.md` —
   3 refs rewritten.
-- `configurations/shopify/home-manager/skills/graphite-pitfalls/SKILL.md` —
-  2 refs rewritten.
 
 #### Nvim teardown
 - `home-manager/nixvim/plugins/mcphub.nix` — **deleted**.

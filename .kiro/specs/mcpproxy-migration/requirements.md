@@ -32,7 +32,7 @@ runtime persistence.
   the memory-sync CLI's MCP-availability probe; the agent-contract
   rewrite (AGENTS.md startup gate + memory-recall rules + every
   common subagent + every Shopify-host subagent / agents reference
-  + the Shopify `graphite-pitfalls` skill); nvim MCP teardown (drop
+  + the Shopify-host agents reference); nvim MCP teardown (drop
   `mcphub.nix`, strip the MCP extension wiring from `codecompanion.nix`
   while preserving codecompanion as a non-MCP chat plugin, drop the
   lualine `mcphub` status component, drop both legacy flake inputs);
@@ -117,7 +117,7 @@ runtime persistence.
 
 #### Acceptance Criteria
 
-1. The agent contracts in scope (AGENTS.md, every common subagent under `home-manager/common/agents/`, every Shopify-host subagent and agents reference, and the Shopify `graphite-pitfalls` skill) shall not reference any `hub_*`-prefixed tool name.
+1. The agent contracts in scope (AGENTS.md, every common subagent under `home-manager/common/agents/`, and every Shopify-host subagent and agents reference) shall not reference any `hub_*`-prefixed tool name.
 2. The AGENTS.md startup gate shall verify obsidian and cavemem reachability by invoking the four-tool surface (a `retrieve_tools` query plus the appropriate `call_tool_*` invocation), preserving its current refuse-to-proceed semantics on failure.
 3. The AGENTS.md memory-recall rules shall describe tool invocations in terms of the four-tool surface while preserving the original semantic intent: when to search memories, deduplication-before-creation, and the memory note format.
 4. The AGENTS.md startup-gate failure message shall name mcpproxy and shall provide a recovery hint that names mcpproxy's launchd label.

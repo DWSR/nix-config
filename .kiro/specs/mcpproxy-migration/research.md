@@ -84,7 +84,6 @@ is a `cmd/mcpproxy`-style Go binary; template applies directly.
 | `home-manager/common/agents/security-auditor.md` | 2 |
 | `configurations/shopify/home-manager/agents/stack-captain.md` | 13 |
 | `configurations/shopify/home-manager/agents-graphite.md` | 3 |
-| `configurations/shopify/home-manager/skills/graphite-pitfalls/SKILL.md` | 2 |
 
 109 refs total; `vault-synthesizer.md` dominates. Already at 0:
 `agents-cc-sdd.md`, `agents/nix-pkg.md`, `agents/nvim-tailor.md`,
