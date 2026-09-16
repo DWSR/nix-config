@@ -171,11 +171,14 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
   assert.equal(personal.secretUri, 'op://Private/AgentMemory/Bearer');
   assert.equal(shopify.secretUri, 'op://Employee/AgentMemory/Bearer');
   assert.doesNotMatch(personal.agentmemory.launcherText, /OPENAI_(?:API_KEY|BASE_URL|MODEL|REASONING_EFFORT)/);
+  assert.doesNotMatch(personal.agentmemory.launcherText, /AGENTMEMORY_(?:AUTO_COMPRESS|GRAPH_EXTRACTION_ENABLED)/);
   assert.match(shopify.agentmemory.launcherText, /toolchain\/base_profile\/share\/dev\/bin\/user:\$PATH/);
   assert.match(shopify.agentmemory.launcherText, /devx llm-gateway print-token --key/);
   assert.match(shopify.agentmemory.launcherText, /devx llm-gateway print-token --base/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_MODEL="gpt-5\.6-sol"/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_REASONING_EFFORT="xhigh"/);
+  assert.match(shopify.agentmemory.launcherText, /AGENTMEMORY_AUTO_COMPRESS="true"/);
+  assert.match(shopify.agentmemory.launcherText, /GRAPH_EXTRACTION_ENABLED="true"/);
   assert.deepEqual(personal.backend, shopify.backend);
   assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);
   const { launcherText: _personalLauncher, ...personalAgentMemory } = personal.agentmemory;

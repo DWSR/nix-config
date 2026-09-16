@@ -173,6 +173,8 @@ in
 
         export OPENAI_MODEL="gpt-5.6-sol"
         export OPENAI_REASONING_EFFORT="xhigh"
+        export AGENTMEMORY_AUTO_COMPRESS="true"
+        export GRAPH_EXTRACTION_ENABLED="true"
       ''
     ];
   };
