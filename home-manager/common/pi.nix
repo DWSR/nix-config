@@ -13,6 +13,10 @@ let
   };
   piSubagents = pkgs.callPackage ../../scripts/pi-subagents.nix { };
   rpivTodo = pkgs.callPackage ../../scripts/rpiv-todo.nix { };
+  piNord = pkgs.callPackage ../../scripts/pi-nord.nix { };
+  ponytail = pkgs.callPackage ../../scripts/ponytail.nix { };
+  rpivAskUserQuestion = pkgs.callPackage ../../scripts/rpiv-ask-user-question.nix { };
+  piLens = pkgs.callPackage ../../scripts/pi-lens.nix { };
   piLensLspPackages =
     with pkgs;
     [
@@ -143,13 +147,16 @@ in
       "${piMcpproxyGo}/index.ts"
       "${piSubagents}/index.ts"
       "${rpivTodo}/index.ts"
-      "https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-ask-user-question"
-      "git:github.com/DietrichGebert/ponytail"
-      "https://github.com/maddeye/pi-nord"
-      "https://github.com/apmantza/pi-lens"
+      "${rpivAskUserQuestion}/index.ts"
+      "${ponytail}/pi-extension/index.js"
+      "${piLens}/dist/index.js"
     ];
 
-    skills = kiroSkillPaths;
+    skills = kiroSkillPaths ++ [
+      "${ponytail}/skills"
+      "${piLens}/skills"
+    ];
+    themes = [ "${piNord}/themes" ];
     settings.subagents.defaultThinking = "xhigh";
     settings.subagents.defaultExtensions = config.programs.pi.coding-agent.extensions;
   };
