@@ -156,6 +156,9 @@ in
     # each daemon launch rather than persisting them in launchd or Nix output.
     wrapperCommands = [
       ''
+        # launchd does not inherit Home Manager's interactive sessionPath.
+        export PATH="${config.home.homeDirectory}/.local/state/tec/toolchain/base_profile/share/dev/bin/user:$PATH"
+
         OPENAI_API_KEY="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --key 2>/dev/null)" || {
           echo "Error: Failed to get OPENAI_API_KEY from devx llm-gateway print-token --key within 15 seconds" >&2
           exit 1
