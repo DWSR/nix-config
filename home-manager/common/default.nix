@@ -164,6 +164,7 @@
       DO_NOT_TRACK = "1";
       OBJC_DISABLE_INITIALIZE_FORK_SAFETY = "YES";
       KUBECTL_EXTERNAL_DIFF = "dyff between --omit-header --set-exit-code";
+      TOKSCALE_EXTRA_DIRS = "pi:${config.xdg.stateHome}/pi/sessions";
       _ZO_FZF_OPTS = "--popup";
     };
   };
