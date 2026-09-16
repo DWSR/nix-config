@@ -88,6 +88,7 @@ in
       "${piMcpproxyGo}/index.ts"
       "${piSubagents}/index.ts"
       "${rpivTodo}/index.ts"
+      "git:github.com/DietrichGebert/ponytail"
     ];
 
     skills = kiroSkillPaths;
