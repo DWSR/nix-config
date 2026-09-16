@@ -172,6 +172,24 @@ in
         export ANTHROPIC_BASE_URL
 
         export ANTHROPIC_MODEL="claude-sonnet-5"
+
+        OPENAI_API_KEY="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --key 2>/dev/null)" || {
+          echo "Error: Failed to get OPENAI_API_KEY for embeddings from devx llm-gateway print-token --key within 15 seconds" >&2
+          exit 1
+        }
+        export OPENAI_API_KEY
+        # Keep the OpenAI credential scoped to embeddings; Anthropic remains
+        # the AgentMemory LLM provider.
+        export OPENAI_API_KEY_FOR_LLM="false"
+
+        OPENAI_EMBEDDING_BASE_URL="$(${pkgs.coreutils}/bin/timeout --kill-after=2s 15s devx llm-gateway print-token --base 2>/dev/null)/vendors/openai/v1" || {
+          echo "Error: Failed to get OPENAI_EMBEDDING_BASE_URL from devx llm-gateway print-token --base within 15 seconds" >&2
+          exit 1
+        }
+        export OPENAI_EMBEDDING_BASE_URL
+        export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+        export EMBEDDING_PROVIDER="openai"
+
         export AGENTMEMORY_AUTO_COMPRESS="true"
         export GRAPH_EXTRACTION_ENABLED="true"
       ''
