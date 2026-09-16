@@ -157,6 +157,7 @@ in
       "${piLens}/skills"
     ];
     themes = [ "${piNord}/themes" ];
+    settings.theme = "nord";
     settings.subagents.defaultThinking = "xhigh";
     settings.subagents.defaultExtensions = config.programs.pi.coding-agent.extensions;
   };
