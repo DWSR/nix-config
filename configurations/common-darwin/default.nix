@@ -126,6 +126,7 @@
         "deskflow/homebrew-tap" = inputs.homebrew-deskflow;
         "cyrusradfar/homebrew-unf" = inputs.homebrew-unf;
         "darrylmorley/homebrew-whatcable" = inputs.homebrew-whatcable;
+        "abue-ammar/homebrew-tinycast" = inputs.homebrew-tinycast;
       };
     };
 
@@ -235,6 +236,7 @@
       # proxies after a reconnect (deskflow/deskflow#9843). The continuous cask
       # includes the upstream fix until it reaches the next stable release.
       "deskflow-dev"
+      "tinycast"
       "loopback"
       "moom"
       "obsidian"

@@ -133,8 +133,6 @@
       unstable.slack
       viddy
       xz
-
-      unstable.raycast
     ];
 
     activation.createScratchDir = lib.hm.dag.entryAfter [ "writeBoundary" ] ''

@@ -75,6 +75,11 @@
       flake = false;
     };
 
+    homebrew-tinycast = {
+      url = "github:abue-ammar/homebrew-tinycast";
+      flake = false;
+    };
+
     git-issue-tracker = {
       url = "github:nnunley/git-issue-tracker";
       flake = false;
