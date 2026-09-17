@@ -2,7 +2,7 @@ From: nix-config <noreply@local>
 Subject: [PATCH] agentmemory: bound the in-memory BM25 index
 
 Source: src/state/search-index.ts
-Upstream: https://github.com/rohitg00/agentmemory/issues/309
+Upstream: https://github.com/DWSR/agentmemory/issues/309
 
 Large imported corpora exhaust the Node heap because SearchIndex retains an
 unbounded Map/Set graph and serialize() duplicates it into arrays. Keep the

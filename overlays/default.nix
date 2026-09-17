@@ -5,6 +5,20 @@ let
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
   agentmemory = import ./agentmemory.nix { };
+  agentmemoryFlake = final: _prev: {
+    agentmemory =
+      inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
+        (old: {
+          postPatch = (old.postPatch or "") + ''
+            cp ${old.npmDeps}/package-lock.json package-lock.json
+          '';
+          passthru = (old.passthru or { }) // {
+            sourceRevision = "0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6";
+            iiiVersion = "0.11.5";
+            iiiRevision = "iii/v0.11.5";
+          };
+        });
+  };
 in
 {
   fixed-packages = final: prev: {
@@ -94,5 +108,6 @@ in
     // (zellijPlugins final prev)
     // (misc final prev)
     // (litestream final prev)
-    // (agentmemory final prev);
+    // (agentmemory final prev)
+    // (agentmemoryFlake final prev);
 }

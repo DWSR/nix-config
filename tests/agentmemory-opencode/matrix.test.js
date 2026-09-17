@@ -347,6 +347,8 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_ENGINE_PORT, '49134');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_AUTO_COMPRESS, 'false');
+  assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_III_VERSION, '0.11.5');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.OTEL_ENABLED, 'false');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.OTEL_METRICS_ENABLED, 'false');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET, undefined);

@@ -3,7 +3,7 @@
 This document records the performance and reliability risks identified in the
 managed AgentMemory deployment, the evidence behind them, and the proposed
 improvement order. It covers the pinned AgentMemory `0.9.29` package at
-revision `e04ba88819c365c9acf9d6661ea802143e728bd6` and iii-engine `0.11.2`.
+revision `0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6` and iii-engine `0.11.5`.
 
 ## Current Profile
 
@@ -14,7 +14,7 @@ The managed runtime uses:
 | --- | --- |
 | BM25 in-memory cap | `100000` entries |
 | BM25 persistence cap | `50000` entries |
-| Shopify LLM compression | Enabled |
+| Shopify LLM compression | Disabled |
 | Shopify embeddings | OpenAI-compatible provider, `text-embedding-3-small` |
 | Shopify graph extraction | Enabled |
 | MCP exposure | Eight stock core tools through mcpproxy |
@@ -323,8 +323,8 @@ Suggested acceptance gates:
 1. Recover the bearer and establish a trustworthy health baseline.
 2. Add persisted-index load guards and align BM25/vector eviction behavior.
 3. Run the large-corpus restart and persistence benchmark.
-4. Bound compression and graph queues before re-enabling Shopify's expensive
-   feature flags.
+4. Bound graph queues before enabling Shopify's remaining expensive feature
+   flags.
 5. Remove per-observation enumeration and reduce capture write amplification.
 6. Add project/file indexes for context and enrichment.
 7. Serialize or delta-encode index persistence.
@@ -344,4 +344,4 @@ Suggested acceptance gates:
 - `tests/agentmemory-opencode/core-surface.test.js`
 - `tests/agentmemory-opencode/capture-smoke.test.js`
 - `tests/agentmemory-opencode/package-contract.test.js`
-- Pinned upstream source: `https://github.com/rohitg00/agentmemory/tree/e04ba88819c365c9acf9d6661ea802143e728bd6`
+- Pinned upstream source: `https://github.com/DWSR/agentmemory/tree/0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6`

@@ -190,7 +190,6 @@ in
         export OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
         export EMBEDDING_PROVIDER="openai"
 
-        export AGENTMEMORY_AUTO_COMPRESS="true"
         export GRAPH_EXTRACTION_ENABLED="true"
       ''
     ];

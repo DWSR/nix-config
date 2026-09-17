@@ -3,7 +3,7 @@ From: nix-config integration <noreply@local>
 Date: Mon, 7 Sep 2026 00:00:00 +0000
 Subject: [PATCH] agentmemory: complete the existing OpenCode capture lifecycle
 
-Provenance: repository-owned patch for AgentMemory e04ba88819c365c9acf9d6661ea802143e728bd6
+Provenance: repository-owned patch for DWSR/agentmemory main at 0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6
 Source: plugin/opencode/agentmemory-capture.ts
 Scope: current OpenCode events, completed assistant content, tool lifecycle,
 idle summarization, REST failure logging, normal disposal, and managed REST

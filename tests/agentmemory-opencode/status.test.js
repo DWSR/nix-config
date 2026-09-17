@@ -134,8 +134,8 @@ function assertCommonStatus(result, expected) {
   assert.equal(result.status, expected.exitCode, result.error?.message || result.stderr);
   assert.match(result.stdout, new RegExp(`^status=${expected.status}$`, 'm'));
   assert.match(result.stdout, new RegExp(`^opencode_backend=${expected.backend}$`, 'm'));
-  assert.match(result.stdout, /^agentmemory_revision=e04ba88819c365c9acf9d6661ea802143e728bd6$/m);
-  assert.match(result.stdout, /^iii_revision=iii\/v0\.11\.2$/m);
+  assert.match(result.stdout, /^agentmemory_revision=0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6$/m);
+  assert.match(result.stdout, /^iii_revision=iii\/v0\.11\.5$/m);
   assert.match(result.stdout, /^data_dir=\/tmp\/agentmemory\/status-data$/m);
   for (const listener of ['rest', 'stream', 'viewer', 'engine']) {
     assert.match(result.stdout, new RegExp(`^listener_${listener}=${expected.listenerState}$`, 'm'));

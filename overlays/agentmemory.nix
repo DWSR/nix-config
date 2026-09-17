@@ -12,25 +12,25 @@ let
     else
       throw "Unsupported agentmemory system: ${system}";
 
-  agentmemoryRev = "e04ba88819c365c9acf9d6661ea802143e728bd6";
+  agentmemoryRev = "0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6";
   agentmemorySrc = final.fetchFromGitHub {
-    owner = "rohitg00";
+    owner = "DWSR";
     repo = "agentmemory";
     rev = agentmemoryRev;
-    hash = "sha256-fJ8I8kj7TGvN4T1WPvimSqOrkrC3Ph+QqBE1b8sfs0k=";
+    hash = "sha256-7MYDOtFZHPtnevCtW1hyK2mwCoORRDT0ePBFSJFLgd8=";
   };
 
-  # AgentMemory's compatible iii-engine v0.11.2 release.
-  iiiVersion = "0.11.2";
+  # AgentMemory main's compatible iii-engine v0.11.5 release.
+  iiiVersion = "0.11.5";
   iiiRevision = "iii/v${iiiVersion}";
   iiiSources = {
     "aarch64-darwin" = final.fetchurl {
       url = "https://github.com/iii-hq/iii/releases/download/${iiiRevision}/iii-aarch64-apple-darwin.tar.gz";
-      hash = "sha256-54NMRP77K1ND0ycQKpQUGSRff/9Ef5U3OFegSwM/sb0=";
+      hash = "sha256-RZ9XrYI1xXl/HT3PjkMzvzRrb3gbqF6hga8cA2OkDvg=";
     };
     "x86_64-darwin" = final.fetchurl {
       url = "https://github.com/iii-hq/iii/releases/download/${iiiRevision}/iii-x86_64-apple-darwin.tar.gz";
-      hash = "sha256-K2fl8YgzxBX0yxap4TsOlTVV4MoThoK/JIlKvouAuDY=";
+      hash = "sha256-rIjKhKcM/DfQDGF+rzdDhXQBmHyxCLqlSJshwnavcxA=";
     };
   };
 
@@ -170,7 +170,7 @@ in
 
       meta = with final.lib; {
         description = "Persistent memory for AI coding agents";
-        homepage = "https://github.com/rohitg00/agentmemory";
+        homepage = "https://github.com/DWSR/agentmemory";
         license = licenses.asl20;
         mainProgram = "agentmemory";
         platforms = supportedSystems;

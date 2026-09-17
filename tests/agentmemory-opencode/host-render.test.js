@@ -162,6 +162,7 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR, config.agentmemory.dataDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_RUNTIME_DIR, config.agentmemory.runtimeDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
+    assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_AUTO_COMPRESS, 'false');
     assert.match(config.agentmemory.settings, /AGENTMEMORY_DATA_DIR=/);
     assert.doesNotMatch(config.agentmemory.settings, /AGENTMEMORY_SECRET=/);
     assert.deepEqual(config.capturePlugins, ['opencode/plugins/agentmemory-capture.ts']);
@@ -184,7 +185,7 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
   assert.match(shopify.agentmemory.launcherText, /OPENAI_EMBEDDING_BASE_URL=.*devx llm-gateway print-token --base.*\/vendors\/openai\/v1/);
   assert.match(shopify.agentmemory.launcherText, /OPENAI_EMBEDDING_MODEL="text-embedding-3-small"/);
   assert.match(shopify.agentmemory.launcherText, /EMBEDDING_PROVIDER="openai"/);
-  assert.match(shopify.agentmemory.launcherText, /AGENTMEMORY_AUTO_COMPRESS="true"/);
+  assert.doesNotMatch(shopify.agentmemory.launcherText, /AGENTMEMORY_AUTO_COMPRESS/);
   assert.match(shopify.agentmemory.launcherText, /GRAPH_EXTRACTION_ENABLED="true"/);
   assert.deepEqual(personal.backend, shopify.backend);
   assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);

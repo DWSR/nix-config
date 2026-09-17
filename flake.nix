@@ -109,6 +109,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    agentmemory = {
+      url = "github:DWSR/agentmemory";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
   };
 
   outputs =
@@ -248,6 +253,11 @@
               outputs.overlays.custom-packages
             ];
           };
+          agentMemoryPackage = inputs.agentmemory.packages.${system}.agentmemory.overrideAttrs (old: {
+            postPatch = (old.postPatch or "") + ''
+              cp ${old.npmDeps}/package-lock.json package-lock.json
+            '';
+          });
           gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
 
           opencodeTurnTimestampHosts = [
@@ -1762,7 +1772,7 @@
                   AGENTMEMORY_IMPORTER_NODE_BIN = "${pkgs.nodejs_22}/bin/node";
                   AGENTMEMORY_IMPORTER_NODE_PATH = "${pkgs.cavemem-importer-deps}/lib/node_modules";
                   AGENTMEMORY_OBSIDIAN_IMPORTER_BIN = "${agentMemoryObsidianImporter}/bin/agentmemory-import-obsidian";
-                  AGENTMEMORY_PACKAGE_PATH = pkgs.agentmemory;
+                  AGENTMEMORY_PACKAGE_PATH = agentMemoryPackage;
                   MCPPROXY_PACKAGE_PATH = pkgs.mcpproxy-go;
                 }
                 ''

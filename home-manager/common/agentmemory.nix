@@ -15,7 +15,13 @@ let
     else
       "cavemem";
   isAgentMemory = memoryBackend == "agentmemory";
+  iiiVersion = cfg.package.iiiVersion or "0.11.5";
+  iiiRevision = cfg.package.iiiRevision or "iii/v${iiiVersion}";
   keychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
+  runtimeInputs = [
+    pkgs.coreutils
+  ]
+  ++ lib.optional (builtins.hasAttr "iii-engine" pkgs) pkgs.iii-engine;
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
     inherit (cfg)
       bearerReference
@@ -27,7 +33,7 @@ let
       viewerPort
       ;
     inherit keychainPath;
-    iiiRevision = cfg.package.iiiRevision or "unknown";
+    inherit iiiRevision;
     opencodeBackend = memoryBackend;
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
@@ -63,6 +69,8 @@ let
       (envLine "AGENTMEMORY_TOOLS" "core")
       (envLine "AGENTMEMORY_BM25_MAX_ENTRIES" cfg.bm25MaxEntries)
       (envLine "AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES" cfg.bm25PersistMaxEntries)
+      (envLine "AGENTMEMORY_AUTO_COMPRESS" "false")
+      (envLine "AGENTMEMORY_III_VERSION" iiiVersion)
       (envLine "OTEL_ENABLED" "false")
       (envLine "OTEL_METRICS_ENABLED" "false")
       (envLine "III_REST_PORT" cfg.restPort)
@@ -74,7 +82,7 @@ let
 
   agentmemoryLauncher = pkgs.writeShellApplication {
     name = "agentmemory";
-    runtimeInputs = [ pkgs.coreutils ];
+    inherit runtimeInputs;
     text = ''
       set -eu
 
@@ -242,6 +250,8 @@ in
             AGENTMEMORY_TOOLS = "core";
             AGENTMEMORY_BM25_MAX_ENTRIES = toString cfg.bm25MaxEntries;
             AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES = toString cfg.bm25PersistMaxEntries;
+            AGENTMEMORY_AUTO_COMPRESS = "false";
+            AGENTMEMORY_III_VERSION = iiiVersion;
             OTEL_ENABLED = "false";
             OTEL_METRICS_ENABLED = "false";
             III_REST_PORT = toString cfg.restPort;

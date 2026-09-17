@@ -7,7 +7,7 @@
 }:
 let
   piAgentMemorySecretFile = "${config.programs.agentmemory.runtimeDir}/pi-bearer";
-  piAgentMemory = "${pkgs.agentmemory}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
+  piAgentMemory = "${config.programs.agentmemory.package}/lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts";
   piMcpproxyGo = pkgs.callPackage ../../scripts/pi-mcpproxy-go.nix {
     src = ./extensions/pi-mcpproxy-go;
   };

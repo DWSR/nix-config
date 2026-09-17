@@ -300,6 +300,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.III_ENGINE_PORT, '61134');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
+  assert.equal(first.launchd.environment.AGENTMEMORY_AUTO_COMPRESS, 'false');
+  assert.equal(first.launchd.environment.AGENTMEMORY_III_VERSION, '0.11.5');
   assert.equal(first.launchd.environment.OTEL_ENABLED, 'false');
   assert.equal(first.launchd.environment.OTEL_METRICS_ENABLED, 'false');
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET, undefined);
@@ -309,6 +311,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.match(first.settings, /AGENTMEMORY_SECRET_REFERENCE=agentmemory-bearer/);
   assert.match(first.settings, /AGENTMEMORY_BM25_MAX_ENTRIES=100000/);
   assert.match(first.settings, /AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES=50000/);
+  assert.match(first.settings, /AGENTMEMORY_AUTO_COMPRESS=false/);
+  assert.match(first.settings, /AGENTMEMORY_III_VERSION=0\.11\.5/);
   assert.match(first.settings, /OTEL_ENABLED=false/);
   assert.match(first.settings, /OTEL_METRICS_ENABLED=false/);
   assert.doesNotMatch(first.settings, /connect opencode/);
