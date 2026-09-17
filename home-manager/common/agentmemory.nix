@@ -15,6 +15,7 @@ let
     else
       "cavemem";
   isAgentMemory = memoryBackend == "agentmemory";
+  keychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
     inherit (cfg)
       bearerReference
@@ -25,6 +26,7 @@ let
       streamPort
       viewerPort
       ;
+    inherit keychainPath;
     iiiRevision = cfg.package.iiiRevision or "unknown";
     opencodeBackend = memoryBackend;
     sourceRevision = cfg.package.sourceRevision or "unknown";
@@ -34,15 +36,18 @@ let
 
   sessionReaperPackage = pkgs.callPackage ../../scripts/agentmemory-reap-sessions.nix {
     inherit (cfg) bearerReference restPort;
+    inherit keychainPath;
   };
 
   importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
     inherit (cfg) bearerReference;
+    inherit keychainPath;
     restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
   };
 
   obsidianImportPackage = pkgs.callPackage ../../scripts/agentmemory-import-obsidian.nix {
     inherit (cfg) bearerReference;
+    inherit keychainPath;
     restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
   };
 
@@ -58,6 +63,8 @@ let
       (envLine "AGENTMEMORY_TOOLS" "core")
       (envLine "AGENTMEMORY_BM25_MAX_ENTRIES" cfg.bm25MaxEntries)
       (envLine "AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES" cfg.bm25PersistMaxEntries)
+      (envLine "OTEL_ENABLED" "false")
+      (envLine "OTEL_METRICS_ENABLED" "false")
       (envLine "III_REST_PORT" cfg.restPort)
       (envLine "III_STREAM_PORT" cfg.streamPort)
       (envLine "III_VIEWER_PORT" cfg.viewerPort)
@@ -74,7 +81,8 @@ let
       ${lib.concatStringsSep "\n" cfg.wrapperCommands}
 
       security_bin="''${AGENTMEMORY_SECURITY_BIN:-/usr/bin/security}"
-      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      keychain_path="''${AGENTMEMORY_KEYCHAIN_PATH:-${lib.escapeShellArg keychainPath}}"
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg cfg.bearerReference} -w "$keychain_path" 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
         echo "ERROR: AgentMemory bearer unavailable from macOS Keychain; daemon not started." >&2
         echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
@@ -234,6 +242,8 @@ in
             AGENTMEMORY_TOOLS = "core";
             AGENTMEMORY_BM25_MAX_ENTRIES = toString cfg.bm25MaxEntries;
             AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES = toString cfg.bm25PersistMaxEntries;
+            OTEL_ENABLED = "false";
+            OTEL_METRICS_ENABLED = "false";
             III_REST_PORT = toString cfg.restPort;
             III_STREAM_PORT = toString cfg.streamPort;
             III_VIEWER_PORT = toString cfg.viewerPort;

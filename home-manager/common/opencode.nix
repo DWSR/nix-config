@@ -12,6 +12,7 @@ let
     hash = "sha256-uKMCItuqK7JXeGeXvG3RiUg7xWLzlO93K3XMbVEn8ZI=";
   };
   agentmemory = config.programs.agentmemory;
+  agentmemoryKeychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
   memoryBackend = config.home.opencode.memoryBackend;
   isAgentMemory = memoryBackend == "agentmemory";
 in
@@ -228,7 +229,7 @@ in
     # route is the full-daemon gate; standalone MCP fallback has no healthy
     # daemon response and is rejected.
     ++ lib.optional (isAgentMemory && agentmemory.enable) ''
-      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w ${lib.escapeShellArg agentmemoryKeychainPath} 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
         echo "ERROR: AgentMemory daemon preflight failed: bearer unavailable from macOS Keychain." >&2
         echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2

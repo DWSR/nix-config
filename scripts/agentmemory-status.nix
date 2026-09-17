@@ -5,6 +5,7 @@
   dataDir,
   enginePort,
   iiiRevision,
+  keychainPath,
   lib,
   lsof,
   logDir,
@@ -39,10 +40,11 @@ writeShellApplication {
     launchctl_bin="''${AGENTMEMORY_STATUS_LAUNCHCTL_BIN:-/bin/launchctl}"
     lsof_bin="''${AGENTMEMORY_STATUS_LSOF_BIN:-lsof}"
     security_bin="''${AGENTMEMORY_STATUS_SECURITY_BIN:-/usr/bin/security}"
+    keychain_path="''${AGENTMEMORY_STATUS_KEYCHAIN_PATH:-${builtins.toJSON (toString keychainPath)}}"
     launchd_domain="''${AGENTMEMORY_STATUS_LAUNCHD_DOMAIN:-gui/$(id -u)}"
 
     if [ -z "''${AGENTMEMORY_SECRET:-}" ]; then
-      agentmemory_secret=$(${coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      agentmemory_secret=$(${coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg bearerReference} -w "$keychain_path" 2>/dev/null) || agentmemory_secret=""
       if [ -n "$agentmemory_secret" ]; then
         export AGENTMEMORY_SECRET="$agentmemory_secret"
       fi

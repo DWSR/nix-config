@@ -6,6 +6,7 @@
   lib,
   nodejs_22,
   cavemem-importer-deps,
+  keychainPath ? null,
 }:
 
 writeShellApplication {
@@ -24,7 +25,13 @@ writeShellApplication {
 
     if [ "$requires_secret" -eq 1 ] && [ -z "''${AGENTMEMORY_SECRET:-}" ]; then
       security_bin="''${AGENTMEMORY_IMPORT_SECURITY_BIN:-/usr/bin/security}"
-      agentmemory_secret=$(${coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg bearerReference} -w 2>/dev/null) || agentmemory_secret=""
+      keychain_path="''${AGENTMEMORY_IMPORT_KEYCHAIN_PATH:-${
+        if keychainPath == null then
+          "$HOME/Library/Keychains/login.keychain-db"
+        else
+          lib.escapeShellArg keychainPath
+      }}"
+      agentmemory_secret=$(${coreutils}/bin/timeout --kill-after=2s 5s "$security_bin" find-generic-password -s mcpproxy -a ${lib.escapeShellArg bearerReference} -w "$keychain_path" 2>/dev/null) || agentmemory_secret=""
       if [ -z "$agentmemory_secret" ]; then
         echo "ERROR: AgentMemory bearer unavailable from macOS Keychain; import not started." >&2
         exit 1

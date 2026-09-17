@@ -10,6 +10,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 const reportNixPath = path.join(__dirname, 'personal-secret-validation.nix');
 const activationProofNixPath = path.join(__dirname, 'missing-secret-activation.nix');
 const activatorNixPath = path.join(repoRoot, 'scripts', 'mcp-secrets-activate.nix');
+const activatorSource = fs.readFileSync(activatorNixPath, 'utf8');
 
 function buildExpression(expression) {
   return execFileSync(
@@ -70,4 +71,11 @@ test('personal activation fails before mutation when the bearer secret is not pr
   assert.match(proof, /^activation_status=1$/m);
   assert.match(proof, /\/run\/secrets\/agentmemory-bearer does not exist/);
   assert.doesNotMatch(proof, /add-generic-password|gh auth login/);
+});
+
+test('activation retries transient login-keychain failures', () => {
+  assert.match(activatorSource, /write_keychain_entry\(\)/);
+  assert.match(activatorSource, /while \[ "\$attempts" -lt 15 \]/);
+  assert.match(activatorSource, /login keychain.*locked/i);
+  assert.match(activatorSource, /login\.keychain-db/);
 });

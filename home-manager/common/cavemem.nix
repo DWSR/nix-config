@@ -497,7 +497,7 @@ in
           export CAVEMEM_DATA_DIR=${lib.escapeShellArg (toString cfg.dataDir)}
         ''
         ''
-          cavemem_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w 2>/dev/null) || cavemem_api_key=""
+          cavemem_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a mcpproxy-api-key -w ${lib.escapeShellArg "${config.home.homeDirectory}/Library/Keychains/login.keychain-db"} 2>/dev/null) || cavemem_api_key=""
           if [ -z "$cavemem_api_key" ]; then
             echo "ERROR: cavemem MCP server not reachable via mcpproxy: mcpproxy API key unavailable from macOS Keychain (missing, denied, or lookup timed out after 5 seconds; service=mcpproxy, account=mcpproxy-api-key)." >&2
             echo "Restart mcpproxy with: launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy" >&2

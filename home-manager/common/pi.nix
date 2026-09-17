@@ -99,6 +99,7 @@ let
   kiroSkillPaths = map (
     name: "${config.programs.cc-sdd.skillsPackage}/skills/${name}"
   ) kiroSkillNames;
+  agentmemoryKeychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
 in
 {
   imports = [ inputs.pi.homeModules.default ];
@@ -116,7 +117,7 @@ in
       secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password \
         -s mcpproxy \
         -a ${lib.escapeShellArg config.programs.agentmemory.bearerReference} \
-        -w 2>/dev/null) || secret=""
+        -w ${lib.escapeShellArg agentmemoryKeychainPath} 2>/dev/null) || secret=""
       if [ -n "$secret" ]; then
         umask 077
         printf '%s\n' "$secret" > "$secret_file"

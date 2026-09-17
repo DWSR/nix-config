@@ -1,0 +1,27 @@
+From: nix-config integration <noreply@local>
+Subject: [PATCH] agentmemory: disable iii OpenTelemetry exporters
+
+The managed runtime keeps its normal local logs, but does not need the
+iii-engine OpenTelemetry observability worker or the Node SDK exporters.
+
+--- a/iii-config.yaml
++++ b/iii-config.yaml
+@@ -38,8 +38,8 @@
+   - name: iii-observability
+     config:
+-      enabled: true
++      enabled: false
+       service_name: agentmemory
+       exporter: memory
+       # 0.1 instead of 1.0: at full sampling under sustained load the
+       # log subscriber falls behind, the worker emits a "Log trigger
+       # subscriber lagged" WARN, and that WARN re-enters the same
+@@ -49,6 +49,6 @@
+       sampling_ratio: 0.1
+-      metrics_enabled: true
+-      logs_enabled: true
++      metrics_enabled: false
++      logs_enabled: false
+       # Console output is off by default; the feedback path needs the
+       # console layer to amplify. Re-enable per-session via env if you
+       # need verbose tracing for debugging.

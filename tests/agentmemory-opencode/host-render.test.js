@@ -144,6 +144,7 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.viewerPort, 3113);
     assert.equal(config.agentmemory.enginePort, 49134);
     assert.equal(config.agentmemory.bearerReference, 'agentmemory-bearer');
+    assert.match(config.agentmemory.launcherText, /Library\/Keychains\/login\.keychain-db/);
     assert.equal(config.agentmemory.hasObsidianImporter, true, `${host} exposes the managed Obsidian importer`);
     assert.equal(config.opencode.wrapperHasObsidianImporter, false, `${host} does not invoke the importer at startup`);
     assert.equal(config.mcp.serverNames.includes('obsidian'), false, `${host} omits the Obsidian MCP server`);

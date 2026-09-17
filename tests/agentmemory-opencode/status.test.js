@@ -185,7 +185,9 @@ test('status resolves the configured bearer from Keychain when the environment i
       listenerState: 'listening',
       status: 'healthy',
     });
-    assert.match(fs.readFileSync(fixture.securityLog, 'utf8'), /-s mcpproxy -a status-bearer-reference -w/);
+    const securityArgs = fs.readFileSync(fixture.securityLog, 'utf8');
+    assert.match(securityArgs, /-s mcpproxy -a status-bearer-reference -w/);
+    assert.match(securityArgs, /\/Users\/brandonmcnama\/Library\/Keychains\/login\.keychain-db$/);
   } finally {
     fixture.cleanup();
   }

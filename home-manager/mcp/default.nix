@@ -662,6 +662,7 @@ let
       source_config=${lib.escapeShellArg sourceConfigPath}
       runtime_config_dir=${lib.escapeShellArg runtimeConfigDir}
       runtime_config=${lib.escapeShellArg runtimeConfigPath}
+      keychain_path=${lib.escapeShellArg "${config.home.homeDirectory}/Library/Keychains/login.keychain-db"}
 
       ${lib.concatMapStringsSep "\n" (
         name:
@@ -669,7 +670,7 @@ let
           envName = toEnvVarName name;
         in
         ''
-          if ! ${envName}="$(/usr/bin/security find-generic-password -s mcpproxy -a "${name}" -w 2>/dev/null)"; then
+          if ! ${envName}="$(/usr/bin/security find-generic-password -s mcpproxy -a "${name}" -w "$keychain_path" 2>/dev/null)"; then
             echo "mcpproxy-launchd-wrapper: failed to read '${name}' from macOS Keychain (-s mcpproxy -a ${name})" >&2
             echo "  ensure the SOPS bridge has populated this entry; re-run \`darwin-rebuild switch\` and check" >&2
             echo "  /var/log/install.log for mcp-secrets-activate errors." >&2

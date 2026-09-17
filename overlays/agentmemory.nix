@@ -79,6 +79,7 @@ in
         ./agentmemory-patches/opencode-capture.patch
         ./agentmemory-patches/opencode-cache-stability.patch
         ./agentmemory-patches/bm25-index-cap.patch
+        ./agentmemory-patches/disable-otel.patch
       ];
 
       postPatch = ''

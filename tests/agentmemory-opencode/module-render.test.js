@@ -172,6 +172,9 @@ in builtins.toJSON {
   mcpproxy = {
     environment = mcpproxyJob.config.EnvironmentVariables;
     programArguments = mcpproxyJob.config.ProgramArguments;
+    wrapperText = builtins.unsafeDiscardStringContext (
+      builtins.readFile (builtins.head mcpproxyJob.config.ProgramArguments)
+    );
   };
 })`;
 
@@ -282,6 +285,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.packages.includes('memory-sync'), false);
   assert.equal(first.packages.includes('cavemem-import-vault'), false);
   assert.match(first.agentmemoryCli.source, /AGENTMEMORY_SECURITY_BIN/);
+  assert.match(first.agentmemoryCli.source, /AGENTMEMORY_KEYCHAIN_PATH/);
+  assert.match(first.agentmemoryCli.source, /Library\/Keychains\/login\.keychain-db/);
   assert.match(first.agentmemoryCli.source, /find-generic-password -s mcpproxy -a agentmemory-bearer -w/);
   assert.match(first.agentmemoryCli.source, /agentmemory-0\.9\.29\/bin\/agentmemory/);
   assert.equal(first.launchd.label, 'dev.dwsr.agentmemory');
@@ -295,6 +300,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.III_ENGINE_PORT, '61134');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
+  assert.equal(first.launchd.environment.OTEL_ENABLED, 'false');
+  assert.equal(first.launchd.environment.OTEL_METRICS_ENABLED, 'false');
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET, undefined);
   assert.equal(first.launchd.environment.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
   assert.match(first.settings, /AGENTMEMORY_DATA_DIR=\/tmp\/agentmemory\/data/);
@@ -302,6 +309,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.match(first.settings, /AGENTMEMORY_SECRET_REFERENCE=agentmemory-bearer/);
   assert.match(first.settings, /AGENTMEMORY_BM25_MAX_ENTRIES=100000/);
   assert.match(first.settings, /AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES=50000/);
+  assert.match(first.settings, /OTEL_ENABLED=false/);
+  assert.match(first.settings, /OTEL_METRICS_ENABLED=false/);
   assert.doesNotMatch(first.settings, /connect opencode/);
   const pluginFiles = first.configFiles.filter((file) => file.startsWith('opencode/plugins/') && file.includes('agentmemory'));
   assert.deepEqual(pluginFiles, ['opencode/plugins/agentmemory-capture.ts']);
@@ -379,6 +388,7 @@ test('managed MCP inventory removes Obsidian and reloads on rendered-config chan
   assert.ok(serverNames.includes('instances-mcp'));
   assert.ok(serverNames.includes('git-mcp'));
   assert.match(rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH, /^[0-9a-f]{64}$/);
+  assert.match(rendered.mcpproxy.wrapperText, /Library\/Keychains\/login\.keychain-db/);
   assert.equal(
     rendered.mcpproxy.environment.MCPPROXY_CONFIG_HASH,
     crypto.createHash('sha256').update(rendered.mcpConfigText).digest('hex'),

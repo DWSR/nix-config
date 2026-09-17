@@ -208,6 +208,29 @@ pkgs.writeShellApplication {
       esac
     }
 
+    write_keychain_entry() {
+      local service="$1"
+      local name="$2"
+      local value="$3"
+      local attempts=0
+
+      # The login keychain can still be locked while launchd finishes the
+      # user's GUI session. Retry the user-scoped write so a transient
+      # errSecInteractionNotAllowed does not leave the whole bridge empty.
+      while [ "$attempts" -lt 15 ]; do
+        if sudo -u "$USERNAME" -H /usr/bin/security add-generic-password \
+             -U -s "$service" -a "$name" -w "$value" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+          return 0
+        fi
+        attempts=$((attempts + 1))
+        if [ "$attempts" -lt 15 ]; then
+          sleep 1
+        fi
+      done
+
+      return 1
+    }
+
     # WRITE phase (R5.4, R6.1). Runs FIRST in the mutation pass — the
     # ordering invariant (write-then-delete) requires every new-layout
     # entry to be in place before any legacy delete runs, so that a
@@ -220,9 +243,9 @@ pkgs.writeShellApplication {
     for name in "''${SECRET_NAMES[@]}"; do
       value="$(cat "/run/secrets/$name")"
       service="$(route_service "$name")"
-      if ! sudo -u "$USERNAME" -H /usr/bin/security add-generic-password \
-           -U -s "$service" -a "$name" -w "$value" "$KEYCHAIN_PATH" >/dev/null 2>&1; then
+      if ! write_keychain_entry "$service" "$name" "$value"; then
         echo "mcp-secrets-activate: error: failed to add Keychain entry $service/$name" >&2
+        echo "  unlock the login keychain in the target GUI session and rerun darwin-rebuild switch." >&2
         exit 2
       fi
       printf 'mcp-secrets: %s %s/%s\n' add-or-update "$service" "$name" >&2

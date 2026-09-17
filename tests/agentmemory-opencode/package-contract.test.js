@@ -11,6 +11,7 @@ const manifestPath = path.join(repoRoot, 'overlays', 'agentmemory-deps', 'packag
 const lockPath = path.join(repoRoot, 'overlays', 'agentmemory-deps', 'package-lock.json');
 const overlaysPath = path.join(repoRoot, 'overlays', 'default.nix');
 const bm25PatchPath = path.join(repoRoot, 'overlays', 'agentmemory-patches', 'bm25-index-cap.patch');
+const otelPatchPath = path.join(repoRoot, 'overlays', 'agentmemory-patches', 'disable-otel.patch');
 
 function read(relativePath) {
   return fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
@@ -99,7 +100,16 @@ test('runtime package keeps upstream configurable loopback configuration and sto
   assert.match(overlay, /plugin\/opencode\/agentmemory-capture\.ts/);
   assert.match(overlay, /agentmemory-patches\/opencode-capture\.patch/);
   assert.match(overlay, /agentmemory-patches\/bm25-index-cap\.patch/);
+  assert.match(overlay, /agentmemory-patches\/disable-otel\.patch/);
   assert.match(overlay, /! grep -q 'host: 0\.0\.0\.0'/);
+});
+
+test('runtime package disables iii OpenTelemetry exporters', () => {
+  const patch = fs.readFileSync(otelPatchPath, 'utf8');
+
+  assert.match(patch, /enabled: false/);
+  assert.match(patch, /metrics_enabled: false/);
+  assert.match(patch, /logs_enabled: false/);
 });
 
 test('BM25 patch bounds live indexing and rejects unsafe persistence', () => {

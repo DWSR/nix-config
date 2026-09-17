@@ -3,6 +3,7 @@
   coreutils,
   curl,
   jq,
+  keychainPath,
   lib,
   restPort,
   writeShellApplication,
@@ -21,6 +22,7 @@ writeShellApplication {
     rest_endpoint="''${AGENTMEMORY_REAPER_URL:-http://127.0.0.1:${toString restPort}}"
     curl_bin="''${AGENTMEMORY_REAPER_CURL_BIN:-curl}"
     security_bin="''${AGENTMEMORY_REAPER_SECURITY_BIN:-/usr/bin/security}"
+    keychain_path="''${AGENTMEMORY_REAPER_KEYCHAIN_PATH:-${lib.escapeShellArg keychainPath}}"
     max_age_seconds=604800
 
     if ! "$curl_bin" --fail --silent --show-error --max-time 10 \
@@ -35,7 +37,7 @@ writeShellApplication {
         "$security_bin" find-generic-password \
         -s mcpproxy \
         -a ${lib.escapeShellArg bearerReference} \
-        -w 2>/dev/null) || agentmemory_secret=""
+        -w "$keychain_path" 2>/dev/null) || agentmemory_secret=""
     fi
     if [ -z "$agentmemory_secret" ]; then
       printf '%s\n' 'AgentMemory bearer unavailable; skipping session reap.' >&2
