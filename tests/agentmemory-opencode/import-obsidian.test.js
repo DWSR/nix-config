@@ -83,8 +83,8 @@ async function startStockCoreProxy(harness, daemon) {
     mcpServers: [{
       name: 'agentmemory',
       protocol: 'stdio',
-      command: path.join(agentMemoryPackagePath(), 'bin/agentmemory-mcp'),
-      args: [],
+      command: path.join(agentMemoryPackagePath(), 'bin/agentmemory'),
+      args: ['mcp'],
       enabled: true,
       quarantined: false,
       env: {

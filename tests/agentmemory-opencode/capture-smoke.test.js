@@ -300,7 +300,7 @@ for (let index = 0; index < 3; index += 1) {
 await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
 const system = [];
 await hooks["experimental.chat.system.transform"]({ sessionID }, { system });
-await hooks.dispose();
+if (typeof hooks.dispose === "function") await hooks.dispose();
 
 console.log(JSON.stringify({ requests, system }));
 `;
@@ -358,7 +358,7 @@ await hooks["chat.message"](
   { sessionID: "failure-session", agent: "build", model: { providerID: "test", modelID: "model" } },
   { parts: [{ type: "text", text: "third response failure" }] },
 );
-await hooks.dispose();
+if (typeof hooks.dispose === "function") await hooks.dispose();
 console.log(JSON.stringify({ observeCount, aborted, abortReasonName }));
 `;
 }

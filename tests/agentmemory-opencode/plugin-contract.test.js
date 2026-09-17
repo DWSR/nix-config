@@ -241,7 +241,7 @@ await hooks.event({ event: {
 await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
 const system = [];
 await hooks["experimental.chat.system.transform"]({ sessionID }, { system });
-await hooks.dispose();
+if (typeof hooks.dispose === "function") await hooks.dispose();
 
 console.log(JSON.stringify({ requests, system }));
 `,

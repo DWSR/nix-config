@@ -252,7 +252,7 @@ await hooks.event({ event: {
 const system = [];
 await hooks["experimental.chat.system.transform"]({ sessionID }, { system });
 await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
-await hooks.dispose();
+if (typeof hooks.dispose === "function") await hooks.dispose();
 
 console.log(JSON.stringify({ system }));
 `,
@@ -343,7 +343,7 @@ async function startProxyHarness(rendered) {
     mcpServers: [
       {
         ...rendered.agentmemoryServer,
-        command: path.join(agentmemoryPackage, 'bin/agentmemory-mcp'),
+        command: path.join(agentmemoryPackage, 'bin/agentmemory'),
         env: {
           ...rendered.agentmemoryServer.env,
           AGENTMEMORY_URL: baseUrl,

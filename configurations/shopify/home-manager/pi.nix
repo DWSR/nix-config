@@ -2,6 +2,7 @@
   inputs,
   lib,
   pkgs,
+  piAquiferSource,
   quickArchDiagramsSource,
   ...
 }:
@@ -11,6 +12,9 @@ let
   };
   shopifyPiProxy = pkgs.callPackage ../../../scripts/shopify-pi-proxy.nix {
     src = ./extensions/shopify-pi-proxy;
+  };
+  aquifer = pkgs.callPackage ../../../scripts/pi-aquifer.nix {
+    src = piAquiferSource;
   };
   shopifyAgentNames = builtins.filter (name: lib.hasSuffix ".md" name) (
     builtins.attrNames (builtins.readDir ./agents)
@@ -71,9 +75,19 @@ in
     ) shopifyAgentNames
   );
 
+  home.file.".pi/agent/extensions/aquifer/config.json".text =
+    builtins.toJSON {
+      gateway = "https://aquifer.shopify.io";
+      profile = "riverbed";
+    }
+    + "\n";
+
   programs.pi.coding-agent = {
     package = piShopify;
-    extensions = [ "${shopifyPiProxy}/index.ts" ];
+    extensions = [
+      "${aquifer}/index.ts"
+      "${shopifyPiProxy}/index.ts"
+    ];
     skills = shopifyPiSkills;
     promptTemplates = [ ./commands ];
     settings = {

@@ -351,8 +351,8 @@ test('enabled AgentMemory registers the stock core shim through mcpproxy only', 
 
   assert.ok(server);
   assert.equal(server.protocol, 'stdio');
-  assert.match(server.command, /\/bin\/agentmemory-mcp$/);
-  assert.deepEqual(server.args, []);
+  assert.match(server.command, /\/bin\/agentmemory$/);
+  assert.deepEqual(server.args, ['mcp']);
   assert.deepEqual(server.env, {
     AGENTMEMORY_BM25_MAX_ENTRIES: '100000',
     AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES: '50000',

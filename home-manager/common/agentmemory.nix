@@ -219,7 +219,8 @@ in
       }
       // lib.optionalAttrs (options ? home && options.home ? mcp) {
         mcp.extraServers.agentmemory = {
-          command = "${cfg.package}/bin/agentmemory-mcp";
+          command = "${cfg.package}/bin/agentmemory";
+          args = [ "mcp" ];
           env = {
             AGENTMEMORY_URL = "http://127.0.0.1:${toString cfg.restPort}";
             AGENTMEMORY_TOOLS = "core";

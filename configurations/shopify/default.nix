@@ -28,6 +28,12 @@ let
     ref = "main";
     rev = "e76b8c810a7db341a7fe893f6804b48205063c32";
   };
+
+  piAquiferSource = builtins.fetchGit {
+    url = "https://github.com/shopify-playground/shop-pi-fy.git";
+    ref = "main";
+    rev = "39d16f0e53b7c3e38699b5f33e95bd2c21f40d02";
+  };
 in
 {
   imports = [
@@ -121,7 +127,9 @@ in
   ];
 
   home-manager.users.${username} = import ./home-manager;
-  home-manager.extraSpecialArgs.quickArchDiagramsSource = quickArchDiagramsSource;
+  home-manager.extraSpecialArgs = {
+    inherit piAquiferSource quickArchDiagramsSource;
+  };
 
   # Private Shopify taps use builtins.fetchGit intentionally.
   # They cannot be flake inputs because nix flake update would fail
