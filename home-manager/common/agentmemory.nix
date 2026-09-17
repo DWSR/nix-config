@@ -20,6 +20,7 @@ let
   keychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
   runtimeInputs = [
     pkgs.coreutils
+    pkgs.bun
   ]
   ++ lib.optional (builtins.hasAttr "iii-engine" pkgs) pkgs.iii-engine;
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
