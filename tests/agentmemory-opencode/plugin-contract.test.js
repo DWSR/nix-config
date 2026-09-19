@@ -87,7 +87,7 @@ test('the patch is provenance-labelled and targets only the upstream entrypoint'
   const fixture = createPatchedFixture();
 
   try {
-    assert.match(patch, /Provenance: repository-owned patch for AgentMemory e04ba888/);
+    assert.match(patch, /Provenance: repository-owned patch for DWSR\/agentmemory main at 0d9306db/);
     assert.match(patch, /Source: plugin\/opencode\/agentmemory-capture\.ts/);
     assert.deepEqual(targetFiles(patch), ['plugin/opencode/agentmemory-capture.ts']);
     assert.match(fixture.source, /export const AgentmemoryCapturePlugin/);
@@ -121,6 +121,8 @@ test('the patched source retains stock requests, limits, context injection, and 
     assert.match(source, /experimental\.session\.compacting/);
     assert.match(source, /"chat\.params"/);
     assert.match(source, /"tool\.execute\.before"/);
+    assert.match(source, /"tool\.execute\.after"/);
+    assert.doesNotMatch(source, /toolName: "enrich_inject"/);
     assert.match(source, /config: async/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
@@ -151,7 +153,9 @@ import { pathToFileURL } from "node:url";
   return {
     ok: true,
     async json() {
-      return parsed.pathname.endsWith("/session/start") ? { context: "automatic context" } : {};
+      if (parsed.pathname.endsWith("/session/start")) return { context: "automatic context" };
+      if (parsed.pathname.endsWith("/enrich")) return { context: "supplemental file memory" };
+      return {};
     },
   };
 };
@@ -170,6 +174,29 @@ await hooks.event({ event: {
 await hooks["chat.message"](
   { sessionID, agent: "build", model: { providerID: "test", modelID: "model" } },
   { parts: [{ type: "text", text: "prompt text" }] },
+);
+await hooks["chat.params"](
+  {
+    sessionID,
+    agent: "build",
+    model: {
+      providerID: "test",
+      id: "model",
+      api: { url: "http://provider.test" },
+      limit: { output: 1024, context: 8192 },
+      cost: { input: 0, output: 0 },
+    },
+  },
+  { temperature: 0, topP: 1 },
+);
+const enrichedToolResult = { output: "cacheable file contents", metadata: {} };
+await hooks["tool.execute.before"](
+  { sessionID, tool: "read", callID: "cache-call" },
+  { args: { path: "README.md" } },
+);
+await hooks["tool.execute.after"](
+  { sessionID, tool: "read", callID: "cache-call" },
+  enrichedToolResult,
 );
 await hooks.event({ event: {
   type: "message.part.updated",
@@ -239,11 +266,13 @@ await hooks.event({ event: {
   } },
 } });
 await hooks.event({ event: { type: "session.idle", properties: { sessionID } } });
-const system = [];
-await hooks["experimental.chat.system.transform"]({ sessionID }, { system });
+const firstSystem = [];
+await hooks["experimental.chat.system.transform"]({ sessionID }, { system: firstSystem });
+const secondSystem = [];
+await hooks["experimental.chat.system.transform"]({ sessionID }, { system: secondSystem });
 if (typeof hooks.dispose === "function") await hooks.dispose();
 
-console.log(JSON.stringify({ requests, system }));
+console.log(JSON.stringify({ requests, firstSystem, secondSystem, enrichedToolResult }));
 `,
   );
 
@@ -406,7 +435,29 @@ console.log(JSON.stringify({ requests, system }));
     assertPostRequest(sessionEnds[0]);
     assert.deepEqual(sessionEnds[0].body, { sessionId: 'session-1' });
 
-    assert.ok(result.system.includes('automatic context'));
+    assert.deepEqual(result.firstSystem, result.secondSystem);
+    assert.ok(result.firstSystem.includes('automatic context'));
+    assert.ok(result.firstSystem.some((entry) => entry.includes('<agentmemory-instructions>')));
+    assert.ok(result.firstSystem.every((entry) => !entry.includes('<agentmemory-enrichment>')));
+
+    assert.match(
+      result.enrichedToolResult.output,
+      /^cacheable file contents\n\n<agentmemory-enrichment>\nSupplemental memory, not file contents:\nsupplemental file memory\n<\/agentmemory-enrichment>$/,
+    );
+    assert.equal(
+      result.enrichedToolResult.metadata.agentmemory_enrichment.offset,
+      'cacheable file contents'.length,
+    );
+    assert.ok(result.enrichedToolResult.metadata.agentmemory_enrichment.length > 0);
+    assert.match(result.enrichedToolResult.metadata.agentmemory_enrichment.sha256, /^[0-9a-f]{64}$/);
+
+    const enrichRequests = requestsByPath(result, '/agentmemory/enrich');
+    assert.equal(enrichRequests.length, 1);
+    assert.deepEqual(enrichRequests[0].body, {
+      sessionId: 'session-1',
+      files: ['README.md'],
+      toolName: 'read',
+    });
 
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });

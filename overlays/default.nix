@@ -9,9 +9,21 @@ let
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
         (old: {
+          patches = (old.patches or [ ]) ++ [
+            ./agentmemory-patches/opencode-capture.patch
+            ./agentmemory-patches/opencode-cache-stability.patch
+            ./agentmemory-patches/bm25-index-cap.patch
+            ./agentmemory-patches/disable-otel.patch
+          ];
           postPatch = (old.postPatch or "") + ''
-            cp ${old.npmDeps}/package-lock.json package-lock.json
+            cp ${./agentmemory-deps/package.json} package.json
+            cp ${./agentmemory-deps/package-lock.json} package-lock.json
           '';
+          npmDeps = final.importNpmLock { npmRoot = ./agentmemory-deps; };
+          npmConfigHook = final.importNpmLock.npmConfigHook;
+          nativeBuildInputs =
+            builtins.filter (input: (input.name or "") != "npm-config-hook") (old.nativeBuildInputs or [ ])
+            ++ [ final.importNpmLock.npmConfigHook ];
           passthru = (old.passthru or { }) // {
             sourceRevision = "0d9306db408b1243a5b27dfa0d0c3c2790d9f6a6";
             iiiVersion = "0.11.5";

@@ -65,7 +65,20 @@ test('managed hosts consume the DWSR AgentMemory flake package', () => {
   assert.match(flake, /agentmemory\s*=\s*\{\s*url = "github:DWSR\/agentmemory"/s);
   assert.match(overlayDefault, /agentmemoryFlake/);
   assert.match(agentmemoryModule, /default = pkgs\.agentmemory/);
-  assert.match(overlayDefault, /cp \$\{old\.npmDeps\}\/package-lock\.json package-lock\.json/);
+  for (const patch of [
+    'opencode-capture',
+    'opencode-cache-stability',
+    'bm25-index-cap',
+    'disable-otel',
+  ]) {
+    assert.match(overlayDefault, new RegExp(`agentmemory-patches/${patch}\\.patch`));
+  }
+  assert.match(overlayDefault, /cp \$\{\.\/agentmemory-deps\/package\.json\} package\.json/);
+  assert.match(overlayDefault, /cp \$\{\.\/agentmemory-deps\/package-lock\.json\} package-lock\.json/);
+  assert.match(overlayDefault, /npmDeps = final\.importNpmLock/);
+  assert.match(overlayDefault, /npmConfigHook = final\.importNpmLock\.npmConfigHook/);
+  assert.match(overlayDefault, /input\.name or ""\) != "npm-config-hook"/);
+  assert.match(flake, /agentMemoryPackage = pkgs\.agentmemory/);
 });
 
 test('overlay pins both Darwin dependency revisions and preserves upstream assets', () => {

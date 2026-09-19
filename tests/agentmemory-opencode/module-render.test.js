@@ -288,6 +288,7 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.match(first.agentmemoryCli.source, /AGENTMEMORY_KEYCHAIN_PATH/);
   assert.match(first.agentmemoryCli.source, /Library\/Keychains\/login\.keychain-db/);
   assert.match(agentMemoryModuleSource, /pkgs\.bun/);
+  assert.match(agentMemoryModuleSource, /stale_engine_pids/);
   assert.match(first.agentmemoryCli.source, /find-generic-password -s mcpproxy -a agentmemory-bearer -w/);
   assert.match(first.agentmemoryCli.source, /agentmemory-0\.9\.29\/bin\/agentmemory/);
   assert.equal(first.launchd.label, 'dev.dwsr.agentmemory');
@@ -299,6 +300,7 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.equal(first.launchd.environment.III_STREAM_PORT, '35112');
   assert.equal(first.launchd.environment.III_VIEWER_PORT, '35113');
   assert.equal(first.launchd.environment.III_ENGINE_PORT, '61134');
+  assert.equal(first.launchd.environment.III_URL, 'ws://127.0.0.1:61134');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_MAX_ENTRIES, '100000');
   assert.equal(first.launchd.environment.AGENTMEMORY_BM25_PERSIST_MAX_ENTRIES, '50000');
   assert.equal(first.launchd.environment.AGENTMEMORY_AUTO_COMPRESS, 'false');

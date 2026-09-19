@@ -258,11 +258,7 @@
               outputs.overlays.custom-packages
             ];
           };
-          agentMemoryPackage = inputs.agentmemory.packages.${system}.agentmemory.overrideAttrs (old: {
-            postPatch = (old.postPatch or "") + ''
-              cp ${old.npmDeps}/package-lock.json package-lock.json
-            '';
-          });
+          agentMemoryPackage = pkgs.agentmemory;
           gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
 
           opencodeTurnTimestampHosts = [

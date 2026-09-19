@@ -1,12 +1,14 @@
 From: nix-config <noreply@local>
 Subject: [PATCH] agentmemory: bound the in-memory BM25 index
 
-Source: src/state/search-index.ts
+Source: src/state/search-index.ts and src/functions/search.ts
 Upstream: https://github.com/DWSR/agentmemory/issues/309
 
 Large imported corpora exhaust the Node heap because SearchIndex retains an
 unbounded Map/Set graph and serialize() duplicates it into arrays. Keep the
-newest configured entries and reject unsafe persistence before allocating the
+newest configured entries, discard oversized persisted snapshots so startup
+can rebuild the derived index from durable memories, bound cold-start rebuilds
+to the same capacity, and reject unsafe persistence before allocating the
 serialization copies.
 
 diff --git a/src/state/search-index.ts b/src/state/search-index.ts
@@ -52,7 +54,15 @@ diff --git a/src/state/search-index.ts b/src/state/search-index.ts
      const terms = this.extractTerms(obs);
      const termFreq = new Map<string, number>();
      let termCount = 0;
-@@ -191,7 +216,12 @@ export class SearchIndex {
+@@ -162,4 +187,7 @@ export class SearchIndex {
+   get size(): number {
+     return this.entries.size;
+   }
++  get capacity(): number {
++    return this.maxEntries;
++  }
+ 
+@@ -191,7 +219,12 @@ export class SearchIndex {
      this.sortedTerms = null;
    }
  
@@ -66,13 +76,61 @@ diff --git a/src/state/search-index.ts b/src/state/search-index.ts
      const entries = Array.from(this.entries.entries());
      const inverted = Array.from(this.invertedIndex.entries()).map(
        ([term, ids]) => [term, Array.from(ids)] as [string, string[]],
+@@ -212,7 +245,18 @@ export class SearchIndex {
+-  static deserialize(json: string): SearchIndex {
++  static deserialize(
++    json: string,
++    maxEntries = configuredMaxEntries(),
++  ): SearchIndex {
+     try {
+-      const idx = new SearchIndex();
++      const idx = new SearchIndex(maxEntries);
++      const persistedLimit = Math.min(
++        maxEntries,
++        configuredMaxPersistedEntries(),
++      );
++      if (json.length > configuredMaxPersistedEntries() * 2048) return idx;
+       const data = JSON.parse(json);
+       if (!data?.entries || !data?.inverted || !data?.docTerms) return idx;
++      if (!Array.isArray(data.entries) || data.entries.length >= persistedLimit) {
++        return idx;
++      }
+        for (const [key, val] of data.entries) {
+         idx.entries.set(key, val);
+diff --git a/src/functions/search.ts b/src/functions/search.ts
+--- a/src/functions/search.ts
++++ b/src/functions/search.ts
+@@ -311,5 +311,14 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
+   const idx = getSearchIndex()
+   idx.clear()
+   memoryIndexReady = false
++  const configuredRebuildLimit = Number.parseInt(
++    process.env["AGENTMEMORY_BM25_REBUILD_MAX_ENTRIES"] || "",
++    10,
++  )
++  const observationLimit =
++    Number.isSafeInteger(configuredRebuildLimit) && configuredRebuildLimit >= 0
++      ? Math.min(idx.capacity, configuredRebuildLimit)
++      : 0
++  let observationsIndexed = 0
+ 
+   // BM25 clear above wipes stale doc entries; the vector index has the
+@@ -341,3 +343,4 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
+   let indexed = 0
+   for (let batch = 0; batch < sessions.length; batch += 10) {
++    if (observationsIndexed >= observationLimit) break
+   const chunk = sessions.slice(batch, batch + 10)
+@@ -356,1 +359,5 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
+-      indexed += await indexRecords(chunkObs, [])
++      const remaining = observationLimit - observationsIndexed
++      const boundedChunk = chunkObs.slice(0, remaining)
++      const count = await indexRecords(boundedChunk, [])
++      indexed += count
++      observationsIndexed += count
 diff --git a/test/search-index.test.ts b/test/search-index.test.ts
 --- a/test/search-index.test.ts
 +++ b/test/search-index.test.ts
-@@ -82,6 +82,29 @@ describe("SearchIndex", () => {
-     expect(index.search("auth", 5).length).toBe(5);
-   });
- 
+@@ -85,1 +85,33 @@ describe("SearchIndex", () => {
 +  it("evicts the oldest entries at the configured capacity", () => {
 +    const bounded = new SearchIndex(2);
 +    bounded.add(makeObs({ id: "obs_a", title: "alpha" }));
@@ -96,6 +154,23 @@ diff --git a/test/search-index.test.ts b/test/search-index.test.ts
 +    );
 +  });
 +
++  it("discards persisted indexes at the configured capacity", () => {
++    const oversized = new SearchIndex(2);
++    oversized.add(makeObs({ id: "obs_a", title: "alpha" }));
++    oversized.add(makeObs({ id: "obs_b", title: "beta" }));
++
++    const restored = SearchIndex.deserialize(oversized.serialize(), 2);
++    expect(restored.size).toBe(0);
++  });
++
    it("clears the index", () => {
-     index.add(makeObs());
-     index.clear();
+diff --git a/src/config.ts b/src/config.ts
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -204,3 +204,3 @@ export function loadConfig(): AgentMemoryConfig {
+   const engineUrl =
+     env["III_ENGINE_URL"] ||
+-    `ws://localhost:${
++    `ws://127.0.0.1:${
+       parseInt(env["III_ENGINE_PORT"] || "", 10) || restPort + 46023
+     }`;

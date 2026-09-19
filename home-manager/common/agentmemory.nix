@@ -21,6 +21,7 @@ let
   runtimeInputs = [
     pkgs.coreutils
     pkgs.bun
+    pkgs.lsof
   ]
   ++ lib.optional (builtins.hasAttr "iii-engine" pkgs) pkgs.iii-engine;
   statusPackage = pkgs.callPackage ../../scripts/agentmemory-status.nix {
@@ -78,6 +79,7 @@ let
       (envLine "III_STREAM_PORT" cfg.streamPort)
       (envLine "III_VIEWER_PORT" cfg.viewerPort)
       (envLine "III_ENGINE_PORT" cfg.enginePort)
+      (envLine "III_URL" "ws://127.0.0.1:${toString cfg.enginePort}")
     ]
     + "\n";
 
@@ -88,6 +90,16 @@ let
       set -eu
 
       ${lib.concatStringsSep "\n" cfg.wrapperCommands}
+
+      stale_engine_pids="$(lsof -tiTCP:${toString cfg.enginePort} -sTCP:LISTEN 2>/dev/null || true)"
+      for pid in $stale_engine_pids; do
+        kill "$pid" 2>/dev/null || true
+      done
+      for _ in $(seq 1 20); do
+        stale_engine_pids="$(lsof -tiTCP:${toString cfg.enginePort} -sTCP:LISTEN 2>/dev/null || true)"
+        [ -z "$stale_engine_pids" ] && break
+        sleep 0.1
+      done
 
       security_bin="''${AGENTMEMORY_SECURITY_BIN:-/usr/bin/security}"
       keychain_path="''${AGENTMEMORY_KEYCHAIN_PATH:-${lib.escapeShellArg keychainPath}}"
@@ -260,6 +272,7 @@ in
             III_STREAM_PORT = toString cfg.streamPort;
             III_VIEWER_PORT = toString cfg.viewerPort;
             III_ENGINE_PORT = toString cfg.enginePort;
+            III_URL = "ws://127.0.0.1:${toString cfg.enginePort}";
           };
           StandardOutPath = "${cfg.logDir}/agentmemory.log";
           StandardErrorPath = "${cfg.logDir}/agentmemory.error.log";
