@@ -18,6 +18,26 @@ const commandOptions = {
   timeout: 600_000,
 };
 
+test('managed AgentMemory package contains the bundled Pi integration', () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, 'overlays/agentmemory-deps/package.json'), 'utf8'),
+  );
+  const packagePath = process.env.AGENTMEMORY_PACKAGE_PATH || execFileSync(
+    'nix',
+    [
+      'build',
+      '--no-link',
+      '--print-out-paths',
+      'path:.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory',
+    ],
+    commandOptions,
+  ).trim();
+
+  assert.ok(manifest.files.includes('integrations/'));
+  assert.equal(fs.existsSync(path.join(packagePath, agentMemoryEntry)), true);
+  assert.equal(fs.existsSync(path.join(packagePath, agentMemorySecurityEntry)), true);
+});
+
 function buildRuntimePaths() {
   const outputs = execFileSync(
     'nix',
