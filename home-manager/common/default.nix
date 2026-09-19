@@ -122,6 +122,7 @@
       kubectl
       k9s
       lazygit
+      mcpproxy-purge-tool-calls
       openssh
       rclone
       readline

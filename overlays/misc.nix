@@ -194,6 +194,27 @@ final: prev: {
     ];
   };
 
+  mcpproxy-purge-tool-calls = final.buildGoModule {
+    pname = "mcpproxy-purge-tool-calls";
+    version = "1";
+
+    src = ../scripts/mcpproxy-purge-tool-calls;
+    vendorHash = "sha256-sZ2i3aCVufv5d2/NWb2OpM7/omEo1RmVmfOou+WyVKM=";
+
+    doCheck = true;
+    checkPhase = ''
+      runHook preCheck
+      go test ./...
+      runHook postCheck
+    '';
+
+    meta = {
+      description = "Delete mcpproxy tool-call history buckets from an offline BBolt database";
+      mainProgram = "mcpproxy-purge-tool-calls";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   # nono: capability-based sandbox for AI agents (nolabs-ai/nono, Apache-2.0).
   # Published to crates.io as `nono-cli`; the binary is `nono`. Pinned to 0.69.0
   # because nixpkgs-unstable only ships 0.43.1.
