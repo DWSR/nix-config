@@ -750,16 +750,16 @@ in
 
   mcpproxy-go = final.buildGoModule rec {
     pname = "mcpproxy-go";
-    version = "0.52.1";
+    version = "0.67.0";
 
     src = final.fetchFromGitHub {
       owner = "smart-mcp-proxy";
       repo = "mcpproxy-go";
       tag = "v${version}";
-      hash = "sha256-OlPKitX8Fj8rpMJ6PaZ3km68gBPP9aOoIzaz8xRxW0o=";
+      hash = "sha256-I6+B5LPV/lNZyU6Wlc7lNWUyorH+pmTLQhM3EfiCNVs=";
     };
 
-    vendorHash = "sha256-ZwtSgPPPiOG+22809NogB0eXhgoc+CpmtbIxiGYUfss=";
+    vendorHash = "sha256-xbbR4Xm6ZsBPLB+yIiah91SE1yC7wzYY/QZR9Dj4uOE=";
     subPackages = [ "cmd/mcpproxy" ];
     tags = [ "nogui" ];
     ldflags = [
