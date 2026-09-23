@@ -631,6 +631,9 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.binksReviewerText, /binks-review --no-upload/);
   assert.match(rendered.shopify.binksReviewerText, /## External Review Handoff/);
   assert.match(rendered.shopify.binksReviewerText, /WORKTREE_FINGERPRINT/);
+  assert.match(rendered.shopify.binksReviewerText, /RUN_STATUS: CLEAN \| VALID_FINDINGS \| UNAVAILABLE/);
+  assert.match(rendered.shopify.binksReviewerText, /UNAVAILABLE_REASON/);
+  assert.doesNotMatch(rendered.shopify.binksReviewerText, /RUN_STATUS: FAILED/);
   assert.match(rendered.shopify.binksReviewerText, /DISPOSITION: VALID \| FALSE_POSITIVE \| NEEDS_CONTEXT/);
   assert.equal(rendered.shopify.agentNames.includes('yb-backlog-validator'), true);
   assert.equal(rendered.shopify.agentNames.includes('yb-issue-validator'), true);
@@ -683,17 +686,18 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
     'mcp',
     'yugabyte-gh-issue-backlog-review',
   ]);
-  assert.match(rendered.shopify.kiroReviewText, /one local Binks review per task/);
+  assert.match(rendered.shopify.kiroReviewText, /one best-effort local Binks review per task/);
   assert.match(rendered.shopify.kiroReviewText, /BINKS: REUSED/);
+  assert.match(rendered.shopify.kiroReviewText, /BINKS: UNAVAILABLE/);
+  assert.match(rendered.shopify.kiroReviewText, /MUST NOT\s+reject or block the task/);
   assert.match(rendered.shopify.kiroReviewText, /Never write a marker/);
-  assert.match(rendered.shopify.kiroVerifyText, /Every invocation of this Shopify-host skill/);
-  assert.match(rendered.shopify.kiroVerifyText, /runs in main\/controller context/);
-  assert.match(rendered.shopify.kiroVerifyText, /reuses a handoff from an earlier reviewer/);
-  assert.match(rendered.shopify.kiroVerifyText, /every other Git forge/);
+  assert.doesNotMatch(rendered.shopify.kiroVerifyText, /Binks|binks-reviewer/);
   assert.match(rendered.shopify.kiroImplText, /retain its first `## External Review Handoff` in session context/);
   assert.match(rendered.shopify.kiroImplText, /Before spawning the task reviewer/);
-  assert.match(rendered.shopify.kiroReviewerPromptText, /parent owns eligibility and dispatch/);
-  assert.match(rendered.shopify.kiroReviewerPromptText, /not launch a nested `binks-reviewer`/);
+  assert.match(rendered.shopify.kiroImplText, /continue without retrying, stopping/);
+  assert.match(rendered.shopify.kiroImplText, /never a prerequisite/);
+  assert.match(rendered.shopify.kiroReviewerPromptText, /best-effort pre-PR feedback/);
+  assert.match(rendered.shopify.kiroReviewerPromptText, /never launch a nested `binks-reviewer`/);
   assert.match(rendered.shopify.stateActivation, /install -d -m 0700/);
   assert.match(rendered.shopify.stateActivation, /\.local\/share\/binks-review/);
   includesAll(rendered.shopify.binksXdgFiles, [

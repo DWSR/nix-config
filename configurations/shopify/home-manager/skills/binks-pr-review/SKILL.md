@@ -13,13 +13,12 @@ run takes several minutes and consumes its own Shopify AI proxy budget.
 - An explicit `/binks-review` invocation authorizes one read-only local run.
 - An explicit request for local or pre-PR Binks review authorizes one read-only
   local run.
-- A `binks-reviewer` dispatch from the Shopify-host `kiro-review` or
-  `kiro-verify-completion` protocol authorizes that dispatch's one read-only
-  local run. The caller owns its per-task or per-invocation run limit.
+- A `binks-reviewer` dispatch from the Shopify-host `kiro-review` protocol
+  authorizes that task's one best-effort read-only local run.
 - Otherwise, explain the time and separate model cost and ask before running.
 - Never install a hook that runs Binks on every edit, commit, or push.
-- Ask before rerunning after fixes unless a Shopify-host Kiro protocol dispatches
-  that run under its configured per-task or per-invocation policy.
+- Ask before rerunning after fixes. The Shopify-host Kiro protocol never retries
+  an unavailable local run automatically.
 - Review authorization does not authorize edits or result upload. Fix findings
   only when the same request explicitly asks for fixes; otherwise report them.
 - Result upload is disabled by default. Set `BINKS_REVIEW_UPLOAD=1` only after

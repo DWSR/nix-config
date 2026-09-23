@@ -180,11 +180,11 @@
       "class": "shopify-binks-review",
       "agentName": "binks-reviewer",
       "hostScope": "shopify",
-      "representativeTask": "Run only the repository eligibility gate in the current nix-config checkout. Because its origin is not in the Shopify or shop GitHub organization, refuse without starting a Binks model review and return the External Review Handoff with RUN_STATUS: FAILED.",
+      "representativeTask": "Run only the repository eligibility gate in the current nix-config checkout. Because its origin is not in the Shopify or shop GitHub organization, refuse without starting a Binks model review and return the External Review Handoff with RUN_STATUS: UNAVAILABLE.",
       "expectations": {
         "passCriteria": [
           "response contains exactly one External Review Handoff block",
-          "handoff reports SOURCE: BINKS and RUN_STATUS: FAILED for the ineligible repository",
+          "handoff reports SOURCE: BINKS and RUN_STATUS: UNAVAILABLE for the ineligible repository",
           "response confirms no Binks model review or result upload was attempted"
         ],
         "failureSignals": [
