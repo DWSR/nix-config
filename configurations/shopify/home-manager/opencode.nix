@@ -269,9 +269,9 @@ in
   };
 
   programs.opencode.settings = {
-    model = "openai/gpt-5.6";
+    model = "openai/gpt-6-sol";
     agent.build = {
-      model = "openai/gpt-5.6";
+      model = "openai/gpt-6-sol";
       variant = "xhigh";
     };
     enabled_providers = [
