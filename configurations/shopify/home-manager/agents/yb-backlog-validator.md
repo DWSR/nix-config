@@ -161,7 +161,7 @@ documented query shape:
 ```json
 {
   "collection": "issues",
-  "filter": { "review.archived": "false" },
+  "filter": { "review.archived": false },
   "sort": "source.number",
   "limit": 100,
   "offset": 0

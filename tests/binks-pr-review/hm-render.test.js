@@ -646,6 +646,7 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.doesNotMatch(rendered.shopify.ybBacklogValidatorText, /^model:/m);
   assert.match(rendered.shopify.ybBacklogValidatorText, /waves of exactly four/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /blocked_this_run/);
+  assert.match(rendered.shopify.ybBacklogValidatorText, /"filter":\s*\{\s*"review\.archived":\s*false\s*\}/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /"\*": deny/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /podman info --format json/);
   assert.match(rendered.shopify.ybBacklogValidatorText, /starts with `chrome-devtools:`/);
