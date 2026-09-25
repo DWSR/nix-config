@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         GitHub pull request review chords
 // @namespace    https://github.com/DWSR/nix-config
-// @version      1.0.2
-// @description  Review a pull request from any PR page with r y, r n, or r c.
+// @version      1.1.0
+// @description  Review pull requests and navigate native PR stacks with keyboard shortcuts.
 // @match        https://github.com/*/*/pull/*
 // @grant        none
 // @run-at       document-end
@@ -76,6 +76,32 @@
         'input, textarea, select, [contenteditable="true"], [role="textbox"]',
       ),
     );
+
+  const stackTargetFromDocument = (documentRoot, pullRequest, offset) => {
+    for (const script of documentRoot.querySelectorAll(
+      'script[type="application/json"][data-target="react-app.embeddedData"]',
+    )) {
+      try {
+        const pulls = JSON.parse(script.textContent)?.payload
+          ?.pullRequestsLayoutRoute?.stack?.pulls;
+        if (!Array.isArray(pulls)) {
+          continue;
+        }
+
+        const currentIndex = pulls.findIndex(
+          (pull) => String(pull.number) === pullRequest.number,
+        );
+        const target = pulls[currentIndex + offset];
+        if (currentIndex !== -1 && typeof target?.url === "string") {
+          return target.url;
+        }
+      } catch {
+        // Ignore unrelated or incomplete React application data.
+      }
+    }
+
+    return null;
+  };
 
   const headShaFromJson = (root, pullRequest) => {
     const stack = [root];
@@ -375,16 +401,38 @@
   document.addEventListener(
     "keydown",
     (event) => {
+      const pullRequest = pullRequestFromPage();
       if (
         event.isComposing ||
         event.repeat ||
         event.altKey ||
         event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
         isEditable(event.target) ||
-        !pullRequestFromPage()
+        !pullRequest
       ) {
+        resetChord();
+        return;
+      }
+
+      if (
+        event.metaKey &&
+        event.shiftKey &&
+        (event.key === "ArrowUp" || event.key === "ArrowDown")
+      ) {
+        resetChord();
+        const target = stackTargetFromDocument(
+          document,
+          pullRequest,
+          event.key === "ArrowUp" ? -1 : 1,
+        );
+        if (target) {
+          consumeKey(event);
+          location.assign(target);
+        }
+        return;
+      }
+
+      if (event.metaKey || event.shiftKey) {
         resetChord();
         return;
       }
