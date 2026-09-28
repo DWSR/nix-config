@@ -615,7 +615,7 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.skillText, /performs no hourly or periodic update/);
   assert.match(rendered.shopify.skillText, /REASONING_EFFORT=xhigh binks-review/);
   assert.match(rendered.shopify.skillText, /--config ''/);
-  assert.match(rendered.shopify.skillText, /--model openai:gpt-5\.6-sol/);
+  assert.match(rendered.shopify.skillText, /--model openai:gpt-6-sol/);
   assert.match(rendered.shopify.skillText, /--provider local/);
   assert.match(rendered.shopify.skillText, /Review authorization does not authorize edits or result upload/);
   assert.match(rendered.shopify.skillText, /dispatch from the Shopify-host `kiro-review`/);
@@ -624,7 +624,7 @@ test('Shopify alone renders Binks and its Kiro review integration', () => {
   assert.match(rendered.shopify.skillText, /BINKS_REVIEW_UPLOAD=1/);
   assert.match(rendered.shopify.skillsPackagePath, /-cc-sdd-skills-shopify-3\.0\.2$/);
   assert.match(rendered.shopify.binksReviewerText, /mode: subagent/);
-  assert.match(rendered.shopify.binksReviewerText, /model: openai\/gpt-5\.6-luna/);
+  assert.match(rendered.shopify.binksReviewerText, /model: openai\/gpt-6-luna/);
   assert.match(rendered.shopify.binksReviewerText, /variant: low/);
   assert.match(rendered.shopify.binksReviewerText, /Load the `binks-pr-review` skill/);
   assert.match(rendered.shopify.binksReviewerText, /exact host is `github\.com`/);

@@ -47,12 +47,12 @@ run takes several minutes and consumes its own Shopify AI proxy budget.
 ## Run
 
 Use the agent-oriented metadata path so Binks does not call `gh pr view`. Pin
-the review to GPT 5.6 Sol with `xhigh`, Binks' maximum reasoning effort:
+the review to GPT 6 Sol with `xhigh`, Binks' maximum reasoning effort:
 
 ```bash
 REASONING_EFFORT=xhigh binks-review \
   --config '' \
-  --model openai:gpt-5.6-sol \
+  --model openai:gpt-6-sol \
   --provider local \
   --base "$base" \
   --title "$title" \
