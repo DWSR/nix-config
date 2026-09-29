@@ -5,7 +5,7 @@
   coreutils,
   lib,
   nodejs_22,
-  cavemem-importer-deps,
+  obsidian-importer-deps,
   keychainPath ? null,
 }:
 
@@ -44,7 +44,7 @@ writeShellApplication {
     fi
 
     export AGENTMEMORY_URL=${lib.escapeShellArg restEndpoint}
-    export NODE_PATH=${cavemem-importer-deps}/lib/node_modules
+    export NODE_PATH=${obsidian-importer-deps}/lib/node_modules
     exec ${nodejs_22}/bin/node --experimental-strip-types ${./agentmemory-import-obsidian.ts} "$@"
   '';
 }

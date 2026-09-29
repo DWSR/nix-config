@@ -5,15 +5,14 @@
   the v2-diagnosis spec to wire the bundled pricing JSON via
   OPENCODE_COST_PRICING_PATH per Requirements 3.1 and 3.5).
 
-  Shape mirrors `scripts/cavemem-import-vault.nix`: a
-  `writeShellApplication` that pins the Node runtime via
+   A `writeShellApplication` pins the Node runtime via
   `runtimeInputs`, points `NODE_PATH` at the vendored deps tree
   produced by `pkgs.opencode-cost-diagnosis-deps` (Task 1.2, defined
   in `overlays/mcp-servers.nix`), and execs Node against the
   diagnostic's JS entry point.
 
-  No per-host parameterisation (unlike the cavemem importer): the
-  diagnostic discovers opencode's session DB location at runtime via
+   No per-host parameterisation: the diagnostic discovers opencode's
+   session DB location at runtime via
   flags / defaults, so the wrapper takes no host-specific arguments.
   Consequently the HM module (Task 6.x) will invoke this derivation
   via `pkgs.callPackage ./scripts/opencode-cost-report.nix { }` with
@@ -32,12 +31,12 @@
 */
 {
   writeShellApplication,
-  nodejs,
+  nodejs_22,
   opencode-cost-diagnosis-deps,
 }:
 writeShellApplication {
   name = "opencode-cost-report";
-  runtimeInputs = [ nodejs ];
+  runtimeInputs = [ nodejs_22 ];
   text = ''
     # Resolve `require('better-sqlite3')` and `require('tiktoken')`
     # against the vendored deps tree from Task 1.2. The deps
@@ -53,6 +52,6 @@ writeShellApplication {
     # 3.1, 3.5).
     export OPENCODE_COST_PRICING_PATH=${./opencode-cost-report-pricing.json}
 
-    exec ${nodejs}/bin/node ${./opencode-cost-report.js} "$@"
+    exec ${nodejs_22}/bin/node ${./opencode-cost-report.js} "$@"
   '';
 }

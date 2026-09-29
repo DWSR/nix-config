@@ -50,7 +50,6 @@ function renderIntegration() {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
-        home.opencode.memoryBackend = "agentmemory";
         home.mcp = {
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
           keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
@@ -450,6 +449,9 @@ test('the captured plugin session is recalled through stock core MCP tools', asy
       'the stock plugin must inject automatic context into the model system prompt',
     );
 
+    const { tools } = await listProxyTools(harness);
+    assert.ok(tools.some((tool) => tool.name === 'memory_sessions'));
+    assert.ok(tools.some((tool) => tool.name === 'memory_recall'));
     const sessions = callProxyRead(harness, 'memory_sessions', {});
     assert.match(JSON.stringify(sessions), /task-5-1-e2e-session/);
 

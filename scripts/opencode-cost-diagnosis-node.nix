@@ -21,9 +21,7 @@
     require("tiktoken"); console.log("ok")'`
 
   This is a developer/verification tool, NOT an end-user CLI. It is
-  shipped on PATH alongside the production wrapper using the same
-  pattern as `cavemem-smoke-test` (a dev-time verifier also installed
-  via the standard HM module pipeline) so that the deps tree is
+   shipped on PATH alongside the production wrapper so the deps tree is
   trivially exercisable from any shell without having to know the
   store path of `opencode-cost-diagnosis-deps`.
 
@@ -35,12 +33,12 @@
 */
 {
   writeShellApplication,
-  nodejs,
+  nodejs_22,
   opencode-cost-diagnosis-deps,
 }:
 writeShellApplication {
   name = "opencode-cost-diagnosis-node";
-  runtimeInputs = [ nodejs ];
+  runtimeInputs = [ nodejs_22 ];
   text = ''
     # Resolve `require('better-sqlite3')` and `require('tiktoken')`
     # (and any transitive deps) against the vendored tree from Task
@@ -48,6 +46,6 @@ writeShellApplication {
     # this single export is sufficient.
     export NODE_PATH=${opencode-cost-diagnosis-deps}/lib/node_modules
 
-    exec ${nodejs}/bin/node "$@"
+    exec ${nodejs_22}/bin/node "$@"
   '';
 }

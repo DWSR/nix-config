@@ -4,7 +4,7 @@ let
   zellijPlugins = import ./zellij-plugins.nix { inherit inputs; };
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
-  agentmemory = import ./agentmemory.nix { };
+  iiiEngine = import ./agentmemory.nix { };
   agentmemoryFlake = final: _prev: {
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
@@ -120,6 +120,6 @@ in
     // (zellijPlugins final prev)
     // (misc final prev)
     // (litestream final prev)
-    // (agentmemory final prev)
+    // (iiiEngine final prev)
     // (agentmemoryFlake final prev);
 }

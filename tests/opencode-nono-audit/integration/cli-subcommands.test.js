@@ -272,7 +272,7 @@ test('main([review]) over the fixtures returns 0 and writes a report carrying th
 // 3. No readable source (R1.5 hard failure) → NONZERO, no report
 // ────────────────────────────────────────────────────────────────────
 
-test('main([all]) with an unreadable session DB and no cavemem returns NONZERO and writes no report (R1.5)', () => {
+test('main([all]) with an unreadable session DB returns NONZERO and writes no report (R1.5)', () => {
   const stateDir = mkStateDir();
   const missingDb = path.join(FIXTURES_DIR, 'does-not-exist-session.db');
 
@@ -314,6 +314,16 @@ test('main([audit, --nope]) — unknown flag returns NONZERO and prints usage', 
   );
   assert.notEqual(code, 0, 'unknown flag → nonzero');
   assert.match(stderr, /usage/i, 'unknown flag prints usage to stderr');
+});
+
+test('the retired secondary-source flag is rejected before writing a report', () => {
+  const stateDir = mkStateDir();
+  const { result: code, stderr } = captureStdio(() =>
+    main(['audit', '--session-db', SESSION_DB, '--cavemem-db', 'unused.db', '--state-dir', stateDir]),
+  );
+  assert.equal(code, 2);
+  assert.match(stderr, /unknown flag: --cavemem-db/);
+  assert.deepEqual(listReports(stateDir), { json: [], md: [] });
 });
 
 test('main([]) — no subcommand returns NONZERO and prints usage', () => {

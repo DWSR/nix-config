@@ -3,7 +3,7 @@
  * FULL pipeline through the CLI entry point `main(argv)` and assert the
  * Task 6.2 coverage matrix items TOGETHER, reading the EMITTED report
  * (JSON on disk) and the freshness MARKER (opencode-nono-audit spec,
- * Task 6.2, Requirements 1.1, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4,
+ * Task 6.2, Requirements 1.1, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4,
  * 3.1, 3.2).
  *
  * Why this file exists (gap it fills): the per-subsystem integration
@@ -57,7 +57,6 @@ const {
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const SESSION_DB = path.join(FIXTURES_DIR, 'opencode-nono-session.db');
 const DRIFT_DB = path.join(FIXTURES_DIR, 'opencode-nono-drift.db');
-const CAVEMEM_DB = path.join(FIXTURES_DIR, 'cavemem-data.db');
 const METADATA_FIXTURE = path.join(FIXTURES_DIR, 'sandbox-metadata.json');
 
 // The metadata fixture's profileVersion (sandbox-metadata.json).
@@ -113,25 +112,21 @@ function runMain(argv) {
 // 1. FULL-PIPELINE READ-ONLY GUARANTEE through the CLI (R1.6).
 //    The existing read-only test (audit-sources.test.js) is at the
 //    runAudit() level; this asserts it through main(['all', ...]) with
-//    BOTH the session AND cavemem fixture DBs configured — byte/mtime
-//    unchanged after a full pipeline run that also WRITES a report +
+//    the session DB configured — byte/mtime unchanged after a full
+//    pipeline run that also WRITES a report +
 //    marker (proving the writes never touch the read-only sources).
 // ────────────────────────────────────────────────────────────────────
 
-test('main([all]) over the fixtures is read-only: session + cavemem fixture DBs are mtime/size unchanged after the full pipeline (R1.6)', () => {
+test('main([all]) leaves the session DB unchanged after the full pipeline (R1.6)', () => {
   const stateDir = mkStateDir();
 
   const beforeSession = statSnapshot(SESSION_DB);
-  const beforeCavemem = statSnapshot(CAVEMEM_DB);
   const beforeSessionBytes = fs.readFileSync(SESSION_DB);
-  const beforeCavememBytes = fs.readFileSync(CAVEMEM_DB);
 
   const code = runMain([
     'all',
     '--session-db',
     SESSION_DB,
-    '--cavemem-db',
-    CAVEMEM_DB,
     '--metadata',
     METADATA_FIXTURE,
     '--state-dir',
@@ -146,16 +141,12 @@ test('main([all]) over the fixtures is read-only: session + cavemem fixture DBs 
   readEmittedReport(stateDir); // asserts exactly one JSON report exists
 
   const afterSession = statSnapshot(SESSION_DB);
-  const afterCavemem = statSnapshot(CAVEMEM_DB);
 
   assert.equal(afterSession.mtimeMs, beforeSession.mtimeMs, 'session DB mtime changed — pipeline not read-only');
   assert.equal(afterSession.size, beforeSession.size, 'session DB size changed — pipeline not read-only');
-  assert.equal(afterCavemem.mtimeMs, beforeCavemem.mtimeMs, 'cavemem DB mtime changed — pipeline not read-only');
-  assert.equal(afterCavemem.size, beforeCavemem.size, 'cavemem DB size changed — pipeline not read-only');
 
   // Byte-for-byte identical (a stronger guarantee than mtime/size).
   assert.ok(beforeSessionBytes.equals(fs.readFileSync(SESSION_DB)), 'session DB bytes changed');
-  assert.ok(beforeCavememBytes.equals(fs.readFileSync(CAVEMEM_DB)), 'cavemem DB bytes changed');
 });
 
 // ────────────────────────────────────────────────────────────────────

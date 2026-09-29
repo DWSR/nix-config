@@ -13,10 +13,8 @@
  * derived from the available sources (coverage-gap disclosure).
  *
  * Authoritative source (task 1.1 Phase 0 decision): OpenCode
- * `part.data.state.input` structured keys. cavemem is a LOW-confidence
- * secondary context source only — its content is prose prompt/response
- * text, never structured tool calls, so it must NOT by itself produce
- * high-confidence capabilities.
+ * `part.data.state.input` structured keys. Tool names and arguments
+ * come from the session database alone.
  *
  * Lives under tests/opencode-nono-audit/integration/ (run.js recurses
  * everywhere except fixtures/ and node_modules/). runAudit resolves
@@ -37,7 +35,6 @@ const { runAudit } = require('../../../scripts/opencode-nono-audit.js');
 
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const SESSION_DB = path.join(FIXTURES_DIR, 'opencode-nono-session.db');
-const CAVEMEM_DB = path.join(FIXTURES_DIR, 'cavemem-data.db');
 
 // The structurally-unobservable capability classes per the Phase 0
 // source-fidelity decision (sorted, stable).
@@ -163,6 +160,7 @@ test('runAudit derives CapabilityRecords with confidence + sources over the vali
       cap.sources.includes('opencode-sqlite'),
       'session-derived records must tag opencode-sqlite',
     );
+    assert.deepEqual(cap.sources, ['opencode-sqlite']);
   }
 });
 
@@ -294,56 +292,7 @@ test('a fixture whose tool part lacks derivable args yields empty capability arr
 });
 
 // ────────────────────────────────────────────────────────────────────
-// 4. cavemem as a contributing secondary source (R1.3)
-// ────────────────────────────────────────────────────────────────────
-
-test('cavemem present → recorded as a contributing source without fabricating high-confidence capabilities (R1.3)', () => {
-  const withCavemem = runAudit({ sessionDbPath: SESSION_DB, cavememDbPath: CAVEMEM_DB });
-  assert.equal(withCavemem.ok, true);
-  const audit = withCavemem.value;
-
-  // cavemem is genuinely exercised as an additional source: it appears as
-  // an ok SourceStatus, AND it contributes (as a tagged source somewhere,
-  // or via a recorded low-confidence context) when available.
-  const cavememStatus = audit.sources.find((s) => s.source === 'cavemem');
-  assert.ok(cavememStatus, 'cavemem SourceStatus must be present when configured');
-  assert.equal(cavememStatus.status, 'ok');
-
-  // cavemem must NOT fabricate high-confidence capabilities. Any record
-  // that lists cavemem among its sources must not be high-confidence
-  // SOLELY from cavemem — i.e. cavemem-only evidence cannot be 'high'.
-  for (const cap of audit.capabilities) {
-    if (cap.sources.length === 1 && cap.sources[0] === 'cavemem') {
-      assert.notEqual(
-        cap.confidence,
-        'high',
-        'cavemem-only evidence must never be high-confidence',
-      );
-    }
-  }
-
-  // R1.3 "additional source when available": cavemem must genuinely
-  // contribute. Either some capability tags cavemem as a source, or the
-  // audit records a cavemem-derived context. Assert the contribution is real.
-  const cavememContributed =
-    audit.capabilities.some((c) => c.sources.includes('cavemem')) ||
-    (Array.isArray(audit.cavememContext) && audit.cavememContext.length > 0);
-  assert.ok(
-    cavememContributed,
-    'cavemem must genuinely contribute (a tagged source or a recorded context) when available',
-  );
-
-  // The high-confidence structured capabilities derived from the session
-  // DB are unchanged by cavemem's presence (still high-confidence,
-  // session-sourced).
-  const bash = capOf(audit, 'bash');
-  assert.ok(bash, 'bash record present with cavemem configured');
-  assert.equal(bash.confidence, 'high');
-  assert.ok(bash.sources.includes('opencode-sqlite'));
-});
-
-// ────────────────────────────────────────────────────────────────────
-// 5. Determinism: capability ordering is stable across runs
+// 4. Determinism: capability ordering is stable across runs
 // ────────────────────────────────────────────────────────────────────
 
 test('capability ordering is deterministic (stable tool order across runs)', () => {

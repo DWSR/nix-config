@@ -25,16 +25,14 @@
     via the schema_drift / cli_missing labels rather than itself
     crashing on import.
 
-  Why the four checks fail fast (unlike cavemem-smoke-test):
+   Why the checks fail fast:
 
   - Task 6.3 specifies fail-fast on each check with a labeled exit
     message (`[smoke-test-failure: <label>] <detail>`). The four
     checks are ordered by dependency: a DB missing in (a) makes (b)
     meaningless; a CLI missing in (c) makes (d) impossible. Reporting
     a downstream "version_mismatch" when the actual root cause is
-    "db_missing" would be misleading. This differs from
-    cavemem-smoke-test, which deliberately aggregates because its
-    four bug checks are independent across orthogonal patches.
+     "db_missing" would be misleading.
 
   Why an OPENCODE_COST_SMOKE_TEST_DB override:
 

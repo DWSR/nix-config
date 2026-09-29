@@ -13,20 +13,9 @@ let
   };
   agentmemory = config.programs.agentmemory;
   agentmemoryKeychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
-  memoryBackend = config.home.opencode.memoryBackend;
-  isAgentMemory = memoryBackend == "agentmemory";
 in
 {
   options.home.opencode = {
-    memoryBackend = lib.mkOption {
-      type = lib.types.enum [
-        "cavemem"
-        "agentmemory"
-      ];
-      default = "cavemem";
-      description = "OpenCode ambient memory backend.";
-    };
-
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.opencode-pinned;
@@ -196,14 +185,12 @@ in
         fi
       ''
       # mcpproxy preflight: verify the orchestrator is live before OpenCode
-      # starts. AgentMemory's authenticated daemon check follows this snippet
-      # when the AgentMemory backend is enabled.
+      # starts. The AgentMemory bearer check follows this snippet.
       #
       # Probe sequence:
       #   1. `GET http://127.0.0.1:8080/healthz` (no auth) checks mcpproxy
       #      liveness.
-      #   2. The AgentMemory snippet below resolves its bearer and checks the
-      #      authenticated full-daemon health route.
+      #   2. The AgentMemory snippet below resolves its bearer from Keychain.
       #
       # Each mcpproxy failure includes the recovery hint
       # `launchctl kickstart gui/$(id -u)/com.smart-mcp-proxy.mcpproxy`.
@@ -225,25 +212,18 @@ in
         fi
       ''
     ]
-    # AgentMemory preflight follows mcpproxy liveness. The authenticated health
-    # route is the full-daemon gate; standalone MCP fallback has no healthy
-    # daemon response and is rejected.
-    ++ lib.optional (isAgentMemory && agentmemory.enable) ''
-        agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w ${lib.escapeShellArg agentmemoryKeychainPath} 2>/dev/null) || agentmemory_secret=""
-        if [ -z "$agentmemory_secret" ]; then
-          echo "ERROR: AgentMemory daemon preflight failed: bearer unavailable from macOS Keychain." >&2
-          echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
-          exit 1
-        fi
-        export AGENTMEMORY_URL="http://127.0.0.1:${toString agentmemory.restPort}"
-        export AGENTMEMORY_SECRET="$agentmemory_secret"
-      #   agentmemory_health=$(/usr/bin/curl -sf --max-time 2 -H "Authorization: Bearer $AGENTMEMORY_SECRET" http://127.0.0.1:${toString agentmemory.restPort}/agentmemory/health 2>/dev/null) || agentmemory_health=""
-      #   if ! printf "%s" "$agentmemory_health" | ${pkgs.jq}/bin/jq -e '(.status == "healthy") or (.status == "degraded") or (.status == "ok")' >/dev/null 2>&1; then
-      #     echo "ERROR: AgentMemory daemon preflight failed: full-daemon health check did not report healthy or degraded." >&2
-      #     echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
-      #     exit 1
-      #   fi
-      # ''
+    # Resolve the AgentMemory bearer after mcpproxy liveness so the in-process
+    # capture plugin and MCP shim share the managed runtime credential.
+    ++ lib.optional agentmemory.enable ''
+      agentmemory_secret=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg agentmemory.bearerReference} -w ${lib.escapeShellArg agentmemoryKeychainPath} 2>/dev/null) || agentmemory_secret=""
+      if [ -z "$agentmemory_secret" ]; then
+        echo "ERROR: AgentMemory daemon preflight failed: bearer unavailable from macOS Keychain." >&2
+        echo "Recover AgentMemory with: launchctl kickstart -k gui/$(id -u)/dev.dwsr.agentmemory" >&2
+        exit 1
+      fi
+      export AGENTMEMORY_URL="http://127.0.0.1:${toString agentmemory.restPort}"
+      export AGENTMEMORY_SECRET="$agentmemory_secret"
+    ''
     ++ [
       # Enable the experimental `lsp` tool so the model can use the configured
       # LSP servers for goToDefinition / findReferences / hover / symbols / etc.
@@ -313,7 +293,7 @@ in
       # with the outer launcher. See `home.opencode.finalPackage` above.
       package = config.home.opencode.finalPackage;
       # AGENTS.md is composed from three vendored chunks:
-      #   1. selected backend fragment — one ambient memory backend's rules
+      #   1. ./agents-agentmemory.md — stock AgentMemory rules
       #   2. ./agents.md            — global non-memory rules + commit/time conventions
       #   3. ./agents-cc-sdd.md     — SDD preamble + cc-sdd-init bootstrap + the
       #                               kiro skills catalog + workflow summary
@@ -324,7 +304,7 @@ in
       # verbatim into ./agents-cc-sdd.md. See the AgentMemory topic
       # "agents md compression" for the rationale.
       context = lib.concatStringsSep "\n\n" [
-        (builtins.readFile (if isAgentMemory then ./agents-agentmemory.md else ./agents-cavemem.md))
+        (builtins.readFile ./agents-agentmemory.md)
         (builtins.readFile ./agents.md)
         (builtins.readFile ./agents-cc-sdd.md)
       ];
@@ -373,7 +353,7 @@ in
         # are hidden internal agents that run extra LLM calls (title on
         # every new session, summary on every compaction). We don't rely
         # on either: session titles aren't used in our workflow, and
-        # the selected ambient capture backend preserves the context that
+        # AgentMemory preserves the context that
         # `summary` would otherwise regenerate. Schema: see `agent.*.disable`
         # at https://opencode.ai/config.json.
         agent.title.disable = true;

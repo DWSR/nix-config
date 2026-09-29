@@ -3,7 +3,7 @@
  * read-only test fixtures (Task 1.3, Requirements 1.1, 1.3, 1.4, 2.1).
  *
  * This test is the observable-completion gate for task 1.3: it loads
- * each of the four committed fixtures and asserts the shape later
+ * each of the three committed fixtures and asserts the shape later
  * tasks depend on. It lives under tests/opencode-nono-audit/unit/
  * (NOT inside fixtures/) because run.js's discoverTestFiles() skips
  * the fixtures/ directory.
@@ -22,8 +22,6 @@
  *       data_migration set differs from the supported baseline so
  *       SqliteReader.open() throws SchemaDriftError. Still a valid
  *       SQLite file with a data_migration table.
- *   - cavemem-data.db           — cavemem schema_version=2 fixture with
- *       a handful of uncompressed prompt/response observation rows.
  *   - sandbox-metadata.json     — sandbox metadata carrying a
  *       profileVersion string (consumed by the task 5.2 freshness
  *       marker).
@@ -51,7 +49,6 @@ const {
 const FIXTURES_DIR = path.resolve(__dirname, '..', 'fixtures');
 const SESSION_DB = path.join(FIXTURES_DIR, 'opencode-nono-session.db');
 const DRIFT_DB = path.join(FIXTURES_DIR, 'opencode-nono-drift.db');
-const CAVEMEM_DB = path.join(FIXTURES_DIR, 'cavemem-data.db');
 const METADATA_JSON = path.join(FIXTURES_DIR, 'sandbox-metadata.json');
 
 // ────────────────────────────────────────────────────────────────────
@@ -179,39 +176,6 @@ test('drift session fixture exists and triggers SchemaDriftError on open', () =>
     (err) => err instanceof SchemaDriftError,
     'SqliteReader.open() must raise SchemaDriftError on the drift fixture',
   );
-});
-
-// ────────────────────────────────────────────────────────────────────
-// cavemem data.db
-// ────────────────────────────────────────────────────────────────────
-
-test('cavemem fixture exists, is schema_version=2, and has prompt/response observations', () => {
-  assert.ok(fs.existsSync(CAVEMEM_DB), `missing fixture: ${CAVEMEM_DB}`);
-
-  const db = new Database(CAVEMEM_DB, { readonly: true, fileMustExist: true });
-  try {
-    const version = db.prepare('SELECT version FROM schema_version').get().version;
-    assert.equal(version, 2);
-
-    const obs = db
-      .prepare('SELECT kind, content, compressed FROM observations ORDER BY id')
-      .all();
-    assert.ok(obs.length >= 2, 'expected at least two observation rows');
-    const kinds = new Set(obs.map((o) => o.kind));
-    assert.ok(kinds.has('prompt'), 'expected a prompt observation');
-    assert.ok(kinds.has('response'), 'expected a response observation');
-    for (const o of obs) {
-      assert.equal(o.compressed, 0, 'fixture observations must be uncompressed');
-      assert.equal(typeof o.content, 'string');
-      assert.ok(o.content.length > 0, 'observation content must be non-empty');
-    }
-
-    // sessions row exists so observation FKs are satisfiable.
-    const sessions = db.prepare('SELECT id, ide FROM sessions').all();
-    assert.ok(sessions.length >= 1, 'expected at least one cavemem session row');
-  } finally {
-    db.close();
-  }
 });
 
 // ────────────────────────────────────────────────────────────────────

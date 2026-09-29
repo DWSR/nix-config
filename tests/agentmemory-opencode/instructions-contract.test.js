@@ -12,10 +12,6 @@ const agentMemoryInstructions = fs.readFileSync(
   path.join(repoRoot, 'home-manager/common/agents-agentmemory.md'),
   'utf8',
 );
-const cavememInstructions = fs.readFileSync(
-  path.join(repoRoot, 'home-manager/common/agents-cavemem.md'),
-  'utf8',
-);
 const ccSddInstructions = fs.readFileSync(
   path.join(repoRoot, 'home-manager/common/agents-cc-sdd.md'),
   'utf8',
@@ -42,7 +38,6 @@ function renderOpenCodeContext() {
         home.username = "brandonmcnama";
          home.homeDirectory = "/Users/brandonmcnama";
          home.stateVersion = "26.05";
-         home.opencode.memoryBackend = "agentmemory";
          programs.agentmemory.enable = false;
       }
     ];
@@ -103,8 +98,6 @@ test('AgentMemory instructions preserve stock limitations and avoid custom claim
   assert.match(agentMemoryInstructions, /subprocesses may inherit that bearer/i);
   assert.match(agentMemoryInstructions, /no (?:strict )?project selector|no project selector/i);
   assert.match(agentMemoryInstructions, /custom fallback guard/i);
-  assert.doesNotMatch(agentMemoryInstructions, /All sessions MUST use BOTH Obsidian vault \+ cavemem/i);
-  assert.doesNotMatch(agentMemoryInstructions, /Cavemem = ambient/i);
   assert.match(agentMemoryInstructions, /do not promise stable context/i);
   assert.doesNotMatch(agentMemoryInstructions, /custom (?:read|capture|retrieval) (?:facade|fallback|relay)/i);
 });
@@ -121,11 +114,10 @@ test('rendered OpenCode context carries AgentMemory guidance and disabled title/
   assert.equal(rendered.summaryDisabled, true);
 });
 
-test('global and backend fragments contain no active vault memory contract', () => {
+test('global and AgentMemory fragments contain no active vault memory contract', () => {
   for (const [name, content] of [
     ['global', instructions],
     ['AgentMemory', agentMemoryInstructions],
-    ['Cavemem', cavememInstructions],
     ['cc-sdd', ccSddInstructions],
   ]) {
     assert.doesNotMatch(content, forbiddenVaultContract, `${name} contains vault-only guidance`);
@@ -133,7 +125,5 @@ test('global and backend fragments contain no active vault memory contract', () 
 
   assert.match(instructions, /# Version control/);
   assert.match(instructions, /# Time and dates/);
-  assert.match(cavememInstructions, /ambient memory backend/i);
-  assert.doesNotMatch(cavememInstructions, /synthesizer|curator|curated/i);
   assert.match(ccSddInstructions, /## Workflow/);
 });

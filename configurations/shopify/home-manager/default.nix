@@ -13,7 +13,6 @@ in
 {
   imports = [
     ../../../home-manager/common
-    ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
 
     ./binks-pr-review.nix

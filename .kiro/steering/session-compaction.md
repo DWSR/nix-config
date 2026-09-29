@@ -1,372 +1,75 @@
-# session-compaction operator guide
+# Session compaction operator guide
 
-Operator-facing steering for the `programs.session-compaction`
-home-manager feature. The feature installs an opencode plugin that
-watches each opencode session and triggers opencode's native
-compaction once cumulative tokens or wall-clock time crosses a
-configured threshold, optionally augmenting the continuation prompt
-with cavemem-recovered context.
+`programs.session-compaction` installs an OpenCode plugin that triggers native
+summarization after a session crosses a token or wall-clock threshold. The
+plugin also provides `/compact` for manual compaction. AgentMemory captures
+session activity independently; the compaction plugin does not add external
+context to OpenCode's summary.
 
-This document satisfies requirements R4.6, R6.3, R9.2, and R9.4 from
-`.kiro/specs/session-compaction/requirements.md`. Design references
-below point at
-`.kiro/specs/session-compaction/design.md`.
+## Automatic and manual triggers
 
-## When to invoke `/compact` manually
+The plugin checks each `message.updated` event. It sums the distinct assistant
+messages' `input + cache.read` tokens; updates to the same message replace the
+previous snapshot. A session with zero LLM turns never compacts automatically.
+The default thresholds are 500,000 tokens or 24 hours since session start (or
+the last compaction). A 30-minute cooldown prevents repeated automatic
+compactions. Disable either threshold by setting its option to `null`.
 
-The plugin handles the common case automatically: it trips when a
-session crosses `thresholdTokens` (default 500K) or
-`thresholdWallTimeHours` (default 24h), subject to a `cooldownMinutes`
-gate (default 30 min). Reach for `/compact` only in the cases the
-threshold logic cannot cover well:
+Use `/compact` before a large phase or when the automatic cooldown or a high
+threshold delays compaction. It bypasses the automatic cooldown but refuses a
+session with zero LLM turns and shows “Nothing to compact.” Both paths call
+OpenCode's native `client.session.summarize`; the plugin observes
+`session.compacted` to reset the wall-clock anchor and record the trigger.
 
-- **Before a known-expensive phase.** You are about to dispatch a
-  long-running subagent, a deep grep across a monorepo, or a
-  multi-step refactor. Compacting first means the expensive phase
-  runs against a smaller carry-over context.
-- **After the plugin missed a trigger because of a stale cooldown.**
-  The cooldown window blocks a second automatic compaction within
-  `cooldownMinutes` of the last one. If you have just done a large
-  burst of work right after a compaction, `/compact` bypasses the
-  cooldown.
-- **Recovery from a misconfigured threshold.** If you have raised
-  `thresholdTokens` too high and the session is now expensive,
-  `/compact` lets you reclaim the savings without re-deploying
-  home-manager.
-- **Never run `/compact` on a session that has produced zero LLM
-  turns since the last compaction.** Per R4.4 the command will
-  refuse and emit a clear "nothing to compact" message, but you can
-  short-circuit the round-trip by checking first.
+## Inspect a compaction
 
-`/compact` always applies the same cavemem augmentation as automatic
-compaction (R4.3); manual and automatic compactions are
-indistinguishable from the LLM's point of view downstream.
+OpenCode writes plugin `client.app.log` entries under
+`~/.local/share/opencode/log/` (singular `log`). Filter for
+`service=session-compaction` and inspect the structured `extra` fields:
 
-## What context augmentation preserves
+| Message | Relevant fields | Meaning |
+|---------|-----------------|---------|
+| `self-check passed` / `self-check failed` | `extra.missing` on failure | Startup check of the required SDK methods; failure disables the plugin for this process. |
+| `session started` | Thresholds, cooldown, subagent policy | Configuration in effect at session creation. |
+| `compaction triggered` | `trigger`, `reason`, `timestamp` | The plugin called the native summarizer. |
+| `session compacted` | `trigger` | A completed compaction, attributed to `automatic`, `manual`, or `external`. |
+| `compaction suppressed` | `reason` | Threshold/cooldown/zero-turn guard prevented an attempt. |
+| `session idle` | `turnCount`, `totalInputTokens`, `wallTimeMillis` | Current session totals. |
+| `session-compaction error` | `errorMessage`, `context` | A compaction or handler failed. |
 
-The plugin's distinguishing behavior is **pre-compaction
-augmentation**: before opencode summarizes the conversation, the
-plugin queries cavemem for the current session's prior observations
-and inlines a bounded prefix into the continuation prompt. This is
-intended to recover specific facts (file paths, error strings, IDs,
-decisions) that opencode's native summary tends to lose.
+`external` means OpenCode compacted without a plugin-initiated attempt, such as
+through its TUI keybind. Suppression reasons include `in_cooldown:<N>s_remaining`,
+`zero_turns`, `zero_turns_manual`, `tokens_disabled`, `wall_time_disabled`,
+and `no_threshold_met`. The latter is emitted on each below-threshold update;
+exclude it when looking for actionable suppressions.
 
-What is preserved:
+## Home Manager options
 
-- **Recent cavemem observations for this session**, returned by
-  `cavemem search` keyed on session metadata. The plugin treats the
-  output as opaque text and trims it to a hard 4KB cap so the
-  injected context does not itself become a token-cost driver
-  (design §Performance & Scalability).
-- **The opencode-native summary itself**, generated by opencode's
-  own compaction step. Augmentation is additive; it does not replace
-  the summary.
-
-What is **not** preserved:
-
-- Full message history before the compaction point. Opencode's
-  native compaction discards it; that is the whole point.
-- Tool outputs older than the cavemem retention window.
-- Anything cavemem never captured (for example, observations from a
-  separate session, even in the same project).
-
-If augmentation is disabled at install time via
-`programs.session-compaction.augmentationEnabled = false`, the
-plugin still triggers compaction at thresholds but skips the
-cavemem query and lets opencode's native summary stand alone
-(R3.6). Use this if cavemem latency on the per-turn critical path is
-unacceptable for your workload.
-
-## How to inspect a past compaction event
-
-Two sources cover compaction history; use them together.
-
-### Plugin operational log
-
-The plugin writes via opencode's `client.app.log` API. **Resolved
-path**: `~/.local/share/opencode/log/` (note the singular `log/`,
-not the plural `logs/` the design speculatively documented). Each
-opencode session produces one or more rotating files under that
-directory; look for entries with `service=session-compaction`.
-
-Key log events:
-
-| Event | Marker | Meaning |
-|-------|--------|---------|
-| Compaction fired | `message: "session.compacted"` with `extra.trigger=...` | Compaction completed; see attribution below |
-| Compaction suppressed | `message: "compaction suppressed"` with e.g. `extra.reason="in_cooldown:120s_remaining"` | A real suppression — cooldown, zero turns, or neither axis tripped. See canonical reasons below. |
-| Augmentation skipped | `message: "compaction suppressed"` with `extra.reason=augmentation_disabled` or `augmentation_empty` | **Misleading message text** — see quirk below |
-| Self-check passed | `message: "self-check passed"` | Startup probe of opencode hooks/APIs succeeded |
-| Self-check failed | `message: "self-check failed"` with `extra.missing: [...]` | Startup probe failed; every handler short-circuits for this opencode session (R7.4). See "How to spot a self-check failure" below. |
-| Config snapshot | `message: "startup"` / `"shutdown"` | Threshold values active for the session (R6.5) |
-
-**Task 3.4 quirk — filter on `extra.reason`, not on `message`.** The
-two augmentation-skipped paths (R3.6 `augmentationEnabled=false`
-and R3.3 empty cavemem result) currently emit a `logSuppression`
-record whose `message` field reads `"compaction suppressed"` — but
-these paths **do not actually suppress compaction**. Opencode's
-native summary still runs; only the augmentation step is skipped.
-The semantic intent is carried by `extra.reason`. When triaging a
-session that you expect compacted but appears not to have, always
-check `extra.reason` rather than counting `"compaction suppressed"`
-occurrences. This will be cleaned up in a follow-up by introducing a
-dedicated `logAugmentationSkipped` wrapper.
-
-#### Canonical `extra.reason` values
-
-These are the exact strings the impl module emits on a
-`"compaction suppressed"` record. Organized by operator mental
-model; grep against these for accurate triage. Trigger reasons
-(`tokens_exceeded:<N>` and `wall_time_exceeded:<N>h`) appear on the
-`"session.compacted"` event, **not** on `"compaction suppressed"`,
-so they are not listed here.
-
-| Grouping | Reason string(s) | When emitted |
-|----------|------------------|--------------|
-| Cooldown active | `in_cooldown:<N>s_remaining` (prefix match — grep `in_cooldown`) | Cooldown window still open; `<N>` is seconds remaining. |
-| Zero turns since session start | `zero_turns` | Automatic evaluator ran on a session with no LLM turns. |
-| Manual `/compact` on a zero-turn session | `zero_turns_manual` | User invoked `/compact` before any LLM turn — surfaces the "Nothing to compact" toast (R4.4). |
-| Token axis disabled | `tokens_disabled` | `thresholdTokens` is `null` or `0`. |
-| Wall-time axis disabled | `wall_time_disabled` | `thresholdWallTimeHours` is `null` or `0`. |
-| Neither axis tripped (high-volume informational) | `no_threshold_met` | Both axes enabled but neither tripped. See caveat below. |
-| Augmentation step skipped — operator disabled | `augmentation_disabled` | `programs.session-compaction.augmentationEnabled = false`. Compaction still ran. |
-| Augmentation step skipped — cavemem empty/timeout/error | `augmentation_empty` | Cavemem returned empty (spawn fail, non-zero exit, timeout, or no payload). Compaction still ran. |
-
-**Caveat for `no_threshold_met`.** This reason fires on **every**
-`message.updated` event that does not trip a threshold — i.e. the
-vast majority of events in any active session. In a busy session it
-will dominate the suppression log. Treat it as the "still-under-
-threshold" record; high cardinality is expected. When triaging real
-suppressions, exclude it from your grep:
-
-```
-grep "compaction suppressed" app.log | grep -v no_threshold_met
-```
-
-### How to spot a self-check failure
-
-A failed startup self-check is **not** a suppression record. It is
-its own event type emitted once per opencode session by
-`runSelfCheckIfNeeded` (impl line ~941, `logSelfCheck`). The
-downstream short-circuit (R7.4) consults a module-scoped flag, so
-no per-event `"compaction suppressed"` entries are written for
-self-check-disabled sessions — only the single startup record.
-
-Grep for it directly:
-
-```
-grep '"message":"self-check failed"' app.log
-```
-
-The failing entry's shape:
-
-```json
-{
-  "service": "session-compaction",
-  "level":   "error",
-  "message": "self-check failed",
-  "extra":   { "missing": ["<sdk surface>", "..."] }
-}
-```
-
-`extra.missing` lists every SDK surface the probe could not find;
-the operator can read the full list in one entry without scanning
-per-handler logs. If `"self-check failed"` is present for a
-session, every other handler in that session is a no-op — do not
-expect to see `session.compacted`, `compaction suppressed`, or
-augmentation events.
-
-### The three `trigger` attribution values (R6.1)
-
-Every `session.compacted` event carries `extra.trigger` set to one of:
-
-- **`automatic`** — the plugin's threshold logic initiated this
-  compaction (the token bucket or the wall-time bucket tripped on a
-  `message.updated` event, the cooldown gate allowed it, and the
-  plugin called `invokeCompaction`). This is the default mode of
-  operation. No action required from you; this is the spec working
-  as designed.
-- **`manual`** — the operator (or an agent in the session) invoked
-  `/compact` and the plugin's `command.executed` handler routed the
-  invocation through `invokeCompaction`. Use this attribution to
-  audit how often manual compactions are needed; a high `manual`
-  count relative to `automatic` is a signal that the threshold
-  defaults need retuning downward (see next section).
-- **`external`** — opencode itself initiated the compaction without
-  going through the plugin. The most common source is opencode's
-  TUI `session.compact` keybind, but any non-plugin-initiated path
-  lands here. This attribution exists so the operator can recognize
-  a compaction that the plugin observed but did not cause. If you
-  see `external` triggers when you did not press the keybind, check
-  whether opencode itself has additional compaction surfaces in the
-  version you are running.
-
-### Cavemem timeline
-
-For the observation stream the augmentation pulled from, use:
-
-```
-cavemem search "<query>"
-```
-
-or, from an agent session, `hub_cavemem__timeline` and
-`hub_cavemem__search`. Cavemem captures every prompt, response, and
-tool call automatically, so you can reconstruct what the
-augmentation prefix likely included even without a copy of the
-injected text.
-
-## How to retune thresholds based on `opencode-cost-report`
-
-`opencode-cost-report` (installed by the prior `opencode-cost-
-diagnosis` spec) is the diagnostic tool you use to decide whether
-to raise or lower thresholds. Re-run it after enabling
-session-compaction and after each retune iteration; read the
-per-session bucket totals and compare against your baseline.
-
-### Buckets that matter
-
-- **`accumulatedToolOutputsCached`** — the bucket session-compaction
-  is designed to bound. A reduction here is the primary success
-  signal (R9.1 requires ≥40% on at least 2 of 3 replay sessions).
-- **`accumulatedHistoryCached`** — secondary signal; compaction
-  trims this too.
-- **`cachedWrite`** — guard rail. A spike here means compaction
-  itself is hot-writing the cache too often, which can erase the
-  savings. R9.1's pass criterion includes "did NOT increase by more
-  than +20% on any session".
-- **`cost.total`** — the headline number.
-
-### Decision matrix
-
-| Symptom | Action |
-|---------|--------|
-| `accumulatedToolOutputsCached` barely changed across replay | Lower `thresholdTokens` (try 350K, then 250K) and re-run Procedure 1. |
-| Compactions firing several times per hour, `cachedWrite` up >20% | Raise `thresholdTokens` (try 750K) or raise `cooldownMinutes` (try 60). |
-| Sessions exceed 24h often without compacting on tokens | Lower `thresholdWallTimeHours` (try 12). |
-| `manual` triggers dominate `automatic` in `app.log` | Lower `thresholdTokens` so automatic catches the workload. |
-| Augmentation injects too much / too little | Adjust `cavememContextTimeoutMillis`; the 4KB context cap is a compile-time constant for now. |
-| Subagents are the cost driver | Set `programs.session-compaction.watchSubagents = true` and optionally constrain via `subagentAllowlist`. |
-
-### HM option reference
-
-All options live under `programs.session-compaction.*` in your
-home-manager configuration:
+All options are under `programs.session-compaction`:
 
 | Option | Default | Purpose |
 |--------|---------|---------|
-| `enable` | `false` | Master switch. |
-| `thresholdTokens` | `500000` | Trips on `Σ input + cacheRead` per session. |
-| `thresholdWallTimeHours` | `24` | Trips on `Date.now() - startedAt`, reset on each compaction. |
+| `enable` | `false` | Install the plugin and `/compact` command. Both hosts enable it in the common module. |
+| `thresholdTokens` | `500000` | Cumulative `input + cache.read` token threshold. |
+| `thresholdWallTimeHours` | `24` | Hours since session start or most recent compaction. |
 | `cooldownMinutes` | `30` | Minimum gap between automatic compactions. |
-| `augmentationEnabled` | `true` | Whether to query cavemem during compaction. |
-| `watchSubagents` | `false` | Apply threshold logic to subagent sessions. |
-| `subagentAllowlist` | `null` | When `watchSubagents=true`, `null` means match-any; `[]` means match-none; otherwise an exact-match list of agent types. |
-| `cavememContextTimeoutMillis` | `2000` | Cavemem query timeout on the per-turn critical path. |
+| `watchSubagents` | `false` | Apply automatic threshold logic to subagent sessions. |
+| `subagentAllowlist` | `null` | With `watchSubagents=true`, `null` matches any, `[]` matches none, and a list matches named agents. |
 
-Per R9.4, **record each retune iteration** — the prior bucket
-values, the new option values, the post-retune bucket values — so
-you can detect when you have hit diminishing returns and need to
-escalate the design rather than keep tuning. The design caps tuning
-at two iterations before escalation (design §Testing Strategy /
-Validation Tests Procedure 1, step 6).
+For threshold tuning, compare `accumulatedToolOutputsCached`,
+`accumulatedHistoryCached`, `cachedWrite`, and `cost.total` in
+`opencode-cost-report` before and after representative sessions. A high
+`manual`/`automatic` ratio suggests lowering the automatic thresholds; high
+`cachedWrite` after frequent compactions suggests increasing the token
+threshold or cooldown. Record each retune iteration and refer to
+`.kiro/specs/session-compaction/design.md` §Testing Strategy for the original
+replay and outlier-cap procedures.
 
-## Validation methodology
+## Cooldown persistence
 
-The validation procedures are defined verbatim in
-`.kiro/specs/session-compaction/design.md` §Testing Strategy /
-Validation Tests. Cross-reference rather than re-summarize so this
-doc stays in sync. The pass criteria are copied here because they
-are the operator-facing artifact you check against.
-
-### Procedure 1 — Baseline-and-replay reduction test (R9.1, R9.4)
-
-See design §Testing Strategy / Validation Tests / Procedure 1 for
-the full step-by-step (workload selection, baseline capture, enable
-+ replay, post-enablement capture).
-
-**Pass criteria — all three must hold:**
-
-- `accumulatedToolOutputsCached` reduced by ≥40% on **at least 2 of
-  3** replay sessions.
-- `cachedWrite` did NOT increase by more than +20% on any of the 3
-  replay sessions (guards against the prompt-cache regression risk
-  in research.md §D.11).
-- At least one `session.compacted` event with
-  `trigger ∈ {automatic, manual}` is present in the plugin's
-  `app.log` for each replay session that exceeded thresholds.
-
-**On failure (R9.4):** record the per-session deltas in your
-tuning log, then either retune `thresholdTokens` /
-`thresholdWallTimeHours` and repeat from step 3 of Procedure 1, or
-escalate the design via a follow-up spec / brief revision. **No more
-than 2 retune iterations before escalation.**
-
-### Procedure 2 — Outlier-cap test (R9.3)
-
-See design §Testing Strategy / Validation Tests / Procedure 2 for
-the full step-by-step (synthetic stress or outlier replay).
-
-**Pass criterion:** the plugin's `app.log` records at least one
-`session.compacted` event with
-`trigger ∈ {automatic, manual, external}` **before** the session's
-`cost.total` (read from opencode's session table) crosses $500
-v1-equivalent. Crossing $500 without any compaction event is a
-fail. Multiple compaction events during the run are expected.
-
-### Replay harness (deferred)
-
-A deterministic replay harness (a Node CLI that re-emits recorded
-opencode events at a given session's pace, with the plugin in the
-loop) is **out of scope for the v1 implementation**. Use live
-re-execution against representative real workloads for now. The
-harness is a follow-up improvement for future iteration on
-threshold defaults — see design §Testing Strategy / Validation
-Tests / Replay harness.
-
-## Persistence open item
-
-The plugin's cooldown logic reads opencode's `Session.time.compacting`
-field via `client.session.get`. The design assumes this field
-**persists** post-compaction so the next `message.updated` handler
-sees it and respects the cooldown window. v1 implements this
-designed path directly (see
-`home-manager/common/session-compaction-internal/session-compaction-impl.ts`,
-the `session.compacted` handler near line 2003).
-
-**The open item:** empirical observation may show opencode clears
-the field at the end of the compacting phase. If Procedure 1 or
-Procedure 2 above shows cooldowns failing — for example, two
-automatic compactions firing within `cooldownMinutes` of each
-other — the remediation is documented in the impl module:
-
-- Record `lastCompactionAt` in a module-scoped Map inside the impl
-  module's `session.compacted` handler.
-- Have `evaluateThreshold` prefer the Map value over
-  `Session.time.compacting`.
-- This is implemented as a follow-up task, not a v1 change.
-
-**How to confirm whether the open item bites you:** run Procedure 1
-or Procedure 2 and grep `app.log` for adjacent
-`session.compacted` events on the same session within
-`cooldownMinutes`. If you find any, you have hit the persistence
-deviation and should file a follow-up.
-
-## See also
-
-- `.kiro/specs/session-compaction/requirements.md` — full
-  requirements, especially R4 (manual surface), R6 (observability),
-  R9 (validated cost reduction).
-- `.kiro/specs/session-compaction/design.md` — full design,
-  especially §Components / SteeringDoc (the brief for this
-  document), §Testing Strategy / Validation Tests (the procedures
-  referenced above), §Data Models (the cooldown signal flow).
-- `home-manager/common/session-compaction.nix` — HM module options
-  and env-var serialization.
-- `home-manager/common/session-compaction-internal/session-compaction-impl.ts`
-  — plugin implementation; the `session.compacted` handler around
-  line 2003 documents the persistence open item in code.
-- `opencode-cost-report` — diagnostic CLI for reading per-session
-  bucket totals; from the prior `opencode-cost-diagnosis` spec.
-- `cavemem search` / `hub_cavemem__timeline` —
-  observation-stream inspection for reconstructing what
-  augmentation injected.
+The plugin reads `Session.time.compacting` from OpenCode for the cooldown and
+resets its own wall-clock anchor when it sees `session.compacted`. If two
+automatic compactions occur within `cooldownMinutes` for the same session,
+check whether OpenCode retains `Session.time.compacting` after the first
+compaction. See the persistence open item in
+`home-manager/common/session-compaction-internal/session-compaction-impl.ts`.

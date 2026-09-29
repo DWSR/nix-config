@@ -30,7 +30,6 @@ function renderIntegration() {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
-        home.opencode.memoryBackend = "agentmemory";
         home.mcp = {
           githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
           keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
@@ -70,6 +69,7 @@ function makeFakeCommands(directory) {
 if [ -n "\${SECURITY_REQUEST_LOG:-}" ]; then
   printf '%s\\n' "$@" >> "\${SECURITY_REQUEST_LOG}"
 fi
+if [ "\${PREFLIGHT_MODE:-healthy}" = missing-bearer ]; then exit 1; fi
 printf '%s' '${secret}'
 `,
     { mode: 0o755 },
@@ -78,13 +78,11 @@ printf '%s' '${secret}'
     curlPath,
     `#!/bin/sh
 url=""
-authorization=""
 if [ -n "\${CURL_REQUEST_LOG:-}" ]; then
   printf '%s\n' "$@" >> "\${CURL_REQUEST_LOG}"
 fi
 for arg in "$@"; do
   case "$arg" in
-    Authorization:*) authorization="$arg" ;;
     http://*) url="$arg" ;;
   esac
 done
@@ -95,19 +93,7 @@ case "$url" in
     fi
     printf '%s' '{"status":"ok"}'
     ;;
-  */agentmemory/health)
-    if [ "$authorization" != 'Authorization: Bearer ${secret}' ]; then
-      printf '%s' '{"status":"unauthorized"}'
-      exit 22
-    fi
-    if [ "\${PREFLIGHT_MODE:-healthy}" = healthy ]; then
-      printf '%s' '{"status":"healthy"}'
-    elif [ "$PREFLIGHT_MODE" = degraded ]; then
-      printf '%s' '{"status":"degraded"}'
-    else
-      printf '%s' '{"status":"fallback"}'
-    fi
-    ;;
+  *) exit 22 ;;
 esac
 `,
     { mode: 0o755 },
@@ -148,11 +134,11 @@ function runPreflight(preflight, mode = 'healthy') {
 test('AgentMemory preflight follows mcpproxy liveness and exports no secret text', () => {
   const rendered = renderIntegration();
   const healthIndex = rendered.preflight.indexOf('mcpproxy unreachable');
-  const agentMemoryIndex = rendered.preflight.indexOf('AgentMemory daemon');
+  const agentMemoryIndex = rendered.preflight.indexOf('AgentMemory daemon preflight failed');
 
   assert.match(rendered.preflight, /export AGENTMEMORY_URL="http:\/\/127\.0\.0\.1:35111"/);
   assert.ok(healthIndex >= 0, 'mcpproxy liveness must remain present');
-  assert.ok(agentMemoryIndex > healthIndex, 'AgentMemory health must run after mcpproxy liveness');
+  assert.ok(agentMemoryIndex > healthIndex, 'AgentMemory bearer resolution must follow mcpproxy liveness');
   assert.doesNotMatch(rendered.preflight, /obsidian|api\/v1\/servers|mcpproxy-api-key|X-API-Key/i);
   assert.doesNotMatch(rendered.preflight, new RegExp(secret));
 
@@ -171,38 +157,25 @@ test('AgentMemory preflight follows mcpproxy liveness and exports no secret text
   const result = runPreflight(rendered.preflight, 'healthy');
   assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
   assert.match(result.stdout, /launched/);
-  assert.match(result.curlArgs, /Authorization: Bearer preflight-test-bearer-value/);
-  assert.ok(
-    result.curlArgs.indexOf('http://127.0.0.1:8080/healthz')
-      < result.curlArgs.indexOf('http://127.0.0.1:35111/agentmemory/health'),
-  );
-  assert.match(result.curlArgs, /http:\/\/127\.0\.0\.1:35111\/agentmemory\/health/);
+  assert.match(result.curlArgs, /http:\/\/127\.0\.0\.1:8080\/healthz/);
+  assert.doesNotMatch(result.curlArgs, /Authorization: Bearer|agentmemory\/health/);
   assert.equal(
     result.securityArgs,
-    'find-generic-password\n-s\nmcpproxy\n-a\nagentmemory-bearer\n-w\n',
+    'find-generic-password\n-s\nmcpproxy\n-a\nagentmemory-bearer\n-w\n/Users/brandonmcnama/Library/Keychains/login.keychain-db\n',
   );
   assert.doesNotMatch(result.securityArgs, /mcpproxy-api-key/);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
 });
 
-test('AgentMemory preflight rejects standalone fallback and does not launch OpenCode', () => {
+test('AgentMemory preflight fails when the managed bearer is unavailable', () => {
   const rendered = renderIntegration();
-  const result = runPreflight(rendered.preflight, 'fallback');
+  const result = runPreflight(rendered.preflight, 'missing-bearer');
 
   assert.equal(result.status, 1, `${result.stderr}\n${result.stdout}`);
   assert.doesNotMatch(result.stdout, /launched/);
   assert.match(result.stderr, /AgentMemory daemon preflight failed/);
   assert.equal((result.stderr.match(/Recover AgentMemory with:/g) || []).length, 1);
   assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, new RegExp(secret));
-});
-
-test('AgentMemory preflight accepts a degraded but available full daemon', () => {
-  const rendered = renderIntegration();
-  const result = runPreflight(rendered.preflight, 'degraded');
-
-  assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
-  assert.match(result.stdout, /launched/);
-  assert.doesNotMatch(result.stderr, /AgentMemory daemon preflight failed/);
 });
 
 test('mcpproxy liveness failure stops before AgentMemory is attempted', () => {

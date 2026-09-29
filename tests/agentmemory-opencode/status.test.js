@@ -10,7 +10,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const repoRoot = path.resolve(__dirname, '../..');
 const secret = 'status-test-bearer-value';
 
-function statusPackageDerivation(backend = 'agentmemory') {
+function statusPackageDerivation() {
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
@@ -23,15 +23,10 @@ function statusPackageDerivation(backend = 'agentmemory') {
     modules = [
       ${JSON.stringify(path.join(repoRoot, 'home-manager/common/agentmemory.nix'))}
       {
-        options.home.opencode.memoryBackend = pkgs.lib.mkOption {
-          type = pkgs.lib.types.enum [ "cavemem" "agentmemory" ];
-        };
-        options.home.cavemem.enable = pkgs.lib.mkEnableOption "fixture cavemem";
-        config = {
+         config = {
           home.username = "brandonmcnama";
           home.homeDirectory = "/Users/brandonmcnama";
           home.stateVersion = "26.05";
-          home.opencode.memoryBackend = ${JSON.stringify(backend)};
           programs.agentmemory = {
             enable = true;
             dataDir = "/tmp/agentmemory/status-data";
@@ -55,8 +50,8 @@ in hm.programs.agentmemory.statusPackage.drvPath)`;
   }).trim();
 }
 
-function statusCommandPath(backend = 'agentmemory') {
-  return execFileSync('nix-store', ['--realise', statusPackageDerivation(backend)], {
+function statusCommandPath() {
+  return execFileSync('nix-store', ['--realise', statusPackageDerivation()], {
     cwd: repoRoot,
     encoding: 'utf8',
   }).trim().split('\n').at(-1) + '/bin/agentmemory-status';
@@ -111,8 +106,8 @@ function createFixture() {
   };
 }
 
-function runStatus(fixture, state, backend = 'agentmemory') {
-  const result = spawnSync(statusCommandPath(backend), [], {
+function runStatus(fixture, state) {
+  const result = spawnSync(statusCommandPath(), [], {
     cwd: repoRoot,
     encoding: 'utf8',
     env: {

@@ -10,8 +10,8 @@
 // Therefore this file MUST expose **exactly one** function-shaped
 // named export — `SessionCompactionPlugin`. Every seam
 // (SessionTokenTracker, ThresholdEvaluator, CompactionInvoker,
-// CavememContextSource, SessionCompactionLogger, PluginSelfCheck,
-// the config loader, the ignore set, and the six hook handler
+// SessionCompactionLogger, PluginSelfCheck, the config loader,
+// the ignore set, and the hook handler
 // bodies) lives in the sibling impl module
 // `../session-compaction-internal/session-compaction-impl.ts`.
 //

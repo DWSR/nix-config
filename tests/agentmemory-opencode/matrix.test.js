@@ -34,8 +34,7 @@ function evalMatrix() {
          ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode.nix'))}
          ${JSON.stringify(path.join(repoRoot, 'home-manager/common/opencode-nono.nix'))}
          ${JSON.stringify(path.join(repoRoot, 'home-manager/common/session-compaction.nix'))}
-         ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
+         ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
       ];
       mkSynthetic = scenario:
         (flake.inputs.home-manager.lib.homeManagerConfiguration {
@@ -50,12 +49,7 @@ function evalMatrix() {
                 githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
                 keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
               };
-              home.opencode.memoryBackend = scenario.backend;
-              home.cavemem = {
-                enable = scenario.cavememEnable;
-                dataDir = "/tmp/agentmemory-matrix/cavemem";
-              };
-              programs.agentmemory = {
+               programs.agentmemory = {
                 enable = scenario.agentMemoryEnable;
                 dataDir = "/tmp/agentmemory-matrix/agentmemory";
                 runtimeDir = "/tmp/agentmemory-matrix/runtime";
@@ -75,14 +69,10 @@ function evalMatrix() {
       hostRows = ${hostRowsExpression};
       scenarios = {
         enabled = mkSynthetic {
-          backend = "agentmemory";
           agentMemoryEnable = true;
-          cavememEnable = false;
         };
         disabled = mkSynthetic {
-          backend = "cavemem";
           agentMemoryEnable = false;
-          cavememEnable = true;
         };
         personal =
           if builtins.hasAttr "personal" hostRows then hostRows.personal else hostConfig "Brandons-MacBook-Pro";
@@ -108,11 +98,11 @@ function evalMatrix() {
             file: builtins.match "opencode/plugins/.*" file != null
           ) configFiles;
           memoryPluginFiles = builtins.filter (
-            file: builtins.match "opencode/plugins/(cavemem\\\\.js|agentmemory-.*)" file != null
+             file: builtins.match "opencode/plugins/agentmemory-.*" file != null
           ) configFiles;
           relevantConfigTexts = builtins.mapAttrs configText (
             pkgs.lib.filterAttrs (
-              file: _: builtins.match "(opencode/(AGENTS\\\\.md|opencode\\\\.json|plugins/(cavemem\\\\.js|agentmemory-.*))|mcpproxy/mcp_config\\\\.json|nono/profiles/.*)" file != null
+               file: _: builtins.match "(opencode/(AGENTS\\\\.md|opencode\\\\.json|plugins/agentmemory-.*)|mcpproxy/mcp_config\\\\.json|nono/profiles/.*)" file != null
             ) hm.xdg.configFile
           );
           relevantHomeTexts = builtins.mapAttrs (
@@ -127,7 +117,6 @@ function evalMatrix() {
             discardText hm.xdg.configFile."mcpproxy/mcp_config.json".text
           );
           agentMemoryServers = builtins.filter (server: server.name == "agentmemory") mcpConfig.mcpServers;
-          cavememServers = builtins.filter (server: server.name == "cavemem") mcpConfig.mcpServers;
           agentMemoryJob =
             if builtins.hasAttr "agentmemory" hm.launchd.agents then hm.launchd.agents.agentmemory else null;
           agentMemorySettingsPath = hm.programs.agentmemory.runtimeDir + "/.env";
@@ -181,7 +170,6 @@ function evalMatrix() {
         in
         {
           inherit name packageNames pluginFiles memoryPluginFiles nonoProfiles allGeneratedText launchd;
-          backend = hm.home.opencode.memoryBackend;
           agentMemory = {
             enable = hm.programs.agentmemory.enable;
             obsidianImporter = builtins.elem "agentmemory-import-obsidian" packageNames;
@@ -197,14 +185,9 @@ function evalMatrix() {
               engine = hm.programs.agentmemory.enginePort;
             };
           };
-          cavemem = {
-            enable = hm.home.cavemem.enable;
-            packageNames = builtins.filter (package: pkgs.lib.hasPrefix "cavemem" package) packageNames;
-          };
           mcp = {
             serverNames = map (server: server.name) mcpConfig.mcpServers;
             agentMemoryCount = builtins.length agentMemoryServers;
-            cavememCount = builtins.length cavememServers;
             configText = discardText hm.xdg.configFile."mcpproxy/mcp_config.json".text;
             obsidianPackageNames = obsidianPackageNames;
             obsidianVaultPathConfigured = builtins.hasAttr "obsidianVaultPath" hm.home.mcp;
@@ -218,7 +201,7 @@ function evalMatrix() {
            consumers = {
              vaultCurator = builtins.hasAttr ${JSON.stringify(vaultAgentNames.curator)} hm.programs.opencode.agents;
              vaultSynthesizer = builtins.hasAttr ${JSON.stringify(vaultAgentNames.synthesizer)} hm.programs.opencode.agents;
-             augmentation = hm.programs.session-compaction.augmentationEnabled;
+              nativeCompactCommand = builtins.hasAttr "compact" hm.programs.opencode.commands;
            };
           secretReference =
             if builtins.hasAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets then
@@ -276,8 +259,8 @@ function assertLoopbackEndpointContract(rendered) {
 
   assert.deepEqual(
     urls,
-    [`http://127.0.0.1:${ports.rest}`, `http://127.0.0.1:${ports.viewer}`],
-    `${rendered.name} emits only loopback REST and viewer URLs`,
+    [`http://127.0.0.1:${ports.rest}`, `http://127.0.0.1:${ports.viewer}`, `ws://127.0.0.1:${ports.engine}`],
+    `${rendered.name} emits only loopback REST, viewer, and engine URLs`,
   );
 
   const portEnvironmentNames = {
@@ -327,7 +310,7 @@ function assertAgentMemoryPromptContract(rendered) {
   );
 }
 
-function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
+function assertAgentMemoryRuntime(rendered) {
   assert.equal(rendered.agentMemory.enable, true, `${rendered.name} enables AgentMemory`);
   assert.equal(
     rendered.agentMemory.obsidianImporter,
@@ -339,7 +322,8 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.equal(rendered.agentMemory.ports.viewer, 3113);
   assert.equal(rendered.agentMemory.ports.engine, 49134);
   assert.ok(rendered.agentMemory.packageNames.length >= 2);
-  assert.ok(rendered.agentMemory.packageNames.includes('agentmemory-import-cavemem'));
+  assert.ok(rendered.agentMemory.packageNames.includes('agentmemory-import-obsidian'));
+  assert.equal(rendered.agentMemory.packageNames.includes('agentmemory-import-cavemem'), false);
   assert.equal(rendered.agentMemory.launchd.Label, 'dev.dwsr.agentmemory');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_REST_PORT, '3111');
   assert.equal(rendered.agentMemory.launchd.EnvironmentVariables.III_STREAM_PORT, '3112');
@@ -360,14 +344,8 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assert.doesNotMatch(rendered.agentMemory.settings, /AGENTMEMORY_SECRET=/);
   assertLoopbackEndpointContract(rendered);
   assert.equal(rendered.memoryPluginFiles.length, 1);
-  assert.deepEqual(
-    rendered.memoryPluginFiles,
-    selected === 'agentmemory'
-      ? ['opencode/plugins/agentmemory-capture.ts']
-      : ['opencode/plugins/cavemem.js'],
-  );
+  assert.deepEqual(rendered.memoryPluginFiles, ['opencode/plugins/agentmemory-capture.ts']);
   assert.equal(rendered.mcp.agentMemoryCount, 1);
-  assert.equal(rendered.cavemem.enable, cavememEnabled);
   assert.deepEqual(rendered.mcp.opencodeNames, ['mcpproxy']);
   assert.deepEqual(rendered.mcp.serverNames.includes('agentmemory'), true);
   assert.equal(rendered.mcp.obsidianVaultPathConfigured, false);
@@ -381,20 +359,13 @@ function assertAgentMemoryRuntime(rendered, { selected, cavememEnabled }) {
   assertNoBearerLiteral(rendered);
 }
 
-test('the focused AgentMemory host-render matrix is registered and validates all selections', () => {
+test('the focused AgentMemory host-render matrix validates both hosts and the disabled runtime', () => {
   assertCheckIsRegistered();
   const rendered = evalMatrix();
 
   for (const row of [rendered.enabled, rendered.personal, rendered.shopify]) {
-     assertAgentMemoryRuntime(row, { selected: 'agentmemory', cavememEnabled: false });
-     assert.equal(row.backend, 'agentmemory');
-     assert.equal(row.mcp.cavememCount, 0);
-     assert.equal(row.consumers.vaultCurator, false);
-     assert.equal(row.consumers.vaultSynthesizer, false);
-    assert.equal(row.consumers.augmentation, false);
+    assertAgentMemoryRuntime(row);
     assertAgentMemoryPromptContract(row);
-    assert.match(row.instructions.context, /stock AgentMemory/i);
-    assert.doesNotMatch(row.instructions.context, /Ambient capture \(cavemem\)/i);
     for (const profile of Object.values(row.nonoProfiles)) {
       assert.ok(profile.network.open_port.includes(8080));
       assert.ok(profile.network.open_port.includes(3111));
@@ -407,14 +378,14 @@ test('the focused AgentMemory host-render matrix is registered and validates all
   assert.equal(rendered.shopify.secretReference, 'op://Employee/AgentMemory/Bearer');
   assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
   assert.equal(rendered.shopify.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
+  assert.equal(rendered.personal.consumers.nativeCompactCommand, true);
+  assert.equal(rendered.shopify.consumers.nativeCompactCommand, true);
   const disabled = rendered.disabled;
   assert.equal(disabled.agentMemory.enable, false);
   assert.equal(disabled.agentMemory.launchd, null);
   assert.deepEqual(disabled.agentMemory.packageNames, []);
-  assert.equal(disabled.memoryPluginFiles.length, 1);
-  assert.deepEqual(disabled.memoryPluginFiles, ['opencode/plugins/cavemem.js']);
+  assert.deepEqual(disabled.memoryPluginFiles, []);
   assert.equal(disabled.mcp.agentMemoryCount, 0);
-  assert.equal(disabled.mcp.cavememCount, 1);
   assert.deepEqual(disabled.mcp.opencodeNames, ['mcpproxy']);
   assertNoBearerLiteral(disabled);
   for (const profile of Object.values(disabled.nonoProfiles)) {

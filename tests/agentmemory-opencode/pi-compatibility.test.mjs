@@ -47,10 +47,10 @@ function buildRuntimePaths() {
       '--print-out-paths',
       '--impure',
        '--expr',
-       `let
-         flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-         pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-       in [ pkgs.pi-agent pkgs.pi-agent-extensions ]`,
+        `let
+          flake = builtins.getFlake ${JSON.stringify(repoRoot)};
+          pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+        in [ flake.inputs.pi.packages.aarch64-darwin.coding-agent pkgs.agentmemory ]`,
     ],
     commandOptions,
   )
@@ -60,110 +60,34 @@ function buildRuntimePaths() {
   assert.equal(outputs.length, 2);
   return {
     pi: outputs.find((output) => fs.existsSync(path.join(output, 'bin/pi'))),
-    extensions: outputs.find((output) =>
-      fs.existsSync(path.join(output, 'share/pi-agent/extensions.json')),
-    ),
+    extensions: outputs.find((output) => fs.existsSync(path.join(output, agentMemoryEntry))),
   };
 }
 
-function renderPiOwnership(backend) {
+function renderPiOwnership() {
   const expression = `(let
     flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-    pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
-    hm = (flake.inputs.home-manager.lib.homeManagerConfiguration {
-      inherit pkgs;
-      extraSpecialArgs = { inherit (flake) inputs; };
-      modules = [
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/default.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/common/cavemem.nix'))}
-        ${JSON.stringify(path.join(repoRoot, 'home-manager/mcp'))}
-        {
-           home.username = "brandonmcnama";
-           home.homeDirectory = "/tmp/pi-compatibility";
-           home.stateVersion = "26.05";
-           home.opencode.memoryBackend = ${JSON.stringify(backend)};
-           home.cavemem.enable = ${backend === 'cavemem'};
-          home.mcp = {
-            githubToken = builtins.concatStringsSep "" [ "$" "{env:MCP_GITHUB_TOKEN}" ];
-            keychainSecrets."agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
-          };
-          programs.agentmemory = {
-            enable = true;
-            dataDir = "/tmp/pi-compatibility/data";
-            runtimeDir = "/tmp/pi-compatibility/runtime";
-            logDir = "/tmp/pi-compatibility/logs";
-            bearerReference = "agentmemory-bearer";
-          };
-          programs.pi-agent = {
-            enable = true;
-            provider = {
-              mode = "personal";
-              defaultModel = {
-                provider = "openai";
-                modelId = "gpt-5.6-sol";
-              };
-            };
-          };
-        }
-      ];
-    }).config;
-    piExtensions = builtins.mapAttrs (_: reference: {
-      package = builtins.unsafeDiscardStringContext (toString reference.package);
-      relativePath = reference.relativePath;
-    }) hm.programs.pi-agent.extensions;
-    piPackageNames = [ (builtins.unsafeDiscardStringContext (toString hm.programs.pi-agent.package)) ]
-      ++ builtins.attrValues (builtins.mapAttrs (
-        _: reference: builtins.unsafeDiscardStringContext (toString reference.package)
-      ) hm.programs.pi-agent.extensions);
-    piSurfaceHasCavemem = builtins.any (name: builtins.match ".*cavemem.*" name != null)
-      ((builtins.attrNames piExtensions) ++ (builtins.attrNames hm.programs.pi-agent.mcp));
-    piOwnedPaths = [
-      hm.programs.pi-agent.internal.statusInputs.agentDir
-      (toString hm.programs.agentmemory.dataDir)
-      (toString hm.programs.agentmemory.runtimeDir)
-    ];
-    packageNames = map (package: package.name or "") hm.home.packages;
+    hm = flake.darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama;
+    pi = hm.programs.pi.coding-agent;
+    extensions = map (extension: builtins.unsafeDiscardStringContext (toString extension)) pi.extensions;
     mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile."mcpproxy/mcp_config.json".text);
-    openCodeCavemem = {
-      enabled = hm.home.cavemem.enable;
-      packageNames = builtins.filter (name: builtins.match ".*cavemem.*" name != null) packageNames;
-      mcpServerNames = builtins.filter (name: name == "cavemem") (map (server: server.name) mcpConfig.mcpServers);
-      dataDir = if hm.home.cavemem.enable then toString hm.home.cavemem.dataDir else null;
-    };
   in builtins.toJSON {
-    inherit (hm.home.opencode) memoryBackend;
     agentMemory = {
       enabled = hm.programs.agentmemory.enable;
-      extension = hm.programs.pi-agent.extensions.agentmemory.relativePath;
-      extensionPackage = builtins.unsafeDiscardStringContext (toString hm.programs.pi-agent.extensions.agentmemory.package);
+      extension = builtins.head (builtins.filter (e: builtins.match ".*/integrations/pi/index[.]ts" e != null) extensions);
       runtimePackage = builtins.unsafeDiscardStringContext (toString hm.programs.agentmemory.package);
       dataDir = toString hm.programs.agentmemory.dataDir;
-      url = hm.programs.pi-agent.internal.agentMemoryUrl;
-      secretReference = hm.programs.pi-agent.internal.agentMemorySecretReference;
+      url = pi.environment.AGENTMEMORY_URL.value;
+      secretFile = pi.environment.AGENTMEMORY_SECRET.file;
+      secretReference = hm.programs.agentmemory.bearerReference;
     };
     pi = {
-      inherit piSurfaceHasCavemem;
-      extensionNames = builtins.attrNames piExtensions;
-      agentMemoryPackage = builtins.unsafeDiscardStringContext (piExtensions.agentmemory.package);
-      dataPaths = piOwnedPaths;
-      credentials = {
-        secretReference = hm.programs.pi-agent.agentMemory.secretReference;
-        internalSecretReference = hm.programs.pi-agent.internal.agentMemorySecretReference;
-      };
-      cavemem = {
-        extensions = builtins.filter (name: builtins.match ".*cavemem.*" name != null) (builtins.attrNames piExtensions);
-        packages = builtins.filter (name: builtins.match ".*cavemem.*" name != null) piPackageNames;
-        mcp = if piSurfaceHasCavemem then [ "cavemem" ] else [ ];
-        backup = builtins.filter (value: builtins.match ".*(cavemem|backup).*" value != null) piOwnedPaths;
-        data = builtins.filter (value: builtins.match ".*cavemem.*" value != null) piOwnedPaths;
-      };
-      historyMigration = {
-        packages = builtins.filter (name: builtins.match ".*(import|migration|history).*" name != null) piPackageNames;
-        commands = builtins.filter (name: builtins.match ".*(import|migration|history).*" name != null)
-          ((builtins.attrNames piExtensions) ++ (builtins.attrNames hm.programs.pi-agent.mcp));
-      };
+      inherit (pi) enable;
+      package = builtins.unsafeDiscardStringContext (toString pi.package);
+      inherit extensions;
+      retiredExtensions = builtins.filter (e: builtins.match ".*cavemem.*" e != null) extensions;
     };
-    openCodeCavemem = openCodeCavemem;
+    memoryServerNames = map (server: server.name) mcpConfig.mcpServers;
    })`;
 
   return JSON.parse(
@@ -393,42 +317,20 @@ async function loadSecurityHelper(runtime) {
   return loadPiModule(runtime, agentMemorySecurityEntry);
 }
 
-async function exerciseFactory(backend, runtime) {
-  const ownership = renderPiOwnership(backend);
-  assert.equal(ownership.memoryBackend, backend);
+async function exerciseFactory(runtime) {
+  const ownership = renderPiOwnership();
   assert.equal(ownership.agentMemory.enabled, true);
-  assert.equal(
-    ownership.agentMemory.extension,
-    'lib/node_modules/@agentmemory/agentmemory/integrations/pi/index.ts',
-  );
-  assert.match(ownership.agentMemory.extensionPackage, /pi-agent-extensions/);
-  assert.match(ownership.agentMemory.runtimePackage, /agentmemory/);
-  assert.equal(ownership.agentMemory.dataDir, '/tmp/pi-compatibility/data');
+  assert.equal(ownership.agentMemory.extension, path.join(ownership.agentMemory.runtimePackage, agentMemoryEntry));
+  assert.equal(ownership.agentMemory.runtimePackage, runtime.extensions);
+  assert.ok(ownership.agentMemory.dataDir.endsWith('/agentmemory'));
   assert.equal(ownership.agentMemory.url, 'http://127.0.0.1:3111');
   assert.equal(ownership.agentMemory.secretReference, 'agentmemory-bearer');
-  assert.ok(ownership.pi.extensionNames.includes('agentmemory'));
-  assert.equal(ownership.pi.agentMemoryPackage, ownership.agentMemory.extensionPackage);
-  assert.deepEqual(ownership.pi.credentials, {
-    internalSecretReference: 'agentmemory-bearer',
-    secretReference: 'agentmemory-bearer',
-  });
-  assert.deepEqual(ownership.pi.cavemem, {
-    backup: [],
-    data: [],
-    extensions: [],
-    mcp: [],
-    packages: [],
-  });
-  assert.deepEqual(ownership.pi.historyMigration, { commands: [], packages: [] });
-  assert.equal(ownership.pi.piSurfaceHasCavemem, false);
-  assert.equal(ownership.openCodeCavemem.enabled, backend === 'cavemem');
-  if (backend === 'cavemem') {
-    assert.deepEqual(ownership.openCodeCavemem.mcpServerNames, ['cavemem']);
-    assert.ok(ownership.openCodeCavemem.packageNames.some((name) => name.includes('cavemem')));
-  } else {
-    assert.deepEqual(ownership.openCodeCavemem.mcpServerNames, []);
-    assert.deepEqual(ownership.openCodeCavemem.packageNames, []);
-  }
+  assert.match(ownership.agentMemory.secretFile, /\.agentmemory\/pi-bearer$/);
+  assert.equal(ownership.pi.enable, true);
+  assert.match(ownership.pi.package, /-pi$/);
+  assert.deepEqual(ownership.pi.retiredExtensions, []);
+  assert.equal(ownership.memoryServerNames.includes('agentmemory'), true);
+  assert.equal(ownership.memoryServerNames.includes('cavemem'), false);
 
   const mock = await startMockServer();
   const previous = {
@@ -477,7 +379,7 @@ async function exerciseFactory(backend, runtime) {
     );
     assert.match(beforeAgentResult.systemPrompt, /Relevant long-term memory from agentmemory/);
     const healthResult = await tools.get('memory_health').execute('health-call', {});
-    assert.deepEqual(healthResult.details, { ok: true });
+    assert.deepEqual(healthResult.details, { status: 'healthy', version: '0.9.29' });
     const searchResult = await tools
       .get('memory_search')
       .execute('search-call', { query: 'compatibility', limit: 5 });
@@ -528,19 +430,24 @@ async function exerciseFactory(backend, runtime) {
   }
 }
 
-test('bundled AgentMemory Pi integration uses authenticated standard routes in AgentMemory mode', async () => {
-  await exerciseFactory('agentmemory', buildRuntimePaths());
+test('bundled AgentMemory Pi integration uses authenticated standard routes', async () => {
+  await exerciseFactory(buildRuntimePaths());
 });
 
-test('bundled AgentMemory Pi integration remains active during OpenCode cavemem rollback', async () => {
-  await exerciseFactory('cavemem', buildRuntimePaths());
+test('Shopify Pi consumes the AgentMemory-guided validation skill directly', () => {
+  const source = fs.readFileSync(path.join(repoRoot, 'configurations/shopify/home-manager/pi.nix'), 'utf8');
+  const skill = fs.readFileSync(path.join(repoRoot, 'configurations/shopify/home-manager/skills/validate-yb-issue/SKILL.md'), 'utf8');
+  assert.match(source, /skills = shopifyPiSkills/);
+  assert.match(source, /\.\/skills\/validate-yb-issue/);
+  assert.doesNotMatch(source, /replaceStrings|writeTextDir/);
+  assert.match(skill, /AgentMemory recall first/);
 });
 
 test('bundled Pi security helper keeps its relative layout and bearer guard contract', async () => {
   const runtime = buildRuntimePaths();
   assert.equal(path.posix.dirname(agentMemorySecurityEntry), path.posix.dirname(agentMemoryEntry));
   assert.equal(path.posix.basename(agentMemorySecurityEntry), 'security.ts');
-  assert.match(runtime.extensions, /pi-agent-extensions/);
+  assert.match(runtime.extensions, /agentmemory-0\.9\.29/);
   assert.equal(fs.existsSync(path.join(runtime.extensions, agentMemoryEntry)), true);
   assert.equal(fs.existsSync(path.join(runtime.extensions, agentMemorySecurityEntry)), true);
 

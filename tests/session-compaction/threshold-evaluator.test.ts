@@ -89,10 +89,8 @@ function makeConfig(
     thresholdTokens: 10_000,
     thresholdWallTimeHours: 24,
     cooldownMinutes: 30,
-    augmentationEnabled: true,
     watchSubagents: false,
     subagentAllowlist: { kind: "match-any" },
-    cavememContextTimeoutMillis: 2000,
     ...overrides,
   }
 }

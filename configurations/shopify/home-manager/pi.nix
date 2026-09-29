@@ -49,18 +49,10 @@ let
           ' "$source" > "$out/$name.md"
         done
       '';
-  ybIssuePiSkill = pkgs.writeTextDir "SKILL.md" (
-    lib.replaceStrings
-      [ "2. Cavemem: `search` with the issue number and symptom keywords." ]
-      [
-        "2. AgentMemory: use the stock memory search tool through mcpproxy with the issue number and symptom keywords."
-      ]
-      (builtins.readFile ./skills/validate-yb-issue/SKILL.md)
-  );
   shopifyPiSkills = [
     ./skills/binks-pr-review
     ./skills/create-yb-fix-pr
-    ybIssuePiSkill
+    ./skills/validate-yb-issue
     pkgs.quick-skills
     "${quickArchDiagramsSource}/skill"
   ];

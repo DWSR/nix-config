@@ -2,6 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 
@@ -14,6 +15,11 @@ let renderedHosts;
 
 function renderHosts() {
   if (renderedHosts) return renderedHosts;
+  if (process.env.AGENTMEMORY_MATRIX_HOSTS) {
+    const rows = JSON.parse(fs.readFileSync(process.env.AGENTMEMORY_MATRIX_HOSTS, 'utf8'));
+    renderedHosts = { personal: rows.personal.hostRender, shopify: rows.shopify.hostRender };
+    return renderedHosts;
+  }
 
   const expression = `
     let
@@ -37,14 +43,8 @@ function renderHosts() {
               builtins.unsafeDiscardStringContext (
                 builtins.readFile "\${builtins.head agentmemoryLaunchers}/bin/agentmemory"
               );
-          cavememServers = builtins.filter (server: server.name == "cavemem") mcpConfig.mcpServers;
-          agentTexts = builtins.mapAttrs (_: value:
-            if builtins.typeOf value == "path" then builtins.readFile value else value
-          ) hm.programs.opencode.agents;
-        in
-        {
-          backend = hm.home.opencode.memoryBackend;
-          cavememEnabled = hm.home.cavemem.enable;
+         in
+         {
           homeDirectory = hm.home.homeDirectory;
           mcp = {
             serverNames = map (server: server.name) mcpConfig.mcpServers;
@@ -80,27 +80,15 @@ function renderHosts() {
               inherit (agentmemoryJob.config) Label EnvironmentVariables;
             };
           };
-          cavemem = {
-            dataDir = hm.home.cavemem.dataDir;
-            packageNames = map (package: package.name or "") hm.home.packages;
-            serverCount = builtins.length cavememServers;
-            settings = builtins.hasAttr "\${hm.home.cavemem.dataDir}/settings.json" hm.home.file;
-          };
-          opencode = {
-            agents = builtins.attrNames hm.programs.opencode.agents;
-            agentTextHasCavemem = builtins.any (text: lib.hasInfix "cavemem" text) (builtins.attrValues agentTexts);
-            contextHasCavemem = lib.hasInfix "Ambient capture (cavemem)" hm.programs.opencode.context;
-            contextHasStockAgentMemory = lib.hasInfix "stock AgentMemory" hm.programs.opencode.context;
-            wrapperHasAgentMemoryPreflight = lib.hasInfix "AgentMemory daemon preflight failed" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
-            wrapperHasCavememPreflight = lib.hasInfix "cavemem MCP server not reachable" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
-            wrapperHasObsidianImporter = lib.hasInfix "agentmemory-import-obsidian" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
-          };
-          consumers = {
-            sessionCompactionAugmentation = hm.programs.session-compaction.augmentationEnabled;
-          };
+           opencode = {
+             agents = builtins.attrNames hm.programs.opencode.agents;
+             contextHasStockAgentMemory = lib.hasInfix "stock AgentMemory" hm.programs.opencode.context;
+             wrapperHasAgentMemoryPreflight = lib.hasInfix "AgentMemory daemon preflight failed" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
+             wrapperHasObsidianImporter = lib.hasInfix "agentmemory-import-obsidian" (builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands);
+           };
           secretUri = builtins.getAttr "agentmemory-bearer" hm.home.mcp.keychainSecrets;
           capturePlugins = builtins.filter (name:
-            builtins.match "opencode/plugins/(cavemem\\.js|agentmemory-.*)" name != null
+             builtins.match "opencode/plugins/agentmemory-.*" name != null
           ) (builtins.attrNames hm.xdg.configFile);
         };
       summarize = host:
@@ -133,8 +121,6 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
   const shopify = rendered.shopify;
 
   for (const [host, config] of Object.entries(rendered)) {
-    assert.equal(config.backend, 'agentmemory', `${host} selects AgentMemory for OpenCode`);
-    assert.equal(config.cavememEnabled, false, `${host} does not enable normal cavemem runtime`);
     assert.equal(config.agentmemory.enable, true, `${host} enables AgentMemory`);
     assert.equal(config.agentmemory.dataDir, config.expectedDataDir);
     assert.equal(config.agentmemory.runtimeDir, config.expectedRuntimeDir);
@@ -146,13 +132,17 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.bearerReference, 'agentmemory-bearer');
     assert.match(config.agentmemory.launcherText, /Library\/Keychains\/login\.keychain-db/);
     assert.equal(config.agentmemory.hasObsidianImporter, true, `${host} exposes the managed Obsidian importer`);
+    assert.equal(config.mcp.packageNames.includes('agentmemory-import-cavemem'), false, `${host} omits the retired importer`);
     assert.equal(config.opencode.wrapperHasObsidianImporter, false, `${host} does not invoke the importer at startup`);
+    assert.equal(config.opencode.wrapperHasAgentMemoryPreflight, true, `${host} checks the AgentMemory daemon`);
+    assert.equal(config.opencode.contextHasStockAgentMemory, true, `${host} renders AgentMemory instructions`);
     assert.equal(config.mcp.serverNames.includes('obsidian'), false, `${host} omits the Obsidian MCP server`);
     assert.equal(config.mcp.packageNames.some((name) => name.includes('mcp-obsidian')), false, `${host} omits the Obsidian MCP package`);
     assert.deepEqual(config.mcp.obsidianPackageNames, [], `${host} omits Obsidian MCP packages`);
     assert.equal(config.mcp.obsidianVaultPathConfigured, false, `${host} omits the Obsidian vault-path option`);
     assert.deepEqual(config.mcp.retiredPipelinePackages, [], `${host} omits retired memory pipeline commands`);
     assert.ok(config.mcp.serverNames.includes('agentmemory'), `${host} retains AgentMemory MCP`);
+    assert.equal(config.mcp.serverNames.includes('cavemem'), false, `${host} omits the retired server`);
     assert.ok(config.mcp.serverNames.includes('github'), `${host} retains GitHub MCP`);
     assert.ok(config.mcp.serverNames.includes('time'), `${host} retains time MCP`);
     assert.ok(config.mcp.serverNames.includes('git-mcp'), `${host} retains git-mcp`);
@@ -187,8 +177,6 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
   assert.match(shopify.agentmemory.launcherText, /EMBEDDING_PROVIDER="openai"/);
   assert.doesNotMatch(shopify.agentmemory.launcherText, /AGENTMEMORY_AUTO_COMPRESS/);
   assert.match(shopify.agentmemory.launcherText, /GRAPH_EXTRACTION_ENABLED="true"/);
-  assert.deepEqual(personal.backend, shopify.backend);
-  assert.deepEqual(personal.cavememEnabled, shopify.cavememEnabled);
   const { launcherText: _personalLauncher, ...personalAgentMemory } = personal.agentmemory;
   const { launcherText: _shopifyLauncher, ...shopifyAgentMemory } = shopify.agentmemory;
   assert.deepEqual(personalAgentMemory, shopifyAgentMemory);

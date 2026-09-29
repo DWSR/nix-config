@@ -61,25 +61,11 @@
 let
   cfg = config.programs.opencode-nono;
   agentmemory = config.programs.agentmemory;
-  memoryBackend = config.home.opencode.memoryBackend;
-  isAgentMemory = memoryBackend == "agentmemory";
-  isCavemem = memoryBackend == "cavemem";
 
   # The runtime paths granted under `filesystem.allow` (managed + audit) and
   # `filesystem.read` (review). The OpenCode paths and `$TMPDIR` are the
-  # empirically-derived startup grant set (Task 2.2). `$HOME/.local/share/
-  # cavemem` is cavemem's capture database directory: the OpenCode cavemem
-  # plugin (home-manager/common/opencode-plugins/cavemem.js) spawns
-  # `cavemem hook run <event>` INSIDE this sandbox, and that child writes
-  # the SQLite DB at `home.cavemem.dataDir` (default
-  # `$HOME/.local/share/cavemem`). Without this grant the write is
-  # Seatbelt-denied and the plugin swallows the error, silently dropping all
-  # ambient capture. The `$HOME`-relative literal tracks the cavemem dataDir
-  # default; update it if `home.cavemem.dataDir` is overridden. The
-  # CAVEMEM_DATA_DIR env that points the hook at this dir is exported by
-  # cavemem.nix's wrapperCommands and admitted via `launcherAllowVars` below.
-  # Rendered as `$HOME`/`$TMPDIR` literals (no absolute home-directory
-  # hardcoding); nono expands them at runtime.
+  # empirically-derived startup grant set (Task 2.2). Rendered as
+  # `$HOME`/`$TMPDIR` literals; nono expands them at runtime.
   opencodeDataPaths = [
     "$HOME/.config/opencode"
     "$HOME/.cache/opencode"
@@ -89,8 +75,7 @@ let
     "$HOME/.local/share/opentui"
     "$HOME/.local/logs"
     "$TMPDIR"
-  ]
-  ++ lib.optional isCavemem "$HOME/.local/share/cavemem";
+  ];
 
   # The confirmed groups (Task 2.1) that all exist on nono 0.61.1.
   # `git_config` is intentionally excluded: agents run git through the
@@ -140,12 +125,7 @@ let
     "XDG_DATA_HOME"
     "XDG_STATE_HOME"
   ]
-  ++ lib.optionals isCavemem [
-    # The cavemem capture plugin exports this host-side path so its hook child
-    # and mcpproxy upstream use the same SQLite database.
-    "CAVEMEM_DATA_DIR"
-  ]
-  ++ lib.optionals (isAgentMemory && agentmemory.enable) [
+  ++ lib.optionals agentmemory.enable [
     "AGENTMEMORY_SECRET"
     "AGENTMEMORY_URL"
   ];
@@ -652,9 +632,7 @@ in
         workdir.access = lib.mkDefault "readwrite";
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault (
-          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
-        );
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -675,9 +653,7 @@ in
         filesystem.allow = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
         network.block = lib.mkDefault false;
-        network.openPort = lib.mkDefault (
-          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
-        );
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
 
@@ -694,9 +670,7 @@ in
         workdir.access = lib.mkDefault "read";
         filesystem.read = lib.mkDefault opencodeDataPaths;
         filesystem.deny = lib.mkDefault gitConfigDenyPaths;
-        network.openPort = lib.mkDefault (
-          [ 8080 ] ++ lib.optional (isAgentMemory && agentmemory.enable) agentmemory.restPort
-        );
+        network.openPort = lib.mkDefault ([ 8080 ] ++ lib.optional agentmemory.enable agentmemory.restPort);
         environment.allowVars = lib.mkDefault launcherAllowVars;
       };
     };

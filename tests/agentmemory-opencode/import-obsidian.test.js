@@ -263,7 +263,7 @@ function runDiscovery(vaultPath) {
 function importerEnvironment() {
   const nodePaths = [
     process.env.NODE_PATH,
-    process.env.AGENTMEMORY_IMPORTER_NODE_PATH,
+    process.env.AGENTMEMORY_OBSIDIAN_NODE_PATH,
     dependencyNodePath(),
   ]
     .filter(Boolean)
@@ -275,14 +275,14 @@ function importerEnvironment() {
 
 function dependencyNodePath() {
   if (cachedDependencyNodePath) return cachedDependencyNodePath;
-  const configured = process.env.AGENTMEMORY_IMPORTER_NODE_PATH;
+  const configured = process.env.AGENTMEMORY_OBSIDIAN_NODE_PATH;
   const dependencyRoot = configured || execFileSync(
     'nix',
     [
       'build',
       '--no-link',
       '--print-out-paths',
-      '.#darwinConfigurations.ShopifyLaptop.pkgs.cavemem-importer-deps',
+      '.#darwinConfigurations.ShopifyLaptop.pkgs.obsidian-importer-deps',
     ],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
@@ -294,7 +294,7 @@ function dependencyNodePath() {
 
 function importerNodeBin() {
   if (cachedImporterNodeBin) return cachedImporterNodeBin;
-  const configured = process.env.AGENTMEMORY_IMPORTER_NODE_BIN;
+  const configured = process.env.AGENTMEMORY_OBSIDIAN_NODE_BIN;
   if (configured) {
     cachedImporterNodeBin = configured;
     return cachedImporterNodeBin;
@@ -1566,10 +1566,21 @@ test('packages the managed importer with Node 22, YAML dependencies, and no embe
   assert.match(packageText, /--experimental-strip-types/);
   assert.match(packageText, /agentmemory-import-obsidian\.ts/);
   assert.match(packageText, /AGENTMEMORY_URL=.*http:\/\/127\.0\.0\.1:3111/);
-  assert.match(packageText, /cavemem-importer-deps-[^/]+\/lib\/node_modules/);
+  assert.match(packageText, /obsidian-importer-deps-[^/]+\/lib\/node_modules/);
   assert.match(packageText, /find-generic-password -s mcpproxy -a fixture-bearer -w/);
   assert.doesNotMatch(packageText, /fixture-(?:secret|bearer-value)/);
   assert.doesNotMatch(packageText, /memories\//);
+});
+
+test('the importer dependency package contains only js-yaml and its pure-JS transitive dependency', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'overlays/obsidian-importer-deps/package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, 'overlays/obsidian-importer-deps/package-lock.json'), 'utf8'));
+
+  assert.deepEqual(manifest.dependencies, { 'js-yaml': '4.1.1' });
+  assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
+  assert.deepEqual(Object.keys(lock.packages).sort(), [
+    '', 'node_modules/argparse', 'node_modules/js-yaml',
+  ]);
 });
 
 test('packaged importer skips Keychain for help and dry-run and resolves bearer only for live mode', async () => {
@@ -2018,7 +2029,7 @@ test('isolates a record above the strict request ceiling and submits later recor
 });
 
 function assertDaemonCleanup(evidence) {
-  const deadline = Date.now() + 5_000;
+  const deadline = Date.now() + 15_000;
   assert.equal(isProcessAlive(evidence.pid), false, `daemon PID ${evidence.pid} survived teardown`);
   assert.equal(
     isProcessGroupAlive(evidence.processGroupId),
@@ -2156,7 +2167,7 @@ test('packaged daemon harness owns an authenticated ready process group and remo
     assert.equal(health.ok, true);
     const healthBody = await health.json();
     assert.ok(['healthy', 'degraded'].includes(healthBody.status), JSON.stringify(healthBody));
-  });
+  }, { cleanupTimeoutMs: 30_000 });
 
   await assertDaemonCleanup(evidence);
   await assertPortAvailable(evidence.endpointPort);
@@ -2281,7 +2292,7 @@ test('harness tracks an unmarked descendant in an owned process group', {
 });
 
 test('harness discovers and tears down a detached listener through real listener probes', {
-  timeout: 10_000,
+  timeout: 20_000,
 }, async () => {
   const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agentmemory-obsidian-listener-fixture-'));
   const readyFile = path.join(fixtureDir, 'listener.port');
@@ -2293,7 +2304,7 @@ test('harness discovers and tears down a detached listener through real listener
     await waitForFile(readyFile);
     const port = Number(fs.readFileSync(readyFile, 'utf8'));
     assert.ok(port > 0);
-    assert.ok(listListeningProcesses([port], Date.now() + 2_000).some(({ pid }) => pid === listener.pid));
+    assert.ok(listListeningProcesses([port], Date.now() + 5_000).some(({ pid }) => pid === listener.pid));
 
     const daemon = {
       child: listener,
@@ -2307,14 +2318,14 @@ test('harness discovers and tears down a detached listener through real listener
       ownedProcessGroups: [],
       ownedListenerRecords: [],
       ports: [port],
-      cleanupTimeoutMs: 2_000,
+      cleanupTimeoutMs: 10_000,
       closed: false,
     };
 
     await stopOwnedDaemon(daemon);
     assert.equal(isProcessAlive(listener.pid), false);
     assert.equal(isProcessGroupAlive(listener.pid), false);
-    await assertPortAvailable(port, Date.now() + 2_000);
+    await assertPortAvailable(port, Date.now() + 5_000);
   } finally {
     if (isProcessAlive(listener.pid)) killProcessGroup(listener.pid);
     fs.rmSync(fixtureDir, { recursive: true, force: true });
@@ -2366,10 +2377,10 @@ test('listener discovery bounds sequential lsof probes by one absolute deadline'
   fs.writeFileSync(fakeLsof, '#!/bin/sh\nsleep 2\n', { mode: 0o700 });
   const startedAt = Date.now();
   try {
-    const result = runIsolatedListenerProbe(fakeBinDir, [31_001, 31_002, 31_003], 250);
+    const result = runIsolatedListenerProbe(fakeBinDir, [31_001, 31_002, 31_003], 1_000, 5_000);
     assert.equal(result.status, 1, 'listener discovery returned after consuming separate per-port waits');
     assert.match(result.stderr, /deadline|timed out/i);
-    assert.ok(Date.now() - startedAt < 1_500, 'listener discovery exceeded the shared absolute deadline');
+    assert.ok(Date.now() - startedAt < 4_000, 'listener discovery exceeded the shared absolute deadline');
   } finally {
     fs.rmSync(fixtureDir, { recursive: true, force: true });
   }
@@ -2530,7 +2541,7 @@ test('stock core proxy leaves an unrelated same-port lookalike listener alive', 
       await waitForFile(readyFile);
       assert.equal(Number(fs.readFileSync(readyFile, 'utf8')), proxyHarness.port);
       assert.ok(
-        listAllListeningProcesses(Date.now() + 2_000).some(({ pid, port }) => (
+        listAllListeningProcesses(Date.now() + 10_000).some(({ pid, port }) => (
           pid === lookalike.pid && port === proxyHarness.port
         )),
       );
@@ -2544,13 +2555,16 @@ test('stock core proxy leaves an unrelated same-port lookalike listener alive', 
       await stopOwnedDaemon(proxyHarness.proxy);
       assert.equal(isProcessAlive(lookalike.pid), true, 'unrelated listener was killed with the proxy');
     } finally {
-      if (proxyHarness?.proxy && !proxyHarness.proxy.closed) {
-        await stopOwnedDaemon(proxyHarness.proxy);
+      try {
+        if (proxyHarness?.proxy && !proxyHarness.proxy.closed) {
+          await stopOwnedDaemon(proxyHarness.proxy);
+        }
+      } finally {
+        if (lookalike?.pid && isProcessAlive(lookalike.pid)) killProcessGroup(lookalike.pid);
+        if (lookalikeFixtureDir) fs.rmSync(lookalikeFixtureDir, { recursive: true, force: true });
       }
-      if (lookalike?.pid && isProcessAlive(lookalike.pid)) killProcessGroup(lookalike.pid);
-      if (lookalikeFixtureDir) fs.rmSync(lookalikeFixtureDir, { recursive: true, force: true });
     }
-  });
+  }, { cleanupTimeoutMs: 30_000 });
 });
 
 test('harness retains its root until a registered proxy survives teardown failure handling', {

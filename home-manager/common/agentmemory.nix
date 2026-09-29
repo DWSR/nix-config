@@ -9,12 +9,6 @@ let
   inherit (lib) mkOption types;
 
   cfg = config.programs.agentmemory;
-  memoryBackend =
-    if config.home ? opencode && config.home.opencode ? memoryBackend then
-      config.home.opencode.memoryBackend
-    else
-      "cavemem";
-  isAgentMemory = memoryBackend == "agentmemory";
   iiiVersion = cfg.package.iiiVersion or "0.11.5";
   iiiRevision = cfg.package.iiiRevision or "iii/v${iiiVersion}";
   keychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
@@ -36,7 +30,7 @@ let
       ;
     inherit keychainPath;
     inherit iiiRevision;
-    opencodeBackend = memoryBackend;
+    opencodeBackend = "agentmemory";
     sourceRevision = cfg.package.sourceRevision or "unknown";
   };
 
@@ -45,12 +39,6 @@ let
   sessionReaperPackage = pkgs.callPackage ../../scripts/agentmemory-reap-sessions.nix {
     inherit (cfg) bearerReference restPort;
     inherit keychainPath;
-  };
-
-  importPackage = pkgs.callPackage ../../scripts/agentmemory-import-cavemem.nix {
-    inherit (cfg) bearerReference;
-    inherit keychainPath;
-    restEndpoint = "http://127.0.0.1:${toString cfg.restPort}";
   };
 
   obsidianImportPackage = pkgs.callPackage ../../scripts/agentmemory-import-obsidian.nix {
@@ -219,7 +207,6 @@ in
           cfg.statusPackage
           restartPackage
           sessionReaperPackage
-          importPackage
           obsidianImportPackage
           (pkgs.callPackage ../../scripts/opencode-cache-validate.nix { })
         ];
@@ -244,7 +231,7 @@ in
         };
       };
 
-      xdg.configFile = lib.mkIf isAgentMemory {
+      xdg.configFile = {
         "opencode/plugins/agentmemory-capture.ts".source =
           "${cfg.package}/lib/node_modules/@agentmemory/agentmemory/plugin/opencode/agentmemory-capture.ts";
       };

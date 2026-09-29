@@ -1,0 +1,10 @@
+{
+  "name": "obsidian-importer-deps",
+  "version": "0.0.1",
+  "description": "Vendored js-yaml for the Obsidian-to-AgentMemory importer (Nix-managed; not published).",
+  "private": true,
+  "license": "MIT",
+  "dependencies": {
+    "js-yaml": "4.1.1"
+  }
+}

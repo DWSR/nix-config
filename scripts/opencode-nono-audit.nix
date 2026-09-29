@@ -30,12 +30,12 @@
 */
 {
   writeShellApplication,
-  nodejs,
+  nodejs_22,
   opencode-cost-diagnosis-deps,
 }:
 writeShellApplication {
   name = "opencode-nono-audit";
-  runtimeInputs = [ nodejs ];
+  runtimeInputs = [ nodejs_22 ];
   text = ''
     # Resolve `require('better-sqlite3')` against the vendored deps
     # tree. The deps derivation produces a flat $out/lib/node_modules/
@@ -47,6 +47,6 @@ writeShellApplication {
     # reuse of opencode-cost-diagnosis).
     export OPENCODE_NONO_COST_REPORT_LIB=${./opencode-cost-report.js}
 
-    exec ${nodejs}/bin/node ${./opencode-nono-audit.js} "$@"
+    exec ${nodejs_22}/bin/node ${./opencode-nono-audit.js} "$@"
   '';
 }

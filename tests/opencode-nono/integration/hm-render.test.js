@@ -179,7 +179,12 @@ function peerAssertionExpr(host) {
 
 function getRender() {
   if (!renderCache) {
-    renderCache = nixEvalJson(liveRenderExpr());
+    if (process.env.OPENCODE_NONO_HOSTS) {
+      const rows = JSON.parse(fs.readFileSync(process.env.OPENCODE_NONO_HOSTS, 'utf8'));
+      renderCache = { personal: rows.personal.nonoRender, shopify: rows.shopify.nonoRender };
+    } else {
+      renderCache = nixEvalJson(liveRenderExpr());
+    }
   }
   return renderCache;
 }

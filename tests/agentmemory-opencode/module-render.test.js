@@ -24,10 +24,6 @@ const commonDefaultSource = fs.readFileSync(
   path.join(repoRoot, 'home-manager/common/default.nix'),
   'utf8',
 );
-const cavememModuleSource = fs.readFileSync(
-  path.join(repoRoot, 'home-manager/common/cavemem.nix'),
-  'utf8',
-);
 const flakeSource = fs.readFileSync(path.join(repoRoot, 'flake.nix'), 'utf8');
 
 const retiredPipelineNames = Object.freeze({
@@ -69,7 +65,6 @@ function renderModule({ enable }) {
           enginePort = 61134;
            bearerReference = "agentmemory-bearer";
          };
-         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
       }
     ];
   }).config;
@@ -150,7 +145,6 @@ function renderStockMcpModule({ enable, addInventoryServer = false }) {
            enable = ${nixBoolean};
            restPort = 35111;
          };
-         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
         programs.opencode.settings.mcp.mcpproxy = {
           type = "remote";
           url = "http://127.0.0.1:8080/mcp";
@@ -187,12 +181,7 @@ in builtins.toJSON {
   );
 }
 
-function renderConsumerCutover({ enable, augmentationEnabled }) {
-  const nixBoolean = enable ? 'true' : 'false';
-  const augmentationOverride =
-    augmentationEnabled === undefined
-      ? ''
-      : `augmentationEnabled = ${augmentationEnabled ? 'true' : 'false'};`;
+function renderNativeCompaction() {
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
   pkgs = import flake.inputs.nixpkgs {
@@ -212,14 +201,12 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
         home.username = "brandonmcnama";
         home.homeDirectory = "/Users/brandonmcnama";
         home.stateVersion = "26.05";
-         programs.agentmemory.enable = ${nixBoolean};
-         home.opencode.memoryBackend = "${enable ? 'agentmemory' : 'cavemem'}";
+          programs.agentmemory.enable = true;
         programs.session-compaction = {
           enable = true;
           thresholdTokens = 123456;
           thresholdWallTimeHours = 7;
           cooldownMinutes = 19;
-          ${augmentationOverride}
         };
       }
     ];
@@ -227,7 +214,7 @@ function renderConsumerCutover({ enable, augmentationEnabled }) {
    in builtins.toJSON {
      wrapper = builtins.concatStringsSep "\\n" hm.home.opencode.wrapperCommands;
      command = toString hm.programs.opencode.commands.compact;
-     augmentationEnabled = hm.programs.session-compaction.augmentationEnabled;
+      pluginInstalled = builtins.hasAttr "opencode/plugins/session-compaction.ts" hm.xdg.configFile;
      agents = builtins.attrNames hm.programs.opencode.agents;
      context = hm.programs.opencode.context;
    })`;
@@ -248,6 +235,7 @@ test('obsolete vault pipelines are absent from active configuration', () => {
     path.join(repoRoot, 'tests', retiredPipelineNames.sync, 'contract.test.js'),
     path.join(repoRoot, 'scripts', `${retiredPipelineNames.vaultImporter}.js`),
     path.join(repoRoot, 'scripts', `${retiredPipelineNames.vaultImporter}.nix`),
+    path.join(repoRoot, 'home-manager/common/cavemem.nix'),
     path.join(repoRoot, 'home-manager/common/agents', `${retiredPipelineNames.curator}.md`),
     path.join(repoRoot, 'home-manager/common/agents', `${retiredPipelineNames.synthesizer}.md`),
   ];
@@ -258,7 +246,6 @@ test('obsolete vault pipelines are absent from active configuration', () => {
 
   for (const [name, source] of Object.entries({
     'common default module': commonDefaultSource,
-    'Cavemem module': cavememModuleSource,
     flake: flakeSource,
   })) {
     for (const term of [
@@ -280,8 +267,8 @@ test('enabled AgentMemory rendering is deterministic and declarative', () => {
   assert.ok(first.activation.includes('agentmemoryLogDir'));
   assert.equal(first.activation.includes('agentmemory-import-obsidian'), false);
   assert.ok(first.packages.some((name) => name.startsWith('agentmemory-')));
-  assert.ok(first.packages.includes('agentmemory-import-cavemem'));
   assert.ok(first.packages.includes('agentmemory-import-obsidian'));
+  assert.equal(first.packages.includes('agentmemory-import-cavemem'), false);
   assert.equal(first.packages.includes('memory-sync'), false);
   assert.equal(first.packages.includes('cavemem-import-vault'), false);
   assert.match(first.agentmemoryCli.source, /AGENTMEMORY_SECURITY_BIN/);
@@ -423,69 +410,20 @@ test('disabled AgentMemory contributes no stock MCP registration', () => {
   assert.equal(rendered.opencodeMcp.agentmemory, undefined);
 });
 
-test('ConsumerCutover selects compaction source without changing native compaction wiring', () => {
-  const agentMemory = renderConsumerCutover({ enable: true });
-  const cavemem = renderConsumerCutover({ enable: false });
+test('native compaction and the AgentMemory prompt render together', () => {
+  const rendered = renderNativeCompaction();
 
-  for (const rendered of [agentMemory, cavemem]) {
-    assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_TOKENS="123456"/);
-    assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_WALL_HOURS="7"/);
-    assert.match(rendered.wrapper, /SESSION_COMPACTION_COOLDOWN_MINUTES="19"/);
-    assert.match(rendered.command, /compact\.md$/);
-  }
-
-  assert.match(
-    agentMemory.wrapper,
-    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
-    'AgentMemory selection must use native compaction without cavemem augmentation',
+  assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_TOKENS="123456"/);
+  assert.match(rendered.wrapper, /SESSION_COMPACTION_THRESHOLD_WALL_HOURS="7"/);
+  assert.match(rendered.wrapper, /SESSION_COMPACTION_COOLDOWN_MINUTES="19"/);
+  assert.doesNotMatch(rendered.wrapper, /SESSION_COMPACTION_(?:AUGMENTATION|CAVEMEM)/);
+  assert.equal(rendered.pluginInstalled, true);
+  assert.match(rendered.command, /compact\.md$/);
+  assert.equal(rendered.agents.includes(retiredPipelineNames.synthesizer), false);
+  assert.equal(rendered.agents.includes(retiredPipelineNames.curator), false);
+  assert.match(rendered.context, /stock AgentMemory/);
+  assert.doesNotMatch(
+    rendered.context,
+    /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i,
   );
-  assert.match(
-    cavemem.wrapper,
-    /SESSION_COMPACTION_AUGMENTATION_ENABLED="1"/,
-    'cavemem selection must retain the prior augmentation source',
-  );
-  assert.equal(
-    agentMemory.command,
-    cavemem.command,
-    'backend selection must not change /compact command wiring',
-  );
-});
-
-test('ConsumerCutover forces AgentMemory augmentation off without changing cavemem overrides', () => {
-  const agentMemoryOverride = renderConsumerCutover({
-    enable: true,
-    augmentationEnabled: true,
-  });
-  const cavememOverride = renderConsumerCutover({
-    enable: false,
-    augmentationEnabled: false,
-  });
-
-  assert.match(
-    agentMemoryOverride.wrapper,
-    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
-  );
-  assert.equal(agentMemoryOverride.augmentationEnabled, false);
-  assert.match(
-    cavememOverride.wrapper,
-    /SESSION_COMPACTION_AUGMENTATION_ENABLED="0"/,
-  );
-  assert.equal(cavememOverride.augmentationEnabled, false);
-});
-
-test('ConsumerCutover removes vault-only agents in every backend', () => {
-  const agentMemory = renderConsumerCutover({ enable: true });
-  const cavemem = renderConsumerCutover({ enable: false });
-
-  for (const rendered of [agentMemory, cavemem]) {
-    assert.equal(rendered.agents.includes(retiredPipelineNames.synthesizer), false);
-    assert.equal(rendered.agents.includes(retiredPipelineNames.curator), false);
-  }
-
-  for (const rendered of [agentMemory, cavemem]) {
-    assert.doesNotMatch(
-      rendered.context,
-      /\bobsidian\b|\bvault\b|\bMOCs?\b|memories\/|write-note|read-note|list-notes|search-by-tags|search-vault/i,
-    );
-  }
 });

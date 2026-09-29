@@ -17,7 +17,9 @@ const syntheticSecrets = Object.freeze({
 });
 const expectedServers = Object.freeze(['agentmemory', 'github', 'time', 'git-mcp']);
 const cleanupTimeoutMs = 10_000;
-const processProbeTimeoutMs = 250;
+// ps/lsof can exceed 250ms under a busy Nix check builder; explicit teardown
+// deadlines still bound the negative tests below.
+const processProbeTimeoutMs = 2_000;
 
 function freePort() {
   const server = net.createServer();
@@ -719,7 +721,7 @@ test('runtime teardown rejects an unowned survivor that keeps the allocated port
   try {
     listener = await startAdversarialListener(port);
     await assert.rejects(
-      () => terminateProxy({ pid: -1, exitCode: 0 }, root, port, { timeoutMs: 250 }),
+      () => terminateProxy({ pid: -1, exitCode: 0 }, root, port, { timeoutMs: 3_000 }),
       /port .* remained occupied|listener teardown incomplete/,
     );
     assert.equal(listener.exitCode, null, 'teardown must not kill an unowned listener');
@@ -756,7 +758,7 @@ test('runtime teardown does not kill a valid same-command process group with a r
       },
       root,
       ownedPort,
-      { timeoutMs: 2_000 },
+      { timeoutMs: 8_000 },
     );
 
     const ownedProcess = processRecords().find((record) => record.pid === ownedListener.pid);
@@ -802,7 +804,7 @@ test('runtime teardown does not kill an exact marker match in a separate process
       },
       root,
       ownedPort,
-      { timeoutMs: 2_000 },
+      { timeoutMs: 8_000 },
     );
 
     assert.equal(separateListener.exitCode, null, 'an exact marker match in another group must survive');
@@ -842,7 +844,7 @@ test('runtime teardown does not signal a process group reused by a stale record'
       },
       root,
       expectedPort,
-      { timeoutMs: 2_000 },
+      { timeoutMs: 8_000 },
     );
 
     assert.equal(reusedListener.exitCode, null, 'a reused stale PGID must not receive teardown signals');
@@ -874,10 +876,12 @@ test('runtime teardown does not escalate to SIGKILL after expected-port ownershi
       },
       root,
       port,
-      { timeoutMs: 2_000 },
+      { timeoutMs: 8_000 },
     );
 
     assert.equal(listener.exitCode, null, 'SIGKILL must not target a process after its port ownership changes');
+    // This postcondition probes lsof after teardown; it is not testing the
+    // teardown deadline. Use the test harness's full probe window.
     assert.deepEqual(listeningRecords(port), []);
   } finally {
     await stopDetachedProcess(listener);

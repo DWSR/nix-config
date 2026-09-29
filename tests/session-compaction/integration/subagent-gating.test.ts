@@ -45,16 +45,6 @@
  * subprocess exit code is 0; on failure, the runner's stderr is
  * surfaced verbatim so a regression is debuggable.
  *
- * Tempdir runner pattern (in-boundary)
- * ------------------------------------
- * The runner is a single `.mjs` file written to a tempdir at
- * `before()` and removed at `after()`. This mirrors the pattern
- * `cavemem-context-source.test.ts` uses to install fake `cavemem`
- * shell scripts on PATH: a runtime artifact written via
- * `writeFileSync` is treated as fixture material, NOT as a
- * separate source file. The task's `_Boundary:_` therefore
- * remains a single test file.
- *
  * The runner switches on a `SCENARIO` env var (`"a"|"b"|"c"|"d"`)
  * and an `IMPL_PATH` env var (absolute path to the impl module).
  * It builds the mock client inline, drives the appropriate

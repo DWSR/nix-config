@@ -1,8 +1,7 @@
 /*
   home-manager/common/session-compaction.nix — HM install pipeline
   for the opencode session-compaction plugin (Task 1.3 of the
-  `session-compaction` spec; Requirements 1.3, 1.5, 1.6, 2.2, 2.4,
-  2.6, 2.8, 3.6, 4.1, 5.1, 5.4, 7.1, 7.6).
+  `session-compaction` spec).
 
   Mirrors `home-manager/common/opencode-cost-diagnosis.nix` exactly:
   options block at top, `config = lib.mkIf cfg.enable { … }` below,
@@ -100,13 +99,6 @@ in
       description = "Minimum minutes between successive automatic compactions on the same session.";
     };
 
-    augmentationEnabled = lib.mkOption {
-      type = lib.types.bool;
-      default = config.home.opencode.memoryBackend == "cavemem";
-      apply = enabled: config.home.opencode.memoryBackend == "cavemem" && enabled;
-      description = "Whether to augment opencode's continuation prompt with cavemem context. AgentMemory forces this off even when explicitly enabled. Cavemem rollback defaults this on and honors explicit values. When false, compaction still fires on threshold but no cavemem query is made (R3.6).";
-    };
-
     watchSubagents = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -131,11 +123,6 @@ in
       '';
     };
 
-    cavememContextTimeoutMillis = lib.mkOption {
-      type = lib.types.ints.positive;
-      default = 2000;
-      description = "Maximum time the cavemem context query is allowed to take during pre-compaction augmentation. On timeout, augmentation is skipped (R3.3).";
-    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -180,9 +167,7 @@ in
           export SESSION_COMPACTION_THRESHOLD_TOKENS="${toString (cfg.thresholdTokens or 0)}"
           export SESSION_COMPACTION_THRESHOLD_WALL_HOURS="${toString (cfg.thresholdWallTimeHours or 0)}"
           export SESSION_COMPACTION_COOLDOWN_MINUTES="${toString cfg.cooldownMinutes}"
-          export SESSION_COMPACTION_AUGMENTATION_ENABLED="${if cfg.augmentationEnabled then "1" else "0"}"
           export SESSION_COMPACTION_WATCH_SUBAGENTS="${if cfg.watchSubagents then "1" else "0"}"
-          export SESSION_COMPACTION_CAVEMEM_TIMEOUT_MS="${toString cfg.cavememContextTimeoutMillis}"
         ''
         + (
           if cfg.subagentAllowlist == null then

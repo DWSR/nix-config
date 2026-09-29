@@ -138,7 +138,7 @@ in
     doInstallCheck = false;
   });
 
-  nix.gc.interval = {
+  nix.gc.interval = lib.mkForce {
     Hour = 3;
     Minute = 15;
   };

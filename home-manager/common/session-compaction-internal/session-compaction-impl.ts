@@ -1,9 +1,8 @@
 // Session-compaction internal implementation module (task 3.7).
 //
-// Every seam declared by the design — SessionTokenTracker,
-// ThresholdEvaluator, CompactionInvoker, CavememContextSource,
-// SessionCompactionLogger, PluginSelfCheck, plus the config loader,
-// ignore-set helpers, and all six hook handler bodies — lives in
+// The SessionTokenTracker, ThresholdEvaluator, CompactionInvoker,
+// SessionCompactionLogger, PluginSelfCheck, config loader,
+// ignore-set helpers, and hook handler bodies live in
 // this file. The plugin entry at
 // `home-manager/common/opencode-plugins/session-compaction.ts`
 // imports `createHooks` and `PluginClient` from here and is
@@ -28,8 +27,6 @@
 // "../session-compaction-internal/session-compaction-impl.ts"`
 // resolves through the home-manager-files Nix store layout because
 // both files share the same `home-manager-files` derivation.
-
-import { spawn } from "node:child_process"
 
 // Minimal duck-typed shape for opencode's Message payload, mirroring
 // the subset this seam reads from `types.gen.ts`. The
@@ -228,10 +225,8 @@ export interface ThresholdConfig {
   readonly thresholdTokens: number | null
   readonly thresholdWallTimeHours: number | null
   readonly cooldownMinutes: number
-  readonly augmentationEnabled: boolean
   readonly watchSubagents: boolean
   readonly subagentAllowlist: SubagentAllowlist
-  readonly cavememContextTimeoutMillis: number
 }
 
 // SubagentAllowlist trichotomy preserved across the
@@ -694,198 +689,6 @@ export function getLastErrorAt(sessionID: string): number | null {
 }
 
 // ============================================================
-// CavememContextSource (task 2.5)
-// ============================================================
-//
-// Read-only spawn of `cavemem search` to fetch context for the
-// augmentation path (task 3.4). The only cavemem subcommand this
-// plugin ever invokes is `search` (R3.4, R8.4); the arg list is
-// hardcoded except for the sessionID and limit, so no operator-
-// controlled string ever determines which cavemem subcommand
-// runs. Every failure path (spawn error, non-zero exit, timeout)
-// returns an empty result; the function never throws (R3.3 —
-// compaction must proceed even if cavemem is unreachable).
-//
-// Stderr is discarded by setting `stdio[2] = "ignore"` so cavemem's
-// own error messages cannot leak into the caller's `app.log`
-// stream. Stdout is capped at 4096 bytes; once the cap is
-// reached, subsequent chunks are dropped and a sentinel marker
-// `…[truncated]` is appended to the returned text.
-
-// CavememContextResult mirrors design §Service Interface byte-
-// for-byte. Empty `text` + empty `source` is the canonical
-// sentinel for "no context retrieved"; `elapsedMillis` is always
-// populated so callers can attribute timing without branching.
-export interface CavememContextResult {
-  readonly text: string
-  readonly source: string
-  readonly elapsedMillis: number
-}
-
-const CAVEMEM_CLI = "cavemem"
-const CAVEMEM_DEFAULT_TIMEOUT_MS = 2000
-const CAVEMEM_STDOUT_CAP_BYTES = 4096
-const CAVEMEM_TRUNCATION_MARKER = "…[truncated]"
-const CAVEMEM_DEFAULT_LIMIT = 10
-
-/**
- * Resolve the per-call timeout from the HM-module-exported env
- * var `SESSION_COMPACTION_CAVEMEM_TIMEOUT_MS` (task 1.3), falling
- * back to `CAVEMEM_DEFAULT_TIMEOUT_MS` (2000ms) when the var is
- * missing, empty, non-numeric, or non-positive. Tests (task 4.3)
- * override the env var directly. Returns a strictly positive
- * integer count of milliseconds.
- */
-function resolveCavememTimeoutMillis(): number {
-  const raw = process.env.SESSION_COMPACTION_CAVEMEM_TIMEOUT_MS
-  if (typeof raw !== "string" || raw.length === 0) {
-    return CAVEMEM_DEFAULT_TIMEOUT_MS
-  }
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return CAVEMEM_DEFAULT_TIMEOUT_MS
-  }
-  return parsed
-}
-
-/**
- * Spawn `cavemem search --session <sessionID> --limit <limit>`
- * and return its stdout, bounded by the configured timeout and a
- * 4096-byte stdout cap. Read-only by construction: the only
- * cavemem subcommand this plugin invokes is `search`, and the
- * arg list is hardcoded except for the caller-supplied sessionID
- * and limit (R3.4, R8.4).
- *
- * Failure semantics (R3.3 — cavemem unreachable/empty must not
- * block compaction; the function never throws):
- *
- *   - Spawn error (ENOENT, EPERM, etc.) → `{ text: "",
- *     source: "", elapsedMillis: <small, typically <100ms> }`.
- *   - Subprocess exits non-zero → `{ text: "", source: "",
- *     elapsedMillis }`.
- *   - Subprocess exceeds the timeout → SIGTERM the child;
- *     resolve `{ text: "", source: "", elapsedMillis ≈ timeout }`.
- *   - Stdout exceeds 4096 bytes → truncate at the cap and
- *     append `"…[truncated]"`.
- *   - Subprocess exits zero with empty stdout → `{ text: "",
- *     source: "cavemem search", elapsedMillis }` (a successful
- *     call returning no payload is distinguishable from a
- *     failure by the non-empty `source`).
- *
- * The Promise resolves at most once; the `settled` guard handles
- * the race between the `close` event and the timeout timer.
- */
-export async function fetchCavememContext(
-  sessionID: string,
-  limit?: number,
-): Promise<CavememContextResult> {
-  const startedAt = Date.now()
-  const timeoutMillis = resolveCavememTimeoutMillis()
-  const effectiveLimit = limit ?? CAVEMEM_DEFAULT_LIMIT
-
-  return new Promise<CavememContextResult>((resolve) => {
-    let settled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const chunks: Array<Buffer> = []
-    let collected = 0
-    let truncated = false
-
-    const empty = (): CavememContextResult => ({
-      text: "",
-      source: "",
-      elapsedMillis: Date.now() - startedAt,
-    })
-
-    const finish = (result: CavememContextResult): void => {
-      if (settled) return
-      settled = true
-      if (timer !== undefined) clearTimeout(timer)
-      resolve(result)
-    }
-
-    let child: ReturnType<typeof spawn>
-    try {
-      child = spawn(
-        CAVEMEM_CLI,
-        [
-          "search",
-          "--session",
-          sessionID,
-          "--limit",
-          String(effectiveLimit),
-        ],
-        { stdio: ["ignore", "pipe", "ignore"] },
-      )
-    } catch {
-      // Synchronous spawn failures are rare (most surface as
-      // async 'error' events) but possible (e.g. argv too large).
-      // Resolve empty so callers never observe a thrown
-      // exception — R3.3 demands compaction proceeds regardless.
-      resolve(empty())
-      return
-    }
-
-    timer = setTimeout(() => {
-      // R3.3 timeout bound: kill the subprocess and resolve
-      // empty. The killed child's subsequent 'close' event is
-      // ignored by the `settled` guard inside `finish`.
-      try {
-        child.kill("SIGTERM")
-      } catch {
-        // kill() returns false (does not throw) when the
-        // process is already gone; the catch is defensive for
-        // unexpected runtime variants.
-      }
-      finish(empty())
-    }, timeoutMillis)
-
-    child.on("error", () => {
-      // Async spawn error — most commonly ENOENT when cavemem
-      // is not on PATH. Resolve empty; never throw.
-      finish(empty())
-    })
-
-    if (child.stdout) {
-      child.stdout.on("data", (chunk: Buffer) => {
-        if (truncated) return
-        const remaining = CAVEMEM_STDOUT_CAP_BYTES - collected
-        if (remaining <= 0) {
-          truncated = true
-          return
-        }
-        if (chunk.length <= remaining) {
-          chunks.push(chunk)
-          collected += chunk.length
-        } else {
-          chunks.push(chunk.subarray(0, remaining))
-          collected += remaining
-          truncated = true
-        }
-      })
-      child.stdout.on("error", () => {
-        // Stream errors are non-fatal: the 'close' event still
-        // fires and produces the final result via `finish`.
-      })
-    }
-
-    child.on("close", (code) => {
-      if (code !== 0) {
-        finish(empty())
-        return
-      }
-      const text =
-        Buffer.concat(chunks).toString("utf8") +
-        (truncated ? CAVEMEM_TRUNCATION_MARKER : "")
-      finish({
-        text,
-        source: "cavemem search",
-        elapsedMillis: Date.now() - startedAt,
-      })
-    })
-  })
-}
-
-// ============================================================
 // SessionCompactionLogger (task 2.6)
 // ============================================================
 //
@@ -914,14 +717,13 @@ export async function fetchCavememContext(
 //     effects beyond the single `client.app.log` call. The
 //     surrounding handlers own state; loggers only emit.
 //
-// The eight methods cover every emission shape declared in design
+// The loggers cover the remaining emission shapes:
 // §Event Contract:
 //   logSelfCheck       — startup self-check (R7.2, R7.3)
 //   logSessionStart    — session.created init (R6.5)
 //   logSessionIdle     — session.idle summary (R6.5)
 //   logTrigger         — compaction triggered (R6.1)
 //   logSuppression     — automatic compaction suppressed (R6.4)
-//   logAugmentation    — cavemem context pushed (R6.2)
 //   logCompacted       — session.compacted observation (R6.1)
 //   logError           — handler-scope failure (R7.5)
 
@@ -997,11 +799,8 @@ export async function logSessionStart(
           thresholdTokens: config.thresholdTokens,
           thresholdWallTimeHours: config.thresholdWallTimeHours,
           cooldownMinutes: config.cooldownMinutes,
-          augmentationEnabled: config.augmentationEnabled,
           watchSubagents: config.watchSubagents,
           subagentAllowlist: config.subagentAllowlist,
-          cavememContextTimeoutMillis:
-            config.cavememContextTimeoutMillis,
         },
       },
     })
@@ -1103,37 +902,6 @@ export async function logSuppression(
 }
 
 /**
- * Emit "augmentation pushed" (R6.2). Called by task 3.4's
- * `experimental.session.compacting` handler after pushing
- * cavemem context onto `output.context`. The `source` field
- * names the augmenting context's origin (e.g. `"cavemem search"`)
- * so the operator can later determine what was injected.
- */
-export async function logAugmentation(
-  client: PluginClient,
-  sessionID: string,
-  source: string,
-  lengthChars: number,
-): Promise<void> {
-  try {
-    await client.app.log({
-      body: {
-        service: "session-compaction",
-        level: "info",
-        message: "augmentation pushed",
-        extra: {
-          sessionID,
-          augmentationSource: source,
-          augmentationLengthChars: lengthChars,
-        },
-      },
-    })
-  } catch {
-    // Swallow per Logger Contract.
-  }
-}
-
-/**
  * Emit "session compacted" (R6.1). Called by task 3.6's
  * `session.compacted` handler — this is the post-compaction
  * observation that records the trigger attribution. The
@@ -1226,12 +994,12 @@ export async function logWarn(
 //
 // The first event-handler wiring on the plugin's exported
 // function. Earlier seams (SessionTokenTracker, ThresholdEvaluator,
-// CompactionInvoker, CavememContextSource, SessionCompactionLogger,
+// CompactionInvoker, SessionCompactionLogger,
 // PluginSelfCheck) were declared as pure modules with no runtime
 // connection to opencode's event bus. This section closes the gap
 // for `session.created`:
 //
-//   1. `loadConfigFromEnv()` parses the seven SESSION_COMPACTION_*
+//   1. `loadConfigFromEnv()` parses the five SESSION_COMPACTION_*
 //      env vars the HM module exports (task 1.3) into a typed
 //      `ThresholdConfig`. The trichotomy parser
 //      (`parseSubagentAllowlist`) honors the same sentinel scheme
@@ -1332,7 +1100,7 @@ function parseBoolEnv(raw: string | undefined): boolean {
 }
 
 /**
- * Read the seven SESSION_COMPACTION_* env vars the HM module
+ * Read the five SESSION_COMPACTION_* env vars the HM module
  * exports (task 1.3) into a `ThresholdConfig`. Token and wall-time
  * threshold axes are normalized so `0` → `null` per R2.8 (the
  * canonical "disabled" form in the type signature; the evaluator
@@ -1359,16 +1127,12 @@ function loadConfigFromEnv(): ThresholdConfig {
       process.env.SESSION_COMPACTION_COOLDOWN_MINUTES,
       0,
     ),
-    augmentationEnabled: parseBoolEnv(
-      process.env.SESSION_COMPACTION_AUGMENTATION_ENABLED,
-    ),
     watchSubagents: parseBoolEnv(
       process.env.SESSION_COMPACTION_WATCH_SUBAGENTS,
     ),
     subagentAllowlist: parseSubagentAllowlist(
       process.env.SESSION_COMPACTION_SUBAGENT_ALLOWLIST,
     ),
-    cavememContextTimeoutMillis: resolveCavememTimeoutMillis(),
   }
 }
 
@@ -1658,8 +1422,7 @@ export function createHooks(client: PluginClient) {
     // slash command; we filter on `input.name === "compact"` and
     // ignore everything else. The handler funnels into the SAME
     // `invokeCompaction` seam (task 2.4) as the automatic-threshold
-    // path so the downstream augmentation chain (task 3.4) and
-    // session.compacted attribution (task 3.6) treat manual and
+    // path so session.compacted attribution (task 3.6) treats manual and
     // automatic compactions identically — only the
     // `CompactionAttempt.trigger` distinguishes them in the logs.
     //
@@ -1740,10 +1503,9 @@ export function createHooks(client: PluginClient) {
         return
       }
 
-      // R4.2 / R4.3: invoke compaction. The SAME seam as the
-      // automatic path (task 3.2), so the augmentation chain
-      // (task 3.4) and session.compacted attribution (task 3.6)
-      // fire identically. `trigger="manual"` and
+      // R4.2: invoke compaction. The SAME seam as the automatic
+      // path (task 3.2), so session.compacted attribution (task 3.6)
+      // fires identically. `trigger="manual"` and
       // `reason="user_initiated"` are the canonical manual-path
       // values per design §Service Interface.
       const result = await invokeCompaction(
@@ -1774,122 +1536,6 @@ export function createHooks(client: PluginClient) {
           // (R7.5).
         }
       }
-    },
-    // ============================================================
-    // experimental.session.compacting handler (task 3.4)
-    // ============================================================
-    //
-    // Pre-compaction augmentation hook. opencode fires this event
-    // immediately before generating its native session summary; the
-    // handler may push additional context onto `output.context`
-    // which opencode then folds into the inputs of its summary
-    // generation. The handler MUST NOT set `output.prompt` (R3.5 —
-    // augment, never replace) and MUST NOT throw (compaction must
-    // proceed even if augmentation fails — R3.3).
-    //
-    // Order of guards is deliberate:
-    //
-    //   1. Self-check short-circuit (R7.4). If the startup probe
-    //      classified the plugin as disabled, do nothing. opencode's
-    //      native summarization proceeds unaugmented.
-    //   2. Augmentation-disabled gate (R3.6). If the operator
-    //      disabled augmentation via the install module option,
-    //      emit a `logSuppression` with reason
-    //      `"augmentation_disabled"` and return WITHOUT invoking
-    //      cavemem. Integration test 5.3 asserts zero cavemem
-    //      subprocess invocations on this path.
-    //   3. Cavemem query via CavememContextSource (task 2.5). The
-    //      `fetchCavememContext` helper is contractually never-throws
-    //      (every failure path resolves an empty result), but we
-    //      wrap in try/catch defensively so a future refactor that
-    //      accidentally lets it throw cannot propagate an exception
-    //      into opencode's compaction loop. A caught exception
-    //      records an `app.log` error entry and returns without
-    //      modifying `output`.
-    //   4. Empty-result gate (R3.3). Cavemem returns
-    //      `result.text === ""` for spawn failure, non-zero exit,
-    //      timeout, AND for a successful call with no payload. All
-    //      four cases must let compaction proceed unaugmented; we
-    //      emit a `logSuppression` with reason `"augmentation_empty"`
-    //      for observability and return without touching `output`.
-    //   5. Non-empty result (R3.2, R3.5): `output.context.push(text)`
-    //      and emit `logAugmentation` (R6.2) carrying the source
-    //      attribution and pushed length. `output.prompt` is NEVER
-    //      assigned anywhere in this handler.
-    "experimental.session.compacting": async (
-      input: { sessionID: string },
-      output: { context: string[]; prompt?: string },
-    ) => {
-      // R7.4 short-circuit. opencode's native summary still
-      // proceeds — we simply add nothing to it.
-      await runSelfCheckIfNeeded(client)
-      if (getSelfCheckResult() === "failed") return
-
-      const config = getOrLoadConfig()
-
-      // R3.6: augmentation explicitly disabled. Emit a suppression
-      // log so the operator can grep for skipped augmentations,
-      // then return WITHOUT invoking cavemem. The cavemem
-      // subprocess is never spawned on this path (integration
-      // test 5.3 asserts zero invocations).
-      if (!config.augmentationEnabled) {
-        await logSuppression(
-          client,
-          input.sessionID,
-          "augmentation_disabled",
-        )
-        return
-      }
-
-      // R3.1 / R3.2: query cavemem for prior-session context tied
-      // to `input.sessionID`. `fetchCavememContext` is
-      // contractually never-throws (task 2.5); the try/catch is
-      // belt-and-braces against future refactors. Per R3.3 a
-      // thrown exception is treated the same as an empty result:
-      // record the error, leave `output` untouched, return.
-      let result: CavememContextResult
-      try {
-        result = await fetchCavememContext(input.sessionID)
-      } catch (e: unknown) {
-        const errorMessage =
-          e instanceof Error ? e.message : String(e)
-        await logError(client, input.sessionID, {
-          message: errorMessage,
-          context: "experimental.session.compacting",
-        })
-        return
-      }
-
-      // R3.3: empty result (cavemem unreachable, non-zero exit,
-      // timeout, or successful call with no payload). Let
-      // compaction proceed unaugmented. The suppression log gives
-      // the operator an observability hook without distinguishing
-      // failure modes (CavememContextSource itself collapses the
-      // four cases into a single empty-text sentinel).
-      if (result.text.length === 0) {
-        await logSuppression(
-          client,
-          input.sessionID,
-          "augmentation_empty",
-        )
-        return
-      }
-
-      // R3.5: augment, never replace. Push onto `output.context`;
-      // do NOT assign `output.prompt`. opencode's native
-      // summarization treats `output.context` as additional input
-      // to its summary generation, preserving opencode's own
-      // summary semantics.
-      output.context.push(result.text)
-      // R6.2: record the augmentation event with the source
-      // attribution and pushed length so the operator can audit
-      // what was injected for any historical compaction.
-      await logAugmentation(
-        client,
-        input.sessionID,
-        result.source,
-        result.text.length,
-      )
     },
     // ============================================================
     // session.idle handler (task 3.5)

@@ -96,300 +96,16 @@ in
       };
     };
 
-  # Cross-agent persistent memory for AI coding agents. Built from
-  # JuliusBrussee/cavemem v0.2.1 source (a pnpm monorepo) with three
-  # cherry-picked upstream patches applied to the TypeScript source
-  # before tsup bundles the CLI. The patches must be applied at the
-  # source layer (not against the published npm tarball's pre-built
-  # dist/) because tsup inlines all `@cavemem/*` workspace packages
-  # into `apps/cli/dist/index.js` via `noExternal`.
-  #
-  # Build layout:
-  #   - `fetchPnpmDeps` populates the offline pnpm store from the
-  #     vendored `pnpm-lock.yaml` using pnpm 10.
-  #   - `pnpmConfigHook` runs `pnpm install --offline
-  #     --frozen-lockfile --ignore-scripts`, so native postinstalls
-  #     (better-sqlite3) do not run automatically — buildPhase invokes
-  #     better-sqlite3's install script explicitly with
-  #     `npm_config_build_from_source` and `npm_config_nodedir` set.
-  #   - `pnpm --filter cavemem build` runs tsup, producing
-  #     `apps/cli/dist/index.js` with all `@cavemem/*` workspace code
-  #     inlined via tsup's `noExternal` setting.
-  #   - installPhase runs cavemem's upstream `scripts/pack-release.mjs`
-  #     to produce a slim publish layout (dist/, hooks-scripts/,
-  #     LICENSE, README.md, slim package.json with only the six
-  #     third-party runtime deps), then copies the runtime deps from
-  #     the workspace pnpm store into the slim layout's node_modules.
-  #     `pnpm deploy` would do this in one step but it
-  #     re-resolves the workspace topology against the network, which
-  #     the Nix sandbox forbids.
-  #   - `makeWrapper` exposes `bin/cavemem` as a stable absolute path
-  #     so the daemon resolves the same Node + entry point on every
-  #     invocation.
-  cavemem = final.stdenv.mkDerivation (finalAttrs: {
-    pname = "cavemem";
-    version = "0.2.1";
-
-    src = final.fetchFromGitHub {
-      owner = "JuliusBrussee";
-      repo = "cavemem";
-      tag = "v${finalAttrs.version}";
-      hash = "sha256-0YkpwaBYyH/nJCV0Y2EvaFL1KEvVtgf/tN2h1azwdNg=";
-    };
-
-    # Bug-fix patches cherry-picked from upstream PRs against the v0.2.1
-    # source tree, plus repository-owned data-dir patches.
-    # Keep the patch stack ordered payload, privacy, storage policy, then the
-    # integration-owned storage-limit diagnostic. The data-dir patch is what
-    # makes `home.cavemem.dataDir` in the home-manager module actually take
-    # effect (cavemem v0.2.1 has no other override mechanism for the hardcoded
-    # `~/.cavemem` path).
-    patches = [
-      ./cavemem-14-hook-payload-shape.patch
-      ./cavemem-39-session-start-cwd-filter.patch
-      ./cavemem-25-search-alpha-doc.patch
-      ./cavemem-data-dir-env.patch
-    ];
-
-    pnpmDeps = final.fetchPnpmDeps {
-      inherit (finalAttrs) pname version src;
-      pnpm = final.pnpm_10;
-      fetcherVersion = 3;
-      hash = "sha256-/C4HE52RMiabYQBhLZbVmVdFUaL1/MrvlAORGWuEfbU=";
-    };
-
-    nativeBuildInputs = [
-      final.nodejs
-      final.pnpm_10
-      final.pnpmConfigHook
-      final.makeWrapper
-      final.python3
-    ]
-    ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
-      # better-sqlite3's bundled SQLite amalgamation needs the
-      # darwin libtool (cctools) to link the static archive; the
-      # default stdenv on darwin does not put it on PATH.
-      final.cctools
-    ];
-
-    buildPhase = ''
-      runHook preBuild
-
-      # The configHook ran pnpm install with --ignore-scripts, so
-      # better-sqlite3's prebuild/build postinstall did not run.
-      # Force a from-source build (the prebuild-install fallback
-      # would try to fetch a prebuilt binary from GitHub, which the
-      # Nix sandbox forbids), then run the install script in the
-      # workspace store so the native binding is in place when
-      # `pnpm deploy` copies the production tree. node-gyp would
-      # otherwise try to fetch Node headers from nodejs.org;
-      # `npm_config_nodedir` points at the local nixpkgs nodejs
-      # which already ships the headers.
-      export npm_config_build_from_source=true
-      export npm_config_nodedir=${final.nodejs}
-      pushd node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 > /dev/null
-      npm run install --foreground-scripts
-      popd > /dev/null
-
-      # tsup-bundles apps/cli/src/index.ts → apps/cli/dist/index.js,
-      # inlining all @cavemem/* workspace packages.
-      pnpm --filter cavemem build
-
-      runHook postBuild
-    '';
-
-    installPhase = ''
-      runHook preInstall
-
-      # The published `cavemem` npm package is just the built
-      # `apps/cli/dist/`, the `hooks-scripts/` directory, README,
-      # LICENSE, and a slim package.json that declares the six
-      # third-party runtime deps (commander, kleur, better-sqlite3,
-      # hono, @hono/node-server, @modelcontextprotocol/sdk). All
-      # `@cavemem/*` workspace packages are inlined into
-      # `dist/index.js` by tsup at build time. So at runtime cavemem
-      # needs those six deps' source trees on disk plus the
-      # already-built native binding for better-sqlite3 (which the
-      # buildPhase compiled in the workspace store).
-      #
-      # `pnpm deploy` would do this neatly but it requires
-      # network access (it re-resolves the workspace transitively),
-      # which the Nix sandbox forbids. Instead, we run the upstream
-      # `pack:release` build script (which already knows the slim
-      # layout) to produce `apps/cli/release/`, then hand-link the
-      # runtime deps (and their transitive runtime closure) from the
-      # workspace store into the release tree's node_modules.
-      #
-      # The slim package.json declares only the six top-level deps,
-      # but at runtime `@modelcontextprotocol/sdk` `require()`s zod,
-      # zod-to-json-schema, ajv, ajv-formats, content-type, cors,
-      # cross-spawn, eventsource, eventsource-parser, express,
-      # express-rate-limit, jose, json-schema-typed, pkce-challenge,
-      # and raw-body. Subcommands like `cavemem --version` happen to
-      # work without those because they don't import the SDK, but
-      # `cavemem mcp` (and the smoke test's stdio probe of
-      # `tools/list`) crashes at startup with "Cannot find package
-      # 'zod'" if any of them are missing. To avoid maintaining a
-      # hand-curated mirror of the SDK's transitive closure (and
-      # express's, which is non-trivial), we walk each runtime dep's
-      # `package.json` and copy every `dependencies` entry transitively
-      # into the same flat `node_modules/` directory. Node's module
-      # resolution walks parent directories, so a flat layout under
-      # `$out/lib/node_modules/cavemem/node_modules/` resolves all of
-      # them correctly regardless of who imports whom.
-      #
-      # `@xenova/transformers` is in optionalDependencies; it is not
-      # in the slim package.json's dependencies and therefore not
-      # linked here. The downstream cavemem.nix module is responsible
-      # for wiring an alternative embedding provider when the operator
-      # opts out of the default `local` one (Requirement 3).
-      ( cd apps/cli && node scripts/pack-release.mjs )
-
-      mkdir -p $out/lib/node_modules/cavemem
-      cp -R apps/cli/release/. $out/lib/node_modules/cavemem/
-
-      mkdir -p $out/lib/node_modules/cavemem/node_modules
-
-      # Recursive runtime-dep copier. For each requested dep:
-      #   1. Resolve the on-disk path by trying app-level, then
-      #      workspace-root, then the pnpm content-addressed store
-      #      under `node_modules/.pnpm/<escaped>@*/node_modules/<dep>`
-      #      (pnpm encodes `/` as `+` in scoped store dir names).
-      #   2. cp -R the resolved path into the output's flat
-      #      node_modules.
-      #   3. Read the dep's own `package.json`, enqueue every
-      #      `dependencies` entry, and recurse. An associative array
-      #      memoises already-copied deps so the closure is computed
-      #      exactly once per dep.
-      declare -A copied_deps
-
-      resolve_dep() {
-        local dep=$1
-        local s candidate
-        for candidate in "apps/cli/node_modules/$dep" "node_modules/$dep"; do
-          if [ -e "$candidate" ]; then
-            s=$(readlink -f "$candidate" 2>/dev/null || true)
-            if [ -n "$s" ] && [ -d "$s" ]; then
-              echo "$s"
-              return 0
-            fi
-          fi
-        done
-        # Fall back to scanning the pnpm content-addressed store.
-        local escaped="''${dep//\//+}"
-        for candidate in node_modules/.pnpm/"$escaped"@*/node_modules/"$dep"; do
-          if [ -d "$candidate" ]; then
-            s=$(readlink -f "$candidate" 2>/dev/null || true)
-            if [ -n "$s" ] && [ -d "$s" ]; then
-              echo "$s"
-              return 0
-            fi
-          fi
-        done
-        return 1
-      }
-
-      copy_dep() {
-        local dep=$1
-        if [ -n "''${copied_deps[$dep]:-}" ]; then return 0; fi
-        copied_deps[$dep]=1
-
-        local src
-        src=$(resolve_dep "$dep" || true)
-        if [ -z "$src" ]; then
-          echo "ERROR: could not resolve runtime dep '$dep' in workspace store" >&2
-          exit 1
-        fi
-
-        mkdir -p "$out/lib/node_modules/cavemem/node_modules/$(dirname "$dep")"
-        cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
-
-        # Enqueue this dep's own runtime dependencies. Use node to
-        # parse package.json so we don't depend on jq being on PATH.
-        local pkgjson="$src/package.json"
-        if [ -f "$pkgjson" ]; then
-          local tdep
-          while IFS= read -r tdep; do
-            [ -z "$tdep" ] && continue
-            copy_dep "$tdep"
-          done < <(node -e "const p=require('$pkgjson');console.log(Object.keys(p.dependencies||{}).join('\n'))" 2>/dev/null || true)
-        fi
-      }
-
-      # RUNTIME_DEPS: the slim package.json's six top-level deps plus
-      # the MCP SDK's runtime imports (which the SDK's own package.json
-      # declares). Their transitive closures (e.g. express's accepts,
-      # body-parser, finalhandler, ...) are pulled in automatically by
-      # copy_dep walking each package.json.
-      for dep in commander kleur better-sqlite3 hono @hono/node-server \
-                 @modelcontextprotocol/sdk \
-                 zod zod-to-json-schema ajv ajv-formats content-type \
-                 cors cross-spawn eventsource eventsource-parser \
-                 express express-rate-limit jose json-schema-typed \
-                 pkce-challenge raw-body; do
-        copy_dep "$dep"
-      done
-
-      # better-sqlite3 historically pulls in `bindings` and
-      # `file-uri-to-path` via internal require() calls that aren't
-      # always in its `dependencies` field (older versions, or when
-      # bundled via prebuild-install). Keep an explicit fallback for
-      # those so a future better-sqlite3 bump doesn't silently break
-      # the native binding loader.
-      for dep in bindings file-uri-to-path; do
-        if [ -z "''${copied_deps[$dep]:-}" ]; then
-          src=$(readlink -f "node_modules/.pnpm/node_modules/$dep" 2>/dev/null \
-                || true)
-          if [ -n "$src" ] && [ -d "$src" ]; then
-            cp -R "$src" "$out/lib/node_modules/cavemem/node_modules/$dep"
-            copied_deps[$dep]=1
-          fi
-        fi
-      done
-
-      makeWrapper ${final.nodejs}/bin/node $out/bin/cavemem \
-        --add-flags "$out/lib/node_modules/cavemem/dist/index.js"
-
-      runHook postInstall
-    '';
-
-    meta = with final.lib; {
-      description = "Cross-agent persistent memory for AI coding agents (CLI + MCP server)";
-      homepage = "https://github.com/JuliusBrussee/cavemem";
-      license = licenses.mit;
-      mainProgram = "cavemem";
-      platforms = platforms.darwin ++ platforms.linux;
-    };
-  });
-
-  # Vendored Node dependency tree for the AgentMemory importers. The
-  # Cavemem history importer needs a `require()`-able copy of
-  # `better-sqlite3`, while the Obsidian importer uses `js-yaml` to
-  # parse YAML frontmatter. The dependency tree deliberately does NOT
-  # reuse the cavemem package's bundled better-sqlite3 because cavemem packs its
-  # runtime deps into a private `node_modules` under
-  # `$out/lib/node_modules/cavemem/node_modules/` and they are not
-  # discoverable from outside that tree.
-  #
-  # Layout mirrors `mkGcloudMcp`: a hand-written `package.json`
-  # pinning the two top-level deps and a generated `package-lock.json`
-  # (produced once via `npm install --package-lock-only` and
-  # committed) live in a sibling subdir
-  # `overlays/cavemem-importer-deps/`. `buildNpmPackage` +
-  # `importNpmLock` run `npm ci` offline against the vendored lock,
-  # and the better-sqlite3 postinstall compiles its native binding
-  # from source (the bundled `prebuild-install` would otherwise try
-  # to fetch a prebuilt binary from GitHub, which the Nix sandbox
-  # forbids).
-  cavemem-importer-deps = final.buildNpmPackage {
-    pname = "cavemem-importer-deps";
+  # js-yaml for the managed Obsidian-to-AgentMemory importer. Keep its
+  # vendored Node dependency tree independent of other SQLite consumers.
+  obsidian-importer-deps = final.buildNpmPackage {
+    pname = "obsidian-importer-deps";
     version = "0.0.1";
-    # buildNpmPackage uses this for npm, hooks, build inputs, and native ABI.
     nodejs = final.nodejs_22;
 
-    src = ./cavemem-importer-deps;
+    src = ./obsidian-importer-deps;
 
-    npmDeps = final.importNpmLock { npmRoot = ./cavemem-importer-deps; };
+    npmDeps = final.importNpmLock { npmRoot = ./obsidian-importer-deps; };
     inherit
       (final.callPackage (final.path + "/pkgs/build-support/node/import-npm-lock/hooks") {
         nodejs = final.nodejs_22;
@@ -397,22 +113,6 @@ in
       npmConfigHook
       ;
     dontNpmBuild = true;
-    # npmConfigHook installs native dependencies during configurePhase, so
-    # build-from-source must be a derivation env var, not a preBuild export.
-    env.npm_config_build_from_source = "true";
-
-    nativeBuildInputs = [
-      # Node 24.19.0 aborts when better-sqlite3 v12 statements are finalized
-      # (nodejs/node#65446). Keep the native build and runtime on Node 22.
-      final.python3
-    ]
-    ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
-      # better-sqlite3's bundled SQLite amalgamation needs the darwin
-      # libtool (cctools) to link the static archive; the default
-      # stdenv on darwin does not put it on PATH. Mirrors the cavemem
-      # package above.
-      final.cctools
-    ];
 
     # The default `buildNpmPackage` install phase assumes the package
     # ships a `bin` field and copies the project under
@@ -428,9 +128,7 @@ in
     '';
 
     meta = with final.lib; {
-      description = "Vendored Node deps (better-sqlite3 + js-yaml) for the AgentMemory importers";
-      homepage = "https://github.com/JuliusBrussee/cavemem";
-      license = licenses.mit;
+      description = "Vendored js-yaml for the Obsidian-to-AgentMemory importer";
       platforms = platforms.darwin ++ platforms.linux;
     };
   };
@@ -440,13 +138,10 @@ in
   # diagnostic is a Node script that needs `require()`-able copies of
   # `better-sqlite3` (to read the opencode SQLite databases) and
   # `tiktoken` (WASM tokenizer used for proportional splits of
-  # uncached input). It deliberately does NOT reuse the
-  # cavemem-importer-deps tree because the dependency sets differ
-  # (the Obsidian importer uses js-yaml; this diagnostic uses tiktoken),
-  # and keeping them separate avoids unrelated lockfile churn on
-  # either side.
+  # uncached input). Its native SQLite dependency is independent of
+  # the Obsidian importer's pure-JavaScript js-yaml tree.
   #
-  # Layout mirrors `cavemem-importer-deps`: a hand-written
+  # Layout uses a hand-written
   # `package.json` pinning the two top-level deps and a generated
   # `package-lock.json` (produced via `npm install --package-lock-only`
   # and committed) live in a sibling subdir
@@ -461,34 +156,35 @@ in
   opencode-cost-diagnosis-deps = final.buildNpmPackage {
     pname = "opencode-cost-diagnosis-deps";
     version = "0.0.1";
+    # Node 24.19.0 aborts while finalizing better-sqlite3 v12 statements.
+    # Build the native binding for the Node 22 runtime used by its consumers.
+    nodejs = final.nodejs_22;
 
     src = ./opencode-cost-diagnosis-deps;
 
     npmDeps = final.importNpmLock { npmRoot = ./opencode-cost-diagnosis-deps; };
-    inherit (final.importNpmLock) npmConfigHook;
+    inherit
+      (final.callPackage (final.path + "/pkgs/build-support/node/import-npm-lock/hooks") {
+        nodejs = final.nodejs_22;
+      })
+      npmConfigHook
+      ;
     dontNpmBuild = true;
 
+    # npmConfigHook installs the native dependency during configurePhase.
+    env.npm_config_build_from_source = "true";
+    env.npm_config_nodedir = final.nodejs_22;
+
     nativeBuildInputs = [
-      final.nodejs
+      final.nodejs_22
       final.python3
     ]
     ++ final.lib.optionals final.stdenv.hostPlatform.isDarwin [
       # better-sqlite3's bundled SQLite amalgamation needs the darwin
       # libtool (cctools) to link the static archive; the default
-      # stdenv on darwin does not put it on PATH. Mirrors the
-      # cavemem-importer-deps derivation above.
+      # stdenv on darwin does not put it on PATH.
       final.cctools
     ];
-
-    preBuild = ''
-      # Force better-sqlite3 to compile from source instead of letting
-      # `prebuild-install` reach out to GitHub for a prebuilt binary;
-      # `npm_config_nodedir` points node-gyp at the local nodejs which
-      # already ships the headers it needs (otherwise node-gyp would
-      # try to fetch them from nodejs.org).
-      export npm_config_build_from_source=true
-      export npm_config_nodedir=${final.nodejs}
-    '';
 
     # The default `buildNpmPackage` install phase assumes the package
     # ships a `bin` field and copies the project under

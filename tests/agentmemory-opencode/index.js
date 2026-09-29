@@ -8,12 +8,10 @@ const { spawnSync } = require('node:child_process');
 const repoRoot = path.resolve(__dirname, '../..');
 const featureTests = [
   'activation-secret.test.js',
-  'backend-selection.test.js',
   'capture-smoke.test.js',
   'core-surface.test.js',
   'cutover-contract.test.js',
   'host-render.test.js',
-  'import-cavemem.test.js',
   'import-obsidian.test.js',
   'instructions-contract.test.js',
   'matrix.test.js',
@@ -28,7 +26,8 @@ const featureTests = [
   'validation-suite.test.js',
 ];
 const integrationTests = [
-  'tests/session-compaction/integration/augmentation-disabled.test.ts',
+  'tests/session-compaction/integration/automatic-flow.test.ts',
+  'tests/session-compaction/integration/manual-flow.test.ts',
 ];
 
 function detachedSource() {

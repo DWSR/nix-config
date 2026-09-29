@@ -57,7 +57,7 @@ writeShellApplication {
     # 1. Preflight, host-side (outside any sandbox).
     #
     # The preflight snippet is the joined `home.opencode.wrapperCommands`
-    # (mcpproxy/obsidian/cavemem probes, devx token mint, LSP env, the RTK
+     # (mcpproxy + AgentMemory probes, devx token mint, LSP env, the RTK
     # resolver). It keeps its own fail-fast `exit` behavior (R5.1, R5.2),
     # and the RTK resolver's `OPENCODE_RTK_*` exports happen here so the RTK
     # and nono states are both observable on the same launch (R5.4).

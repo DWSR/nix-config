@@ -73,8 +73,9 @@ basename collisions remain accepted behavior.
 The OpenCode `title` and `summary` agents are disabled by configuration. Do not
 re-enable them or add another summary path to compensate for AgentMemory.
 
-The full daemon is checked before OpenCode starts. If the daemon becomes
-unavailable after startup, the stock MCP shim may use its local fallback tools
+The launcher checks mcpproxy liveness and resolves the AgentMemory bearer
+before OpenCode starts. Inspect full daemon health with `agentmemory-status`.
+If the daemon becomes unavailable, the stock MCP shim may use its local fallback tools
 and standalone store, with reduced graph, vector, compression, and
 consolidation behavior. This fallback is accepted upstream behavior. Do not add
 a custom fallback guard, retry queue, or relay.

@@ -24,8 +24,7 @@
     3. Post-`nix flake update` smoke test (Task 6.3 —
        `scripts/opencode-cost-diagnosis-smoke-test.nix`) installed on
        PATH so the operator can revalidate the install pipeline +
-       schema-baseline pin after any opencode bump. Mirrors the
-       `cavememSmokeTest` precedent in `home-manager/common/cavemem.nix`.
+        schema-baseline pin after any opencode bump.
 
   Peer dependency: this module asserts at HM-evaluation time that
   `programs.opencode.enable` is true on the same host. The opencode
@@ -35,8 +34,7 @@
   wrapper. Without `programs.opencode.enable = true;` the diagnostic
   would silently produce empty reports on a fresh machine; the
   assertion fails the build instead and names the missing peer so the
-  operator's fix is obvious. Mirrors the same assertion shape used by
-  `home-manager/common/memory-sync.nix`.
+   operator's fix is obvious.
 
   Both wrappers and the future smoke-test derivation reach
   `pkgs.opencode-cost-diagnosis-deps` (Task 1.2, defined in
@@ -74,7 +72,7 @@ let
   # contains the expected version range. Exits 0 silently on
   # success; on any failure prints
   # `[smoke-test-failure: <label>] <detail>` to stderr and exits
-  # non-zero. Same shape as the `cavememSmokeTest` precedent.
+  # non-zero.
   opencode-cost-diagnosis-smoke-test =
     pkgs.callPackage ../../scripts/opencode-cost-diagnosis-smoke-test.nix
       { };

@@ -131,6 +131,11 @@ function readActivePromptArtifacts() {
 
 function renderActiveCutoverArtifacts() {
   if (renderedArtifacts) return renderedArtifacts;
+  if (process.env.AGENTMEMORY_MATRIX_HOSTS) {
+    const rows = JSON.parse(fs.readFileSync(process.env.AGENTMEMORY_MATRIX_HOSTS, 'utf8'));
+    renderedArtifacts = { personal: rows.personal.cutover, shopify: rows.shopify.cutover };
+    return renderedArtifacts;
+  }
 
   const expression = `(let
   flake = builtins.getFlake ${JSON.stringify(repoRoot)};
@@ -162,14 +167,16 @@ function renderActiveCutoverArtifacts() {
       serverNames = map (server: server.name) mcpConfig.mcpServers;
       skillNames = skillNames;
       pi = {
-        enable = hm.programs.pi-agent.enable;
-        agentMemoryUrl = hm.programs.pi-agent.internal.agentMemoryUrl;
-        extensionNames = builtins.attrNames hm.programs.pi-agent.extensions;
-        instructionResources = map (resource: {
-          path = discard resource;
-          content = discard (builtins.readFile resource);
-        }) hm.programs.pi-agent.internal.instructionResources;
-        mcpPort = hm.programs.pi-agent.mcp.port;
+        enable = hm.programs.pi.coding-agent.enable;
+        agentMemoryUrl = hm.programs.pi.coding-agent.environment.AGENTMEMORY_URL.value;
+        extensions = map (extension: discard (toString extension)) hm.programs.pi.coding-agent.extensions;
+        instructionResources = [
+          {
+            path = discard (toString hm.programs.pi.coding-agent.rules);
+            content = discard (builtins.readFile hm.programs.pi.coding-agent.rules);
+          }
+        ];
+        mcpPort = hm.home.mcp.listenPort;
       };
     };
 in builtins.toJSON {
@@ -360,9 +367,9 @@ test('OpenCode and Pi rendered startup contracts keep the shortened preflight an
     assert.match(piPromptSurface, /memory_(?:save|lesson_save)/);
 
     const livenessIndex = config.wrapper.indexOf('http://127.0.0.1:8080/healthz');
-    const agentMemoryIndex = config.wrapper.indexOf('/agentmemory/health');
+    const agentMemoryIndex = config.wrapper.indexOf('AgentMemory daemon preflight failed');
     assert.ok(livenessIndex >= 0, `${host} keeps mcpproxy liveness`);
-    assert.ok(agentMemoryIndex > livenessIndex, `${host} checks AgentMemory after mcpproxy`);
+    assert.ok(agentMemoryIndex > livenessIndex, `${host} resolves the AgentMemory bearer after mcpproxy`);
     assert.match(config.wrapper, /AgentMemory daemon preflight failed/);
     assert.match(config.wrapper, /Recover AgentMemory with:/);
     assert.doesNotMatch(config.wrapper, /api\/v1\/servers|mcpproxy-api-key|X-API-Key|obsidian/i);
@@ -376,11 +383,11 @@ test('OpenCode and Pi rendered startup contracts keep the shortened preflight an
 
     assert.equal(config.pi.enable, true, `${host} enables Pi`);
     assert.equal(config.pi.agentMemoryUrl, 'http://127.0.0.1:3111', `${host} wires Pi to AgentMemory`);
-    assert.equal(config.pi.extensionNames.includes('agentmemory'), true, `${host} keeps Pi AgentMemory extension`);
-    assert.equal(config.pi.extensionNames.includes('mcp'), true, `${host} keeps Pi mcpproxy extension`);
+    assert.equal(config.pi.extensions.some((extension) => /\/integrations\/pi\/index\.ts$/.test(extension)), true, `${host} keeps Pi AgentMemory extension`);
+    assert.equal(config.pi.extensions.some((extension) => /pi-mcpproxy-go[^/]*\/index\.ts$/.test(extension)), true, `${host} keeps Pi mcpproxy extension`);
     assert.equal(config.pi.mcpPort, 8080, `${host} keeps Pi mcpproxy transport`);
     assert.equal(
-      config.pi.instructionResources.some(({ path: resourcePath }) => /share\/pi-agent\/instructions\.md$/.test(resourcePath)),
+       config.pi.instructionResources.some(({ path: resourcePath }) => /pi-agent\/instructions\.md$/.test(resourcePath)),
       true,
       `${host} renders managed Pi instructions`,
     );

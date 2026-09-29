@@ -34,8 +34,9 @@ test('the feature gate contains no Pi acceptance criteria', () => {
       cutoverAggregateTest,
     ].includes(name));
   featureFiles.push(
-    ...fs.readdirSync(__dirname).filter((name) => name.endsWith('.nix')),
-    'fixtures/cavemem-import-fixture.js',
+    // This snapshot supplies Pi render data to cutover-contract.test.js;
+    // its assertions remain in that aggregate test, not the feature gate.
+    ...fs.readdirSync(__dirname).filter((name) => name.endsWith('.nix') && name !== 'host-matrix.nix'),
   );
 
   for (const featureFile of featureFiles) {
@@ -69,29 +70,24 @@ test('the canonical flake check runs the complete suite with packaged runtimes',
 
   assert.match(flake, /node tests\/agentmemory-opencode\/index\.js/);
   assert.match(flake, /AGENTMEMORY_PACKAGE_PATH/);
+  assert.match(flake, /pkgs\.iii-engine/);
+  assert.match(flake, /pkgs\.which/);
   assert.match(flake, /AGENTMEMORY_MISSING_SECRET_ACTIVATION_PROOF/);
   assert.match(flake, /MCPPROXY_PACKAGE_PATH/);
-  assert.match(flake, /AGENTMEMORY_IMPORTER_NODE_BIN/);
-  assert.match(flake, /AGENTMEMORY_IMPORTER_NODE_PATH/);
-  assert.match(flake, /AGENTMEMORY_IMPORTER_BIN/);
+  assert.match(flake, /AGENTMEMORY_OBSIDIAN_NODE_BIN/);
+  assert.match(flake, /AGENTMEMORY_OBSIDIAN_NODE_PATH/);
   assert.match(flake, /AGENTMEMORY_OBSIDIAN_IMPORTER_BIN/);
-  assert.match(flake, /AGENTMEMORY_CONFIGURED_IMPORTER_BIN/);
-  assert.match(flake, /AGENTMEMORY_CONFIGURED_IMPORTER_ENDPOINT/);
-  assert.match(flake, /pkgs\.sqlite/);
-  assert.match(flake, /pkgs\.which/);
   assert.doesNotMatch(
     flake,
     /node --test tests\/agentmemory-opencode\/matrix\.test\.js/,
   );
 });
 
-test('the feature gate runs compaction without cavemem augmentation', () => {
+test('the feature gate runs native automatic and manual compaction flows', () => {
   const runner = fs.readFileSync(runnerPath, 'utf8');
 
-  assert.match(
-    runner,
-    /tests\/session-compaction\/integration\/augmentation-disabled\.test\.ts/,
-  );
+  assert.match(runner, /tests\/session-compaction\/integration\/automatic-flow\.test\.ts/);
+  assert.match(runner, /tests\/session-compaction\/integration\/manual-flow\.test\.ts/);
 });
 
 test('the local feature runner detaches linked worktrees before resolving flakes', () => {

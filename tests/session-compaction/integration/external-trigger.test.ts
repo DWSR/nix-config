@@ -111,13 +111,6 @@
  * `=== null`, and the failure case (`!== null`) leaves no state for
  * subsequent assertions in the same block to worry about.
  *
- * Augmentation is irrelevant to this test: `experimental.session
- * .compacting` is never driven, so the cavemem subprocess is never
- * spawned and no PATH override / fake script is required. We
- * therefore set `SESSION_COMPACTION_AUGMENTATION_ENABLED=0` to make
- * the harness shape explicit and avoid any accidental cavemem
- * lookup.
- *
  * Env-var ordering: `loadConfigFromEnv()` is LAZY — it runs the
  * first time `getOrLoadConfig()` is called inside a handler, not
  * at module-load time. Setting env vars at module scope below
@@ -145,13 +138,7 @@ import {
 // 300 > 100 trips `tokens_exceeded` on the very first
 // AssistantMessage, exactly what Scenario A needs.
 //
-// Augmentation is explicitly disabled so we don't accidentally
-// spawn a cavemem subprocess from any code path we don't drive.
-// This test never invokes `experimental.session.compacting`, but
-// asserting the disabled config makes the harness's negative
-// space explicit.
 process.env.SESSION_COMPACTION_THRESHOLD_TOKENS = "100"
-process.env.SESSION_COMPACTION_AUGMENTATION_ENABLED = "0"
 
 // Literal `body.message` the impl emits from `logCompacted`
 // (session-compaction-impl.ts:1155). Hardcoded here so a future

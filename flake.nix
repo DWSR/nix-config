@@ -1734,17 +1734,6 @@
                 inherit pkgs;
               };
 
-          agentMemoryImporter = pkgs.callPackage ./scripts/agentmemory-import-cavemem.nix {
-            bearerReference = "fixture-bearer";
-            restEndpoint = "http://127.0.0.1:3111";
-          };
-
-          agentMemoryConfiguredImporterEndpoint = "http://127.0.0.1:35114";
-          agentMemoryConfiguredImporter = pkgs.callPackage ./scripts/agentmemory-import-cavemem.nix {
-            bearerReference = "fixture-bearer";
-            restEndpoint = agentMemoryConfiguredImporterEndpoint;
-          };
-
           agentMemoryObsidianImporter = pkgs.callPackage ./scripts/agentmemory-import-obsidian.nix {
             bearerReference = "fixture-bearer";
             restEndpoint = "http://127.0.0.1:3111";
@@ -1756,22 +1745,20 @@
                 {
                   nativeBuildInputs = [
                     pkgs.git
+                    pkgs.iii-engine
                     pkgs.nix
                     pkgs.nodejs
                     pkgs.nodejs_22
                     pkgs.lsof
                     pkgs.ps
-                    pkgs.sqlite
+                    # The AgentMemory CLI discovers the pinned iii binary via `which`.
                     pkgs.which
                   ];
                   inherit agentMemoryHostMatrix;
                   AGENTMEMORY_MISSING_SECRET_ACTIVATION_PROOF = agentMemoryMissingSecretActivation;
                   AGENTMEMORY_PERSONAL_SECRET_VALIDATION = agentMemoryPersonalSecretValidation;
-                  AGENTMEMORY_CONFIGURED_IMPORTER_BIN = "${agentMemoryConfiguredImporter}/bin/agentmemory-import-cavemem";
-                  AGENTMEMORY_CONFIGURED_IMPORTER_ENDPOINT = agentMemoryConfiguredImporterEndpoint;
-                  AGENTMEMORY_IMPORTER_BIN = "${agentMemoryImporter}/bin/agentmemory-import-cavemem";
-                  AGENTMEMORY_IMPORTER_NODE_BIN = "${pkgs.nodejs_22}/bin/node";
-                  AGENTMEMORY_IMPORTER_NODE_PATH = "${pkgs.cavemem-importer-deps}/lib/node_modules";
+                  AGENTMEMORY_OBSIDIAN_NODE_BIN = "${pkgs.nodejs_22}/bin/node";
+                  AGENTMEMORY_OBSIDIAN_NODE_PATH = "${pkgs.obsidian-importer-deps}/lib/node_modules";
                   AGENTMEMORY_OBSIDIAN_IMPORTER_BIN = "${agentMemoryObsidianImporter}/bin/agentmemory-import-obsidian";
                   AGENTMEMORY_PACKAGE_PATH = agentMemoryPackage;
                   MCPPROXY_PACKAGE_PATH = pkgs.mcpproxy-go;
@@ -1941,6 +1928,7 @@
                   pkgs.nix
                   pkgs.nodejs
                 ];
+                OPENCODE_NONO_HOSTS = agentMemoryHostMatrix;
               }
               ''
                 export HOME=$(mktemp -d)
@@ -1956,7 +1944,7 @@
             pkgs.runCommand "opencode-nono-audit-tests"
               {
                 nativeBuildInputs = [
-                  pkgs.nodejs
+                  pkgs.nodejs_22
                 ];
               }
               ''

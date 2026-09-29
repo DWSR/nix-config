@@ -32,8 +32,6 @@ let
 
 in
 {
-  home.opencode.memoryBackend = "agentmemory";
-
   # The Stylix opencode target (enabled in home-manager/common/stylix.nix)
   # now owns the TUI theme: it sets programs.opencode.tui.theme = "stylix"
   # plus themes.stylix and renders opencode/tui.json itself. The previous raw

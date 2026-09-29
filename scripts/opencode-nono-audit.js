@@ -21,13 +21,10 @@
  * pass fixture paths directly to runAudit().
  *
  * ─────────────────────────────────────────────────────────────────
- * Task 2.1 (Requirements 1.1, 1.3, 1.4, 1.5, 1.6) adds runAudit's
- * SOURCE-OPENING layer: open the OpenCode session DB read-only via the
- * reused SqliteReader, optionally open the cavemem data.db read-only as
- * a version-guarded secondary source, track per-source SourceStatus,
- * mark the report `partial` on any degraded source, and return an
- * error Result (no UsageAudit / no assessment) when no source is
- * readable at all (R1.5).
+ * Task 2.1 adds runAudit's SOURCE-OPENING layer: open the OpenCode
+ * session DB read-only via the reused SqliteReader, track its
+ * SourceStatus, mark the report `partial` on schema drift, and
+ * return an error Result when no source is available.
  *
  * ─────────────────────────────────────────────────────────────────
  * Task 2.2 (Requirements 1.2, 1.3) adds the OBSERVED-CAPABILITY MODEL:
@@ -39,10 +36,8 @@
  * URL-like substrings buried in command strings are NOT promoted.
  * ports/envVars are inference-only on the current DB shape, so their
  * arrays stay empty and the class is disclosed in unobservableClasses.
- * cavemem (R1.3) is a best-effort LOW-confidence secondary context
- * source — it never fabricates high-confidence capabilities. Raw
- * strings are extracted UNREDACTED here; redaction is applied at
- * serialization (task 5.1).
+ * Raw strings are extracted UNREDACTED here; redaction is applied
+ * at serialization (task 5.1).
  * ─────────────────────────────────────────────────────────────────
  */
 'use strict';
@@ -90,14 +85,6 @@ function defaultSessionDbPath() {
       : path.join(process.env.HOME || '', '.local', 'share');
   return path.join(xdgData, 'opencode', 'opencode-stable.db');
 }
-
-/**
- * The cavemem `data.db` schema version this audit understands. The
- * fixture (and the live cavemem store) is schema_version = 2; opening a
- * cavemem DB whose `schema_version.version` differs is treated as an
- * `incompatible` source (version guard, R1.3), never a crash.
- */
-const SUPPORTED_CAVEMEM_SCHEMA_VERSION = 2;
 
 /**
  * Open the OpenCode session DB read-only via the reused SqliteReader
@@ -161,60 +148,6 @@ function openSessionSource(dbPath, lib) {
   }
 }
 
-/**
- * Open the cavemem `data.db` read-only as a best-effort SECONDARY
- * source, version-guarded on `schema_version.version` (R1.3).
- *
- * - Success at the supported schema version → `{ status: 'ok' }`.
- * - Wrong schema version → `{ status: 'incompatible' }`.
- * - Missing / unreadable file (or unexpected schema layout) →
- *   `{ status: 'missing' | 'unreadable' }`.
- *
- * The handle is opened `{ readonly: true, fileMustExist: true }` and is
- * closed before returning — task 2.1 only needs the version guard and
- * status; cavemem observation iteration is a task 2.2 concern.
- *
- * @param {string} cavememDbPath
- * @returns {{ source: 'cavemem', status: string, detail?: string }}
- */
-function openCavememSource(cavememDbPath) {
-  // better-sqlite3 is resolvable via NODE_PATH (wrapper) or the deps
-  // tree the test node exports. Require lazily so a session-only audit
-  // that never touches cavemem does not pay for it.
-  const Database = require('better-sqlite3');
-
-  let db = null;
-  try {
-    db = new Database(cavememDbPath, { readonly: true, fileMustExist: true });
-    const row = db.prepare('SELECT version FROM schema_version').get();
-    const version = row && typeof row.version !== 'undefined' ? row.version : null;
-    if (version !== SUPPORTED_CAVEMEM_SCHEMA_VERSION) {
-      return {
-        source: 'cavemem',
-        status: 'incompatible',
-        detail: `unsupported cavemem schema_version ${String(version)} (expected ${SUPPORTED_CAVEMEM_SCHEMA_VERSION})`,
-      };
-    }
-    return { source: 'cavemem', status: 'ok' };
-  } catch (e) {
-    const exists = fileExists(cavememDbPath);
-    const detail = e && e.message ? e.message : String(e);
-    return {
-      source: 'cavemem',
-      status: exists ? 'unreadable' : 'missing',
-      detail,
-    };
-  } finally {
-    if (db) {
-      try {
-        db.close();
-      } catch {
-        /* best-effort handle release */
-      }
-    }
-  }
-}
-
 /** True iff `p` names an existing path on disk. */
 function fileExists(p) {
   try {
@@ -228,7 +161,7 @@ function fileExists(p) {
  * R1.5's hard-fail discriminator: the audit returns an error Result
  * (no UsageAudit, no assessment) only when NO source was even openable
  * — i.e., every recorded source is `missing` or `unreadable`. An
- * `incompatible` source (schema drift / wrong cavemem version) IS a
+ * `incompatible` source (schema drift) IS a
  * source that was found and inspected; it degrades the report to
  * `partial` but the audit still proceeds and reports it. This matches
  * the task observable completion: the drift fixture produces
@@ -244,7 +177,7 @@ function isReportable(status) {
 
 /**
  * Capability classes that are NOT derivable from the current OpenCode
- * session DB / cavemem shapes (Phase 0 source-fidelity decision,
+ * session DB shape (Phase 0 source-fidelity decision,
  * tests/opencode-nono-audit/fixtures/phase0-source-fidelity-decision.md).
  * Disclosed in `UsageAudit.unobservableClasses` so the report states its
  * coverage gaps explicitly rather than implying full coverage. Sorted
@@ -428,69 +361,20 @@ function extractCapabilities(reader) {
 }
 
 /**
- * Collect best-effort LOW-confidence context from the cavemem
- * `data.db`, opened read-only (R1.3). cavemem content is prose
- * prompt/response text, never structured tool calls (Phase 0), so it
- * NEVER fabricates high-confidence capabilities. We surface a small,
- * bounded set of session-context records (id + cwd) so the audit
- * genuinely uses cavemem as an additional source when available without
- * over-claiming. Each context entry is tagged `source: 'cavemem'`.
- *
- * Returns an empty array on any read failure — cavemem is best-effort
- * and its degraded status is already recorded as a SourceStatus by
- * {@link openCavememSource}.
- *
- * @param {string} cavememDbPath
- * @returns {Array<{ source: 'cavemem', sessionId: string, cwd: string|null, confidence: 'low' }>}
- */
-function collectCavememContext(cavememDbPath) {
-  const Database = require('better-sqlite3');
-  let db = null;
-  try {
-    db = new Database(cavememDbPath, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare('SELECT id, cwd FROM sessions ORDER BY id ASC')
-      .all();
-    return rows.map((r) => ({
-      source: 'cavemem',
-      sessionId: String(r.id),
-      cwd: typeof r.cwd === 'string' ? r.cwd : null,
-      confidence: 'low',
-    }));
-  } catch {
-    return [];
-  } finally {
-    if (db) {
-      try {
-        db.close();
-      } catch {
-        /* best-effort handle release */
-      }
-    }
-  }
-}
-
-/**
  * @typedef {object} AuditOptions
  * @property {string} [sessionDbPath] Override the OpenCode session DB
  *   path. Defaults to {@link defaultSessionDbPath}.
- * @property {string} [cavememDbPath] Optional cavemem data.db path. When
- *   omitted, cavemem is treated as not-configured (its absence is NOT a
- *   degradation and does NOT mark the report partial — R1.3).
  */
 
 /**
  * runAudit — the read-only audit entry point. Task 2.1 implements the
  * source-opening layer only.
  *
- * Opens the OpenCode session DB read-only (R1.1) and, when configured,
- * the cavemem data.db read-only as a version-guarded secondary source
- * (R1.3). Records a SourceStatus per source; a degraded source marks
- * the report `partial` and is named in `sources[]` (R1.4). Never
- * mutates any source (R1.6: SqliteReader opens `{ readonly: true }`,
- * cavemem opens `{ readonly: true, fileMustExist: true }`). When NO
- * source is readable, returns an error Result with no UsageAudit and no
- * assessment (R1.5).
+ * Opens the OpenCode session DB read-only (R1.1), recording its
+ * SourceStatus. Schema drift marks the report `partial` and is named
+ * in `sources[]` (R1.4). The SqliteReader opens `{ readonly: true }`.
+ * When the DB is missing or unreadable, returns an error Result
+ * with no UsageAudit or assessment (R1.5).
  *
  * @param {AuditOptions} [opts]
  * @returns {{ ok: true, value: object } | { ok: false, error: object }}
@@ -501,8 +385,6 @@ function collectCavememContext(cavememDbPath) {
 function runAudit(opts) {
   const options = opts || {};
   const sessionDbPath = options.sessionDbPath || defaultSessionDbPath();
-  const cavememConfigured =
-    typeof options.cavememDbPath === 'string' && options.cavememDbPath.length > 0;
 
   const lib = loadCostReportLib();
 
@@ -530,22 +412,6 @@ function runAudit(opts) {
     }
   }
 
-  // Secondary source: cavemem data.db (R1.3), version-guarded and
-  // optional. Only recorded when a path was configured; an unconfigured
-  // optional source is not a degradation.
-  /** @type {Array<object>} */
-  let cavememContext = [];
-  if (cavememConfigured) {
-    const cavememStatus = openCavememSource(options.cavememDbPath);
-    sources.push(cavememStatus);
-    // R1.3: when cavemem is readable, use it as a best-effort LOW-confidence
-    // secondary context source. It never fabricates high-confidence
-    // capabilities (Phase 0); we record bounded session context only.
-    if (cavememStatus.status === 'ok') {
-      cavememContext = collectCavememContext(options.cavememDbPath);
-    }
-  }
-
   // R1.5: no source readable at all → error Result, no UsageAudit, no
   // assessment. "No source readable" means nothing was even openable
   // (every source missing/unreadable); an `incompatible` source is
@@ -563,14 +429,12 @@ function runAudit(opts) {
     };
   }
 
-  return { ok: true, value: buildAudit(sources, capabilities, cavememContext) };
+  return { ok: true, value: buildAudit(sources, capabilities) };
 }
 
 /**
  * Assemble a UsageAudit from the opened sources. A report is `partial`
- * when ANY recorded source is degraded (status !== 'ok'); an
- * unconfigured optional source is simply absent from `sources` and so
- * does not count toward partiality (R1.4).
+ * when the session source has schema drift (status !== 'ok'; R1.4).
  *
  * Capability extraction (task 2.2, R1.2): `capabilities` is the
  * CapabilityRecord[] derived from the readable session source by
@@ -578,16 +442,13 @@ function runAudit(opts) {
  * discloses the structurally-unobservable capability classes
  * ({@link UNOBSERVABLE_CLASSES}) so the report states its coverage gaps
  * explicitly — even when `capabilities` is empty, an empty capability
- * set must NOT imply full coverage. `cavememContext` carries any
- * best-effort LOW-confidence cavemem session context (R1.3); it is
- * omitted from the report when empty.
+ * set must NOT imply full coverage.
  *
  * @param {Array<{ source: string, status: string, detail?: string }>} sources
  * @param {object[]} [capabilities] CapabilityRecord[] from the session source
- * @param {object[]} [cavememContext] low-confidence cavemem context (R1.3)
  * @returns {object} UsageAudit
  */
-function buildAudit(sources, capabilities, cavememContext) {
+function buildAudit(sources, capabilities) {
   const partial = sources.some((s) => s.status !== 'ok');
   /** @type {object} */
   const audit = {
@@ -600,11 +461,6 @@ function buildAudit(sources, capabilities, cavememContext) {
     // never be read as "full coverage observed".
     unobservableClasses: [...UNOBSERVABLE_CLASSES],
   };
-  // R1.3: surface cavemem-derived low-confidence context only when it
-  // genuinely contributed (omit the key entirely otherwise).
-  if (Array.isArray(cavememContext) && cavememContext.length > 0) {
-    audit.cavememContext = cavememContext;
-  }
   return audit;
 }
 
@@ -1810,7 +1666,7 @@ function reconcileLedger(candidates, opts) {
 // REDACTION (R1.7): a single deep pass redacts every string in the
 // assembled object before serialization — commands, paths, endpoints,
 // capability/missingCapability strings, sessionContext, ledger
-// free-text, rationale, source detail, cavemem cwd, etc. The mask token
+// free-text, rationale, source detail, etc. The mask token
 // contains no secret-shaped substring so the pass is idempotent.
 //
 // Scope (5.1): assembly + redaction + JSON/MD serialization + 0600/XDG
@@ -2416,7 +2272,6 @@ const SUBCOMMANDS = Object.freeze(['audit', 'assess', 'review', 'all']);
 /** Flags that take a value argument. `--profile` is repeatable. */
 const VALUE_FLAGS = Object.freeze([
   '--session-db',
-  '--cavemem-db',
   '--metadata',
   '--ledger',
   '--state-dir',
@@ -2440,7 +2295,6 @@ Subcommands:
 
 Options:
   --session-db <path>   OpenCode session DB (default: OPENCODE_DB_PATH / XDG).
-  --cavemem-db <path>   cavemem data.db (optional secondary source).
   --metadata <path>     sandbox-rendered metadata.json (profileVersion source).
   --profile <name>      Profile to assess (repeatable; assess/all).
   --ledger <path>       Operator decisions ledger (review/all).
@@ -2500,9 +2354,6 @@ function parseArgs(argv) {
       switch (tok) {
         case '--session-db':
           opts.sessionDbPath = value;
-          break;
-        case '--cavemem-db':
-          opts.cavememDbPath = value;
           break;
         case '--metadata':
           opts.metadataPath = value;
@@ -2606,7 +2457,6 @@ function main(argv) {
   // ── 1. Usage audit (every subcommand) ──
   const auditOpts = {};
   if (typeof opts.sessionDbPath === 'string') auditOpts.sessionDbPath = opts.sessionDbPath;
-  if (typeof opts.cavememDbPath === 'string') auditOpts.cavememDbPath = opts.cavememDbPath;
 
   const auditResult = runAudit(auditOpts);
   if (!auditResult.ok) {
@@ -2675,7 +2525,6 @@ module.exports = {
   // (task 2.2) consumes runAudit's readable session source.
   runAudit,
   defaultSessionDbPath,
-  SUPPORTED_CAVEMEM_SCHEMA_VERSION,
   // Task 2.2: observed-capability model. Exported for unit-test reach.
   extractCapabilities,
   UNOBSERVABLE_CLASSES,

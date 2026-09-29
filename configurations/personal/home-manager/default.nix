@@ -16,7 +16,6 @@ in
     ./op-shell-plugins.nix
 
     ../../../home-manager/common
-    ../../../home-manager/common/cavemem.nix
     ../../../home-manager/mcp
     ./deskflow.nix
     ./git.nix
