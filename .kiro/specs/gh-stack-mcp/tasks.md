@@ -15,7 +15,7 @@
   - _Requirements: 1.1, 1.5, 1.6, 4.6, 7.5, 8.1, 8.6, 11.1_
 
 - [ ] 2. Build the local command boundary
-- [ ] 2.1 Validate each worktree and selected repository
+- [x] 2.1 Validate each worktree and selected repository
   - Reject missing/non-absolute/non-Git paths, credential URLs, fork fetch/push URLs, unknown schemes, and mismatched remote identities.
   - Derive canonical worktree, Git directory, common directory, and API repository without changing process cwd; ignore inherited `GH_REPO`.
   - Temporary-repository fixtures accept same-repo SSH/HTTPS remotes and reject cross-repo targets before launch.
