@@ -2,13 +2,18 @@ package stackmcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 type processRunnerFixture struct {
@@ -350,7 +355,7 @@ printf 'stderr-after-cap\n' >&2
 exit 7
 `, ":", ":")
 	runner := newTestProcessRunner(t, fixture.config)
-	result, err := runner.Run(context.Background(), fixture.target, CommandSpec{Args: []string{"fixture"}})
+	result, err := runner.Run(context.Background(), fixture.target, CommandSpec{Args: []string{"view"}})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -567,6 +572,454 @@ func TestProcessRunnerReportsMissingFixedDependenciesBeforeSpawn(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerSelectsFixedBudgetFromFirstCommandArgument(t *testing.T) {
+	timing := defaultProcessRunnerTiming()
+	want := map[string]time.Duration{
+		"view":     45 * time.Second,
+		"init":     5 * time.Minute,
+		"add":      5 * time.Minute,
+		"checkout": 5 * time.Minute,
+		"rebase":   15 * time.Minute,
+		"sync":     15 * time.Minute,
+		"push":     15 * time.Minute,
+		"submit":   15 * time.Minute,
+		"link":     15 * time.Minute,
+		"unstack":  15 * time.Minute,
+	}
+	for operation, expected := range want {
+		budget, err := timing.operationBudget(CommandSpec{Args: []string{operation, "ignored-by-budget-selection"}})
+		if err != nil {
+			t.Errorf("operationBudget(%q) error = %v", operation, err)
+			continue
+		}
+		if budget != expected {
+			t.Errorf("operationBudget(%q) = %s, want %s", operation, budget, expected)
+		}
+	}
+	if _, err := timing.operationBudget(CommandSpec{Args: []string{"unknown"}}); err == nil {
+		t.Error("operationBudget accepted an unknown operation")
+	}
+}
+
+func TestProcessRunnerRejectsIncomingDeadlineWithoutMarginsBeforeSpawn(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "extension-was-invoked")
+	fixture := newProcessRunnerFixture(t, "printf 'invoked\\n' > "+shellQuote(marker), ":", ":")
+	runner := newTestProcessRunner(t, fixture.config)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(10*time.Second))
+	defer cancel()
+
+	result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
+	if err == nil {
+		t.Fatal("Run() error = nil, want insufficient request-deadline budget")
+	}
+	if result.Spawned {
+		t.Errorf("Run() reported a spawn despite insufficient deadline margins: %+v", result)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Errorf("extension was invoked despite insufficient deadline margins: stat error = %v", statErr)
+	}
+}
+
+func TestProcessRunnerReservesCleanupAndDeliveryMargins(t *testing.T) {
+	started := filepath.Join(t.TempDir(), "extension-started")
+	fixture := newProcessRunnerFixture(t, ": > "+shellQuote(started)+"\nexec /bin/sleep 30", ":", ":")
+	timing := shortProcessRunnerTiming()
+	timing.cleanupTimeout = 100 * time.Millisecond
+	timing.deliveryMargin = 150 * time.Millisecond
+	timing.operationBudgets["view"] = 2 * time.Second
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"view", "--json"}})
+	elapsed := time.Since(startedAt)
+	if err == nil {
+		t.Fatal("Run() error = nil, want the reserved execution deadline to stop the child")
+	}
+	if !result.Spawned || !result.TimedOut || result.CleanupUnknown {
+		t.Errorf("Run() result = %+v, want spawned timeout with confirmed cleanup", result)
+	}
+	if !waitForRunnerFile(started, time.Second) {
+		t.Fatal("fake extension did not start")
+	}
+	if elapsed >= 500*time.Millisecond {
+		t.Errorf("Run() elapsed %s, want execution to stop before the request delivery margin", elapsed)
+	}
+}
+
+func TestProcessRunnerRejectsDeadlineWithNoPositiveWorkWindow(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "extension-was-invoked")
+	fixture := newProcessRunnerFixture(t, "printf 'invoked\\n' > "+shellQuote(marker), ":", ":")
+	timing := shortProcessRunnerTiming()
+	timing.cleanupTimeout = 70 * time.Millisecond
+	timing.deliveryMargin = 80 * time.Millisecond
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(100*time.Millisecond))
+	defer cancel()
+
+	result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"view", "--json"}})
+	if err == nil {
+		t.Fatal("Run() error = nil, want a request deadline rejected before launch")
+	}
+	if result.Spawned {
+		t.Errorf("Run() reported a spawn with no work window: %+v", result)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Errorf("extension was invoked with no work window: stat error = %v", statErr)
+	}
+}
+
+func TestProcessRunnerEnforcesShortenedOperationBudget(t *testing.T) {
+	started := filepath.Join(t.TempDir(), "extension-started")
+	fixture := newProcessRunnerFixture(t, ": > "+shellQuote(started)+"\nexec /bin/sleep 30", ":", ":")
+	timing := shortProcessRunnerTiming()
+	timing.operationBudgets["view"] = 120 * time.Millisecond
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+
+	startedAt := time.Now()
+	result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"view", "--json"}})
+	elapsed := time.Since(startedAt)
+	if err == nil {
+		t.Fatal("Run() error = nil, want the operation budget to stop the child")
+	}
+	if !result.Spawned || !result.TimedOut || result.CleanupUnknown {
+		t.Errorf("Run() result = %+v, want spawned timeout with confirmed cleanup", result)
+	}
+	if !waitForRunnerFile(started, time.Second) {
+		t.Fatal("fake extension did not start")
+	}
+	if elapsed >= 400*time.Millisecond {
+		t.Errorf("Run() elapsed %s, want the shortened operation budget plus bounded cleanup", elapsed)
+	}
+}
+
+func TestProcessRunnerTreatsChildExitAfterShortenedDeadlineAsUncertain(t *testing.T) {
+	started := filepath.Join(t.TempDir(), "extension-started")
+	invocations := filepath.Join(t.TempDir(), "write-invocations")
+	fixture := newProcessRunnerFixture(t, fmt.Sprintf(`
+printf 'invoked\n' >> %s
+: > %s
+trap '' TERM
+exec /bin/sleep 0.25
+`, shellQuote(invocations), shellQuote(started)), ":", ":")
+	timing := shortProcessRunnerTiming()
+	timing.operationBudgets["push"] = 100 * time.Millisecond
+	timing.cleanupTimeout = 1200 * time.Millisecond
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+
+	result, err := runner.Run(context.Background(), fixture.target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
+	if err == nil {
+		t.Fatal("Run() error = nil, want an uncertain result after the execution deadline")
+	}
+	if !waitForRunnerFile(started, time.Second) {
+		t.Fatal("fake extension did not start")
+	}
+	if !result.Spawned || result.ExitCode == nil || *result.ExitCode != 0 || !result.TimedOut || result.Canceled || result.CleanupUnknown {
+		t.Errorf("late child result = %+v, %v; want exit 0 marked timed out with confirmed cleanup", result, err)
+	}
+	invocationData, err := os.ReadFile(invocations)
+	if err != nil {
+		t.Fatalf("read write invocation count: %v", err)
+	}
+	if got := strings.Count(string(invocationData), "invoked\n"); got != 1 {
+		t.Errorf("uncertain write invocation count = %d, want exactly 1", got)
+	}
+}
+
+func TestProcessRunnerArbitratesReadyCompletionAgainstExpiredContext(t *testing.T) {
+	tests := []struct {
+		name         string
+		makeContexts func() (context.Context, context.Context, func())
+	}{
+		{
+			name: "request cancellation",
+			makeContexts: func() (context.Context, context.Context, func()) {
+				requestContext, cancelRequest := context.WithCancel(context.Background())
+				executionContext, cancelExecution := context.WithCancel(requestContext)
+				cancelRequest()
+				return requestContext, executionContext, func() {
+					cancelExecution()
+					cancelRequest()
+				}
+			},
+		},
+		{
+			name: "effective execution deadline",
+			makeContexts: func() (context.Context, context.Context, func()) {
+				requestContext, cancelRequest := context.WithCancel(context.Background())
+				executionContext, cancelExecution := context.WithDeadline(requestContext, time.Now().Add(-time.Second))
+				return requestContext, executionContext, func() {
+					cancelExecution()
+					cancelRequest()
+				}
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requestContext, executionContext, cleanup := test.makeContexts()
+			t.Cleanup(cleanup)
+
+			waitResults := make(chan error, 1)
+			waitErr := errors.New("fake child exited")
+			waitResults <- waitErr
+			if len(waitResults) != 1 {
+				t.Fatal("wait result was not ready before arbitration")
+			}
+			select {
+			case <-requestContext.Done():
+			case <-executionContext.Done():
+			default:
+				t.Fatal("execution cancellation was not ready before arbitration")
+			}
+
+			waitResult, completed := arbitrateProcessCompletion(requestContext, executionContext, waitResults)
+			if completed {
+				t.Fatal("arbitration accepted an ordinary completion while cancellation or the effective deadline was ready")
+			}
+			if !waitResult.waited {
+				t.Fatal("arbitration did not preserve the ready wait result for cleanup")
+			}
+			if waitResult.err != waitErr {
+				t.Errorf("arbitration wait error = %v, want %v", waitResult.err, waitErr)
+			}
+		})
+	}
+}
+
+func TestProcessRunnerSerializesLinkedWorktreesByCommonDirectory(t *testing.T) {
+	stateDirectory := filepath.Join(t.TempDir(), "runner-overlap")
+	overlap := filepath.Join(t.TempDir(), "overlap-detected")
+	script := fmt.Sprintf(`
+if ! /bin/mkdir %s 2>/dev/null; then
+	printf 'overlap\n' > %s
+fi
+/bin/sleep 0.15
+/bin/rmdir %s 2>/dev/null || true
+`, shellQuote(stateDirectory), shellQuote(overlap), shellQuote(stateDirectory))
+	fixture := newProcessRunnerFixture(t, script, ":", ":")
+	first, second := linkedWorktreeTargets(t, fixture)
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, shortProcessRunnerTiming())
+
+	start := make(chan struct{})
+	results := make(chan runnerCall, 2)
+	var wait sync.WaitGroup
+	for _, target := range []Target{first, second} {
+		wait.Add(1)
+		go func(target Target) {
+			defer wait.Done()
+			<-start
+			result, err := runner.Run(context.Background(), target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
+			results <- runnerCall{result: result, err: err}
+		}(target)
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+
+	for call := range results {
+		if call.err != nil || !call.result.Spawned || call.result.ExitCode == nil || *call.result.ExitCode != 0 {
+			t.Errorf("linked-worktree Run() = %+v, %v; want spawned exit 0", call.result, call.err)
+		}
+	}
+	if _, err := os.Stat(overlap); !os.IsNotExist(err) {
+		t.Errorf("runner allowed same-common-dir worktree operations to overlap: stat error = %v", err)
+	}
+}
+
+func TestProcessRunnerCancellationAndBudgetWhileWaitingForCommonDirectoryLock(t *testing.T) {
+	holderStarted := filepath.Join(t.TempDir(), "holder-started")
+	holderPIDPath := filepath.Join(t.TempDir(), "holder-pid")
+	canceledWaiter := filepath.Join(t.TempDir(), "canceled-waiter-invoked")
+	budgetWaiter := filepath.Join(t.TempDir(), "budget-waiter-invoked")
+	script := fmt.Sprintf(`
+case "$2" in
+holder)
+	printf '%%s\\n' "$$" > %s
+	: > %s
+	exec /bin/sleep 30
+	;;
+waiter-cancel)
+	: > %s
+	exec /bin/sleep 30
+	;;
+waiter-budget)
+	: > %s
+	exec /bin/sleep 30
+	;;
+esac
+`, shellQuote(holderPIDPath), shellQuote(holderStarted), shellQuote(canceledWaiter), shellQuote(budgetWaiter))
+	fixture := newProcessRunnerFixture(t, script, ":", ":")
+	first, second := linkedWorktreeTargets(t, fixture)
+	timing := shortProcessRunnerTiming()
+	timing.operationBudgets["view"] = 150 * time.Millisecond
+	timing.operationBudgets["push"] = 3 * time.Second
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+
+	holderContext, cancelHolder := context.WithCancel(context.Background())
+	holderDone := make(chan runnerCall, 1)
+	go func() {
+		result, err := runner.Run(holderContext, first, CommandSpec{Args: []string{"push", "holder"}})
+		holderDone <- runnerCall{result: result, err: err}
+	}()
+	defer cancelHolder()
+	if !waitForRunnerFile(holderStarted, 2*time.Second) {
+		cancelHolder()
+		select {
+		case call := <-holderDone:
+			t.Fatalf("lock-holding fake extension exited before signaling start: result = %+v, error = %v", call.result, call.err)
+		case <-time.After(time.Second):
+		}
+		t.Fatal("lock-holding fake extension did not start")
+	}
+
+	waiterContext, cancelWaiter := context.WithCancel(context.Background())
+	waiterDone := make(chan runnerCall, 1)
+	go func() {
+		result, err := runner.Run(waiterContext, second, CommandSpec{Args: []string{"push", "waiter-cancel"}})
+		waiterDone <- runnerCall{result: result, err: err}
+	}()
+	time.Sleep(75 * time.Millisecond)
+	cancelWaiter()
+	select {
+	case call := <-waiterDone:
+		if call.err == nil || call.result.Spawned || !call.result.Canceled {
+			t.Errorf("canceled lock waiter = %+v, %v; want an unspawned cancellation", call.result, call.err)
+		}
+	case <-time.After(time.Second):
+		t.Error("Run() remained blocked after cancellation while waiting for the repository lock")
+	}
+	if _, err := os.Stat(canceledWaiter); !os.IsNotExist(err) {
+		t.Errorf("canceled lock waiter launched the extension: stat error = %v", err)
+	}
+
+	budgetDone := make(chan runnerCall, 1)
+	budgetContext, cancelBudgetWaiter := context.WithCancel(context.Background())
+	go func() {
+		result, err := runner.Run(budgetContext, second, CommandSpec{Args: []string{"view", "waiter-budget"}})
+		budgetDone <- runnerCall{result: result, err: err}
+	}()
+	select {
+	case call := <-budgetDone:
+		if call.err == nil || call.result.Spawned || !call.result.TimedOut {
+			t.Errorf("budget-expired lock waiter = %+v, %v; want timeout before spawn", call.result, call.err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		cancelBudgetWaiter()
+		select {
+		case call := <-budgetDone:
+			if call.err == nil || call.result.Spawned || !call.result.TimedOut {
+				t.Errorf("budget-expired lock waiter = %+v, %v; want timeout before spawn", call.result, call.err)
+			}
+		case <-time.After(time.Second):
+			t.Error("Run() exceeded its operation budget while waiting for the repository lock")
+		}
+	}
+	cancelBudgetWaiter()
+	if _, err := os.Stat(budgetWaiter); !os.IsNotExist(err) {
+		t.Errorf("budget-expired lock waiter launched the extension: stat error = %v", err)
+	}
+
+	cancelHolder()
+	select {
+	case <-holderDone:
+	case <-time.After(time.Second):
+		if leaderPID, err := readRunnerPID(holderPIDPath); err == nil {
+			_ = syscall.Kill(-leaderPID, syscall.SIGKILL)
+		}
+		t.Error("lock-holding process did not terminate after cancellation")
+	}
+}
+
+func TestProcessRunnerTimesOutForkedWriteOnceAndReapsProcessGroup(t *testing.T) {
+	invocations := filepath.Join(t.TempDir(), "write-invocations")
+	leaderPIDPath := filepath.Join(t.TempDir(), "leader-pid")
+	childPIDPath := filepath.Join(t.TempDir(), "child-pid")
+	started := filepath.Join(t.TempDir(), "extension-started")
+	script := fmt.Sprintf(`
+printf 'invoked\n' >> %s
+printf '%%s\n' "$$" > %s
+(trap '' TERM; exec /bin/sleep 30) &
+child=$!
+printf '%%s\n' "$child" > %s
+: > %s
+wait "$child"
+`, shellQuote(invocations), shellQuote(leaderPIDPath), shellQuote(childPIDPath), shellQuote(started))
+	fixture := newProcessRunnerFixture(t, script, ":", ":")
+	timing := shortProcessRunnerTiming()
+	timing.cleanupTimeout = 250 * time.Millisecond
+	timing.deliveryMargin = 80 * time.Millisecond
+	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	done := make(chan runnerCall, 1)
+	go func() {
+		result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
+		done <- runnerCall{result: result, err: err}
+	}()
+
+	if !waitForRunnerFile(started, time.Second) {
+		cancel()
+		if leaderPID, err := readRunnerPID(leaderPIDPath); err == nil {
+			_ = syscall.Kill(-leaderPID, syscall.SIGKILL)
+		}
+		t.Fatal("forking fake extension did not start")
+	}
+	leaderPID, err := readRunnerPID(leaderPIDPath)
+	if err != nil {
+		cancel()
+		t.Fatalf("read fake extension pid: %v", err)
+	}
+	childPID, err := readRunnerPID(childPIDPath)
+	if err != nil {
+		cancel()
+		_ = syscall.Kill(-leaderPID, syscall.SIGKILL)
+		t.Fatalf("read forked child pid: %v", err)
+	}
+
+	startedAt := time.Now()
+	var call runnerCall
+	returned := false
+	select {
+	case call = <-done:
+		returned = true
+	case <-time.After(timing.cleanupTimeout + 250*time.Millisecond):
+		t.Error("Run() did not finish within its bounded process-group cleanup interval")
+		_ = syscall.Kill(-leaderPID, syscall.SIGKILL)
+		select {
+		case call = <-done:
+			returned = true
+		case <-time.After(time.Second):
+			t.Fatal("Run() remained blocked after test cleanup killed the fixture process group")
+		}
+	}
+	if returned {
+		if call.err == nil || !call.result.Spawned || call.result.Canceled || !call.result.TimedOut || call.result.CleanupUnknown {
+			t.Errorf("timed-out write result = %+v, %v; want one spawned timeout with confirmed cleanup", call.result, call.err)
+		}
+		if elapsed := time.Since(startedAt); elapsed > timing.cleanupTimeout+250*time.Millisecond {
+			t.Errorf("cancellation cleanup took %s, beyond its configured bound", elapsed)
+		}
+	}
+	if err := syscall.Kill(-leaderPID, 0); !errors.Is(err, syscall.ESRCH) {
+		t.Errorf("child process group still exists after Run(): kill(-%d, 0) = %v", leaderPID, err)
+	}
+	if childPID <= 0 {
+		t.Errorf("forked child pid = %d, want a positive pid", childPID)
+	}
+	data, readErr := os.ReadFile(invocations)
+	if readErr != nil {
+		t.Fatalf("read write invocation count: %v", readErr)
+	}
+	if got := strings.Count(string(data), "invoked\n"); got != 1 {
+		t.Errorf("uncertain write invocation count = %d, want exactly 1", got)
+	}
+}
+
 func TestNewProcessRunnerRequiresAbsoluteExecutablePaths(t *testing.T) {
 	fixture := newProcessRunnerFixture(t, ":", ":", ":")
 	config := fixture.config
@@ -601,6 +1054,81 @@ func runCapturingServerStdout(t *testing.T, run func() (ProcessResult, error)) (
 		t.Errorf("read captured server stdout: %v", readErr)
 	}
 	return result, runErr, serverStdout
+}
+
+type runnerCall struct {
+	result ProcessResult
+	err    error
+}
+
+func shortProcessRunnerTiming() processRunnerTiming {
+	timing := defaultProcessRunnerTiming()
+	for operation := range timing.operationBudgets {
+		timing.operationBudgets[operation] = 3 * time.Second
+	}
+	timing.cleanupTimeout = 300 * time.Millisecond
+	timing.deliveryMargin = 100 * time.Millisecond
+	return timing
+}
+
+func newTestProcessRunnerWithTiming(t *testing.T, config ProcessRunnerConfig, timing processRunnerTiming) *ProcessRunner {
+	t.Helper()
+	runner, err := newProcessRunnerWithTiming(config, timing)
+	if err != nil {
+		t.Fatalf("newProcessRunnerWithTiming() error = %v", err)
+	}
+	return runner
+}
+
+func linkedWorktreeTargets(t *testing.T, fixture processRunnerFixture) (Target, Target) {
+	t.Helper()
+	commonDir := filepath.Join(fixture.root, "shared-common-git-dir")
+	if err := os.MkdirAll(commonDir, 0o700); err != nil {
+		t.Fatalf("create linked-worktree common directory: %v", err)
+	}
+	resolvedCommonDir, err := filepath.EvalSymlinks(commonDir)
+	if err != nil {
+		t.Fatalf("resolve linked-worktree common directory: %v", err)
+	}
+
+	first := fixture.target
+	first.CommonDir = resolvedCommonDir
+	secondPath := filepath.Join(fixture.root, "linked-worktree")
+	if err := os.MkdirAll(secondPath, 0o700); err != nil {
+		t.Fatalf("create linked worktree path: %v", err)
+	}
+	resolvedSecondPath, err := filepath.EvalSymlinks(secondPath)
+	if err != nil {
+		t.Fatalf("resolve linked worktree path: %v", err)
+	}
+	second := first
+	second.Path = resolvedSecondPath
+	second.GitDir = filepath.Join(fixture.root, "linked-worktree.git")
+	return first, second
+}
+
+func waitForRunnerFile(path string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+func readRunnerPID(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid process ID file")
+	}
+	return pid, nil
 }
 
 func shellQuote(value string) string {

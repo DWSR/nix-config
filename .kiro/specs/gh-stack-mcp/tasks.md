@@ -57,7 +57,7 @@
   - Fake auth, signing, and missing-dependency fixtures return actionable diagnostics without exposing credential values.
   - _Boundary: Process runner (`internal/stackmcp/runner.go`, `runner_test.go`)_
   - _Requirements: 3.4, 8.1, 8.2, 8.5, 9.4, 9.5_
-- [ ] 2.8 Limit child lifetime and serialize linked-worktree calls
+- [x] 2.8 Limit child lifetime and serialize linked-worktree calls
   - Serialize this server's operations by common Git directory; prove linked-worktree calls cannot overlap.
   - Reject before launch if the incoming deadline lacks work, cleanup, and delivery margins; bound process-group cleanup after cancellation.
   - Forking-child fixtures show finite uncertain results and no automatic write retry.
@@ -153,3 +153,4 @@
 - Recovery preflight mirrors v0.1.1: `originalRefs` covers branches but not trunk, deleted merged branches fall back to `Head`, `remainingBranches` is the scoped suffix through `endIndex`, and pending submit only un-stacks with a nonempty prior remote Stack ID.
 - Branch URL screening must preserve valid dotted branch components such as `release.v1/feature` while rejecting explicit schemes and host-style pull-request URLs.
 - Close stdin and launch in a new session (`Setsid`) to prevent both prompting and reopening the caller's controlling `/dev/tty`; the runner test exercises this under a pseudo-TTY.
+- Runner ceilings are 45s for view, 5m for init/add/checkout, and 15m for other commands, with 5s cleanup and 10s proxy-delivery reserves; task 3.2 aligns the shared deadlines around these limits.
