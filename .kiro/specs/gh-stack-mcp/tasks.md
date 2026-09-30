@@ -108,7 +108,7 @@
   - _Requirements: 1.1, 1.6, 8.6, 9.7, 9.8, 11.1, 11.2, 11.3_
 
 - [ ] 4. Migrate native Stack agent guidance and permissions
-- [ ] 4.1 Migrate the shared native-Stacks skill to typed local tools
+- [x] 4.1 Migrate the shared native-Stacks skill to typed local tools
   - Preserve GitHub MCP remote-only operations and handoffs for merge, abort, TUI, and unsupported cases.
   - Require local/remote snapshots, scoped authorization, and immediate confirmation of exact Stack number and mode before unstack.
   - Require exhaustive PR-head checks before submit/link and postflight reinspection; disclose direct-client and fork-association risks.

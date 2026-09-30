@@ -1,19 +1,20 @@
 ---
 name: github-native-stacks
 description: >-
-  Interact with GitHub-native pull request Stack objects through the GitHub
-  MCP. Use ONLY when the user explicitly mentions GitHub native stacks,
-  native Stack objects, or `gh stack`, or explicitly asks to list, inspect,
-  create, extend, or unstack one. Do not trigger for generic stacked PRs or
-  stacks managed by another tool.
+  Interact with GitHub-native pull request Stack objects through GitHub MCP and
+  typed local Stack MCP tools. Use ONLY when the user explicitly mentions
+  GitHub native stacks, native Stack objects, or `gh stack`, or explicitly asks
+  to list, inspect, create, extend, or unstack one. Do not trigger for generic
+  stacked PRs or stacks managed by another tool.
 ---
 
 # GitHub Native Stacks
 
-Manage GitHub's remote pull request Stack objects through the `github` MCP
-upstream. A native Stack is an ordered chain of existing pull requests. Each
-pull request above the bottom targets the head branch of the pull request below
-it.
+Manage GitHub-native Stacks across their remote pull request objects and local
+`gh stack` tracking. Use GitHub MCP for remote Stack objects and, when
+advertised, the typed local Stack MCP tools for worktree operations. A native
+Stack is an ordered chain of existing pull requests. Each pull request above
+the bottom targets the head branch of the pull request below it.
 
 This skill is explicit-only. Generic requests about stacked PRs continue to use
 the repository's existing version-control policy. Never convert a stack managed
@@ -37,17 +38,24 @@ reconcile a worktree, maintain `.git/gh-stack`, cascade-rebase branches, push a
 stack, reorder commits, check out a locally tracked Stack, or invoke the
 stack-wide asynchronous merge operation.
 
+When advertised, a separate local Stack MCP provides typed worktree operations.
+Discover it at runtime and use the absent-tools handoff if it is unavailable.
+Local tracking and remote Stack objects are distinct: a local metadata
+observation is not a remote postcondition, and a GitHub MCP mutation does not
+update `.git/gh-stack`.
+
 Never execute `gh stack` by any mechanism. Every `gh stack` command in this
-skill is a user-owned handoff, not an agent command. Inspect through MCP,
-explain the capability boundary, and provide the exact command the user can
-run. Use Git-MCP automatically only for the safe operations listed in
-"Git-MCP recovery boundary" below.
+skill is a user-owned handoff, not an agent command. For supported local work,
+use the discovered typed Stack MCP tools. Use Git-MCP automatically only for
+the safe operations listed in "Git-MCP recovery boundary" below.
 
 Application-code repair on one verified existing member branch is distinct
 from Stack orchestration. When the user explicitly requests a code fix,
 Git-MCP may stage explicit paths and create one ordinary fix commit on that
-branch. It must not amend or rewrite existing Stack commits, and the required
-cascade rebase or push remains a user-owned `gh stack` handoff.
+branch. It must not amend or rewrite existing Stack commits. Any required
+cascade rebase or push uses the typed local Stack MCP tool after its own
+preflight and authorization, or a user-owned `gh stack` handoff if that tool is
+unavailable.
 
 ## Terminology and ordering
 
@@ -64,20 +72,41 @@ cascade rebase or push remains a user-owned `gh stack` handoff.
 ## Discover tools before every workflow
 
 All calls go through mcpproxy's discover-then-invoke surface. Never invent a
-tool name or invoke a `github:*` tool directly.
+tool name or invoke a `github:*` or local Stack MCP tool directly.
+
+### Local Stack tools
+
+1. Discover the live local catalog for each workflow with
+   `retrieve_tools(query: "local gh-stack Stack worktree operations")`.
+2. The designed tool names are `stack_view`, `stack_init`, `stack_add`,
+   `stack_checkout`, `stack_rebase`, `stack_sync`, `stack_push`,
+   `stack_submit`, `stack_link`, and `stack_unstack`. The returned `name` is
+   authoritative; use its exact qualified value and its `call_with` route.
+3. The designed route for `stack_view` is `call_tool_write` because it refreshes
+   local Stack metadata. The designed route for every mutation is
+   `call_tool_destructive`. Follow the live `call_with` value, and stop to
+   inspect the schema if the discovered route or tool contract differs.
+4. If local Stack tools are not advertised, say the running proxy does not
+   expose them. Do not emulate them with GitHub MCP, Git-MCP sequences, or
+   individual pull-request calls; give the matching user-owned `gh stack`
+   handoff from the operation guidance below.
+
+### Remote GitHub MCP tools
 
 1. Discover reads with
    `retrieve_tools(query: "github native pull request stack read")`.
 2. Expect `github:pull_request_stack_read`, then invoke it through
-   `call_tool_read`.
+   `call_tool_read` using the exact discovered name and `call_with` value.
 3. Discover mutations with
    `retrieve_tools(query: "github native pull request stack write")`.
 4. Expect `github:pull_request_stack_write`. Its current annotation is
    destructive for every method, so invoke `create`, `add`, and `unstack`
-   through `call_tool_destructive`, not `call_tool_write`.
+   through `call_tool_destructive`, not `call_tool_write`, when that is the
+   discovered route.
 5. Discover supplemental tools separately, such as
    `github:pull_request_read`, `github:create_pull_request`, and
-   `github:update_pull_request`. Follow each result's `call_with` value.
+   `github:update_pull_request`. Follow each result's exact `name` and
+   `call_with` value.
 6. If a compact signature is lossy or differs from this skill, call
    `mcpproxy_describe_tool` before use. Stop if the live schema cannot support
    the requested operation.
@@ -86,11 +115,136 @@ Every `call_tool_*` call receives the upstream parameters under `args`. Include
 an operation-specific `intent_reason`. Use `intent_data_sensitivity: "public"`
 only for a repository known to be public; otherwise use `"private"`.
 
-If the Stack tools are absent, report that the running GitHub MCP does not
-expose native Stacks. Do not emulate a native Stack by merely inferring a chain
-of PR base branches.
+If the remote GitHub Stack tools are absent, report that the running GitHub MCP
+does not expose native Stacks. Do not emulate a native Stack by merely
+inferring a chain of PR base branches.
 
-## Resolve and read a Stack
+## Local Stack MCP workflow
+
+### User-owned CLI handoffs when local tools are absent
+
+Never replace a missing local MCP tool with a GitHub API or Git-MCP sequence.
+Give the matching command for the user to run in their own terminal. The
+designed local CLI forms for operations not detailed in later sections are:
+
+```bash
+gh stack view
+gh stack init --base <trunk> <bottom> ... <top>
+gh stack add <branch> [-u|-A] [-m <message>]
+gh stack checkout <branch>
+gh stack link --remote <remote>
+gh stack unstack <stack-number>          # remoteAndLocal
+gh stack unstack <stack-number> --local   # localOnly
+```
+
+The unqualified unstack form is `remoteAndLocal`; `--local` is `localOnly`.
+Use the operation-specific handoffs below for checkout, rebase, sync, push, and
+submit. These are user-owned handoffs only; never execute them from the agent.
+
+### Snapshots, previews, and scoped authorization
+
+`stack_view` is a local observation that refreshes Stack metadata, so it is a
+write-class call, not a read-only operation. Use Git-MCP with the explicit
+absolute worktree `path` on every call to identify the target worktree, current
+branch, status, branch refs, and configured remote before local Stack work.
+Use GitHub MCP to inspect the relevant remote Stack membership and affected PR
+state; record when no remote Stack or PR is associated with the target. Call
+`stack_view` only for an explicitly requested local view or as postflight
+verification of an explicitly authorized `localOnly` cleanup. Name its exact
+worktree and remote, and disclose that it refreshes local metadata.
+
+Before each local mutation (`stack_init`, `stack_add`, `stack_checkout`,
+`stack_rebase`, `stack_sync`, `stack_push`, `stack_submit`, `stack_link`, or
+`stack_unstack`):
+
+1. Take fresh Git-MCP and relevant GitHub MCP snapshots for the exact worktree,
+   remote, branches, and PRs. Present the local branch order and status plus
+   the remote Stack number/order and affected PR refs, states, and membership.
+2. Preview the exact branches, paths, and side effects. For `stack_add` with
+   `stage: all`, enumerate every untracked and changed path before staging; do
+   not treat `--all` as an implicit opt-in. For `stack_sync` with pruning,
+   enumerate the exact local branches that would be pruned and ask for that
+   effect explicitly. For rebase, sync, and push, name every affected branch
+   and disclose history rewrites, per-branch force-with-lease, and non-atomic
+   push effects as applicable.
+3. Request authorization for one operation, naming the absolute worktree,
+   exact Git remote (and GitHub owner/repository), exact affected branches in
+   order, operation, options, and side effects. A broad request or earlier
+   authorization is not enough. For `stack_unstack`, use the immediate exact
+   confirmation below as this scoped authorization rather than asking twice.
+   If the inspected state changes, repeat the snapshots, preview, and
+   authorization.
+
+For example, ask to authorize `stack_rebase` with scope `upstack` on worktree
+`<absolute-path>`, remote `<remote>` for `<owner>/<repo>`, affecting branches
+`[<branch-1>, <branch-2>]`, and state the expected history and review effects.
+
+### Submit and link PR-head preflight
+
+Before any local `stack_submit` or `stack_link`, and before a remote-only
+workflow creates PRs by branch name, enumerate all open PRs in the target
+repository with the discovered GitHub MCP list operation. Paginate through
+every page until all pages are exhausted; a head-filtered query or first
+page alone is not an exhaustive check. For each affected branch, match
+`head.ref` by exact branch name and inspect both the head repository and base
+repository associations.
+
+Stop before submit/link for incomplete pagination, a matching PR with a foreign
+or unknown head or base repository association, or multiple matches for an
+affected branch (more than one open PR). Report the matching PR
+number, exact head, and both repository associations. A branch with no matching
+PR is not an existing PR: stop a `stack_link` until an existing PR is explicitly
+identified; for `stack_submit`, proceed with PR creation only when that creation
+is explicitly authorized. Never create PRs implicitly during a link or retry.
+
+After submit/link, inspect local refs with Git-MCP and re-read the affected PRs
+and Stack membership with GitHub MCP. Verify each branch-to-PR association,
+expected head/base refs, and exact Stack order before reporting success. Stop
+and report uncertainty rather than retrying when the result is ambiguous.
+
+### Unstack locally
+
+After the latest local and remote snapshots and preview, immediately ask for
+confirmation naming the exact Stack number and exact `mode` value:
+`remoteAndLocal` or `localOnly`. Do not make another call between that
+confirmation and `stack_unstack`. State the effects in the confirmation:
+
+Include the absolute worktree, remote and GitHub repository, affected branches,
+and `stack_unstack` operation in this same scoped authorization.
+
+Require a positive explicit Stack number in either mode; never infer the active
+Stack number. If the local Stack has no remote Stack number, do not call the
+tool and provide a user-owned local CLI handoff.
+
+- `remoteAndLocal` removes eligible remote Stack grouping and local tracking;
+  it does not delete branches or PRs, and merged, queued, or locked PRs may
+  remain in the remote Stack.
+- `localOnly` removes local tracking only; remote Stack grouping is unchanged.
+
+After `remoteAndLocal`, re-inspect membership for every former PR with GitHub
+MCP and verify local state with Git-MCP. Report any retained locked, merged, or
+queued PRs. Claim full dissolution only after every former eligible PR is
+verified to have no Stack membership. Never imply that unstack deletes a
+branch or PR.
+
+### Postflight and uncertain outcomes
+
+Every local mutation can return `exited_unverified`; an exit code or
+success-looking CLI output is not proof of its postcondition. After that status
+or any timeout, cleanup uncertainty, partial result, or other uncertainty,
+re-inspect local refs and worktree state with Git-MCP and relevant remote PR
+and Stack membership with GitHub MCP before claiming success or retrying. If
+the snapshots do not establish one unambiguous outcome, stop, report what is
+known, and request fresh authorization before any later attempt. Never retry a
+Stack mutation in a loop.
+
+These checks are agent-side safeguards, not backend authentication. Other
+CLI-backed operations can associate a same-named fork PR; direct MCP or loopback
+clients can bypass this agent's PR-head preflight; and a PR can appear between
+the exhaustive list and the CLI lookup, creating a check-to-CLI race. Do not
+describe user confirmation as preventing those cases.
+
+## Resolve and read a remote Stack
 
 Collect `owner` and `repo` plus either a Stack number or pull request number.
 Parse them from a GitHub URL when possible; otherwise ask one concise question.
@@ -135,7 +289,7 @@ ref, and head SHA. Fetch detailed pull request state only when needed:
 Fan out read-only calls in parallel, but preserve bottom-to-top ordering in the
 reported result.
 
-## Mutation authorization and snapshots
+## Remote GitHub MCP mutation authorization and snapshots
 
 Read the latest Stack and affected pull requests immediately before every
 mutation.
@@ -144,9 +298,15 @@ An explicit request naming the repository and exact PR order authorizes one
 `create` or `add` call after a successful preflight and preview. Ask before the
 call when the repository, order, target Stack, or intended PR set was inferred.
 
-Always ask immediately before `unstack`, even when it was requested earlier.
-State which PRs are eligible to leave, which merged or queued PRs may remain,
-and that local `.git/gh-stack` state will not be changed.
+For remote GitHub MCP `unstack`, follow the combined local/remote preflight in
+"Unstack remotely" before asking, even when it was requested earlier. The
+preview must include the latest remote Stack and affected-PR membership/state
+plus a Git-MCP snapshot of the exact local worktree using its explicit absolute
+`path`; if no local checkout is in scope, record that explicitly. Ask only
+after both snapshots and their preview. Name the exact Stack number and
+`remote-only` mode, identify eligible PRs and any merged, queued, or otherwise
+locked PRs that may remain, state that branches and PRs are not deleted, and
+state that local `.git/gh-stack` tracking will remain unchanged.
 
 Before a multi-call workflow, capture and report a snapshot containing:
 
@@ -159,7 +319,7 @@ A confirmation authorizes only the described operation. It does not authorize
 a changed order, additional PRs, force-push, merge, or a retry after state has
 changed. Re-read before retrying.
 
-## Create a Stack
+## Create a remote Stack
 
 Creation links existing PRs; it does not create branches or pull requests.
 
@@ -185,7 +345,7 @@ pullNumbers: [<bottom>, ..., <top>]
 Do not silently update PR bases to make an invalid chain pass validation. Base
 changes alter review diffs and can require branch-history rewrites.
 
-## Add to a Stack
+## Add to a remote Stack
 
 The API only appends to the top. It cannot insert into the middle.
 
@@ -216,9 +376,24 @@ Unstacking removes eligible PRs from the remote grouping. It does not delete
 branches or PRs and does not change their base branches. Merged, queued, or
 otherwise locked PRs can remain in the Stack.
 
-1. Get the latest Stack and snapshot its members.
-2. Explain that this is a remote-only mutation and always ask for confirmation.
-3. Invoke through `call_tool_destructive` without `pullNumbers`:
+1. Get the latest remote Stack and inspect the membership and current state of
+   every affected PR with GitHub MCP. Record the Stack order and each PR's
+   membership/state.
+2. Before confirmation, snapshot the exact local checkout in scope with
+   Git-MCP, passing its explicit absolute `path` on every call. Record the
+   worktree path/identity, status, current branch, configured remote(s),
+   branch refs, and local Stack tracking when Git-MCP exposes it; otherwise
+   record that local Stack tracking was not observable. If no local checkout is
+   in scope, record that explicitly. If the local target is ambiguous, stop and
+   ask for its exact absolute path or clarification that no checkout is in
+   scope; do not guess a worktree or mutate.
+3. Preview both snapshots together. Immediately after the preview, ask for
+   confirmation naming the exact Stack number and `remote-only` mode. State
+   which PRs are eligible to leave, which merged, queued, or otherwise locked
+   PRs may remain, that branches and PRs are not deleted, and that local
+   `.git/gh-stack` tracking will remain unchanged. Do not make another tool
+   call after completing both snapshots and before asking for confirmation.
+4. Invoke through `call_tool_destructive` without `pullNumbers`:
 
 ```text
 method: unstack
@@ -227,45 +402,66 @@ repo: <repo>
 stackNumber: <stack-number>
 ```
 
-4. Interpret `dissolved: true` as complete dissolution. The old Stack can no
+5. Interpret `dissolved: true` as complete dissolution. The old Stack can no
    longer be fetched; verify completion by filtering for each former PR and
    expecting no Stack membership.
-5. Interpret `dissolved: false` plus `stack` as partial unstacking. Get the
+6. Interpret `dissolved: false` plus `stack` as partial unstacking. Get the
    retained Stack, report every retained PR, and verify removed PRs by their
    membership filters. Do not claim dissolution.
 
 If a local checkout tracks the Stack, tell the user that the next local sync or
-submit can recreate the remote grouping. After complete remote dissolution,
-provide this specifically targeted cleanup handoff when they want local
-tracking removed too:
+submit can recreate the remote grouping. If they separately want local tracking
+removed, treat it as a new local-only operation; the earlier `remote-only`
+confirmation does not authorize local cleanup. Take fresh Git-MCP and GitHub
+MCP snapshots for the exact absolute worktree, remote/repository, affected
+branches, and current remote Stack/PR membership. Immediately ask for explicit
+confirmation naming the exact Stack number, `localOnly` mode, absolute worktree,
+remote/repository, and affected branches. Do not make another call between this
+confirmation and the local unstack operation.
+
+If the user wants the agent to perform the cleanup and `stack_unstack` is
+advertised, invoke it through the exact returned `name` and `call_with`, with
+`stackNumber: <stack-number>`, `mode: localOnly`, and the same `path` and
+`remote`. Afterward, verify local tracking with a fresh `stack_view` observation
+and Git-MCP worktree/branch snapshot; disclose that `stack_view` refreshes local
+metadata. Local-only cleanup leaves remote grouping unchanged. If the remote
+unstack was partial, preserve the report of every retained PR, including
+locked, merged, queued, or otherwise remaining members; local cleanup does not
+remove them remotely. Do not claim full remote dissolution based on local
+cleanup.
+
+Use this targeted CLI handoff only if local Stack tools are unavailable or the
+user explicitly wants to run the CLI themselves:
 
 ```bash
 gh stack unstack <stack-number> --local
 ```
 
-After a partial remote unstack, locked PRs still remain grouped remotely. The
-same local-only command may remove local tracking if the user explicitly wants
-that independent effect, but it cannot make both sides fully unstacked. Never
-execute the command from the skill.
+If the user runs the handoff, request `gh stack view` output and verify local
+tracking before claiming cleanup. Never execute the command from the skill.
 
 ## Stack-wide operations
 
-The public Stack API exposes list, get, create, append, and unstack. It does not
-expose cascade sync, cascade rebase, arbitrary reorder, local checkout, push,
-or stack-wide merge. Never simulate one of these operations by looping a
-single-PR tool when the semantics differ.
+The remote GitHub Stack API exposes list, get, create, append, and unstack. It
+does not expose cascade sync, cascade rebase, arbitrary reorder, local checkout,
+push, or stack-wide merge. Use the typed local Stack MCP tools for supported
+local operations; never simulate a Stack-wide operation by looping single-PR or
+Git calls when the semantics differ.
 
 ### Cascade sync
 
-For a sync request, inspect the remote Stack and fan out PR/check/review reads.
-If a local path is available, Git-MCP may inspect status, branches, worktrees,
-logs, and diffs with that explicit absolute path. This is diagnosis only.
+For local sync, use `stack_sync` after the snapshots, branch-prune preview, and
+scoped authorization above. If local Stack tools are not advertised, provide
+the CLI handoff below. For remote-only diagnosis, inspect the remote Stack and
+fan out PR/check/review reads; Git-MCP may inspect status, branches, worktrees,
+logs, and diffs with that explicit absolute path.
 
 Do not call `update_pull_request_branch` for every PR. That endpoint updates
 one branch independently and does not reconcile local Stack metadata, preserve
 commit boundaries, perform a bottom-to-top cascade, or provide atomic rollback.
 
-Provide this handoff:
+Provide this handoff only when local Stack tools are unavailable or the user
+will run the operation themselves:
 
 ```bash
 gh stack sync --remote <remote>
@@ -291,12 +487,20 @@ the exact branch tips are known.
 
 ### Cascade rebase
 
+For local cascade rebase, use `stack_rebase` with the authorized `start` action
+and exact scope after preflight. A conflict may be continued only through the
+guarded `stack_rebase` `continue` action when its recorded conflict branch and
+active Git rebase match. `stack_rebase` does not provide abort; abort remains a
+user-owned `gh stack rebase --abort` handoff. If local Stack tools are absent,
+provide the matching command below.
+
 The GitHub website has a server-side **Rebase Stack** operation, but the
 documented API does not expose it. Do not call an undocumented endpoint. Warn
 that server-side rebases create unsigned commits; repositories requiring signed
 commits should use the local CLI.
 
-Provide the command matching the requested scope:
+For a user-owned local CLI handoff, provide the command matching the requested
+scope:
 
 ```bash
 gh stack rebase --remote <remote>
@@ -309,7 +513,7 @@ Use `--upstack` after editing a lower layer. Use `--downstack` to update only
 the path from trunk through the current layer. Use `--no-trunk` only when the
 user explicitly wants to align Stack branches without pulling trunk.
 
-A local rebase does not push. After success, provide:
+A local rebase does not push. When the user owns the CLI workflow, provide:
 
 ```bash
 gh stack push --remote <remote>
@@ -320,8 +524,9 @@ must inspect and retry any rejected branch rather than assuming the whole Stack
 landed.
 
 For a rebase conflict, the agent may inspect and edit conflicted files, then
-stage explicit resolved paths through Git-MCP. The user must advance or restore
-the Stack with:
+stage explicit resolved paths through Git-MCP. Use the guarded local MCP
+`continue` action only when its preconditions hold; otherwise the user must
+advance or restore the Stack with:
 
 ```bash
 gh stack rebase --continue
@@ -347,11 +552,13 @@ gh stack modify
 
 `modify` is TUI-only. Never execute it from an agent session.
 
-For a non-interactive rebuild, provide the shape of the workflow without
-inventing the history-rewrite commands:
+For a non-interactive rebuild, provide the shape of the user-owned workflow
+without inventing history-rewrite commands. Require the explicit Stack number
+and mode before showing its unstack step:
 
 ```bash
-gh stack unstack
+gh stack unstack <stack-number>          # remoteAndLocal, after confirmation
+gh stack unstack <stack-number> --local  # localOnly, after confirmation
 # Rewrite branch ancestry bottom-to-top using verified old boundary SHAs.
 gh stack init --base <trunk> <bottom> ... <top>
 gh stack submit --auto --remote <remote>
@@ -400,17 +607,25 @@ method and may land the PRs in separate groups.
 
 ### Submit or link
 
-The MCP can perform the remote-only portion when all branches already exist on
-GitHub. It may create missing PRs bottom-to-top with `create_pull_request`, then
-create or append the native Stack after a separate preview and authorization.
+For local Stack publication, use `stack_submit` or `stack_link` only after the
+exhaustive PR-head preflight, snapshots, and scoped authorization above. The
+scope must state whether missing PR creation is intended; do not infer it.
+When local tools are unavailable, provide the user-owned CLI handoff below.
+
+For a remote-only workflow, GitHub MCP can operate when all branches already
+exist on GitHub. It may create missing PRs bottom-to-top with
+`create_pull_request`, then create or append the native Stack after a separate
+preview and authorization. Run the exhaustive PR-head preflight above before
+creating or linking by branch name.
 
 Do not create missing PRs implicitly. State that the multi-call workflow is
 not atomic and report each created PR immediately so a later failure can be
 resumed without duplication. Check for an existing PR by head branch before
 every creation retry.
 
-The MCP cannot push local branches, generate or maintain `.git/gh-stack`, or
-rebase an invalid chain. When any of those are needed, provide:
+The remote-only GitHub MCP cannot push local branches, generate or maintain
+`.git/gh-stack`, or rebase an invalid chain. When any of those are needed and
+local Stack tools are unavailable, provide:
 
 ```bash
 gh stack submit --auto --remote <remote>
@@ -419,10 +634,18 @@ gh stack submit --auto --remote <remote>
 Add `--open` only when the user wants new and existing PRs marked ready for
 review. Otherwise new PRs remain drafts.
 
+For a user-owned link handoff, provide:
+
+```bash
+gh stack link --remote <remote>
+```
+
 ### Push
 
-Do not loop `git-mcp:git_push` as a stack-wide push. Per-branch calls lose the
-CLI's lease coordination and can leave an unreported partial result. Provide:
+For local Stack pushes, use `stack_push` after scoped authorization. Do not loop
+`git-mcp:git_push` as a stack-wide push: per-branch calls lose the CLI's lease
+coordination and can leave an unreported partial result. If local Stack tools
+are unavailable or the user will run the operation themselves, provide:
 
 ```bash
 gh stack push --remote <remote>
@@ -433,12 +656,13 @@ is not atomic, and never creates or updates PRs.
 
 ### Checkout and navigation
 
-The MCP can return the bottom-to-top branch order. Git-MCP may check out an
-existing local branch after verifying it belongs to the requested remote
-Stack, but that does not create local Stack tracking.
+GitHub MCP can return the bottom-to-top branch order. For local Stack checkout,
+use `stack_checkout` after verifying the target branch and worktree. Git-MCP
+checkout of an ordinary existing branch does not create or maintain local Stack
+tracking.
 
-Provide this handoff when local tracking or missing branches are involved. Use
-the PR URL form when targeting a PR so intent is explicit:
+Provide this handoff when local Stack tools are unavailable or missing branches
+require the CLI. Use the PR URL form when targeting a PR so intent is explicit:
 
 ```bash
 gh stack checkout <stack-number>
@@ -446,9 +670,9 @@ gh stack checkout https://github.com/<owner>/<repo>/pull/<pr-number>
 ```
 
 For `up`, `down`, `top`, `bottom`, or `trunk`, report the resolved target branch
-from remote order. Use Git-MCP checkout only when the branch already exists
-locally and the user asked to switch. Otherwise provide the matching
-`gh stack` navigation command. Never use the interactive `gh stack switch`.
+from remote order. Use `stack_checkout` for supported local Stack navigation;
+otherwise provide the matching `gh stack` navigation command. Never use the
+interactive `gh stack switch`.
 
 ### Split, combine, or remove one member
 
@@ -478,13 +702,16 @@ Git-MCP may perform these supporting operations when requested:
 
 - Read status, current branch, branch lists, worktrees, logs, and diffs.
 - Fetch a named remote after explicit authorization to update local refs.
-- Check out an existing local branch identified from remote Stack order.
+- Check out an existing ordinary local branch after explicit request. For
+  native Stack navigation, prefer `stack_checkout` so local Stack tracking is
+  maintained.
 - Stage explicit paths and create one ordinary fix commit for an explicitly
   requested code repair on a verified member branch.
 - Stage explicit conflict-resolution paths after the files are resolved.
 
 Git-MCP must not be used to imitate these `gh stack` operations:
 
+- Any supported typed local Stack MCP operation when that tool is unavailable.
 - Cascade rebase or sync.
 - Continue or abort a `gh stack` rebase.
 - Multi-branch or atomic Stack push.
@@ -514,6 +741,12 @@ atomicity or recovery guarantees.
   snapshot.
 
 ## Completion checks
+
+Before claiming a local Stack mutation succeeded, verify its local branch/ref
+postconditions with Git-MCP and any affected remote PR or Stack postconditions
+with GitHub MCP. For submit/link, verify exact head/base repositories, branch
+associations, and Stack order; for uncertain results, stop when reinspection is
+ambiguous.
 
 Before claiming create or add succeeded:
 
