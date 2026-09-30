@@ -103,6 +103,54 @@ func TestBuildCommandUsesFixedArgumentVectors(t *testing.T) {
 			input: CheckoutInput{Path: target.Path, Remote: target.Remote, Branch: "release.v1/feature"},
 			want:  []string{"checkout", "release.v1/feature"},
 		},
+		{
+			name: "rebase full Stack scope",
+			input: RebaseInput{
+				Path: target.Path, Remote: target.Remote, Action: RebaseStart, Scope: RebaseFull,
+			},
+			want: []string{"rebase", "--remote", target.Remote},
+		},
+		{
+			name: "rebase upstack scope",
+			input: RebaseInput{
+				Path: target.Path, Remote: target.Remote, Action: RebaseStart, Scope: RebaseUpstack,
+			},
+			want: []string{"rebase", "--remote", target.Remote, "--upstack"},
+		},
+		{
+			name: "rebase downstack scope",
+			input: RebaseInput{
+				Path: target.Path, Remote: target.Remote, Action: RebaseStart, Scope: RebaseDownstack,
+			},
+			want: []string{"rebase", "--remote", target.Remote, "--downstack"},
+		},
+		{
+			name: "rebase without trunk scope",
+			input: RebaseInput{
+				Path: target.Path, Remote: target.Remote, Action: RebaseStart, Scope: RebaseNoTrunk,
+			},
+			want: []string{"rebase", "--remote", target.Remote, "--no-trunk"},
+		},
+		{
+			name:  "rebase continue uses only the guarded continuation flag",
+			input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseContinue},
+			want:  []string{"rebase", "--continue"},
+		},
+		{
+			name:  "sync defaults to no prune",
+			input: SyncInput{Path: target.Path, Remote: target.Remote},
+			want:  []string{"sync", "--remote", target.Remote},
+		},
+		{
+			name:  "sync explicitly opts in to prune",
+			input: SyncInput{Path: target.Path, Remote: target.Remote, Prune: true},
+			want:  []string{"sync", "--remote", target.Remote, "--prune"},
+		},
+		{
+			name:  "push uses the validated remote",
+			input: PushInput{Path: target.Path, Remote: target.Remote},
+			want:  []string{"push", "--remote", target.Remote},
+		},
 	}
 
 	for _, testCase := range cases {
@@ -113,6 +161,82 @@ func TestBuildCommandUsesFixedArgumentVectors(t *testing.T) {
 			}
 			if !slices.Equal(got.Args, testCase.want) {
 				t.Errorf("arguments = %#v, want exactly %#v", got.Args, testCase.want)
+			}
+		})
+	}
+}
+
+func TestBuildCommandRejectsImplicitOrMismatchedRemote(t *testing.T) {
+	target := newCommandTarget(t)
+	operations := []struct {
+		name  string
+		build func(string) any
+	}{
+		{
+			name: "rebase",
+			build: func(remote string) any {
+				return RebaseInput{
+					Path: target.Path, Remote: remote, Action: RebaseStart, Scope: RebaseFull,
+				}
+			},
+		},
+		{
+			name: "sync",
+			build: func(remote string) any {
+				return SyncInput{Path: target.Path, Remote: remote}
+			},
+		},
+		{
+			name: "push",
+			build: func(remote string) any {
+				return PushInput{Path: target.Path, Remote: remote}
+			},
+		},
+	}
+	remoteCases := []struct {
+		name          string
+		requestRemote string
+		targetRemote  string
+	}{
+		{name: "missing request remote", requestRemote: "", targetRemote: target.Remote},
+		{name: "mismatched request remote", requestRemote: "other", targetRemote: target.Remote},
+		{name: "missing validated target remote", requestRemote: target.Remote, targetRemote: ""},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, remoteCase := range remoteCases {
+				t.Run(remoteCase.name, func(t *testing.T) {
+					commandTarget := target
+					commandTarget.Remote = remoteCase.targetRemote
+					if _, err := BuildCommand(operation.build(remoteCase.requestRemote), commandTarget); err == nil {
+						t.Fatalf("BuildCommand accepted request remote %q with validated target remote %q", remoteCase.requestRemote, commandTarget.Remote)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestBuildCommandRejectsInvalidRebaseInputs(t *testing.T) {
+	target := newCommandTarget(t)
+	base := RebaseInput{Path: target.Path, Remote: target.Remote}
+	cases := []struct {
+		name  string
+		input RebaseInput
+	}{
+		{name: "missing action", input: base},
+		{name: "abort is not exposed", input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseAction("abort"), Scope: RebaseFull}},
+		{name: "unknown action", input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseAction("force"), Scope: RebaseFull}},
+		{name: "start requires explicit scope", input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseStart}},
+		{name: "start rejects unknown scope", input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseStart, Scope: RebaseScope("current")}},
+		{name: "continue rejects scope", input: RebaseInput{Path: target.Path, Remote: target.Remote, Action: RebaseContinue, Scope: RebaseFull}},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := BuildCommand(testCase.input, target); err == nil {
+				t.Fatalf("BuildCommand accepted invalid rebase input %#v", testCase.input)
 			}
 		})
 	}

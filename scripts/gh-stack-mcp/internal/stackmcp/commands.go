@@ -25,9 +25,77 @@ func BuildCommand(typedInput any, target Target) (CommandSpec, error) {
 			return CommandSpec{}, err
 		}
 		return CommandSpec{Args: []string{"checkout", input.Branch}}, nil
+	case RebaseInput:
+		return buildRebaseCommand(input, target)
+	case SyncInput:
+		return buildSyncCommand(input, target)
+	case PushInput:
+		return buildPushCommand(input, target)
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported Stack command input type %T", typedInput)
 	}
+}
+
+func buildRebaseCommand(input RebaseInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("rebase", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+
+	args := []string{"rebase"}
+	switch input.Action {
+	case RebaseStart:
+		args = append(args, "--remote", target.Remote)
+		switch input.Scope {
+		case RebaseFull:
+		case RebaseUpstack:
+			args = append(args, "--upstack")
+		case RebaseDownstack:
+			args = append(args, "--downstack")
+		case RebaseNoTrunk:
+			args = append(args, "--no-trunk")
+		default:
+			return CommandSpec{}, fmt.Errorf("rebase start requires a supported explicit scope")
+		}
+	case RebaseContinue:
+		if input.Scope != "" {
+			return CommandSpec{}, fmt.Errorf("rebase continue does not accept a scope")
+		}
+		args = append(args, "--continue")
+	default:
+		return CommandSpec{}, fmt.Errorf("unsupported rebase action %q", input.Action)
+	}
+	return CommandSpec{Args: args}, nil
+}
+
+func buildSyncCommand(input SyncInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("sync", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+	args := []string{"sync", "--remote", target.Remote}
+	if input.Prune {
+		args = append(args, "--prune")
+	}
+	return CommandSpec{Args: args}, nil
+}
+
+func buildPushCommand(input PushInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("push", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+	return CommandSpec{Args: []string{"push", "--remote", target.Remote}}, nil
+}
+
+func validateCommandRemote(operation, requestRemote string, target Target) error {
+	if strings.TrimSpace(target.Remote) == "" {
+		return fmt.Errorf("%s requires a validated target remote", operation)
+	}
+	if strings.TrimSpace(requestRemote) == "" {
+		return fmt.Errorf("%s requires an explicit remote", operation)
+	}
+	if requestRemote != target.Remote {
+		return fmt.Errorf("%s remote %q does not match validated target remote %q", operation, requestRemote, target.Remote)
+	}
+	return nil
 }
 
 func buildInitCommand(input InitInput, target Target) (CommandSpec, error) {

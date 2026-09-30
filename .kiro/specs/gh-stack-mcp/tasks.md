@@ -39,7 +39,7 @@
   - Unit tests show exact argument vectors and no generic CLI passthrough.
   - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
   - _Requirements: 1.4, 1.5, 2.3, 2.4, 3.1, 3.2, 3.3, 3.5, 3.6_
-- [ ] 2.5 Map scoped rebase, sync, and push to fixed arguments
+- [x] 2.5 Map scoped rebase, sync, and push to fixed arguments
   - Support rebase start/guarded continue, full/upstack/downstack/no-trunk scope, and the validated remote.
   - Keep prune disabled unless requested; describe non-atomic standalone push and merged-branch pruning.
   - Command fixtures prove exact allowed arguments and reject abort or implicit remote selection.
