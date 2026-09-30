@@ -89,6 +89,16 @@ in
           attic-server = uprev.attic-server.override {
             inherit (uprev) attic-client;
           };
+          gh-stack = uprev.gh-stack.overrideAttrs (_: rec {
+            version = "0.1.1";
+            src = uprev.fetchFromGitHub {
+              owner = "github";
+              repo = "gh-stack";
+              tag = "v${version}";
+              hash = "sha256-jwfqiCnCOOW0AKA52hbgvCCoLzfFX+QfM+vXABkzZgw=";
+            };
+            vendorHash = "sha256-0Xtr/MOpX4u5GnbRdNxKPA0GpSzi8PIbVc9MmP05De4=";
+          });
         })
 
         # nixpkgs-unstable's graphite-cli 1.8.6 fails to build on

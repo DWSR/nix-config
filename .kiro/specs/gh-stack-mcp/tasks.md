@@ -1,7 +1,7 @@
 # Implementation Plan: gh-stack-mcp
 
 - [ ] 1. Establish pinned inputs and typed Go foundation
-- [ ] 1.1 Pin the shared `gh-stack` v0.1.1 package
+- [x] 1.1 Pin the shared `gh-stack` v0.1.1 package
   - Resolve source and dependency hashes against the locked Go toolchain without updating unrelated packages.
   - Verify both hosts select the same v0.1.1 extension derivation and it builds on `aarch64-darwin`.
   - The pinned CLI package is available to both Home Manager and the planned server.
