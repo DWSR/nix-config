@@ -91,6 +91,10 @@ in
           command = "${pkgs.ast-grep-mcp}/bin/ast-grep-mcp";
         };
 
+        gh-stack-mcp = {
+          command = "${pkgs.gh-stack-mcp}/bin/gh-stack-mcp";
+        };
+
         buildkite = {
           command = "${pkgs.buildkite-mcp-server}/bin/buildkite-mcp-server";
           args = [

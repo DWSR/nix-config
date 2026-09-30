@@ -106,6 +106,10 @@ in
           command = "${pkgs.ast-grep-mcp}/bin/ast-grep-mcp";
         };
 
+        gh-stack-mcp = {
+          command = "${pkgs.gh-stack-mcp}/bin/gh-stack-mcp";
+        };
+
         beeper = {
           type = "http";
           url = "http://localhost:23373/v0/mcp";
