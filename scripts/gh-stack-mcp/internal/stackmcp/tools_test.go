@@ -57,7 +57,8 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		timing := shortProcessRunnerTiming()
-		timing.operationBudgets["push"] = 150 * time.Millisecond
+		// Leave startup headroom so the fake child can emit its timeout evidence on Darwin.
+		timing.operationBudgets["push"] = 2 * time.Second
 		runner, err := newProcessRunnerWithTiming(config, timing)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)

@@ -1775,13 +1775,14 @@
                 '';
           };
 
-          # Offline gh-stack-mcp verification (task 3.4). The nested host
+          # Offline gh-stack-mcp verification (tasks 3.4 and 5). The nested host
           # evaluator disables unrelated Shopify-only skill and extension
           # sources so it does not fetch private repositories. The package
           # output remains a dependency, while the explicit vendored Go test
-          # covers all packages. Node renders both hosts and exercises proxy
-          # routing, startup-failure isolation, and shortened deadlines against
-          # local stdio fixtures only (Req 1.1, 1.6, 8.6, 9.7-9.8, 11.1-11.3).
+          # covers all packages. Node renders both hosts, exercises proxy
+          # routing and failure isolation against local stdio fixtures, and
+          # checks the operator runbook without contacting live GitHub
+          # (Req 1.1, 1.6, 8.5-8.6, 9.7-9.9, 10.11-10.12, 11.1-11.4).
           ghStackMcpChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
             gh-stack-mcp =
               pkgs.runCommand "gh-stack-mcp"
@@ -1817,7 +1818,8 @@
                   cd source
                   node --test \
                     tests/gh-stack-mcp/hm-render.test.js \
-                    tests/gh-stack-mcp/proxy-contract.test.js
+                    tests/gh-stack-mcp/proxy-contract.test.js \
+                    tests/gh-stack-mcp/runbook.test.js
                   touch "$out"
                 '';
           };
@@ -1837,6 +1839,8 @@
                   pkgs.nix
                   pkgs.nodejs
                 ];
+                # Keep nested Home Manager evaluation offline for private Shopify-only sources.
+                GH_STACK_MCP_OFFLINE_HOST_RENDER = "1";
               }
               ''
                 export HOME=$(mktemp -d)

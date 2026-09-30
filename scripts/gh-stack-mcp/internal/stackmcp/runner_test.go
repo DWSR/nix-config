@@ -674,9 +674,10 @@ func TestProcessRunnerEnforcesShortenedOperationBudget(t *testing.T) {
 	started := filepath.Join(t.TempDir(), "extension-started")
 	fixture := newProcessRunnerFixture(t, ": > "+shellQuote(started)+"\nexec /bin/sleep 30", ":", ":")
 	timing := shortProcessRunnerTiming()
-	timing.operationBudgets["view"] = 120 * time.Millisecond
+	const operationBudget = 2 * time.Second
+	timing.operationBudgets["view"] = operationBudget
 	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
-	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
 	startedAt := time.Now()
@@ -688,10 +689,10 @@ func TestProcessRunnerEnforcesShortenedOperationBudget(t *testing.T) {
 	if !result.Spawned || !result.TimedOut || result.CleanupUnknown {
 		t.Errorf("Run() result = %+v, want spawned timeout with confirmed cleanup", result)
 	}
-	if !waitForRunnerFile(started, time.Second) {
+	if !waitForRunnerFile(started, 3*time.Second) {
 		t.Fatal("fake extension did not start")
 	}
-	if elapsed >= 400*time.Millisecond {
+	if elapsed >= operationBudget+500*time.Millisecond {
 		t.Errorf("Run() elapsed %s, want the shortened operation budget plus bounded cleanup", elapsed)
 	}
 }

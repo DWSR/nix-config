@@ -137,7 +137,7 @@
   - _Boundary: Agent guidance integration (helper Markdown, `tests/subagent-context-budget/`)_
   - _Requirements: 10.6, 10.9, 10.10, 10.16, 11.5_
 
-- [ ] 5. Finish offline validation with operator recovery guidance
+- [x] 5. Finish offline validation with operator recovery guidance
   - Run Darwin Go, host-render, proxy, and policy checks and fix cross-boundary regressions without accessing a real Stack.
   - Provide the runbook with `gh` auth/signing prerequisites, longer shared timeouts, accepted loopback/fork risks, partial-result recovery, and optional operator-owned disposable-repo smoke steps.
   - The flake check passes and an operator has a documented user-owned acceptance procedure; no CI test mutates GitHub.
