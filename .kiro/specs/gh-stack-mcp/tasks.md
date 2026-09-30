@@ -145,6 +145,13 @@
   - _Boundary: Validation integration (offline check suite, `docs/gh-stack-mcp.md`)_
   - _Requirements: 8.5, 9.9, 10.11, 10.12, 11.1, 11.2, 11.3, 11.4, 11.5_
 
+- [ ] 6. Reconcile shared skill-registration guidance
+- [x] 6.1 Correct the stale native Stack skill-registration comment
+  - Describe typed local Stack MCP operations and reserve `gh stack` handoffs for unavailable or unsupported cases.
+  - _Depends: 4.1, 4.3_
+  - _Boundary: Shared skill-registration comment (`home-manager/common/opencode.nix`)_
+  - _Requirements: 10.1, 11.5_
+
 ## Implementation Notes
 
 - The host PATH lacks Go; use the flake-locked Go 1.26.7 toolchain via `nix shell --inputs-from . nixpkgs#go_1_26` and `GOPROXY=off GOTOOLCHAIN=local` for offline tests/builds.

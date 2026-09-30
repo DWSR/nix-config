@@ -136,8 +136,11 @@ in
 
   config = {
     # Common explicit-only workflow for GitHub's native pull request Stack
-    # objects. The skill uses the GitHub MCP for remote Stack state and keeps
-    # local gh-stack operations behind an explicit user handoff.
+    # objects. The skill uses GitHub MCP for remote Stack state and typed local
+    # Stack MCP tools for supported worktree operations. The agent never
+    # executes `gh stack`; narrowly targeted user-owned handoffs are reserved
+    # for unavailable tools, unsupported operations, or explicit user
+    # preference to run the CLI.
     xdg.configFile."opencode/skills/github-native-stacks" = {
       source = ./skills/github-native-stacks;
     };
