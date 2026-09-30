@@ -295,6 +295,8 @@ in
         type = "remote";
         url = "http://127.0.0.1:8080/mcp";
         enabled = true;
+        # This longer ceiling also applies to unrelated calls through mcpproxy.
+        timeout = 930000;
       };
     };
     provider = {

@@ -550,6 +550,8 @@ let
     listen = "127.0.0.1:${toString cfg.listenPort}";
     data_dir = "${config.home.homeDirectory}/.mcpproxy";
     routing_mode = "retrieve_tools";
+    # This global timeout also lengthens maximum waits for unrelated tools.
+    call_tool_timeout = "15m15s";
     quarantine_enabled = false;
     # Disable the periodic tools/list re-index sweep globally ("0s" =
     # disabled). Tool changes are still picked up reactively via

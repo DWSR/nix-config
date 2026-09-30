@@ -85,7 +85,7 @@
   - _Depends: 1.1, 2.10_
   - _Boundary: Nix integration (`overlays/mcp-servers.nix`)_
   - _Requirements: 9.1, 9.2, 9.4, 9.5, 11.2_
-- [ ] 3.2 (P) Align shared proxy and existing OpenCode tool-call deadlines
+- [x] 3.2 (P) Align shared proxy and existing OpenCode tool-call deadlines
   - Set proxy `call_tool_timeout` and both existing OpenCode proxy-entry timeouts beyond the wrapper's work and cleanup deadline.
   - Preserve one proxy/client entry per host and unchanged connection/listing preflights.
   - Rendered settings satisfy 15m5s < 15m15s < 15m30s and disclose the longer ceiling for unrelated calls.
