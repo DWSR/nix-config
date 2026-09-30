@@ -17,6 +17,27 @@ export RESTIC_PASSWORD=fixture-password
 export RESTIC_FROM_PASSWORD=fixture-password
 export XDG_CACHE_HOME="$work/cache"
 
+local_root="$(jq -r '.localGoogleDriveRoot' "$SQLITE_BACKUP_LOCAL_RENDER")"
+local_manifest_path="$(jq -r '.manifestPath' "$SQLITE_BACKUP_LOCAL_RENDER")"
+jq -e '
+  (.agentNames | length) == 4
+  and (.agentNames | index("sqlite-backup-guard-fixture") != null)
+' "$SQLITE_BACKUP_LOCAL_RENDER" >/dev/null
+jq -e --arg root "$local_root" '
+  .rcloneConfigDestinations == {}
+  and .rcloneDestinations[":local"].type == "local"
+  and (.databases | length) == 1
+  and .databases[0].name == "fixture"
+  and .databases[0].remote == ":local"
+  and .databases[0].remotePath == $root
+  and (.databases[0].pressureGuard.managedPaths | index($root + "/fixture") != null)
+' "$local_manifest_path" >/dev/null
+
+actual_target="$("$SQLITE_BACKUP_LOCAL_CLI" __destination-target fixture)"
+expected_target=":local:$local_root/fixture"
+[ "$actual_target" = "$expected_target" ] \
+  || fail "local destination target mismatch: $actual_target"
+
 source_repo="$work/source-repo"
 drive_root="$work/Google Drive/My Drive/sqlite-backup"
 remote_repo="rclone::local:$drive_root/fixture"

@@ -175,20 +175,43 @@ let
     }
   );
 
+  localGoogleDriveRoot = "${hm.config.home.homeDirectory}/Library/CloudStorage/GoogleDrive-sqlite-backup-test/My Drive/sqlite-backup";
+  localHm = hm.extendModules {
+    modules = [
+      {
+        home.sqliteBackup.rcloneDestinations = lib.mkForce { ":local".type = "local"; };
+        home.sqliteBackup.databases = lib.mkForce [
+          {
+            name = "fixture";
+            path = databaseFixture;
+            remote = ":local";
+            remotePath = localGoogleDriveRoot;
+            pressureGuard.maximumManagedLocalBytes = 3072;
+          }
+        ];
+      }
+    ];
+  };
+  localRender = pkgs.writeText "sqlite-backup-local-destination-render.json" (
+    builtins.toJSON {
+      inherit localGoogleDriveRoot;
+      agentNames = builtins.attrNames localHm.config.launchd.agents;
+      manifestPath = localHm.config.home.sqliteBackup._manifestPath;
+    }
+  );
+
   shopifyPolicy =
     if shopifyHome == null then
       { }
     else
       let
         sqliteBackup = shopifyHome.home.sqliteBackup;
-        localGoogleDriveRoot = "${shopifyHome.home.homeDirectory}/Library/CloudStorage/GoogleDrive-brandon.mcnama@shopify.com/My Drive/sqlite-backup";
-        opencode = builtins.head (builtins.filter (db: db.name == "opencode") sqliteBackup.databases);
         guardNames = builtins.filter (name: builtins.match "sqlite-backup-guard-.*" name != null) (
           builtins.attrNames shopifyHome.launchd.agents
         );
       in
       {
-        inherit guardNames localGoogleDriveRoot;
+        inherit guardNames;
         inherit (sqliteBackup.pressureGuard)
           checkIntervalSeconds
           minimumFilesystemAvailableBytes
@@ -197,7 +220,6 @@ let
           inherit (db) name remote remotePath;
         }) sqliteBackup.databases;
         manifestPath = sqliteBackup._manifestPath;
-        maximumManagedLocalBytes = opencode.pressureGuard.maximumManagedLocalBytes;
         inherit (sqliteBackup) rcloneDestinations;
       };
   shopifyPolicyFile = pkgs.writeText "sqlite-backup-shopify-policy.json" (
@@ -225,6 +247,8 @@ pkgs.runCommand "sqlite-backup-tests"
     SQLITE_BACKUP_MANAGED_SYMLINK = managedSymlink;
     SQLITE_BACKUP_REAL_LITESTREAM = if realLitestream == null then "" else lib.getExe realLitestream;
     SQLITE_BACKUP_RENDER = render;
+    SQLITE_BACKUP_LOCAL_RENDER = localRender;
+    SQLITE_BACKUP_LOCAL_CLI = lib.getExe localHm.config.home.sqliteBackup._cliBinary;
     SQLITE_BACKUP_SHOPIFY_POLICY = shopifyPolicyFile;
     SQLITE_BACKUP_SHOPIFY_CLI =
       if shopifyHome == null then "" else lib.getExe shopifyHome.home.sqliteBackup._cliBinary;

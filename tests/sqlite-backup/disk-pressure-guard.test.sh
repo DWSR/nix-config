@@ -226,44 +226,22 @@ if [ -n "$SQLITE_BACKUP_REAL_LITESTREAM" ]; then
 fi
 
 jq -e '
-  .localGoogleDriveRoot as $root
-  | .minimumFilesystemAvailableBytes == 137438953472
+  .minimumFilesystemAvailableBytes == 137438953472
   and .checkIntervalSeconds == 60
-  and .maximumManagedLocalBytes == 137438953472
   and (.rcloneDestinations | keys) == [":local"]
   and .rcloneDestinations[":local"].type == "local"
-  and all(.databases[]; .remote == ":local" and .remotePath == $root)
-  and (.guardNames | sort) == [
-    "sqlite-backup-guard-cavemem",
-    "sqlite-backup-guard-opencode"
-  ]
+  and .databases == []
+  and .guardNames == []
 ' "$SQLITE_BACKUP_SHOPIFY_POLICY" >/dev/null
 
 shopify_manifest_path="$(jq -r '.manifestPath' "$SQLITE_BACKUP_SHOPIFY_POLICY")"
-shopify_local_google_drive_root="$(jq -r '.localGoogleDriveRoot' "$SQLITE_BACKUP_SHOPIFY_POLICY")"
-jq -e --arg root "$shopify_local_google_drive_root" '
+jq -e '
   .rcloneConfigDestinations == {}
   and .rcloneDestinations[":local"].type == "local"
-  and all(
-    .databases[];
-    .remote == ":local"
-    and .remotePath == $root
-    and (
-      . as $db
-      | .pressureGuard.managedPaths
-      | index($root + "/" + $db.name) != null
-    )
-  )
+  and .databases == []
 ' "$shopify_manifest_path" >/dev/null
-
-for shopify_db in cavemem opencode; do
-  actual_target="$("$SQLITE_BACKUP_SHOPIFY_CLI" __destination-target "$shopify_db")"
-  expected_target=":local:$shopify_local_google_drive_root/$shopify_db"
-  [ "$actual_target" = "$expected_target" ] \
-    || fail "production destination target mismatch for $shopify_db: $actual_target"
-  [[ "$actual_target" != gdrive:* ]] \
-    || fail "production destination still addresses configured gdrive remote for $shopify_db"
-done
+test -z "$("$SQLITE_BACKUP_SHOPIFY_CLI" list)" \
+  || fail "dormant Shopify CLI unexpectedly lists databases"
 
 marker="$XDG_STATE_HOME/sqlite-backup/pressure-fixture.json"
 lock="$XDG_STATE_HOME/sqlite-backup/pressure-fixture.lock"
