@@ -7,7 +7,7 @@
   - The pinned CLI package is available to both Home Manager and the planned server.
   - _Boundary: Nix integration (`overlays/default.nix`)_
   - _Requirements: 9.1, 11.2_
-- [ ] 1.2 (P) Initialize the Go SDK, typed tool contracts, and fake-CLI harness
+- [x] 1.2 (P) Initialize the Go SDK, typed tool contracts, and fake-CLI harness
   - Lock the official Go SDK and define closed inputs/outputs for ten annotated tools.
   - Start the stdio server without network access and exercise it through a fixture client and fake extension.
   - Catalog tests list ten tools, classify view as a write and the others as destructive, and expose no merge, abort, or passthrough.
@@ -144,3 +144,8 @@
   - _Depends: 3.4, 4.4_
   - _Boundary: Validation integration (offline check suite, `docs/gh-stack-mcp.md`)_
   - _Requirements: 8.5, 9.9, 10.11, 10.12, 11.1, 11.2, 11.3, 11.4, 11.5_
+
+## Implementation Notes
+
+- The host PATH lacks Go; use the flake-locked Go 1.26.7 toolchain via `nix shell --inputs-from . nixpkgs#go_1_26` and `GOPROXY=off GOTOOLCHAIN=local` for offline tests/builds.
+- `NewServer` intentionally fails closed until task 2.10 connects the validated guard, command mapper, runner, and result adapters; replace the unavailable dispatcher then.
