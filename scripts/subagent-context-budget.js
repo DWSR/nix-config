@@ -55,6 +55,7 @@ const SUPPORTED_PERMISSION_KEYS = Object.freeze(new Set([
   'mcpproxy_call_tool_read',
   'mcpproxy_call_tool_write',
   'mcpproxy_call_tool_destructive',
+  'mcpproxy_code_execution',
 ]));
 const RATIONALE_REQUIRED_PERMISSIONS = Object.freeze({
   edit: 'broad mutation',
@@ -335,6 +336,10 @@ function validateAgentBudget(catalogName, agent) {
       if (!SUPPORTED_PERMISSION_KEYS.has(permissionKey)) {
         errors.push(validationError(catalogName, `permissionBudget.${permissionKey}`, 'permission budget key is not supported; use supported permission keys and avoid undocumented mutation aliases'));
         continue;
+      }
+
+      if (permissionKey === 'mcpproxy_code_execution' && agent.permissionBudget[permissionKey] !== 'deny') {
+        errors.push(validationError(catalogName, `permissionBudget.${permissionKey}`, 'mcpproxy_code_execution must be denied'));
       }
 
       const rationaleCategory = RATIONALE_REQUIRED_PERMISSIONS[permissionKey];

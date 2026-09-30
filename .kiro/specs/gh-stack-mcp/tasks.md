@@ -115,7 +115,7 @@
   - _Depends: 3.4_
   - _Boundary: Agent guidance (`home-manager/common/skills/github-native-stacks/SKILL.md`)_
   - _Requirements: 7.3, 10.1, 10.2, 10.3, 10.4, 10.5, 10.13, 10.14, 10.15, 10.16_
-- [ ] 4.2 Mirror captain and helper proxy permissions in one budget boundary
+- [x] 4.2 Mirror captain and helper proxy permissions in one budget boundary
   - Make destructive proxy calls `ask` for captain while denying code execution and direct `gh stack` in its frontmatter and rendered budget.
   - Require captain authorization for each exact worktree, remote, history rewrite, or push target; keep no-merge/no-unstack and standalone behavior.
   - Extend budget validation for proxy code-execution denial and apply it to captain and read-only helper budgets.

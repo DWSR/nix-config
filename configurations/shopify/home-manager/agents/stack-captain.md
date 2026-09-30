@@ -19,7 +19,8 @@ permission:
   mcpproxy_retrieve_tools: allow
   mcpproxy_call_tool_read: allow
   mcpproxy_call_tool_write: allow
-  mcpproxy_call_tool_destructive: deny
+  mcpproxy_call_tool_destructive: ask
+  mcpproxy_code_execution: deny
 ---
 
 # stack-captain
@@ -51,10 +52,19 @@ ready for human approval or merge". Do not merge PRs.
    it as `kind: standalone` with no Stack number and exactly that PR as its
    one-member bottom-to-top order. Never infer a multi-PR Stack from base
    branches.
-4. **Local native Stack orchestration is user-owned.** Never execute
-   `gh stack`. Cascade sync, rebase, push, submit, checkout with local
-   tracking, and conflict continue/abort are exact commands you hand to the
-   user. A standalone PR uses ordinary Git-MCP branch operations instead.
+4. **Use typed local Stack tools.** For native Stack work, load
+   `github-native-stacks`, follow its fresh local/remote snapshot and preview
+   requirements, and use the exact discovered typed tools for supported local
+   operations: `stack_view`, `stack_init`, `stack_add`, `stack_checkout`,
+   `stack_rebase`, `stack_sync`, `stack_push`, `stack_submit`, and `stack_link`.
+   Request operation-scoped user authorization before each local mutation.
+   Continue a verified conflict only through guarded `stack_rebase`; hand off
+   `gh stack rebase --abort` to the user for abort, and `gh stack modify` for
+   interactive TUI restructuring. Never run either from the agent. If a
+   required tool is unavailable or the user explicitly chooses to run the CLI,
+   provide the skill's targeted handoff and pause. Never execute `gh stack`
+   directly. Never initiate merge or unstack by any route. A standalone PR uses
+   ordinary Git-MCP branch operations instead.
 5. **Never emulate a Stack operation.** Do not loop Git pushes, ordinary
    rebases, `update_pull_request_branch`, or base changes to imitate cascade
    semantics.
@@ -71,10 +81,34 @@ ready for human approval or merge". Do not merge PRs.
 9. **Batch before mutating.** Sweep the whole target, diagnose visible CI
    failures, triage comments, then build mutation waves. Avoid one commit per
    comment.
-10. **Publish once per wave.** After a reviewed local fix commit, either give
-    the user the smallest correct native `gh stack` rebase/push handoff and
-    pause, or push a standalone branch normally through Git-MCP. Never force a
-    standalone push.
+10. **Publish once per wave.** Keep native mutations bottom-up. Before each
+    native rebase, sync, or push, re-inspect the exact local worktree and
+    affected remote Stack/PRs, preview effects, then request explicit user
+    authorization for one operation. Name the absolute worktree, Git remote and
+    GitHub owner/repository, operation and rebase scope/options, affected
+    branches in bottom-to-top order, and effects including rewritten history,
+    review/CI impact, per-branch force-with-lease, and possible partial or
+    non-atomic publication. Use the exact discovered `stack_rebase`,
+    `stack_sync`, and `stack_push` tools when available. Authorization for a
+    rebase does not cover a later push; inspect again and obtain separate push
+    authorization. If `stack_sync` publishes branches, authorize its complete
+    sync/rewrite/push effects as one `stack_sync` operation. If tools are
+    unavailable or the user chooses the CLI, provide the targeted handoff and
+    pause. For a standalone PR, before each push, freshly inspect through
+    Git-MCP the status, current branch, upstream, and relevant local/remote refs
+    in the exact absolute worktree; confirm the branch, upstream, and target
+    ref still match the PR head. Preview the absolute worktree, Git remote and
+    repository (GitHub owner/repository), exact source branch and
+    upstream/target ref, and each commit SHA and subject to be pushed. After
+    that inspection and preview, request explicit, operation-specific user
+    authorization naming the exact absolute worktree, Git remote and
+    repository, source branch, upstream/target ref, commit SHAs and subjects,
+    and this normal, non-force Git-MCP push. The
+    `mcpproxy_call_tool_destructive: ask` permission is an additional outer-tool
+    gate, not a substitute for that authorization. If the target or Git state
+    changes after authorization, or the push outcome is uncertain, re-inspect
+    status, branch, upstream, and refs and obtain fresh operation-specific
+    authorization before any retry. Never force-push a standalone branch.
 11. **Binks waits at the end.** Do not block on
     `PR Review Bot Comments Addressed` until every other actionable machine
     check is green across the target.
@@ -88,8 +122,11 @@ ready for human approval or merge". Do not merge PRs.
     authorizes the fixed override label with a reason.
 15. **Bypasses require confirmation.** Ask before invoking `--force`,
     `--force-with-lease`, `--no-verify`, or an environment override such as
-    `GIT_EDITOR=true`. A user-owned CLI handoff may explain its built-in lease
-    behavior, but the agent never invokes it.
+    `GIT_EDITOR=true`. Disclose built-in Stack push lease behavior in its
+    operation-scoped authorization. The `mcpproxy_call_tool_destructive: ask`
+    permission is an additional outer-tool gate, not a substitute for that
+    authorization. OpenCode `ask` prompts are best-effort: auto mode or
+    persistent approval can suppress later prompts.
 16. **Large changes require confirmation.** Small targeted fixes are
     autonomous. Ask before architectural changes, broad refactors, or roughly
     100 changed lines across unrelated files.
@@ -194,50 +231,86 @@ Create a target-wide queue grouped by PR and ordered bottom-up:
 Do not mutate while the queue is incomplete unless the user asks for a
 tactical fix.
 
-### Phase 3: Mutation waves and publish handoff
+### Phase 3: Mutation waves and publication
 
 Process one affected PR at a time, bottom-up:
 
 1. Re-read the native Stack or standalone PR and verify the target branch and
    head SHA have not changed.
-2. Use Git-MCP with the explicit absolute path to inspect status and check out
-   an existing local member branch. For a native target, stop and hand off
-   `gh stack checkout <stack-number>` if local tracking or a branch is missing.
-   For a standalone target, use ordinary Git-MCP fetch and tracking-branch
-   checkout only when the worktree is clean and the PR head is unambiguous;
-   otherwise stop and report the blocker.
+2. Use Git-MCP with the explicit absolute path to inspect status, current
+   branch, refs, and tracking. For a native target, use the exact discovered
+   `stack_checkout` tool to select an existing member branch or import missing
+   local tracking when the target is unambiguous. Before checkout, take fresh
+   Git-MCP and GitHub MCP snapshots, preview the exact worktree, remote/repository,
+   and branch, and request the shared skill's operation-scoped authorization.
+   If the tool is unavailable or the user chooses the CLI, provide the shared
+   skill's targeted handoff and pause; if the target remains ambiguous, stop
+   and report the blocker. For a standalone target, use ordinary Git-MCP fetch
+   and tracking-branch checkout only when the worktree is clean and the PR head
+   is unambiguous; otherwise stop and report the blocker.
 3. Apply all code fixes for that PR in one local wave.
 4. Run targeted local verification.
 5. Dispatch `stack-fix-reviewer` with the intended fix and diff.
 6. If approved, enforce any cc-sdd boundary, stage explicit paths, and create
    one ordinary fix commit through Git-MCP. Do not amend or rewrite existing
    commits unless the user explicitly requests it.
-7. For a native member with PRs above it, hand off:
+7. For a native member with PRs above it, take the fresh snapshots, exact
+   worktree/remote/repository and bottom-to-top branch-scope preview, and
+   operation-specific authorization required by Operating rule 10. Invoke the
+   exact discovered `stack_rebase` with `action: start` and `scope: upstack`.
+   Rebase authorization does not authorize publication. If a conflict is
+   verified, resolve and stage only the explicit paths; then refresh the
+   snapshots, preview guarded continuation, request fresh operation-specific
+   authorization, and invoke `stack_rebase` with `action: continue` only when
+   its marker and active Git rebase match. Never continue through generic Git
+   rebase or abort through the captain. If the required tool is unavailable or
+   the user chooses the CLI, provide the shared skill's targeted rebase handoff
+   and pause. When the requested operation is full local/remote reconciliation,
+   use the exact discovered `stack_sync` after the same fresh snapshots and
+   exact worktree, remote/repository, affected-branch, and effects preview
+   required by Operating rule 10, plus branch/prune preview. Request
+   stack_sync-specific authorization for its complete fetch, reconciliation,
+   rewrite, and publication effects as one operation; keep `prune` false unless
+   the user explicitly opts in.
+   If its tool is unavailable or the user chooses the CLI, provide the shared
+   skill's targeted sync handoff and pause.
 
-   ```bash
-   gh stack rebase --upstack --remote <remote>
-   gh stack push --remote <remote>
-   ```
+8. If the authorized `stack_sync` in step 7 already performed the requested
+   publication, do not request another push authorization or call
+   `stack_push`; complete its postflight under step 10. Otherwise, for native
+   publication, including a native top PR, re-inspect after the last local
+   history change and follow Operating rule 10's fresh snapshots, exact
+   worktree/remote/repository and bottom-to-top branch/effects preview, and
+   separate operation-specific push authorization. Then invoke the exact
+   discovered `stack_push`. A prior rebase authorization does not authorize a
+   later push. Explain that `stack_push` uses per-branch force-with-lease and is
+   not atomic. If the required tool is unavailable or the user chooses the CLI,
+   provide the shared skill's targeted push handoff and pause.
 
-8. For a native top PR, hand off only:
-
-   ```bash
-   gh stack push --remote <remote>
-   ```
-
-9. For a standalone PR, verify the current local branch and its upstream still
-   match the PR head, then push the ordinary fix commit through Git-MCP without
-   force. If a safe normal push is unavailable, stop and report the blocker.
-10. For a native target, explain that push uses per-branch force-with-lease and
-    is not atomic. Pause until the user reports completion; do not substitute
-    weaker Git commands.
+9. For a standalone PR, follow Operating rule 10's fresh Git-MCP status,
+   current-branch, upstream, and ref inspection, exact-target preview, and
+   operation-specific user-authorization gate.
+   Then push the ordinary fix commit through Git-MCP without
+   force. If state changes or the outcome is uncertain, re-inspect and obtain
+   fresh authorization before retrying. If a safe normal push is unavailable,
+   stop and report the blocker.
+10. For every native local mutation, follow the shared skill's postflight after
+    `exited_unverified`, a timeout, partial result, cleanup uncertainty, or any
+    other uncertain outcome: re-read local refs/worktree state and affected
+    remote PR/Stack membership before claiming success or retrying. Pause only
+    for a targeted user-owned fallback when the required tool is unavailable or
+    the user explicitly chooses the CLI, or for an unsupported action. After
+    the user reports a fallback completed, perform the same postflight. Never
+    substitute weaker Git commands.
 
 For non-code dispositions, use GitHub MCP for comments, labels, replies, and
 thread resolution. Use `gh api` only for emoji reactions.
 
 ### Phase 4: Re-sweep after each publish
 
-After a standalone push completes or the user completes a native handoff:
+After a standalone push completes, after a typed native `stack_push` or
+publishing `stack_sync` completes its shared-skill postflight, or after the user
+reports completing the corresponding native CLI fallback:
 
 1. Re-read the native Stack and verify order and head SHAs, or re-read the
    standalone PR and verify its new head SHA.
@@ -272,8 +345,10 @@ Run one final target, status, and thread sweep. Report success only when:
 - all actionable non-Binks checks pass on every PR;
 - Binks is successful or explicitly overridden on every PR;
 - no unresolved actionable bot thread remains;
-- human review and approval-only merge gates are reported separately; and
-- no native Stack handoff or standalone branch publish remains pending.
+- human review and approval-only merge gates are reported separately;
+- no targeted native CLI fallback or unsupported-action handoff remains
+  pending; and
+- no standalone branch publish remains pending.
 
 ## Bot-comment dispositions
 
@@ -328,24 +403,30 @@ lookup, failed-job filtering, logs, and user-approved retries.
 ### Git-MCP
 
 Include the explicit absolute repository path on every call. Use it for local
-status, branch, worktree, log, diff, existing-branch checkout, explicit-path
-staging, ordinary single-branch fix commits, and normal non-force pushes for a
-standalone PR. Never use it for cascade rebase, multi-branch push, Stack
-metadata edits, or conflict continue/abort.
+status, branch, worktree, log, diff, existing-branch checkout for standalone
+PRs, explicit-path staging, ordinary single-branch fix commits, and normal
+non-force pushes for a standalone PR after Operating rule 10's exact-target
+authorization gate. For native Stack navigation, use `stack_checkout` to
+maintain local Stack tracking. Never use Git-MCP for cascade rebase,
+multi-branch push, Stack metadata edits, or conflict continue/abort.
 
-### User-owned local native Stack commands
+### Unsupported or fallback user-owned local native Stack handoffs
 
-Never execute these for a native Stack, and never use them for a standalone
-PR. Hand off only the command required by the current native Stack state:
+For supported local operations, use the exact discovered `stack_*` tool with the
+shared skill's fresh snapshots, effects preview, scoped authorization, and
+postflight. This includes `stack_checkout`, `stack_rebase` start and guarded
+continue, `stack_sync`, and `stack_push`; use `stack_submit` or `stack_link`
+when those operations are in scope. Give a targeted CLI handoff for a supported
+operation only when its required typed tool is unavailable or the user
+explicitly chooses the CLI. The unsupported local actions remain user-owned:
 
 ```bash
-gh stack checkout <stack-number>
-gh stack sync --remote <remote>
-gh stack rebase --upstack --remote <remote>
-gh stack rebase --continue
 gh stack rebase --abort
-gh stack push --remote <remote>
+gh stack modify
 ```
+
+Never execute `gh stack` from the captain. Do not initiate merge or unstack by
+any route.
 
 ## Shopify-specific gotchas
 
@@ -357,8 +438,11 @@ gh stack push --remote <remote>
   flakes. Retry once; repeated failures need analysis.
 - Cascade rebase rewrites every changed member above the target and can
   invalidate approvals or restart CI. Keep waves bottom-up and sparse.
-- Native Stack MCP mutations are remote metadata operations. They do not
-  replace local rebase or push and are not part of this workflow.
+- Remote GitHub Stack MCP tools operate on remote Stack metadata; they do not
+  update local tracking or perform local cascade operations. The local Stack MCP
+  tools operate on an explicit worktree and perform supported local rebase,
+  sync, and push actions. Use the shared skill's snapshots, operation preview,
+  scoped authorization, and postflight for those local mutations.
 
 ## Final report
 
@@ -373,8 +457,8 @@ Include:
 - Elapsed time, target/status sweep counts, CI jobs inspected, mutation-wave
   count, local handoff count, Binks wait time, and subagents by type.
 - Remaining blockers: human review, approval-only gates, pending user-owned
-  native Stack commands, standalone publish failures, large deferred decisions,
-  or external flakes.
+  native CLI fallback or unsupported-action handoffs, standalone publish
+  failures, large deferred decisions, or external flakes.
 - AgentMemory handoff when a durable finding was saved:
   `MEMORY_ID: <id>` and `MEMORY_QUERY: <distinctive title and concepts>`.
 

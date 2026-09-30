@@ -24,6 +24,7 @@ let
   };
 
   mcpReadOnlyBudget = readOnlyBudget // {
+    mcpproxy_code_execution = "deny";
     mcpproxy_retrieve_tools = "allow";
     mcpproxy_call_tool_read = "allow";
   };
@@ -134,11 +135,22 @@ let
       hostScope = "shopify";
       state = enforced "host-override";
       permissionBudget = researchBudget // {
-        bash = "allow";
+        # Nix serializes permission keys lexicographically. OpenCode's
+        # last-match-wins Bash rules therefore apply these explicit CLI denies
+        # after the broad allow.
+        bash = {
+          "*" = "allow";
+          "gh stack" = "deny";
+          "gh stack *" = "deny";
+          "git" = "deny";
+          "git *" = "deny";
+        };
         task = "allow";
         mcpproxy_retrieve_tools = "allow";
         mcpproxy_call_tool_read = "allow";
         mcpproxy_call_tool_write = "allow";
+        mcpproxy_call_tool_destructive = "ask";
+        mcpproxy_code_execution = "deny";
       };
       instructionProfile = "shopify-stack";
       capabilityRationale = [
@@ -195,6 +207,7 @@ let
         lsp = "allow";
         mcpproxy_retrieve_tools = "allow";
         mcpproxy_call_tool_read = "allow";
+        mcpproxy_code_execution = "deny";
       };
       instructionProfile = "shopify-stack-fix-review";
       capabilityRationale = [ "read-only code, LSP, and startup memory checks for mutation wave review" ];
