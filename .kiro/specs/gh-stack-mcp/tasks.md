@@ -92,7 +92,7 @@
   - _Depends: 2.8_
   - _Boundary: Nix integration (`home-manager/mcp/default.nix`, both host `opencode.nix` files)_
   - _Requirements: 8.3, 9.3, 9.8, 9.9_
-- [ ] 3.3 Register one packaged stdio upstream per host
+- [x] 3.3 Register one packaged stdio upstream per host
   - Add the same `gh-stack-mcp` extra server to personal and Shopify host configurations.
   - Both rendered configs include the executable without changing routing, direct OpenCode entries, or existing GitHub MCP tools.
   - Host-render checks verify the upstream path, sole OpenCode entry, and no new listener.
