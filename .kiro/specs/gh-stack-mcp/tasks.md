@@ -63,7 +63,7 @@
   - Forking-child fixtures show finite uncertain results and no automatic write retry.
   - _Boundary: Process runner (`internal/stackmcp/runner.go`, `runner_test.go`)_
   - _Requirements: 8.3, 8.4, 11.1_
-- [ ] 2.9 Return structured view and unverified write outcomes
+- [x] 2.9 Return structured view and unverified write outcomes
   - Parse only complete view JSON, preserving local branch order and optional PR observations.
   - Attach exit/output/truncation to spawned writes; classify conflicts only with a valid active marker.
   - Fixtures show sync exit-zero no-op, partial unstack, sequential publication, truncated view, and no-local-Stack errors never claim verified success.
@@ -155,3 +155,4 @@
 - Close stdin and launch in a new session (`Setsid`) to prevent both prompting and reopening the caller's controlling `/dev/tty`; the runner test exercises this under a pseudo-TTY.
 - Runner ceilings are 45s for view, 5m for init/add/checkout, and 15m for other commands, with 5s cleanup and 10s proxy-delivery reserves; task 3.2 aligns the shared deadlines around these limits.
 - Runner timeout fixtures must bound their own cancellation waits; use a startup handshake and operation budget long enough for the child to start before asserting a late exit.
+- Result parsing returns normalized `LocalView` JSON in the existing `Outcome.Stdout` string contract; keep this adapter boundary without changing `tools.go`'s output schema.
