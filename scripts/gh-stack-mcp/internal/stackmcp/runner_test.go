@@ -699,26 +699,87 @@ func TestProcessRunnerEnforcesShortenedOperationBudget(t *testing.T) {
 func TestProcessRunnerTreatsChildExitAfterShortenedDeadlineAsUncertain(t *testing.T) {
 	started := filepath.Join(t.TempDir(), "extension-started")
 	invocations := filepath.Join(t.TempDir(), "write-invocations")
+	release := filepath.Join(t.TempDir(), "extension-release")
+	exitDelayFile := filepath.Join(t.TempDir(), "extension-exit-delay")
+	const operationBudget = 1500 * time.Millisecond
+	const childExitAfterDeadline = 300 * time.Millisecond
 	fixture := newProcessRunnerFixture(t, fmt.Sprintf(`
 printf 'invoked\n' >> %s
 : > %s
+while [ ! -f %s ]; do
+  /bin/sleep 0.005
+done
+IFS= read -r exit_delay < %s
 trap '' TERM
-exec /bin/sleep 0.25
-`, shellQuote(invocations), shellQuote(started)), ":", ":")
+exec /bin/sleep "$exit_delay"
+`, shellQuote(invocations), shellQuote(started), shellQuote(release), shellQuote(exitDelayFile)), ":", ":")
 	timing := shortProcessRunnerTiming()
-	timing.operationBudgets["push"] = 100 * time.Millisecond
-	timing.cleanupTimeout = 1200 * time.Millisecond
+	timing.operationBudgets["push"] = operationBudget
+	timing.cleanupTimeout = 2 * time.Second
 	runner := newTestProcessRunnerWithTiming(t, fixture.config, timing)
 
-	result, err := runner.Run(context.Background(), fixture.target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
-	if err == nil {
+	type timedRunnerCall struct {
+		result  ProcessResult
+		err     error
+		elapsed time.Duration
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runStarted := make(chan time.Time, 1)
+	runResults := make(chan timedRunnerCall, 1)
+	go func() {
+		startedAt := time.Now()
+		runStarted <- startedAt
+		result, err := runner.Run(ctx, fixture.target, CommandSpec{Args: []string{"push", "--remote", "origin"}})
+		runResults <- timedRunnerCall{result: result, err: err, elapsed: time.Since(startedAt)}
+	}()
+	runStartedAt := <-runStarted
+	const cleanupWaitMargin = 250 * time.Millisecond
+	cleanupWaitBound := timing.cleanupTimeout + cleanupWaitMargin
+	cancelAndWait := func(reason string) timedRunnerCall {
+		cancel()
+		select {
+		case call := <-runResults:
+			return call
+		case <-time.After(cleanupWaitBound):
+			t.Fatalf("Run() did not return after %s within runner cleanup timeout %s plus test margin %s", reason, timing.cleanupTimeout, cleanupWaitMargin)
+			return timedRunnerCall{}
+		}
+	}
+	if !waitForRunnerFile(started, 3*time.Second) {
+		call := cancelAndWait("waiting for the fake extension startup marker")
+		t.Fatalf("fake extension did not start: Run() result = %+v, %v", call.result, call.err)
+	}
+	startupElapsed := time.Since(runStartedAt)
+	if startupElapsed >= operationBudget-childExitAfterDeadline {
+		call := cancelAndWait("rejecting a late fake extension startup")
+		t.Fatalf("fake extension start marker appeared after %s, leaving insufficient operation time: Run() result = %+v, %v", startupElapsed, call.result, call.err)
+	}
+
+	childSleep := operationBudget + childExitAfterDeadline - startupElapsed
+	releaseContents := strconv.FormatFloat(childSleep.Seconds(), 'f', 3, 64) + "\n"
+	if err := os.WriteFile(exitDelayFile, []byte(releaseContents), 0o600); err != nil {
+		call := cancelAndWait("handling an exit-delay file error")
+		t.Fatalf("write fake extension exit delay: %v; Run() result = %+v, %v", err, call.result, call.err)
+	}
+	if err := os.WriteFile(release, nil, 0o600); err != nil {
+		call := cancelAndWait("handling a fixture release file error")
+		t.Fatalf("release fake extension: %v; Run() result = %+v, %v", err, call.result, call.err)
+	}
+
+	maxRunDuration := operationBudget + timing.cleanupTimeout + time.Second
+	var call timedRunnerCall
+	select {
+	case call = <-runResults:
+	case <-time.After(time.Until(runStartedAt.Add(maxRunDuration))):
+		call = cancelAndWait("handling the operation and cleanup bound")
+		t.Fatalf("Run() did not return within its operation and cleanup bound: elapsed %s, result = %+v, %v", call.elapsed, call.result, call.err)
+	}
+	if call.err == nil {
 		t.Fatal("Run() error = nil, want an uncertain result after the execution deadline")
 	}
-	if !waitForRunnerFile(started, time.Second) {
-		t.Fatal("fake extension did not start")
-	}
-	if !result.Spawned || result.ExitCode == nil || *result.ExitCode != 0 || !result.TimedOut || result.Canceled || result.CleanupUnknown {
-		t.Errorf("late child result = %+v, %v; want exit 0 marked timed out with confirmed cleanup", result, err)
+	if !call.result.Spawned || call.result.ExitCode == nil || *call.result.ExitCode != 0 || !call.result.TimedOut || call.result.Canceled || call.result.CleanupUnknown {
+		t.Errorf("late child result = %+v, %v; want exit 0 marked timed out with confirmed cleanup", call.result, call.err)
 	}
 	invocationData, err := os.ReadFile(invocations)
 	if err != nil {

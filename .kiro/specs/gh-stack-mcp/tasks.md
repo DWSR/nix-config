@@ -154,3 +154,4 @@
 - Branch URL screening must preserve valid dotted branch components such as `release.v1/feature` while rejecting explicit schemes and host-style pull-request URLs.
 - Close stdin and launch in a new session (`Setsid`) to prevent both prompting and reopening the caller's controlling `/dev/tty`; the runner test exercises this under a pseudo-TTY.
 - Runner ceilings are 45s for view, 5m for init/add/checkout, and 15m for other commands, with 5s cleanup and 10s proxy-delivery reserves; task 3.2 aligns the shared deadlines around these limits.
+- Runner timeout fixtures must bound their own cancellation waits; use a startup handshake and operation budget long enough for the child to start before asserting a late exit.
