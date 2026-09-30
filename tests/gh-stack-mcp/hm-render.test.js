@@ -35,6 +35,12 @@ function hostRenderExpr() {
           rendered = builtins.fromJSON (builtins.unsafeDiscardStringContext config.xdg.configFile."mcpproxy/mcp_config.json".text);
           ghStackSource = config.home.mcp.extraServers.gh-stack-mcp or { };
           ghStackSourceCommand = builtins.unsafeDiscardStringContext (ghStackSource.command or "");
+          ghStackExtensionPackages = builtins.filter
+            (extension: (extension.pname or "") == "gh-stack")
+            config.programs.gh.extensions;
+          ghStackWrapperContents = if ghStackSource ? command
+            then builtins.readFile ghStackSource.command
+            else "";
           ghStackServers = builtins.filter (server: server.name == "gh-stack-mcp") rendered.mcpServers;
           ghStackServer = if ghStackServers == [ ] then { } else builtins.head ghStackServers;
           githubServers = builtins.filter (server: server.name == "github") rendered.mcpServers;
@@ -62,6 +68,12 @@ function hostRenderExpr() {
           sourceHasUrl = ghStackSource ? url;
           sourceHasOauth = ghStackSource ? oauth;
           sourceHasDiscoveryOverride = ghStackSource ? tool_discovery_interval;
+          ghStackExtensions = map (extension: {
+            pname = extension.pname or null;
+            version = extension.version or null;
+            storePath = builtins.unsafeDiscardStringContext (toString extension);
+          }) ghStackExtensionPackages;
+          ghStackWrapperScript = ghStackWrapperContents;
           installedGhStackPackages = installedGhStackPackages;
           ghStackRelatedSecretNames = builtins.filter ghStackRelated (builtins.attrNames config.home.mcp.keychainSecrets);
           ghStackRelatedFileEnvNames = builtins.filter ghStackRelated (builtins.attrNames config.home.mcp.fileSourcedEnv);
@@ -103,6 +115,34 @@ function hostRenderExpr() {
   `;
 }
 
+function assertGhStackExtension(host, hostKey) {
+  assert.equal(
+    host.ghStackExtensions.length,
+    1,
+    `${hostKey} installs exactly one gh-stack GitHub CLI extension`,
+  );
+  const [extension] = host.ghStackExtensions;
+  assert.equal(extension.pname, 'gh-stack', `${hostKey} extension is gh-stack`);
+  assert.equal(extension.version, '0.1.1', `${hostKey} pins gh-stack at v0.1.1`);
+
+  const wrapperExtensionAssignments = [
+    ...host.ghStackWrapperScript.matchAll(
+      /^[ \t]*export[ \t]+GH_STACK_MCP_EXTENSION_PATH=(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^;\s\r\n]+))[ \t]*;?[ \t]*\r?$/gm,
+    ),
+  ];
+  assert.equal(
+    wrapperExtensionAssignments.length,
+    1,
+    `${hostKey} wrapper sets GH_STACK_MCP_EXTENSION_PATH exactly once`,
+  );
+  const [, doubleQuotedPath, singleQuotedPath, unquotedPath] = wrapperExtensionAssignments[0];
+  assert.equal(
+    doubleQuotedPath ?? singleQuotedPath ?? unquotedPath,
+    `${extension.storePath}/bin/gh-stack`,
+    `${hostKey} wrapper uses the installed gh-stack derivation at ${extension.storePath}`,
+  );
+}
+
 function assertGhStackHost(host, hostKey) {
   assert.equal(host.sourceExists, true, `${hostKey} declares gh-stack-mcp in home.mcp.extraServers`);
   assert.equal(host.sourceCount, 1, `${hostKey} declares gh-stack-mcp once`);
@@ -120,6 +160,7 @@ function assertGhStackHost(host, hostKey) {
   assert.equal(host.sourceHasUrl, false, `${hostKey} adds no URL/listener`);
   assert.equal(host.sourceHasOauth, false, `${hostKey} adds no OAuth credentials`);
   assert.equal(host.sourceHasDiscoveryOverride, false, `${hostKey} keeps the global listing default`);
+  assertGhStackExtension(host, hostKey);
   assert.deepEqual(host.installedGhStackPackages, [], `${hostKey} does not add gh-stack-mcp to home.packages`);
   assert.deepEqual(host.ghStackRelatedSecretNames, [], `${hostKey} adds no keychain secret`);
   assert.deepEqual(host.ghStackRelatedFileEnvNames, [], `${hostKey} adds no file-sourced secret`);
@@ -169,6 +210,11 @@ test('both hosts render one packaged gh-stack-mcp stdio upstream through mcpprox
 
   assertGhStackHost(rendered.personal, 'personal');
   assertGhStackHost(rendered.shopify, 'Shopify');
+  assert.equal(
+    rendered.personal.ghStackExtensions[0].storePath,
+    rendered.shopify.ghStackExtensions[0].storePath,
+    'both hosts install the same gh-stack extension derivation',
+  );
   assert.equal(
     rendered.personal.sourcePackagePath,
     rendered.shopify.sourcePackagePath,
