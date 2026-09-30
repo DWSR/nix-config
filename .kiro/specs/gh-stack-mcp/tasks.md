@@ -129,7 +129,7 @@
   - _Depends: 4.1_
   - _Boundary: Agent guidance (`restack.md`, `github-native-stacks-minimal.md`, `plugin.ts`)_
   - _Requirements: 10.1, 10.5, 10.7, 11.5_
-- [ ] 4.4 Preserve read-only helpers and validate effective policy
+- [x] 4.4 Preserve read-only helpers and validate effective policy
   - Deny proxy code execution in five read-only helper frontmatters without granting writes or destructive calls.
   - Add policy regressions proving captain authorization/`ask`/direct-CLI deny, helper boundaries, `/restack` scope, and compact guidance equality.
   - Rendered-agent and instruction-profile tests pass with helpers still read-only.

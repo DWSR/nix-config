@@ -93,6 +93,36 @@ test('canonical memory fragment matches the plugin runtime copy', async () => {
   );
 });
 
+test('GitHub-native Stack compact guidance matches runtime and preserves local, remote, and handoff policy', async () => {
+  const mod = await loadPlugin();
+  const source = fs.readFileSync(
+    path.join(instructionsDir, 'github-native-stacks-minimal.md'),
+    'utf8',
+  ).trim();
+  const runtime = mod.SubagentContextBudgetPlugin.instructionFragments['github-native-stacks-minimal'].text;
+
+  assert.equal(runtime, source);
+  assert.match(source, /Use GitHub MCP for remote-only Stack work\./);
+  assert.match(
+    source,
+    /Discover typed local Stack tools and\s+exact `name`\/`call_with` for `stack_checkout`, `stack_rebase` start\/guarded\s+continue, and `stack_push`/,
+  );
+  assert.match(source, /never run `gh stack` or imitate Stack work with\s+per-branch Git calls/);
+  assert.match(
+    source,
+    /Before each local mutation, follow the skill's explicit-path Git-MCP and affected\s+GitHub MCP snapshots, preview exact scope, and obtain scoped authorization\./,
+  );
+  assert.match(
+    source,
+    /Rebase and push need separate authorization; re-inspect `exited_unverified` or\s+uncertain outcomes before success\/retry, and reauthorize if state changes\./,
+  );
+  assert.match(
+    source,
+    /Use a user-owned handoff with the exact command; stop\s+for unavailable tools, explicit CLI preference, abort/,
+  );
+  assert.match(source, /Never merge or\s+unstack\./);
+});
+
 test('composeInstructionProfile includes mandatory safety fragments for every budget profile', async () => {
   const mod = await loadPlugin();
 

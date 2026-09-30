@@ -270,6 +270,11 @@ function renderedAgentPermissionsExpr() {
         general = shopify.programs.opencode.settings.agent.general.permission;
         explore = shopify.programs.opencode.settings.agent.explore.permission;
         stackCaptain = shopify.programs.opencode.settings.agent."stack-captain".permission;
+        stackStatusSweeper = shopify.programs.opencode.settings.agent."stack-status-sweeper".permission;
+        ciLogSleuth = shopify.programs.opencode.settings.agent."ci-log-sleuth".permission;
+        botThreadTriager = shopify.programs.opencode.settings.agent."bot-thread-triager".permission;
+        stackPreflightAuditor = shopify.programs.opencode.settings.agent."stack-preflight-auditor".permission;
+        stackFixReviewer = shopify.programs.opencode.settings.agent."stack-fix-reviewer".permission;
         ybSleuth = shopify.programs.opencode.settings.agent."yb-sleuth".permission;
       };
     }
@@ -475,8 +480,37 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'allow');
-  assert.equal(rendered.shopify.stackCaptain.bash, 'allow');
+  assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_destructive, 'ask');
+  assert.equal(rendered.shopify.stackCaptain.mcpproxy_code_execution, 'deny');
+  assert.deepEqual(rendered.shopify.stackCaptain.bash, {
+    '*': 'allow',
+    'gh stack': 'deny',
+    'gh stack *': 'deny',
+    git: 'deny',
+    'git *': 'deny',
+  });
   assert.equal(rendered.shopify.stackCaptain.task, 'allow');
+
+  for (const [agentName, permissions] of [
+    ['stack-status-sweeper', rendered.shopify.stackStatusSweeper],
+    ['ci-log-sleuth', rendered.shopify.ciLogSleuth],
+    ['bot-thread-triager', rendered.shopify.botThreadTriager],
+    ['stack-preflight-auditor', rendered.shopify.stackPreflightAuditor],
+    ['stack-fix-reviewer', rendered.shopify.stackFixReviewer],
+  ]) {
+    assert.equal(permissions.mcpproxy_retrieve_tools, 'allow', `${agentName} retains tool discovery`);
+    assert.equal(permissions.mcpproxy_call_tool_read, 'allow', `${agentName} retains read-only MCP access`);
+    assert.ok(
+      [undefined, 'deny'].includes(permissions.mcpproxy_call_tool_write),
+      `${agentName} has no MCP write grant`,
+    );
+    assert.ok(
+      [undefined, 'deny'].includes(permissions.mcpproxy_call_tool_destructive),
+      `${agentName} has no destructive MCP grant`,
+    );
+    assert.equal(permissions.mcpproxy_code_execution, 'deny', `${agentName} cannot execute proxy code`);
+  }
+
   assert.deepEqual(rendered.shopify.ybSleuth.bash, { git: 'allow' });
 });
 

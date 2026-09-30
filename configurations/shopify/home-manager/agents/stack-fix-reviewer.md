@@ -18,6 +18,7 @@ permission:
   mcpproxy_call_tool_read: allow
   mcpproxy_call_tool_write: deny
   mcpproxy_call_tool_destructive: deny
+  mcpproxy_code_execution: deny
 ---
 
 # stack-fix-reviewer
