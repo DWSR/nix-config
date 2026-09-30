@@ -1774,11 +1774,59 @@
                   touch $out
                 '';
           };
+
+          # Offline gh-stack-mcp verification (task 3.4). The nested host
+          # evaluator disables unrelated Shopify-only skill and extension
+          # sources so it does not fetch private repositories. The package
+          # output remains a dependency, while the explicit vendored Go test
+          # covers all packages. Node renders both hosts and exercises proxy
+          # routing, startup-failure isolation, and shortened deadlines against
+          # local stdio fixtures only (Req 1.1, 1.6, 8.6, 9.7-9.8, 11.1-11.3).
+          ghStackMcpChecks = pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+            gh-stack-mcp =
+              pkgs.runCommand "gh-stack-mcp"
+                {
+                  nativeBuildInputs = [
+                    pkgs.git
+                    pkgs.go_1_26
+                    pkgs.nix
+                    pkgs.nodejs
+                    pkgs.gh-stack-mcp
+                    pkgs.mcpproxy-go
+                  ];
+                  goModules = pkgs.gh-stack-mcp.goModules;
+                  GH_STACK_MCP_OFFLINE_HOST_RENDER = "1";
+                  GH_STACK_MCP_PACKAGE_PATH = pkgs.gh-stack-mcp;
+                  MCPPROXY_PACKAGE_PATH = pkgs.mcpproxy-go;
+                }
+                ''
+                  export HOME="$(mktemp -d)"
+                  export NIX_CONFIG="experimental-features = nix-command flakes"
+                  export GOPROXY=off
+                  export GOSUMDB=off
+                  export GOTOOLCHAIN=local
+                  cp -R ${./.} source
+                  chmod -R u+w source
+                  mkdir -p source/scripts/gh-stack-mcp/vendor
+                  cp -R "$goModules"/. source/scripts/gh-stack-mcp/vendor/
+                  chmod -R u+w source/scripts/gh-stack-mcp/vendor
+                  (
+                    cd source/scripts/gh-stack-mcp
+                    go test -mod=vendor ./...
+                  )
+                  cd source
+                  node --test \
+                    tests/gh-stack-mcp/hm-render.test.js \
+                    tests/gh-stack-mcp/proxy-contract.test.js
+                  touch "$out"
+                '';
+          };
         in
         nixvimTests
         // hammerspoonChecks
         // deskflowChecks
         // agentMemoryChecks
+        // ghStackMcpChecks
         // rec {
           formatting = treefmtEval.${system}.config.build.check self;
 
@@ -2342,6 +2390,18 @@
 
           modules = [
             ./configurations/shopify
+            (
+              { lib, ... }:
+              lib.mkIf (builtins.getEnv "GH_STACK_MCP_OFFLINE_HOST_RENDER" == "1") {
+                # These Shopify skill and extension sources are independent
+                # of Stack host rendering. Do not evaluate their Git sources
+                # in the offline contract check.
+                home-manager.users.brandonmcnama.programs.pi.coding-agent.extensions = lib.mkForce [ ];
+                home-manager.users.brandonmcnama.programs.pi.coding-agent.skills = lib.mkForce [ ];
+                home-manager.users.brandonmcnama.xdg.configFile."opencode/skills/quick-arch-diagrams".enable =
+                  lib.mkForce false;
+              }
+            )
           ];
         };
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {

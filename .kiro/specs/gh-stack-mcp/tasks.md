@@ -99,7 +99,7 @@
   - _Depends: 3.1, 3.2_
   - _Boundary: Nix integration (both host `default.nix` files, `tests/gh-stack-mcp/hm-render.test.js`)_
   - _Requirements: 9.2, 9.3, 9.6, 11.2, 11.3_
-- [ ] 3.4 Add offline flake and proxy-routing checks before policy cutover
+- [x] 3.4 Add offline flake and proxy-routing checks before policy cutover
   - Run an isolated proxy fixture: view routes to write and mutations route to destructive.
   - Simulate a missing Stack upstream and shortened nested deadlines while unrelated upstreams remain callable.
   - A Darwin flake check runs Go contracts, host rendering, and proxy fixtures without real Stack or live GitHub calls.
