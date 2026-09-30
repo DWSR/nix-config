@@ -50,7 +50,7 @@ func adaptProcessResult(operation string, target Target, result ProcessResult, p
 			return outcome, errors.Join(processErr, errors.New("stack_view JSON stdout was truncated; local observation was withheld"))
 		}
 
-		view, err := parseLocalView(result.Stdout, target.Path)
+		view, err := parseLocalView(result.Stdout, target.Path, target.GitPath)
 		if err != nil {
 			return outcome, errors.Join(processErr, fmt.Errorf("stack_view did not return one complete valid local view: %w", err))
 		}
@@ -119,7 +119,18 @@ type localPullRequestDocument struct {
 	State  *string `json:"state"`
 }
 
-func parseLocalView(data []byte, worktree string) (LocalView, error) {
+func parseLocalView(data []byte, worktree string, fixedGitPath ...string) (LocalView, error) {
+	if len(fixedGitPath) > 1 {
+		return LocalView{}, errors.New("local view parsing accepts at most one fixed Git executable path")
+	}
+	gitPath := ""
+	if len(fixedGitPath) == 1 && fixedGitPath[0] != "" {
+		gitPath = fixedGitPath[0]
+		if !filepath.IsAbs(gitPath) {
+			return LocalView{}, errors.New("local view parsing requires an absolute fixed Git executable path")
+		}
+	}
+
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 
@@ -156,10 +167,10 @@ func parseLocalView(data []byte, worktree string) (LocalView, error) {
 	if !filepath.IsAbs(worktree) {
 		return LocalView{}, errors.New("view JSON branch refs cannot be validated without an absolute target worktree path")
 	}
-	if err := validateLocalViewBranchRef(worktree, "trunk", *document.Trunk); err != nil {
+	if err := validateLocalViewBranchRefWithPath(gitPath, worktree, "trunk", *document.Trunk); err != nil {
 		return LocalView{}, err
 	}
-	if err := validateLocalViewBranchRef(worktree, "currentBranch", *document.CurrentBranch); err != nil {
+	if err := validateLocalViewBranchRefWithPath(gitPath, worktree, "currentBranch", *document.CurrentBranch); err != nil {
 		return LocalView{}, err
 	}
 
@@ -172,7 +183,7 @@ func parseLocalView(data []byte, worktree string) (LocalView, error) {
 		if branch.Name == nil || *branch.Name == "" {
 			return LocalView{}, fmt.Errorf("view JSON branch %d is missing name", index)
 		}
-		if err := validateLocalViewBranchRef(worktree, fmt.Sprintf("branch %d name", index), *branch.Name); err != nil {
+		if err := validateLocalViewBranchRefWithPath(gitPath, worktree, fmt.Sprintf("branch %d name", index), *branch.Name); err != nil {
 			return LocalView{}, err
 		}
 		if branch.IsCurrent == nil || branch.IsMerged == nil || branch.IsQueued == nil || branch.NeedsRebase == nil {
@@ -212,9 +223,10 @@ func parseLocalView(data []byte, worktree string) (LocalView, error) {
 	return view, nil
 }
 
-func validateLocalViewBranchRef(worktree, field, name string) error {
+func validateLocalViewBranchRefWithPath(gitPath, worktree, field, name string) error {
 	// Check a fully qualified ref so @{-1} cannot expand as branch shorthand.
-	_, err := runTargetGit(
+	_, err := runTargetGitWithPath(
+		gitPath,
 		worktree,
 		"validate local Stack view "+field+" ref",
 		"check-ref-format",

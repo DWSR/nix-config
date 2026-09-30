@@ -39,6 +39,40 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 		os.Exit(0)
+	case "validated-server":
+		server, err := NewServer()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	case "validated-timeout-server":
+		config, err := processRunnerConfigFromEnvironment()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		timing := shortProcessRunnerTiming()
+		timing.operationBudgets["push"] = 150 * time.Millisecond
+		runner, err := newProcessRunnerWithTiming(config, timing)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		if err := runner.validateExecutables(); err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		server := newServer(newStackDispatcher(runner))
+		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
+			fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	case "extension":
 		os.Exit(runFakeExtension())
 	default:

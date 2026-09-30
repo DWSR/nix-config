@@ -10,7 +10,11 @@ import (
 )
 
 func main() {
-	server := stackmcp.NewServer()
+	server, err := stackmcp.NewServer()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
+		os.Exit(1)
+	}
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintf(os.Stderr, "gh-stack-mcp: %v\n", err)
 		os.Exit(1)

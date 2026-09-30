@@ -18,6 +18,9 @@ const maxCapturedOutputBytes = 64 * 1024
 const (
 	processGroupCleanupTimeout  = 5 * time.Second
 	proxyResponseDeliveryMargin = 10 * time.Second
+	stackExtensionPathEnv       = "GH_STACK_MCP_EXTENSION_PATH"
+	stackGitPathEnv             = "GH_STACK_MCP_GIT_PATH"
+	stackGHPathEnv              = "GH_STACK_MCP_GH_PATH"
 )
 
 type ProcessRunnerConfig struct {
@@ -31,6 +34,30 @@ type ProcessRunner struct {
 	timing processRunnerTiming
 	lockMu sync.Mutex
 	locks  map[string]*repositoryOperationLock
+}
+
+func processRunnerConfigFromEnvironment() (ProcessRunnerConfig, error) {
+	config := ProcessRunnerConfig{
+		ExtensionPath: os.Getenv(stackExtensionPathEnv),
+		GitPath:       os.Getenv(stackGitPathEnv),
+		GHPath:        os.Getenv(stackGHPathEnv),
+	}
+	for _, executable := range []struct {
+		name string
+		path string
+	}{
+		{name: stackExtensionPathEnv, path: config.ExtensionPath},
+		{name: stackGitPathEnv, path: config.GitPath},
+		{name: stackGHPathEnv, path: config.GHPath},
+	} {
+		if executable.path == "" {
+			return ProcessRunnerConfig{}, fmt.Errorf("%s must be set to an absolute executable path", executable.name)
+		}
+		if !filepath.IsAbs(executable.path) || strings.ContainsRune(executable.path, '\x00') {
+			return ProcessRunnerConfig{}, fmt.Errorf("%s must be an absolute executable path", executable.name)
+		}
+	}
+	return config, nil
 }
 
 type repositoryOperationLock struct {

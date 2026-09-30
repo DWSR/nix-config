@@ -130,29 +130,40 @@ type Dispatcher interface {
 	Dispatch(context.Context, string, any) (Outcome, error)
 }
 
-type unavailableDispatcher struct{}
-
-func (unavailableDispatcher) Dispatch(_ context.Context, operation string, _ any) (Outcome, error) {
-	return Outcome{
-		Operation: operation,
-		Status:    OutcomeRejected,
-		Stderr:    "Stack command execution is unavailable until the command runner is configured.",
-	}, nil
-}
-
 type toolDefinition struct {
 	name        string
 	description string
 	inputSchema map[string]any
 }
 
-func NewServer() *mcp.Server {
-	return newServer(unavailableDispatcher{})
+// NewServer builds the production server from the fixed executable paths in
+// GH_STACK_MCP_EXTENSION_PATH, GH_STACK_MCP_GIT_PATH, and GH_STACK_MCP_GH_PATH.
+func NewServer() (*mcp.Server, error) {
+	config, err := processRunnerConfigFromEnvironment()
+	if err != nil {
+		return nil, err
+	}
+	return NewServerWithRunnerConfig(config)
+}
+
+// NewServerWithRunnerConfig constructs the production dispatcher with explicit
+// executable paths. It is also the constructor seam used by local fixtures.
+func NewServerWithRunnerConfig(config ProcessRunnerConfig) (*mcp.Server, error) {
+	runner, err := NewProcessRunner(config)
+	if err != nil {
+		return nil, fmt.Errorf("invalid executable configuration (%s, %s, %s): %w",
+			stackExtensionPathEnv, stackGitPathEnv, stackGHPathEnv, err)
+	}
+	if err := runner.validateExecutables(); err != nil {
+		return nil, fmt.Errorf("invalid executable configuration (%s, %s, %s): %w",
+			stackExtensionPathEnv, stackGitPathEnv, stackGHPathEnv, err)
+	}
+	return newServer(newStackDispatcher(runner)), nil
 }
 
 func newServer(dispatcher Dispatcher) *mcp.Server {
 	if dispatcher == nil {
-		dispatcher = unavailableDispatcher{}
+		panic("Stack MCP dispatcher is required")
 	}
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "gh-stack-mcp",
@@ -331,11 +342,25 @@ func registerTypedTool[Input any](server *mcp.Server, dispatcher Dispatcher, def
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input Input) (*mcp.CallToolResult, Outcome, error) {
 		outcome, err := dispatcher.Dispatch(ctx, definition.name, input)
-		if err != nil {
-			return nil, Outcome{}, err
-		}
 		if outcome.Operation != definition.name {
-			return nil, Outcome{}, fmt.Errorf("dispatcher returned operation %q for %q", outcome.Operation, definition.name)
+			err = fmt.Errorf("dispatcher returned operation %q for %q", outcome.Operation, definition.name)
+			outcome = Outcome{
+				Operation: definition.name,
+				Status:    OutcomeRejected,
+				Stderr:    err.Error(),
+			}
+		}
+		if err != nil {
+			if outcome.Status == "" {
+				outcome.Status = OutcomeRejected
+			}
+			if outcome.Stderr == "" {
+				outcome.Stderr = err.Error()
+			}
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+				IsError: true,
+			}, outcome, nil
 		}
 		return nil, outcome, nil
 	})

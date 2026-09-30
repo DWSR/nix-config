@@ -69,7 +69,7 @@
   - Fixtures show sync exit-zero no-op, partial unstack, sequential publication, truncated view, and no-local-Stack errors never claim verified success.
   - _Boundary: Result adapter (`internal/stackmcp/result.go`, `result_test.go`)_
   - _Requirements: 2.1, 2.2, 4.2, 4.5, 5.5, 6.5, 7.3, 8.2, 8.4_
-- [ ] 2.10 Connect all typed MCP handlers through the validated execution path
+- [x] 2.10 Connect all typed MCP handlers through the validated execution path
   - Route ten handlers through worktree guard, fixed arguments, supervised execution, and result handling.
   - Exercise real stdio MCP calls against the fake extension, including view, guarded rebase, unverified writes, and cancellation.
   - The fixture client receives typed outcomes for all operations without a real Stack mutation.
@@ -156,3 +156,4 @@
 - Runner ceilings are 45s for view, 5m for init/add/checkout, and 15m for other commands, with 5s cleanup and 10s proxy-delivery reserves; task 3.2 aligns the shared deadlines around these limits.
 - Runner timeout fixtures must bound their own cancellation waits; use a startup handshake and operation budget long enough for the child to start before asserting a late exit.
 - Result parsing returns normalized `LocalView` JSON in the existing `Outcome.Stdout` string contract; keep this adapter boundary without changing `tools.go`'s output schema.
+- The packaged server requires `GH_STACK_MCP_EXTENSION_PATH`, `GH_STACK_MCP_GIT_PATH`, and `GH_STACK_MCP_GH_PATH`; task 3.1's wrapper must set all three to fixed store paths.

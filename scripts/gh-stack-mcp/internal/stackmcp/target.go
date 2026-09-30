@@ -23,6 +23,7 @@ type Target struct {
 	Path       string
 	GitDir     string
 	CommonDir  string
+	GitPath    string
 	Remote     string
 	Repository string
 }
@@ -321,7 +322,7 @@ func validateTargetOriginalRefs(target Target, originalRefs map[string]string, s
 
 	for branchName, branch := range trackedBranches {
 		objectID, markerHasRef := originalRefs[branchName]
-		localRefExists, err := targetLocalBranchExists(target.Path, branchName)
+		localRefExists, err := targetLocalBranchExistsWithPath(target.GitPath, target.Path, branchName)
 		if err != nil {
 			return fmt.Errorf("check local Stack branch ref: %w", err)
 		}
@@ -539,7 +540,7 @@ func ValidateCheckoutRemoteSelection(target Target) error {
 	if err != nil {
 		return err
 	}
-	preferences, err := loadTargetRemotePreferences(target.Path)
+	preferences, err := loadTargetRemotePreferences(target.Path, target.GitPath)
 	if err != nil {
 		return err
 	}
@@ -565,11 +566,11 @@ func ValidateInitRemoteSelection(target Target, trunk string) error {
 	if trunk == "" || strings.ContainsAny(trunk, "\x00\r\n") {
 		return fmt.Errorf("an init trunk branch is required for remote-selection validation")
 	}
-	currentBranch, err := targetCurrentBranch(target.Path)
+	currentBranch, err := targetCurrentBranchWithPath(target.GitPath, target.Path)
 	if err != nil {
 		return err
 	}
-	trunkExists, err := targetLocalBranchExists(target.Path, trunk)
+	trunkExists, err := targetLocalBranchExistsWithPath(target.GitPath, target.Path, trunk)
 	if err != nil {
 		return err
 	}
@@ -581,7 +582,7 @@ func ValidateInitRemoteSelection(target Target, trunk string) error {
 	if err != nil {
 		return err
 	}
-	preferences, err := loadTargetRemotePreferences(target.Path)
+	preferences, err := loadTargetRemotePreferences(target.Path, target.GitPath)
 	if err != nil {
 		return err
 	}
@@ -605,7 +606,7 @@ type targetRemotePreferences struct {
 }
 
 func requireSoleTargetRemote(target Target) (string, error) {
-	output, err := runTargetGit(target.Path, "list Git remotes for implicit selection", "remote")
+	output, err := runTargetGitWithPath(target.GitPath, target.Path, "list Git remotes for implicit selection", "remote")
 	if err != nil {
 		return "", err
 	}
@@ -622,21 +623,21 @@ func requireSoleTargetRemote(target Target) (string, error) {
 	return remotes[0], nil
 }
 
-func loadTargetRemotePreferences(worktree string) (targetRemotePreferences, error) {
+func loadTargetRemotePreferences(worktree, gitPath string) (targetRemotePreferences, error) {
 	preferences := targetRemotePreferences{
 		branchPreferences: make(map[string]targetBranchRemotePreference),
 	}
 	var err error
-	preferences.pushDefault, _, err = readTargetGitConfig(worktree, "remote.pushDefault")
+	preferences.pushDefault, _, err = readTargetGitConfigWithPath(worktree, "remote.pushDefault", gitPath)
 	if err != nil {
 		return targetRemotePreferences{}, err
 	}
-	preferences.savedRemote, _, err = readTargetGitConfig(worktree, "gh-stack.remote")
+	preferences.savedRemote, _, err = readTargetGitConfigWithPath(worktree, "gh-stack.remote", gitPath)
 	if err != nil {
 		return targetRemotePreferences{}, err
 	}
 
-	output, found, err := runTargetGitOptional(worktree, "list branch remote preferences", "config", "--name-only", "--get-regexp", `^branch\.`)
+	output, found, err := runTargetGitOptionalWithPath(gitPath, worktree, "list branch remote preferences", "config", "--name-only", "--get-regexp", `^branch\.`)
 	if err != nil {
 		return targetRemotePreferences{}, err
 	}
@@ -654,9 +655,9 @@ func loadTargetRemotePreferences(worktree string) (targetRemotePreferences, erro
 		}
 		preference := preferences.branchPreferences[branch]
 		if isPushRemote {
-			preference.pushRemote, _, err = readTargetGitConfig(worktree, "branch."+branch+".pushRemote")
+			preference.pushRemote, _, err = readTargetGitConfigWithPath(worktree, "branch."+branch+".pushRemote", gitPath)
 		} else {
-			preference.remote, _, err = readTargetGitConfig(worktree, "branch."+branch+".remote")
+			preference.remote, _, err = readTargetGitConfigWithPath(worktree, "branch."+branch+".remote", gitPath)
 		}
 		if err != nil {
 			return targetRemotePreferences{}, err
@@ -728,8 +729,8 @@ func (preferences targetRemotePreferences) requireTargetRemote(branch, soleRemot
 	return nil
 }
 
-func readTargetGitConfig(worktree, key string) (string, bool, error) {
-	output, found, err := runTargetGitOptional(worktree, "read Git remote-selection preference", "config", "--get", key)
+func readTargetGitConfigWithPath(worktree, key, gitPath string) (string, bool, error) {
+	output, found, err := runTargetGitOptionalWithPath(gitPath, worktree, "read Git remote-selection preference", "config", "--get", key)
 	if err != nil || !found {
 		return "", found, err
 	}
@@ -740,8 +741,8 @@ func readTargetGitConfig(worktree, key string) (string, bool, error) {
 	return value, value != "", nil
 }
 
-func targetCurrentBranch(worktree string) (string, error) {
-	output, err := runTargetGit(worktree, "read current Git branch", "branch", "--show-current")
+func targetCurrentBranchWithPath(gitPath, worktree string) (string, error) {
+	output, err := runTargetGitWithPath(gitPath, worktree, "read current Git branch", "branch", "--show-current")
 	if err != nil {
 		return "", err
 	}
@@ -752,14 +753,14 @@ func targetCurrentBranch(worktree string) (string, error) {
 	return branch, nil
 }
 
-func targetLocalBranchExists(worktree, branch string) (bool, error) {
-	_, found, err := runTargetGitOptional(worktree, "check for local branch ref", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+func targetLocalBranchExistsWithPath(gitPath, worktree, branch string) (bool, error) {
+	_, found, err := runTargetGitOptionalWithPath(gitPath, worktree, "check for local branch ref", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	return found, err
 }
 
-func runTargetGitOptional(worktree, operation string, args ...string) ([]byte, bool, error) {
+func runTargetGitOptionalWithPath(gitPath, worktree, operation string, args ...string) ([]byte, bool, error) {
 	commandArgs := append([]string{"-C", worktree}, args...)
-	command := exec.Command("git", commandArgs...)
+	command := exec.Command(gitExecutable(gitPath), commandArgs...)
 	command.Env = targetGitEnvironment()
 	output, err := command.Output()
 	if err == nil {
@@ -774,7 +775,21 @@ func runTargetGitOptional(worktree, operation string, args ...string) ([]byte, b
 
 // ValidateTarget resolves the supplied worktree and validates one explicit
 // remote without relying on the process working directory or inherited GH_REPO.
-func ValidateTarget(path, remote string) (Target, error) {
+// Production callers provide the fixed Git executable path; the optional form
+// without a path is retained for package-local unit fixtures.
+func ValidateTarget(path, remote string, fixedGitPath ...string) (Target, error) {
+	if len(fixedGitPath) > 1 {
+		return Target{}, fmt.Errorf("at most one fixed Git executable path may be provided")
+	}
+	gitPath := ""
+	if len(fixedGitPath) == 1 {
+		gitPath = fixedGitPath[0]
+		if gitPath == "" || !filepath.IsAbs(gitPath) || strings.ContainsRune(gitPath, '\x00') {
+			return Target{}, fmt.Errorf("the fixed Git executable path must be absolute")
+		}
+		gitPath = filepath.Clean(gitPath)
+	}
+
 	inputPath, err := resolveInputDirectory(path)
 	if err != nil {
 		return Target{}, err
@@ -786,7 +801,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		return Target{}, fmt.Errorf("the Git remote name is invalid")
 	}
 
-	worktreeOutput, err := runTargetGit(inputPath, "resolve worktree root", "rev-parse", "--show-toplevel")
+	worktreeOutput, err := runTargetGitWithPath(gitPath, inputPath, "resolve worktree root", "rev-parse", "--show-toplevel")
 	if err != nil {
 		return Target{}, err
 	}
@@ -795,7 +810,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		return Target{}, err
 	}
 
-	gitDirOutput, err := runTargetGit(worktreeRoot, "resolve worktree Git directory", "rev-parse", "--absolute-git-dir")
+	gitDirOutput, err := runTargetGitWithPath(gitPath, worktreeRoot, "resolve worktree Git directory", "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return Target{}, err
 	}
@@ -804,7 +819,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		return Target{}, err
 	}
 
-	commonDirOutput, err := runTargetGit(worktreeRoot, "resolve common Git directory", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	commonDirOutput, err := runTargetGitWithPath(gitPath, worktreeRoot, "resolve common Git directory", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return Target{}, err
 	}
@@ -813,7 +828,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		return Target{}, err
 	}
 
-	remoteOutput, err := runTargetGit(worktreeRoot, "list Git remotes", "remote")
+	remoteOutput, err := runTargetGitWithPath(gitPath, worktreeRoot, "list Git remotes", "remote")
 	if err != nil {
 		return Target{}, err
 	}
@@ -832,7 +847,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		return Target{}, fmt.Errorf("the selected Git remote does not exist")
 	}
 
-	fetchURLs, err := targetRemoteURLs(worktreeRoot, remote, false)
+	fetchURLs, err := targetRemoteURLs(worktreeRoot, remote, false, gitPath)
 	if err != nil {
 		return Target{}, err
 	}
@@ -849,7 +864,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		}
 	}
 
-	pushURLs, err := targetRemoteURLs(worktreeRoot, remote, true)
+	pushURLs, err := targetRemoteURLs(worktreeRoot, remote, true, gitPath)
 	if err != nil {
 		return Target{}, err
 	}
@@ -868,6 +883,7 @@ func ValidateTarget(path, remote string) (Target, error) {
 		Path:       worktreeRoot,
 		GitDir:     gitDir,
 		CommonDir:  commonDir,
+		GitPath:    gitPath,
 		Remote:     remote,
 		Repository: repository,
 	}, nil
@@ -913,15 +929,22 @@ func resolveGitDirectory(relativeTo string, output []byte, description string) (
 	return filepath.Clean(resolved), nil
 }
 
-func runTargetGit(worktree, operation string, args ...string) ([]byte, error) {
+func runTargetGitWithPath(gitPath, worktree, operation string, args ...string) ([]byte, error) {
 	commandArgs := append([]string{"-C", worktree}, args...)
-	command := exec.Command("git", commandArgs...)
+	command := exec.Command(gitExecutable(gitPath), commandArgs...)
 	command.Env = targetGitEnvironment()
 	output, err := command.Output()
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", operation, err)
 	}
 	return output, nil
+}
+
+func gitExecutable(gitPath string) string {
+	if gitPath == "" {
+		return "git"
+	}
+	return gitPath
 }
 
 func targetGitEnvironment() []string {
@@ -936,7 +959,7 @@ func targetGitEnvironment() []string {
 	return environment
 }
 
-func targetRemoteURLs(worktree, remote string, push bool) ([]string, error) {
+func targetRemoteURLs(worktree, remote string, push bool, gitPath string) ([]string, error) {
 	args := []string{"remote", "get-url"}
 	operation := "read selected remote fetch URLs"
 	if push {
@@ -944,7 +967,7 @@ func targetRemoteURLs(worktree, remote string, push bool) ([]string, error) {
 		operation = "read selected remote push URLs"
 	}
 	args = append(args, "--all", remote)
-	output, err := runTargetGit(worktree, operation, args...)
+	output, err := runTargetGitWithPath(gitPath, worktree, operation, args...)
 	if err != nil {
 		return nil, err
 	}

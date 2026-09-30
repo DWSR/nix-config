@@ -251,7 +251,7 @@ func validateCommandBranch(target Target, description, branch string) error {
 	if target.Path == "" || !filepath.IsAbs(target.Path) {
 		return fmt.Errorf("%s requires a validated absolute worktree path", description)
 	}
-	if _, err := runTargetGit(target.Path, "validate "+description+" branch", "check-ref-format", "--branch", branch); err != nil {
+	if _, err := runTargetGitWithPath(target.GitPath, target.Path, "validate "+description+" branch", "check-ref-format", "--branch", branch); err != nil {
 		return fmt.Errorf("%s must be a valid Git branch name: %w", description, err)
 	}
 	return nil
