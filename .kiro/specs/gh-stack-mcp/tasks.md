@@ -33,7 +33,7 @@
   - Fixtures reject missing, stale, or marker-only recovery and pending-modify submission before launch.
   - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
   - _Requirements: 4.3, 4.4, 6.6_
-- [ ] 2.4 Map local view, init, add, and checkout to fixed arguments
+- [x] 2.4 Map local view, init, add, and checkout to fixed arguments
   - Reject URL/numeric branch targets and stage-without-message or editor-opening add inputs.
   - Map only typed trunk, branch, stage, and message values; leave view parsing to the result adapter.
   - Unit tests show exact argument vectors and no generic CLI passthrough.
@@ -151,3 +151,4 @@
 - `NewServer` intentionally fails closed until task 2.10 connects the validated guard, command mapper, runner, and result adapters; replace the unavailable dispatcher then.
 - In gh-stack v0.1.1, remote selection checks branch push remote, `remote.pushDefault`, branch remote, `gh-stack.remote`, then the sole remote; missing-trunk init uses the current branch, while remote checkout discovers its trunk from the API.
 - Recovery preflight mirrors v0.1.1: `originalRefs` covers branches but not trunk, deleted merged branches fall back to `Head`, `remainingBranches` is the scoped suffix through `endIndex`, and pending submit only un-stacks with a nonempty prior remote Stack ID.
+- Branch URL screening must preserve valid dotted branch components such as `release.v1/feature` while rejecting explicit schemes and host-style pull-request URLs.
