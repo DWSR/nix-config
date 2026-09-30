@@ -1,12 +1,14 @@
 package stackmcp
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -19,6 +21,248 @@ type Target struct {
 	CommonDir  string
 	Remote     string
 	Repository string
+}
+
+// ValidateCheckoutRemoteSelection requires checkout's implicit remote choices
+// to resolve only to the already validated target. The remote Stack trunk is
+// learned from GitHub by the extension, so every configured branch selector
+// and the selector with no branch-specific settings must be safe.
+func ValidateCheckoutRemoteSelection(target Target) error {
+	soleRemote, err := requireSoleTargetRemote(target)
+	if err != nil {
+		return err
+	}
+	preferences, err := loadTargetRemotePreferences(target.Path)
+	if err != nil {
+		return err
+	}
+
+	// Remote checkout discovers its trunk from the API, then resolves a remote
+	// using that trunk's branch config. Inspect every configured branch selector
+	// and the generic selector; the latter covers a trunk with no branch config.
+	branches := append([]string{""}, preferences.branchNames()...)
+	for _, branch := range branches {
+		if err := preferences.requireTargetRemote(branch, soleRemote, target.Remote); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ValidateInitRemoteSelection checks the pinned CLI's implicit remote selection
+// before init can fetch a missing trunk. The CLI resolves using the current
+// branch; the approved guard contract also names the trunk, so both selectors
+// must resolve to the validated remote. A local trunk, or the current trunk
+// branch that init will use directly, needs no fetch-selection guard.
+func ValidateInitRemoteSelection(target Target, trunk string) error {
+	if trunk == "" || strings.ContainsAny(trunk, "\x00\r\n") {
+		return fmt.Errorf("an init trunk branch is required for remote-selection validation")
+	}
+	currentBranch, err := targetCurrentBranch(target.Path)
+	if err != nil {
+		return err
+	}
+	trunkExists, err := targetLocalBranchExists(target.Path, trunk)
+	if err != nil {
+		return err
+	}
+	if currentBranch == trunk || trunkExists {
+		return nil
+	}
+
+	soleRemote, err := requireSoleTargetRemote(target)
+	if err != nil {
+		return err
+	}
+	preferences, err := loadTargetRemotePreferences(target.Path)
+	if err != nil {
+		return err
+	}
+	for _, branch := range []string{currentBranch, trunk} {
+		if err := preferences.requireTargetRemote(branch, soleRemote, target.Remote); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type targetBranchRemotePreference struct {
+	pushRemote string
+	remote     string
+}
+
+type targetRemotePreferences struct {
+	branchPreferences map[string]targetBranchRemotePreference
+	pushDefault       string
+	savedRemote       string
+}
+
+func requireSoleTargetRemote(target Target) (string, error) {
+	output, err := runTargetGit(target.Path, "list Git remotes for implicit selection", "remote")
+	if err != nil {
+		return "", err
+	}
+	remotes, err := gitOutputLines(output)
+	if err != nil {
+		return "", fmt.Errorf("read Git remotes for implicit selection: %w", err)
+	}
+	if len(remotes) != 1 {
+		return "", fmt.Errorf("implicit Stack remote selection requires exactly one Git remote")
+	}
+	if remotes[0] != target.Remote {
+		return "", fmt.Errorf("the sole Git remote does not match the validated target remote")
+	}
+	return remotes[0], nil
+}
+
+func loadTargetRemotePreferences(worktree string) (targetRemotePreferences, error) {
+	preferences := targetRemotePreferences{
+		branchPreferences: make(map[string]targetBranchRemotePreference),
+	}
+	var err error
+	preferences.pushDefault, _, err = readTargetGitConfig(worktree, "remote.pushDefault")
+	if err != nil {
+		return targetRemotePreferences{}, err
+	}
+	preferences.savedRemote, _, err = readTargetGitConfig(worktree, "gh-stack.remote")
+	if err != nil {
+		return targetRemotePreferences{}, err
+	}
+
+	output, found, err := runTargetGitOptional(worktree, "list branch remote preferences", "config", "--name-only", "--get-regexp", `^branch\.`)
+	if err != nil {
+		return targetRemotePreferences{}, err
+	}
+	if !found {
+		return preferences, nil
+	}
+	keys, err := gitOutputLines(output)
+	if err != nil {
+		return targetRemotePreferences{}, fmt.Errorf("read branch remote preference names: %w", err)
+	}
+	for _, key := range keys {
+		branch, isPushRemote, ok := parseBranchRemotePreferenceKey(key)
+		if !ok {
+			continue
+		}
+		preference := preferences.branchPreferences[branch]
+		if isPushRemote {
+			preference.pushRemote, _, err = readTargetGitConfig(worktree, "branch."+branch+".pushRemote")
+		} else {
+			preference.remote, _, err = readTargetGitConfig(worktree, "branch."+branch+".remote")
+		}
+		if err != nil {
+			return targetRemotePreferences{}, err
+		}
+		preferences.branchPreferences[branch] = preference
+	}
+	return preferences, nil
+}
+
+func parseBranchRemotePreferenceKey(key string) (branch string, isPushRemote bool, ok bool) {
+	const prefix = "branch."
+	lowerKey := strings.ToLower(key)
+	if !strings.HasPrefix(lowerKey, prefix) {
+		return "", false, false
+	}
+	var suffix string
+	switch {
+	case strings.HasSuffix(lowerKey, ".pushremote"):
+		suffix = ".pushremote"
+		isPushRemote = true
+	case strings.HasSuffix(lowerKey, ".remote"):
+		suffix = ".remote"
+	default:
+		return "", false, false
+	}
+	branch = key[len(prefix) : len(key)-len(suffix)]
+	if strings.HasPrefix(branch, `"`) && strings.HasSuffix(branch, `"`) {
+		unquoted, err := strconv.Unquote(branch)
+		if err != nil {
+			return "", false, false
+		}
+		branch = unquoted
+	}
+	if strings.ContainsAny(branch, "\x00\r\n") {
+		return "", false, false
+	}
+	return branch, isPushRemote, true
+}
+
+func (preferences targetRemotePreferences) branchNames() []string {
+	branches := make([]string, 0, len(preferences.branchPreferences))
+	for branch := range preferences.branchPreferences {
+		branches = append(branches, branch)
+	}
+	sort.Strings(branches)
+	return branches
+}
+
+func (preferences targetRemotePreferences) resolve(branch, soleRemote string) string {
+	branchPreference := preferences.branchPreferences[branch]
+	for _, candidate := range []string{
+		branchPreference.pushRemote,
+		preferences.pushDefault,
+		branchPreference.remote,
+		preferences.savedRemote,
+		soleRemote,
+	} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (preferences targetRemotePreferences) requireTargetRemote(branch, soleRemote, targetRemote string) error {
+	if preferences.resolve(branch, soleRemote) != targetRemote {
+		return fmt.Errorf("gh-stack's automatic Git remote selection does not match the validated target")
+	}
+	return nil
+}
+
+func readTargetGitConfig(worktree, key string) (string, bool, error) {
+	output, found, err := runTargetGitOptional(worktree, "read Git remote-selection preference", "config", "--get", key)
+	if err != nil || !found {
+		return "", found, err
+	}
+	value := strings.TrimSuffix(string(output), "\n")
+	if strings.ContainsAny(value, "\x00\r\n") {
+		return "", false, fmt.Errorf("Git remote-selection preference is malformed")
+	}
+	return value, value != "", nil
+}
+
+func targetCurrentBranch(worktree string) (string, error) {
+	output, err := runTargetGit(worktree, "read current Git branch", "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	branch := strings.TrimSuffix(string(output), "\n")
+	if strings.ContainsAny(branch, "\x00\r\n") {
+		return "", fmt.Errorf("Git returned a malformed current branch")
+	}
+	return branch, nil
+}
+
+func targetLocalBranchExists(worktree, branch string) (bool, error) {
+	_, found, err := runTargetGitOptional(worktree, "check for local init trunk", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	return found, err
+}
+
+func runTargetGitOptional(worktree, operation string, args ...string) ([]byte, bool, error) {
+	commandArgs := append([]string{"-C", worktree}, args...)
+	command := exec.Command("git", commandArgs...)
+	command.Env = targetGitEnvironment()
+	output, err := command.Output()
+	if err == nil {
+		return output, true, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return nil, false, nil
+	}
+	return nil, false, fmt.Errorf("%s: %w", operation, err)
 }
 
 // ValidateTarget resolves the supplied worktree and validates one explicit

@@ -21,7 +21,7 @@
   - Temporary-repository fixtures accept same-repo SSH/HTTPS remotes and reject cross-repo targets before launch.
   - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
   - _Requirements: 1.2, 1.3, 1.7, 1.8_
-- [ ] 2.2 Guard implicit Git remote selection
+- [x] 2.2 Guard implicit Git remote selection
   - For missing-trunk init, require a sole remote and verify the CLI's effective fetch-remote preference matches the validated target.
   - For checkout, require a sole remote and reject conflicting branch/default-remote preferences before invocation.
   - Fixtures prove mismatched effective remotes fail without fetching or invoking the extension.
@@ -149,3 +149,4 @@
 
 - The host PATH lacks Go; use the flake-locked Go 1.26.7 toolchain via `nix shell --inputs-from . nixpkgs#go_1_26` and `GOPROXY=off GOTOOLCHAIN=local` for offline tests/builds.
 - `NewServer` intentionally fails closed until task 2.10 connects the validated guard, command mapper, runner, and result adapters; replace the unavailable dispatcher then.
+- In gh-stack v0.1.1, remote selection checks branch push remote, `remote.pushDefault`, branch remote, `gh-stack.remote`, then the sole remote; missing-trunk init uses the current branch, while remote checkout discovers its trunk from the API.
