@@ -78,7 +78,7 @@
   - _Requirements: 1.1, 2.1, 4.2, 5.5, 6.5, 7.3, 8.2, 11.1_
 
 - [ ] 3. Package, register, and verify the upstream before agent migration
-- [ ] 3.1 Package the Go server with the shared extension pin
+- [x] 3.1 Package the Go server with the shared extension pin
   - Build local Go source with fixed SDK dependencies and a stable stdio executable.
   - Provide store paths for the extension, Git, and `gh` without adding a token or new secret to Nix configuration.
   - The Darwin package points to the identical extension installed by `programs.gh.extensions`.

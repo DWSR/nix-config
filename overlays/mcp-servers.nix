@@ -256,6 +256,31 @@ in
     };
   };
 
+  gh-stack-mcp = final.buildGoModule {
+    pname = "gh-stack-mcp";
+    version = "0.1.0";
+
+    src = ../scripts/gh-stack-mcp;
+
+    vendorHash = "sha256-NbuvbsmNbz3aKdjyyfpkbi52yRhXl473j3LvAUDn3L8=";
+    subPackages = [ "." ];
+
+    nativeBuildInputs = [ final.makeWrapper ];
+
+    postInstall = ''
+      wrapProgram $out/bin/gh-stack-mcp \
+        --set GH_STACK_MCP_EXTENSION_PATH ${final.unstable.gh-stack}/bin/gh-stack \
+        --set GH_STACK_MCP_GIT_PATH ${final.git}/bin/git \
+        --set GH_STACK_MCP_GH_PATH ${final.gh}/bin/gh
+    '';
+
+    meta = with final.lib; {
+      description = "MCP server for typed local GitHub Stack operations";
+      mainProgram = "gh-stack-mcp";
+      platforms = platforms.darwin;
+    };
+  };
+
   github-mcp-server = final.buildGoModule {
     pname = "github-mcp-server";
     version = "1.11.0";
