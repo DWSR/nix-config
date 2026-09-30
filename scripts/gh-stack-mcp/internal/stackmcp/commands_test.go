@@ -151,6 +151,59 @@ func TestBuildCommandUsesFixedArgumentVectors(t *testing.T) {
 			input: PushInput{Path: target.Path, Remote: target.Remote},
 			want:  []string{"push", "--remote", target.Remote},
 		},
+		{
+			name:  "submit defaults to noninteractive without opening pull requests",
+			input: SubmitInput{Path: target.Path, Remote: target.Remote},
+			want:  []string{"submit", "--auto", "--remote", target.Remote},
+		},
+		{
+			name:  "submit opts in to opening pull requests",
+			input: SubmitInput{Path: target.Path, Remote: target.Remote, Open: true},
+			want:  []string{"submit", "--auto", "--remote", target.Remote, "--open"},
+		},
+		{
+			name: "link preserves bottom-to-top branch order",
+			input: LinkInput{
+				Path: target.Path, Remote: target.Remote,
+				Branches: []string{"feature/bottom", "feature/middle", "feature/top"},
+			},
+			want: []string{"link", "--remote", target.Remote, "feature/bottom", "feature/middle", "feature/top"},
+		},
+		{
+			name: "link accepts an explicit base",
+			input: LinkInput{
+				Path: target.Path, Remote: target.Remote, Branches: []string{"feature/bottom", "feature/top"}, Base: "main",
+			},
+			want: []string{"link", "--remote", target.Remote, "--base", "main", "feature/bottom", "feature/top"},
+		},
+		{
+			name: "link opts in to opening pull requests",
+			input: LinkInput{
+				Path: target.Path, Remote: target.Remote, Branches: []string{"feature/bottom", "feature/top"}, Open: true,
+			},
+			want: []string{"link", "--remote", target.Remote, "--open", "feature/bottom", "feature/top"},
+		},
+		{
+			name: "link orders base and open options before ordered branches",
+			input: LinkInput{
+				Path: target.Path, Remote: target.Remote, Branches: []string{"feature/bottom", "feature/top"}, Base: "main", Open: true,
+			},
+			want: []string{"link", "--remote", target.Remote, "--base", "main", "--open", "feature/bottom", "feature/top"},
+		},
+		{
+			name: "unstack removes the numbered remote and local grouping",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: 42, Mode: UnstackRemoteAndLocal,
+			},
+			want: []string{"unstack", "42"},
+		},
+		{
+			name: "unstack local-only keeps remote grouping unchanged",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: 42, Mode: UnstackLocalOnly,
+			},
+			want: []string{"unstack", "42", "--local"},
+		},
 	}
 
 	for _, testCase := range cases {
@@ -190,6 +243,26 @@ func TestBuildCommandRejectsImplicitOrMismatchedRemote(t *testing.T) {
 			name: "push",
 			build: func(remote string) any {
 				return PushInput{Path: target.Path, Remote: remote}
+			},
+		},
+		{
+			name: "submit",
+			build: func(remote string) any {
+				return SubmitInput{Path: target.Path, Remote: remote}
+			},
+		},
+		{
+			name: "link",
+			build: func(remote string) any {
+				return LinkInput{Path: target.Path, Remote: remote, Branches: []string{"feature/bottom", "feature/top"}}
+			},
+		},
+		{
+			name: "unstack",
+			build: func(remote string) any {
+				return UnstackInput{
+					Path: target.Path, Remote: remote, StackNumber: 42, Mode: UnstackRemoteAndLocal,
+				}
 			},
 		},
 	}
@@ -289,6 +362,14 @@ func TestBuildCommandRejectsInvalidBranchTargets(t *testing.T) {
 				return CheckoutInput{Path: target.Path, Remote: target.Remote, Branch: branch}
 			},
 		},
+		{
+			name: "link branch",
+			build: func(branch string) any {
+				return LinkInput{
+					Path: target.Path, Remote: target.Remote, Branches: []string{branch, "feature/valid"},
+				}
+			},
+		},
 	}
 
 	for _, operation := range operations {
@@ -299,6 +380,104 @@ func TestBuildCommandRejectsInvalidBranchTargets(t *testing.T) {
 						t.Fatalf("BuildCommand accepted invalid branch target %q", invalid.name)
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestBuildCommandRejectsInvalidLinkBase(t *testing.T) {
+	target := newCommandTarget(t)
+	invalidBases := []struct {
+		name string
+		base string
+	}{
+		{name: "numeric only", base: "482"},
+		{name: "pull request URL", base: "https://github.com/owner/repository/pull/482"},
+		{name: "other URL", base: "ssh://git@github.com/owner/repository.git"},
+		{name: "protocol-relative URL", base: "//github.com/owner/repository/pull/482"},
+		{name: "host-style URL", base: "github.com/owner/repository/pull/482"},
+		{name: "flag-like", base: "--force"},
+		{name: "invalid Git ref", base: "feature..name"},
+		{name: "space in branch", base: "feature base"},
+		{name: "whitespace-only", base: " \t\n"},
+		{name: "NUL in branch", base: "feature\x00name"},
+	}
+
+	for _, invalid := range invalidBases {
+		t.Run(invalid.name, func(t *testing.T) {
+			input := LinkInput{
+				Path: target.Path, Remote: target.Remote,
+				Branches: []string{"feature/bottom", "feature/top"}, Base: invalid.base,
+			}
+			if _, err := BuildCommand(input, target); err == nil {
+				t.Fatalf("BuildCommand accepted invalid link base %q", invalid.base)
+			}
+		})
+	}
+}
+
+func TestBuildCommandRejectsInvalidLinkBranchCounts(t *testing.T) {
+	target := newCommandTarget(t)
+	cases := []struct {
+		name     string
+		branches []string
+	}{
+		{name: "missing branches"},
+		{name: "empty branches", branches: []string{}},
+		{name: "one branch", branches: []string{"feature/only"}},
+		{name: "empty branch among two", branches: []string{"feature/bottom", ""}},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := LinkInput{Path: target.Path, Remote: target.Remote, Branches: testCase.branches}
+			if _, err := BuildCommand(input, target); err == nil {
+				t.Fatalf("BuildCommand accepted link branch list %#v", testCase.branches)
+			}
+		})
+	}
+}
+
+func TestBuildCommandRejectsInvalidUnstackInputs(t *testing.T) {
+	target := newCommandTarget(t)
+	cases := []struct {
+		name  string
+		input UnstackInput
+	}{
+		{
+			name: "remote and local mode requires a positive Stack number",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: 0, Mode: UnstackRemoteAndLocal,
+			},
+		},
+		{
+			name: "local-only mode requires a positive Stack number",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: -1, Mode: UnstackLocalOnly,
+			},
+		},
+		{
+			name:  "mode is required",
+			input: UnstackInput{Path: target.Path, Remote: target.Remote, StackNumber: 42},
+		},
+		{
+			name: "merge is not an unstack mode",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: 42, Mode: UnstackMode("merge"),
+			},
+		},
+		{
+			name: "unknown cleanup mode is not exposed",
+			input: UnstackInput{
+				Path: target.Path, Remote: target.Remote, StackNumber: 42, Mode: UnstackMode("cleanup"),
+			},
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if _, err := BuildCommand(testCase.input, target); err == nil {
+				t.Fatalf("BuildCommand accepted invalid unstack input %#v", testCase.input)
 			}
 		})
 	}

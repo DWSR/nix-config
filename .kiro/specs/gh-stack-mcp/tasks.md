@@ -45,7 +45,7 @@
   - Command fixtures prove exact allowed arguments and reject abort or implicit remote selection.
   - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
   - _Requirements: 4.1, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4_
-- [ ] 2.6 Map submit, branch-only link, and numbered unstack
+- [x] 2.6 Map submit, branch-only link, and numbered unstack
   - Use noninteractive submit; map ordered branch-only link with optional base and opt-in open.
   - Require a positive Stack number for both remote and local-only unstack; expose no merge or unnumbered cleanup.
   - Fixtures show supported argument vectors and disclose remote/local effects without live APIs.

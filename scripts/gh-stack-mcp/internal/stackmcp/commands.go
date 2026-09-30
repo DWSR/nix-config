@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -31,6 +32,12 @@ func BuildCommand(typedInput any, target Target) (CommandSpec, error) {
 		return buildSyncCommand(input, target)
 	case PushInput:
 		return buildPushCommand(input, target)
+	case SubmitInput:
+		return buildSubmitCommand(input, target)
+	case LinkInput:
+		return buildLinkCommand(input, target)
+	case UnstackInput:
+		return buildUnstackCommand(input, target)
 	default:
 		return CommandSpec{}, fmt.Errorf("unsupported Stack command input type %T", typedInput)
 	}
@@ -83,6 +90,66 @@ func buildPushCommand(input PushInput, target Target) (CommandSpec, error) {
 		return CommandSpec{}, err
 	}
 	return CommandSpec{Args: []string{"push", "--remote", target.Remote}}, nil
+}
+
+func buildSubmitCommand(input SubmitInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("submit", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+
+	args := []string{"submit", "--auto", "--remote", target.Remote}
+	if input.Open {
+		args = append(args, "--open")
+	}
+	return CommandSpec{Args: args}, nil
+}
+
+func buildLinkCommand(input LinkInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("link", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+	if len(input.Branches) < 2 {
+		return CommandSpec{}, fmt.Errorf("link requires at least two ordered branches")
+	}
+	if input.Base != "" {
+		if err := validateCommandBranch(target, "link base", input.Base); err != nil {
+			return CommandSpec{}, err
+		}
+	}
+
+	args := []string{"link", "--remote", target.Remote}
+	if input.Base != "" {
+		args = append(args, "--base", input.Base)
+	}
+	if input.Open {
+		args = append(args, "--open")
+	}
+	for _, branch := range input.Branches {
+		if err := validateCommandBranch(target, "link branch", branch); err != nil {
+			return CommandSpec{}, err
+		}
+		args = append(args, branch)
+	}
+	return CommandSpec{Args: args}, nil
+}
+
+func buildUnstackCommand(input UnstackInput, target Target) (CommandSpec, error) {
+	if err := validateCommandRemote("unstack", input.Remote, target); err != nil {
+		return CommandSpec{}, err
+	}
+	if input.StackNumber <= 0 {
+		return CommandSpec{}, fmt.Errorf("unstack requires a positive explicit Stack number")
+	}
+
+	args := []string{"unstack", strconv.Itoa(input.StackNumber)}
+	switch input.Mode {
+	case UnstackRemoteAndLocal:
+	case UnstackLocalOnly:
+		args = append(args, "--local")
+	default:
+		return CommandSpec{}, fmt.Errorf("unstack requires an explicit supported mode")
+	}
+	return CommandSpec{Args: args}, nil
 }
 
 func validateCommandRemote(operation, requestRemote string, target Target) error {
