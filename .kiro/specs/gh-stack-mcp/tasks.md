@@ -1,0 +1,146 @@
+# Implementation Plan: gh-stack-mcp
+
+- [ ] 1. Establish pinned inputs and typed Go foundation
+- [ ] 1.1 Pin the shared `gh-stack` v0.1.1 package
+  - Resolve source and dependency hashes against the locked Go toolchain without updating unrelated packages.
+  - Verify both hosts select the same v0.1.1 extension derivation and it builds on `aarch64-darwin`.
+  - The pinned CLI package is available to both Home Manager and the planned server.
+  - _Boundary: Nix integration (`overlays/default.nix`)_
+  - _Requirements: 9.1, 11.2_
+- [ ] 1.2 (P) Initialize the Go SDK, typed tool contracts, and fake-CLI harness
+  - Lock the official Go SDK and define closed inputs/outputs for ten annotated tools.
+  - Start the stdio server without network access and exercise it through a fixture client and fake extension.
+  - Catalog tests list ten tools, classify view as a write and the others as destructive, and expose no merge, abort, or passthrough.
+  - _Boundary: Tool catalog (`scripts/gh-stack-mcp/go.mod`, `main.go`, `internal/stackmcp/tools.go`)_
+  - _Requirements: 1.1, 1.5, 1.6, 4.6, 7.5, 8.1, 8.6, 11.1_
+
+- [ ] 2. Build the local command boundary
+- [ ] 2.1 Validate each worktree and selected repository
+  - Reject missing/non-absolute/non-Git paths, credential URLs, fork fetch/push URLs, unknown schemes, and mismatched remote identities.
+  - Derive canonical worktree, Git directory, common directory, and API repository without changing process cwd; ignore inherited `GH_REPO`.
+  - Temporary-repository fixtures accept same-repo SSH/HTTPS remotes and reject cross-repo targets before launch.
+  - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
+  - _Requirements: 1.2, 1.3, 1.7, 1.8_
+- [ ] 2.2 Guard implicit Git remote selection
+  - For missing-trunk init, require a sole remote and verify the CLI's effective fetch-remote preference matches the validated target.
+  - For checkout, require a sole remote and reject conflicting branch/default-remote preferences before invocation.
+  - Fixtures prove mismatched effective remotes fail without fetching or invoking the extension.
+  - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
+  - _Requirements: 2.5, 2.6, 3.7, 3.8_
+- [ ] 2.3 Guard Stack recovery and implicit unstack states
+  - Require a valid Stack marker and active matching Git rebase before typed continue.
+  - Reject headless submit when pending modify state would unstack an old remote Stack.
+  - Fixtures reject missing, stale, or marker-only recovery and pending-modify submission before launch.
+  - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
+  - _Requirements: 4.3, 4.4, 6.6_
+- [ ] 2.4 Map local view, init, add, and checkout to fixed arguments
+  - Reject URL/numeric branch targets and stage-without-message or editor-opening add inputs.
+  - Map only typed trunk, branch, stage, and message values; leave view parsing to the result adapter.
+  - Unit tests show exact argument vectors and no generic CLI passthrough.
+  - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
+  - _Requirements: 1.4, 1.5, 2.3, 2.4, 3.1, 3.2, 3.3, 3.5, 3.6_
+- [ ] 2.5 Map scoped rebase, sync, and push to fixed arguments
+  - Support rebase start/guarded continue, full/upstack/downstack/no-trunk scope, and the validated remote.
+  - Keep prune disabled unless requested; describe non-atomic standalone push and merged-branch pruning.
+  - Command fixtures prove exact allowed arguments and reject abort or implicit remote selection.
+  - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
+  - _Requirements: 4.1, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4_
+- [ ] 2.6 Map submit, branch-only link, and numbered unstack
+  - Use noninteractive submit; map ordered branch-only link with optional base and opt-in open.
+  - Require a positive Stack number for both remote and local-only unstack; expose no merge or unnumbered cleanup.
+  - Fixtures show supported argument vectors and disclose remote/local effects without live APIs.
+  - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 7.1, 7.2, 7.4, 7.5, 7.6_
+- [ ] 2.7 Launch fixed executables with isolated auth and bounded output
+  - Use pinned extension/Git/`gh`, child-only `GH_REPO`, and existing `gh` auth; exclude inherited tokens, proxy secrets, and Git directory overrides.
+  - Preserve host signing while capturing and truncating CLI output without writing CLI bytes to MCP stdout.
+  - Fake auth, signing, and missing-dependency fixtures return actionable diagnostics without exposing credential values.
+  - _Boundary: Process runner (`internal/stackmcp/runner.go`, `runner_test.go`)_
+  - _Requirements: 3.4, 8.1, 8.2, 8.5, 9.4, 9.5_
+- [ ] 2.8 Limit child lifetime and serialize linked-worktree calls
+  - Serialize this server's operations by common Git directory; prove linked-worktree calls cannot overlap.
+  - Reject before launch if the incoming deadline lacks work, cleanup, and delivery margins; bound process-group cleanup after cancellation.
+  - Forking-child fixtures show finite uncertain results and no automatic write retry.
+  - _Boundary: Process runner (`internal/stackmcp/runner.go`, `runner_test.go`)_
+  - _Requirements: 8.3, 8.4, 11.1_
+- [ ] 2.9 Return structured view and unverified write outcomes
+  - Parse only complete view JSON, preserving local branch order and optional PR observations.
+  - Attach exit/output/truncation to spawned writes; classify conflicts only with a valid active marker.
+  - Fixtures show sync exit-zero no-op, partial unstack, sequential publication, truncated view, and no-local-Stack errors never claim verified success.
+  - _Boundary: Result adapter (`internal/stackmcp/result.go`, `result_test.go`)_
+  - _Requirements: 2.1, 2.2, 4.2, 4.5, 5.5, 6.5, 7.3, 8.2, 8.4_
+- [ ] 2.10 Connect all typed MCP handlers through the validated execution path
+  - Route ten handlers through worktree guard, fixed arguments, supervised execution, and result handling.
+  - Exercise real stdio MCP calls against the fake extension, including view, guarded rebase, unverified writes, and cancellation.
+  - The fixture client receives typed outcomes for all operations without a real Stack mutation.
+  - _Depends: 2.6, 2.8, 2.9_
+  - _Boundary: Tool-server integration (`tools.go`, `main.go`, guard/mapper/runner/result adapters)_
+  - _Requirements: 1.1, 2.1, 4.2, 5.5, 6.5, 7.3, 8.2, 11.1_
+
+- [ ] 3. Package, register, and verify the upstream before agent migration
+- [ ] 3.1 Package the Go server with the shared extension pin
+  - Build local Go source with fixed SDK dependencies and a stable stdio executable.
+  - Provide store paths for the extension, Git, and `gh` without adding a token or new secret to Nix configuration.
+  - The Darwin package points to the identical extension installed by `programs.gh.extensions`.
+  - _Depends: 1.1, 2.10_
+  - _Boundary: Nix integration (`overlays/mcp-servers.nix`)_
+  - _Requirements: 9.1, 9.2, 9.4, 9.5, 11.2_
+- [ ] 3.2 (P) Align shared proxy and existing OpenCode tool-call deadlines
+  - Set proxy `call_tool_timeout` and both existing OpenCode proxy-entry timeouts beyond the wrapper's work and cleanup deadline.
+  - Preserve one proxy/client entry per host and unchanged connection/listing preflights.
+  - Rendered settings satisfy 15m5s < 15m15s < 15m30s and disclose the longer ceiling for unrelated calls.
+  - _Depends: 2.8_
+  - _Boundary: Nix integration (`home-manager/mcp/default.nix`, both host `opencode.nix` files)_
+  - _Requirements: 8.3, 9.3, 9.8, 9.9_
+- [ ] 3.3 Register one packaged stdio upstream per host
+  - Add the same `gh-stack-mcp` extra server to personal and Shopify host configurations.
+  - Both rendered configs include the executable without changing routing, direct OpenCode entries, or existing GitHub MCP tools.
+  - Host-render checks verify the upstream path, sole OpenCode entry, and no new listener.
+  - _Depends: 3.1, 3.2_
+  - _Boundary: Nix integration (both host `default.nix` files, `tests/gh-stack-mcp/hm-render.test.js`)_
+  - _Requirements: 9.2, 9.3, 9.6, 11.2, 11.3_
+- [ ] 3.4 Add offline flake and proxy-routing checks before policy cutover
+  - Run an isolated proxy fixture: view routes to write and mutations route to destructive.
+  - Simulate a missing Stack upstream and shortened nested deadlines while unrelated upstreams remain callable.
+  - A Darwin flake check runs Go contracts, host rendering, and proxy fixtures without real Stack or live GitHub calls.
+  - _Depends: 2.10, 3.3_
+  - _Boundary: Validation integration (`flake.nix`, `tests/gh-stack-mcp/proxy-contract.test.js`)_
+  - _Requirements: 1.1, 1.6, 8.6, 9.7, 9.8, 11.1, 11.2, 11.3_
+
+- [ ] 4. Migrate native Stack agent guidance and permissions
+- [ ] 4.1 Migrate the shared native-Stacks skill to typed local tools
+  - Preserve GitHub MCP remote-only operations and handoffs for merge, abort, TUI, and unsupported cases.
+  - Require local/remote snapshots, scoped authorization, and immediate confirmation of exact Stack number and mode before unstack.
+  - Require exhaustive PR-head checks before submit/link and postflight reinspection; disclose direct-client and fork-association risks.
+  - _Depends: 3.4_
+  - _Boundary: Agent guidance (`home-manager/common/skills/github-native-stacks/SKILL.md`)_
+  - _Requirements: 7.3, 10.1, 10.2, 10.3, 10.4, 10.5, 10.13, 10.14, 10.15, 10.16_
+- [ ] 4.2 Mirror captain and helper proxy permissions in one budget boundary
+  - Make destructive proxy calls `ask` for captain while denying code execution and direct `gh stack` in its frontmatter and rendered budget.
+  - Require captain authorization for each exact worktree, remote, history rewrite, or push target; keep no-merge/no-unstack and standalone behavior.
+  - Extend budget validation for proxy code-execution denial and apply it to captain and read-only helper budgets.
+  - _Depends: 4.1_
+  - _Boundary: Agent guidance (`stack-captain.md`, `budgets.nix`, `scripts/subagent-context-budget.js`)_
+  - _Requirements: 10.6, 10.8, 10.10, 10.12_
+- [ ] 4.3 (P) Convert `/restack` and compact Stack instructions
+  - Keep `/restack` in the invoking agent; call vetted checkout, rebase, guarded continue, and push via the skill.
+  - Align compact Markdown and plugin guidance with no direct `gh stack` and targeted user handoffs.
+  - The command and both snippets agree on eligible operations and abort/merge exclusions.
+  - _Depends: 4.1_
+  - _Boundary: Agent guidance (`restack.md`, `github-native-stacks-minimal.md`, `plugin.ts`)_
+  - _Requirements: 10.1, 10.5, 10.7, 11.5_
+- [ ] 4.4 Preserve read-only helpers and validate effective policy
+  - Deny proxy code execution in five read-only helper frontmatters without granting writes or destructive calls.
+  - Add policy regressions proving captain authorization/`ask`/direct-CLI deny, helper boundaries, `/restack` scope, and compact guidance equality.
+  - Rendered-agent and instruction-profile tests pass with helpers still read-only.
+  - _Depends: 4.2, 4.3_
+  - _Boundary: Agent guidance integration (helper Markdown, `tests/subagent-context-budget/`)_
+  - _Requirements: 10.6, 10.9, 10.10, 10.16, 11.5_
+
+- [ ] 5. Finish offline validation with operator recovery guidance
+  - Run Darwin Go, host-render, proxy, and policy checks and fix cross-boundary regressions without accessing a real Stack.
+  - Provide the runbook with `gh` auth/signing prerequisites, longer shared timeouts, accepted loopback/fork risks, partial-result recovery, and optional operator-owned disposable-repo smoke steps.
+  - The flake check passes and an operator has a documented user-owned acceptance procedure; no CI test mutates GitHub.
+  - _Depends: 3.4, 4.4_
+  - _Boundary: Validation integration (offline check suite, `docs/gh-stack-mcp.md`)_
+  - _Requirements: 8.5, 9.9, 10.11, 10.12, 11.1, 11.2, 11.3, 11.4, 11.5_
