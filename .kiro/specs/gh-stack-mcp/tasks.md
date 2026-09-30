@@ -122,7 +122,7 @@
   - _Depends: 4.1_
   - _Boundary: Agent guidance (`stack-captain.md`, `budgets.nix`, `scripts/subagent-context-budget.js`)_
   - _Requirements: 10.6, 10.8, 10.10, 10.12_
-- [ ] 4.3 (P) Convert `/restack` and compact Stack instructions
+- [x] 4.3 (P) Convert `/restack` and compact Stack instructions
   - Keep `/restack` in the invoking agent; call vetted checkout, rebase, guarded continue, and push via the skill.
   - Align compact Markdown and plugin guidance with no direct `gh stack` and targeted user handoffs.
   - The command and both snippets agree on eligible operations and abort/merge exclusions.
