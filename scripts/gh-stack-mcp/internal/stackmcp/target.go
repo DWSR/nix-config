@@ -1,8 +1,12 @@
 package stackmcp
 
 import (
+	"bytes"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -21,6 +25,509 @@ type Target struct {
 	CommonDir  string
 	Remote     string
 	Repository string
+}
+
+const maxTargetStateFileSize = 4 << 20
+
+type targetRebaseStateMarker struct {
+	CurrentBranchIndex        *int              `json:"currentBranchIndex"`
+	ConflictBranch            string            `json:"conflictBranch"`
+	RemainingBranches         *[]string         `json:"remainingBranches"`
+	OriginalBranch            string            `json:"originalBranch"`
+	OriginalRefs              map[string]string `json:"originalRefs"`
+	UseOnto                   bool              `json:"useOnto,omitempty"`
+	OntoOldBase               string            `json:"ontoOldBase,omitempty"`
+	CommitterDateIsAuthorDate bool              `json:"committerDateIsAuthorDate,omitempty"`
+	NoTrunk                   bool              `json:"noTrunk,omitempty"`
+	TrunkRef                  string            `json:"trunkRef,omitempty"`
+	TrunkSHA                  string            `json:"trunkSha,omitempty"`
+	StartIndex                *int              `json:"startIndex,omitempty"`
+	EndIndex                  *int              `json:"endIndex,omitempty"`
+}
+
+type targetStackFile struct {
+	SchemaVersion int           `json:"schemaVersion"`
+	Repository    string        `json:"repository"`
+	Stacks        []targetStack `json:"stacks"`
+}
+
+type targetStack struct {
+	ID       string              `json:"id,omitempty"`
+	Number   int                 `json:"number,omitempty"`
+	Trunk    targetStackBranch   `json:"trunk"`
+	Branches []targetStackBranch `json:"branches"`
+}
+
+type targetStackBranch struct {
+	Branch      string                  `json:"branch"`
+	Head        string                  `json:"head,omitempty"`
+	Base        string                  `json:"base,omitempty"`
+	PullRequest *targetStackPullRequest `json:"pullRequest,omitempty"`
+}
+
+type targetStackPullRequest struct {
+	Number int    `json:"number"`
+	ID     string `json:"id,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Merged bool   `json:"merged,omitempty"`
+}
+
+type targetModifyStateMarker struct {
+	Phase              *string `json:"phase"`
+	PriorRemoteStackID string  `json:"prior_remote_stack_id"`
+}
+
+// ValidateRebaseContinueState verifies that typed continue has matching Stack
+// recovery metadata and a well-formed Git rebase in this worktree's GitDir.
+func ValidateRebaseContinueState(target Target) error {
+	if err := validateTargetStateGitDir(target.GitDir); err != nil {
+		return fmt.Errorf("validate worktree Git directory for Stack recovery: %w", err)
+	}
+	markerData, err := readTargetStateFile(target, "gh-stack-rebase-state", "read Stack rebase marker")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("Stack rebase recovery marker is missing")
+		}
+		return err
+	}
+
+	var marker targetRebaseStateMarker
+	if err := decodeTargetStateJSON(markerData, &marker, "Stack rebase marker"); err != nil {
+		return err
+	}
+	if marker.CurrentBranchIndex == nil {
+		return fmt.Errorf("Stack rebase marker is missing currentBranchIndex")
+	}
+	if *marker.CurrentBranchIndex < 0 {
+		return fmt.Errorf("Stack rebase marker has an invalid currentBranchIndex")
+	}
+	if !validTargetStateBranch(marker.ConflictBranch) {
+		return fmt.Errorf("Stack rebase marker is missing a valid conflictBranch")
+	}
+	if !validTargetStateBranch(marker.OriginalBranch) {
+		return fmt.Errorf("Stack rebase marker is missing a valid originalBranch")
+	}
+	if marker.OriginalRefs == nil {
+		return fmt.Errorf("Stack rebase marker is missing originalRefs")
+	}
+
+	stackData, err := readTargetStateFile(target, "gh-stack", "read tracked Stack metadata")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("tracked Stack metadata is missing")
+		}
+		return err
+	}
+	var stackFile targetStackFile
+	if err := decodeTargetStateJSON(stackData, &stackFile, "tracked Stack metadata"); err != nil {
+		return err
+	}
+	if err := validateTargetStackFile(stackFile); err != nil {
+		return err
+	}
+
+	stack, err := findTargetRecoveryStack(stackFile.Stacks, marker.ConflictBranch, marker.OriginalBranch)
+	if err != nil {
+		return err
+	}
+	branchIndex := *marker.CurrentBranchIndex
+	if branchIndex >= len(stack.Branches) || stack.Branches[branchIndex].Branch != marker.ConflictBranch {
+		return fmt.Errorf("Stack rebase marker branch index does not match its conflictBranch")
+	}
+	if err := validateTargetOriginalRefs(target, marker.OriginalRefs, stack, marker.ConflictBranch); err != nil {
+		return err
+	}
+	if err := validateTargetRemainingBranches(marker.RemainingBranches, stack, branchIndex, marker.StartIndex, marker.EndIndex); err != nil {
+		return err
+	}
+
+	if err := validateActiveTargetGitRebase(target, marker); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateSubmitState rejects the pinned extension's headless pending-submit
+// recovery path, which can unstack the previous remote Stack.
+func ValidateSubmitState(target Target) error {
+	if err := validateTargetStateGitDir(target.GitDir); err != nil {
+		return fmt.Errorf("validate worktree Git directory before submit: %w", err)
+	}
+	data, err := readTargetStateFile(target, "gh-stack-modify-state", "read Stack modify state")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("cannot verify Stack modify state before submit: %w", err)
+	}
+
+	var state targetModifyStateMarker
+	if err := json.Unmarshal(data, &state); err != nil {
+		return fmt.Errorf("Stack modify state is malformed; submit was rejected: %w", err)
+	}
+	if state.Phase == nil || *state.Phase == "" || strings.TrimSpace(*state.Phase) != *state.Phase || strings.ContainsAny(*state.Phase, "\x00\r\n") {
+		return fmt.Errorf("Stack modify state has no valid phase; submit was rejected")
+	}
+	if *state.Phase == "pending_submit" && state.PriorRemoteStackID != "" {
+		return fmt.Errorf("headless submit is rejected while Stack modify state is pending_submit because it can unstack a previous remote Stack")
+	}
+	return nil
+}
+
+func readTargetStateFile(target Target, relativePath, description string) ([]byte, error) {
+	if err := validateTargetStateGitDir(target.GitDir); err != nil {
+		return nil, fmt.Errorf("%s: %w", description, err)
+	}
+	path := filepath.Join(target.GitDir, relativePath)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", description, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: state path is not a regular file", description)
+	}
+	if info.Size() > maxTargetStateFileSize {
+		return nil, fmt.Errorf("%s: state file exceeds the size limit", description)
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", description, err)
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%s: inspect state file: %w", description, err)
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(info, openedInfo) {
+		return nil, fmt.Errorf("%s: state file changed while it was opened", description)
+	}
+	if openedInfo.Size() > maxTargetStateFileSize {
+		return nil, fmt.Errorf("%s: state file exceeds the size limit", description)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxTargetStateFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s: read state file: %w", description, err)
+	}
+	if len(data) > maxTargetStateFileSize {
+		return nil, fmt.Errorf("%s: state file exceeds the size limit", description)
+	}
+	return data, nil
+}
+
+func validateTargetStateGitDir(gitDir string) error {
+	if gitDir == "" || !filepath.IsAbs(gitDir) {
+		return fmt.Errorf("worktree Git directory is not an absolute path")
+	}
+	info, err := os.Lstat(gitDir)
+	if err != nil {
+		return fmt.Errorf("inspect worktree Git directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("worktree Git directory is not a directory")
+	}
+	return nil
+}
+
+func decodeTargetStateJSON(data []byte, destination any, description string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return fmt.Errorf("parse %s: %w", description, err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("parse %s: trailing JSON data", description)
+		}
+		return fmt.Errorf("parse %s: %w", description, err)
+	}
+	return nil
+}
+
+func validateTargetStackFile(stackFile targetStackFile) error {
+	if len(stackFile.Stacks) == 0 {
+		return fmt.Errorf("tracked Stack metadata has no stacks")
+	}
+	for stackIndex, stack := range stackFile.Stacks {
+		if !validTargetStateBranch(stack.Trunk.Branch) || len(stack.Branches) == 0 {
+			return fmt.Errorf("tracked Stack metadata contains an incomplete stack at index %d", stackIndex)
+		}
+		seen := map[string]struct{}{stack.Trunk.Branch: {}}
+		for _, branch := range stack.Branches {
+			if !validTargetStateBranch(branch.Branch) {
+				return fmt.Errorf("tracked Stack metadata contains an invalid branch at stack index %d", stackIndex)
+			}
+			if _, exists := seen[branch.Branch]; exists {
+				return fmt.Errorf("tracked Stack metadata contains duplicate branch %q", branch.Branch)
+			}
+			seen[branch.Branch] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func findTargetRecoveryStack(stacks []targetStack, conflictBranch, originalBranch string) (targetStack, error) {
+	var match *targetStack
+	for index := range stacks {
+		stack := &stacks[index]
+		if targetStackBranchIndex(*stack, conflictBranch) < 0 || !targetStackContains(*stack, originalBranch) {
+			continue
+		}
+		if match != nil {
+			return targetStack{}, fmt.Errorf("Stack rebase marker matches more than one tracked stack")
+		}
+		match = stack
+	}
+	if match == nil {
+		return targetStack{}, fmt.Errorf("Stack rebase marker branches do not match one tracked stack")
+	}
+	return *match, nil
+}
+
+func targetStackBranchIndex(stack targetStack, branch string) int {
+	for index, candidate := range stack.Branches {
+		if candidate.Branch == branch {
+			return index
+		}
+	}
+	return -1
+}
+
+func targetStackContains(stack targetStack, branch string) bool {
+	if stack.Trunk.Branch == branch {
+		return true
+	}
+	return targetStackBranchIndex(stack, branch) >= 0
+}
+
+func validateTargetOriginalRefs(target Target, originalRefs map[string]string, stack targetStack, conflictBranch string) error {
+	trackedBranches := make(map[string]targetStackBranch, len(stack.Branches))
+	for _, branch := range stack.Branches {
+		trackedBranches[branch.Branch] = branch
+	}
+	for branch, objectID := range originalRefs {
+		if _, ok := trackedBranches[branch]; !ok {
+			return fmt.Errorf("Stack rebase marker originalRefs contain an untracked branch")
+		}
+		if !validTargetObjectID(objectID) {
+			return fmt.Errorf("Stack rebase marker originalRefs contain an invalid object ID")
+		}
+	}
+	if _, ok := originalRefs[conflictBranch]; !ok {
+		return fmt.Errorf("Stack rebase marker originalRefs omit the conflict branch")
+	}
+
+	for branchName, branch := range trackedBranches {
+		objectID, markerHasRef := originalRefs[branchName]
+		localRefExists, err := targetLocalBranchExists(target.Path, branchName)
+		if err != nil {
+			return fmt.Errorf("check local Stack branch ref: %w", err)
+		}
+		if localRefExists {
+			if !markerHasRef {
+				return fmt.Errorf("Stack rebase marker originalRefs omit a branch with a local branch ref")
+			}
+			continue
+		}
+		if branch.Head != "" {
+			if !markerHasRef {
+				return fmt.Errorf("Stack rebase marker originalRefs omit a deleted branch's tracked Head fallback")
+			}
+			if !strings.EqualFold(objectID, branch.Head) {
+				return fmt.Errorf("Stack rebase marker originalRefs do not match a deleted branch's tracked Head fallback")
+			}
+			continue
+		}
+		if markerHasRef {
+			return fmt.Errorf("Stack rebase marker originalRefs contain a branch with no local ref or tracked Head source")
+		}
+	}
+	return nil
+}
+
+func validateTargetRemainingBranches(remainingBranches *[]string, stack targetStack, currentBranchIndex int, startIndex, endIndex *int) error {
+	if remainingBranches == nil {
+		return fmt.Errorf("Stack rebase marker is missing remainingBranches")
+	}
+	if currentBranchIndex < 0 || currentBranchIndex >= len(stack.Branches) {
+		return fmt.Errorf("Stack rebase marker has an invalid currentBranchIndex for remainingBranches")
+	}
+	start := 0
+	if startIndex != nil {
+		start = *startIndex
+	}
+	if start < 0 || start > currentBranchIndex {
+		return fmt.Errorf("Stack rebase marker has an invalid startIndex for remainingBranches")
+	}
+	if endIndex == nil {
+		return fmt.Errorf("Stack rebase marker is missing endIndex for remainingBranches")
+	}
+	end := *endIndex
+	if end <= currentBranchIndex || end > len(stack.Branches) {
+		return fmt.Errorf("Stack rebase marker has an invalid endIndex for remainingBranches")
+	}
+	expected := stack.Branches[currentBranchIndex+1 : end]
+	if len(*remainingBranches) != len(expected) {
+		return fmt.Errorf("Stack rebase marker remainingBranches do not match the selected rebase range")
+	}
+	for index, branch := range *remainingBranches {
+		if !validTargetStateBranch(branch) || branch != expected[index].Branch {
+			return fmt.Errorf("Stack rebase marker remainingBranches do not match the selected rebase range")
+		}
+	}
+	return nil
+}
+
+func validateActiveTargetGitRebase(target Target, marker targetRebaseStateMarker) error {
+	mergeActive, err := targetStateDirectoryExists(target, "rebase-merge")
+	if err != nil {
+		return err
+	}
+	applyActive, err := targetStateDirectoryExists(target, "rebase-apply")
+	if err != nil {
+		return err
+	}
+	if mergeActive == applyActive {
+		if mergeActive {
+			return fmt.Errorf("Git rebase state is inconsistent: both rebase directories are present")
+		}
+		return fmt.Errorf("no active Git rebase state is present in the worktree")
+	}
+
+	var rebaseHead string
+	if mergeActive {
+		rebaseHead, err = validateTargetMergeRebaseState(target, marker)
+	} else {
+		rebaseHead, err = validateTargetApplyRebaseState(target, marker)
+	}
+	if err != nil {
+		return err
+	}
+	if !validTargetObjectID(rebaseHead) {
+		return fmt.Errorf("active Git rebase has an invalid REBASE_HEAD")
+	}
+	return nil
+}
+
+func validateTargetMergeRebaseState(target Target, marker targetRebaseStateMarker) (string, error) {
+	const directory = "rebase-merge"
+	headName, err := readTargetStateLine(target, filepath.Join(directory, "head-name"), "read Git rebase head-name")
+	if err != nil {
+		return "", err
+	}
+	if headName != "refs/heads/"+marker.ConflictBranch {
+		return "", fmt.Errorf("active Git rebase branch does not match the Stack conflict branch")
+	}
+	if _, err := readTargetObjectID(target, filepath.Join(directory, "onto"), "read Git rebase onto"); err != nil {
+		return "", err
+	}
+	originalHead, err := readTargetObjectID(target, filepath.Join(directory, "orig-head"), "read Git rebase original head")
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(originalHead, marker.OriginalRefs[marker.ConflictBranch]) {
+		return "", fmt.Errorf("active Git rebase original head does not match the Stack recovery marker")
+	}
+	if _, err := readTargetStateFile(target, filepath.Join(directory, "git-rebase-todo"), "read Git rebase todo"); err != nil {
+		return "", fmt.Errorf("active Git rebase state is incomplete: %w", err)
+	}
+	return readTargetObjectID(target, "REBASE_HEAD", "read active Git REBASE_HEAD")
+}
+
+func validateTargetApplyRebaseState(target Target, marker targetRebaseStateMarker) (string, error) {
+	const directory = "rebase-apply"
+	headName, err := readTargetStateLine(target, filepath.Join(directory, "head-name"), "read Git rebase head-name")
+	if err != nil {
+		return "", err
+	}
+	if headName != "refs/heads/"+marker.ConflictBranch {
+		return "", fmt.Errorf("active Git rebase branch does not match the Stack conflict branch")
+	}
+	if _, err := readTargetObjectID(target, filepath.Join(directory, "onto"), "read Git rebase onto"); err != nil {
+		return "", err
+	}
+	originalHead, err := readTargetObjectID(target, filepath.Join(directory, "orig-head"), "read Git rebase original head")
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(originalHead, marker.OriginalRefs[marker.ConflictBranch]) {
+		return "", fmt.Errorf("active Git rebase original head does not match the Stack recovery marker")
+	}
+	if _, err := readTargetStateFile(target, filepath.Join(directory, "rebasing"), "read Git apply-rebase marker"); err != nil {
+		return "", fmt.Errorf("active Git rebase state is incomplete: %w", err)
+	}
+	for _, name := range []string{"next", "last"} {
+		value, err := readTargetStateLine(target, filepath.Join(directory, name), "read Git apply-rebase progress")
+		if err != nil {
+			return "", err
+		}
+		progress, err := strconv.Atoi(value)
+		if err != nil || progress < 1 {
+			return "", fmt.Errorf("active Git rebase has invalid %s progress", name)
+		}
+	}
+	if _, err := readTargetObjectID(target, filepath.Join(directory, "original-commit"), "read Git apply-rebase original commit"); err != nil {
+		return "", err
+	}
+	return readTargetObjectID(target, "REBASE_HEAD", "read active Git REBASE_HEAD")
+}
+
+func targetStateDirectoryExists(target Target, relativePath string) (bool, error) {
+	if err := validateTargetStateGitDir(target.GitDir); err != nil {
+		return false, err
+	}
+	path := filepath.Join(target.GitDir, relativePath)
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("inspect active Git rebase state: %w", err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("active Git rebase state path is not a directory")
+	}
+	return true, nil
+}
+
+func readTargetStateLine(target Target, relativePath, description string) (string, error) {
+	data, err := readTargetStateFile(target, relativePath, description)
+	if err != nil {
+		return "", err
+	}
+	line := string(data)
+	if strings.HasSuffix(line, "\n") {
+		line = strings.TrimSuffix(line, "\n")
+	}
+	if line == "" || line != strings.TrimSpace(line) || strings.ContainsAny(line, "\x00\r\n") {
+		return "", fmt.Errorf("%s is malformed", description)
+	}
+	return line, nil
+}
+
+func readTargetObjectID(target Target, relativePath, description string) (string, error) {
+	value, err := readTargetStateLine(target, relativePath, description)
+	if err != nil {
+		return "", err
+	}
+	if !validTargetObjectID(value) {
+		return "", fmt.Errorf("%s is not a valid Git object ID", description)
+	}
+	return value, nil
+}
+
+func validTargetObjectID(value string) bool {
+	if (len(value) != 40 && len(value) != 64) || strings.Trim(value, "0") == "" {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validTargetStateBranch(branch string) bool {
+	return branch != "" && branch == strings.TrimSpace(branch) && !strings.ContainsAny(branch, "\x00\r\n")
 }
 
 // ValidateCheckoutRemoteSelection requires checkout's implicit remote choices
@@ -246,7 +753,7 @@ func targetCurrentBranch(worktree string) (string, error) {
 }
 
 func targetLocalBranchExists(worktree, branch string) (bool, error) {
-	_, found, err := runTargetGitOptional(worktree, "check for local init trunk", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	_, found, err := runTargetGitOptional(worktree, "check for local branch ref", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	return found, err
 }
 

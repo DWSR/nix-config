@@ -27,7 +27,7 @@
   - Fixtures prove mismatched effective remotes fail without fetching or invoking the extension.
   - _Boundary: Worktree guard (`internal/stackmcp/target.go`, `target_test.go`)_
   - _Requirements: 2.5, 2.6, 3.7, 3.8_
-- [ ] 2.3 Guard Stack recovery and implicit unstack states
+- [x] 2.3 Guard Stack recovery and implicit unstack states
   - Require a valid Stack marker and active matching Git rebase before typed continue.
   - Reject headless submit when pending modify state would unstack an old remote Stack.
   - Fixtures reject missing, stale, or marker-only recovery and pending-modify submission before launch.
@@ -150,3 +150,4 @@
 - The host PATH lacks Go; use the flake-locked Go 1.26.7 toolchain via `nix shell --inputs-from . nixpkgs#go_1_26` and `GOPROXY=off GOTOOLCHAIN=local` for offline tests/builds.
 - `NewServer` intentionally fails closed until task 2.10 connects the validated guard, command mapper, runner, and result adapters; replace the unavailable dispatcher then.
 - In gh-stack v0.1.1, remote selection checks branch push remote, `remote.pushDefault`, branch remote, `gh-stack.remote`, then the sole remote; missing-trunk init uses the current branch, while remote checkout discovers its trunk from the API.
+- Recovery preflight mirrors v0.1.1: `originalRefs` covers branches but not trunk, deleted merged branches fall back to `Head`, `remainingBranches` is the scoped suffix through `endIndex`, and pending submit only un-stacks with a nonempty prior remote Stack ID.
