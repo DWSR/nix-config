@@ -51,7 +51,7 @@
   - Fixtures show supported argument vectors and disclose remote/local effects without live APIs.
   - _Boundary: Command mapper (`internal/stackmcp/commands.go`, `commands_test.go`)_
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 7.1, 7.2, 7.4, 7.5, 7.6_
-- [ ] 2.7 Launch fixed executables with isolated auth and bounded output
+- [x] 2.7 Launch fixed executables with isolated auth and bounded output
   - Use pinned extension/Git/`gh`, child-only `GH_REPO`, and existing `gh` auth; exclude inherited tokens, proxy secrets, and Git directory overrides.
   - Preserve host signing while capturing and truncating CLI output without writing CLI bytes to MCP stdout.
   - Fake auth, signing, and missing-dependency fixtures return actionable diagnostics without exposing credential values.
@@ -152,3 +152,4 @@
 - In gh-stack v0.1.1, remote selection checks branch push remote, `remote.pushDefault`, branch remote, `gh-stack.remote`, then the sole remote; missing-trunk init uses the current branch, while remote checkout discovers its trunk from the API.
 - Recovery preflight mirrors v0.1.1: `originalRefs` covers branches but not trunk, deleted merged branches fall back to `Head`, `remainingBranches` is the scoped suffix through `endIndex`, and pending submit only un-stacks with a nonempty prior remote Stack ID.
 - Branch URL screening must preserve valid dotted branch components such as `release.v1/feature` while rejecting explicit schemes and host-style pull-request URLs.
+- Close stdin and launch in a new session (`Setsid`) to prevent both prompting and reopening the caller's controlling `/dev/tty`; the runner test exercises this under a pseudo-TTY.
