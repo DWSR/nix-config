@@ -84,8 +84,8 @@ in
     promptTemplates = [ ./commands ];
     settings = {
       defaultProvider = "openai-1m";
-      defaultModel = "gpt-5.6-sol";
-      defaultThinkingLevel = "xhigh";
+      defaultModel = "gpt-6.1-sol";
+      defaultThinkingLevel = "max";
     };
   };
 }

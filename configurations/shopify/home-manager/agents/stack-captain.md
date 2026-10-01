@@ -1,7 +1,7 @@
 ---
 description: Orchestrate a fan-out/fan-in workflow that drives standalone Shopify PRs and GitHub-native PR Stacks to actionable green. Treats a standalone PR as a one-member Stack, uses GitHub/Buildkite MCP, read-only helpers, bottom-up mutation waves, final Binks gating, and metrics. Invoke with @stack-captain for any Shopify PR or native Stack.
 mode: all
-model: openai/gpt-6-luna
+model: openai/gpt-6-luna-fast
 variant: xhigh
 temperature: 0.1
 permission:

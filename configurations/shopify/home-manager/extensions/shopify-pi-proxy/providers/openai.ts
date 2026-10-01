@@ -58,6 +58,24 @@ const oneMillionModels = ONE_MILLION_MODEL_IDS.flatMap((id) => {
     : [];
 });
 
+// The pinned pi-ai catalog predates GPT-6.1 Sol; register it explicitly for Pi.
+oneMillionModels.push({
+  id: "gpt-6.1-sol",
+  name: "GPT-6.1 Sol [1m]",
+  reasoning: true,
+  thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+  input: ["text", "image"],
+  contextWindow: 1_000_000,
+  maxTokens: 128_000,
+  cost: {
+    input: 2,
+    output: 10,
+    cacheRead: 0.1,
+    cacheWrite: 2.5,
+    tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
+  },
+});
+
 export function registerOpenAIProviders(
   pi: ExtensionAPI,
   headers: ProviderHeaders,

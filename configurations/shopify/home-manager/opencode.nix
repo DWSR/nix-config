@@ -267,10 +267,10 @@ in
   };
 
   programs.opencode.settings = {
-    model = "openai/gpt-6-sol";
+    model = "openai/gpt-6.1-sol";
     agent.build = {
-      model = "openai/gpt-6-sol";
-      variant = "xhigh";
+      model = "openai/gpt-6.1-sol";
+      variant = "max";
     };
     enabled_providers = [
       "anthropic"
