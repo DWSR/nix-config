@@ -44,8 +44,8 @@ test('operator runbook documents the Stack MCP contract and offline/manual bound
   assertFact(/127\.0\.0\.1:8080/, 'the loopback listener address');
   assertFact(/unauthenticated loopback/i, 'the unauthenticated loopback boundary');
   assertFact(/any\s+local process or account/i, 'access by any local process or account');
-  assertFact(/OpenCode\s+`ask`[\s\S]{0,160}not backend authentication/i, 'that prompts are not backend authentication');
-  assertFact(/auto mode\s+or persistent approval/i, 'ways an ask prompt can be suppressed');
+  assertFact(/allows typed local Stack MCP calls without a human authorization prompt/i, 'approval-free local Stack tool calls');
+  assertFact(/Agent-side preflight and effects previews are not backend authentication/i, 'that agent checks are not backend authentication');
   assertFact(/same.named fork PR/i, 'same-named fork association risk');
   assertFact(/only for `submit` and\s+`link`/i, 'the publication-only agent head check');
   assertFact(/direct MCP clients? bypass/i, 'the direct-client preflight bypass');
@@ -58,7 +58,8 @@ test('operator runbook documents the Stack MCP contract and offline/manual bound
     'deadline expiry or process cancellation/interruption as timed-out unknown outcomes',
   );
   assertFact(/`cleanup_unknown`/, 'uncertain cleanup outcomes');
-  assertFact(/Never automatically retry/i, 'the no-automatic-retry rule');
+  assertFact(/Never retry without reinspection/i, 'the no-blind-retry rule');
+  assertFact(/unambiguous fresh inspections and an effects preview, not human authorization/i, 'approval-free verified retries');
   assertFact(/Git-MCP[\s\S]{0,180}absolute `path`/i, 'explicit-path local inspection');
   assertFact(/GitHub MCP[\s\S]{0,180}(?:PR|Stack) membership/i, 'remote PR and Stack inspection');
   assertFact(
@@ -78,7 +79,8 @@ test('operator runbook documents the Stack MCP contract and offline/manual bound
   assertFact(/(?:same.repository[\s\S]{0,100}disposable|disposable[\s\S]{0,100}same.repository)/i, 'a disposable same-repository target');
   assertFact(/not\s+production/i, 'the prohibition on production test data');
   assertFact(/retrieve_tools/, 'live tool discovery');
-  assertFact(/exact\s+preflight and authorization/i, 'preflight and scoped authorization');
+  assertFact(/exact\s+preflight and effects preview/i, 'preflight and effects preview');
+  assertFact(/before each mutation; no human authorization is needed/i, 'approval-free local smoke calls');
   assertFact(/verify local and remote results separately/i, 'separate local and remote postflight');
   assertFact(/CI[\s\S]{0,120}(?:does not|never)[\s\S]{0,100}(?:mutate|call).*GitHub/i, 'the no-live-GitHub CI boundary');
 });

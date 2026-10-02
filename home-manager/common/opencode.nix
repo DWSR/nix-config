@@ -403,8 +403,9 @@ in
         # lexicographically, so the catch-all "*" (ASCII 0x2A) always sorts
         # before "git"/"git *"/"gt"/"gt *" and stays the FIRST (broadest)
         # rule. "git"/"gt" block the bare binaries; "git *"/"gt *" block every
-        # subcommand. Native Stack workflows use GitHub MCP plus explicit local
-        # CLI handoffs, while ordinary staging routes through git-mcp's git_add.
+        # subcommand. Native Stack workflows use GitHub MCP plus typed local
+        # Stack MCP tools; CLI handoffs cover unsupported local operations.
+        # Ordinary staging routes through git-mcp's git_add.
         #
         # Built-in agents (build/plan/general/explore) inherit this default;
         # custom agents with their own permission.bash block OVERRIDE it

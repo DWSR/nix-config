@@ -91,6 +91,7 @@ test('canonical memory fragment matches the plugin runtime copy', async () => {
     mod.SubagentContextBudgetPlugin.instructionFragments['memory-mcpproxy'].text,
     source,
   );
+  assert.doesNotMatch(source, /call_tool_destructive[^\n]*after approval/i);
 });
 
 test('GitHub-native Stack compact guidance matches runtime and preserves local, remote, and handoff policy', async () => {
@@ -100,8 +101,14 @@ test('GitHub-native Stack compact guidance matches runtime and preserves local, 
     'utf8',
   ).trim();
   const runtime = mod.SubagentContextBudgetPlugin.instructionFragments['github-native-stacks-minimal'].text;
+  const role = fs.readFileSync(
+    path.join(instructionsDir, 'role-fragments/shopify-stack.md'),
+    'utf8',
+  ).trim();
 
   assert.equal(runtime, source);
+  assert.equal(mod.SubagentContextBudgetPlugin.instructionFragments['shopify-stack'].text, role);
+  assert.match(role, /Call typed local Stack MCP tools without human authorization/);
   assert.match(source, /Use GitHub MCP for remote-only Stack work\./);
   assert.match(
     source,
@@ -110,12 +117,14 @@ test('GitHub-native Stack compact guidance matches runtime and preserves local, 
   assert.match(source, /never run `gh stack` or imitate Stack work with\s+per-branch Git calls/);
   assert.match(
     source,
-    /Before each local mutation, follow the skill's explicit-path Git-MCP and affected\s+GitHub MCP snapshots, preview exact scope, and obtain scoped authorization\./,
+    /Before each local mutation, follow the skill's explicit-path Git-MCP and affected\s+GitHub MCP snapshots and preview exact scope\./,
   );
   assert.match(
     source,
-    /Rebase and push need separate authorization; re-inspect `exited_unverified` or\s+uncertain outcomes before success\/retry, and reauthorize if state changes\./,
+    /Call the typed local Stack MCP\s+tool without human authorization, including rebase, push, and verified retries\./,
   );
+  assert.match(source, /Re-inspect `exited_unverified` or uncertain outcomes before success\/retry/);
+  assert.doesNotMatch(source, /obtain scoped authorization|reauthorize if state changes/i);
   assert.match(
     source,
     /Use a user-owned handoff with the exact command; stop\s+for unavailable tools, explicit CLI preference, abort/,

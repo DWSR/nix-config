@@ -19,7 +19,7 @@ permission:
   mcpproxy_retrieve_tools: allow
   mcpproxy_call_tool_read: allow
   mcpproxy_call_tool_write: allow
-  mcpproxy_call_tool_destructive: ask
+  mcpproxy_call_tool_destructive: allow
   mcpproxy_code_execution: deny
 ---
 
@@ -57,11 +57,12 @@ ready for human approval or merge". Do not merge PRs.
    requirements, and use the exact discovered typed tools for supported local
    operations: `stack_view`, `stack_init`, `stack_add`, `stack_checkout`,
    `stack_rebase`, `stack_sync`, `stack_push`, `stack_submit`, and `stack_link`.
-   Request operation-scoped user authorization before each local mutation.
-   Continue a verified conflict only through guarded `stack_rebase`; hand off
-   `gh stack rebase --abort` to the user for abort, and `gh stack modify` for
-   interactive TUI restructuring. Never run either from the agent. If a
-   required tool is unavailable or the user explicitly chooses to run the CLI,
+   Call these tools without seeking human authorization; fresh preflight and
+   postflight still apply. Continue a verified conflict only through guarded
+   `stack_rebase`. For abort, hand off `gh stack rebase --abort`; for interactive
+   TUI restructuring, hand off `gh stack modify`. Never run either from the
+   agent. If a required tool is unavailable or the user explicitly chooses to
+   run the CLI,
    provide the skill's targeted handoff and pause. Never execute `gh stack`
    directly. Never initiate merge or unstack by any route. A standalone PR uses
    ordinary Git-MCP branch operations instead.
@@ -83,29 +84,26 @@ ready for human approval or merge". Do not merge PRs.
    comment.
 10. **Publish once per wave.** Keep native mutations bottom-up. Before each
     native rebase, sync, or push, re-inspect the exact local worktree and
-    affected remote Stack/PRs, preview effects, then request explicit user
-    authorization for one operation. Name the absolute worktree, Git remote and
+    affected remote Stack/PRs. Preview the absolute worktree, Git remote and
     GitHub owner/repository, operation and rebase scope/options, affected
     branches in bottom-to-top order, and effects including rewritten history,
     review/CI impact, per-branch force-with-lease, and possible partial or
     non-atomic publication. Use the exact discovered `stack_rebase`,
-    `stack_sync`, and `stack_push` tools when available. Authorization for a
-    rebase does not cover a later push; inspect again and obtain separate push
-    authorization. If `stack_sync` publishes branches, authorize its complete
-    sync/rewrite/push effects as one `stack_sync` operation. If tools are
-    unavailable or the user chooses the CLI, provide the targeted handoff and
-    pause. For a standalone PR, before each push, freshly inspect through
-    Git-MCP the status, current branch, upstream, and relevant local/remote refs
-    in the exact absolute worktree; confirm the branch, upstream, and target
+    `stack_sync`, and `stack_push` tools without human authorization. Rebase
+    and push each require their own fresh snapshots and effects preview; a
+    publishing `stack_sync` includes its fetch/reconciliation/rewrite/push
+    effects in one preview. If tools are unavailable or the user chooses the
+    CLI, provide the targeted handoff and pause. For a standalone PR, before
+    each push, freshly inspect through Git-MCP the status, current branch,
+    upstream, and relevant local/remote refs in the exact absolute worktree;
+    confirm the branch, upstream, and target
     ref still match the PR head. Preview the absolute worktree, Git remote and
     repository (GitHub owner/repository), exact source branch and
     upstream/target ref, and each commit SHA and subject to be pushed. After
     that inspection and preview, request explicit, operation-specific user
     authorization naming the exact absolute worktree, Git remote and
     repository, source branch, upstream/target ref, commit SHAs and subjects,
-    and this normal, non-force Git-MCP push. The
-    `mcpproxy_call_tool_destructive: ask` permission is an additional outer-tool
-    gate, not a substitute for that authorization. If the target or Git state
+    and this normal, non-force Git-MCP push. If the target or Git state
     changes after authorization, or the push outcome is uncertain, re-inspect
     status, branch, upstream, and refs and obtain fresh operation-specific
     authorization before any retry. Never force-push a standalone branch.
@@ -120,13 +118,11 @@ ready for human approval or merge". Do not merge PRs.
 14. **Override is narrow.** Use `binks-overrider` only after the check has
     remained in progress for more than 90 minutes or the user explicitly
     authorizes the fixed override label with a reason.
-15. **Bypasses require confirmation.** Ask before invoking `--force`,
+15. **Bypasses require confirmation.** Ask before adding explicit `--force`,
     `--force-with-lease`, `--no-verify`, or an environment override such as
-    `GIT_EDITOR=true`. Disclose built-in Stack push lease behavior in its
-    operation-scoped authorization. The `mcpproxy_call_tool_destructive: ask`
-    permission is an additional outer-tool gate, not a substitute for that
-    authorization. OpenCode `ask` prompts are best-effort: auto mode or
-    persistent approval can suppress later prompts.
+    `GIT_EDITOR=true` to ordinary Git operations. The typed Stack tool's built-in
+    per-branch force-with-lease is not an added bypass: disclose it in the
+    effects preview and call the tool without human authorization.
 16. **Large changes require confirmation.** Small targeted fixes are
     autonomous. Ask before architectural changes, broad refactors, or roughly
     100 changed lines across unrelated files.
@@ -242,7 +238,7 @@ Process one affected PR at a time, bottom-up:
    `stack_checkout` tool to select an existing member branch or import missing
    local tracking when the target is unambiguous. Before checkout, take fresh
    Git-MCP and GitHub MCP snapshots, preview the exact worktree, remote/repository,
-   and branch, and request the shared skill's operation-scoped authorization.
+   and branch, then call the typed tool without human authorization.
    If the tool is unavailable or the user chooses the CLI, provide the shared
    skill's targeted handoff and pause; if the target remains ambiguous, stop
    and report the blocker. For a standalone target, use ordinary Git-MCP fetch
@@ -256,34 +252,30 @@ Process one affected PR at a time, bottom-up:
    commits unless the user explicitly requests it.
 7. For a native member with PRs above it, take the fresh snapshots, exact
    worktree/remote/repository and bottom-to-top branch-scope preview, and
-   operation-specific authorization required by Operating rule 10. Invoke the
-   exact discovered `stack_rebase` with `action: start` and `scope: upstack`.
-   Rebase authorization does not authorize publication. If a conflict is
-   verified, resolve and stage only the explicit paths; then refresh the
-   snapshots, preview guarded continuation, request fresh operation-specific
-   authorization, and invoke `stack_rebase` with `action: continue` only when
+   invoke the exact discovered `stack_rebase` with `action: start` and
+   `scope: upstack` without human authorization. If a conflict is verified,
+   resolve and stage only the explicit paths; then refresh the snapshots,
+   preview guarded continuation, and invoke `stack_rebase` with
+   `action: continue` without human authorization only when
    its marker and active Git rebase match. Never continue through generic Git
    rebase or abort through the captain. If the required tool is unavailable or
    the user chooses the CLI, provide the shared skill's targeted rebase handoff
    and pause. When the requested operation is full local/remote reconciliation,
    use the exact discovered `stack_sync` after the same fresh snapshots and
    exact worktree, remote/repository, affected-branch, and effects preview
-   required by Operating rule 10, plus branch/prune preview. Request
-   stack_sync-specific authorization for its complete fetch, reconciliation,
-   rewrite, and publication effects as one operation; keep `prune` false unless
-   the user explicitly opts in.
+   required by Operating rule 10, plus branch/prune preview. Include its
+   complete fetch, reconciliation, rewrite, and publication effects in the
+   preview; keep `prune` false unless pruning is part of the requested sync.
    If its tool is unavailable or the user chooses the CLI, provide the shared
    skill's targeted sync handoff and pause.
 
-8. If the authorized `stack_sync` in step 7 already performed the requested
-   publication, do not request another push authorization or call
-   `stack_push`; complete its postflight under step 10. Otherwise, for native
-   publication, including a native top PR, re-inspect after the last local
-   history change and follow Operating rule 10's fresh snapshots, exact
+8. If `stack_sync` in step 7 already performed the requested publication, do
+   not call `stack_push`; complete its postflight under step 10. Otherwise, for
+   native publication, including a native top PR, re-inspect after the last
+   local history change and follow Operating rule 10's fresh snapshots, exact
    worktree/remote/repository and bottom-to-top branch/effects preview, and
-   separate operation-specific push authorization. Then invoke the exact
-   discovered `stack_push`. A prior rebase authorization does not authorize a
-   later push. Explain that `stack_push` uses per-branch force-with-lease and is
+   invoke the exact discovered `stack_push` without human authorization.
+   Explain that `stack_push` uses per-branch force-with-lease and is
    not atomic. If the required tool is unavailable or the user chooses the CLI,
    provide the shared skill's targeted push handoff and pause.
 
@@ -413,7 +405,7 @@ multi-branch push, Stack metadata edits, or conflict continue/abort.
 ### Unsupported or fallback user-owned local native Stack handoffs
 
 For supported local operations, use the exact discovered `stack_*` tool with the
-shared skill's fresh snapshots, effects preview, scoped authorization, and
+shared skill's fresh snapshots, effects preview, and
 postflight. This includes `stack_checkout`, `stack_rebase` start and guarded
 continue, `stack_sync`, and `stack_push`; use `stack_submit` or `stack_link`
 when those operations are in scope. Give a targeted CLI handoff for a supported
@@ -442,7 +434,7 @@ any route.
   update local tracking or perform local cascade operations. The local Stack MCP
   tools operate on an explicit worktree and perform supported local rebase,
   sync, and push actions. Use the shared skill's snapshots, operation preview,
-  scoped authorization, and postflight for those local mutations.
+  and postflight for those local mutations; no human authorization is needed.
 
 ## Final report
 

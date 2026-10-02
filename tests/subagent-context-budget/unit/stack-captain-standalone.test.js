@@ -8,6 +8,7 @@ const path = require('node:path');
 const repoRoot = path.resolve(__dirname, '../../..');
 const STACK_CAPTAIN_PATH = 'configurations/shopify/home-manager/agents/stack-captain.md';
 const RESTACK_PATH = 'configurations/shopify/home-manager/commands/restack.md';
+const STACK_SKILL_PATH = 'home-manager/common/skills/github-native-stacks/SKILL.md';
 const STACK_HELPERS = Object.freeze([
   {
     name: 'stack-status-sweeper',
@@ -137,10 +138,10 @@ function readBashRules(frontmatter) {
   );
 }
 
-test('stack-captain keeps operation-scoped authorization and native CLI boundaries', () => {
+test('stack-captain calls typed Stack tools without approval and keeps native CLI boundaries', () => {
   const captain = readAgentPolicy(STACK_CAPTAIN_PATH);
 
-  assert.equal(captain.permissions.mcpproxy_call_tool_destructive, 'ask');
+  assert.equal(captain.permissions.mcpproxy_call_tool_destructive, 'allow');
   assert.equal(captain.permissions.mcpproxy_code_execution, 'deny');
   assert.deepEqual(readBashRules(captain.frontmatter), {
     '*': 'allow',
@@ -150,19 +151,20 @@ test('stack-captain keeps operation-scoped authorization and native CLI boundari
     'git *': 'deny',
   });
 
-  assert.match(captain.source, /request explicit user\s+authorization for one operation/);
+  const nativePublicationRule = captain.source.split('10. **Publish once per wave.**')[1].split('For a standalone PR, before')[0];
+  assert.match(nativePublicationRule, /`stack_sync`, and `stack_push` tools without human authorization/);
+  assert.doesNotMatch(nativePublicationRule, /request|obtain.*authorization/i);
   assert.match(
-    captain.source,
-    /Name the absolute worktree, Git remote and\s+GitHub owner\/repository, operation and rebase scope\/options, affected\s+branches in bottom-to-top order, and effects including rewritten history/,
+    nativePublicationRule,
+    /Preview the absolute worktree, Git remote and\s+GitHub owner\/repository, operation and rebase scope\/options, affected\s+branches in bottom-to-top order, and effects including rewritten history/,
   );
   assert.match(
-    captain.source,
+    nativePublicationRule,
     /effects including rewritten history,\s+review\/CI impact, per-branch force-with-lease, and possible partial or\s+non-atomic publication/,
   );
-  assert.match(
-    captain.source,
-    /Authorization for a\s+rebase does not cover a later push; inspect again and obtain separate push\s+authorization/,
-  );
+  assert.match(captain.source, /`stack_checkout` tool[\s\S]*?call the typed tool without human authorization/);
+  assert.match(captain.source, /`action: continue` without human authorization only when/);
+  assert.match(captain.source, /`stack_push` without human authorization/);
   assert.match(
     captain.source,
     /request explicit, operation-specific user\s+authorization naming the exact absolute worktree, Git remote and\s+repository, source branch, upstream\/target ref, commit SHAs and subjects,\s+and this normal, non-force Git-MCP push/,
@@ -170,6 +172,18 @@ test('stack-captain keeps operation-scoped authorization and native CLI boundari
   assert.match(captain.source, /Do not merge PRs\./);
   assert.match(captain.source, /Never initiate merge or unstack by any route\./);
   assert.doesNotMatch(captain.source, /\b(?:stack_merge|stack_unstack)\b|gh stack (?:merge|unstack)\b/);
+});
+
+test('native Stack skill permits every typed local operation after preflight without human confirmation', () => {
+  const skill = read(STACK_SKILL_PATH);
+  const localWorkflow = skill.split('## Local Stack MCP workflow')[1].split('## Resolve and read a remote Stack')[0];
+
+  assert.match(localWorkflow, /`stack_view` whenever local tracking state is needed/);
+  assert.match(localWorkflow, /No additional human authorization or confirmation is required for\s+any `gh-stack-mcp` tool call/);
+  assert.match(localWorkflow, /call `stack_unstack` without an additional human confirmation/);
+  assert.match(localWorkflow, /A later attempt requires fresh, unambiguous snapshots\s+and an effects preview, not human authorization/);
+  assert.doesNotMatch(localWorkflow, /request authorization|obtain scoped authorization|ask for confirmation/i);
+  assert.match(skill, /For remote GitHub MCP, `409`[\s\S]*?ask before retrying that remote\s+call\. For a typed local Stack MCP call,[\s\S]*?without human\s+authorization/);
 });
 
 test('Shopify Stack helpers preserve read-only permissions and deny proxy code execution', () => {
@@ -188,14 +202,11 @@ test('/restack stays in the invoking agent and uses typed operations with target
 
   assert.match(restack, /Keep `\/restack` in\s+the invoking agent/);
   assert.doesNotMatch(restack, /^agent:\s*stack-captain\s*$/m);
-  assert.match(restack, /invoke the\s+discovered `stack_checkout`/);
-  assert.match(restack, /`stack_rebase` with\s+`action: start`, and invoke the exact discovered typed tool/);
-  assert.match(restack, /fresh scoped\s+authorization for `stack_rebase` `action: continue`/);
-  assert.match(restack, /Call the discovered tool\s+without a scope only when the marker, conflict branch, and active Git rebase\s+match/);
-  assert.match(
-    restack,
-    /separate fresh\s+scoped authorization for the exact `stack_push` target; rebase\s+authorization\s+does not authorize push\. Invoke the exact discovered typed tool/,
-  );
+  assert.match(restack, /discovered `stack_checkout` without human authorization/);
+  assert.match(restack, /invoke the exact discovered `stack_rebase` with\s+`action: start` without human authorization/);
+  assert.match(restack, /`action: continue` and no scope, without human\s+authorization, only when the marker, conflict branch, and active Git rebase\s+match/);
+  assert.match(restack, /discovered `stack_push` without human authorization/);
+  assert.doesNotMatch(restack, /obtain.*authorization|reauthoriz/i);
 
   assert.match(
     restack,

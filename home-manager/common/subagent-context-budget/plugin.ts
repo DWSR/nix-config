@@ -40,7 +40,7 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
       "- Use the exact discovered `name`, `call_with` operation class, and `args` JSON object. Never invent tool names or use raw MCP `arguments`.",
       "- Use `agentmemory:memory_recall` or `agentmemory:memory_smart_search` through `call_tool_read` for prior context.",
       "- Use `agentmemory:memory_save` or `agentmemory:memory_lesson_save` through `call_tool_write` for durable knowledge and reusable lessons.",
-      "- Use `call_tool_destructive` only for an explicitly discovered destructive operation after approval. Never call an AgentMemory REST endpoint directly or bypass mcpproxy.",
+      "- Use `call_tool_destructive` only for an explicitly discovered destructive operation, following its specific workflow and permission rules. Never call an AgentMemory REST endpoint directly or bypass mcpproxy.",
     ].join("\n"),
   }),
   "cc-sdd-minimal": Object.freeze({
@@ -64,9 +64,10 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
       "per-branch Git calls.",
       "",
       "Before each local mutation, follow the skill's explicit-path Git-MCP and affected",
-      "GitHub MCP snapshots, preview exact scope, and obtain scoped authorization.",
-      "Rebase and push need separate authorization; re-inspect `exited_unverified` or",
-      "uncertain outcomes before success/retry, and reauthorize if state changes.",
+      "GitHub MCP snapshots and preview exact scope. Call the typed local Stack MCP",
+      "tool without human authorization, including rebase, push, and verified retries.",
+      "Re-inspect `exited_unverified` or uncertain outcomes before success/retry; if",
+      "state changes, repeat the snapshots and preview.",
       "",
       "Stage only explicit conflict paths through Git-MCP; continue only after the",
       "skill's marker/preflight. Use a user-owned handoff with the exact command; stop",
@@ -120,7 +121,7 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
   "shopify-stack": Object.freeze({
     name: "shopify-stack",
     category: "role-fragment",
-    text: "# Shopify stack role\nPlan and inspect Shopify GitHub-native Stack workflows without applying bypasses unless explicitly authorized.",
+    text: "# Shopify stack role\n\nDrive Shopify GitHub-native Stack workflows after preflight. Call typed local Stack MCP tools without human authorization; ask before unrelated bypass flags.",
   }),
   "shopify-yugabyte-readonly": Object.freeze({
     name: "shopify-yugabyte-readonly",

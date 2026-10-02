@@ -110,28 +110,28 @@
 - [ ] 4. Migrate native Stack agent guidance and permissions
 - [x] 4.1 Migrate the shared native-Stacks skill to typed local tools
   - Preserve GitHub MCP remote-only operations and handoffs for merge, abort, TUI, and unsupported cases.
-  - Require local/remote snapshots, scoped authorization, and immediate confirmation of exact Stack number and mode before unstack.
+  - Require local/remote snapshots and effects previews for each typed tool, including the exact Stack number and mode before unstack; do not require human authorization.
   - Require exhaustive PR-head checks before submit/link and postflight reinspection; disclose direct-client and fork-association risks.
   - _Depends: 3.4_
   - _Boundary: Agent guidance (`home-manager/common/skills/github-native-stacks/SKILL.md`)_
   - _Requirements: 7.3, 10.1, 10.2, 10.3, 10.4, 10.5, 10.13, 10.14, 10.15, 10.16_
 - [x] 4.2 Mirror captain and helper proxy permissions in one budget boundary
-  - Make destructive proxy calls `ask` for captain while denying code execution and direct `gh stack` in its frontmatter and rendered budget.
-  - Require captain authorization for each exact worktree, remote, history rewrite, or push target; keep no-merge/no-unstack and standalone behavior.
+  - Make destructive proxy calls `allow` for captain while denying code execution and direct `gh stack` in its frontmatter and rendered budget.
+  - Require captain previews for each exact native worktree, remote, history rewrite, or push target without human authorization; keep no-merge/no-unstack and standalone behavior.
   - Extend budget validation for proxy code-execution denial and apply it to captain and read-only helper budgets.
   - _Depends: 4.1_
   - _Boundary: Agent guidance (`stack-captain.md`, `budgets.nix`, `scripts/subagent-context-budget.js`)_
   - _Requirements: 10.6, 10.8, 10.10, 10.12_
 - [x] 4.3 (P) Convert `/restack` and compact Stack instructions
   - Keep `/restack` in the invoking agent; call vetted checkout, rebase, guarded continue, and push via the skill.
-  - Align compact Markdown and plugin guidance with no direct `gh stack` and targeted user handoffs.
+  - Align compact Markdown and plugin guidance with approval-free typed calls, no direct `gh stack`, and targeted user handoffs.
   - The command and both snippets agree on eligible operations and abort/merge exclusions.
   - _Depends: 4.1_
   - _Boundary: Agent guidance (`restack.md`, `github-native-stacks-minimal.md`, `plugin.ts`)_
   - _Requirements: 10.1, 10.5, 10.7, 11.5_
 - [x] 4.4 Preserve read-only helpers and validate effective policy
   - Deny proxy code execution in five read-only helper frontmatters without granting writes or destructive calls.
-  - Add policy regressions proving captain authorization/`ask`/direct-CLI deny, helper boundaries, `/restack` scope, and compact guidance equality.
+  - Add policy regressions proving captain destructive `allow` and approval-free native calls, direct-CLI deny, helper boundaries, `/restack` scope, and compact guidance equality.
   - Rendered-agent and instruction-profile tests pass with helpers still read-only.
   - _Depends: 4.2, 4.3_
   - _Boundary: Agent guidance integration (helper Markdown, `tests/subagent-context-budget/`)_

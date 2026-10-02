@@ -134,28 +134,28 @@
 8. When a managed host renders configuration, the shared proxy and existing OpenCode MCP-entry call deadlines shall exceed the Stack MCP's longest operation and cleanup deadline.
 9. The operator guidance shall disclose that those longer shared deadlines apply to unrelated MCP calls.
 
-### Requirement 10: Agent authorization and workflow
+### Requirement 10: Agent preflight and workflow
 
-**Objective:** As the operator, I want existing Stack agents to use the new tools under deliberate preflight, so that a tool call is not mistaken for broad authorization.
+**Objective:** As the operator, I want Stack agents to use typed local tools without human authorization while retaining deliberate preflight and postflight.
 
 #### Acceptance Criteria
 
 1. When local Stack work is requested, the native-Stacks guidance shall discover and invoke typed Stack MCP tools rather than executing `gh stack` directly.
 2. When remote-only Stack work is requested, the native-Stacks guidance shall continue using GitHub MCP.
 3. Before a history rewrite, push, submit, link, or unstack, the agent workflow shall inspect the local target and any affected remote Stack or PRs and describe the expected effects.
-4. Before unstack, the agent workflow shall request explicit confirmation for the exact target and operation after the latest state inspection.
-5. If the target or state changes after confirmation or an outcome is uncertain, the agent workflow shall stop and request fresh inspection before retrying.
-6. Before `stack-captain` invokes a history rewrite or push, its guidance shall request user authorization for the specific operation and target.
+4. Before local unstack, the agent workflow shall preview the verified Stack number, mode, target, and effects after the latest state inspection, without requesting human confirmation.
+5. If the target or state changes or an outcome is uncertain, the agent workflow shall re-inspect both sides and preview effects before any verified retry; ambiguous outcomes shall stop.
+6. Before `stack-captain` invokes a native Stack history rewrite or push, its guidance shall inspect and preview the specific operation and target without requesting human authorization.
 7. When `/restack` is invoked, its workflow shall use the vetted tools for eligible local Stack operations instead of instructing an agent to run arbitrary Git or `gh stack` commands.
 8. The `stack-captain` workflow shall not initiate merge or unstack.
 9. The integration shall preserve read-only helper boundaries.
-10. When `stack-captain` invokes a destructive Stack MCP tool, its OpenCode outer-tool permission shall be configured to ask, with no code-execution bypass available to that agent.
-11. The operator guidance shall state that unauthenticated loopback clients, including other local accounts, can invoke the Stack MCP and agent confirmations are not backend authentication.
-12. The operator guidance shall disclose that auto mode or persistent OpenCode approval can suppress later `ask` prompts.
-13. Before add stages untracked files or sync prunes branches, the agent workflow shall preview the affected paths or branches and ask for that opt-in effect.
+10. When `stack-captain` invokes a destructive Stack MCP tool, its OpenCode outer-tool permission shall be `allow`, with no code-execution bypass available to that agent.
+11. The operator guidance shall state that unauthenticated loopback clients, including other local accounts, can invoke the Stack MCP and agent preflight is not backend authentication.
+12. The operator guidance shall state that typed local Stack MCP calls and verified retries need no human authorization.
+13. Before add stages untracked files or sync prunes branches, the agent workflow shall preview the affected paths or branches without requiring opt-in confirmation for the tool call.
 14. Before submit or link, the agent workflow shall enumerate all open PRs matching each affected branch name and stop if a match has a foreign or unknown head repository, or if more than one match exists.
 15. The operator guidance shall disclose that other CLI-backed operations can associate a same-named fork PR and that direct MCP callers can bypass the agent's PR-head preflight.
-16. Before init, add, rebase, sync, push, submit, or link, the agent workflow shall request authorization for the exact worktree, remote, affected branches, and side effects after the latest inspection.
+16. Before init, add, checkout, rebase, sync, push, submit, link, or unstack, the agent workflow shall inspect and preview the exact worktree, remote, affected branches, and side effects without requesting human authorization for the tool call.
 
 ### Requirement 11: Offline verification and operator guidance
 
@@ -167,4 +167,4 @@
 2. When configuration checks run, the test suite shall verify the shared extension pin, executable availability, and Stack MCP registration on both hosts.
 3. When automated verification runs, the test suite shall not mutate an operator repository or call the live GitHub Stacks API.
 4. When an operator reviews the runbook, the runbook shall distinguish local tracking from remote Stack objects, document authentication prerequisites, and provide post-failure inspection steps.
-5. When operator guidance is updated, the native-Stacks skill, `stack-captain`, `/restack`, and their compact context variants shall present consistent permission, confirmation, and no-direct-CLI rules.
+5. When operator guidance is updated, the native-Stacks skill, `stack-captain`, `/restack`, and their compact context variants shall present consistent permission, approval-free local tool, and no-direct-CLI rules.

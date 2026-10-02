@@ -149,7 +149,7 @@ let
         mcpproxy_retrieve_tools = "allow";
         mcpproxy_call_tool_read = "allow";
         mcpproxy_call_tool_write = "allow";
-        mcpproxy_call_tool_destructive = "ask";
+        mcpproxy_call_tool_destructive = "allow";
         mcpproxy_code_execution = "deny";
       };
       instructionProfile = "shopify-stack";

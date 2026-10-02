@@ -10,7 +10,7 @@ A Go stdio MCP server exposes ten typed local Stack operations through the exist
 
 - For `requirements.md` sections “Typed tool and repository boundary” through “Bounded execution and truthful outcomes”: tool schemas, worktree/repository binding, subprocess supervision, and truthful results.
 - For “Declarative deployment” and “Offline verification and operator guidance”: one shared `gh-stack` v0.1.1 pin, Go package, both-host registration, shared call deadlines, checks, and runbook.
-- For “Agent authorization and workflow”: native-Stacks skill, Shopify `stack-captain`/`/restack` guidance, and permission assertions.
+- For “Agent preflight and workflow”: native-Stacks skill, Shopify `stack-captain`/`/restack` guidance, and permission assertions.
 
 ### Out of Boundary
 
@@ -28,7 +28,7 @@ A Go stdio MCP server exposes ten typed local Stack operations through the exist
 ### Revalidation Triggers
 
 - A `gh-stack` version change, JSON schema/flag change, repository/remote selection change, or new command with different prompt/partial-success semantics.
-- A mcpproxy annotation/`call_with` or OpenCode permission change, especially code-execution dispatch or `ask` behavior.
+- A mcpproxy annotation/`call_with` or OpenCode permission change, especially code-execution dispatch or destructive-tool routing.
 - A change to `home.mcp.extraServers` rendering, shared call deadlines, launchd auth environment, global Git signing, or the remote Stack tool contract.
 
 ## Architecture
@@ -100,14 +100,14 @@ The shared mcpproxy `call_tool_timeout` becomes `15m15s`; the **existing** OpenC
 | `configurations/personal/home-manager/opencode.nix`, `configurations/shopify/home-manager/opencode.nix` | Set the existing proxy MCP-entry call timeout above the proxy deadline. |
 | `flake.nix` | Add a Darwin check for the Go fixtures and both-host rendering. |
 | `home-manager/common/skills/github-native-stacks/SKILL.md` | Preserve remote GitHub MCP rules; replace eligible local handoffs with typed-tool preflight and postflight. |
-| `configurations/shopify/home-manager/agents/stack-captain.md` | Update restack waves, destructive `ask`, code-execution deny, no-merge/no-unstack rule, and direct-CLI deny. |
+| `configurations/shopify/home-manager/agents/stack-captain.md` | Update restack waves, destructive `allow`, code-execution deny, no-merge/no-unstack rule, and direct-CLI deny. |
 | `configurations/shopify/home-manager/commands/restack.md` | Run eligible checkout/rebase/recovery/push in the invoking agent; keep unsupported cases as handoffs. |
 | `home-manager/common/subagent-context-budget/budgets.nix`, `scripts/subagent-context-budget.js` | Mirror the captain policy and support a code-execution deny in budget validation. |
 | `home-manager/common/subagent-context-budget/instructions/github-native-stacks-minimal.md`, `home-manager/common/subagent-context-budget/plugin.ts` | Keep both compact Stack guidance copies consistent. |
 | `home-manager/common/opencode.nix` | Correct the stale skill-registration comment; do not add an MCP server here. |
 | `configurations/shopify/home-manager/agents/stack-preflight-auditor.md`, `configurations/shopify/home-manager/agents/stack-status-sweeper.md`, `configurations/shopify/home-manager/agents/ci-log-sleuth.md` | Deny proxy code execution while retaining read-only grants; correct stale handoff wording where present. |
 | `configurations/shopify/home-manager/agents/bot-thread-triager.md`, `configurations/shopify/home-manager/agents/stack-fix-reviewer.md` | Preserve their read-only boundary under proxy code execution. |
-| `tests/subagent-context-budget/integration/hm-render.test.js`, `tests/subagent-context-budget/unit/instruction-profile.test.js`, `tests/subagent-context-budget/unit/stack-captain-standalone.test.js` | Assert effective `ask`/deny behavior, direct-CLI denial, and compact guidance consistency. |
+| `tests/subagent-context-budget/integration/hm-render.test.js`, `tests/subagent-context-budget/unit/instruction-profile.test.js`, `tests/subagent-context-budget/unit/stack-captain-standalone.test.js` | Assert effective `allow`/deny behavior, direct-CLI denial, and compact guidance consistency. |
 
 `home-manager/common/gh-cli.nix` continues to use `pkgs.unstable.gh-stack`; the nested overlay changes its package version without changing that module. Existing GitHub MCP packages are unchanged.
 
@@ -120,7 +120,7 @@ The shared mcpproxy `call_tool_timeout` becomes `15m15s`; the **existing** OpenC
 | Command mapper | Operation-specific argv; no passthrough | 2–7 | Extension v0.1.1 P0 |
 | Process runner and result adapter | Finite execution and honest observations | 2.1–2.2, 4.2, 5.5, 6.5, 7.3, 8 | Git and `gh` P0 |
 | Nix integration | Shared pin, executables, timeouts, two hosts | 9, 11.2 | Overlay, Home Manager, OpenCode P0 |
-| Agent guidance | Preflight, approval, reinspection, helper policy | 7.3, 10, 11.5 | GitHub MCP and Git-MCP P1 |
+| Agent guidance | Preflight, approval-free local calls, reinspection, helper policy | 7.3, 10, 11.5 | GitHub MCP and Git-MCP P1 |
 
 ### Tool catalog and command mapper
 
@@ -164,9 +164,9 @@ The common result is `Outcome {operation, repository, spawned, exitCode?, status
 
 ### Agent policy and verification
 
-The native-Stacks skill discovers exact live tool names and `call_with` values; remote-only reads/writes remain GitHub MCP calls. Before a local mutation, the agent takes a Git-MCP worktree/branch snapshot and affected GitHub MCP Stack/PR snapshot, previews effects (including untracked files for `add --all` and local branches for prune), and requests scoped authorization for init/add/rebase/sync/push/submit/link; unstack requires immediate confirmation after its latest snapshot. For `submit` and `link` only, it pages through **all** open PRs in the target repository via GitHub MCP, compares each affected branch's exact head name and head/base repository, and stops on fork, unknown, or multiple matches; incomplete pagination also stops. After `exited_unverified` or uncertainty, it re-reads local refs and affected PR/Stack membership before any success claim or retry; ambiguous outcomes stop, not loop.
+The native-Stacks skill discovers exact live tool names and `call_with` values; remote-only reads/writes remain GitHub MCP calls. Before a local mutation, the agent takes a Git-MCP worktree/branch snapshot and affected GitHub MCP Stack/PR snapshot and previews effects (including untracked files for `add --all` and local branches for prune). It calls all typed local Stack tools without human authorization, including unstack and verified retries. For `submit` and `link` only, it pages through **all** open PRs in the target repository via GitHub MCP, compares each affected branch's exact head name and head/base repository, and stops on fork, unknown, or multiple matches; incomplete pagination also stops. After `exited_unverified` or uncertainty, it re-reads local refs and affected PR/Stack membership before any success claim or retry; ambiguous outcomes stop, not loop.
 
-Captain's destructive proxy permission changes from `deny` to `ask` in both frontmatter and budget-rendered variants; proxy code execution is denied there and in read-only helpers. Its direct `gh stack` bash deny, bottom-up waves, standalone-PR path, and no-merge/no-unstack rule remain. `/restack` stays in its invoking agent rather than routing into captain's full Binks/CI workflow; it uses the same skill/preflight for eligible checkout, scoped rebase, guarded continue, and push. Missing local/remote prerequisites, abort, merge, TUI restructuring, and uncertain recovery remain targeted user handoffs. `ask` is best-effort: auto mode and persistent approval can suppress a later OpenCode prompt, and loopback clients need no prompt at all. The publication-only PR-head check is also agent policy: other commands can adopt a fork PR into local tracking, `sync` may use that association for remote Stack writes, direct clients bypass the check, and a new PR can appear between check and CLI lookup. These residual risks were accepted by the operator.
+Captain's destructive proxy permission is `allow` in both frontmatter and budget-rendered variants; proxy code execution is denied there and in read-only helpers. The permission covers the destructive router; operation-specific rules still govern other tools. Its direct `gh stack` bash deny, bottom-up waves, standalone-PR path, and no-merge/no-unstack rule remain. `/restack` stays in its invoking agent rather than routing into captain's full Binks/CI workflow; it uses the same skill/preflight for eligible checkout, scoped rebase, guarded continue, and push. Missing local/remote prerequisites, abort, merge, TUI restructuring, and uncertain recovery remain targeted user handoffs. The publication-only PR-head check is also agent policy: other commands can adopt a fork PR into local tracking, `sync` may use that association for remote Stack writes, direct clients bypass the check, and a new PR can appear between check and CLI lookup. These residual risks were accepted by the operator.
 
 ## System Flows
 
@@ -182,7 +182,7 @@ sequenceDiagram
   User->>Agent: Request local Stack change
   Agent->>GitMCP: Inspect worktree and refs
   Agent->>GitHubMCP: Inspect affected remote Stack
-  Agent->>User: Confirm scoped high impact effect
+  Agent->>Agent: Preview scope and effects
   Agent->>Proxy: Call typed tool
   Proxy->>Server: Worktree and remote request
   Server->>Extension: Validated noninteractive argv
@@ -225,11 +225,11 @@ The same reinspection gate applies after rebase conflict or a user-owned abort, 
 - Go unit/stdio contract tests use a fake extension and temporary Git worktrees. Verify all ten tool schemas and annotations, argument mapping, branch/remote validation, `GH_REPO` isolation, marker checks, deadlines, bounded output, and child stdout isolation (1–8, 11.1).
 - Fixture scenarios cover nonzero conflict without marker, stale/marker-only recovery rejection, valid continue, pending-modify submit refusal, `add` missing message, missing-trunk init and checkout with conflicting Git remote preferences, sync exit 0 with no completed postcondition, partial unstack, cancellation, and result truncation (2–8).
 - Nix/Node checks build the package, assert one v0.1.1 derivation for both `programs.gh.extensions` and the wrapper, render both host `mcp_config.json` entries plus shared timeout ordering, and leave OpenCode pointed only at mcpproxy. An isolated proxy fixture verifies `call_with` routing, finite end-to-end cancellation with shortened test budgets, and that a missing Stack upstream leaves unrelated upstreams callable (9, 11.2–11.3).
-- Policy tests validate full and budget-rendered captain permissions, code-execution denial on read-only helpers, unchanged direct-CLI denial, `/restack` invoking-agent scope, and agreement of both compact guidance copies (10, 11.5). No CI check calls the real extension against an operator checkout or the live Stacks API.
+- Policy tests validate full and budget-rendered captain permissions, code-execution denial on read-only helpers, unchanged direct-CLI denial, approval-free local calls, `/restack` invoking-agent scope, and agreement of both compact guidance copies (10, 11.5). No CI check calls the real extension against an operator checkout or the live Stacks API.
 - Runbook smoke is operator-owned after activation: confirm existing `gh` auth, discover tool routing, exercise view or a disposable same-repository Stack, and verify remote/local results separately. Restart OpenCode and mcpproxy after applying config changes; record host/API/auth incompatibility before broader use.
 
 ## Security and Rollout
 
-- The local endpoint remains unauthenticated loopback TCP. Any local account able to reach it can invoke tools with the wrapper process's `gh` credentials; OpenCode approval and skill prose are not a backend authorization boundary. The extension's branch-name PR lookup can also select a same-named fork PR. Agent-side exhaustive checks cover `submit`/`link` but not other operations or direct MCP calls; even a checked publication has a race before CLI lookup. These risks were accepted in `brief.md`.
+- The local endpoint remains unauthenticated loopback TCP. Any local account able to reach it can invoke tools with the wrapper process's `gh` credentials; agent preflight and OpenCode permissions are not a backend authorization boundary. The extension's branch-name PR lookup can also select a same-named fork PR. Agent-side exhaustive checks cover `submit`/`link` but not other operations or direct MCP calls; even a checked publication has a race before CLI lookup. These risks were accepted in `brief.md`.
 - Do not inject a GitHub token into the server's environment or Nix store. Existing `gh` auth, host Git signing, and hooks remain in force; an `add` that cannot sign fails rather than disabling signing.
 - Land the version pin, server, and offline checks before updating agent guidance. Activate package/registration and policy together per host; fall back to existing remote GitHub MCP and user-owned local commands if the new upstream is unavailable. Rollback removes the extra upstream and restores the previous extension pin without touching `.git/gh-stack` or PRs.

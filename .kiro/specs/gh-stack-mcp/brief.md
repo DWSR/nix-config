@@ -12,7 +12,7 @@ Both macOS hosts install `gh-stack` through Home Manager, currently at the flake
 
 ## Desired Outcome
 
-An agent can discover typed, noninteractive local Stack tools through mcpproxy on either host and use them under explicit worktree, preflight, confirmation, and partial-result rules. Operator tests can prove packaging, tool contracts, and host registration without rewriting real branches or calling live APIs.
+An agent can discover typed, noninteractive local Stack tools through mcpproxy on either host and use them under explicit worktree, preflight, and partial-result rules without human authorization for tool calls. Operator tests can prove packaging, tool contracts, and host registration without rewriting real branches or calling live APIs.
 
 ## Approach
 
@@ -26,7 +26,7 @@ Build a small Go stdio MCP server with the official Go MCP SDK. Each tool maps a
 ## Boundary Candidates
 
 - The wrapper owns input validation, worktree/executable selection, process lifetime, tool schemas, and faithful CLI result reporting; the extension owns Stack semantics and local metadata.
-- Existing GitHub MCP owns remote-only native Stack inspection/mutation; agent guidance owns preflight, user confirmations, and user-owned recovery handoffs. Captain and `/restack` may use the wrapper for restack workflows; captain remains prohibited from initiating merge/unstack and read-only helpers stay read-only.
+- Existing GitHub MCP owns remote-only native Stack inspection/mutation; agent guidance owns local preflight, effects previews, and user-owned recovery handoffs. Captain and `/restack` may use the wrapper for restack workflows; captain remains prohibited from initiating merge/unstack and read-only helpers stay read-only.
 - Nix owns the shared extension version, server package, both-host registration, timeout settings, and offline checks; it does not change global Git signing or unrelated upstream registration. Raising shared call timeouts affects unrelated upstreams.
 
 ## Out of Boundary
@@ -36,7 +36,7 @@ Build a small Go stdio MCP server with the official Go MCP SDK. Each tool maps a
 - Do not expose numeric or PR-URL targets for `checkout`/`link`: CLI numeric resolution can select a different Stack or append PRs to an existing Stack. Use nonnumeric branch targets, or GitHub MCP for remote-only PR linking.
 - Do not claim all Stack pushes are atomic: `sync` attempts an atomic Git push, but standalone `push` and sequential `submit` can partially land. Do not promise automatic conflict resolution or merge completion from a queue acknowledgement.
 - Do not bypass Git signing for `add` commits or silently select destructive CLI flags; typed rebase continue requires a verified active Git conflict and a valid Stack recovery marker. Rebase abort remains a user-owned handoff because the CLI can hard-reset branches based on a stale marker.
-- Do not claim agent-side confirmations authenticate mcpproxy clients: unauthenticated loopback access by any local process, including another local account, is an explicitly accepted risk.
+- Do not claim agent-side preflight authenticates mcpproxy clients: unauthenticated loopback access by any local process, including another local account, is an explicitly accepted risk.
 - Do not invoke a private or undocumented GitHub Stack endpoint or force a repository history rewrite as a verification step.
 
 ## Upstream / Downstream
@@ -58,5 +58,5 @@ Build a small Go stdio MCP server with the official Go MCP SDK. Each tool maps a
 - The global proxy call timeout and both existing OpenCode proxy-entry timeouts must exceed the wrapper's longest execution plus cleanup budget. The operator accepted the longer wait ceiling for unrelated MCP tools instead of adding another proxy.
 - `gh-stack` matches open PRs by branch name without checking the head repository. The operator chose exhaustive same-repository PR-head preflight only before `submit`/`link`, not `view`, `init`, `sync`, `rebase`, or `push`; direct MCP callers can bypass even the publish preflight. Wrong local association and remote Stack mutation remain accepted residual risks.
 - `view --json` may refresh local metadata; zero exit from some mutations does not establish full success. Treat ambiguous, timed-out, or partial outcomes as such, not as safe-to-retry failures.
-- mcpproxy listens on loopback with `require_mcp_auth = false`. The operator accepted access by other local processes; the agent must still ask before high-impact operations, especially unstack, but that prompt is not server authorization.
-- Captain's destructive MCP permission changes from deny to ask for vetted restack operations, not blanket allow; code-execution bypass is excluded, and it still must not initiate merge or unstack. The operator accepted that OpenCode's `ask` is best-effort because auto mode and persistent approval can skip later prompts.
+- mcpproxy listens on loopback with `require_mcp_auth = false`. The operator accepted access by other local processes; typed local Stack tools need no human authorization, including unstack, but agent preflight still applies.
+- Captain's destructive MCP permission is `allow` for vetted restack operations; code-execution bypass is excluded, and it still must not initiate merge or unstack. OpenCode permissions cover the whole destructive router, so the captain's other operation-specific rules still apply.

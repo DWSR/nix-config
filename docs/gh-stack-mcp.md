@@ -73,24 +73,24 @@ separate settings.
 mcpproxy exposes an unauthenticated loopback listener on `127.0.0.1:8080`. Any
 local process or account able to reach it can call the Stack MCP server with
 the wrapper's `gh` credentials; loopback is not same-user isolation. OpenCode
-`ask` prompts and skill confirmations are not backend authentication. Auto mode
-or persistent approval can suppress a later `ask` prompt.
+allows typed local Stack MCP calls without a human authorization prompt.
+Agent-side preflight and effects previews are not backend authentication.
 
 The pinned CLI can associate a same-named fork PR during other CLI-backed
 operations. Agent-side exhaustive PR-head checks run only for `submit` and
 `link`; direct MCP clients bypass those checks. A matching PR can also appear
 after the check and before the CLI lookup, so the check-to-CLI lookup race
 remains. Treat these as accepted limits of this integration, not as conditions
-that confirmation or a successful prompt eliminates.
+that preflight or a successful tool call eliminates.
 
 ## Recovery after a write or uncertain result
 
 Every write can be partial or uncertain. `exited_unverified` means the process
 ended without a verified postcondition; `timed_out_unknown` can result from
 deadline expiry or process cancellation/interruption; `cleanup_unknown` means
-process cleanup could not be confirmed. A
-timeout or cleanup result does not prove that no local or remote change landed.
-Never automatically retry. After `exited_unverified`, `timed_out_unknown`,
+process cleanup could not be confirmed. A timeout or cleanup result does not
+prove that no local or remote change landed.
+Never retry without reinspection. After `exited_unverified`, `timed_out_unknown`,
 `cleanup_unknown`, or partial output, do not claim success unless fresh local
 refs and worktree status plus the affected remote PR heads and Stack membership
 establish the requested postcondition. If either side is unreadable or
@@ -99,11 +99,11 @@ success-looking CLI output proves success.
 
 Before any retry, re-inspect both sides. If either inspection is unreadable or
 ambiguous, report unknown and stop; do not retry. A retry requires complete,
-unambiguous fresh inspections and fresh scoped authorization. For an agent
-workflow, discover and use Git-MCP status, branch, log, and reflog reads with
-the same explicit absolute `path` on every call. Use GitHub MCP reads for
-remote PR and Stack membership. For example, follow the live tool names and
-routes for:
+unambiguous fresh inspections and an effects preview, not human authorization.
+For an agent workflow, discover and use Git-MCP status, branch, log, and reflog
+reads with the same explicit absolute `path` on every call. Use GitHub MCP
+reads for remote PR and Stack membership. For example, follow the live tool
+names and routes for:
 
 ```text
 Git-MCP: git_status(path="<absolute-worktree>")
@@ -162,9 +162,9 @@ smoke.
    `call_tool_destructive`. Separately discover remote GitHub MCP Stack/PR reads.
 4. Take fresh Git-MCP snapshots for the absolute worktree and fresh GitHub MCP
    reads for the target repository and affected branches. Confirm the remote,
-   branch order, PR matches, and current Stack membership. Request exact
-   preflight and authorization for this disposable worktree, remote, branches,
-   and operation before each mutation.
+   branch order, PR matches, and current Stack membership. Complete exact
+   preflight and effects preview for this disposable worktree, remote, branches,
+   and operation before each mutation; no human authorization is needed.
 5. Call typed `stack_init` once for the explicit trunk and bottom-to-top branch
    list. Then call `stack_view` and verify local tracking and branch order
    separately from GitHub MCP; an absent remote Stack at this point is not a
@@ -172,7 +172,7 @@ smoke.
 6. To test publication as well, paginate through all open PRs in this disposable
    repository and inspect exact head and base repositories for each target
    branch. Stop for a foreign/unknown head or base, multiple matches, or
-   incomplete pagination. After separate exact authorization to publish, call
+   incomplete pagination. After previewing any new PR creation, call
    typed `stack_submit` once, then verify local refs and view with Git-MCP/local
    Stack MCP and verify PR heads, bases, and remote Stack order with GitHub MCP.
    Verify local and remote results separately; do not use `stack_view` as proof

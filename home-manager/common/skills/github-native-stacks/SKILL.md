@@ -54,7 +54,7 @@ from Stack orchestration. When the user explicitly requests a code fix,
 Git-MCP may stage explicit paths and create one ordinary fix commit on that
 branch. It must not amend or rewrite existing Stack commits. Any required
 cascade rebase or push uses the typed local Stack MCP tool after its own
-preflight and authorization, or a user-owned `gh stack` handoff if that tool is
+preflight and effects preview, or a user-owned `gh stack` handoff if that tool is
 unavailable.
 
 ## Terminology and ordering
@@ -141,7 +141,7 @@ The unqualified unstack form is `remoteAndLocal`; `--local` is `localOnly`.
 Use the operation-specific handoffs below for checkout, rebase, sync, push, and
 submit. These are user-owned handoffs only; never execute them from the agent.
 
-### Snapshots, previews, and scoped authorization
+### Snapshots, previews, and local tool calls
 
 `stack_view` is a local observation that refreshes Stack metadata, so it is a
 write-class call, not a read-only operation. Use Git-MCP with the explicit
@@ -149,9 +149,9 @@ absolute worktree `path` on every call to identify the target worktree, current
 branch, status, branch refs, and configured remote before local Stack work.
 Use GitHub MCP to inspect the relevant remote Stack membership and affected PR
 state; record when no remote Stack or PR is associated with the target. Call
-`stack_view` only for an explicitly requested local view or as postflight
-verification of an explicitly authorized `localOnly` cleanup. Name its exact
-worktree and remote, and disclose that it refreshes local metadata.
+`stack_view` whenever local tracking state is needed for inspection, preflight,
+or postflight. Name its exact worktree and remote, and disclose that it refreshes
+local metadata.
 
 Before each local mutation (`stack_init`, `stack_add`, `stack_checkout`,
 `stack_rebase`, `stack_sync`, `stack_push`, `stack_submit`, `stack_link`, or
@@ -162,22 +162,17 @@ Before each local mutation (`stack_init`, `stack_add`, `stack_checkout`,
    the remote Stack number/order and affected PR refs, states, and membership.
 2. Preview the exact branches, paths, and side effects. For `stack_add` with
    `stage: all`, enumerate every untracked and changed path before staging; do
-   not treat `--all` as an implicit opt-in. For `stack_sync` with pruning,
-   enumerate the exact local branches that would be pruned and ask for that
-   effect explicitly. For rebase, sync, and push, name every affected branch
-   and disclose history rewrites, per-branch force-with-lease, and non-atomic
-   push effects as applicable.
-3. Request authorization for one operation, naming the absolute worktree,
-   exact Git remote (and GitHub owner/repository), exact affected branches in
-   order, operation, options, and side effects. A broad request or earlier
-   authorization is not enough. For `stack_unstack`, use the immediate exact
-   confirmation below as this scoped authorization rather than asking twice.
-   If the inspected state changes, repeat the snapshots, preview, and
-   authorization.
-
-For example, ask to authorize `stack_rebase` with scope `upstack` on worktree
-`<absolute-path>`, remote `<remote>` for `<owner>/<repo>`, affecting branches
-`[<branch-1>, <branch-2>]`, and state the expected history and review effects.
+   not silently stage unrelated files. For `stack_sync` with pruning, enumerate
+   the exact local branches that would be pruned. For rebase, sync, and push,
+   name every affected branch and disclose history rewrites, per-branch
+   force-with-lease, and non-atomic push effects as applicable.
+3. Call the exact discovered tool for the inspected absolute worktree, Git
+   remote, GitHub owner/repository, affected branches in order, operation, and
+   options. No additional human authorization or confirmation is required for
+   any `gh-stack-mcp` tool call, including `stack_unstack` or a verified retry.
+   If the inspected state changes, repeat the snapshots and preview before
+   calling. Ask for missing target details only when the target or mode cannot
+   be established from the request and the snapshots.
 
 ### Submit and link PR-head preflight
 
@@ -191,11 +186,11 @@ repository associations.
 
 Stop before submit/link for incomplete pagination, a matching PR with a foreign
 or unknown head or base repository association, or multiple matches for an
-affected branch (more than one open PR). Report the matching PR
-number, exact head, and both repository associations. A branch with no matching
-PR is not an existing PR: stop a `stack_link` until an existing PR is explicitly
-identified; for `stack_submit`, proceed with PR creation only when that creation
-is explicitly authorized. Never create PRs implicitly during a link or retry.
+affected branch (more than one open PR). Report the matching PR number, exact
+head, and both repository associations. A branch with no matching PR is not an
+existing PR: stop a `stack_link` until an existing PR is identified; for
+`stack_submit`, include any missing PR creation in the preview before proceeding.
+Never create PRs implicitly during a link or an unverified retry.
 
 After submit/link, inspect local refs with Git-MCP and re-read the affected PRs
 and Stack membership with GitHub MCP. Verify each branch-to-PR association,
@@ -204,13 +199,10 @@ and report uncertainty rather than retrying when the result is ambiguous.
 
 ### Unstack locally
 
-After the latest local and remote snapshots and preview, immediately ask for
-confirmation naming the exact Stack number and exact `mode` value:
-`remoteAndLocal` or `localOnly`. Do not make another call between that
-confirmation and `stack_unstack`. State the effects in the confirmation:
-
-Include the absolute worktree, remote and GitHub repository, affected branches,
-and `stack_unstack` operation in this same scoped authorization.
+After the latest local and remote snapshots, preview the exact Stack number,
+absolute worktree, remote and GitHub repository, affected branches, and `mode`:
+`remoteAndLocal` or `localOnly`. State the effects of the selected mode, then
+call `stack_unstack` without an additional human confirmation.
 
 Require a positive explicit Stack number in either mode; never infer the active
 Stack number. If the local Stack has no remote Stack number, do not call the
@@ -235,14 +227,15 @@ or any timeout, cleanup uncertainty, partial result, or other uncertainty,
 re-inspect local refs and worktree state with Git-MCP and relevant remote PR
 and Stack membership with GitHub MCP before claiming success or retrying. If
 the snapshots do not establish one unambiguous outcome, stop, report what is
-known, and request fresh authorization before any later attempt. Never retry a
-Stack mutation in a loop.
+known, and do not retry. A later attempt requires fresh, unambiguous snapshots
+and an effects preview, not human authorization. Never retry a Stack mutation
+in a loop.
 
 These checks are agent-side safeguards, not backend authentication. Other
 CLI-backed operations can associate a same-named fork PR; direct MCP or loopback
 clients can bypass this agent's PR-head preflight; and a PR can appear between
 the exhaustive list and the CLI lookup, creating a check-to-CLI race. Do not
-describe user confirmation as preventing those cases.
+describe the agent's preview as preventing those cases.
 
 ## Resolve and read a remote Stack
 
@@ -412,12 +405,11 @@ stackNumber: <stack-number>
 If a local checkout tracks the Stack, tell the user that the next local sync or
 submit can recreate the remote grouping. If they separately want local tracking
 removed, treat it as a new local-only operation; the earlier `remote-only`
-confirmation does not authorize local cleanup. Take fresh Git-MCP and GitHub
-MCP snapshots for the exact absolute worktree, remote/repository, affected
-branches, and current remote Stack/PR membership. Immediately ask for explicit
-confirmation naming the exact Stack number, `localOnly` mode, absolute worktree,
-remote/repository, and affected branches. Do not make another call between this
-confirmation and the local unstack operation.
+confirmation does not select local cleanup by itself. Take fresh Git-MCP and
+GitHub MCP snapshots for the exact absolute worktree, remote/repository,
+affected branches, and current remote Stack/PR membership. Preview the exact
+Stack number, `localOnly` mode, worktree, remote/repository, branches, and local
+tracking removal, then call `stack_unstack` without a second confirmation.
 
 If the user wants the agent to perform the cleanup and `stack_unstack` is
 advertised, invoke it through the exact returned `name` and `call_with`, with
@@ -450,11 +442,11 @@ Git calls when the semantics differ.
 
 ### Cascade sync
 
-For local sync, use `stack_sync` after the snapshots, branch-prune preview, and
-scoped authorization above. If local Stack tools are not advertised, provide
-the CLI handoff below. For remote-only diagnosis, inspect the remote Stack and
-fan out PR/check/review reads; Git-MCP may inspect status, branches, worktrees,
-logs, and diffs with that explicit absolute path.
+For local sync, use `stack_sync` after the snapshots and branch-prune preview
+above. If local Stack tools are not advertised, provide the CLI handoff below.
+For remote-only diagnosis, inspect the remote Stack and fan out PR/check/review
+reads; Git-MCP may inspect status, branches, worktrees, logs, and diffs with
+that explicit absolute path.
 
 Do not call `update_pull_request_branch` for every PR. That endpoint updates
 one branch independently and does not reconcile local Stack metadata, preserve
@@ -467,9 +459,9 @@ will run the operation themselves:
 gh stack sync --remote <remote>
 ```
 
-Add `--prune` only when the user explicitly wants merged local branches
-deleted. Never omit `--remote` unless `remote.pushDefault` is known to be
-configured.
+Select `prune: true` only when removing merged local branches is part of the
+requested sync; preview the affected branches. Never omit `--remote` unless
+`remote.pushDefault` is known to be configured.
 
 Explain the effects before handing off: sync fetches remote changes,
 reconciles local and remote Stack composition, fast-forwards trunk, rebases
@@ -487,7 +479,7 @@ the exact branch tips are known.
 
 ### Cascade rebase
 
-For local cascade rebase, use `stack_rebase` with the authorized `start` action
+For local cascade rebase, use `stack_rebase` with the verified `start` action
 and exact scope after preflight. A conflict may be continued only through the
 guarded `stack_rebase` `continue` action when its recorded conflict branch and
 active Git rebase match. `stack_rebase` does not provide abort; abort remains a
@@ -510,8 +502,8 @@ gh stack rebase --no-trunk
 ```
 
 Use `--upstack` after editing a lower layer. Use `--downstack` to update only
-the path from trunk through the current layer. Use `--no-trunk` only when the
-user explicitly wants to align Stack branches without pulling trunk.
+the path from trunk through the current layer. Use `--no-trunk` when the
+requested scope is to align Stack branches without pulling trunk.
 
 A local rebase does not push. When the user owns the CLI workflow, provide:
 
@@ -557,8 +549,8 @@ without inventing history-rewrite commands. Require the explicit Stack number
 and mode before showing its unstack step:
 
 ```bash
-gh stack unstack <stack-number>          # remoteAndLocal, after confirmation
-gh stack unstack <stack-number> --local  # localOnly, after confirmation
+gh stack unstack <stack-number>          # remoteAndLocal
+gh stack unstack <stack-number> --local  # localOnly
 # Rewrite branch ancestry bottom-to-top using verified old boundary SHAs.
 gh stack init --base <trunk> <bottom> ... <top>
 gh stack submit --auto --remote <remote>
@@ -607,10 +599,11 @@ method and may land the PRs in separate groups.
 
 ### Submit or link
 
-For local Stack publication, use `stack_submit` or `stack_link` only after the
-exhaustive PR-head preflight, snapshots, and scoped authorization above. The
-scope must state whether missing PR creation is intended; do not infer it.
-When local tools are unavailable, provide the user-owned CLI handoff below.
+For local Stack publication, use `stack_submit` or `stack_link` after the
+exhaustive PR-head preflight, snapshots, and effects preview above. Include any
+missing PR creation in the `stack_submit` preview; `stack_link` requires
+existing PRs. When local tools are unavailable, provide the user-owned CLI
+handoff below.
 
 For a remote-only workflow, GitHub MCP can operate when all branches already
 exist on GitHub. It may create missing PRs bottom-to-top with
@@ -642,10 +635,11 @@ gh stack link --remote <remote>
 
 ### Push
 
-For local Stack pushes, use `stack_push` after scoped authorization. Do not loop
-`git-mcp:git_push` as a stack-wide push: per-branch calls lose the CLI's lease
-coordination and can leave an unreported partial result. If local Stack tools
-are unavailable or the user will run the operation themselves, provide:
+For local Stack pushes, use `stack_push` after fresh snapshots and an effects
+preview. Do not loop `git-mcp:git_push` as a stack-wide push: per-branch calls
+lose the CLI's lease coordination and can leave an unreported partial result.
+If local Stack tools are unavailable or the user will run the operation
+themselves, provide:
 
 ```bash
 gh stack push --remote <remote>
@@ -701,7 +695,8 @@ Every Git-MCP call must include the explicit absolute repository `path`.
 Git-MCP may perform these supporting operations when requested:
 
 - Read status, current branch, branch lists, worktrees, logs, and diffs.
-- Fetch a named remote after explicit authorization to update local refs.
+- Fetch a named remote for preflight or recovery when the target is unambiguous;
+  re-inspect refs afterward.
 - Check out an existing ordinary local branch after explicit request. For
   native Stack navigation, prefer `stack_checkout` so local Stack tracking is
   maintained.
@@ -729,11 +724,14 @@ atomicity or recovery guarantees.
 - `404` from list commonly means native Stacks are unavailable for the
   repository. From get it can also mean the Stack number does not exist.
   Preserve the API message and explain both possibilities when ambiguous.
-- `409` means another request is modifying the Stack. Re-read it, show the new
-  order and SHAs, and ask before retrying. Never retry in a loop.
+- For remote GitHub MCP, `409` means another request is modifying the Stack.
+  Re-read it, show the new order and SHAs, and ask before retrying that remote
+  call. For a typed local Stack MCP call, follow the local postflight and retry
+  after fresh unambiguous snapshots and an effects preview, without human
+  authorization. Never retry in a loop.
 - `422` means the requested PR chain or mutation is invalid, or unstacking
   cannot remove any locked member. Re-read PR bases and Stack membership;
-  never coerce the request with unapproved base changes.
+  never coerce the request with unrequested base changes.
 - A timeout does not prove a mutation failed. Read the Stack or filter by PR
   before retrying so the operation is not duplicated.
 - On any partial multi-call workflow, stop at the first unexpected failure,

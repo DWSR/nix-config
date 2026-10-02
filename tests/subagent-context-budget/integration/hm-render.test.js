@@ -480,7 +480,7 @@ test('rendered OpenCode config applies permissions for built-in and Markdown age
   assert.equal(rendered.personal.hasStackCaptain, false);
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_write, 'allow');
-  assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_destructive, 'ask');
+  assert.equal(rendered.shopify.stackCaptain.mcpproxy_call_tool_destructive, 'allow');
   assert.equal(rendered.shopify.stackCaptain.mcpproxy_code_execution, 'deny');
   assert.deepEqual(rendered.shopify.stackCaptain.bash, {
     '*': 'allow',
@@ -543,6 +543,7 @@ test('per-agent disableBudget marks only that agent unbudgeted and leaves render
   assert.equal(rendered.shopify.hasYbSleuthPermissionOverride, false);
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_write, 'allow');
+  assert.equal(rendered.shopify.stackCaptainPermission.mcpproxy_call_tool_destructive, 'allow');
 });
 
 test('rendered metadata is host-aware and filters Shopify-only agents from personal host', () => {
@@ -575,6 +576,7 @@ test('rendered metadata is host-aware and filters Shopify-only agents from perso
   assert.deepEqual(rendered.shopify.stackCaptain.state, { kind: 'enforced', reason: 'host-override' });
   assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_retrieve_tools, 'allow');
   assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_call_tool_write, 'allow');
+  assert.equal(rendered.shopify.stackCaptain.permissionBudget.mcpproxy_call_tool_destructive, 'allow');
   assert.deepEqual(rendered.shopify.ybSleuth.permissionBudget.bash, { git: 'allow' });
 });
 
