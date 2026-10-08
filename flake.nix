@@ -262,7 +262,6 @@
           gitCacheClone = pkgs.callPackage ./scripts/git-clone-isolation.nix { };
 
           opencodeTurnTimestampHosts = [
-            "ShopifyLaptop"
             "Brandons-MacBook-Pro"
           ];
 
@@ -381,7 +380,7 @@
           nixvimTests =
             if system == "aarch64-darwin" then
               let
-                hmConfig = self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama;
+                hmConfig = self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama;
                 nvimPackage = hmConfig.programs.nixvim.build.package;
                 testDir = ./home-manager/nixvim/tests;
               in
@@ -488,10 +487,9 @@
                       pkgs.lib.assertMsg (missing == [ ])
                         "treesitter-textobjects keymaps missing from programs.nixvim.keymaps on ${hostName}: ${pkgs.lib.concatStringsSep " " missing}. The main-branch keymap API regressed (likely back to the inert plugins.treesitter-textobjects.settings.{select,move} form).";
                   in
-                  assert checkHost "ShopifyLaptop";
                   assert checkHost "Brandons-MacBook-Pro";
                   pkgs.runCommand "nixvim-textobjects-keymaps" { } ''
-                    printf 'treesitter-textobjects keymaps declared on both hosts\n' > $out
+                    printf 'treesitter-textobjects keymaps declared on the personal host\n' > $out
                   '';
 
                 # Tier 2: Config assertions — plugins, keybindings, settings, LSP config
@@ -771,7 +769,7 @@
 
               # Live mic-mute semantic check — design "Components and Interfaces →
               # Verification → #### Verification" `hammerspoon-mic-mute-semantic`
-              # bullet. Feeds the LIVE ShopifyLaptop `home.hammerspoon` cfg (now
+              # bullet. Feeds the personal host `home.hammerspoon` cfg (now
               # carrying the ⌃⌘⇧F12 binding + the mic-mute.lua extraConfig) through
               # the framework's real `mkSemanticCheck` gate. Building it proves the
               # mic-mute Lua references only existing `hs` symbols (Req 6.1);
@@ -780,7 +778,7 @@
               # unchanged.
               hammerspoon-mic-mute-semantic = mkSemanticCheck {
                 inherit
-                  (self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama.home.hammerspoon)
+                  (self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.home.hammerspoon)
                   keybindings
                   extraConfig
                   reloadOnConfigChange
@@ -832,7 +830,7 @@
                 reloadOnConfigChange = true;
               };
 
-              # Host-wiring eval assertions (both hosts) — Task 8.4; design
+              # Host-wiring eval assertions (personal host) — Task 8.4; design
               # "#### Verification" host-wiring bullet + Testing Strategy →
               # Build/Integration host-wiring list. Pure eval over each darwin
               # host config plus a trivial runCommand, so no host switch or
@@ -849,7 +847,6 @@
               hammerspoon-host-wiring =
                 let
                   hosts = [
-                    "ShopifyLaptop"
                     "Brandons-MacBook-Pro"
                   ];
                   checkHost =
@@ -899,7 +896,7 @@
                     printf '%s\n' "$hostReport" > $out
                   '';
 
-              # Mic-mute wiring + teardown eval assertions (both hosts) — Task
+              # Mic-mute wiring + teardown eval assertions (personal host) — Task
               # 4.2; design "#### Verification" `hammerspoon-mic-mute-wiring`
               # bullet. Pure eval over each darwin host config plus a trivial
               # runCommand, so no host switch or Accessibility grant is needed
@@ -915,7 +912,6 @@
               hammerspoon-mic-mute-wiring =
                 let
                   hosts = [
-                    "ShopifyLaptop"
                     "Brandons-MacBook-Pro"
                   ];
                   checkHost =
@@ -956,7 +952,7 @@
                     printf '%s\n' "$hostReport" > $out
                   '';
 
-              # Caffeinate wiring + teardown eval assertions (both hosts) — Task
+              # Caffeinate wiring + teardown eval assertions (personal host) — Task
               # 4.2; design "#### Verification" `hammerspoon-caffeinate-wiring`
               # bullet. Pure eval over each darwin host config plus a trivial
               # runCommand, so no host switch or Accessibility grant is needed
@@ -964,14 +960,11 @@
               # caffeinate sentinel is present in the rendered home.hammerspoon
               # config (via render.nix) (Req 7.2), and the "domzilla-caffeine"
               # cask is absent from homebrew.casks (Req 6.1/7.3) — asserting on
-              # both hosts is the robust, uniform mirror of the mic-mute check.
-              # Plus, Shopify-only, the rendered zellij default layout carries no
-              # `command "caffeinate"` pane (Req 6.2/7.3). The framework, mic-mute,
-              # and hammerspoon-caffeinate-semantic checks are unchanged.
+              # The personal host is the retained host behavior. The framework,
+              # mic-mute, and hammerspoon-caffeinate-semantic checks are unchanged.
               hammerspoon-caffeinate-wiring =
                 let
                   hosts = [
-                    "ShopifyLaptop"
                     "Brandons-MacBook-Pro"
                   ];
                   sentinel = "-- hammerspoon-caffeinate: menu-bar toggle";
@@ -995,28 +988,18 @@
                       "hammerspoon caffeinate wiring: ${hostName} still lists the \"domzilla-caffeine\" cask in homebrew.casks (Req 6.1/7.3).";
                     "${hostName}: caffeinate sentinel present=${pkgs.lib.boolToString sentinelPresent}; domzilla-caffeine cask present=${pkgs.lib.boolToString caffeineCaskPresent}";
 
-                  # Shopify-only: the overridden zellij default layout lives on
-                  # ShopifyLaptop; assert no `command "caffeinate"` pane remains.
-                  shopifyLayout =
-                    self.darwinConfigurations."ShopifyLaptop".config.home-manager.users.brandonmcnama.xdg.configFile."zellij/layouts/default.kdl".text;
-                  zellijCaffeinatePresent = pkgs.lib.hasInfix ''command "caffeinate"'' shopifyLayout;
                 in
-                assert pkgs.lib.assertMsg (!zellijCaffeinatePresent)
-                  "hammerspoon caffeinate wiring: ShopifyLaptop rendered zellij default layout still contains a 'command \"caffeinate\"' pane (Req 6.2/7.3).";
                 pkgs.runCommand "hammerspoon-caffeinate-wiring"
                   {
                     hostReport = pkgs.lib.concatMapStringsSep "\n" checkHost hosts;
-                    zellijReport = "ShopifyLaptop: zellij caffeinate pane present=${pkgs.lib.boolToString zellijCaffeinatePresent}";
                   }
                   ''
                     printf '%s\n' "$hostReport" > $out
-                    printf '%s\n' "$zellijReport" >> $out
                   '';
 
               hammerspoon-timezone-menubar-wiring =
                 let
                   hosts = [
-                    "ShopifyLaptop"
                     "Brandons-MacBook-Pro"
                   ];
                   sentinel = "-- hammerspoon-timezone-menubar: compact world clocks";
@@ -1236,12 +1219,6 @@
                       home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
                     }
                   ];
-                  shopify = inspectedHost "ShopifyLaptop" [ ];
-                  futureShopify = inspectedHost "ShopifyLaptop" [
-                    {
-                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = true;
-                    }
-                  ];
                   personalCheck = checkConfig {
                     baselineHm = personalWithoutWatchdog;
                     label = "Brandons-MacBook-Pro";
@@ -1249,24 +1226,8 @@
                     expectedEnabled = true;
                     expectedRole = "server";
                   };
-                  shopifyCheck = checkConfig {
-                    baselineHm = shopify;
-                    label = "ShopifyLaptop";
-                    hm = shopify;
-                    expectedEnabled = false;
-                    expectedRole = "client";
-                  };
-                  futureShopifyCheck = checkConfig {
-                    baselineHm = shopify;
-                    label = "ShopifyLaptop future-enabled variant";
-                    hm = futureShopify;
-                    expectedEnabled = true;
-                    expectedRole = "client";
-                  };
                   hostReport = pkgs.lib.concatStringsSep "\n" [
                     personalCheck
-                    shopifyCheck
-                    futureShopifyCheck
                   ];
 
                   sourceForgedContributionModule = {
@@ -1291,12 +1252,6 @@
                       home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = pkgs.lib.mkForce false;
                     }
                   ];
-                  sourceForgedShopify = sourceForgedHost "ShopifyLaptop" [ ];
-                  sourceForgedFutureShopify = sourceForgedHost "ShopifyLaptop" [
-                    {
-                      home-manager.users.brandonmcnama.home.hammerspoon.deskflowWatchdog.enable = true;
-                    }
-                  ];
                   rejectedConfig =
                     args:
                     assert pkgs.lib.assertMsg (
@@ -1310,20 +1265,6 @@
                       hm = sourceForgedPersonal;
                       expectedEnabled = true;
                       expectedRole = "server";
-                    })
-                    (rejectedConfig {
-                      baselineHm = sourceForgedShopify;
-                      label = "source-forged ShopifyLaptop";
-                      hm = sourceForgedShopify;
-                      expectedEnabled = false;
-                      expectedRole = "client";
-                    })
-                    (rejectedConfig {
-                      baselineHm = sourceForgedShopify;
-                      label = "source-forged ShopifyLaptop future-enabled variant";
-                      hm = sourceForgedFutureShopify;
-                      expectedEnabled = true;
-                      expectedRole = "client";
                     })
                   ];
 
@@ -1631,32 +1572,21 @@
                 printf '%s\n' "$report" > $out
               '';
 
-              # Host-wiring eval assertions (both hosts) — deskflow-config spec
+              # Host-wiring eval assertions (personal host) — deskflow-config spec
               # task 4.2 plus the personal-host server adoption. Pure eval over
               # each darwin host config plus a trivial runCommand; shares the
               # aarch64 gate above (it reads self.darwinConfigurations). Forcing
               # the per-host report forces, per host, assertions each naming the
               # host and the failing property:
-              #   ShopifyLaptop (client): home.deskflow enabled in the client role;
-              #     Deskflow.conf carries coreMode=1 + the curated keys
-              #     tlsEnabled=true and port=24800; the trusted-servers file pins
-              #     the personal host's server cert fingerprint (Req 6.1/7.1/8.3).
               #   Brandons-MacBook-Pro (server): home.deskflow enabled in the
               #     server role; Deskflow.conf carries coreMode=2 + tlsEnabled=true,
               #     port=24800, keySize=4096 and a pinned certificate path; the
-              #     rendered deskflow-server.conf defines both screens and the
-              #     right link (Req 6.1/7.1/8.1/8.2/4.3). No other host enables
-              #     Deskflow (Req 6.3). The deskflow-render check above is unchanged.
+              #     rendered deskflow-server.conf defines the remaining screen
+              #     layout (Req 6.1/7.1/8.1/8.2/4.3).
               deskflow-host-wiring =
                 let
-                  # The personal host's Deskflow server cert fingerprint, which the
-                  # ShopifyLaptop client must trust (mirrors the value wired in
-                  # configurations/shopify/home-manager/deskflow.nix).
-                  personalFingerprint = "4a9f1514fc4bf5af3dec2f62b272fa84188e4d6554c53146a98fe761d7cf2701";
-                  # Expected role per host. Both hosts now enable Deskflow:
-                  # ShopifyLaptop as the client, Brandons-MacBook-Pro as the server.
+                  # Expected role for the remaining personal host.
                   expectedRoles = {
-                    ShopifyLaptop = "client";
                     "Brandons-MacBook-Pro" = "server";
                   };
                   checkHost =
@@ -1677,21 +1607,9 @@
                       "deskflow host-wiring: ${hostName} rendered Deskflow.conf must contain port=24800 (Req 7.1).";
                     assert lib.assertMsg (missingModalSuppressionLines == [ ])
                       "deskflow host-wiring: ${hostName} Deskflow.conf must contain all modal-suppression lines; missing [ ${lib.concatStringsSep ", " missingModalSuppressionLines} ].";
-                    if expectedRole == "client" then
-                      let
-                        trustText = hm.home.file."Library/Deskflow/tls/trusted-servers".text;
-                      in
-                      assert lib.assertMsg (lib.hasInfix "coreMode=1" settings)
-                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=1 (client mode, Req 7.1).";
-                      assert lib.assertMsg (lib.hasInfix ''remoteHost="Brandons-MacBook-Pro.local"'' settings)
-                        "deskflow host-wiring: ${hostName} Deskflow.conf must set client/remoteHost to the server \"Brandons-MacBook-Pro.local\" (Req 3.2).";
-                      assert lib.assertMsg (lib.hasInfix "v2:sha256:${personalFingerprint}" trustText)
-                        "deskflow host-wiring: ${hostName} trusted-servers must pin v2:sha256:${personalFingerprint} (Req 8.3).";
-                      "${hostName}: enable=true role=\"client\"; coreMode=1, tlsEnabled=true, port=24800, remoteHost set; trusted-servers pins server fingerprint"
-                    else
-                      let
-                        layout = hm.home.file."Library/Deskflow/deskflow-server.conf".text;
-                      in
+                    let
+                      layout = hm.home.file."Library/Deskflow/deskflow-server.conf".text;
+                    in
                       assert lib.assertMsg (lib.hasInfix "coreMode=2" settings)
                         "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=2 (server mode, Req 7.1).";
                       assert lib.assertMsg (lib.hasInfix "keySize=4096" settings)
@@ -1699,11 +1617,9 @@
                       assert lib.assertMsg (lib.hasInfix "certificate=" settings)
                         "deskflow host-wiring: ${hostName} Deskflow.conf must pin a certificate path (Req 8.1).";
                       assert lib.assertMsg (
-                        lib.hasInfix "Brandons-MacBook-Pro.local" layout && lib.hasInfix "ShopifyLaptop.local" layout
-                      ) "deskflow host-wiring: ${hostName} deskflow-server.conf must define both screens (Req 4.3).";
-                      assert lib.assertMsg (lib.hasInfix "right = ShopifyLaptop.local" layout)
-                        "deskflow host-wiring: ${hostName} deskflow-server.conf must contain the 'right = ShopifyLaptop.local' link (Req 4.3).";
-                      "${hostName}: enable=true role=\"server\"; coreMode=2, tlsEnabled=true, port=24800, keySize=4096, cert pinned; server layout screens+link present";
+                        lib.hasInfix "Brandons-MacBook-Pro.local" layout
+                      ) "deskflow host-wiring: ${hostName} deskflow-server.conf must define the personal screen (Req 4.3).";
+                    "${hostName}: enable=true role=\"server\"; coreMode=2, tlsEnabled=true, port=24800, keySize=4096, cert pinned; personal layout present";
                 in
                 pkgs.runCommand "deskflow-host-wiring"
                   {
@@ -1874,7 +1790,6 @@
             inherit pkgs;
             inherit (inputs) home-manager;
             realLitestream = if system == "aarch64-darwin" then pkgs.litestream else null;
-            shopifyHome = self.darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama;
           };
 
           local-binary-cache-render =
@@ -1952,24 +1867,6 @@
                 chmod -R u+w source
                 cd source
                 node --experimental-strip-types --test tests/rtk-opencode/*.test.js tests/rtk-opencode/*.test.ts
-                touch $out
-              '';
-
-          binks-pr-review-tests =
-            pkgs.runCommand "binks-pr-review-tests"
-              {
-                nativeBuildInputs = [
-                  pkgs.nix
-                  pkgs.nodejs
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                node --test tests/binks-pr-review/*.test.js
                 touch $out
               '';
 
@@ -2356,6 +2253,7 @@
         {
           default = pkgs.mkShell {
             buildInputs = preCommitCheck.enabledPackages ++ [
+              pkgs.nodejs
               # Available in-shell so operators can decrypt/edit secrets/*.yaml
               # with the root-owned sops-nix age key. The wrapper invokes the
               # pinned sops binary under sudo with SOPS_AGE_KEY_FILE set; see
