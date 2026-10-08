@@ -638,6 +638,22 @@
         "type": "github"
       }
     },
+    "nixpkgs_3": {
+      "locked": {
+        "lastModified": 1791260994,
+        "narHash": "sha256-Miqqk/ammqnTUxaoCyvtwoPeLbI1ksFyLxi/CazZpWY=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "151fa4e8ddfdd8dd25d945ad94ed54a13de9f6e4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "nixvim": {
       "inputs": {
         "flake-parts": "flake-parts",
@@ -726,6 +742,25 @@
         "type": "github"
       }
     },
+    "pared": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_3"
+      },
+      "locked": {
+        "lastModified": 1791454500,
+        "narHash": "sha256-reHwkDv9RvFCZyyx2D7l5rSrH3gLuIdJqp2eOZvSXlg=",
+        "owner": "4evy",
+        "repo": "pared",
+        "rev": "bc9d5e0b196e014bad827405cba9be4060cb6ad2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "4evy",
+        "ref": "2.1.0",
+        "repo": "pared",
+        "type": "github"
+      }
+    },
     "pi": {
       "inputs": {
         "bun2nix": "bun2nix",
@@ -798,6 +833,7 @@
         "nixvim": "nixvim",
         "op-shell-plugins": "op-shell-plugins",
         "opencode": "opencode",
+        "pared": "pared",
         "pi": "pi",
         "sops-nix": "sops-nix",
         "stylix": "stylix",

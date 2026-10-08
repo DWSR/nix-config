@@ -14,6 +14,7 @@
 
     ./1password.nix
     ./local-binary-cache.nix
+    ./pared.nix
     ./slack.nix
     ./sqlite-backup-verify.nix
     ./stylix.nix

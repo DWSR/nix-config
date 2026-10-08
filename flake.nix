@@ -119,6 +119,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # The nix-darwin module also manages feature policy and performs model
+    # cleanup during activation. Keep the CLI package available system-wide;
+    # configure Apple Intelligence policy manually with `pared wizard`.
+    pared.url = "github:4evy/pared/2.1.0";
+
   };
 
   outputs =
