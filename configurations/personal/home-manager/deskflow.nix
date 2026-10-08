@@ -13,10 +13,10 @@
   # "deskflow-cert" in ../../default.nix (format = "yaml"; key = "data") and
   # decrypted to an owner-only path. It
   # is referenced by path only -- the private key never enters the Nix store.
-  home.hammerspoon.deskflowWatchdog.enable = true;
+  home.hammerspoon.deskflowWatchdog.enable = false;
 
   home.deskflow = {
-    enable = true;
+    enable = false;
     role = "server";
     computerName = "Brandons-MacBook-Pro.local";
 
@@ -32,10 +32,7 @@
         { name = "Brandons-MacBook-Pro.local"; }
       ];
 
-      links = [
-        {
-        }
-      ];
+      links = [ ];
 
       # Global options, translated from deskflow-server.conf's `section: options`.
       # Values are strings (the schema is attrsOf str); the renderer emits them

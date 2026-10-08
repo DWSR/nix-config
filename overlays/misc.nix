@@ -502,13 +502,19 @@ final: prev: {
           sources = opencodeBunSources;
         };
       });
+      # Apple's codesign is available at a stable absolute path on Darwin but
+      # is not included in Nix's build sandbox PATH. OpenCode invokes it by
+      # name after embedding the bundle, so expose that host tool explicitly.
+      opencodeCodesign = final.writeShellScriptBin "codesign" ''
+        exec /usr/bin/codesign "$@"
+      '';
       replaceBun = input: if (input.pname or null) == "bun" then opencodeBun else input;
     in
     inputs.opencode.packages.${final.stdenv.hostPlatform.system}.opencode.overrideAttrs (old: {
       version = "1.18.32";
       __intentionallyOverridingVersion = true;
 
-      nativeBuildInputs = map replaceBun (old.nativeBuildInputs or [ ]);
+      nativeBuildInputs = (map replaceBun (old.nativeBuildInputs or [ ])) ++ [ opencodeCodesign ];
 
       # 1. Turn timestamp rendering. Operators need a host rebuild plus a fresh
       #    OpenCode process before this behavior appears; already-running
