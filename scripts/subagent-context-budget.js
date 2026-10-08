@@ -19,12 +19,11 @@ const path = require('node:path');
 
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
-const HOST_SCOPES = Object.freeze(['all', 'shopify', 'personal']);
+const HOST_SCOPES = Object.freeze(['all', 'personal']);
 const BASELINE_TOKEN_STATUSES = Object.freeze(['placeholder', 'measured']);
 const FORBIDDEN_BASELINE_INSTRUCTION_CATEGORIES = Object.freeze(new Set([
   'host-specific',
   'project-specific',
-  'shopify',
   'personal',
   'nix-config',
 ]));
@@ -302,7 +301,7 @@ function validateAgentBudget(catalogName, agent) {
     errors.push(validationError(catalogName, 'source', 'agent source must be builtin, common-markdown, or host-markdown'));
   }
   if (!HOST_SCOPES.includes(agent.hostScope)) {
-    errors.push(validationError(catalogName, 'hostScope', 'agent host scope must be all, shopify, or personal'));
+    errors.push(validationError(catalogName, 'hostScope', 'agent host scope must be all or personal'));
   }
   if (!isValidBudgetState(agent.state)) {
     errors.push(validationError(catalogName, 'state', 'agent state must be enforced/default, enforced/host-override, or unbudgeted/operator-escape-hatch'));
@@ -366,7 +365,7 @@ function validateBudgetMetadata(metadata) {
     errors.push(validationError('<metadata>', 'version', 'metadata version must be 1'));
   }
   if (!HOST_SCOPES.includes(metadata.host)) {
-    errors.push(validationError('<metadata>', 'host', 'metadata host must be all, shopify, or personal'));
+    errors.push(validationError('<metadata>', 'host', 'metadata host must be all or personal'));
   }
   if (typeof metadata.enforcementEnabled !== 'boolean') {
     errors.push(validationError('<metadata>', 'enforcementEnabled', 'metadata must declare enforcement state'));
@@ -1937,7 +1936,7 @@ function validateSmokeDefinition(index, def) {
     errors.push(smokeError(index, 'agentName', 'smoke definition must define a non-empty agentName'));
   }
   if (!SMOKE_HOST_SCOPES.has(def.hostScope)) {
-    errors.push(smokeError(index, 'hostScope', 'hostScope must be all, shopify, or personal'));
+    errors.push(smokeError(index, 'hostScope', 'hostScope must be all or personal'));
   }
   if (!isNonEmptyString(def.representativeTask)) {
     errors.push(smokeError(index, 'representativeTask', 'representativeTask must be a non-empty string'));

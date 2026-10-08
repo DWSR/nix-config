@@ -96,7 +96,6 @@ in
       jwtPrivateKey = config.sops.secrets."local-binary-cache-jwt-private-key".path;
       cachePublicKeyOutput = "${cacheBootstrapDirectory}/cache-public-key.txt";
       personalTokenOutput = "${cacheBootstrapDirectory}/personal-token";
-      shopifyTokenOutput = "${cacheBootstrapDirectory}/shopify-token";
     };
 
     server = {

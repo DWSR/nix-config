@@ -9,7 +9,6 @@ const path = require('node:path');
 const repoRoot = path.resolve(__dirname, '../..');
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 let renderedHosts;
 
@@ -17,7 +16,7 @@ function renderHosts() {
   if (renderedHosts) return renderedHosts;
   if (process.env.AGENTMEMORY_MATRIX_HOSTS) {
     const rows = JSON.parse(fs.readFileSync(process.env.AGENTMEMORY_MATRIX_HOSTS, 'utf8'));
-    renderedHosts = { personal: rows.personal.hostRender, shopify: rows.shopify.hostRender };
+    renderedHosts = { personal: rows.personal.hostRender };
     return renderedHosts;
   }
 
@@ -100,7 +99,6 @@ function renderHosts() {
         };
     in builtins.toJSON {
       personal = summarize "${HOSTS.personal}";
-      shopify = summarize "${HOSTS.shopify}";
     }
   `;
 
@@ -115,10 +113,9 @@ function renderHosts() {
   return renderedHosts;
 }
 
-test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', () => {
+test('personal host cuts OpenCode over to AgentMemory runtime wiring', () => {
   const rendered = renderHosts();
   const personal = rendered.personal;
-  const shopify = rendered.shopify;
 
   for (const [host, config] of Object.entries(rendered)) {
     assert.equal(config.agentmemory.enable, true, `${host} enables AgentMemory`);
@@ -152,37 +149,17 @@ test('both hosts cut OpenCode over to equivalent AgentMemory runtime wiring', ()
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR, config.agentmemory.dataDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_RUNTIME_DIR, config.agentmemory.runtimeDir);
     assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_SECRET_REFERENCE, 'agentmemory-bearer');
-    assert.equal(config.agentmemory.launchd.EnvironmentVariables.AGENTMEMORY_AUTO_COMPRESS, 'false');
     assert.match(config.agentmemory.settings, /AGENTMEMORY_DATA_DIR=/);
     assert.doesNotMatch(config.agentmemory.settings, /AGENTMEMORY_SECRET=/);
     assert.deepEqual(config.capturePlugins, ['opencode/plugins/agentmemory-capture.ts']);
-    assert.match(config.secretUri, /^op:\/\/(Private|Employee)\/AgentMemory\/Bearer$/);
+    assert.match(config.secretUri, /^op:\/\/Private\/AgentMemory\/Bearer$/);
     assert.doesNotMatch(JSON.stringify(config), /bearer-value|test-secret|sk-[A-Za-z0-9]/i);
   }
 
   assert.equal(personal.secretUri, 'op://Private/AgentMemory/Bearer');
-  assert.equal(shopify.secretUri, 'op://Employee/AgentMemory/Bearer');
   assert.doesNotMatch(personal.agentmemory.launcherText, /OPENAI_/);
   assert.doesNotMatch(personal.agentmemory.launcherText, /ANTHROPIC_(?:API_KEY|BASE_URL|MODEL)/);
-  assert.doesNotMatch(shopify.agentmemory.launcherText, /OPENAI_MODEL|OPENAI_REASONING_EFFORT/);
   assert.doesNotMatch(personal.agentmemory.launcherText, /AGENTMEMORY_(?:AUTO_COMPRESS|GRAPH_EXTRACTION_ENABLED)/);
-  assert.match(shopify.agentmemory.launcherText, /toolchain\/base_profile\/share\/dev\/bin\/user:\$PATH/);
-  assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_API_KEY=.*devx llm-gateway print-token --key/);
-  assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_BASE_URL=.*devx llm-gateway print-token --base.*\/apis\/anthropic/);
-  assert.match(shopify.agentmemory.launcherText, /ANTHROPIC_MODEL="claude-haiku-4-5"/);
-  assert.match(shopify.agentmemory.launcherText, /OPENAI_API_KEY=.*devx llm-gateway print-token --key/);
-  assert.match(shopify.agentmemory.launcherText, /OPENAI_API_KEY_FOR_LLM="false"/);
-  assert.match(shopify.agentmemory.launcherText, /OPENAI_EMBEDDING_BASE_URL=.*devx llm-gateway print-token --base.*\/vendors\/openai\/v1/);
-  assert.match(shopify.agentmemory.launcherText, /OPENAI_EMBEDDING_MODEL="text-embedding-3-small"/);
-  assert.match(shopify.agentmemory.launcherText, /EMBEDDING_PROVIDER="openai"/);
-  assert.doesNotMatch(shopify.agentmemory.launcherText, /AGENTMEMORY_AUTO_COMPRESS/);
-  assert.match(shopify.agentmemory.launcherText, /GRAPH_EXTRACTION_ENABLED="true"/);
   const { launcherText: _personalLauncher, ...personalAgentMemory } = personal.agentmemory;
-  const { launcherText: _shopifyLauncher, ...shopifyAgentMemory } = shopify.agentmemory;
-  assert.deepEqual(personalAgentMemory, shopifyAgentMemory);
-  assert.deepEqual(
-    personal.capturePlugins,
-    shopify.capturePlugins,
-    'capture plugins are equivalent across hosts',
-  );
+  assert.ok(personalAgentMemory.enable);
 });

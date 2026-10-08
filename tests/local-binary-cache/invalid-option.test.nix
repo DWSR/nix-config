@@ -237,15 +237,6 @@ let
       ];
       select = config: builtins.head config.publisher.chainedHooks;
     };
-    external-hook-include-injection = {
-      module.services.localBinaryCache.publisher.externalHookInclude =
-        builtins.fromJSON ''"/tmp/etc/nix/nix.conf.d/shopify.conf\npost-build-hook = /tmp/injected"'';
-      select = config: config.publisher.externalHookInclude;
-    };
-    external-hook-include-wrong-shape = {
-      module.services.localBinaryCache.publisher.externalHookInclude = "/tmp/shopify.conf";
-      select = config: config.publisher.externalHookInclude;
-    };
   };
 
   selected = fixtures.${fixture} or (throw "unknown local binary cache fixture: ${fixture}");

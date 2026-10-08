@@ -51,8 +51,7 @@ function evalPublisherFixture(moduleSource, resultSource) {
 }
 
 function publisherModule(hostRole, fixture) {
-  const server = hostRole === 'personal'
-    ? `server = {
+  const server = `server = {
         enable = true;
         package = pkgs.hello;
         proxyPackage = pkgs.hello;
@@ -60,8 +59,7 @@ function publisherModule(hostRole, fixture) {
         jwtPublicKey = ${jwtPublicKey};
         tlsCertificate = ${tlsCertificate};
         tlsKeyFile = "/run/secrets/local-binary-cache-fixture-tls-key";
-      };`
-    : '';
+       };`;
 
   return `{ pkgs, ... }: {
     system.stateVersion = 7;
@@ -199,18 +197,8 @@ function assertPublisherRuntime(hostRole, fixture, poisonedToken, rendered) {
     );
   }
 
-  assert.equal(rendered.hasAtticDaemon, hostRole === 'personal');
-  assert.equal(rendered.hasCaddyDaemon, hostRole === 'personal');
-  if (hostRole === 'shopify') {
-    assert.equal(
-      rendered.activation.includes('local-binary-cache: preparing Attic runtime directories'),
-      false,
-    );
-    assert.equal(
-      rendered.activation.includes('local-binary-cache: preparing Caddy log directory'),
-      false,
-    );
-  }
+  assert.equal(rendered.hasAtticDaemon, true);
+  assert.equal(rendered.hasCaddyDaemon, true);
 
   for (const artifact of [rendered.executableText, clientConfig]) {
     assert.equal(artifact.includes(fixture.statePaths.token), true);
@@ -223,49 +211,19 @@ function assertPublisherRuntime(hostRole, fixture, poisonedToken, rendered) {
   }
 }
 
-test('personal and Shopify roles render the same shared root publisher runtime', t => {
-  const roles = {
-    personal: {
-      poisonedToken: 'poisoned-personal-publisher-token-value-54f20b',
-      fixture: createScriptFixture({
-        statePaths: {
-          ca: 'public/personal-ca.pem',
-          token: 'secrets/personal-publisher-token',
-        },
-      }),
+test('personal role renders the root publisher runtime', t => {
+  const fixture = createScriptFixture({
+    statePaths: {
+      ca: 'public/personal-ca.pem',
+      token: 'secrets/personal-publisher-token',
     },
-    shopify: {
-      poisonedToken: 'poisoned-shopify-publisher-token-value-f1839a',
-      fixture: createScriptFixture({
-        statePaths: {
-          ca: 'public/shopify-ca.pem',
-          token: 'secrets/shopify-publisher-token',
-        },
-      }),
-    },
-  };
-
-  for (const role of Object.values(roles)) {
-    t.after(role.fixture.cleanup);
-    fs.writeFileSync(role.fixture.statePaths.ca, 'fixture-only-public-ca-certificate\n');
-    fs.writeFileSync(role.fixture.statePaths.token, `${role.poisonedToken}\n`, { mode: 0o400 });
-  }
-
-  const personal = renderPublisher('personal', roles.personal.fixture);
-  const shopify = renderPublisher('shopify', roles.shopify.fixture);
-  assertPublisherRuntime(
-    'personal',
-    roles.personal.fixture,
-    roles.personal.poisonedToken,
-    personal,
-  );
-  assertPublisherRuntime(
-    'shopify',
-    roles.shopify.fixture,
-    roles.shopify.poisonedToken,
-    shopify,
-  );
-  assert.deepEqual(sharedServiceContract(personal), sharedServiceContract(shopify));
+  });
+  t.after(fixture.cleanup);
+  const poisonedToken = 'poisoned-personal-publisher-token-value-54f20b';
+  fs.writeFileSync(fixture.statePaths.ca, 'fixture-only-public-ca-certificate\n');
+  fs.writeFileSync(fixture.statePaths.token, `${poisonedToken}\n`, { mode: 0o400 });
+  const personal = renderPublisher('personal', fixture);
+  assertPublisherRuntime('personal', fixture, poisonedToken, personal);
 });
 
 test('disabled and bootstrap fixtures render no publisher executable or daemon', t => {
@@ -313,7 +271,6 @@ test('disabled and bootstrap fixtures render no publisher executable or daemon',
           jwtPrivateKey = "/run/secrets/local-binary-cache-bootstrap-jwt";
           cachePublicKeyOutput = "/var/db/local-binary-cache/bootstrap/cache-public-key.txt";
           personalTokenOutput = "/var/db/local-binary-cache/bootstrap/personal-token";
-          shopifyTokenOutput = "/var/db/local-binary-cache/bootstrap/shopify-token";
         };
         server = {
           enable = true;

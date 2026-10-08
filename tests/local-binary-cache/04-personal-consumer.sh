@@ -22,7 +22,7 @@ output="$1"
 nonce="$2"
 [[ "$output" =~ ^/nix/store/[0-9abcdfghijklmnpqrsvwxyz]{32}- ]] \
   || fail "invalid producer store path: $output"
-[[ "$nonce" == shopify-* ]] || fail "expected a Shopify producer nonce"
+[[ "$nonce" == personal-* ]] || fail "expected a personal producer nonce"
 [[ ! -e "$output" ]] || fail "consumer already has $output"
 
 /run/current-system/sw/bin/local-binary-cache-status

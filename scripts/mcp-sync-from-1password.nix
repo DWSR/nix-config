@@ -41,7 +41,7 @@ pkgs.writeShellApplication {
   ];
   text = ''
     case "''${1:-}" in
-      shopify|personal)
+      personal)
         HOST="$1"
         ;;
       --help|-h)
@@ -52,7 +52,7 @@ pkgs.writeShellApplication {
       mcp-sync-from-1password <host>
 
     Arguments:
-      host    shopify | personal
+      host    personal
 
     Environment:
       MCP_SYNC_USERNAME    Override `id -un` for home-manager user lookup.
@@ -67,14 +67,13 @@ pkgs.writeShellApplication {
         exit 0
         ;;
       *)
-        echo "mcp-sync-from-1password: error: expected host \"shopify\" or \"personal\", got \"''${1:-}\"" >&2
+        echo "mcp-sync-from-1password: error: expected host \"personal\", got \"''${1:-}\"" >&2
         echo "  run --help for usage" >&2
         exit 1
         ;;
     esac
 
     case "$HOST" in
-      shopify)  DARWIN_HOST="ShopifyLaptop" ;;
       personal) DARWIN_HOST="Brandons-MacBook-Pro" ;;
     esac
 

@@ -10,7 +10,6 @@ const {
 
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 
 function gitCloneIsolationHostRenderExpr() {
@@ -36,7 +35,6 @@ function gitCloneIsolationHostRenderExpr() {
     in
     {
       personal = summarize "${HOSTS.personal}";
-      shopify = summarize "${HOSTS.shopify}";
     }
   `;
 }
@@ -68,25 +66,7 @@ function disabledModuleRenderExpr() {
   `;
 }
 
-function shopifyRefreshAgentExpr(agentAttr) {
-  return `
-    let
-      flake = builtins.getFlake (toString ${repoRoot});
-      config = flake.darwinConfigurations."${HOSTS.shopify}".config.home-manager.users.brandonmcnama;
-      agent = config.launchd.agents.${agentAttr};
-    in
-    {
-      enabled = agent.enable;
-      label = agent.config.Label;
-      programArguments = agent.config.ProgramArguments;
-      runAtLoad = agent.config.RunAtLoad;
-      startInterval = agent.config.StartInterval;
-      expectedCacheRoot = config.programs.git-clone-isolation.cacheRoot;
-    }
-  `;
-}
-
-test('Home Manager host render enables git-clone-isolation with wrapper package and default paths', () => {
+test('personal Home Manager render enables git-clone-isolation with wrapper package and default paths', () => {
   const rendered = nixEvalJson(gitCloneIsolationHostRenderExpr());
 
   for (const [hostKey, host] of Object.entries(rendered)) {
@@ -103,42 +83,4 @@ test('disabled Home Manager module omits git-clone-isolation wrapper package', (
 
   assert.equal(rendered.enabled, false);
   assert.equal(rendered.packageInHomePackages, false);
-});
-
-test('Shopify host renders globaldb-yugabyte main-branch cache refresh agent', () => {
-  const rendered = nixEvalJson(shopifyRefreshAgentExpr('git-clone-isolation-globaldb-yugabyte-refresh'));
-
-  assert.equal(rendered.enabled, true);
-  assert.equal(rendered.label, 'dev.dwsr.git-clone-isolation.globaldb-yugabyte-refresh');
-  assert.equal(rendered.runAtLoad, true);
-  assert.equal(rendered.startInterval, 600);
-  assert.deepEqual(rendered.programArguments.slice(1), [
-    'refresh',
-    '--repo',
-    'https://github.com/Shopify/globaldb-yugabyte',
-    '--branch',
-    'main',
-    '--cache-root',
-    rendered.expectedCacheRoot,
-  ]);
-  assert.match(rendered.programArguments[0], /git-cache-clone\/bin\/git-cache-clone$/);
-});
-
-test('Shopify host renders terraform-the-cloud main-branch cache refresh agent', () => {
-  const rendered = nixEvalJson(shopifyRefreshAgentExpr('git-clone-isolation-terraform-the-cloud-refresh'));
-
-  assert.equal(rendered.enabled, true);
-  assert.equal(rendered.label, 'dev.dwsr.git-clone-isolation.terraform-the-cloud-refresh');
-  assert.equal(rendered.runAtLoad, true);
-  assert.equal(rendered.startInterval, 600);
-  assert.deepEqual(rendered.programArguments.slice(1), [
-    'refresh',
-    '--repo',
-    'https://github.com/Shopify/terraform-the-cloud',
-    '--branch',
-    'main',
-    '--cache-root',
-    rendered.expectedCacheRoot,
-  ]);
-  assert.match(rendered.programArguments[0], /git-cache-clone\/bin\/git-cache-clone$/);
 });

@@ -43,7 +43,7 @@ function fixtureSummary() {
     ['eval', '--json', '--impure', '--expr', `
       let
         flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-        pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+        pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
         fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
       in {
         nativeToolPaths = fixture.nativeToolPaths;
@@ -80,7 +80,7 @@ function buildAdmin(nativeOverrides = {}, packageOverrides = {}) {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
       admin = pkgs.callPackage (import ${JSON.stringify(adminPath)}) (${packageArgs});
     in admin

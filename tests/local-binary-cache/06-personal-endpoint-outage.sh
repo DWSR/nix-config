@@ -97,7 +97,7 @@ fi
 [[ $# -eq 1 ]] || fail "usage: $0 RUN_ID"
 
 run_id="$1"
-[[ "$run_id" =~ ^shopify-outage-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+[[ "$run_id" =~ ^personal-outage-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || fail "invalid run identifier: $run_id"
 
 cd "$repo_root"
@@ -134,13 +134,13 @@ done
 printf 'endpoint-outage-curl-exit=%d run-id=%s\n' "$endpoint_status" "$run_id"
 job_loaded "$attic_label" || fail "Attic stopped during the Caddy-only outage"
 
-restore_challenge="shopify-restore-$(/usr/bin/uuidgen | /usr/bin/tr '[:upper:]' '[:lower:]')"
-[[ "$restore_challenge" =~ ^shopify-restore-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
+restore_challenge="personal-restore-$(/usr/bin/uuidgen | /usr/bin/tr '[:upper:]' '[:lower:]')"
+[[ "$restore_challenge" =~ ^personal-restore-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
   || fail "uuidgen returned an invalid restoration challenge: $restore_challenge"
 restore_consumed=0
 
-next_script="$script_directory/07-shopify-outage-producer.sh"
-printf 'Next on ShopifyLaptop while outage is held: %s %s %s\n' \
+next_script="$script_directory/06-personal-endpoint-outage.sh --recover"
+printf 'Recover on Brandons-MacBook-Pro while outage is held: %s %s %s\n' \
   "$next_script" "$run_id" "$restore_challenge"
 printf 'Do not enter RESTORE until phase 08 reports that it is waiting.\n'
 

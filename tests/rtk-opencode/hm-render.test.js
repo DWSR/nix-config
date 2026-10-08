@@ -11,7 +11,6 @@ const repoRoot = path.resolve(__dirname, '../..');
 const NIX_EVAL_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 const TASK_5_2_REQUIREMENTS = Object.freeze([
   '1.1', '1.2', '1.3', '1.5',
@@ -71,24 +70,15 @@ function rtkHostRenderExpr() {
       usageTags = config:
         builtins.fromJSON config.programs.opencode.settings.provider.anthropic.options.headers.Shopify-Usage-Tag;
       personal = hm "${HOSTS.personal}" [ ];
-      shopify = hm "${HOSTS.shopify}" [ ];
       personalDefaultDisabled = hm "${HOSTS.personal}" [
         ({ lib, ... }: {
           home-manager.users.brandonmcnama.programs.opencode-rtk.defaultEnabled = lib.mkForce false;
         })
       ];
-      shopifyRtkDisabled = hm "${HOSTS.shopify}" [
-        ({ lib, ... }: {
-          home-manager.users.brandonmcnama.programs.opencode-rtk.enable = lib.mkForce false;
-        })
-      ];
     in
     {
       personal = summarize personal;
-      shopify = summarize shopify;
       personalDefaultDisabled = summarize personalDefaultDisabled;
-      shopifyUsageTags = usageTags shopify;
-      shopifyRtkDisabledUsageTags = usageTags shopifyRtkDisabled;
     }
   `;
 }
@@ -159,7 +149,6 @@ function runRtkResolver(script, override) {
 function assertNoRtkSessionHistoryWriters() {
   const files = [
     'home-manager/common/opencode-rtk.nix',
-    'configurations/shopify/home-manager/opencode.nix',
   ];
   const forbidden = [
     /opencode-stable\.db/,
@@ -187,10 +176,10 @@ test('Task 5.2 requirement coverage is pinned to source requirement numbers', ()
   ]);
 });
 
-test('both hosts render RTK package, plugin, metadata, wrapper env, guide, and smoke package', () => {
+test('personal host renders RTK package, plugin, metadata, wrapper env, guide, and smoke package', () => {
   const rendered = nixEvalJson(rtkHostRenderExpr());
 
-  for (const [hostKey, host] of Object.entries({ personal: rendered.personal, shopify: rendered.shopify })) {
+  for (const [hostKey, host] of Object.entries({ personal: rendered.personal })) {
     assert.equal(host.enabled, true, `${hostKey} RTK module enabled`);
     assert.equal(host.defaultEnabled, true, `${hostKey} default enabled`);
     assert.equal(host.packageName, 'rtk');
@@ -230,7 +219,6 @@ test('OpenCode peer assertion rejects RTK when programs.opencode is disabled', (
 test('host default override keeps RTK installed and allows per-launch enable state', () => {
   const rendered = nixEvalJson(rtkHostRenderExpr());
   const disabledHost = rendered.personalDefaultDisabled;
-  const otherHost = rendered.shopify;
 
   assert.equal(disabledHost.enabled, true);
   assert.equal(disabledHost.defaultEnabled, false);
@@ -238,7 +226,6 @@ test('host default override keeps RTK installed and allows per-launch enable sta
   assert.equal(disabledHost.packageInHomePackages, true);
   assert.equal(disabledHost.pluginFilePresent, true);
   assert.equal(disabledHost.smokeTestPackageInHomePackages, true);
-  assert.equal(otherHost.defaultEnabled, true);
 
   const resolverScript = extractRtkResolverScript(disabledHost);
   assert.deepEqual(runRtkResolver(resolverScript), {
@@ -255,16 +242,9 @@ test('host default override keeps RTK installed and allows per-launch enable sta
   });
 });
 
-test('Shopify usage tags preserve existing tags and consume RTK usage tag env value', () => {
+test('wrapper resolver emits RTK usage tags for default and per-launch override states', () => {
   const rendered = nixEvalJson(rtkHostRenderExpr());
-
-  assert.equal(parseRenderedTags(rendered.shopifyUsageTags), '{env:OPENCODE_RTK_USAGE_TAG}');
-  assert.equal(parseRenderedTags(rendered.shopifyRtkDisabledUsageTags), 'rtk:disabled');
-});
-
-test('wrapper resolver emits Shopify RTK usage tags for default and per-launch override states', () => {
-  const rendered = nixEvalJson(rtkHostRenderExpr());
-  const enabledByDefault = extractRtkResolverScript(rendered.shopify);
+  const enabledByDefault = extractRtkResolverScript(rendered.personal);
 
   assert.deepEqual(runRtkResolver(enabledByDefault), {
     effective: 'enabled',

@@ -9,7 +9,7 @@
 #
 # Convention: the YAML anchor `&host_<name>` corresponds to the age public
 # key of the host whose darwinConfiguration shares the same role short-name
-# (`shopify` → ShopifyLaptop, `personal` → Brandons-MacBook-Pro). Each
+# (`personal` → Brandons-MacBook-Pro). Each
 # `creation_rule` lists exactly one recipient (the target host) so that
 # compromise of one host's age private key cannot decrypt the other host's
 # secrets — see requirements.md sections 2.1, 2.2, 2.4.
@@ -19,7 +19,6 @@
 # in regex patterns to avoid matching arbitrary characters.
 
 keys:
-  - &host_shopify  age1wpwzerd6plex7nxz32cdcqju83jeazj7yrm3pehy3hqdcx8guskqefm043
   - &host_personal age158am3rk8z2msgnx08e03f9x2dumgqqj3rfhkdj7fcffp5g99tfsstagvlp
 
 creation_rules:
@@ -27,14 +26,6 @@ creation_rules:
     key_groups:
       - age:
           - *host_personal
-  - path_regex: secrets/local-binary-cache\.shopify\.yaml$
-    key_groups:
-      - age:
-          - *host_shopify
-  - path_regex: secrets/mcp\.shopify\.yaml$
-    key_groups:
-      - age:
-          - *host_shopify
   - path_regex: secrets/mcp\.personal\.yaml$
     key_groups:
       - age:
@@ -43,7 +34,3 @@ creation_rules:
     key_groups:
       - age:
           - *host_personal
-  - path_regex: secrets/deskflow-cert\.shopify\.yaml$
-    key_groups:
-      - age:
-          - *host_shopify

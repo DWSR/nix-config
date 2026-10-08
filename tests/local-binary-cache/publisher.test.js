@@ -32,8 +32,6 @@ const UPSTREAM_CACHE_KEYS = [
 ];
 const TOKEN_VALUE = 'poisoned-runtime-token-value';
 const PERSONAL_TOKEN_VALUE = 'poisoned-personal-host-token-value';
-const SHOPIFY_TOKEN_VALUE = 'poisoned-shopify-host-token-value';
-const IDENTICAL_TOKEN_VALUE = 'poisoned-identical-host-token-value';
 const OPERATOR_TOKEN_VALUE = 'poisoned-bootstrap-operator-token-value';
 const BOOTSTRAP_HOSTNAME = 'Brandons-MacBook-Pro.local';
 const LOGIN_USER = 'bootstrap-test-user';
@@ -44,7 +42,6 @@ const STATUS_PRIVATE_KEY_VALUE = 'poisoned-status-private-key-value';
 const STATUS_UPSTREAM_SUBSTITUTERS = [
   'https://cache.nixos.org/',
   'https://nix-community.cachix.org',
-  's3://shopify-nix-cache?endpoint=https://storage.googleapis.com&profile=shopify-nix-cache-reader',
 ];
 const ATTIC_CLIENT_EXECUTABLE = process.env.ATTIC_CLIENT_EXECUTABLE;
 const ATTIC_CLIENT_SOURCE = process.env.ATTIC_CLIENT_SOURCE;
@@ -375,7 +372,6 @@ function createBootstrapFixture(t, options = {}) {
         const tokens = {
           'local-binary-cache-bootstrap': process.env.OPERATOR_TOKEN_VALUE,
           'Brandons-MacBook-Pro': process.env.PERSONAL_TOKEN_VALUE,
-          ShopifyLaptop: process.env.SHOPIFY_TOKEN_VALUE,
         };
         if (!(subject in tokens)) {
           process.stderr.write('unexpected token subject: ' + subject + '\\n');
@@ -388,10 +384,7 @@ function createBootstrapFixture(t, options = {}) {
         if (process.env.ATTIC_ADMIN_EMPTY_SUBJECT === subject) {
           process.exit(0);
         }
-        const token = process.env.ATTIC_ADMIN_IDENTICAL_HOST_TOKENS === '1'
-          && ['Brandons-MacBook-Pro', 'ShopifyLaptop'].includes(subject)
-          ? process.env.IDENTICAL_TOKEN_VALUE
-          : tokens[subject];
+        const token = tokens[subject];
         process.stdout.write(token + '\\n');
       `,
       curl: `
@@ -483,7 +476,6 @@ function createBootstrapFixture(t, options = {}) {
       jwtPrivate: 'secrets/jwt-private.pem',
       jwtPublic: 'public/jwt-public.pem',
       personalTokenOutput: 'outputs/personal-token',
-      shopifyTokenOutput: 'outputs/shopify-token',
       tlsCertificate: 'public/server.pem',
       tlsKey: 'secrets/server-key.pem',
     },
@@ -549,7 +541,6 @@ function createBootstrapFixture(t, options = {}) {
     loginUser: LOGIN_USER,
     opensslExecutable: getOpenSSLExecutable(),
     personalTokenOutput: fixture.statePaths.personalTokenOutput,
-    shopifyTokenOutput: fixture.statePaths.shopifyTokenOutput,
     statExecutable: fixture.executables.stat,
     tlsCertificate: fixture.statePaths.tlsCertificate,
     tlsKeyFile: fixture.statePaths.tlsKey,
@@ -572,11 +563,9 @@ function runBootstrap(bootstrap, args = [], extraEnv = {}) {
       CURL_AMBIENT_OUTPUT: bootstrap.fixture.statePaths.ambientOutput,
       CURL_AMBIENT_TRACE: bootstrap.fixture.statePaths.ambientTrace,
       CURL_LOG: bootstrap.fixture.statePaths.curlLog,
-      IDENTICAL_TOKEN_VALUE,
       JWT_PRIVATE_PATH: bootstrap.fixture.statePaths.jwtPrivate,
       OPERATOR_TOKEN_VALUE,
       PERSONAL_TOKEN_VALUE,
-      SHOPIFY_TOKEN_VALUE,
       ...extraEnv,
     },
   });
@@ -682,7 +671,6 @@ test('patched Attic client merges only an explicit process-scoped custom CA and 
     TOKEN_VALUE,
     OPERATOR_TOKEN_VALUE,
     PERSONAL_TOKEN_VALUE,
-    SHOPIFY_TOKEN_VALUE,
     STATUS_PRIVATE_KEY_VALUE,
     caContents,
   ]) {
@@ -706,7 +694,6 @@ function assertNoBootstrapOutputs(bootstrap) {
   for (const output of [
     bootstrap.fixture.statePaths.cachePublicKeyOutput,
     bootstrap.fixture.statePaths.personalTokenOutput,
-    bootstrap.fixture.statePaths.shopifyTokenOutput,
   ]) {
     assert.equal(fs.existsSync(output), false, `unexpected bootstrap output: ${output}`);
   }
@@ -729,7 +716,6 @@ function assertBootstrapObservabilityRedacted(bootstrap, result) {
     fs.readFileSync(bootstrap.fixture.statePaths.ca, 'utf8'),
     OPERATOR_TOKEN_VALUE,
     PERSONAL_TOKEN_VALUE,
-    SHOPIFY_TOKEN_VALUE,
     fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8'),
     fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8'),
   ];
@@ -756,7 +742,6 @@ function assertBootstrapCurlInvocations(bootstrap, expectedCount) {
   const secrets = [
     OPERATOR_TOKEN_VALUE,
     PERSONAL_TOKEN_VALUE,
-    SHOPIFY_TOKEN_VALUE,
     fs.readFileSync(bootstrap.fixture.statePaths.tlsKey, 'utf8'),
     fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8'),
   ];
@@ -857,7 +842,7 @@ function createPostBuildWrapperFixture(t) {
       `,
     },
     statePaths: {
-      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      externalInclude: 'etc/nix/nix.conf.d/local-binary-cache.conf',
       hookLog: 'state/hook.log',
       publisher: 'state/publisher',
     },
@@ -887,7 +872,7 @@ function createPostBuildWrapperFixture(t) {
       nix.package = nixPackage;
       services.localBinaryCache = {
         enable = true;
-        hostRole = "shopify";
+        hostRole = "personal";
         bootstrapMode = false;
         cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
         caCertificate = ${path.join(__dirname, 'fixtures/tls-certificate.pem')};
@@ -898,7 +883,6 @@ function createPostBuildWrapperFixture(t) {
           tokenFile = "/run/secrets/local-binary-cache-token";
           stateDirectory = ${JSON.stringify(fixture.statePaths.publisher)};
           chainedHooks = [ ${chainedHooks} ];
-          externalHookInclude = ${JSON.stringify(fixture.statePaths.externalInclude)};
         };
       };
     }`,
@@ -1153,7 +1137,7 @@ function createPublicationFlowFixture(t) {
       binaryCache: 'state/substitution-cache',
       ca: 'public/ca.pem',
       consumerStore: 'state/substitution-store',
-      externalInclude: 'etc/nix/nix.conf.d/shopify.conf',
+      externalInclude: 'etc/nix/nix.conf.d/local-binary-cache.conf',
       hookLog: 'state/hook.log',
       log: 'state/attic.log',
       nixConf: 'etc/nix-fixture',
@@ -1201,7 +1185,7 @@ function createPublicationFlowFixture(t) {
       nix.package = nixPackage;
       services.localBinaryCache = {
         enable = true;
-        hostRole = "shopify";
+        hostRole = "personal";
         bootstrapMode = false;
         cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs=";
         caCertificate = ${path.join(__dirname, 'fixtures/tls-certificate.pem')};
@@ -1212,7 +1196,6 @@ function createPublicationFlowFixture(t) {
           tokenFile = ${JSON.stringify(fixture.statePaths.token)};
           stateDirectory = ${JSON.stringify(fixture.statePaths.publisher)};
           chainedHooks = [ ${JSON.stringify(fixture.executables.chainedHook)} ];
-          externalHookInclude = ${JSON.stringify(fixture.statePaths.externalInclude)};
         };
       };
     }`,
@@ -2387,12 +2370,6 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
       '--validity', '31557600s',
       '--push', CACHE_NAME,
     ],
-    [
-      '-f', '<runtime-config>', 'make-token',
-      '--sub', 'ShopifyLaptop',
-      '--validity', '31557600s',
-      '--push', CACHE_NAME,
-    ],
   ]);
   assert.equal(adminInvocations.every(invocation => invocation.configMode === '0600'), true);
   assert.equal(adminInvocations.every(invocation => invocation.configHasExpectedSecret), true);
@@ -2405,12 +2382,7 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
     fs.readFileSync(bootstrap.fixture.statePaths.personalTokenOutput, 'utf8'),
     `${PERSONAL_TOKEN_VALUE}\n`,
   );
-  assert.equal(
-    fs.readFileSync(bootstrap.fixture.statePaths.shopifyTokenOutput, 'utf8'),
-    `${SHOPIFY_TOKEN_VALUE}\n`,
-  );
   assert.equal(fs.statSync(bootstrap.fixture.statePaths.personalTokenOutput).mode & 0o777, 0o400);
-  assert.equal(fs.statSync(bootstrap.fixture.statePaths.shopifyTokenOutput).mode & 0o777, 0o400);
 
   const privateKey = fs.readFileSync(bootstrap.fixture.statePaths.jwtPrivate, 'utf8');
   const observable = [
@@ -2425,7 +2397,6 @@ test('legacy anonymous 404 bootstrap creates and verifies darwin, captures its k
     fs.readFileSync(bootstrap.fixture.statePaths.ca, 'utf8'),
     privateKey,
     PERSONAL_TOKEN_VALUE,
-    SHOPIFY_TOKEN_VALUE,
   ]) {
     assert.equal(observable.includes(secret), false);
   }
@@ -2497,7 +2468,7 @@ test('bootstrap treats an initial anonymous 401 as an ambiguous create candidate
     readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
       invocation.args[invocation.args.indexOf('--sub') + 1]
     )),
-    ['local-binary-cache-bootstrap', 'Brandons-MacBook-Pro', 'ShopifyLaptop'],
+    ['local-binary-cache-bootstrap', 'Brandons-MacBook-Pro'],
   );
   assert.equal(
     fs.readFileSync(bootstrap.fixture.statePaths.cachePublicKeyOutput, 'utf8'),
@@ -2626,7 +2597,7 @@ test('bootstrap reuses a matching live cache without creating or replacing its i
     readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
       invocation.args[invocation.args.indexOf('--sub') + 1]
     )),
-    ['Brandons-MacBook-Pro', 'ShopifyLaptop'],
+    ['Brandons-MacBook-Pro'],
   );
   assert.equal(
     fs.readFileSync(bootstrap.fixture.statePaths.cachePublicKeyOutput, 'utf8'),
@@ -2649,7 +2620,6 @@ test('ready verifies anonymous cache state and configured key without mutating b
   for (const output of [
     bootstrap.fixture.statePaths.cachePublicKeyOutput,
     bootstrap.fixture.statePaths.personalTokenOutput,
-    bootstrap.fixture.statePaths.shopifyTokenOutput,
   ]) {
     assert.equal(fs.existsSync(output), false);
   }
@@ -2704,7 +2674,6 @@ test('cache identity guards refuse missing or mismatched state without creating 
       for (const output of [
         bootstrap.fixture.statePaths.cachePublicKeyOutput,
         bootstrap.fixture.statePaths.personalTokenOutput,
-        bootstrap.fixture.statePaths.shopifyTokenOutput,
       ]) {
         assert.equal(fs.existsSync(output), false);
       }
@@ -2743,7 +2712,6 @@ test('bootstrap fails closed when anonymous observed state differs from the cach
       for (const output of [
         bootstrap.fixture.statePaths.cachePublicKeyOutput,
         bootstrap.fixture.statePaths.personalTokenOutput,
-        bootstrap.fixture.statePaths.shopifyTokenOutput,
       ]) {
         assert.equal(fs.existsSync(output), false);
       }
@@ -2792,14 +2760,10 @@ test('bootstrap rejects a configured signing key with noncanonical Base64 paddin
   assertNoBootstrapOutputs(bootstrap);
 });
 
-test('bootstrap reports each host token issuance failure without partial outputs', async t => {
-  const cases = [
-    ['Brandons-MacBook-Pro', ['Brandons-MacBook-Pro']],
-    ['ShopifyLaptop', ['Brandons-MacBook-Pro', 'ShopifyLaptop']],
-  ];
-
-  for (const [subject, expectedSubjects] of cases) {
-    await t.test(subject, child => {
+test('bootstrap reports personal token issuance failure without partial outputs', async t => {
+  const subject = 'Brandons-MacBook-Pro';
+  const expectedSubjects = [subject];
+  await t.test(subject, child => {
       const bootstrap = createBootstrapFixture(child, { cacheState: validCacheState() });
 
       const result = runBootstrap(bootstrap, ['bootstrap'], {
@@ -2815,17 +2779,16 @@ test('bootstrap reports each host token issuance failure without partial outputs
         expectedSubjects,
       );
       assertNoBootstrapOutputs(bootstrap);
-      for (const secret of [PERSONAL_TOKEN_VALUE, SHOPIFY_TOKEN_VALUE]) {
+      for (const secret of [PERSONAL_TOKEN_VALUE]) {
         assert.equal(result.stdout.includes(secret), false);
         assert.equal(result.stderr.includes(secret), false);
       }
-    });
-  }
+  });
 });
 
-test('bootstrap rejects empty token output for either host without partial outputs', async t => {
-  for (const subject of ['Brandons-MacBook-Pro', 'ShopifyLaptop']) {
-    await t.test(subject, child => {
+test('bootstrap rejects empty personal token output without partial outputs', async t => {
+  await t.test('Brandons-MacBook-Pro', child => {
+    const subject = 'Brandons-MacBook-Pro';
       const bootstrap = createBootstrapFixture(child, { cacheState: validCacheState() });
 
       const result = runBootstrap(bootstrap, ['bootstrap'], {
@@ -2835,40 +2798,13 @@ test('bootstrap rejects empty token output for either host without partial outpu
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, new RegExp(`empty token for subject ${subject}`));
       assertNoBootstrapOutputs(bootstrap);
-    });
-  }
-});
-
-test('bootstrap rejects identical host credentials without exposing or writing them', t => {
-  const bootstrap = createBootstrapFixture(t, { cacheState: validCacheState() });
-
-  const result = runBootstrap(bootstrap, ['bootstrap'], {
-    ATTIC_ADMIN_IDENTICAL_HOST_TOKENS: '1',
   });
-
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /identical credentials for distinct host subjects/);
-  assert.deepEqual(
-    readJsonLines(bootstrap.fixture.statePaths.atticAdminLog).map(invocation => (
-      invocation.args[invocation.args.indexOf('--sub') + 1]
-    )),
-    ['Brandons-MacBook-Pro', 'ShopifyLaptop'],
-  );
-  assertNoBootstrapOutputs(bootstrap);
-  const observable = [
-    result.stdout,
-    result.stderr,
-    fs.readFileSync(bootstrap.executable, 'utf8'),
-    fs.readFileSync(bootstrap.fixture.statePaths.atticAdminLog, 'utf8'),
-  ].join('\n');
-  assert.equal(observable.includes(IDENTICAL_TOKEN_VALUE), false);
 });
 
 test('bootstrap refuses existing output files before cache or token mutation', async t => {
   const cases = [
     ['cache key', 'cachePublicKeyOutput', 0o644],
     ['personal token', 'personalTokenOutput', 0o400],
-    ['Shopify token', 'shopifyTokenOutput', 0o400],
   ];
 
   for (const [name, field, mode] of cases) {

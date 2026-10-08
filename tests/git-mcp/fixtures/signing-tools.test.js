@@ -69,7 +69,7 @@ function fixtureSummary() {
   cachedFixtureSummary = nixEvalJson(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(`${repoRoot}/tests/git-mcp/fixtures/signing-tools.nix`)} { inherit pkgs; };
     in
     {
@@ -89,7 +89,7 @@ function buildFixtureBundle() {
   const expression = `
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(`${repoRoot}/tests/git-mcp/fixtures/signing-tools.nix`)} {
         inherit pkgs;
         signerPackage = { nativeToolPaths, ... }:

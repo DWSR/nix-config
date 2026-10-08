@@ -23,7 +23,7 @@ function packageRoot() {
       'build',
       '--no-link',
       '--print-out-paths',
-      '.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory',
+      '.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.agentmemory',
     ],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);

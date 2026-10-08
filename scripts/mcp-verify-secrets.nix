@@ -55,7 +55,7 @@ pkgs.writeShellApplication {
   ];
   text = ''
     case "''${1:-}" in
-      shopify|personal)
+      personal)
         HOST="$1"
         ;;
       --help|-h)
@@ -66,7 +66,7 @@ pkgs.writeShellApplication {
       mcp-verify-secrets <host>
 
     Arguments:
-      host    shopify | personal
+      host    personal
 
     Output (per-key, one line each):
       MATCH    <service>    Keychain value equals decrypted yaml value
@@ -82,7 +82,7 @@ pkgs.writeShellApplication {
         exit 0
         ;;
       *)
-        echo "mcp-verify-secrets: error: expected host \"shopify\" or \"personal\", got \"''${1:-}\"" >&2
+        echo "mcp-verify-secrets: error: expected host \"personal\", got \"''${1:-}\"" >&2
         echo "  run --help for usage" >&2
         exit 1
         ;;

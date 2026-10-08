@@ -97,7 +97,6 @@ in
     #
     # Order positions: 1 (very early) and 9999 (very late) bracket every
     # other contribution to programs.zsh.initContent (compare with the
-    # mkOrder 550 block in configurations/shopify/home-manager/dev.nix
     # and mkOrder 1000 in configurations/personal/home-manager/op-shell-plugins.nix).
     #
     # Order 600 hosts the cached tool-init sources — runs after dev.nix's

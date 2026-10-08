@@ -18,7 +18,6 @@ const serverCertificate = path.join(certificateDirectory, 'server.pem');
 const jwtPublicKey = path.join(certificateDirectory, 'jwt-public.pem');
 const cachePublicKey = path.join(certificateDirectory, 'cache-public-key.txt');
 const personalSecrets = path.join(repoRoot, 'secrets/local-binary-cache.personal.yaml');
-const shopifySecrets = path.join(repoRoot, 'secrets/local-binary-cache.shopify.yaml');
 
 function run(executable, args) {
   return childProcess.execFileSync(executable, args, {
@@ -37,7 +36,6 @@ function assertExactCreationRules(policy) {
   });
   const expectedRules = new Map([
     ['secrets/local-binary-cache\\.personal\\.yaml$', 'host_personal'],
-    ['secrets/local-binary-cache\\.shopify\\.yaml$', 'host_shopify'],
   ]);
   const relevantPathLines = lines.filter(
     line => line.includes('path_regex:') && line.includes('local-binary-cache'),
@@ -72,11 +70,6 @@ function assertExactCreationRules(policy) {
     assert.notEqual(match, null, `${alias} must resolve to one age recipient`);
     hostRecipients.set(alias, match[1]);
   }
-  assert.notEqual(
-    hostRecipients.get('host_personal'),
-    hostRecipients.get('host_shopify'),
-    'personal and Shopify recipients must remain distinct',
-  );
 }
 
 function assertCanonicalCachePublicKey(value) {
@@ -273,8 +266,6 @@ test('cache identity creation rules are exact and remain host-isolated', () => {
 
 test('cache identity creation rules reject every additional recipient form', () => {
   const policy = fs.readFileSync(path.join(repoRoot, '.sops.yaml'), 'utf8');
-  const shopifyRecipient = policy.match(/^\s+- &host_shopify\s+(age1[a-z0-9]+)$/m)?.[1];
-  assert.notEqual(shopifyRecipient, undefined, 'Shopify age recipient is missing');
   const personalAlias = '          - *host_personal';
   const personalRule = [
     '  - path_regex: secrets/local-binary-cache\\.personal\\.yaml$',
@@ -283,8 +274,7 @@ test('cache identity creation rules reject every additional recipient form', () 
     personalAlias,
   ].join('\n');
   for (const additionalRecipient of [
-    '          - *host_shopify',
-    `          - ${shopifyRecipient}`,
+    '          - age1abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcd',
     '      - pgp:\n          - 0123456789ABCDEF0123456789ABCDEF01234567',
   ]) {
     const mutated = replaceOnce(
@@ -315,19 +305,13 @@ test('cache identity creation rules reject duplicate or malformed relevant rules
 test('Stage 2 runtime identities are exact host-isolated SOPS ciphertext', () => {
   const policy = fs.readFileSync(path.join(repoRoot, '.sops.yaml'), 'utf8');
   const personalRecipient = policy.match(/^\s+- &host_personal (age1[a-z0-9]+)$/m)?.[1];
-  const shopifyRecipient = policy.match(/^\s+- &host_shopify\s+(age1[a-z0-9]+)$/m)?.[1];
   assert.notEqual(personalRecipient, undefined, 'personal age recipient is missing');
-  assert.notEqual(shopifyRecipient, undefined, 'Shopify age recipient is missing');
-  assert.notEqual(personalRecipient, shopifyRecipient, 'host recipients must remain distinct');
 
   assertEncryptedSecretStore(personalSecrets, [
     'local-binary-cache-jwt-private-key',
     'local-binary-cache-personal-token',
     'local-binary-cache-tls-key',
   ], personalRecipient);
-  assertEncryptedSecretStore(shopifySecrets, [
-    'local-binary-cache-shopify-token',
-  ], shopifyRecipient);
 });
 
 test('runbook fixes the secret names, consumers, ownership, and mode before host wiring', () => {
@@ -357,7 +341,6 @@ test('runbook fixes the secret names, consumers, ownership, and mode before host
     /`local-binary-cache-jwt-private-key`[^\n]*root[^\n]*`0400`/,
   );
   assert.match(runbook, /`local-binary-cache-personal-token`[^\n]*root[^\n]*`0400`/);
-  assert.match(runbook, /`local-binary-cache-shopify-token`[^\n]*root[^\n]*`0400`/);
   assert.match(runbook, /Task 5\.2[^\n]*`sops\.secrets`/);
   assert.match(runbook, /Tasks 5\.4 and 5\.5[^\n]*token `sops\.secrets`[^\n]*ready mode/);
 

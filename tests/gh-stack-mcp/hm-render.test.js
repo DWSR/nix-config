@@ -9,7 +9,6 @@ const repoRoot = path.resolve(__dirname, '../..');
 const NIX_COMMAND_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 
 function nixEvalJson(expr) {
@@ -110,7 +109,6 @@ function hostRenderExpr() {
     in
     {
       personal = summarize "${HOSTS.personal}";
-      shopify = summarize "${HOSTS.shopify}";
     }
   `;
 }
@@ -205,19 +203,8 @@ function assertGhStackHost(host, hostKey) {
   }, `${hostKey} preserves the OpenCode proxy endpoint and timeout`);
 }
 
-test('both hosts render one packaged gh-stack-mcp stdio upstream through mcpproxy', () => {
+test('personal host renders one packaged gh-stack-mcp stdio upstream through mcpproxy', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
   assertGhStackHost(rendered.personal, 'personal');
-  assertGhStackHost(rendered.shopify, 'Shopify');
-  assert.equal(
-    rendered.personal.ghStackExtensions[0].storePath,
-    rendered.shopify.ghStackExtensions[0].storePath,
-    'both hosts install the same gh-stack extension derivation',
-  );
-  assert.equal(
-    rendered.personal.sourcePackagePath,
-    rendered.shopify.sourcePackagePath,
-    'both hosts use the same gh-stack-mcp package output',
-  );
 });

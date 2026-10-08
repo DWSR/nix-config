@@ -33,7 +33,7 @@ function createPatchedFixture() {
       'build',
       '--no-link',
       '--print-out-paths',
-      'path:.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory',
+      'path:.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.agentmemory',
     ],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim();

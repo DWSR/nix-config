@@ -26,7 +26,7 @@ function packageRoot(attribute, environmentName) {
 
   return execFileSync(
     'nix',
-    ['build', '--no-link', '--print-out-paths', `.#darwinConfigurations.ShopifyLaptop.pkgs.${attribute}`],
+    ['build', '--no-link', '--print-out-paths', `.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.${attribute}`],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
 }

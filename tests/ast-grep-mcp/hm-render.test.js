@@ -10,7 +10,6 @@ const repoRoot = path.resolve(__dirname, '../..');
 const NIX_COMMAND_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 
 function nixEvalJson(expr) {
@@ -117,7 +116,6 @@ function hostRenderExpr() {
     in
     {
       personal = summarize "${HOSTS.personal}";
-      shopify = summarize "${HOSTS.shopify}";
     }
   `;
 }
@@ -168,11 +166,10 @@ test('ast-grep-mcp package exposes metadata, built executable output, and help s
   assert.match(help, /--config/);
 });
 
-test('both hosts render ast-grep upstream through mcpproxy and preserve existing servers', () => {
+test('personal host renders ast-grep upstream through mcpproxy and preserves existing servers', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
   assert.equal(rendered.personal.serverNames.includes('obsidian'), false);
-  assert.equal(rendered.shopify.serverNames.includes('obsidian'), false);
   assertIncludesAll(rendered.personal.serverNames, [
     'github',
     'time',
@@ -186,23 +183,9 @@ test('both hosts render ast-grep upstream through mcpproxy and preserve existing
     'slack-hangops',
     'beeper',
   ], 'personal mcpproxy servers');
-  assertIncludesAll(rendered.shopify.serverNames, [
-    'github',
-    'time',
-    'instances-mcp',
-    'git-mcp',
-    'agentmemory',
-    'grep-app',
-    'ast-grep',
-    'buildkite',
-    'gcloud-mcp',
-    'tool-gateway',
-  ], 'Shopify mcpproxy servers');
 
   assert.equal(rendered.personal.routingMode, 'retrieve_tools');
-  assert.equal(rendered.shopify.routingMode, 'retrieve_tools');
   assertAstGrepServer(rendered.personal.astGrep, 'personal');
-  assertAstGrepServer(rendered.shopify.astGrep, 'Shopify');
 });
 
 test('ast-grep host declarations add no required secrets or direct opencode MCP entries', () => {

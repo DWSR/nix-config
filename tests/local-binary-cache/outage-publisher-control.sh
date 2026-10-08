@@ -4,7 +4,7 @@
 publisher_plist="/Library/LaunchDaemons/$publisher_label.plist"
 publisher_state_directory="/var/db/local-binary-cache/publisher"
 publisher_runner="$script_directory/outage-log-io.pl"
-publisher_recovery_command="$script_directory/07-shopify-outage-producer.sh --recover"
+publisher_recovery_command="$script_directory/06-personal-endpoint-outage.sh --recover"
 publisher_stopped=0
 publisher_privilege_ready=0
 

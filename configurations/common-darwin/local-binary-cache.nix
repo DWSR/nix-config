@@ -166,14 +166,6 @@ let
   publisherStateDirectoryType = types.addCheck runtimePathType (path: path != "/") // {
     description = "non-root absolute publisher runtime directory without Nix store context";
   };
-  externalHookIncludePathType =
-    types.addCheck safeRuntimePathType (
-      path:
-      path == "/etc/nix/nix.conf.d/shopify.conf" || lib.hasSuffix "/etc/nix/nix.conf.d/shopify.conf" path
-    )
-    // {
-      description = "Shopify hook include path or a hermetic fixture path with the same suffix";
-    };
   caddyTlsKeyPathType =
     types.addCheck runtimePathType (path: builtins.match "/[ /A-Za-z0-9._+,:=@%~\"'()-]+" path != null)
     // {
@@ -208,14 +200,6 @@ let
     (config.nix.settings.trusted-public-keys or [ ])
     ++ (config.nix.settings.extra-trusted-public-keys or [ ])
   );
-  consumerNixExtraOptions = ''
-    extra-substituters = ${lib.concatStringsSep " " declarativeSubstituters}
-    extra-trusted-public-keys = ${lib.concatStringsSep " " declarativeTrustedPublicKeys}
-    fallback = true
-    narinfo-cache-negative-ttl = ${toString cfg.consumer.negativeTtlSeconds}
-    require-sigs = true
-    ssl-cert-file = /etc/ssl/certs/ca-certificates.crt
-  '';
 
   bootstrapInputsDeclared =
     cfg.server.package != null
@@ -223,7 +207,6 @@ let
     && cfg.bootstrap.jwtPrivateKey != null
     && cfg.bootstrap.cachePublicKeyOutput != null
     && cfg.bootstrap.personalTokenOutput != null
-    && cfg.bootstrap.shopifyTokenOutput != null
     && cfg.server.jwtPublicKey != null
     && cfg.server.tlsCertificate != null
     && cfg.server.tlsKeyFile != null;
@@ -238,7 +221,6 @@ let
           cachePublicKeyOutput
           jwtPrivateKey
           personalTokenOutput
-          shopifyTokenOutput
           ;
         configuredCachePublicKey = if cfg.cachePublicKey == null then "" else cfg.cachePublicKey;
         curlExecutable = lib.getExe pkgs.curl;
@@ -334,90 +316,6 @@ let
       }
     else
       null;
-  externalHookPreflightPackage =
-    if cfg.publisher.enable && cfg.publisher.externalHookInclude != null then
-      let
-        declaredHookArguments = lib.concatMapStringsSep " " lib.escapeShellArg cfg.publisher.chainedHooks;
-        envExecutable = lib.getExe' pkgs.coreutils "env";
-        mkdirExecutable = lib.getExe' pkgs.coreutils "mkdir";
-        mktempExecutable = lib.getExe' pkgs.coreutils "mktemp";
-        nixExecutable = lib.getExe config.nix.package;
-        rmExecutable = lib.getExe' pkgs.coreutils "rm";
-      in
-      pkgs.writeShellApplication {
-        name = "local-binary-cache-external-hook-preflight";
-        text = ''
-          umask 077
-
-          fail() {
-            printf 'local-binary-cache: %s\n' "$1" >&2
-            exit 1
-          }
-
-          external_include=${lib.escapeShellArg cfg.publisher.externalHookInclude}
-          declared_hooks=( ${declaredHookArguments} )
-
-          if [[ ! -e "$external_include" ]]; then
-            fail "external Nix config is missing: $external_include"
-          fi
-          if [[ ! -f "$external_include" ]]; then
-            fail "external Nix config is not a regular file: $external_include"
-          fi
-          if [[ ! -r "$external_include" ]]; then
-            fail "external Nix config is unreadable: $external_include"
-          fi
-          work_directory="$(${mktempExecutable} --directory /tmp/local-binary-cache-hook-check.XXXXXX)"
-          cleanup() {
-            ${rmExecutable} -rf -- "$work_directory"
-          }
-          trap cleanup EXIT
-          ${mkdirExecutable} -p -- \
-            "$work_directory/home" \
-            "$work_directory/nix-conf" \
-            "$work_directory/xdg-config"
-          printf 'include %s\n' "$external_include" > "$work_directory/nix-conf/nix.conf"
-
-          if ! effective_hook="$(${envExecutable} -i \
-            HOME="$work_directory/home" \
-            XDG_CONFIG_HOME="$work_directory/xdg-config" \
-            NIX_CONFIG= \
-            NIX_CONF_DIR="$work_directory/nix-conf" \
-            LANG=C \
-            LC_ALL=C \
-            ${nixExecutable} --extra-experimental-features nix-command \
-              config show post-build-hook \
-              2> "$work_directory/nix-stderr")"; then
-            fail "failed to inspect external Nix config: $external_include"
-          fi
-
-          if [[ -n "$effective_hook" ]]; then
-            if [[ "$effective_hook" != /* ]] || [[ ! "$effective_hook" =~ ^/[A-Za-z0-9._+,:=@%~-]+(/[A-Za-z0-9._+,:=@%~-]+)*$ ]]; then
-              fail "external Nix config returned an unsafe post-build-hook: $external_include"
-            fi
-          fi
-
-          if [[ -n "$effective_hook" ]]; then
-            hook_is_declared=0
-            for declared_hook in "''${declared_hooks[@]}"; do
-              if [[ "$effective_hook" == "$declared_hook" ]]; then
-                hook_is_declared=1
-                break
-              fi
-            done
-            if (( ! hook_is_declared )); then
-              fail "conflicting post-build-hook $effective_hook in external Nix config $external_include"
-            fi
-          fi
-
-          for declared_hook in "''${declared_hooks[@]}"; do
-            if [[ ! -f "$declared_hook" || ! -x "$declared_hook" ]]; then
-              fail "declared chained hook is not an executable file: $declared_hook"
-            fi
-          done
-        '';
-      }
-    else
-      null;
 
   publisherOptions = {
     options = {
@@ -459,12 +357,6 @@ let
         description = "Explicit existing post-build hooks invoked by the final wrapper.";
       };
 
-      externalHookInclude = mkOption {
-        type = types.nullOr externalHookIncludePathType;
-        default = if cfg.hostRole == "shopify" then "/etc/nix/nix.conf.d/shopify.conf" else null;
-        description = "Externally owned Shopify Nix include inspected before installing the final hook.";
-      };
-
       enqueuePackage = mkOption {
         type = types.nullOr types.package;
         default = enqueueHookPackage;
@@ -479,12 +371,6 @@ let
         description = "Final post-build wrapper that enqueues before explicitly chained hooks.";
       };
 
-      externalHookPreflightPackage = mkOption {
-        type = types.nullOr types.package;
-        default = externalHookPreflightPackage;
-        readOnly = true;
-        description = "Isolated effective-config check for the externally owned Shopify hook include.";
-      };
     };
   };
 
@@ -611,7 +497,6 @@ in
       type = types.nullOr (
         types.enum [
           "personal"
-          "shopify"
         ]
       );
       default = null;
@@ -671,12 +556,6 @@ in
         type = types.nullOr runtimePathType;
         default = null;
         description = "Runtime output path for the personal host's bootstrap publication token.";
-      };
-
-      shopifyTokenOutput = mkOption {
-        type = types.nullOr runtimePathType;
-        default = null;
-        description = "Runtime output path for the Shopify host's bootstrap publication token.";
       };
 
       package = mkOption {
@@ -817,10 +696,6 @@ in
       message = "services.localBinaryCache.bootstrap.personalTokenOutput is required in bootstrap mode.";
     }
     {
-      assertion = !cfg.bootstrapMode || cfg.bootstrap.shopifyTokenOutput != null;
-      message = "services.localBinaryCache.bootstrap.shopifyTokenOutput is required in bootstrap mode.";
-    }
-    {
       assertion = !cfg.server.enable || cfg.hostRole == "personal";
       message = "services.localBinaryCache.server.enable may only be true when hostRole is personal.";
     }
@@ -853,16 +728,6 @@ in
         builtins.length cfg.publisher.chainedHooks
         == builtins.length (lib.unique cfg.publisher.chainedHooks);
       message = "services.localBinaryCache.publisher.chainedHooks must not contain duplicate paths.";
-    }
-    {
-      assertion =
-        !cfg.publisher.enable || cfg.hostRole != "shopify" || cfg.publisher.externalHookInclude != null;
-      message = "services.localBinaryCache.publisher.externalHookInclude is required for the Shopify publisher.";
-    }
-    {
-      assertion =
-        !cfg.publisher.enable || cfg.hostRole == "shopify" || cfg.publisher.externalHookInclude == null;
-      message = "services.localBinaryCache.publisher.externalHookInclude may only be set for the Shopify publisher.";
     }
     {
       assertion = !cfg.publisher.enable || cfg.publisher.package != null;
@@ -946,24 +811,12 @@ in
   };
 
   config.nix.extraOptions = lib.mkMerge [
-    (lib.mkIf (cfg.consumer.enable && cfg.hostRole == "shopify") (
-      lib.mkOrder 9998 consumerNixExtraOptions
-    ))
     (lib.mkIf (cfg.publisher.postBuildHookPackage != null) (
       lib.mkOrder 9999 ''
         post-build-hook = ${lib.getExe cfg.publisher.postBuildHookPackage}
       ''
     ))
   ];
-
-  config.system.activationScripts.checks.text =
-    lib.mkIf (cfg.publisher.externalHookPreflightPackage != null)
-      (
-        lib.mkAfter ''
-          echo "local-binary-cache: checking external post-build hook" >&2
-          ${lib.getExe cfg.publisher.externalHookPreflightPackage}
-        ''
-      );
 
   config.system.activationScripts.launchd.text =
     lib.mkIf (cfg.server.enable || cfg.publisher.enable)

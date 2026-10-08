@@ -20,7 +20,6 @@
   jwtPrivateKey,
   loginUser,
   personalTokenOutput,
-  shopifyTokenOutput,
   tokenValiditySeconds,
   cmpExecutable ? lib.getExe' diffutils "cmp",
   opensslExecutable ? lib.getExe openssl,
@@ -224,7 +223,6 @@ writeShellApplication {
         cache_name=${lib.escapeShellArg cacheName}
         cache_public_key_output=${lib.escapeShellArg cachePublicKeyOutput}
         personal_token_output=${lib.escapeShellArg personalTokenOutput}
-        shopify_token_output=${lib.escapeShellArg shopifyTokenOutput}
         configured_cache_public_key=${lib.escapeShellArg configuredCachePublicKey}
         configured_cache_public_key_file=${lib.escapeShellArg configuredCachePublicKeyFile}
 
@@ -388,7 +386,7 @@ writeShellApplication {
             if [[ ! "$endpoint" =~ ^https://[^/[:space:]?#]+(:[0-9]+)?$ ]]; then
               fail "cache endpoint must be an HTTPS origin without a path: $endpoint"
             fi
-            for value in "$endpoint" "$cache_public_key_output" "$personal_token_output" "$shopify_token_output"; do
+            for value in "$endpoint" "$cache_public_key_output" "$personal_token_output"; do
               if [[ "$value" =~ [\"\\\\] || "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
                 fail "cache operation input contains unsupported TOML characters"
               fi
@@ -413,11 +411,8 @@ writeShellApplication {
             if [[ "$operation" == bootstrap ]]; then
               require_output_path "cache public key" "$cache_public_key_output"
               require_output_path "Brandons-MacBook-Pro token" "$personal_token_output"
-              require_output_path "ShopifyLaptop token" "$shopify_token_output"
-              if [[ "$cache_public_key_output" == "$personal_token_output"
-                || "$cache_public_key_output" == "$shopify_token_output"
-                || "$personal_token_output" == "$shopify_token_output" ]]; then
-                fail "cache public key and host token outputs must use distinct paths"
+              if [[ "$cache_public_key_output" == "$personal_token_output" ]]; then
+                fail "cache public key and personal token outputs must use distinct paths"
               fi
             fi
 
@@ -425,12 +420,10 @@ writeShellApplication {
             outputs_committed=0
             cache_key_output_created=0
             personal_token_output_created=0
-            shopify_token_output_created=0
             cleanup_operations() {
               if (( outputs_committed == 0 )); then
                 (( cache_key_output_created == 1 )) && rm -f -- "$cache_public_key_output"
                 (( personal_token_output_created == 1 )) && rm -f -- "$personal_token_output"
-                (( shopify_token_output_created == 1 )) && rm -f -- "$shopify_token_output"
               fi
               if [[ -n "$work_directory" ]]; then
                 rm -rf -- "$work_directory"
@@ -501,12 +494,7 @@ writeShellApplication {
               write_admin_config
             fi
             personal_token="$work_directory/Brandons-MacBook-Pro.token"
-            shopify_token="$work_directory/ShopifyLaptop.token"
             generate_token Brandons-MacBook-Pro ${lib.escapeShellArg "${toString tokenValiditySeconds}s"} --push "$personal_token"
-            generate_token ShopifyLaptop ${lib.escapeShellArg "${toString tokenValiditySeconds}s"} --push "$shopify_token"
-            if "$cmp" -s -- "$personal_token" "$shopify_token"; then
-              fail "token issuer returned identical credentials for distinct host subjects"
-            fi
 
             cache_key="$work_directory/cache-public-key.txt"
             printf '%s\n' "$live_cache_public_key" > "$cache_key"
@@ -515,13 +503,10 @@ writeShellApplication {
             cache_key_output_created=1
             write_new_output "Brandons-MacBook-Pro token" "$personal_token" "$personal_token_output" 0400
             personal_token_output_created=1
-            write_new_output "ShopifyLaptop token" "$shopify_token" "$shopify_token_output" 0400
-            shopify_token_output_created=1
             outputs_committed=1
 
             printf 'cache-public-key path=%s\n' "$cache_public_key_output"
             printf 'host-token subject=Brandons-MacBook-Pro path=%s mode=0400\n' "$personal_token_output"
-            printf 'host-token subject=ShopifyLaptop path=%s mode=0400\n' "$shopify_token_output"
             ;;
           *)
             fail "usage: local-binary-cache-bootstrap [preflight|bootstrap|ready]"

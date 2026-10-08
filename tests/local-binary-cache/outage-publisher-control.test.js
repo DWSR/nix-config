@@ -11,10 +11,6 @@ const { repoRoot } = require('./helpers');
 
 const scriptDirectory = path.join(repoRoot, 'tests/local-binary-cache');
 const control = path.join(scriptDirectory, 'outage-publisher-control.sh');
-const producerSource = fs.readFileSync(
-  path.join(scriptDirectory, '07-shopify-outage-producer.sh'),
-  'utf8',
-);
 
 function findPublisherExecutable() {
   const configured = process.env.PUBLISHER_VALIDATOR_EXECUTABLE;
@@ -317,11 +313,11 @@ printf 'loaded=%d stopped=%d\\n' "$loaded" "$publisher_stopped"
   assert.match(result.stdout, /loaded=0 stopped=1/);
   assert.match(
     result.stderr,
-    /Manual recovery if interrupted: .*\/07-shopify-outage-producer\.sh --recover/,
+    /Manual recovery if interrupted: .*\/06-personal-endpoint-outage\.sh --recover/,
   );
   assert.equal(
     fs.readFileSync(events, 'utf8'),
-    `guidance:${path.join(scriptDirectory, '07-shopify-outage-producer.sh')} --recover\nbootout\n`,
+    `guidance:${path.join(scriptDirectory, '06-personal-endpoint-outage.sh')} --recover\nbootout\n`,
   );
 });
 
@@ -384,14 +380,17 @@ printf 'status=%d stopped=%d\\n' "$status" "$publisher_stopped"
 
 test('publisher recovery mode accepts only literal --recover with no service-selected data', () => {
   assert.match(
-    producerSource,
+    fs.readFileSync(path.join(scriptDirectory, '06-personal-endpoint-outage.sh'), 'utf8'),
     /\[\[ \$# -eq 1 && "\$1" == --recover \]\]/,
   );
   assert.match(
-    producerSource,
-    /publisher-recovery-command=.*07-shopify-outage-producer\.sh --recover/,
+    fs.readFileSync(path.join(scriptDirectory, '06-personal-endpoint-outage.sh'), 'utf8'),
+    /caddy_recovery_command=.*06-personal-endpoint-outage\.sh --recover/,
   );
-  assert.doesNotMatch(producerSource, /--recover[ =](?:\$|"\$)|--recover-(?:label|plist|service)/);
+  assert.doesNotMatch(
+    fs.readFileSync(path.join(scriptDirectory, '06-personal-endpoint-outage.sh'), 'utf8'),
+    /--recover[ =](?:\$|"\$)|--recover-(?:label|plist|service)/,
+  );
 });
 
 test('publisher control rejects every later sudo prompt path', t => {

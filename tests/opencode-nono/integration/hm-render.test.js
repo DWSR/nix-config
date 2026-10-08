@@ -2,7 +2,7 @@
 
 /*
  * hm-render.test.js — HM render assertions for the opencode-nono-sandbox
- * spec (Task 7.1). Renders BOTH nix-darwin hosts via `nix eval --json` and
+ * spec (Task 7.1). Renders the personal nix-darwin host via `nix eval --json` and
  * asserts the `programs.opencode-nono` module's emitted surface: the three
  * base profiles (each `extends ["default"]`, secret-free, no Keychain /
  * security / curl grants), profile content, host-specific labels, the
@@ -32,7 +32,6 @@ const repoRoot = path.resolve(__dirname, '../../..');
 const NIX_COMMAND_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 const PROFILE_KEYS = Object.freeze(['opencode-managed', 'opencode-audit', 'opencode-review']);
 
@@ -74,7 +73,7 @@ function nixEvalJson(expr) {
   ));
 }
 
-// Render, for both hosts, every artifact the assertions inspect: the three
+// Render every artifact the assertions inspect: the three
 // profile JSON texts (raw, so the forbidden-token scan runs over the literal
 // serialized form), the metadata + guide texts, the launcher finalPackage
 // name, the nono package name, and the live `config.assertions` list plus the
@@ -108,7 +107,6 @@ function liveRenderExpr() {
     in
     {
       personal = summarize (hm "${HOSTS.personal}");
-      shopify = summarize (hm "${HOSTS.shopify}");
     }
   `;
 }
@@ -181,7 +179,7 @@ function getRender() {
   if (!renderCache) {
     if (process.env.OPENCODE_NONO_HOSTS) {
       const rows = JSON.parse(fs.readFileSync(process.env.OPENCODE_NONO_HOSTS, 'utf8'));
-      renderCache = { personal: rows.personal.nonoRender, shopify: rows.shopify.nonoRender };
+      renderCache = { personal: rows.personal.nonoRender };
     } else {
       renderCache = nixEvalJson(liveRenderExpr());
     }
@@ -346,17 +344,6 @@ test('CFUserTextEncoding is granted as a single file, never in a directory key (
   // the directory-key assertions above are meaningfully exercised (and the
   // CF startup read is not silently dropped).
   assert.ok(grantedAsFile, `${CF} must be granted via a *_file key on at least one profile`);
-});
-
-test('Shopify host carries a host-specific label; personal does not (R2.3)', () => {
-  const rendered = getRender();
-
-  for (const key of ['opencode-managed', 'opencode-audit']) {
-    const shopifyDesc = JSON.parse(rendered.shopify.profileTexts[key]).meta.description;
-    const personalDesc = JSON.parse(rendered.personal.profileTexts[key]).meta.description;
-    assert.match(shopifyDesc, /Host:\s*ShopifyLaptop/i, `shopify/${key} description must carry host label`);
-    assert.doesNotMatch(personalDesc, /Host:\s*ShopifyLaptop/i, `personal/${key} description must NOT carry shopify host label`);
-  }
 });
 
 test('rendered metadata.json has the expected shape (R6.5/R7.4)', () => {

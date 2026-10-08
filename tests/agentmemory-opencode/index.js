@@ -20,7 +20,6 @@ const featureTests = [
   'package-contract.test.js',
   'plugin-contract.test.js',
   'preflight.test.js',
-  'shopify-agent-prompts.test.js',
   'specialist-prompts.test.js',
   'status.test.js',
   'validation-suite.test.js',

@@ -9,12 +9,7 @@ const test = require('node:test');
 const { repoRoot } = require('./helpers');
 
 const directory = path.join(repoRoot, 'tests/local-binary-cache');
-const scripts = [
-  '05-shopify-outage-preflight.sh',
-  '06-personal-endpoint-outage.sh',
-  '07-shopify-outage-producer.sh',
-  '08-shopify-outage-recovery.sh',
-];
+const scripts = [ '06-personal-endpoint-outage.sh' ];
 const atticClientExecutable = process.env.ATTIC_CLIENT_EXECUTABLE;
 const atticClientSource = process.env.ATTIC_CLIENT_SOURCE;
 
@@ -73,30 +68,13 @@ test('outage phases retain exact numbering and remove cursor architecture', () =
     const scriptPath = path.join(directory, script);
     assert.ok(fs.statSync(scriptPath).mode & 0o111, `${script} must be executable`);
   }
-  assert.match(source(scripts[0]), /06-personal-endpoint-outage\.sh/);
-  assert.match(source(scripts[1]), /07-shopify-outage-producer\.sh/);
-  assert.match(source(scripts[2]), /08-shopify-outage-recovery\.sh/);
   assert.equal(fs.existsSync(path.join(directory, 'outage-log-cursor.sh')), false);
 });
 
-test('each phase validates its exact host and literal positional handoff', () => {
-  const preflight = source(scripts[0]);
-  const personal = source(scripts[1]);
-  const producer = source(scripts[2]);
-  const recovery = source(scripts[3]);
-
-  assert.match(preflight, /expected_host="ShopifyLaptop"/);
-  assert.match(preflight, /\[\[ \$# -eq 0 \]\]/);
+test('personal outage script validates its host and recovery invocation', () => {
+  const personal = source(scripts[0]);
   assert.match(personal, /expected_host="Brandons-MacBook-Pro"/);
   assert.match(personal, /\[\[ \$# -eq 1 && "\$1" == --recover \]\]/);
-  assert.match(personal, /\[\[ \$# -eq 1 \]\]/);
-  assert.match(producer, /expected_host="ShopifyLaptop"/);
-  assert.match(producer, /\[\[ \$# -eq 1 && "\$1" == --recover \]\]/);
-  assert.match(producer, /\[\[ \$# -eq 2 \]\]/);
-  assert.match(recovery, /expected_host="ShopifyLaptop"/);
-  assert.match(recovery, /\[\[ \$# -eq 4 \]\]/);
-  assert.match(producer, /RUN_TICKET=%s/);
-  assert.match(recovery, /run ticket path does not match handoff/);
 });
 
 test('personal phase restores Caddy and emits the exact recovery-ready handoff', () => {
@@ -106,51 +84,11 @@ test('personal phase restores Caddy and emits the exact recovery-ready handoff',
     'Manual recovery if interrupted: %s\\n',
     'launchctl bootout system "$caddy_plist"',
     'endpoint-outage-curl-exit=',
-    'restore_challenge="shopify-restore-$(/usr/bin/uuidgen',
-    'Do not enter RESTORE until phase 08 reports that it is waiting.',
-    'consume_restore_command "$restore_input"',
     'recover_endpoint',
     'configured-live-key-match=true',
-    'RECOVERY_READY %s %s',
   ]);
   assert.equal((text.match(/launchctl bootout/g) ?? []).length, 1);
   assert.doesNotMatch(text, /bootout[^\n]*attic/);
-});
-
-test('phase 07 proves synchronous failure under paused publisher then restores it', () => {
-  const text = source(scripts[2]);
-  assertOrdered(text, [
-    'pending queue is not empty before outage build',
-    'nix build --no-link --print-out-paths',
-    'build did not create pending root',
-    'stop_publisher',
-    'run_bounded_publisher',
-    'bounded publisher failure did not retain pending root',
-    'ticket-create',
-    'finish_publisher_control',
-    'Start on ShopifyLaptop before RESTORE:',
-    'Only after phase 08 reports waiting',
-  ]);
-  assert.match(text, /nonzero "\$failure_capture" 2 "\$failure_prefix" "retained for retry"/);
-  assert.doesNotMatch(text, /publisher_log|cursor|tail -n/);
-});
-
-test('phase 08 consumes ticket and waits before endpoint recovery and synchronous success', () => {
-  const text = source(scripts[3]);
-  assertOrdered(text, [
-    'expected pending root is absent',
-    'ticket-consume',
-    'stop_publisher',
-    'phase-08-waiting',
-    'RECOVERY_READY %s %s',
-    'consume_recovery_ready "$recovery_ready_input"',
-    'configured-live-key-match=true',
-    'run_bounded_publisher zero',
-    'bounded publisher success did not remove pending root',
-    '$endpoint/$root_id.narinfo',
-    'finish_publisher_control',
-  ]);
-  assert.doesNotMatch(text, /publisher_log|cursor|tail -n/);
 });
 
 test('runner and publisher-control contracts are bounded, exact, and secret-free', () => {
@@ -177,7 +115,7 @@ test('runner and publisher-control contracts are bounded, exact, and secret-free
   assert.match(control, /publisher_user" == root/);
   assert.match(control, /\/bin\/realpath "\$executable"/);
   assert.match(control, /-- "\$publisher_executable"/);
-  assert.match(control, /07-shopify-outage-producer\.sh --recover/);
+  assert.match(control, /06-personal-endpoint-outage\.sh --recover/);
   assert.doesNotMatch(control, /\btrap\b[^\n]*(?:EXIT|HUP|INT|TERM)/);
 
   assert.doesNotMatch(combined, /atticadm\b|token(?:-file)?\b|\/run\/secrets/);
@@ -247,23 +185,18 @@ test('deployed publisher contract excludes process-group escape mechanisms', () 
 });
 
 test('outage phases preflight privilege and reject every later sudo prompt', () => {
-  const [preflight, personal, producer, recovery] = scripts.map(source);
+  const [personal] = scripts.map(source);
   const promptCapableSudo = /(?:^[ \t]*|\$\(|(?:if|then|while|until|!|&&|\|\|)[ \t]+)sudo[ \t]+(?!-n(?:[ \t]|$))/m;
 
   for (const [index, text] of scripts.map(source).entries()) {
     assert.doesNotMatch(text, promptCapableSudo, `${scripts[index]} contains prompt-capable sudo`);
   }
-  assertOrdered(preflight, ['sudo -n -v', 'sudo -n test -d']);
   assertOrdered(personal, ['sudo -n -v', 'sudo -n launchctl bootout']);
-  assertOrdered(producer, ['acquire_noninteractive_privilege', 'load_publisher_contract']);
-  assertOrdered(recovery, ['acquire_noninteractive_privilege', 'load_publisher_contract']);
 });
 
 test('outage Bash never owns launchd restoration from EXIT or signal traps', () => {
   const serviceLifecycleSources = [
     source('06-personal-endpoint-outage.sh'),
-    source('07-shopify-outage-producer.sh'),
-    source('08-shopify-outage-recovery.sh'),
     source('outage-publisher-control.sh'),
   ];
 

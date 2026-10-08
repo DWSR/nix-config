@@ -2,7 +2,6 @@
   pkgs,
   home-manager,
   realLitestream ? null,
-  shopifyHome ? null,
 }:
 let
   inherit (pkgs) lib;
@@ -200,31 +199,6 @@ let
     }
   );
 
-  shopifyPolicy =
-    if shopifyHome == null then
-      { }
-    else
-      let
-        sqliteBackup = shopifyHome.home.sqliteBackup;
-        guardNames = builtins.filter (name: builtins.match "sqlite-backup-guard-.*" name != null) (
-          builtins.attrNames shopifyHome.launchd.agents
-        );
-      in
-      {
-        inherit guardNames;
-        inherit (sqliteBackup.pressureGuard)
-          checkIntervalSeconds
-          minimumFilesystemAvailableBytes
-          ;
-        databases = map (db: {
-          inherit (db) name remote remotePath;
-        }) sqliteBackup.databases;
-        manifestPath = sqliteBackup._manifestPath;
-        inherit (sqliteBackup) rcloneDestinations;
-      };
-  shopifyPolicyFile = pkgs.writeText "sqlite-backup-shopify-policy.json" (
-    builtins.toJSON shopifyPolicy
-  );
 in
 pkgs.runCommand "sqlite-backup-tests"
   {
@@ -249,9 +223,6 @@ pkgs.runCommand "sqlite-backup-tests"
     SQLITE_BACKUP_RENDER = render;
     SQLITE_BACKUP_LOCAL_RENDER = localRender;
     SQLITE_BACKUP_LOCAL_CLI = lib.getExe localHm.config.home.sqliteBackup._cliBinary;
-    SQLITE_BACKUP_SHOPIFY_POLICY = shopifyPolicyFile;
-    SQLITE_BACKUP_SHOPIFY_CLI =
-      if shopifyHome == null then "" else lib.getExe shopifyHome.home.sqliteBackup._cliBinary;
   }
   ''
     bash ${./persistent-emergency-halts.test.sh}

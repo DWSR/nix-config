@@ -16,15 +16,15 @@
 # `home.deskflow.tls.trustedFingerprints`.
 #
 # Run this ON the host whose role you pass (e.g. `personal` on
-# Brandons-MacBook-Pro, `shopify` on ShopifyLaptop), from a checkout of the
+# Brandons-MacBook-Pro), from a checkout of the nix-config repo.
 # nix-config repo (it is intentionally a standalone script, not run from inside
 # the opencode sandbox):
 #
-#     bash scripts/deskflow-generate-cert.sh shopify          # generate (refuses to clobber)
-#     bash scripts/deskflow-generate-cert.sh shopify --force  # ROTATE (replaces the identity)
+#     bash scripts/deskflow-generate-cert.sh personal          # generate (refuses to clobber)
+#     bash scripts/deskflow-generate-cert.sh personal --force  # ROTATE (replaces the identity)
 #
 # Requires openssl, sops, and git on PATH, e.g.:
-#     nix shell nixpkgs#openssl nixpkgs#sops -c bash scripts/deskflow-generate-cert.sh shopify
+#     nix shell nixpkgs#openssl nixpkgs#sops -c bash scripts/deskflow-generate-cert.sh personal
 #
 set -euo pipefail
 
@@ -34,8 +34,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: deskflow-generate-cert.sh <host-role> [--force]
 
-  <host-role>  the sops-nix host role this cert belongs to (e.g. personal,
-               shopify). Must match an `&host_<role>` age recipient anchor in
+  <host-role>  the sops-nix host role this cert belongs to (personal). Must match an
+               `&host_<role>` age recipient anchor in
                .sops.yaml and the per-host darwinConfiguration. Run this script
                ON that host.
   --force      ROTATE an existing identity: changes the fingerprint and breaks

@@ -187,7 +187,6 @@ let
         jwtPrivateKey = "/run/secrets/local-binary-cache-jwt-private-key";
         cachePublicKeyOutput = "/var/db/local-binary-cache/bootstrap/cache-public-key.txt";
         personalTokenOutput = "/var/db/local-binary-cache/bootstrap/personal-token";
-        shopifyTokenOutput = "/var/db/local-binary-cache/bootstrap/shopify-token";
       };
       server = serverConfig;
     };
@@ -202,52 +201,45 @@ let
     };
   };
   readyPersonal = mkReady "personal" { };
-  readyShopify = mkReady "shopify" { };
   missingTrust = mkReady "personal" {
     services.localBinaryCache = {
       cachePublicKey = null;
       caCertificate = null;
     };
   };
-  invalidRole = mkReady "personal" {
-    services.localBinaryCache.hostRole = "shopify";
-  };
-  distributedPublisher = mkReady "shopify" {
+  distributedPublisher = mkReady "personal" {
     nix.distributedBuilds = true;
   };
-  duplicateChainedHooks = mkReady "shopify" {
+  duplicateChainedHooks = mkReady "personal" {
     services.localBinaryCache.publisher.chainedHooks = [
       "/usr/local/bin/existing-post-build-hook"
       "/usr/local/bin/existing-post-build-hook"
     ];
   };
-  contextualStoreChainedHook = mkReady "shopify" {
+  contextualStoreChainedHook = mkReady "personal" {
     services.localBinaryCache.publisher.chainedHooks = [ (lib.getExe runtimePackage) ];
   };
-  contextlessStoreChainedHook = mkReady "shopify" {
+  contextlessStoreChainedHook = mkReady "personal" {
     services.localBinaryCache.publisher.chainedHooks = [
       (builtins.unsafeDiscardStringContext (lib.getExe runtimePackage))
     ];
   };
-  injectedExternalHookInclude = mkReady "shopify" {
-    services.localBinaryCache.publisher.externalHookInclude = "/tmp/local-binary-cache-fixture/etc/nix/nix.conf.d/shopify.conf";
-  };
-  storeBackedTokenFile = mkReady "shopify" {
+  storeBackedTokenFile = mkReady "personal" {
     services.localBinaryCache.publisher.tokenFile = contextualStorePath;
   };
-  storeRootTokenFile = mkReady "shopify" {
+  storeRootTokenFile = mkReady "personal" {
     services.localBinaryCache.publisher.tokenFile = builtins.storeDir;
   };
-  storeBackedStateDirectory = mkReady "shopify" {
+  storeBackedStateDirectory = mkReady "personal" {
     services.localBinaryCache.publisher.stateDirectory = contextlessStorePath;
   };
-  malformedCachePublicKey = mkReady "shopify" {
+  malformedCachePublicKey = mkReady "personal" {
     services.localBinaryCache.cachePublicKey = "darwin:not-base64";
   };
-  malformedPaddedCachePublicKey = mkReady "shopify" {
+  malformedPaddedCachePublicKey = mkReady "personal" {
     services.localBinaryCache.cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs==";
   };
-  noncanonicalCachePublicKey = mkReady "shopify" {
+  noncanonicalCachePublicKey = mkReady "personal" {
     services.localBinaryCache.cachePublicKey = "darwin:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Ft=";
   };
   alternateRetentionDays = mkReady "personal" {
@@ -303,6 +295,12 @@ let
       };
     };
   };
+  invalidRole = mkConfiguration {
+    services.localBinaryCache = {
+      enable = true;
+      hostRole = "removed-host";
+    };
+  };
   missingPrimaryUser = mkReady "personal" {
     system.primaryUser = null;
   };
@@ -336,7 +334,7 @@ let
   runtimePathAccepted =
     path:
     (builtins.tryEval
-      (mkReady "shopify" {
+      (mkReady "personal" {
         services.localBinaryCache.publisher.tokenFile = path;
       }).config.services.localBinaryCache.publisher.tokenFile
     ).success;
@@ -382,18 +380,13 @@ assert
     "services.localBinaryCache.bootstrap.jwtPrivateKey is required in bootstrap mode."
     "services.localBinaryCache.bootstrap.cachePublicKeyOutput is required in bootstrap mode."
     "services.localBinaryCache.bootstrap.personalTokenOutput is required in bootstrap mode."
-    "services.localBinaryCache.bootstrap.shopifyTokenOutput is required in bootstrap mode."
   ];
 assert readyPersonal.config.services.localBinaryCache.readiness.package != null;
-assert readyShopify.config.services.localBinaryCache.readiness.package != null;
 assert readyPersonal.config.services.localBinaryCache.diagnostics.package != null;
-assert readyShopify.config.services.localBinaryCache.diagnostics.package != null;
 assert failedAssertions readyPersonal == [ ];
-assert failedAssertions readyShopify == [ ];
+assert rejected invalidRole.config.services.localBinaryCache.hostRole;
 assert readyPersonal.config.services.localBinaryCache.consumer.priority == 30;
-assert readyShopify.config.services.localBinaryCache.consumer.priority == 30;
 assert readyPersonal.config.services.localBinaryCache.publisher.tokenValidity == 31557600;
-assert readyShopify.config.services.localBinaryCache.publisher.tokenValidity == 31557600;
 assert lib.all
   (
     configuration:
@@ -415,18 +408,11 @@ assert lib.all
     && lib.elem tlsCertificate configuration.config.security.pki.certificateFiles
     && builtins.length configuration.config.security.pki.certificateFiles == 1
   )
-  [
-    readyPersonal
-    readyShopify
-  ];
+  [ readyPersonal ];
 assert
   failureMessages missingTrust == [
     "services.localBinaryCache.cachePublicKey is required in ready mode."
     "services.localBinaryCache.caCertificate is required when consumer.enable is true."
-  ];
-assert
-  failureMessages invalidRole == [
-    "services.localBinaryCache.server.enable may only be true when hostRole is personal."
   ];
 assert
   failureMessages distributedPublisher == [
@@ -440,24 +426,11 @@ assert failedAssertions contextualStoreChainedHook == [ ];
 assert rejected (
   builtins.head contextlessStoreChainedHook.config.services.localBinaryCache.publisher.chainedHooks
 );
-assert failedAssertions injectedExternalHookInclude == [ ];
 assert readyPersonal.config.services.localBinaryCache.publisher.enqueuePackage != null;
 assert readyPersonal.config.services.localBinaryCache.publisher.postBuildHookPackage != null;
-assert readyPersonal.config.services.localBinaryCache.publisher.externalHookInclude == null;
-assert
-  readyPersonal.config.services.localBinaryCache.publisher.externalHookPreflightPackage == null;
 assert lib.hasInfix "post-build-hook = " readyPersonal.config.nix.extraOptions;
-assert readyShopify.config.services.localBinaryCache.publisher.enqueuePackage != null;
-assert readyShopify.config.services.localBinaryCache.publisher.postBuildHookPackage != null;
-assert
-  readyShopify.config.services.localBinaryCache.publisher.externalHookInclude
-  == "/etc/nix/nix.conf.d/shopify.conf";
-assert readyShopify.config.services.localBinaryCache.publisher.externalHookPreflightPackage != null;
-assert lib.hasInfix "local-binary-cache: checking external post-build hook"
-  readyShopify.config.system.activationScripts.checks.text;
 assert bootstrap.config.services.localBinaryCache.publisher.enqueuePackage == null;
 assert bootstrap.config.services.localBinaryCache.publisher.postBuildHookPackage == null;
-assert bootstrap.config.services.localBinaryCache.publisher.externalHookPreflightPackage == null;
 assert bootstrap.config.security.pki.certificateFiles == [ ];
 assert bootstrap.config.nix.settings.extra-substituters == [ ];
 assert bootstrap.config.nix.settings.extra-trusted-public-keys == [ ];

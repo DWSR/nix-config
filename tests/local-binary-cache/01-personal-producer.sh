@@ -11,7 +11,7 @@ publisher_log="/var/log/local-binary-cache/publisher/stderr.log"
 endpoint="https://Brandons-MacBook-Pro.local:8443/darwin"
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd "$script_directory/../.." && pwd -P)"
-next_script="$script_directory/02-shopify-consumer.sh"
+next_script="$script_directory/04-personal-consumer.sh"
 
 fail() {
   printf '01-personal-producer: %s\n' "$1" >&2
@@ -113,4 +113,4 @@ fi
 [[ ! -e "$output" ]] || fail "producer output remains in the local store: $output"
 
 printf 'OUT=%s\nNONCE=%s\n' "$output" "$nonce"
-printf 'Next on ShopifyLaptop: %s %s %s\n' "$next_script" "$output" "$nonce"
+printf 'Next on Brandons-MacBook-Pro: %s %s %s\n' "$next_script" "$output" "$nonce"

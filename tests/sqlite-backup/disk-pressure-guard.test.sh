@@ -225,24 +225,6 @@ if [ -n "$SQLITE_BACKUP_REAL_LITESTREAM" ]; then
   assert_contains "$work/litestream-config.out" "sqlite-backup-test.db"
 fi
 
-jq -e '
-  .minimumFilesystemAvailableBytes == 137438953472
-  and .checkIntervalSeconds == 60
-  and (.rcloneDestinations | keys) == [":local"]
-  and .rcloneDestinations[":local"].type == "local"
-  and .databases == []
-  and .guardNames == []
-' "$SQLITE_BACKUP_SHOPIFY_POLICY" >/dev/null
-
-shopify_manifest_path="$(jq -r '.manifestPath' "$SQLITE_BACKUP_SHOPIFY_POLICY")"
-jq -e '
-  .rcloneConfigDestinations == {}
-  and .rcloneDestinations[":local"].type == "local"
-  and .databases == []
-' "$shopify_manifest_path" >/dev/null
-test -z "$("$SQLITE_BACKUP_SHOPIFY_CLI" list)" \
-  || fail "dormant Shopify CLI unexpectedly lists databases"
-
 marker="$XDG_STATE_HOME/sqlite-backup/pressure-fixture.json"
 lock="$XDG_STATE_HOME/sqlite-backup/pressure-fixture.lock"
 failed="$XDG_STATE_HOME/sqlite-backup/pressure-fixture.failed"

@@ -317,7 +317,6 @@ in
       # prompt at Nix-eval time. The helper is exposed as
       # `config.home.opencode.agentWithCaveman` so host configs can apply
       # the same wrapping to their own subagents (see
-      # configurations/shopify/home-manager/opencode.nix for the live
       # example). `programs.opencode.agents` accepts either a path or a
       # string of inlined content; the helper returns one or the other
       # based on the toggle.

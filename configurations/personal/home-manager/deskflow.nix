@@ -2,8 +2,7 @@
 {
   # Brandons-MacBook-Pro Deskflow server enablement.
   #
-  # This host is the Deskflow server: its keyboard/mouse are shared to clients
-  # (ShopifyLaptop). The screen layout below is the declarative translation of
+  # This host is the Deskflow server: its keyboard/mouse are shared to clients.
   # the host's exported deskflow-server.conf (screens + links + global options).
   # Per-screen options in that export (halfDuplex*, xtestIsXineramaUnaware,
   # switchCorners/switchCornerSize) were all Deskflow defaults and so are omitted;
@@ -14,9 +13,6 @@
   # "deskflow-cert" in ../../default.nix (format = "yaml"; key = "data") and
   # decrypted to an owner-only path. It
   # is referenced by path only -- the private key never enters the Nix store.
-  # ShopifyLaptop trusts THIS host's fingerprint via its own trustedFingerprints,
-  # and this host pre-trusts ShopifyLaptop's fingerprint below, so the TLS
-  # connection is mutually pre-seeded (no interactive approval needed).
   home.hammerspoon.deskflowWatchdog.enable = true;
 
   home.deskflow = {
@@ -28,32 +24,16 @@
       certificateFile = osConfig.sops.secrets."deskflow-cert".path;
       keySize = 4096;
 
-      # Trust the ShopifyLaptop client's TLS identity by fingerprint, so the
-      # server accepts it with no interactive approval. This is the SHA-256 of
-      # the sops-managed cert on ShopifyLaptop (secrets/deskflow-cert.shopify.yaml);
-      # rotating that cert invalidates this value. Rendered read-only to
-      # ~/Library/Deskflow/tls/trusted-clients (a server verifies clients).
-      trustedFingerprints = [
-        "f3296755f00be642cda4cc062c01f5ccaa3dc4ceb9fc16389bddc02b5a589749"
-      ];
+      trustedFingerprints = [ ];
     };
 
     server = {
       screens = [
         { name = "Brandons-MacBook-Pro.local"; }
-        { name = "ShopifyLaptop.local"; }
       ];
 
       links = [
         {
-          from = "Brandons-MacBook-Pro.local";
-          direction = "right";
-          to = "ShopifyLaptop.local";
-        }
-        {
-          from = "ShopifyLaptop.local";
-          direction = "left";
-          to = "Brandons-MacBook-Pro.local";
         }
       ];
 

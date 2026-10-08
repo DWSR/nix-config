@@ -22,7 +22,6 @@ const specialists = Object.freeze({
       /home\.packages/,
       /nix build/,
       /nix fmt/,
-      /darwinConfigurations\.ShopifyLaptop/,
       /darwinConfigurations\.Brandons-MacBook-Pro/,
     ],
   },

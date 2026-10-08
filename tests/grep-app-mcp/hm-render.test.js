@@ -10,7 +10,6 @@ const repoRoot = path.resolve(__dirname, '../..');
 const NIX_COMMAND_TIMEOUT_MS = 600_000;
 const HOSTS = Object.freeze({
   personal: 'Brandons-MacBook-Pro',
-  shopify: 'ShopifyLaptop',
 });
 
 function nixEvalJson(expr) {
@@ -106,7 +105,6 @@ function hostRenderExpr() {
     in
     {
       personal = summarize "${HOSTS.personal}";
-      shopify = summarize "${HOSTS.shopify}";
     }
   `;
 }
@@ -143,11 +141,10 @@ test('grep-app-mcp package exposes metadata and built executable output', () => 
   assert.equal(fs.existsSync(path.join(outPath, 'lib', 'node_modules', 'grep_app_mcp', 'dist', 'server-stdio.js')), true);
 });
 
-test('both hosts render grep-app upstream through mcpproxy and preserve existing servers', () => {
+test('personal host renders grep-app upstream through mcpproxy and preserves existing servers', () => {
   const rendered = nixEvalJson(hostRenderExpr());
 
   assert.equal(rendered.personal.serverNames.includes('obsidian'), false);
-  assert.equal(rendered.shopify.serverNames.includes('obsidian'), false);
   assertIncludesAll(rendered.personal.serverNames, [
     'github',
     'time',
@@ -160,23 +157,9 @@ test('both hosts render grep-app upstream through mcpproxy and preserve existing
     'slack-hangops',
     'beeper',
   ], 'personal mcpproxy servers');
-  assertIncludesAll(rendered.shopify.serverNames, [
-    'github',
-    'time',
-    'instances-mcp',
-    'git-mcp',
-    'agentmemory',
-    'grep-app',
-    'buildkite',
-    'gcloud-mcp',
-    'tool-gateway',
-  ], 'Shopify mcpproxy servers');
-  assert.equal(rendered.shopify.serverNames.includes('gt-mcp'), false, 'Shopify mcpproxy excludes Graphite CLI');
 
   assert.equal(rendered.personal.routingMode, 'retrieve_tools');
-  assert.equal(rendered.shopify.routingMode, 'retrieve_tools');
   assertGrepAppServer(rendered.personal.grepApp, 'personal');
-  assertGrepAppServer(rendered.shopify.grepApp, 'Shopify');
 });
 
 test('opencode MCP config keeps only the mcpproxy wrapper entry', () => {

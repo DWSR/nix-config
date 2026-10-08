@@ -184,10 +184,6 @@
             type = "app";
             program = "${gitCacheClone}/bin/git-cache-clone";
           };
-          bump-shopify-taps = {
-            type = "app";
-            program = "${import ./scripts/bump-shopify-taps.nix { inherit pkgs; }}/bin/bump-shopify-taps";
-          };
           mcp-sync-from-1password = {
             type = "app";
             program = "${
@@ -778,7 +774,8 @@
               # unchanged.
               hammerspoon-mic-mute-semantic = mkSemanticCheck {
                 inherit
-                  (self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.home.hammerspoon)
+                  (self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.home.hammerspoon
+                  )
                   keybindings
                   extraConfig
                   reloadOnConfigChange
@@ -1610,15 +1607,14 @@
                     let
                       layout = hm.home.file."Library/Deskflow/deskflow-server.conf".text;
                     in
-                      assert lib.assertMsg (lib.hasInfix "coreMode=2" settings)
-                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=2 (server mode, Req 7.1).";
-                      assert lib.assertMsg (lib.hasInfix "keySize=4096" settings)
-                        "deskflow host-wiring: ${hostName} Deskflow.conf must contain keySize=4096 (Req 8.2).";
-                      assert lib.assertMsg (lib.hasInfix "certificate=" settings)
-                        "deskflow host-wiring: ${hostName} Deskflow.conf must pin a certificate path (Req 8.1).";
-                      assert lib.assertMsg (
-                        lib.hasInfix "Brandons-MacBook-Pro.local" layout
-                      ) "deskflow host-wiring: ${hostName} deskflow-server.conf must define the personal screen (Req 4.3).";
+                    assert lib.assertMsg (lib.hasInfix "coreMode=2" settings)
+                      "deskflow host-wiring: ${hostName} Deskflow.conf must contain coreMode=2 (server mode, Req 7.1).";
+                    assert lib.assertMsg (lib.hasInfix "keySize=4096" settings)
+                      "deskflow host-wiring: ${hostName} Deskflow.conf must contain keySize=4096 (Req 8.2).";
+                    assert lib.assertMsg (lib.hasInfix "certificate=" settings)
+                      "deskflow host-wiring: ${hostName} Deskflow.conf must pin a certificate path (Req 8.1).";
+                    assert lib.assertMsg (lib.hasInfix "Brandons-MacBook-Pro.local" layout)
+                      "deskflow host-wiring: ${hostName} deskflow-server.conf must define the personal screen (Req 4.3).";
                     "${hostName}: enable=true role=\"server\"; coreMode=2, tlsEnabled=true, port=24800, keySize=4096, cert pinned; personal layout present";
                 in
                 pkgs.runCommand "deskflow-host-wiring"
@@ -2219,7 +2215,7 @@
               no-builtins-fetch = {
                 enable = true;
                 name = "No builtins.fetchGit/fetchTarball";
-                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"builtins\\.fetchGit\\|builtins\\.fetchTarball\\|builtins\\.fetchurl\" --include=\"*.nix\" --exclude=flake.nix | ${pkgs.gnugrep}/bin/grep -v \"shopify/default\\.nix\" && exit 1 || exit 0'";
+                entry = "${pkgs.bash}/bin/bash -c '${pkgs.gnugrep}/bin/grep -rn \"builtins\\.fetchGit\\|builtins\\.fetchTarball\\|builtins\\.fetchurl\" --include=\"*.nix\" --exclude=flake.nix && exit 1 || exit 0'";
                 language = "system";
                 pass_filenames = false;
               };
@@ -2284,28 +2280,6 @@
       overlays = import ./overlays { inherit inputs; };
 
       darwinConfigurations = {
-        "ShopifyLaptop" = inputs.darwin.lib.darwinSystem {
-          specialArgs = {
-            inherit inputs outputs;
-            username = "brandonmcnama";
-          };
-
-          modules = [
-            ./configurations/shopify
-            (
-              { lib, ... }:
-              lib.mkIf (builtins.getEnv "GH_STACK_MCP_OFFLINE_HOST_RENDER" == "1") {
-                # These Shopify skill and extension sources are independent
-                # of Stack host rendering. Do not evaluate their Git sources
-                # in the offline contract check.
-                home-manager.users.brandonmcnama.programs.pi.coding-agent.extensions = lib.mkForce [ ];
-                home-manager.users.brandonmcnama.programs.pi.coding-agent.skills = lib.mkForce [ ];
-                home-manager.users.brandonmcnama.xdg.configFile."opencode/skills/quick-arch-diagrams".enable =
-                  lib.mkForce false;
-              }
-            )
-          ];
-        };
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
             inherit inputs outputs;

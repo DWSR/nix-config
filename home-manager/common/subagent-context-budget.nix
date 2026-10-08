@@ -49,16 +49,7 @@ let
   isEnforced = agent: agent.state.kind == "enforced";
   isBuiltinAgent = agent: agent.source == "builtin";
   isRenderedMarkdownAgent = agent: builtins.hasAttr agent.name config.programs.opencode.agents;
-  hostHasScopedAgent =
-    scope:
-    lib.any (agent: agent.hostScope == scope && isRenderedMarkdownAgent agent) budgetCatalog.hostAgents;
-  inferredHostScope =
-    if hostHasScopedAgent "shopify" then
-      "shopify"
-    else if hostHasScopedAgent "personal" then
-      "personal"
-    else
-      "personal";
+  inferredHostScope = "personal";
   currentHostScope = if cfg.hostScope == null then inferredHostScope else cfg.hostScope;
   agentAppliesToHost =
     agent: currentHostScope == "all" || agent.hostScope == "all" || agent.hostScope == currentHostScope;
@@ -129,7 +120,6 @@ in
         lib.types.enum [
           "all"
           "personal"
-          "shopify"
         ]
       );
       default = null;

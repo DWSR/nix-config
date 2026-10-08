@@ -76,7 +76,6 @@ function evalMatrix() {
         };
         personal =
           if builtins.hasAttr "personal" hostRows then hostRows.personal else hostConfig "Brandons-MacBook-Pro";
-        shopify = if builtins.hasAttr "shopify" hostRows then hostRows.shopify else hostConfig "ShopifyLaptop";
       };
       discardText = value: builtins.unsafeDiscardStringContext value;
       configText = name: value:
@@ -215,8 +214,6 @@ function evalMatrix() {
       disabled = summarize "disabled" scenarios.disabled;
       personal =
         if builtins.hasAttr "personal" hostRows then scenarios.personal else summarize "personal" scenarios.personal;
-      shopify =
-        if builtins.hasAttr "shopify" hostRows then scenarios.shopify else summarize "shopify" scenarios.shopify;
     }
   `;
 
@@ -359,11 +356,11 @@ function assertAgentMemoryRuntime(rendered) {
   assertNoBearerLiteral(rendered);
 }
 
-test('the focused AgentMemory host-render matrix validates both hosts and the disabled runtime', () => {
+test('the focused AgentMemory host-render matrix validates personal and disabled runtimes', () => {
   assertCheckIsRegistered();
   const rendered = evalMatrix();
 
-  for (const row of [rendered.enabled, rendered.personal, rendered.shopify]) {
+  for (const row of [rendered.enabled, rendered.personal]) {
     assertAgentMemoryRuntime(row);
     assertAgentMemoryPromptContract(row);
     for (const profile of Object.values(row.nonoProfiles)) {
@@ -375,11 +372,8 @@ test('the focused AgentMemory host-render matrix validates both hosts and the di
   }
 
   assert.equal(rendered.personal.secretReference, 'op://Private/AgentMemory/Bearer');
-  assert.equal(rendered.shopify.secretReference, 'op://Employee/AgentMemory/Bearer');
   assert.equal(rendered.personal.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
-  assert.equal(rendered.shopify.agentMemory.launchd.EnvironmentVariables.AGENTMEMORY_DATA_DIR.endsWith('/agentmemory'), true);
   assert.equal(rendered.personal.consumers.nativeCompactCommand, true);
-  assert.equal(rendered.shopify.consumers.nativeCompactCommand, true);
   const disabled = rendered.disabled;
   assert.equal(disabled.agentMemory.enable, false);
   assert.equal(disabled.agentMemory.launchd, null);

@@ -28,7 +28,7 @@ test('managed AgentMemory package contains the bundled Pi integration', () => {
       'build',
       '--no-link',
       '--print-out-paths',
-      'path:.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory',
+      'path:.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.agentmemory',
     ],
     commandOptions,
   ).trim();
@@ -49,7 +49,7 @@ function buildRuntimePaths() {
        '--expr',
         `let
           flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-          pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+          pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
         in [ flake.inputs.pi.packages.aarch64-darwin.coding-agent pkgs.agentmemory ]`,
     ],
     commandOptions,
@@ -67,7 +67,7 @@ function buildRuntimePaths() {
 function renderPiOwnership() {
   const expression = `(let
     flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-    hm = flake.darwinConfigurations.ShopifyLaptop.config.home-manager.users.brandonmcnama;
+    hm = flake.darwinConfigurations.Brandons-MacBook-Pro.config.home-manager.users.brandonmcnama;
     pi = hm.programs.pi.coding-agent;
     extensions = map (extension: builtins.unsafeDiscardStringContext (toString extension)) pi.extensions;
     mcpConfig = builtins.fromJSON (builtins.unsafeDiscardStringContext hm.xdg.configFile."mcpproxy/mcp_config.json".text);
@@ -432,15 +432,6 @@ async function exerciseFactory(runtime) {
 
 test('bundled AgentMemory Pi integration uses authenticated standard routes', async () => {
   await exerciseFactory(buildRuntimePaths());
-});
-
-test('Shopify Pi consumes the AgentMemory-guided validation skill directly', () => {
-  const source = fs.readFileSync(path.join(repoRoot, 'configurations/shopify/home-manager/pi.nix'), 'utf8');
-  const skill = fs.readFileSync(path.join(repoRoot, 'configurations/shopify/home-manager/skills/validate-yb-issue/SKILL.md'), 'utf8');
-  assert.match(source, /skills = shopifyPiSkills/);
-  assert.match(source, /\.\/skills\/validate-yb-issue/);
-  assert.doesNotMatch(source, /replaceStrings|writeTextDir/);
-  assert.match(skill, /AgentMemory recall first/);
 });
 
 test('bundled Pi security helper keeps its relative layout and bearer guard contract', async () => {

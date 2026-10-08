@@ -19,65 +19,26 @@ const ACTIVE_PROMPT_DIRS = Object.freeze([
   'home-manager/common/opencode',
   'home-manager/common/pi-agent',
   'home-manager/common/subagent-context-budget',
-  'configurations/shopify/home-manager/agents',
-  'configurations/shopify/home-manager/commands',
 ]);
 const ACTIVE_SKILL_DIRS = Object.freeze([
   'home-manager/common/skills',
-  'configurations/shopify/home-manager/skills',
 ]);
 const ACTIVE_SKILL_FILES = Object.freeze([
   'home-manager/common/skills/github-native-stacks/SKILL.md',
-  'configurations/shopify/home-manager/skills/binks-pr-review/SKILL.md',
-  'configurations/shopify/home-manager/skills/create-yb-fix-pr/SKILL.md',
-  'configurations/shopify/home-manager/skills/validate-yb-issue/SKILL.md',
-]);
-const MEMORY_SKILL_FILES = Object.freeze([
-  'configurations/shopify/home-manager/skills/create-yb-fix-pr/SKILL.md',
-  'configurations/shopify/home-manager/skills/validate-yb-issue/SKILL.md',
 ]);
 const COMMON_MEMORY_PRODUCERS = Object.freeze(['nix-pkg', 'nvim-tailor', 'security-auditor']);
-const SHOPIFY_MEMORY_AGENTS = Object.freeze([
-  'yb-issue-validator',
-  'yb-sleuth',
-  'yb-backlog-validator',
-  'stack-captain',
-  'yb-fix-pr-author',
-  'yb-issue-oneshot',
-]);
-const SHOPIFY_MEMORY_PRODUCERS = Object.freeze([
-  'yb-issue-validator',
-  'yb-sleuth',
-  'stack-captain',
-  'yb-fix-pr-author',
-  'yb-issue-oneshot',
-]);
-const SHOPIFY_MEMORY_CONSUMERS = SHOPIFY_MEMORY_AGENTS;
 const REPO_OWNED_RENDERED_SKILLS = Object.freeze({
   personal: Object.freeze([
     'opencode/skills/github-native-stacks',
   ]),
-  shopify: Object.freeze([
-    'opencode/skills/binks-pr-review',
-    'opencode/skills/create-yb-fix-pr',
-    'opencode/skills/github-native-stacks',
-    'opencode/skills/validate-yb-issue',
-  ]),
 });
-// These skills are active but dependency-owned: cc-sdd is supplied by the
-// pinned package, process-flow-diagram and architecture-diagram are fetched on
-// the hosts, and quick/quick-arch-diagrams are fetched or packaged on Shopify.
-// Check their rendered names, but do not read their imported content as
-// repo-owned source.
+// These skills are dependency-owned: cc-sdd is supplied by the pinned
+// package, while process-flow-diagram and architecture-diagram are fetched.
+// Check their rendered names without reading their imported content.
 const IMPORTED_RENDERED_SKILLS = Object.freeze({
   personal: Object.freeze([
     'opencode/skills/architecture-diagram',
     'opencode/skills/process-flow-diagram',
-  ]),
-  shopify: Object.freeze([
-    'opencode/skills/process-flow-diagram',
-    'opencode/skills/quick',
-    'opencode/skills/quick-arch-diagrams',
   ]),
 });
 const IMPORTED_SKILL_PREFIXES = Object.freeze(['opencode/skills/kiro-']);
@@ -133,7 +94,7 @@ function renderActiveCutoverArtifacts() {
   if (renderedArtifacts) return renderedArtifacts;
   if (process.env.AGENTMEMORY_MATRIX_HOSTS) {
     const rows = JSON.parse(fs.readFileSync(process.env.AGENTMEMORY_MATRIX_HOSTS, 'utf8'));
-    renderedArtifacts = { personal: rows.personal.cutover, shopify: rows.shopify.cutover };
+    renderedArtifacts = { personal: rows.personal.cutover };
     return renderedArtifacts;
   }
 
@@ -181,7 +142,6 @@ function renderActiveCutoverArtifacts() {
     };
 in builtins.toJSON {
   personal = summarize "Brandons-MacBook-Pro";
-  shopify = summarize "ShopifyLaptop";
 })`;
 
   renderedArtifacts = JSON.parse(childProcess.execFileSync(
@@ -394,36 +354,7 @@ test('OpenCode and Pi rendered startup contracts keep the shortened preflight an
   }
 });
 
-test('Shopify and common producers and consumers preserve searchable ID handoffs', () => {
+test('common producers and consumers preserve searchable ID handoffs', () => {
   const artifacts = readActivePromptArtifacts();
 
-  for (const name of SHOPIFY_MEMORY_PRODUCERS) {
-    const content = artifacts.get(`configurations/shopify/home-manager/agents/${name}.md`);
-    assertAgentMemoryWorkflow(`shopify/${name}`, content);
-    assertMemoryProducer(`shopify/${name}`, content);
-  }
-
-  for (const name of SHOPIFY_MEMORY_CONSUMERS) {
-    const content = artifacts.get(`configurations/shopify/home-manager/agents/${name}.md`);
-    assertAgentMemoryRecall(`shopify/${name}`, content);
-    assertMemoryConsumer(`shopify/${name}`, content);
-  }
-
-  for (const relativePath of MEMORY_SKILL_FILES) {
-    const content = artifacts.get(relativePath);
-    assertAgentMemoryWorkflow(relativePath, content);
-    assertMemoryProducer(relativePath, content);
-    assertMemoryConsumer(relativePath, content);
-  }
-
-  const shopifyWiring = readSource('configurations/shopify/home-manager/opencode.nix');
-  assert.doesNotMatch(shopifyWiring, /lib\.replaceStrings/);
-  assert.match(
-    shopifyWiring,
-    /xdg\.configFile\."opencode\/skills\/create-yb-fix-pr"\s*=\s*\{\s*source = \.\/skills\/create-yb-fix-pr;/s,
-  );
-  assert.match(
-    shopifyWiring,
-    /xdg\.configFile\."opencode\/skills\/validate-yb-issue"\s*=\s*\{\s*source = \.\/skills\/validate-yb-issue;/s,
-  );
 });

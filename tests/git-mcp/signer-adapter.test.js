@@ -57,7 +57,7 @@ function buildFixtureBundle() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
     in fixture.packages
   `);
@@ -67,7 +67,7 @@ function buildSigner() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} {
         inherit pkgs;
         signerPackage = import ${JSON.stringify(signerPath)};
@@ -82,7 +82,7 @@ function fixtureSummary() {
     ['eval', '--json', '--impure', '--expr', `
       let
         flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-        pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+        pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
         fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
       in {
         agentTrapExecutable = fixture.agentTrapExecutable;

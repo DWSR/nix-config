@@ -61,7 +61,7 @@ function filteredFlakeExpression(body) {
         filter = path: type: builtins.baseNameOf path != ".git";
       };
       flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
     in
       ${body}
   `;

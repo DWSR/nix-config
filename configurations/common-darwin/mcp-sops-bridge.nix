@@ -11,7 +11,7 @@
 # decrypted `/run/secrets/<name>` files to the macOS Keychain + gh CLI.
 #
 # This module OWNS the sops-nix import. Per design D3, per-host
-# `configurations/{shopify,personal}/default.nix` files import ONLY
+# `configurations/personal/default.nix` imports ONLY
 # this bridge module — they MUST NOT separately import
 # `inputs.sops-nix.darwinModules.default`. Owning the import keeps
 # sops-nix's option declarations (`sops.*`) on the merged-config
@@ -59,7 +59,7 @@
 #
 # `sops.defaultSopsFile` is intentionally NOT set here — each per-host
 # `default.nix` owns the choice of which encrypted yaml to use
-# (`secrets/mcp.shopify.yaml` vs `secrets/mcp.personal.yaml`).
+# (`secrets/mcp.personal.yaml`).
 let
   hmMcp = config.home-manager.users.${username}.home.mcp;
 
@@ -131,7 +131,6 @@ in
         keyFile = "/var/lib/sops-nix/key.txt";
         # Disable the SSH-host-key-derivation path. sops-nix's Darwin
         # default is `["/etc/ssh/ssh_host_ed25519_key"]`, which assumes
-        # sshd is enabled and the host key file exists. ShopifyLaptop
         # (and likely the personal MBP) doesn't run sshd, so the
         # default path doesn't exist and would surface a confusing
         # warning. The age keyFile above is the only key source we

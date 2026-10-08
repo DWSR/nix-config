@@ -40,7 +40,7 @@ function agentMemoryPackagePath() {
   const configured = process.env.AGENTMEMORY_PACKAGE_PATH;
   cachedAgentMemoryPackagePath = configured || execFileSync(
     'nix',
-    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.ShopifyLaptop.pkgs.agentmemory'],
+    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.agentmemory'],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
   return cachedAgentMemoryPackagePath;
@@ -51,7 +51,7 @@ function mcpProxyPackagePath() {
   const configured = process.env.MCPPROXY_PACKAGE_PATH;
   cachedMcpProxyPackagePath = configured || execFileSync(
     'nix',
-    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.ShopifyLaptop.pkgs.mcpproxy-go'],
+    ['build', '--no-link', '--print-out-paths', '.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.mcpproxy-go'],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
   return cachedMcpProxyPackagePath;
@@ -282,7 +282,7 @@ function dependencyNodePath() {
       'build',
       '--no-link',
       '--print-out-paths',
-      '.#darwinConfigurations.ShopifyLaptop.pkgs.obsidian-importer-deps',
+      '.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.obsidian-importer-deps',
     ],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim().split('\n').at(-1);
@@ -301,7 +301,7 @@ function importerNodeBin() {
   }
   const nodePackage = execFileSync(
     'nix',
-    ['eval', '--raw', '.#darwinConfigurations.ShopifyLaptop.pkgs.nodejs_22'],
+    ['eval', '--raw', '.#darwinConfigurations.Brandons-MacBook-Pro.pkgs.nodejs_22'],
     { cwd: repoRoot, encoding: 'utf8' },
   ).trim();
   cachedImporterNodeBin = path.join(nodePackage, 'bin', 'node');

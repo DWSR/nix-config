@@ -49,7 +49,7 @@ function buildAcceptancePackage() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       admin = pkgs.callPackage ${JSON.stringify(adminPath)} { };
     in
       pkgs.callPackage ${JSON.stringify(acceptancePath)} { adminPackage = admin; }
@@ -60,7 +60,7 @@ function buildAcceptanceFixturePackage() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fakeGit = pkgs.writeShellApplication {
         name = "git";
         runtimeInputs = [ pkgs.coreutils pkgs.gnugrep ];

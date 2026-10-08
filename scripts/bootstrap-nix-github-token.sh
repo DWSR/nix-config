@@ -23,7 +23,7 @@
 # so it runs on a freshly-imaged host before any of those are configured.
 #
 # Usage:
-#   ./scripts/bootstrap-nix-github-token.sh <shopify|personal>
+#   ./scripts/bootstrap-nix-github-token.sh personal
 #
 # See secrets/README.md ("Nix GitHub access token") for the surrounding
 # bootstrap flow, including how to feed the token to the very first switch
@@ -39,10 +39,9 @@ usage() {
 $PROG - seed $NIX_TOKEN_FILE from 1Password (no Nix required).
 
 Usage:
-  $PROG <shopify|personal>
+  $PROG personal
 
 Arguments:
-  shopify    reuse op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub
   personal   reuse op://Private/GitHub/Tokens/Full Control
 
 Environment:
@@ -58,9 +57,6 @@ USAGE
 }
 
 case "${1:-}" in
-  shopify)
-    OP_URI="op://Employee/GitHub - Shopify/PATs/shopify laptop mcphub"
-    ;;
   personal)
     OP_URI="op://Private/GitHub/Tokens/Full Control"
     ;;
@@ -69,12 +65,12 @@ case "${1:-}" in
     exit 0
     ;;
   "")
-    echo "$PROG: error: missing host argument (shopify|personal)" >&2
+    echo "$PROG: error: missing host argument (personal)" >&2
     usage >&2
     exit 1
     ;;
   *)
-    echo "$PROG: error: unknown host \"$1\" (expected shopify|personal)" >&2
+    echo "$PROG: error: unknown host \"$1\" (expected personal)" >&2
     exit 1
     ;;
 esac

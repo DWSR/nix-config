@@ -65,7 +65,7 @@ in
         KDL fragment for the zjstatus status-bar pane appended to every
         zellij tab. Read by both the common default layout and any
         host-specific layout overrides
-        (e.g. configurations/shopify/home-manager/zellij.nix) so the
+        per-host module so the
         status bar definition lives in one place.
       '';
     };

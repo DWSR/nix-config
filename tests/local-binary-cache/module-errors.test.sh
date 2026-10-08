@@ -68,5 +68,3 @@ check_rejected chained-hook-relative services.localBinaryCache.publisher.chained
 check_rejected publisher-state-root services.localBinaryCache.publisher.stateDirectory
 check_rejected chained-hook-injection services.localBinaryCache.publisher.chainedHooks
 check_rejected chained-hook-contextless-store services.localBinaryCache.publisher.chainedHooks
-check_rejected external-hook-include-injection services.localBinaryCache.publisher.externalHookInclude
-check_rejected external-hook-include-wrong-shape services.localBinaryCache.publisher.externalHookInclude

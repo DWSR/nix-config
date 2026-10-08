@@ -37,7 +37,7 @@ function nixExpression(body) {
           in base != ".git" && base != "result";
       };
       flake = builtins.getFlake (builtins.unsafeDiscardStringContext (toString source));
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       guidance = import (source + "/home-manager/common/pi-agent/guidance.nix") { inherit pkgs; };
       modulePath = source + "/home-manager/common/pi-agent/default.nix";
       piPackage = pkgs.writeShellScriptBin "pi" "exit 0";

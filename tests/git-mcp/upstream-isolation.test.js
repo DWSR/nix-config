@@ -44,7 +44,7 @@ function buildSigner() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
     in pkgs.callPackage (import ${JSON.stringify(signerPath)}) fixture.nativeToolArgs
   `);
@@ -54,7 +54,7 @@ function buildGitMcpServer() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-    in flake.darwinConfigurations.ShopifyLaptop.pkgs.git-mcp-server
+    in flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs.git-mcp-server
   `);
 }
 
@@ -83,7 +83,7 @@ function buildFixtureBundle() {
   return nixBuild(`
     let
       flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-      pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+      pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
       fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
     in fixture.packages
   `);
@@ -95,7 +95,7 @@ function fixtureSummary() {
     ['eval', '--json', '--impure', '--expr', `
       let
         flake = builtins.getFlake ${JSON.stringify(repoRoot)};
-        pkgs = flake.darwinConfigurations.ShopifyLaptop.pkgs;
+        pkgs = flake.darwinConfigurations.Brandons-MacBook-Pro.pkgs;
         fixture = import ${JSON.stringify(fixturePath)} { inherit pkgs; };
       in {
         nativeToolPaths = fixture.nativeToolPaths;

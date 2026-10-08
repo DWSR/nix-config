@@ -142,10 +142,9 @@ let
       };
       secretReference = hm.home.mcp.keychainSecrets."agentmemory-bearer";
 
-      # Evaluate real host projections before entering the check builder:
-      # nested Nix in the build environment cannot refetch Shopify's private
-      # skill inputs. Synthetic HM variants remain in the
-      # JS tests, but host assertions read these snapshots in the flake check.
+      # Evaluate the real host projection before entering the check builder.
+      # Synthetic HM variants remain in the JS tests; the flake check consumes
+      # this snapshot for real-host assertions.
       hostRender = {
         homeDirectory = hm.home.homeDirectory;
         mcp = {
@@ -216,8 +215,7 @@ let
         };
       };
 
-      # The separate opencode-nono check reads this projection instead of
-      # refetching Shopify-only Pi skills from nested Nix in its build sandbox.
+      # The separate opencode-nono check reads this projection in its build sandbox.
       nonoRender = {
         profileTexts = {
           "opencode-managed" = discard hm.xdg.configFile."nono/profiles/${nono.managedProfile}.json".text;
@@ -238,6 +236,5 @@ in
 pkgs.writeText "agentmemory-opencode-hosts.json" (
   builtins.toJSON {
     personal = summarizeHost "Brandons-MacBook-Pro";
-    shopify = summarizeHost "ShopifyLaptop";
   }
 )
