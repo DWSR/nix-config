@@ -120,6 +120,10 @@ let
     "ANTHROPIC_BASE_URL"
     "ANTHROPIC_AUTH_TOKEN"
     "DEFAULT_PROXY_BASE"
+    # Personal host: omlx local inference provider key (exported by the
+    # personal opencode wrapper from the Keychain; NAME only, value never
+    # serialized). Harmless on hosts that never export it.
+    "OMLX_API_KEY"
     "XDG_CONFIG_HOME"
     "XDG_CACHE_HOME"
     "XDG_DATA_HOME"

@@ -1,4 +1,9 @@
-{ pkgs, lib, ... }:
+{
+  pkgs,
+  lib,
+  config,
+  ...
+}:
 let
   architectureDiagramSkill = pkgs.fetchFromGitHub {
     owner = "Cocoon-AI";
@@ -33,6 +38,62 @@ in
     # This longer ceiling also applies to unrelated calls through mcpproxy.
     timeout = 930000;
   };
+
+  # oMLX local inference provider (OpenAI-compatible endpoint at
+  # localhost:8000). The provider supports the OpenAI/Anthropic drop-in API
+  # served by `omlx serve`; model IDs are the `~/.omlx/models/<org>/<name>`
+  # directory names (or any per-model alias configured in the oMLX admin
+  # dashboard). The API key is referenced by name and resolved from the
+  # environment by the wrapper snippet below, which reads the `omlx-api-key`
+  # Keychain entry (provisioned by mcp-secrets-activate from
+  # secrets/mcp.personal.yaml) and exports OMLX_API_KEY. Same shape as the
+  # integration oMLX generates in its admin dashboard
+  # (omlx/integrations/opencode.py).
+  #
+  # Model set mirrors what is currently served on this host
+  # (~/.omlx/models/lmstudio-community); add or drop entries as models are
+  # downloaded/removed. Session model picker uses `omlx/<model-id>`.
+  programs.opencode.settings.provider.omlx = {
+    npm = "@ai-sdk/openai-compatible";
+    name = "oMLX";
+    options = {
+      baseURL = "http://localhost:8000/v1";
+      apiKey = "{env:OMLX_API_KEY}";
+    };
+    models = {
+      "lmstudio-community/Qwen3.8-27B-MLX-4bit" = {
+        name = "Qwen3.8 27B";
+        modalities = {
+          input = [ "text" ];
+          output = [ "text" ];
+        };
+      };
+      "lmstudio-community/Qwen3.5-9B-MLX-4bit" = {
+        name = "Qwen3.5 9B";
+        modalities = {
+          input = [ "text" ];
+          output = [ "text" ];
+        };
+      };
+    };
+  };
+
+  # Export OMLX_API_KEY for the provider.omlx `{env:OMLX_API_KEY}` reference
+  # above. Reads the Keychain entry written by mcp-secrets-activate
+  # (`-s mcpproxy -a omlx-api-key`), mirroring the AgentMemory bearer
+  # resolution in the common wrapper. NON-FATAL: on the first switch before
+  # the sops bridge activation populates the Keychain, opencode still
+  # starts and only the omlx provider misbehaves until the next switch.
+  home.opencode.wrapperCommands = [
+    ''
+      omlx_api_key=$(${pkgs.coreutils}/bin/timeout --kill-after=2s 5s /usr/bin/security find-generic-password -s mcpproxy -a omlx-api-key -w ${lib.escapeShellArg "${config.home.homeDirectory}/Library/Keychains/login.keychain-db"} 2>/dev/null) || omlx_api_key=""
+      if [ -n "$omlx_api_key" ]; then
+        export OMLX_API_KEY="$omlx_api_key"
+      else
+        echo "WARNING: omlx api key unavailable from Keychain; the omlx provider will fail until the next switch provisions it." >&2
+      fi
+    ''
+  ];
 
   # opencode-nono sandbox rollout posture for this host (R3.1). The module
   # (home-manager/common/opencode-nono.nix) is enabled by the common
@@ -80,8 +141,9 @@ in
     # regardless (on macOS nono emits Seatbelt deny rules even for a child of
     # an allowed parent). The base module's `gitConfigDenyPaths`
     # ($HOME/.config/git) CONCATENATES with this host deny (both lib.mkDefault).
-    # This host config adds no host-specific grants to the review profile (the
-    # base module still denies $HOME/.config/git there too).
+    # This host config adds no host-specific FILESYSTEM grants to the review
+    # profile (the base module still denies $HOME/.config/git there too); the
+    # only review-profile delta is the omlx loopback port below.
     profiles.opencode-audit.filesystem.allow = lib.mkDefault [
       "$HOME/.cache"
     ];
@@ -100,6 +162,11 @@ in
       # denying it blocks the command under nono's Seatbelt deny precedence.
       "/bin/date"
     ];
+    # omlx provider reaches the local inference server (omlx serve) on
+    # loopback :8000, same reason mcpproxy's :8080 is granted in the base
+    # module. lib.mkDefault ties at priority 1000 with the base list and
+    # concatenates, preserving the mcpproxy + agentmemory grants.
+    profiles.opencode-audit.network.openPort = lib.mkDefault [ 8000 ];
     profiles.opencode-managed.filesystem.allow = lib.mkDefault [
       "$HOME/.cache"
     ];
@@ -112,5 +179,11 @@ in
       "$HOME/.config/gcloud"
       "/bin/date"
     ];
+    # See the audit profile's openPort note — omlx on loopback :8000.
+    profiles.opencode-managed.network.openPort = lib.mkDefault [ 8000 ];
+    # Review profile also reaches omlx on loopback :8000 (like :8080 for
+    # mcpproxy in the base module), so a read-only review session can still
+    # drive the local model.
+    profiles.opencode-review.network.openPort = lib.mkDefault [ 8000 ];
   };
 }

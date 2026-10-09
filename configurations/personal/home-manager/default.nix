@@ -68,6 +68,12 @@ in
         "mcp-hangops-xoxc" = "op://Private/HangOps/Tokens/xoxc";
         "mcp-hangops-xoxd" = "op://Private/HangOps/Tokens/xoxd";
         "agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
+        # oMLX local inference server API key (secrets/mcp.personal.yaml
+        # `omlx-api-key`). mcp-secrets-activate writes it to the Keychain
+        # under -s mcpproxy -a omlx-api-key; the personal opencode wrapper
+        # (configurations/personal/home-manager/opencode.nix) reads it and
+        # exports OMLX_API_KEY for the provider.omlx `{env:...}` reference.
+        "omlx-api-key" = "op://Private/oMLX/API Key";
       };
 
       # gh CLI auth token. Reuses the same PAT as mcp-github-token because
