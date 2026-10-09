@@ -134,4 +134,6 @@ in
     // (iiiEngine final prev)
     // (omlx final prev)
     // (agentmemoryFlake final prev);
+
+  inherit omlx;
 }

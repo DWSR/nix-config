@@ -2,7 +2,7 @@
 
 ## Task Format Template
 
-- [ ] 1. Expose the omlx overlay
+- [x] 1. Expose the omlx overlay
   - Add `omlx = omlx;` to the output attrset in `overlays/default.nix` so
     `flake.overlays.omlx` resolves.
   - Observable completion: `nix eval '.#overlays.omlx' --apply 'x: true'`
