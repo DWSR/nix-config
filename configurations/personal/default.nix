@@ -162,7 +162,7 @@ in
       "Keynote" = 409183694;
       "Mini Motorways" = 1456188526;
       "Numbers" = 361304891;
-      "Pages" = 409201541;
+      "Pages: Create Documents" = 361309726;
       "Refined GitHub" = 1519867270;
       "SponsorBlock" = 1573461917;
       "Tailscale" = 1475387142;
