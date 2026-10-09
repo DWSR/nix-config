@@ -37,7 +37,7 @@
   - _Boundary: tests/omlx-service/_
   - _Depends: 1, 2_
 
-- [ ] 4. Wire the module and test into the personal config and flake checks
+- [x] 4. Wire the module and test into the personal config and flake checks
   - Add `./omlx.nix` to the personal imports list and set
     `home.omlx.enable = true;` in `configurations/personal/home-manager/default.nix`.
   - Add an `omlx-service` check under `checks` in `flake.nix` mirroring the

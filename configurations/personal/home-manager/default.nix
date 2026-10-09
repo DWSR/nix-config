@@ -19,6 +19,7 @@ in
     ../../../home-manager/mcp
     ./deskflow.nix
     ./git.nix
+    ./omlx.nix
     ./opencode.nix
     ./sqlite-backup.nix
   ];
@@ -30,6 +31,8 @@ in
 
   home = {
     stateVersion = "26.05";
+
+    omlx.enable = true;
 
     packages = with pkgs; [
       butane
