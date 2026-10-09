@@ -5,6 +5,7 @@ let
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
   iiiEngine = import ./agentmemory.nix { };
+  omlx = import ./omlx { inherit inputs; };
   agentmemoryFlake = final: _prev: {
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
@@ -131,5 +132,6 @@ in
     // (misc final prev)
     // (litestream final prev)
     // (iiiEngine final prev)
+    // (omlx final prev)
     // (agentmemoryFlake final prev);
 }

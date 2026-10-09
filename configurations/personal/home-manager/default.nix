@@ -40,6 +40,7 @@ in
       hcloud
       kagimcp
       nh
+      omlx
       slack-mcp-server
       vfkit
       wireshark

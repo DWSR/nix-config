@@ -80,6 +80,38 @@
       flake = false;
     };
 
+    # oMLX source, pinned. `overlays/omlx/default.nix` builds it into the
+    # `omlx` package via uv2nix (see that file); this input is only the
+    # upstream source tree, consumed through the flake (no Homebrew tap).
+    # The vendored overlays/omlx/uv.lock was generated from this revision.
+    omlx = {
+      url = "github:jundot/omlx/cc1fdc9a24053224521a8dc6e1350d64e8ec16f4";
+      flake = false;
+    };
+
+    # uv2nix toolchain for building the `omlx` Python application. The
+    # Python packaging metadata (pyproject.toml) does not lock build
+    # systems, so pyproject-build-systems supplies them separately. All
+    # three follow the flake's nixpkgs and pyproject-nix so the generated
+    # package sets share one interpreter/toolchain.
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+    };
+
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+    };
+
     git-issue-tracker = {
       url = "github:nnunley/git-issue-tracker";
       flake = false;
