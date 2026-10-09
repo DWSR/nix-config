@@ -24,7 +24,7 @@
   - _Boundary: configurations/personal/home-manager/omlx.nix_
   - _Depends: 1_
 
-- [ ] 3. Add the standalone render test
+- [x] 3. Add the standalone render test
   - Add `tests/omlx-service/` (`helpers.js`, `hm-render.test.js`, `package.json`)
     mirroring `tests/personal-tailscale-service/`.
   - Source pkgs via `import flake.inputs.nixpkgs { system = ...; overlays = [
