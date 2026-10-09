@@ -10,7 +10,7 @@
   - _Requirements: 5.1, 5.2, 5.3_
   - _Boundary: overlays/default.nix_
 
-- [ ] 2. Create the omlx Home Manager module
+- [x] 2. Create the omlx Home Manager module
   - Add `configurations/personal/home-manager/omlx.nix` with `options.home.omlx`
     (`enable`, `package`, `host`, `port`, `extraArgs`).
   - Emit `launchd.agents.omlx` (Label `dev.dwsr.omlx`, `ProgramArguments`
