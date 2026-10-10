@@ -13,6 +13,7 @@
     ./atuin.nix
     ./cc-sdd.nix
     ./deskflow
+    ./fabro.nix
     ./gh-cli.nix
     ./ghostty.nix
     ./git.nix
