@@ -1837,6 +1837,24 @@
                 touch $out
               '';
 
+          fabro-service =
+            pkgs.runCommand "fabro-service"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/fabro-service/
+                touch $out
+              '';
+
           sqlite-backup-tests = import ./tests/sqlite-backup {
             inherit pkgs;
             inherit (inputs) home-manager;

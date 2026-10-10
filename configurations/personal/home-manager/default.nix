@@ -162,6 +162,8 @@ in
     bearerReference = "agentmemory-bearer";
   };
 
+  programs.fabro.enable = true;
+
   programs.ssh = {
     includes = [ "~/.orbstack/ssh/config" ];
 
