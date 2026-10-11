@@ -75,6 +75,17 @@ in
             "test_eventSourceResponse_whenUsingMemoryChannel_thenHandlesAsyncQueueCorrectly"
           ];
         });
+        # nixpkgs gates this disable on pythonAtLeast "3.14" because of a py3.14
+        # pickling restriction, but the identical pickle error
+        # (Can't pickle local object 'FastAPI.setup.<locals>.openapi') also fires
+        # on py3.13 for the two e2e variants in
+        # tests/e2e/push_notifications/test_default_push_notification_support.py,
+        # failing the a2a-sdk build and taking pkgs.litellm (which pulls in
+        # a2a-sdk as an extra_proxy dependency) down with it. Make the disable
+        # unconditional; `-k` substring matching also deselects the e2e variants.
+        a2a-sdk = pyprev.a2a-sdk.overridePythonAttrs (old: {
+          disabledTests = (old.disabledTests or [ ]) ++ [ "test_notification_triggering" ];
+        });
       })
     ];
   };
