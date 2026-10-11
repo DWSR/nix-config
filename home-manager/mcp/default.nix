@@ -576,9 +576,14 @@ let
 
   # Every operator-declared MCP secret that the mcpproxy daemon
   # actually consumes (top-level api_key + per-server env/header
-  # placeholders), plus the bridge-owned `mcpproxy-api-key`. The
-  # launchd wrapper iterates this list and exports each value from
-  # the macOS Keychain as an env var.
+  # placeholders). The launchd wrapper iterates this list and exports
+  # each value from the macOS Keychain as an env var.
+  #
+  # `mcpproxy-api-key` — the daemon's own bearer — used to be special
+  # here as a bridge-owned literal ahead of the keychainSecrets set; it
+  # is now an ordinary `keychainSecrets` entry (see the history note in
+  # configurations/common-darwin/mcp-sops-bridge.nix), so the wrapper
+  # simply iterates the set.
   #
   # The `sqlite-backup-*` filter matches the routing in
   # `scripts/mcp-secrets-activate.nix`'s `route_service` helper: those
@@ -588,10 +593,7 @@ let
   # The mcpproxy daemon does not reference sqlite-backup secrets in
   # any rendered `mcp_config.json` placeholder anyway. Keep this
   # predicate in sync with the activation script.
-  daemonSecretNames = [
-    "mcpproxy-api-key"
-  ]
-  ++ builtins.filter (name: !(lib.hasPrefix "sqlite-backup-" name)) (
+  daemonSecretNames = builtins.filter (name: !(lib.hasPrefix "sqlite-backup-" name)) (
     builtins.attrNames cfg.keychainSecrets
   );
 

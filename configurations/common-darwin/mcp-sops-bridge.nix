@@ -68,15 +68,22 @@ let
   # Bridge-owned MCP secrets that are NOT derived from home-manager's
   # `home.mcp.keychainSecrets` (which is keyed by upstream MCP server
   # name). These secrets support mcpproxy itself rather than any
-  # specific upstream — `mcpproxy-api-key` gates mcpproxy's HTTP
-  # admin API (`/api/v1/*`) and is consumed by mcpproxy's own
-  # `${keyring:mcpproxy-api-key}` placeholder at daemon start time,
-  # not spawned-process env-var injection. The bridge still flows
-  # them through the same SOPS → `/run/secrets/<name>` → Keychain
-  # pipeline as the HM-declared secrets, so downstream consumers
-  # (the activation script, the verify script, the operator's
-  # rotation runbook) treat them uniformly.
-  bridgeOwnedKeychainSecrets = [ "mcpproxy-api-key" ];
+  # specific upstream.
+  #
+  # HISTORY (2026-10-11): this list used to own `mcpproxy-api-key` —
+  # mcpproxy's HTTP admin bearer — as a non-1Password-backed entry. That
+  # made the secret invisible to `mcp-sync-from-1password`, which rewrote
+  # the per-host yaml from `home.mcp.keychainSecrets` alone and silently
+  # dropped the entry on every sync (surfacing as a
+  # `validateSopsFiles` build failure once the key check went
+  # build-time), and no 1Password URI existed to re-seed it. The entry is
+  # now an ordinary `keychainSecrets` item on the host (the Keychain
+  # layout is identical: `route_service` puts every non-`sqlite-backup-*`
+  # name under `-s mcpproxy`), so it is 1Password-backed, rotatable, and
+  # enumerated by mcp-verify-secrets like every other entry. This list is
+  # kept for genuine future exceptions; adding a name here means it MUST
+  # also be accounted for in mcp-sync-from-1password's carry-forward.
+  bridgeOwnedKeychainSecrets = [ ];
 
   allKeychainSecretNames = builtins.attrNames hmMcp.keychainSecrets ++ bridgeOwnedKeychainSecrets;
 

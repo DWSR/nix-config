@@ -82,6 +82,13 @@ in
         # presents to the loopback gateway. Generate one, e.g.
         # `openssl rand -hex 32`, in the LiteLLM 1Password item.
         "litellm-master-key" = "op://Private/LiteLLM/Master Key";
+        # mcpproxy daemon bearer (its `${env:MCP_PROXY_API_KEY}` top-level
+        # api_key; formerly a bridge-owned non-1Password entry that the
+        # 1Password sync silently dropped — now an ordinary item). One-time
+        # seeding: copy the deployed value out of the Keychain
+        # (`security find-generic-password -s mcpproxy -a mcpproxy-api-key -w`)
+        # into the 1Password item, then run the sync as usual.
+        "mcpproxy-api-key" = "op://Private/MCP Proxy/API Key";
         # OpenCode subscription API key (one key covers both the Go
         # subscription catalog and Zen pay-as-you-go; the reverse proxy
         # address in programs.litellm selects the catalog). Sourced from
