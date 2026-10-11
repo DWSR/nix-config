@@ -26,6 +26,7 @@
     ./hammerspoon-mic-mute
     ./hammerspoon-timezone-menubar
     ./launchd-activation.nix
+    ./litellm.nix
     ./opencode-cost-diagnosis.nix
     ./opencode-nono.nix
     ./opencode-nono-audit.nix
