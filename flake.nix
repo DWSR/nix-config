@@ -1855,6 +1855,24 @@
                 touch $out
               '';
 
+          litellm-service =
+            pkgs.runCommand "litellm-service"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/litellm-service/
+                touch $out
+              '';
+
           sqlite-backup-tests = import ./tests/sqlite-backup {
             inherit pkgs;
             inherit (inputs) home-manager;

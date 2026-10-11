@@ -77,6 +77,17 @@ in
         # (configurations/personal/home-manager/opencode.nix) reads it and
         # exports OMLX_API_KEY for the provider.omlx `{env:...}` reference.
         "omlx-api-key" = "op://Private/oMLX/API Key";
+        # LiteLLM proxy master key (home-manager/common/litellm.nix). The
+        # Bearer value every local consumer (total-recall, fabro, curl)
+        # presents to the loopback gateway. Generate one, e.g.
+        # `openssl rand -hex 32`, in the LiteLLM 1Password item.
+        "litellm-master-key" = "op://Private/LiteLLM/Master Key";
+        # OpenCode subscription API key (one key covers both the Go
+        # subscription catalog and Zen pay-as-you-go; the reverse proxy
+        # address in programs.litellm selects the catalog). Sourced from
+        # OpenCode Console; if opencode on this host is already connected,
+        # the same key lives in ~/.local/share/opencode/auth.json.
+        "opencode-api-key" = "op://Private/OpenCode/API Key";
       };
 
       # gh CLI auth token. Reuses the same PAT as mcp-github-token because
@@ -163,6 +174,96 @@ in
   };
 
   programs.fabro.enable = true;
+
+  # LiteLLM proxy: one loopback OpenAI-compatible gateway in front of the
+  # subscription-backed models, so local consumers (total-recall, fabro,
+  # curl) can call them without per-provider integrations. Consumer usage
+  # contract (base URL, auth, chatgpt sign-in) is documented in
+  # home-manager/common/litellm.nix.
+  #
+  #   chatgpt/<model>      ChatGPT subscription (Codex backend; no API key —
+  #                        OAuth device flow). Complete the one-time sign-in
+  #                        with `litellm-chatgpt-login` in a terminal, then
+  #                        restart the agent (litellm 1.86 HELD its first
+  #                        startup on the login prompt). /v1/chat/completions
+  #                        is bridged to the Responses API upstream.
+  #   opencode-go/<model>  OpenCode Go subscription; one API key also steers
+  #                        the Zen balance fallback. gpt/grok model ids go to
+  #                        {api_base}/responses, the GLM/Kimi/DeepSeek/MiMo
+  #                        ids to /chat/completions.
+  #
+  # The model ids mirror the servable catalog when this block landed
+  # (litellm docs providers/chatgpt, opencode.ai/docs/go). Catalogs move:
+  # trim or extend these lists as the subscriptions' offerings change.
+  programs.litellm = {
+    enable = true;
+
+    providerKeys.OPENCODE_API_KEY = "opencode-api-key";
+
+    settings = {
+      model_list =
+        # ChatGPT subscription (Codex) models.
+        (map
+          (m: {
+            model_name = "chatgpt/${m}";
+            model_info.mode = "responses";
+            litellm_params.model = "chatgpt/${m}";
+          })
+          [
+            "gpt-5.4"
+            "gpt-5.4-pro"
+            "gpt-5.3-codex"
+            "gpt-5.3-codex-spark"
+            "gpt-5.3-instant"
+            "gpt-5.3-chat-latest"
+          ]
+        )
+        # OpenCode Go: Responses-API wire models.
+        ++ (map
+          (m: {
+            model_name = "opencode-go/${m}";
+            model_info.mode = "responses";
+            litellm_params = {
+              model = "openai/${m}";
+              api_base = "https://opencode.ai/zen/go/v1";
+              api_key = "os.environ/OPENCODE_API_KEY";
+            };
+          })
+          [
+            "grok-4.7"
+            "grok-4.6"
+            "gpt-6-luna"
+            "gpt-5.6-luna"
+          ]
+        )
+        # OpenCode Go: chat/completions wire models ("open coding models").
+        ++ (map
+          (m: {
+            model_name = "opencode-go/${m}";
+            model_info.mode = "chat";
+            litellm_params = {
+              model = "openai/${m}";
+              api_base = "https://opencode.ai/zen/go/v1";
+              api_key = "os.environ/OPENCODE_API_KEY";
+            };
+          })
+          [
+            "glm-5.3-flash"
+            "glm-5.3"
+            "glm-5.2"
+            "glm-5.1"
+            "kimi-k3"
+            "kimi-k2.7-code"
+            "kimi-k2.6"
+            "deepseek-v4-pro"
+            "deepseek-v4-flash"
+            "mimo-v2.6-flash"
+            "mimo-v2.6-pro"
+            "longcat-2.0"
+          ]
+        );
+    };
+  };
 
   programs.ssh = {
     includes = [ "~/.orbstack/ssh/config" ];
