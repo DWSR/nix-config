@@ -387,28 +387,26 @@ assert failedAssertions readyPersonal == [ ];
 assert rejected invalidRole.config.services.localBinaryCache.hostRole;
 assert readyPersonal.config.services.localBinaryCache.consumer.priority == 30;
 assert readyPersonal.config.services.localBinaryCache.publisher.tokenValidity == 31557600;
-assert lib.all
-  (
-    configuration:
-    let
-      role = configuration.config.services.localBinaryCache.hostRole;
-      settings = configuration.config.nix.settings;
-    in
-    settings.substituters == [ "https://${role}-existing.example" ]
-    && lib.elem "https://${role}-extra.example" settings.extra-substituters
-    && lib.elem localSubstituter settings.extra-substituters
-    && builtins.length settings.extra-substituters == 2
-    && lib.elem "${role}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" settings.extra-trusted-public-keys
-    && lib.elem cachePublicKey settings.extra-trusted-public-keys
-    && builtins.length settings.extra-trusted-public-keys == 2
-    && settings.fallback
-    && settings.narinfo-cache-negative-ttl == 60
-    && settings.require-sigs
-    && settings.ssl-cert-file == combinedCaBundle
-    && lib.elem tlsCertificate configuration.config.security.pki.certificateFiles
-    && builtins.length configuration.config.security.pki.certificateFiles == 1
-  )
-  [ readyPersonal ];
+assert lib.all (
+  configuration:
+  let
+    role = configuration.config.services.localBinaryCache.hostRole;
+    settings = configuration.config.nix.settings;
+  in
+  settings.substituters == [ "https://${role}-existing.example" ]
+  && lib.elem "https://${role}-extra.example" settings.extra-substituters
+  && lib.elem localSubstituter settings.extra-substituters
+  && builtins.length settings.extra-substituters == 2
+  && lib.elem "${role}-existing:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" settings.extra-trusted-public-keys
+  && lib.elem cachePublicKey settings.extra-trusted-public-keys
+  && builtins.length settings.extra-trusted-public-keys == 2
+  && settings.fallback
+  && settings.narinfo-cache-negative-ttl == 60
+  && settings.require-sigs
+  && settings.ssl-cert-file == combinedCaBundle
+  && lib.elem tlsCertificate configuration.config.security.pki.certificateFiles
+  && builtins.length configuration.config.security.pki.certificateFiles == 1
+) [ readyPersonal ];
 assert
   failureMessages missingTrust == [
     "services.localBinaryCache.cachePublicKey is required in ready mode."
