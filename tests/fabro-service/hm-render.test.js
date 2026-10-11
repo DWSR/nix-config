@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { nixEvalJson, repoRoot } = require('./helpers');
+const { nixEvalJson, nixEvalFailure, repoRoot } = require('./helpers');
 
 const fabroModulePath = `${repoRoot}/home-manager/common/fabro.nix`;
 
@@ -41,6 +41,13 @@ function standaloneFabroExpr(extraModule) {
         else
           null;
       sessionVariables = hm.config.home.sessionVariables or { };
+      wrapperText =
+        if hm.config.programs.fabro._wrapper != null then
+          builtins.readFile (
+            hm.config.programs.fabro._wrapper + "/bin/fabro-launchd-wrapper"
+          )
+        else
+          null;
     }
   `;
 }
@@ -266,6 +273,100 @@ test('settings render as TOML at the pinned target path', () => {
 
   assert.equal(rendered.isNull, false);
   assert.match(rendered.text, /max_concurrent_runs = 2/);
+});
+
+test('prompt-free wrapper passes through when no keychain secrets are declared', () => {
+  const rendered = nixEvalJson(standaloneFabroExpr(`{ ... }: {
+    programs.fabro.enable = true;
+    programs.fabro.bind = "127.0.0.1:32276";
+  }`));
+
+  assert.equal(rendered.wrapperText, null);
+  assert.match(rendered.agent.config.ProgramArguments[0], /\/bin\/fabro$/);
+});
+
+test('keychainSecrets route the agent through a keychain-resolving wrapper', () => {
+  const rendered = nixEvalJson(standaloneFabroExpr(`{ ... }: {
+    programs.fabro.enable = true;
+    programs.fabro.bind = "127.0.0.1:32276";
+    programs.fabro.keychainSecrets = {
+      SESSION_SECRET = "fabro-session-secret";
+      FABRO_DEV_TOKEN = "fabro-dev-token";
+    };
+  }`));
+
+  const { config } = rendered.agent;
+  assert.equal(config.ProgramArguments.length, 1);
+  assert.match(config.ProgramArguments[0], /\/bin\/fabro-launchd-wrapper$/);
+
+  const wrapper = rendered.wrapperText;
+  assert.ok(wrapper, 'expected programs.fabro._wrapper to render');
+
+  assert.match(wrapper, /-s mcpproxy -a fabro-session-secret/);
+  assert.match(wrapper, /-s mcpproxy -a fabro-dev-token/);
+  assert.match(wrapper, /export SESSION_SECRET\b/);
+  assert.match(wrapper, /export FABRO_DEV_TOKEN\b/);
+  // Missing secrets abort before the server starts (dev-token auth
+  // refuses to run without the pair) — one fatal exit per secret.
+  assert.equal((wrapper.match(/exit 1/g) ?? []).length, 2);
+  // The wrapper execs fabro with the same server flags the direct
+  // invocation would pass.
+  assert.match(
+    wrapper,
+    /exec .*\/bin\/fabro server start --foreground --bind 127\.0\.0\.1:32276/,
+  );
+});
+
+test('declared keychain secrets never land in the launchd plist', () => {
+  const rendered = nixEvalJson(standaloneFabroExpr(`{ ... }: {
+    programs.fabro.enable = true;
+    programs.fabro.keychainSecrets = {
+      SESSION_SECRET = "fabro-session-secret";
+    };
+  }`));
+
+  const env = rendered.agent.config.EnvironmentVariables;
+  assert.equal(env.SESSION_SECRET, undefined);
+});
+
+test('undeclared keychain secret references fail the eval loudly', () => {
+  const failure = nixEvalFailure(standaloneFabroExpr(`{
+    lib, ...
+  }: {
+    options.home.mcp = {
+      keychainSecrets = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+      };
+    };
+    config = {
+      home.mcp.keychainSecrets."some-other-secret" = "x";
+      programs.fabro.enable = true;
+      programs.fabro.keychainSecrets = {
+        SESSION_SECRET = "fabro-session-secret";
+      };
+    };
+  }`));
+
+  assert.match(
+    failure,
+    /programs\.fabro\.keychainSecrets\.SESSION_SECRET must name a home\.mcp\.keychainSecrets entry/,
+  );
+});
+
+test('undeclared-home contexts skip the keychainSecrets cross-assertion', () => {
+  const rendered = nixEvalJson(standaloneFabroExpr(`{ ... }: {
+    programs.fabro.enable = true;
+    programs.fabro.keychainSecrets = {
+      SESSION_SECRET = "fabro-session-secret";
+    };
+  }`));
+
+  assert.equal(rendered.hasAgent, true);
+  assert.match(
+    rendered.agent.config.ProgramArguments[0],
+    /\/bin\/fabro-launchd-wrapper$/,
+  );
 });
 
 test('disabled configuration registers no launchd agent', () => {

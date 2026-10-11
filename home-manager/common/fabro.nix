@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  options,
   pkgs,
   ...
 }:
@@ -25,6 +26,7 @@ let
   fabroDataDir = cfg.storageDir;
   logDir = "${config.home.homeDirectory}/Library/Logs/fabro";
   settingsPath = "${fabroStateDir}/settings.toml";
+  keychainPath = "${config.home.homeDirectory}/Library/Keychains/login.keychain-db";
 
   settingsManaged = cfg.settings != { };
 
@@ -60,6 +62,59 @@ let
   tomlFormat = pkgs.formats.toml { };
 
   settingsFile = tomlFormat.generate "fabro-settings.toml" cfg.settings;
+
+  # Server flags shared by the direct and wrapped launchd invocations.
+  serverArgs =
+    lib.optionals (cfg.bind != null) [
+      "--bind"
+      cfg.bind
+    ]
+    ++ lib.optionals (!cfg.web) [ "--no-web" ]
+    ++ cfg.extraArgs;
+
+  # Secrets the launchd wrapper resolves from the mcpproxy-routed Keychain
+  # layout (see scripts/mcp-secrets-activate.nix) — e.g. the dev-token
+  # auth pair. fabro reads them in-process at start-up (dev-token auth
+  # refuses to start without SESSION_SECRET / FABRO_DEV_TOKEN), so they
+  # must not be passed through the world-readable launchd plist.
+  fabroWrapperSecrets = lib.mapAttrsToList (envName: secretName: {
+    inherit envName secretName;
+  }) cfg.keychainSecrets;
+  wrapperResolvesKeychain = fabroWrapperSecrets != [ ];
+
+  # Bash parameter reference defaulting to empty, built by concatenation so
+  # the indented wrapper text can interpolate the env-var NAME without the
+  # `''` string-from-shell escaping swallowing the `${`.
+  envRef = name: "\${" + name + ":-}";
+
+  fabroWrapper = pkgs.writeShellApplication {
+    name = "fabro-launchd-wrapper";
+    text = ''
+      set -eu
+
+      keychain_path=${lib.escapeShellArg keychainPath}
+
+      ${lib.concatMapStringsSep "\n" (
+        {
+          envName,
+          secretName,
+        }:
+        ''
+          if ! ${envName}="$(/usr/bin/security find-generic-password -s mcpproxy -a ${lib.escapeShellArg secretName} -w "$keychain_path" 2>/dev/null)" || [ -z "${envRef envName}" ]; then
+            echo "ERROR: ${envName} (${secretName}) unavailable from macOS Keychain; not starting without it." >&2
+            echo "  Provision it via the 1Password item declared in home.mcp.keychainSecrets," >&2
+            echo "  then refresh the Keychain with a switch and restart:" >&2
+            echo "  launchctl kickstart -k gui/\$(id -u)/dev.dwsr.fabro" >&2
+            exit 1
+          else
+            export ${envName}
+          fi
+        ''
+      ) fabroWrapperSecrets}
+
+      exec ${cfg.package}/bin/fabro server start --foreground ${lib.escapeShellArgs serverArgs}
+    '';
+  };
 in
 {
   options.programs.fabro = {
@@ -170,8 +225,30 @@ in
       default = { };
       description = ''
         Extra environment variables for the service, merged over the
-        module-provided FABRO_* variables. Use this for provider API keys
-        and other secrets the server must carry into runs.
+        module-provided FABRO_* variables. Use this only for non-secret
+        values; the launchd plist is world-readable, so auth credentials
+        belong in {option}`keychainSecrets`.
+      '';
+    };
+
+    keychainSecrets = mkOption {
+      type = types.attrsOf types.str;
+      default = { };
+      example = {
+        SESSION_SECRET = "fabro-session-secret";
+        FABRO_DEV_TOKEN = "fabro-dev-token";
+      };
+      description = ''
+        Map of environment variable name → `home.mcp.keychainSecrets`
+        entry name for secrets fabro needs at start-up (the dev-token
+        auth pair above). The launchd agent execs through a wrapper that
+        resolves each entry from the macOS Keychain (service
+        `mcpproxy`) and exports it before start, so no secret value
+        lands in the Nix store or the agent plist. A missing entry
+        aborts the start: dev-token auth refuses to run without the
+        pair anyway. Declaring any entries changes the agent's
+        ProgramArguments to the wrapper (the wrapper execs fabro with
+        the same server flags).
       '';
     };
 
@@ -184,10 +261,27 @@ in
         tests. Null when settings are not declared.
       '';
     };
+
+    _wrapper = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      description = "Internal launchd wrapper consumed by the agent config and tests.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
-    programs.fabro._settingsFile = if settingsManaged then settingsFile else null;
+    assertions = lib.optionals (options.home ? mcp) (
+      lib.mapAttrsToList (envName: secretName: {
+        assertion = builtins.hasAttr secretName config.home.mcp.keychainSecrets;
+        message = "programs.fabro.keychainSecrets.${envName} must name a home.mcp.keychainSecrets entry (\"${secretName}\").";
+      }) cfg.keychainSecrets
+    );
+
+    programs.fabro = {
+      _settingsFile = if settingsManaged then settingsFile else null;
+      _wrapper = if wrapperResolvesKeychain then fabroWrapper else null;
+    };
 
     home = {
       packages = [ cfg.package ];
@@ -226,18 +320,21 @@ in
         # invocation (the Docker image CMD runs the same): foreground
         # execution with the server daemon record written for
         # `fabro server status` / `fabro server stop`.
-        ProgramArguments = [
-          "${cfg.package}/bin/fabro"
-          "server"
-          "start"
-          "--foreground"
-        ]
-        ++ lib.optionals (cfg.bind != null) [
-          "--bind"
-          cfg.bind
-        ]
-        ++ lib.optionals (!cfg.web) [ "--no-web" ]
-        ++ cfg.extraArgs;
+        #
+        # With keychainSecrets the agent execs through a wrapper that
+        # resolves them from the Keychain first; without any it runs the
+        # binary directly.
+        ProgramArguments =
+          if wrapperResolvesKeychain then
+            [ "${fabroWrapper}/bin/fabro-launchd-wrapper" ]
+          else
+            [
+              "${cfg.package}/bin/fabro"
+              "server"
+              "start"
+              "--foreground"
+            ]
+            ++ serverArgs;
         RunAtLoad = true;
         KeepAlive = true;
         EnvironmentVariables = serviceEnv;

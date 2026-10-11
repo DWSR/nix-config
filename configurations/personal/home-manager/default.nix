@@ -95,6 +95,17 @@ in
         # OpenCode Console; if opencode on this host is already connected,
         # the same key lives in ~/.local/share/opencode/auth.json.
         "opencode-api-key" = "op://Private/OpenCode/API Key";
+        # Fabro launchd agent dev-token auth pair
+        # (home-manager/common/fabro.nix keychainSecrets). The launchd
+        # wrapper exports them into the agent environment at start, so
+        # no secret value lands in the launchd plist and the pair
+        # survives reboots (launchctl setenv does not). Seed the 1Password
+        # Fabro item once with the values currently carried by
+        # `launchctl getenv`, then run the usual 1Password keychain sync:
+        # the fabro CLI and web sessions are bound to this pair, so
+        # reusing them avoids a re-auth; rotating requires re-login.
+        "fabro-session-secret" = "op://Private/Fabro/Session Secret";
+        "fabro-dev-token" = "op://Private/Fabro/Dev Token";
       };
 
       # gh CLI auth token. Reuses the same PAT as mcp-github-token because
@@ -180,7 +191,236 @@ in
     bearerReference = "agentmemory-bearer";
   };
 
-  programs.fabro.enable = true;
+  # Fabro routes its models through the local LiteLLM gateway
+  # (docs.fabro.sh/integrations/litellm). Fabro model id → LiteLLM
+  # model_name:
+  #
+  #   gpt-6-luna        chatgpt/gpt-6-luna          (xhigh via litellm default)
+  #   gpt-6-luna-none   chatgpt/gpt-6-luna-none     (no thinking; litellm default)
+  #   gpt-6-astra       chatgpt/gpt-6-astra         (xhigh)
+  #   gpt-6.1-sol       chatgpt/gpt-6.1-sol         (xhigh)
+  #   go-gpt-6-luna     opencode-go/gpt-6-luna
+  #   glm-5.3-flash     opencode-go/glm-5.3-flash
+  #   longcat-2.5       opencode-go/longcat-2.5-preview-free
+  #   big-pickle        opencode-zen/big-pickle
+  #
+  # Effort is constrained per model (capabilities.reasoning_effort) rather
+  # than defaulted here: runs that request no effort still inherit the
+  # litellm deployment default, and fabro can never send an effort outside
+  # the pinned level.
+  #
+  # Runs need LITELLM_API_KEY in the fabro server vault (env vars are
+  # stripped from run workers). One-time setup from the Keychain:
+  #   fabro secret set LITELLM_API_KEY "$(/usr/bin/security \
+  #     find-generic-password -s mcpproxy -a litellm-master-key -w)"
+  # This settings block REPLACES the wizard-written settings.toml at the
+  # next switch (fabro.nix owns the file once settings are declared), so
+  # the wizard's server.* sections must be maintained here rather than
+  # re-recorded by re-running the wizard.
+  programs.fabro = {
+    enable = true;
+
+    # fabro refuses to start its dev-token auth without this pair (the
+    # "auth is configured but SESSION_SECRET is not set" start failure).
+    # The launchd wrapper resolves each from the Keychain at start, so a
+    # reboot no longer depends on hand-set launchctl setenv values.
+    keychainSecrets = {
+      SESSION_SECRET = "fabro-session-secret";
+      FABRO_DEV_TOKEN = "fabro-dev-token";
+    };
+
+    settings = {
+      llm.providers.litellm = {
+        enabled = true;
+        base_url = "http://127.0.0.1:4000/v1";
+        default_model = "gpt-6-luna";
+
+        models = {
+          "gpt-6-luna" = {
+            display_name = "GPT-6 Luna (ChatGPT, xhigh)";
+            api_model = "chatgpt/gpt-6-luna";
+            limits = {
+              context_tokens = 1050000;
+              max_output_tokens = 128000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              reasoning_effort = {
+                xhigh = true;
+              };
+            };
+          };
+          "gpt-6-luna-none" = {
+            display_name = "GPT-6 Luna (ChatGPT, no thinking)";
+            api_model = "chatgpt/gpt-6-luna-none";
+            limits = {
+              context_tokens = 1050000;
+              max_output_tokens = 128000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              # lithos has no `none` effort (minimal..max), so no-think
+              # stays the unset default: fabro sends no effort and
+              # litellm's deployment default (`reasoning_effort = "none"`)
+              # applies.
+            };
+          };
+          "gpt-6-astra" = {
+            display_name = "GPT-6 Astra (ChatGPT, xhigh)";
+            api_model = "chatgpt/gpt-6-astra";
+            limits = {
+              context_tokens = 1050000;
+              max_output_tokens = 128000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              reasoning_effort = {
+                xhigh = true;
+              };
+            };
+          };
+          "gpt-6.1-sol" = {
+            display_name = "GPT-6.1 Sol (ChatGPT, xhigh)";
+            api_model = "chatgpt/gpt-6.1-sol";
+            limits = {
+              context_tokens = 1050000;
+              max_output_tokens = 128000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              reasoning_effort = {
+                xhigh = true;
+              };
+            };
+          };
+          "go-gpt-6-luna" = {
+            display_name = "GPT-6 Luna (OpenCode Go)";
+            api_model = "opencode-go/gpt-6-luna";
+            limits = {
+              context_tokens = 1050000;
+              max_output_tokens = 128000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              reasoning_effort = {
+                low = true;
+                medium = true;
+                high = true;
+                xhigh = true;
+                max = true;
+              };
+            };
+          };
+          "glm-5.3-flash" = {
+            display_name = "GLM-5.3 Flash (OpenCode Go)";
+            api_model = "opencode-go/glm-5.3-flash";
+            small_default = true;
+            limits = {
+              context_tokens = 1000000;
+              max_output_tokens = 131072;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+              reasoning_effort = {
+                low = true;
+                high = true;
+                max = true;
+              };
+            };
+          };
+          "longcat-2.5" = {
+            display_name = "LongCat 2.5 Preview Free (OpenCode Go)";
+            api_model = "opencode-go/longcat-2.5-preview-free";
+            # Same family tier and chat-model window as longcat-2.0's
+            # serving; upstream publishes no separate hard output cap.
+            limits = {
+              context_tokens = 1000000;
+              max_output_tokens = 131072;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+            };
+          };
+          "big-pickle" = {
+            display_name = "Big Pickle (OpenCode Zen)";
+            api_model = "opencode-zen/big-pickle";
+            limits = {
+              context_tokens = 200000;
+              max_output_tokens = 32000;
+            };
+            capabilities = {
+              text = true;
+              tools = true;
+              reasoning = true;
+            };
+          };
+        };
+      };
+
+      # Wizard-recorded values (fabro owns this file at runtime; the
+      # switch-installed copy above carries the same content).
+      cli = {
+        exec.model = {
+          provider = "litellm";
+          name = "gpt-6-luna";
+        };
+
+        target = {
+          type = "http";
+          url = "http://127.0.0.1:32276/api/v1";
+        };
+      };
+
+      run = {
+        environment.id = "default";
+        model.name = "gpt-6-luna";
+      };
+
+      server = {
+        api.url = "http://127.0.0.1:32276/api/v1";
+
+        artifacts = {
+          prefix = "artifacts";
+          provider = "local";
+          local.root = "/Users/brandonmcnama/.local/share/fabro/objects";
+        };
+
+        auth.methods = [ "dev-token" ];
+
+        integrations.github.strategy = "token";
+
+        listen = {
+          address = "127.0.0.1:32276";
+          type = "tcp";
+        };
+
+        sandbox.providers = {
+          daytona.enabled = false;
+          docker.enabled = true;
+          local.enabled = true;
+        };
+
+        web = {
+          enabled = true;
+          url = "http://127.0.0.1:32276";
+        };
+      };
+    };
+  };
 
   # LiteLLM proxy: one loopback OpenAI-compatible gateway in front of the
   # subscription-backed models, so local consumers (total-recall, fabro,
@@ -209,41 +449,57 @@ in
 
     settings = {
       model_list =
-        # ChatGPT subscription (Codex) models.
-        (map
-          (m: {
-            model_name = "chatgpt/${m}";
-            model_info.mode = "responses";
-            litellm_params.model = "chatgpt/${m}";
-          })
-          [
-            "gpt-5.4"
-            "gpt-5.4-pro"
-            "gpt-5.3-codex"
-            "gpt-5.3-codex-spark"
-            "gpt-5.3-instant"
-            "gpt-5.3-chat-latest"
-          ]
-        )
-        # OpenCode Go: Responses-API wire models.
-        ++ (map
-          (m: {
-            model_name = "opencode-go/${m}";
+        # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
+        # device flow — see litellm-chatgpt-login). Reasoning effort is
+        # pinned per deployment so the effort travels with the model id;
+        # duplicated litellm_params.model entries are fine because model
+        # names are distinct (same named upstream model + different
+        # default params load-balances instead of pinning).
+        [
+          {
+            model_name = "chatgpt/gpt-6-luna";
             model_info.mode = "responses";
             litellm_params = {
-              model = "openai/${m}";
-              api_base = "https://opencode.ai/zen/go/v1";
-              api_key = "os.environ/OPENCODE_API_KEY";
+              model = "chatgpt/gpt-6-luna";
+              reasoning_effort = "xhigh";
             };
-          })
-          [
-            "grok-4.7"
-            "grok-4.6"
-            "gpt-6-luna"
-            "gpt-5.6-luna"
-          ]
-        )
-        # OpenCode Go: chat/completions wire models ("open coding models").
+          }
+          {
+            model_name = "chatgpt/gpt-6-luna-none";
+            model_info.mode = "responses";
+            litellm_params = {
+              model = "chatgpt/gpt-6-luna";
+              reasoning_effort = "none";
+            };
+          }
+          {
+            model_name = "chatgpt/gpt-6-astra";
+            model_info.mode = "responses";
+            litellm_params = {
+              model = "chatgpt/gpt-6-astra";
+              reasoning_effort = "xhigh";
+            };
+          }
+          {
+            model_name = "chatgpt/gpt-6.1-sol";
+            model_info.mode = "responses";
+            litellm_params = {
+              model = "chatgpt/gpt-6.1-sol";
+              reasoning_effort = "xhigh";
+            };
+          }
+        ]
+        # OpenCode Go Responses-API wire models.
+        ++ (map (m: {
+          model_name = "opencode-go/${m}";
+          model_info.mode = "responses";
+          litellm_params = {
+            model = "openai/${m}";
+            api_base = "https://opencode.ai/zen/go/v1";
+            api_key = "os.environ/OPENCODE_API_KEY";
+          };
+        }) [ "gpt-6-luna" ])
+        # OpenCode Go chat/completions wire models.
         ++ (map
           (m: {
             model_name = "opencode-go/${m}";
@@ -256,19 +512,24 @@ in
           })
           [
             "glm-5.3-flash"
-            "glm-5.3"
-            "glm-5.2"
-            "glm-5.1"
-            "kimi-k3"
-            "kimi-k2.7-code"
-            "kimi-k2.6"
-            "deepseek-v4-pro"
-            "deepseek-v4-flash"
-            "mimo-v2.6-flash"
-            "mimo-v2.6-pro"
-            "longcat-2.0"
+            "longcat-2.5-preview-free"
           ]
-        );
+        )
+        # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
+        # the stealth model serves on the Zen balance endpoint, which the
+        # OpenCode API key reaches unchanged (usage draws from the balance
+        # behind the Go subscription).
+        ++ [
+          {
+            model_name = "opencode-zen/big-pickle";
+            model_info.mode = "chat";
+            litellm_params = {
+              model = "openai/big-pickle";
+              api_base = "https://opencode.ai/zen/v1";
+              api_key = "os.environ/OPENCODE_API_KEY";
+            };
+          }
+        ];
     };
   };
 
