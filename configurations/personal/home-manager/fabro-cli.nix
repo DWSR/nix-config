@@ -33,6 +33,11 @@ let
   '';
 in
 {
+  # The CLI binary itself: the fabro package came from programs.fabro's
+  # home.packages, and that module is disabled since the server moved to
+  # the VM, so this module owns the install instead.
+  home.packages = [ pkgs.fabro ];
+
   home.sessionVariables.FABRO_HOME = fabroHome;
 
   xdg.configFile.".fabro/settings.toml".source = cliSettings;
