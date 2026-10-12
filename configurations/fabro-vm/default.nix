@@ -9,12 +9,14 @@
 # (home-manager/common/lima-vm.nix `image` default); this configuration
 # matters once a Linux builder exists to build a custom image (then switch
 # the module's `image.location` to the store path) or for remote deployment
-# into the running instance (`nixos-rebuild --target`). Fabro is not
-# configured here yet.
+# into the running instance (`nixos-rebuild --target`). The guest runs
+# Docker plus the fabro and LiteLLM services, with their secrets from
+# sops-nix (`sops.fabro` block below).
 {
+  config,
+  lib,
   modulesPath,
   pkgs,
-  lib,
   ...
 }:
 {
@@ -32,6 +34,49 @@
   # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
   # systemd service.
   services.lima.enable = true;
+
+  # Encrypted store (secrets/fabro.fabro.yaml, recipient `&host_fabro`).
+  # The guest's age private key lives outside the repo at
+  # /var/lib/sops-nix/key.txt (installed during bootstrap; private copy
+  # in the Private vault as `sops-age-key-fabro` — see
+  # secrets/README.md). Decryption happens in system activation, before
+  # normal units start, so the application services read the rendered
+  # env files at systemd start without secrets entering the Nix store.
+  sops = {
+    defaultSopsFile = ../../secrets/fabro.fabro.yaml;
+
+    # Single key source: the age file. Disable the SSH-host-key and GPG
+    # probes so decryption only ever uses /var/lib/sops-nix/key.txt.
+    age = {
+      keyFile = "/var/lib/sops-nix/key.txt";
+      sshKeyPaths = [ ];
+    };
+    gnupg.sshKeyPaths = [ ];
+
+    secrets = {
+      fabro-session-secret = { };
+      fabro-dev-token = { };
+      litellm-master-key = { };
+    };
+
+    # systemd EnvironmentFiles the services consume (fabro.nix and
+    # litellm.nix reference config.sops.templates.<name>.path):
+    #   * fabro-env — the dev-token auth pair fabro REQUIRES (dev-token
+    #     start refuses to run without SESSION_SECRET + FABRO_DEV_TOKEN).
+    #   * litellm-env — LITELLM_MASTER_KEY, which litellm honours as the
+    #     proxy master key (the same env-var shape the mac launchd
+    #     wrapper exported; no secret lands in the config in the store).
+    templates = {
+      "fabro-env".content = ''
+        SESSION_SECRET=${config.sops.placeholder.fabro-session-secret}
+        FABRO_DEV_TOKEN=${config.sops.placeholder.fabro-dev-token}
+      '';
+
+      "litellm-env".content = ''
+        LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
+      '';
+    };
+  };
 
   # Guest hostname, matching home-manager/common/lima-vm.nix's
   # `hostname` provision (which covers the upstream release image until

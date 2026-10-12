@@ -11,16 +11,20 @@
 #   * `server.auth.methods = ["dev-token"]` is REQUIRED by fabro (the field
 #     has no "none": the server refuses to start without a bootstrap
 #     method, and dev-token start requires the SESSION_SECRET +
-#     FABRO_DEV_TOKEN pair). The pair is NOT in the Nix store: the service
-#     reads it from /var/lib/fabro/env (root-only, systemd EnvironmentFile)
-#     provisioned once per VM — see `provision_fabro_auth` below. sops-nix
-#     is the planned substitute that makes this declarative.
+#     FABRO_DEV_TOKEN pair). The pair is NOT in the Nix store: systemd
+#     loads it from the sops-nix-rendered env file
+#     (`sops.templates."fabro-env"` in default.nix: decrypted from
+#     secrets/fabro.fabro.yaml into /run/secrets at activation, then
+#     rendered as an EnvironmentFile). The template carries the
+#     1Password Fabro pair, so switching to it invalidates web/CLI
+#     sessions bound to the pair the VM previously generated in-guest.
 #
 # settings.toml is installed into FABRO_HOME before every start (systemd
 # StateDirectory owns /var/lib/fabro), preserving the ownership semantics
 # the HM module had at activation time: declarative content wins over
 # runtime wizard edits on every restart.
 {
+  config,
   lib,
   pkgs,
   ...
@@ -258,11 +262,12 @@ in
     path = [ pkgs.git ];
 
     serviceConfig = {
-      # The dev-token auth pair (SESSION_SECRET, FABRO_DEV_TOKEN), created
-      # once per VM (both secrets land there; see provision_fabro_auth in
-      # the fabro config; not in the Nix store). Missing entries fail
-      # start-up loudly: dev-token auth refuses to run without them anyway.
-      EnvironmentFile = "/var/lib/fabro/env";
+      # The dev-token auth pair (SESSION_SECRET, FABRO_DEV_TOKEN) from
+      # the sops-nix template env (rendered at activation from
+      # secrets/fabro.fabro.yaml; see default.nix). Missing entries fail
+      # start-up loudly: dev-token auth refuses to run without them
+      # anyway.
+      EnvironmentFile = config.sops.templates."fabro-env".path;
       ExecStartPre = "${pkgs.coreutils}/bin/install -m 0600 -T ${fabroSettings} ${fabroStateDir}/settings.toml";
       ExecStart = "${lib.getExe pkgs.fabro} server start --foreground";
       StateDirectory = [

@@ -19,18 +19,30 @@
 #                        {api_base}/responses, the GLM/Kimi/DeepSeek/MiMo
 #                        ids to /chat/completions.
 #
-# NOT provisioned yet (the launchd wrapper's Keychain equivalents have no
-# NixOS counterpart until sops-nix lands on this host):
-#   * provider keys — `OPENCODE_API_KEY` (os.environ/) is unset, so all
-#     opencode-* deployments fail at call time until it is provisioned.
-#   * master key — the proxy runs without `general_settings.master_key`; it
-#     is only reachable on the VM's loopback (no Lima port forwarding for
-#     port 4000), so nothing off-VM can reach it.
+# Authentication: the proxy enforces a master key, supplied as the
+# LITELLM_MASTER_KEY env var from the sops-nix `litellm-env` template
+# (decrypted from secrets/fabro.fabro.yaml; the same env-var shape the
+# mac launchd wrapper used — the config in the store carries no secret).
+# Consumers present `Authorization: Bearer <master key>`; in the guest
+# that value must also exist in fabro's server vault as LITELLM_API_KEY
+# (`fabro secret set`, runs source it there).
+#
+# NOT provisioned yet: provider keys — `OPENCODE_API_KEY` (os.environ/)
+# is unset, so all opencode-* deployments fail at call time until it is
+# delivered (one more sops key in secrets/fabro.fabro.yaml + the
+# matching template entry).
+{
+  config,
+  ...
+}:
 {
   services.litellm = {
     enable = true;
     host = "127.0.0.1";
     port = 4000;
+
+    # LITELLM_MASTER_KEY from the sops template (see default.nix).
+    environmentFile = config.sops.templates."litellm-env".path;
 
     settings =
       let

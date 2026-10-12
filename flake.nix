@@ -1955,7 +1955,22 @@
                   "fabro-vm: systemd.services.fabro must start after litellm.service.";
                 assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.after)
                   "fabro-vm: systemd.services.fabro must start after docker.service.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                assert pkgs.lib.assertMsg (
+                  vm.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
+                ) "fabro-vm: sops.age.keyFile must point at the guest's age key.";
+                assert pkgs.lib.assertMsg (
+                  builtins.hasAttr "fabro-session-secret" vm.sops.secrets
+                  && builtins.hasAttr "fabro-dev-token" vm.sops.secrets
+                  && builtins.hasAttr "litellm-master-key" vm.sops.secrets
+                ) "fabro-vm: sops.secrets must declare the fabro auth pair and the litellm master key.";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services.fabro.serviceConfig.EnvironmentFile == vm.sops.templates."fabro-env".path
+                ) "fabro-vm: the fabro service must consume the sops-rendered env file.";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services.litellm.serviceConfig.EnvironmentFile
+                  == [ vm.sops.templates."litellm-env".path ]
+                ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2494,6 +2509,11 @@
         system = "aarch64-linux";
         modules = [
           inputs.nixos-lima.nixosModules.lima
+          # Encrypted store wiring: configurations/fabro-vm declares
+          # `sops.secrets` from secrets/fabro.fabro.yaml (guest owns the
+          # `&host_fabro` recipient; private key at
+          # /var/lib/sops-nix/key.txt in the guest).
+          inputs.sops-nix.nixosModules.default
           {
             nixpkgs.overlays = [ outputs.overlays.fabro ];
           }
