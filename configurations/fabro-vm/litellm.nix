@@ -32,8 +32,43 @@
 # the proxy itself.
 {
   config,
+  lib,
+  pkgs,
   ...
 }:
+let
+  # The `chatgpt/*` provider credentials: litellm's chatgpt authenticator
+  # (llms/chatgpt/authenticator) resolves CHATGPT_TOKEN_DIR, falling back to
+  # `~/.config/litellm/chatgpt`. The DynamicUser unit has no HOME, so both
+  # the unit and this login wrapper pin the path inside the state dir; the
+  # service reads and refreshes auth.json in place under the same path.
+  litellmTokenDir = "${config.services.litellm.stateDir}/chatgpt";
+
+  # Device-flow login for the ChatGPT providers (the mac's
+  # `programs.litellm.litellmChatGptLogin` wrapper, pointed at the guest's
+  # token dir). Prints a verification URL + code, waits for the human to
+  # approve it, then writes auth.json under CHATGPT_TOKEN_DIR. Runs under
+  # sudo, so the credentials and token dir are handed to the DynamicUser
+  # proxy (numeric owner of the state dir) afterwards.
+  litellmChatGptLogin = pkgs.writeShellApplication {
+    name = "litellm-chatgpt-login";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      export CHATGPT_TOKEN_DIR=${lib.escapeShellArg litellmTokenDir}
+
+      # Device flow: prints the verification URL + code and waits for the
+      # human to approve it, then writes auth.json under CHATGPT_TOKEN_DIR.
+      ${
+        (pkgs.python3.withPackages (pythonPackages: [ pythonPackages.litellm ])).interpreter
+      } -c 'from litellm.llms.chatgpt.authenticator import Authenticator; Authenticator().get_access_token()'
+
+      # Hand the credentials to the DynamicUser proxy (the service reads
+      # and refreshes auth.json in place): copy the state dir's numeric
+      # owner onto the token dir tree.
+      chown -R --reference=${config.services.litellm.stateDir} "${litellmTokenDir}"
+    '';
+  };
+in
 {
   services.litellm = {
     enable = true;
@@ -42,6 +77,8 @@
 
     # LITELLM_MASTER_KEY from the sops template (see default.nix).
     environmentFile = config.sops.templates."litellm-env".path;
+
+    environment.CHATGPT_TOKEN_DIR = litellmTokenDir;
 
     settings =
       let
@@ -148,4 +185,8 @@
           ];
       };
   };
+
+  # The login wrapper ships with the guest (invoked under sudo over SSH;
+  # see the wrapper above).
+  environment.systemPackages = [ litellmChatGptLogin ];
 }
