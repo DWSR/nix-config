@@ -78,14 +78,29 @@ let
     ]
     ++ cfg.portForwards;
 
-    # Guest hostname. nixos-lima's lima-init runs `provision.system` scripts
-    # with root on every boot (AFTER NixOS's own activation has set
-    # networking.hostName from the image config — 'nixos' on the upstream
-    # release image), so writing the kernel hostname directly here wins on
-    # every boot. Dependency-free and idempotent; the flake's fabro-vm
-    # guest config sets the same value via networking.hostName for
-    # self-built images.
-    provision = lib.optionals (cfg.hostname != null) [
+    provision = [
+      # The Lima cidata user is created imperatively by lima-init on every
+      # boot after NixOS's activation and must NOT be declared in the
+      # guest's users.users (mutableUsers stays true so rebuilds preserve
+      # it). This grants it the docker group whenever the guest actually
+      # runs docker, so its unprivileged shell can use the daemon socket;
+      # the getent guard makes it a silent no-op otherwise.
+      {
+        mode = "system";
+        # NOTE: provisioning scripts inherit lima-init's PATH, which does not
+        # include glibc's `getent` — the group check greps /etc/group instead.
+        # With getent the grant was a SILENT no-op (command-not-found exits
+        # inside the `if`, so the script returned 0 without acting).
+        script = ''
+          #!/bin/sh
+          if grep -q '^docker:' /etc/group \
+            && ! id -nG "$LIMA_CIDATA_USER" | tr ' \t' '\n' | grep -qx docker; then
+            usermod -aG docker "$LIMA_CIDATA_USER"
+          fi
+        '';
+      }
+    ]
+    ++ lib.optionals (cfg.hostname != null) [
       {
         mode = "system";
         script = ''
@@ -181,6 +196,66 @@ let
       exec limactl "$@"
     '';
   };
+
+  limaVmDeploy =
+    if cfg.guestSystem == null then
+      null
+    else
+      pkgs.writeShellApplication {
+        name = "lima-vm-deploy";
+        runtimeInputs = [
+          pkgs.gnutar
+          pkgs.gzip
+          pkgs.openssh
+        ];
+        text = ''
+          # Apply the flake's nixosConfigurations.${cfg.guestSystem} to the
+          # running instance WITHOUT cloning the repository inside the guest.
+          #
+          #   usage: lima-vm-deploy [REPO]   (REPO defaults to the cwd; it must
+          #                                  contain flake.nix + flake.lock)
+          #
+          # The NixOS closure is built by the guest's own Nix daemon (macOS has
+          # no Linux builder): the working tree is streamed as a tarball into a
+          # scratch dir over SSH and nixos-rebuild evaluates/switches from it
+          # there. Inputs must be locked so the guest resolves the same pinned
+          # sources.
+          export LIMA_HOME=${lib.escapeShellArg limaHome}
+
+          repo=''${1:-$PWD}
+          name=${lib.escapeShellArg cfg.name}
+          system=${lib.escapeShellArg cfg.guestSystem}
+          sshConfig="$LIMA_HOME/$name/ssh.config"
+          remoteHost="lima-$name"
+          scratch=/tmp/lima-vm-deploy
+
+          if [ ! -f "$repo/flake.nix" ] || [ ! -f "$repo/flake.lock" ]; then
+            echo "lima-vm-deploy: $repo is not a locked flake (usage: lima-vm-deploy [REPO])" >&2
+            exit 1
+          fi
+          if [ ! -f "$sshConfig" ]; then
+            echo "lima-vm-deploy: no ssh config at $sshConfig; is the instance running? try: limactl start $name" >&2
+            exit 1
+          fi
+
+          remote() {
+            ssh -F "$sshConfig" "$remoteHost" "$@"
+          }
+
+          remote -- "rm -rf '$scratch' && mkdir -p '$scratch'"
+
+          # Stream the tree (git metadata and switch leftovers removed).
+          tar --exclude=.git --exclude=.direnv --exclude=result --exclude='result-*' \
+            --exclude=.pre-commit-config.yaml \
+            --exclude='*.aac' --exclude='*.mp4*' --exclude='*.mp3' \
+            -cf - -C "$repo" . \
+            | gzip \
+            | remote -- "tar -xzf - -C '$scratch'"
+
+          remote -- "nixos-rebuild switch --sudo --flake '$scratch#$system'"
+          echo "lima-vm-deploy: switched guest to '$system'; scratch tree left at $scratch."
+        '';
+      };
 in
 {
   options.virtualisation.limaVM = {
@@ -342,6 +417,29 @@ in
       '';
     };
 
+    guestSystem = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "fabro-vm";
+      description = ''
+        Name of the `nixosConfigurations.<name>` output that defines this
+        VM's guest OS. When set, the module ships `lima-vm-deploy`, which
+        applies that configuration to the running instance from the
+        repository working tree WITHOUT cloning the repository inside the
+        guest: it streams a tarball of the tree over SSH into a scratch
+        dir, then lets the guest's own Nix evaluate its flake and switch
+        with `nixos-rebuild switch --sudo` (the flake inputs must be
+        locked; the macOS host itself is not a Linux builder).
+      '';
+    };
+
+    _deploy = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      description = "Internal `lima-vm-deploy` script consumed by home.packages and tests. Null when {option}`guestSystem` is unset.";
+    };
+
     path = mkOption {
       type = types.listOf types.package;
       default = [ ];
@@ -398,12 +496,14 @@ in
     virtualisation.limaVM = {
       _configYaml = limaConfigYaml;
       _supervisor = supervisor;
+      _deploy = limaVmDeploy;
     };
 
     home.packages = [
       cfg.package
       limaVmctl
-    ];
+    ]
+    ++ lib.optional (limaVmDeploy != null) limaVmDeploy;
 
     launchd.agents.${agentName} = {
       enable = true;

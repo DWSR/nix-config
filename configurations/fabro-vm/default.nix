@@ -35,6 +35,15 @@
   # this configuration can be built into a custom image / deployed).
   networking.hostName = "fabro";
 
+  # Docker: the only service the fabro host runs right now (fabro itself
+  # is pending). NixOS's Docker module manages its own systemd unit,
+  # bridge/overlay kernel module loading, and nftables compat. The
+  # docker group membership for the cidata user is granted by the Lima
+  # module's `provision`, because lima-init creates that user
+  # imperatively on each boot and users.users must not declare it
+  # (mutableUsers stays true so rebuilds preserve it).
+  virtualisation.docker.enable = true;
+
   # ssh
   services.openssh.enable = true;
 

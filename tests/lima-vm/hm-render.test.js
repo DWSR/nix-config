@@ -49,6 +49,13 @@ function standaloneLimaExpr(extraModule, name = 'fabro') {
           )
         else
           null;
+      deployText =
+        if (hm.config.virtualisation.limaVM._deploy or null) != null then
+          builtins.readFile (
+            hm.config.virtualisation.limaVM._deploy + "/bin/lima-vm-deploy"
+          )
+        else
+          null;
     }
   `;
 }
@@ -217,10 +224,21 @@ test('invalid instance names fail the eval loudly', () => {
   );
 });
 
-test('default configuration leaves provisioning empty', () => {
+test('default configuration renders only the docker-group provision', () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
-  assert.match(rendered.configYaml, /provision: ?\[\]/);
+  const yaml = rendered.configYaml;
+  assert.match(yaml, /provision:\n/);
+  assert.match(yaml, /mode: ?['"]?system['"]?/);
+  // The cidata user is created imperatively by lima-init, so it cannot be
+  // declared in users.users; this idempotent grant runs on every boot.
+  // (Lima's YAML round-trip of the folded double-quoted scalar is
+  // byte-exact — verified against a throwaway `limactl create --name rtt`
+  // instance reading the provision script back.)
+  assert.match(yaml, /grep -q '\^docker:' \/etc\/group/);
+  assert.match(yaml, /usermod -aG docker/);
+  assert.match(yaml, /LIMA_CIDATA_USER/);
+  assert.doesNotMatch(yaml, /\/proc\/sys\/kernel\/hostname/); // hostname unset
 });
 
 test('setting hostname adds a booted-every-boot provisioning script', () => {
@@ -235,6 +253,35 @@ test('setting hostname adds a booted-every-boot provisioning script', () => {
     rendered.configYaml,
     /echo ?['"]?fabro['"]? ?>>?\/proc\/sys\/kernel\/hostname/,
   );
+});
+
+test('guestSystem unset ships no deploy script', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
+
+  assert.equal(rendered.deployText, null);
+  assert.ok(
+    !rendered.packages.some((name) => name.startsWith('lima-vm-deploy')),
+    `unexpected lima-vm-deploy in home.packages: ${JSON.stringify(rendered.packages)}`,
+  );
+});
+
+test('guestSystem ships a deploy script with tar-over-ssh and no repo clone', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
+    virtualisation.limaVM.enable = true;
+    virtualisation.limaVM.guestSystem = "fabro-vm";
+  }`));
+
+  const deploy = rendered.deployText;
+  assert.ok(deploy, 'expected virtualisation.limaVM._deploy to render');
+
+  assert.match(deploy, /usage: lima-vm-deploy \[REPO\]/);
+  assert.match(deploy, /ssh -F "\$sshConfig" "\$remoteHost"/);
+  assert.match(deploy, /sshConfig="\$LIMA_HOME\/\$name\/ssh\.config"/);
+  assert.match(deploy, /tar --exclude=\.git/);
+  assert.match(deploy, /-cf - -C "\$repo" \./);
+  assert.match(deploy, /system=fabro-vm$/m);
+  assert.match(deploy, /nixos-rebuild switch --sudo --flake '\$scratch#\$system'/);
+  assert.match(deploy, /switched guest to '\$system'/);
 });
 
 test('invalid hostnames fail the eval loudly', () => {
@@ -297,7 +344,10 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
     {
       enable = hm.virtualisation.limaVM.enable;
       hostname = hm.virtualisation.limaVM.hostname;
+      guestSystem = hm.virtualisation.limaVM.guestSystem;
       configYamlHasHostnameProvision = builtins.match ".*echo fabro.*/proc/sys/kernel/hostname.*" configYaml != null;
+      configYamlHasUsermodProvision = builtins.match ".*usermod -aG docker.*" configYaml != null;
+      deployNotNull = hm.virtualisation.limaVM._deploy != null;
       supervisorNotNull = hm.virtualisation.limaVM._supervisor != null;
       hasAgent = hm.launchd.agents ? lima-fabro;
       agent = hm.launchd.agents.lima-fabro or null;
@@ -308,7 +358,10 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
 
   assert.equal(rendered.enable, true);
   assert.equal(rendered.hostname, 'fabro');
+  assert.equal(rendered.guestSystem, 'fabro-vm');
   assert.equal(rendered.configYamlHasHostnameProvision, true);
+  assert.equal(rendered.configYamlHasUsermodProvision, true);
+  assert.equal(rendered.deployNotNull, true);
   assert.equal(rendered.supervisorNotNull, true);
   assert.equal(rendered.hasAgent, true);
 

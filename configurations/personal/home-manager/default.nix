@@ -191,17 +191,17 @@ in
     bearerReference = "agentmemory-bearer";
   };
 
-  # NixOS Lima VM that will host fabro. The launchd agent
-  # (dev.dwsr.lima-fabro) keeps the instance up via limactl hostagent
-  # commands; the guest boots the pinned upstream nixos-lima release image
-  # until a Linux builder exists for the flake's own
-  # packages.aarch64-linux.fabro-vm-image. The hostname provision makes
-  # the guest targetable as "fabro" ahead of the coming fabro NixOS
-  # configuration in the repo (configurations/fabro-vm sets the same
-  # networking.hostName for self-built images).
+  # NixOS Lima VM that hosts fabro. The launchd agent (dev.dwsr.lima-fabro)
+  # keeps the instance up via limactl hostagent commands; the guest boots
+  # the pinned upstream nixos-lima release image until a Linux builder
+  # exists for the flake's own packages.aarch64-linux.fabro-vm-image. The
+  # hostname provision makes the guest targetable as "fabro" and
+  # guestSystem points lima-vm-deploy (no repo clone inside the guest) at
+  # the flake's fabro-vm NixOS configuration.
   virtualisation.limaVM = {
     enable = true;
     hostname = "fabro";
+    guestSystem = "fabro-vm";
   };
 
   # Fabro routes its models through the local LiteLLM gateway
