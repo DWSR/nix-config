@@ -72,6 +72,13 @@ in
         "mcp-hangops-xoxc" = "op://Private/HangOps/Tokens/xoxc";
         "mcp-hangops-xoxd" = "op://Private/HangOps/Tokens/xoxd";
         "agentmemory-bearer" = "op://Private/AgentMemory/Bearer";
+        # Fabro dev-token login credential (the VM's dev-token auth pair is
+        # the same 1Password item — secrets/fabro.fabro.yaml SESSION_SECRET
+        # + FABRO_DEV_TOKEN). The fabro-login wrapper
+        # (configurations/personal/home-manager/fabro-cli.nix) reads it
+        # from the Keychain and runs the one-time `fabro auth login`
+        # exchange against svc:fabro.
+        "fabro-dev-token" = "op://Private/Fabro/Dev Token";
         # oMLX local inference server API key (secrets/mcp.personal.yaml
         # `omlx-api-key`). mcp-secrets-activate writes it to the Keychain
         # under -s mcpproxy -a omlx-api-key; the personal opencode wrapper
