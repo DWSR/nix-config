@@ -72,6 +72,7 @@ key lives in the Private-vault note `sops-age-key-fabro`.
 | `fabro-dev-token` | `op://Private/Fabro/Dev Token` | fabro server `FABRO_DEV_TOKEN` |
 | `litellm-master-key` | `op://Private/LiteLLM/Master Key` | LiteLLM proxy master key |
 | `opencode-api-key` | `op://Private/OpenCode/API Key` | LiteLLM `os.environ/OPENCODE_API_KEY` deployments |
+| `tailscale-oauth-secret` | `op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret` | `services.tailscale.authKeyFile` (tailnet registration; `configurations/fabro-vm/tailscale.nix`) |
 
 Values were seeded from the 1Password items above (not from the
 keychain bridge). Until the service switches over, the guest keeps
@@ -79,6 +80,17 @@ running with the imperative `/var/lib/fabro/env` pair generated
 in-guest, which differs from this store; moving the service to the
 sops-backed pair invalidates in-guest CLI/web sessions and requires a
 `fabro auth login` re-run in the guest.
+
+The Tailscale row differs from the rest of the table: its source lives
+in the `Infrastructure` vault, not `Private`. The item
+`Fabro Host Tailscale Credentials` holds a Tailscale OAuth client
+(Client ID + `tskey-client-…` Client Secret, `auth_keys` scope) whose
+secret doubles as the node auth key (tailscale.com/kb/1215). Only the
+secret is mirrored into the store; the client ID is embedded in the
+secret value. Registration tags the guest `tag:fabro`
+(`services.tailscale.extraUpFlags`), and rotation affects only future
+node registrations — an already-registered guest keeps its bond until
+`tailscale logout` runs in-guest.
 
 ### Editing / rotating
 

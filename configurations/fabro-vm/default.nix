@@ -11,7 +11,8 @@
 # the module's `image.location` to the store path) or for remote deployment
 # into the running instance (`nixos-rebuild --target`). The guest runs
 # Docker plus the fabro and LiteLLM services, with their secrets from
-# sops-nix (`sops.fabro` block below).
+# sops-nix (`sops.fabro` block below), and joins the tailnet as a Tailscale
+# Services host advertising both applications (./tailscale.nix).
 {
   config,
   lib,
@@ -28,6 +29,9 @@
     # The host's two application services; Docker is enabled below.
     ./fabro.nix
     ./litellm.nix
+    # Tailnet registration (OAuth credential auth key) and advertisement
+    # of the fabro and litellm services (svc:fabro / svc:litellm).
+    ./tailscale.nix
   ];
 
   # lima-init reconfigures the system from Lima's cidata userdata at boot
@@ -58,6 +62,11 @@
       fabro-dev-token = { };
       litellm-master-key = { };
       opencode-api-key = { };
+      # OAuth client secret (`tskey-client-…`) consumed as the
+      # services.tailscale auth key (tailscale.nix: authKeyFile). Source:
+      # op://Infrastructure/Fabro Host Tailscale Credentials/Client
+      # Secret.
+      tailscale-oauth-secret = { };
     };
 
     # systemd EnvironmentFiles the services consume (fabro.nix and

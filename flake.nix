@@ -1972,14 +1972,40 @@
                 ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
                 assert pkgs.lib.assertMsg (builtins.hasAttr "opencode-api-key" vm.sops.secrets)
                   "fabro-vm: sops.secrets must declare the opencode provider key.";
-                assert pkgs.lib.assertMsg (pkgs.lib.stringContains "OPENCODE_API_KEY=\${"
-                  vm.sops.templates."litellm-env".content
+                assert pkgs.lib.assertMsg (
+                  pkgs.lib.hasInfix "OPENCODE_API_KEY=" vm.sops.templates."litellm-env".content
+                  && pkgs.lib.hasInfix vm.sops.placeholder."opencode-api-key" vm.sops.templates."litellm-env".content
                 ) "fabro-vm: the litellm env template must export OPENCODE_API_KEY from the sops store.";
                 assert pkgs.lib.assertMsg (
                   vm.sops.templates."fabro-env".restartUnits == [ "fabro.service" ]
                   && vm.sops.templates."litellm-env".restartUnits == [ "litellm.service" ]
                 ) "fabro-vm: sops templates must restart their consumers when the rendered values change.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                assert pkgs.lib.assertMsg vm.services.tailscale.enable
+                  "fabro-vm: services.tailscale must be enabled (tailnet node + service host).";
+                assert pkgs.lib.assertMsg (
+                  builtins.hasAttr "tailscale-oauth-secret" vm.sops.secrets
+                  && vm.services.tailscale.authKeyFile == vm.sops.secrets."tailscale-oauth-secret".path
+                ) "fabro-vm: the tailscale auth key must come from the sops store (tailscale-oauth-secret).";
+                assert pkgs.lib.assertMsg (
+                  vm.services.tailscale.extraUpFlags == [ "--advertise-tags=tag:fabro" ]
+                ) "fabro-vm: tailscale must register the guest as tag:fabro (the OAuth client's granted tag).";
+                assert pkgs.lib.assertMsg (
+                  builtins.elem "tailscaled-autoconnect.service" vm.systemd.services.tailscale-serve.after
+                  && builtins.elem "tailscaled-autoconnect.service" vm.systemd.services.tailscale-serve.requires
+                ) "fabro-vm: tailscale-serve must run after tailscaled registration completes.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
+                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 2
+                    && pkgs.lib.hasInfix "--service=svc:fabro --https=32776 http://127.0.0.1:32276" (
+                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
+                    )
+                    && pkgs.lib.hasInfix "--service=svc:litellm --https=4000 http://127.0.0.1:4000" (
+                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
+                    )
+                  )
+                  "fabro-vm: tailscale-serve must advertise svc:fabro and svc:litellm per the console resource defs (tcp:32776 / tcp:4000).";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:32776→127.0.0.1:32276 and svc:litellm tcp:4000→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
