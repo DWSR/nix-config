@@ -68,8 +68,40 @@ let
       chown -R --reference=${config.services.litellm.stateDir} "${litellmTokenDir}"
     '';
   };
+
+  # ExecStartPost health gate: poll the proxy's own liveness endpoint so
+  # the unit only reaches "active (started)" once the HTTP listener is
+  # actually answering. Without it systemd counts the process spawn and a
+  # hung-but-alive proxy looks started (and fabro would boot against a
+  # dead router despite After/Requires ordering). A failing probe fails
+  # the start job; the hard Requires=litellm.service then keeps fabro
+  # down with it. Budget stays under the default 90s start timeout.
+  litellmHealthGate = pkgs.writeShellApplication {
+    name = "litellm-health-gate";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+    ];
+    text = ''
+      attempts=30
+      for (( i = 1; i <= attempts; i++ )); do
+        if curl -fsS --connect-timeout 2 --max-time 4 -o /dev/null 'http://127.0.0.1:4000/health/liveliness'; then
+          exit 0
+        fi
+        echo "litellm-health-gate: probe $i/$attempts failed, retrying" >&2
+        sleep 2
+      done
+      echo "litellm-health-gate: /health/liveliness never returned 200" >&2
+      exit 1
+    '';
+  };
 in
 {
+  # The nixpkgs module only does spec-setups in ExecStartPre (tiktoken
+  # cache seed + UI dir chmod); the health gate lands here as a plain
+  # serviceConfig entry since the module exposes no readiness option.
+  systemd.services.litellm.serviceConfig.ExecStartPost = lib.getExe litellmHealthGate;
+
   services.litellm = {
     enable = true;
     host = "127.0.0.1";

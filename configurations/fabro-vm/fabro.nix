@@ -229,6 +229,29 @@ let
       };
     };
   };
+  # ExecStartPost health gate (same contract as litellm.nix's
+  # litellmHealthGate): poll the API's /api/v1/health so "active"
+  # means the listener answers, not just that the process spawned.
+  # Curl's -f fails on 4xx/5xx, so a not-yet-ready response loops too.
+  fabroHealthGate = pkgs.writeShellApplication {
+    name = "fabro-health-gate";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.curl
+    ];
+    text = ''
+      attempts=30
+      for (( i = 1; i <= attempts; i++ )); do
+        if curl -fsS --connect-timeout 2 --max-time 4 -o /dev/null 'http://127.0.0.1:32276/api/v1/health'; then
+          exit 0
+        fi
+        echo "fabro-health-gate: probe $i/$attempts failed, retrying" >&2
+        sleep 2
+      done
+      echo "fabro-health-gate: /api/v1/health never returned 200" >&2
+      exit 1
+    '';
+  };
 in
 {
   systemd.services.fabro = {
@@ -275,6 +298,7 @@ in
       EnvironmentFile = config.sops.templates."fabro-env".path;
       ExecStartPre = "${pkgs.coreutils}/bin/install -m 0600 -T ${fabroSettings} ${fabroStateDir}/settings.toml";
       ExecStart = "${lib.getExe pkgs.fabro} server start --foreground";
+      ExecStartPost = lib.getExe fabroHealthGate;
       StateDirectory = [
         "fabro/home"
         "fabro/storage"
