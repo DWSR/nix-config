@@ -339,3 +339,68 @@ test('disabled configuration registers no launchd agent', () => {
   assert.equal(rendered.hasConfigFile, false);
   assert.equal(rendered.wrapperText, null);
 });
+
+// litellm 1.86's per-provider param allowlists predate the personal host's
+// model ids, so without per-deployment `allowed_openai_params` the proxy
+// rejects `reasoning_effort` at its param gate — for a consumer's request
+// value AND for each chatgpt deployment's pinned default, which left the
+// chatgpt models un-callable outright.
+test('personal host allows reasoning_effort on every deployment', () => {
+  const rendered = nixEvalJson(`
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      hm = flake.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama;
+      modelList = hm.programs.litellm.settings.model_list;
+      deploymentStatus = builtins.listToAttrs (builtins.map (deployment: {
+        name = deployment.model_name;
+        value = {
+          allowsReasoningEffort = builtins.elem "reasoning_effort"
+            (deployment.litellm_params.allowed_openai_params or [ ]);
+          defaultEffort = deployment.litellm_params.reasoning_effort or null;
+          mode = deployment.model_info.mode or null;
+        };
+      }) modelList);
+    in
+    {
+      modelNames = builtins.attrNames deploymentStatus;
+      allAllowReasoningEffort =
+        builtins.all (d: d.allowsReasoningEffort) (builtins.attrValues deploymentStatus);
+      chatgptLuna = deploymentStatus."chatgpt/gpt-6-luna";
+      chatgptLunaNone = deploymentStatus."chatgpt/gpt-6-luna-none";
+      chatgptAstra = deploymentStatus."chatgpt/gpt-6-astra";
+      chatgptSol = deploymentStatus."chatgpt/gpt-6.1-sol";
+      goLuna = deploymentStatus."opencode-go/gpt-6-luna";
+      goGlm = deploymentStatus."opencode-go/glm-5.3-flash";
+      goLongcat = deploymentStatus."opencode-go/longcat-2.5-preview-free";
+      zenBigPickle = deploymentStatus."opencode-zen/big-pickle";
+      settingsText = builtins.readFile (hm.xdg.configFile."litellm/config.yaml".source);
+    }
+  `);
+
+  assert.deepEqual(rendered.modelNames.sort(), [
+    'chatgpt/gpt-6-astra',
+    'chatgpt/gpt-6-luna',
+    'chatgpt/gpt-6-luna-none',
+    'chatgpt/gpt-6.1-sol',
+    'opencode-go/glm-5.3-flash',
+    'opencode-go/gpt-6-luna',
+    'opencode-go/longcat-2.5-preview-free',
+    'opencode-zen/big-pickle',
+  ]);
+  assert.equal(rendered.allAllowReasoningEffort, true);
+
+  // The pinned deployment defaults survive the allowance merge.
+  assert.equal(rendered.chatgptLuna.defaultEffort, 'xhigh');
+  assert.equal(rendered.chatgptLuna.mode, 'responses');
+  assert.equal(rendered.chatgptLunaNone.defaultEffort, 'none');
+  assert.equal(rendered.chatgptLunaNone.mode, 'responses');
+  assert.equal(rendered.chatgptAstra.defaultEffort, 'xhigh');
+  assert.equal(rendered.chatgptSol.defaultEffort, 'xhigh');
+  assert.equal(rendered.goLuna.mode, 'responses');
+  assert.equal(rendered.goGlm.mode, 'chat');
+  assert.equal(rendered.goLongcat.mode, 'chat');
+  assert.equal(rendered.zenBigPickle.mode, 'chat');
+
+  assert.match(rendered.settingsText, /allowed_openai_params:/);
+  assert.match(rendered.settingsText, /- reasoning_effort/);
+});

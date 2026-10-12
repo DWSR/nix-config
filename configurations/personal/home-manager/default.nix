@@ -447,90 +447,110 @@ in
 
     providerKeys.OPENCODE_API_KEY = "opencode-api-key";
 
-    settings = {
-      model_list =
-        # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
-        # device flow — see litellm-chatgpt-login). Reasoning effort is
-        # pinned per deployment so the effort travels with the model id;
-        # duplicated litellm_params.model entries are fine because model
-        # names are distinct (same named upstream model + different
-        # default params load-balances instead of pinning).
-        [
-          {
-            model_name = "chatgpt/gpt-6-luna";
-            model_info.mode = "responses";
-            litellm_params = {
-              model = "chatgpt/gpt-6-luna";
-              reasoning_effort = "xhigh";
-            };
-          }
-          {
-            model_name = "chatgpt/gpt-6-luna-none";
-            model_info.mode = "responses";
-            litellm_params = {
-              model = "chatgpt/gpt-6-luna";
-              reasoning_effort = "none";
-            };
-          }
-          {
-            model_name = "chatgpt/gpt-6-astra";
-            model_info.mode = "responses";
-            litellm_params = {
-              model = "chatgpt/gpt-6-astra";
-              reasoning_effort = "xhigh";
-            };
-          }
-          {
-            model_name = "chatgpt/gpt-6.1-sol";
-            model_info.mode = "responses";
-            litellm_params = {
-              model = "chatgpt/gpt-6.1-sol";
-              reasoning_effort = "xhigh";
-            };
-          }
-        ]
-        # OpenCode Go Responses-API wire models.
-        ++ (map (m: {
-          model_name = "opencode-go/${m}";
-          model_info.mode = "responses";
-          litellm_params = {
-            model = "openai/${m}";
-            api_base = "https://opencode.ai/zen/go/v1";
-            api_key = "os.environ/OPENCODE_API_KEY";
-          };
-        }) [ "gpt-6-luna" ])
-        # OpenCode Go chat/completions wire models.
-        ++ (map
-          (m: {
+    settings =
+      let
+        # litellm 1.86's per-provider param allowlists predate the model ids
+        # served here (gpt-6*, glm, longcat), so `reasoning_effort` — both a
+        # consumer's request value and each chatgpt deployment's pinned
+        # default — fails the proxy's UnsupportedParamsError gate before
+        # reaching upstream. Merging this in re-permits the param per
+        # deployment; the chat→responses bridge then maps it to
+        # `reasoning.effort` for the Codex/OpenCode-Go upstreams.
+        reasoningEffortAllowed = {
+          allowed_openai_params = [ "reasoning_effort" ];
+        };
+      in
+      {
+        model_list =
+          # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
+          # device flow — see litellm-chatgpt-login). Reasoning effort is
+          # pinned per deployment so the effort travels with the model id;
+          # duplicated litellm_params.model entries are fine because model
+          # names are distinct (same named upstream model + different
+          # default params load-balances instead of pinning).
+          [
+            {
+              model_name = "chatgpt/gpt-6-luna";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-luna";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6-luna-none";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-luna";
+                reasoning_effort = "none";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6-astra";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-astra";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6.1-sol";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6.1-sol";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+          ]
+          # OpenCode Go Responses-API wire models.
+          ++ (map (m: {
             model_name = "opencode-go/${m}";
-            model_info.mode = "chat";
+            model_info.mode = "responses";
             litellm_params = {
               model = "openai/${m}";
               api_base = "https://opencode.ai/zen/go/v1";
               api_key = "os.environ/OPENCODE_API_KEY";
-            };
-          })
-          [
-            "glm-5.3-flash"
-            "longcat-2.5-preview-free"
-          ]
-        )
-        # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
-        # the stealth model serves on the Zen balance endpoint, which the
-        # OpenCode API key reaches unchanged (usage draws from the balance
-        # behind the Go subscription).
-        ++ [
-          {
-            model_name = "opencode-zen/big-pickle";
-            model_info.mode = "chat";
-            litellm_params = {
-              model = "openai/big-pickle";
-              api_base = "https://opencode.ai/zen/v1";
-              api_key = "os.environ/OPENCODE_API_KEY";
-            };
-          }
-        ];
-    };
+            }
+            // reasoningEffortAllowed;
+          }) [ "gpt-6-luna" ])
+          # OpenCode Go chat/completions wire models.
+          ++ (map
+            (m: {
+              model_name = "opencode-go/${m}";
+              model_info.mode = "chat";
+              litellm_params = {
+                model = "openai/${m}";
+                api_base = "https://opencode.ai/zen/go/v1";
+                api_key = "os.environ/OPENCODE_API_KEY";
+              }
+              // reasoningEffortAllowed;
+            })
+            [
+              "glm-5.3-flash"
+              "longcat-2.5-preview-free"
+            ]
+          )
+          # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
+          # the stealth model serves on the Zen balance endpoint, which the
+          # OpenCode API key reaches unchanged (usage draws from the balance
+          # behind the Go subscription).
+          ++ [
+            {
+              model_name = "opencode-zen/big-pickle";
+              model_info.mode = "chat";
+              litellm_params = {
+                model = "openai/big-pickle";
+                api_base = "https://opencode.ai/zen/v1";
+                api_key = "os.environ/OPENCODE_API_KEY";
+              }
+              // reasoningEffortAllowed;
+            }
+          ];
+      };
   };
 
   programs.ssh = {
