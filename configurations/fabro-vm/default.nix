@@ -30,6 +30,11 @@
   # systemd service.
   services.lima.enable = true;
 
+  # Guest hostname, matching home-manager/common/lima-vm.nix's
+  # `hostname` provision (which covers the upstream release image until
+  # this configuration can be built into a custom image / deployed).
+  networking.hostName = "fabro";
+
   # ssh
   services.openssh.enable = true;
 

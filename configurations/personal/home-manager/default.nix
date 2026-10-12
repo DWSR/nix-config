@@ -195,9 +195,14 @@ in
   # (dev.dwsr.lima-fabro) keeps the instance up via limactl hostagent
   # commands; the guest boots the pinned upstream nixos-lima release image
   # until a Linux builder exists for the flake's own
-  # packages.aarch64-linux.fabro-vm-image. Fabro itself is not configured
-  # inside the VM yet.
-  virtualisation.limaVM.enable = true;
+  # packages.aarch64-linux.fabro-vm-image. The hostname provision makes
+  # the guest targetable as "fabro" ahead of the coming fabro NixOS
+  # configuration in the repo (configurations/fabro-vm sets the same
+  # networking.hostName for self-built images).
+  virtualisation.limaVM = {
+    enable = true;
+    hostname = "fabro";
+  };
 
   # Fabro routes its models through the local LiteLLM gateway
   # (docs.fabro.sh/integrations/litellm). Fabro model id → LiteLLM

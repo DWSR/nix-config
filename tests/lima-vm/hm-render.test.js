@@ -217,6 +217,38 @@ test('invalid instance names fail the eval loudly', () => {
   );
 });
 
+test('default configuration leaves provisioning empty', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
+
+  assert.match(rendered.configYaml, /provision: ?\[\]/);
+});
+
+test('setting hostname adds a booted-every-boot provisioning script', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
+    virtualisation.limaVM.enable = true;
+    virtualisation.limaVM.hostname = "fabro";
+  }`));
+
+  assert.match(rendered.configYaml, /provision:\n/);
+  assert.match(rendered.configYaml, /mode: ?['"]?system['"]?/);
+  assert.match(
+    rendered.configYaml,
+    /echo ?['"]?fabro['"]? ?>>?\/proc\/sys\/kernel\/hostname/,
+  );
+});
+
+test('invalid hostnames fail the eval loudly', () => {
+  const failure = nixEvalFailure(standaloneLimaExpr(`{ ... }: {
+    virtualisation.limaVM.enable = true;
+    virtualisation.limaVM.hostname = "bad host";
+  }`));
+
+  assert.match(
+    failure,
+    /virtualisation\.limaVM\.hostname must be a valid hostname/,
+  );
+});
+
 test('extraLimaConfig merges over the rendered keys', () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
@@ -260,10 +292,12 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
     let
       flake = builtins.getFlake (toString ${repoRoot});
       hm = flake.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama;
+      configYaml = builtins.readFile hm.virtualisation.limaVM._configYaml;
     in
     {
       enable = hm.virtualisation.limaVM.enable;
-      configYamlNotNull = hm.virtualisation.limaVM._configYaml != null;
+      hostname = hm.virtualisation.limaVM.hostname;
+      configYamlHasHostnameProvision = builtins.match ".*echo fabro.*/proc/sys/kernel/hostname.*" configYaml != null;
       supervisorNotNull = hm.virtualisation.limaVM._supervisor != null;
       hasAgent = hm.launchd.agents ? lima-fabro;
       agent = hm.launchd.agents.lima-fabro or null;
@@ -273,7 +307,8 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
   );
 
   assert.equal(rendered.enable, true);
-  assert.equal(rendered.configYamlNotNull, true);
+  assert.equal(rendered.hostname, 'fabro');
+  assert.equal(rendered.configYamlHasHostnameProvision, true);
   assert.equal(rendered.supervisorNotNull, true);
   assert.equal(rendered.hasAgent, true);
 

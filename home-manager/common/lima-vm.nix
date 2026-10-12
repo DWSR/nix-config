@@ -33,7 +33,6 @@ let
   agentName = "lima-${cfg.name}";
 
   yamlFormat = pkgs.formats.yaml { };
-
   # The Lima instance configuration. Mirrors upstream's nixos.yaml template:
   # no host mounts, no containerd, and the UDP/68 ignore rule that keeps
   # Lima's port forwarding away from the guest DHCP port (nixos-lima issue
@@ -78,6 +77,23 @@ let
       }
     ]
     ++ cfg.portForwards;
+
+    # Guest hostname. nixos-lima's lima-init runs `provision.system` scripts
+    # with root on every boot (AFTER NixOS's own activation has set
+    # networking.hostName from the image config — 'nixos' on the upstream
+    # release image), so writing the kernel hostname directly here wins on
+    # every boot. Dependency-free and idempotent; the flake's fabro-vm
+    # guest config sets the same value via networking.hostName for
+    # self-built images.
+    provision = lib.optionals (cfg.hostname != null) [
+      {
+        mode = "system";
+        script = ''
+          #!/bin/sh
+          echo ${lib.escapeShellArg cfg.hostname} >/proc/sys/kernel/hostname
+        '';
+      }
+    ];
   }
   // cfg.extraLimaConfig;
 
@@ -178,6 +194,26 @@ in
         alphanumeric plus `-`, `_`, and `.` separators, no leading or
         trailing separator); enforced with an assertion. The launchd agent
         is keyed `lima-''${name}` with label `dev.dwsr.lima-''${name}`.
+      '';
+    };
+
+    hostname = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      defaultText = "null (keeps the image's default guest hostname)";
+      example = "fabro";
+      description = ''
+        Hostname assigned to the guest, set through a Lima `provision`
+        system script that nixos-lima's lima-init applies on every boot
+        (NixOS guests get no hostname from Lima's own cidata handling).
+        This makes the VM targetable from SSH entries and deploy tools
+        even while it still boots the upstream release image whose baked-in
+        `networking.hostName` is `nixos`. The flake's
+        `nixosConfigurations.fabro-vm` sets the same value through
+        `networking.hostName`, so a self-built image matches without the
+        provision script. Null leaves the image's hostname unchanged.
+        Must be a valid hostname (letters, digits, dots, hyphens);
+        enforced with an assertion.
       '';
     };
 
@@ -346,6 +382,12 @@ in
       {
         assertion = builtins.match "[a-zA-Z0-9]+([-._][a-zA-Z0-9]+)*" cfg.name != null;
         message = "virtualisation.limaVM.name must be a valid lima instance name (alphanumeric with - . _ separators).";
+      }
+      {
+        assertion =
+          cfg.hostname == null
+          || builtins.match "[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?" cfg.hostname != null;
+        message = "virtualisation.limaVM.hostname must be a valid hostname (letters, digits, dots, hyphens).";
       }
       {
         assertion = cfg.vmType != "vz" || cfg.image.arch == nativeArch;
