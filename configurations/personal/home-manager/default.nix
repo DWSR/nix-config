@@ -18,6 +18,7 @@ in
     ../../../home-manager/common
     ../../../home-manager/mcp
     ./deskflow.nix
+    ./fabro-cli.nix
     ./git.nix
     ./omlx.nix
     ./opencode.nix
