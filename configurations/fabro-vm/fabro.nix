@@ -220,7 +220,12 @@ let
 
       web = {
         enabled = true;
-        url = "http://127.0.0.1:32276";
+        # The tailnet-facing URL (svc:fabro is advertised at 443 by
+        # tailscale.nix): the server redirects the web UI root here, and a
+        # loopback self-reference would point tailnet clients at themselves.
+        # The API URL below stays loopback-only — the in-guest CLI consumer
+        # does not traverse the tailnet.
+        url = "https://fabro.tuxedo-musical.ts.net";
       };
     };
   };

@@ -72,13 +72,16 @@ in
       Type = "oneshot";
       Restart = "on-failure";
       RestartSec = 5;
-      # Tailnet-facing ports match the admin-console resource definitions
-      # (tcp:32776 for fabro, tcp:4000 for litellm); the loopback targets
-      # are the listeners from fabro.nix (127.0.0.1:32276, API + web UI)
-      # and litellm.nix (127.0.0.1:4000).
+      # Tailnet-facing ports: both admin-console resource definitions use
+      # tcp:443, so the services are reachable at
+      # https://fabro.tuxedo-musical.ts.net/ and
+      # https://litellm.tuxedo-musical.ts.net/ (no port suffix; TLS is
+      # terminated by tailscaled under each service name). The loopback
+      # targets are the listeners from fabro.nix (127.0.0.1:32276,
+      # API + web UI) and litellm.nix (127.0.0.1:4000).
       ExecStart = [
-        "${lib.getExe cfg.package} serve --service=svc:fabro --https=32776 http://127.0.0.1:32276"
-        "${lib.getExe cfg.package} serve --service=svc:litellm --https=4000 http://127.0.0.1:4000"
+        "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
+        "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
       ];
     };
   };

@@ -1997,15 +1997,15 @@
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
                     && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 2
-                    && pkgs.lib.hasInfix "--service=svc:fabro --https=32776 http://127.0.0.1:32276" (
+                    && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
-                    && pkgs.lib.hasInfix "--service=svc:litellm --https=4000 http://127.0.0.1:4000" (
+                    && pkgs.lib.hasInfix "--service=svc:litellm --https=443 http://127.0.0.1:4000" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
                   )
-                  "fabro-vm: tailscale-serve must advertise svc:fabro and svc:litellm per the console resource defs (tcp:32776 / tcp:4000).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:32776→127.0.0.1:32276 and svc:litellm tcp:4000→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                  "fabro-vm: tailscale-serve must advertise svc:fabro and svc:litellm per the console resource defs (tcp:443 / tcp:443).";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
