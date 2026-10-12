@@ -156,6 +156,17 @@
     # configure Apple Intelligence policy manually with `pared wizard`.
     pared.url = "github:4evy/pared/2.1.0";
 
+    # NixOS guest for the fabro Lima VM (configurations/fabro-vm): the
+    # guest-side module provides lima-init (cidata boot-time setup) and the
+    # lima-guestagent systemd service. Pinned to the release tag whose
+    # image the VM boots by default (home-manager/common/lima-vm.nix
+    # `image` default). The guest shares the flake's nixpkgs.
+    nixos-lima = {
+      url = "github:nixos-lima/nixos-lima/v0.2.2";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.nixpkgs-unstable.follows = "nixpkgs";
+    };
+
   };
 
   outputs =
@@ -184,6 +195,28 @@
     in
     {
       formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
+
+      # NixOS guest for the fabro Lima VM (configurations/fabro-vm), defined
+      # with the flake's nixpkgs and nixos-lima's guest module. aarch64-linux
+      # only: the VZ driver requires a native-architecture guest and the Lima
+      # hosts here run Apple Silicon. Evaluable anywhere; building
+      # packages.aarch64-linux.fabro-vm-image needs a Linux builder.
+      nixosConfigurations.fabro-vm = inputs.nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          inputs.nixos-lima.nixosModules.lima
+          ./configurations/fabro-vm
+        ];
+      };
+
+      # qcow-efi boot image for the fabro Lima VM guest (`system.build.qcow-efi`
+      # on nixosConfigurations.fabro-vm), the same format nixos-lima builds its
+      # release images with. The personal host boots the pinned upstream
+      # RELEASE image by default (home-manager/common/lima-vm.nix `image`
+      # default); switch that module's `image.location` to this output's
+      # `nixos.qcow2` store path (digest null) once the image can be built.
+      packages.aarch64-linux.fabro-vm-image =
+        self.nixosConfigurations.fabro-vm.config.system.build.qcow-efi;
 
       apps = forAllSystems (
         system:
@@ -1853,6 +1886,81 @@
                 cd source
                 node --test tests/fabro-service/
                 touch $out
+              '';
+
+          # lima-vm module node tests (render assertions over a standalone
+          # homeManagerConfiguration + personal-host wiring).
+          lima-vm-service =
+            pkgs.runCommand "lima-vm-service"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/lima-vm/
+                touch $out
+              '';
+
+          # Schema-validate the personal host's rendered Lima YAML with the
+          # same limactl the launchd service uses (`limactl validate` is
+          # offline; no VM or Linux builder needed).
+          lima-vm-config-validate =
+            let
+              limaConfigYaml =
+                self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.virtualisation.limaVM._configYaml;
+            in
+            assert pkgs.lib.assertMsg (limaConfigYaml != null)
+              "lima-vm-config-validate: the personal host's virtualisation.limaVM._configYaml is null (module disabled?).";
+            pkgs.runCommand "lima-vm-config-validate"
+              {
+                configYaml = limaConfigYaml;
+                nativeBuildInputs = [ pkgs.unstable.lima ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export USER=nix
+                limactl validate "$configYaml"
+                touch $out
+              '';
+
+          # Eval assertions for the fabro NixOS guest (pure eval over
+          # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
+          # builder needed — building packages.aarch64-linux.fabro-vm-image
+          # does).
+          fabro-vm-guest-eval =
+            let
+              vm = self.nixosConfigurations.fabro-vm.config;
+              guestReport =
+                assert pkgs.lib.assertMsg vm.services.lima.enable
+                  "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
+                assert pkgs.lib.assertMsg vm.services.openssh.enable
+                  "fabro-vm: services.openssh must be enabled (Lima connects over SSH).";
+                assert pkgs.lib.assertMsg (
+                  !vm.security.sudo.wheelNeedsPassword
+                ) "fabro-vm: the cidata user needs passwordless sudo for Lima provisioning.";
+                assert pkgs.lib.assertMsg vm.users.mutableUsers
+                  "fabro-vm: users.mutableUsers must stay true (lima-init creates the user imperatively).";
+                assert pkgs.lib.assertMsg (builtins.elem "nix-command" (
+                  vm.nix.settings.experimental-features or [ ]
+                )) "fabro-vm: guest nix must enable the nix-command experimental feature.";
+                assert pkgs.lib.assertMsg (builtins.elem "flakes" (
+                  vm.nix.settings.experimental-features or [ ]
+                )) "fabro-vm: guest nix must enable the flakes experimental feature.";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]";
+            in
+            pkgs.runCommand "fabro-vm-guest-eval"
+              {
+                inherit guestReport;
+              }
+              ''
+                printf '%s\n' "$guestReport" > "$out"
               '';
 
           litellm-service =
