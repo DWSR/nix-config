@@ -172,6 +172,7 @@
     fabro
     litellm
 
+    btop
     nextvi # small version of vi
     gitMinimal # minimal version of git
   ];
