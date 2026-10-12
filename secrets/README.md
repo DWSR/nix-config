@@ -19,11 +19,17 @@ boundary of this pipeline.
 | ---------------------- | --------------- | --------------- | -------------------------------- | ----------------------------- |
 | ShopifyLaptop          | `shopify`       | Employee        | `op://Employee/sops-age-key-shopify` | `secrets/mcp.shopify.yaml`  |
 | Brandons-MacBook-Pro   | `personal`      | Private         | `op://Private/sops-age-key-personal` | `secrets/mcp.personal.yaml` |
+| fabro (fabro-vm Lima VM guest) | `fabro`  | Private         | `op://Private/sops-age-key-fabro` | `secrets/fabro.fabro.yaml`    |
 
-The short-name (`shopify` / `personal`) is the value passed to the
+The short-name (`shopify` / `personal` / `fabro`) is the value passed to the
 helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
 appears in the `mcp.<host>.yaml` filename. It also matches the YAML
 anchor name in `.sops.yaml`.
+
+The `fabro` host is the NixOS guest of the `fabro-vm` Lima VM
+(`nixosConfigurations.fabro-vm`, guest hostname `fabro`). It is
+enrolled in `.sops.yaml` as `&host_fabro` but has no darwin
+configuration; see "Fabro host store (NixOS guest)" below.
 
 ### Keychain account layout
 
@@ -48,6 +54,50 @@ One secret has a third consumer outside the Keychain:
 `mcp-github-token` is also exposed to Nix itself as
 `access-tokens = github.com=<token>`. See
 "Nix GitHub access token" below.
+
+## Fabro host store (NixOS guest)
+
+`secrets/fabro.fabro.yaml` is the fabro host's store: one file for the
+guest's application services (the fabro server and the LiteLLM proxy).
+The guest is a NixOS host, so there is no macOS Keychain bridge —
+values are consumed directly from `sops.secrets` declarations (service
+wiring in `configurations/fabro-vm` is pending) once the guest's age
+private key is installed at `/var/lib/sops-nix/key.txt` (mode 0600,
+root). It was installed during the 2026-10-12 bootstrap; the private
+key lives in the Private-vault note `sops-age-key-fabro`.
+
+| SOPS key | 1Password source | Consumer |
+| --- | --- | --- |
+| `fabro-session-secret` | `op://Private/Fabro/Session Secret` | fabro server `SESSION_SECRET` |
+| `fabro-dev-token` | `op://Private/Fabro/Dev Token` | fabro server `FABRO_DEV_TOKEN` |
+| `litellm-master-key` | `op://Private/LiteLLM/Master Key` | LiteLLM proxy master key |
+
+Values were seeded from the 1Password items above (not from the
+keychain bridge). Until the service switches over, the guest keeps
+running with the imperative `/var/lib/fabro/env` pair generated
+in-guest, which differs from this store; moving the service to the
+sops-backed pair invalidates in-guest CLI/web sessions and requires a
+`fabro auth login` re-run in the guest.
+
+### Editing / rotating
+
+`sops-nix-sudo` points at the personal host's key, which cannot open
+this store. Pull the fabro host's key from 1Password for the duration
+of the edit, then destroy the staging copy:
+
+```sh
+T=$(mktemp -d)
+op read 'op://Private/sops-age-key-fabro/notesPlain' > "$T/key.txt"
+SOPS_AGE_KEY_FILE="$T/key.txt" \
+  nix run --inputs-from . nixpkgs#sops -c \
+  sops --config .sops.yaml edit secrets/fabro.fabro.yaml
+rm -rf "$T"
+```
+
+Rotate the value in the 1Password item first where one exists (see
+table), then mirror it here. After any `.sops.yaml` recipient change,
+re-encrypt with the same `SOPS_AGE_KEY_FILE` trick via `sops
+updatekeys secrets/fabro.fabro.yaml`.
 
 ## Prerequisites — read this first
 
