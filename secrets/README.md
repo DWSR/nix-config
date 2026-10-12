@@ -71,6 +71,7 @@ key lives in the Private-vault note `sops-age-key-fabro`.
 | `fabro-session-secret` | `op://Private/Fabro/Session Secret` | fabro server `SESSION_SECRET` |
 | `fabro-dev-token` | `op://Private/Fabro/Dev Token` | fabro server `FABRO_DEV_TOKEN` |
 | `litellm-master-key` | `op://Private/LiteLLM/Master Key` | LiteLLM proxy master key |
+| `opencode-api-key` | `op://Private/OpenCode/API Key` | LiteLLM `os.environ/OPENCODE_API_KEY` deployments |
 
 Values were seeded from the 1Password items above (not from the
 keychain bridge). Until the service switches over, the guest keeps

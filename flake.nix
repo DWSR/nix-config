@@ -1970,6 +1970,15 @@
                   vm.systemd.services.litellm.serviceConfig.EnvironmentFile
                   == [ vm.sops.templates."litellm-env".path ]
                 ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
+                assert pkgs.lib.assertMsg (builtins.hasAttr "opencode-api-key" vm.sops.secrets)
+                  "fabro-vm: sops.secrets must declare the opencode provider key.";
+                assert pkgs.lib.assertMsg (pkgs.lib.stringContains "OPENCODE_API_KEY=\${"
+                  vm.sops.templates."litellm-env".content
+                ) "fabro-vm: the litellm env template must export OPENCODE_API_KEY from the sops store.";
+                assert pkgs.lib.assertMsg (
+                  vm.sops.templates."fabro-env".restartUnits == [ "fabro.service" ]
+                  && vm.sops.templates."litellm-env".restartUnits == [ "litellm.service" ]
+                ) "fabro-vm: sops templates must restart their consumers when the rendered values change.";
                 "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"

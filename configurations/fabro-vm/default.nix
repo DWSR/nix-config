@@ -57,6 +57,7 @@
       fabro-session-secret = { };
       fabro-dev-token = { };
       litellm-master-key = { };
+      opencode-api-key = { };
     };
 
     # systemd EnvironmentFiles the services consume (fabro.nix and
@@ -64,17 +65,31 @@
     #   * fabro-env — the dev-token auth pair fabro REQUIRES (dev-token
     #     start refuses to run without SESSION_SECRET + FABRO_DEV_TOKEN).
     #   * litellm-env — LITELLM_MASTER_KEY, which litellm honours as the
-    #     proxy master key (the same env-var shape the mac launchd
-    #     wrapper exported; no secret lands in the config in the store).
+    #     proxy master key, and OPENCODE_API_KEY, which the opencode-*
+    #     deployments resolve via `os.environ/OPENCODE_API_KEY` (the
+    #     same env-var shape the mac launchd wrapper exported; no secret
+    #     lands in the config in the store).
+    #
+    # Each template restarts its consumer when the rendered value
+    # changes: systemd does not track EnvironmentFile contents, so
+    # without restartUnits a rotated secret is only picked up after the
+    # next manual restart or reboot.
     templates = {
-      "fabro-env".content = ''
-        SESSION_SECRET=${config.sops.placeholder.fabro-session-secret}
-        FABRO_DEV_TOKEN=${config.sops.placeholder.fabro-dev-token}
-      '';
+      "fabro-env" = {
+        restartUnits = [ "fabro.service" ];
+        content = ''
+          SESSION_SECRET=${config.sops.placeholder.fabro-session-secret}
+          FABRO_DEV_TOKEN=${config.sops.placeholder.fabro-dev-token}
+        '';
+      };
 
-      "litellm-env".content = ''
-        LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
-      '';
+      "litellm-env" = {
+        restartUnits = [ "litellm.service" ];
+        content = ''
+          LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
+          OPENCODE_API_KEY=${config.sops.placeholder.opencode-api-key}
+        '';
+      };
     };
   };
 

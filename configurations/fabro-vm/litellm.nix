@@ -25,12 +25,11 @@
 # mac launchd wrapper used — the config in the store carries no secret).
 # Consumers present `Authorization: Bearer <master key>`; in the guest
 # that value must also exist in fabro's server vault as LITELLM_API_KEY
-# (`fabro secret set`, runs source it there).
-#
-# NOT provisioned yet: provider keys — `OPENCODE_API_KEY` (os.environ/)
-# is unset, so all opencode-* deployments fail at call time until it is
-# delivered (one more sops key in secrets/fabro.fabro.yaml + the
-# matching template entry).
+# (`fabro secret set`, runs source it there). The template also exports
+# OPENCODE_API_KEY for the `os.environ/OPENCODE_API_KEY` provider
+# references above (the mac's providerKeys equivalent); like the mac,
+# a missing/unset key fails the opencode-* deployments per-request, not
+# the proxy itself.
 {
   config,
   ...
