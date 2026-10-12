@@ -233,7 +233,7 @@ in
       llm.providers.litellm = {
         enabled = true;
         base_url = "http://127.0.0.1:4000/v1";
-        default_model = "gpt-6-luna";
+        default_model = "glm-5.3-flash";
 
         models = {
           "gpt-6-luna" = {
@@ -376,7 +376,7 @@ in
       cli = {
         exec.model = {
           provider = "litellm";
-          name = "gpt-6-luna";
+          name = "glm-5.3-flash";
         };
 
         target = {
@@ -387,7 +387,7 @@ in
 
       run = {
         environment.id = "default";
-        model.name = "gpt-6-luna";
+        model.name = "glm-5.3-flash";
       };
 
       server = {
