@@ -463,7 +463,7 @@ final: prev: {
   # opencode`; update/remove `opencodeBun` only if the new tag's build floor or
   # nixpkgs Bun state changes.
   #
-  # `version` is pinned to a clean "1.18.32" because the upstream packages
+  # `version` is pinned to the release version because the upstream packages
   # output bakes a "+<rev>" suffix (node_modules.nix sets
   # `${packageJson.version}+${rev}`); this keeps the derivation name and
   # `opencode --version` identical to the release version.
@@ -511,7 +511,7 @@ final: prev: {
       replaceBun = input: if (input.pname or null) == "bun" then opencodeBun else input;
     in
     inputs.opencode.packages.${final.stdenv.hostPlatform.system}.opencode.overrideAttrs (old: {
-      version = "1.18.32";
+      version = "1.19.0";
       __intentionallyOverridingVersion = true;
 
       nativeBuildInputs = (map replaceBun (old.nativeBuildInputs or [ ])) ++ [ opencodeCodesign ];
