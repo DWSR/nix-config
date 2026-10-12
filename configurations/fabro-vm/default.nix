@@ -23,6 +23,9 @@
     # `system.build.qcow-efi` for packages.aarch64-linux.fabro-vm-image
     # (grows the root partition into the Lima-assigned disk size).
     ./image.nix
+    # The host's two application services; Docker is enabled below.
+    ./fabro.nix
+    ./litellm.nix
   ];
 
   # lima-init reconfigures the system from Lima's cidata userdata at boot
@@ -91,6 +94,15 @@
   };
 
   environment.systemPackages = with pkgs; [
+    # Fabro and LiteLLM: only the packages for now (installed by the pivot
+    # off macOS; the mac-side launchd services were removed with it). The
+    # fabro server and LiteLLM proxy service land here with the fabro
+    # configuration; Docker stays the host's only running service until
+    # then. `fabro` comes from the repo's overlay (applied in flake.nix);
+    # litellm is nixpkgs'.
+    fabro
+    litellm
+
     nextvi # small version of vi
     gitMinimal # minimal version of git
   ];

@@ -1,0 +1,140 @@
+# LiteLLM proxy on the fabro host: one loopback OpenAI-compatible gateway in
+# front of the subscription-backed models (the mac's `programs.litellm`
+# launchd agent, minus its Keychain machinery). Uses the upstream nixpkgs
+# `services.litellm` module (DynamicUser, state dir, seeded tiktoken cache,
+# writable-UI runtime dir).
+#
+#   chatgpt/<model>      ChatGPT subscription (Codex backend; no API key —
+#                        OAuth device flow). The proxy HELD its startup per
+#                        chatgpt/ deployment until a human completes the
+#                        login flow. Provision once on the host mac (running
+#                        `litellm-chatgpt-login` there) and copy the
+#                        ~/.config/litellm credentials JSON into the VM's
+#                        /var/lib/litellm (state dir persists across
+#                        switches), then restart litellm.service.
+#                        /v1/chat/completions is bridged to the Responses
+#                        API upstream.
+#   opencode-go/<model>  OpenCode Go subscription; one API key also steers
+#                        the Zen balance fallback. gpt/grok model ids go to
+#                        {api_base}/responses, the GLM/Kimi/DeepSeek/MiMo
+#                        ids to /chat/completions.
+#
+# NOT provisioned yet (the launchd wrapper's Keychain equivalents have no
+# NixOS counterpart until sops-nix lands on this host):
+#   * provider keys — `OPENCODE_API_KEY` (os.environ/) is unset, so all
+#     opencode-* deployments fail at call time until it is provisioned.
+#   * master key — the proxy runs without `general_settings.master_key`; it
+#     is only reachable on the VM's loopback (no Lima port forwarding for
+#     port 4000), so nothing off-VM can reach it.
+{
+  services.litellm = {
+    enable = true;
+    host = "127.0.0.1";
+    port = 4000;
+
+    settings =
+      let
+        # litellm 1.86's per-provider param allowlists predate the model ids
+        # served here (gpt-6*, glm, longcat), so `reasoning_effort` — both a
+        # consumer's request value and each deployment's pinned default —
+        # fails the proxy's UnsupportedParamsError gate before reaching
+        # upstream. Merging this in re-permits the param per deployment; the
+        # chat→responses bridge then maps it to `reasoning.effort` for the
+        # Codex/OpenCode-Go upstreams.
+        reasoningEffortAllowed = {
+          allowed_openai_params = [ "reasoning_effort" ];
+        };
+      in
+      {
+        model_list =
+          # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
+          # device flow). Reasoning effort is pinned per deployment so the
+          # effort travels with the model id; duplicated
+          # litellm_params.model entries are fine because model names are
+          # distinct (same named upstream model + different default params
+          # load-balances instead of pinning).
+          [
+            {
+              model_name = "chatgpt/gpt-6-luna";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-luna";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6-luna-none";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-luna";
+                reasoning_effort = "none";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6-astra";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6-astra";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+            {
+              model_name = "chatgpt/gpt-6.1-sol";
+              model_info.mode = "responses";
+              litellm_params = {
+                model = "chatgpt/gpt-6.1-sol";
+                reasoning_effort = "xhigh";
+              }
+              // reasoningEffortAllowed;
+            }
+          ]
+          # OpenCode Go Responses-API wire models.
+          ++ (map (m: {
+            model_name = "opencode-go/${m}";
+            model_info.mode = "responses";
+            litellm_params = {
+              model = "openai/${m}";
+              api_base = "https://opencode.ai/zen/go/v1";
+              api_key = "os.environ/OPENCODE_API_KEY";
+            }
+            // reasoningEffortAllowed;
+          }) [ "gpt-6-luna" ])
+          # OpenCode Go chat/completions wire models.
+          ++ (map
+            (m: {
+              model_name = "opencode-go/${m}";
+              model_info.mode = "chat";
+              litellm_params = {
+                model = "openai/${m}";
+                api_base = "https://opencode.ai/zen/go/v1";
+                api_key = "os.environ/OPENCODE_API_KEY";
+              }
+              // reasoningEffortAllowed;
+            })
+            [
+              "glm-5.3-flash"
+              "longcat-2.5-preview-free"
+            ]
+          )
+          # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
+          # the stealth model serves on the Zen balance endpoint, which the
+          # OpenCode API key reaches unchanged (usage draws from the balance
+          # behind the Go subscription).
+          ++ [
+            {
+              model_name = "opencode-zen/big-pickle";
+              model_info.mode = "chat";
+              litellm_params = {
+                model = "openai/big-pickle";
+                api_base = "https://opencode.ai/zen/v1";
+                api_key = "os.environ/OPENCODE_API_KEY";
+              }
+              // reasoningEffortAllowed;
+            }
+          ];
+      };
+  };
+}

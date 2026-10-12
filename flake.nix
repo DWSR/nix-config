@@ -196,28 +196,6 @@
     {
       formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
 
-      # NixOS guest for the fabro Lima VM (configurations/fabro-vm), defined
-      # with the flake's nixpkgs and nixos-lima's guest module. aarch64-linux
-      # only: the VZ driver requires a native-architecture guest and the Lima
-      # hosts here run Apple Silicon. Evaluable anywhere; building
-      # packages.aarch64-linux.fabro-vm-image needs a Linux builder.
-      nixosConfigurations.fabro-vm = inputs.nixpkgs.lib.nixosSystem {
-        system = "aarch64-linux";
-        modules = [
-          inputs.nixos-lima.nixosModules.lima
-          ./configurations/fabro-vm
-        ];
-      };
-
-      # qcow-efi boot image for the fabro Lima VM guest (`system.build.qcow-efi`
-      # on nixosConfigurations.fabro-vm), the same format nixos-lima builds its
-      # release images with. The personal host boots the pinned upstream
-      # RELEASE image by default (home-manager/common/lima-vm.nix `image`
-      # default); switch that module's `image.location` to this output's
-      # `nixos.qcow2` store path (digest null) once the image can be built.
-      packages.aarch64-linux.fabro-vm-image =
-        self.nixosConfigurations.fabro-vm.config.system.build.qcow-efi;
-
       apps = forAllSystems (
         system:
         let
@@ -1953,7 +1931,31 @@
                 assert pkgs.lib.assertMsg (builtins.elem "flakes" (
                   vm.nix.settings.experimental-features or [ ]
                 )) "fabro-vm: guest nix must enable the flakes experimental feature.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]";
+                assert pkgs.lib.assertMsg vm.virtualisation.docker.enable
+                  "fabro-vm: virtualisation.docker must be enabled (the host's only service for now).";
+                assert pkgs.lib.assertMsg (builtins.any (p: (p.pname or p.name or "") == "fabro")
+                  vm.environment.systemPackages
+                ) "fabro-vm: environment.systemPackages must contain the fabro package.";
+                assert pkgs.lib.assertMsg (builtins.any (p: (p.pname or p.name or "") == "litellm")
+                  vm.environment.systemPackages
+                ) "fabro-vm: environment.systemPackages must contain the litellm package.";
+                assert pkgs.lib.assertMsg (
+                  (self.nixosConfigurations.fabro-vm.pkgs.fabro.pname or "") == "fabro"
+                ) "fabro-vm: pkgs.fabro must resolve through the repo's fabro overlay.";
+                assert pkgs.lib.assertMsg vm.services.litellm.enable
+                  "fabro-vm: services.litellm must be enabled (the loopback LLM gateway).";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services ? fabro
+                ) "fabro-vm: systemd.services.fabro must be defined.";
+                assert pkgs.lib.assertMsg (builtins.elem "litellm.service" vm.systemd.services.fabro.requires)
+                  "fabro-vm: systemd.services.fabro must require litellm.service.";
+                assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.requires)
+                  "fabro-vm: systemd.services.fabro must require docker.service.";
+                assert pkgs.lib.assertMsg (builtins.elem "litellm.service" vm.systemd.services.fabro.after)
+                  "fabro-vm: systemd.services.fabro must start after litellm.service.";
+                assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.after)
+                  "fabro-vm: systemd.services.fabro must start after docker.service.";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2477,6 +2479,36 @@
       );
 
       overlays = import ./overlays { inherit inputs; };
+
+      # Host configurations. `Brandons-MacBook-Pro` runs nix-darwin; the
+      # fabro host is the NixOS guest of its Lima VM (branch: other top-level
+      # configurations would go here for e.g. a physical fabro box).
+      #
+      # fabro-vm uses the flake's nixpkgs and nixos-lima's guest module.
+      # aarch64-linux only: the VZ driver requires a native-architecture
+      # guest and the Lima hosts here run Apple Silicon. Evaluable anywhere;
+      # building packages.aarch64-linux.fabro-vm-image needs a Linux
+      # builder. The fabro overlay applies so the guest gets the same
+      # release-binary package the mac had.
+      nixosConfigurations.fabro-vm = inputs.nixpkgs.lib.nixosSystem {
+        system = "aarch64-linux";
+        modules = [
+          inputs.nixos-lima.nixosModules.lima
+          {
+            nixpkgs.overlays = [ outputs.overlays.fabro ];
+          }
+          ./configurations/fabro-vm
+        ];
+      };
+
+      # qcow-efi boot image for the fabro Lima VM guest (`system.build.qcow-efi`
+      # on nixosConfigurations.fabro-vm), the same format nixos-lima builds its
+      # release images with. The personal host boots the pinned upstream
+      # RELEASE image by default (home-manager/common/lima-vm.nix `image`
+      # default); switch that module's `image.location` to this output's
+      # `nixos.qcow2` store path (digest null) once the image can be built.
+      packages.aarch64-linux.fabro-vm-image =
+        self.nixosConfigurations.fabro-vm.config.system.build.qcow-efi;
 
       darwinConfigurations = {
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
