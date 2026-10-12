@@ -351,6 +351,14 @@ in
         # https://opencode.ai/config.json ("Defaults to true").
         snapshot = false;
 
+        # Disable the update check/notice. The binary is pinned by the
+        # `opencode` flake input and bumps happen through `nix flake update
+        # opencode`, so the in-TUI notice is noise (and `opencode upgrade`
+        # would replace the nix-managed binary). Schema: `autoupdate` at
+        # https://opencode.ai/config.json ("Set to false to disable update
+        # checks").
+        autoupdate = false;
+
         # Disable opencode's built-in `title` and `summary` agents. Both
         # are hidden internal agents that run extra LLM calls (title on
         # every new session, summary on every compaction). We don't rely
@@ -422,6 +430,19 @@ in
           "gt" = "deny";
           "gt *" = "deny";
         };
+
+        # Allow tools to touch paths outside the launch cwd without the
+        # per-access prompt (`external_directory` defaults to "ask"). The
+        # enforcement boundary for outside-workspace access is nono's
+        # sandbox (programs.opencode-nono): every managed launch runs under
+        # a profile whose filesystem allow/deny list is the grant set, so
+        # opencode's own prompt is redundant friction. Per-launch opt-outs
+        # (`OPENCODE_NONO=disabled`) intentionally accept the exposed
+        # surface. Schema: `permission.external_directory` at
+        # https://opencode.ai/config.json. Lives here (not in
+        # opencode-nono.nix) because that module's R5.5 contract forbids
+        # opencode permission changes enabled-vs-disabled.
+        permission.external_directory = "allow";
       };
     };
 
