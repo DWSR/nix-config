@@ -60,11 +60,12 @@ One secret has a third consumer outside the Keychain:
 `secrets/fabro.fabro.yaml` is the fabro host's store: one file for the
 guest's application services (the fabro server and the LiteLLM proxy).
 The guest is a NixOS host, so there is no macOS Keychain bridge —
-values are consumed directly from `sops.secrets` declarations (service
-wiring in `configurations/fabro-vm` is pending) once the guest's age
-private key is installed at `/var/lib/sops-nix/key.txt` (mode 0600,
-root). It was installed during the 2026-10-12 bootstrap; the private
-key lives in the Private-vault note `sops-age-key-fabro`.
+values are consumed from the `sops.secrets` / `sops.templates`
+declarations in `configurations/fabro-vm/default.nix` (deployed: the
+services read sops-rendered env files). The guest's age private key is
+installed at `/var/lib/sops-nix/key.txt` (mode 0600, root); it was
+installed during the 2026-10-12 bootstrap and also lives in the
+Private-vault note `sops-age-key-fabro`.
 
 | SOPS key | 1Password source | Consumer |
 | --- | --- | --- |
@@ -72,14 +73,14 @@ key lives in the Private-vault note `sops-age-key-fabro`.
 | `fabro-dev-token` | `op://Private/Fabro/Dev Token` | fabro server `FABRO_DEV_TOKEN` |
 | `litellm-master-key` | `op://Private/LiteLLM/Master Key` | LiteLLM proxy master key |
 | `opencode-api-key` | `op://Private/OpenCode/API Key` | LiteLLM `os.environ/OPENCODE_API_KEY` deployments |
+| `github-token` | `op://Private/GitHub/Tokens/Fabro` | fabro host GitHub PAT — `/run/secrets/github-token` (no guest consumer wired yet) |
 | `tailscale-oauth-secret` | `op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret` | `services.tailscale.authKeyFile` (tailnet registration; `configurations/fabro-vm/tailscale.nix`) |
 
-Values were seeded from the 1Password items above (not from the
-keychain bridge). Until the service switches over, the guest keeps
-running with the imperative `/var/lib/fabro/env` pair generated
-in-guest, which differs from this store; moving the service to the
-sops-backed pair invalidates in-guest CLI/web sessions and requires a
-`fabro auth login` re-run in the guest.
+Values are seeded from the 1Password items above (not from the
+keychain bridge). The fabro service consumes this sops-rendered pair
+(switched over from the imperative `/var/lib/fabro/env` pair the VM
+had generated in-guest; that one-time move invalidated the sessions
+bound to the old pair).
 
 The Tailscale row differs from the rest of the table: its source lives
 in the `Infrastructure` vault, not `Private`. The item
@@ -92,7 +93,42 @@ secret value. Registration tags the guest `tag:fabro`
 node registrations — an already-registered guest keeps its bond until
 `tailscale logout` runs in-guest.
 
+### Syncing the store from 1Password
+
+`nix run '.#fabro-sync-from-1password'` rewrites the whole store from
+the 1Password items in the table above: it evaluates the
+`fabro.onePasswordSecrets` manifest from the guest configuration,
+`op read`s every URI, and atomically re-encrypts
+`secrets/fabro.fabro.yaml` against the `&host_fabro` recipient. It
+pulls the fabro host's age key from the `sops-age-key-fabro` note (the
+mac's `/var/lib/sops-nix/key.txt` is the personal key and cannot open
+this store), carries forward any declared-but-manifest-less keys from
+the prior store, and aborts — leaving the store untouched — if a sync
+would drop a declared key or any URI fails to resolve. `op` must be
+signed in (`op signin`) for the run.
+
+```sh
+nix run '.#fabro-sync-from-1password'
+```
+
+Adding a secret: declare it in `sops.secrets`
+(`configurations/fabro-vm/default.nix`), add its URI to
+`fabro.onePasswordSecrets` in the same file, run the sync, commit the
+re-encrypted store, then deploy the guest. **Ordering matters**: each
+`sops.secrets` entry becomes active on the guest's next
+`nixos-rebuild switch`, which fails at sops activation until the store
+actually contains that key — sync (and commit) before switching.
+
+Exit codes: 0 success; 1 not a git working tree / flake-eval failure;
+2 `op` not authenticated; 3 a 1Password URI unresolvable; 4 sops
+failure; 5 the sync would drop a declared key.
+
 ### Editing / rotating
+
+Value refreshes of manifest-mapped keys are the sync helper's job (run
+it after rotating the 1Password item). The manual flow below is for
+everything the manifest does not cover: structural edits, keys without
+a 1Password source, and re-encrypting after a recipient change.
 
 `sops-nix-sudo` points at the personal host's key, which cannot open
 this store. Pull the fabro host's key from 1Password for the duration

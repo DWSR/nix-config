@@ -242,6 +242,14 @@
             type = "app";
             program = "${import ./scripts/mcp-verify-secrets.nix { inherit pkgs; }}/bin/mcp-verify-secrets";
           };
+          # fabro store sync (secrets/fabro.fabro.yaml); see
+          # scripts/fabro-sync-from-1password.nix and secrets/README.md.
+          fabro-sync-from-1password = {
+            type = "app";
+            program = "${
+              import ./scripts/fabro-sync-from-1password.nix { inherit pkgs; }
+            }/bin/fabro-sync-from-1password";
+          };
           git-mcp-secure-enclave-acceptance = {
             type = "app";
             program = "${gitMcpAcceptance}/bin/git-mcp-secure-enclave-acceptance";
@@ -1958,11 +1966,17 @@
                 assert pkgs.lib.assertMsg (
                   vm.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
                 ) "fabro-vm: sops.age.keyFile must point at the guest's age key.";
-                assert pkgs.lib.assertMsg (
-                  builtins.hasAttr "fabro-session-secret" vm.sops.secrets
-                  && builtins.hasAttr "fabro-dev-token" vm.sops.secrets
-                  && builtins.hasAttr "litellm-master-key" vm.sops.secrets
-                ) "fabro-vm: sops.secrets must declare the fabro auth pair and the litellm master key.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.hasAttr "fabro-session-secret" vm.sops.secrets
+                    && builtins.hasAttr "fabro-dev-token" vm.sops.secrets
+                    && builtins.hasAttr "litellm-master-key" vm.sops.secrets
+                    && builtins.hasAttr "github-token" vm.sops.secrets
+                  )
+                  "fabro-vm: sops.secrets must declare the fabro auth pair, the litellm master key, and the host GitHub PAT.";
+                assert pkgs.lib.assertMsg (builtins.all (k: vm.sops.secrets ? "${k}") (
+                  builtins.attrNames vm.fabro.onePasswordSecrets
+                )) "fabro-vm: every fabro.onePasswordSecrets manifest key must be declared in sops.secrets.";
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services.fabro.serviceConfig.EnvironmentFile == vm.sops.templates."fabro-env".path
                 ) "fabro-vm: the fabro service must consume the sops-rendered env file.";
@@ -2011,7 +2025,7 @@
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
