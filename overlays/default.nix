@@ -35,6 +35,10 @@ let
   };
 in
 {
+  # mcp-servers is the named-overlay export the fabro-vm guest consumes
+  # (flake.nix nixosConfigurations.fabro-vm nixpkgs.overlays); the
+  # darwin hosts reach the same packages through `custom-packages`.
+  mcp-servers = mcpServers;
   fixed-packages = final: prev: {
     # https://github.com/NixOS/nixpkgs/issues/507531
     direnv = prev.direnv.overrideAttrs (_: {

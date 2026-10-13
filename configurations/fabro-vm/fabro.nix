@@ -192,6 +192,19 @@ let
     run = {
       environment.id = "default";
       model.name = "glm-5.3-flash";
+
+      # No [run.agent.mcps.*] entries: the mcpproxy gateway
+      # (mcpproxy.nix) is currently DISABLED and the agent MCP
+      # pointing was removed with it (docs.fabro.sh/agents/mcp). To
+      # restore the integration, re-enable the mcpproxy.service unit
+      # (restore `wantedBy` in mcpproxy.nix) and add an entry here:
+      #   agent.mcps.mcpproxy = {
+      #     type = "http";
+      #     url = "http://127.0.0.1:8080/mcp";
+      #     # mcpproxy's call_tool_timeout budget; tools surface as
+      #     # mcp__mcpproxy__* qualified names.
+      #     tool_timeout = "2m";
+      #   };
     };
 
     server = {
