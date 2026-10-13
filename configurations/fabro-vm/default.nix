@@ -14,6 +14,7 @@
 # sops-nix (`sops` block below), and joins the tailnet as a Tailscale
 # Services host advertising both applications (./tailscale.nix).
 {
+  rsync34,
   config,
   lib,
   modulesPath,
@@ -77,6 +78,27 @@ in
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
     };
+
+    # nixpkgs' rsync bump to 3.5.0 broke the kernel build's post-install
+    # rsync of the module sources (a local-copy regression in
+    # RsyncProject/rsync#1050's class: deterministic "error in socket IO
+    # (code 10) at io.c(949)" + SIGUSR1 to the generator inside the nix
+    # build sandbox). Pin rsync to the 25.05 release (3.4.x) in this
+    # guest's package set until nixpkgs ships a fixed 3.5.x.
+    nixpkgs.overlays = [
+      (
+        _: prev:
+        let
+          old = import rsync34 { system = prev.stdenv.hostPlatform.system; };
+        in
+        {
+          # Dynamic attr access: `old.rsync` trips statix's inherit rule
+          # here, and `inherit (old) rsync` loses the overlay's last-arg
+          # position.
+          rsync = old."rsync";
+        }
+      )
+    ];
 
     # Keep the sync manifest honest: every URI-mapped key must be
     # declared (an undeclared entry would sync a value the guest never
@@ -199,6 +221,21 @@ in
     boot = {
       kernelParams = [ "console=tty0" ];
       kernelPackages = pkgs.linuxPackages_latest;
+
+      # The state root /var/lib/fabro is Lima's virtiofs share of the
+      # host's ~/.local/state/fabro, and VZ exposes shared directories
+      # only over virtiofs — but nixpkgs' common kernel config leaves
+      # CONFIG_VIRTIO_FS unset (it presets 9p for the QEMU side instead).
+      # This patch turns the filesystem on as a module, which autoloads
+      # on first mount.
+      kernelPatches = [
+        {
+          name = "virtio-fs";
+          patch = null;
+          structuredExtraConfig.VIRTIO_FS = lib.kernel.module;
+        }
+      ];
+
       loader.grub = {
         device = "nodev";
         efiSupport = true;

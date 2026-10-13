@@ -42,6 +42,11 @@ function standaloneLimaExpr(extraModule, name = 'fabro') {
           builtins.readFile hm.config.virtualisation.limaVM._configYaml
         else
           null;
+      limaDirsActivationData =
+        if (hm.config.home.activation.limaVmDirs or null) != null then
+          hm.config.home.activation.limaVmDirs.data
+        else
+          "";
       supervisorText =
         if (hm.config.virtualisation.limaVM._supervisor or null) != null then
           builtins.readFile (
@@ -163,6 +168,32 @@ test('rendered Lima YAML matches the module defaults', () => {
   assert.match(yaml, /\s*guestPort: ?68\b/);
   assert.match(yaml, /\s*guestIP: ?['"]?0\.0\.0\.0['"]?/);
   assert.match(yaml, /\s*ignore: ?true/);
+});
+
+test('mounts entries render into the Lima YAML', () => {
+  const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
+    virtualisation.limaVM.enable = true;
+    virtualisation.limaVM.mounts = [
+      {
+        location = "~/.local/state/fabro";
+        mountPoint = "/var/lib/fabro";
+        writable = true;
+      }
+    ];
+  }`));
+
+  const yaml = rendered.configYaml;
+  assert.match(yaml, /mounts:\n/);
+  assert.match(yaml, /location: ?['"]?~\/\.local\/state\/fabro['"]?/);
+  assert.match(yaml, /mountPoint: ?['"]?\/var\/lib\/fabro['"]?/);
+  assert.match(yaml, /writable: ?true/);
+
+  // The activation pre-creates the host share source ("~/.local/state/
+  // fabro" expanded to the configuring user's home) alongside the other
+  // lima dirs.
+  const dirsData = rendered.limaDirsActivationData;
+  assert.ok(dirsData, 'expected home.activation.limaVmDirs to render');
+  assert.match(dirsData, /\/Users\/fabro-test\/\.local\/state\/fabro/);
 });
 
 test('supervisor creates the instance on first run and supervises in the foreground', () => {
@@ -347,6 +378,7 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
       guestSystem = hm.virtualisation.limaVM.guestSystem;
       configYamlHasHostnameProvision = builtins.match ".*echo fabro.*/proc/sys/kernel/hostname.*" configYaml != null;
       configYamlHasUsermodProvision = builtins.match ".*usermod -aG docker.*" configYaml != null;
+      configYamlHasFabroStateMount = builtins.match ".*location:.*~/.local/state/fabro.*writable: true.*" configYaml != null;
       deployNotNull = hm.virtualisation.limaVM._deploy != null;
       supervisorNotNull = hm.virtualisation.limaVM._supervisor != null;
       hasAgent = hm.launchd.agents ? lima-fabro;
@@ -361,6 +393,7 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
   assert.equal(rendered.guestSystem, 'fabro-vm');
   assert.equal(rendered.configYamlHasHostnameProvision, true);
   assert.equal(rendered.configYamlHasUsermodProvision, true);
+  assert.equal(rendered.configYamlHasFabroStateMount, true);
   assert.equal(rendered.deployNotNull, true);
   assert.equal(rendered.supervisorNotNull, true);
   assert.equal(rendered.hasAgent, true);

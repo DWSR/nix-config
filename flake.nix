@@ -132,6 +132,18 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Source checkout of nixpkgs 25.05, used only to source rsync 3.4.x
+    # for the fabro guest (configurations/fabro-vm/default.nix pins it in
+    # an overlay): nixpkgs' rsync 3.5.0 breaks the kernel build's
+    # post-install source copy inside the nix sandbox
+    # (RsyncProject/rsync#1050-class local-copy regression). flake =
+    # false so the overlay can `import` the tree like a checkout; the
+    # branch tip is pinned by flake.lock.
+    rsync34 = {
+      url = "github:NixOS/nixpkgs/nixos-25.05";
+      flake = false;
+    };
+
     # OpenCode pinned to the anomalyco fork, consumed via that repo's own Nix
     # packaging (its flake's `packages.<system>.opencode`). overlays/misc.nix
     # layers the turn-timestamp patch, prompt-compression postPatch, and a
@@ -1981,6 +1993,32 @@
                   vm.systemd.services.fabro.serviceConfig.EnvironmentFile == vm.sops.templates."fabro-env".path
                 ) "fabro-vm: the fabro service must consume the sops-rendered env file.";
                 assert pkgs.lib.assertMsg (
+                  !(vm.systemd.services.fabro.serviceConfig.DynamicUser or false)
+                  && (vm.systemd.services.fabro.serviceConfig.User or "") == "brandonmcnama"
+                ) "fabro-vm: the fabro service must run as the Lima cidata user (the state share's VZ identity).";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "/var/lib/fabro" (vm.systemd.services.fabro.serviceConfig.ReadWritePaths or [ ])
+                    && builtins.elem "/var/lib/fabro" (
+                      let
+                        rmf = vm.systemd.services.fabro.unitConfig.RequiresMountsFor or "";
+                      in
+                      if builtins.isString rmf then pkgs.lib.splitString " " rmf else rmf
+                    )
+                    # Render the actual unit file, so a misnested
+                    # serviceConfig/unitConfig key (or any other
+                    # set-coercion failure in the unit) fails the check
+                    # instead of the guest at switch time.
+                    && pkgs.lib.hasInfix "RequiresMountsFor=/var/lib/fabro" vm.systemd.units."fabro.service".text
+                  )
+                  "fabro-vm: the fabro service must get ReadWritePaths + RequiresMountsFor on /var/lib/fabro (the host state share).";
+                assert pkgs.lib.assertMsg (builtins.elem "lima-init.service" (
+                  vm.systemd.services.fabro.after or [ ]
+                )) "fabro-vm: the fabro service must start after lima-init (which mounts the state share).";
+                assert pkgs.lib.assertMsg (builtins.any (p: p.name or "" == "virtio-fs")
+                  vm.boot.kernelPatches
+                ) "fabro-vm: the kernel must ship the virtio-fs patch (VIRTIO_FS=m) for the state share.";
+                assert pkgs.lib.assertMsg (
                   vm.systemd.services.litellm.serviceConfig.EnvironmentFile
                   == [ vm.sops.templates."litellm-env".path ]
                 ) "fabro-vm: the litellm service must load LITELLM_MASTER_KEY from the sops template.";
@@ -2025,7 +2063,7 @@
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (kernel VIRTIO_FS=m via the virtio-fs patch; service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor); sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2574,6 +2612,9 @@
           }
           ./configurations/fabro-vm
         ];
+        specialArgs = {
+          inherit (inputs) rsync34;
+        };
       };
 
       # qcow-efi boot image for the fabro Lima VM guest (`system.build.qcow-efi`

@@ -32,6 +32,11 @@ let
   logDir = "${config.home.homeDirectory}/Library/Logs/lima-vm";
   agentName = "lima-${cfg.name}";
 
+  # Host filesystem path for a mounts entry's `location` (a leading `~`
+  # is Lima's own expansion against the invoking user's home).
+  hostMountDir =
+    loc: if lib.hasPrefix "~" loc then config.home.homeDirectory + lib.removePrefix "~" loc else loc;
+
   yamlFormat = pkgs.formats.yaml { };
   # The Lima instance configuration. Mirrors upstream's nixos.yaml template:
   # no host mounts, no containerd, and the UDP/68 ignore rule that keeps
@@ -59,9 +64,12 @@ let
       disk
       ;
 
-    # No host filesystem mounts: file exchange goes through limactl
-    # copy/scp (plain SSH), which keeps the VM self-contained.
-    mounts = [ ];
+    # Host→guest filesystem mounts, empty by default (file exchange has
+    # so far gone through limactl copy/scp, which keeps the VM
+    # self-contained). On the VZ driver each entry attaches as a virtiofs
+    # share; the nixos-lima guest's lima-init service reparses them into
+    # /etc/fstab and mounts them on every boot. See {option}mounts.
+    inherit (cfg) mounts;
 
     containerd = {
       system = false;
@@ -407,6 +415,22 @@ in
       '';
     };
 
+    mounts = mkOption {
+      type = types.listOf types.attrs;
+      default = [ ];
+      description = ''
+        Lima `mounts` entries: a host `location` attached into the guest
+        at `mountPoint`. `writable` defaults to false; shares the guest
+        writes to need it. On the VZ driver each entry is a virtiofs
+        share, which VZ maps wholesale to the Lima cidata user — guest
+        services that write through a share must run as that user (the
+        fabro guest does; see configurations/fabro-vm/fabro.nix). The
+        nixos-lima guest's lima-init service reparses these into
+        /etc/fstab on every boot. A `location` beginning with `~` is
+        expanded against the configuring user's home on the host.
+      '';
+    };
+
     extraLimaConfig = mkOption {
       inherit (yamlFormat) type;
       default = { };
@@ -527,10 +551,13 @@ in
 
     home.activation.limaVmDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       run mkdir -p ${
-        lib.escapeShellArgs [
-          limaHome
-          logDir
-        ]
+        lib.escapeShellArgs (
+          [
+            limaHome
+            logDir
+          ]
+          ++ map hostMountDir (map (m: m.location) cfg.mounts)
+        )
       }
     '';
   };

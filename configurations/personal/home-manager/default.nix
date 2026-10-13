@@ -193,6 +193,25 @@ in
     enable = true;
     hostname = "fabro";
     guestSystem = "fabro-vm";
+
+    # The fabro server's state lives ON THE MAC: /var/lib/fabro in the
+    # guest is this writable virtiofs share, so the fabro home and
+    # storage subdirectories the guest service writes (home/, storage/)
+    # are host files that survive VM recreation and get covered by the
+    # usual backups of ~/.local. VZ maps the whole share to the Lima
+    # cidata user (brandonmcnama), so the guest's fabro service runs as
+    # that identity (configurations/fabro-vm/fabro.nix). CLI-era files
+    # at the top level of ~/.local/state/fabro stay CLI-owned; the guest
+    # owns only the home/ and storage/ subdirectories. Applies at
+    # (re)create of the instance — the running instance's lima.yaml is
+    # edited in place for live application.
+    mounts = [
+      {
+        location = "~/.local/state/fabro";
+        mountPoint = "/var/lib/fabro";
+        writable = true;
+      }
+    ];
   };
 
   programs.ssh = {

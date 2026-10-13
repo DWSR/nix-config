@@ -19,10 +19,17 @@
 #     1Password Fabro pair, so switching to it invalidates web/CLI
 #     sessions bound to the pair the VM previously generated in-guest.
 #
-# settings.toml is installed into FABRO_HOME before every start (systemd
-# StateDirectory owns /var/lib/fabro), preserving the ownership semantics
-# the HM module had at activation time: declarative content wins over
-# runtime wizard edits on every restart.
+# settings.toml is installed into FABRO_HOME before every start (the
+# state root /var/lib/fabro is Lima's writable virtiofs share of the
+# host's ~/.local/state/fabro, so the fabro state physically lives on
+# the macOS host and survives VM recreation). VZ maps the whole share to
+# the Lima cidata user (`brandonmcnama`), so the service runs as that
+# identity rather than a DynamicUser, needs explicit ReadWritePaths
+# under ProtectSystem=strict, and waits for lima-init's fstab-derived
+# mount units; see the module comment in
+# configurations/personal/home-manager/default.nix). The install keeps
+# the declarative-wins semantics: the generated settings.toml overwrites
+# runtime wizard edits on every start.
 {
   config,
   lib,
@@ -260,10 +267,14 @@ in
 
     # Fabro relies on LiteLLM (model routing via llm.providers.litellm) and
     # Docker (the docker sandbox provider): hard dependencies, so either
-    # stopping takes fabro down, and both boot before fabro.
+    # stopping takes fabro down, and both boot before fabro. lima-init is
+    # the unit that writes /etc/fstab entries for Lima's mounts and
+    # restarts local-fs.target — the state share is guaranteed up only
+    # after it (RequiresMountsFor below adds the mount-unit ordering too).
     after = [
       "docker.service"
       "litellm.service"
+      "lima-init.service"
     ];
     requires = [
       "docker.service"
@@ -289,6 +300,15 @@ in
     # here; git mirrors the dependency the upstream Docker image installs.
     path = [ pkgs.git ];
 
+    # The state subpaths must be writable explicitly under
+    # ProtectSystem=strict (StateDirectory is unusable on a mount it
+    # would chown), and start-up must wait for the mount unit so a
+    # failed share fails loudly instead of silently writing into the
+    # guest's root filesystem. unitConfig is a SIBLING of serviceConfig —
+    # RequiresMountsFor inside serviceConfig would fail the unit-file
+    # render with a set-coercion error.
+    unitConfig.RequiresMountsFor = "/var/lib/fabro";
+
     serviceConfig = {
       # The dev-token auth pair (SESSION_SECRET, FABRO_DEV_TOKEN) from
       # the sops-nix template env (rendered at activation from
@@ -296,18 +316,32 @@ in
       # start-up loudly: dev-token auth refuses to run without them
       # anyway.
       EnvironmentFile = config.sops.templates."fabro-env".path;
-      ExecStartPre = "${pkgs.coreutils}/bin/install -m 0600 -T ${fabroSettings} ${fabroStateDir}/settings.toml";
+      ExecStartPre = [
+        # The state subdirectories live inside the host-owned share and
+        # must exist before the settings install (and before the first
+        # start ever saw them); idempotent, runs as the service user who
+        # owns the share.
+        "${pkgs.coreutils}/bin/mkdir -p ${fabroStateDir} ${fabroDataDir}"
+        "${pkgs.coreutils}/bin/install -m 0600 -T ${fabroSettings} ${fabroStateDir}/settings.toml"
+      ];
       ExecStart = "${lib.getExe pkgs.fabro} server start --foreground";
       ExecStartPost = lib.getExe fabroHealthGate;
-      StateDirectory = [
-        "fabro/home"
-        "fabro/storage"
-      ];
+
+      # The state root is Lima's writable virtiofs share of the host's
+      # ~/.local/state/fabro. VZ maps the whole share to the Lima cidata
+      # user: any other identity (a DynamicUser above all) fails EPERM
+      # against even a chown of the state dirs, so the service runs as
+      # the cidata user, which the share's host directory is owned by
+      # (see configurations/personal/home-manager/default.nix's mounts).
+      User = "brandonmcnama";
+
+      # explicit ReadWritePaths under ProtectSystem=strict.
+      ReadWritePaths = [ "/var/lib/fabro" ];
+
       # The docker sandbox provider talks over /run/docker.sock (the
-      # docker group is dropped from DynamicUser's dynamic user unless
-      # listed here).
+      # service user needs the docker gid regardless of /etc/group
+      # membership).
       SupplementaryGroups = [ "docker" ];
-      DynamicUser = true;
       Restart = "on-failure";
       RestartSec = 5;
       NoNewPrivileges = true;
