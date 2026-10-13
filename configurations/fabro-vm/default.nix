@@ -10,11 +10,9 @@
 # matters once a Linux builder exists to build a custom image (then switch
 # the module's `image.location` to the store path) or for remote deployment
 # into the running instance (`nixos-rebuild --target`). The guest runs
-# Docker plus the fabro and LiteLLM services, with the fabro/litellm
-# secrets from sops-nix (`sops.fabro` block below), and joins the
-# tailnet as a Tailscale Services host advertising the two
-# applications (./tailscale.nix). A dormant (disabled) mcpproxy
-# gateway module rides along (./mcpproxy.nix).
+# Docker plus the fabro and LiteLLM services, with their secrets from
+# sops-nix (`sops.fabro` block below), and joins the tailnet as a Tailscale
+# Services host advertising both applications (./tailscale.nix).
 {
   config,
   lib,
@@ -28,13 +26,9 @@
     # `system.build.qcow-efi` for packages.aarch64-linux.fabro-vm-image
     # (grows the root partition into the Lima-assigned disk size).
     ./image.nix
-    # The host's application services; Docker is enabled below.
+    # The host's two application services; Docker is enabled below.
     ./fabro.nix
     ./litellm.nix
-    # The mcpproxy gateway module: unit is defined but deliberately
-    # DISABLED (nothing starts it at boot) and fabro points at nothing;
-    # see the module header for reactivation.
-    ./mcpproxy.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
     # of the fabro and litellm services (svc:fabro / svc:litellm).
     ./tailscale.nix
@@ -171,14 +165,10 @@
   environment.systemPackages = with pkgs; [
     # Packages installed with the pivot off macOS (the mac-side launchd
     # services were removed with it; the systemd services live in
-    # fabro.nix, litellm.nix, and mcpproxy.nix). `fabro` and
-    # `mcpproxy-go` come from the repo's overlays (applied in
-    # flake.nix); litellm is nixpkgs'.
+    # fabro.nix and litellm.nix). `fabro` comes from the repo's overlay
+    # (applied in flake.nix); litellm is nixpkgs'.
     fabro
     litellm
-    # mcpproxy CLI kept installed independently of the disabled
-    # mcpproxy.service (manual `mcpproxy` runs / maintenance over SSH).
-    mcpproxy-go
 
     btop
     nextvi # small version of vi

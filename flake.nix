@@ -2006,31 +2006,12 @@
                   )
                   "fabro-vm: tailscale-serve must advertise svc:fabro and svc:litellm per the console resource defs (tcp:443 / tcp:443).";
                 assert pkgs.lib.assertMsg (
-                  vm.systemd.services ? mcpproxy
-                ) "fabro-vm: systemd.services.mcpproxy must be defined (the MCP gateway).";
+                  !(vm.systemd.services ? mcpproxy)
+                ) "fabro-vm: no mcpproxy unit in the guest (the gateway is deliberately not installed).";
                 assert pkgs.lib.assertMsg (
-                  (self.nixosConfigurations.fabro-vm.pkgs.mcpproxy-go.pname or "") == "mcpproxy-go"
-                ) "fabro-vm: pkgs.mcpproxy-go must resolve through the repo's mcp-servers overlay.";
-                # mcpproxy.service is deliberately DISABLED and fabro is
-                # un-pointed (2026-10-12): the unit is defined-but-dormant
-                # (see mcpproxy.nix) so the integration can be re-enabled
-                # by restoring `wantedBy` and the fabro pointing.
-                assert pkgs.lib.assertMsg (
-                  (vm.systemd.services.mcpproxy.wantedBy or [ ]) == [ ]
-                ) "fabro-vm: the mcpproxy unit must stay DISABLED (no wantedBy) until deliberately re-enabled.";
-                assert pkgs.lib.assertMsg (
-                  !builtins.elem "mcpproxy.service" vm.systemd.services.fabro.after
-                  && !builtins.elem "mcpproxy.service" vm.systemd.services.fabro.requires
-                  && !builtins.elem "mcpproxy.service" vm.systemd.services.fabro.wants
-                ) "fabro-vm: fabro must not couple to the disabled mcpproxy.service.";
-                assert pkgs.lib.assertMsg (
-                  pkgs.lib.hasInfix "serve --config /var/lib/mcpproxy/mcp_config.json --data-dir /var/lib/mcpproxy" vm.systemd.services.mcpproxy.serviceConfig.ExecStart
-                  &&
-                    pkgs.lib.last (pkgs.lib.splitString " " vm.systemd.services.mcpproxy.serviceConfig.ExecStartPre)
-                    == "/var/lib/mcpproxy/mcp_config.json"
-                  && (vm.systemd.services.mcpproxy.restartTriggers or [ ]) != [ ]
-                ) "fabro-vm: mcpproxy must serve the StateDirectory config copy the ExecStartPre installs.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; mcpproxy gateway unit on 127.0.0.1:8080 (mcp-servers overlay supplies mcpproxy-go; seed EMPTY of upstreams, deliberately not mirroring the mac's catalog, StateDirectory lifecycle, ExecStartPost /healthz gate) deliberately DISABLED — no wantedBy, and fabro is un-pointed (no run.agent.mcps entry, no after/requires/wants coupling, CLI still in systemPackages); sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm+mcpproxy-go; overlays=[fabro mcp-servers]";
+                  !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
+                ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key; fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2575,16 +2556,7 @@
           # /var/lib/sops-nix/key.txt in the guest).
           inputs.sops-nix.nixosModules.default
           {
-            # The fabro overlay supplies the fabro server binary; the
-            # mcp-servers overlay makes the repo's MCP server packages
-            # available to the guest for when upstreams are added to the
-            # mcpproxy seed (configurations/fabro-vm/mcpproxy.nix — the
-            # seed itself ships empty; the mac's catalog is not
-            # mirrored).
-            nixpkgs.overlays = [
-              outputs.overlays.fabro
-              outputs.overlays.mcp-servers
-            ];
+            nixpkgs.overlays = [ outputs.overlays.fabro ];
           }
           ./configurations/fabro-vm
         ];
