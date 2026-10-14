@@ -179,6 +179,17 @@
       inputs.nixpkgs-unstable.follows = "nixpkgs";
     };
 
+    # Stationary fabro-vm kernel pin (configurations/fabro-vm). The released
+    # nixos-lima v0.2.2 image was built from this nixpkgs rev (verified as
+    # 26.05.20261008.7c8764b in the booted image) with upstream's own kernel
+    # choice (lima.nix's linuxPackages_latest — NOT the 26.05 branch default
+    # 6.18.55), so the same attr from this pin evaluates to the exact kernel
+    # derivation the image already carries — guest rebuilds ship no kernel
+    # at all. Deliberately NOT bumped with the flake's nixpkgs: kernel
+    # updates unlock on nixos-lima image releases; bump this rev in lockstep
+    # with them.
+    nixpkgs-image.url = "github:NixOS/nixpkgs/7c8764b7c7b09b34f632464276218ef9090eaa11";
+
   };
 
   outputs =
@@ -1975,6 +1986,33 @@
                   "fabro-vm: systemd.services.fabro must start after litellm.service.";
                 assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.after)
                   "fabro-vm: systemd.services.fabro must start after docker.service.";
+                # The state share must be a first-class fileSystems entry:
+                # nixos-lima's lima-init re-appends its fstab block only at
+                # boot, so a post-boot switch would otherwise regenerate
+                # /etc/fstab without the share, stop var-lib-fabro.mount,
+                # and strand the fabro service (see the default.nix
+                # comment on the entry). Device must equal the host
+                # config's computed Lima tag so the share's mount unit
+                # text is stable across switches and boots.
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      hostTags =
+                        self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users."brandonmcnama".virtualisation.limaVM._mountTags;
+                      hostTagForFabro = builtins.head (
+                        map (m: m.tag) (builtins.filter (m: m.mountPoint == "/var/lib/fabro") hostTags)
+                      );
+                    in
+                    vm.fileSystems ? "/var/lib/fabro"
+                    && vm.fileSystems."/var/lib/fabro".device == hostTagForFabro
+                    && vm.fileSystems."/var/lib/fabro".fsType == "virtiofs"
+                    &&
+                      vm.fileSystems."/var/lib/fabro".options == [
+                        "rw"
+                        "nofail"
+                      ]
+                  )
+                  "fabro-vm: fileSystems.\"/var/lib/fabro\" must declare the Lima share (virtiofs, host config's mount tag, rw+nofail) so switches keep the state share mounted.";
                 assert pkgs.lib.assertMsg (
                   vm.sops.age.keyFile == "/var/lib/sops-nix/key.txt"
                 ) "fabro-vm: sops.age.keyFile must point at the guest's age key.";
@@ -2015,9 +2053,14 @@
                 assert pkgs.lib.assertMsg (builtins.elem "lima-init.service" (
                   vm.systemd.services.fabro.after or [ ]
                 )) "fabro-vm: the fabro service must start after lima-init (which mounts the state share).";
-                assert pkgs.lib.assertMsg (builtins.any (p: p.name or "" == "virtio-fs")
-                  vm.boot.kernelPatches
-                ) "fabro-vm: the kernel must ship the virtio-fs patch (VIRTIO_FS=m) for the state share.";
+                assert pkgs.lib.assertMsg
+                  (
+                    !builtins.any (p: p.name or "" == "virtio-fs") vm.boot.kernelPatches
+                    && pkgs.lib.hasInfix "CONFIG_VIRTIO_FS=m" (
+                      builtins.readFile vm.boot.kernelPackages.kernel.configfile
+                    )
+                  )
+                  "fabro-vm: the stock kernel config must set CONFIG_VIRTIO_FS=m (the state share needs virtiofs) and the guest must not override the kernel derivation (a patch/extraConfig forces an in-guest source compile instead of a cache substitution).";
                 assert pkgs.lib.assertMsg (
                   vm.systemd.services.litellm.serviceConfig.EnvironmentFile
                   == [ vm.sops.templates."litellm-env".path ]
@@ -2028,6 +2071,12 @@
                   pkgs.lib.hasInfix "OPENCODE_API_KEY=" vm.sops.templates."litellm-env".content
                   && pkgs.lib.hasInfix vm.sops.placeholder."opencode-api-key" vm.sops.templates."litellm-env".content
                 ) "fabro-vm: the litellm env template must export OPENCODE_API_KEY from the sops store.";
+                assert pkgs.lib.assertMsg
+                  (
+                    pkgs.lib.hasInfix "GITHUB_TOKEN=" vm.sops.templates."fabro-env".content
+                    && pkgs.lib.hasInfix vm.sops.placeholder."github-token" vm.sops.templates."fabro-env".content
+                  )
+                  "fabro-vm: the fabro env template must export GITHUB_TOKEN from the sops store (the token-strategy GitHub integration).";
                 assert pkgs.lib.assertMsg (
                   vm.sops.templates."fabro-env".restartUnits == [ "fabro.service" ]
                   && vm.sops.templates."litellm-env".restartUnits == [ "litellm.service" ]
@@ -2063,7 +2112,7 @@
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (kernel VIRTIO_FS=m via the virtio-fs patch; service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor); sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2592,7 +2641,8 @@
       # fabro host is the NixOS guest of its Lima VM (branch: other top-level
       # configurations would go here for e.g. a physical fabro box).
       #
-      # fabro-vm uses the flake's nixpkgs and nixos-lima's guest module.
+      # fabro-vm uses the flake's nixpkgs, the stationary `nixpkgs-image`
+      # kernel pin, and nixos-lima's guest module.
       # aarch64-linux only: the VZ driver requires a native-architecture
       # guest and the Lima hosts here run Apple Silicon. Evaluable anywhere;
       # building packages.aarch64-linux.fabro-vm-image needs a Linux
@@ -2614,6 +2664,19 @@
         ];
         specialArgs = {
           inherit (inputs) rsync34;
+          # Stationary kernel: imported (overlays-free) from the nixpkgs rev
+          # the booted release image was built from, so the eval's kernel drv
+          # hash equals the one baked into the image. See the boot comment in
+          # configurations/fabro-vm/default.nix.
+          imageNixpkgs = import inputs.nixpkgs-image { system = "aarch64-linux"; };
+          # Lima virtiofs mount tags, computed by the HOST's lima-vm module
+          # from its declared mounts (see {option}`_mountTags`). The guest's
+          # fileSystems entry for /var/lib/fabro needs the same tag Lima
+          # assigns at share time, or the declared mount stops matching the
+          # share when lima-init re-derives its fstab block. Host config
+          # reference is lazy; the darwin eval does not depend on this guest.
+          limaVirtiofsTags =
+            self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users."brandonmcnama".virtualisation.limaVM._mountTags;
         };
       };
 

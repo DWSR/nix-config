@@ -73,7 +73,7 @@ Private-vault note `sops-age-key-fabro`.
 | `fabro-dev-token` | `op://Private/Fabro/Dev Token` | fabro server `FABRO_DEV_TOKEN` |
 | `litellm-master-key` | `op://Private/LiteLLM/Master Key` | LiteLLM proxy master key |
 | `opencode-api-key` | `op://Private/OpenCode/API Key` | LiteLLM `os.environ/OPENCODE_API_KEY` deployments |
-| `github-token` | `op://Private/GitHub/Tokens/Fabro` | fabro host GitHub PAT — `/run/secrets/github-token` (no guest consumer wired yet) |
+| `github-token` | `op://Private/GitHub/Tokens/Fabro` | fabro-host GitHub PAT — exported to the fabro service as `GITHUB_TOKEN` via `sops.templates."fabro-env"` (the `integrations.github.strategy = "token"` env source) |
 | `tailscale-oauth-secret` | `op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret` | `services.tailscale.authKeyFile` (tailnet registration; `configurations/fabro-vm/tailscale.nix`) |
 
 Values are seeded from the 1Password items above (not from the

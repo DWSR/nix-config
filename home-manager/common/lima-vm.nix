@@ -493,6 +493,34 @@ in
         Null when disabled.
       '';
     };
+
+    _mountTags = mkOption {
+      type = types.listOf (
+        types.submodule {
+          options = {
+            mountPoint = mkOption {
+              type = types.str;
+              description = "The {option}`mounts` entry's guest path.";
+            };
+            tag = mkOption {
+              type = types.str;
+              description = "The virtiofs tag Lima assigns the entry.";
+            };
+          };
+        }
+      );
+      internal = true;
+      readOnly = true;
+      description = ''
+        Internal per-mount virtiofs tags. Lima derives each tag
+        deterministically from `location:mountPoint` of the expanded
+        host location (lima pkg/limayaml/defaults.go `MountTag`:
+        `lima-<sha256 first 8 bytes hex>`), so the guest can declare
+        matching `fileSystems` entries that survive NixOS switch
+        regeneration (nixos-lima's lima-init only re-appends its fstab
+        block at boot).
+      '';
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -521,6 +549,20 @@ in
       _configYaml = limaConfigYaml;
       _supervisor = supervisor;
       _deploy = limaVmDeploy;
+      _mountTags = map (
+        m:
+        let
+          # The tag input is the EXPANDED host location (Lima expands "~"
+          # against the invoking user's home before hashing — verified
+          # against lima 2.2.0's MountTag for this instance's share) joined
+          # with the guest mount point by ":".
+          tagInput = "${hostMountDir m.location}:${m.mountPoint}";
+        in
+        {
+          inherit (m) mountPoint;
+          tag = "lima-${builtins.substring 0 16 (builtins.hashString "sha256" tagInput)}";
+        }
+      ) cfg.mounts;
     };
 
     home.packages = [
