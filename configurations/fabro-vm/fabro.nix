@@ -337,7 +337,12 @@ in
 
     # Workflow nodes (shell executors spawned by fabro runs) resolve PATH
     # here; git mirrors the dependency the upstream Docker image installs.
-    path = [ pkgs.git ];
+    path = [
+      pkgs.git
+      pkgs.coreutils
+      pkgs.curl
+      pkgs.jq
+    ];
 
     # The state subpaths must be writable explicitly under
     # ProtectSystem=strict (StateDirectory is unusable on a mount it
