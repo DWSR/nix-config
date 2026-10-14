@@ -79,7 +79,7 @@ let
       skillNames = builtins.filter (name: builtins.match "opencode/skills/.+" name != null) configFiles;
       skillFiles = pkgs.lib.filterAttrs (
         name: _:
-        builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|github-native-stacks|validate-yb-issue)" name
+        builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|fabro-workflow|github-native-stacks|validate-yb-issue)" name
         != null
       ) hm.xdg.configFile;
       pi = hm.programs.pi.coding-agent;

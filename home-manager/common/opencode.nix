@@ -145,6 +145,13 @@ in
       source = ./skills/github-native-stacks;
     };
 
+    # Vendored upstream skill (andrewthetechie/andrew-skills) for authoring,
+    # validating, and debugging Fabro workflow packages. Copied from upstream
+    # main at cf7d897dba3e54216bfb52ab230ac9448c9ef22f.
+    xdg.configFile."opencode/skills/fabro-workflow" = {
+      source = ./skills/fabro-workflow;
+    };
+
     # Upstream skill for generating self-contained process flow diagrams.
     xdg.configFile."opencode/skills/process-flow-diagram" = {
       source = "${processFlowDiagramSkill}/process-flow-diagram";

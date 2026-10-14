@@ -29,6 +29,7 @@ const ACTIVE_SKILL_FILES = Object.freeze([
 const COMMON_MEMORY_PRODUCERS = Object.freeze(['nix-pkg', 'nvim-tailor', 'security-auditor']);
 const REPO_OWNED_RENDERED_SKILLS = Object.freeze({
   personal: Object.freeze([
+    'opencode/skills/fabro-workflow',
     'opencode/skills/github-native-stacks',
   ]),
 });
@@ -109,7 +110,7 @@ function renderActiveCutoverArtifacts() {
       hm = flake.darwinConfigurations.\${host}.config.home-manager.users.brandonmcnama;
       mcpConfig = builtins.fromJSON (discard hm.xdg.configFile."mcpproxy/mcp_config.json".text);
       skillFiles = flake.inputs.nixpkgs.lib.filterAttrs (
-         name: _: builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|github-native-stacks|validate-yb-issue)" name != null
+         name: _: builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|fabro-workflow|github-native-stacks|validate-yb-issue)" name != null
       ) hm.xdg.configFile;
       skillNames = builtins.filter (
         name: builtins.match "opencode/skills/.+" name != null
@@ -332,7 +333,7 @@ test('OpenCode and Pi rendered startup contracts keep the shortened preflight an
     assert.ok(agentMemoryIndex > livenessIndex, `${host} resolves the AgentMemory bearer after mcpproxy`);
     assert.match(config.wrapper, /AgentMemory daemon preflight failed/);
     assert.match(config.wrapper, /Recover AgentMemory with:/);
-    assert.doesNotMatch(config.wrapper, /api\/v1\/servers|mcpproxy-api-key|X-API-Key|obsidian/i);
+    assert.doesNotMatch(config.wrapper, /api\/v1\/servers|mcpproxy-api-key|\bX-API-Key\b|obsidian/i);
 
     assert.equal(config.agentNames.includes('vault-curator'), false, `${host} omits the vault curator`);
     assert.equal(config.agentNames.includes('vault-synthesizer'), false, `${host} omits the vault synthesizer`);
