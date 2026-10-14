@@ -230,6 +230,14 @@ let
     run = {
       environment.id = "default";
       model.name = "deepseek-v4.1-flash";
+
+      # Push every checkpoint: after each node commits to fabro/run/<id>,
+      # publish the branch to origin so checkpoint timeline, fork, and
+      # rewind can resolve checkpoints against the remote branch.
+      run_branch = {
+        enabled = true;
+        push = true;
+      };
     };
 
     server = {
