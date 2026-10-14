@@ -217,6 +217,7 @@ in
               // reasoningEffortAllowed;
             })
             [
+              "deepseek-v4.1-flash"
               "glm-5.3-flash"
               "longcat-2.5-preview-free"
             ]

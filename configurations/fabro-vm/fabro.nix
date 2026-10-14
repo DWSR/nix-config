@@ -46,7 +46,7 @@ let
     llm.providers.litellm = {
       enabled = true;
       base_url = "http://127.0.0.1:4000/v1";
-      default_model = "glm-5.3-flash";
+      default_model = "deepseek-v4.1-flash";
 
       # OpenCode's Go gateway rejects requests without a stable
       # x-opencode-session id; fabro never sends one itself (its lithos
@@ -145,6 +145,23 @@ let
             };
           };
         };
+        "deepseek-v4.1-flash" = {
+          display_name = "DeepSeek V4.1 Flash (OpenCode Go)";
+          api_model = "opencode-go/deepseek-v4.1-flash";
+          # DeepSeek's published V4 ceiling: 1M total context, 384k output.
+          limits = {
+            context_tokens = 1000000;
+            max_output_tokens = 384000;
+          };
+          capabilities = {
+            text = true;
+            tools = true;
+            # Reasoning effort is unset (DeepSeek carries no fabro-mapped
+            # effort enum on this wire): fabro sends no effort and the
+            # gateway's own default thinking mode applies.
+            reasoning = true;
+          };
+        };
         "glm-5.3-flash" = {
           display_name = "GLM-5.3 Flash (OpenCode Go)";
           api_model = "opencode-go/glm-5.3-flash";
@@ -198,7 +215,7 @@ let
     cli = {
       exec.model = {
         provider = "litellm";
-        name = "glm-5.3-flash";
+        name = "deepseek-v4.1-flash";
       };
 
       target = {
@@ -209,7 +226,7 @@ let
 
     run = {
       environment.id = "default";
-      model.name = "glm-5.3-flash";
+      model.name = "deepseek-v4.1-flash";
     };
 
     server = {
