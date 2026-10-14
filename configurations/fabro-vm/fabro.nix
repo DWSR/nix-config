@@ -48,6 +48,17 @@ let
       base_url = "http://127.0.0.1:4000/v1";
       default_model = "glm-5.3-flash";
 
+      # OpenCode's Go gateway rejects requests without a stable
+      # x-opencode-session id; fabro never sends one itself (its lithos
+      # client sends only content-type/authorization/accept/user-agent),
+      # so attach a static id at the provider level. default_headers
+      # interpolate only vault secrets here (env/vars/run context are
+      # rejected or passed through literally on 0.382.0-nightly.0), so a
+      # shared id is the only option: every fabro call lands in one
+      # gateway session bucket, which coarsens prompt-cache routing
+      # affinity but is accepted.
+      default_headers."x-opencode-session" = "fabro-litellm";
+
       models = {
         "gpt-6-luna" = {
           display_name = "GPT-6 Luna (ChatGPT, xhigh)";
@@ -310,11 +321,14 @@ in
     unitConfig.RequiresMountsFor = "/var/lib/fabro";
 
     serviceConfig = {
-      # The dev-token auth pair (SESSION_SECRET, FABRO_DEV_TOKEN) from
-      # the sops-nix template env (rendered at activation from
-      # secrets/fabro.fabro.yaml; see default.nix). Missing entries fail
-      # start-up loudly: dev-token auth refuses to run without them
-      # anyway.
+      # The dev-token auth pair (SESSION_SECRET, FABRO_DEV_TOKEN) and the
+      # GitHub PAT (GITHUB_TOKEN; the token-strategy GitHub integration
+      # itself reads it from the server vault — see the github-token
+      # comment in default.nix — this export is the rendered source for
+      # that one imperative `fabro secret set`) from the sops-nix template
+      # env (rendered at activation from secrets/fabro.fabro.yaml; see
+      # default.nix). Missing entries fail start-up loudly: dev-token auth
+      # refuses to run without them anyway.
       EnvironmentFile = config.sops.templates."fabro-env".path;
       ExecStartPre = [
         # The state subdirectories live inside the host-owned share and

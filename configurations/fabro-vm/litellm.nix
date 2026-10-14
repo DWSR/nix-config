@@ -17,7 +17,11 @@
 #   opencode-go/<model>  OpenCode Go subscription; one API key also steers
 #                        the Zen balance fallback. gpt/grok model ids go to
 #                        {api_base}/responses, the GLM/Kimi/DeepSeek/MiMo
-#                        ids to /chat/completions.
+#                        ids to /chat/completions. The gateways require a
+#                        stable x-opencode-session header, so the opencode-*
+#                        model groups forward client x-* headers upstream
+#                        (litellm_settings.model_group_settings below) for
+#                        the id fabro attaches at its provider level.
 #
 # Authentication: the proxy enforces a master key, supplied as the
 # LITELLM_MASTER_KEY env var from the sops-nix `litellm-env` template
@@ -126,6 +130,24 @@ in
         };
       in
       {
+        # Header forwarding: litellm strips client headers upstream by
+        # default. Enabling forward_client_headers_to_llm_api per model
+        # group sends the documented x- prefix allowlist through for those
+        # groups only (litellm/proxy/litellm_pre_call_utils.py's
+        # _get_forwardable_headers: x-* except x-stainless-*, never
+        # Authorization/Content-Type), and matches via plain prefix regex
+        # so "opencode-go/*" covers every opencode model id. OpenCode's
+        # Go/Zen gateways need the client's stable x-opencode-session id
+        # on the upstream call — fabro attaches it
+        # (llm.providers.litellm.default_headers in fabro.nix) and this
+        # is what carries it the rest of the way.
+        litellm_settings = {
+          model_group_settings.forward_client_headers_to_llm_api = [
+            "opencode-go/*"
+            "opencode-zen/*"
+          ];
+        };
+
         model_list =
           # OpenAI subscription (ChatGPT Work/Codex backend, chatgpt/ OAuth
           # device flow). Reasoning effort is pinned per deployment so the
