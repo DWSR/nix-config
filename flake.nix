@@ -2097,22 +2097,74 @@
                 assert pkgs.lib.assertMsg
                   (
                     builtins.hasAttr "ExecStart" vm.systemd.services.tailscale-serve.serviceConfig
-                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 2
+                    && builtins.length vm.systemd.services.tailscale-serve.serviceConfig.ExecStart == 3
                     && pkgs.lib.hasInfix "--service=svc:fabro --https=443 http://127.0.0.1:32276" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
                     && pkgs.lib.hasInfix "--service=svc:litellm --https=443 http://127.0.0.1:4000" (
                       builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
                     )
+                    && pkgs.lib.hasInfix "--service=svc:opencode --https=443 http://127.0.0.1:4096" (
+                      builtins.concatStringsSep " " vm.systemd.services.tailscale-serve.serviceConfig.ExecStart
+                    )
                   )
-                  "fabro-vm: tailscale-serve must advertise svc:fabro and svc:litellm per the console resource defs (tcp:443 / tcp:443).";
+                  "fabro-vm: tailscale-serve must advertise svc:fabro, svc:litellm, and svc:opencode per the console resource defs (tcp:443 each).";
+                # OpenCode v1 web console (configurations/fabro-vm/opencode.nix).
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services ? opencode
+                ) "fabro-vm: systemd.services.opencode must be defined (the web console).";
+                assert pkgs.lib.assertMsg (vm.systemd.services.opencode.serviceConfig.DynamicUser or false
+                ) "fabro-vm: the opencode service must run as a DynamicUser.";
+                assert pkgs.lib.assertMsg (builtins.elem "opencode" (
+                  vm.systemd.services.opencode.serviceConfig.StateDirectory or [ ]
+                )) "fabro-vm: the opencode service must own /var/lib/opencode via StateDirectory.";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services.opencode.serviceConfig.EnvironmentFile == vm.sops.templates."opencode-env".path
+                ) "fabro-vm: the opencode service must consume the sops-rendered env file.";
+                assert pkgs.lib.assertMsg
+                  (builtins.all
+                    (name: builtins.any (p: (p.pname or p.name or "") == name) vm.systemd.services.opencode.path)
+                    [
+                      "git"
+                      "gh"
+                      "nix"
+                    ]
+                  )
+                  "fabro-vm: the opencode service PATH must provide git, gh, and nix (there is no git-mcp on the guest).";
+                assert pkgs.lib.assertMsg
+                  (pkgs.lib.hasInfix vm.sops.secrets."opencode-signing-key".path (
+                    vm.systemd.services.opencode.serviceConfig.LoadCredential or ""
+                  ))
+                  "fabro-vm: the opencode service must load the signing key from the sops store as a systemd credential.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.hasAttr "opencode-github-token" vm.sops.secrets
+                    && builtins.hasAttr "opencode-server-password" vm.sops.secrets
+                    && builtins.hasAttr "opencode-signing-key" vm.sops.secrets
+                  )
+                  "fabro-vm: sops.secrets must declare the opencode GitHub token, server password, and signing key.";
+                assert pkgs.lib.assertMsg
+                  (
+                    pkgs.lib.hasInfix "GITHUB_TOKEN=" vm.sops.templates."opencode-env".content
+                    && pkgs.lib.hasInfix "OPENCODE_SERVER_PASSWORD=" vm.sops.templates."opencode-env".content
+                    &&
+                      pkgs.lib.hasInfix vm.sops.placeholder."opencode-github-token"
+                        vm.sops.templates."opencode-env".content
+                    &&
+                      pkgs.lib.hasInfix vm.sops.placeholder."opencode-server-password"
+                        vm.sops.templates."opencode-env".content
+                  )
+                  "fabro-vm: the opencode env template must export the GitHub token and server password from the sops store.";
+                assert pkgs.lib.assertMsg (
+                  vm.sops.templates."opencode-env".restartUnits == [ "opencode.service" ]
+                ) "fabro-vm: the opencode env template must restart opencode when the rendered values change.";
                 assert pkgs.lib.assertMsg (
                   !(vm.systemd.services ? mcpproxy)
                 ) "fabro-vm: no mcpproxy unit in the guest (the gateway is deliberately not installed).";
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (six keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\"; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276 and svc:litellm tcp:443→127.0.0.1:4000 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro]";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro+opencode systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
@@ -2658,7 +2710,16 @@
           # /var/lib/sops-nix/key.txt in the guest).
           inputs.sops-nix.nixosModules.default
           {
-            nixpkgs.overlays = [ outputs.overlays.fabro ];
+            # The guest needs the repo's custom packages (opencode-pinned,
+            # cc-sdd-skills, gh-stack's vendored deps) and the
+            # nixpkgs-unstable re-exports on top of the fabro overlay; all
+            # three are lazy, so nothing new is fetched unless referenced.
+            # Mirrors the darwin host's overlay set.
+            nixpkgs.overlays = [
+              outputs.overlays.fabro
+              outputs.overlays.unstable-packages
+              outputs.overlays.custom-packages
+            ];
           }
           ./configurations/fabro-vm
         ];

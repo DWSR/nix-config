@@ -12,9 +12,10 @@
 # matters once a Linux builder exists to build a custom image (then switch
 # the module's `image.location` to the store path) or for remote deployment
 # into the running instance (`nixos-rebuild --target`). The guest runs
-# Docker plus the fabro and LiteLLM services, with their secrets from
-# sops-nix (`sops` block below), and joins the tailnet as a Tailscale
-# Services host advertising both applications (./tailscale.nix).
+# Docker plus the fabro, LiteLLM, and OpenCode services, with their
+# secrets from sops-nix (`sops` block below), and joins the tailnet as a
+# Tailscale Services host advertising all three applications
+# (./tailscale.nix).
 {
   rsync34,
   config,
@@ -45,11 +46,14 @@ in
     # `system.build.qcow-efi` for packages.aarch64-linux.fabro-vm-image
     # (grows the root partition into the Lima-assigned disk size).
     ./image.nix
-    # The host's two application services; Docker is enabled below.
+    # The host's application services; Docker is enabled below.
     ./fabro.nix
     ./litellm.nix
+    # The OpenCode v1 web console (DynamicUser service; svc:opencode).
+    ./opencode.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
-    # of the fabro and litellm services (svc:fabro / svc:litellm).
+    # of the fabro, litellm, and opencode services (svc:fabro /
+    # svc:litellm / svc:opencode).
     ./tailscale.nix
   ];
 
@@ -88,6 +92,13 @@ in
       # sops.secrets below.
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
+      # The OpenCode v1 server's secrets (opencode.nix): a dedicated
+      # GitHub PAT, its basic-auth server password, and the SSH
+      # commit-signing key (a 1Password SSH Key item — multi-line value;
+      # fabro-sync-from-1password emits it as a YAML double-quoted scalar).
+      "opencode-github-token" = "op://Private/GitHub/Tokens/OpenCode";
+      "opencode-server-password" = "op://Private/OpenCode/Server Password";
+      "opencode-signing-key" = "op://Private/OpenCode Signing Key/private key";
     };
 
     # nixpkgs' rsync bump to 3.5.0 broke the kernel build's post-install
@@ -169,10 +180,30 @@ in
         # LITELLM_API_KEY was already back post-delete), so each FRESH
         # VM needs that one `secret set` run again after the switch.
         github-token = { };
+
+        # OpenCode server secrets (opencode.nix). The dedicated GitHub PAT
+        # for the opencode service (source:
+        # op://Private/GitHub/Tokens/OpenCode): exported as both
+        # GITHUB_TOKEN and GH_TOKEN by the opencode-env template below;
+        # git pushes authenticate through `gh auth git-credential`.
+        opencode-github-token = { };
+        # The opencode server's basic-auth password (source:
+        # op://Private/OpenCode/Server Password); the username defaults to
+        # `opencode`. The tailnet ACL gates reachability; this gates the
+        # app itself.
+        opencode-server-password = { };
+        # The git SSH commit-signing key (source:
+        # op://Private/OpenCode Signing Key — a 1Password SSH Key item,
+        # so the value is multi-line; fabro-sync-from-1password emits it
+        # as a YAML double-quoted scalar). Handed to the service as a
+        # systemd credential (opencode.nix: LoadCredential), never via
+        # the environment.
+        opencode-signing-key = { };
       };
 
-      # systemd EnvironmentFiles the services consume (fabro.nix and
-      # litellm.nix reference config.sops.templates.<name>.path):
+      # systemd EnvironmentFiles the services consume (fabro.nix,
+      # litellm.nix, and opencode.nix reference
+      # config.sops.templates.<name>.path):
       #   * fabro-env — the dev-token auth pair fabro REQUIRES (dev-token
       #     start refuses to run without SESSION_SECRET + FABRO_DEV_TOKEN),
       #     plus GITHUB_TOKEN (the GitHub PAT: the token-strategy
@@ -184,6 +215,10 @@ in
       #     deployments resolve via `os.environ/OPENCODE_API_KEY` (the
       #     same env-var shape the mac launchd wrapper exported; no secret
       #     lands in the config in the store).
+      #   * opencode-env — the opencode server's token env (the same PAT
+      #     as both GITHUB_TOKEN and GH_TOKEN), the litellm master key for
+      #     the provider's `{env:LITELLM_MASTER_KEY}` api key, and the
+      #     server's basic-auth password.
       #
       # Each template restarts its consumer when the rendered value
       # changes: systemd does not track EnvironmentFile contents, so
@@ -204,6 +239,16 @@ in
           content = ''
             LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
             OPENCODE_API_KEY=${config.sops.placeholder.opencode-api-key}
+          '';
+        };
+
+        "opencode-env" = {
+          restartUnits = [ "opencode.service" ];
+          content = ''
+            GITHUB_TOKEN=${config.sops.placeholder."opencode-github-token"}
+            GH_TOKEN=${config.sops.placeholder."opencode-github-token"}
+            LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
+            OPENCODE_SERVER_PASSWORD=${config.sops.placeholder."opencode-server-password"}
           '';
         };
       };

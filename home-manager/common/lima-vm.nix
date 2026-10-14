@@ -383,13 +383,19 @@ in
 
     cpus = mkOption {
       type = types.ints.positive;
-      default = 4;
-      description = "Lima `cpus`.";
+      default = 8;
+      description = ''
+        Lima `cpus`. Keep at or below the host's physical core count:
+        oversubscribing Virtualization.framework starves the Lima
+        hostagent (every limactl call times out) and spikes host load
+        without buying guest build speed (guest rebuilds substitute
+        prebuilt artifacts rather than compiling).
+      '';
     };
 
     memory = mkOption {
       type = types.str;
-      default = "8GiB";
+      default = "12GiB";
       description = ''
         Lima `memory`. The nixos-lima docs recommend at least 8GiB (NixOS
         rebuilds inside the guest are memory-hungry).
@@ -398,7 +404,7 @@ in
 
     disk = mkOption {
       type = types.str;
-      default = "60GiB";
+      default = "128GiB";
       description = ''
         Lima `disk` (root disk size). The base image is resized to this on
         create; the NixOS root filesystem (ext4, `autoResize`) grows into

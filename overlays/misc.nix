@@ -454,14 +454,29 @@ final: prev: {
   #     only to make the root-workspace `prettier` devDep land for the older
   #     nixpkgs build machinery; by v1.16.2 the build-time prettier import was
   #     removed and prettier moved into packages/opencode, so it is moot.
-  # OpenCode's build requires bun 1.3.14 (its package.json
-  # `packageManager: "bun@1.3.14"`), while this repo's current nixpkgs-unstable
-  # lock still exposes bun 1.3.13. Keep upstream
-  # opencode's own Nix packaging, but replace only the build-time `bun` native
-  # input with a minimally-overridden 1.3.14 Bun binary package.
+  # Bun selection is platform-split. OpenCode's package.json pins
+  # `packageManager: "bun@1.3.14"` and upstream's nix/opencode.nix relaxes
+  # that check to a warning, so only the compiler behavior matters:
+  #   * darwin keeps the minimally-overridden prebuilt 1.3.14 binary package
+  #     (`opencodeBun` below) — the combination the darwin hosts build and
+  #     smoke-test today.
+  #   * linux deliberately uses the repo nixpkgs bun 1.3.13. Every nixpkgs
+  #     bun is patchelf'd by autoPatchelfHook (a ~85-char /nix/store ELF
+  #     interpreter instead of upstream's 26-char path), and bun 1.3.14's
+  #     `bun build --compile` mishandles such a patched template on
+  #     linux-aarch64: the produced standalone SIGSEGVs inside the dynamic
+  #     loader before main (observed as upstream's in-build smoke test
+  #     exiting 139 in the fabro guest; 1.3.13 compiles working standalones
+  #     from the same patched template). See
+  #     https://github.com/NixOS/nixpkgs/issues/520383 (bun segfaults, the
+  #     patchelf'd-template root cause) and
+  #     https://github.com/anomalyco/opencode/issues/26846 (opencode smoke
+  #     test exit 139).
   # Bumps: change the `opencode` input ref in flake.nix + `nix flake update
-  # opencode`; update/remove `opencodeBun` only if the new tag's build floor or
-  # nixpkgs Bun state changes.
+  # opencode`; revisit `opencodeBun` only if the new tag's build floor or
+  # nixpkgs Bun state changes, and re-verify the linux build in the guest
+  # (pre-flight: `nix build .#nixosConfigurations.fabro-vm.pkgs.opencode-pinned`
+  # from the streamed tree).
   #
   # `version` is pinned to the release version because the upstream packages
   # output bakes a "+<rev>" suffix (node_modules.nix sets
@@ -508,7 +523,12 @@ final: prev: {
       opencodeCodesign = final.writeShellScriptBin "codesign" ''
         exec /usr/bin/codesign "$@"
       '';
-      replaceBun = input: if (input.pname or null) == "bun" then opencodeBun else input;
+      replaceBun =
+        input:
+        if (input.pname or null) == "bun" then
+          (if final.stdenv.hostPlatform.isDarwin then opencodeBun else final.unstable.bun)
+        else
+          input;
     in
     inputs.opencode.packages.${final.stdenv.hostPlatform.system}.opencode.overrideAttrs (old: {
       version = "1.19.0";

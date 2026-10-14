@@ -1,6 +1,7 @@
 # Tailscale on the fabro host: the guest joins the tailnet as a persistent
-# tagged node and advertises the two application services as Tailscale
-# Services (`svc:fabro` and `svc:litellm`, defined in the admin console).
+# tagged node and advertises the three application services as Tailscale
+# Services (`svc:fabro`, `svc:litellm`, and `svc:opencode`, defined in the
+# admin console).
 #
 # Node registration uses the OAuth client credentials from the 1Password
 # item `Fabro Host Tailscale Credentials`
@@ -61,7 +62,7 @@ in
   };
 
   systemd.services.tailscale-serve = {
-    description = "Advertise the fabro and litellm Tailscale Services";
+    description = "Advertise the fabro, litellm, and opencode Tailscale Services";
     after = [
       "tailscaled.service"
       "tailscaled-autoconnect.service"
@@ -72,16 +73,19 @@ in
       Type = "oneshot";
       Restart = "on-failure";
       RestartSec = 5;
-      # Tailnet-facing ports: both admin-console resource definitions use
-      # tcp:443, so the services are reachable at
-      # https://fabro.tuxedo-musical.ts.net/ and
-      # https://litellm.tuxedo-musical.ts.net/ (no port suffix; TLS is
+      # Tailnet-facing ports: all three admin-console resource definitions
+      # use tcp:443, so the services are reachable at
+      # https://fabro.tuxedo-musical.ts.net/,
+      # https://litellm.tuxedo-musical.ts.net/, and
+      # https://opencode.tuxedo-musical.ts.net/ (no port suffix; TLS is
       # terminated by tailscaled under each service name). The loopback
-      # targets are the listeners from fabro.nix (127.0.0.1:32276,
-      # API + web UI) and litellm.nix (127.0.0.1:4000).
+      # targets are the listeners from fabro.nix (127.0.0.1:32276, API +
+      # web UI), litellm.nix (127.0.0.1:4000), and opencode.nix
+      # (127.0.0.1:4096).
       ExecStart = [
         "${lib.getExe cfg.package} serve --service=svc:fabro --https=443 http://127.0.0.1:32276"
         "${lib.getExe cfg.package} serve --service=svc:litellm --https=443 http://127.0.0.1:4000"
+        "${lib.getExe cfg.package} serve --service=svc:opencode --https=443 http://127.0.0.1:4096"
       ];
     };
   };

@@ -58,7 +58,8 @@ One secret has a third consumer outside the Keychain:
 ## Fabro host store (NixOS guest)
 
 `secrets/fabro.fabro.yaml` is the fabro host's store: one file for the
-guest's application services (the fabro server and the LiteLLM proxy).
+guest's application services (the fabro server, the LiteLLM proxy, and
+the OpenCode v1 server).
 The guest is a NixOS host, so there is no macOS Keychain bridge —
 values are consumed from the `sops.secrets` / `sops.templates`
 declarations in `configurations/fabro-vm/default.nix` (deployed: the
@@ -75,6 +76,17 @@ Private-vault note `sops-age-key-fabro`.
 | `opencode-api-key` | `op://Private/OpenCode/API Key` | LiteLLM `os.environ/OPENCODE_API_KEY` deployments |
 | `github-token` | `op://Private/GitHub/Tokens/Fabro` | fabro-host GitHub PAT — exported to the fabro service as `GITHUB_TOKEN` via `sops.templates."fabro-env"` (the `integrations.github.strategy = "token"` env source) |
 | `tailscale-oauth-secret` | `op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret` | `services.tailscale.authKeyFile` (tailnet registration; `configurations/fabro-vm/tailscale.nix`) |
+| `opencode-github-token` | `op://Private/GitHub/Tokens/OpenCode` | OpenCode server's dedicated GitHub PAT — exported as `GITHUB_TOKEN` and `GH_TOKEN` via `sops.templates."opencode-env"`; git pushes authenticate through `gh auth git-credential` (`configurations/fabro-vm/opencode.nix`) |
+| `opencode-server-password` | `op://Private/OpenCode/Server Password` | OpenCode server basic-auth password (`OPENCODE_SERVER_PASSWORD`; username defaults to `opencode`) |
+| `opencode-signing-key` | `op://Private/OpenCode Signing Key/private key` | git SSH commit-signing key; handed to the opencode service as a systemd credential (`LoadCredential=`, `configurations/fabro-vm/opencode.nix`) |
+
+The `opencode-signing-key` row differs from the token rows: its 1Password
+source is an **SSH Key item** (not a note/text field), so the value is a
+multi-line PEM. `fabro-sync-from-1password` supports that — multi-line
+values are emitted as YAML double-quoted scalars (every key stays on one
+physical line, which the carry-forward parser and coverage gate rely on).
+If 1Password renames the key field, the fallback field-id form is
+`op://Private/OpenCode Signing Key/privateKey`.
 
 Values are seeded from the 1Password items above (not from the
 keychain bridge). The fabro service consumes this sops-rendered pair

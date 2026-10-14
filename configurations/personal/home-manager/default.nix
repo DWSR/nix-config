@@ -194,14 +194,6 @@ in
     hostname = "fabro";
     guestSystem = "fabro-vm";
 
-    # 10 vCPUs = the host's physical core count. More than that
-    # (12 was tried) oversubscribes Virtualization.framework: macOS's
-    # scheduler starves the Lima hostagent (every limactl call times
-    # out) and pushes host load to ~900, while the guest gains nothing —
-    # and with the kernel-patch removal the rebuild substitutes instead
-    # of compiling, so the extra cores wouldn't even buy build speed.
-    cpus = 10;
-
     # The fabro server's state lives ON THE MAC: /var/lib/fabro in the
     # guest is this writable virtiofs share, so the fabro home and
     # storage subdirectories the guest service writes (home/, storage/)

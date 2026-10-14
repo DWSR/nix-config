@@ -36,11 +36,13 @@
 # next `nixos-rebuild switch` at the sops activation step, so saying no
 # up front beats breaking the switch later.
 #
-# Token shape assumption (same as the sibling): values are single-line
-# printable strings, emitted as YAML 1.2 single-quoted scalars with
-# embedded `'` doubled. Multi-line or NUL-byte values need pipe block
-# scalars; the fabro store's token shapes are all single-line bearer
-# strings.
+# Token shape assumption: values are single-line printable strings,
+# emitted as YAML 1.2 single-quoted scalars with embedded `'` doubled.
+# Multi-line values (e.g. the opencode SSH signing key) are emitted as
+# YAML double-quoted scalars instead, with backslashes, double quotes,
+# and newlines escaped (`\\`, `\"`, `\n`), so every key stays on one
+# physical line — the line-based carry-forward parser and the coverage
+# gate below stay valid verbatim. NUL bytes remain unsupported.
 #
 # Exit codes:
 #   0    success
@@ -259,14 +261,23 @@ pkgs.writeShellApplication {
       exit 5
     fi
 
-    # Emit plaintext yaml: manifest keys as single-quoted scalars with
-    # embedded `'` doubled, carried entries verbatim (they preserve the
-    # prior file's escaping), both sorted.
+    # Emit plaintext yaml: manifest keys sorted; single-line values as
+    # single-quoted scalars with embedded `'` doubled, multi-line values
+    # as double-quoted scalars (escape order: backslash, quote, newline)
+    # so every key stays on one physical line. Carried entries are
+    # emitted verbatim (they preserve the prior file's escaping).
     {
       for key in "''${SECRET_KEYS[@]}"; do
         v="''${VALUES[$key]}"
-        v_escaped="''${v//\'/\'\'}"
-        printf "%s: '%s'\n" "$key" "$v_escaped"
+        if [[ "$v" == *$'\n'* ]]; then
+          v_escaped="''${v//\\/\\\\}"
+          v_escaped="''${v_escaped//\"/\\\"}"
+          v_escaped="''${v_escaped//$'\n'/\\n}"
+          printf '%s: "%s"\n' "$key" "$v_escaped"
+        else
+          v_escaped="''${v//\'/\'\'}"
+          printf "%s: '%s'\n" "$key" "$v_escaped"
+        fi
       done
       if [ "$CARRIED_COUNT" -gt 0 ]; then
         printf '%s\n' "''${!CARRIED[@]}" | LC_ALL=C sort |

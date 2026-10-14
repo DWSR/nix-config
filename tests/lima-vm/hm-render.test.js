@@ -156,9 +156,9 @@ test('rendered Lima YAML matches the module defaults', () => {
   assert.match(yaml, /digest: ?['"]?sha512:[0-9a-f]+['"]?/);
 
   assert.match(yaml, /vmType: ?['"]?vz['"]?/);
-  assert.match(yaml, /cpus: ?4\b/);
-  assert.match(yaml, /memory: ?['"]?8GiB['"]?/);
-  assert.match(yaml, /disk: ?['"]?60GiB['"]?/);
+  assert.match(yaml, /cpus: ?8\b/);
+  assert.match(yaml, /memory: ?['"]?12GiB['"]?/);
+  assert.match(yaml, /disk: ?['"]?128GiB['"]?/);
 
   assert.match(yaml, /mounts: ?\[\]/);
   assert.match(yaml, /containerd:\n(?:.*\n)*?\s+system: ?false/);
@@ -334,7 +334,7 @@ test('extraLimaConfig merges over the rendered keys', () => {
   }`));
 
   assert.match(rendered.configYaml, /memory: ?['"]?16GiB['"]?/);
-  assert.doesNotMatch(rendered.configYaml, /memory: ?['"]?8GiB['"]?/);
+  assert.doesNotMatch(rendered.configYaml, /memory: ?['"]?12GiB['"]?/);
 });
 
 test('a custom image can point at a store path without a digest', () => {
