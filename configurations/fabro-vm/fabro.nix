@@ -148,6 +148,10 @@ let
         "deepseek-v4.1-flash" = {
           display_name = "DeepSeek V4.1 Flash (OpenCode Go)";
           api_model = "opencode-go/deepseek-v4.1-flash";
+          # Same parity tier as the wire it shares with glm-5.3-flash, and
+          # the cheap pick for fabro's small utility tasks (run titles and
+          # other metadata calls).
+          small_default = true;
           # DeepSeek's published V4 ceiling: 1M total context, 384k output.
           limits = {
             context_tokens = 1000000;
@@ -165,7 +169,6 @@ let
         "glm-5.3-flash" = {
           display_name = "GLM-5.3 Flash (OpenCode Go)";
           api_model = "opencode-go/glm-5.3-flash";
-          small_default = true;
           limits = {
             context_tokens = 1000000;
             max_output_tokens = 131072;
