@@ -1,0 +1,22 @@
+{
+  "feature_name": "nix-built-container-for-default-fabro-environmen",
+  "created_at": "2026-10-15T14:59:10Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "updated_at": "2026-10-15T15:20:05Z",
+  "phase": "tasks-generated",
+  "ready_for_implementation": true
+}
