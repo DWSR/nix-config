@@ -20,6 +20,7 @@
   - Emit exactly one `sha256:<hex>` line to `$out`; fail the build when `index.json` is missing or the value is not `sha256:`-prefixed.
   - Confirm a fixture archive yields a single `sha256:` line, a malformed archive fails the derivation, and the digest is only read at run time (no IFD).
   - _Requirements: 2.5, 2.6_
+  - _Blocked: committed sandbox-image.nix fails nixfmt-rfc-style and statix W04 (archive = cfg.archive); unblock by running nixfmt and using inherit (cfg) archive._
 
 - [ ] 3. Local image loader
 - [ ] 3.1 (P) Implement the loader script
