@@ -1962,8 +1962,10 @@
                 assert pkgs.lib.assertMsg (builtins.elem "flakes" (
                   vm.nix.settings.experimental-features or [ ]
                 )) "fabro-vm: guest nix must enable the flakes experimental feature.";
-                assert pkgs.lib.assertMsg vm.virtualisation.docker.enable
-                  "fabro-vm: virtualisation.docker must be enabled (the host's only service for now).";
+                assert pkgs.lib.assertMsg vm.virtualisation.podman.enable
+                  "fabro-vm: virtualisation.podman must be enabled (the container engine behind the docker sandbox provider).";
+                assert pkgs.lib.assertMsg vm.virtualisation.podman.dockerSocket.enable
+                  "fabro-vm: virtualisation.podman.dockerSocket must be enabled (fabro reaches the API via /run/docker.sock).";
                 assert pkgs.lib.assertMsg (builtins.any (p: (p.pname or p.name or "") == "fabro")
                   vm.environment.systemPackages
                 ) "fabro-vm: environment.systemPackages must contain the fabro package.";
@@ -1980,12 +1982,15 @@
                 ) "fabro-vm: systemd.services.fabro must be defined.";
                 assert pkgs.lib.assertMsg (builtins.elem "litellm.service" vm.systemd.services.fabro.requires)
                   "fabro-vm: systemd.services.fabro must require litellm.service.";
-                assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.requires)
-                  "fabro-vm: systemd.services.fabro must require docker.service.";
+                assert pkgs.lib.assertMsg (builtins.elem "podman.socket" vm.systemd.services.fabro.requires)
+                  "fabro-vm: systemd.services.fabro must require podman.socket.";
                 assert pkgs.lib.assertMsg (builtins.elem "litellm.service" vm.systemd.services.fabro.after)
                   "fabro-vm: systemd.services.fabro must start after litellm.service.";
-                assert pkgs.lib.assertMsg (builtins.elem "docker.service" vm.systemd.services.fabro.after)
-                  "fabro-vm: systemd.services.fabro must start after docker.service.";
+                assert pkgs.lib.assertMsg (builtins.elem "podman.socket" vm.systemd.services.fabro.after)
+                  "fabro-vm: systemd.services.fabro must start after podman.socket.";
+                assert pkgs.lib.assertMsg
+                  (builtins.elem "podman" vm.systemd.services.fabro.serviceConfig.SupplementaryGroups)
+                  "fabro-vm: the fabro service must hold the podman group (Docker-compatible socket access).";
                 # The state share must be a first-class fileSystems entry:
                 # nixos-lima's lima-init re-appends its fstab block only at
                 # boot, so a post-boot switch would otherwise regenerate
@@ -2164,7 +2169,7 @@
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; docker=true; litellm+fabro+opencode systemd services with fabro→{litellm,docker} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {

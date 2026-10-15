@@ -90,9 +90,10 @@ let
       # The Lima cidata user is created imperatively by lima-init on every
       # boot after NixOS's activation and must NOT be declared in the
       # guest's users.users (mutableUsers stays true so rebuilds preserve
-      # it). This grants it the docker group whenever the guest actually
-      # runs docker, so its unprivileged shell can use the daemon socket;
-      # the getent guard makes it a silent no-op otherwise.
+      # it). This grants it the podman group whenever the guest actually
+      # runs podman, so its unprivileged shell can use the API socket
+      # (the members-only socket of the guest's podman.socket unit); the
+      # getent guard makes it a silent no-op otherwise.
       {
         mode = "system";
         # NOTE: provisioning scripts inherit lima-init's PATH, which does not
@@ -101,9 +102,9 @@ let
         # inside the `if`, so the script returned 0 without acting).
         script = ''
           #!/bin/sh
-          if grep -q '^docker:' /etc/group \
-            && ! id -nG "$LIMA_CIDATA_USER" | tr ' \t' '\n' | grep -qx docker; then
-            usermod -aG docker "$LIMA_CIDATA_USER"
+          if grep -q '^podman:' /etc/group \
+            && ! id -nG "$LIMA_CIDATA_USER" | tr ' \t' '\n' | grep -qx podman; then
+            usermod -aG podman "$LIMA_CIDATA_USER"
           fi
         '';
       }

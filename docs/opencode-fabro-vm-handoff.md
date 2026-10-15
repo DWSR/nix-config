@@ -460,8 +460,8 @@ Through the web console (`https://opencode.tuxedo-musical.ts.net`, basic auth
 - **Tailscale ordering**: `tailscale serve --service=svc:opencode` fails until
   the console service exists; the unit retries on failure.
 - **Resources**: the VM has 10 vCPU / 8 GiB / 60 GiB, shared with litellm,
-  fabro, and Docker. Heavy parallel builds may contend; bump Lima memory
-  later if needed.
+  fabro, and the podman container engine. Heavy parallel builds may contend;
+  bump Lima memory later if needed.
 - **Workspace volatility**: guest-local, lost on VM recreation; GitHub is the
   source of truth. The fabro state share is unaffected.
 
@@ -473,7 +473,8 @@ Through the web console (`https://opencode.tuxedo-musical.ts.net`, basic auth
 - `github-native-stacks` skill (MCP-dependent).
 - mcpproxy / AgentMemory / git-mcp on the guest (deliberately absent; fabro's
   guest-eval asserts forbid mcpproxy).
-- Docker access for the opencode user; trusted-users relaxation for `nix`
+- Container-engine (podman) socket access for the opencode user;
+  trusted-users relaxation for `nix`
   per-invocation options; direct OpenCode Go/Zen provider (declined — litellm
   only).
 

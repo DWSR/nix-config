@@ -255,7 +255,7 @@ test('invalid instance names fail the eval loudly', () => {
   );
 });
 
-test('default configuration renders only the docker-group provision', () => {
+test('default configuration renders only the podman-group provision', () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   const yaml = rendered.configYaml;
@@ -266,8 +266,8 @@ test('default configuration renders only the docker-group provision', () => {
   // (Lima's YAML round-trip of the folded double-quoted scalar is
   // byte-exact — verified against a throwaway `limactl create --name rtt`
   // instance reading the provision script back.)
-  assert.match(yaml, /grep -q '\^docker:' \/etc\/group/);
-  assert.match(yaml, /usermod -aG docker/);
+  assert.match(yaml, /grep -q '\^podman:' \/etc\/group/);
+  assert.match(yaml, /usermod -aG podman/);
   assert.match(yaml, /LIMA_CIDATA_USER/);
   assert.doesNotMatch(yaml, /\/proc\/sys\/kernel\/hostname/); // hostname unset
 });
@@ -377,7 +377,7 @@ test('the personal host enables the managed lima VM', { timeout: 600_000 }, () =
       hostname = hm.virtualisation.limaVM.hostname;
       guestSystem = hm.virtualisation.limaVM.guestSystem;
       configYamlHasHostnameProvision = builtins.match ".*echo fabro.*/proc/sys/kernel/hostname.*" configYaml != null;
-      configYamlHasUsermodProvision = builtins.match ".*usermod -aG docker.*" configYaml != null;
+      configYamlHasUsermodProvision = builtins.match ".*usermod -aG podman.*" configYaml != null;
       configYamlHasFabroStateMount = builtins.match ".*location:.*~/.local/state/fabro.*writable: true.*" configYaml != null;
       deployNotNull = hm.virtualisation.limaVM._deploy != null;
       supervisorNotNull = hm.virtualisation.limaVM._supervisor != null;

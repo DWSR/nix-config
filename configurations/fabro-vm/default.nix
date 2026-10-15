@@ -12,7 +12,8 @@
 # matters once a Linux builder exists to build a custom image (then switch
 # the module's `image.location` to the store path) or for remote deployment
 # into the running instance (`nixos-rebuild --target`). The guest runs
-# Docker plus the fabro, LiteLLM, and OpenCode services, with their
+# Podman with a Docker-compatible API socket (fabro's docker sandbox
+# provider) plus the fabro, LiteLLM, and OpenCode services, with their
 # secrets from sops-nix (`sops` block below), and joins the tailnet as a
 # Tailscale Services host advertising all three applications
 # (./tailscale.nix).
@@ -46,7 +47,7 @@ in
     # `system.build.qcow-efi` for packages.aarch64-linux.fabro-vm-image
     # (grows the root partition into the Lima-assigned disk size).
     ./image.nix
-    # The host's application services; Docker is enabled below.
+    # The host's application services; Podman is enabled below.
     ./fabro.nix
     ./litellm.nix
     # The OpenCode v1 web console (DynamicUser service; svc:opencode).
@@ -259,14 +260,20 @@ in
     # this configuration can be built into a custom image / deployed).
     networking.hostName = "fabro";
 
-    # Docker: the only service the fabro host runs right now (fabro itself
-    # is pending). NixOS's Docker module manages its own systemd unit,
-    # bridge/overlay kernel module loading, and nftables compat. The
-    # docker group membership for the cidata user is granted by the Lima
+    # Podman is the container engine behind fabro's docker sandbox
+    # provider. dockerSocket.enable makes systemd symlink /run/docker.sock
+    # -> /run/podman/podman.sock, so the provider's default bollard
+    # transport (unix:///var/run/docker.sock) keeps working; dockerCompat
+    # adds the docker CLI alias NixOS's docker module used to install. The
+    # podman group membership for the cidata user is granted by the Lima
     # module's `provision`, because lima-init creates that user
     # imperatively on each boot and users.users must not declare it
     # (mutableUsers stays true so rebuilds preserve it).
-    virtualisation.docker.enable = true;
+    virtualisation.podman = {
+      enable = true;
+      dockerSocket.enable = true;
+      dockerCompat = true;
+    };
 
     # ssh
     services.openssh.enable = true;

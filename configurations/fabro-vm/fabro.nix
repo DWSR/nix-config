@@ -1,8 +1,9 @@
 # Fabro server on the fabro host: the workflow engine's API server + web UI
 # as a systemd service (the mac's `programs.fabro` launchd agent, minus its
-# Keychain machinery). Depends on LiteLLM (model routing) and Docker (the
-# docker sandbox provider) with hard `requires` semantics: stopping either
-# stops fabro, and both are up before fabro starts.
+# Keychain machinery). Depends on LiteLLM (model routing) and the container
+# engine API (Podman's Docker-compatible socket; the docker sandbox
+# provider) with hard `requires` semantics: stopping either stops fabro,
+# and both are up before fabro starts.
 #
 # The ported settings keep the runtime-verified values the mac agent
 # deployed (same fabro build channel), with the guest paths substituted:
@@ -258,6 +259,8 @@ let
         type = "tcp";
       };
 
+      # `docker` is fabro's provider name: it speaks the Docker API,
+      # served here by podman's compatibility socket (/run/docker.sock).
       sandbox.providers = {
         daytona.enabled = false;
         docker.enabled = true;
@@ -305,18 +308,21 @@ in
     wantedBy = [ "multi-user.target" ];
 
     # Fabro relies on LiteLLM (model routing via llm.providers.litellm) and
-    # Docker (the docker sandbox provider): hard dependencies, so either
-    # stopping takes fabro down, and both boot before fabro. lima-init is
-    # the unit that writes /etc/fstab entries for Lima's mounts and
-    # restarts local-fs.target — the state share is guaranteed up only
-    # after it (RequiresMountsFor below adds the mount-unit ordering too).
+    # the container engine API (podman.socket; the docker sandbox provider
+    # connects through /run/docker.sock): hard dependencies, so stopping
+    # either takes fabro down, and both are up before fabro. podman.service
+    # is deliberately not named: it is socket-activated and exits when idle
+    # while podman.socket stays listening. lima-init is the unit that writes
+    # /etc/fstab entries for Lima's mounts and restarts local-fs.target —
+    # the state share is guaranteed up only after it (RequiresMountsFor
+    # below adds the mount-unit ordering too).
     after = [
-      "docker.service"
+      "podman.socket"
       "litellm.service"
       "lima-init.service"
     ];
     requires = [
-      "docker.service"
+      "podman.socket"
       "litellm.service"
     ];
 
@@ -385,10 +391,10 @@ in
       # explicit ReadWritePaths under ProtectSystem=strict.
       ReadWritePaths = [ "/var/lib/fabro" ];
 
-      # The docker sandbox provider talks over /run/docker.sock (the
-      # service user needs the docker gid regardless of /etc/group
-      # membership).
-      SupplementaryGroups = [ "docker" ];
+      # The docker sandbox provider talks over /run/docker.sock, a symlink
+      # to podman's API socket (the service user needs the podman gid
+      # regardless of /etc/group membership).
+      SupplementaryGroups = [ "podman" ];
       Restart = "on-failure";
       RestartSec = 5;
       NoNewPrivileges = true;
