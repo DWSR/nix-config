@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Flake input and guest plumbing
-- [ ] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
+- [x] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
   - Add the `nix-snapshotter` flake input following `nixpkgs` and record its locked `rev`/`narHash` in `flake.lock`.
   - Add `inputs.nix-snapshotter.overlays.default` to the fabro-vm `nixpkgs.overlays` list so `pkgs.nix-snapshotter` resolves, and pass the input through `specialArgs`.
   - Confirm the guest config evaluates cleanly on darwin and `pkgs.nix-snapshotter.buildImage` resolves to a function.
