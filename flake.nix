@@ -2,6 +2,19 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-26.05-darwin";
     nixpkgs-unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+
+    # Sandbox image builder for the fabro Lima VM guest
+    # (configurations/fabro-vm): the pinned pdtpartners/nix-snapshotter,
+    # consumed through its `overlays.default` so the guest's
+    # `pkgs.nix-snapshotter.buildImage` resolves to the input's correctly
+    # wired builder. nixpkgs ships its own `nix-snapshotter`, but its
+    # `passthru.buildImage` callPackage does not thread the `globset`
+    # dependency through, so it fails to evaluate. Its nixpkgs input
+    # follows the flake's so no second nixpkgs is fetched.
+    nix-snapshotter = {
+      url = "github:pdtpartners/nix-snapshotter";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     op-shell-plugins = {
       url = "github:1Password/shell-plugins";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -2719,17 +2732,26 @@
             # cc-sdd-skills, gh-stack's vendored deps) and the
             # nixpkgs-unstable re-exports on top of the fabro overlay; all
             # three are lazy, so nothing new is fetched unless referenced.
-            # Mirrors the darwin host's overlay set.
+            # Mirrors the darwin host's overlay set. The nix-snapshotter
+            # overlay supplies the guest's `pkgs.nix-snapshotter` (the
+            # sandbox image builder), replacing nixpkgs' package whose
+            # `buildImage` passthru is not wired up (see the input comment).
             nixpkgs.overlays = [
               outputs.overlays.fabro
               outputs.overlays.unstable-packages
               outputs.overlays.custom-packages
+              inputs.nix-snapshotter.overlays.default
             ];
           }
           ./configurations/fabro-vm
         ];
         specialArgs = {
           inherit (inputs) rsync34;
+          # The pinned nix-snapshotter flake, threaded through so the guest
+          # modules can reference its `buildImage`/archive derivations
+          # without re-deriving them from nixpkgs (configurations/fabro-vm
+          # imports its overlay above).
+          nixSnapshotter = inputs.nix-snapshotter;
           # Stationary kernel: imported (overlays-free) from the nixpkgs rev
           # the booted release image was built from, so the eval's kernel drv
           # hash equals the one baked into the image. See the boot comment in
