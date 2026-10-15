@@ -1,0 +1,66 @@
+# Implementation Plan
+
+- [ ] 1. Define the repo-built sandbox image (configurations/fabro-vm/sandbox-image.nix)
+- [ ] 1.1 Create the module, declare `config.fabro.sandboxImage`, and build the image
+  - Create `configurations/fabro-vm/sandbox-image.nix` and add `./sandbox-image.nix` to the `imports` list in `configurations/fabro-vm/default.nix`.
+  - Declare `config.fabro.sandboxImage.image` with `pkgs.dockerTools.buildLayeredImage` (`name = "fabro-sandbox"`, `tag = "latest"`) from the flake's nixpkgs, and `config.fabro.sandboxImage.tag = "fabro-sandbox:latest"` as the single stable reference both delivery and Fabro config consume.
+  - Set `contents = [ bashInteractive coreutils git curl jq cacert nix ]`, `config.Cmd = [ "/bin/bash" ]`, `config.User = "root"`, and `config.Env = [ "PATH=/bin" "SSL_CERT_FILE=…" "NIX_SSL_CERT_FILE=…" ]`; expose the derivation on `system.build.fabroSandboxImage`.
+  - Keep the build registry-free: the image references only store paths from the flake's nixpkgs and needs no network fetch to build.
+  - Done when `nixosConfigurations.fabro-vm` evaluates with the module imported and `config.fabro.sandboxImage.image.system == "aarch64-linux"` and `system.build.fabroSandboxImage` resolve.
+  - _Requirements: 1.1, 1.2, 1.3, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5_
+- [ ] 1.2 Bake the single-user Nix runtime into the image
+  - Add `/etc/nix/nix.conf` (`experimental-features = nix-command flakes`, `sandbox = false`, empty `build-users-group`) and pre-create the writable store state root (`/nix/var/nix/profiles`, `/nix/var/nix/gcroots`) via `extraCommands`.
+  - Keep the model daemonless and mount-free: Nix runs as root against the container's writable `/nix/store`; add no host bind mount, daemon socket, or `nix-daemon`.
+  - Done when the image derivation carries `/etc/nix/nix.conf` and the store state root, and requires no host `/nix` or socket to function.
+  - _Requirements: 3.1, 3.2, 3.3_
+
+- [ ] 2. Define the fabro-sandbox-image-load oneshot in sandbox-image.nix
+  - Define `systemd.services.fabro-sandbox-image-load` with `Type = "oneshot"`, `RemainAfterExit = true`, `after`/`requires` `docker.service`, and `wantedBy = [ "multi-user.target" ]`.
+  - `ExecStart` runs `docker load --input <config.fabro.sandboxImage.image>` and `ExecStartPost` runs `docker tag fabro-sandbox:latest <config.fabro.sandboxImage.tag>`; reference the docker CLI by store path (`virtualisation.docker.package`), not by ambient PATH.
+  - Embed the image store path in the unit text so a rebuild changes the unit and re-runs the load, retagging under the same stable tag with no manual step.
+  - Done when `nixosConfigurations.fabro-vm.config.systemd.services.fabro-sandbox-image-load` exists with a oneshot `ExecStart` naming the image path and tag, and `virtualisation.docker.enable` remains true.
+  - _Requirements: 1.4, 4.1, 4.2, 4.3, 4.4_
+
+- [ ] 3. Wire Fabro's default environment and service ordering in fabro.nix (P)
+  - Declare `config.fabro.environments.default` (`provider = "docker"`, `image.docker = config.fabro.sandboxImage.tag`, `resources = { cpu = 2; memory = "4GB"; }`, `network.mode = "allow_all"`) and include `environments = config.fabro.environments` in the generated `fabroSettings`.
+  - Add `fabro-sandbox-image-load.service` to `systemd.services.fabro`'s `requires` and `after` so a failed load stops Fabro instead of starting runs against a missing image.
+  - Preserve `run.environment.id = "default"`, the docker provider selection, run resources, and network policy; only the image reference changes.
+  - Done when the generated `settings.toml` carries `[environments.default]` with the tag and `fabro.service` requires/after the load unit.
+  - _Requirements: 4.5, 5.1, 5.2, 5.3, 5.4_
+  - _Boundary: Default Environment Wiring, Fabro Service Ordering_
+  - _Depends: 1.1_
+
+- [ ] 4. Expose the image as a flake package and verify the wiring (flake.nix)
+- [ ] 4.1 Expose `packages.aarch64-linux.fabro-sandbox-image` and assert it (P)
+  - Add `packages.aarch64-linux.fabro-sandbox-image = self.nixosConfigurations.fabro-vm.config.system.build.fabroSandboxImage`.
+  - Add an eval-only repository check that asserts the package exists and its `system == "aarch64-linux"`; do not build the image tar in the check (no Linux builder on the mac).
+  - Done when `nix flake check` on darwin evaluates the package and the assertion passes, and fails when the package or its architecture drifts.
+  - _Requirements: 1.2, 6.1_
+  - _Boundary: Flake Package, Repository Verification_
+  - _Depends: 1.1_
+- [ ] 4.2 Extend fabro-vm-guest-eval with delivery and wiring assertions
+  - Assert `systemd.services ? fabro-sandbox-image-load`, `Type == "oneshot"`, `requires`/`after` contain `docker.service`, and `ExecStart`/`ExecStartPost` name the image path and `config.fabro.sandboxImage.tag`.
+  - Assert `fabro.service` `requires`/`after` contain `fabro-sandbox-image-load.service`, and `config.fabro.environments.default` matches `provider`, `image.docker`, `resources`, and `network`.
+  - Done when the extended `fabro-vm-guest-eval` check passes and fails on a drifted tag, load unit, or environment entry.
+  - _Requirements: 4.5, 6.2, 6.3_
+  - _Depends: 2, 3_
+
+- [ ] 5. Validate the image and wiring in-guest
+- [ ] 5.1 Build, load, and inspect the image contract
+  - Deploy with `lima-vm-deploy`, confirm `nix build .#packages.aarch64-linux.fabro-sandbox-image` succeeds, and confirm `docker image inspect fabro-sandbox:latest` shows `PATH=/bin` and `User=root`.
+  - Run `docker run --rm fabro-sandbox:latest bash -c 'command -v bash ls mkdir git curl jq nix && nix --version'` and confirm every tool resolves on `/bin`.
+  - Confirm the load unit ran with no manual load/tag step and that a repeat deploy updates the image under the same tag.
+  - Done when the image is present under `fabro-sandbox:latest`, its config matches the contract, and every tool resolves.
+  - _Requirements: 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 4.1, 4.2, 4.3_
+  - _Depends: 2, 3, 4.1_
+- [ ] 5.2 Prove Nix works inside the sandbox
+  - Run `docker run --rm fabro-sandbox:latest bash -c 'nix build --no-link nixpkgs#hello'` and confirm the derivation evaluates and builds with no host mounts.
+  - Done when a Nix command inside the image evaluates and builds successfully, exercising the writable in-container store and `sandbox = false`.
+  - _Requirements: 3.2, 3.3, 6.5_
+  - _Depends: 5.1_
+- [ ] 5.3 Prove a run uses the image and the environment survives a restart
+  - Start a Fabro run with no explicit environment and confirm it resolves to `default` and `docker ps` shows `fabro-sandbox:latest`.
+  - Restart `fabro.service` and confirm a new run still resolves to the tag; if the pinned server persists `default` instead of re-applying `settings.toml`, record the remediation (refresh or remove the persisted `default` row) — this is the `settings.toml` auto-migration risk in `research.md`.
+  - Done when run evidence shows the repo-built image as the run's environment after a server restart.
+  - _Requirements: 5.2, 5.3, 6.4_
+  - _Depends: 5.1_
