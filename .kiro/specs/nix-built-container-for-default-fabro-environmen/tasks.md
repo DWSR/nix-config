@@ -1,14 +1,14 @@
 # Implementation Plan
 
 - [ ] 1. Flake input and guest plumbing
-- [ ] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
+- [x] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
   - Add the `nix-snapshotter` flake input following `nixpkgs` and record its locked `rev`/`narHash` in `flake.lock`.
   - Add `inputs.nix-snapshotter.overlays.default` to the fabro-vm `nixpkgs.overlays` list so `pkgs.nix-snapshotter` resolves, and pass the input through `specialArgs`.
   - Confirm the guest config evaluates cleanly on darwin and `pkgs.nix-snapshotter.buildImage` resolves to a function.
   - _Requirements: 2.2, 2.3_
 
 - [ ] 2. Sandbox image and digest derivations
-- [ ] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
+- [x] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
   - Create `configurations/fabro-vm/sandbox-image.nix` exposing `fabro.sandboxImage.{enable,name,tag,contents,imageConfig,copyToRoot,archive,digest}` (archive/digest read-only) and import it from `configurations/fabro-vm/default.nix`.
   - Build `archive` with `pkgs.nix-snapshotter.buildImage` over `copyToRoot = pkgs.buildEnv { pathsToLink = [ "/bin" ]; }` carrying `bashInteractive`, `git`, `coreutils`, and `nix`; pin `name`/`tag`.
   - Set `imageConfig = { Env = [ "PATH=/bin" "NIX_REMOTE=daemon" ]; Cmd = [ "/bin/bash" ]; WorkingDir = "/"; }`.
