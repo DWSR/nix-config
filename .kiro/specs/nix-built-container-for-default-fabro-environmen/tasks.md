@@ -15,7 +15,7 @@
   - Confirm the derivation is an `aarch64-linux` `nix-image-*.tar` whose `copyToRoot` resolves to the four named packages and whose config carries the PATH/Cmd invariants.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.4_
 
-- [ ] 2.2 Add the OCI manifest-digest derivation
+- [x] 2.2 Add the OCI manifest-digest derivation
   - Add `digest = pkgs.runCommand ... { nativeBuildInputs = [ pkgs.jq pkgs.coreutils ]; }` extracting `tar -xOf ${archive} index.json | jq -r '.manifests[0].digest'`.
   - Emit exactly one `sha256:<hex>` line to `$out`; fail the build when `index.json` is missing or the value is not `sha256:`-prefixed.
   - Confirm a fixture archive yields a single `sha256:` line, a malformed archive fails the derivation, and the digest is only read at run time (no IFD).

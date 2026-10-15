@@ -115,10 +115,41 @@ in
     digest = lib.mkOption {
       type = lib.types.package;
       readOnly = true;
+      default =
+        pkgs.runCommand "fabro-sandbox-image-digest"
+          {
+            nativeBuildInputs = [
+              pkgs.jq
+              pkgs.coreutils
+            ];
+          }
+          ''
+            set -euo pipefail
+
+            # Extract the OCI image-layout index from the archive and read the
+            # manifest digest. `tar` comes from the stdenv base path; a missing
+            # index.json aborts here via `set -e`.
+            tar -xOf ${cfg.archive} index.json > index.json
+            digest="$(jq -r '.manifests[0].digest' index.json)"
+
+            # Fabro references the image by content digest, so the value must be
+            # a single `sha256:<64 lowercase hex>` line. Anything else (a missing
+            # digest renders as the literal `null`) fails the build instead of
+            # yielding a bogus image reference.
+            if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+              echo "fabro-sandbox-image-digest: ${cfg.archive}: index.json manifest digest is not a single sha256:<64 hex> value: '$digest'" >&2
+              exit 1
+            fi
+
+            printf '%s\n' "$digest" > "$out"
+          '';
       description = ''
         Read-only text file holding the OCI manifest digest
         (`sha256:<hex>`) extracted from the archive's `index.json`. Fabro
-        references the image as `<name>@<digest>`.
+        references the image as `<name>@<digest>`. The digest is a build
+        artifact consumed at run time (embedded in the loader unit's
+        `ExecStart`); it is never read during evaluation, so no import-from-
+        derivation is triggered.
       '';
     };
   };
