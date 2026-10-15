@@ -50,6 +50,10 @@ in
     # The host's application services; Podman is enabled below.
     ./fabro.nix
     ./litellm.nix
+    # The podman-bridge API bridge that lets dispatch workflow sandboxes
+    # create and start (and the bridge transparently approves) child runs
+    # without a Fabro credential in any sandbox environment.
+    ./api-bridge.nix
     # The OpenCode v1 web console (DynamicUser service; svc:opencode).
     ./opencode.nix
     # Tailnet registration (OAuth credential auth key) and advertisement
@@ -273,6 +277,14 @@ in
       enable = true;
       dockerSocket.enable = true;
       dockerCompat = true;
+    };
+
+    # Serve the Fabro API to sandbox containers on the podman bridge, with
+    # per-container identity checks (see api-bridge.nix). The allowed
+    # slugs are the workflows whose runs may dispatch child runs.
+    services.fabro-api-bridge = {
+      enable = true;
+      allowedWorkflowSlugs = [ "dispatch" ];
     };
 
     # ssh
