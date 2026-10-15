@@ -45,6 +45,7 @@
   - Confirm the script text issues a GET, compares `.image.docker`, sends `If-Match` on the PUT, and names declared/persisted on failure.
   - _Boundary: Environment Reconciler_
   - _Requirements: 4.1, 4.2, 4.4, 4.5, 4.6_
+  - _Blocked: Implement stage for task 4.1 failed without a usable status report (no impl_blocker/impl_summary/review_findings); re-run implement with a status report to unblock._
 
 - [ ] 4.2 Declare the reconciler unit
   - Add `fabro-sandbox-env.service` to `sandbox.nix` (`Type = "oneshot"`, `RemainAfterExit`, `wantedBy = [ "multi-user.target" ]`, `after`/`requires = [ "fabro.service" "fabro-sandbox-image-load.service" ]`) running as root.
