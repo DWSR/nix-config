@@ -62,7 +62,7 @@
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
 - [ ] 6. Sandbox smoke check
-- [ ] 6.1 (P) Implement the smoke script and install it in the guest
+- [x] 6.1 (P) Implement the smoke script and install it in the guest
   - Create `scripts/fabro-sandbox-smoke.nix` as a `writeShellApplication` defaulting the reference to `localhost/fabro-sandbox@$(cat /run/fabro-sandbox/digest)`.
   - Probes: tools (`bash --version; git --version; command -v nix`), store (`test -e /nix/store; ls /nix/store`), daemon (`nix store ping`).
   - Print a step banner before each probe, exit non-zero naming the failed step, and add the script to `environment.systemPackages`.
