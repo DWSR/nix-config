@@ -195,7 +195,7 @@ in
 
   # Expose the runtime smoke check on the guest's PATH (Requirements 6.3-6.5):
   # `fabro-sandbox-smoke` runs the loaded image by digest and probes tools, the
-  # host store, and the host daemon, naming the failed step.
+  # CA bundle, the host store, and the host daemon, naming the failed step.
   #
   # `fabro-sandbox-verify` (task 7.5) is the operator's end-to-end harness:
   # reproducibility (rebuild + compare digest), wiring (the persisted `default`

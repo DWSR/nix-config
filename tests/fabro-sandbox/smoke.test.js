@@ -45,12 +45,16 @@ test('smoke script defaults the reference to the recorded image digest', () => {
   assert.match(text, /ref="\$\{name\}@\$/);
 });
 
-test('smoke script runs the tools, store, and daemon probes in the image', () => {
+test('smoke script runs the tools, certs, store, and daemon probes in the image', () => {
   const text = smokeText();
   // Requirement 6.3: the image's tools run inside a container from the image.
   // `setsid` is included because the Fabro sandbox driver refuses to run a
-  // command node without it (exit 127 before the script starts).
-  assert.match(text, /bash --version; git --version; command -v nix; command -v setsid/);
+  // command node without it (exit 127 before the script starts). `gh` rides
+  // along because sandbox runs shell out to the GitHub CLI.
+  assert.match(text, /bash --version; git --version; gh --version; command -v nix; command -v setsid/);
+  // The CA bundle must exist in the running container: without it every
+  // https client in the sandbox fails TLS certificate validation.
+  assert.match(text, /test -s \/etc\/ssl\/certs\/ca-bundle\.crt/);
   // Requirement 6.4: the container reaches the host store and daemon.
   assert.match(text, /test -e \/nix\/store; ls \/nix\/store/);
   assert.match(text, /nix store ping/);

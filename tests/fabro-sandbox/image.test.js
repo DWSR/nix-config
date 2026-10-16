@@ -58,18 +58,28 @@ test('the image config puts bash on PATH and points nix at the host daemon', () 
     env.includes('NIX_CONFIG=experimental-features = nix-command flakes'),
     `Env must contain NIX_CONFIG with nix-command and flakes: ${JSON.stringify(env)}`,
   );
+  // Containers see neither the guest's /etc/ssl nor its CA configuration, so
+  // https clients (git's libcurl via OpenSSL, gh via Go's crypto/x509) must
+  // be pointed at the CA bundle linked into the image root or every TLS
+  // connection fails certificate validation.
+  assert.ok(
+    env.includes('SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt'),
+    `Env must contain SSL_CERT_FILE pointing at the CA bundle: ${JSON.stringify(env)}`,
+  );
   assert.deepEqual(cmd, ['/bin/bash']);
   assert.equal(workingDir, '/');
 });
 
-test('copyToRoot exposes bash, git, coreutils, nix, and util-linux on /bin', () => {
+test('copyToRoot exposes the tools on /bin and the CA bundle on /etc/ssl/certs', () => {
   const image = sandboxImage();
   // Requirements 1.1, 1.2, 1.5: the tools are linked into the image's /bin.
   // `bashInteractive` reports `bash-interactive` as its pname. `util-linux`
   // carries `setsid`, which the Fabro sandbox driver requires before it will
   // run a command node (its absence exits 127 with `sandbox-driver: the
-  // container image must provide setsid and env`).
-  for (const name of ['bash', 'git', 'coreutils', 'nix', 'util-linux']) {
+  // container image must provide setsid and env`). `gh` is the GitHub CLI
+  // sandbox runs use; `cacert` reports `nss-cacert` as its pname and carries
+  // the `/etc/ssl/certs/ca-bundle.crt` the SSL_CERT_FILE env points at.
+  for (const name of ['bash', 'git', 'gh', 'coreutils', 'nix', 'util-linux', 'nss-cacert']) {
     assert.ok(
       image.copyToRootNames.some(
         (candidate) => candidate === name || candidate.startsWith(`${name}-`),
@@ -79,6 +89,10 @@ test('copyToRoot exposes bash, git, coreutils, nix, and util-linux on /bin', () 
   }
   assert.equal(image.copyToRootName, 'fabro-sandbox-root');
   assert.ok(image.copyToRootPathsToLink.includes('/bin'));
+  assert.ok(
+    image.copyToRootPathsToLink.includes('/etc/ssl/certs'),
+    `pathsToLink must expose the CA bundle: ${JSON.stringify(image.copyToRootPathsToLink)}`,
+  );
   // The declared contents and the built root carry the same packages.
   assert.deepEqual([...image.contentNames].sort(), [...image.copyToRootNames].sort());
 });

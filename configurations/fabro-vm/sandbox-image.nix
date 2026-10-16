@@ -53,20 +53,25 @@ in
       default = with pkgs; [
         bashInteractive
         git
+        gh
         coreutils
         nix
         util-linux
+        cacert
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git coreutils nix util-linux ]
+        with pkgs; [ bashInteractive git gh coreutils nix util-linux cacert ]
       '';
       description = ''
-        Packages whose `/bin` entries the image exposes on its default
-        command path (bash, git, coreutils, nix, and util-linux). The Fabro
-        sandbox driver runs scripts through `setsid` and `env`, so
-        util-linux's `setsid` must be on the path or every command node
-        exits 127 with `sandbox-driver: the container image must provide
-        setsid and env`.
+        Packages the image exposes in its root: the `/bin` command path
+        (bash, git, gh, coreutils, nix, and util-linux) plus cacert's
+        `/etc/ssl/certs` CA bundle. The Fabro sandbox driver runs scripts
+        through `setsid` and `env`, so util-linux's `setsid` must be on the
+        path or every command node exits 127 with `sandbox-driver: the
+        container image must provide setsid and env`. Containers see neither
+        the guest's `/etc/ssl` nor its CA configuration, so without the
+        bundle https clients (git, gh) fail TLS validation; the `SSL_CERT_FILE`
+        entry in `imageConfig.Env` points at it.
       '';
     };
 
@@ -77,6 +82,7 @@ in
           "PATH=/bin"
           "NIX_REMOTE=daemon"
           "NIX_CONFIG=experimental-features = nix-command flakes"
+          "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
         ];
         Cmd = [ "/bin/bash" ];
         WorkingDir = "/";
@@ -85,11 +91,15 @@ in
         OCI image configuration. `Env` must carry `PATH=/bin` (the Fabro
         Docker provider runs a non-login shell, so the path cannot come
         from a profile), `NIX_REMOTE=daemon` (the host daemon socket
-        bind-mounted by ./sandbox.nix), and `NIX_CONFIG` enabling the
-        `nix-command` and `flakes` experimental features: containers see
+        bind-mounted by ./sandbox.nix), `NIX_CONFIG` enabling the
+        `nix-command` and `flakes` experimental features (containers see
         neither the guest's /etc/nix/nix.conf nor any per-user config, so
         without it plain `nix` commands fail the experimental-features
-        gate before ever reaching the daemon.
+        gate before ever reaching the daemon), and `SSL_CERT_FILE` pointing
+        at the CA bundle linked into the image root from cacert. Both
+        OpenSSL (git's libcurl) and Go's crypto/x509 (gh) honor
+        `SSL_CERT_FILE`, so one variable covers every https client in the
+        container.
       '';
     };
 
@@ -99,12 +109,16 @@ in
       default = pkgs.buildEnv {
         name = "fabro-sandbox-root";
         paths = cfg.contents;
-        pathsToLink = [ "/bin" ];
+        pathsToLink = [
+          "/bin"
+          "/etc/ssl/certs"
+        ];
       };
       description = ''
-        Read-only root filesystem derivation: the `contents` packages
-        linked into `/bin`, with their store-path prefix stripped and
-        placed at the image root by `buildImage`.
+        Read-only root filesystem derivation: the `contents` packages'
+        `/bin` entries and cacert's `/etc/ssl/certs` bundle linked into the
+        image root, with their store-path prefix stripped and placed at the
+        image root by `buildImage`.
       '';
     };
 
