@@ -32,6 +32,15 @@ function guest() {
         after = vm.systemd.services.fabro.after;
         wants = vm.systemd.services.fabro.wants;
       };
+      keeper = {
+        type = vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.Type;
+        restart = vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.Restart;
+        restartSec = vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.RestartSec;
+        wantedBy = vm.systemd.services."fabro-sandbox-image-keep".wantedBy;
+        after = vm.systemd.services."fabro-sandbox-image-keep".after;
+        requires = vm.systemd.services."fabro-sandbox-image-keep".requires;
+        execStart = toString vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.ExecStart;
+      };
       reconciler = {
         type = vm.systemd.services."fabro-sandbox-env".serviceConfig.Type;
         remainAfterExit = vm.systemd.services."fabro-sandbox-env".serviceConfig.RemainAfterExit;
@@ -92,6 +101,27 @@ test('fabro.service is ordered after and wants the loader', () => {
   // Requirement 3.4: the image is loaded before Fabro can use it.
   assert.ok(fabro.after.includes('fabro-sandbox-image-load.service'));
   assert.ok(fabro.wants.includes('fabro-sandbox-image-load.service'));
+});
+
+test('the keeper unit re-pins the loaded image against the store prune', () => {
+  const { keeper, digestPath } = guest();
+  // The hourly `podman system prune -af` reaper (autoPrune) removes every
+  // image not referenced by a running container; the keeper's long-running
+  // container is that running reference, and the restart policy keeps the pin
+  // alive across crashes.
+  assert.equal(keeper.type, 'simple');
+  assert.equal(keeper.restart, 'always');
+  assert.equal(keeper.restartSec, 5);
+  assert.ok(keeper.wantedBy.includes('multi-user.target'));
+  // The image and the recorded digest come from the loader.
+  assert.ok(keeper.after.includes('fabro-sandbox-image-load.service'));
+  assert.ok(keeper.requires.includes('fabro-sandbox-image-load.service'));
+  // The digest store path is embedded so a contents change rewrites the unit
+  // and the switch restarts the keeper on the new digest.
+  assert.ok(
+    keeper.execStart.includes(digestPath),
+    `ExecStart must embed the digest store path: ${keeper.execStart}`,
+  );
 });
 
 test('the reconciler unit is a oneshot after fabro.service and the loader', () => {

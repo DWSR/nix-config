@@ -15,6 +15,15 @@
 # `fabro.service` (./fabro.nix) is ordered after and `wants` this unit so
 # the image is loaded before Fabro's `default` environment can use it.
 #
+# `fabro-sandbox-image-keep.service` keeps one trivial long-running
+# container from the loaded image (scripts/fabro-sandbox-image-keep.nix).
+# The guest's hourly `podman system prune -af` reaper removes every image
+# not referenced by a running container; the loaded image is only
+# referenced transiently while Fabro creates sandbox containers, so without
+# the keeper the reaper deletes it between runs and the next run's docker
+# provider fails with `docker error [500]: pulling image` trying to pull
+# `localhost/fabro-sandbox` from the nonexistent `localhost` registry.
+#
 # `fabro-sandbox-env.service` reconciles Fabro's persisted `default`
 # environment to the digest the loader recorded (scripts/
 # fabro-sandbox-env-reconcile.nix). It is a oneshot ordered after both
@@ -52,6 +61,14 @@ let
   # unchanged image leaves this unit (and the persisted environment)
   # untouched.
   reconcileScript = import ../../scripts/fabro-sandbox-env-reconcile.nix {
+    inherit pkgs;
+    inherit (cfg) name;
+  };
+
+  # The keeper script is parameterised by the image name (baked in at build
+  # time); the unit passes the digest store path and the script reads the
+  # loaded digest at run time.
+  keepScript = import ../../scripts/fabro-sandbox-image-keep.nix {
     inherit pkgs;
     inherit (cfg) name;
   };
@@ -96,6 +113,34 @@ in
       # Both store paths are embedded: a contents change rewrites this unit
       # (reloading the image), an unchanged image leaves it untouched.
       ExecStart = "${lib.getExe loadScript} ${cfg.archive} ${cfg.digest}";
+    };
+  };
+
+  # Keep one long-running container from the loaded image (see
+  # scripts/fabro-sandbox-image-keep.nix): `podman system prune -af` removes
+  # every image not referenced by a running container, so the hourly store
+  # reaper would otherwise delete the image between runs and the next run's
+  # docker provider would fail trying to pull `localhost/fabro-sandbox` from
+  # the nonexistent `localhost` registry (`docker error [500]: pulling
+  # image`).
+  systemd.services."fabro-sandbox-image-keep" = {
+    description = "Pin the loaded Fabro sandbox image with a running keeper container";
+    wantedBy = [ "multi-user.target" ];
+
+    # The image and its recorded digest come from the loader; podman.socket
+    # is pulled in transitively (the loader requires it).
+    after = [ "fabro-sandbox-image-load.service" ];
+    requires = [ "fabro-sandbox-image-load.service" ];
+
+    serviceConfig = {
+      Type = "simple";
+      Restart = "always";
+      RestartSec = 5;
+
+      # The digest store path is embedded so a contents change rewrites this
+      # unit and the switch restarts the keeper on the new digest; the value
+      # itself is read at run time from the loader's recorded file.
+      ExecStart = "${lib.getExe keepScript} ${cfg.digest}";
     };
   };
 

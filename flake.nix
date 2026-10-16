@@ -2271,6 +2271,36 @@
                 assert pkgs.lib.assertMsg
                   (builtins.elem "fabro-sandbox-image-load.service" vm.systemd.services.fabro.wants)
                   "fabro-vm: fabro.service must want the sandbox image loader (the image is loaded before Fabro uses it).";
+                # The keeper container re-pins the loaded image against the
+                # hourly `podman system prune -af` reaper (autoPrune above):
+                # the image is only referenced transiently while Fabro creates
+                # sandbox containers, so without a running reference the reaper
+                # deletes it between runs and the next run's docker provider
+                # fails pulling `localhost/fabro-sandbox`.
+                assert pkgs.lib.assertMsg (vm.systemd.services ? "fabro-sandbox-image-keep")
+                  "fabro-vm: systemd.services.\"fabro-sandbox-image-keep\" must be defined (the keeper that pins the loaded sandbox image).";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.Type == "simple"
+                    && vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.Restart == "always"
+                  )
+                  "fabro-vm: the sandbox image keeper must be a restarting service (a running container pins the image against `podman system prune -a`).";
+                assert pkgs.lib.assertMsg (
+                  builtins.elem "fabro-sandbox-image-load.service"
+                    vm.systemd.services."fabro-sandbox-image-keep".after
+                  &&
+                    builtins.elem "fabro-sandbox-image-load.service"
+                      vm.systemd.services."fabro-sandbox-image-keep".requires
+                ) "fabro-vm: the sandbox image keeper must start after and require the sandbox image loader.";
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      execStart = toString vm.systemd.services."fabro-sandbox-image-keep".serviceConfig.ExecStart;
+                      digest = builtins.unsafeDiscardStringContext (toString vm.fabro.sandboxImage.digest);
+                    in
+                    pkgs.lib.hasInfix digest execStart
+                  )
+                  "fabro-vm: the sandbox image keeper's ExecStart must embed the digest store path (so a contents change restarts the keeper on the new digest).";
                 assert pkgs.lib.assertMsg (vm.systemd.services ? "fabro-sandbox-env")
                   "fabro-vm: systemd.services.\"fabro-sandbox-env\" must be defined (the default-environment reconciler).";
                 assert pkgs.lib.assertMsg (
@@ -2306,7 +2336,7 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a → generated podman-prune oneshot+timer reaps leaked sandbox containers/images); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only plus the Nix daemon socket for every container; run.environment.id=default";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a → generated podman-prune oneshot+timer reaps leaked sandbox containers/images); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-image-keep restarting service runs a keeper container from the loaded image (pins it against the hourly prune -af); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only plus the Nix daemon socket for every container; run.environment.id=default";
 
             in
             pkgs.runCommand "fabro-vm-guest-eval"

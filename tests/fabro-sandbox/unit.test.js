@@ -49,6 +49,46 @@ test('fabro.service is ordered after and wants the loader', () => {
   assert.match(wants[1], /"fabro-sandbox-image-load\.service"/);
 });
 
+// The keeper unit lives in sandbox.nix between the loader and the reconciler.
+// Extract its block so the assertions are scoped to the keeper.
+function keeperBlock() {
+  const src = readSandbox();
+  const start = src.indexOf('systemd.services."fabro-sandbox-image-keep"');
+  assert.notEqual(start, -1, 'sandbox.nix must declare the fabro-sandbox-image-keep unit');
+  const next = src.indexOf('systemd.services.', start + 1);
+  return src.slice(start, next === -1 ? src.length : next);
+}
+
+test('sandbox.nix declares the keeper unit as a restarting loader-gated service', () => {
+  const block = keeperBlock();
+  // The keeper must be a long-running service with a restart policy: a
+  // running container is what pins the image against `podman system prune -a`
+  // (the hourly autoPrune reaper), and the restart policy keeps the pin alive
+  // across crashes.
+  assert.match(block, /Type = "simple"/);
+  assert.match(block, /Restart = "always"/);
+  assert.match(block, /RestartSec = 5/);
+  assert.match(block, /wantedBy = \[ "multi-user\.target" \]/);
+
+  // Ordered after and hard-requiring the loader: the image and the recorded
+  // digest both come from it.
+  const after = serviceList(block, 'after');
+  assert.match(after, /"fabro-sandbox-image-load\.service"/);
+
+  const requires = serviceList(block, 'requires');
+  assert.match(requires, /"fabro-sandbox-image-load\.service"/);
+});
+
+test('keeper ExecStart embeds the digest store path', () => {
+  const block = keeperBlock();
+  const execStart = block.match(/ExecStart = "([^"]*)"/);
+  assert.notEqual(execStart, null, 'keeper unit must declare an ExecStart');
+  // The digest store path is interpolated so a contents change rewrites the
+  // unit and the switch restarts the keeper on the new digest.
+  assert.match(execStart[1], /\$\{lib\.getExe keepScript\}/);
+  assert.match(execStart[1], /\$\{cfg\.digest\}/);
+});
+
 // The reconciler unit also lives in sandbox.nix. Extract its block (from the
 // declaration to the next `systemd.services.` entry, or end of file) so the
 // assertions are scoped to the reconciler and not the loader.
