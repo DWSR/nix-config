@@ -50,6 +50,14 @@ test('the image config puts bash on PATH and points nix at the host daemon', () 
     env.includes('NIX_REMOTE=daemon'),
     `Env must contain NIX_REMOTE=daemon: ${JSON.stringify(env)}`,
   );
+  // The in-container nix client must enable the experimental features:
+  // containers see neither the guest's /etc/nix/nix.conf nor a per-user
+  // config, and every nix-command (e.g. the `nix store ping` smoke daemon
+  // probe) is gated on them before the daemon is ever reached.
+  assert.ok(
+    env.includes('NIX_CONFIG=experimental-features = nix-command flakes'),
+    `Env must contain NIX_CONFIG with nix-command and flakes: ${JSON.stringify(env)}`,
+  );
   assert.deepEqual(cmd, ['/bin/bash']);
   assert.equal(workingDir, '/');
 });

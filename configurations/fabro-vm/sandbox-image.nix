@@ -71,6 +71,7 @@ in
         Env = [
           "PATH=/bin"
           "NIX_REMOTE=daemon"
+          "NIX_CONFIG=experimental-features = nix-command flakes"
         ];
         Cmd = [ "/bin/bash" ];
         WorkingDir = "/";
@@ -78,8 +79,12 @@ in
       description = ''
         OCI image configuration. `Env` must carry `PATH=/bin` (the Fabro
         Docker provider runs a non-login shell, so the path cannot come
-        from a profile) and `NIX_REMOTE=daemon` (the host daemon socket
-        bind-mounted by ./sandbox.nix).
+        from a profile), `NIX_REMOTE=daemon` (the host daemon socket
+        bind-mounted by ./sandbox.nix), and `NIX_CONFIG` enabling the
+        `nix-command` and `flakes` experimental features: containers see
+        neither the guest's /etc/nix/nix.conf nor any per-user config, so
+        without it plain `nix` commands fail the experimental-features
+        gate before ever reaching the daemon.
       '';
     };
 
