@@ -86,7 +86,7 @@
   - _Depends: 2.1, 2.2, 3.2, 4.2, 5.1_
   - _Requirements: 6.1, 6.2_
 
-- [ ] 7.3 Add the Node test harness and its flake check
+- [x] 7.3 Add the Node test harness and its flake check
   - Create `tests/fabro-sandbox/{helpers.js,image.test.js,wiring.test.js,package.json}` reusing the `tests/fabro-service` `nixEvalJson` pattern.
   - `image.test.js`: assert `imageConfig.Env` has `PATH=/bin` and `NIX_REMOTE=daemon`, `Cmd == [ "/bin/bash" ]`, `copyToRoot` names bash/git/coreutils/nix, and the digest derivation reads `index.json` and writes a `sha256:` line.
   - `wiring.test.js`: assert the loader/reconciler unit shape and ordering, the containers mounts, `run.environment.id`, and the reconciler script GET/compare/`If-Match` flow; register `checks.<system>.fabro-sandbox-tests` as a `node --test` `runCommand`.

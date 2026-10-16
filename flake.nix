@@ -2268,6 +2268,34 @@
             lockFile = ./flake.lock;
           };
 
+          # Node test harness for the sandbox image and its guest wiring
+          # (nix-built-container-for-default-fabro-environmen spec, task 7.3;
+          # design "Repository Checks → Implementation Notes" and "Testing
+          # Strategy"; requirements 6.1, 6.2). The suite evaluates the guest
+          # configuration through the flake (`fabro.sandboxImage`'s OCI config,
+          # contents, archive, and digest derivation; the loader/reconciler
+          # unit shape and ordering; the containers.conf mounts; the reconciler
+          # GET/compare/If-Match flow), so a regression fails the check with a
+          # named assertion. Mirrors the `fabro-service` check: the source is
+          # copied into the sandbox and `nix` + `nodejs` run the tests there.
+          fabro-sandbox-tests =
+            pkgs.runCommand "fabro-sandbox-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/fabro-sandbox/
+                touch $out
+              '';
+
           litellm-service =
             pkgs.runCommand "litellm-service"
               {
