@@ -1975,10 +1975,64 @@
                 assert pkgs.lib.assertMsg (builtins.elem "flakes" (
                   vm.nix.settings.experimental-features or [ ]
                 )) "fabro-vm: guest nix must enable the flakes experimental feature.";
+                # Store maintenance (nixpkgs' nix-gc / nix-optimise
+                # modules): daily reaping with the repo's shared
+                # --delete-older-than 7d retention, plus the optimiser.
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.nix.gc.automatic
+                    && vm.nix.gc.dates == [ "daily" ]
+                    && vm.nix.gc.options == "--delete-older-than 7d"
+                    && vm.nix.optimise.automatic
+                    && vm.nix.optimise.dates == [ "daily" ]
+                  )
+                  "fabro-vm: nix.gc must run daily with --delete-older-than 7d and nix.optimise must be enabled daily.";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.timers ? nix-gc
+                  && vm.systemd.timers ? nix-optimise
+                  && builtins.elem "daily" vm.systemd.timers.nix-gc.timerConfig.OnCalendar
+                  && builtins.elem "daily" vm.systemd.timers.nix-optimise.timerConfig.OnCalendar
+                  && vm.systemd.timers.nix-gc.timerConfig.Persistent
+                  && vm.systemd.timers.nix-optimise.timerConfig.Persistent
+                ) "fabro-vm: the generated nix-gc and nix-optimise timers must fire daily and persist missed runs.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services ? nix-gc
+                    && vm.systemd.services.nix-gc.serviceConfig.Type == "oneshot"
+                    && pkgs.lib.hasInfix "--delete-older-than 7d" vm.systemd.services.nix-gc.script
+                    && pkgs.lib.hasInfix "--optimise" vm.systemd.services.nix-optimise.serviceConfig.ExecStart
+                  )
+                  "fabro-vm: nix-gc must collect with --delete-older-than 7d and nix-optimise must run nix-store --optimise.";
                 assert pkgs.lib.assertMsg vm.virtualisation.podman.enable
                   "fabro-vm: virtualisation.podman must be enabled (the container engine behind the docker sandbox provider).";
                 assert pkgs.lib.assertMsg vm.virtualisation.podman.dockerSocket.enable
                   "fabro-vm: virtualisation.podman.dockerSocket must be enabled (fabro reaches the API via /run/docker.sock).";
+                # The store reaper (virtualisation.podman.autoPrune): fabro
+                # runs leak containers/images into the rootful store, so the
+                # generated podman-prune oneshot+timer must stay enabled and
+                # hourly; a dropped `-a` silently degrades it to dangling-only.
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.virtualisation.podman.autoPrune.enable
+                    && vm.virtualisation.podman.autoPrune.dates == "hourly"
+                    && vm.virtualisation.podman.autoPrune.flags == [ "-a" ]
+                  )
+                  "fabro-vm: virtualisation.podman.autoPrune must be enabled hourly with the -a flag (leftover sandbox containers/images fill the guest disk).";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services ? podman-prune
+                    && vm.systemd.services.podman-prune.serviceConfig.Type == "oneshot"
+                    && pkgs.lib.hasInfix "\"system\" \"prune\" \"-f\" \"-a\"" vm.systemd.services.podman-prune.serviceConfig.ExecStart
+                  )
+                  "fabro-vm: the generated podman-prune service must be a oneshot running `podman system prune -f -a`.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.timers ? podman-prune
+                    && vm.systemd.timers.podman-prune.timerConfig.OnCalendar == [ "hourly" ]
+                    && vm.systemd.timers.podman-prune.timerConfig.Persistent
+                    && builtins.elem "timers.target" vm.systemd.timers.podman-prune.wantedBy
+                  )
+                  "fabro-vm: the generated podman-prune timer must fire hourly (persistent, enabled via timers.target).";
                 assert pkgs.lib.assertMsg (builtins.any (p: (p.pname or p.name or "") == "fabro")
                   vm.environment.systemPackages
                 ) "fabro-vm: environment.systemPackages must contain the fabro package.";
@@ -2252,7 +2306,8 @@
                 assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
                   builtins.readFile ./configurations/fabro-vm/fabro.nix
                 )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only plus the Nix daemon socket for every container; run.environment.id=default";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat; autoPrune hourly -a → generated podman-prune oneshot+timer reaps leaked sandbox containers/images); nix store maintenance via the nix-gc and nix-optimise daily timers (GC retains 7 days of generations); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only plus the Nix daemon socket for every container; run.environment.id=default";
+
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {

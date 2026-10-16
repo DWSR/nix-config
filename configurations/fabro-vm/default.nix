@@ -278,10 +278,27 @@ in
     # module's `provision`, because lima-init creates that user
     # imperatively on each boot and users.users must not declare it
     # (mutableUsers stays true so rebuilds preserve it).
+    #
+    # autoPrune is the module's generated `podman-prune` oneshot + timer
+    # pair: the docker sandbox provider never removes the container (and
+    # fetched images) a finished fabro run leaves in the rootful store,
+    # so without a reaper the guest's virtual disk grows until Lima's
+    # `disk` size fills. The module renders `podman system prune -f` plus
+    # `flags` (`-a` extends the prune to images no container references —
+    # the requested `podman system prune -af`) on `dates` (the module
+    # default, weekly, is too slow a reaper for this host); the timer is
+    # Persistent (catches up a missed run after a VM stop) with the
+    # module's 30-min RandomizedDelaySec jitter. Volumes stay untouched
+    # (no --volumes).
     virtualisation.podman = {
       enable = true;
       dockerSocket.enable = true;
       dockerCompat = true;
+      autoPrune = {
+        enable = true;
+        flags = [ "-a" ];
+        dates = "hourly";
+      };
     };
 
     # Serve the Fabro API to sandbox containers on the podman bridge, with
@@ -317,6 +334,25 @@ in
         "flakes"
       ];
       trusted-users = [ "@wheel" ];
+    };
+
+    # Store maintenance. GC reaps the generation-per-switch accretion on
+    # this deploy target with the repo's shared retention policy
+    # (--delete-older-than 7d keeps a week of rollback), and the
+    # optimiser hard-links duplicate store paths (nixpkgs' generated unit
+    # is nice 19 with idle CPU/IO scheduling behind an AC-power condition,
+    # so it does not contend with fabro runs). systemd's `daily` is
+    # 00:00 in the guest's zone; both module-generated timers are
+    # Persistent, so a run missed while the VM was stopped fires after
+    # boot instead.
+    nix.gc = {
+      automatic = true;
+      dates = "daily";
+      options = "--delete-older-than 7d";
+    };
+    nix.optimise = {
+      automatic = true;
+      dates = [ "daily" ];
     };
 
     # qcow-efi disk layout: ESP on vda1, root labeled nixos, grown to the
