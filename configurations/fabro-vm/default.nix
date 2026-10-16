@@ -49,6 +49,11 @@ in
     ./image.nix
     # The host's application services; Podman is enabled below.
     ./fabro.nix
+    # The repo-owned sandbox image (fabro.sandboxImage: the nix-snapshotter
+    # OCI archive) that becomes Fabro's `default` environment image, plus
+    # the loader unit that publishes it into the local Podman store.
+    ./sandbox-image.nix
+    ./sandbox.nix
     ./litellm.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
