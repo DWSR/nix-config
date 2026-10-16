@@ -2966,7 +2966,7 @@
           vm = self.nixosConfigurations.fabro-vm;
         in
         import ./scripts/fabro-sandbox-smoke.nix {
-          pkgs = vm.pkgs;
+          inherit (vm) pkgs;
           inherit (vm.config.fabro.sandboxImage) name;
         };
 
@@ -2984,7 +2984,7 @@
         vm.pkgs.callPackage ./scripts/fabro-sandbox-verify.nix {
           inherit (cfg) name archive digest;
           smoke = import ./scripts/fabro-sandbox-smoke.nix {
-            pkgs = vm.pkgs;
+            inherit (vm) pkgs;
             inherit (cfg) name;
           };
         };
