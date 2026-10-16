@@ -13,9 +13,10 @@
 #     fallback);
 #   * the run's workflow slug must be in `allowedWorkflowSlugs` and the run
 #     must be `running`;
-#   * only `POST /api/v1/runs` and `POST /api/v1/runs/{id}/start` are
-#     forwarded — a dispatching run may create and start children, nothing
-#     else;
+#   * only four routes are forwarded — a dispatching run may create and
+#     start children, list runs, and archive its own earlier successful
+#     runs (`POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
+#     `POST /api/v1/runs/{id}/archive`, `GET /api/v1/runs`); nothing else;
 #   * on create the bridge fills in `parent_id` with the calling run, and
 #     refuses a conflicting parent, a target repository other than the
 #     calling run's repository, or a workflow version that is not one of
@@ -23,7 +24,9 @@
 #   * on start only children of the calling run pass, and a child that
 #     lands in pre-execution approval is approved transparently before the
 #     response is returned, so dispatch workflows never need approval
-#     hooks or approve calls.
+#     hooks or approve calls;
+#   * on archive only previous runs of the calling workflow for the
+#     calling run's repository that ended `succeeded` pass.
 #
 # The Fabro API itself keeps its loopback-only listener; the bridge holds
 # the dev token (from the sops `fabro-env` template, like fabro.service)

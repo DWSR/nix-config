@@ -12,15 +12,22 @@
 //!
 //!   * the caller run's workflow slug must be in `ALLOWED_WORKFLOW_SLUGS`
 //!     and the run must be `running`;
-//!   * only `POST /api/v1/runs` and `POST /api/v1/runs/{id}/start` are
-//!     forwarded; everything else is refused;
+//!   * only four routes are forwarded; everything else is refused:
+//!     `POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
+//!     `POST /api/v1/runs/{id}/archive`, and `GET /api/v1/runs`;
 //!   * on create, a missing `parent_id` is filled in with the calling run
 //!     (a conflicting parent is refused), the target repository must match
 //!     the calling run's repository, and the workflow version must be one
 //!     of the pinned dispatch targets (`ALLOWED_VERSION_VARIABLES`);
 //!   * on start, only children of the calling run may be started, and a
 //!     child that lands in pre-execution approval is approved transparently
-//!     before the response is returned.
+//!     before the response is returned;
+//!   * on archive, only previous runs of the calling workflow for the
+//!     calling run's repository that ended `succeeded` may be archived
+//!     (never the calling run itself), which is how a dispatcher prunes
+//!     its own earlier runs;
+//!   * on list, the query parameters are forwarded unchanged; the caller
+//!     is expected to filter the returned summaries itself.
 //!
 //! The Fabro dev token is read from the process environment (systemd
 //! EnvironmentFile) and only ever travels on the loopback upstream call.
@@ -153,6 +160,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 struct IncomingRequest {
     method: String,
     path: String,
+    query: Option<String>,
     body: Vec<u8>,
 }
 
@@ -185,7 +193,11 @@ fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, String> {
     let mut parts = request_line.split_whitespace();
     let method = parts.next().ok_or("missing request method")?.to_string();
     let target = parts.next().ok_or("missing request target")?.to_string();
-    let path = target.split('?').next().unwrap_or("").to_string();
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) if !query.is_empty() => (path.to_string(), Some(query.to_string())),
+        Some((path, _)) => (path.to_string(), None),
+        None => (target.clone(), None),
+    };
 
     let mut content_length: usize = 0;
     for line in lines {
@@ -217,7 +229,12 @@ fn read_request(stream: &mut TcpStream) -> Result<IncomingRequest, String> {
     }
     body.truncate(content_length);
 
-    Ok(IncomingRequest { method, path, body })
+    Ok(IncomingRequest {
+        method,
+        path,
+        query,
+        body,
+    })
 }
 
 fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]) {
@@ -570,9 +587,17 @@ fn caller_allowed(cfg: &Config, caller: &Value) -> Result<(), String> {
 enum Route {
     Create,
     Start(String),
+    Archive(String),
+    ListRuns,
 }
 
 fn route(method: &str, path: &str) -> Option<Route> {
+    if method == "GET" {
+        if path == "/api/v1/runs" {
+            return Some(Route::ListRuns);
+        }
+        return None;
+    }
     if method != "POST" {
         return None;
     }
@@ -580,11 +605,18 @@ fn route(method: &str, path: &str) -> Option<Route> {
         return Some(Route::Create);
     }
     let rest = path.strip_prefix("/api/v1/runs/")?;
-    let id = rest.strip_suffix("/start")?;
-    if id.is_empty() || id.contains('/') {
-        return None;
+    for (suffix, wrap) in [
+        ("/start", Route::Start as fn(String) -> Route),
+        ("/archive", Route::Archive as fn(String) -> Route),
+    ] {
+        if let Some(id) = rest.strip_suffix(suffix) {
+            if id.is_empty() || id.contains('/') {
+                return None;
+            }
+            return Some(wrap(id.to_string()));
+        }
     }
-    Some(Route::Start(id.to_string()))
+    None
 }
 
 fn prepare_create(
@@ -718,6 +750,89 @@ fn handle_start(
     })
 }
 
+/// Archive a previous run of the calling workflow for the caller's own
+/// repository. The target must have ended `succeeded`; the calling run
+/// itself and runs of any other workflow or repository are refused.
+fn handle_archive(
+    cfg: &Config,
+    caller: &Value,
+    target_id: &str,
+) -> Result<UpstreamResponse, (u16, String)> {
+    let caller_id = caller.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if target_id == caller_id {
+        return Err((403, "the calling run cannot archive itself".to_string()));
+    }
+
+    let target_response = api_request(cfg, "GET", &format!("/runs/{target_id}"), None)
+        .map_err(|e| (502, format!("cannot inspect run {target_id}: {e}")))?;
+    if target_response.status == 404 {
+        return Err((404, format!("run {target_id} does not exist")));
+    }
+    if !(200..300).contains(&target_response.status) {
+        return Err((
+            502,
+            format!("inspecting run {target_id} failed: HTTP {}", target_response.status),
+        ));
+    }
+    let target: Value = serde_json::from_slice(&target_response.body)
+        .map_err(|e| (502, format!("run {target_id} metadata is not JSON: {e}")))?;
+
+    let caller_slug = caller
+        .pointer("/workflow/slug")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let target_slug = target
+        .pointer("/workflow/slug")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if target_slug.is_empty() || target_slug != caller_slug {
+        return Err((
+            403,
+            format!("run {target_id} is not a run of the calling workflow {caller_slug:?}"),
+        ));
+    }
+
+    let caller_repo = caller
+        .pointer("/repository/name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let target_repo = target
+        .pointer("/repository/name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if caller_repo.is_empty() || !target_repo.eq_ignore_ascii_case(caller_repo) {
+        return Err((
+            403,
+            format!("run {target_id} is not a run for the calling run's repository {caller_repo:?}"),
+        ));
+    }
+
+    let status = target
+        .pointer("/lifecycle/status/kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if status != "succeeded" {
+        return Err((
+            403,
+            format!("run {target_id} status is {status:?}, expected \"succeeded\""),
+        ));
+    }
+
+    api_request(cfg, "POST", &format!("/runs/{target_id}/archive"), None)
+        .map_err(|e| (502, format!("archive request for {target_id} failed: {e}")))
+}
+
+/// Forward a run-list request to the Fabro API with its query string
+/// intact. The endpoint is read-only; the caller filters the returned
+/// summaries (workflow, repository, status) on its side.
+fn handle_list(cfg: &Config, query: Option<&str>) -> Result<UpstreamResponse, String> {
+    let target = match query {
+        Some(query) => format!("/runs?{query}"),
+        None => "/runs".to_string(),
+    };
+    api_request(cfg, "GET", &target, None)
+}
+
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
@@ -821,6 +936,26 @@ fn handle_connection(cfg: Arc<Config>, cache: Arc<Mutex<VersionCache>>, mut stre
                 respond(&mut stream, response.status, &response.content_type, &response.body);
             }
             Err((status, message)) => fail(&mut stream, status, &message),
+        },
+        Some(Route::Archive(target_id)) => match handle_archive(&cfg, &caller, &target_id) {
+            Ok(response) => {
+                eprintln!(
+                    "fabro-api-bridge: allow run={run_id} POST /api/v1/runs/{target_id}/archive -> {}",
+                    response.status
+                );
+                respond(&mut stream, response.status, &response.content_type, &response.body);
+            }
+            Err((status, message)) => fail(&mut stream, status, &message),
+        },
+        Some(Route::ListRuns) => match handle_list(&cfg, request.query.as_deref()) {
+            Ok(response) => {
+                eprintln!(
+                    "fabro-api-bridge: allow run={run_id} GET /api/v1/runs -> {}",
+                    response.status
+                );
+                respond(&mut stream, response.status, &response.content_type, &response.body);
+            }
+            Err(error) => fail(&mut stream, 502, &format!("upstream list failed: {error}")),
         },
         None => fail(
             &mut stream,
@@ -935,9 +1070,17 @@ mod tests {
             route("POST", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV/start"),
             Some(Route::Start(id)) if id == "01M507E860H2VN80HQBC0W18ZV"
         ));
-        assert!(route("GET", "/api/v1/runs").is_none());
+        assert!(matches!(
+            route("POST", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV/archive"),
+            Some(Route::Archive(id)) if id == "01M507E860H2VN80HQBC0W18ZV"
+        ));
+        assert!(matches!(route("GET", "/api/v1/runs"), Some(Route::ListRuns)));
+        assert!(route("GET", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV").is_none());
+        assert!(route("GET", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV/archive").is_none());
+        assert!(route("DELETE", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV").is_none());
         assert!(route("POST", "/api/v1/runs/foo/approve").is_none());
         assert!(route("POST", "/api/v1/runs/foo/start/extra").is_none());
+        assert!(route("POST", "/api/v1/runs/foo/archive/extra").is_none());
         assert!(route("POST", "/api/v1/environments").is_none());
     }
 
@@ -1082,18 +1225,19 @@ mod tests {
             let collected = Arc::clone(&requests);
             thread::spawn(move || {
                 for stream in listener.incoming() {
-                    let Ok(mut stream) = stream else { continue };
-                    let (method, path, body) = match read_request(&mut stream) {
-                        Ok(request) => (request.method, request.path, request.body),
-                        Err(_) => continue,
-                    };
-                    let body_text = String::from_utf8_lossy(&body).into_owned();
-                    collected
-                        .lock()
-                        .unwrap()
-                        .push((format!("{method} {path}"), body_text.clone()));
-                    let (status, value) = answer(&method, &path, &body_text);
-                    respond_json(&mut stream, status, &value);
+            let Ok(mut stream) = stream else { continue };
+            let (method, path, query, body) = match read_request(&mut stream) {
+                Ok(request) => (request.method, request.path, request.query, request.body),
+                Err(_) => continue,
+            };
+            let body_text = String::from_utf8_lossy(&body).into_owned();
+            let target = match query {
+                Some(query) => format!("{method} {path}?{query}"),
+                None => format!("{method} {path}"),
+            };
+            collected.lock().unwrap().push((target, body_text.clone()));
+            let (status, value) = answer(&method, &path, &body_text);
+            respond_json(&mut stream, status, &value);
                 }
             });
             MockApi { addr, requests }
@@ -1152,6 +1296,124 @@ mod tests {
         assert_eq!(error.0, 403);
     }
 
+    fn archive_caller() -> Value {
+        json!({
+            "id": "01M507E860H2VN80HQBC0W18ZV",
+            "workflow": {"slug": "dispatch"},
+            "lifecycle": {"status": {"kind": "running"}},
+            "repository": {"name": "DWSR/nix-config"}
+        })
+    }
+
+    #[test]
+    fn archive_flow_allows_previous_successful_run_of_same_workflow_and_repo() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs/01OLD") => (
+                200,
+                json!({
+                    "id": "01OLD",
+                    "workflow": {"slug": "dispatch"},
+                    "repository": {"name": "DWSR/nix-config"},
+                    "lifecycle": {"status": {"kind": "succeeded"}, "archived": false}
+                }),
+            ),
+            ("POST", "/api/v1/runs/01OLD/archive") => (
+                200,
+                json!({"id": "01OLD", "lifecycle": {"archived": true}}),
+            ),
+            _ => (404, json!({"error": "unexpected"})),
+        });
+        let cfg = test_config(api.addr.clone());
+
+        let response = handle_archive(&cfg, &archive_caller(), "01OLD").unwrap();
+        assert_eq!(response.status, 200);
+        let final_run: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(final_run["lifecycle"]["archived"], json!(true));
+
+        let requests = api.requests.lock().unwrap().clone();
+        let paths: Vec<String> = requests.iter().map(|(p, _)| p.clone()).collect();
+        assert!(paths.contains(&"GET /api/v1/runs/01OLD".to_string()));
+        assert!(paths.contains(&"POST /api/v1/runs/01OLD/archive".to_string()));
+    }
+
+    #[test]
+    fn archive_flow_refuses_self_foreign_and_non_succeeded_targets() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs/01OTHERWORKFLOW") => (
+                200,
+                json!({
+                    "id": "01OTHERWORKFLOW",
+                    "workflow": {"slug": "oneshot"},
+                    "repository": {"name": "DWSR/nix-config"},
+                    "lifecycle": {"status": {"kind": "succeeded"}}
+                }),
+            ),
+            ("GET", "/api/v1/runs/01OTHERREPO") => (
+                200,
+                json!({
+                    "id": "01OTHERREPO",
+                    "workflow": {"slug": "dispatch"},
+                    "repository": {"name": "DWSR/other"},
+                    "lifecycle": {"status": {"kind": "succeeded"}}
+                }),
+            ),
+            ("GET", "/api/v1/runs/01FAILED") => (
+                200,
+                json!({
+                    "id": "01FAILED",
+                    "workflow": {"slug": "dispatch"},
+                    "repository": {"name": "DWSR/nix-config"},
+                    "lifecycle": {"status": {"kind": "failed"}}
+                }),
+            ),
+            ("GET", "/api/v1/runs/01MISSING") => (404, json!({"error": "not found"})),
+            _ => (200, json!({})),
+        });
+        let cfg = test_config(api.addr.clone());
+        let caller = archive_caller();
+
+        let self_archive = handle_archive(&cfg, &caller, "01M507E860H2VN80HQBC0W18ZV").unwrap_err();
+        assert_eq!(self_archive.0, 403);
+        assert_eq!(handle_archive(&cfg, &caller, "01OTHERWORKFLOW").unwrap_err().0, 403);
+        assert_eq!(handle_archive(&cfg, &caller, "01OTHERREPO").unwrap_err().0, 403);
+        assert_eq!(handle_archive(&cfg, &caller, "01FAILED").unwrap_err().0, 403);
+        assert_eq!(handle_archive(&cfg, &caller, "01MISSING").unwrap_err().0, 404);
+
+        let requests = api.requests.lock().unwrap().clone();
+        assert!(!requests.iter().any(|(path, _)| path.contains("/archive")));
+    }
+
+    #[test]
+    fn list_flow_forwards_the_query_string() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs") => (
+                200,
+                json!({"data": [{"id": "01OLD"}], "meta": {"has_more": false, "total": 1}}),
+            ),
+            _ => (404, json!({"error": "unexpected"})),
+        });
+        let cfg = test_config(api.addr.clone());
+
+        let response = handle_list(
+            &cfg,
+            Some("status=succeeded&page%5Blimit%5D=100&page%5Boffset%5D=0"),
+        )
+        .unwrap();
+        assert_eq!(response.status, 200);
+        let body: Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["meta"]["has_more"], json!(false));
+
+        let requests = api.requests.lock().unwrap().clone();
+        let targets: Vec<String> = requests.iter().map(|(p, _)| p.clone()).collect();
+        assert_eq!(
+            targets,
+            vec![
+                "GET /api/v1/runs?status=succeeded&page%5Blimit%5D=100&page%5Boffset%5D=0"
+                    .to_string()
+            ]
+        );
+    }
+
     #[test]
     fn request_round_trip_over_tcp() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1159,22 +1421,23 @@ mod tests {
         let parsed = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let request = read_request(&mut stream).unwrap();
-            (request.method, request.path, request.body)
+            (request.method, request.path, request.query, request.body)
         });
 
         let body = br#"{"hello":"world"}"#;
         let mut stream = TcpStream::connect(addr).unwrap();
         let request = format!(
-            "POST /api/v1/runs HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\n\r\n",
+            "POST /api/v1/runs?status=succeeded HTTP/1.1\r\nhost: x\r\ncontent-length: {}\r\n\r\n",
             body.len()
         );
         stream.write_all(request.as_bytes()).unwrap();
         stream.write_all(body).unwrap();
         stream.flush().unwrap();
 
-        let (method, path, parsed_body) = parsed.join().unwrap();
+        let (method, path, query, parsed_body) = parsed.join().unwrap();
         assert_eq!(method, "POST");
         assert_eq!(path, "/api/v1/runs");
+        assert_eq!(query.as_deref(), Some("status=succeeded"));
         assert_eq!(parsed_body, body);
     }
 }
