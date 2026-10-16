@@ -1,0 +1,92 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const { nixEvalJson, repoRoot } = require('./helpers');
+
+// Evaluate the guest's `fabro.sandboxImage` option tree through the flake, so
+// the assertions read the NixOS-evaluated image (OCI config, contents, archive,
+// and digest derivation) rather than the module source. The guest is
+// `aarch64-linux`, but the option tree is evaluable on any host — the same
+// `nixEvalJson` pattern tests/fabro-service uses.
+function sandboxImage() {
+  return nixEvalJson(`
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      cfg = flake.nixosConfigurations.fabro-vm.config.fabro.sandboxImage;
+    in
+    {
+      enable = cfg.enable;
+      name = cfg.name;
+      tag = cfg.tag;
+      env = cfg.imageConfig.Env;
+      cmd = cfg.imageConfig.Cmd;
+      workingDir = cfg.imageConfig.WorkingDir;
+      contentNames = map (p: p.pname or p.name) cfg.contents;
+      copyToRootName = cfg.copyToRoot.name;
+      copyToRootNames = map (p: p.pname or p.name) cfg.copyToRoot.paths;
+      copyToRootPathsToLink = cfg.copyToRoot.pathsToLink;
+      archiveOutPath = cfg.archive.outPath;
+      archiveSystem = cfg.archive.system;
+      digestBuildCommand = cfg.digest.buildCommand;
+    }
+  `);
+}
+
+test('the sandbox image is enabled and pinned to the local name and tag', () => {
+  const image = sandboxImage();
+  assert.equal(image.enable, true);
+  assert.equal(image.name, 'localhost/fabro-sandbox');
+  assert.equal(image.tag, 'latest');
+});
+
+test('the image config puts bash on PATH and points nix at the host daemon', () => {
+  const { env, cmd, workingDir } = sandboxImage();
+  // Requirements 1.3, 1.4: the Docker provider runs a non-login shell, so
+  // PATH must come from the image config rather than a login profile.
+  assert.ok(env.includes('PATH=/bin'), `Env must contain PATH=/bin: ${JSON.stringify(env)}`);
+  assert.ok(
+    env.includes('NIX_REMOTE=daemon'),
+    `Env must contain NIX_REMOTE=daemon: ${JSON.stringify(env)}`,
+  );
+  assert.deepEqual(cmd, ['/bin/bash']);
+  assert.equal(workingDir, '/');
+});
+
+test('copyToRoot exposes bash, git, coreutils, and nix on /bin', () => {
+  const image = sandboxImage();
+  // Requirements 1.1, 1.2, 1.5: the four tools are linked into the image's
+  // /bin. `bashInteractive` reports `bash-interactive` as its pname.
+  for (const name of ['bash', 'git', 'coreutils', 'nix']) {
+    assert.ok(
+      image.copyToRootNames.some(
+        (candidate) => candidate === name || candidate.startsWith(`${name}-`),
+      ),
+      `copyToRoot must carry ${name}: ${JSON.stringify(image.copyToRootNames)}`,
+    );
+  }
+  assert.equal(image.copyToRootName, 'fabro-sandbox-root');
+  assert.ok(image.copyToRootPathsToLink.includes('/bin'));
+  // The declared contents and the built root carry the same packages.
+  assert.deepEqual([...image.contentNames].sort(), [...image.copyToRootNames].sort());
+});
+
+test('the archive is an aarch64-linux OCI image tarball', () => {
+  const image = sandboxImage();
+  // Requirement 2.1: the image is built for the guest's architecture and the
+  // archive is the `nix-image-*.tar` OCI image layout.
+  assert.equal(image.archiveSystem, 'aarch64-linux');
+  assert.match(image.archiveOutPath, /nix-image-.*\.tar$/);
+});
+
+test('the digest derivation reads index.json and writes a sha256 line', () => {
+  const { digestBuildCommand } = sandboxImage();
+  // Requirements 2.5, 2.6: extract the manifest digest from the archive's
+  // index.json and emit a single sha256:<hex> line to $out, failing the build
+  // when the value is not a sha256 digest.
+  assert.match(digestBuildCommand, /tar -xOf .* index\.json/);
+  assert.match(digestBuildCommand, /jq -r '\.manifests\[0\]\.digest'/);
+  assert.match(digestBuildCommand, /sha256:/);
+  assert.match(digestBuildCommand, /"\$out"/);
+});
