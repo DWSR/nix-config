@@ -2,6 +2,6 @@
   "name": "fabro-sandbox-tests",
   "version": "0.0.0",
   "private": true,
-  "main": "loader.test.js",
-  "description": "Test suite entry point for the fabro-sandbox spec (sandbox image, loader, reconciler, host-store sharing). The main field lets node --test load this directory."
+  "main": "run.js",
+  "description": "Test suite entry point for the fabro-sandbox spec (sandbox image, loader, reconciler, host-store sharing). The main field lets node --test load every *.test.js in this directory through run.js."
 }

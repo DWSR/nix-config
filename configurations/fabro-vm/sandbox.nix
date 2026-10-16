@@ -1,4 +1,4 @@
-# Sandbox image loader for the fabro-vm guest
+# Sandbox image loader and environment reconciler for the fabro-vm guest
 # (spec `nix-built-container-for-default-fabro-environmen`).
 #
 # `fabro-sandbox-image-load.service` loads the repo-built OCI archive
@@ -14,6 +14,15 @@
 #
 # `fabro.service` (./fabro.nix) is ordered after and `wants` this unit so
 # the image is loaded before Fabro's `default` environment can use it.
+#
+# `fabro-sandbox-env.service` reconciles Fabro's persisted `default`
+# environment to the digest the loader recorded (scripts/
+# fabro-sandbox-env-reconcile.nix). It is a oneshot ordered after both
+# `fabro.service` (the environments API) and the loader (the declared
+# digest), and reads `FABRO_DEV_TOKEN` from the sops-rendered `fabro-env`
+# file. Running as root, it updates the persisted environment in place
+# (never creating a duplicate) and is idempotent when the reference
+# already matches.
 {
   config,
   lib,
@@ -26,6 +35,15 @@ let
   # The loader script is parameterised by the image name (baked in at build
   # time); the unit passes the archive and digest store paths positionally.
   loadScript = import ../../scripts/fabro-sandbox-image-load.nix {
+    inherit pkgs;
+    inherit (cfg) name;
+  };
+
+  # The reconciler script is parameterised by the image name (baked in at
+  # build time); it reads the digest the loader recorded at run time, so an
+  # unchanged image leaves this unit (and the persisted environment)
+  # untouched.
+  reconcileScript = import ../../scripts/fabro-sandbox-env-reconcile.nix {
     inherit pkgs;
     inherit (cfg) name;
   };
@@ -52,6 +70,39 @@ in
       # Both store paths are embedded: a contents change rewrites this unit
       # (reloading the image), an unchanged image leaves it untouched.
       ExecStart = "${lib.getExe loadScript} ${cfg.archive} ${cfg.digest}";
+    };
+  };
+
+  # Reconcile Fabro's persisted `default` environment to the digest the loader
+  # recorded. `fabro.service` serves the environments API and the loader
+  # records /run/fabro-sandbox/digest, so both are hard dependencies (and
+  # ordering) of this unit.
+  systemd.services."fabro-sandbox-env" = {
+    description = "Reconcile the Fabro default environment to the loaded sandbox image digest";
+    wantedBy = [ "multi-user.target" ];
+
+    after = [
+      "fabro.service"
+      "fabro-sandbox-image-load.service"
+    ];
+    requires = [
+      "fabro.service"
+      "fabro-sandbox-image-load.service"
+    ];
+
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+
+      # FABRO_DEV_TOKEN comes from the sops-rendered `fabro-env` file (the
+      # same template fabro.service loads); the token never enters the Nix
+      # store or the image. No User is set, so the unit runs as root.
+      EnvironmentFile = config.sops.templates."fabro-env".path;
+
+      # The digest is read at run time from the loader's recorded file, so an
+      # unchanged image leaves this unit (and the persisted environment)
+      # untouched.
+      ExecStart = lib.getExe reconcileScript;
     };
   };
 }
