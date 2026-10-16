@@ -308,11 +308,15 @@ in
     # the bridge accepts in a create request.
     services.fabro-api-bridge = {
       enable = true;
-      allowedWorkflowSlugs = [ "dispatch" ];
+      allowedWorkflowSlugs = [
+        "dispatch"
+        "kiro-impl"
+      ];
       allowedVersionVariables = [
         "kiro_spec_workflow_version"
         "oneshot_workflow_version"
         "dependabot_workflow_version"
+        "kiro_task_workflow_version"
       ];
     };
 
