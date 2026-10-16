@@ -23,6 +23,14 @@
 # file. Running as root, it updates the persisted environment in place
 # (never creating a duplicate) and is idempotent when the reference
 # already matches.
+#
+# The global `[containers]` mounts below give every container Podman creates
+# the guest's `/nix/store` (read-only) and the Nix daemon socket, so
+# Nix-based sandbox environments reuse host store paths (the image's store
+# paths are empty mountpoints) and talk to the host daemon via
+# `NIX_REMOTE=daemon`. The mounts live in the engine-level containers.conf,
+# not on the environment, because Fabro's environment schema has no mount
+# field (Requirement 5.3).
 {
   config,
   lib,
@@ -105,4 +113,20 @@ in
       ExecStart = lib.getExe reconcileScript;
     };
   };
+
+  # Host-store and daemon sharing (Requirements 5.1-5.5). `virtualisation.podman`
+  # enables `virtualisation.containers`, whose module renders
+  # `containersConf.settings` into /etc/containers/containers.conf. Declaring
+  # the mounts under the global `[containers]` table means every container
+  # Podman creates receives them, with no per-environment configuration.
+  #
+  # The image's store paths are empty mountpoints, so binding the guest's
+  # `/nix/store` read-only is what makes the image's `/bin` symlinks resolve
+  # while preventing sandbox containers from writing to the guest store. The
+  # daemon-socket directory is bound read-write so the socket is usable and the
+  # image's `NIX_REMOTE=daemon` reaches the host daemon.
+  virtualisation.containers.containersConf.settings.containers.mounts = [
+    "type=bind,source=/nix/store,destination=/nix/store,ro"
+    "type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket"
+  ];
 }
