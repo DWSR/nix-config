@@ -22,7 +22,7 @@
   - _Requirements: 2.5, 2.6_
 
 - [ ] 3. Local image loader
-- [ ] 3.1 (P) Implement the loader script
+- [x] 3.1 (P) Implement the loader script
   - Create `scripts/fabro-sandbox-image-load.nix` as a `writeShellApplication` (`runtimeInputs = [ pkgs.podman pkgs.coreutils ]`).
   - Run `podman load -i ${archive}`; read `digest=$(cat ${digest})`, form `ref="${name}@${digest}"`, and verify with `podman image exists "$ref"`, failing with the ref on mismatch.
   - Write the digest to `/run/fabro-sandbox/digest` (mode 0644), retain the local `<name>:<tag>` tag, and issue no push/registry call.
