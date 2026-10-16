@@ -30,7 +30,7 @@
   - _Boundary: Sandbox Image Loader_
   - _Requirements: 3.1, 3.3, 3.5, 3.6_
 
-- [ ] 3.2 Declare the loader unit and gate `fabro.service` on it
+- [x] 3.2 Declare the loader unit and gate `fabro.service` on it
   - Create `configurations/fabro-vm/sandbox.nix` with `fabro-sandbox-image-load.service` (`Type = "oneshot"`, `RemainAfterExit`, `wantedBy = [ "multi-user.target" ]`, `after`/`requires = [ "podman.socket" ]`, `RuntimeDirectory = "fabro-sandbox"`) and import it from `default.nix`.
   - Embed the archive and digest store paths in `ExecStart` so a contents change rewrites the unit (reloading the image) and an unchanged image leaves the unit untouched.
   - Add `fabro.service` `after`/`wants` for the loader so the image is loaded before Fabro can use it.
