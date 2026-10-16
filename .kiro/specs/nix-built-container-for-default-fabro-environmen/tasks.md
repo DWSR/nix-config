@@ -1,28 +1,28 @@
 # Implementation Plan
 
 - [ ] 1. Flake input and guest plumbing
-- [ ] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
+- [x] 1.1 Add the pinned `nix-snapshotter` input and thread it into the guest
   - Add the `nix-snapshotter` flake input following `nixpkgs` and record its locked `rev`/`narHash` in `flake.lock`.
   - Add `inputs.nix-snapshotter.overlays.default` to the fabro-vm `nixpkgs.overlays` list so `pkgs.nix-snapshotter` resolves, and pass the input through `specialArgs`.
   - Confirm the guest config evaluates cleanly on darwin and `pkgs.nix-snapshotter.buildImage` resolves to a function.
   - _Requirements: 2.2, 2.3_
 
 - [ ] 2. Sandbox image and digest derivations
-- [ ] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
+- [x] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
   - Create `configurations/fabro-vm/sandbox-image.nix` exposing `fabro.sandboxImage.{enable,name,tag,contents,imageConfig,copyToRoot,archive,digest}` (archive/digest read-only) and import it from `configurations/fabro-vm/default.nix`.
   - Build `archive` with `pkgs.nix-snapshotter.buildImage` over `copyToRoot = pkgs.buildEnv { pathsToLink = [ "/bin" ]; }` carrying `bashInteractive`, `git`, `coreutils`, and `nix`; pin `name`/`tag`.
   - Set `imageConfig = { Env = [ "PATH=/bin" "NIX_REMOTE=daemon" ]; Cmd = [ "/bin/bash" ]; WorkingDir = "/"; }`.
   - Confirm the derivation is an `aarch64-linux` `nix-image-*.tar` whose `copyToRoot` resolves to the four named packages and whose config carries the PATH/Cmd invariants.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.1, 2.4_
 
-- [ ] 2.2 Add the OCI manifest-digest derivation
+- [x] 2.2 Add the OCI manifest-digest derivation
   - Add `digest = pkgs.runCommand ... { nativeBuildInputs = [ pkgs.jq pkgs.coreutils ]; }` extracting `tar -xOf ${archive} index.json | jq -r '.manifests[0].digest'`.
   - Emit exactly one `sha256:<hex>` line to `$out`; fail the build when `index.json` is missing or the value is not `sha256:`-prefixed.
   - Confirm a fixture archive yields a single `sha256:` line, a malformed archive fails the derivation, and the digest is only read at run time (no IFD).
   - _Requirements: 2.5, 2.6_
 
 - [ ] 3. Local image loader
-- [ ] 3.1 (P) Implement the loader script
+- [x] 3.1 (P) Implement the loader script
   - Create `scripts/fabro-sandbox-image-load.nix` as a `writeShellApplication` (`runtimeInputs = [ pkgs.podman pkgs.coreutils ]`).
   - Run `podman load -i ${archive}`; read `digest=$(cat ${digest})`, form `ref="${name}@${digest}"`, and verify with `podman image exists "$ref"`, failing with the ref on mismatch.
   - Write the digest to `/run/fabro-sandbox/digest` (mode 0644), retain the local `<name>:<tag>` tag, and issue no push/registry call.
@@ -30,7 +30,7 @@
   - _Boundary: Sandbox Image Loader_
   - _Requirements: 3.1, 3.3, 3.5, 3.6_
 
-- [ ] 3.2 Declare the loader unit and gate `fabro.service` on it
+- [x] 3.2 Declare the loader unit and gate `fabro.service` on it
   - Create `configurations/fabro-vm/sandbox.nix` with `fabro-sandbox-image-load.service` (`Type = "oneshot"`, `RemainAfterExit`, `wantedBy = [ "multi-user.target" ]`, `after`/`requires = [ "podman.socket" ]`, `RuntimeDirectory = "fabro-sandbox"`) and import it from `default.nix`.
   - Embed the archive and digest store paths in `ExecStart` so a contents change rewrites the unit (reloading the image) and an unchanged image leaves the unit untouched.
   - Add `fabro.service` `after`/`wants` for the loader so the image is loaded before Fabro can use it.

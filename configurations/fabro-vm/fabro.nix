@@ -320,11 +320,15 @@ in
       "podman.socket"
       "litellm.service"
       "lima-init.service"
+      # The repo-built sandbox image is loaded into the local Podman store
+      # before fabro's `default` environment can use it.
+      "fabro-sandbox-image-load.service"
     ];
     requires = [
       "podman.socket"
       "litellm.service"
     ];
+    wants = [ "fabro-sandbox-image-load.service" ];
 
     environment = {
       # Same FABRO_HOME/FABRO_STORAGE_DIR split the upstream Docker image
