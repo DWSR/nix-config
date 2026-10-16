@@ -10,10 +10,12 @@
 # probes the four things the image and the host-store mounts must provide
 # (Requirements 6.3-6.5):
 #
-#   1. tools  — `bash --version; git --version; gh --version; command -v nix;
-#               command -v setsid` inside the container (Requirement 6.3: the
-#               image's tools run there; `setsid` is what the Fabro sandbox
-#               driver requires before it runs a command node).
+#   1. tools  — `bash --version; git --version; gh --version; python3
+#               --version; command -v nix; command -v setsid` inside the
+#               container (Requirement 6.3: the image's tools run there;
+#               `setsid` is what the Fabro sandbox driver requires before it
+#               runs a command node, and python3 is what the DWSR/fabro
+#               workflow command nodes run their scripts with).
 #   2. certs  — `test -s /etc/ssl/certs/ca-bundle.crt` (the image links
 #               cacert's bundle into its root and points SSL_CERT_FILE at it,
 #               so https clients validate TLS without the guest's /etc/ssl).
@@ -67,7 +69,7 @@ pkgs.writeShellApplication {
       fi
     }
 
-    probe tools 'bash --version; git --version; gh --version; command -v nix; command -v setsid'
+    probe tools 'bash --version; git --version; gh --version; python3 --version; command -v nix; command -v setsid'
     probe certs 'test -s /etc/ssl/certs/ca-bundle.crt'
     probe store 'test -e /nix/store; ls /nix/store'
     probe daemon 'nix store ping'

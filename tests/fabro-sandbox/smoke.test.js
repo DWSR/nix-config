@@ -50,8 +50,9 @@ test('smoke script runs the tools, certs, store, and daemon probes in the image'
   // Requirement 6.3: the image's tools run inside a container from the image.
   // `setsid` is included because the Fabro sandbox driver refuses to run a
   // command node without it (exit 127 before the script starts). `gh` rides
-  // along because sandbox runs shell out to the GitHub CLI.
-  assert.match(text, /bash --version; git --version; gh --version; command -v nix; command -v setsid/);
+  // along because sandbox runs shell out to the GitHub CLI; `python3` is what
+  // the DWSR/fabro workflow command nodes run their scripts with.
+  assert.match(text, /bash --version; git --version; gh --version; python3 --version; command -v nix; command -v setsid/);
   // The CA bundle must exist in the running container: without it every
   // https client in the sandbox fails TLS certificate validation.
   assert.match(text, /test -s \/etc\/ssl\/certs\/ca-bundle\.crt/);

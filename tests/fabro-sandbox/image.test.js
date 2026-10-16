@@ -77,9 +77,12 @@ test('copyToRoot exposes the tools on /bin and the CA bundle on /etc/ssl/certs',
   // carries `setsid`, which the Fabro sandbox driver requires before it will
   // run a command node (its absence exits 127 with `sandbox-driver: the
   // container image must provide setsid and env`). `gh` is the GitHub CLI
-  // sandbox runs use; `cacert` reports `nss-cacert` as its pname and carries
-  // the `/etc/ssl/certs/ca-bundle.crt` the SSL_CERT_FILE env points at.
-  for (const name of ['bash', 'git', 'gh', 'coreutils', 'nix', 'util-linux', 'nss-cacert']) {
+  // sandbox runs use; `python3` runs the DWSR/fabro workflow command nodes'
+  // scripts (dispatch, oneshot, kiro-*: without it command nodes fail with
+  // `env: 'python3': No such file or directory`). `cacert` reports
+  // `nss-cacert` as its pname and carries the
+  // `/etc/ssl/certs/ca-bundle.crt` the SSL_CERT_FILE env points at.
+  for (const name of ['bash', 'git', 'gh', 'coreutils', 'python3', 'nix', 'util-linux', 'nss-cacert']) {
     assert.ok(
       image.copyToRootNames.some(
         (candidate) => candidate === name || candidate.startsWith(`${name}-`),
