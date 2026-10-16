@@ -2881,6 +2881,33 @@
       packages.aarch64-linux.fabro-vm-image =
         self.nixosConfigurations.fabro-vm.config.system.build.qcow-efi;
 
+      # Sandbox image artifacts for the fabro-vm guest (spec
+      # nix-built-container-for-default-fabro-environmen, task 7.4;
+      # requirements 2.6, 6.3). Bound to the guest's own derivations so the
+      # flake exposes exactly what the guest loads and runs:
+      #   - fabro-sandbox-image: the pinned nix-snapshotter OCI archive
+      #     (fabro.sandboxImage.archive); aarch64-linux, built on the guest.
+      #   - fabro-sandbox-image-digest: the manifest-digest text file
+      #     (fabro.sandboxImage.digest) that identifies the archive contents.
+      #   - fabro-sandbox-smoke: the runtime smoke check, resolved through the
+      #     same script module (same guest pkgs + image name) the guest
+      #     installs into environment.systemPackages, so both bind to one
+      #     derivation.
+      packages.aarch64-linux.fabro-sandbox-image =
+        self.nixosConfigurations.fabro-vm.config.fabro.sandboxImage.archive;
+
+      packages.aarch64-linux.fabro-sandbox-image-digest =
+        self.nixosConfigurations.fabro-vm.config.fabro.sandboxImage.digest;
+
+      packages.aarch64-linux.fabro-sandbox-smoke =
+        let
+          vm = self.nixosConfigurations.fabro-vm;
+        in
+        import ./scripts/fabro-sandbox-smoke.nix {
+          pkgs = vm.pkgs;
+          inherit (vm.config.fabro.sandboxImage) name;
+        };
+
       darwinConfigurations = {
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
           specialArgs = {
