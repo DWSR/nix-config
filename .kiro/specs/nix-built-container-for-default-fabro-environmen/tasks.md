@@ -54,7 +54,7 @@
   - _Requirements: 4.3, 4.5, 4.6_
 
 - [ ] 5. Host Nix store and daemon sharing
-- [ ] 5.1 Add global `containers.conf` mounts for the host store and daemon
+- [x] 5.1 Add global `containers.conf` mounts for the host store and daemon
   - In `sandbox.nix`, set `virtualisation.containers.containersConf.settings.containers.mounts` to `"type=bind,source=/nix/store,destination=/nix/store,ro"` and `"type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket"`.
   - Keep the mounts global (`[containers]`, not per-environment) so every Podman-created container receives them, with the store read-only.
   - Confirm the generated `/etc/containers/containers.conf` carries both mount entries and the store mount is `ro`.
