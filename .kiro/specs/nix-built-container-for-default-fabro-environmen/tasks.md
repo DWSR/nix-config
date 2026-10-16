@@ -46,7 +46,7 @@
   - _Boundary: Environment Reconciler_
   - _Requirements: 4.1, 4.2, 4.4, 4.5, 4.6_
 
-- [ ] 4.2 Declare the reconciler unit
+- [x] 4.2 Declare the reconciler unit
   - Add `fabro-sandbox-env.service` to `sandbox.nix` (`Type = "oneshot"`, `RemainAfterExit`, `wantedBy = [ "multi-user.target" ]`, `after`/`requires = [ "fabro.service" "fabro-sandbox-image-load.service" ]`) running as root.
   - Set `EnvironmentFile = config.sops.templates."fabro-env".path` so the reconciler reads `FABRO_DEV_TOKEN` from the sops store.
   - Confirm the rendered unit is a oneshot ordered after both services and consumes the sops template path.
