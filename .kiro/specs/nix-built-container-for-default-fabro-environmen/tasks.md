@@ -8,7 +8,7 @@
   - _Requirements: 2.2, 2.3_
 
 - [ ] 2. Sandbox image and digest derivations
-- [ ] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
+- [x] 2.1 Define `fabro.sandboxImage` options and the image archive derivation
   - Create `configurations/fabro-vm/sandbox-image.nix` exposing `fabro.sandboxImage.{enable,name,tag,contents,imageConfig,copyToRoot,archive,digest}` (archive/digest read-only) and import it from `configurations/fabro-vm/default.nix`.
   - Build `archive` with `pkgs.nix-snapshotter.buildImage` over `copyToRoot = pkgs.buildEnv { pathsToLink = [ "/bin" ]; }` carrying `bashInteractive`, `git`, `coreutils`, and `nix`; pin `name`/`tag`.
   - Set `imageConfig = { Env = [ "PATH=/bin" "NIX_REMOTE=daemon" ]; Cmd = [ "/bin/bash" ]; WorkingDir = "/"; }`.
