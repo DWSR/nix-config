@@ -2192,6 +2192,19 @@
                 printf '%s\n' "$guestReport" > "$out"
               '';
 
+          # Pinned-input check for the sandbox image (nix-built-container-for-
+          # default-fabro-environmen spec, task 7.1; design "Repository Checks
+          # → Implementation Notes"; requirements 2.2, 2.3, 6.1, 6.2). The
+          # check reads flake.lock and fails evaluation unless the
+          # `nix-snapshotter` node carries locked.rev + locked.narHash, so an
+          # unpinned image input cannot ship. The logic lives in
+          # scripts/fabro-sandbox-pinned.nix so the fixture-based assertion in
+          # tests/fabro-sandbox can evaluate the same function.
+          fabro-sandbox-pinned = import ./scripts/fabro-sandbox-pinned.nix {
+            inherit pkgs;
+            lockFile = ./flake.lock;
+          };
+
           litellm-service =
             pkgs.runCommand "litellm-service"
               {

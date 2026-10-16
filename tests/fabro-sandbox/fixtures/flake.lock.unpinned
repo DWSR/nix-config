@@ -1,0 +1,21 @@
+{
+  "nodes": {
+    "nix-snapshotter": {
+      "locked": {
+        "lastModified": 0,
+        "path": "/fixture/nix-snapshotter",
+        "type": "path"
+      },
+      "original": {
+        "path": "/fixture/nix-snapshotter",
+        "type": "path"
+      }
+    }
+  },
+  "root": {
+    "inputs": {
+      "nix-snapshotter": "nix-snapshotter"
+    }
+  },
+  "version": 7
+}
