@@ -2908,6 +2908,25 @@
           inherit (vm.config.fabro.sandboxImage) name;
         };
 
+      # Operator-facing end-to-end verification harness (spec
+      # nix-built-container-for-default-fabro-environmen, task 7.5; Requirements
+      # 2.1, 3.1, 4.2, 6.3, 6.4). Bound to the guest's own archive, digest, and
+      # smoke derivations, so `nix run .#fabro-sandbox-verify -- all` on the
+      # guest rebuilds the exact image the loader loaded, confirms the persisted
+      # `default` environment references its digest, and runs the smoke check.
+      packages.aarch64-linux.fabro-sandbox-verify =
+        let
+          vm = self.nixosConfigurations.fabro-vm;
+          cfg = vm.config.fabro.sandboxImage;
+        in
+        vm.pkgs.callPackage ./scripts/fabro-sandbox-verify.nix {
+          inherit (cfg) name archive digest;
+          smoke = import ./scripts/fabro-sandbox-smoke.nix {
+            pkgs = vm.pkgs;
+            inherit (cfg) name;
+          };
+        };
+
       darwinConfigurations = {
         "Brandons-MacBook-Pro" = inputs.darwin.lib.darwinSystem {
           specialArgs = {

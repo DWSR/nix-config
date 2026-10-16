@@ -68,5 +68,9 @@ test('smoke script banners each step and names the failed step', () => {
 test('the guest installs the smoke script in environment.systemPackages', () => {
   const src = fs.readFileSync(sandboxPath, 'utf8');
   assert.match(src, /scripts\/fabro-sandbox-smoke\.nix/);
-  assert.match(src, /environment\.systemPackages = \[ smokeScript \]/);
+  const block = src.match(/environment\.systemPackages = \[([\s\S]*?)\]/);
+  assert.notEqual(block, null, 'sandbox.nix must set environment.systemPackages');
+  assert.match(block[1], /\bsmokeScript\b/);
+  // The task 7.5 verifier rides alongside it; both are guest-installed tools.
+  assert.match(block[1], /\bverifyScript\b/);
 });

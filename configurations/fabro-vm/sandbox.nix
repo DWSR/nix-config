@@ -63,6 +63,16 @@ let
     inherit pkgs;
     inherit (cfg) name;
   };
+
+  # The task 7.5 verification harness (spec
+  # `nix-built-container-for-default-fabro-environmen`) is bound to the guest's
+  # own archive/digest/smoke derivations so `fabro-sandbox-verify all` on the
+  # guest rebuilds the exact image the loader loaded and compares it with the
+  # digest the reconciler published.
+  verifyScript = pkgs.callPackage ../../scripts/fabro-sandbox-verify.nix {
+    inherit (cfg) name archive digest;
+    smoke = smokeScript;
+  };
 in
 {
   systemd.services."fabro-sandbox-image-load" = {
@@ -141,5 +151,12 @@ in
   # Expose the runtime smoke check on the guest's PATH (Requirements 6.3-6.5):
   # `fabro-sandbox-smoke` runs the loaded image by digest and probes tools, the
   # host store, and the host daemon, naming the failed step.
-  environment.systemPackages = [ smokeScript ];
+  #
+  # `fabro-sandbox-verify` (task 7.5) is the operator's end-to-end harness:
+  # reproducibility (rebuild + compare digest), wiring (the persisted `default`
+  # environment references the recorded digest), and smoke, all in one command.
+  environment.systemPackages = [
+    smokeScript
+    verifyScript
+  ];
 }

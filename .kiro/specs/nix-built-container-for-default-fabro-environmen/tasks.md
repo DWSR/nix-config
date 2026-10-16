@@ -100,7 +100,7 @@
   - _Depends: 2.2, 6.1_
   - _Requirements: 2.6, 6.3_
 
-- [ ]* 7.5 (P) Verify reproducibility and end-to-end wiring on the guest
+- [x]* 7.5 (P) Verify reproducibility and end-to-end wiring on the guest
   - Build the image twice from identical inputs and confirm the digest is unchanged.
   - Run `nixos-rebuild switch`, confirm the loader records the digest and the reconciler sets `image.docker` to the digest reference, and run `fabro-sandbox-smoke` (tools, store, daemon) to success.
   - Confirm a contents change changes both the digest and the environment reference.
