@@ -10,8 +10,10 @@
 # probes the three things the image and the host-store mounts must provide
 # (Requirements 6.3-6.5):
 #
-#   1. tools  — `bash --version; git --version; command -v nix` inside the
-#               container (Requirement 6.3: the image's tools run there).
+#   1. tools  — `bash --version; git --version; command -v nix; command -v
+#               setsid` inside the container (Requirement 6.3: the image's
+#               tools run there; `setsid` is what the Fabro sandbox driver
+#               requires before it runs a command node).
 #   2. store  — `test -e /nix/store; ls /nix/store` (Requirement 6.4: the
 #               read-only host-store bind is present).
 #   3. daemon — `nix store ping` (Requirement 6.4: NIX_REMOTE=daemon reaches
@@ -62,7 +64,7 @@ pkgs.writeShellApplication {
       fi
     }
 
-    probe tools 'bash --version; git --version; command -v nix'
+    probe tools 'bash --version; git --version; command -v nix; command -v setsid'
     probe store 'test -e /nix/store; ls /nix/store'
     probe daemon 'nix store ping'
 

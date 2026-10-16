@@ -62,11 +62,14 @@ test('the image config puts bash on PATH and points nix at the host daemon', () 
   assert.equal(workingDir, '/');
 });
 
-test('copyToRoot exposes bash, git, coreutils, and nix on /bin', () => {
+test('copyToRoot exposes bash, git, coreutils, nix, and util-linux on /bin', () => {
   const image = sandboxImage();
-  // Requirements 1.1, 1.2, 1.5: the four tools are linked into the image's
-  // /bin. `bashInteractive` reports `bash-interactive` as its pname.
-  for (const name of ['bash', 'git', 'coreutils', 'nix']) {
+  // Requirements 1.1, 1.2, 1.5: the tools are linked into the image's /bin.
+  // `bashInteractive` reports `bash-interactive` as its pname. `util-linux`
+  // carries `setsid`, which the Fabro sandbox driver requires before it will
+  // run a command node (its absence exits 127 with `sandbox-driver: the
+  // container image must provide setsid and env`).
+  for (const name of ['bash', 'git', 'coreutils', 'nix', 'util-linux']) {
     assert.ok(
       image.copyToRootNames.some(
         (candidate) => candidate === name || candidate.startsWith(`${name}-`),

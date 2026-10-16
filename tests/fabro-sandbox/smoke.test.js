@@ -48,7 +48,9 @@ test('smoke script defaults the reference to the recorded image digest', () => {
 test('smoke script runs the tools, store, and daemon probes in the image', () => {
   const text = smokeText();
   // Requirement 6.3: the image's tools run inside a container from the image.
-  assert.match(text, /bash --version; git --version; command -v nix/);
+  // `setsid` is included because the Fabro sandbox driver refuses to run a
+  // command node without it (exit 127 before the script starts).
+  assert.match(text, /bash --version; git --version; command -v nix; command -v setsid/);
   // Requirement 6.4: the container reaches the host store and daemon.
   assert.match(text, /test -e \/nix\/store; ls \/nix\/store/);
   assert.match(text, /nix store ping/);

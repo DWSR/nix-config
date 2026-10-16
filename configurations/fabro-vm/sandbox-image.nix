@@ -55,13 +55,18 @@ in
         git
         coreutils
         nix
+        util-linux
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git coreutils nix ]
+        with pkgs; [ bashInteractive git coreutils nix util-linux ]
       '';
       description = ''
         Packages whose `/bin` entries the image exposes on its default
-        command path (bash, git, coreutils, and nix).
+        command path (bash, git, coreutils, nix, and util-linux). The Fabro
+        sandbox driver runs scripts through `setsid` and `env`, so
+        util-linux's `setsid` must be on the path or every command node
+        exits 127 with `sandbox-driver: the container image must provide
+        setsid and env`.
       '';
     };
 
