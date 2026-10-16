@@ -347,13 +347,17 @@ in
       HOME = "/var/lib/fabro";
     };
 
-    # Workflow nodes (shell executors spawned by fabro runs) resolve PATH
-    # here; git mirrors the dependency the upstream Docker image installs.
+    # Workflow nodes (shell executors spawned by fabro runs) and host
+    # hooks (`[[run.hooks]]` with `sandbox = false`, spawned by the
+    # server as `sh -c`) resolve PATH here; git mirrors the dependency
+    # the upstream Docker image installs, and bashInteractive supplies
+    # the shell those host hooks spawn.
     path = [
       pkgs.git
       pkgs.coreutils
       pkgs.curl
       pkgs.jq
+      pkgs.bashInteractive
     ];
 
     # The state subpaths must be writable explicitly under

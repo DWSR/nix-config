@@ -2004,6 +2004,13 @@
                 assert pkgs.lib.assertMsg
                   (builtins.elem "podman" vm.systemd.services.fabro.serviceConfig.SupplementaryGroups)
                   "fabro-vm: the fabro service must hold the podman group (Docker-compatible socket access).";
+                # Host hooks (`[[run.hooks]]` with `sandbox = false`) are
+                # spawned by the server as `sh -c` against the unit PATH;
+                # without a shell package every hook dies at spawn with
+                # ENOENT and silently no-ops (non-blocking).
+                assert pkgs.lib.assertMsg (builtins.any (p: (p.pname or p.name or "") == "bash-interactive")
+                  vm.systemd.services.fabro.path
+                ) "fabro-vm: the fabro service PATH must contain bashInteractive (the `sh` host hooks spawn).";
                 # The state share must be a first-class fileSystems entry:
                 # nixos-lima's lima-init re-appends its fstab block only at
                 # boot, so a post-boot switch would otherwise regenerate
