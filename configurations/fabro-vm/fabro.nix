@@ -267,6 +267,8 @@ let
         local.enabled = true;
       };
 
+      scheduler.max_concurrent_runs = 8;
+
       web = {
         enabled = true;
         # The tailnet-facing URL (svc:fabro is advertised at 443 by
