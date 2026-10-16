@@ -55,6 +55,14 @@ let
     inherit pkgs;
     inherit (cfg) name;
   };
+
+  # The runtime smoke check is parameterised by the image name (baked in at
+  # build time); it reads the digest the loader recorded at run time, so it
+  # always exercises the image the guest just loaded.
+  smokeScript = import ../../scripts/fabro-sandbox-smoke.nix {
+    inherit pkgs;
+    inherit (cfg) name;
+  };
 in
 {
   systemd.services."fabro-sandbox-image-load" = {
@@ -129,4 +137,9 @@ in
     "type=bind,source=/nix/store,destination=/nix/store,ro"
     "type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket"
   ];
+
+  # Expose the runtime smoke check on the guest's PATH (Requirements 6.3-6.5):
+  # `fabro-sandbox-smoke` runs the loaded image by digest and probes tools, the
+  # host store, and the host daemon, naming the failed step.
+  environment.systemPackages = [ smokeScript ];
 }
