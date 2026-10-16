@@ -38,7 +38,7 @@
   - _Requirements: 3.1, 3.2, 3.4, 3.6_
 
 - [ ] 4. Environment reconciler
-- [ ] 4.1 (P) Implement the reconciliation script
+- [x] 4.1 (P) Implement the reconciliation script
   - Create `scripts/fabro-sandbox-env-reconcile.nix` as a `writeShellApplication` (`runtimeInputs = [ pkgs.curl pkgs.jq pkgs.coreutils ]`) that builds `ref="${name}@$(cat /run/fabro-sandbox/digest)"`.
   - GET `/api/v1/environments/default` with `Authorization: Bearer $FABRO_DEV_TOKEN`; on 404 report `declared=<ref> persisted=<missing>`; read `revision` and `.image.docker`.
   - Exit 0 unchanged when `.image.docker == ref`; otherwise PUT with `If-Match: "<revision>"` and a body from `jq 'del(.id, .revision) | .image.docker = $ref'`; any other status reports both references and the HTTP status.
