@@ -94,7 +94,7 @@
   - _Depends: 2.2, 3.2, 4.2, 5.1_
   - _Requirements: 6.1, 6.2_
 
-- [ ] 7.4 Expose the image, digest, and smoke script as flake packages
+- [x] 7.4 Expose the image, digest, and smoke script as flake packages
   - Add `packages.aarch64-linux.fabro-sandbox-image`, `fabro-sandbox-image-digest`, and `fabro-sandbox-smoke` bound to the guest derivations.
   - Confirm each attribute evaluates on `aarch64-linux` and the smoke attribute resolves to the smoke script derivation.
   - _Depends: 2.2, 6.1_
