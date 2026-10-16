@@ -2182,7 +2182,70 @@
                 assert pkgs.lib.assertMsg (
                   !builtins.any (p: (p.pname or p.name or "") == "mcpproxy-go") vm.environment.systemPackages
                 ) "fabro-vm: mcpproxy-go must not be in the guest systemPackages.";
-                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]";
+                # Sandbox image and its guest wiring (nix-built-container-for-
+                # default-fabro-environmen spec, task 7.2; design "Repository
+                # Checks → Implementation Notes"; requirements 6.1, 6.2). Each
+                # assertion names the missing or misconfigured element, so a
+                # regression fails evaluation with an actionable message.
+                assert pkgs.lib.assertMsg vm.fabro.sandboxImage.enable
+                  "fabro-vm: fabro.sandboxImage.enable must be true (the repo-owned sandbox image is the default environment image).";
+                assert pkgs.lib.assertMsg (vm.systemd.services ? "fabro-sandbox-image-load")
+                  "fabro-vm: systemd.services.\"fabro-sandbox-image-load\" must be defined (the sandbox image loader).";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services."fabro-sandbox-image-load".serviceConfig.Type == "oneshot"
+                ) "fabro-vm: the sandbox image loader must be a oneshot unit.";
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      execStart = toString vm.systemd.services."fabro-sandbox-image-load".serviceConfig.ExecStart;
+                      archive = builtins.unsafeDiscardStringContext (toString vm.fabro.sandboxImage.archive);
+                      digest = builtins.unsafeDiscardStringContext (toString vm.fabro.sandboxImage.digest);
+                    in
+                    pkgs.lib.hasInfix archive execStart && pkgs.lib.hasInfix digest execStart
+                  )
+                  "fabro-vm: the sandbox image loader's ExecStart must embed the archive and digest store paths (so a contents change reloads the image).";
+                assert pkgs.lib.assertMsg
+                  (builtins.elem "fabro-sandbox-image-load.service" vm.systemd.services.fabro.after)
+                  "fabro-vm: fabro.service must start after the sandbox image loader.";
+                assert pkgs.lib.assertMsg
+                  (builtins.elem "fabro-sandbox-image-load.service" vm.systemd.services.fabro.wants)
+                  "fabro-vm: fabro.service must want the sandbox image loader (the image is loaded before Fabro uses it).";
+                assert pkgs.lib.assertMsg (vm.systemd.services ? "fabro-sandbox-env")
+                  "fabro-vm: systemd.services.\"fabro-sandbox-env\" must be defined (the default-environment reconciler).";
+                assert pkgs.lib.assertMsg (
+                  vm.systemd.services."fabro-sandbox-env".serviceConfig.Type == "oneshot"
+                ) "fabro-vm: the default-environment reconciler must be a oneshot unit.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "fabro.service" vm.systemd.services."fabro-sandbox-env".after
+                    && builtins.elem "fabro-sandbox-image-load.service" vm.systemd.services."fabro-sandbox-env".after
+                  )
+                  "fabro-vm: the default-environment reconciler must start after fabro.service and the sandbox image loader.";
+                assert pkgs.lib.assertMsg
+                  (
+                    builtins.elem "fabro.service" vm.systemd.services."fabro-sandbox-env".requires
+                    && builtins.elem "fabro-sandbox-image-load.service" vm.systemd.services."fabro-sandbox-env".requires
+                  )
+                  "fabro-vm: the default-environment reconciler must require fabro.service and the sandbox image loader.";
+                assert pkgs.lib.assertMsg
+                  (
+                    vm.systemd.services."fabro-sandbox-env".serviceConfig.EnvironmentFile
+                    == vm.sops.templates."fabro-env".path
+                  )
+                  "fabro-vm: the default-environment reconciler must consume the sops fabro-env template (FABRO_DEV_TOKEN).";
+                assert pkgs.lib.assertMsg
+                  (
+                    let
+                      mounts = vm.virtualisation.containers.containersConf.settings.containers.mounts;
+                    in
+                    builtins.elem "type=bind,source=/nix/store,destination=/nix/store,ro" mounts
+                    && builtins.elem "type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket" mounts
+                  )
+                  "fabro-vm: containers.conf mounts must bind the host /nix/store read-only and the Nix daemon socket into every container.";
+                assert pkgs.lib.assertMsg (pkgs.lib.hasInfix ''environment.id = "default"'' (
+                  builtins.readFile ./configurations/fabro-vm/fabro.nix
+                )) "fabro-vm: run.environment.id must be \"default\" (the sandbox image's Fabro environment).";
+                "fabro-vm (aarch64-linux): services.lima=true; openssh=true; podman=true (dockerSocket+dockerCompat); litellm+fabro+opencode systemd services with fabro→{litellm,podman.socket} requires+after; sops store secrets/fabro.fabro.yaml decrypted to /run/secrets via the guest age key (nine keys; fabro.onePasswordSecrets maps each to its 1Password source and drives fabro-sync-from-1password); fabro consumes sops.templates.\"fabro-env\", litellm LITELLM_MASTER_KEY via sops.templates.\"litellm-env\", opencode consumes sops.templates.\"opencode-env\" (GITHUB_TOKEN/GH_TOKEN + LITELLM_MASTER_KEY + OPENCODE_SERVER_PASSWORD) and the sops signing key via LoadCredential; opencode runs as a DynamicUser (StateDirectory /var/lib/opencode incl. workspace) with git/gh/nix on PATH; tailscale registered from the sops OAuth secret (tag:fabro, preauthorized, non-ephemeral) with svc:fabro tcp:443→127.0.0.1:32276, svc:litellm tcp:443→127.0.0.1:4000, and svc:opencode tcp:443→127.0.0.1:4096 advertised after registration; fabro state lives on the host via the VZ virtiofs share /var/lib/fabro←~/.local/state/fabro (stock kernel provides VIRTIO_FS=m, no kernel override); service runs as the Lima cidata user with ReadWritePaths+RequiresMountsFor; sudo.wheelNeedsPassword=false; mutableUsers=true; nix experimental-features=[nix-command flakes]; systemPackages has fabro+litellm; overlays=[fabro unstable-packages custom-packages]; sandbox: fabro.sandboxImage enabled (pinned nix-snapshotter OCI archive + manifest-digest derivation); fabro-sandbox-image-load oneshot embeds the archive+digest store paths (fabro.service after+wants it); fabro-sandbox-env oneshot after+requires fabro.service+loader and consumes sops.templates.\"fabro-env\"; containers.conf mounts /nix/store read-only plus the Nix daemon socket for every container; run.environment.id=default";
             in
             pkgs.runCommand "fabro-vm-guest-eval"
               {
