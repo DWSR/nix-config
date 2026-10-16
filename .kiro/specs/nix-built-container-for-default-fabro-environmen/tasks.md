@@ -72,7 +72,7 @@
   - _Requirements: 6.3, 6.4, 6.5_
 
 - [ ] 7. Repository checks and flake outputs
-- [ ] 7.1 Add the pinned-input check
+- [x] 7.1 Add the pinned-input check
   - Add `checks.<system>.fabro-sandbox-pinned` as a `runCommand` that reads `flake.lock` and asserts the `nix-snapshotter` node has `locked.rev` and `locked.narHash`.
   - Fail evaluation with a named message when the lock entry is absent or unpinned.
   - Confirm a fixture lock missing `rev`/`narHash` fails and the real lock passes.
