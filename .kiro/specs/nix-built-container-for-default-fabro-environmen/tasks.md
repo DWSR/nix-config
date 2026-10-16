@@ -79,7 +79,7 @@
   - _Depends: 1.1_
   - _Requirements: 2.2, 2.3, 6.1, 6.2_
 
-- [ ] 7.2 Extend the guest-eval check with sandbox assertions
+- [x] 7.2 Extend the guest-eval check with sandbox assertions
   - Add `assertMsg` chains to `fabro-vm-guest-eval`: `fabro.sandboxImage.enable`; the loader unit exists, is a oneshot, and its `ExecStart` references the archive and digest store paths; `fabro.service` is after/wants the loader; the reconciler unit exists, is a oneshot, is after `fabro.service` and the loader, and consumes the sops template; the containers mounts list holds the `/nix/store` ro bind and the daemon-socket bind; `run.environment.id == "default"`.
   - Update the check's summary string to describe the sandbox image, loader, reconciler, and host-store sharing.
   - Confirm `nix build .#checks.<darwin>.fabro-vm-guest-eval` passes and each assert fails with a named message when its element is removed.
