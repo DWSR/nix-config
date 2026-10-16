@@ -55,24 +55,31 @@ in
         git
         gh
         coreutils
+        findutils
+        gnugrep
         python3
         nix
         util-linux
         cacert
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git gh coreutils python3 nix util-linux cacert ]
+        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep python3 nix util-linux cacert ]
       '';
       description = ''
         Packages the image exposes in its root: the `/bin` command path
-        (bash, git, gh, coreutils, python3, nix, and util-linux) plus cacert's
-        `/etc/ssl/certs` CA bundle. The Fabro sandbox driver runs scripts
-        through `setsid` and `env`, so util-linux's `setsid` must be on the
-        path or every command node exits 127 with `sandbox-driver: the
-        container image must provide setsid and env`. The DWSR/fabro workflow
-        packages (dispatch, oneshot, kiro-spec, kiro-task, dependabot) run
-        their command nodes as Python scripts, so python3 must be on the path
-        or every such node fails with `env: 'python3': No such file or
+        (bash, git, gh, coreutils, findutils, gnugrep, python3, nix, and
+        util-linux) plus cacert's `/etc/ssl/certs` CA bundle. The Fabro
+        sandbox driver runs scripts through `setsid` and `env`, so
+        util-linux's `setsid` must be on the path or every command node exits
+        127 with `sandbox-driver: the container image must provide setsid and
+        env`. Pebble (the agent harness Fabro runs agent nodes with) probes
+        for bash, find, and grep in the execution scope before building a
+        session and fails with `Scope command failed: Pebble requires Bash,
+        find, and grep in the execution scope` when findutils or gnugrep are
+        missing, so both must be present. The DWSR/fabro workflow packages
+        (dispatch, oneshot, kiro-spec, kiro-task, dependabot) run their
+        command nodes as Python scripts, so python3 must be on the path or
+        every such node fails with `env: 'python3': No such file or
         directory` (the upstream `buildpack-deps` image this replaces shipped
         it). Containers see neither the guest's `/etc/ssl` nor its CA
         configuration, so without the bundle https clients (git, gh) fail TLS

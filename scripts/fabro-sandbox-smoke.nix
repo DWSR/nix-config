@@ -11,11 +11,13 @@
 # (Requirements 6.3-6.5):
 #
 #   1. tools  — `bash --version; git --version; gh --version; python3
-#               --version; command -v nix; command -v setsid` inside the
-#               container (Requirement 6.3: the image's tools run there;
-#               `setsid` is what the Fabro sandbox driver requires before it
-#               runs a command node, and python3 is what the DWSR/fabro
-#               workflow command nodes run their scripts with).
+#               --version; command -v find; command -v grep; command -v nix;
+#               command -v setsid` inside the container (Requirement 6.3: the
+#               image's tools run there; `setsid` is what the Fabro sandbox
+#               driver requires before it runs a command node, `find`/`grep`
+#               are what Pebble (the agent harness) probes for before it
+#               builds a session, and python3 is what the DWSR/fabro workflow
+#               command nodes run their scripts with).
 #   2. certs  — `test -s /etc/ssl/certs/ca-bundle.crt` (the image links
 #               cacert's bundle into its root and points SSL_CERT_FILE at it,
 #               so https clients validate TLS without the guest's /etc/ssl).
@@ -69,7 +71,7 @@ pkgs.writeShellApplication {
       fi
     }
 
-    probe tools 'bash --version; git --version; gh --version; python3 --version; command -v nix; command -v setsid'
+    probe tools 'bash --version; git --version; gh --version; python3 --version; command -v find; command -v grep; command -v nix; command -v setsid'
     probe certs 'test -s /etc/ssl/certs/ca-bundle.crt'
     probe store 'test -e /nix/store; ls /nix/store'
     probe daemon 'nix store ping'
