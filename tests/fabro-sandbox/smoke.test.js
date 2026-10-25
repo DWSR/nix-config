@@ -64,7 +64,7 @@ test('smoke script runs the home, env, tools, certs, store, daemon, and registry
   assert.match(text, /bash --version; git --version; gh --version; python3 --version; command -v find; command -v grep; command -v nix; command -v setsid/);
   // Workflow agents expect the usual developer tools rather than burning
   // turns on `rg: command not found` / `awk: command not found`.
-  assert.match(text, /probe agent-tools 'rg --version; awk --version; jq --version; curl --version'/);
+  assert.match(text, /probe agent-tools 'rg --version; awk --version; jq --version; curl --version; sed --version'/);
   // The CA bundle must exist in the running container: without it every
   // https client in the sandbox fails TLS certificate validation.
   assert.match(text, /test -s \/etc\/ssl\/certs\/ca-bundle\.crt/);

@@ -95,7 +95,8 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
   // which Pebble (the agent harness) probes for in the execution scope before
   // it builds a session; `python3` runs the DWSR/fabro workflow command
   // nodes' scripts (dispatch, oneshot, kiro-*: without it command nodes fail
-  // with `env: 'python3': No such file or directory`). `cacert` reports
+  // with `env: 'python3': No such file or directory`). `gnused` carries the
+  // `sed` workflow agents and shell snippets expect. `cacert` reports
   // `nss-cacert` as its pname and carries the
   // `/etc/ssl/certs/ca-bundle.crt` the SSL_CERT_FILE env points at.
   // ripgrep/gawk/jq/curl are the developer tools workflow agents expect, and
@@ -108,6 +109,7 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
     'coreutils',
     'findutils',
     'gnugrep',
+    'gnused',
     'python3',
     'nix',
     'util-linux',

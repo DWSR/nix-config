@@ -28,8 +28,9 @@
 #               builds a session, and python3 is what the DWSR/fabro workflow
 #               command nodes run their scripts with).
 #   4. agent-tools — `rg --version; awk --version; jq --version; curl
-#               --version` (tools workflow agents expect; otherwise they burn
-#               turns on `rg: command not found` / `awk: command not found`).
+#               --version; sed --version` (tools workflow agents expect;
+#               otherwise they burn turns on `rg: command not found` /
+#               `awk: command not found` / `sed: command not found`).
 #   5. certs  — `test -s /etc/ssl/certs/ca-bundle.crt` (the image links
 #               cacert's bundle into its root and points SSL_CERT_FILE at it,
 #               so https clients validate TLS without the guest's /etc/ssl).
@@ -91,7 +92,7 @@ pkgs.writeShellApplication {
     probe home 'test -n "$HOME"; test -d "$HOME"; test -w "$HOME"'
     probe usr-bin-env '/usr/bin/env sh -c "exit 0"'
     probe tools 'bash --version; git --version; gh --version; python3 --version; command -v find; command -v grep; command -v nix; command -v setsid'
-    probe agent-tools 'rg --version; awk --version; jq --version; curl --version'
+    probe agent-tools 'rg --version; awk --version; jq --version; curl --version; sed --version'
     probe certs 'test -s /etc/ssl/certs/ca-bundle.crt'
     probe store 'test -e /nix/store; ls /nix/store'
     probe daemon 'nix store ping'

@@ -67,6 +67,7 @@ in
         coreutils
         findutils
         gnugrep
+        gnused
         python3
         nix
         util-linux
@@ -78,11 +79,11 @@ in
         usrBinEnv
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep python3 nix util-linux cacert ripgrep gawk jq curl usrBinEnv ]
+        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep gnused python3 nix util-linux cacert ripgrep gawk jq curl usrBinEnv ]
       '';
       description = ''
         Packages the image exposes in its root: the `/bin` command path
-        (bash, git, gh, coreutils, findutils, gnugrep, python3, nix,
+        (bash, git, gh, coreutils, findutils, gnugrep, sed, python3, nix,
         util-linux, ripgrep, gawk, jq, and curl) plus cacert's
         `/etc/ssl/certs` CA bundle and the `usrBinEnv` `/usr/bin/env`
         symlink. The Fabro sandbox driver runs scripts through `setsid` and
