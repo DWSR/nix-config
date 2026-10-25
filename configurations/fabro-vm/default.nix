@@ -280,23 +280,26 @@ in
     # (mutableUsers stays true so rebuilds preserve it).
     #
     # autoPrune is the module's generated `podman-prune` oneshot + timer
-    # pair: the docker sandbox provider never removes the container (and
-    # fetched images) a finished fabro run leaves in the rootful store,
-    # so without a reaper the guest's virtual disk grows until Lima's
+    # pair: the docker sandbox provider never removes the containers, fetched
+    # images, or per-run volumes a finished fabro run leaves in the rootful
+    # store, so without a reaper the guest's virtual disk grows until Lima's
     # `disk` size fills. The module renders `podman system prune -f` plus
-    # `flags` (`-a` extends the prune to images no container references —
-    # the requested `podman system prune -af`) on `dates` (the module
-    # default, weekly, is too slow a reaper for this host); the timer is
-    # Persistent (catches up a missed run after a VM stop) with the
-    # module's 30-min RandomizedDelaySec jitter. Volumes stay untouched
-    # (no --volumes).
+    # `flags` (`-a` extends the prune to images no container references;
+    # `--volumes` also removes volumes no container references — plain
+    # `podman system prune` keeps volumes and `-a` does not imply
+    # `--volumes`) on `dates` (the module default, weekly, is too slow a
+    # reaper for this host); the timer is Persistent (catches up a missed run
+    # after a VM stop) with the module's 30-min RandomizedDelaySec jitter.
     virtualisation.podman = {
       enable = true;
       dockerSocket.enable = true;
       dockerCompat = true;
       autoPrune = {
         enable = true;
-        flags = [ "-a" ];
+        flags = [
+          "-a"
+          "--volumes"
+        ];
         dates = "hourly";
       };
     };

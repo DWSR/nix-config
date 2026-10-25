@@ -58,6 +58,20 @@ test('the image config puts bash on PATH and points nix at the host daemon', () 
     env.includes('NIX_CONFIG=experimental-features = nix-command flakes'),
     `Env must contain NIX_CONFIG with nix-command and flakes: ${JSON.stringify(env)}`,
   );
+  // The container has no /etc/passwd-derived home, so HOME is empty unless the
+  // image sets it. Nix then resolves the flake registry and fetcher/eval
+  // caches relative to the working directory: `nix registry list` fails with
+  // `error: not an absolute path: ".cache/nix/flake-registry.json"` and the
+  // caches land in /workspace. /tmp matches the proven workaround and is
+  // writable in the container.
+  assert.ok(
+    env.includes('HOME=/tmp'),
+    `Env must contain HOME=/tmp: ${JSON.stringify(env)}`,
+  );
+  assert.ok(
+    env.includes('XDG_CACHE_HOME=/tmp/nix-cache'),
+    `Env must contain XDG_CACHE_HOME=/tmp/nix-cache: ${JSON.stringify(env)}`,
+  );
   // Containers see neither the guest's /etc/ssl nor its CA configuration, so
   // https clients (git's libcurl via OpenSSL, gh via Go's crypto/x509) must
   // be pointed at the CA bundle linked into the image root or every TLS
@@ -70,7 +84,7 @@ test('the image config puts bash on PATH and points nix at the host daemon', () 
   assert.equal(workingDir, '/');
 });
 
-test('copyToRoot exposes the tools on /bin and the CA bundle on /etc/ssl/certs', () => {
+test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', () => {
   const image = sandboxImage();
   // Requirements 1.1, 1.2, 1.5: the tools are linked into the image's /bin.
   // `bashInteractive` reports `bash-interactive` as its pname. `util-linux`
@@ -84,7 +98,26 @@ test('copyToRoot exposes the tools on /bin and the CA bundle on /etc/ssl/certs',
   // with `env: 'python3': No such file or directory`). `cacert` reports
   // `nss-cacert` as its pname and carries the
   // `/etc/ssl/certs/ca-bundle.crt` the SSL_CERT_FILE env points at.
-  for (const name of ['bash', 'git', 'gh', 'coreutils', 'findutils', 'gnugrep', 'python3', 'nix', 'util-linux', 'nss-cacert']) {
+  // ripgrep/gawk/jq/curl are the developer tools workflow agents expect, and
+  // `fabro-sandbox-usr-bin-env` puts `/usr/bin/env` in the root so
+  // `#!/usr/bin/env node` shims from npm-installed packages run.
+  for (const name of [
+    'bash',
+    'git',
+    'gh',
+    'coreutils',
+    'findutils',
+    'gnugrep',
+    'python3',
+    'nix',
+    'util-linux',
+    'nss-cacert',
+    'ripgrep',
+    'gawk',
+    'jq',
+    'curl',
+    'fabro-sandbox-usr-bin-env',
+  ]) {
     assert.ok(
       image.copyToRootNames.some(
         (candidate) => candidate === name || candidate.startsWith(`${name}-`),
@@ -97,6 +130,10 @@ test('copyToRoot exposes the tools on /bin and the CA bundle on /etc/ssl/certs',
   assert.ok(
     image.copyToRootPathsToLink.includes('/etc/ssl/certs'),
     `pathsToLink must expose the CA bundle: ${JSON.stringify(image.copyToRootPathsToLink)}`,
+  );
+  assert.ok(
+    image.copyToRootPathsToLink.includes('/usr/bin'),
+    `pathsToLink must expose /usr/bin/env: ${JSON.stringify(image.copyToRootPathsToLink)}`,
   );
   // The declared contents and the built root carry the same packages.
   assert.deepEqual([...image.contentNames].sort(), [...image.copyToRootNames].sort());

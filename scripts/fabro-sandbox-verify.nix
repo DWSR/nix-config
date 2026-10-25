@@ -30,7 +30,8 @@
 #   - `wiring` reads the loader-recorded digest, forms `<name>@<digest>`, and
 #     compares it with `.image.docker` returned by
 #     GET /api/v1/environments/default.
-#   - `smoke` runs the installed `fabro-sandbox-smoke` (tools, certs, store, daemon).
+#   - `smoke` runs the installed `fabro-sandbox-smoke` (home, `/usr/bin/env`,
+#     tools, certs, store, daemon, flake registry).
 #   - `all` runs the three in order; re-running it after a contents change
 #     confirms the digest and the environment reference both move.
 #
@@ -89,7 +90,8 @@ writeShellApplication {
       wiring           Confirm the loader recorded the digest and Fabro's `default`
                        environment references <name>@<digest> through the
                        environments API (Requirements 3.1, 4.2).
-      smoke            Run fabro-sandbox-smoke (tools, certs, store, daemon)
+      smoke            Run fabro-sandbox-smoke (home, /usr/bin/env, tools,
+                       certs, store, daemon, flake registry)
                        (Requirements 6.3, 6.4).
       all              Run reproducibility, wiring, and smoke in order. Re-run
                        after a contents change to confirm the digest and the
@@ -182,7 +184,7 @@ writeShellApplication {
         fail smoke_missing "fabro-sandbox-smoke is not executable: $smoke_bin"
       fi
       if ! "$smoke_bin"; then
-        fail smoke_failed "fabro-sandbox-smoke failed (tools, certs, store, or daemon probe)"
+        fail smoke_failed "fabro-sandbox-smoke failed (home, env, tools, certs, store, daemon, or registry probe)"
       fi
       printf 'fabro-sandbox-verify: [smoke] fabro-sandbox-smoke passed\n'
     }

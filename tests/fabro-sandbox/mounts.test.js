@@ -18,6 +18,7 @@ const sandboxPath = path.join(repoRoot, 'configurations/fabro-vm/sandbox.nix');
 const MOUNTS_PATH = 'virtualisation.containers.containersConf.settings.containers.mounts';
 const STORE_MOUNT = 'type=bind,source=/nix/store,destination=/nix/store,ro';
 const DAEMON_MOUNT = 'type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket';
+const TMP_MOUNT = 'type=tmpfs,destination=/tmp';
 
 function sandboxSource() {
   return fs.readFileSync(sandboxPath, 'utf8');
@@ -47,10 +48,10 @@ test('sandbox.nix sets the global containers mounts list', () => {
   assert.match(sandboxSource(), /virtualisation\.containers\.containersConf\.settings\.containers\.mounts = \[/);
 });
 
-test('containers mounts carry exactly the host store and daemon socket binds', () => {
+test('containers mounts carry the store and daemon binds plus a /tmp tmpfs', () => {
   assert.deepEqual(
     mountEntries().slice().sort(),
-    [STORE_MOUNT, DAEMON_MOUNT].sort(),
+    [STORE_MOUNT, DAEMON_MOUNT, TMP_MOUNT].sort(),
   );
 });
 
@@ -68,4 +69,14 @@ test('the daemon socket bind is writable', () => {
   assert.equal(daemon, DAEMON_MOUNT);
   // The socket directory must stay writable, or the mounted socket is unusable.
   assert.doesNotMatch(daemon, /(^|,)(ro|readonly)(,|$)/);
+});
+
+test('a per-container tmpfs supplies the writable /tmp HOME points at', () => {
+  // The image sets HOME=/tmp and XDG_CACHE_HOME=/tmp/nix-cache, but its
+  // store-backed root has no /tmp (and store directories are normalised to
+  // 0555). The tmpfs makes that path exist and be writable for every sandbox.
+  const tmp = mountEntries().find((entry) => entry.includes('destination=/tmp'));
+  assert.notEqual(tmp, undefined, 'a tmpfs mounted at /tmp must be declared');
+  assert.equal(tmp, TMP_MOUNT);
+  assert.match(tmp, /^type=tmpfs,/);
 });

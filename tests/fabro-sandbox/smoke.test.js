@@ -45,8 +45,15 @@ test('smoke script defaults the reference to the recorded image digest', () => {
   assert.match(text, /ref="\$\{name\}@\$/);
 });
 
-test('smoke script runs the tools, certs, store, and daemon probes in the image', () => {
+test('smoke script runs the home, env, tools, certs, store, daemon, and registry probes', () => {
   const text = smokeText();
+  // Nix resolves the flake registry and fetcher/eval caches under $HOME. An
+  // empty HOME makes plain nix commands fail with `not an absolute path:
+  // ".cache/nix/flake-registry.json"` and writes caches into /workspace.
+  assert.match(text, /probe home 'test -n "\$HOME"; test -d "\$HOME"; test -w "\$HOME"'/);
+  // npm-installed bin shims start with `#!/usr/bin/env node`; without
+  // /usr/bin/env they exit 126 even when node is on PATH.
+  assert.match(text, /probe usr-bin-env '\/usr\/bin\/env sh -c "exit 0"'/);
   // Requirement 6.3: the image's tools run inside a container from the image.
   // `setsid` is included because the Fabro sandbox driver refuses to run a
   // command node without it (exit 127 before the script starts). `gh` rides
@@ -55,14 +62,28 @@ test('smoke script runs the tools, certs, store, and daemon probes in the image'
   // `python3` is what the DWSR/fabro workflow command nodes run their scripts
   // with.
   assert.match(text, /bash --version; git --version; gh --version; python3 --version; command -v find; command -v grep; command -v nix; command -v setsid/);
+  // Workflow agents expect the usual developer tools rather than burning
+  // turns on `rg: command not found` / `awk: command not found`.
+  assert.match(text, /probe agent-tools 'rg --version; awk --version; jq --version; curl --version'/);
   // The CA bundle must exist in the running container: without it every
   // https client in the sandbox fails TLS certificate validation.
   assert.match(text, /test -s \/etc\/ssl\/certs\/ca-bundle\.crt/);
   // Requirement 6.4: the container reaches the host store and daemon.
   assert.match(text, /test -e \/nix\/store; ls \/nix\/store/);
   assert.match(text, /nix store ping/);
+  // The registry resolves to an absolute path only when HOME/XDG_CACHE_HOME
+  // are usable; this is the probe that failed in the dependabot runs.
+  assert.match(text, /probe nix-registry 'nix registry list >\/dev\/null'/);
   // Each probe runs in a fresh container from the digest reference.
   assert.match(text, /podman run --rm "\$ref" \/bin\/bash -c/);
+});
+
+test('smoke script gates the network-dependent nix shell probe', () => {
+  const text = smokeText();
+  // `nix shell nixpkgs#hello` fetches from the network; keep it off the fast
+  // smoke path unless the operator opts in.
+  assert.match(text, /FABRO_SANDBOX_SMOKE_NETWORK/);
+  assert.match(text, /probe nix-shell 'nix shell nixpkgs#hello --command hello'/);
 });
 
 test('smoke script banners each step and names the failed step', () => {

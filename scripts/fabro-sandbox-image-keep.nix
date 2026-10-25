@@ -3,8 +3,8 @@
 # store with a running container.
 #
 # The guest's hourly store reaper (`virtualisation.podman.autoPrune` →
-# `podman system prune -f -a`) removes every image not referenced by a
-# *running* container. The loaded sandbox image is only referenced
+# `podman system prune -f -a --volumes`) removes every image not referenced
+# by a *running* container. The loaded sandbox image is only referenced
 # transiently while Fabro creates a sandbox container, so between runs the
 # reaper deletes it; the next run's docker provider then treats
 # `<name>@<digest>` as missing, tries to pull it from the nonexistent

@@ -17,6 +17,16 @@
 }:
 let
   cfg = config.fabro.sandboxImage;
+
+  # npm-installed bin shims start with `#!/usr/bin/env node`; without a
+  # `/usr/bin/env` they exit 126 even when the interpreter is on PATH. The
+  # image root is read-only and has no `/usr`, so provide the symlink through
+  # the same `contents`/`pathsToLink` mechanism as the other packages. The
+  # target `/bin/env` is coreutils' env, already linked into the image root.
+  usrBinEnv = pkgs.runCommand "fabro-sandbox-usr-bin-env" { } ''
+    mkdir -p $out/usr/bin
+    ln -s /bin/env $out/usr/bin/env
+  '';
 in
 {
   options.fabro.sandboxImage = {
@@ -61,30 +71,38 @@ in
         nix
         util-linux
         cacert
+        ripgrep
+        gawk
+        jq
+        curl
+        usrBinEnv
       ];
       defaultText = lib.literalExpression ''
-        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep python3 nix util-linux cacert ]
+        with pkgs; [ bashInteractive git gh coreutils findutils gnugrep python3 nix util-linux cacert ripgrep gawk jq curl usrBinEnv ]
       '';
       description = ''
         Packages the image exposes in its root: the `/bin` command path
-        (bash, git, gh, coreutils, findutils, gnugrep, python3, nix, and
-        util-linux) plus cacert's `/etc/ssl/certs` CA bundle. The Fabro
-        sandbox driver runs scripts through `setsid` and `env`, so
-        util-linux's `setsid` must be on the path or every command node exits
-        127 with `sandbox-driver: the container image must provide setsid and
-        env`. Pebble (the agent harness Fabro runs agent nodes with) probes
-        for bash, find, and grep in the execution scope before building a
-        session and fails with `Scope command failed: Pebble requires Bash,
-        find, and grep in the execution scope` when findutils or gnugrep are
-        missing, so both must be present. The DWSR/fabro workflow packages
-        (dispatch, oneshot, kiro-spec, kiro-task, dependabot) run their
-        command nodes as Python scripts, so python3 must be on the path or
-        every such node fails with `env: 'python3': No such file or
-        directory` (the upstream `buildpack-deps` image this replaces shipped
-        it). Containers see neither the guest's `/etc/ssl` nor its CA
-        configuration, so without the bundle https clients (git, gh) fail TLS
-        validation; the `SSL_CERT_FILE` entry in `imageConfig.Env` points at
-        it.
+        (bash, git, gh, coreutils, findutils, gnugrep, python3, nix,
+        util-linux, ripgrep, gawk, jq, and curl) plus cacert's
+        `/etc/ssl/certs` CA bundle and the `usrBinEnv` `/usr/bin/env`
+        symlink. The Fabro sandbox driver runs scripts through `setsid` and
+        `env`, so util-linux's `setsid` must be on the path or every command
+        node exits 127 with `sandbox-driver: the container image must provide
+        setsid and env`. Pebble (the agent harness Fabro runs agent nodes
+        with) probes for bash, find, and grep in the execution scope before
+        building a session and fails with `Scope command failed: Pebble
+        requires Bash, find, and grep in the execution scope` when findutils
+        or gnugrep are missing, so both must be present. The DWSR/fabro
+        workflow packages (dispatch, oneshot, kiro-spec, kiro-task,
+        dependabot) run their command nodes as Python scripts, so python3
+        must be on the path or every such node fails with `env: 'python3':
+        No such file or directory` (the upstream `buildpack-deps` image this
+        replaces shipped it). Containers see neither the guest's `/etc/ssl`
+        nor its CA configuration, so without the bundle https clients (git,
+        gh, curl) fail TLS validation; the `SSL_CERT_FILE` entry in
+        `imageConfig.Env` points at it. ripgrep, gawk, jq, and curl are for
+        workflow agents that expect the usual developer tools and otherwise
+        burn turns on `rg: command not found` / `awk: command not found`.
       '';
     };
 
@@ -93,6 +111,8 @@ in
       default = {
         Env = [
           "PATH=/bin"
+          "HOME=/tmp"
+          "XDG_CACHE_HOME=/tmp/nix-cache"
           "NIX_REMOTE=daemon"
           "NIX_CONFIG=experimental-features = nix-command flakes"
           "SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt"
@@ -103,16 +123,23 @@ in
       description = ''
         OCI image configuration. `Env` must carry `PATH=/bin` (the Fabro
         Docker provider runs a non-login shell, so the path cannot come
-        from a profile), `NIX_REMOTE=daemon` (the host daemon socket
-        bind-mounted by ./sandbox.nix), `NIX_CONFIG` enabling the
-        `nix-command` and `flakes` experimental features (containers see
-        neither the guest's /etc/nix/nix.conf nor any per-user config, so
-        without it plain `nix` commands fail the experimental-features
-        gate before ever reaching the daemon), and `SSL_CERT_FILE` pointing
-        at the CA bundle linked into the image root from cacert. Both
-        OpenSSL (git's libcurl) and Go's crypto/x509 (gh) honor
-        `SSL_CERT_FILE`, so one variable covers every https client in the
-        container.
+        from a profile), `HOME` and `XDG_CACHE_HOME` (the container has no
+        `/etc/passwd`-derived home, so without them Nix resolves its flake
+        registry and fetcher/eval caches relative to the working directory:
+        `nix registry list` fails with `error: not an absolute path:
+        ".cache/nix/flake-registry.json"` and caches land in `/workspace`,
+        dirtying the checkout or getting committed by the dependabot
+        `amend` stage; both point into the writable container `/tmp` to
+        match the proven workaround and keep caches out of the workspace),
+        `NIX_REMOTE=daemon` (the host daemon socket bind-mounted by
+        ./sandbox.nix), `NIX_CONFIG` enabling the `nix-command` and `flakes`
+        experimental features (containers see neither the guest's
+        /etc/nix/nix.conf nor any per-user config, so without it plain `nix`
+        commands fail the experimental-features gate before ever reaching
+        the daemon), and `SSL_CERT_FILE` pointing at the CA bundle linked
+        into the image root from cacert. Both OpenSSL (git's libcurl, curl)
+        and Go's crypto/x509 (gh) honor `SSL_CERT_FILE`, so one variable
+        covers every https client in the container.
       '';
     };
 
@@ -125,13 +152,15 @@ in
         pathsToLink = [
           "/bin"
           "/etc/ssl/certs"
+          "/usr/bin"
         ];
       };
       description = ''
         Read-only root filesystem derivation: the `contents` packages'
-        `/bin` entries and cacert's `/etc/ssl/certs` bundle linked into the
-        image root, with their store-path prefix stripped and placed at the
-        image root by `buildImage`.
+        `/bin` entries, cacert's `/etc/ssl/certs` bundle, and the
+        `usrBinEnv` `/usr/bin/env` symlink linked into the image root, with
+        their store-path prefix stripped and placed at the image root by
+        `buildImage`.
       '';
     };
 

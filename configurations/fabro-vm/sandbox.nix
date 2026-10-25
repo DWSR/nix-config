@@ -17,8 +17,8 @@
 #
 # `fabro-sandbox-image-keep.service` keeps one trivial long-running
 # container from the loaded image (scripts/fabro-sandbox-image-keep.nix).
-# The guest's hourly `podman system prune -af` reaper removes every image
-# not referenced by a running container; the loaded image is only
+# The guest's hourly `podman system prune -af --volumes` reaper removes
+# every image not referenced by a running container; the loaded image is only
 # referenced transiently while Fabro creates sandbox containers, so without
 # the keeper the reaper deletes it between runs and the next run's docker
 # provider fails with `docker error [500]: pulling image` trying to pull
@@ -117,10 +117,11 @@ in
   };
 
   # Keep one long-running container from the loaded image (see
-  # scripts/fabro-sandbox-image-keep.nix): `podman system prune -af` removes
-  # every image not referenced by a running container, so the hourly store
-  # reaper would otherwise delete the image between runs and the next run's
-  # docker provider would fail trying to pull `localhost/fabro-sandbox` from
+  # scripts/fabro-sandbox-image-keep.nix): `podman system prune -af --volumes`
+  # removes every image not referenced by a running container, so the hourly
+  # store reaper would otherwise delete the image between runs and the next
+  # run's docker provider would fail trying to pull `localhost/fabro-sandbox`
+  # from
   # the nonexistent `localhost` registry (`docker error [500]: pulling
   # image`).
   systemd.services."fabro-sandbox-image-keep" = {
@@ -188,14 +189,23 @@ in
   # while preventing sandbox containers from writing to the guest store. The
   # daemon-socket directory is bound read-write so the socket is usable and the
   # image's `NIX_REMOTE=daemon` reaches the host daemon.
+  #
+  # The image is a minimal store-path root with no `/tmp`, but its
+  # `imageConfig.Env` sets `HOME=/tmp` and `XDG_CACHE_HOME=/tmp/nix-cache` so
+  # Nix does not resolve its flake registry and caches relative to the
+  # workspace. A per-container tmpfs gives every sandbox a writable,
+  # user-independent `/tmp` (the store cannot supply one: Nix normalises store
+  # directories to 0555) and keeps those caches out of later containers.
   virtualisation.containers.containersConf.settings.containers.mounts = [
     "type=bind,source=/nix/store,destination=/nix/store,ro"
     "type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket"
+    "type=tmpfs,destination=/tmp"
   ];
 
   # Expose the runtime smoke check on the guest's PATH (Requirements 6.3-6.5):
-  # `fabro-sandbox-smoke` runs the loaded image by digest and probes tools, the
-  # CA bundle, the host store, and the host daemon, naming the failed step.
+  # `fabro-sandbox-smoke` runs the loaded image by digest and probes home,
+  # `/usr/bin/env`, tools, the CA bundle, the host store, the host daemon, and
+  # the flake registry, naming the failed step.
   #
   # `fabro-sandbox-verify` (task 7.5) is the operator's end-to-end harness:
   # reproducibility (rebuild + compare digest), wiring (the persisted `default`

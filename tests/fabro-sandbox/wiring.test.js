@@ -105,10 +105,10 @@ test('fabro.service is ordered after and wants the loader', () => {
 
 test('the keeper unit re-pins the loaded image against the store prune', () => {
   const { keeper, digestPath } = guest();
-  // The hourly `podman system prune -af` reaper (autoPrune) removes every
-  // image not referenced by a running container; the keeper's long-running
-  // container is that running reference, and the restart policy keeps the pin
-  // alive across crashes.
+  // The hourly `podman system prune -af --volumes` reaper (autoPrune) removes
+  // every image not referenced by a running container; the keeper's
+  // long-running container is that running reference, and the restart policy
+  // keeps the pin alive across crashes.
   assert.equal(keeper.type, 'simple');
   assert.equal(keeper.restart, 'always');
   assert.equal(keeper.restartSec, 5);

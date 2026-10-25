@@ -62,9 +62,9 @@ function keeperBlock() {
 test('sandbox.nix declares the keeper unit as a restarting loader-gated service', () => {
   const block = keeperBlock();
   // The keeper must be a long-running service with a restart policy: a
-  // running container is what pins the image against `podman system prune -a`
-  // (the hourly autoPrune reaper), and the restart policy keeps the pin alive
-  // across crashes.
+  // running container is what pins the image against
+  // `podman system prune -a --volumes` (the hourly autoPrune reaper), and the
+  // restart policy keeps the pin alive across crashes.
   assert.match(block, /Type = "simple"/);
   assert.match(block, /Restart = "always"/);
   assert.match(block, /RestartSec = 5/);
