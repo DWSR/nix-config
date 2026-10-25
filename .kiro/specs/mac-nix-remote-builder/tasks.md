@@ -8,6 +8,7 @@
   - Document the builder age-key item, the age-key-before-first-switch bootstrap order, and authorized-key rotation in `secrets/README.md`.
   - Done when `.sops.yaml` parses with the anchor and its rule, `secrets/README.md` names the builder store, and the recipient round-trips from the stored private key.
   - _Requirements: 4.2, 4.6_
+  - _Blocked: No authenticated 1Password CLI (no OP token/Connect; op cannot init); store builder age key in Private item sops-age-key-mac-builder, then read back and verify the recipient._
 
 - [ ] 1.2 Author the encrypted builder secret store
   - Create `secrets/remote-builder.mac-builder.yaml` with a `builder-authorized-keys` entry holding the newline-separated client public keys, encrypted to `&host_mac_builder`.
