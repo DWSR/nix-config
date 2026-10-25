@@ -334,6 +334,35 @@ in
     # login (upstream documents the same requirement).
     users.mutableUsers = true;
 
+    # nixos-rebuild's switch-to-configuration reloads user units for every
+    # logind user by spawning itself as that user and connecting to the user
+    # dbus. lima-init owns the cidata user, so there is no
+    # `users.users.brandonmcnama` to hang `linger = true` on. Enable lingering
+    # and start the user manager explicitly; otherwise
+    # /run/user/501/bus is a stale socket, the child fails with
+    # "Failed to open dbus connection", and the switch exits 4.
+    systemd.services.fabro-lima-user-manager = {
+      description = "Start the Lima cidata user manager for nixos-rebuild";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "systemd-logind.service"
+        "lima-init.service"
+      ];
+      requires = [ "systemd-logind.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      # Upholds keeps user@501.service active while this oneshot is active:
+      # 501 is the Lima cidata UID, so a manager that dies between switches is
+      # restarted automatically (user@.service itself has Restart=no).
+      unitConfig.Upholds = "user@501.service";
+      script = ''
+        ${config.systemd.package}/bin/loginctl enable-linger brandonmcnama
+        ${config.systemd.package}/bin/systemctl start "user@$(${pkgs.coreutils}/bin/id -u brandonmcnama).service"
+      '';
+    };
+
     # Remote deployment into the instance's nix store.
     nix.settings = {
       experimental-features = [
