@@ -98,13 +98,7 @@ let
     text = ''
       export LIMA_HOME=${lib.escapeShellArg limaHome}
 
-      exec ssh -F "$LIMA_HOME/${cfg.name}/ssh.config" \\
-        -o ServerAliveInterval=30 \\
-        -o ServerAliveCountMax=3 \\
-        -o ExitOnForwardFailure=yes \\
-        -N \\
-        -L ${lib.escapeShellArg cfg.forward.bindAddress}:${toString cfg.forward.port}:127.0.0.1:22 \\
-        lima-${cfg.name}
+      exec ssh -F "$LIMA_HOME/${cfg.name}/ssh.config" -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -L ${lib.escapeShellArg cfg.forward.bindAddress}:${toString cfg.forward.port}:127.0.0.1:22 lima-${cfg.name}
     '';
   };
 
