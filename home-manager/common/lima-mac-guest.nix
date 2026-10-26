@@ -87,6 +87,26 @@ let
       exec limactl --tty=false start --foreground "$name"
     '';
   };
+
+  forwardAgentName = "lima-${cfg.name}-forward";
+
+  forward = pkgs.writeShellApplication {
+    name = "lima-${cfg.name}-forward";
+    runtimeInputs = [
+      pkgs.openssh
+    ];
+    text = ''
+      export LIMA_HOME=${lib.escapeShellArg limaHome}
+
+      exec ssh -F "$LIMA_HOME/${cfg.name}/ssh.config" \\
+        -o ServerAliveInterval=30 \\
+        -o ServerAliveCountMax=3 \\
+        -o ExitOnForwardFailure=yes \\
+        -N \\
+        -L ${lib.escapeShellArg cfg.forward.bindAddress}:${toString cfg.forward.port}:127.0.0.1:22 \\
+        lima-${cfg.name}
+    '';
+  };
 in
 {
   options.virtualisation.limaMacGuest = {
@@ -259,7 +279,6 @@ in
       type = types.nullOr types.path;
       internal = true;
       readOnly = true;
-      default = null;
       description = "Internal forward script/agent. Null when disabled.";
     };
 
@@ -288,26 +307,50 @@ in
       }
     ];
 
-    virtualisation.limaMacGuest._configYaml = limaConfigYaml;
-    virtualisation.limaMacGuest._supervisor = supervisor;
+    virtualisation.limaMacGuest = {
+      _configYaml = limaConfigYaml;
+      _supervisor = supervisor;
+      _forward = if cfg.forward.enable then forward else null;
+    };
 
-    launchd.agents.${agentName} = {
-      enable = true;
-      config = {
-        Label = "dev.dwsr.${agentName}";
-        ProgramArguments = [ (lib.getExe supervisor) ];
-        RunAtLoad = true;
-        KeepAlive = {
-          SuccessfulExit = false;
+    launchd.agents = {
+      ${agentName} = {
+        enable = true;
+        config = {
+          Label = "dev.dwsr.${agentName}";
+          ProgramArguments = [ (lib.getExe supervisor) ];
+          RunAtLoad = true;
+          KeepAlive = {
+            SuccessfulExit = false;
+          };
+          ProcessType = "Background";
+          EnvironmentVariables = {
+            LIMA_HOME = limaHome;
+            HOME = config.home.homeDirectory;
+            PATH = servicePath;
+          };
+          StandardOutPath = "${logDir}/${agentName}.log";
+          StandardErrorPath = "${logDir}/${agentName}.error.log";
         };
-        ProcessType = "Background";
-        EnvironmentVariables = {
-          LIMA_HOME = limaHome;
-          HOME = config.home.homeDirectory;
-          PATH = servicePath;
+      };
+    }
+    // lib.optionalAttrs cfg.forward.enable {
+      ${forwardAgentName} = {
+        enable = true;
+        config = {
+          Label = "dev.dwsr.${forwardAgentName}";
+          ProgramArguments = [ (lib.getExe forward) ];
+          RunAtLoad = true;
+          KeepAlive = true;
+          ProcessType = "Background";
+          EnvironmentVariables = {
+            LIMA_HOME = limaHome;
+            HOME = config.home.homeDirectory;
+            PATH = servicePath;
+          };
+          StandardOutPath = "${logDir}/${forwardAgentName}.log";
+          StandardErrorPath = "${logDir}/${forwardAgentName}.error.log";
         };
-        StandardOutPath = "${logDir}/${agentName}.log";
-        StandardErrorPath = "${logDir}/${agentName}.error.log";
       };
     };
 
