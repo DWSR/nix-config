@@ -70,7 +70,7 @@
   - Done when the rendered agent starts the guest on load, restarts it after a nonzero exit, and leaves it stopped after a clean `limactl stop`.
   - _Requirements: 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 3.4 Add the launchd host-side SSH forward
+- [x] 3.4 Add the launchd host-side SSH forward
   - Render the forward as `ssh -F <LIMA_HOME>/<name>/ssh.config -o ExitOnForwardFailure=yes -N -L <bindAddress>:<port>:127.0.0.1:22 lima-<name>` with a server-alive interval.
   - Register `launchd.agents.dev.dwsr.lima-mac-builder-forward` with `RunAtLoad` and `KeepAlive` so it retries until the instance exists and recovers when the tunnel drops.
   - Done when the rendered agent binds the configured address and exposes the guest sshd without guest IP discovery.
