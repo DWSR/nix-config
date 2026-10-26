@@ -60,7 +60,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - _Requirements: 1.6, 2.2, 2.6, 2.7, 3.5, 7.1, 7.2, 7.3, 7.6_
   - _Depends: 1.3_
 
-- [ ] 3.2 Add weighted placement and session-affinity router settings
+- [x] 3.2 Add weighted placement and session-affinity router settings
   - Set `routing_strategy = "simple-shuffle"`, `optional_pre_call_checks = [ "session_affinity" ]`, and `deployment_affinity_ttl_seconds = 21600`; leave `deployment_affinity` and any `rpm`/`tpm` unset so placement uses weights plus router availability only.
   - Comment that pins are in-process and keyed by logical model and session identity, so a gateway restart clears them.
   - Observable: `nix eval` of the guest's `router_settings` shows the three values, `deployment_affinity` absent, and no request-rate or token-rate field.
