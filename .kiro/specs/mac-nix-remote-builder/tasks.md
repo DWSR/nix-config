@@ -43,7 +43,7 @@
   - _Depends: 1.2_
   - _Requirements: 2.4, 2.5, 2.6, 2.7, 4.1, 4.3, 4.4, 4.5_
 
-- [ ] 2.4 Register the builder host in the flake
+- [x] 2.4 Register the builder host in the flake
   - Add `darwinConfigurations.mac-builder` to `flake.nix` via `inputs.darwin.lib.darwinSystem`, following the existing `Brandons-MacBook-Pro` entry, with `inputs`/`outputs` specialArgs and the `./configurations/mac-builder` module.
   - Done when `nix eval .#darwinConfigurations.mac-builder.config.nixpkgs.hostPlatform` reports `aarch64-darwin` and the host's `system.build.toplevel` evaluates.
   - _Depends: 2.1, 2.2, 2.3_
