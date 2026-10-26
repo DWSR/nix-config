@@ -34,7 +34,7 @@
   - Done when the evaluated user has the `staff` group, is absent from `admin`, and no other account is added to `nix.settings.trusted-users`.
   - _Requirements: 2.1, 2.2, 2.3_
 
-- [ ] 2.3 Wire the builder secret store and authorized-keys activation
+- [x] 2.3 Wire the builder secret store and authorized-keys activation
   - Import `inputs.sops-nix.darwinModules.default` directly; set `sops.age.keyFile = "/var/lib/sops-nix/key.txt"`, `sops.age.sshKeyPaths = []`, `sops.gnupg.sshKeyPaths = []`, and `sops.defaultSopsFile = ../../secrets/remote-builder.mac-builder.yaml`.
   - Declare `sops.secrets."builder-authorized-keys"` and install it to `~nix-builder/.ssh/authorized_keys` (`0600`, owned by `nix-builder`, dir `0700`) from a `system.activationScripts.postActivation.text = lib.mkOrder 9999` fragment ordered after decryption.
   - Make the fragment fail loudly, naming the secret, when the file is missing or empty; set `PasswordAuthentication no`, `KbdInteractiveAuthentication no`, and `PermitRootLogin no`.

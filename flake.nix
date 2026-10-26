@@ -3092,6 +3092,17 @@
             ./configurations/personal
           ];
         };
+
+        "mac-builder" = inputs.darwin.lib.darwinSystem {
+          specialArgs = {
+            inherit inputs outputs;
+            username = "nix-builder";
+          };
+
+          modules = [
+            ./configurations/mac-builder
+          ];
+        };
       };
     };
 }
