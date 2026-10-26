@@ -18,7 +18,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - Observable: `nix eval` of the module's exported table reports 8 logical models, 9 deployments, and one provider-free id per logical model.
   - _Requirements: 1.1, 1.3, 1.5, 2.1, 2.7_
 
-- [ ] 1.2 Add catalog validation and export the pure `mkCatalog` constructor
+- [x] 1.2 Add catalog validation and export the pure `mkCatalog` constructor
   - Fail evaluation on a missing required field, a deployment naming an unknown provider, and a group with zero deployments, using the design's `litellm-catalog: deployment '<id>' is missing field '<field>'` shape and naming the entry.
   - Fail on an id containing `/` or a provider key token, on a duplicate `model_info.id`, and on group disagreement over `mode`, `requestDefaults`, `contextWindow`, or `maxOutputTokens`, naming the logical model, both deployments, and the field.
   - Export `mkCatalog` so fixture tables can be evaluated in tests, and run validation before returning any projection.

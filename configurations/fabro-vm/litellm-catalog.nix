@@ -27,9 +27,13 @@
 # The table is pure data: no host paths, secrets, or derivations. A credential
 # appears only as the runtime environment-variable name the provider consumes.
 #
-# The module ignores its argument today; the validation and projection helpers
-# added beside the table will consume `lib` without changing the import shape.
-_:
+# `mkCatalog` is a pure constructor exported for fixture-based tests; it
+# validates the table before returning any projection and throws at evaluation
+# time on a missing required field, an unknown provider reference, a group with
+# no deployments, a provider-scoped or duplicate id, or a group whose
+# deployments disagree on their client-visible semantics. `catalog` is the
+# repository table already passed through `mkCatalog`.
+{ lib }:
 let
   table = {
     # Shared default for both client surfaces.
@@ -212,6 +216,230 @@ let
     };
   };
 in
+let
+  # ---------------------------------------------------------------------------
+  # Validation
+  #
+  # Validation is a total function over the table and runs before any
+  # projection is returned, so a malformed table fails Nix evaluation instead
+  # of producing a gateway or client config with a bad id. Every message names
+  # the offending logical model, provider, or deployment and the field.
+  # ---------------------------------------------------------------------------
+
+  error = message: "litellm-catalog: ${message}";
+
+  requiredProviderFields = [
+    "modelPrefix"
+    "apiBase"
+    "apiKeyEnvVar"
+    "allowedOpenAIParams"
+    "requiresClientSessionHeader"
+  ];
+
+  requiredLogicalModelFields = [
+    "displayName"
+    "deployments"
+  ];
+
+  requiredDeploymentFields = [
+    "provider"
+    "upstreamModel"
+    "mode"
+    "requestDefaults"
+    "contextWindow"
+    "maxOutputTokens"
+  ];
+
+  # A difference in any of these makes two logical models rather than one
+  # unified group, so the group must agree on all of them.
+  agreementFields = [
+    "mode"
+    "requestDefaults"
+    "contextWindow"
+    "maxOutputTokens"
+  ];
+
+  hasField = attrs: field: builtins.hasAttr field attrs;
+
+  # Error messages label a deployment `<logical>/<provider>`, matching the
+  # design's `deployment '<id>' is missing field '<field>'` shape. The
+  # client-visible deployment id is `<logical>@<provider>` and is only built
+  # when generating the gateway `model_list`.
+  deploymentLabel = logicalId: deployment: "${logicalId}/${deployment.provider or "<no-provider>"}";
+
+  missingFieldErrors =
+    kind: label: fields: attrs:
+    map (field: error "${kind} '${label}' is missing field '${field}'") (
+      builtins.filter (field: !(hasField attrs field)) fields
+    );
+
+  # Strings are quoted with single quotes to match the design text; everything
+  # else uses its JSON form, which is deterministic for attrsets and lists.
+  renderValue = value: if builtins.isString value then "'${value}'" else builtins.toJSON value;
+
+  providersOf = catalogTable: catalogTable.providers or { };
+
+  providerErrors =
+    catalogTable:
+    lib.concatLists (
+      lib.mapAttrsToList (
+        key: provider: missingFieldErrors "provider" key requiredProviderFields provider
+      ) (providersOf catalogTable)
+    );
+
+  # Ids are client-callable and provider-agnostic: no slash (the provider-scoped
+  # shape) and no provider key token anywhere in the id.
+  idErrors =
+    catalogTable: logicalId:
+    lib.optional (lib.hasInfix "/" logicalId) (
+      error "logical model id '${logicalId}' must not contain '/' (client-callable ids are provider-agnostic)"
+    )
+    ++
+      map
+        (
+          providerKey:
+          error "logical model id '${logicalId}' embeds provider key token '${providerKey}' (client-callable ids are provider-agnostic)"
+        )
+        (
+          builtins.filter (providerKey: lib.hasInfix providerKey logicalId) (
+            builtins.attrNames (providersOf catalogTable)
+          )
+        );
+
+  deploymentErrors =
+    catalogTable: logicalId: deployment:
+    let
+      label = deploymentLabel logicalId deployment;
+      provider = deployment.provider or null;
+    in
+    missingFieldErrors "deployment" label requiredDeploymentFields deployment
+    ++ lib.optional (provider != null && !(builtins.hasAttr provider (providersOf catalogTable))) (
+      error "deployment '${label}' names unknown provider '${provider}'"
+    )
+    ++
+      lib.optional
+        (
+          hasField deployment "mode"
+          && !(builtins.elem deployment.mode [
+            "chat"
+            "responses"
+          ])
+        )
+        (
+          error "deployment '${label}' has invalid mode ${renderValue deployment.mode} (expected 'chat' or 'responses')"
+        )
+    ++
+      lib.optional
+        (hasField deployment "weight" && !(builtins.isInt deployment.weight && deployment.weight >= 1))
+        (
+          error "deployment '${label}' has invalid weight ${renderValue deployment.weight} (expected a positive integer)"
+        );
+
+  # `model_info.id` is `<logical>@<provider>` and must be unique across the
+  # whole table, not only inside one group: two different logical models can
+  # compose the same string (logical `foo@bar` on provider `baz` and logical
+  # `foo` on provider `bar@baz` both yield `foo@bar@baz`). Every message names
+  # the field, both logical models, and both deployments.
+  allDeployments =
+    catalogTable:
+    lib.concatMap (
+      logicalId:
+      map (deployment: {
+        inherit logicalId deployment;
+        id = "${logicalId}@${deployment.provider or "<no-provider>"}";
+      }) (catalogTable.logicalModels.${logicalId}.deployments or [ ])
+    ) (builtins.attrNames (catalogTable.logicalModels or { }));
+
+  duplicateIdErrors =
+    catalogTable:
+    let
+      entries = allDeployments catalogTable;
+      modelInfoIds = map (entry: entry.id) entries;
+      duplicated = builtins.filter (
+        id: builtins.length (builtins.filter (other: other == id) modelInfoIds) > 1
+      ) (lib.unique modelInfoIds);
+    in
+    lib.concatMap (
+      id:
+      let
+        matching = builtins.filter (entry: entry.id == id) entries;
+        reference = builtins.head matching;
+      in
+      map (
+        entry:
+        error "duplicate model_info.id '${id}' declared by logical model '${reference.logicalId}' deployment '${deploymentLabel reference.logicalId reference.deployment}' and by logical model '${entry.logicalId}' deployment '${deploymentLabel entry.logicalId entry.deployment}'"
+      ) (builtins.tail matching)
+    ) duplicated;
+
+  # Each later deployment is compared with the group's first deployment; the
+  # message names the field, the logical model, and both deployments.
+  conflictErrors =
+    logicalId: deployments:
+    if deployments == [ ] then
+      [ ]
+    else
+      let
+        reference = builtins.head deployments;
+        referenceLabel = deploymentLabel logicalId reference;
+      in
+      lib.concatMap (
+        field:
+        map
+          (
+            deployment:
+            error "logical model '${logicalId}' disagrees on ${field}: '${referenceLabel}'=${
+              renderValue (reference.${field} or null)
+            }, '${deploymentLabel logicalId deployment}'=${renderValue (deployment.${field} or null)}"
+          )
+          (
+            builtins.filter (deployment: (deployment.${field} or null) != (reference.${field} or null)) (
+              builtins.tail deployments
+            )
+          )
+      ) agreementFields;
+
+  logicalModelErrors =
+    catalogTable: logicalId:
+    let
+      logicalModel = catalogTable.logicalModels.${logicalId};
+      deployments = logicalModel.deployments or [ ];
+    in
+    idErrors catalogTable logicalId
+    ++ missingFieldErrors "logical model" logicalId requiredLogicalModelFields logicalModel
+    ++ lib.optional (hasField logicalModel "deployments" && deployments == [ ]) (
+      error "logical model '${logicalId}' has no deployments (a client-callable id must resolve to at least one)"
+    )
+    ++ lib.concatMap (deploymentErrors catalogTable logicalId) deployments
+    ++ conflictErrors logicalId deployments;
+
+  tableErrors =
+    catalogTable:
+    providerErrors catalogTable
+    ++ lib.concatMap (logicalModelErrors catalogTable) (
+      builtins.attrNames (catalogTable.logicalModels or { })
+    )
+    ++ duplicateIdErrors catalogTable;
+
+  # Validate before returning anything; the first error in table order is the
+  # one reported, so a fixture failure is deterministic.
+  validate =
+    catalogTable: result:
+    let
+      errors = tableErrors catalogTable;
+    in
+    if errors == [ ] then result else throw (builtins.head errors);
+
+  # Pure constructor exported for fixture-based failure tests. Later units add
+  # the gateway and client projections here, after this validation.
+  mkCatalog =
+    catalogTable:
+    validate catalogTable {
+      logicalModels = catalogTable.logicalModels;
+    };
+in
 {
-  inherit table;
+  inherit table mkCatalog;
+
+  # The repository's table, already validated.
+  catalog = mkCatalog table;
 }
