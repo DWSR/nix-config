@@ -38,7 +38,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - _Requirements: 2.2, 6.1, 6.2, 6.5, 6.7, 6.9_
 
 - [ ] 2. Session identity
-- [ ] 2.1 Implement the pure resolver `configurations/fabro-vm/litellm_session_identity.py`
+- [x] 2.1 Implement the pure resolver `configurations/fabro-vm/litellm_session_identity.py`
   - `existing_session_id(metadata_dicts)` returns the first non-empty `session_id`, else `None`; `producer_tag(user_agent)` takes the product token before `/`, lowercases it, keeps `[a-z0-9._-]` up to 32 characters, and falls back to `unknown`.
   - `derive_session_identity(prompt_cache_key, user_agent)` returns `None` unless the key is a stripped non-empty string of at most 512 characters without CR, LF, or NUL; otherwise it returns `bridge:v1:<producer>:<sha256 hex of the stripped key>`.
   - Import only the Python standard library, never raise, and never produce a value shaped like a client session id.
