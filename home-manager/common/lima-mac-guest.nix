@@ -145,7 +145,7 @@ in
         options = {
           location = mkOption {
             type = types.str;
-            default = "https://updates.cdn-apple.com/2026FallFCS/.../UniversalMac_27.0.1_26A434_Restore.ipsw";
+            default = "https://updates.cdn-apple.com/2026FallFCS/59241290-5d51-4ca8-9df4-31624b9a4eac/UniversalMac_27.0.1_26A434_Restore.ipsw";
             description = "Image URL or local file path passed as `images[0].location`.";
           };
 

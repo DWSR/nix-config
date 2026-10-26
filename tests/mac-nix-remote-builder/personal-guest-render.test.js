@@ -131,7 +131,7 @@ test('rendered guest YAML matches the module contract', () => {
 
   assert.match(yaml, /os: ?Darwin/);
   assert.match(yaml, /vmType: ?['"]?vz['"]?/);
-  assert.match(yaml, /location: ?['"]?https:\/\/updates\.cdn-apple\.com\/2026FallFCS\/\.\.\.\/UniversalMac_27\.0\.1_26A434_Restore\.ipsw['"]?/);
+  assert.match(yaml, /location: ?['"]?https:\/\/updates\.cdn-apple\.com\/2026FallFCS\/59241290-5d51-4ca8-9df4-31624b9a4eac\/UniversalMac_27\.0\.1_26A434_Restore\.ipsw['"]?/);
   assert.match(yaml, /digest: ?['"]?sha256:2f016638293c3e641b8b25391a76fbc16563b3711915a5551cf8aa0f5598a5c1['"]?/);
   assert.match(yaml, /suppressFirstLoginSetup: ?true/);
   assert.match(yaml, /mounts: ?\[\]/);
