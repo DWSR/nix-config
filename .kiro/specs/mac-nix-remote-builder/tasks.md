@@ -119,7 +119,7 @@
   - _Depends: 2.4_
   - _Requirements: 1.3, 1.4, 1.5, 2.2, 2.5, 3.1, 7.1, 7.3_
 
-- [ ] 6.2 (P) Add personal-guest render assertions
+- [x] 6.2 (P) Add personal-guest render assertions
   - Add `tests/mac-nix-remote-builder/personal-guest-render.test.js` evaluating `virtualisation.limaMacGuest` in a standalone fixture and on the personal host.
   - Assert the rendered YAML (`os: Darwin`, `vmType: vz`, pinned image + digest, `osOpts.Darwin.suppressFirstLoginSetup`, `mounts: []`, no containerd), both launchd agents (supervisor and forward), and that `virtualisation.limaVM` still renders unchanged.
   - Done when the suite passes and the fabro instance's render is unchanged from its pre-feature output.
