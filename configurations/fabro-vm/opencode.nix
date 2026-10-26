@@ -326,11 +326,14 @@ in
         "${pkgs.coreutils}/bin/mkdir -p ${opencodeHome}/.ssh ${opencodeDataDir}/gh/extensions"
 
         # Declarative-wins config: wipe and re-copy the tree each start.
-        # The chmod restores owner-write on the store's read-only modes so
-        # runtime settings writes succeed (and are reset next start).
+        # The pre-chmod makes the previous copy's parent writable (the
+        # store modes are read-only, including the top-level directory);
+        # the post-chmod restores owner-write on the fresh tree so runtime
+        # settings writes succeed and the next start can wipe it.
+        "-${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}"
         "${pkgs.coreutils}/bin/rm -rf ${opencodeConfigDir}"
         "${pkgs.coreutils}/bin/cp -r ${opencodeConfig} ${opencodeConfigDir}"
-        "${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}/opencode"
+        "${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}"
 
         # The gh-stack extension, mirrored from home-manager's
         # `programs.gh.extensions` layout (a `bin/` symlink under
