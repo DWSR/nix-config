@@ -209,6 +209,43 @@ nix shell nixpkgs#age -c age-keygen -y /tmp/verify-age-mac-builder.txt
 rm /tmp/verify-age-mac-builder.txt
 ```
 
+### Verifying the enrolled recipient
+
+`.sops.yaml` only needs the public half, but the pairing is what makes
+the store usable, so verify it before treating enrollment as done. The
+repository check derives the recipient from the stored private key and
+compares it with `&host_mac_builder`. It reads the key straight from
+1Password when `op` is signed in, and falls back to a local copy:
+
+```sh
+# operator flow: fetch the stored copy and verify the pairing
+nix shell nixpkgs#nodejs nixpkgs#age -c \
+  node --test tests/mac-nix-remote-builder/sops-identity.test.js
+
+# offline flow: point the check at a local copy of the private key
+MAC_BUILDER_AGE_KEY_FILE=/tmp/age-key-mac-builder.txt \
+  nix shell nixpkgs#nodejs nixpkgs#age -c \
+  node --test tests/mac-nix-remote-builder/sops-identity.test.js
+```
+
+A run that reports the round trip as skipped is **not** proof of
+enrollment: the policy and runbook checks pass without any key material.
+Enrollment is also a hard prerequisite for step 2 of the bootstrap
+ordering below — a recipient whose private key never reached 1Password
+cannot decrypt the store it wraps.
+
+If the enrollment was never completed (for example, an ephemeral CI run
+generated a key that was destroyed with its temporary directory),
+regenerate the keypair, replace the `&host_mac_builder` recipient in
+`.sops.yaml` with the new public key, and rerun the check. Nothing is
+encrypted to the recipient until `secrets/remote-builder.mac-builder.yaml`
+exists, so that replacement needs no `sops updatekeys`; once the store
+exists, use the rotation procedure below instead.
+
+The private key is the only copy of the identity: keep it in 1Password
+and never in the repository, and delete any staging copy as soon as the
+note holds it.
+
 ### Bootstrap ordering
 
 The builder's age key must be installed **before the first switch**. A

@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 
@@ -11,6 +12,11 @@ const { repoRoot } = require('./helpers');
 const hostname = 'Brandons-MacBook-Pro.local';
 const liveCachePublicKey = 'darwin:obrEophonKhvx/fOUDJciChVVl+MtjjhpBcN9ab/ZsQ=';
 const privatePemHeader = /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----/;
+// A plaintext PEM *artifact* is a complete block whose BEGIN and END delimiters
+// each start their own line. Source files legitimately mention the marker text
+// inside string or regex literals (tests/git-mcp does), and such a mention is
+// not key material.
+const plaintextPemBlock = /^-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----\r?\n(?:[A-Za-z0-9+/=]+\r?\n)+-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----\r?$/m;
 const plaintextJwt = /\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/;
 const certificateDirectory = path.join(repoRoot, 'certificates/local-binary-cache');
 const caCertificate = path.join(certificateDirectory, 'ca.pem');
@@ -178,6 +184,16 @@ function assertRs256Verifier(details, algorithmDetails) {
 function replaceOnce(value, original, replacement) {
   assert.equal(value.split(original).length, 2, `fixture does not contain exactly one ${original}`);
   return value.replace(original, replacement);
+}
+
+function plaintextPemArtifacts(files) {
+  return files.filter((file) => {
+    const contents = fs.readFileSync(file);
+    if (contents.includes(0)) {
+      return false;
+    }
+    return plaintextPemBlock.test(contents.toString('utf8'));
+  });
 }
 
 function repositoryFiles(directory) {
@@ -353,17 +369,33 @@ test('runbook fixes the secret names, consumers, ownership, and mode before host
 });
 
 test('repository contains no plaintext private PEM artifact', () => {
-  const leaks = [];
+  assert.deepEqual(
+    plaintextPemArtifacts(repositoryFiles(repoRoot)).map(file => path.relative(repoRoot, file)),
+    [],
+  );
+});
 
-  for (const file of repositoryFiles(repoRoot)) {
-    const contents = fs.readFileSync(file);
-    if (contents.includes(0)) {
-      continue;
-    }
-    if (privatePemHeader.test(contents.toString('utf8'))) {
-      leaks.push(path.relative(repoRoot, file));
-    }
+test('plaintext PEM scan ignores marker mentions and still rejects a real block', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'pem-artifact-scan-'));
+  try {
+    const mention = path.join(directory, 'marker-mention.js');
+    fs.writeFileSync(
+      mention,
+      "const prohibitedOutput = /-----BEGIN OPENSSH PRIVATE KEY-----/;\n"
+      + "const stub = '-----BEGIN PRIVATE KEY-----';\n",
+    );
+    assert.deepEqual(plaintextPemArtifacts([mention]), []);
+
+    const artifact = path.join(directory, 'id_ed25519');
+    fs.writeFileSync(artifact, [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW',
+      'QyNTUxOQAAACBmaXh0dXJlLXJlc2lkZW50LWhhbmRsZS1wcmltYXJ5AAAAA=',
+      '-----END OPENSSH PRIVATE KEY-----',
+      '',
+    ].join('\n'));
+    assert.deepEqual(plaintextPemArtifacts([artifact]), [artifact]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
-
-  assert.deepEqual(leaks, []);
 });
