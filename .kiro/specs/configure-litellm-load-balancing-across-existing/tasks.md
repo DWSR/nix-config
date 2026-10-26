@@ -25,7 +25,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - Observable: a fixture table missing `contextWindow` fails with `missing field 'contextWindow'`, and a two-deployment fixture with differing `mode` fails naming both deployment ids.
   - _Requirements: 1.2, 1.4, 1.7, 2.3, 2.4, 2.5, 8.6_
 
-- [ ] 1.3 Generate the gateway `modelList` and `forwardClientHeaders` projections
+- [x] 1.3 Generate the gateway `modelList` and `forwardClientHeaders` projections
   - Emit one `model_list` entry per deployment, ordered by sorted logical id then deployment order, with `model_name` = logical id, `model_info.id` = `<logical>@<provider>`, the mode and token limits, `litellm_params` combining the provider prefix, upstream id, base URL and key variable when declared, request defaults, and the provider allowlist, plus an explicit numeric `weight` defaulting to `1`.
   - Emit `forwardClientHeaders` as the sorted logical ids whose provider set includes `requiresClientSessionHeader = true`.
   - Observable: `nix eval` shows 9 entries with unique `model_info.id`s and a weight on every entry, the 5-id forwarding list (`gpt-6-luna`, `deepseek-v4.1-flash`, `glm-5.3-flash`, `longcat-2.5-preview-free`, `big-pickle`), and identical output when evaluated twice.

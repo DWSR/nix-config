@@ -429,12 +429,80 @@ let
     in
     if errors == [ ] then result else throw (builtins.head errors);
 
-  # Pure constructor exported for fixture-based failure tests. Later units add
-  # the gateway and client projections here, after this validation.
+  # ---------------------------------------------------------------------------
+  # Gateway projection
+  #
+  # One `model_list` entry per deployment: the client-callable id is the
+  # `model_name`, the deployment id is `model_info.id`, and the provider-side
+  # binding (prefix + upstream id, base URL, credential variable, parameter
+  # allowlist) plus the deployment's request defaults live in `litellm_params`.
+  # The placement weight is always emitted as an explicit integer so a missing
+  # table weight means the same thing as a declared `1`.
+  #
+  # Order follows the sorted logical-model keys and each group's declared
+  # deployment order, so repeated evaluation yields an identical list.
+  # ---------------------------------------------------------------------------
+
+  deploymentRecord =
+    catalogTable: logicalId: deployment:
+    let
+      provider = catalogTable.providers.${deployment.provider};
+    in
+    {
+      model_name = logicalId;
+      model_info = {
+        id = "${logicalId}@${deployment.provider}";
+        mode = deployment.mode;
+        max_input_tokens = deployment.contextWindow;
+        max_output_tokens = deployment.maxOutputTokens;
+      };
+      litellm_params = {
+        model = "${provider.modelPrefix}${deployment.upstreamModel}";
+      }
+      // lib.optionalAttrs (provider.apiBase != null) {
+        api_base = provider.apiBase;
+      }
+      // lib.optionalAttrs (provider.apiKeyEnvVar != null) {
+        api_key = "os.environ/${provider.apiKeyEnvVar}";
+      }
+      // deployment.requestDefaults
+      // {
+        allowed_openai_params = provider.allowedOpenAIParams;
+        weight = deployment.weight or 1;
+      };
+    };
+
+  modelListProjection =
+    catalogTable:
+    lib.concatMap (
+      logicalId:
+      map (deploymentRecord catalogTable logicalId) catalogTable.logicalModels.${logicalId}.deployments
+    ) (builtins.attrNames catalogTable.logicalModels);
+
+  # A group forwards client x-* headers upstream as a whole when any of its
+  # deployments names a provider that requires the client session header
+  # (requirement 7.2: forwarding is uniform across the group, never
+  # per-deployment).
+  groupRequiresForwarding =
+    catalogTable: logicalId:
+    lib.any (
+      deployment: catalogTable.providers.${deployment.provider}.requiresClientSessionHeader
+    ) catalogTable.logicalModels.${logicalId}.deployments;
+
+  forwardClientHeadersProjection =
+    catalogTable:
+    builtins.filter (groupRequiresForwarding catalogTable) (
+      builtins.attrNames catalogTable.logicalModels
+    );
+
+  # Pure constructor exported for fixture-based failure tests. Every projection
+  # is derived after validation, from the same table.
   mkCatalog =
     catalogTable:
     validate catalogTable {
       logicalModels = catalogTable.logicalModels;
+      modelList = modelListProjection catalogTable;
+      forwardClientHeaders = forwardClientHeadersProjection catalogTable;
     };
 in
 {
