@@ -112,7 +112,7 @@
 
 - [ ] 6. Add repository checks and integration validation
 
-- [ ] 6.1 Add the shared harness and builder-host render assertions
+- [x] 6.1 Add the shared harness and builder-host render assertions
   - Create `tests/mac-nix-remote-builder/helpers.js` (the `nixEvalJson`/`nixEvalFailure` pattern from `tests/lima-vm/helpers.js`) and `builder-host-render.test.js`.
   - Assert the evaluated `darwinConfigurations.mac-builder`: the `nix-builder` user (non-admin, `staff` group), `services.openssh.enable`, `trusted-users` membership, the GC schedule, `hostPlatform == "aarch64-darwin"`, the `builder-authorized-keys` sops declaration, and the absence of any Lima image/provisioning/boot/FRE reference.
   - Done when `node --test tests/mac-nix-remote-builder/builder-host-render.test.js` passes and each assertion fails when its element is removed.
