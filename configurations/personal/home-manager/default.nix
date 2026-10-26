@@ -219,6 +219,16 @@ in
   # and launchd agents.
   virtualisation.limaMacGuest = {
     enable = true;
+    package = pkgs.stdenv.mkDerivation {
+      pname = "lima";
+      version = "2.3.0-beta.1";
+      src = pkgs.fetchurl {
+        url = "https://github.com/lima-vm/lima/releases/download/v2.3.0-beta.1/lima-2.3.0-beta.1-Darwin-arm64.tar.gz";
+        sha256 = "sha256-qh+m8a/5ff0AJiDwi3ac4n4K6K+8h2YDVeCvYt+fcjw=";
+      };
+      sourceRoot = ".";
+      installPhase = "mkdir -p $out; cp -r ./* $out/";
+    };
     name = "mac-builder";
     image = {
       location = "https://updates.cdn-apple.com/2026FallFCS/.../UniversalMac_27.0.1_26A434_Restore.ipsw";
