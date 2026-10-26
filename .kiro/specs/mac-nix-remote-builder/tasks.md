@@ -150,6 +150,7 @@
   - _Requirements: 7.1, 7.2, 7.3_
 
 - [ ] 6.6 Run the integration smoke against a live guest
+  - _Blocked: requires a live macOS Lima guest and operator environment; not runnable in this sandbox_
   - Create the guest, run `mac-builder-deploy`, and confirm the first switch activates; run `mac-builder-readiness` against the endpoint.
   - Submit an `aarch64-darwin` derivation through `ssh-ng://` and confirm the output returns; submit a foreign-system derivation and confirm rejection.
   - Reboot the personal host and confirm the guest starts and the forward comes up without login; kill the guest and confirm launchd restarts it; clean-stop and confirm it stays stopped.
