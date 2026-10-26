@@ -185,41 +185,14 @@ let
             };
           };
         };
-        "longcat-2.0" = {
-          display_name = "LongCat 2.0 (OpenCode Go)";
-          api_model = "opencode-go/longcat-2.0";
-          # Same family tier and chat-model window as the previous
-          # longcat-2.5-preview-free serving (which left the Go catalog);
-          # upstream publishes no separate hard output cap.
+        "longcat-2.5" = {
+          display_name = "LongCat 2.5 Preview Free (OpenCode Go)";
+          api_model = "opencode-go/longcat-2.5-preview-free";
+          # Same family tier and chat-model window as longcat-2.0's
+          # serving; upstream publishes no separate hard output cap.
           limits = {
             context_tokens = 1000000;
             max_output_tokens = 131072;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-        "go-beam-free" = {
-          display_name = "Beam Free (OpenCode Go)";
-          api_model = "opencode-go/beam-free";
-          limits = {
-            context_tokens = 1048576;
-            max_output_tokens = 131072;
-          };
-          capabilities = {
-            text = true;
-            tools = true;
-            reasoning = true;
-          };
-        };
-        "go-omen-alpha" = {
-          display_name = "Omen Alpha (OpenCode Go)";
-          api_model = "opencode-go/omen-alpha";
-          limits = {
-            context_tokens = 500000;
-            max_output_tokens = 128000;
           };
           capabilities = {
             text = true;

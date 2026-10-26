@@ -147,14 +147,8 @@ let
         "opencode-go/glm-5.3-flash" = {
           name = "GLM-5.3 Flash (OpenCode Go)";
         };
-        "opencode-go/beam-free" = {
-          name = "Beam Free (OpenCode Go)";
-        };
-        "opencode-go/omen-alpha" = {
-          name = "Omen Alpha (OpenCode Go)";
-        };
-        "opencode-go/longcat-2.0" = {
-          name = "LongCat 2.0 (OpenCode Go)";
+        "opencode-go/longcat-2.5-preview-free" = {
+          name = "LongCat 2.5 Preview Free (OpenCode Go)";
         };
         "opencode-zen/big-pickle" = {
           name = "Big Pickle (OpenCode Zen)";
@@ -326,14 +320,11 @@ in
         "${pkgs.coreutils}/bin/mkdir -p ${opencodeHome}/.ssh ${opencodeDataDir}/gh/extensions"
 
         # Declarative-wins config: wipe and re-copy the tree each start.
-        # The pre-chmod makes the previous copy's parent writable (the
-        # store modes are read-only, including the top-level directory);
-        # the post-chmod restores owner-write on the fresh tree so runtime
-        # settings writes succeed and the next start can wipe it.
-        "-${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}"
+        # The chmod restores owner-write on the store's read-only modes so
+        # runtime settings writes succeed (and are reset next start).
         "${pkgs.coreutils}/bin/rm -rf ${opencodeConfigDir}"
         "${pkgs.coreutils}/bin/cp -r ${opencodeConfig} ${opencodeConfigDir}"
-        "${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}"
+        "${pkgs.coreutils}/bin/chmod -R u+w ${opencodeConfigDir}/opencode"
 
         # The gh-stack extension, mirrored from home-manager's
         # `programs.gh.extensions` layout (a `bin/` symlink under

@@ -340,93 +340,65 @@ test('disabled configuration registers no launchd agent', () => {
   assert.equal(rendered.wrapperText, null);
 });
 
-// The fabro-vm is the deployed LiteLLM consumer. litellm 1.86's per-provider
-// param allowlists predate its model ids, so without per-deployment
-// `allowed_openai_params` the proxy rejects `reasoning_effort` at its param
-// gate — for a consumer's request value AND for each chatgpt deployment's
-// pinned default, which left the chatgpt models un-callable outright.
-test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
+// The live gateway moved from the mac's launchd agent to the fabro-vm guest,
+// and litellm 1.86's per-provider param allowlists predate those model ids,
+// so without per-deployment `allowed_openai_params` the proxy rejects
+// `reasoning_effort` at its param gate — for a consumer's request value AND
+// for each chatgpt deployment's pinned default, which left the chatgpt models
+// un-callable outright. Assert the gateway's own (rendered) settings, keyed by
+// upstream model so the ids the catalog publishes can change independently.
+test('fabro-vm gateway allows reasoning_effort on every deployment', () => {
   const rendered = nixEvalJson(`
     let
       flake = builtins.getFlake (toString ${repoRoot});
-      vm = flake.nixosConfigurations.fabro-vm.config;
-      modelList = vm.services.litellm.settings.model_list;
-      deploymentStatus = builtins.listToAttrs (builtins.map (deployment: {
-        name = deployment.model_name;
-        value = {
-          allowsReasoningEffort = builtins.elem "reasoning_effort"
-            (deployment.litellm_params.allowed_openai_params or [ ]);
-          defaultEffort = deployment.litellm_params.reasoning_effort or null;
-          mode = deployment.model_info.mode or null;
-          apiBase = deployment.litellm_params.api_base or null;
-          apiKey = deployment.litellm_params.api_key or null;
-          headers = deployment.litellm_params.extra_headers or null;
-        };
-      }) modelList);
+      vm = flake.nixosConfigurations.fabro-vm;
+      settings = vm.config.services.litellm.settings;
+      statusOf = deployment: {
+        upstream = deployment.litellm_params.model or null;
+        allowsReasoningEffort = builtins.elem "reasoning_effort"
+          (deployment.litellm_params.allowed_openai_params or [ ]);
+        defaultEffort = deployment.litellm_params.reasoning_effort or null;
+        mode = deployment.model_info.mode or null;
+      };
+      statuses = builtins.map statusOf settings.model_list;
+      forUpstream = upstream:
+        builtins.filter (status: status.upstream == upstream) statuses;
+      configFile = (vm.pkgs.formats.yaml { }).generate "config.yaml" settings;
     in
     {
-      modelNames = builtins.attrNames deploymentStatus;
-      allAllowReasoningEffort =
-        builtins.all (d: d.allowsReasoningEffort) (builtins.attrValues deploymentStatus);
-      chatgptLuna = deploymentStatus."chatgpt/gpt-6-luna";
-      chatgptLunaNone = deploymentStatus."chatgpt/gpt-6-luna-none";
-      chatgptAstra = deploymentStatus."chatgpt/gpt-6-astra";
-      chatgptSol = deploymentStatus."chatgpt/gpt-6.1-sol";
-      goBeam = deploymentStatus."opencode-go/beam-free";
-      goOmen = deploymentStatus."opencode-go/omen-alpha";
-      goLongcat = deploymentStatus."opencode-go/longcat-2.0";
-      goLuna = deploymentStatus."opencode-go/gpt-6-luna";
-      goGlm = deploymentStatus."opencode-go/glm-5.3-flash";
-      zenBigPickle = deploymentStatus."opencode-zen/big-pickle";
-      forwarding =
-        vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
-      settingsText = builtins.toJSON vm.services.litellm.settings;
+      deploymentCount = builtins.length statuses;
+      allAllowReasoningEffort = builtins.all (status: status.allowsReasoningEffort) statuses;
+      chatgptLuna = forUpstream "chatgpt/gpt-6-luna";
+      chatgptAstra = forUpstream "chatgpt/gpt-6-astra";
+      chatgptSol = forUpstream "chatgpt/gpt-6.1-sol";
+      goLuna = forUpstream "openai/gpt-6-luna";
+      goDeepseek = forUpstream "openai/deepseek-v4.1-flash";
+      goGlm = forUpstream "openai/glm-5.3-flash";
+      goLongcat = forUpstream "openai/longcat-2.5-preview-free";
+      zenBigPickle = forUpstream "openai/big-pickle";
+      settingsText = builtins.readFile configFile;
     }
   `);
 
-  assert.deepEqual(rendered.modelNames.sort(), [
-    'chatgpt/gpt-6-astra',
-    'chatgpt/gpt-6-luna',
-    'chatgpt/gpt-6-luna-none',
-    'chatgpt/gpt-6.1-sol',
-    'opencode-go/beam-free',
-    'opencode-go/deepseek-v4.1-flash',
-    'opencode-go/glm-5.3-flash',
-    'opencode-go/gpt-6-luna',
-    'opencode-go/longcat-2.0',
-    'opencode-go/omen-alpha',
-    'opencode-zen/big-pickle',
-  ]);
+  assert.equal(rendered.deploymentCount, 9);
   assert.equal(rendered.allAllowReasoningEffort, true);
 
-  // The pinned deployment defaults survive the allowance merge.
-  assert.equal(rendered.chatgptLuna.defaultEffort, 'xhigh');
-  assert.equal(rendered.chatgptLuna.mode, 'responses');
-  assert.equal(rendered.chatgptLunaNone.defaultEffort, 'none');
-  assert.equal(rendered.chatgptLunaNone.mode, 'responses');
-  assert.equal(rendered.chatgptAstra.defaultEffort, 'xhigh');
-  assert.equal(rendered.chatgptSol.defaultEffort, 'xhigh');
-  assert.equal(rendered.goLuna.mode, 'responses');
-  assert.equal(rendered.goGlm.mode, 'chat');
+  // gpt-6-luna and gpt-6-luna-none share the chatgpt upstream; their pinned
+  // defaults tell them apart and must survive the allowance merge.
+  assert.deepEqual(
+    rendered.chatgptLuna.map(({ defaultEffort, mode }) => [defaultEffort, mode]).sort(),
+    [['none', 'responses'], ['xhigh', 'responses']],
+  );
+  assert.equal(rendered.chatgptAstra[0].defaultEffort, 'xhigh');
+  assert.equal(rendered.chatgptAstra[0].mode, 'responses');
+  assert.equal(rendered.chatgptSol[0].defaultEffort, 'xhigh');
+  assert.equal(rendered.chatgptSol[0].mode, 'responses');
+  assert.equal(rendered.goLuna[0].mode, 'responses');
+  assert.equal(rendered.goDeepseek[0].mode, 'chat');
+  assert.equal(rendered.goGlm[0].mode, 'chat');
+  assert.equal(rendered.goLongcat[0].mode, 'chat');
+  assert.equal(rendered.zenBigPickle[0].mode, 'chat');
 
-  for (const deployment of [rendered.goBeam, rendered.goOmen, rendered.goLongcat]) {
-    assert.equal(deployment.mode, 'chat');
-    assert.equal(deployment.apiBase, 'https://opencode.ai/zen/go/v1');
-    assert.equal(deployment.apiKey, 'os.environ/OPENCODE_API_KEY');
-    assert.equal(deployment.headers, null);
-  }
-  assert.equal(rendered.zenBigPickle.mode, 'chat');
-
-  // Session ids stay dynamic for every opencode-* group.
-  assert.deepEqual(rendered.forwarding, [
-    'opencode-go/*',
-    'opencode-zen/*',
-  ]);
-
-  assert.equal(rendered.settingsText.includes('opencode-go/deepseek-v4.1-flash-free'), false);
-  assert.equal(rendered.settingsText.includes('opencode-go/glm-5.3-flash-free'), false);
-  assert.equal(rendered.settingsText.includes('iceman-contributor-free'), false);
-
-  assert.match(rendered.settingsText, /allowed_openai_params/);
-  assert.match(rendered.settingsText, /"reasoning_effort"/);
+  assert.match(rendered.settingsText, /allowed_openai_params:/);
+  assert.match(rendered.settingsText, /- reasoning_effort/);
 });

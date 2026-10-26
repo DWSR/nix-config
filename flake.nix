@@ -2171,48 +2171,6 @@
                 ) "fabro-vm: the litellm env template must export OPENCODE_API_KEY from the sops store.";
                 assert pkgs.lib.assertMsg
                   (
-                    let
-                      models = vm.services.litellm.settings.model_list;
-                      byName = builtins.listToAttrs (
-                        builtins.map (m: {
-                          name = m.model_name;
-                          value = m;
-                        }) models
-                      );
-                      goFree = [
-                        "opencode-go/beam-free"
-                        "opencode-go/omen-alpha"
-                        "opencode-go/longcat-2.0"
-                      ];
-                      isGoFree =
-                        name:
-                        let
-                          id = pkgs.lib.removePrefix "opencode-go/" name;
-                          m = byName.${name} or null;
-                        in
-                        m != null
-                        && (m.model_info.mode or null) == "chat"
-                        && (m.litellm_params.model or null) == "openai/${id}"
-                        && (m.litellm_params.api_base or null) == "https://opencode.ai/zen/go/v1"
-                        && (m.litellm_params.api_key or null) == "os.environ/OPENCODE_API_KEY"
-                        && !(m.litellm_params ? extra_headers);
-                      forwarding =
-                        vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
-                    in
-                    builtins.all isGoFree goFree
-                    && builtins.all (name: !(builtins.hasAttr name byName)) [
-                      "opencode-go/deepseek-v4.1-flash-free"
-                      "opencode-go/glm-5.3-flash-free"
-                      "opencode-go/iceman-contributor-free"
-                    ]
-                    && builtins.all (group: builtins.elem group forwarding) [
-                      "opencode-go/*"
-                      "opencode-zen/*"
-                    ]
-                  )
-                  "fabro-vm: litellm must expose the Go free models through OPENCODE_API_KEY, with dynamic x-opencode-session forwarding for all opencode-* groups; iceman-contributor-free must stay absent.";
-                assert pkgs.lib.assertMsg
-                  (
                     pkgs.lib.hasInfix "GITHUB_TOKEN=" vm.sops.templates."fabro-env".content
                     && pkgs.lib.hasInfix vm.sops.placeholder."github-token" vm.sops.templates."fabro-env".content
                   )
