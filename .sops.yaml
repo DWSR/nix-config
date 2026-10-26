@@ -10,7 +10,7 @@
 # Convention: the YAML anchor `&host_<name>` corresponds to the age public
 # key of the host whose darwinConfiguration / nixosConfiguration shares the
 # same role short-name (`personal` → Brandons-MacBook-Pro; `fabro` → the
-# fabro-vm NixOS guest). Each
+# fabro-vm NixOS guest; `mac-builder` → the macOS remote builder). Each
 # `creation_rule` lists exactly one recipient (the target host) so that
 # compromise of one host's age private key cannot decrypt the other host's
 # secrets — see requirements.md sections 2.1, 2.2, 2.4.
@@ -22,6 +22,7 @@
 keys:
   - &host_personal age158am3rk8z2msgnx08e03f9x2dumgqqj3rfhkdj7fcffp5g99tfsstagvlp
   - &host_fabro age13dg3prj95p7gxtql8m8zr5jwfm7a550js5mm9l2tc9n8n9rft5ys3gke7z
+  - &host_mac_builder age1u72hsq9g3sl37klrl7tm2wt52tmvfmjadtuf3wtnylvfq36g4efsxfv844
 
 creation_rules:
   - path_regex: secrets/local-binary-cache\.personal\.yaml$
@@ -43,3 +44,11 @@ creation_rules:
     key_groups:
       - age:
           - *host_fabro
+  # The mac builder host (nix-darwin, eventually dedicated Apple hardware;
+  # currently hosted as a Lima macOS guest): the builder's authorized
+  # client public keys. One store, decryptable only by the builder's own
+  # age key at /var/lib/sops-nix/key.txt.
+  - path_regex: secrets/remote-builder\.mac-builder\.yaml$
+    key_groups:
+      - age:
+          - *host_mac_builder

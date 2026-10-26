@@ -20,11 +20,12 @@ boundary of this pipeline.
 | ShopifyLaptop          | `shopify`       | Employee        | `op://Employee/sops-age-key-shopify` | `secrets/mcp.shopify.yaml`  |
 | Brandons-MacBook-Pro   | `personal`      | Private         | `op://Private/sops-age-key-personal` | `secrets/mcp.personal.yaml` |
 | fabro (fabro-vm Lima VM guest) | `fabro`  | Private         | `op://Private/sops-age-key-fabro` | `secrets/fabro.fabro.yaml`    |
+| mac-builder (macOS remote builder host) | `mac-builder` | Private | `op://Private/sops-age-key-mac-builder` | `secrets/remote-builder.mac-builder.yaml` |
 
-The short-name (`shopify` / `personal` / `fabro`) is the value passed to the
-helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
-appears in the `mcp.<host>.yaml` filename. It also matches the YAML
-anchor name in `.sops.yaml`.
+The short-name (`shopify` / `personal` / `fabro` / `mac-builder`) matches
+the YAML anchor name in `.sops.yaml`. For the MCP hosts it is also the
+value passed to the helper apps (`mcp-sync-from-1password`,
+`mcp-verify-secrets`) and appears in the `mcp.<host>.yaml` filename.
 
 The `fabro` host is the NixOS guest of the `fabro-vm` Lima VM
 (`nixosConfigurations.fabro-vm`, guest hostname `fabro`). It is
@@ -159,6 +160,103 @@ Rotate the value in the 1Password item first where one exists (see
 table), then mirror it here. After any `.sops.yaml` recipient change,
 re-encrypt with the same `SOPS_AGE_KEY_FILE` trick via `sops
 updatekeys secrets/fabro.fabro.yaml`.
+
+## Builder host store (mac-builder)
+
+`secrets/remote-builder.mac-builder.yaml` is the macOS remote builder's
+own store. Its initial contents are the
+`builder-authorized-keys` (newline-separated client SSH public keys);
+the `mac-builder` host's nix-darwin configuration installs them at
+`~nix-builder/.ssh/authorized_keys`. The store is encrypted to
+`&host_mac_builder` only, so the personal host and every other host are
+unable to decrypt it (see requirement 4.6).
+
+The builder's age private key is the Secure Note
+`op://Private/sops-age-key-mac-builder` (vault `Private`, field
+`notesPlain`). The public recipient is enrolled in `.sops.yaml` as
+`&host_mac_builder`; the matching creation rule is
+`secrets/remote-builder\.mac-builder\.yaml$` with exactly that one
+recipient. On the builder host the private key lives at
+`/var/lib/sops-nix/key.txt` (mode `0600`, owned by root).
+
+### Generation
+
+Generate the keypair once, from any trusted machine with `op` access:
+
+```sh
+nix shell nixpkgs#age -c age-keygen -o /tmp/age-key-mac-builder.txt
+nix shell nixpkgs#age -c age-keygen -y /tmp/age-key-mac-builder.txt
+```
+
+Store the full file contents (header comments and the
+`AGE-SECRET-KEY-…` line) in the Secure Note:
+
+```sh
+op item create \
+  --vault=Private \
+  --category="Secure Note" \
+  --title="sops-age-key-mac-builder" \
+  "notesPlain=$(cat /tmp/age-key-mac-builder.txt)"
+rm /tmp/age-key-mac-builder.txt
+```
+
+Verify the stored copy derives the recipient recorded in `.sops.yaml`:
+
+```sh
+op read 'op://Private/sops-age-key-mac-builder/notesPlain' \
+  > /tmp/verify-age-mac-builder.txt
+nix shell nixpkgs#age -c age-keygen -y /tmp/verify-age-mac-builder.txt
+rm /tmp/verify-age-mac-builder.txt
+```
+
+### Bootstrap ordering
+
+The builder's age key must be installed **before the first switch**. A
+fresh macOS has no `/var/lib/sops-nix/key.txt`, so sops-nix activation
+cannot decrypt `secrets/remote-builder.mac-builder.yaml` and the first
+`darwin-rebuild switch` fails. This is the same key-before-first-switch
+order the per-host bootstrap above uses:
+
+1. Create and enroll the `mac-builder` age key, and add its recipient
+   to `.sops.yaml` (this task).
+2. Create `secrets/remote-builder.mac-builder.yaml` encrypted to that
+   recipient.
+3. Install the private key on the builder host before switching:
+
+   ```sh
+   sudo install -d -m 0755 -o root -g wheel /var/lib/sops-nix
+   op read 'op://Private/sops-age-key-mac-builder/notesPlain' \
+     | sudo install -m 0600 -o root -g wheel /dev/stdin /var/lib/sops-nix/key.txt
+   sudo nix shell nixpkgs#age -c age-keygen -y /var/lib/sops-nix/key.txt
+   ```
+
+   The derived public key must equal `&host_mac_builder`.
+4. Only then run the first `darwin-rebuild switch`. The one-touch deploy
+   command performs steps 3 and 4 in this order when it bootstraps a
+   fresh guest.
+
+### Authorized-key rotation
+
+`builder-authorized-keys` is the list of client identities allowed to
+connect as `nix-builder`. To add or remove a client, decrypt the store
+with the builder's key, edit the newline-separated value, re-encrypt it,
+and commit the result:
+
+```sh
+T=$(mktemp -d)
+op read 'op://Private/sops-age-key-mac-builder/notesPlain' > "$T/key.txt"
+SOPS_AGE_KEY_FILE="$T/key.txt" \
+  nix run --inputs-from . nixpkgs#sops -c \
+  sops --config .sops.yaml edit secrets/remote-builder.mac-builder.yaml
+rm -rf "$T"
+```
+
+Re-encrypt with `sops updatekeys` if the recipient itself changed. The
+next activation writes the updated keys to
+`~nix-builder/.ssh/authorized_keys`; activation fails loudly, naming
+`builder-authorized-keys`, when the decrypted secret is missing or
+empty. Never put a private key or client secret in this store — it holds
+only public client keys.
 
 ## Prerequisites — read this first
 
