@@ -53,7 +53,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - _Depends: 2.1_
 
 - [ ] 3. Gateway configuration
-- [ ] 3.1 Make `configurations/fabro-vm/litellm.nix` consume the catalog
+- [x] 3.1 Make `configurations/fabro-vm/litellm.nix` consume the catalog
   - Replace the hand-written chatgpt/opencode-go/opencode-zen `model_list` with `catalog.modelList` and the prefix forwarding list with `catalog.forwardClientHeaders`; leave `environmentFile`, `CHATGPT_TOKEN_DIR`, the health gate, and the login wrapper untouched.
   - Rewrite the module header comment so it describes catalog sourcing and group-scoped forwarding instead of provider-scoped ids and prefix matching.
   - Observable: `nix eval` of the guest's `services.litellm.settings` shows the catalog's 9 entries and 5-id forwarding list, and no provider-scoped model id or `opencode-go/*`/`opencode-zen/*` literal remains in the module.
