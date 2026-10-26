@@ -214,6 +214,33 @@ in
     ];
   };
 
+  # macOS Lima guest that serves as the aarch64-darwin builder. Independent of
+  # the fabro NixOS instance above (5.7): its own module, options, supervisor,
+  # and launchd agents.
+  virtualisation.limaMacGuest = {
+    enable = true;
+    name = "mac-builder";
+    image = {
+      location = "https://updates.cdn-apple.com/2026FallFCS/.../UniversalMac_27.0.1_26A434_Restore.ipsw";
+      digest = "sha256:2f016638293c3e641b8b25391a76fbc16563b3711915a5551cf8aa0f5598a5c1";
+      arch = "aarch64";
+    };
+    cpus = 4;
+    memory = "8GiB";
+    disk = "64GiB";
+    suppressFirstLoginSetup = true;
+    forward = {
+      enable = true;
+      bindAddress = "0.0.0.0";
+      port = 2222;
+    };
+    deploy = {
+      enable = true;
+      hostName = "mac-builder";
+      ageKeySecretRef = "op://Private/sops-age-key-mac-builder";
+    };
+  };
+
   programs.ssh = {
     includes = [ "~/.orbstack/ssh/config" ];
 
