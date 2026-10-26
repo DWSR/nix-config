@@ -1938,6 +1938,24 @@
                 touch $out
               '';
 
+          mac-nix-remote-builder =
+            pkgs.runCommand "mac-nix-remote-builder"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/mac-nix-remote-builder/
+                touch $out
+              '';
+
           # Schema-validate the personal host's rendered Lima YAML with the
           # same limactl the launchd service uses (`limactl validate` is
           # offline; no VM or Linux builder needed).
