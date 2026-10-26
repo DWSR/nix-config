@@ -58,7 +58,7 @@
   - Done when a standalone Home Manager evaluation reads the option namespace, renders nothing while disabled, and the personal host's `virtualisation.limaVM` render is unchanged.
   - _Requirements: 5.1, 5.7_
 
-- [ ] 3.2 Render the macOS Lima guest YAML
+- [x] 3.2 Render the macOS Lima guest YAML
   - Render `_configYaml` with `minimumLimaVersion >= 2.3.0`, `os: Darwin`, `vmType: vz`, `arch: aarch64`, the pinned Apple `.ipsw` `images[0].location` + `digest`, `video.display: default`, `mounts: []`, and no `containerd`.
   - Set `osOpts.Darwin.suppressFirstLoginSetup = true` (the FRE skip) and take `cpus`, `memory`, and `disk` from options.
   - Done when the rendered YAML passes `limactl validate` and contains the pinned image, the FRE-skip key, and `mounts: []`.
