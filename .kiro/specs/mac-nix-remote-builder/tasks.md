@@ -2,14 +2,14 @@
 
 - [ ] 1. Provision the builder-host secret identity and store
 
-- [ ] 1.1 Provision the builder age identity and add its sops rule
+- [x] 1.1 Provision the builder age identity and add its sops rule
   - Generate the builder age keypair; store the private key in 1Password and capture the public recipient (operator action, mirrors the existing per-host bootstrap).
   - Add the `&host_mac_builder` anchor and a `secrets/remote-builder\.mac-builder\.yaml$` creation rule with exactly that one recipient to `.sops.yaml`.
   - Document the builder age-key item, the age-key-before-first-switch bootstrap order, and authorized-key rotation in `secrets/README.md`.
   - Done when `.sops.yaml` parses with the anchor and its rule, `secrets/README.md` names the builder store, and the recipient round-trips from the stored private key.
   - _Requirements: 4.2, 4.6_
 
-- [ ] 1.2 Author the encrypted builder secret store
+- [x] 1.2 Author the encrypted builder secret store
   - Create `secrets/remote-builder.mac-builder.yaml` with a `builder-authorized-keys` entry holding the newline-separated client public keys, encrypted to `&host_mac_builder`.
   - Confirm the encrypted file lists only the builder recipient and `sops -d` yields only `builder-authorized-keys`.
   - Done when the store decrypts to the declared key set and its plaintext contains no personal-host secret.
