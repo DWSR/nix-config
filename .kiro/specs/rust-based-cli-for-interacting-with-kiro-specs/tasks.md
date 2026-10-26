@@ -1,0 +1,237 @@
+# Implementation Plan
+
+Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `requirements.md`, and `design.md`. Units are listed in dependency order; `(P)` marks peers that may run concurrently.
+
+- [ ] 1. Crate foundation and CLI shell
+- [ ] 1.1 Scaffold the Rust crate with a checked-in lockfile
+  - Create `scripts/kiro-spec/Cargo.toml` (edition 2021, `serde` with `derive`, `serde_json`) and keep the generated `Cargo.lock` in the crate source; add no other runtime crate.
+  - Add `src/main.rs` exiting with `run(std::env::args_os())` and `src/lib.rs` declaring `cli`, `error`, `paths`, `spec_json`, `tasks`, `requirements`, `validate`, `edit`, and `render` as compiling stubs.
+  - Confirm `cargo build --locked` and `cargo test --locked` succeed in `scripts/kiro-spec/` and the produced binary is named `kiro-spec`.
+  - _Requirements: 1.4, 11.6_
+- [ ] 1.2 Process entry, error categories, and exit mapping
+  - Implement `error.rs` with `AppError`, `SpecError`, and `MutationError` carrying the usage, resolution, read, conflict, and write categories from the design's Error Strategy table.
+  - Implement `run()` so diagnostics are written as `kiro-spec: <context>: <detail>` on stderr, results are fully built before stdout, and a command that produces no result writes no stdout byte.
+  - Unit tests prove the 0/1/2 mapping per category and that a failed command emits nothing on stdout.
+  - _Requirements: 1.6, 9.3, 9.10, 9.11_
+- [ ] 1.3 Argument grammar, help, and version
+  - Parse the four read subcommands plus `complete`/`block` and the `--root`, `--spec`, `--json`, `--reason` options, accepting `--opt value` and `--opt=value` with last-value-wins.
+  - Print the synopsis and all six subcommands for `--help`/`-h` and `kiro-spec <version>` for `--version`/`-V`; reject unknown commands/options, a missing `--spec` or option value, and `--json` on mutations with exit 2 before any filesystem access.
+  - Confirm help lists every flag, version matches the Cargo package version, and an invalid argv leaves a fixture spec byte-identical.
+  - _Requirements: 1.5, 1.6, 2.4, 9.10_
+
+- [ ] 2. Explicit spec resolution and artifact readers
+- [ ] 2.1 (P) Resolve one spec directory from explicit inputs
+  - Implement `SpecPaths::resolve(root, name)` joining `<root>/.kiro/specs/<name>`, with `--root` defaulting to `.` and no parent search or cwd inference.
+  - Reject empty, `.`, `..`, absolute, `/`-containing, and NUL-containing names before joining; require an existing directory and report the joined path verbatim without canonicalisation.
+  - Expose `directory()`, `name()`, `spec_json()`, `tasks_md()`, and `requirements_md()`; never derive an artifact path from a task ID.
+  - Unit tests cover default and explicit roots, each rejected name, and the missing-directory diagnostic.
+  - _Requirements: 2.1, 2.2, 2.3, 2.5, 2.6_
+  - _Boundary: spec resolution (`scripts/kiro-spec/src/paths.rs`)_
+- [ ] 2.2 (P) Read spec.json and encode the phase ladder
+  - Implement `read_value(path)` and `phase_of(value)` in `spec_json.rs`; `phase_of` fails naming the file when the value is not an object or `phase` is not a string.
+  - Implement `Phase::parse` over exactly the six documented phase strings and `Phase::rank` for ordering, and keep every other module free of phase-string comparisons.
+  - Unit tests cover phase parsing and ranking, both strict `phase_of` failures, and raw access to missing and wrongly typed fields.
+  - _Requirements: 5.4, 5.5, 6.6, 6.14_
+  - _Boundary: spec.json access (`scripts/kiro-spec/src/spec_json.rs`)_
+- [ ] 2.3 (P) Index requirements.md and resolve reference tokens
+  - Build the index from `### Requirement N:` headings and the numbered acceptance-criterion items beneath them, ignoring content outside those sections.
+  - Tokenise `_Requirements:_` payloads into references, separating well-formed `N`/`N.M` tokens from malformed ones, and expose resolved and unresolved lookup.
+  - Unit tests cover index building, resolved `N` and `N.M`, malformed tokens, unresolved references, and a requirements.md without criteria.
+  - _Requirements: 6.19, 6.20_
+  - _Boundary: requirements index (`scripts/kiro-spec/src/requirements.rs`)_
+
+- [ ] 3. tasks.md parsing and task model
+- [ ] 3.1 Parse checkbox entries, blocks, and metadata
+  - Lex source lines so an unindented `- [ ]`, `- [x]`, or `- [!]` checkbox plus space starts an entry, trying the `N.M` subtask form before the `N` major form.
+  - Capture 1-based line, canonical identifier, level, parent, and description; consume the `*` optional marker; attach the indented `_Requirements`, `_Boundary`, `_Depends`, and `_Blocked` metadata bullets plus continuation prose to the entry block.
+  - End a block at a blank line, the next candidate, or an ATX heading; skip fenced code blocks; keep source lines and `to_bytes()` byte-faithful.
+  - Unit tests cover adjacent entries with no blank line, multi-line metadata, fenced code, headings, optional markers, and byte round-tripping.
+  - _Requirements: 3.1, 3.5, 3.7, 11.1_
+- [ ] 3.2 Derive state, counts, next task, and unique lookup
+  - Derive `TaskState` from the checkbox character only (`[x]`/`[x]*` completed, `[!]`/`[!]*` blocked, `[ ]`/`[ ]*` pending), join a `_Blocked:` bullet and its continuations into `blocked_reason` for `[!]` entries, and keep `optional` in every state.
+  - Implement `TaskCounts { total, completed, pending, blocked, optional_pending }` with state counts summing to `total`, and `next_actionable()` returning the first non-completed childless entry while leaving unchecked groupings unselected.
+  - Implement `find_unique(id)` over canonical `N`/`N.M` identifiers, accepting one trailing `.` and refusing malformed, unknown, or duplicated identifiers.
+  - Unit tests cover the six-marker matrix, counts, grouping selection, a fully completed spec, and duplicate lookup ambiguity.
+  - _Requirements: 3.2, 3.3, 3.4, 3.5, 3.7, 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.6, 8.9, 11.1_
+- [ ] 3.3 Classify grammar defects as findings
+  - Classify a checkbox line without a numeric identifier as `tasks.line.unnumbered` (warning) and exclude it from entries; classify numbered lines outside the two supported forms as `tasks.id.depth`, `tasks.id.non-numeric`, or `tasks.line.malformed`.
+  - Emit `tasks.id.duplicate` at each repeated identifier line and `tasks.limit.exceeded` at the 50th entry, stating the observed count and the 49 limit.
+  - Keep parsing total: defects become findings while valid entries in the same document still parse.
+  - Unit tests cover each code, the 49/50 boundary, and a document mixing defects with valid entries.
+  - _Requirements: 6.15, 6.16, 6.17, 6.18_
+
+- [ ] 4. Human and JSON rendering
+- [ ] 4.1 Emit JSON schema version 1 documents
+  - Define `Format`, `JSON_SCHEMA_VERSION = 1`, and shared entry field access in `render/mod.rs`; implement `render/json.rs` for the `next`, `tasks`, `status`, and `validate` documents.
+  - Emit `schema_version` and `spec` in every document with struct field order, pretty printing, and a trailing newline; render `tasks` as a flat document-order array, `"task": null` when nothing is actionable, and `null` lines when none apply.
+  - Map `valid` to "no error-severity finding" and expose per entry the identifier, description, state, optional flag, and blocked reason; expose `stage`, `total`, nested `counts`, and `optional_pending` for `status`.
+  - Omit the resolved root path from every successful result so output is identical across checkouts.
+  - Unit tests assert key order, both null cases, blocked reasons, the status field set, and identical repeated output.
+  - _Requirements: 9.1, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.11_
+- [ ] 4.2 Emit human plain-text renderings
+  - Implement `render/human.rs` for the documented line forms: two-space indent per level, `[pending]`/`[completed]`/`[blocked]`, `(optional)`, `- blocked: <reason>`, and `No tasks.` for an empty document.
+  - Print the single selected line or `No incomplete task.` for `next`; print exactly the six documented `status` lines; print `file:line: severity [code] message` (or `file: ...`) plus `<n> errors, <m> warnings` with singular nouns at one.
+  - Emit no ANSI escapes or terminal detection so piped and interactive output match.
+  - Unit tests cover every entry shape, empty results, and singular/plural summaries.
+  - _Requirements: 3.3, 9.2, 9.3_
+
+- [ ] 5. Validation rules and findings
+- [ ] 5.1 Define the finding model and deterministic ordering
+  - Define `Severity`, `Finding { severity, code, message, file, line }`, `ValidationReport`, and `has_errors()` in `validate.rs`, with spec-relative file names (`spec.json`, `tasks.md`, `requirements.md`).
+  - Provide the sort key `(file, line, code, message)` ordered with `line: None` before line 1, so every later rule set returns findings the reporter can order without re-sorting at call sites.
+  - Unit tests cover ordering across files and lines, the `None`-first rule, and `has_errors()` for error-only, warning-only, and empty reports.
+  - _Requirements: 6.2, 6.21_
+- [ ] 5.2 Report spec.json access, field, feature-name, and phase-vocabulary defects
+  - Emit `spec.json.missing`, `spec.json.unreadable`, and `spec.json.parse` for access failures, then `spec.field.missing`/`spec.field.type` naming the field path for the twelve required fields and their nested booleans.
+  - Emit `spec.feature-name.mismatch` when `feature_name` differs from the spec directory and `spec.phase.unknown` for a value outside the six phases; skip dependent rules when a field is absent or mistyped.
+  - Unit tests cover one case per code and messages that name the offending field.
+  - _Requirements: 6.3, 6.4, 6.5, 6.6, 11.2_
+- [ ] 5.3 Enforce phase-to-approval and readiness relationships
+  - Treat the phase as a minimum: require each stage's `generated` flag at or below the phase (`spec.phase.generated-false`), require all three approvals at `tasks-approved` or later (`spec.phase.approved-false`), and emit `spec.approval.without-generated` and `spec.ready.without-tasks-approval`.
+  - Accept a flag or approval ahead of the phase and skip phase-dependent rules when `phase` is missing or unknown.
+  - Unit tests cover each phase boundary, an approval ahead of its phase, and readiness without tasks approval.
+  - _Requirements: 6.7, 6.8, 6.9, 6.10, 6.11, 6.12, 6.14_
+- [ ] 5.4 Report generated-versus-artifact presence once per artifact
+  - Emit one `spec.generated.artifact-missing` per absent artifact required by a phase or a true `generated` flag, treating a directory or unreadable path as missing and deduplicating when both rules point at one artifact.
+  - Emit `requirements.artifact-missing` when `_Requirements:` bullets exist without requirements.md, and `requirements.unreadable` for undecodable files.
+  - Unit tests cover flag-true-without-file, phase-required-without-file, deduplication, and a missing requirements.md that is still referenced.
+  - _Requirements: 6.13, 6.19_
+- [ ] 5.5 Resolve `_Requirements:` references and fold in task findings
+  - Emit `tasks.unreadable` for an undecodable `tasks.md`, carry every parser finding into the report unchanged, and resolve each `_Requirements:` token against the index as `requirements.ref.malformed` or `requirements.ref.unresolved` at the metadata bullet's line.
+  - Keep warning/error classification and the `(file, line, code, message)` order intact after the merge.
+  - Unit tests cover a spec with task and reference defects reporting both, and a fully valid spec reporting no findings.
+  - _Requirements: 6.15, 6.17, 6.19, 6.20, 6.21_
+- [ ] 5.6 Assemble `validate()` with lenient artifact reads
+  - Implement `validate(paths)` reading `spec.json`, `tasks.md`, and `requirements.md` without aborting: a missing, unreadable, or malformed artifact inside an existing spec directory becomes a finding instead of a command failure.
+  - Merge every rule set into one sorted `ValidationReport`, skipping reference resolution when requirements.md is absent so only the artifact error is reported, and never repair a file.
+  - Unit tests cover a directory where every artifact is missing, a partially present directory, and a clean spec reporting no findings.
+  - _Requirements: 2.8, 6.1, 6.22_
+
+- [ ] 6. Read subcommands
+- [ ] 6.1 Wire `tasks` and `next`
+  - Dispatch both over `SpecPaths` and `parse_tasks`, reading only `tasks.md`, rendering through the selected `Format`, and requiring no `spec.json`.
+  - Keep `tasks` in document order with subtasks beneath their grouping entry; have `next` report the actionable entry with blocked state and reason, or the no-incomplete-task result, and never select a grouping entry.
+  - Confirm a fixture tree yields identical repeated output in both formats and hash-equal files after runs of both commands.
+  - _Requirements: 2.7, 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 4.1, 4.2, 4.3, 4.4, 4.5, 10.5_
+- [ ] 6.2 Wire `status`
+  - Read `spec.json` before rendering and fail naming the file when it is unparseable or `phase` is not a string; never infer the stage from task progress.
+  - Render total, completed, pending, blocked, optional pending, and the raw phase string in both formats, reusing the task model's counts.
+  - Confirm on a fixture tree that counts match entry states and the run leaves every file byte-identical.
+  - _Requirements: 2.7, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 10.5_
+- [ ] 6.3 Wire `validate`
+  - Run `validate()` and render the complete report in both formats; keep findings as result data on stdout and operational diagnostics on stderr.
+  - Exit 1 when any error-severity finding exists and 0 for warnings or no findings, identically with and without `--json`, and never emit a partial document.
+  - Confirm a clean fixture exits 0, a broken fixture exits 1 in both formats, and no file changes in either case.
+  - _Requirements: 2.8, 6.1, 6.22, 9.1, 9.9, 9.10, 9.11, 10.5_
+
+- [ ] 7. Task mutations
+- [ ] 7.1 Publish byte-preserving atomic writes
+  - Implement `write_atomic(path, bytes)` creating a `create_new` temporary `.tasks.md.kiro-spec.<pid>.tmp` in the spec directory, copying original permissions, writing and `sync_all`ing the bytes, then renaming over `tasks.md`.
+  - Remove the temporary file on any pre-rename failure so `tasks.md` stays intact, and never open the original for writing; readers ignore leftover temporary files.
+  - Reassemble bytes from `TaskDocument` so untouched lines keep their original terminators; equal bytes produce `EditPlan { bytes: None }` with no filesystem write.
+  - Unit test (skipped when the process can still write, for example as root) proves a write failure leaves `tasks.md` unchanged and returns a mutation error.
+  - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5_
+- [ ] 7.2 Plan and apply `complete`
+  - Replace only the target line's checkbox state character with `x`, preserving identifier, description, optional marker, indentation, metadata bullets, and line terminator.
+  - Remove every `_Blocked:` bullet and its continuation lines in that entry block, and leave parent, child, and sibling entries untouched.
+  - Return a byte-identical no-op for an already completed entry and fail before any temp file for malformed, unknown, or ambiguous identifiers.
+  - Unit tests cover pending-to-completed, blocked-to-completed with reason removal, idempotent completion, and byte equality of all untouched lines.
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.9, 10.3, 11.3_
+- [ ] 7.3 Plan and apply `block`
+  - Rewrite the entry to `[!]` (or `[!]*`) and insert `  - _Blocked: <reason>_` directly beneath the task line using that line's terminator.
+  - Replace the text and continuation lines of an existing reason bullet in place so exactly one remains; treat an identical reason as a byte-identical no-op; reject a completed entry as an unsupported transition and expose no unblock command.
+  - Unit tests cover pending-to-blocked, reason replacement, same-reason no-op, optional-marker preservation, completion-as-unblock, and CRLF insertion.
+  - _Requirements: 8.1, 8.2, 8.4, 8.5, 8.9, 8.10, 10.3, 11.3_
+- [ ] 7.4 Wire `complete` and `block`
+  - Validate the task identifier and `--reason` (non-empty after trimming, no line break, no `--json`) before parsing the spec; reject usage problems with exit 2 and business-rule conflicts with exit 1, writing nothing.
+  - Apply the mutation, publish atomically, and report the identifier and resulting state on stdout, including the unchanged state for a no-op; exit 1 on a write failure with `tasks.md` intact.
+  - Confirm a later `tasks`, `next`, or `status` run reflects the mutation and no file other than `tasks.md` changed.
+  - _Requirements: 7.7, 7.8, 8.3, 8.6, 8.7, 8.8, 8.9, 10.6_
+
+- [ ] 8. Fixture-driven test suite
+- [ ] 8.1 Build the temp-tree test harness
+  - Add `tests/support/mod.rs` building throwaway `.kiro/specs/<name>/` trees under `std::env::temp_dir()` from declarative inputs and invoking the binary via `env!("CARGO_BIN_EXE_kiro-spec")` to capture stdout, stderr, and exit status.
+  - Provide helpers to copy a fixture tree into a temp directory, hash a tree before and after a run, and force a read-only spec directory.
+  - Confirm a harness self-test round-trips a temporary spec tree and reports captured streams without writing under the repository.
+  - _Requirements: 11.1, 11.8_
+- [ ] 8.2 Add the fixture spec trees
+  - Add `tests/fixtures/basic/` covering pending, optional, completed, blocked, grouping, adjacent-entry, multi-line-metadata, and legacy `_Blocked:` prose cases.
+  - Add `tests/fixtures/malformed/` covering depth, non-numeric, duplicate, malformed, unnumbered, and 50-entry documents, and `tests/fixtures/spec-json-cases/` with one tree per required-field and phase/approval rule.
+  - Confirm each fixture parses through the harness and the malformed set triggers exactly its intended finding codes.
+  - _Requirements: 11.1, 11.2_
+- [ ] 8.3 (P) Read-command CLI contract tests
+  - Add `tests/cli.rs` covering help contents, unknown command or option, missing `--spec` or value, malformed IDs, `--root` default and override, rejected spec names, missing spec directory, and missing artifact diagnostics with exit 2 or 1 and unchanged files.
+  - Assert exactly one parseable JSON document and the documented human text per read command, empty stdout on diagnostics, stdout/stderr separation, identical exit status with and without `--json`, and hash-equal trees after `tasks`, `next`, `status`, and `validate`.
+  - Assert `validate` exits 0 on warnings or no findings and 1 on errors in both formats.
+  - _Requirements: 1.5, 1.6, 2.6, 2.7, 9.1, 9.2, 9.3, 9.10, 10.5, 11.4, 11.8_
+  - _Boundary: read-command contract tests (`scripts/kiro-spec/tests/cli.rs`)_
+- [ ] 8.4 (P) Mutation contract tests
+  - Add `tests/mutations.rs` proving `complete` and `block` preserve description, identifier, optional marker, metadata bullets, indentation, line endings, and every untouched byte.
+  - Cover pending-to-completed, blocked-to-completed with reason removal, idempotent completion, block insertion and replacement, same-reason no-op, completed-to-blocked rejection, unknown and duplicate IDs, CRLF and missing-final-newline fixtures, and a no-write failure path.
+  - Follow each mutation with `tasks`, `next`, and `status` assertions on the new state.
+  - _Requirements: 7.1, 7.3, 7.4, 7.9, 8.1, 8.2, 8.4, 8.5, 8.9, 10.1, 10.3, 11.3_
+  - _Boundary: mutation contract tests (`scripts/kiro-spec/tests/mutations.rs`)_
+- [ ] 8.5 Add the corpus determinism test
+  - Add `tests/corpus.rs` iterating every directory under `.kiro/specs/` only when `KIRO_SPEC_CORPUS` is set, running `tasks`, `next`, `status`, and `validate` twice per spec.
+  - Assert success and byte-identical repeated output, hash the corpus before and after to prove read commands write nothing, and skip the test when the variable is absent.
+  - Confirm the test passes against the checked-in 34-spec corpus and reports a non-UTF-8 or unreadable artifact loudly.
+  - _Requirements: 11.5, 11.8_
+
+- [ ] 9. Packaging and host wiring
+- [ ] 9.1 Build the package from the custom-packages overlay
+  - Add `kiro-spec` to `overlays/misc.nix` as `final.rustPlatform.buildRustPackage` with `pname`, `version = "0.1.0"`, `src = final.lib.cleanSource ../scripts/kiro-spec`, `cargoLock.lockFile = ../scripts/kiro-spec/Cargo.lock`, `doCheck = true`, and `meta.mainProgram = "kiro-spec"`.
+  - Leave existing overlay entries unchanged and keep the build and its checks free of network access.
+  - Confirm the overlay package evaluates and builds for `aarch64-darwin` with `nix build --impure --expr` importing the flake's `overlays.custom-packages`.
+  - _Requirements: 1.1, 1.4, 11.6_
+- [ ] 9.2 (P) Install the binary from the common Home Manager tree
+  - Add `home-manager/common/kiro-spec.nix` exposing `programs.kiro-spec.package` (default `pkgs.kiro-spec`) and installing `config.programs.kiro-spec.package` in `home.packages` unconditionally.
+  - Import `./kiro-spec.nix` from `home-manager/common/default.nix` beside the existing modules so every host importing the common tree inherits the command.
+  - Confirm the rendered personal host `home.packages` contains the package path and no other module behavior changes.
+  - _Requirements: 1.1_
+  - _Boundary: common Home Manager module (`home-manager/common/kiro-spec.nix`, `home-manager/common/default.nix`)_
+- [ ] 9.3 (P) Put the binary on the sandbox image command path
+  - Add `pkgs.kiro-spec` to the default `contents` list in `configurations/fabro-vm/sandbox-image.nix`.
+  - Extend the `contents` description and `defaultText` to state that `kiro-spec` must stay on the image's `/bin` path, mirroring the existing `PATH=/bin` invariant.
+  - Confirm the evaluated image root links `bin/kiro-spec` alongside the existing commands.
+  - _Requirements: 1.2_
+  - _Boundary: sandbox image contents (`configurations/fabro-vm/sandbox-image.nix`)_
+- [ ] 9.4 Add package, corpus, and Linux flake outputs
+  - Add `checks.<system>.kiro-spec` bound to the overlay package so each darwin system builds it and runs `cargo test` through `doCheck`.
+  - Add `checks.<system>.kiro-spec-corpus` that copies `.kiro` into `$TMPDIR`, runs the packaged binary's read commands twice per spec, asserts identical output, and compares the copied tree hash before and after.
+  - Bind `packages.aarch64-linux.kiro-spec` to the guest's `pkgs.kiro-spec` so the Linux build and its checks are addressable with `nix build .#packages.aarch64-linux.kiro-spec`.
+  - Confirm both darwin checks and the Linux package build succeed offline.
+  - _Requirements: 11.5, 11.6, 11.8_
+- [ ] 9.5 Assert host and image wiring in a flake check
+  - Add `checks.aarch64-darwin.kiro-spec-wiring` asserting every `darwinConfigurations` host carries `pkgs.kiro-spec` in `home.packages` and the guest image `contents` contains the linux package, both resolving to the crate's pname and version.
+  - Fail the check with a named host or image when either wiring is missing.
+  - Confirm the check passes with the wiring in place and fails when one host import or the image entry is removed locally.
+  - _Requirements: 1.1, 1.2, 1.3_
+  - _Depends: 9.2, 9.3_
+- [ ] 9.6 Assert image contents in the sandbox Node test
+  - Extend `tests/fabro-sandbox/image.test.js` to assert `kiro-spec` appears in the evaluated image `contentNames` and `copyToRootNames`.
+  - Keep the existing image assertions unchanged and run the suite with `node --test tests/fabro-sandbox/image.test.js`.
+  - Confirm the new assertion fails when the `contents` entry is removed.
+  - _Requirements: 1.2_
+  - _Depends: 9.3_
+
+- [ ] 10. Document the CLI, JSON schema, finding codes, and `[!]` encoding
+  - Write `docs/kiro-spec.md` covering the six subcommands, JSON schema version 1 field sets for `next`, `tasks`, `status`, and `validate`, the finding-code table, exit codes 0/1/2, and the `[!]` marker with its `- _Blocked: <reason>_` bullet.
+  - Generate every example from a fixture spec so the empty-task-list and no-incomplete-task cases match real output, and document the corpus and offline test commands.
+  - Confirm each documented example matches the packaged binary's output and that the doc names every finding code `validate` can emit.
+  - _Requirements: 9.5, 11.7_
+
+- [ ] 11. Run the offline acceptance gate
+  - Run `cargo test --locked` in `scripts/kiro-spec/`, then `nix build .#checks.aarch64-darwin.kiro-spec`, `.#checks.aarch64-darwin.kiro-spec-corpus`, `.#checks.aarch64-darwin.kiro-spec-wiring`, and `.#packages.aarch64-linux.kiro-spec` through the configured Linux builder.
+  - Run the `tests/fabro-sandbox` Node suite and walk all six subcommands against a temp spec tree in both formats.
+  - Compare one fixture's output and exit status between the darwin package and the guest's linux package, and confirm the repository's `.kiro/specs/` tree hash is unchanged.
+  - Fix cross-boundary regressions without weakening a check; no check may contact the network.
+  - _Depends: 9.6, 10_
+  - _Requirements: 1.3, 11.5, 11.6, 11.8_
+
+## Implementation Notes
+
+- The default dev shell has no Rust toolchain; use a pinned `nix shell nixpkgs#cargo nixpkgs#rustc` (or the nixpkgs revision the overlay builds with) so the checked-in `Cargo.lock` matches `cargoLock.lockFile`.
+- `doCheck = true` runs `cargo test` inside the Nix build, where `KIRO_SPEC_CORPUS` is unset; the corpus test therefore skips there, and the flake's corpus check covers it against a copied tree.
+- `lib.cleanSource` only sees files tracked by git, so `git add` new source, fixture, and documentation files before running any flake check.
+- Mutation tests that depend on an unwritable spec directory must skip when the process can still write (for example as root in a container) instead of asserting a false pass.
+- `validate` findings are result data on stdout in both formats; stderr carries only usage and operational diagnostics.
