@@ -12,6 +12,45 @@ let
   nativeArch = if pkgs.stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64";
 
   yamlFormat = pkgs.formats.yaml { };
+
+  limaYaml = {
+    minimumLimaVersion = "2.3.0";
+    os = "Darwin";
+    arch = "aarch64";
+    vmType = "vz";
+
+    images = [
+      (
+        {
+          inherit (cfg.image) location arch;
+        }
+        // lib.optionalAttrs (cfg.image.digest != null) {
+          inherit (cfg.image) digest;
+        }
+      )
+    ];
+
+    video = {
+      display = "default";
+    };
+
+    mounts = [ ];
+
+    osOpts = {
+      Darwin = {
+        inherit (cfg) suppressFirstLoginSetup;
+      };
+    };
+
+    inherit (cfg)
+      cpus
+      memory
+      disk
+      ;
+  }
+  // cfg.extraLimaConfig;
+
+  limaConfigYaml = yamlFormat.generate "lima-${cfg.name}.yaml" limaYaml;
 in
 {
   options.virtualisation.limaMacGuest = {
@@ -170,7 +209,6 @@ in
       type = types.nullOr types.path;
       internal = true;
       readOnly = true;
-      default = null;
       description = "Internal rendered Lima YAML. Null when disabled.";
     };
 
@@ -214,5 +252,7 @@ in
         message = "virtualisation.limaMacGuest: the VZ driver requires a native-architecture guest (image.arch \"${cfg.image.arch}\" on ${nativeArch}).";
       }
     ];
+
+    virtualisation.limaMacGuest._configYaml = limaConfigYaml;
   };
 }
