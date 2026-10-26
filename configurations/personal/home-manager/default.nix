@@ -227,7 +227,21 @@ in
         sha256 = "sha256-qh+m8a/5ff0AJiDwi3ac4n4K6K+8h2YDVeCvYt+fcjw=";
       };
       sourceRoot = ".";
-      installPhase = "mkdir -p $out; cp -r ./* $out/";
+      installPhase = ''
+                mkdir -p $out
+                cp -r ./* $out/
+                cat > $out/lima.entitlements <<'ENTITLEMENTS'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>com.apple.security.virtualization</key>
+          <true/>
+        </dict>
+        </plist>
+        ENTITLEMENTS
+                /usr/bin/codesign --force --sign - --entitlements $out/lima.entitlements $out/bin/limactl
+      '';
     };
     name = "mac-builder";
     image = {
