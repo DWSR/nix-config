@@ -1,0 +1,218 @@
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+let
+  inherit (lib) mkEnableOption mkOption types;
+
+  cfg = config.virtualisation.limaMacGuest;
+
+  nativeArch = if pkgs.stdenv.hostPlatform.isAarch64 then "aarch64" else "x86_64";
+
+  yamlFormat = pkgs.formats.yaml { };
+in
+{
+  options.virtualisation.limaMacGuest = {
+    enable = mkEnableOption "the macOS Lima guest for the mac-builder";
+
+    name = mkOption {
+      type = types.str;
+      default = "mac-builder";
+      description = ''
+        Lima instance name. Must be valid for `limactl` (lowercase
+        alphanumeric plus `-`, `_`, and `.` separators, no leading or
+        trailing separator); enforced with an assertion.
+      '';
+    };
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.unstable.lima;
+      defaultText = "pkgs.unstable.lima";
+      description = ''
+        The lima package providing `limactl`. Must be Lima >= 2.3 for
+        macOS guests.
+      '';
+    };
+
+    limaHome = mkOption {
+      type = types.str;
+      default = "${config.xdg.stateHome}/lima";
+      defaultText = lib.literalExpression ''"''${config.xdg.stateHome}/lima"'';
+      description = ''
+        Shared LIMA_HOME for the managed macOS guest instance.
+      '';
+    };
+
+    image = mkOption {
+      description = ''
+        The macOS guest boot image (pinned Apple `.ipsw`).
+      '';
+      type = types.submodule {
+        options = {
+          location = mkOption {
+            type = types.str;
+            default = "https://updates.cdn-apple.com/2026FallFCS/.../UniversalMac_27.0.1_26A434_Restore.ipsw";
+            description = "Image URL or local file path passed as `images[0].location`.";
+          };
+
+          digest = mkOption {
+            type = types.nullOr types.str;
+            default = "sha256:2f016638293c3e641b8b25391a76fbc16563b3711915a5551cf8aa0f5598a5c1";
+            description = ''
+              Digest for `images[0].digest` (`sha256:` prefix). Null skips
+              verification.
+            '';
+          };
+
+          arch = mkOption {
+            type = types.enum [
+              "aarch64"
+              "x86_64"
+            ];
+            default = "aarch64";
+            defaultText = "aarch64";
+            description = "Guest architecture for `images[0].arch`.";
+          };
+        };
+      };
+    };
+
+    cpus = mkOption {
+      type = types.ints.positive;
+      default = 4;
+      description = "Lima `cpus`.";
+    };
+
+    memory = mkOption {
+      type = types.str;
+      default = "8GiB";
+      description = "Lima `memory`.";
+    };
+
+    disk = mkOption {
+      type = types.str;
+      default = "64GiB";
+      description = "Lima `disk` (root disk size).";
+    };
+
+    suppressFirstLoginSetup = mkOption {
+      type = types.bool;
+      default = true;
+      description = ''
+        Set `osOpts.Darwin.suppressFirstLoginSetup` to skip the macOS
+        First Run Experience.
+      '';
+    };
+
+    extraLimaConfig = mkOption {
+      inherit (yamlFormat) type;
+      default = { };
+      description = ''
+        Freeform Lima YAML configuration merged over the module-rendered
+        root keys.
+      '';
+    };
+
+    forward = mkOption {
+      description = "Host-side SSH forward exposing the guest sshd.";
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = true;
+            description = "Enable the host-side SSH forward launchd agent.";
+          };
+
+          bindAddress = mkOption {
+            type = types.str;
+            default = "127.0.0.1";
+            description = "Address the forward binds on the host.";
+          };
+
+          port = mkOption {
+            type = types.port;
+            default = 2222;
+            description = "Host port the forward binds.";
+          };
+        };
+      };
+    };
+
+    deploy = mkOption {
+      description = "Deploy/bootstrap wiring for the builder host.";
+      type = types.submodule {
+        options = {
+          enable = mkOption {
+            type = types.bool;
+            default = false;
+            description = "Enable deploy wiring.";
+          };
+
+          hostName = mkOption {
+            type = types.str;
+            default = "";
+            description = "Builder host name used by deploy.";
+          };
+
+          ageKeySecretRef = mkOption {
+            type = types.str;
+            default = "";
+            description = "1Password reference for the builder age key.";
+          };
+        };
+      };
+    };
+
+    _configYaml = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      default = null;
+      description = "Internal rendered Lima YAML. Null when disabled.";
+    };
+
+    _supervisor = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      default = null;
+      description = "Internal supervisor script. Null when disabled.";
+    };
+
+    _forward = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      default = null;
+      description = "Internal forward script/agent. Null when disabled.";
+    };
+
+    _deploy = mkOption {
+      type = types.nullOr types.path;
+      internal = true;
+      readOnly = true;
+      default = null;
+      description = "Internal deploy script. Null when disabled.";
+    };
+  };
+
+  config = lib.mkIf cfg.enable {
+    assertions = [
+      {
+        assertion = pkgs.stdenv.hostPlatform.isDarwin;
+        message = "virtualisation.limaMacGuest manages the guest through a launchd agent and is darwin-only.";
+      }
+      {
+        assertion = builtins.match "[a-zA-Z0-9]+([-._][a-zA-Z0-9]+)*" cfg.name != null;
+        message = "virtualisation.limaMacGuest.name must be a valid lima instance name (alphanumeric with - . _ separators).";
+      }
+      {
+        assertion = cfg.image.arch == nativeArch;
+        message = "virtualisation.limaMacGuest: the VZ driver requires a native-architecture guest (image.arch \"${cfg.image.arch}\" on ${nativeArch}).";
+      }
+    ];
+  };
+}
