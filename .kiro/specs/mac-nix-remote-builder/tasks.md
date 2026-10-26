@@ -85,7 +85,7 @@
 
 - [ ] 4. Ship the one-touch deploy command
 
-- [ ] 4.1 Implement the deploy and bootstrap command
+- [x] 4.1 Implement the deploy and bootstrap command
   - Create `scripts/mac-builder-deploy.nix` as a `writeShellApplication` taking `[REPO]` (defaulting to the cwd) and requiring `flake.nix` + `flake.lock`, failing before any host change when inputs are not locked.
   - Probe reachability through the instance's Lima SSH config and fail with the connection error otherwise; stream the repository tree (excluding `.git`, `.direnv`, `result*`) to a guest scratch dir over SSH.
   - Read the builder age key from 1Password and install `/var/lib/sops-nix/key.txt` (`0600`, root); bootstrap Nix with the pinned installer when absent; apply with `sudo -A nix run <pinned nix-darwin> -- switch --flake '<scratch>#mac-builder'` (later switches use `darwin-rebuild`).
