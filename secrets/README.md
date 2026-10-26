@@ -20,6 +20,7 @@ boundary of this pipeline.
 | ShopifyLaptop          | `shopify`       | Employee        | `op://Employee/sops-age-key-shopify` | `secrets/mcp.shopify.yaml`  |
 | Brandons-MacBook-Pro   | `personal`      | Private         | `op://Private/sops-age-key-personal` | `secrets/mcp.personal.yaml` |
 | fabro (fabro-vm Lima VM guest) | `fabro`  | Private         | `op://Private/sops-age-key-fabro` | `secrets/fabro.fabro.yaml`    |
+| mac-builder (macOS remote builder guest) | `mac-builder` | Private | `op://Private/sops-age-key-mac-builder` | `secrets/remote-builder.mac-builder.yaml` |
 
 The short-name (`shopify` / `personal` / `fabro`) is the value passed to the
 helper apps (`mcp-sync-from-1password`, `mcp-verify-secrets`) and
@@ -159,6 +160,49 @@ Rotate the value in the 1Password item first where one exists (see
 table), then mirror it here. After any `.sops.yaml` recipient change,
 re-encrypt with the same `SOPS_AGE_KEY_FILE` trick via `sops
 updatekeys secrets/fabro.fabro.yaml`.
+
+## Builder host store (macOS remote builder)
+
+`secrets/remote-builder.mac-builder.yaml` is the builder host's store: one
+file for the `builder-authorized-keys` secret (newline-separated client
+public keys) consumed by sops-nix on the builder host. It is encrypted
+to the `&host_mac_builder` recipient only.
+
+| Item | Value |
+| --- | --- |
+| Encrypted file | `secrets/remote-builder.mac-builder.yaml` |
+| SOPS key | `builder-authorized-keys` |
+| Recipient anchor | `&host_mac_builder` |
+| 1Password item | `op://Private/sops-age-key-mac-builder` (Secure Note, `notesPlain`) |
+| Private key on host | `/var/lib/sops-nix/key.txt` (mode `0600`, root) |
+
+The builder age private key is generated once with `age-keygen` and
+stashed in 1Password under the item above, mirroring the per-host
+bootstrap. Its public recipient is
+`age10puuz9e0nj3u9va2mg7uaad5m5v2sdfs73e97tgsd3r4cykk2gcsk5laq5`.
+
+### Age-key-before-first-switch bootstrap order
+
+The builder age key must be installed before the first
+`darwin-rebuild switch` on the builder host:
+
+1. Generate the keypair (or reuse the stored one) and capture the
+   public recipient.
+2. Stash the private key in 1Password at
+   `op://Private/sops-age-key-mac-builder/notesPlain`.
+3. Install the private key on the builder host at
+   `/var/lib/sops-nix/key.txt` (mode `0600`, root) — the deploy
+   command does this from 1Password before applying the configuration.
+4. Only then run the first switch; sops-nix decrypts
+   `secrets/remote-builder.mac-builder.yaml` using that key.
+
+### Authorized-key rotation
+
+Rotate the authorized client keys by editing the 1Password-backed
+`builder-authorized-keys` value, re-encrypting
+`secrets/remote-builder.mac-builder.yaml` against `&host_mac_builder`,
+and re-running deploy/switch. The store stays scoped to the builder
+recipient; no personal-host secret is added.
 
 ## Prerequisites — read this first
 
