@@ -64,7 +64,7 @@
   - Done when the rendered YAML passes `limactl validate` and contains the pinned image, the FRE-skip key, and `mounts: []`.
   - _Requirements: 5.1, 5.6_
 
-- [ ] 3.3 Add the launchd VM supervisor
+- [x] 3.3 Add the launchd VM supervisor
   - Render the supervisor that creates the instance from `_configYaml` when missing, then `exec limactl --tty=false start --foreground <name>` with `LIMA_HOME` exported.
   - Register `launchd.agents.dev.dwsr.lima-mac-builder` with `RunAtLoad = true`, `KeepAlive.SuccessfulExit = false`, `ProcessType = "Background"`, `LIMA_HOME` in the environment, and logs under `~/Library/Logs/lima-vm/`.
   - Done when the rendered agent starts the guest on load, restarts it after a nonzero exit, and leaves it stopped after a clean `limactl stop`.
