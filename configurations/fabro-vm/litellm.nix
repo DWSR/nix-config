@@ -47,6 +47,16 @@ let
   # ids, the gateway `model_list`, and the group-scoped forwarding list.
   catalog = (import ./litellm-catalog.nix { inherit lib; }).catalog;
 
+  # Failover bound derived from the catalog: one sibling attempt per other
+  # deployment of the largest unified group (currently `gpt-6-luna` with two
+  # deployments, so 1). Every retry therefore stays inside the requested
+  # logical model; adding a third deployment to that group widens the bound to
+  # 2 without any other edit. Validation keeps every group non-empty, so the
+  # subtraction never underflows below zero in practice.
+  maxFallbacks = lib.foldl' (
+    acc: logicalModel: lib.max acc (builtins.length logicalModel.deployments - 1)
+  ) 0 (builtins.attrValues catalog.logicalModels);
+
   # The ChatGPT provider credentials: litellm's ChatGPT authenticator
   # (llms.chatgpt.authenticator) resolves CHATGPT_TOKEN_DIR, falling back to
   # `~/.config/litellm/chatgpt`. The DynamicUser unit has no HOME, so both
@@ -150,8 +160,23 @@ in
       # `deployment_affinity` check stays off. Pins are per-process memory (no
       # Redis): a gateway restart clears every pin, and Fabro restarts with the
       # unit because it hard-requires litellm.service.
+      #
+      # Failover stays inside the requested group. `num_retries = 0` never
+      # repeats an attempt on the same deployment; `enable_weighted_failover`
+      # re-picks a healthy sibling by weight; `max_fallbacks` (derived above)
+      # bounds the sibling attempts; and `allowed_fails = 0` with a 60-second
+      # `cooldown_time` removes a failed deployment from placement and affinity
+      # until it recovers. No `fallbacks`, `context_window_fallbacks`, or
+      # `model_group_alias` is declared, so a request can never cross into
+      # another logical model and a removed provider-scoped id fails as an
+      # unknown model.
       router_settings = {
         routing_strategy = "simple-shuffle";
+        num_retries = 0;
+        max_fallbacks = maxFallbacks;
+        enable_weighted_failover = true;
+        allowed_fails = 0;
+        cooldown_time = 60;
         optional_pre_call_checks = [ "session_affinity" ];
         deployment_affinity_ttl_seconds = 21600;
       };
