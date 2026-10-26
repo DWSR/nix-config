@@ -487,6 +487,7 @@
   - _Requirements: 1.5, 11.5_
   - _Boundary: OrchestratorScript (integration check)_
   - _Depends: 6.1_
+  - _Blocked: Needs 6-step smoke on second nix-darwin host (Brandons-MacBook-Pro); host, MCPs, and memory-sync files are absent here. Unblock with host access or operator-run evidence._
 
 - [x] 6.3 Author the Obsidian troubleshooting memory note
   - Via `hub_obsidian__write-note`, create
