@@ -487,6 +487,7 @@
   - _Requirements: 1.5, 11.5_
   - _Boundary: OrchestratorScript (integration check)_
   - _Depends: 6.1_
+  - _Blocked: Live 6-step smoke on Brandons-MacBook-Pro unreachable from this sandbox; memory-sync scripts/agents are retired under agentmemory. Unblock: operator runs it on that host, or close 6.2 obsolete._
 
 - [x] 6.3 Author the Obsidian troubleshooting memory note
   - Via `hub_obsidian__write-note`, create
