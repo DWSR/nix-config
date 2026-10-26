@@ -143,7 +143,7 @@
   - _Boundary: Deploy Behavior Tests_
   - _Requirements: 6.4, 6.5, 6.6, 6.7_
 
-- [ ] 6.5 Register the mac-nix-remote-builder flake check
+- [x] 6.5 Register the mac-nix-remote-builder flake check
   - Add `checks.<system>.mac-nix-remote-builder` as a `node --test tests/mac-nix-remote-builder/` `runCommand` following the existing `lima-vm-service` check (Nix + Node native inputs, copied writable source).
   - Done when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).mac-nix-remote-builder` runs the whole suite.
   - _Depends: 6.1, 6.2, 6.3, 6.4_
