@@ -51,6 +51,42 @@ let
   // cfg.extraLimaConfig;
 
   limaConfigYaml = yamlFormat.generate "lima-${cfg.name}.yaml" limaYaml;
+
+  inherit (cfg) limaHome;
+  logDir = "${config.home.homeDirectory}/Library/Logs/lima-vm";
+  agentName = "lima-${cfg.name}";
+
+  servicePath = lib.concatStringsSep ":" [
+    (lib.makeBinPath [
+      cfg.package
+      pkgs.openssh
+    ])
+    "/usr/local/bin"
+    "/usr/bin"
+    "/bin"
+    "/usr/sbin"
+    "/sbin"
+  ];
+
+  supervisor = pkgs.writeShellApplication {
+    name = "lima-${cfg.name}-supervisor";
+    runtimeInputs = [
+      cfg.package
+      pkgs.openssh
+    ];
+    text = ''
+      export LIMA_HOME=${lib.escapeShellArg limaHome}
+
+      name=${lib.escapeShellArg cfg.name}
+      config=${lib.escapeShellArg limaConfigYaml}
+
+      if ! limactl list --json "$name" >/dev/null 2>&1; then
+        limactl --tty=false create --name="$name" "$config"
+      fi
+
+      exec limactl --tty=false start --foreground "$name"
+    '';
+  };
 in
 {
   options.virtualisation.limaMacGuest = {
@@ -216,7 +252,6 @@ in
       type = types.nullOr types.path;
       internal = true;
       readOnly = true;
-      default = null;
       description = "Internal supervisor script. Null when disabled.";
     };
 
@@ -254,5 +289,36 @@ in
     ];
 
     virtualisation.limaMacGuest._configYaml = limaConfigYaml;
+    virtualisation.limaMacGuest._supervisor = supervisor;
+
+    launchd.agents.${agentName} = {
+      enable = true;
+      config = {
+        Label = "dev.dwsr.${agentName}";
+        ProgramArguments = [ (lib.getExe supervisor) ];
+        RunAtLoad = true;
+        KeepAlive = {
+          SuccessfulExit = false;
+        };
+        ProcessType = "Background";
+        EnvironmentVariables = {
+          LIMA_HOME = limaHome;
+          HOME = config.home.homeDirectory;
+          PATH = servicePath;
+        };
+        StandardOutPath = "${logDir}/${agentName}.log";
+        StandardErrorPath = "${logDir}/${agentName}.error.log";
+      };
+    };
+
+    home.activation.limaMacGuestDirs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p ${
+        lib.escapeShellArgs [
+          limaHome
+          logDir
+        ]
+      }
+    '';
   };
+
 }
