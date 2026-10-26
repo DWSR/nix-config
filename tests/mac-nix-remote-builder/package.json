@@ -1,0 +1,7 @@
+{
+  "name": "mac-nix-remote-builder-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "builder-host-render.test.js",
+  "description": "Test suite entry point for the mac-nix-remote-builder mac-builder host render."
+}
