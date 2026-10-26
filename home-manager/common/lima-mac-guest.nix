@@ -107,6 +107,8 @@ let
         lima-${cfg.name}
     '';
   };
+
+  deployScript = pkgs.callPackage ../../scripts/mac-builder-deploy.nix { };
 in
 {
   options.virtualisation.limaMacGuest = {
@@ -286,7 +288,6 @@ in
       type = types.nullOr types.path;
       internal = true;
       readOnly = true;
-      default = null;
       description = "Internal deploy script. Null when disabled.";
     };
   };
@@ -311,7 +312,10 @@ in
       _configYaml = limaConfigYaml;
       _supervisor = supervisor;
       _forward = if cfg.forward.enable then forward else null;
+      _deploy = if cfg.deploy.enable then deployScript else null;
     };
+
+    home.packages = lib.optional (cfg._deploy != null) cfg._deploy;
 
     launchd.agents = {
       ${agentName} = {

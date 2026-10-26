@@ -328,6 +328,10 @@
             type = "app";
             program = "${pkgs.callPackage ./scripts/opencode-nono-validate.nix { }}/bin/opencode-nono-validate";
           };
+          mac-builder-deploy = {
+            type = "app";
+            program = "${pkgs.callPackage ./scripts/mac-builder-deploy.nix { }}/bin/mac-builder-deploy";
+          };
         }
       );
 
