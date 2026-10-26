@@ -93,7 +93,7 @@
   - Done when stubbed `ssh`/`op` runs show the locked-flake guard, the unreachable error, the streamed tree, the age-key install, and the switch invocation.
   - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8_
 
-- [ ] 4.2 Wire the deploy command into the guest module and personal host
+- [x] 4.2 Wire the deploy command into the guest module and personal host
   - Build the module's internal `_deploy` from `scripts/mac-builder-deploy.nix` and add it to `home.packages`; set `deploy.{enable,hostName,ageKeySecretRef}` on the personal host.
   - Expose the deploy command as a flake app/package on `aarch64-darwin`, following the existing `scripts/*` app pattern.
   - Done when `mac-builder-deploy` is on the personal host's PATH and the flake app resolves to the script derivation.
