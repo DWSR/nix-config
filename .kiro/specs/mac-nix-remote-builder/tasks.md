@@ -18,7 +18,7 @@
 
 - [ ] 2. Build the portable nix-darwin builder host configuration
 
-- [ ] 2.1 Scaffold the host configuration with packages, daemon trust, and GC
+- [x] 2.1 Scaffold the host configuration with packages, daemon trust, and GC
   - Create `configurations/mac-builder/default.nix` as a standalone nix-darwin module with `nixpkgs.hostPlatform = "aarch64-darwin"`, `nixpkgs.config.allowUnfree = true`, and an explicit `system.stateVersion`.
   - Set `nix.enable = true` (its launchd daemon serves builds without an interactive login), `nix.settings.trusted-users = [ "nix-builder" ]`, and `nix.settings.experimental-features = [ "nix-command" "flakes" ]`.
   - Declare no `extra-platforms`, so the daemon serves only `aarch64-darwin` and rejects foreign-system requests.
@@ -28,7 +28,7 @@
   - Done when the configuration evaluates for `aarch64-darwin` and its rendered settings show the trusted user, the GC schedule, and OpenSSH enabled.
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 3.1, 3.5, 3.6_
 
-- [ ] 2.2 Define the dedicated non-privileged builder user
+- [x] 2.2 Define the dedicated non-privileged builder user
   - Declare `users.users.nix-builder` with a fixed non-system UID, primary `gid = 20` (`staff`), `isHidden = true`, `home = "/Users/nix-builder"`, `createHome = true`, and `shell = "/bin/bash"`.
   - Keep the account out of the `admin` group so it holds no administrative or root privileges.
   - Done when the evaluated user has the `staff` group, is absent from `admin`, and no other account is added to `nix.settings.trusted-users`.
