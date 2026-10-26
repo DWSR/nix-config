@@ -135,7 +135,7 @@
   - _Boundary: Secret-Value Checks_
   - _Requirements: 4.3, 7.6_
 
-- [ ] 6.4 (P) Add deploy behavior tests with stubs
+- [x] 6.4 (P) Add deploy behavior tests with stubs
   - Add `tests/mac-nix-remote-builder/deploy.test.js` driving the deploy against stubbed `ssh`/`op`.
   - Assert the locked-flake guard aborts before any host change, the unreachable host fails with the connection error, the tree is streamed as a tar over SSH with no mounts, the age key is installed, and the switch command runs.
   - Done when every guard/stream/install/switch case passes with the stubs.
