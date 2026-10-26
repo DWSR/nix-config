@@ -102,7 +102,7 @@
 
 - [ ] 5. Add the runtime readiness check
 
-- [ ] 5.1 Implement and expose the readiness check
+- [x] 5.1 Implement and expose the readiness check
   - Create `scripts/mac-builder-readiness.nix` as a `writeShellApplication` taking the endpoint (user, address, port) and an operator SSH identity.
   - Check that SSH as `nix-builder` succeeds, that the remote reports `builtins.currentSystem == "aarch64-darwin"`, and that `nix store ping` over the `ssh-ng://` endpoint succeeds; print a per-check report.
   - Exit nonzero naming the failing check; expose the command as a flake app/package on `aarch64-darwin`.
