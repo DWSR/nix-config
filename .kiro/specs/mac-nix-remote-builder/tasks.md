@@ -127,7 +127,7 @@
   - _Boundary: Personal-Host Guest Render Tests_
   - _Requirements: 5.1, 5.6, 5.7, 7.2_
 
-- [ ] 6.3 (P) Add poisoned-secret render assertions
+- [x] 6.3 (P) Add poisoned-secret render assertions
   - Add `tests/mac-nix-remote-builder/secret-value.test.js` rendering the guest YAML, the activation fragment, and the deploy text with poisoned secret values.
   - Assert only the poisoned *paths* (`/var/lib/sops-nix/key.txt`, `/run/secrets/builder-authorized-keys`, `~nix-builder/.ssh/authorized_keys`) appear and no poisoned value does.
   - Done when the check fails when a value is substituted for a path and passes on the real configuration.
