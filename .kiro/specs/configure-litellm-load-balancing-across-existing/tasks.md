@@ -71,6 +71,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - Declare no `fallbacks`, `context_window_fallbacks`, or `model_group_alias`, so no request crosses a logical model and removed ids fail as unknown models.
   - Observable: `nix eval` shows the five values with `max_fallbacks = 1` and none of the three fallback keys present; adding a third `gpt-6-luna` deployment re-evaluates to `max_fallbacks = 2`.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 5.8, 5.9_
+  - _Blocked: Darwin checks cannot build on this aarch64-linux host (platform mismatch); run the guest-eval and litellm-service aarch64-darwin checks on a macOS host or remote builder._
 
 - [ ] 3.4 Package the bridge with the gateway config and point the service at it
   - Build a `runCommand "litellm-config"` directory holding `config.yaml` rendered from `services.litellm.settings`, `litellm_affinity_bridge.py`, and `litellm_session_identity.py`, and register `litellm_settings.callbacks = [ "litellm_affinity_bridge.proxy_handler_instance" ]`.
