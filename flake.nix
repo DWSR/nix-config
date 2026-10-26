@@ -332,6 +332,10 @@
             type = "app";
             program = "${pkgs.callPackage ./scripts/mac-builder-deploy.nix { }}/bin/mac-builder-deploy";
           };
+          mac-builder-readiness = {
+            type = "app";
+            program = "${pkgs.callPackage ./scripts/mac-builder-readiness.nix { }}/bin/mac-builder-readiness";
+          };
         }
       );
 
