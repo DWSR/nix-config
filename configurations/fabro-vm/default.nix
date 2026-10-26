@@ -317,7 +317,6 @@ in
       ];
       allowedVersionVariables = [
         "kiro_spec_workflow_version"
-        "kiro_impl_workflow_version"
         "oneshot_workflow_version"
         "dependabot_workflow_version"
         "kiro_task_workflow_version"
