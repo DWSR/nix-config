@@ -134,6 +134,27 @@ in
       };
 
       model_list = catalog.modelList;
+
+      # Router policy: weighted random placement over the healthy deployments
+      # of the requested logical group, plus native session affinity. The
+      # weights live on the catalog's `model_list` entries; the only other
+      # placement input is the router's own availability state. No rpm/tpm (or
+      # any other rate) limit is set here, so a new placement is a weighted
+      # choice among the deployments that are not cooling down.
+      #
+      # `optional_pre_call_checks` turns on the router's `session_affinity`
+      # check: after a placement it records the selected deployment under
+      # (logical model, session identity) in its in-process cache, and later
+      # requests for the same pair reuse that deployment until the pin has been
+      # idle for `deployment_affinity_ttl_seconds` (six hours). The alternative
+      # `deployment_affinity` check stays off. Pins are per-process memory (no
+      # Redis): a gateway restart clears every pin, and Fabro restarts with the
+      # unit because it hard-requires litellm.service.
+      router_settings = {
+        routing_strategy = "simple-shuffle";
+        optional_pre_call_checks = [ "session_affinity" ];
+        deployment_affinity_ttl_seconds = 21600;
+      };
     };
   };
 
