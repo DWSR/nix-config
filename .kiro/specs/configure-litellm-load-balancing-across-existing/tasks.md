@@ -31,7 +31,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - Observable: `nix eval` shows 9 entries with unique `model_info.id`s and a weight on every entry, the 5-id forwarding list (`gpt-6-luna`, `deepseek-v4.1-flash`, `glm-5.3-flash`, `longcat-2.5-preview-free`, `big-pickle`), and identical output when evaluated twice.
   - _Requirements: 1.3, 2.2, 3.2, 7.3_
 
-- [ ] 1.4 Generate the OpenCode and Fabro client projections
+- [x] 1.4 Generate the OpenCode and Fabro client projections
   - Produce `opencode = { defaultModel, models }` keyed by logical id with the display name, and `fabro = { defaultModel, models }` keyed by logical id with `display_name`, `api_model` = the logical id, `limits` from the group, `capabilities` = the `text`/`tools`/`reasoning` baseline plus mapped `reasoningEffortLevels` and `fabroCapabilities`, `small_default` when declared, and forced `caching`/`cache_routing` = true.
   - Use the table-level default model for both surfaces, and never expose a provider prefix, base URL, or key variable in either projection.
   - Observable: `nix eval` shows the same 8 keys on both surfaces, every Fabro record with `caching`/`cache_routing` true and `api_model` equal to its key, and no `/` in any projected id.
