@@ -340,17 +340,17 @@ test('disabled configuration registers no launchd agent', () => {
   assert.equal(rendered.wrapperText, null);
 });
 
-// litellm 1.86's per-provider param allowlists predate the personal host's
-// model ids, so without per-deployment `allowed_openai_params` the proxy
-// rejects `reasoning_effort` at its param gate — for a consumer's request
-// value AND for each chatgpt deployment's pinned default, which left the
-// chatgpt models un-callable outright.
-test('personal host allows reasoning_effort on every deployment', () => {
+// The fabro-vm is the deployed LiteLLM consumer. litellm 1.86's per-provider
+// param allowlists predate its model ids, so without per-deployment
+// `allowed_openai_params` the proxy rejects `reasoning_effort` at its param
+// gate — for a consumer's request value AND for each chatgpt deployment's
+// pinned default, which left the chatgpt models un-callable outright.
+test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
   const rendered = nixEvalJson(`
     let
       flake = builtins.getFlake (toString ${repoRoot});
-      hm = flake.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama;
-      modelList = hm.programs.litellm.settings.model_list;
+      vm = flake.nixosConfigurations.fabro-vm.config;
+      modelList = vm.services.litellm.settings.model_list;
       deploymentStatus = builtins.listToAttrs (builtins.map (deployment: {
         name = deployment.model_name;
         value = {
@@ -358,6 +358,9 @@ test('personal host allows reasoning_effort on every deployment', () => {
             (deployment.litellm_params.allowed_openai_params or [ ]);
           defaultEffort = deployment.litellm_params.reasoning_effort or null;
           mode = deployment.model_info.mode or null;
+          apiBase = deployment.litellm_params.api_base or null;
+          apiKey = deployment.litellm_params.api_key or null;
+          headers = deployment.litellm_params.extra_headers or null;
         };
       }) modelList);
     in
@@ -369,11 +372,15 @@ test('personal host allows reasoning_effort on every deployment', () => {
       chatgptLunaNone = deploymentStatus."chatgpt/gpt-6-luna-none";
       chatgptAstra = deploymentStatus."chatgpt/gpt-6-astra";
       chatgptSol = deploymentStatus."chatgpt/gpt-6.1-sol";
+      goBeam = deploymentStatus."opencode-go/beam-free";
+      goOmen = deploymentStatus."opencode-go/omen-alpha";
+      goLongcat = deploymentStatus."opencode-go/longcat-2.0";
       goLuna = deploymentStatus."opencode-go/gpt-6-luna";
       goGlm = deploymentStatus."opencode-go/glm-5.3-flash";
-      goLongcat = deploymentStatus."opencode-go/longcat-2.5-preview-free";
       zenBigPickle = deploymentStatus."opencode-zen/big-pickle";
-      settingsText = builtins.readFile (hm.xdg.configFile."litellm/config.yaml".source);
+      forwarding =
+        vm.services.litellm.settings.litellm_settings.model_group_settings.forward_client_headers_to_llm_api;
+      settingsText = builtins.toJSON vm.services.litellm.settings;
     }
   `);
 
@@ -382,9 +389,12 @@ test('personal host allows reasoning_effort on every deployment', () => {
     'chatgpt/gpt-6-luna',
     'chatgpt/gpt-6-luna-none',
     'chatgpt/gpt-6.1-sol',
+    'opencode-go/beam-free',
+    'opencode-go/deepseek-v4.1-flash',
     'opencode-go/glm-5.3-flash',
     'opencode-go/gpt-6-luna',
-    'opencode-go/longcat-2.5-preview-free',
+    'opencode-go/longcat-2.0',
+    'opencode-go/omen-alpha',
     'opencode-zen/big-pickle',
   ]);
   assert.equal(rendered.allAllowReasoningEffort, true);
@@ -398,9 +408,25 @@ test('personal host allows reasoning_effort on every deployment', () => {
   assert.equal(rendered.chatgptSol.defaultEffort, 'xhigh');
   assert.equal(rendered.goLuna.mode, 'responses');
   assert.equal(rendered.goGlm.mode, 'chat');
-  assert.equal(rendered.goLongcat.mode, 'chat');
+
+  for (const deployment of [rendered.goBeam, rendered.goOmen, rendered.goLongcat]) {
+    assert.equal(deployment.mode, 'chat');
+    assert.equal(deployment.apiBase, 'https://opencode.ai/zen/go/v1');
+    assert.equal(deployment.apiKey, 'os.environ/OPENCODE_API_KEY');
+    assert.equal(deployment.headers, null);
+  }
   assert.equal(rendered.zenBigPickle.mode, 'chat');
 
-  assert.match(rendered.settingsText, /allowed_openai_params:/);
-  assert.match(rendered.settingsText, /- reasoning_effort/);
+  // Session ids stay dynamic for every opencode-* group.
+  assert.deepEqual(rendered.forwarding, [
+    'opencode-go/*',
+    'opencode-zen/*',
+  ]);
+
+  assert.equal(rendered.settingsText.includes('opencode-go/deepseek-v4.1-flash-free'), false);
+  assert.equal(rendered.settingsText.includes('opencode-go/glm-5.3-flash-free'), false);
+  assert.equal(rendered.settingsText.includes('iceman-contributor-free'), false);
+
+  assert.match(rendered.settingsText, /allowed_openai_params/);
+  assert.match(rendered.settingsText, /"reasoning_effort"/);
 });

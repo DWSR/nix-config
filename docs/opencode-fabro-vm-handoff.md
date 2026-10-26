@@ -36,9 +36,8 @@ branch `main`, HEAD `8765bac` ("chore(fabro): bump to 0.386.0-nightly.0").
 3. **Provider: local LiteLLM**, declarative, no `auth.json`.
 4. **Session header: dynamic, never static.** The provider id must start with
    `opencode` so opencode itself sends `x-opencode-session: <real session id>`;
-   LiteLLM already forwards client `x-*` headers for the `opencode-go/*` and
-   `opencode-zen/*` model groups. Do **not** add provider `options.headers` or
-   any litellm-side `extra_headers`.
+   LiteLLM forwards client `x-*` headers for the `opencode-go/*` and
+   `opencode-zen/*` model groups. Do **not** add provider `options.headers`.
 5. **Server password** via sops (`OPENCODE_SERVER_PASSWORD`), in addition to
    the tailnet ACL.
 6. **GitHub token**: new sops secret `opencode-github-token` sourced from
@@ -205,7 +204,9 @@ recreated** — GitHub is the source of truth.
       "opencode-go/gpt-6-luna" = { name = "GPT-6 Luna (OpenCode Go)"; };
       "opencode-go/deepseek-v4.1-flash" = { name = "DeepSeek V4.1 Flash (OpenCode Go)"; };
       "opencode-go/glm-5.3-flash" = { name = "GLM-5.3 Flash (OpenCode Go)"; };
-      "opencode-go/longcat-2.5-preview-free" = { name = "LongCat 2.5 Preview Free (OpenCode Go)"; };
+      "opencode-go/beam-free" = { name = "Beam Free (OpenCode Go)"; };
+      "opencode-go/omen-alpha" = { name = "Omen Alpha (OpenCode Go)"; };
+      "opencode-go/longcat-2.0" = { name = "LongCat 2.0 (OpenCode Go)"; };
       "opencode-zen/big-pickle" = { name = "Big Pickle (OpenCode Zen)"; };
     };
   };
@@ -216,7 +217,7 @@ Notes:
 
 - The provider id **must start with `opencode`** (hence `opencode-litellm`);
   that is the entire mechanism for the dynamic session header. Do not rename
-  it to `litellm` and do not add static headers.
+  it to `litellm` and do not pin a static session id at the provider level.
 - `chatgpt/*` deployments are declared in litellm but not loaded in the guest
   until the ChatGPT OAuth credentials are provisioned via the existing
   in-guest `litellm-chatgpt-login` procedure. Calls to them fail until then;

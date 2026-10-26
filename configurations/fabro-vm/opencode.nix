@@ -147,8 +147,14 @@ let
         "opencode-go/glm-5.3-flash" = {
           name = "GLM-5.3 Flash (OpenCode Go)";
         };
-        "opencode-go/longcat-2.5-preview-free" = {
-          name = "LongCat 2.5 Preview Free (OpenCode Go)";
+        "opencode-go/beam-free" = {
+          name = "Beam Free (OpenCode Go)";
+        };
+        "opencode-go/omen-alpha" = {
+          name = "Omen Alpha (OpenCode Go)";
+        };
+        "opencode-go/longcat-2.0" = {
+          name = "LongCat 2.0 (OpenCode Go)";
         };
         "opencode-zen/big-pickle" = {
           name = "Big Pickle (OpenCode Zen)";

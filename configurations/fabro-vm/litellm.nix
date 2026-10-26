@@ -21,7 +21,9 @@
 #                        stable x-opencode-session header, so the opencode-*
 #                        model groups forward client x-* headers upstream
 #                        (litellm_settings.model_group_settings below) for
-#                        the id fabro attaches at its provider level.
+#                        the id fabro attaches at its provider level. The Go
+#                        free tier (beam-free, omen-alpha) rides the same
+#                        chat/completions base with cost=0.
 #
 # Authentication: the proxy enforces a master key, supplied as the
 # LITELLM_MASTER_KEY env var from the sops-nix `litellm-env` template
@@ -217,9 +219,19 @@ in
               // reasoningEffortAllowed;
             })
             [
+              # Free Go tier. The catalog currently exposes these at
+              # cost=0; LiteLLM forwards the caller's session id so they
+              # keep OpenCode's cache affinity instead of pinning a static
+              # extra_headers value.
+              "beam-free"
+              "omen-alpha"
+
               "deepseek-v4.1-flash"
               "glm-5.3-flash"
-              "longcat-2.5-preview-free"
+
+              # longcat-2.5-preview-free left the Go catalog; 2.0 is the
+              # current Go-served id and is also cost=0.
+              "longcat-2.0"
             ]
           )
           # Big Pickle is not part of the Go catalog (opencode.ai/docs/go):
