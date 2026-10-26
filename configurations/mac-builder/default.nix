@@ -42,5 +42,14 @@
     zstd
   ];
 
+  users.users.nix-builder = {
+    uid = 502;
+    gid = 20;
+    isHidden = true;
+    home = "/Users/nix-builder";
+    createHome = true;
+    shell = "/bin/bash";
+  };
+
   system.stateVersion = 7;
 }
