@@ -45,7 +45,7 @@ final integration unit verifies the whole set before the guest rebuild.
   - Observable: `PYTHONPATH=configurations/fabro-vm python3 -c ...` shows `ses_...` winning over a body key, the same key under `fabro` and `other` yielding different ids, and non-string, blank, 513-character, and CR-bearing keys yielding `None`.
   - _Requirements: 4.2, 4.3, 4.4, 4.5, 6.8_
 
-- [ ] 2.2 Implement the in-process bridge `configurations/fabro-vm/litellm_affinity_bridge.py`
+- [x] 2.2 Implement the in-process bridge `configurations/fabro-vm/litellm_affinity_bridge.py`
   - `SessionIdentityBridge(CustomLogger).async_pre_call_hook` returns `data` unchanged when `metadata` or `litellm_metadata` already carries a session id; otherwise it removes `prompt_cache_key` from the outbound body and `proxy_server_request.body`, derives an identity with the resolver from the request `user-agent` (case-insensitive lookup), and writes it to `metadata` and `litellm_metadata` when present.
   - Drop a malformed key without an identity, never raise on missing metadata, headers, or an unexpected body shape, and export `proxy_handler_instance`.
   - Observable: under the pinned LiteLLM interpreter, a synthetic request carrying only `prompt_cache_key` gains `metadata.session_id` and loses the key, while one with a header-derived `session_id` is returned unchanged.
