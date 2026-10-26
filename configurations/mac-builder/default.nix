@@ -1,9 +1,13 @@
 {
   pkgs,
+  lib,
+  inputs,
   ...
 }:
 
 {
+  imports = [ inputs.sops-nix.darwinModules.default ];
+
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
 
@@ -50,6 +54,32 @@
     createHome = true;
     shell = "/bin/bash";
   };
+
+  sops.age.keyFile = "/var/lib/sops-nix/key.txt";
+  sops.age.sshKeyPaths = [ ];
+  sops.gnupg.sshKeyPaths = [ ];
+  sops.defaultSopsFile = ../../secrets/remote-builder.mac-builder.yaml;
+
+  sops.secrets."builder-authorized-keys" = {
+    mode = "0644";
+    owner = "root";
+    group = "root";
+  };
+
+  system.activationScripts.postActivation.text = lib.mkOrder 9999 ''
+    set -euo pipefail
+    secret_file="/run/secrets/builder-authorized-keys"
+    ssh_dir="/Users/nix-builder/.ssh"
+    authorized_keys="$ssh_dir/authorized_keys"
+
+    if [ ! -s "$secret_file" ]; then
+      echo "mac-builder: required sops secret builder-authorized-keys is missing or empty at $secret_file" >&2
+      exit 1
+    fi
+
+    install -d -m 0700 -o nix-builder -g staff "$ssh_dir"
+    install -m 0600 -o nix-builder -g staff "$secret_file" "$authorized_keys"
+  '';
 
   system.stateVersion = 7;
 }
