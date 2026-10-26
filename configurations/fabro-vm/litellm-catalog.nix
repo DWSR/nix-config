@@ -19,6 +19,13 @@
 #   maxOutputTokens  -> model_info.max_output_tokens
 #   weight           placement weight; emitted explicitly, defaults to 1
 #
+# Optional per-logical-model client metadata drives the Fabro projection:
+# `smallDefault` marks the small utility model, `reasoningEffortLevels` becomes
+# the Fabro `reasoning_effort` capability map, and `fabroCapabilities` overrides
+# the `text`/`tools`/`reasoning` baseline. Both client projections are derived
+# from the same table and never carry a provider prefix, base URL, or
+# credential variable.
+#
 # Every deployment of a logical model must agree on `mode`, `requestDefaults`,
 # `contextWindow`, and `maxOutputTokens`; a semantic difference makes two
 # logical models rather than one unified group. `gpt-6-luna` is the only group
@@ -75,6 +82,9 @@ let
       # deployments pin the same effort so the group stays semantically equal.
       gpt-6-luna = {
         displayName = "GPT-6 Luna";
+        # Both deployments pin `xhigh`, so that is the only effort level Fabro
+        # may advertise for the unified group.
+        reasoningEffortLevels = [ "xhigh" ];
         deployments = [
           {
             provider = "chatgpt";
@@ -122,6 +132,7 @@ let
 
       gpt-6-astra = {
         displayName = "GPT-6 Astra";
+        reasoningEffortLevels = [ "xhigh" ];
         deployments = [
           {
             provider = "chatgpt";
@@ -139,6 +150,7 @@ let
 
       "gpt-6.1-sol" = {
         displayName = "GPT-6.1 Sol";
+        reasoningEffortLevels = [ "xhigh" ];
         deployments = [
           {
             provider = "chatgpt";
@@ -156,6 +168,9 @@ let
 
       "deepseek-v4.1-flash" = {
         displayName = "DeepSeek V4.1 Flash";
+        # The cheap pick for Fabro's small utility tasks (run titles and other
+        # metadata calls).
+        smallDefault = true;
         deployments = [
           {
             provider = "opencode-go";
@@ -171,6 +186,11 @@ let
 
       "glm-5.3-flash" = {
         displayName = "GLM-5.3 Flash";
+        reasoningEffortLevels = [
+          "low"
+          "high"
+          "max"
+        ];
         deployments = [
           {
             provider = "opencode-go";
@@ -495,6 +515,83 @@ let
       builtins.attrNames catalogTable.logicalModels
     );
 
+  # ---------------------------------------------------------------------------
+  # Client projections
+  #
+  # Both clients are keyed by the same provider-agnostic logical ids and share
+  # the table-level default model, so neither surface can drift from the served
+  # catalog. Neither projection reads the provider table: a prefix, base URL, or
+  # credential variable has no path into a client config.
+  #
+  # OpenCode entries carry only the display name. Fabro records additionally
+  # carry the group's limits, the `text`/`tools`/`reasoning` capability
+  # baseline, optional mapped `reasoningEffortLevels`, optional
+  # `fabroCapabilities` overrides, and an optional `small_default`; `caching`
+  # and `cache_routing` are forced on so Fabro always emits its conversational
+  # cache key. Validation already guarantees a group's deployments agree on
+  # `contextWindow` and `maxOutputTokens`, so the first deployment represents
+  # the group.
+  # ---------------------------------------------------------------------------
+
+  opencodeProjection = catalogTable: {
+    defaultModel = catalogTable.defaultModel;
+    models = lib.mapAttrs (_: logicalModel: {
+      name = logicalModel.displayName;
+    }) catalogTable.logicalModels;
+  };
+
+  # Baseline capabilities with the per-model `fabroCapabilities` override, then
+  # the capability map derived from `reasoningEffortLevels`, and finally the two
+  # cache capabilities forced on. `reasoningEffortLevels` stays authoritative
+  # for `reasoning_effort`, matching the catalog contract.
+  projectFabroCapabilities =
+    logicalModel:
+    let
+      levels = logicalModel.reasoningEffortLevels or [ ];
+    in
+    {
+      text = true;
+      tools = true;
+      reasoning = true;
+    }
+    // (logicalModel.fabroCapabilities or { })
+    // lib.optionalAttrs (levels != [ ]) {
+      reasoning_effort = builtins.listToAttrs (
+        map (level: {
+          name = level;
+          value = true;
+        }) levels
+      );
+    }
+    // {
+      caching = true;
+      cache_routing = true;
+    };
+
+  fabroRecord =
+    catalogTable: logicalId:
+    let
+      logicalModel = catalogTable.logicalModels.${logicalId};
+      reference = builtins.head logicalModel.deployments;
+    in
+    {
+      display_name = logicalModel.displayName;
+      api_model = logicalId;
+      limits = {
+        context_tokens = reference.contextWindow;
+        max_output_tokens = reference.maxOutputTokens;
+      };
+      capabilities = projectFabroCapabilities logicalModel;
+    }
+    // lib.optionalAttrs (logicalModel ? smallDefault) {
+      small_default = logicalModel.smallDefault;
+    };
+
+  fabroProjection = catalogTable: {
+    defaultModel = catalogTable.defaultModel;
+    models = lib.mapAttrs (logicalId: _: fabroRecord catalogTable logicalId) catalogTable.logicalModels;
+  };
+
   # Pure constructor exported for fixture-based failure tests. Every projection
   # is derived after validation, from the same table.
   mkCatalog =
@@ -503,6 +600,8 @@ let
       logicalModels = catalogTable.logicalModels;
       modelList = modelListProjection catalogTable;
       forwardClientHeaders = forwardClientHeadersProjection catalogTable;
+      opencode = opencodeProjection catalogTable;
+      fabro = fabroProjection catalogTable;
     };
 in
 {
