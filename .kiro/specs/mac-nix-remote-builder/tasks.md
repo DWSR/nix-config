@@ -51,7 +51,7 @@
 
 - [ ] 3. Add the personal-host Lima macOS guest adapter
 
-- [ ] 3.1 Define the limaMacGuest option surface and register the module
+- [x] 3.1 Define the limaMacGuest option surface and register the module
   - Create `home-manager/common/lima-mac-guest.nix` exposing `virtualisation.limaMacGuest` with `enable`, `name` (default `"mac-builder"`), `package`, `limaHome`, `image.{location,digest,arch}`, `cpus`, `memory`, `disk`, `suppressFirstLoginSetup` (default `true`), `extraLimaConfig`, `forward.{enable,bindAddress,port}`, `deploy.{enable,hostName,ageKeySecretRef}`, and internal `_configYaml`/`_supervisor`/`_forward`/`_deploy` read-only paths.
   - Add assertions for a native-architecture VZ guest and a valid Lima instance name, and import the module from `home-manager/common/default.nix` beside `./lima-vm.nix`.
   - Never read or write `virtualisation.limaVM`; keep the module disabled by default.
