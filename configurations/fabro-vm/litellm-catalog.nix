@@ -335,19 +335,41 @@ let
           error "deployment '${label}' has invalid weight ${renderValue deployment.weight} (expected a positive integer)"
         );
 
-  # Duplicate `model_info.id`s can only occur inside one group, because the id
-  # is `<logical>@<provider>` and logical ids are attrset keys.
+  # `model_info.id` is `<logical>@<provider>` and must be unique across the
+  # whole table, not only inside one group: two different logical models can
+  # compose the same string (logical `foo@bar` on provider `baz` and logical
+  # `foo` on provider `bar@baz` both yield `foo@bar@baz`). Every message names
+  # the field, both logical models, and both deployments.
+  allDeployments =
+    catalogTable:
+    lib.concatMap (
+      logicalId:
+      map (deployment: {
+        inherit logicalId deployment;
+        id = "${logicalId}@${deployment.provider or "<no-provider>"}";
+      }) (catalogTable.logicalModels.${logicalId}.deployments or [ ])
+    ) (builtins.attrNames (catalogTable.logicalModels or { }));
+
   duplicateIdErrors =
-    logicalId: deployments:
+    catalogTable:
     let
-      modelInfoIds = map (
-        deployment: "${logicalId}@${deployment.provider or "<no-provider>"}"
-      ) deployments;
+      entries = allDeployments catalogTable;
+      modelInfoIds = map (entry: entry.id) entries;
       duplicated = builtins.filter (
         id: builtins.length (builtins.filter (other: other == id) modelInfoIds) > 1
       ) (lib.unique modelInfoIds);
     in
-    map (id: error "logical model '${logicalId}' declares duplicate model_info.id '${id}'") duplicated;
+    lib.concatMap (
+      id:
+      let
+        matching = builtins.filter (entry: entry.id == id) entries;
+        reference = builtins.head matching;
+      in
+      map (
+        entry:
+        error "duplicate model_info.id '${id}' declared by logical model '${reference.logicalId}' deployment '${deploymentLabel reference.logicalId reference.deployment}' and by logical model '${entry.logicalId}' deployment '${deploymentLabel entry.logicalId entry.deployment}'"
+      ) (builtins.tail matching)
+    ) duplicated;
 
   # Each later deployment is compared with the group's first deployment; the
   # message names the field, the logical model, and both deployments.
@@ -388,7 +410,6 @@ let
       error "logical model '${logicalId}' has no deployments (a client-callable id must resolve to at least one)"
     )
     ++ lib.concatMap (deploymentErrors catalogTable logicalId) deployments
-    ++ duplicateIdErrors logicalId deployments
     ++ conflictErrors logicalId deployments;
 
   tableErrors =
@@ -396,7 +417,8 @@ let
     providerErrors catalogTable
     ++ lib.concatMap (logicalModelErrors catalogTable) (
       builtins.attrNames (catalogTable.logicalModels or { })
-    );
+    )
+    ++ duplicateIdErrors catalogTable;
 
   # Validate before returning anything; the first error in table order is the
   # one reported, so a fixture failure is deterministic.
