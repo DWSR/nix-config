@@ -76,7 +76,7 @@
   - Done when the rendered agent binds the configured address and exposes the guest sshd without guest IP discovery.
   - _Requirements: 3.2, 5.2_
 
-- [ ] 3.5 Enable the guest on the personal host
+- [x] 3.5 Enable the guest on the personal host
   - Enable `virtualisation.limaMacGuest` in `configurations/personal/home-manager/default.nix` with the pinned latest macOS image and digest, resource sizes, `suppressFirstLoginSetup = true`, and the forward `bindAddress`/`port`.
   - Confirm the existing `virtualisation.limaVM` fabro instance stays enabled and unchanged.
   - Done when the personal host evaluates with both the fabro NixOS instance and the macOS builder guest declared, and the rendered guest YAML carries the FRE skip and `mounts: []`.
