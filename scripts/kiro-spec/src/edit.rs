@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::error::MutationError;
-use crate::tasks::{MetadataKind, TaskDocument, TaskEntry, TaskState};
+use crate::tasks::{MetadataBullet, MetadataKind, TaskDocument, TaskEntry, TaskState, Terminator};
 
 /// The byte offset of the checkbox state character in a parsed task line.
 ///
@@ -78,6 +78,8 @@ impl EditPlan {
 pub enum Change {
     /// Mark the entry completed and remove every blocked reason bullet.
     Complete,
+    /// Mark the entry blocked and record `reason` in its single reason bullet.
+    Block { reason: String },
 }
 
 /// Plan one mutation of a uniquely identified entry.
@@ -96,7 +98,131 @@ pub fn mutate(
     let entry = document.find_unique(id)?;
     match change {
         Change::Complete => Ok(plan_complete(document, entry)),
+        Change::Block { reason } => plan_block(document, entry, &reason),
     }
+}
+
+/// Plan the `block` change for one resolved entry.
+///
+/// A pending entry gains the blocked state and one canonical reason bullet
+/// directly beneath its task line; any stale `_Blocked:` bullet is removed. A
+/// blocked entry keeps exactly one bullet: the first one is rewritten in place,
+/// preserving its indent and position, while its continuation lines and any
+/// later reason bullets are removed. When the surviving bullet already carries
+/// the requested reason the whole document is a byte-identical no-op, wherever
+/// that bullet sits in the block.
+fn plan_block(
+    document: &TaskDocument,
+    entry: &TaskEntry,
+    reason: &str,
+) -> Result<EditPlan, MutationError> {
+    if entry.state == TaskState::Completed {
+        return Err(MutationError::conflict(
+            entry.id.text.clone(),
+            "unsupported transition: a completed entry cannot be blocked",
+        ));
+    }
+
+    let reason = reason.trim();
+    let original = document.to_bytes();
+    let source = document.source_lines();
+    let blocked = entry
+        .block
+        .metadata()
+        .iter()
+        .filter(|bullet| bullet.kind() == MetadataKind::Blocked)
+        .collect::<Vec<_>>();
+
+    if entry.state == TaskState::Blocked && blocked.len() == 1 && blocked[0].payload() == reason {
+        return Ok(EditPlan::new(
+            entry.id.text.clone(),
+            TaskState::Blocked,
+            Some(reason.to_string()),
+            &original,
+            original.clone(),
+        ));
+    }
+
+    // Only an already blocked entry rewrites its reason bullet in place. A
+    // pending entry always gets a canonical bullet directly beneath its line.
+    let kept = if entry.state == TaskState::Blocked {
+        blocked.first().copied()
+    } else {
+        None
+    };
+    let kept_line = kept.map(MetadataBullet::line);
+
+    let mut removed = BTreeSet::new();
+    for bullet in &blocked {
+        let first = Some(bullet.line()) == kept_line;
+        let from = if first {
+            bullet.line() + 1
+        } else {
+            bullet.line()
+        };
+        for line in from..=bullet.last_line() {
+            removed.insert(line);
+        }
+    }
+
+    let indent = kept
+        .map(|bullet| source[bullet.line() - 1].text())
+        .map(leading_whitespace)
+        .unwrap_or("  ");
+    let bullet_text = format!("{indent}- _Blocked: {reason}_");
+
+    let task = &source[entry.line - 1];
+    let inserts_bullet = kept.is_none();
+    let task_terminator = task.terminator();
+    let task_terminator = if inserts_bullet && task_terminator == Terminator::None {
+        Terminator::Lf
+    } else {
+        task_terminator
+    };
+    let inserted_terminator = if inserts_bullet {
+        task.terminator()
+    } else {
+        Terminator::None
+    };
+
+    let mut replacement = Vec::with_capacity(original.len() + bullet_text.len() + 2);
+    for (index, line) in source.iter().enumerate() {
+        let line_number = index + 1;
+        if removed.contains(&line_number) {
+            continue;
+        }
+        if line_number == entry.line {
+            let mut text = line.text().as_bytes().to_vec();
+            text[STATE_OFFSET] = b'!';
+            replacement.extend_from_slice(&text);
+            replacement.extend_from_slice(task_terminator.bytes());
+            if inserts_bullet {
+                replacement.extend_from_slice(bullet_text.as_bytes());
+                replacement.extend_from_slice(inserted_terminator.bytes());
+            }
+            continue;
+        }
+        if Some(line_number) == kept_line {
+            replacement.extend_from_slice(bullet_text.as_bytes());
+            replacement.extend_from_slice(line.terminator().bytes());
+            continue;
+        }
+        replacement.extend_from_slice(line.text().as_bytes());
+        replacement.extend_from_slice(line.terminator().bytes());
+    }
+
+    Ok(EditPlan::new(
+        entry.id.text.clone(),
+        TaskState::Blocked,
+        Some(reason.to_string()),
+        &original,
+        replacement,
+    ))
+}
+
+/// The leading spaces and tabs of a source line.
+fn leading_whitespace(text: &str) -> &str {
+    &text[..text.len() - text.trim_start_matches([' ', '\t']).len()]
 }
 
 /// Plan the `complete` change for one resolved entry.
@@ -625,5 +751,318 @@ mod tests {
             "the original tasks.md is never opened for writing"
         );
         assert!(!temporary_path(&path).exists());
+    }
+
+    #[test]
+    fn blocking_a_pending_entry_inserts_the_reason_beneath_it() {
+        let source = "\
+# Plan\r
+\r
+- [ ] 1. Parent\r
+- [ ]* 1.1 Do the thing\r
+  - _Requirements: 8.1_\r
+  - _Boundary: editor_\r
+- [x] 1.2 Done sibling\r
+- [ ] 1.3 Later sibling\r
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(
+            &document,
+            "1.1",
+            Change::Block {
+                reason: "waiting on review".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+
+        assert_eq!(plan.id, "1.1");
+        assert_eq!(plan.state, TaskState::Blocked);
+        assert_eq!(plan.reason.as_deref(), Some("waiting on review"));
+        let expected = "\
+# Plan\r
+\r
+- [ ] 1. Parent\r
+- [!]* 1.1 Do the thing\r
+  - _Blocked: waiting on review_\r
+  - _Requirements: 8.1_\r
+  - _Boundary: editor_\r
+- [x] 1.2 Done sibling\r
+- [ ] 1.3 Later sibling\r
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "the optional marker, metadata, siblings, and CRLF endings survive"
+        );
+    }
+
+    #[test]
+    fn blocking_a_blocked_entry_replaces_the_reason_in_place() {
+        let source = "\
+- [!] 2. Blocked work\r
+  - _Requirements: 8.4_\r
+  - _Blocked: old reason\r
+    with more detail\r
+  - _Depends: 1_\r
+- [ ] 2.1 Untouched child\r
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(
+            &document,
+            "2",
+            Change::Block {
+                reason: "new reason".to_string(),
+            },
+        )
+        .expect("the entry blocks again");
+
+        assert_eq!(plan.state, TaskState::Blocked);
+        assert_eq!(plan.reason.as_deref(), Some("new reason"));
+        let expected = "\
+- [!] 2. Blocked work\r
+  - _Requirements: 8.4_\r
+  - _Blocked: new reason_\r
+  - _Depends: 1_\r
+- [ ] 2.1 Untouched child\r
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "the bullet keeps its position and indent, its continuation lines are removed"
+        );
+    }
+
+    #[test]
+    fn blocking_with_the_same_reason_is_a_byte_identical_noop() {
+        let source = "\
+- [!] 3. Already blocked
+  - _Requirements: 8.4_
+  - _Blocked: waiting on the
+    security review
+  - _Depends: 1_
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(
+            &document,
+            "3",
+            Change::Block {
+                reason: "waiting on the security review".to_string(),
+            },
+        )
+        .expect("repeating the reason succeeds");
+
+        assert_eq!(plan.id, "3");
+        assert_eq!(plan.state, TaskState::Blocked);
+        assert_eq!(
+            plan.reason.as_deref(),
+            Some("waiting on the security review")
+        );
+        assert_eq!(
+            plan.bytes, None,
+            "the identical, non-canonically placed reason is left byte-identical"
+        );
+    }
+
+    #[test]
+    fn blocking_an_entry_with_a_reason_bullet_without_a_marker_suffix_is_a_noop() {
+        let source = "- [!] 4. Blocked\n  - _Blocked: no trailing underscore\n";
+
+        let plan = mutate(
+            &parse_tasks(source),
+            "4",
+            Change::Block {
+                reason: "no trailing underscore".to_string(),
+            },
+        )
+        .expect("the same payload is a no-op");
+
+        assert_eq!(plan.bytes, None);
+    }
+
+    #[test]
+    fn blocking_collapses_duplicate_reason_bullets_to_one() {
+        let source = "\
+- [!] 5. Blocked twice
+  - _Blocked: first reason
+  - _Requirements: 8.4_
+  - _Blocked: second reason
+    with a continuation
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(
+            &document,
+            "5",
+            Change::Block {
+                reason: "second reason".to_string(),
+            },
+        )
+        .expect("the entry blocks again");
+
+        let expected = "\
+- [!] 5. Blocked twice
+  - _Blocked: second reason_
+  - _Requirements: 8.4_
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "exactly one reason bullet remains and the metadata is preserved"
+        );
+    }
+
+    #[test]
+    fn blocking_a_completed_entry_is_an_unsupported_transition() {
+        let source = "- [x] 6. Done\n  - _Requirements: 8.5_\n";
+        let document = parse_tasks(source);
+
+        let error = mutate(
+            &document,
+            "6",
+            Change::Block {
+                reason: "not allowed".to_string(),
+            },
+        )
+        .expect_err("a completed entry cannot be blocked");
+
+        assert_eq!(error.category(), ErrorCategory::Conflict);
+        assert_eq!(error.context(), "6");
+        assert!(
+            error.detail().contains("completed") && error.detail().contains("block"),
+            "the diagnostic names the unsupported transition: {}",
+            error.detail()
+        );
+        assert_eq!(
+            document.to_bytes(),
+            source.as_bytes(),
+            "refusing the transition plans no replacement"
+        );
+    }
+
+    #[test]
+    fn blocking_inserts_a_crlf_bullet_using_the_task_line_terminator() {
+        let source = "- [ ] 7. Windows line\r\n- [ ] 8. Next\r\n";
+
+        let plan = mutate(
+            &parse_tasks(source),
+            "7",
+            Change::Block {
+                reason: "review".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(b"- [!] 7. Windows line\r\n  - _Blocked: review_\r\n- [ ] 8. Next\r\n".as_slice())
+        );
+    }
+
+    #[test]
+    fn blocking_the_unterminated_last_line_keeps_it_unterminated() {
+        let source = "- [ ] 9. Last line";
+
+        let plan = mutate(
+            &parse_tasks(source),
+            "9",
+            Change::Block {
+                reason: "review".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(b"- [!] 9. Last line\n  - _Blocked: review_".as_slice()),
+            "the inserted bullet becomes the unterminated final line"
+        );
+    }
+
+    #[test]
+    fn blocking_a_pending_entry_drops_a_stale_reason_bullet() {
+        let source = "\
+- [ ] 10. Pending with a stale bullet
+  - _Blocked: stale reason_
+  - _Requirements: 8.4_
+";
+
+        let plan = mutate(
+            &parse_tasks(source),
+            "10",
+            Change::Block {
+                reason: "current reason".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+
+        let expected = "\
+- [!] 10. Pending with a stale bullet
+  - _Blocked: current reason_
+  - _Requirements: 8.4_
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "one canonical bullet sits directly beneath the task line"
+        );
+    }
+
+    #[test]
+    fn a_blocked_entry_leaves_the_blocked_state_only_through_complete() {
+        let source = "- [ ]* 11. Work\n  - _Requirements: 8.10_\n";
+        let document = parse_tasks(source);
+
+        let blocked = mutate(
+            &document,
+            "11",
+            Change::Block {
+                reason: "waiting".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+        let blocked_source = String::from_utf8(blocked.bytes.clone().expect("bytes change"))
+            .expect("the replacement is UTF-8");
+        let blocked_document = parse_tasks(&blocked_source);
+        let entry = blocked_document
+            .find_unique("11")
+            .expect("the entry parses");
+        assert_eq!(entry.state, TaskState::Blocked);
+        assert_eq!(entry.blocked_reason.as_deref(), Some("waiting"));
+
+        let completed = mutate(&blocked_document, "11", Change::Complete)
+            .expect("complete is the only way out of blocked");
+        assert_eq!(
+            completed.bytes.as_deref(),
+            Some(b"- [x]* 11. Work\n  - _Requirements: 8.10_\n".as_slice()),
+            "completing removes the reason bullet"
+        );
+    }
+
+    #[test]
+    fn publishing_a_block_plan_replaces_tasks_md_and_leaves_no_temporary_file() {
+        let directory = TempDir::new("block-publish");
+        let path = directory.path().join("tasks.md");
+        let source = "- [ ] 1. One\r\n- [!] 2. Two\r\n  - _Blocked: old_\r\n";
+        fs::write(&path, source).expect("fixture is written");
+        let document = parse_tasks(source);
+
+        let plan = mutate(
+            &document,
+            "2",
+            Change::Block {
+                reason: "new".to_string(),
+            },
+        )
+        .expect("the entry blocks");
+        plan.publish(&path).expect("the plan is published");
+
+        assert_eq!(
+            fs::read(&path).expect("published file is readable"),
+            b"- [ ] 1. One\r\n- [!] 2. Two\r\n  - _Blocked: new_\r\n"
+        );
+        assert_eq!(names(directory.path()), vec!["tasks.md"]);
     }
 }
