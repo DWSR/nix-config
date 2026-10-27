@@ -171,7 +171,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Follow each mutation with `tasks`, `next`, and `status` assertions on the new state.
   - _Requirements: 7.1, 7.3, 7.4, 7.9, 8.1, 8.2, 8.4, 8.5, 8.9, 10.1, 10.3, 11.3_
   - _Boundary: mutation contract tests (`scripts/kiro-spec/tests/mutations.rs`)_
-- [ ] 8.5 Add the corpus determinism test
+- [x] 8.5 Add the corpus determinism test
   - Add `tests/corpus.rs` iterating every directory under `.kiro/specs/` only when `KIRO_SPEC_CORPUS` is set, running `tasks`, `next`, `status`, and `validate` twice per spec.
   - Assert success and byte-identical repeated output, hash the corpus before and after to prove read commands write nothing, and skip the test when the variable is absent.
   - Confirm the test passes against the checked-in 34-spec corpus and reports a non-UTF-8 or unreadable artifact loudly.
