@@ -183,6 +183,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Leave existing overlay entries unchanged and keep the build and its checks free of network access.
   - Confirm the overlay package evaluates and builds for `aarch64-darwin` with `nix build --impure --expr` importing the flake's `overlays.custom-packages`.
   - _Requirements: 1.1, 1.4, 11.6_
+  - _Blocked: Darwin build unverifiable on this aarch64-linux runner (no Darwin builder); run `nix build` for aarch64-darwin on a Darwin host or configured builder._
 - [ ] 9.2 (P) Install the binary from the common Home Manager tree
   - Add `home-manager/common/kiro-spec.nix` exposing `programs.kiro-spec.package` (default `pkgs.kiro-spec`) and installing `config.programs.kiro-spec.package` in `home.packages` unconditionally.
   - Import `./kiro-spec.nix` from `home-manager/common/default.nix` beside the existing modules so every host importing the common tree inherits the command.
