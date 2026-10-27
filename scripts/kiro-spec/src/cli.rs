@@ -10,6 +10,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::error::AppError;
+use crate::paths::SpecPaths;
+use crate::render::{human, Format};
+use crate::tasks::{parse_tasks, TaskDocument};
 
 /// The single help document, kept in one place so tests can assert it lists
 /// every subcommand and option.
@@ -354,10 +357,9 @@ pub fn version_text() -> String {
 /// Execute one invocation and return its complete result document.
 ///
 /// `Some(document)` is written to stdout verbatim; `None` means the command
-/// produces no result at all. Help and version are handled here; a parsed
-/// subcommand returns `None` until its dispatch is added by the command tasks.
-/// The result is fully rendered before this function returns, so `run()` can
-/// never publish a partial document.
+/// produces no result at all. Help and version are handled here; the read
+/// commands dispatch through [`dispatch`]. The result is fully rendered before
+/// this function returns, so `run()` can never publish a partial document.
 pub fn execute<I>(args: I) -> Result<Option<String>, AppError>
 where
     I: IntoIterator<Item = OsString>,
@@ -365,13 +367,74 @@ where
     match parse(args)? {
         Parsed::Help => Ok(Some(HELP_TEXT.to_string())),
         Parsed::Version => Ok(Some(version_text())),
-        Parsed::Command(_invocation) => Ok(None),
+        Parsed::Command(invocation) => dispatch(&invocation),
+    }
+}
+
+/// Select the rendering format requested by `--json`.
+const fn format_of(json: bool) -> Format {
+    if json {
+        Format::Json
+    } else {
+        Format::Human
+    }
+}
+
+/// Resolve the spec and read only `tasks.md`.
+///
+/// `tasks` and `next` never open `spec.json` or `requirements.md`, so a spec
+/// directory holding a task list is enough for both commands. A missing,
+/// unreadable, or undecodable file is a read failure naming its path; nothing
+/// is ever written.
+fn load_tasks(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppError> {
+    let paths = SpecPaths::resolve(&invocation.root, &invocation.spec)?;
+    let path = paths.tasks_md();
+    let context = path.display().to_string();
+    let bytes = std::fs::read(&path).map_err(|error| {
+        let detail = if error.kind() == std::io::ErrorKind::NotFound {
+            "task list not found".to_string()
+        } else {
+            format!("file could not be read: {error}")
+        };
+        AppError::read(context.clone(), detail)
+    })?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| AppError::read(context, "file is not valid UTF-8"))?;
+    Ok((paths, parse_tasks(&text)))
+}
+
+/// Run one parsed subcommand and return its complete rendering.
+///
+/// `status` and `validate` are wired by their own tasks; until then they
+/// produce no result.
+fn dispatch(invocation: &Invocation) -> Result<Option<String>, AppError> {
+    let format = format_of(invocation.json);
+    match &invocation.command {
+        Command::Tasks => {
+            let (paths, document) = load_tasks(invocation)?;
+            Ok(Some(match format {
+                Format::Human => human::render_tasks(&document, paths.name()),
+                Format::Json => crate::render::json::render_tasks(&document, paths.name()),
+            }))
+        }
+        Command::Next => {
+            let (paths, document) = load_tasks(invocation)?;
+            let next = document.next_actionable();
+            Ok(Some(match format {
+                Format::Human => human::render_next(next, paths.name()),
+                Format::Json => crate::render::json::render_next(next, paths.name()),
+            }))
+        }
+        _ => Ok(None),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
 
     fn parse_args(args: &[&str]) -> Result<Parsed, AppError> {
         let mut argv = vec![OsString::from("kiro-spec")];
@@ -691,20 +754,260 @@ mod tests {
     }
 
     #[test]
-    fn execute_renders_help_and_version_without_a_result_for_commands() {
-        let mut argv = vec![OsString::from("kiro-spec"), OsString::from("--help")];
-        assert_eq!(execute(argv.clone()).unwrap(), Some(HELP_TEXT.to_string()));
+    fn execute_renders_help_and_version() {
+        let argv = vec![OsString::from("kiro-spec"), OsString::from("--help")];
+        assert_eq!(execute(argv).unwrap(), Some(HELP_TEXT.to_string()));
 
-        argv = vec![OsString::from("kiro-spec"), OsString::from("-V")];
+        let argv = vec![OsString::from("kiro-spec"), OsString::from("-V")];
         assert_eq!(execute(argv).unwrap(), Some(version_text()));
+    }
 
-        let command = vec![
-            OsString::from("kiro-spec"),
-            OsString::from("--spec"),
-            OsString::from("demo"),
-            OsString::from("next"),
-        ];
-        assert_eq!(execute(command).unwrap(), None);
+    /// A disposable spec tree for the read-command dispatch tests.
+    struct SpecTree {
+        root: PathBuf,
+        name: String,
+    }
+
+    impl SpecTree {
+        /// Create `.kiro/specs/<name>/` and, when supplied, its `tasks.md`.
+        ///
+        /// No `spec.json` is written: the read commands under test must not
+        /// require it.
+        fn new(name: &str, tasks: Option<&str>) -> Self {
+            let id = NEXT_TREE.fetch_add(1, Ordering::Relaxed);
+            let root = std::env::temp_dir()
+                .join(format!("kiro-spec-dispatch-{}-{id}", std::process::id()));
+            let spec = root.join(".kiro").join("specs").join(name);
+            std::fs::create_dir_all(&spec).expect("fixture spec directory is created");
+            if let Some(text) = tasks {
+                std::fs::write(spec.join("tasks.md"), text).expect("fixture tasks.md is written");
+            }
+            Self {
+                root,
+                name: name.to_string(),
+            }
+        }
+
+        fn args(&self, command: &str) -> Vec<OsString> {
+            let root = self.root.to_str().expect("fixture root is valid UTF-8");
+            vec![
+                OsString::from("kiro-spec"),
+                OsString::from("--root"),
+                OsString::from(root),
+                OsString::from("--spec"),
+                OsString::from(&self.name),
+                OsString::from(command),
+            ]
+        }
+
+        fn json_args(&self, command: &str) -> Vec<OsString> {
+            let mut args = self.args(command);
+            args.push(OsString::from("--json"));
+            args
+        }
+
+        fn tasks_path(&self) -> PathBuf {
+            self.root
+                .join(".kiro")
+                .join("specs")
+                .join(&self.name)
+                .join("tasks.md")
+        }
+
+        /// Every file beneath the fixture root with its exact bytes.
+        fn snapshot(&self) -> Vec<(PathBuf, Vec<u8>)> {
+            fn collect(directory: &std::path::Path, files: &mut Vec<(PathBuf, Vec<u8>)>) {
+                for entry in std::fs::read_dir(directory).expect("fixture directory is readable") {
+                    let path = entry.expect("fixture entry is readable").path();
+                    if path.is_dir() {
+                        collect(&path, files);
+                    } else {
+                        files.push((
+                            path.clone(),
+                            std::fs::read(&path).expect("fixture file is readable"),
+                        ));
+                    }
+                }
+            }
+
+            let mut files = Vec::new();
+            collect(&self.root, &mut files);
+            files.sort_by(|left, right| left.0.cmp(&right.0));
+            files
+        }
+    }
+
+    impl Drop for SpecTree {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    static NEXT_TREE: AtomicU64 = AtomicU64::new(0);
+
+    fn run_json(args: Vec<OsString>) -> (String, serde_json::Value) {
+        let rendered = execute(args)
+            .expect("the read command succeeds")
+            .expect("the read command produces a result");
+        let parsed = serde_json::from_str(&rendered).expect("the result is one JSON document");
+        (rendered, parsed)
+    }
+
+    #[test]
+    fn tasks_dispatches_every_entry_in_document_order_without_spec_json() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [x] 1.1 Pin inputs\n",
+                "- [!]* 1.2 Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+                "- [ ]* 2. Optional major\n",
+            )),
+        );
+        let human = execute(tree.args("tasks"))
+            .expect("tasks succeeds without spec.json")
+            .expect("tasks produces a result");
+        assert_eq!(
+            human,
+            concat!(
+                "1 Foundation [pending]\n",
+                "  1.1 Pin inputs [completed]\n",
+                "  1.2 Blocked work [blocked] (optional) - blocked: Waiting on credentials\n",
+                "2 Optional major [pending] (optional)\n",
+            )
+        );
+
+        let (_, parsed) = run_json(tree.json_args("tasks"));
+        assert_eq!(parsed["schema_version"], serde_json::json!(1));
+        assert_eq!(parsed["spec"], serde_json::json!("basic"));
+        let entries = parsed["tasks"]
+            .as_array()
+            .expect("tasks is an array in document order");
+        let ids: Vec<&str> = entries
+            .iter()
+            .map(|entry| entry["id"].as_str().expect("every entry carries an id"))
+            .collect();
+        assert_eq!(ids, ["1", "1.1", "1.2", "2"]);
+        assert_eq!(entries[2]["state"], serde_json::json!("blocked"));
+        assert_eq!(entries[2]["optional"], serde_json::json!(true));
+        assert_eq!(
+            entries[2]["blocked_reason"],
+            serde_json::json!("Waiting on credentials")
+        );
+    }
+
+    #[test]
+    fn next_reports_the_actionable_entry_with_its_blocked_reason() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [x] 1.1 Done child\n",
+                "- [!]* 1.2 Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+            )),
+        );
+        let human = execute(tree.args("next"))
+            .expect("next succeeds without spec.json")
+            .expect("next produces a result");
+        assert_eq!(
+            human,
+            "  1.2 Blocked work [blocked] (optional) - blocked: Waiting on credentials\n"
+        );
+
+        let (_, parsed) = run_json(tree.json_args("next"));
+        assert_eq!(parsed["spec"], serde_json::json!("basic"));
+        assert_eq!(parsed["task"]["id"], serde_json::json!("1.2"));
+        assert_eq!(parsed["task"]["state"], serde_json::json!("blocked"));
+        assert_eq!(
+            parsed["task"]["blocked_reason"],
+            serde_json::json!("Waiting on credentials")
+        );
+    }
+
+    #[test]
+    fn next_never_selects_a_grouping_entry_or_reports_a_remaining_task() {
+        let grouping = SpecTree::new(
+            "grouping",
+            Some("- [ ] 1. Foundation\n- [x] 1.1 Done child\n"),
+        );
+        assert_eq!(
+            execute(grouping.args("next")).unwrap(),
+            Some("No incomplete task.\n".to_string())
+        );
+        let (_, parsed) = run_json(grouping.json_args("next"));
+        assert_eq!(parsed["task"], serde_json::Value::Null);
+
+        let empty = SpecTree::new("empty", Some("# Implementation Plan\n"));
+        assert_eq!(
+            execute(empty.args("next")).unwrap(),
+            Some("No incomplete task.\n".to_string())
+        );
+        assert_eq!(
+            execute(empty.args("tasks")).unwrap(),
+            Some("No tasks.\n".to_string())
+        );
+    }
+
+    #[test]
+    fn read_commands_repeat_identically_and_leave_tasks_md_unchanged() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [x] 1.1 Pin inputs\n",
+                "- [!] 1.2 Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+            )),
+        );
+        let before = tree.snapshot();
+
+        for command in ["tasks", "next"] {
+            let human_once = execute(tree.args(command)).unwrap();
+            let human_twice = execute(tree.args(command)).unwrap();
+            assert_eq!(human_once, human_twice, "{command} human output repeats");
+
+            let json_once = execute(tree.json_args(command)).unwrap();
+            let json_twice = execute(tree.json_args(command)).unwrap();
+            assert_eq!(json_once, json_twice, "{command} JSON output repeats");
+            let rendered = json_once.expect("the read command produces a result");
+            let parsed: serde_json::Value =
+                serde_json::from_str(&rendered).expect("the result is one JSON document");
+            assert_eq!(parsed["schema_version"], serde_json::json!(1));
+        }
+
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "read commands must leave every fixture file byte-identical"
+        );
+    }
+
+    #[test]
+    fn a_missing_or_undecodable_tasks_md_is_a_read_error_naming_the_path() {
+        for command in ["tasks", "next"] {
+            let missing = SpecTree::new("missing-tasks", None);
+            let error = execute(missing.args(command)).expect_err("the read must fail");
+            assert_eq!(error.category(), crate::error::ErrorCategory::Read);
+            assert_eq!(error.exit_code(), 1);
+            assert!(
+                error.context().ends_with("missing-tasks/tasks.md"),
+                "{command}: {:?}",
+                error.context()
+            );
+
+            let undecodable = SpecTree::new("undecodable", Some("placeholder"));
+            std::fs::write(undecodable.tasks_path(), [0xff, 0xfe])
+                .expect("fixture tasks.md is rewritten");
+            let error = execute(undecodable.args(command)).expect_err("the read must fail");
+            assert_eq!(error.category(), crate::error::ErrorCategory::Read);
+            assert!(
+                error.detail().contains("UTF-8"),
+                "{command}: {:?}",
+                error.detail()
+            );
+        }
     }
 
     #[test]
