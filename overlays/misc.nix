@@ -342,6 +342,26 @@ final: prev: {
     };
   };
 
+  # First-party Kiro spec CLI. The crate lives in the repository, so this is
+  # the single source both the darwin hosts and the Linux sandbox image
+  # consume. `cargoLock.lockFile` keeps the build offline and reproducible
+  # from the checked-in lockfile; `doCheck` runs the crate's own test suite.
+  kiro-spec = final.rustPlatform.buildRustPackage {
+    pname = "kiro-spec";
+    version = "0.1.0";
+
+    src = final.lib.cleanSource ../scripts/kiro-spec;
+
+    cargoLock.lockFile = ../scripts/kiro-spec/Cargo.lock;
+
+    doCheck = true;
+
+    meta = {
+      mainProgram = "kiro-spec";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   # Pin zellij to a specific version. nixpkgs unstable drifts silently
   # (e.g. 0.44.1 → 0.44.2 between channel bumps); pinning gives
   # reproducibility and avoids surprise version changes during routine
