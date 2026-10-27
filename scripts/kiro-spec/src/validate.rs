@@ -181,6 +181,115 @@ fn spec_json_finding(code: &'static str, message: impl Into<String>) -> Finding 
     }
 }
 
+/// The three approval stages and the phase that first requires each one's
+/// generated flag.
+const STAGES: [(&str, Phase); 3] = [
+    ("requirements", Phase::RequirementsGenerated),
+    ("design", Phase::DesignGenerated),
+    ("tasks", Phase::TasksGenerated),
+];
+
+/// The `spec.json` field path of one stage flag, for example
+/// `approvals.design.generated`.
+fn stage_field(stage: &str, flag: &str) -> String {
+    format!("approvals.{stage}.{flag}")
+}
+
+/// A boolean field, or `None` when it is absent or has another JSON type.
+///
+/// The absent or mistyped field is already reported by the required-field
+/// rules, so a cross-field rule that cannot read its input stays silent rather
+/// than guessing.
+fn boolean_field(root: &Value, path: &str) -> Option<bool> {
+    match lookup_field(root, path) {
+        Lookup::Found(Value::Bool(flag)) => Some(*flag),
+        _ => None,
+    }
+}
+
+/// Report phase-to-flag, approval-to-generation, and readiness defects.
+///
+/// The rules are Requirements 6.7-6.12 and 6.14. The phase is a minimum: only
+/// each stage at or below it is required, so a generated flag or an approval
+/// ahead of the reported phase is valid. Phase-dependent rules are skipped when
+/// `phase` is absent or not one of the six documented values, because the
+/// field or unknown-phase finding already covers that defect. The
+/// approval-to-generation and readiness rules are cross-field rules and do not
+/// depend on the phase, but they too are skipped when the fields they read are
+/// absent or mistyped.
+///
+/// Artifact presence (Requirement 6.13) belongs to the separate
+/// `spec.generated.artifact-missing` rule set, so a false flag is reported here
+/// even when the artifact happens to be present.
+fn phase_relationship_findings(value: &Value) -> Vec<Finding> {
+    let mut findings = Vec::new();
+
+    for (stage, _) in STAGES {
+        let approved_path = stage_field(stage, "approved");
+        let generated_path = stage_field(stage, "generated");
+        if boolean_field(value, &approved_path) == Some(true)
+            && boolean_field(value, &generated_path) == Some(false)
+        {
+            findings.push(spec_json_finding(
+                "spec.approval.without-generated",
+                format!("`{approved_path}` is true while `{generated_path}` is false"),
+            ));
+        }
+    }
+
+    let ready_path = "ready_for_implementation";
+    let tasks_approved_path = stage_field("tasks", "approved");
+    if boolean_field(value, ready_path) == Some(true)
+        && boolean_field(value, &tasks_approved_path) == Some(false)
+    {
+        findings.push(spec_json_finding(
+            "spec.ready.without-tasks-approval",
+            format!("`{ready_path}` is true while `{tasks_approved_path}` is false"),
+        ));
+    }
+
+    let Some(phase) = value
+        .get("phase")
+        .and_then(Value::as_str)
+        .and_then(Phase::parse)
+    else {
+        return findings;
+    };
+
+    for (stage, stage_phase) in STAGES {
+        if phase.rank() < stage_phase.rank() {
+            continue;
+        }
+        let generated_path = stage_field(stage, "generated");
+        if boolean_field(value, &generated_path) == Some(false) {
+            findings.push(spec_json_finding(
+                "spec.phase.generated-false",
+                format!(
+                    "phase `{}` requires `{generated_path}` to be true",
+                    phase.as_str()
+                ),
+            ));
+        }
+    }
+
+    if phase.rank() >= Phase::TasksApproved.rank() {
+        for (stage, _) in STAGES {
+            let approved_path = stage_field(stage, "approved");
+            if boolean_field(value, &approved_path) == Some(false) {
+                findings.push(spec_json_finding(
+                    "spec.phase.approved-false",
+                    format!(
+                        "phase `{}` requires `{approved_path}` to be true",
+                        phase.as_str()
+                    ),
+                ));
+            }
+        }
+    }
+
+    findings
+}
+
 /// Read `spec.json` for validation, classifying an access failure as the one
 /// finding that replaces all field rules.
 ///
@@ -214,13 +323,15 @@ fn read_spec_json(path: &Path) -> Result<Value, Finding> {
     }
 }
 
-/// Report `spec.json` access, required-field, feature-name, and phase defects.
+/// Report `spec.json` access, required-field, feature-name, phase, and
+/// phase-relationship defects.
 ///
-/// The rules are Requirements 6.3, 6.4, 6.5, and 6.6. Access failures and a
+/// The rules are Requirements 6.3-6.12 and 6.14. Access failures and a
 /// non-object document short-circuit the field rules; a field that is absent or
 /// mistyped short-circuits only the rules that read it, so a missing
-/// `feature_name` never produces a mismatch and a non-string `phase` never
-/// produces an unknown-phase finding.
+/// `feature_name` never produces a mismatch, a non-string `phase` never
+/// produces an unknown-phase or phase-relationship finding, and a missing
+/// approval flag never produces an approval-to-generation finding.
 ///
 /// This is one rule set of the eventual `validate()` report; it is public so the
 /// assembler and integration tests can exercise the rules without a CLI run.
@@ -293,6 +404,8 @@ pub fn spec_json_findings(paths: &SpecPaths) -> Vec<Finding> {
             ));
         }
     }
+
+    findings.extend(phase_relationship_findings(&value));
 
     findings
 }
@@ -628,6 +741,13 @@ mod tests {
 
     fn codes(findings: &[Finding]) -> Vec<&'static str> {
         findings.iter().map(|finding| finding.code).collect()
+    }
+
+    /// The finding codes in report order, independent of emission order.
+    fn sorted_codes(findings: &[Finding]) -> Vec<&'static str> {
+        let mut codes = codes(findings);
+        codes.sort_unstable();
+        codes
     }
 
     fn messages(findings: &[Finding]) -> Vec<&str> {
@@ -976,6 +1096,416 @@ mod tests {
         assert!(
             spec_json_findings(&paths).is_empty(),
             "a well-formed spec.json has no spec.json findings"
+        );
+    }
+
+    /// A `spec.json` whose phase, generated flags, approved flags, and
+    /// readiness are the inputs under test.
+    fn spec_document(
+        phase: &str,
+        generated: [bool; 3],
+        approved: [bool; 3],
+        ready: bool,
+    ) -> String {
+        format!(
+            r#"{{
+  "feature_name": "demo",
+  "created_at": "2026-10-26T02:32:24Z",
+  "updated_at": "2026-10-26T02:32:24Z",
+  "language": "en",
+  "phase": "{phase}",
+  "approvals": {{
+    "requirements": {{ "generated": {}, "approved": {} }},
+    "design": {{ "generated": {}, "approved": {} }},
+    "tasks": {{ "generated": {}, "approved": {} }}
+  }},
+  "ready_for_implementation": {ready}
+}}"#,
+            generated[0], approved[0], generated[1], approved[1], generated[2], approved[2],
+        )
+    }
+
+    /// Every generated-flag path at or below `tasks-generated`.
+    const GENERATED_PATHS: [&str; 3] = [
+        "approvals.requirements.generated",
+        "approvals.design.generated",
+        "approvals.tasks.generated",
+    ];
+
+    /// Every approved-flag path required at `tasks-approved`.
+    const APPROVED_PATHS: [&str; 3] = [
+        "approvals.requirements.approved",
+        "approvals.design.approved",
+        "approvals.tasks.approved",
+    ];
+
+    #[test]
+    fn the_phase_is_a_minimum_for_each_stage_generated_flag() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let cases: [(Phase, &[&str]); 4] = [
+            (Phase::Initialized, &[]),
+            (
+                Phase::RequirementsGenerated,
+                &["approvals.requirements.generated"],
+            ),
+            (
+                Phase::DesignGenerated,
+                &[
+                    "approvals.requirements.generated",
+                    "approvals.design.generated",
+                ],
+            ),
+            (
+                Phase::TasksGenerated,
+                &[
+                    "approvals.requirements.generated",
+                    "approvals.design.generated",
+                    "approvals.tasks.generated",
+                ],
+            ),
+        ];
+
+        for (phase, expected) in cases {
+            let document = spec_document(phase.as_str(), [false; 3], [false; 3], false);
+            fixture.write(&paths, "spec.json", document.as_bytes());
+
+            let findings = spec_json_findings(&paths);
+
+            assert_eq!(
+                findings.len(),
+                expected.len(),
+                "phase {} requires exactly the stages at or below it: {:?}",
+                phase.as_str(),
+                messages(&findings)
+            );
+            for finding in &findings {
+                assert_eq!(
+                    finding.code,
+                    "spec.phase.generated-false",
+                    "phase {} must only report missing generated flags here: {:?}",
+                    phase.as_str(),
+                    messages(&findings)
+                );
+                assert_eq!(finding.severity, Severity::Error);
+                assert_eq!(finding.file, "spec.json");
+                assert_eq!(finding.line, None);
+            }
+            for path in expected {
+                let finding = field_finding(&findings, path);
+                assert!(
+                    finding.message.contains(phase.as_str()),
+                    "the message for {path} must name the phase, got {:?}",
+                    finding.message
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tasks_approved_and_later_require_every_generated_and_approved_flag() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        for phase in [Phase::TasksApproved, Phase::Implemented] {
+            let document = spec_document(phase.as_str(), [false; 3], [false; 3], false);
+            fixture.write(&paths, "spec.json", document.as_bytes());
+
+            let findings = spec_json_findings(&paths);
+
+            assert_eq!(
+                findings.len(),
+                6,
+                "phase {} requires three generated and three approved flags: {:?}",
+                phase.as_str(),
+                messages(&findings)
+            );
+            for path in GENERATED_PATHS {
+                assert_eq!(
+                    field_finding(&findings, path).code,
+                    "spec.phase.generated-false"
+                );
+            }
+            for path in APPROVED_PATHS {
+                let finding = field_finding(&findings, path);
+                assert_eq!(finding.code, "spec.phase.approved-false");
+                assert!(
+                    finding.message.contains(phase.as_str()),
+                    "the message for {path} must name the phase, got {:?}",
+                    finding.message
+                );
+            }
+        }
+
+        let document = spec_document("tasks-approved", [true; 3], [true, false, false], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.phase.approved-false"; 2],
+            "only the false approvals are reported: {:?}",
+            messages(&findings)
+        );
+        for path in ["approvals.design.approved", "approvals.tasks.approved"] {
+            assert_eq!(
+                field_finding(&findings, path).code,
+                "spec.phase.approved-false"
+            );
+        }
+
+        let below = spec_document("tasks-generated", [true; 3], [true, false, false], false);
+        fixture.write(&paths, "spec.json", below.as_bytes());
+        assert!(
+            spec_json_findings(&paths).is_empty(),
+            "approvals are not required before the tasks-approved phase"
+        );
+    }
+
+    #[test]
+    fn a_generated_flag_or_approval_ahead_of_the_phase_is_accepted() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        for phase in [
+            Phase::Initialized,
+            Phase::RequirementsGenerated,
+            Phase::DesignGenerated,
+            Phase::TasksGenerated,
+        ] {
+            let document = spec_document(phase.as_str(), [true; 3], [true; 3], true);
+            fixture.write(&paths, "spec.json", document.as_bytes());
+
+            assert!(
+                spec_json_findings(&paths).is_empty(),
+                "phase {} must accept flags and approvals ahead of it",
+                phase.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn an_approval_without_its_generated_flag_is_reported_per_stage() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let document = spec_document(
+            "initialized",
+            [false, true, false],
+            [true, true, true],
+            false,
+        );
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = spec_json_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.approval.without-generated"; 2],
+            "only the stages approved without generation are reported: {:?}",
+            messages(&findings)
+        );
+        for (approved, generated) in [
+            (
+                "approvals.requirements.approved",
+                "approvals.requirements.generated",
+            ),
+            ("approvals.tasks.approved", "approvals.tasks.generated"),
+        ] {
+            let finding = field_finding(&findings, approved);
+            assert_eq!(finding.code, "spec.approval.without-generated");
+            assert_eq!(finding.severity, Severity::Error);
+            assert_eq!(finding.file, "spec.json");
+            assert_eq!(finding.line, None);
+            assert!(
+                finding.message.contains(generated),
+                "the message must name {generated}, got {:?}",
+                finding.message
+            );
+        }
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.message.contains("approvals.design.approved")),
+            "the design approval has its generated flag and is not reported"
+        );
+    }
+
+    #[test]
+    fn readiness_requires_the_tasks_approval() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let document = spec_document("tasks-generated", [true; 3], [true, true, false], true);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = spec_json_findings(&paths);
+
+        assert_eq!(codes(&findings), vec!["spec.ready.without-tasks-approval"]);
+        let finding = field_finding(&findings, "ready_for_implementation");
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.file, "spec.json");
+        assert_eq!(finding.line, None);
+        assert!(
+            finding.message.contains("approvals.tasks.approved"),
+            "the message must name the missing approval, got {:?}",
+            finding.message
+        );
+
+        let document = spec_document("tasks-generated", [true; 3], [true, true, false], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+        assert!(
+            spec_json_findings(&paths).is_empty(),
+            "a spec that is not ready may leave the tasks approval false"
+        );
+
+        let approved = spec_document("tasks-generated", [true; 3], [true; 3], true);
+        fixture.write(&paths, "spec.json", approved.as_bytes());
+        assert!(
+            spec_json_findings(&paths).is_empty(),
+            "readiness with the tasks approval is valid"
+        );
+    }
+
+    #[test]
+    fn phase_dependent_rules_are_skipped_when_the_phase_is_absent_or_unknown() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let unknown = spec_document("future-phase", [false; 3], [false; 3], false);
+        fixture.write(&paths, "spec.json", unknown.as_bytes());
+        assert_eq!(
+            codes(&spec_json_findings(&paths)),
+            vec!["spec.phase.unknown"],
+            "an unknown phase suppresses every phase-dependent rule"
+        );
+
+        let without_phase = unknown.replace("  \"phase\": \"future-phase\",\n", "");
+        fixture.write(&paths, "spec.json", without_phase.as_bytes());
+        assert_eq!(
+            codes(&spec_json_findings(&paths)),
+            vec!["spec.field.missing"],
+            "a missing phase suppresses every phase-dependent rule"
+        );
+    }
+
+    #[test]
+    fn cross_field_rules_still_run_when_the_phase_is_unknown() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let document = spec_document(
+            "future-phase",
+            [false, true, true],
+            [true, true, false],
+            true,
+        );
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = spec_json_findings(&paths);
+
+        assert_eq!(
+            sorted_codes(&findings),
+            vec![
+                "spec.approval.without-generated",
+                "spec.phase.unknown",
+                "spec.ready.without-tasks-approval",
+            ],
+            "cross-field rules do not depend on the phase: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.code == "spec.phase.generated-false"
+                    || finding.code == "spec.phase.approved-false"),
+            "phase-dependent rules stay suppressed"
+        );
+    }
+
+    #[test]
+    fn phase_rules_are_skipped_for_a_stage_flag_that_is_absent_or_mistyped() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let absent = spec_document("design-generated", [false; 3], [false; 3], false).replace(
+            "\"design\": { \"generated\": false, \"approved\": false }",
+            "\"design\": { \"approved\": false }",
+        );
+        fixture.write(&paths, "spec.json", absent.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.field.missing", "spec.phase.generated-false"],
+            "the absent design flag is a field defect while the readable requirements flag is a phase defect: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(
+            field_finding(&findings, "approvals.requirements.generated").code,
+            "spec.phase.generated-false"
+        );
+
+        let mistyped = spec_document("tasks-generated", [true, true, true], [false; 3], false)
+            .replace(
+                "\"tasks\": { \"generated\": true, \"approved\": false }",
+                "\"tasks\": { \"generated\": \"yes\", \"approved\": false }",
+            );
+        fixture.write(&paths, "spec.json", mistyped.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.field.type"],
+            "a mistyped flag is not a false flag: {:?}",
+            messages(&findings)
+        );
+    }
+
+    #[test]
+    fn cross_field_rules_are_skipped_when_their_fields_are_absent_or_mistyped() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let absent = spec_document("tasks-generated", [true; 3], [true; 3], true).replace(
+            "\"tasks\": { \"generated\": true, \"approved\": true }",
+            "\"tasks\": { \"approved\": true }",
+        );
+        fixture.write(&paths, "spec.json", absent.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.field.missing"],
+            "an absent generated flag cannot prove an approval-without-generation defect: {:?}",
+            messages(&findings)
+        );
+
+        let mistyped = spec_document("tasks-generated", [true; 3], [true; 3], true).replace(
+            "\"tasks\": { \"generated\": true, \"approved\": true }",
+            "\"tasks\": { \"generated\": \"yes\", \"approved\": true }",
+        );
+        fixture.write(&paths, "spec.json", mistyped.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.field.type"],
+            "a mistyped generated flag cannot prove an approval-without-generation defect: {:?}",
+            messages(&findings)
+        );
+
+        let absent_ready = spec_document("tasks-generated", [true; 3], [true, true, false], true)
+            .replace("  \"ready_for_implementation\": true", "  \"ready\": true");
+        fixture.write(&paths, "spec.json", absent_ready.as_bytes());
+        let findings = spec_json_findings(&paths);
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.field.missing"],
+            "a missing readiness flag cannot prove a readiness defect: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.code == "spec.ready.without-tasks-approval"),
+            "the readiness rule is skipped when its field is absent"
         );
     }
 }
