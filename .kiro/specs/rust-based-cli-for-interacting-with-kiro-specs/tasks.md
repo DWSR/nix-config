@@ -68,7 +68,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Omit the resolved root path from every successful result so output is identical across checkouts.
   - Unit tests assert key order, both null cases, blocked reasons, the status field set, and identical repeated output.
   - _Requirements: 9.1, 9.4, 9.5, 9.6, 9.7, 9.8, 9.9, 9.11_
-- [ ] 4.2 Emit human plain-text renderings
+- [x] 4.2 Emit human plain-text renderings
   - Implement `render/human.rs` for the documented line forms: two-space indent per level, `[pending]`/`[completed]`/`[blocked]`, `(optional)`, `- blocked: <reason>`, and `No tasks.` for an empty document.
   - Print the single selected line or `No incomplete task.` for `next`; print exactly the six documented `status` lines; print `file:line: severity [code] message` (or `file: ...`) plus `<n> errors, <m> warnings` with singular nouns at one.
   - Emit no ANSI escapes or terminal detection so piped and interactive output match.
