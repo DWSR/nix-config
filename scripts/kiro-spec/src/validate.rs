@@ -654,6 +654,28 @@ pub fn tasks_findings(paths: &SpecPaths) -> Vec<Finding> {
     findings
 }
 
+/// Validate every artifact of one resolved spec and return the sorted report.
+///
+/// Each rule set reads its artifacts leniently: a missing, unreadable, or
+/// malformed artifact becomes a finding instead of a command failure, so
+/// validation never aborts on the directory contents (Requirement 2.8). The
+/// rule sets are merged and sorted once by [`Finding::sort_key`], leaving every
+/// caller with the documented `(file, line, code, message)` order (Requirement
+/// 6.21) and no reason to re-sort.
+///
+/// `tasks_findings` skips reference resolution when `requirements.md` is absent
+/// or undecodable, so the artifact rule's single finding stands in for every
+/// token. Validation only reads; it never repairs or writes a file (Requirements
+/// 6.1 and 6.22).
+pub fn validate(paths: &SpecPaths) -> ValidationReport {
+    let mut findings = spec_json_findings(paths);
+    findings.extend(artifact_presence_findings(paths));
+    findings.extend(tasks_findings(paths));
+    let mut report = ValidationReport { findings };
+    report.sort();
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2268,5 +2290,160 @@ mod tests {
             "a clean spec reports no findings: {:?}",
             messages(&findings)
         );
+    }
+
+    /// The bytes of every regular file directly inside the spec directory,
+    /// keyed by file name, for the read-only assertions.
+    fn artifact_bytes(paths: &SpecPaths) -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(paths.directory())
+            .expect("the spec directory is readable")
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_file())
+            .map(|entry| {
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    std::fs::read(entry.path()).expect("the artifact is readable"),
+                )
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn validate_handles_a_directory_where_every_artifact_is_missing() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let before = artifact_bytes(&paths);
+
+        let report = validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec!["spec.json.missing"],
+            "a missing spec.json is a finding, not a command failure: {:?}",
+            messages(&report.findings)
+        );
+        assert!(report.has_errors(), "the missing artifact is an error");
+        assert_eq!(
+            artifact_bytes(&paths),
+            before,
+            "validate never creates or repairs an artifact"
+        );
+    }
+
+    #[test]
+    fn validate_reports_a_partially_present_spec_without_resolving_references() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(
+            &paths,
+            "spec.json",
+            spec_document("initialized", [false; 3], [false; 3], false).as_bytes(),
+        );
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n  - _Requirements: 1.1_\n",
+        );
+        let before = artifact_bytes(&paths);
+
+        let report = validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec!["requirements.artifact-missing"],
+            "an absent requirements.md yields one artifact error rather than unresolved references: {:?}",
+            messages(&report.findings)
+        );
+        assert_eq!(report.findings[0].file, "requirements.md");
+        assert_eq!(report.findings[0].line, None);
+        assert_eq!(
+            artifact_bytes(&paths),
+            before,
+            "validate is read-only and leaves the present artifacts byte-identical"
+        );
+    }
+
+    #[test]
+    fn validate_turns_unreadable_and_malformed_artifacts_into_findings() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "spec.json", b"not json");
+        fixture.write(&paths, "tasks.md", b"- [ ] 1. \xff\n");
+        fixture.write(&paths, "requirements.md", b"### Requirement 1: \xff\n");
+
+        let report = validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec![
+                "requirements.unreadable",
+                "spec.json.parse",
+                "tasks.unreadable",
+            ],
+            "each undecodable or malformed artifact becomes its own finding: {:?}",
+            messages(&report.findings)
+        );
+        assert!(report.has_errors());
+    }
+
+    #[test]
+    fn validate_merges_every_rule_set_into_one_sorted_report() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("other");
+        fixture.write(
+            &paths,
+            "spec.json",
+            spec_document("initialized", [false; 3], [false; 3], false).as_bytes(),
+        );
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] no numeric identifier\n- [ ] 1. First copy\n- [ ] 1. Second copy\n  - _Requirements: 9.4_\n",
+        );
+
+        let report = validate(&paths);
+
+        assert_eq!(
+            codes(&report.findings),
+            vec![
+                "spec.feature-name.mismatch",
+                "tasks.line.unnumbered",
+                "tasks.id.duplicate",
+                "requirements.ref.unresolved",
+            ],
+            "spec.json, tasks.md, and reference findings merge in report order: {:?}",
+            messages(&report.findings)
+        );
+        assert!(
+            report.findings.windows(2).all(|pair| pair[0] <= pair[1]),
+            "the assembled report is sorted once: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn validate_reports_a_clean_spec_as_valid() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "spec.json", valid_spec("demo").as_bytes());
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        fixture.write(&paths, "design.md", b"# Design\n");
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n  - _Requirements: 1.1, 1.2_\n  - _Boundary: parser (`src/tasks.rs`)_\n",
+        );
+
+        let report = validate(&paths);
+
+        assert!(
+            report.findings.is_empty(),
+            "a clean spec reports no findings: {:?}",
+            messages(&report.findings)
+        );
+        assert!(!report.has_errors());
     }
 }
