@@ -96,7 +96,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Emit `requirements.artifact-missing` when `_Requirements:` bullets exist without requirements.md, and `requirements.unreadable` for undecodable files.
   - Unit tests cover flag-true-without-file, phase-required-without-file, deduplication, and a missing requirements.md that is still referenced.
   - _Requirements: 6.13, 6.19_
-- [ ] 5.5 Resolve `_Requirements:` references and fold in task findings
+- [x] 5.5 Resolve `_Requirements:` references and fold in task findings
   - Emit `tasks.unreadable` for an undecodable `tasks.md`, carry every parser finding into the report unchanged, and resolve each `_Requirements:` token against the index as `requirements.ref.malformed` or `requirements.ref.unresolved` at the metadata bullet's line.
   - Keep warning/error classification and the `(file, line, code, message)` order intact after the merge.
   - Unit tests cover a spec with task and reference defects reporting both, and a fully valid spec reporting no findings.
