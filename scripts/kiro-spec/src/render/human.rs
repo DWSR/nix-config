@@ -1,9 +1,11 @@
-//! Plain-text renderings of `next`, `tasks`, `status`, and `validate`.
+//! Plain-text renderings of `next`, `tasks`, `status`, `validate`, and the
+//! mutation result.
 //!
 //! Every rendering is built in memory and ends with a newline. The text is
 //! pure: it never inspects the terminal and never emits ANSI escapes, so piped
 //! and interactive output are identical.
 
+use crate::edit::EditPlan;
 use crate::render::{entry_fields, severity_label};
 use crate::tasks::{TaskCounts, TaskDocument, TaskEntry};
 use crate::validate::{Severity, ValidationReport};
@@ -92,6 +94,17 @@ pub fn render_status(stage: &str, counts: &TaskCounts, spec: &str) -> String {
     )
 }
 
+/// Render a `complete` or `block` result: the affected identifier and the
+/// resulting state, with a `(no change)` suffix when the file was already in
+/// that state.
+pub fn render_mutation(plan: &EditPlan) -> String {
+    if plan.bytes.is_none() {
+        format!("{} [{}] (no change)\n", plan.id, plan.state.as_str())
+    } else {
+        format!("{} [{}]\n", plan.id, plan.state.as_str())
+    }
+}
+
 /// Render `validate`: each finding in the report's order, then the summary.
 pub fn render_validation(report: &ValidationReport, _spec: &str) -> String {
     let mut rendered = String::new();
@@ -130,7 +143,7 @@ pub fn render_validation(report: &ValidationReport, _spec: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::tasks::{parse_tasks, TaskDocument};
+    use crate::tasks::{parse_tasks, TaskDocument, TaskState};
     use crate::validate::{Finding, Severity, ValidationReport};
 
     fn report(findings: Vec<Finding>) -> ValidationReport {
@@ -230,6 +243,27 @@ mod tests {
             super::render_next(document("").next_actionable(), "example"),
             "No incomplete task.\n"
         );
+    }
+
+    #[test]
+    fn mutation_renders_the_identifier_state_and_a_no_change_suffix() {
+        let changed = crate::edit::EditPlan::new(
+            "7.4",
+            TaskState::Completed,
+            None,
+            b"- [ ] 7.4\n",
+            b"- [x] 7.4\n".to_vec(),
+        );
+        assert_eq!(super::render_mutation(&changed), "7.4 [completed]\n");
+
+        let noop = crate::edit::EditPlan::new(
+            "7.4",
+            TaskState::Completed,
+            None,
+            b"- [x] 7.4\n",
+            b"- [x] 7.4\n".to_vec(),
+        );
+        assert_eq!(super::render_mutation(&noop), "7.4 [completed] (no change)\n");
     }
 
     #[test]
