@@ -8,7 +8,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Add `src/main.rs` exiting with `run(std::env::args_os())` and `src/lib.rs` declaring `cli`, `error`, `paths`, `spec_json`, `tasks`, `requirements`, `validate`, `edit`, and `render` as compiling stubs.
   - Confirm `cargo build --locked` and `cargo test --locked` succeed in `scripts/kiro-spec/` and the produced binary is named `kiro-spec`.
   - _Requirements: 1.4, 11.6_
-- [ ] 1.2 Process entry, error categories, and exit mapping
+- [x] 1.2 Process entry, error categories, and exit mapping
   - Implement `error.rs` with `AppError`, `SpecError`, and `MutationError` carrying the usage, resolution, read, conflict, and write categories from the design's Error Strategy table.
   - Implement `run()` so diagnostics are written as `kiro-spec: <context>: <detail>` on stderr, results are fully built before stdout, and a command that produces no result writes no stdout byte.
   - Unit tests prove the 0/1/2 mapping per category and that a failed command emits nothing on stdout.
