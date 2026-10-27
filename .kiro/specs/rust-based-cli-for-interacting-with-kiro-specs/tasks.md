@@ -81,7 +81,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Provide the sort key `(file, line, code, message)` ordered with `line: None` before line 1, so every later rule set returns findings the reporter can order without re-sorting at call sites.
   - Unit tests cover ordering across files and lines, the `None`-first rule, and `has_errors()` for error-only, warning-only, and empty reports.
   - _Requirements: 6.2, 6.21_
-- [ ] 5.2 Report spec.json access, field, feature-name, and phase-vocabulary defects
+- [x] 5.2 Report spec.json access, field, feature-name, and phase-vocabulary defects
   - Emit `spec.json.missing`, `spec.json.unreadable`, and `spec.json.parse` for access failures, then `spec.field.missing`/`spec.field.type` naming the field path for the twelve required fields and their nested booleans.
   - Emit `spec.feature-name.mismatch` when `feature_name` differs from the spec directory and `spec.phase.unknown` for a value outside the six phases; skip dependent rules when a field is absent or mistyped.
   - Unit tests cover one case per code and messages that name the offending field.
