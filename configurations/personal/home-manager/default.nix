@@ -241,7 +241,12 @@ in
         </dict>
         </plist>
         ENTITLEMENTS
-                /usr/bin/codesign --force --sign - --entitlements $out/lima.entitlements $out/bin/limactl
+      '';
+      postFixup = ''
+        /usr/bin/codesign --force --sign - --entitlements $out/lima.entitlements $out/bin/limactl
+        /usr/bin/codesign --verify --deep --strict $out/bin/limactl
+        /usr/bin/codesign -d --entitlements :- $out/bin/limactl 2>&1 \
+          | ${pkgs.gnugrep}/bin/grep -Fq '<key>com.apple.security.virtualization</key>'
       '';
     };
     name = "mac-builder";
