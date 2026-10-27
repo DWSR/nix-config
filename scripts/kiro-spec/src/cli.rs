@@ -1034,10 +1034,7 @@ mod tests {
     }
 
     /// The paths whose bytes differ between two fixture snapshots.
-    fn changed_paths(
-        before: &[(PathBuf, Vec<u8>)],
-        after: &[(PathBuf, Vec<u8>)],
-    ) -> Vec<PathBuf> {
+    fn changed_paths(before: &[(PathBuf, Vec<u8>)], after: &[(PathBuf, Vec<u8>)]) -> Vec<PathBuf> {
         let mut changed = Vec::new();
         for (path, bytes) in after {
             let previous = before
@@ -1815,19 +1812,23 @@ mod tests {
         assert_eq!(code, 0);
         assert_eq!(stderr, "");
         assert_eq!(stdout, "1 [blocked] (no change)\n");
-        assert_eq!(tree.snapshot(), before, "a same-reason block writes nothing");
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "a same-reason block writes nothing"
+        );
     }
 
     #[test]
     fn blocking_a_completed_entry_exits_one_without_writing() {
-        let tree = SpecTree::new(
-            "basic",
-            Some("- [x] 1. Done\n  - _Requirements: 8.5_\n"),
-        );
+        let tree = SpecTree::new("basic", Some("- [x] 1. Done\n  - _Requirements: 8.5_\n"));
         let before = tree.snapshot();
 
         let (code, stdout, stderr) = run_capturing(tree.block_args("1", "not allowed"));
-        assert_eq!(code, 1, "an unsupported transition is a business-rule conflict");
+        assert_eq!(
+            code, 1,
+            "an unsupported transition is a business-rule conflict"
+        );
         assert_eq!(stdout, "", "a refused mutation writes no result document");
         assert!(
             stderr.starts_with("kiro-spec: ") && stderr.contains("completed"),
@@ -1902,10 +1903,9 @@ mod tests {
         let original = std::fs::read(tree.tasks_path()).expect("fixture is readable");
         // `create_new` refuses to reuse a temporary path, so the publish fails
         // deterministically even when the tests run as root.
-        let stale = tree.spec_dir().join(format!(
-            ".tasks.md.kiro-spec.{}.tmp",
-            std::process::id()
-        ));
+        let stale = tree
+            .spec_dir()
+            .join(format!(".tasks.md.kiro-spec.{}.tmp", std::process::id()));
         std::fs::write(&stale, b"stale contents").expect("stale temporary file is written");
 
         let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", "1"));

@@ -263,7 +263,10 @@ mod tests {
             b"- [x] 7.4\n",
             b"- [x] 7.4\n".to_vec(),
         );
-        assert_eq!(super::render_mutation(&noop), "7.4 [completed] (no change)\n");
+        assert_eq!(
+            super::render_mutation(&noop),
+            "7.4 [completed] (no change)\n"
+        );
     }
 
     #[test]
