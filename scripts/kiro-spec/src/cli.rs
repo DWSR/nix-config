@@ -14,6 +14,7 @@ use crate::paths::SpecPaths;
 use crate::render::{human, Format};
 use crate::spec_json;
 use crate::tasks::{parse_tasks, TaskDocument};
+use crate::validate;
 
 /// The single help document, kept in one place so tests can assert it lists
 /// every subcommand and option.
@@ -85,6 +86,51 @@ pub enum Parsed {
     Version,
     /// A subcommand and its options were accepted.
     Command(Invocation),
+}
+
+/// The complete result of one command.
+///
+/// The document is fully rendered before it is published, so a partially built
+/// result can never reach stdout. `exit_code` separates a successful result from
+/// a complete validation report that contains error-severity findings; every
+/// other failure is an [`AppError`], so this value is always `0` or `1`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Outcome {
+    document: Option<String>,
+    exit_code: i32,
+}
+
+impl Outcome {
+    /// A successful command result; `None` means the command has no result.
+    pub fn success(document: Option<String>) -> Self {
+        Self {
+            document,
+            exit_code: 0,
+        }
+    }
+
+    /// A complete validation report whose findings include an error.
+    pub fn validation_errors(document: String) -> Self {
+        Self {
+            document: Some(document),
+            exit_code: 1,
+        }
+    }
+
+    /// The document to publish on stdout, if the command produces one.
+    pub fn document(&self) -> Option<&str> {
+        self.document.as_deref()
+    }
+
+    /// The process exit code for this outcome: `0` or `1`.
+    pub const fn exit_code(&self) -> i32 {
+        self.exit_code
+    }
+
+    /// Consume the outcome and return its document.
+    pub fn into_document(self) -> Option<String> {
+        self.document
+    }
 }
 
 /// Interpret an argv sequence, including the leading program name.
@@ -355,19 +401,19 @@ pub fn version_text() -> String {
     format!("kiro-spec {VERSION}\n")
 }
 
-/// Execute one invocation and return its complete result document.
+/// Execute one invocation and return its complete result.
 ///
-/// `Some(document)` is written to stdout verbatim; `None` means the command
-/// produces no result at all. Help and version are handled here; the read
-/// commands dispatch through [`dispatch`]. The result is fully rendered before
-/// this function returns, so `run()` can never publish a partial document.
-pub fn execute<I>(args: I) -> Result<Option<String>, AppError>
+/// The document and the process status are built together before anything is
+/// written, so `run()` can never publish a partial document. A validation
+/// report that contains error-severity findings still yields its complete
+/// document, with exit code `1`.
+pub fn execute<I>(args: I) -> Result<Outcome, AppError>
 where
     I: IntoIterator<Item = OsString>,
 {
     match parse(args)? {
-        Parsed::Help => Ok(Some(HELP_TEXT.to_string())),
-        Parsed::Version => Ok(Some(version_text())),
+        Parsed::Help => Ok(Outcome::success(Some(HELP_TEXT.to_string()))),
+        Parsed::Version => Ok(Outcome::success(Some(version_text()))),
         Parsed::Command(invocation) => dispatch(&invocation),
     }
 }
@@ -438,34 +484,50 @@ fn load_status(invocation: &Invocation) -> Result<(SpecPaths, String, TaskDocume
 
 /// Run one parsed subcommand and return its complete rendering.
 ///
-/// `validate` is wired by its own task; until then it produces no result.
-fn dispatch(invocation: &Invocation) -> Result<Option<String>, AppError> {
+/// `validate` reads every artifact leniently and renders the whole report: a
+/// missing or malformed artifact is a finding inside a complete document, not a
+/// command failure. Only an error-severity finding changes the exit status, and
+/// the document is written either way.
+fn dispatch(invocation: &Invocation) -> Result<Outcome, AppError> {
     let format = format_of(invocation.json);
     match &invocation.command {
         Command::Tasks => {
             let (paths, document) = load_tasks(invocation)?;
-            Ok(Some(match format {
+            Ok(Outcome::success(Some(match format {
                 Format::Human => human::render_tasks(&document, paths.name()),
                 Format::Json => crate::render::json::render_tasks(&document, paths.name()),
-            }))
+            })))
         }
         Command::Next => {
             let (paths, document) = load_tasks(invocation)?;
             let next = document.next_actionable();
-            Ok(Some(match format {
+            Ok(Outcome::success(Some(match format {
                 Format::Human => human::render_next(next, paths.name()),
                 Format::Json => crate::render::json::render_next(next, paths.name()),
-            }))
+            })))
         }
         Command::Status => {
             let (paths, stage, document) = load_status(invocation)?;
             let counts = document.counts();
-            Ok(Some(match format {
+            Ok(Outcome::success(Some(match format {
                 Format::Human => human::render_status(&stage, &counts, paths.name()),
                 Format::Json => crate::render::json::render_status(&stage, &counts, paths.name()),
-            }))
+            })))
         }
-        _ => Ok(None),
+        Command::Validate => {
+            let paths = resolve_paths(invocation)?;
+            let report = validate::validate(&paths);
+            let rendered = match format {
+                Format::Human => human::render_validation(&report, paths.name()),
+                Format::Json => crate::render::json::render_validation(&report, paths.name()),
+            };
+            Ok(if report.has_errors() {
+                Outcome::validation_errors(rendered)
+            } else {
+                Outcome::success(Some(rendered))
+            })
+        }
+        _ => Ok(Outcome::success(None)),
     }
 }
 
@@ -475,6 +537,15 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::atomic::Ordering;
+
+    /// The result document of one invocation, for the tests that only assert on
+    /// stdout content.
+    fn document<I>(args: I) -> Result<Option<String>, AppError>
+    where
+        I: IntoIterator<Item = OsString>,
+    {
+        execute(args).map(Outcome::into_document)
+    }
 
     fn parse_args(args: &[&str]) -> Result<Parsed, AppError> {
         let mut argv = vec![OsString::from("kiro-spec")];
@@ -796,10 +867,10 @@ mod tests {
     #[test]
     fn execute_renders_help_and_version() {
         let argv = vec![OsString::from("kiro-spec"), OsString::from("--help")];
-        assert_eq!(execute(argv).unwrap(), Some(HELP_TEXT.to_string()));
+        assert_eq!(document(argv).unwrap(), Some(HELP_TEXT.to_string()));
 
         let argv = vec![OsString::from("kiro-spec"), OsString::from("-V")];
-        assert_eq!(execute(argv).unwrap(), Some(version_text()));
+        assert_eq!(document(argv).unwrap(), Some(version_text()));
     }
 
     /// A disposable spec tree for the read-command dispatch tests.
@@ -892,11 +963,246 @@ mod tests {
     static NEXT_TREE: AtomicU64 = AtomicU64::new(0);
 
     fn run_json(args: Vec<OsString>) -> (String, serde_json::Value) {
-        let rendered = execute(args)
+        let rendered = document(args)
             .expect("the read command succeeds")
             .expect("the read command produces a result");
         let parsed = serde_json::from_str(&rendered).expect("the result is one JSON document");
         (rendered, parsed)
+    }
+
+    /// Execute one invocation through the process plumbing, capturing both
+    /// streams and the exit status.
+    fn run_capturing(args: Vec<OsString>) -> (i32, String, String) {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = crate::run_with(args, &mut stdout, &mut stderr, execute);
+        (
+            code,
+            String::from_utf8(stdout).expect("stdout is valid UTF-8"),
+            String::from_utf8(stderr).expect("stderr is valid UTF-8"),
+        )
+    }
+
+    /// A `spec.json` with every required field at the `initialized` phase, so
+    /// validation reports no `spec.json` finding for a spec named `name`.
+    fn valid_spec_json(name: &str) -> String {
+        concat!(
+            "{\n",
+            "  \"feature_name\": \"basic\",\n",
+            "  \"created_at\": \"2026-10-26T02:32:24Z\",\n",
+            "  \"updated_at\": \"2026-10-26T02:59:19Z\",\n",
+            "  \"language\": \"en\",\n",
+            "  \"phase\": \"initialized\",\n",
+            "  \"approvals\": {\n",
+            "    \"requirements\": { \"generated\": false, \"approved\": false },\n",
+            "    \"design\": { \"generated\": false, \"approved\": false },\n",
+            "    \"tasks\": { \"generated\": false, \"approved\": false }\n",
+            "  },\n",
+            "  \"ready_for_implementation\": false\n",
+            "}\n",
+        )
+        .replace("basic", name)
+    }
+
+    #[test]
+    fn validate_renders_a_clean_spec_and_exits_zero_in_both_formats() {
+        let tree = SpecTree::new("basic", Some("- [ ] 1. Foundation\n"));
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.args("validate"));
+        assert_eq!(code, 0, "a clean spec with no findings exits zero");
+        assert_eq!(stderr, "", "findings are result data, not diagnostics");
+        assert_eq!(stdout, "0 errors, 0 warnings\n");
+
+        let (code, stdout, stderr) = run_capturing(tree.json_args("validate"));
+        assert_eq!(code, 0, "--json must not change the exit status");
+        assert_eq!(stderr, "");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&stdout).expect("validate emits one JSON document");
+        assert_eq!(parsed["schema_version"], serde_json::json!(1));
+        assert_eq!(parsed["spec"], serde_json::json!("basic"));
+        assert_eq!(parsed["valid"], serde_json::json!(true));
+        assert_eq!(parsed["findings"], serde_json::json!([]));
+
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "validate must leave every fixture file byte-identical"
+        );
+    }
+
+    #[test]
+    fn validate_writes_the_complete_report_and_exits_one_for_errors() {
+        let tree = SpecTree::new(
+            "basic",
+            Some("- [ ] 1. Foundation\n- [ ] 1. Duplicate identifier\n"),
+        );
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.args("validate"));
+        assert_eq!(code, 1, "an error-severity finding exits non-zero");
+        assert_eq!(stderr, "", "findings are result data, not diagnostics");
+        assert_eq!(
+            stdout,
+            concat!(
+                "tasks.md:2: error [tasks.id.duplicate] ",
+                "duplicate task identifier `1`; first occurrence is line 1\n",
+                "1 error, 0 warnings\n",
+            )
+        );
+
+        let (code, stdout, stderr) = run_capturing(tree.json_args("validate"));
+        assert_eq!(code, 1, "--json must report the same exit status");
+        assert_eq!(stderr, "");
+        let parsed: serde_json::Value = serde_json::from_str(&stdout)
+            .expect("a failing validate still emits one JSON document");
+        assert_eq!(parsed["schema_version"], serde_json::json!(1));
+        assert_eq!(parsed["spec"], serde_json::json!("basic"));
+        assert_eq!(parsed["valid"], serde_json::json!(false));
+        let findings = parsed["findings"]
+            .as_array()
+            .expect("the complete report carries every finding");
+        assert_eq!(findings.len(), 1, "the whole report is written: {parsed:?}");
+        assert_eq!(findings[0]["severity"], serde_json::json!("error"));
+        assert_eq!(findings[0]["code"], serde_json::json!("tasks.id.duplicate"));
+        assert_eq!(findings[0]["file"], serde_json::json!("tasks.md"));
+        assert_eq!(findings[0]["line"], serde_json::json!(2));
+        assert_eq!(
+            findings[0]["message"],
+            serde_json::json!("duplicate task identifier `1`; first occurrence is line 1")
+        );
+
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "a failing validate must not change any file"
+        );
+    }
+
+    #[test]
+    fn validate_exits_zero_when_the_only_findings_are_warnings() {
+        let tree = SpecTree::new("basic", Some("- [ ] a checkbox without a number\n"));
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.args("validate"));
+        assert_eq!(code, 0, "warnings alone do not change the exit status");
+        assert_eq!(stderr, "");
+        assert_eq!(
+            stdout,
+            concat!(
+                "tasks.md:1: warning [tasks.line.unnumbered] ",
+                "checkbox line has no numeric identifier\n",
+                "0 errors, 1 warning\n",
+            )
+        );
+
+        let (code, stdout, stderr) = run_capturing(tree.json_args("validate"));
+        assert_eq!(code, 0, "--json must report the same exit status");
+        assert_eq!(stderr, "");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&stdout).expect("validate emits one JSON document");
+        assert_eq!(parsed["valid"], serde_json::json!(true));
+        assert_eq!(
+            parsed["findings"][0]["severity"],
+            serde_json::json!("warning")
+        );
+        assert_eq!(
+            parsed["findings"][0]["code"],
+            serde_json::json!("tasks.line.unnumbered")
+        );
+
+        assert_eq!(tree.snapshot(), before, "validate never writes a file");
+    }
+
+    #[test]
+    fn validate_reports_a_missing_artifact_as_a_finding_instead_of_failing() {
+        let tree = SpecTree::new("basic", Some("- [ ] 1. Foundation\n"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.args("validate"));
+        assert_eq!(
+            code, 1,
+            "a missing artifact is an error finding, not an abort"
+        );
+        assert_eq!(stderr, "", "the report is a result document");
+        assert_eq!(
+            stdout,
+            concat!(
+                "spec.json: error [spec.json.missing] file not found\n",
+                "1 error, 0 warnings\n",
+            )
+        );
+
+        let (code, stdout, stderr) = run_capturing(tree.json_args("validate"));
+        assert_eq!(code, 1, "--json must report the same exit status");
+        assert_eq!(stderr, "");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&stdout).expect("validate emits one JSON document");
+        assert_eq!(parsed["valid"], serde_json::json!(false));
+        assert_eq!(
+            parsed["findings"][0]["code"],
+            serde_json::json!("spec.json.missing")
+        );
+        assert_eq!(parsed["findings"][0]["line"], serde_json::Value::Null);
+
+        assert_eq!(tree.snapshot(), before, "validate writes nothing");
+    }
+
+    #[test]
+    fn validate_repeats_identically_without_changing_any_file() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [!] 1.1 Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+            )),
+        );
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+
+        for args in [tree.args("validate"), tree.json_args("validate")] {
+            let once = run_capturing(args.clone());
+            let twice = run_capturing(args);
+            assert_eq!(once, twice, "validate output must repeat byte-identically");
+            assert_eq!(once.0, 0, "a valid spec exits zero");
+            assert_eq!(once.2, "", "a valid spec writes no diagnostic");
+            assert!(
+                !once.1.is_empty(),
+                "validate always renders a complete report"
+            );
+        }
+
+        assert_eq!(tree.snapshot(), before, "validate writes nothing");
+    }
+
+    #[test]
+    fn validate_writes_a_diagnostic_to_stderr_when_the_spec_directory_is_absent() {
+        let tree = SpecTree::new("basic", Some("- [ ] 1. Foundation\n"));
+        let root = tree
+            .root
+            .to_str()
+            .expect("fixture root is valid UTF-8")
+            .to_string();
+        let args = vec![
+            OsString::from("kiro-spec"),
+            OsString::from("--root"),
+            OsString::from(root),
+            OsString::from("--spec"),
+            OsString::from("absent"),
+            OsString::from("validate"),
+        ];
+
+        let (code, stdout, stderr) = run_capturing(args);
+        assert_eq!(code, 1, "an absent spec directory is a resolution failure");
+        assert_eq!(stdout, "", "a resolution failure emits no result document");
+        assert!(
+            stderr.starts_with("kiro-spec: ") && stderr.contains("absent"),
+            "the diagnostic names the resolved path, got {stderr:?}"
+        );
     }
 
     #[test]
@@ -911,7 +1217,7 @@ mod tests {
                 "- [ ]* 2. Optional major\n",
             )),
         );
-        let human = execute(tree.args("tasks"))
+        let human = document(tree.args("tasks"))
             .expect("tasks succeeds without spec.json")
             .expect("tasks produces a result");
         assert_eq!(
@@ -954,7 +1260,7 @@ mod tests {
                 "  - _Blocked: Waiting on credentials_\n",
             )),
         );
-        let human = execute(tree.args("next"))
+        let human = document(tree.args("next"))
             .expect("next succeeds without spec.json")
             .expect("next produces a result");
         assert_eq!(
@@ -979,7 +1285,7 @@ mod tests {
             Some("- [ ] 1. Foundation\n- [x] 1.1 Done child\n"),
         );
         assert_eq!(
-            execute(grouping.args("next")).unwrap(),
+            document(grouping.args("next")).unwrap(),
             Some("No incomplete task.\n".to_string())
         );
         let (_, parsed) = run_json(grouping.json_args("next"));
@@ -987,11 +1293,11 @@ mod tests {
 
         let empty = SpecTree::new("empty", Some("# Implementation Plan\n"));
         assert_eq!(
-            execute(empty.args("next")).unwrap(),
+            document(empty.args("next")).unwrap(),
             Some("No incomplete task.\n".to_string())
         );
         assert_eq!(
-            execute(empty.args("tasks")).unwrap(),
+            document(empty.args("tasks")).unwrap(),
             Some("No tasks.\n".to_string())
         );
     }
@@ -1010,12 +1316,12 @@ mod tests {
         let before = tree.snapshot();
 
         for command in ["tasks", "next"] {
-            let human_once = execute(tree.args(command)).unwrap();
-            let human_twice = execute(tree.args(command)).unwrap();
+            let human_once = document(tree.args(command)).unwrap();
+            let human_twice = document(tree.args(command)).unwrap();
             assert_eq!(human_once, human_twice, "{command} human output repeats");
 
-            let json_once = execute(tree.json_args(command)).unwrap();
-            let json_twice = execute(tree.json_args(command)).unwrap();
+            let json_once = document(tree.json_args(command)).unwrap();
+            let json_twice = document(tree.json_args(command)).unwrap();
             assert_eq!(json_once, json_twice, "{command} JSON output repeats");
             let rendered = json_once.expect("the read command produces a result");
             let parsed: serde_json::Value =
@@ -1034,7 +1340,7 @@ mod tests {
     fn a_missing_or_undecodable_tasks_md_is_a_read_error_naming_the_path() {
         for command in ["tasks", "next"] {
             let missing = SpecTree::new("missing-tasks", None);
-            let error = execute(missing.args(command)).expect_err("the read must fail");
+            let error = document(missing.args(command)).expect_err("the read must fail");
             assert_eq!(error.category(), crate::error::ErrorCategory::Read);
             assert_eq!(error.exit_code(), 1);
             assert!(
@@ -1046,7 +1352,7 @@ mod tests {
             let undecodable = SpecTree::new("undecodable", Some("placeholder"));
             std::fs::write(undecodable.tasks_path(), [0xff, 0xfe])
                 .expect("fixture tasks.md is rewritten");
-            let error = execute(undecodable.args(command)).expect_err("the read must fail");
+            let error = document(undecodable.args(command)).expect_err("the read must fail");
             assert_eq!(error.category(), crate::error::ErrorCategory::Read);
             assert!(
                 error.detail().contains("UTF-8"),
@@ -1079,7 +1385,7 @@ mod tests {
         );
         tree.write_spec_json(STATUS_SPEC_JSON);
 
-        let human = execute(tree.args("status"))
+        let human = document(tree.args("status"))
             .expect("status succeeds with spec.json")
             .expect("status produces a result");
         assert_eq!(
@@ -1110,7 +1416,7 @@ mod tests {
         let completed = SpecTree::new("done", Some("- [x] 1. Done\n"));
         completed.write_spec_json("{\"phase\": \"initialized\"}");
         assert_eq!(
-            execute(completed.args("status")).unwrap(),
+            document(completed.args("status")).unwrap(),
             Some(
                 concat!(
                     "spec: done\n",
@@ -1127,7 +1433,7 @@ mod tests {
 
         let unknown = SpecTree::new("unknown", Some("- [ ] 1. Pending\n"));
         unknown.write_spec_json("{\"phase\": \"future-phase\"}");
-        let human = execute(unknown.args("status")).unwrap().unwrap();
+        let human = document(unknown.args("status")).unwrap().unwrap();
         assert!(
             human.contains("stage: future-phase\n"),
             "the raw phase string is reported verbatim, got {human:?}"
@@ -1149,7 +1455,7 @@ mod tests {
                 tree.write_spec_json(text);
             }
 
-            let error = execute(tree.args("status")).expect_err("status must fail");
+            let error = document(tree.args("status")).expect_err("status must fail");
             assert_eq!(
                 error.category(),
                 crate::error::ErrorCategory::Read,
@@ -1183,7 +1489,7 @@ mod tests {
         tree.write_spec_json("{\"phase\": \"initialized\"}");
 
         assert_eq!(
-            execute(tree.args("status")).unwrap(),
+            document(tree.args("status")).unwrap(),
             Some(
                 concat!(
                     "spec: empty\n",
@@ -1207,7 +1513,7 @@ mod tests {
         let tree = SpecTree::new("broken", None);
         tree.write_spec_json("{ \"phase\": }");
 
-        let error = execute(tree.args("status")).expect_err("status must fail");
+        let error = document(tree.args("status")).expect_err("status must fail");
         assert!(
             error.context().ends_with("broken/spec.json"),
             "spec.json is checked first, got {:?}",
@@ -1225,7 +1531,7 @@ mod tests {
         let tree = SpecTree::new("no-tasks", None);
         tree.write_spec_json(STATUS_SPEC_JSON);
 
-        let error = execute(tree.args("status")).expect_err("status needs tasks.md");
+        let error = document(tree.args("status")).expect_err("status needs tasks.md");
         assert_eq!(error.category(), crate::error::ErrorCategory::Read);
         assert!(
             error.context().ends_with("no-tasks/tasks.md"),
@@ -1249,8 +1555,8 @@ mod tests {
         let before = tree.snapshot();
 
         for args in [tree.args("status"), tree.json_args("status")] {
-            let once = execute(args.clone()).expect("status succeeds");
-            let twice = execute(args).expect("status succeeds again");
+            let once = document(args.clone()).expect("status succeeds");
+            let twice = document(args).expect("status succeeds again");
             assert_eq!(once, twice, "status output must repeat byte-identically");
             assert!(once.is_some(), "status always produces a result");
         }
