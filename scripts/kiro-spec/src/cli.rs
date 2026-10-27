@@ -9,6 +9,7 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::edit::{mutate, Change};
 use crate::error::AppError;
 use crate::paths::SpecPaths;
 use crate::render::{human, Format};
@@ -375,8 +376,11 @@ fn validate_task_id(value: &str) -> Result<(), AppError> {
     }
 }
 
+/// A canonical numeric segment: digits with no leading zero.
 fn is_digits(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+    !value.is_empty()
+        && value.bytes().all(|byte| byte.is_ascii_digit())
+        && (value.len() == 1 || !value.starts_with('0'))
 }
 
 /// A reason is one non-empty line.
@@ -482,6 +486,23 @@ fn load_status(invocation: &Invocation) -> Result<(SpecPaths, String, TaskDocume
     Ok((paths, stage, document))
 }
 
+/// Plan, publish, and render one `complete` or `block` mutation.
+///
+/// The plan is built and published before any result text exists, so a refused
+/// transition or a failed write leaves `tasks.md` untouched and publishes no
+/// document. A plan that changes no bytes is published as a no-op and still
+/// reports the entry's resulting state.
+fn run_mutation(
+    paths: &SpecPaths,
+    document: &TaskDocument,
+    task: &str,
+    change: Change,
+) -> Result<Outcome, AppError> {
+    let plan = mutate(document, task, change)?;
+    plan.publish(&paths.tasks_md())?;
+    Ok(Outcome::success(Some(human::render_mutation(&plan))))
+}
+
 /// Run one parsed subcommand and return its complete rendering.
 ///
 /// `validate` reads every artifact leniently and renders the whole report: a
@@ -527,7 +548,21 @@ fn dispatch(invocation: &Invocation) -> Result<Outcome, AppError> {
                 Outcome::success(Some(rendered))
             })
         }
-        _ => Ok(Outcome::success(None)),
+        Command::Complete { task } => {
+            let (paths, document) = load_tasks(invocation)?;
+            run_mutation(&paths, &document, task, Change::Complete)
+        }
+        Command::Block { task, reason } => {
+            let (paths, document) = load_tasks(invocation)?;
+            run_mutation(
+                &paths,
+                &document,
+                task,
+                Change::Block {
+                    reason: reason.clone(),
+                },
+            )
+        }
     }
 }
 
@@ -767,7 +802,7 @@ mod tests {
 
     #[test]
     fn malformed_task_identifiers_are_usage_errors() {
-        for task in ["", "x", "1.2.3", "1..2", ".1", "1.x", "1 "] {
+        for task in ["", "x", "1.2.3", "1..2", ".1", "1.x", "1 ", "01", "1.02"] {
             let args = ["--spec", "demo", "complete", task];
             let error = usage_error(&args);
             assert!(
@@ -917,6 +952,21 @@ mod tests {
             args
         }
 
+        /// Arguments for `complete <task-id>`.
+        fn mutation_args(&self, command: &str, task: &str) -> Vec<OsString> {
+            let mut args = self.args(command);
+            args.push(OsString::from(task));
+            args
+        }
+
+        /// Arguments for `block <task-id> --reason <text>`.
+        fn block_args(&self, task: &str, reason: &str) -> Vec<OsString> {
+            let mut args = self.mutation_args("block", task);
+            args.push(OsString::from("--reason"));
+            args.push(OsString::from(reason));
+            args
+        }
+
         fn spec_dir(&self) -> PathBuf {
             self.root.join(".kiro").join("specs").join(&self.name)
         }
@@ -981,6 +1031,26 @@ mod tests {
             String::from_utf8(stdout).expect("stdout is valid UTF-8"),
             String::from_utf8(stderr).expect("stderr is valid UTF-8"),
         )
+    }
+
+    /// The paths whose bytes differ between two fixture snapshots.
+    fn changed_paths(before: &[(PathBuf, Vec<u8>)], after: &[(PathBuf, Vec<u8>)]) -> Vec<PathBuf> {
+        let mut changed = Vec::new();
+        for (path, bytes) in after {
+            let previous = before
+                .iter()
+                .find(|(other, _)| other == path)
+                .map(|(_, previous)| previous);
+            if previous != Some(bytes) {
+                changed.push(path.clone());
+            }
+        }
+        for (path, _) in before {
+            if !after.iter().any(|(other, _)| other == path) {
+                changed.push(path.clone());
+            }
+        }
+        changed
     }
 
     /// A `spec.json` with every required field at the `initialized` phase, so
@@ -1565,6 +1635,296 @@ mod tests {
             tree.snapshot(),
             before,
             "status must leave every fixture file byte-identical"
+        );
+    }
+
+    #[test]
+    fn complete_writes_the_entry_and_later_reads_report_it() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [ ]* 1.1 Ready\n",
+                "  - _Requirements: 7.4_\n",
+                "- [ ] 2. Wrap up\n",
+            )),
+        );
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+        assert_eq!(
+            document(tree.args("next")).unwrap(),
+            Some("  1.1 Ready [pending] (optional)\n".to_string()),
+            "the fixture starts with 1.1 as the next actionable entry"
+        );
+
+        let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", "1.1"));
+        assert_eq!(code, 0, "a successful mutation exits zero");
+        assert_eq!(stderr, "", "a successful mutation writes no diagnostic");
+        assert_eq!(
+            stdout, "1.1 [completed]\n",
+            "the result names the identifier and resulting state"
+        );
+
+        assert_eq!(
+            std::fs::read(tree.tasks_path()).expect("tasks.md is readable"),
+            concat!(
+                "- [ ] 1. Foundation\n",
+                "- [x]* 1.1 Ready\n",
+                "  - _Requirements: 7.4_\n",
+                "- [ ] 2. Wrap up\n",
+            )
+            .as_bytes(),
+            "only the target checkbox changes and the optional marker survives"
+        );
+
+        let changed = changed_paths(&before, &tree.snapshot());
+        assert_eq!(
+            changed,
+            vec![tree.tasks_path()],
+            "no file other than tasks.md may change"
+        );
+
+        let (code, stdout, _) = run_capturing(tree.args("tasks"));
+        assert_eq!(code, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "1 Foundation [pending]\n",
+                "  1.1 Ready [completed] (optional)\n",
+                "2 Wrap up [pending]\n",
+            ),
+            "a later tasks run reports the new state"
+        );
+
+        let (code, stdout, _) = run_capturing(tree.args("next"));
+        assert_eq!(code, 0);
+        assert_eq!(
+            stdout, "2 Wrap up [pending]\n",
+            "a later next run no longer selects the completed entry"
+        );
+
+        let (code, stdout, _) = run_capturing(tree.args("status"));
+        assert_eq!(code, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "spec: basic\n",
+                "stage: initialized\n",
+                "total: 3\n",
+                "completed: 1\n",
+                "pending: 2 (optional: 0)\n",
+                "blocked: 0\n",
+            ),
+            "a later status run counts the new state"
+        );
+    }
+
+    #[test]
+    fn completing_a_completed_entry_reports_the_unchanged_state() {
+        let tree = SpecTree::new("basic", Some("- [x] 1. Already done\n"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", "1"));
+        assert_eq!(code, 0, "a no-op mutation still exits zero");
+        assert_eq!(stderr, "");
+        assert_eq!(
+            stdout, "1 [completed] (no change)\n",
+            "a no-op reports the identifier, the resulting state, and that it changed nothing"
+        );
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "a no-op keeps tasks.md byte-identical"
+        );
+    }
+
+    #[test]
+    fn block_records_the_reason_and_later_reads_report_it() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ] 1. Foundation\n",
+                "- [ ]* 1.1 Ready\n",
+                "  - _Requirements: 8.1_\n",
+            )),
+        );
+        tree.write_spec_json(&valid_spec_json("basic"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.block_args("1.1", "waiting on review"));
+        assert_eq!(code, 0);
+        assert_eq!(stderr, "");
+        assert_eq!(stdout, "1.1 [blocked]\n");
+
+        assert_eq!(
+            std::fs::read(tree.tasks_path()).expect("tasks.md is readable"),
+            concat!(
+                "- [ ] 1. Foundation\n",
+                "- [!]* 1.1 Ready\n",
+                "  - _Blocked: waiting on review_\n",
+                "  - _Requirements: 8.1_\n",
+            )
+            .as_bytes(),
+            "the blocked marker and exactly one reason bullet are written"
+        );
+        assert_eq!(
+            changed_paths(&before, &tree.snapshot()),
+            vec![tree.tasks_path()],
+            "blocking changes no file other than tasks.md"
+        );
+
+        let (code, stdout, _) = run_capturing(tree.args("tasks"));
+        assert_eq!(code, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "1 Foundation [pending]\n",
+                "  1.1 Ready [blocked] (optional) - blocked: waiting on review\n",
+            ),
+            "a later tasks run reports the blocked state and its reason"
+        );
+
+        let (code, stdout, _) = run_capturing(tree.args("status"));
+        assert_eq!(code, 0);
+        assert_eq!(
+            stdout,
+            concat!(
+                "spec: basic\n",
+                "stage: initialized\n",
+                "total: 2\n",
+                "completed: 0\n",
+                "pending: 1 (optional: 0)\n",
+                "blocked: 1\n",
+            ),
+            "a later status run counts the blocked entry"
+        );
+    }
+
+    #[test]
+    fn blocking_with_the_same_reason_reports_the_unchanged_state() {
+        let tree = SpecTree::new(
+            "basic",
+            Some("- [!] 1. Already blocked\n  - _Blocked: waiting_\n"),
+        );
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.block_args("1", "waiting"));
+        assert_eq!(code, 0);
+        assert_eq!(stderr, "");
+        assert_eq!(stdout, "1 [blocked] (no change)\n");
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "a same-reason block writes nothing"
+        );
+    }
+
+    #[test]
+    fn blocking_a_completed_entry_exits_one_without_writing() {
+        let tree = SpecTree::new("basic", Some("- [x] 1. Done\n  - _Requirements: 8.5_\n"));
+        let before = tree.snapshot();
+
+        let (code, stdout, stderr) = run_capturing(tree.block_args("1", "not allowed"));
+        assert_eq!(
+            code, 1,
+            "an unsupported transition is a business-rule conflict"
+        );
+        assert_eq!(stdout, "", "a refused mutation writes no result document");
+        assert!(
+            stderr.starts_with("kiro-spec: ") && stderr.contains("completed"),
+            "the diagnostic names the unsupported transition, got {stderr:?}"
+        );
+        assert_eq!(tree.snapshot(), before, "a refused mutation writes nothing");
+    }
+
+    #[test]
+    fn unknown_duplicate_and_malformed_identifiers_follow_the_exit_contract() {
+        let tree = SpecTree::new(
+            "basic",
+            Some("- [ ] 1. First\n- [x] 1. Duplicate\n- [ ] 2. Unique\n"),
+        );
+        let before = tree.snapshot();
+
+        for (task, expected) in [("1", "more than one"), ("9", "no task")] {
+            let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", task));
+            assert_eq!(code, 1, "{task:?} is a business-rule conflict");
+            assert_eq!(stdout, "", "{task:?} writes no result document");
+            assert!(
+                stderr.starts_with("kiro-spec: ") && stderr.contains(expected),
+                "{task:?}: {stderr:?}"
+            );
+        }
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "unknown and duplicate identifiers write nothing"
+        );
+
+        let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", "1.x"));
+        assert_eq!(code, 2, "a malformed identifier is a usage error");
+        assert_eq!(stdout, "");
+        assert!(
+            stderr.contains("task identifier"),
+            "the diagnostic names the expected form, got {stderr:?}"
+        );
+        assert_eq!(tree.snapshot(), before);
+    }
+
+    #[test]
+    fn usage_errors_are_rejected_before_the_spec_is_read() {
+        // No tasks.md exists, so any filesystem check would exit 1 instead.
+        let tree = SpecTree::new("empty", None);
+        let before = tree.snapshot();
+
+        let mut cases = vec![
+            tree.mutation_args("complete", "1.x"),
+            tree.block_args("1", "   "),
+            tree.block_args("1", "first\nsecond"),
+        ];
+        let mut json = tree.mutation_args("complete", "1");
+        json.push(OsString::from("--json"));
+        cases.push(json);
+
+        for args in cases {
+            let (code, stdout, stderr) = run_capturing(args.clone());
+            assert_eq!(code, 2, "{args:?} is a usage error");
+            assert_eq!(stdout, "", "{args:?} writes no result");
+            assert!(
+                stderr.starts_with("kiro-spec: "),
+                "{args:?} writes a usage diagnostic, got {stderr:?}"
+            );
+        }
+        assert_eq!(tree.snapshot(), before, "usage errors touch no file");
+    }
+
+    #[test]
+    fn a_write_failure_exits_one_and_leaves_tasks_md_intact() {
+        let tree = SpecTree::new("stale-temp", Some("- [ ] 1. Pending\n"));
+        let original = std::fs::read(tree.tasks_path()).expect("fixture is readable");
+        // `create_new` refuses to reuse a temporary path, so the publish fails
+        // deterministically even when the tests run as root.
+        let stale = tree
+            .spec_dir()
+            .join(format!(".tasks.md.kiro-spec.{}.tmp", std::process::id()));
+        std::fs::write(&stale, b"stale contents").expect("stale temporary file is written");
+
+        let (code, stdout, stderr) = run_capturing(tree.mutation_args("complete", "1"));
+
+        assert_eq!(code, 1, "a failed write exits non-zero");
+        assert_eq!(stdout, "", "a failed write publishes no result");
+        assert!(
+            stderr.starts_with("kiro-spec: ") && stderr.contains("tasks.md"),
+            "the write failure names tasks.md, got {stderr:?}"
+        );
+        assert_eq!(
+            std::fs::read(tree.tasks_path()).expect("tasks.md is readable"),
+            original,
+            "tasks.md stays intact after a write failure"
+        );
+        assert_eq!(
+            std::fs::read(&stale).expect("stale temporary file is readable"),
+            b"stale contents",
+            "the editor never removes a temporary file it did not create"
         );
     }
 
