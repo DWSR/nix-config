@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use crate::error::AppError;
 use crate::paths::SpecPaths;
 use crate::render::{human, Format};
+use crate::spec_json;
 use crate::tasks::{parse_tasks, TaskDocument};
 
 /// The single help document, kept in one place so tests can assert it lists
@@ -380,14 +381,16 @@ const fn format_of(json: bool) -> Format {
     }
 }
 
-/// Resolve the spec and read only `tasks.md`.
+/// Resolve the spec directory named by the invocation.
+fn resolve_paths(invocation: &Invocation) -> Result<SpecPaths, AppError> {
+    Ok(SpecPaths::resolve(&invocation.root, &invocation.spec)?)
+}
+
+/// Read and parse `tasks.md` for an already resolved spec.
 ///
-/// `tasks` and `next` never open `spec.json` or `requirements.md`, so a spec
-/// directory holding a task list is enough for both commands. A missing,
-/// unreadable, or undecodable file is a read failure naming its path; nothing
-/// is ever written.
-fn load_tasks(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppError> {
-    let paths = SpecPaths::resolve(&invocation.root, &invocation.spec)?;
+/// A missing, unreadable, or undecodable file is a read failure naming its
+/// path; nothing is ever written.
+fn read_tasks(paths: &SpecPaths) -> Result<TaskDocument, AppError> {
     let path = paths.tasks_md();
     let context = path.display().to_string();
     let bytes = std::fs::read(&path).map_err(|error| {
@@ -400,13 +403,42 @@ fn load_tasks(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppE
     })?;
     let text =
         String::from_utf8(bytes).map_err(|_| AppError::read(context, "file is not valid UTF-8"))?;
-    Ok((paths, parse_tasks(&text)))
+    Ok(parse_tasks(&text))
+}
+
+/// Resolve the spec and read only `tasks.md`.
+///
+/// `tasks` and `next` never open `spec.json` or `requirements.md`, so a spec
+/// directory holding a task list is enough for both commands. Nothing is ever
+/// written.
+fn load_tasks(invocation: &Invocation) -> Result<(SpecPaths, TaskDocument), AppError> {
+    let paths = resolve_paths(invocation)?;
+    let document = read_tasks(&paths)?;
+    Ok((paths, document))
+}
+
+/// Resolve the spec and read `spec.json` before `tasks.md`.
+///
+/// `status` needs a raw stage string, so an absent, unparseable, or wrongly
+/// shaped `spec.json` is a hard read failure naming the file (Requirement 5.5);
+/// the count rules come from the same parsed task model as `tasks` and `next`.
+fn load_status(invocation: &Invocation) -> Result<(SpecPaths, String, TaskDocument), AppError> {
+    let paths = resolve_paths(invocation)?;
+    let spec_json_path = paths.spec_json();
+    let value = spec_json::read_value(&spec_json_path)?;
+    let stage = spec_json::phase_of(&value).map_err(|error| {
+        AppError::read(
+            spec_json_path.display().to_string(),
+            error.detail().to_string(),
+        )
+    })?;
+    let document = read_tasks(&paths)?;
+    Ok((paths, stage, document))
 }
 
 /// Run one parsed subcommand and return its complete rendering.
 ///
-/// `status` and `validate` are wired by their own tasks; until then they
-/// produce no result.
+/// `validate` is wired by its own task; until then it produces no result.
 fn dispatch(invocation: &Invocation) -> Result<Option<String>, AppError> {
     let format = format_of(invocation.json);
     match &invocation.command {
@@ -423,6 +455,14 @@ fn dispatch(invocation: &Invocation) -> Result<Option<String>, AppError> {
             Ok(Some(match format {
                 Format::Human => human::render_next(next, paths.name()),
                 Format::Json => crate::render::json::render_next(next, paths.name()),
+            }))
+        }
+        Command::Status => {
+            let (paths, stage, document) = load_status(invocation)?;
+            let counts = document.counts();
+            Ok(Some(match format {
+                Format::Human => human::render_status(&stage, &counts, paths.name()),
+                Format::Json => crate::render::json::render_status(&stage, &counts, paths.name()),
             }))
         }
         _ => Ok(None),
@@ -806,12 +846,18 @@ mod tests {
             args
         }
 
+        fn spec_dir(&self) -> PathBuf {
+            self.root.join(".kiro").join("specs").join(&self.name)
+        }
+
         fn tasks_path(&self) -> PathBuf {
-            self.root
-                .join(".kiro")
-                .join("specs")
-                .join(&self.name)
-                .join("tasks.md")
+            self.spec_dir().join("tasks.md")
+        }
+
+        /// Write the fixture's `spec.json` verbatim, for commands that need it.
+        fn write_spec_json(&self, text: &str) {
+            std::fs::write(self.spec_dir().join("spec.json"), text)
+                .expect("fixture spec.json is written");
         }
 
         /// Every file beneath the fixture root with its exact bytes.
@@ -1008,6 +1054,212 @@ mod tests {
                 error.detail()
             );
         }
+    }
+
+    /// A complete `spec.json` whose phase is a documented rung.
+    const STATUS_SPEC_JSON: &str = concat!(
+        "{\n",
+        "  \"feature_name\": \"basic\",\n",
+        "  \"phase\": \"tasks-generated\",\n",
+        "  \"ready_for_implementation\": true\n",
+        "}\n",
+    );
+
+    #[test]
+    fn status_reports_counts_and_the_raw_phase_in_both_formats() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ]* 1. Optional pending\n",
+                "- [ ] 2. Pending\n",
+                "- [x] 3. Completed\n",
+                "- [!]* 4. Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+            )),
+        );
+        tree.write_spec_json(STATUS_SPEC_JSON);
+
+        let human = execute(tree.args("status"))
+            .expect("status succeeds with spec.json")
+            .expect("status produces a result");
+        assert_eq!(
+            human,
+            concat!(
+                "spec: basic\n",
+                "stage: tasks-generated\n",
+                "total: 4\n",
+                "completed: 1\n",
+                "pending: 2 (optional: 1)\n",
+                "blocked: 1\n",
+            )
+        );
+
+        let (_, parsed) = run_json(tree.json_args("status"));
+        assert_eq!(parsed["schema_version"], serde_json::json!(1));
+        assert_eq!(parsed["spec"], serde_json::json!("basic"));
+        assert_eq!(parsed["stage"], serde_json::json!("tasks-generated"));
+        assert_eq!(parsed["total"], serde_json::json!(4));
+        assert_eq!(parsed["counts"]["completed"], serde_json::json!(1));
+        assert_eq!(parsed["counts"]["pending"], serde_json::json!(2));
+        assert_eq!(parsed["counts"]["blocked"], serde_json::json!(1));
+        assert_eq!(parsed["optional_pending"], serde_json::json!(1));
+    }
+
+    #[test]
+    fn status_reports_the_spec_json_phase_and_never_infers_it_from_progress() {
+        let completed = SpecTree::new("done", Some("- [x] 1. Done\n"));
+        completed.write_spec_json("{\"phase\": \"initialized\"}");
+        assert_eq!(
+            execute(completed.args("status")).unwrap(),
+            Some(
+                concat!(
+                    "spec: done\n",
+                    "stage: initialized\n",
+                    "total: 1\n",
+                    "completed: 1\n",
+                    "pending: 0 (optional: 0)\n",
+                    "blocked: 0\n",
+                )
+                .to_string()
+            ),
+            "a completed task list must not advance the reported stage"
+        );
+
+        let unknown = SpecTree::new("unknown", Some("- [ ] 1. Pending\n"));
+        unknown.write_spec_json("{\"phase\": \"future-phase\"}");
+        let human = execute(unknown.args("status")).unwrap().unwrap();
+        assert!(
+            human.contains("stage: future-phase\n"),
+            "the raw phase string is reported verbatim, got {human:?}"
+        );
+        let (_, parsed) = run_json(unknown.json_args("status"));
+        assert_eq!(parsed["stage"], serde_json::json!("future-phase"));
+    }
+
+    #[test]
+    fn status_fails_naming_spec_json_when_the_document_or_phase_is_unusable() {
+        for (spec_json, expected_detail) in [
+            (None, "file not found"),
+            (Some("{ \"phase\": }"), "invalid JSON"),
+            (Some("[]"), "object"),
+            (Some("{\"phase\": 3}"), "string"),
+        ] {
+            let tree = SpecTree::new("broken", Some("- [ ] 1. Pending\n"));
+            if let Some(text) = spec_json {
+                tree.write_spec_json(text);
+            }
+
+            let error = execute(tree.args("status")).expect_err("status must fail");
+            assert_eq!(
+                error.category(),
+                crate::error::ErrorCategory::Read,
+                "{spec_json:?}"
+            );
+            assert_eq!(error.exit_code(), 1, "{spec_json:?}");
+            assert!(
+                error.context().ends_with("broken/spec.json"),
+                "the diagnostic must name spec.json, got {:?}",
+                error.context()
+            );
+            match spec_json {
+                None => assert_eq!(error.detail(), expected_detail),
+                Some("{ \"phase\": }") => assert!(
+                    error.detail().starts_with(expected_detail),
+                    "{spec_json:?}: {:?}",
+                    error.detail()
+                ),
+                Some(_) => assert!(
+                    error.detail().contains("phase") && error.detail().contains(expected_detail),
+                    "{spec_json:?}: {:?}",
+                    error.detail()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn status_reports_zero_counts_for_an_empty_task_list() {
+        let tree = SpecTree::new("empty", Some("# Implementation Plan\n"));
+        tree.write_spec_json("{\"phase\": \"initialized\"}");
+
+        assert_eq!(
+            execute(tree.args("status")).unwrap(),
+            Some(
+                concat!(
+                    "spec: empty\n",
+                    "stage: initialized\n",
+                    "total: 0\n",
+                    "completed: 0\n",
+                    "pending: 0 (optional: 0)\n",
+                    "blocked: 0\n",
+                )
+                .to_string()
+            )
+        );
+        let (_, parsed) = run_json(tree.json_args("status"));
+        assert_eq!(parsed["total"], serde_json::json!(0));
+        assert_eq!(parsed["counts"]["pending"], serde_json::json!(0));
+        assert_eq!(parsed["optional_pending"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn status_reads_spec_json_before_tasks_md() {
+        let tree = SpecTree::new("broken", None);
+        tree.write_spec_json("{ \"phase\": }");
+
+        let error = execute(tree.args("status")).expect_err("status must fail");
+        assert!(
+            error.context().ends_with("broken/spec.json"),
+            "spec.json is checked first, got {:?}",
+            error.context()
+        );
+        assert!(
+            error.detail().starts_with("invalid JSON"),
+            "{:?}",
+            error.detail()
+        );
+    }
+
+    #[test]
+    fn status_fails_naming_tasks_md_when_it_is_missing() {
+        let tree = SpecTree::new("no-tasks", None);
+        tree.write_spec_json(STATUS_SPEC_JSON);
+
+        let error = execute(tree.args("status")).expect_err("status needs tasks.md");
+        assert_eq!(error.category(), crate::error::ErrorCategory::Read);
+        assert!(
+            error.context().ends_with("no-tasks/tasks.md"),
+            "{:?}",
+            error.context()
+        );
+    }
+
+    #[test]
+    fn status_repeats_identically_and_leaves_every_file_byte_identical() {
+        let tree = SpecTree::new(
+            "basic",
+            Some(concat!(
+                "- [ ]* 1. Optional pending\n",
+                "- [x] 1.1 Completed child\n",
+                "- [!] 2. Blocked work\n",
+                "  - _Blocked: Waiting on credentials_\n",
+            )),
+        );
+        tree.write_spec_json(STATUS_SPEC_JSON);
+        let before = tree.snapshot();
+
+        for args in [tree.args("status"), tree.json_args("status")] {
+            let once = execute(args.clone()).expect("status succeeds");
+            let twice = execute(args).expect("status succeeds again");
+            assert_eq!(once, twice, "status output must repeat byte-identically");
+            assert!(once.is_some(), "status always produces a result");
+        }
+
+        assert_eq!(
+            tree.snapshot(),
+            before,
+            "status must leave every fixture file byte-identical"
+        );
     }
 
     #[test]
