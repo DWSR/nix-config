@@ -76,7 +76,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - _Requirements: 3.3, 9.2, 9.3_
 
 - [ ] 5. Validation rules and findings
-- [ ] 5.1 Define the finding model and deterministic ordering
+- [x] 5.1 Define the finding model and deterministic ordering
   - Define `Severity`, `Finding { severity, code, message, file, line }`, `ValidationReport`, and `has_errors()` in `validate.rs`, with spec-relative file names (`spec.json`, `tasks.md`, `requirements.md`).
   - Provide the sort key `(file, line, code, message)` ordered with `line: None` before line 1, so every later rule set returns findings the reporter can order without re-sorting at call sites.
   - Unit tests cover ordering across files and lines, the `None`-first rule, and `has_errors()` for error-only, warning-only, and empty reports.
