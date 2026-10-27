@@ -142,7 +142,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Replace the text and continuation lines of an existing reason bullet in place so exactly one remains; treat an identical reason as a byte-identical no-op; reject a completed entry as an unsupported transition and expose no unblock command.
   - Unit tests cover pending-to-blocked, reason replacement, same-reason no-op, optional-marker preservation, completion-as-unblock, and CRLF insertion.
   - _Requirements: 8.1, 8.2, 8.4, 8.5, 8.9, 8.10, 10.3, 11.3_
-- [ ] 7.4 Wire `complete` and `block`
+- [x] 7.4 Wire `complete` and `block`
   - Validate the task identifier and `--reason` (non-empty after trimming, no line break, no `--json`) before parsing the spec; reject usage problems with exit 2 and business-rule conflicts with exit 1, writing nothing.
   - Apply the mutation, publish atomically, and report the identifier and resulting state on stdout, including the unchanged state for a no-op; exit 1 on a write failure with `tasks.md` intact.
   - Confirm a later `tasks`, `next`, or `status` run reflects the mutation and no file other than `tasks.md` changed.
