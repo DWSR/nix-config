@@ -118,7 +118,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Render total, completed, pending, blocked, optional pending, and the raw phase string in both formats, reusing the task model's counts.
   - Confirm on a fixture tree that counts match entry states and the run leaves every file byte-identical.
   - _Requirements: 2.7, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7, 10.5_
-- [ ] 6.3 Wire `validate`
+- [x] 6.3 Wire `validate`
   - Run `validate()` and render the complete report in both formats; keep findings as result data on stdout and operational diagnostics on stderr.
   - Exit 1 when any error-severity finding exists and 0 for warnings or no findings, identically with and without `--json`, and never emit a partial document.
   - Confirm a clean fixture exits 0, a broken fixture exits 1 in both formats, and no file changes in either case.
