@@ -1,9 +1,9 @@
 //! Line-oriented `tasks.md` grammar, entry blocks, and the task model.
 //!
-//! The parser is pure: it takes a document's text and returns the source lines
-//! plus the task entries they declare, with no filesystem access and no
-//! failures. Grammar defects are classified by `validate`, never by turning a
-//! whole document into an error.
+//! The parser is pure: it takes a document's text and returns the source lines,
+//! the task entries they declare, and the grammar defects it found, with no
+//! filesystem access and no failures. Grammar defects are reported as findings
+//! and never turn a whole document into an error.
 //!
 //! Every source line keeps the terminator it was read with, so a document can
 //! be reassembled byte for byte by [`TaskDocument::to_bytes`]. An entry block
@@ -11,7 +11,16 @@
 //! ATX heading, and carries the indented metadata bullets and continuation
 //! prose written beneath it.
 
+use std::collections::BTreeMap;
+
 use crate::error::MutationError;
+use crate::validate::{Finding, Severity};
+
+/// The maximum number of task entries one document may declare.
+const TASK_LIMIT: usize = 49;
+
+/// The spec-relative file every task grammar finding belongs to.
+const TASKS_FILE: &str = "tasks.md";
 
 /// The state encoded by a task line's checkbox.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -236,12 +245,18 @@ pub struct TaskCounts {
 pub struct TaskDocument {
     lines: Vec<SourceLine>,
     entries: Vec<TaskEntry>,
+    findings: Vec<Finding>,
 }
 
 impl TaskDocument {
     /// Every parsed task entry, in document order.
     pub fn entries(&self) -> &[TaskEntry] {
         &self.entries
+    }
+
+    /// Every grammar defect the parser classified, ordered by line and code.
+    pub fn findings(&self) -> &[Finding] {
+        &self.findings
     }
 
     /// Every source line, in document order.
@@ -336,10 +351,12 @@ impl TaskDocument {
 /// Candidate checkboxes are recognized only at column zero. Fenced code blocks
 /// are skipped, so a checkbox, heading, or metadata bullet inside one never
 /// starts an entry or ends a block. Parsing is total: a checkbox that does not
-/// match a numbered form is simply not an entry.
+/// match a numbered form becomes a finding, while every valid entry in the same
+/// document is still parsed.
 pub fn parse_tasks(text: &str) -> TaskDocument {
     let lines = split_lines(text);
     let mut entries = Vec::new();
+    let mut findings = Vec::new();
     let mut fence: Option<(char, usize)> = None;
     let mut index = 0;
     while index < lines.len() {
@@ -356,10 +373,11 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
             index += 1;
             continue;
         }
-        if candidate(line).is_some() {
+        if let Some(candidate) = candidate(line) {
             let end = block_end(&lines, index);
-            if let Some(entry) = build_entry(&lines, index, end) {
-                entries.push(entry);
+            match build_entry(&lines, index, end) {
+                Some(entry) => entries.push(entry),
+                None => findings.push(classify_defect(candidate, index + 1)),
             }
             index = end;
             continue;
@@ -367,7 +385,121 @@ pub fn parse_tasks(text: &str) -> TaskDocument {
         index += 1;
     }
     mark_parents(&mut entries);
-    TaskDocument { lines, entries }
+    findings.extend(duplicate_findings(&entries));
+    findings.extend(limit_finding(&entries));
+    findings.sort_by(|left, right| {
+        left.line
+            .unwrap_or(0)
+            .cmp(&right.line.unwrap_or(0))
+            .then_with(|| left.code.cmp(right.code))
+            .then_with(|| left.message.cmp(&right.message))
+    });
+    TaskDocument {
+        lines,
+        entries,
+        findings,
+    }
+}
+
+/// Classify a checkbox line that did not parse as a task entry.
+///
+/// A line whose text does not start with an ASCII digit is a warning and never
+/// counts as an entry. A numeric start is further divided into an identifier
+/// with more than two numeric levels, an identifier that is not numeric, and a
+/// line that simply does not match either supported numbered form.
+fn classify_defect(candidate: Candidate<'_>, line: usize) -> Finding {
+    let rest = candidate.rest;
+    if !rest.starts_with(|character: char| character.is_ascii_digit()) {
+        return task_finding(
+            Severity::Warning,
+            "tasks.line.unnumbered",
+            "checkbox line has no numeric identifier".to_string(),
+            line,
+        );
+    }
+    let token = rest.split_whitespace().next().unwrap_or(rest);
+    let core = token.strip_suffix('.').unwrap_or(token);
+    let levels = core.split('.').collect::<Vec<_>>();
+    if levels.len() > 2 && levels.iter().all(|level| is_numeric_level(level)) {
+        return task_finding(
+            Severity::Error,
+            "tasks.id.depth",
+            format!("task identifier `{token}` has more than two numeric levels"),
+            line,
+        );
+    }
+    if token
+        .chars()
+        .any(|character| !character.is_ascii_digit() && character != '.')
+    {
+        return task_finding(
+            Severity::Error,
+            "tasks.id.non-numeric",
+            format!("task identifier `{token}` is not numeric"),
+            line,
+        );
+    }
+    task_finding(
+        Severity::Error,
+        "tasks.line.malformed",
+        format!(
+            "checkbox line with numeric start `{token}` does not match the supported task grammar"
+        ),
+        line,
+    )
+}
+
+/// Build a finding that belongs to one `tasks.md` line.
+fn task_finding(severity: Severity, code: &'static str, message: String, line: usize) -> Finding {
+    Finding {
+        severity,
+        code,
+        message,
+        file: TASKS_FILE.to_string(),
+        line: Some(line),
+    }
+}
+
+/// Whether one dotted segment is a non-empty run of ASCII digits.
+fn is_numeric_level(segment: &str) -> bool {
+    !segment.is_empty() && segment.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Report every canonical identifier after its first occurrence.
+fn duplicate_findings(entries: &[TaskEntry]) -> Vec<Finding> {
+    let mut first_lines: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut findings = Vec::new();
+    for entry in entries {
+        match first_lines.get(entry.id.text.as_str()) {
+            Some(first) => findings.push(task_finding(
+                Severity::Error,
+                "tasks.id.duplicate",
+                format!(
+                    "duplicate task identifier `{}`; first occurrence is line {first}",
+                    entry.id.text
+                ),
+                entry.line,
+            )),
+            None => {
+                first_lines.insert(entry.id.text.as_str(), entry.line);
+            }
+        }
+    }
+    findings
+}
+
+/// Report the one entry limit breach at the first entry past the limit.
+fn limit_finding(entries: &[TaskEntry]) -> Option<Finding> {
+    let overflow = entries.get(TASK_LIMIT)?;
+    Some(task_finding(
+        Severity::Error,
+        "tasks.limit.exceeded",
+        format!(
+            "{} task entries exceed the limit of {TASK_LIMIT}",
+            entries.len()
+        ),
+        overflow.line,
+    ))
 }
 
 /// One checkbox line that could open an entry, split into its parts.
@@ -1365,6 +1497,239 @@ mod tests {
                 .id
                 .text,
             "2"
+        );
+    }
+
+    fn findings(document: &TaskDocument) -> Vec<(&'static str, Severity, Option<usize>)> {
+        document
+            .findings()
+            .iter()
+            .map(|finding| (finding.code, finding.severity, finding.line))
+            .collect()
+    }
+
+    fn numbered_document(count: usize) -> String {
+        (1..=count)
+            .map(|number| format!("- [ ] {number}. Task {number}\n"))
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_document_reports_no_findings() {
+        let document = parse_tasks(BASIC);
+
+        assert!(
+            document.findings().is_empty(),
+            "valid entries must not produce findings: {:?}",
+            document.findings()
+        );
+    }
+
+    #[test]
+    fn classifies_an_unnumbered_checkbox_as_a_warning() {
+        let text = "\
+- [x] `nix fmt` clean
+- [ ] 1. Real task
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            document.entries().len(),
+            1,
+            "an unnumbered checkbox is not an entry"
+        );
+        assert_eq!(document.entries()[0].id.text, "1");
+        let finding = &document.findings()[0];
+        assert_eq!(finding.code, "tasks.line.unnumbered");
+        assert_eq!(finding.severity, Severity::Warning);
+        assert_eq!(finding.file, "tasks.md");
+        assert_eq!(finding.line, Some(1));
+        assert!(
+            finding.message.contains("numeric identifier"),
+            "message must explain the defect: {:?}",
+            finding.message
+        );
+    }
+
+    #[test]
+    fn classifies_identifiers_with_more_than_two_levels() {
+        let document = parse_tasks("- [ ] 1.2.3. Too deep\n- [ ] 1.2.3 Too deep\n");
+
+        assert_eq!(
+            findings(&document),
+            vec![
+                ("tasks.id.depth", Severity::Error, Some(1)),
+                ("tasks.id.depth", Severity::Error, Some(2)),
+            ]
+        );
+        assert!(document.entries().is_empty());
+        for finding in document.findings() {
+            assert!(
+                finding.message.contains("1.2.3"),
+                "message must name the identifier: {:?}",
+                finding.message
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_identifiers_that_are_not_numeric() {
+        let text = "\
+- [ ] 1a. Suffixed
+- [ ] 1.x Dotted letter
+- [ ] 2-3 Hyphenated
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            findings(&document),
+            vec![
+                ("tasks.id.non-numeric", Severity::Error, Some(1)),
+                ("tasks.id.non-numeric", Severity::Error, Some(2)),
+                ("tasks.id.non-numeric", Severity::Error, Some(3)),
+            ]
+        );
+        assert!(document.entries().is_empty());
+        for finding in document.findings() {
+            assert!(
+                finding.message.contains("not numeric"),
+                "message must explain the defect: {:?}",
+                finding.message
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_numeric_starts_outside_the_supported_grammar_as_malformed() {
+        let text = "\
+- [ ] 1..2 Empty level
+- [ ] 2 No dot
+- [ ] 3.4
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            findings(&document),
+            vec![
+                ("tasks.line.malformed", Severity::Error, Some(1)),
+                ("tasks.line.malformed", Severity::Error, Some(2)),
+                ("tasks.line.malformed", Severity::Error, Some(3)),
+            ]
+        );
+        assert!(document.entries().is_empty());
+        for finding in document.findings() {
+            assert!(
+                finding.message.contains("supported"),
+                "message must explain the defect: {:?}",
+                finding.message
+            );
+        }
+    }
+
+    #[test]
+    fn reports_a_duplicate_at_each_repeated_identifier_line() {
+        let text = "\
+- [ ] 1. First
+- [ ] 1. Duplicate
+- [x] 1. Third
+- [ ] 2. Unique
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(document.entries().len(), 4, "duplicates still parse");
+        let duplicates = document
+            .findings()
+            .iter()
+            .filter(|finding| finding.code == "tasks.id.duplicate")
+            .collect::<Vec<_>>();
+        assert_eq!(duplicates.len(), 2, "each repeat is one finding");
+        assert_eq!(duplicates[0].severity, Severity::Error);
+        assert_eq!(duplicates[0].line, Some(2));
+        assert_eq!(duplicates[1].line, Some(3));
+        for finding in duplicates {
+            assert_eq!(finding.file, "tasks.md");
+            assert!(
+                finding.message.contains("`1`") && finding.message.contains("line 1"),
+                "message must name the identifier and first occurrence: {:?}",
+                finding.message
+            );
+        }
+    }
+
+    #[test]
+    fn reports_the_49_entry_boundary_at_the_50th_entry() {
+        let at_limit = parse_tasks(&numbered_document(49));
+        assert!(
+            at_limit.findings().is_empty(),
+            "49 entries are allowed: {:?}",
+            at_limit.findings()
+        );
+
+        let over_limit = parse_tasks(&numbered_document(50));
+        assert_eq!(
+            findings(&over_limit),
+            vec![("tasks.limit.exceeded", Severity::Error, Some(50))]
+        );
+        let finding = &over_limit.findings()[0];
+        assert_eq!(finding.file, "tasks.md");
+        assert!(
+            finding.message.contains("50") && finding.message.contains("49"),
+            "message must state the observed count and the limit: {:?}",
+            finding.message
+        );
+    }
+
+    #[test]
+    fn fenced_code_blocks_hide_grammar_defects() {
+        let text = "\
+```
+- [ ] not numbered
+- [ ] 1.2.3 too deep
+```
+- [ ] 1. Real
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(document.entries().len(), 1);
+        assert_eq!(document.entries()[0].id.text, "1");
+        assert!(
+            document.findings().is_empty(),
+            "fenced checkbox lines must not become findings: {:?}",
+            document.findings()
+        );
+    }
+
+    #[test]
+    fn keeps_parsing_valid_entries_beside_grammar_defects() {
+        let text = "\
+- [x] `nix fmt` clean
+- [ ] 1.2.3 Too deep
+- [ ] 2a. Not numeric
+- [ ] 3 No dot
+- [ ] 4. Valid one
+- [ ] 4. Duplicate valid
+- [ ] 5. Another valid
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            document
+                .entries()
+                .iter()
+                .map(|entry| (entry.id.text.as_str(), entry.line))
+                .collect::<Vec<_>>(),
+            vec![("4", 5), ("4", 6), ("5", 7)],
+            "valid entries in the same document still parse"
+        );
+        assert_eq!(
+            findings(&document),
+            vec![
+                ("tasks.line.unnumbered", Severity::Warning, Some(1)),
+                ("tasks.id.depth", Severity::Error, Some(2)),
+                ("tasks.id.non-numeric", Severity::Error, Some(3)),
+                ("tasks.line.malformed", Severity::Error, Some(4)),
+                ("tasks.id.duplicate", Severity::Error, Some(6)),
+            ]
         );
     }
 }
