@@ -101,7 +101,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Keep warning/error classification and the `(file, line, code, message)` order intact after the merge.
   - Unit tests cover a spec with task and reference defects reporting both, and a fully valid spec reporting no findings.
   - _Requirements: 6.15, 6.17, 6.19, 6.20, 6.21_
-- [ ] 5.6 Assemble `validate()` with lenient artifact reads
+- [x] 5.6 Assemble `validate()` with lenient artifact reads
   - Implement `validate(paths)` reading `spec.json`, `tasks.md`, and `requirements.md` without aborting: a missing, unreadable, or malformed artifact inside an existing spec directory becomes a finding instead of a command failure.
   - Merge every rule set into one sorted `ValidationReport`, skipping reference resolution when requirements.md is absent so only the artifact error is reported, and never repair a file.
   - Unit tests cover a directory where every artifact is missing, a partially present directory, and a clean spec reporting no findings.
