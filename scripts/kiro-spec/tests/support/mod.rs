@@ -106,9 +106,7 @@ impl TempTree {
 
     /// Run the compiled binary with exactly `args`, inheriting no root or spec.
     pub fn run(&self, args: &[&str]) -> Run {
-        let mut command = binary();
-        command.args(args);
-        Run::capture(command)
+        run_binary(args)
     }
 
     /// Run the compiled binary from `cwd` with exactly `args`.
@@ -135,6 +133,16 @@ impl Drop for TempTree {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+/// Run the compiled binary from the process working directory.
+///
+/// Tests that inspect a tree outside temporary storage, such as the checked-in
+/// spec corpus, pass an absolute `--root` instead of building a [`TempTree`].
+pub fn run_binary(args: &[&str]) -> Run {
+    let mut command = binary();
+    command.args(args);
+    Run::capture(command)
 }
 
 /// The captured result of one binary invocation.
