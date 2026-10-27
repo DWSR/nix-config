@@ -13,6 +13,7 @@ use serde_json::Value;
 
 use crate::paths::SpecPaths;
 use crate::spec_json::Phase;
+use crate::tasks::{parse_tasks, MetadataKind};
 
 /// The severity of one validation finding.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -407,6 +408,160 @@ pub fn spec_json_findings(paths: &SpecPaths) -> Vec<Finding> {
 
     findings.extend(phase_relationship_findings(&value));
 
+    findings
+}
+
+/// The three artifacts gated by a generated flag and the phase that first
+/// requires each one.
+///
+/// Each entry is `(spec-relative artifact name, approval stage, required
+/// phase)`. The path of an artifact is always
+/// `<spec-directory>/<artifact name>`.
+const GATED_ARTIFACTS: [(&str, &str, Phase); 3] = [
+    (
+        "requirements.md",
+        "requirements",
+        Phase::RequirementsGenerated,
+    ),
+    ("design.md", "design", Phase::DesignGenerated),
+    ("tasks.md", "tasks", Phase::TasksGenerated),
+];
+
+/// An artifact's readable text, or why it has none.
+enum ArtifactRead {
+    /// No regular file exists at the path.
+    Missing,
+    /// A regular file exists but cannot be read or decoded, with the detail a
+    /// diagnostic states.
+    Unreadable(String),
+    /// The file decoded as UTF-8 text.
+    Text(String),
+}
+
+/// Read an artifact as UTF-8 text, classifying absence separately.
+///
+/// Presence means a regular file, so a directory is `Missing`. A file that
+/// cannot be read or is not valid UTF-8 is `Unreadable`, letting the caller
+/// report the decoding problem instead of a missing artifact.
+fn read_artifact(path: &Path) -> ArtifactRead {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => {}
+        _ => return ArtifactRead::Missing,
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => ArtifactRead::Text(text),
+            Err(_) => ArtifactRead::Unreadable("file is not valid UTF-8".to_string()),
+        },
+        Err(error) => ArtifactRead::Unreadable(format!("file could not be read: {error}")),
+    }
+}
+
+/// Whether a regular artifact file exists and can be opened for reading.
+///
+/// Requirement 6.13 asks about the artifact's presence, not its text, so a
+/// file with an undecodable body is present and its encoding is reported by the
+/// requirements rule. A directory or an unopenable path counts as missing.
+fn artifact_present(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_file() => std::fs::File::open(path).is_ok(),
+        _ => false,
+    }
+}
+
+/// Report one `spec.generated.artifact-missing` per required-but-absent gated
+/// artifact.
+///
+/// An artifact is required when the phase is at or above its stage or its
+/// `generated` flag is `true` (Requirement 6.13). Both rules point at the same
+/// artifact, so the loop emits once per artifact and a phase and flag that
+/// agree never duplicate the finding. Phase requirements are skipped when
+/// `phase` is absent, mistyped, or unknown, and the flag rule is skipped when
+/// its flag is absent or mistyped; `spec.field.*`, `spec.phase.unknown`, and
+/// `spec.phase.generated-false` already cover those defects. A missing or
+/// unparseable `spec.json` yields no artifact findings because this rule set
+/// reads only `spec.json`.
+fn generated_artifact_findings(paths: &SpecPaths) -> Vec<Finding> {
+    let value = match read_spec_json(&paths.spec_json()) {
+        Ok(value) => value,
+        Err(_) => return Vec::new(),
+    };
+    let phase = value
+        .get("phase")
+        .and_then(Value::as_str)
+        .and_then(Phase::parse);
+    let mut findings = Vec::new();
+    for (artifact, stage, required_phase) in GATED_ARTIFACTS {
+        let required_by_phase = phase.is_some_and(|phase| phase.rank() >= required_phase.rank());
+        let required_by_flag =
+            boolean_field(&value, &stage_field(stage, "generated")) == Some(true);
+        if !(required_by_phase || required_by_flag) {
+            continue;
+        }
+        if artifact_present(&paths.directory().join(artifact)) {
+            continue;
+        }
+        findings.push(Finding {
+            severity: Severity::Error,
+            code: "spec.generated.artifact-missing",
+            message: format!("required artifact `{artifact}` is missing"),
+            file: artifact.to_string(),
+            line: None,
+        });
+    }
+    findings
+}
+
+/// Whether `tasks.md` carries at least one `_Requirements:` metadata bullet.
+///
+/// The parser already skips fenced code blocks and attaches a bullet only to
+/// its entry block. A missing or undecodable `tasks.md` contributes no
+/// references here; `tasks.unreadable` is reported by the tasks rule set.
+fn references_requirements(paths: &SpecPaths) -> bool {
+    let ArtifactRead::Text(text) = read_artifact(&paths.tasks_md()) else {
+        return false;
+    };
+    parse_tasks(&text)
+        .entries()
+        .iter()
+        .flat_map(|entry| entry.block.metadata())
+        .any(|bullet| bullet.kind() == MetadataKind::Requirements)
+}
+
+/// Report `requirements.md` presence and readability defects.
+///
+/// Requirement 6.19 makes a `_Requirements:` bullet a dependency on
+/// `requirements.md`, so bullets without the file yield one
+/// `requirements.artifact-missing`. A file that exists but cannot be read or
+/// decoded is `requirements.unreadable`, which replaces per-reference
+/// resolution because no index can be built from it.
+fn requirements_artifact_findings(paths: &SpecPaths) -> Vec<Finding> {
+    let finding = |code: &'static str, message: String| Finding {
+        severity: Severity::Error,
+        code,
+        message,
+        file: "requirements.md".to_string(),
+        line: None,
+    };
+    match read_artifact(&paths.requirements_md()) {
+        ArtifactRead::Missing if references_requirements(paths) => vec![finding(
+            "requirements.artifact-missing",
+            "`_Requirements:` references exist but `requirements.md` is missing".to_string(),
+        )],
+        ArtifactRead::Unreadable(detail) => vec![finding("requirements.unreadable", detail)],
+        _ => Vec::new(),
+    }
+}
+
+/// Report generated-versus-artifact and requirements-artifact defects.
+///
+/// This is one rule set of the eventual `validate()` report: it emits
+/// `spec.generated.artifact-missing`, `requirements.artifact-missing`, and
+/// `requirements.unreadable`. It never aborts and never repairs a file, and it
+/// reads only artifacts inside the resolved spec directory.
+pub fn artifact_presence_findings(paths: &SpecPaths) -> Vec<Finding> {
+    let mut findings = generated_artifact_findings(paths);
+    findings.extend(requirements_artifact_findings(paths));
     findings
 }
 
@@ -1506,6 +1661,260 @@ mod tests {
                 .iter()
                 .any(|finding| finding.code == "spec.ready.without-tasks-approval"),
             "the readiness rule is skipped when its field is absent"
+        );
+    }
+
+    /// The artifact names reported by `spec.generated.artifact-missing`, in
+    /// emission order.
+    fn reported_artifacts(findings: &[Finding]) -> Vec<&str> {
+        findings
+            .iter()
+            .filter(|finding| finding.code == "spec.generated.artifact-missing")
+            .map(|finding| finding.file.as_str())
+            .collect()
+    }
+
+    /// A `tasks.md` whose single entry references requirement `1.1`.
+    const REFERENCING_TASKS: &[u8] = b"- [ ] 1. Implement the parser\n  - _Requirements: 1.1_\n";
+
+    #[test]
+    fn a_true_generated_flag_requires_its_artifact_before_the_phase() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document("initialized", [true, false, false], [false; 3], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec!["spec.generated.artifact-missing"],
+            "only the artifact of the true flag is required: {:?}",
+            messages(&findings)
+        );
+        let finding = &findings[0];
+        assert_eq!(finding.severity, Severity::Error);
+        assert_eq!(finding.file, "requirements.md");
+        assert_eq!(finding.line, None);
+        assert!(
+            finding.message.contains("requirements.md"),
+            "the message must name the artifact, got {:?}",
+            finding.message
+        );
+
+        fixture.write(&paths, "requirements.md", b"### Requirement 1: Parser\n");
+        assert!(
+            artifact_presence_findings(&paths).is_empty(),
+            "a present artifact satisfies its generated flag"
+        );
+    }
+
+    #[test]
+    fn a_phase_requires_every_artifact_at_or_below_it() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+
+        let cases: [(Phase, &[&str]); 6] = [
+            (Phase::Initialized, &[]),
+            (Phase::RequirementsGenerated, &["requirements.md"]),
+            (Phase::DesignGenerated, &["requirements.md", "design.md"]),
+            (
+                Phase::TasksGenerated,
+                &["requirements.md", "design.md", "tasks.md"],
+            ),
+            (
+                Phase::TasksApproved,
+                &["requirements.md", "design.md", "tasks.md"],
+            ),
+            (
+                Phase::Implemented,
+                &["requirements.md", "design.md", "tasks.md"],
+            ),
+        ];
+
+        for (phase, expected) in cases {
+            let document = spec_document(phase.as_str(), [false; 3], [false; 3], false);
+            fixture.write(&paths, "spec.json", document.as_bytes());
+
+            let findings = artifact_presence_findings(&paths);
+
+            assert_eq!(
+                reported_artifacts(&findings),
+                expected,
+                "phase {} requires exactly the artifacts at or below it: {:?}",
+                phase.as_str(),
+                messages(&findings)
+            );
+            assert!(
+                findings
+                    .iter()
+                    .all(|finding| finding.severity == Severity::Error && finding.line.is_none()),
+                "artifact findings are file-level errors"
+            );
+        }
+    }
+
+    #[test]
+    fn an_artifact_required_by_phase_and_flag_is_reported_once() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document("tasks-generated", [true; 3], [true; 3], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            reported_artifacts(&findings),
+            vec!["requirements.md", "design.md", "tasks.md"],
+            "each artifact is reported once even when both rules require it: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(
+            findings.len(),
+            3,
+            "phase and flag rules must be deduplicated"
+        );
+    }
+
+    #[test]
+    fn a_directory_in_place_of_an_artifact_counts_as_missing() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document("initialized", [true; 3], [false; 3], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+        std::fs::create_dir_all(paths.directory().join("requirements.md"))
+            .expect("the artifact directory is created");
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert!(
+            reported_artifacts(&findings).contains(&"requirements.md"),
+            "a directory is not a readable artifact: {:?}",
+            messages(&findings)
+        );
+    }
+
+    #[test]
+    fn an_unknown_phase_skips_phase_rules_but_not_true_flags() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document("future-phase", [true, false, false], [false; 3], false);
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            reported_artifacts(&findings),
+            vec!["requirements.md"],
+            "an unknown phase cannot require an artifact, but its flag still does: {:?}",
+            messages(&findings)
+        );
+    }
+
+    #[test]
+    fn an_absent_generated_flag_does_not_hide_a_phase_requirement() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document("requirements-generated", [false; 3], [false; 3], false)
+            .replace(
+                "\"requirements\": { \"generated\": false, \"approved\": false }",
+                "\"requirements\": { \"approved\": false }",
+            );
+        fixture.write(&paths, "spec.json", document.as_bytes());
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            reported_artifacts(&findings),
+            vec!["requirements.md"],
+            "the phase rule does not depend on reading the flag: {:?}",
+            messages(&findings)
+        );
+    }
+
+    #[test]
+    fn a_referenced_missing_requirements_file_is_reported_once() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "tasks.md", REFERENCING_TASKS);
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec!["requirements.artifact-missing"],
+            "a referenced but absent requirements.md is one finding: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].file, "requirements.md");
+        assert_eq!(findings[0].line, None);
+        for needle in ["_Requirements:", "requirements.md"] {
+            assert!(
+                findings[0].message.contains(needle),
+                "the message must name {needle:?}, got {:?}",
+                findings[0].message
+            );
+        }
+    }
+
+    #[test]
+    fn an_undecodable_requirements_file_is_reported() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        let document = spec_document(
+            "requirements-generated",
+            [true, false, false],
+            [false; 3],
+            false,
+        );
+        fixture.write(&paths, "spec.json", document.as_bytes());
+        fixture.write(&paths, "tasks.md", REFERENCING_TASKS);
+        fixture.write(&paths, "requirements.md", b"### Requirement 1: \xff\n");
+
+        let findings = artifact_presence_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec!["requirements.unreadable"],
+            "a present but undecodable file is unreadable, not missing: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].file, "requirements.md");
+        assert_eq!(findings[0].line, None);
+        assert!(
+            findings[0].message.contains("UTF-8"),
+            "the message must state the decoding problem, got {:?}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn requirements_artifact_rules_are_quiet_without_references() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "tasks.md", b"- [ ] 1. Implement the parser\n");
+        assert!(
+            artifact_presence_findings(&paths).is_empty(),
+            "an absent requirements.md with no references is not a finding"
+        );
+
+        fixture.write(&paths, "requirements.md", b"### Requirement 1: Parser\n");
+        assert!(
+            artifact_presence_findings(&paths).is_empty(),
+            "a readable requirements.md is not a finding"
+        );
+
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n\n```\n  - _Requirements: 1.1_\n```\n",
+        );
+        std::fs::remove_file(paths.requirements_md()).expect("the fixture file is removed");
+        assert!(
+            artifact_presence_findings(&paths).is_empty(),
+            "a bullet inside a fenced block is not a reference"
         );
     }
 }
