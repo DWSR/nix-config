@@ -108,7 +108,16 @@ test('deploy: streams tree, installs age key, and runs switch with stubs', () =>
 
   const log = fs.readFileSync(logFile, 'utf8');
   assert.match(log, /tar -xzf - -C/);
+  const keyDirSetup = log.indexOf(
+    'sudo -A /usr/bin/install -d -m 0755 -o root -g wheel /var/lib/sops-nix',
+  );
+  const keyWrite = log.indexOf('sudo -A tee /var/lib/sops-nix/key.txt');
+  assert.ok(keyDirSetup >= 0, 'expected privileged creation of the sops-nix directory');
+  assert.ok(keyWrite > keyDirSetup, 'expected the key directory to exist before writing the key');
   assert.match(log, /tee \/var\/lib\/sops-nix\/key\.txt/);
+  assert.match(log, /curl -fsSL https:\/\/nixos\.org\/nix\/install \| SUDO_ASKPASS=\/tmp\/mac-builder-askpass sudo -A sh/);
+  assert.match(log, /read op:\/\/Private\/mac-builder vm password\/password/);
+  assert.match(log, /cat \/tmp\/mac-builder-password/);
   assert.match(log, /darwin-rebuild switch|nix run .* switch/);
   assert.doesNotMatch(log, /mount/i);
 });

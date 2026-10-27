@@ -25,6 +25,7 @@ pkgs.writeShellApplication {
     scratch=/tmp/mac-builder-deploy
 
     AGE_KEY_REF=''${MAC_BUILDER_AGE_KEY_REF:-op://Private/sops-age-key-mac-builder/notesPlain}
+    VM_PASSWORD_REF=''${MAC_BUILDER_VM_PASSWORD_REF:-op://Private/mac-builder vm password/password}
 
     remote() {
       ssh -F "$sshConfig" "$remoteHost" "$@"
@@ -35,7 +36,8 @@ pkgs.writeShellApplication {
       exit 1
     fi
 
-    remote -- "printf '%s\\n' '#!/bin/sh' 'cat \"\$HOME/password\"' > /tmp/mac-builder-askpass && chmod 700 /tmp/mac-builder-askpass"
+    vm_password="$(op read "$VM_PASSWORD_REF")"
+    printf '%s' "$vm_password" | remote -- "umask 077 && cat > /tmp/mac-builder-password && printf '%s\\n' '#!/bin/sh' 'cat /tmp/mac-builder-password' > /tmp/mac-builder-askpass && chmod 700 /tmp/mac-builder-askpass"
 
     remote -- "rm -rf '$scratch' && mkdir -p '$scratch'"
 
@@ -46,11 +48,11 @@ pkgs.writeShellApplication {
       | remote -- "tar -xzf - -C '$scratch'"
 
     age_key="$(op read "$AGE_KEY_REF")"
-    remote -- "mkdir -p /var/lib/sops-nix"
+    remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A /usr/bin/install -d -m 0755 -o root -g wheel /var/lib/sops-nix"
     printf '%s' "$age_key" | remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A tee /var/lib/sops-nix/key.txt >/dev/null"
     remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A chmod 600 /var/lib/sops-nix/key.txt"
 
-    remote -- "if ! command -v nix >/dev/null 2>&1; then curl -fsSL https://nixos.org/nix/install | sh; fi"
+    remote -- "if ! command -v nix >/dev/null 2>&1; then curl -fsSL https://nixos.org/nix/install | SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A sh; fi"
 
     if remote -- "command -v darwin-rebuild >/dev/null 2>&1"; then
       remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A darwin-rebuild switch --flake '$scratch#mac-builder'"
