@@ -23,3 +23,19 @@ pub struct Finding {
     /// The 1-based source line, when the finding applies to a line.
     pub line: Option<usize>,
 }
+
+/// The findings produced by one validation run.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ValidationReport {
+    /// Every finding, in the order the reporter renders it.
+    pub findings: Vec<Finding>,
+}
+
+impl ValidationReport {
+    /// Whether any finding has error severity.
+    pub fn has_errors(&self) -> bool {
+        self.findings
+            .iter()
+            .any(|finding| finding.severity == Severity::Error)
+    }
+}
