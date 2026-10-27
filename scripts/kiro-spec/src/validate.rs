@@ -12,8 +12,9 @@ use std::path::Path;
 use serde_json::Value;
 
 use crate::paths::SpecPaths;
+use crate::requirements::{tokenize, ReferenceProblem, RequirementsIndex};
 use crate::spec_json::Phase;
-use crate::tasks::{parse_tasks, MetadataKind};
+use crate::tasks::{parse_tasks, MetadataKind, TaskDocument};
 
 /// The severity of one validation finding.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -562,6 +563,94 @@ fn requirements_artifact_findings(paths: &SpecPaths) -> Vec<Finding> {
 pub fn artifact_presence_findings(paths: &SpecPaths) -> Vec<Finding> {
     let mut findings = generated_artifact_findings(paths);
     findings.extend(requirements_artifact_findings(paths));
+    findings
+}
+
+/// The spec-relative name of the `tasks.md` artifact.
+const TASKS_FILE: &str = "tasks.md";
+
+/// Resolve every `_Requirements:` token of one parsed document against the
+/// requirements index.
+///
+/// Requirement 6.20 reports a malformed or unresolvable token as an error at the
+/// metadata bullet's own line, never at the referenced line in
+/// `requirements.md`. Each token is reported once, so a bullet naming two
+/// unknown references yields two findings with distinct messages.
+fn reference_findings(document: &TaskDocument, index: &RequirementsIndex) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for entry in document.entries() {
+        for bullet in entry.block.metadata() {
+            if bullet.kind() != MetadataKind::Requirements {
+                continue;
+            }
+            for reference in tokenize(bullet.payload()) {
+                let (code, message) = match index.resolve(&reference) {
+                    Ok(()) => continue,
+                    Err(ReferenceProblem::Malformed) => (
+                        "requirements.ref.malformed",
+                        format!(
+                            "`_Requirements:_` token `{}` is not a requirement or acceptance-criterion reference",
+                            reference.text()
+                        ),
+                    ),
+                    Err(ReferenceProblem::Unresolved) => (
+                        "requirements.ref.unresolved",
+                        format!(
+                            "`_Requirements:_` token `{}` does not resolve to a requirement or acceptance criterion in requirements.md",
+                            reference.text()
+                        ),
+                    ),
+                };
+                findings.push(Finding {
+                    severity: Severity::Error,
+                    code,
+                    message,
+                    file: TASKS_FILE.to_string(),
+                    line: Some(bullet.line()),
+                });
+            }
+        }
+    }
+    findings
+}
+
+/// Report `tasks.md` access, grammar, and `_Requirements:` reference defects.
+///
+/// This is one rule set of the eventual `validate()` report. An undecodable
+/// `tasks.md` yields one `tasks.unreadable` error and nothing else, because no
+/// entry, metadata bullet, or reference can be read from it; an absent
+/// `tasks.md` yields nothing here, since artifact presence is reported by the
+/// artifact rule. A readable document contributes every parser finding
+/// unchanged plus one finding per malformed or unresolved reference token.
+///
+/// Reference resolution needs the requirements index, so it is skipped when
+/// `requirements.md` is absent or undecodable: the artifact rule already
+/// reports that defect, and resolution would otherwise collapse every token
+/// into an unresolved finding. The merged findings are sorted by
+/// `(file, line, code, message)`, so the caller never re-sorts this rule set and
+/// warning/error classification survives the merge.
+pub fn tasks_findings(paths: &SpecPaths) -> Vec<Finding> {
+    let text = match read_artifact(&paths.tasks_md()) {
+        ArtifactRead::Missing => return Vec::new(),
+        ArtifactRead::Unreadable(detail) => {
+            return vec![Finding {
+                severity: Severity::Error,
+                code: "tasks.unreadable",
+                message: detail,
+                file: TASKS_FILE.to_string(),
+                line: None,
+            }]
+        }
+        ArtifactRead::Text(text) => text,
+    };
+
+    let document = parse_tasks(&text);
+    let mut findings = document.findings().to_vec();
+    if let ArtifactRead::Text(requirements) = read_artifact(&paths.requirements_md()) {
+        let index = RequirementsIndex::build(&requirements);
+        findings.extend(reference_findings(&document, &index));
+    }
+    findings.sort();
     findings
 }
 
@@ -1915,6 +2004,269 @@ mod tests {
         assert!(
             artifact_presence_findings(&paths).is_empty(),
             "a bullet inside a fenced block is not a reference"
+        );
+    }
+
+    /// A `requirements.md` that declares requirement 1 with two criteria and
+    /// requirement 2 with one.
+    const REQUIREMENTS_INDEX: &str = "\
+### Requirement 1: One binary
+
+#### Acceptance Criteria
+
+1. The configuration provides the executable.
+2. The CLI operates offline.
+
+### Requirement 2: Validation
+
+#### Acceptance Criteria
+
+1. Findings are sorted.
+";
+
+    #[test]
+    fn an_undecodable_tasks_file_is_reported_as_unreadable() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "tasks.md", b"- [ ] 1. \xff8\n");
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+
+        let findings = tasks_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec!["tasks.unreadable"],
+            "an undecodable tasks.md has no parsable entries or references: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(findings[0].severity, Severity::Error);
+        assert_eq!(findings[0].file, "tasks.md");
+        assert_eq!(findings[0].line, None, "an access finding has no line");
+        assert!(
+            findings[0].message.contains("UTF-8"),
+            "the diagnostic must state the decoding problem, got {:?}",
+            findings[0].message
+        );
+    }
+
+    #[test]
+    fn a_missing_tasks_file_contributes_no_task_finding() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+
+        assert!(
+            tasks_findings(&paths).is_empty(),
+            "an absent tasks.md is the artifact rule's concern, not a task finding"
+        );
+    }
+
+    /// A `tasks.md` mixing every grammar defect the parser classifies with one
+    /// valid entry.
+    const DEFECT_TASKS: &str = "\
+- [ ] no numeric identifier
+- [ ] 1.2.3 more than two levels
+- [ ] 2x not numeric
+- [ ] 3 . spaced identifier
+- [ ] 1. Duplicate identifier
+- [ ] 1. Duplicate identifier again
+- [ ] 4. A valid entry
+";
+
+    #[test]
+    fn parser_findings_are_carried_into_the_report_unchanged() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "tasks.md", DEFECT_TASKS.as_bytes());
+
+        let mut expected = parse_tasks(DEFECT_TASKS).findings().to_vec();
+        expected.sort();
+
+        let findings = tasks_findings(&paths);
+
+        assert_eq!(
+            findings, expected,
+            "every parser finding is reported with its severity, code, message, file, and line"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Warning
+                    && finding.code == "tasks.line.unnumbered"),
+            "the unnumbered checkbox stays a warning: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.severity == Severity::Error
+                    && finding.code == "tasks.id.depth"),
+            "the depth defect stays an error: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.code == "tasks.id.duplicate" && finding.line == Some(6)),
+            "the duplicate is reported at its own line: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            findings.iter().all(|finding| finding.file == "tasks.md"),
+            "task findings are spec-relative tasks.md findings"
+        );
+    }
+
+    #[test]
+    fn malformed_and_unresolved_references_are_reported_at_the_bullet_line() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n  - _Requirements: 1.1, 2.1, 9.4, 18.1-18.9_\n- [ ] 2. Wire the adapter\n  - _Requirements: 1.2,\n    7.6_\n",
+        );
+
+        let findings = tasks_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec![
+                "requirements.ref.malformed",
+                "requirements.ref.unresolved",
+                "requirements.ref.unresolved",
+            ],
+            "only the malformed and unresolved tokens are reported: {:?}",
+            messages(&findings)
+        );
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.severity == Severity::Error && finding.file == "tasks.md"),
+            "reference findings are tasks.md errors at the bullet line"
+        );
+
+        let malformed = &findings[0];
+        assert_eq!(malformed.line, Some(2), "the bullet's line is reported");
+        assert!(
+            malformed.message.contains("18.1-18.9"),
+            "the message must name the malformed token, got {:?}",
+            malformed.message
+        );
+
+        let first_unresolved = &findings[1];
+        assert_eq!(first_unresolved.line, Some(2));
+        assert!(
+            first_unresolved.message.contains("9.4"),
+            "the message must name the unresolved token, got {:?}",
+            first_unresolved.message
+        );
+
+        let multiline = &findings[2];
+        assert_eq!(
+            multiline.line,
+            Some(4),
+            "a multi-line bullet is reported at its own first line"
+        );
+        assert!(
+            multiline.message.contains("7.6"),
+            "the message must name the token continued onto the next line, got {:?}",
+            multiline.message
+        );
+    }
+
+    #[test]
+    fn reference_resolution_is_skipped_without_a_readable_requirements_file() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n  - _Requirements: 9.4_\n",
+        );
+
+        assert!(
+            tasks_findings(&paths).is_empty(),
+            "an absent requirements.md is reported by the artifact rule, not per reference"
+        );
+
+        fixture.write(&paths, "requirements.md", b"### Requirement 1: \xff\n");
+        assert!(
+            tasks_findings(&paths).is_empty(),
+            "an unreadable requirements.md builds no index, so no reference is resolved"
+        );
+
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        assert_eq!(
+            codes(&tasks_findings(&paths)),
+            vec!["requirements.ref.unresolved"],
+            "a readable requirements.md resolves every token again"
+        );
+    }
+
+    #[test]
+    fn a_spec_with_task_and_reference_defects_reports_both_in_documented_order() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] no numeric identifier\n- [ ] 1. First copy\n- [ ] 1. Second copy\n  - _Requirements: 9.4, 18.1-18.9_\n",
+        );
+
+        let findings = tasks_findings(&paths);
+
+        assert_eq!(
+            codes(&findings),
+            vec![
+                "tasks.line.unnumbered",
+                "tasks.id.duplicate",
+                "requirements.ref.malformed",
+                "requirements.ref.unresolved",
+            ],
+            "grammar and reference defects both merge in (file, line, code, message) order: {:?}",
+            messages(&findings)
+        );
+        assert_eq!(
+            findings[0].severity,
+            Severity::Warning,
+            "the unnumbered checkbox keeps its warning classification"
+        );
+        assert!(
+            findings[1..]
+                .iter()
+                .all(|finding| finding.severity == Severity::Error),
+            "the merged defects after the warning are errors"
+        );
+        assert!(
+            findings.windows(2).all(|pair| pair[0] <= pair[1]),
+            "the merged report keeps the documented order"
+        );
+    }
+
+    #[test]
+    fn a_fully_valid_spec_reports_no_findings() {
+        let fixture = SpecFixture::new();
+        let paths = fixture.paths("demo");
+        fixture.write(&paths, "spec.json", valid_spec("demo").as_bytes());
+        fixture.write(&paths, "requirements.md", REQUIREMENTS_INDEX.as_bytes());
+        fixture.write(&paths, "design.md", b"# Design\n");
+        fixture.write(
+            &paths,
+            "tasks.md",
+            b"- [ ] 1. Implement the parser\n  - _Requirements: 1.1, 1.2_\n  - _Boundary: parser (`src/tasks.rs`)_\n",
+        );
+
+        let mut findings = spec_json_findings(&paths);
+        findings.extend(artifact_presence_findings(&paths));
+        findings.extend(tasks_findings(&paths));
+
+        assert!(
+            findings.is_empty(),
+            "a clean spec reports no findings: {:?}",
+            messages(&findings)
         );
     }
 }
