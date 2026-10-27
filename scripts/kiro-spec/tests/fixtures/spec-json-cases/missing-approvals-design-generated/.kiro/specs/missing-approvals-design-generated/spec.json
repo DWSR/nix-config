@@ -1,0 +1,21 @@
+{
+  "feature_name": "missing-approvals-design-generated",
+  "created_at": "2026-10-26T00:00:00Z",
+  "updated_at": "2026-10-26T01:00:00Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": false,
+      "approved": false
+    },
+    "design": {
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "phase": "initialized",
+  "ready_for_implementation": false
+}

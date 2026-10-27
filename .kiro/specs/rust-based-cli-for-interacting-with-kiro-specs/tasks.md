@@ -154,7 +154,7 @@ Ready-to-implement breakdown for the `kiro-spec` CLI defined by `brief.md`, `req
   - Provide helpers to copy a fixture tree into a temp directory, hash a tree before and after a run, and force a read-only spec directory.
   - Confirm a harness self-test round-trips a temporary spec tree and reports captured streams without writing under the repository.
   - _Requirements: 11.1, 11.8_
-- [ ] 8.2 Add the fixture spec trees
+- [x] 8.2 Add the fixture spec trees
   - Add `tests/fixtures/basic/` covering pending, optional, completed, blocked, grouping, adjacent-entry, multi-line-metadata, and legacy `_Blocked:` prose cases.
   - Add `tests/fixtures/malformed/` covering depth, non-numeric, duplicate, malformed, unnumbered, and 50-entry documents, and `tests/fixtures/spec-json-cases/` with one tree per required-field and phase/approval rule.
   - Confirm each fixture parses through the harness and the malformed set triggers exactly its intended finding codes.
