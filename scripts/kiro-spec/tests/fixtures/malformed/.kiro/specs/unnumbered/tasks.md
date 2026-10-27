@@ -1,0 +1,2 @@
+- [x] run nix fmt
+- [ ] 1. Real task
