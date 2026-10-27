@@ -11,6 +11,8 @@
 //! ATX heading, and carries the indented metadata bullets and continuation
 //! prose written beneath it.
 
+use crate::error::MutationError;
+
 /// The state encoded by a task line's checkbox.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskState {
@@ -211,6 +213,24 @@ impl Terminator {
     }
 }
 
+/// Aggregate task counts by state.
+///
+/// `completed + pending + blocked` always equals `total`; `optional_pending`
+/// is a subset of `pending`, not an additional state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TaskCounts {
+    /// Every parsed entry, whatever its state.
+    pub total: usize,
+    /// Entries whose checkbox is `[x]`.
+    pub completed: usize,
+    /// Entries whose checkbox is `[ ]`.
+    pub pending: usize,
+    /// Entries whose checkbox is `[!]`.
+    pub blocked: usize,
+    /// Pending entries that carried the `*` optional marker.
+    pub optional_pending: usize,
+}
+
 /// A parsed `tasks.md` document: its source lines and its task entries.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TaskDocument {
@@ -244,6 +264,70 @@ impl TaskDocument {
             bytes.extend_from_slice(line.terminator().bytes());
         }
         bytes
+    }
+
+    /// Count every entry by state and count the optional pending subset.
+    ///
+    /// The three state counts sum to `total` because every entry has exactly
+    /// one state.
+    pub fn counts(&self) -> TaskCounts {
+        let mut counts = TaskCounts {
+            total: self.entries.len(),
+            ..TaskCounts::default()
+        };
+        for entry in &self.entries {
+            match entry.state {
+                TaskState::Completed => counts.completed += 1,
+                TaskState::Pending => {
+                    counts.pending += 1;
+                    if entry.optional {
+                        counts.optional_pending += 1;
+                    }
+                }
+                TaskState::Blocked => counts.blocked += 1,
+            }
+        }
+        counts
+    }
+
+    /// The first entry in document order that is not completed and owns no
+    /// subtasks.
+    ///
+    /// A grouping entry is never selected, even while it is unchecked: its
+    /// children carry the actionable work. When every childless entry is
+    /// completed there is no next task, so an unchecked grouping alone yields
+    /// `None`.
+    pub fn next_actionable(&self) -> Option<&TaskEntry> {
+        self.entries
+            .iter()
+            .find(|entry| entry.state != TaskState::Completed && !entry.has_children)
+    }
+
+    /// Resolve one canonical `N` or `N.M` identifier to its entry.
+    ///
+    /// One trailing `.` is accepted, matching the CLI's identifier grammar.
+    /// Anything else that is not already canonical, any identifier with no
+    /// matching entry, and any identifier shared by more than one entry is
+    /// refused with a conflict naming the identifier.
+    pub fn find_unique(&self, id: &str) -> Result<&TaskEntry, MutationError> {
+        let canonical = canonical_identifier(id).ok_or_else(|| {
+            MutationError::conflict(id, "invalid task identifier; expected N or N.M")
+        })?;
+        let mut matches = self
+            .entries
+            .iter()
+            .filter(|entry| entry.id.text == canonical);
+        let first = matches
+            .next()
+            .ok_or_else(|| MutationError::conflict(id, "no task matches this identifier"))?;
+        let occurrences = 1 + matches.count();
+        if occurrences > 1 {
+            return Err(MutationError::conflict(
+                id,
+                format!("identifier matches more than one entry ({occurrences} occurrences)"),
+            ));
+        }
+        Ok(first)
     }
 }
 
@@ -387,6 +471,33 @@ fn canonical_number(digits: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+/// Canonicalise a user-supplied identifier, accepting one trailing `.`.
+///
+/// Only identifiers the parser can report are matchable, so each numeric
+/// segment must already be canonical: `1` and `1.2` resolve, while `01` and
+/// `1.02` are refused rather than silently rewritten.
+fn canonical_identifier(value: &str) -> Option<String> {
+    let core = value.strip_suffix('.').unwrap_or(value);
+    let mut parts = core.split('.');
+    let major = canonical_segment(parts.next()?)?;
+    match (parts.next(), parts.next()) {
+        (None, _) => Some(major.to_string()),
+        (Some(minor), None) => Some(format!("{major}.{}", canonical_segment(minor)?)),
+        (Some(_), Some(_)) => None,
+    }
+}
+
+/// A numeric identifier segment that is already in canonical form.
+fn canonical_segment(text: &str) -> Option<&str> {
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    if text.len() > 1 && text.starts_with('0') {
+        return None;
+    }
+    Some(text)
 }
 
 /// The 0-based exclusive end of the block that starts at `start`.
@@ -625,6 +736,7 @@ fn split_lines(text: &str) -> Vec<SourceLine> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorCategory;
 
     const BASIC: &str = "\
 # Implementation Plan
@@ -977,5 +1089,282 @@ mod tests {
         assert_eq!(crlf.entries().len(), 2);
         assert_eq!(crlf.entries()[0].line, 1);
         assert_eq!(crlf.entries()[1].line, 4);
+    }
+
+    #[test]
+    fn derives_state_from_the_checkbox_character_for_all_six_markers() {
+        let text = "\
+- [ ] 1.1 Pending required
+- [ ]* 1.2 Pending optional
+- [x] 1.3 Completed required
+- [x]* 1.4 Completed optional
+- [!] 1.5 Blocked required
+- [!]* 1.6 Blocked optional
+  - _Blocked: waiting on review_
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            document
+                .entries()
+                .iter()
+                .map(|entry| entry.state)
+                .collect::<Vec<_>>(),
+            vec![
+                TaskState::Pending,
+                TaskState::Pending,
+                TaskState::Completed,
+                TaskState::Completed,
+                TaskState::Blocked,
+                TaskState::Blocked,
+            ],
+            "only the checkbox character decides the state"
+        );
+        assert_eq!(
+            document
+                .entries()
+                .iter()
+                .map(|entry| entry.optional)
+                .collect::<Vec<_>>(),
+            vec![false, true, false, true, false, true],
+            "the optional marker survives in every state"
+        );
+        assert_eq!(
+            document
+                .entries()
+                .iter()
+                .map(|entry| entry.blocked_reason.as_deref())
+                .collect::<Vec<_>>(),
+            vec![None, None, None, None, None, Some("waiting on review")],
+            "only the blocked entry reports a reason"
+        );
+    }
+
+    #[test]
+    fn ignores_a_blocked_bullet_on_non_blocked_entries() {
+        let text = "\
+- [ ] 1. Pending
+  - _Blocked: stale note_
+- [x] 2. Completed
+  - _Blocked: another stale note_
+- [!] 3. Blocked
+  - _Blocked: real reason_
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            document
+                .entries()
+                .iter()
+                .map(|entry| entry.blocked_reason.as_deref())
+                .collect::<Vec<_>>(),
+            vec![None, None, Some("real reason")],
+            "state comes from the checkbox, not from a `_Blocked:` bullet"
+        );
+    }
+
+    #[test]
+    fn counts_every_state_and_the_optional_pending_subset() {
+        let text = "\
+- [ ] 1. Group
+- [ ]* 1.1 Optional pending
+- [x] 1.2 Completed
+- [x]* 1.3 Optional completed
+- [!] 1.4 Blocked
+- [!]* 1.5 Optional blocked
+- [ ]* 2. Optional pending major
+";
+        let document = parse_tasks(text);
+        let counts = document.counts();
+
+        assert_eq!(counts.total, 7);
+        assert_eq!(
+            counts.pending, 3,
+            "grouping and optional pending entries are pending"
+        );
+        assert_eq!(counts.completed, 2);
+        assert_eq!(counts.blocked, 2);
+        assert_eq!(
+            counts.completed + counts.pending + counts.blocked,
+            counts.total,
+            "state counts must sum to the total"
+        );
+        assert_eq!(
+            counts.optional_pending, 2,
+            "only pending optional entries count as optional pending"
+        );
+    }
+
+    #[test]
+    fn an_empty_document_counts_nothing_and_selects_nothing() {
+        let document = parse_tasks("# Implementation Plan\n");
+
+        assert_eq!(
+            document.counts(),
+            TaskCounts {
+                total: 0,
+                completed: 0,
+                pending: 0,
+                blocked: 0,
+                optional_pending: 0,
+            }
+        );
+        assert!(document.next_actionable().is_none());
+        assert!(document.find_unique("1").is_err());
+    }
+
+    #[test]
+    fn next_actionable_is_the_first_pending_childless_entry() {
+        let text = "\
+- [ ] 1. Group
+- [x] 1.1 Completed child
+- [ ] 1.2 Next child
+- [ ] 2. Separate major
+";
+        let document = parse_tasks(text);
+        let next = document
+            .next_actionable()
+            .expect("a childless pending entry exists");
+
+        assert_eq!(
+            next.id.text, "1.2",
+            "grouping entries are skipped in document order"
+        );
+    }
+
+    #[test]
+    fn next_actionable_reports_a_blocked_entry_with_its_reason() {
+        let text = "\
+- [x] 1. Completed
+- [!] 2. Blocked work
+  - _Blocked: needs credentials_
+- [ ] 3. Later work
+";
+        let document = parse_tasks(text);
+        let next = document
+            .next_actionable()
+            .expect("the blocked entry is not completed");
+
+        assert_eq!(next.id.text, "2");
+        assert_eq!(next.state, TaskState::Blocked);
+        assert_eq!(next.blocked_reason.as_deref(), Some("needs credentials"));
+    }
+
+    #[test]
+    fn next_actionable_leaves_unchecked_groupings_unselected() {
+        let text = "\
+- [ ] 1. Group
+- [x] 1.1 Done child
+- [x]* 1.2 Done optional child
+- [x] 2. Done major
+";
+        let document = parse_tasks(text);
+
+        assert!(
+            document.next_actionable().is_none(),
+            "an unchecked grouping with no unfinished child is never selected"
+        );
+    }
+
+    #[test]
+    fn next_actionable_treats_majors_without_subtasks_as_actionable() {
+        let text = "\
+- [ ] 1. First major
+- [ ] 2. Second major
+";
+        let document = parse_tasks(text);
+
+        assert_eq!(
+            document
+                .next_actionable()
+                .map(|entry| entry.id.text.as_str()),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn find_unique_resolves_canonical_ids_and_one_trailing_dot() {
+        let document = parse_tasks(BASIC);
+
+        for (query, expected) in [
+            ("1", "1"),
+            ("1.2", "1.2"),
+            ("2", "2"),
+            ("1.", "1"),
+            ("1.2.", "1.2"),
+        ] {
+            let entry = document
+                .find_unique(query)
+                .unwrap_or_else(|error| panic!("{query} must resolve: {error}"));
+            assert_eq!(entry.id.text, expected, "query {query}");
+        }
+    }
+
+    #[test]
+    fn find_unique_refuses_malformed_identifiers() {
+        let document = parse_tasks(BASIC);
+
+        for query in [
+            "", ".", "..", "1..2", ".1", "1.2.3", "x", "1.x", " 1", "1 ", "-1", "01", "1.02",
+        ] {
+            let error = document
+                .find_unique(query)
+                .expect_err(&format!("{query:?} is not a canonical identifier"));
+            assert_eq!(error.category(), ErrorCategory::Conflict, "{query:?}");
+            assert_eq!(error.category().exit_code(), 1, "{query:?}");
+            assert_eq!(error.context(), query, "{query:?}");
+        }
+    }
+
+    #[test]
+    fn find_unique_names_an_unknown_identifier() {
+        let document = parse_tasks(BASIC);
+
+        for query in ["9", "1.9"] {
+            let error = document
+                .find_unique(query)
+                .expect_err(&format!("{query:?} matches no entry"));
+            assert_eq!(error.category(), ErrorCategory::Conflict, "{query:?}");
+            assert_eq!(error.context(), query, "{query:?}");
+            assert!(
+                error.detail().contains("no task"),
+                "{query:?}: {:?}",
+                error.detail()
+            );
+        }
+    }
+
+    #[test]
+    fn find_unique_refuses_ambiguous_identifiers() {
+        let text = "\
+- [ ] 1. First
+- [x] 1. Duplicate major
+- [ ] 1.1 Child
+- [x] 1.1 Duplicate child
+- [ ] 2. Unique
+";
+        let document = parse_tasks(text);
+
+        for query in ["1", "1.1"] {
+            let error = document
+                .find_unique(query)
+                .expect_err(&format!("{query} matches more than one entry"));
+            assert_eq!(error.category(), ErrorCategory::Conflict, "{query}");
+            assert_eq!(error.category().exit_code(), 1, "{query}");
+            assert_eq!(error.context(), query);
+            assert!(
+                error.detail().contains("more than one"),
+                "{query}: {:?}",
+                error.detail()
+            );
+        }
+        assert_eq!(
+            document
+                .find_unique("2")
+                .expect("identifier is unique")
+                .id
+                .text,
+            "2"
+        );
     }
 }
