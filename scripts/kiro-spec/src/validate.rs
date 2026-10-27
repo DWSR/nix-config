@@ -291,21 +291,28 @@ mod tests {
 
     #[test]
     fn has_errors_reports_error_only_warning_only_and_empty_reports() {
-        let errors = ValidationReport {
+        let error_only = ValidationReport {
             findings: vec![
                 finding(error(), "spec.json.missing", "missing", "spec.json", None),
                 finding(
-                    warning(),
-                    "tasks.line.unnumbered",
-                    "no identifier",
-                    "tasks.md",
-                    Some(1),
+                    error(),
+                    "spec.field.missing",
+                    "missing `phase`",
+                    "spec.json",
+                    None,
                 ),
             ],
         };
         assert!(
-            errors.has_errors(),
-            "one error finding makes the report invalid"
+            error_only.has_errors(),
+            "a report whose findings are all errors is invalid"
+        );
+        assert!(
+            error_only
+                .findings
+                .iter()
+                .all(|finding| finding.severity == Severity::Error),
+            "the error-only case carries no warnings"
         );
 
         let warnings = ValidationReport {
@@ -330,5 +337,25 @@ mod tests {
 
         let empty = ValidationReport::default();
         assert!(!empty.has_errors(), "an empty report is valid");
+    }
+
+    #[test]
+    fn has_errors_is_true_for_a_report_mixing_errors_and_warnings() {
+        let mixed = ValidationReport {
+            findings: vec![
+                finding(error(), "spec.json.missing", "missing", "spec.json", None),
+                finding(
+                    warning(),
+                    "tasks.line.unnumbered",
+                    "no identifier",
+                    "tasks.md",
+                    Some(1),
+                ),
+            ],
+        };
+        assert!(
+            mixed.has_errors(),
+            "a warning beside an error does not hide the error"
+        );
     }
 }
