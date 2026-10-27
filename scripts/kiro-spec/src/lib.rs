@@ -36,31 +36,32 @@ where
 
 /// Execute `args` with `execute` and publish the outcome to the given streams.
 ///
-/// `execute` returns the complete result document, or `None` when the command
-/// produces no result. The exit code is `2` for usage failures and `1` for
-/// every other failure; success always exits `0`. Tests provide their own
-/// executor to prove the mapping and stream separation without spawning a
-/// process.
+/// `execute` returns the complete result and its process status together, so a
+/// command that has a result always publishes the whole document before the
+/// status is returned. Usage failures exit `2`, every other failure exits `1`,
+/// and a result supplies its own `0` or `1`. Tests provide their own executor to
+/// prove the mapping and stream separation without spawning a process.
 pub fn run_with<I, W, E, F>(args: I, stdout: &mut W, stderr: &mut E, execute: F) -> i32
 where
     I: IntoIterator<Item = OsString>,
     W: Write,
     E: Write,
-    F: FnOnce(I) -> Result<Option<String>, error::AppError>,
+    F: FnOnce(I) -> Result<cli::Outcome, error::AppError>,
 {
     match execute(args) {
-        Ok(Some(document)) => match stdout
-            .write_all(document.as_bytes())
-            .and_then(|()| stdout.flush())
-        {
-            Ok(()) => 0,
-            Err(io_error) => {
-                let error = error::AppError::write("stdout", io_error.to_string());
-                let _ = writeln!(stderr, "{}", error.diagnostic());
-                error.exit_code()
+        Ok(outcome) => {
+            if let Some(document) = outcome.document() {
+                if let Err(io_error) = stdout
+                    .write_all(document.as_bytes())
+                    .and_then(|()| stdout.flush())
+                {
+                    let error = error::AppError::write("stdout", io_error.to_string());
+                    let _ = writeln!(stderr, "{}", error.diagnostic());
+                    return error.exit_code();
+                }
             }
-        },
-        Ok(None) => 0,
+            outcome.exit_code()
+        }
         Err(error) => {
             let _ = writeln!(stderr, "{}", error.diagnostic());
             error.exit_code()
@@ -130,7 +131,7 @@ mod tests {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let code = run_with(Vec::<OsString>::new(), &mut stdout, &mut stderr, |_args| {
-            Ok(Some(document.to_string()))
+            Ok(cli::Outcome::success(Some(document.to_string())))
         });
         assert_eq!(code, 0);
         assert_eq!(String::from_utf8(stdout).unwrap(), document);
@@ -138,11 +139,35 @@ mod tests {
     }
 
     #[test]
+    fn a_validation_result_publishes_its_document_and_exits_one() {
+        let document = concat!(
+            "spec.json: error [spec.json.missing] file not found\n",
+            "1 error, 0 warnings\n",
+        );
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let code = run_with(Vec::<OsString>::new(), &mut stdout, &mut stderr, |_args| {
+            Ok(cli::Outcome::validation_errors(document.to_string()))
+        });
+        assert_eq!(code, 1, "an error-severity finding exits one");
+        assert_eq!(
+            String::from_utf8(stdout).unwrap(),
+            document,
+            "the complete report is result data on stdout"
+        );
+        assert_eq!(
+            String::from_utf8(stderr).unwrap(),
+            "",
+            "findings are never diagnostics"
+        );
+    }
+
+    #[test]
     fn a_command_without_a_result_writes_no_stdout_byte() {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let code = run_with(Vec::<OsString>::new(), &mut stdout, &mut stderr, |_args| {
-            Ok(None)
+            Ok(cli::Outcome::success(None))
         });
         assert_eq!(code, 0);
         assert!(stdout.is_empty());
@@ -166,7 +191,7 @@ mod tests {
         let mut stdout = FullStdout;
         let mut stderr = Vec::new();
         let code = run_with(Vec::<OsString>::new(), &mut stdout, &mut stderr, |_args| {
-            Ok(Some("spec: demo\n".to_string()))
+            Ok(cli::Outcome::success(Some("spec: demo\n".to_string())))
         });
         assert_eq!(code, 1);
         assert_eq!(
