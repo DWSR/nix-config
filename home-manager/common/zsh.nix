@@ -41,6 +41,7 @@ let
     zellij = mkInitCache "zellij" ''
       echo 'export ZELLIJ_AUTO_ATTACH=true' > $out
       ${config.programs.zellij.package}/bin/zellij setup --generate-auto-start zsh >> $out
+      sed -i 's/if \[\[ -z "\$ZELLIJ" \]\]; then/if [[ -z "$ZELLIJ" \&\& -z "$REX_SESSION" ]]; then/' $out
     '';
     zoxide = mkInitCache "zoxide" "${config.programs.zoxide.package}/bin/zoxide init zsh > $out";
     fzf = mkInitCache "fzf" "${config.programs.fzf.package}/bin/fzf --zsh > $out";
@@ -119,7 +120,9 @@ in
         # equivalent to the corresponding `eval "$(<tool> init zsh)"` but
         # avoids a per-invocation subprocess fork. Cumulative measured
         # savings vs. uncached: ~235ms warm.
-        source ${cachedInits.zellij}
+        if [[ -z "$REX_SESSION" ]]; then
+          source ${cachedInits.zellij}
+        fi
         source ${cachedInits.zoxide}
 
         # Extend interactive zoxide selection with top-level ~/scratch
