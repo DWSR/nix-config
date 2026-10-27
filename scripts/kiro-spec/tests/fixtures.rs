@@ -25,8 +25,6 @@ const MALFORMED: &[Expected] = &[("tasks.line.malformed", "tasks.md", Some(1), "
 const UNNUMBERED: &[Expected] = &[("tasks.line.unnumbered", "tasks.md", Some(1), "warning")];
 const LIMIT: &[Expected] = &[("tasks.limit.exceeded", "tasks.md", Some(50), "error")];
 
-const FIELD_MISSING: &[Expected] = &[("spec.field.missing", "spec.json", None, "error")];
-const FIELD_TYPE: &[Expected] = &[("spec.field.type", "spec.json", None, "error")];
 const FEATURE_NAME: &[Expected] = &[("spec.feature-name.mismatch", "spec.json", None, "error")];
 const PHASE_UNKNOWN: &[Expected] = &[("spec.phase.unknown", "spec.json", None, "error")];
 const PHASE_GENERATED: &[Expected] = &[("spec.phase.generated-false", "spec.json", None, "error")];
@@ -49,6 +47,98 @@ const ARTIFACT_MISSING: &[Expected] = &[(
     None,
     "error",
 )];
+
+/// One per-field fixture: `(case directory, spec.json field path, required type)`.
+///
+/// Each tree removes exactly one of the twelve required fields so the
+/// `spec.field.missing` rule is observed in isolation.
+const MISSING_FIELD_CASES: [(&str, &str, &str); 12] = [
+    ("missing-feature-name", "feature_name", "string"),
+    ("missing-created-at", "created_at", "string"),
+    ("missing-updated-at", "updated_at", "string"),
+    ("missing-language", "language", "string"),
+    ("missing-phase", "phase", "string"),
+    (
+        "missing-approvals-requirements-generated",
+        "approvals.requirements.generated",
+        "boolean",
+    ),
+    (
+        "missing-approvals-requirements-approved",
+        "approvals.requirements.approved",
+        "boolean",
+    ),
+    (
+        "missing-approvals-design-generated",
+        "approvals.design.generated",
+        "boolean",
+    ),
+    (
+        "missing-approvals-design-approved",
+        "approvals.design.approved",
+        "boolean",
+    ),
+    (
+        "missing-approvals-tasks-generated",
+        "approvals.tasks.generated",
+        "boolean",
+    ),
+    (
+        "missing-approvals-tasks-approved",
+        "approvals.tasks.approved",
+        "boolean",
+    ),
+    (
+        "missing-ready-for-implementation",
+        "ready_for_implementation",
+        "boolean",
+    ),
+];
+
+/// One per-field fixture: each tree gives exactly one required field the wrong
+/// JSON type so the `spec.field.type` rule is observed in isolation.
+const TYPE_FIELD_CASES: [(&str, &str, &str); 12] = [
+    ("type-feature-name", "feature_name", "string"),
+    ("type-created-at", "created_at", "string"),
+    ("type-updated-at", "updated_at", "string"),
+    ("type-language", "language", "string"),
+    ("type-phase", "phase", "string"),
+    (
+        "type-approvals-requirements-generated",
+        "approvals.requirements.generated",
+        "boolean",
+    ),
+    (
+        "type-approvals-requirements-approved",
+        "approvals.requirements.approved",
+        "boolean",
+    ),
+    (
+        "type-approvals-design-generated",
+        "approvals.design.generated",
+        "boolean",
+    ),
+    (
+        "type-approvals-design-approved",
+        "approvals.design.approved",
+        "boolean",
+    ),
+    (
+        "type-approvals-tasks-generated",
+        "approvals.tasks.generated",
+        "boolean",
+    ),
+    (
+        "type-approvals-tasks-approved",
+        "approvals.tasks.approved",
+        "boolean",
+    ),
+    (
+        "type-ready-for-implementation",
+        "ready_for_implementation",
+        "boolean",
+    ),
+];
 
 /// The fixture directory holding every checked-in spec tree.
 fn fixtures_root() -> PathBuf {
@@ -162,6 +252,72 @@ fn assert_validation(tree: &TempTree, spec: &str, expected: &[Expected]) {
                 .as_str()
                 .is_some_and(|message| !message.is_empty()),
             "validate {spec}: finding {index} message is not empty"
+        );
+    }
+}
+
+/// Assert one per-field fixture reports exactly the documented field finding.
+///
+/// The message must name the broken field path, and a wrongly typed field must
+/// also state the type it should have had.
+fn assert_field_fixture(case: &str, field: &str, expected_type: Option<&str>, code: &'static str) {
+    let tree = copy_fixture(case, &format!("spec-json-cases/{case}"));
+    let run = tree.run_spec(case, &["validate", "--json"]);
+    assert_eq!(run.stderr(), "", "validate {case}: no diagnostics");
+    assert_eq!(
+        run.code(),
+        1,
+        "validate {case}: the field defect is an error"
+    );
+
+    let result = json_document(&run);
+    assert_eq!(result["spec"].as_str(), Some(case), "validate {case}: spec");
+    assert_eq!(
+        result["valid"].as_bool(),
+        Some(false),
+        "validate {case}: an error finding makes the spec invalid"
+    );
+    let findings = result["findings"]
+        .as_array()
+        .unwrap_or_else(|| panic!("validate {case}: findings array\n{result}"));
+    assert_eq!(
+        findings.len(),
+        1,
+        "validate {case}: isolates exactly one finding:\n{result}"
+    );
+
+    let finding = &findings[0];
+    assert_eq!(
+        finding["code"].as_str(),
+        Some(code),
+        "validate {case}: finding code"
+    );
+    assert_eq!(
+        finding["file"].as_str(),
+        Some("spec.json"),
+        "validate {case}: finding file"
+    );
+    assert_eq!(
+        finding["line"].as_u64(),
+        None,
+        "validate {case}: field findings are file-level"
+    );
+    assert_eq!(
+        finding["severity"].as_str(),
+        Some("error"),
+        "validate {case}: finding severity"
+    );
+    let message = finding["message"]
+        .as_str()
+        .unwrap_or_else(|| panic!("validate {case}: message\n{result}"));
+    assert!(
+        message.contains(field),
+        "validate {case}: message names `{field}`, got {message:?}"
+    );
+    if let Some(expected_type) = expected_type {
+        assert!(
+            message.contains(expected_type),
+            "validate {case}: message names the `{expected_type}` type, got {message:?}"
         );
     }
 }
@@ -315,8 +471,6 @@ fn spec_json_fixture_trees_report_exactly_their_rule_findings() {
     let expected = [
         ("approval-without-generated", APPROVAL_WITHOUT_GENERATED),
         ("feature-name-mismatch", FEATURE_NAME),
-        ("field-missing", FIELD_MISSING),
-        ("field-type", FIELD_TYPE),
         ("generated-artifact-missing", ARTIFACT_MISSING),
         ("phase-approved-false", PHASE_APPROVED),
         ("phase-generated-false", PHASE_GENERATED),
@@ -324,11 +478,18 @@ fn spec_json_fixture_trees_report_exactly_their_rule_findings() {
         ("ready-without-tasks-approval", READY_WITHOUT_APPROVAL),
     ];
 
+    let mut expected_cases = expected
+        .iter()
+        .map(|(case, _)| *case)
+        .chain(MISSING_FIELD_CASES.iter().map(|(case, _, _)| *case))
+        .chain(TYPE_FIELD_CASES.iter().map(|(case, _, _)| *case))
+        .collect::<Vec<_>>();
+    expected_cases.sort_unstable();
+
     let cases = case_directories(&fixtures_root().join("spec-json-cases"));
     assert_eq!(
-        cases,
-        expected.iter().map(|(case, _)| *case).collect::<Vec<_>>(),
-        "every spec.json rule fixture is covered"
+        cases, expected_cases,
+        "every spec.json rule fixture, including one tree per required field, is covered"
     );
 
     let before_root = fixtures_root().join("spec-json-cases");
@@ -348,5 +509,24 @@ fn spec_json_fixture_trees_report_exactly_their_rule_findings() {
         support::hash_tree(&before_root),
         before,
         "the spec.json fixtures are read-only inputs"
+    );
+}
+
+#[test]
+fn required_field_fixture_trees_isolate_each_field() {
+    let before_root = fixtures_root().join("spec-json-cases");
+    let before = support::hash_tree(&before_root);
+
+    for (case, field, _) in MISSING_FIELD_CASES {
+        assert_field_fixture(case, field, None, "spec.field.missing");
+    }
+    for (case, field, expected_type) in TYPE_FIELD_CASES {
+        assert_field_fixture(case, field, Some(expected_type), "spec.field.type");
+    }
+
+    assert_eq!(
+        support::hash_tree(&before_root),
+        before,
+        "the per-field fixtures are read-only inputs"
     );
 }
