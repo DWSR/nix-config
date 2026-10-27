@@ -191,6 +191,7 @@ in
   # the flake's fabro-vm NixOS configuration.
   virtualisation.limaVM = {
     enable = true;
+    package = config.virtualisation.limaMacGuest.package;
     hostname = "fabro";
     guestSystem = "fabro-vm";
 
