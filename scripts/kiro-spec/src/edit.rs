@@ -7,6 +7,7 @@
 //! original path intact; readers continue to open only `tasks.md`, so a stale
 //! temporary file from an interrupted run is ignored.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -14,7 +15,13 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 use crate::error::MutationError;
-use crate::tasks::TaskState;
+use crate::tasks::{MetadataKind, TaskDocument, TaskEntry, TaskState};
+
+/// The byte offset of the checkbox state character in a parsed task line.
+///
+/// Every entry line starts with `- [` at column zero, so the character between
+/// the brackets is always at this offset; the parser guarantees the shape.
+const STATE_OFFSET: usize = 3;
 
 /// A planned mutation and the bytes that publish it.
 ///
@@ -64,6 +71,78 @@ impl EditPlan {
             None => Ok(()),
         }
     }
+}
+
+/// A mutation a caller asks the editor to plan.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Change {
+    /// Mark the entry completed and remove every blocked reason bullet.
+    Complete,
+}
+
+/// Plan one mutation of a uniquely identified entry.
+///
+/// Resolution happens before any bytes are planned, so a malformed, unknown,
+/// or ambiguous identifier is refused without touching the filesystem. The
+/// entry's state character and its blocked reason bullet lines are the only
+/// bytes that can change; every other source line, terminator included, is
+/// re-emitted unchanged. A request that would produce the same document is a
+/// no-op plan with `bytes = None`.
+pub fn mutate(
+    document: &TaskDocument,
+    id: &str,
+    change: Change,
+) -> Result<EditPlan, MutationError> {
+    let entry = document.find_unique(id)?;
+    match change {
+        Change::Complete => Ok(plan_complete(document, entry)),
+    }
+}
+
+/// Plan the `complete` change for one resolved entry.
+fn plan_complete(document: &TaskDocument, entry: &TaskEntry) -> EditPlan {
+    let original = document.to_bytes();
+    if entry.state == TaskState::Completed {
+        return EditPlan::new(
+            entry.id.text.clone(),
+            TaskState::Completed,
+            None,
+            &original,
+            original.clone(),
+        );
+    }
+
+    let removed = entry
+        .block
+        .metadata()
+        .iter()
+        .filter(|bullet| bullet.kind() == MetadataKind::Blocked)
+        .flat_map(|bullet| bullet.line()..=bullet.last_line())
+        .collect::<BTreeSet<_>>();
+
+    let mut replacement = Vec::with_capacity(original.len());
+    for (index, line) in document.source_lines().iter().enumerate() {
+        let line_number = index + 1;
+        if removed.contains(&line_number) {
+            continue;
+        }
+        if line_number == entry.line {
+            let mut text = line.text().as_bytes().to_vec();
+            text[STATE_OFFSET] = b'x';
+            replacement.extend_from_slice(&text);
+        } else {
+            replacement.extend_from_slice(line.text().as_bytes());
+        }
+        replacement.extend_from_slice(line.terminator().bytes());
+    }
+
+    EditPlan::new(
+        entry.id.text.clone(),
+        TaskState::Completed,
+        None,
+        &original,
+        replacement,
+    )
 }
 
 /// Atomically replace `path` with `bytes`.
@@ -254,6 +333,200 @@ mod tests {
         );
 
         assert_eq!(plan.bytes, Some(replacement));
+    }
+
+    #[test]
+    fn completing_a_pending_entry_changes_only_its_checkbox() {
+        let source = "\
+# Plan\r
+\r
+- [ ] 1. Parent\r
+- [ ]* 1.1 Do the thing\r
+  - _Requirements: 7.2_\r
+  - _Boundary: editor_\r
+- [ ] 1.2 Sibling\r
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "1.1", Change::Complete).expect("the entry completes");
+
+        assert_eq!(plan.id, "1.1");
+        assert_eq!(plan.state, TaskState::Completed);
+        assert_eq!(plan.reason, None);
+        let expected = "\
+# Plan\r
+\r
+- [ ] 1. Parent\r
+- [x]* 1.1 Do the thing\r
+  - _Requirements: 7.2_\r
+  - _Boundary: editor_\r
+- [ ] 1.2 Sibling\r
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "only the target checkbox changes; parent, sibling, metadata, and CRLF survive"
+        );
+    }
+
+    #[test]
+    fn completing_a_blocked_entry_removes_its_reason_and_continuations() {
+        let source = "\
+- [ ] 2. Parent\r
+- [!]* 2.1 Blocked child\r
+  - _Requirements: 8.1_\r
+  - _Blocked: waiting on the\r
+    security review\r
+  - _Depends: 1_\r
+- [x] 2.2 Done sibling\r
+- [ ] 2.3 Later sibling\r
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "2.1", Change::Complete).expect("the entry completes");
+
+        let expected = "\
+- [ ] 2. Parent\r
+- [x]* 2.1 Blocked child\r
+  - _Requirements: 8.1_\r
+  - _Depends: 1_\r
+- [x] 2.2 Done sibling\r
+- [ ] 2.3 Later sibling\r
+";
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(expected.as_bytes()),
+            "the reason bullet and its continuation lines are removed, nothing else changes"
+        );
+    }
+
+    #[test]
+    fn completion_removes_every_blocked_bullet_from_the_whole_block() {
+        let source = "\
+- [!] 3. Blocked work
+  - _Blocked: first reason
+  - _Requirements: 10.1_
+  - _Blocked: second reason
+    with a continuation
+  - _Boundary: keep this_
+- [ ] 4. Untouched
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "3", Change::Complete).expect("the entry completes");
+
+        let expected = "\
+- [x] 3. Blocked work
+  - _Requirements: 10.1_
+  - _Boundary: keep this_
+- [ ] 4. Untouched
+";
+        assert_eq!(plan.bytes.as_deref(), Some(expected.as_bytes()));
+    }
+
+    #[test]
+    fn completing_a_pending_entry_drops_a_stale_blocked_bullet() {
+        let source = "\
+- [ ] 5. Pending with stale wording
+  - _Blocked: no longer applies_
+  - _Requirements: 7.4_
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "5", Change::Complete).expect("the entry completes");
+
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(b"- [x] 5. Pending with stale wording\n  - _Requirements: 7.4_\n".as_slice())
+        );
+    }
+
+    #[test]
+    fn completing_a_parent_leaves_its_children_untouched() {
+        let source = "\
+- [ ] 6. Grouping parent
+- [ ] 6.1 Child one
+  - _Requirements: 7.5_
+- [x] 6.2 Child two
+- [ ] 7. Sibling major
+";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "6", Change::Complete).expect("the parent completes");
+
+        let expected = "\
+- [x] 6. Grouping parent
+- [ ] 6.1 Child one
+  - _Requirements: 7.5_
+- [x] 6.2 Child two
+- [ ] 7. Sibling major
+";
+        assert_eq!(plan.bytes.as_deref(), Some(expected.as_bytes()));
+    }
+
+    #[test]
+    fn completing_an_already_completed_entry_is_a_byte_identical_noop() {
+        let source = "- [x]* 4. Already done\r\n  - _Requirements: 7.2_\r\n";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "4", Change::Complete).expect("completion succeeds");
+
+        assert_eq!(plan.id, "4");
+        assert_eq!(plan.state, TaskState::Completed);
+        assert_eq!(plan.reason, None);
+        assert_eq!(
+            plan.bytes, None,
+            "an already completed entry, including stale metadata, is left alone"
+        );
+    }
+
+    #[test]
+    fn completing_the_last_line_preserves_a_missing_final_newline() {
+        let source = "- [ ] 1. One\n- [ ] 2. Two";
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "2", Change::Complete).expect("the entry completes");
+
+        assert_eq!(
+            plan.bytes.as_deref(),
+            Some(b"- [ ] 1. One\n- [x] 2. Two".as_slice()),
+            "the final line keeps its absent terminator"
+        );
+    }
+
+    #[test]
+    fn publishing_a_complete_plan_replaces_only_the_target_line() {
+        let directory = TempDir::new("complete-publish");
+        let path = directory.path().join("tasks.md");
+        let source = "- [ ] 1. One\r\n- [!] 2. Two\r\n  - _Blocked: wait_\r\n";
+        fs::write(&path, source).expect("fixture is written");
+        let document = parse_tasks(source);
+
+        let plan = mutate(&document, "2", Change::Complete).expect("the entry completes");
+        plan.publish(&path).expect("the plan is published");
+
+        assert_eq!(
+            fs::read(&path).expect("published file is readable"),
+            b"- [ ] 1. One\r\n- [x] 2. Two\r\n",
+            "the sibling and every affected line keep their bytes"
+        );
+        assert_eq!(
+            names(directory.path()),
+            vec!["tasks.md"],
+            "publishing leaves no temporary file behind"
+        );
+    }
+
+    #[test]
+    fn malformed_unknown_and_ambiguous_identifiers_produce_no_plan() {
+        let document = parse_tasks("- [ ] 1. First\n- [ ] 1. Duplicate\n- [ ] 2. Only\n");
+
+        for query in ["1", "1.2.3", "9"] {
+            let error = mutate(&document, query, Change::Complete)
+                .expect_err(&format!("{query:?} must be refused"));
+            assert_eq!(error.category(), ErrorCategory::Conflict, "{query:?}");
+            assert_eq!(error.context(), query, "{query:?}");
+        }
     }
 
     #[test]
