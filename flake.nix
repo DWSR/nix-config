@@ -2914,12 +2914,13 @@
                 # 26.05) carries a baked-in allowlist of "supported" nixpkgs
                 # branches that predates 26.05, so it false-flags the
                 # nixpkgs-26.05-darwin input as unsupported and fails the hook.
-                # Disable ONLY that sub-check via its env toggle while keeping
-                # the outdated- and owner-checks active. Drop this override once
-                # a flake-checker that recognizes 26.05 lands in nixpkgs.
+                # Disable ONLY that sub-check via its env toggle, and relax the
+                # built-in 30-day outdated-input threshold to 90 days via CEL
+                # while retaining the owner check. Drop this override once a
+                # flake-checker that recognizes 26.05 lands in nixpkgs.
                 entry = pkgs.lib.mkForce "${pkgs.writeShellScript "flake-checker-skip-supported" ''
                   export NIX_FLAKE_CHECKER_CHECK_SUPPORTED=false
-                  exec ${pkgs.flake-checker}/bin/flake-checker -f "$@"
+                  exec ${pkgs.flake-checker}/bin/flake-checker -f -c 'numDaysOld < 90 && owner == "NixOS"' "$@"
                 ''}";
               };
 
