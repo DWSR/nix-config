@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # npm dependencies are pinned per package-lock.json and consumed by the Nix
+  # builds through importNpmLock/npmDepsHash. The Fabro dependabot workflow
+  # repairs the hash bumps that these version updates require.
+  - package-ecosystem: npm
+    directories:
+      - /home-manager/common/extensions/pi-mcpproxy-go
+      - /overlays/agentmemory-deps
+      - /overlays/gcloud-mcp
+      - /overlays/git-mcp-server
+      - /overlays/observability-mcp
+      - /overlays/obsidian-importer-deps
+      - /overlays/opencode-cost-diagnosis-deps
+      - /overlays/storage-mcp
+      - /scripts/pi-lens
+      - /scripts/rpiv-ask-user-question
+      - /scripts/rpiv-todo
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: cargo
+    directory: /configurations/fabro-vm/api-bridge
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  # Keep the actions pinned by .github/workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

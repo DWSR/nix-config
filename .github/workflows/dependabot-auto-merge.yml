@@ -1,0 +1,45 @@
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Key off the pull request author, not github.actor: the Fabro dependabot
+    # workflow rewrites these branches, and the resulting synchronize event
+    # must still re-enable auto-merge.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Fabro amends dependabot commits, so the original signature that
+          # fetch-metadata verifies is gone by the time this runs again.
+          skip-verification: true
+
+      # main currently has no required status checks, so GitHub refuses to
+      # queue auto-merge on an already-mergeable PR ("Pull request is in clean
+      # status"). Keep the auto-merge path for when a ruleset adds checks, and
+      # otherwise perform the rebase merge that auto-merge would have done.
+      - name: Enable auto-merge for non-major updates
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr merge --auto --rebase "$PR_URL" ||
+            gh pr merge --rebase "$PR_URL"
