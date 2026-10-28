@@ -1,0 +1,610 @@
+_version = 1
+
+[workflow]
+graph = "workflow.fabro"
+
+[run.inputs]
+window_hours = "12"
+min_occurrences = "3"
+max_runs = "100"
+# Keep this list in sync with additional_repositories below: the minted
+# GITHUB_TOKEN is scoped to exactly those repositories.
+repos = "DWSR/nix-config,DWSR/total-recall"
+fabro_web_base = "https://fabro.tuxedo-musical.ts.net"
+dry_run = "false"
+
+# The analysis stage uses Fabro's host run tools to search failed runs and read
+# their failure events; no Fabro credential enters the sandbox.
+[run.agent]
+fabro_tools = true
+
+# The run's primary repository is DWSR/nix-config. The token must also reach
+# the other repositories whose failures this workflow reports on, so issues can
+# be filed in the repository that owns the failing runs.
+[run.integrations.github]
+additional_repositories = ["DWSR/total-recall"]
+permissions = { contents = "read", issues = "write" }
+
+# Read-only triage: never create a run branch or pull request.
+[run.run_branch]
+enabled = false
+
+[run.pull_request]
+enabled = false
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git/failure-triage-scripts
+cat > .git/failure-triage-scripts/tools.py <<'FAILURE_TRIAGE_TOOLS_PY'
+import datetime as _dt
+import hashlib
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+WINDOW_PATH = ".git/failure-triage-window.json"
+ANALYSIS_PATH = ".git/failure-triage-analysis.json"
+LABEL = "fabro-failure-triage"
+LABEL_COLOR = "d93f0b"
+LABEL_DESCRIPTION = "Automated Fabro failure-mode triage"
+DEFAULT_WEB_BASE = "https://fabro.tuxedo-musical.ts.net"
+LOOKBACK_MARGIN_HOURS = 36
+MAX_EVIDENCE_LINES = 3
+MAX_EVIDENCE_CHARS = 600
+MAX_REMEDIATION_CHARS = 4000
+MAX_ISSUE_PAGES = 10
+
+STOP_WORDS = {
+    "the", "and", "for", "with", "from", "into", "that", "this", "these",
+    "those", "failed", "failure", "failures", "error", "errors", "run", "runs",
+    "workflow", "workflows", "after", "before", "when", "while", "cannot",
+    "could", "would", "should", "not", "are", "was", "were", "has", "have",
+    "had", "due", "caused", "because", "same", "mode", "exit", "status",
+    "rejected", "review", "stage", "task", "script",
+}
+
+
+def fail(message):
+    print("failure-triage: %s" % message, file=sys.stderr)
+    sys.exit(1)
+
+
+def now_utc():
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
+def iso_z(value):
+    return value.astimezone(_dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def parse_iso(value, name):
+    if not isinstance(value, str) or not value.strip():
+        fail("%s is missing or empty" % name)
+    try:
+        return _dt.datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        fail("%s is not an ISO-8601 timestamp: %r" % (name, value))
+
+
+def parse_int(name, value, minimum, maximum):
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        fail("%s is not an integer: %r" % (name, value))
+    if number < minimum or number > maximum:
+        fail("%s must be between %d and %d, got %d" % (name, minimum, maximum, number))
+    return number
+
+
+def parse_bool(value):
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def split_repos(value):
+    repos = []
+    for item in str(value).split(","):
+        item = item.strip()
+        if not item:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", item):
+            fail("repository %r is not a canonical owner/name slug" % item)
+        if item not in repos:
+            repos.append(item)
+    if not repos:
+        fail("repos is empty; pass at least one owner/name repository")
+    return repos
+
+
+def write_json(path, value):
+    temporary = path + ".tmp"
+    with open(temporary, "w") as handle:
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(temporary, path)
+
+
+def read_json(path):
+    if not os.path.exists(path):
+        fail("%s is missing; the prepare stage must run first" % path)
+    try:
+        with open(path) as handle:
+            return json.load(handle)
+    except (OSError, ValueError) as error:
+        fail("cannot read %s: %s" % (path, error))
+
+
+def prepare(argv):
+    if len(argv) != 6:
+        fail("usage: tools.py prepare <window_hours> <min_occurrences> <repos> <max_runs> <fabro_web_base> <dry_run>")
+
+    window_hours = parse_int("window_hours", argv[0], 1, 168)
+    min_occurrences = parse_int("min_occurrences", argv[1], 1, 100)
+    repos = split_repos(argv[2])
+    max_runs = parse_int("max_runs", argv[3], 1, 200)
+    web_base = argv[4].strip().rstrip("/")
+    if not re.fullmatch(r"https?://[^/\s]+.*", web_base):
+        fail("fabro_web_base must be an http(s) URL, got %r" % argv[4])
+    dry_run = parse_bool(argv[5])
+
+    end = now_utc().replace(microsecond=0)
+    start = end - _dt.timedelta(hours=window_hours)
+    lookback = start - _dt.timedelta(hours=LOOKBACK_MARGIN_HOURS)
+
+    window = {
+        "generated_at": iso_z(end),
+        "window_hours": window_hours,
+        "window_start": iso_z(start),
+        "window_end": iso_z(end),
+        "lookback_start": iso_z(lookback),
+        "min_occurrences": min_occurrences,
+        "max_runs": max_runs,
+        "repos": repos,
+        "fabro_web_base": web_base,
+        "dry_run": dry_run,
+    }
+    write_json(WINDOW_PATH, window)
+
+    print("failure-triage prepare: window=%s..%s lookback=%s repos=%s max_runs=%d min_occurrences=%d dry_run=%s" % (
+        window["window_start"], window["window_end"], window["lookback_start"],
+        ",".join(repos), max_runs, min_occurrences, "true" if dry_run else "false"),
+        file=sys.stderr)
+    print(json.dumps({"context_updates": {
+        "window_start": window["window_start"],
+        "window_end": window["window_end"],
+        "window_hours": str(window_hours),
+        "min_occurrences": str(min_occurrences),
+        "max_runs": str(max_runs),
+        "repo_count": str(len(repos)),
+        "dry_run": "true" if dry_run else "false",
+    }}))
+
+
+def github_base():
+    return os.environ.get("FAILURE_TRIAGE_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
+
+
+def github(method, path, body=None, expect=(200, 201, 204)):
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(github_base() + path, method=method, data=data, headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Content-Type": "application/json",
+        "User-Agent": "fabro-failure-triage-workflow",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read()
+            return response.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", "replace")
+        if error.code in expect:
+            try:
+                return error.code, json.loads(raw)
+            except ValueError:
+                return error.code, raw
+        raise RuntimeError("GitHub API %s %s failed: HTTP %s: %s" % (
+            method, path, error.code, raw[:1000]))
+    except urllib.error.URLError as error:
+        raise RuntimeError("GitHub API %s %s is unreachable: %s" % (method, path, error.reason))
+    except OSError as error:
+        raise RuntimeError("GitHub API %s %s failed: %s" % (method, path, error))
+
+
+def ensure_label(repo):
+    github("POST", "/repos/%s/labels" % repo, {
+        "name": LABEL,
+        "color": LABEL_COLOR,
+        "description": LABEL_DESCRIPTION,
+    }, expect=(201, 422))
+
+
+def list_open_issues(repo):
+    issues = []
+    for page in range(1, MAX_ISSUE_PAGES + 1):
+        query = urllib.parse.urlencode({
+            "state": "open",
+            "labels": LABEL,
+            "per_page": 100,
+            "page": page,
+        })
+        _, items = github("GET", "/repos/%s/issues?%s" % (repo, query))
+        items = items or []
+        issues.extend(item for item in items if "pull_request" not in item)
+        if len(items) < 100:
+            break
+    return issues
+
+
+def issue_comments(repo, number):
+    comments = []
+    for page in range(1, MAX_ISSUE_PAGES + 1):
+        query = urllib.parse.urlencode({"per_page": 100, "page": page})
+        _, items = github("GET", "/repos/%s/issues/%d/comments?%s" % (repo, number, query))
+        items = items or []
+        comments.extend(item.get("body") or "" for item in items)
+        if len(items) < 100:
+            break
+    return comments
+
+
+def token_set(text):
+    return {
+        token for token in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(token) >= 3 and token not in STOP_WORDS
+    }
+
+
+def similar_failure_mode(left, right):
+    left_tokens = token_set(left)
+    right_tokens = token_set(right)
+    if not left_tokens or not right_tokens:
+        return False
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens) >= 0.55
+
+
+def issue_failure_mode(issue):
+    title = issue.get("title") or ""
+    return re.sub(r"^\s*\[fabro-failure-triage\]\s*", "", title, flags=re.IGNORECASE).strip()
+
+
+def fingerprint_for(repo, fingerprint):
+    return hashlib.sha256(("%s\n%s" % (repo, fingerprint)).encode("utf-8")).hexdigest()[:32]
+
+
+def marker_for(fingerprint):
+    return "<!-- fabro-failure-triage:%s -->" % fingerprint
+
+
+def find_existing_issue(repo, fingerprint, failure_mode):
+    issues = list_open_issues(repo)
+    marker = marker_for(fingerprint)
+    for issue in issues:
+        if marker in (issue.get("body") or ""):
+            return issue, "marker"
+    for issue in issues:
+        if similar_failure_mode(issue_failure_mode(issue), failure_mode):
+            return issue, "similar-title"
+    return None, None
+
+
+def run_url(window, run):
+    url = (run.get("url") or "").strip()
+    if url:
+        return url
+    return "%s/runs/%s" % (window["fabro_web_base"], run["run_id"])
+
+
+def clean_slug(value):
+    slug = re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")[:64].strip("-")
+    return slug
+
+
+def evidence_lines(pattern, runs_by_id):
+    evidence = pattern.get("evidence") or []
+    if not isinstance(evidence, list):
+        evidence = []
+    cleaned = []
+    for item in evidence[:MAX_EVIDENCE_LINES]:
+        text = " ".join(str(item).split())
+        if text:
+            cleaned.append(text[:MAX_EVIDENCE_CHARS])
+    if not cleaned:
+        for run_id in pattern["run_ids"][:MAX_EVIDENCE_LINES]:
+            message = " ".join((runs_by_id[run_id].get("failure_message") or "").split())
+            if message:
+                cleaned.append("%s: %s" % (run_id, message[:MAX_EVIDENCE_CHARS]))
+    return cleaned
+
+
+def table_rows(pattern, runs_by_id, window):
+    rows = []
+    for run_id in pattern["run_ids"]:
+        run = runs_by_id[run_id]
+        rows.append("| [`%s`](%s) | `%s` | %s |" % (
+            run_id, run_url(window, run), run.get("workflow") or "?",
+            run.get("completed_at") or "?"))
+    return rows
+
+
+def build_issue_body(pattern, runs_by_id, window):
+    fingerprint = pattern["_fingerprint"]
+    workflows = sorted({runs_by_id[run_id].get("workflow") or "?" for run_id in pattern["run_ids"]})
+    failed_at = sorted(str(runs_by_id[run_id].get("completed_at") or "") for run_id in pattern["run_ids"])
+    first_seen = next((value for value in failed_at if value), "?")
+    last_seen = next((value for value in reversed(failed_at) if value), "?")
+    lines = [
+        marker_for(fingerprint),
+        "",
+        "## %s" % pattern["failure_mode"],
+        "",
+        "**Repository:** `%s`" % pattern["repository"],
+        "**Window:** %s to %s (%d hours)" % (
+            window["window_start"], window["window_end"], window["window_hours"]),
+        "**Failed runs in this window:** %d" % len(pattern["run_ids"]),
+        "**Affected workflows:** %s" % ", ".join("`%s`" % workflow for workflow in workflows),
+        "**First failure:** %s" % first_seen,
+        "**Latest failure:** %s" % last_seen,
+        "",
+        "### Affected runs",
+        "",
+        "| Run | Workflow | Failed at |",
+        "| --- | --- | --- |",
+    ]
+    lines.extend(table_rows(pattern, runs_by_id, window))
+    lines.extend([
+        "",
+        "### Observed failure",
+        "",
+    ])
+    for evidence in evidence_lines(pattern, runs_by_id):
+        for part in evidence.splitlines()[:8]:
+            lines.append("> %s" % part.replace("`", "'"))
+        lines.append(">")
+    if lines[-1] == ">":
+        lines.pop()
+    lines.extend([
+        "",
+        "### Suggested remediation",
+        "",
+        str(pattern.get("remediation") or "").strip()[:MAX_REMEDIATION_CHARS] or
+        "Inspect the affected runs and the failing stage; no specific remediation was generated.",
+        "",
+        "---",
+        "Opened by the `failure-triage` Fabro workflow because at least %d failed runs in this "
+        "repository shared this failure mode. New occurrences are added as comments instead of "
+        "filing duplicate issues." % window["min_occurrences"],
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def build_comment(pattern, new_run_ids, runs_by_id, window):
+    lines = [
+        "<!-- fabro-failure-triage-update:%s -->" % window["window_end"],
+        "Recurred in the %s to %s window with %d new failed run(s)." % (
+            window["window_start"], window["window_end"], len(new_run_ids)),
+        "",
+        "| Run | Workflow | Failed at |",
+        "| --- | --- | --- |",
+    ]
+    for run_id in new_run_ids:
+        run = runs_by_id[run_id]
+        lines.append("| [`%s`](%s) | `%s` | %s |" % (
+            run_id, run_url(window, run), run.get("workflow") or "?",
+            run.get("completed_at") or "?"))
+    evidence = evidence_lines(pattern, runs_by_id)
+    if evidence:
+        lines.extend(["", "Latest evidence:", ""])
+        for item in evidence:
+            lines.append("> %s" % " ".join(item.split()).replace("`", "'"))
+    return "\n".join(lines) + "\n"
+
+
+def validate_runs(analysis):
+    runs = analysis.get("runs") or []
+    if not isinstance(runs, list):
+        fail("analysis.runs must be a list")
+    runs_by_id = {}
+    for run in runs:
+        if not isinstance(run, dict):
+            fail("analysis.runs entries must be objects")
+        run_id = str(run.get("run_id") or "").strip()
+        repo = str(run.get("repository") or "").strip()
+        if not re.fullmatch(r"[0-9A-Z]{8,32}", run_id):
+            fail("analysis run id %r is not a Fabro run id" % run_id)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
+            fail("analysis run %s has an invalid repository %r" % (run_id, repo))
+        run["run_id"] = run_id
+        run["repository"] = repo
+        runs_by_id[run_id] = run
+    return runs_by_id
+
+
+def validate_pattern(raw, runs_by_id, repos, min_occurrences, index):
+    if not isinstance(raw, dict):
+        return None, "pattern %d is not an object" % index
+    repo = str(raw.get("repository") or "").strip()
+    if repo not in repos:
+        return None, "pattern %d repository %r is not in the configured repo set" % (index, repo)
+    failure_mode = " ".join(str(raw.get("failure_mode") or "").split())
+    if not failure_mode:
+        return None, "pattern %d has no failure_mode" % index
+    remediation = str(raw.get("remediation") or "").strip()
+    if not remediation:
+        return None, "pattern %d has no remediation" % index
+    run_ids = raw.get("run_ids")
+    if not isinstance(run_ids, list) or not run_ids:
+        return None, "pattern %d has no run_ids" % index
+    deduplicated = []
+    for value in run_ids:
+        run_id = str(value).strip()
+        if run_id not in runs_by_id:
+            return None, "pattern %d references unknown run %s" % (index, run_id)
+        if runs_by_id[run_id]["repository"] != repo:
+            return None, "pattern %d mixes repositories (%s is not %s)" % (index, run_id, repo)
+        if run_id not in deduplicated:
+            deduplicated.append(run_id)
+    if len(deduplicated) < min_occurrences:
+        return None, "pattern %d has %d run(s) after deduplication, below the threshold %d" % (
+            index, len(deduplicated), min_occurrences)
+    fingerprint = clean_slug(raw.get("fingerprint") or failure_mode) or hashlib.sha256(
+        failure_mode.encode("utf-8")).hexdigest()[:12]
+    pattern = {
+        "repository": repo,
+        "fingerprint": fingerprint,
+        "failure_mode": failure_mode[:200],
+        "remediation": remediation[:MAX_REMEDIATION_CHARS],
+        "run_ids": deduplicated,
+        "evidence": raw.get("evidence") if isinstance(raw.get("evidence"), list) else [],
+        "_fingerprint": fingerprint_for(repo, fingerprint),
+    }
+    return pattern, None
+
+
+def report(argv):
+    if argv:
+        fail("usage: tools.py report")
+    window = read_json(WINDOW_PATH)
+    analysis = read_json(ANALYSIS_PATH)
+    if not isinstance(analysis, dict):
+        fail("%s must contain a JSON object" % ANALYSIS_PATH)
+
+    repos = set(window.get("repos") or [])
+    min_occurrences = int(window.get("min_occurrences") or 0)
+    if not repos or min_occurrences < 1:
+        fail("window file is missing repos or min_occurrences; re-run prepare")
+    if window.get("window_start") is None or window.get("window_end") is None:
+        fail("window file is missing window_start/window_end")
+    if not window.get("fabro_web_base"):
+        window["fabro_web_base"] = DEFAULT_WEB_BASE
+
+    runs_by_id = validate_runs(analysis)
+    raw_patterns = analysis.get("patterns") or []
+    if not isinstance(raw_patterns, list):
+        fail("analysis.patterns must be a list")
+
+    valid_patterns = []
+    assigned_run_ids = set()
+    for index, raw in enumerate(raw_patterns):
+        pattern, error = validate_pattern(raw, runs_by_id, repos, min_occurrences, index)
+        if error:
+            print("failure-triage report: skipping %s" % error, file=sys.stderr)
+            continue
+        fresh_run_ids = [run_id for run_id in pattern["run_ids"] if run_id not in assigned_run_ids]
+        if len(fresh_run_ids) < len(pattern["run_ids"]):
+            print("failure-triage report: pattern %d repeats %d run(s) already assigned to an "
+                  "earlier pattern" % (index, len(pattern["run_ids"]) - len(fresh_run_ids)),
+                  file=sys.stderr)
+            pattern["run_ids"] = fresh_run_ids
+        if len(pattern["run_ids"]) < min_occurrences:
+            print("failure-triage report: skipping pattern %d because fewer than %d unique "
+                  "run(s) remain after de-duplication" % (index, min_occurrences), file=sys.stderr)
+            continue
+        assigned_run_ids.update(pattern["run_ids"])
+        valid_patterns.append(pattern)
+
+    dry_run = bool(window.get("dry_run"))
+    if dry_run:
+        for pattern in valid_patterns:
+            print("failure-triage report: would file [%s] %s (%d run(s), fingerprint %s)" % (
+                pattern["repository"], pattern["failure_mode"],
+                len(pattern["run_ids"]), pattern["_fingerprint"]), file=sys.stderr)
+        print(json.dumps({"context_updates": {
+            "patterns_detected": str(len(raw_patterns)),
+            "patterns_valid": str(len(valid_patterns)),
+            "issues_created": "0",
+            "issues_updated": "0",
+            "dry_run": "true",
+        }}))
+        return
+
+    if not os.environ.get("GITHUB_TOKEN", "").strip():
+        fail("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for pattern in valid_patterns:
+        repo = pattern["repository"]
+        try:
+            existing, matched_by = find_existing_issue(repo, pattern["_fingerprint"], pattern["failure_mode"])
+            if existing is None:
+                ensure_label(repo)
+                title = "[fabro-failure-triage] %s" % pattern["failure_mode"][:180]
+                body = build_issue_body(pattern, runs_by_id, window)
+                _, issue = github("POST", "/repos/%s/issues" % repo, {
+                    "title": title,
+                    "body": body,
+                    "labels": [LABEL],
+                }, expect=(201,))
+                created += 1
+                print("failure-triage report: created %s#%s for %s" % (
+                    repo, (issue or {}).get("number", "?"), pattern["failure_mode"]),
+                    file=sys.stderr)
+                continue
+
+            number = existing["number"]
+            text = "\n".join([existing.get("body") or ""] + issue_comments(repo, number))
+            new_run_ids = [run_id for run_id in pattern["run_ids"] if run_id not in text]
+            if not new_run_ids:
+                skipped += 1
+                print("failure-triage report: %s#%s already covers all %d run(s)" % (
+                    repo, number, len(pattern["run_ids"])), file=sys.stderr)
+                continue
+
+            body = build_comment(pattern, new_run_ids, runs_by_id, window)
+            github("POST", "/repos/%s/issues/%d/comments" % (repo, number), {"body": body},
+                   expect=(201,))
+            github("POST", "/repos/%s/issues/%d/labels" % (repo, number), {"labels": [LABEL]},
+                   expect=(200, 201))
+            updated += 1
+            print("failure-triage report: commented on %s#%s with %d new run(s) (matched by %s)" % (
+                repo, number, len(new_run_ids), matched_by), file=sys.stderr)
+        except (RuntimeError, ValueError, KeyError) as error:
+            errors.append("%s: %s" % (repo, error))
+            print("failure-triage report: %s failed: %s" % (repo, error), file=sys.stderr)
+
+    print("failure-triage report: detected=%d valid=%d created=%d updated=%d skipped=%d errors=%d" % (
+        len(raw_patterns), len(valid_patterns), created, updated, skipped, len(errors)),
+        file=sys.stderr)
+    print(json.dumps({"context_updates": {
+        "patterns_detected": str(len(raw_patterns)),
+        "patterns_valid": str(len(valid_patterns)),
+        "issues_created": str(created),
+        "issues_updated": str(updated),
+        "issues_skipped": str(skipped),
+        "report_errors": str(len(errors)),
+        "dry_run": "false",
+    }}))
+    if errors:
+        sys.exit(1)
+
+
+def main():
+    if len(sys.argv) < 2:
+        fail("usage: tools.py <prepare|report> [args]")
+    command, rest = sys.argv[1], sys.argv[2:]
+    if command == "prepare":
+        prepare(rest)
+    elif command == "report":
+        report(rest)
+    else:
+        fail("unknown command %r" % command)
+
+
+if __name__ == "__main__":
+    main()
+FAILURE_TRIAGE_TOOLS_PY
+python3 -c "import py_compile; py_compile.compile('.git/failure-triage-scripts/tools.py', doraise=True)"
+echo "failure-triage: helper scripts ready" >&2
+'''

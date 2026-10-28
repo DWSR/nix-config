@@ -1,0 +1,19 @@
+_version = 1
+
+[workflow]
+graph = "workflow.fabro"
+
+[run.inputs]
+repo = ""
+ready_label = "fabro-ready"
+running_label = "fabro-running"
+failed_label = "fabro-failed"
+
+[run.integrations.github]
+permissions = { contents = "read", issues = "write", pull_requests = "read", checks = "read", statuses = "read" }
+
+[run.run_branch]
+enabled = false
+
+[run.pull_request]
+enabled = false

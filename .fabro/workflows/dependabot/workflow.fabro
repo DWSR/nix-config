@@ -1,0 +1,119 @@
+digraph Dependabot {
+    graph [
+        goal="Keep dependabot pull request {{ inputs.pr }} mergeable: rebase it onto the latest base branch, verify the repository's tests pass (fixing regressions and re-running until they pass when they do not), amend every change into the pull request's single commit, push, and leave merging to the repository's GitHub auto-merge workflow. The PR was selected because {{ inputs.reason }}; if that includes ci_failure, use the CI failure details in the test prompt to reproduce and fix the failing checks.",
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    prepare [
+        label="Validate PR and rebase",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="test -f .git/dependabot-scripts/tools.py || { echo 'dependabot: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/dependabot-scripts/tools.py prepare {{ inputs.pr }}"
+    ]
+
+    test [
+        label="Verify tests",
+        prompt="@prompts/test.md",
+        output_schema="routing",
+        max_visits=6,
+        retry_policy="patient",
+        max_retries=2,
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    fix [
+        label="Fix failures",
+        prompt="@prompts/fix.md",
+        output_schema="routing",
+        max_visits=5,
+        retry_policy="patient",
+        max_retries=2,
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    rework [
+        label="Queue rework",
+        shape=parallelogram,
+        output_schema="routing",
+        max_visits=4,
+        stdin_source="context.fix_round",
+        script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nif [ \"$ROUND\" -gt 3 ]; then\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"fix_round\":\"%s\",\"stage_failure\":\"Tests still fail after 3 fix rounds; inspect .git/dependabot-test.log and the run context.\"}}\\n' \"$ROUND\"\nelse\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"fix_round\":\"%s\"}}\\n' \"$ROUND\"\nfi"
+    ]
+
+    amend [
+        label="Amend and push",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/dependabot-scripts/tools.py amend"
+    ]
+
+    wait_test_rate_limit [
+        label="Wait for rate limit (test)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_fix_rate_limit [
+        label="Wait for rate limit (fix)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    finish [
+        label="Clear dispatch labels",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/dependabot-scripts/tools.py success {{ inputs.pr }}"
+    ]
+
+    fail [
+        label="Fail run",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        script="set -eu\nMSG=$(cat || true)\nPR=\"{{ inputs.pr }}\"\nif [ -f .git/dependabot-scripts/tools.py ]; then\n  python3 .git/dependabot-scripts/tools.py release \"$PR\" || true\nelse\n  case \"$PR\" in\n    ''|*[!0-9]*) ;;\n    *)\n      gh api --method POST \"repos/{owner}/{repo}/labels\" -f name=fabro-failed -f color=d73a4a -f description=\"Fabro dependabot run failed; remove this label to retry\" >/dev/null 2>&1 || true\n      gh api --method POST \"repos/{owner}/{repo}/issues/$PR/labels\" -f \"labels[]=fabro-failed\" >/dev/null 2>&1 || true\n      gh api --method DELETE \"repos/{owner}/{repo}/issues/$PR/labels/fabro-running\" >/dev/null 2>&1 || true\n      ;;\n  esac\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"a dependabot stage failed; inspect the failing stage output in the run events and .git/dependabot-state.json\"\nfi\nprintf 'dependabot: %s\\n' \"$MSG\" >&2\nexit 1"
+    ]
+
+    start -> prepare
+
+    prepare -> test [condition="outcome=succeeded && context.rebase_conflict!=true"]
+    prepare -> fix [condition="outcome=succeeded && context.rebase_conflict=true"]
+    prepare -> fail
+
+    test -> wait_test_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    wait_test_rate_limit -> test [condition="outcome=succeeded"]
+    wait_test_rate_limit -> fail
+
+    test -> amend [condition="outcome=succeeded && context.tests_passed=true"]
+    test -> rework [condition="outcome=succeeded && context.tests_passed=false"]
+    test -> fail
+
+    rework -> fix [condition="outcome=succeeded && context.fix_round <= 3"]
+    rework -> fail
+
+    fix -> wait_fix_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    wait_fix_rate_limit -> fix [condition="outcome=succeeded"]
+    wait_fix_rate_limit -> fail
+
+    fix -> test [condition="outcome=succeeded"]
+    fix -> fail
+
+    amend -> finish [condition="outcome=succeeded"]
+    amend -> fail
+
+    finish -> exit [condition="outcome=succeeded"]
+    finish -> fail
+}

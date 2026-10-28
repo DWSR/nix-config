@@ -1,0 +1,76 @@
+digraph KiroTask {
+    graph [
+        goal="Complete Kiro task {{ inputs.task }} of spec {{ inputs.spec }} to completion: implement it with TDD, review it adversarially, then mark it complete and commit.",
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    guard [
+        label="Validate task",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="set -eu\nSPEC={{ inputs.spec }}\nTASK={{ inputs.task }}\nfail() { printf 'kiro-task guard: %s\\n' \"$1\" >&2; exit 1; }\n[ -n \"$SPEC\" ] || fail 'input \"spec\" is empty'\n[ -n \"$TASK\" ] || fail 'input \"task\" is empty'\nSPEC_DIR=\".kiro/specs/$SPEC\"\nfor f in spec.json requirements.md design.md tasks.md; do\n  [ -f \"$SPEC_DIR/$f\" ] || fail \"missing $SPEC_DIR/$f\"\ndone\nESC_ID=$(printf '%s' \"$TASK\" | sed 's/\\./\\\\./g')\nPAT=\"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}(\\.?[[:space:]]|$)\"\nLINE=$(grep -nE \"$PAT\" \"$SPEC_DIR/tasks.md\" | head -n1 | cut -d: -f1)\nif [ -z \"$LINE\" ]; then\n  NEAR=$(grep -oE \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}[0-9]+([.][0-9]+)?\" \"$SPEC_DIR/tasks.md\" | head -n1 | sed -E 's/^-[[:space:]]+\\[[ x]*\\][*]?[[:space:]]+//')\n  if [ -n \"$NEAR\" ]; then\n    fail \"task $TASK not found; tasks.md contains task $NEAR (numeric task inputs lose trailing zeros; pass the task as a JSON string)\"\n  fi\n  fail \"task $TASK not found in $SPEC_DIR/tasks.md\"\nfi\nTASK_LINE=$(sed -n \"${LINE}p\" \"$SPEC_DIR/tasks.md\")\nTASK_STATE=$(printf '%s\\n' \"$TASK_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\nif [ \"$TASK_STATE\" = x ]; then\n  fail \"task $TASK is already checked\"\nfi\nBLOCK=$(awk -v s=\"$LINE\" 'NR>=s { if (NR>s && /^[[:space:]]*(```|~~~)/) { fence = !fence; next } if (fence) next; if (NR>s && /^- \\[[^]]*\\]/) exit; print }' \"$SPEC_DIR/tasks.md\")\nif printf '%s\\n' \"$BLOCK\" | grep -qE '^[[:space:]]+-[[:space:]]+_Blocked:[[:space:]]+[^[:space:]]'; then\n  fail \"task $TASK is marked blocked\"\nfi\nDEPS=$(printf '%s\\n' \"$BLOCK\" | sed -nE 's/^[[:space:]]+-[[:space:]]+_Depends:[[:space:]]*//p' | head -n1)\nfor dep in $(printf '%s' \"$DEPS\" | tr ',' ' '); do\n  DEP=$(printf '%s' \"$dep\" | tr -d '[:space:]_')\n  [ -n \"$DEP\" ] || continue\n  ESC_DEP=$(printf '%s' \"$DEP\" | sed 's/\\./\\\\./g')\n  DEP_LINE=$(grep -E \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_DEP}(\\.?[[:space:]]|$)\" \"$SPEC_DIR/tasks.md\" | head -n1)\n  [ -n \"$DEP_LINE\" ] || fail \"dependency $DEP not found in tasks.md\"\n  DEP_STATE=$(printf '%s\\n' \"$DEP_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\n  if [ \"$DEP_STATE\" != x ]; then\n    fail \"dependency $DEP is not complete\"\n  fi\ndone\nprintf '{\"context_updates\":{\"baseline_sha\":\"%s\"}}\\n' \"$(git rev-parse HEAD)\""
+    ]
+
+    implement [
+        label="Implement",
+        prompt="@prompts/implement.md",
+        output_schema="routing",
+        goal_gate=true,
+        max_visits=5
+    ]
+
+    review [
+        label="Review",
+        prompt="@prompts/review.md",
+        output_schema="routing",
+        goal_gate=true,
+        max_visits=5,
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    rework [
+        label="Queue rework",
+        shape=parallelogram,
+        output_schema="routing",
+        max_visits=3,
+        stdin_source="context.rework_round",
+        script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nif [ \"$ROUND\" -gt 2 ]; then\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\",\"stage_failure\":\"Review rejected the change after 2 rework rounds; giving up.\"}}\\n' \"$ROUND\"\nelse\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\"}}\\n' \"$ROUND\"\nfi"
+    ]
+
+    complete [
+        label="Mark complete and commit",
+        shape=parallelogram,
+        goal_gate=true,
+        script="set -eu\nSPEC={{ inputs.spec }}\nTASK={{ inputs.task }}\nTASKS_FILE=\".kiro/specs/$SPEC/tasks.md\"\nfail() { printf 'kiro-task complete: %s\\n' \"$1\" >&2; exit 1; }\n[ -f \"$TASKS_FILE\" ] || fail \"missing $TASKS_FILE\"\nESC_ID=$(printf '%s' \"$TASK\" | sed 's/\\./\\\\./g')\nPAT=\"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}(\\.?[[:space:]]|$)\"\nLINE=$(grep -nE \"$PAT\" \"$TASKS_FILE\" | head -n1 | cut -d: -f1)\n[ -n \"$LINE\" ] || fail \"task $TASK not found in $TASKS_FILE\"\nTASK_LINE=$(sed -n \"${LINE}p\" \"$TASKS_FILE\")\nTASK_STATE=$(printf '%s\\n' \"$TASK_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\nif [ \"$TASK_STATE\" = x ]; then\n  fail \"task $TASK is already checked\"\nfi\nif [ \"$TASK_STATE\" != \" \" ]; then\n  fail \"task $TASK is not pending\"\nfi\nDESC=$(printf '%s\\n' \"$TASK_LINE\" | sed -E \"s/^-[[:space:]]+\\[[ x]*\\][*]?[[:space:]]+${ESC_ID}\\.?[[:space:]]+//\")\nawk -v n=\"$LINE\" 'NR==n{sub(/\\[ \\]/,\"[x]\")} {print}' \"$TASKS_FILE\" > \"$TASKS_FILE.tmp\"\nmv \"$TASKS_FILE.tmp\" \"$TASKS_FILE\"\ngit add -u\nif git diff --cached --quiet; then\n  printf 'no staged changes; task marked but nothing to commit\\n'\n  exit 0\nfi\nIDENT=\"\"\nif [ -z \"$(git config user.email || true)\" ]; then\n  IDENT=\"-c user.name=Fabro -c user.email=noreply@fabro.sh\"\nfi\ngit $IDENT commit --no-gpg-sign -m \"feat($SPEC): $DESC\" -m \"Kiro task $TASK from spec $SPEC.\"\nprintf 'task %s marked complete and committed: feat(%s): %s\\n' \"$TASK\" \"$SPEC\" \"$DESC\""
+    ]
+
+    blocked [
+        label="Record blocked",
+        prompt="@prompts/blocked.md",
+        output_schema="routing"
+    ]
+
+    start -> guard
+
+    guard -> implement [condition="outcome=succeeded"]
+    guard -> exit
+
+    implement -> review [condition="outcome=succeeded && context.impl_status=READY_FOR_REVIEW"]
+    implement -> blocked
+
+    review -> complete [condition="outcome=succeeded && context.verdict=APPROVED"]
+    review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
+    review -> blocked
+
+    rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
+    rework -> blocked
+
+    complete -> exit
+    blocked -> exit
+}

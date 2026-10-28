@@ -2900,6 +2900,37 @@
 
               deadnix.enable = true;
 
+              markdownlint = {
+                enable = true;
+                files = "^\\.fabro/.*\\.md$";
+                settings.configuration = {
+                  # Workflow prompts are templates with intentional long lines,
+                  # unspaced heading interpolations, continued list numbering,
+                  # inline HTML in {{ ... }} interpolations, and padded code
+                  # spans. Lint everything else.
+                  MD013 = false;
+                  MD018 = false;
+                  MD029 = false;
+                  MD031 = false;
+                  MD033 = false;
+                  MD038 = false;
+                };
+              };
+
+              shellcheck = {
+                enable = true;
+                files = "^scripts/pin-workflow-versions\\.sh$";
+              };
+
+              shfmt = {
+                enable = true;
+                files = "^scripts/pin-workflow-versions\\.sh$";
+                settings = {
+                  language-dialect = "bash";
+                  indent = 2;
+                };
+              };
+
               gitleaks = {
                 enable = true;
                 name = "gitleaks";
@@ -2952,6 +2983,24 @@
             };
           };
         }
+        // pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+          # Offline parse/validate of every committed workflow package. The
+          # fabro CLI only ships an aarch64-darwin artifact, so this check is
+          # absent on other systems rather than failing evaluation.
+          fabro-workflows-validate =
+            let
+              inherit ((pkgs.extend outputs.overlays.fabro)) fabro;
+            in
+            pkgs.runCommand "fabro-workflows-validate" { nativeBuildInputs = [ fabro ]; } ''
+              export HOME=$(mktemp -d)
+              cp -R ${./.fabro} .fabro
+              chmod -R u+w .fabro
+              for workflow in .fabro/workflows/*/workflow.fabro; do
+                fabro validate --quiet --no-upgrade-check "$workflow"
+              done
+              touch $out
+            '';
+        }
       );
 
       devShells = forAllSystems (
@@ -2967,17 +3016,35 @@
               exec /usr/bin/sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt ${pkgs.sops}/bin/sops "$@"
             '';
           };
+          # The fabro package only ships an aarch64-darwin release artifact.
+          # Keep the shell evaluable on x86_64-darwin and gate the CLI to
+          # hosts that can run it.
+          fabroPackages =
+            if system == "aarch64-darwin" then
+              [
+                (pkgs.extend self.overlays.fabro).fabro
+              ]
+            else
+              [ ];
         in
         {
           default = pkgs.mkShell {
-            buildInputs = preCommitCheck.enabledPackages ++ [
-              pkgs.nodejs
-              # Available in-shell so operators can decrypt/edit secrets/*.yaml
-              # with the root-owned sops-nix age key. The wrapper invokes the
-              # pinned sops binary under sudo with SOPS_AGE_KEY_FILE set; see
-              # secrets/README.md for the operator runbook.
-              sopsNixSudo
-            ];
+            buildInputs =
+              preCommitCheck.enabledPackages
+              ++ fabroPackages
+              ++ [
+                pkgs.graphviz
+                pkgs.jq
+                pkgs.markdownlint-cli
+                pkgs.nodejs
+                pkgs.shellcheck
+                pkgs.shfmt
+                # Available in-shell so operators can decrypt/edit secrets/*.yaml
+                # with the root-owned sops-nix age key. The wrapper invokes the
+                # pinned sops binary under sudo with SOPS_AGE_KEY_FILE set; see
+                # secrets/README.md for the operator runbook.
+                sopsNixSudo
+              ];
 
             # Symlink .pre-commit-config.yaml for the global prek hook to find.
             # We do NOT run prek install — hooks are installed globally via

@@ -25,7 +25,7 @@
 #               image's tools run there; `setsid` is what the Fabro sandbox
 #               driver requires before it runs a command node, `find`/`grep`
 #               are what Pebble (the agent harness) probes for before it
-#               builds a session, and python3 is what the DWSR/fabro workflow
+#               builds a session, and python3 is what the .fabro workflow
 #               command nodes run their scripts with).
 #   4. agent-tools — `rg --version; awk --version; jq --version; curl
 #               --version; sed --version` (tools workflow agents expect;
