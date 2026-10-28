@@ -18,6 +18,7 @@ test('evaluated mac-builder host is an aarch64-darwin builder host', () => {
       hostPlatform = cfg.nixpkgs.hostPlatform.system;
       trustedUsers = cfg.nix.settings.trusted-users;
       opensshEnable = cfg.services.openssh.enable;
+      opensshExtraConfig = cfg.services.openssh.extraConfig;
       user = cfg.users.users.nix-builder;
       gcAutomatic = cfg.nix.gc.automatic;
       gcInterval = cfg.nix.gc.interval;
@@ -33,6 +34,7 @@ test('evaluated mac-builder host is an aarch64-darwin builder host', () => {
   assert.equal(rendered.hostPlatform, 'aarch64-darwin');
 
   assert.equal(rendered.opensshEnable, true);
+  assert.match(rendered.opensshExtraConfig, /PasswordAuthentication no/);
 
   assert.ok(
     rendered.trustedUsers.includes('nix-builder'),
@@ -45,7 +47,7 @@ test('evaluated mac-builder host is an aarch64-darwin builder host', () => {
   assert.equal(rendered.user.isHidden, true);
   assert.equal(rendered.user.createHome, true);
   assert.equal(rendered.user.home, '/Users/nix-builder');
-  assert.equal(rendered.user.shell, '/bin/bash');
+  assert.equal(rendered.user.shell, '/bin/zsh');
   assert.deepStrictEqual(rendered.user.extraGroups ?? [], []);
   assert.ok(
     !(rendered.user.extraGroups ?? []).includes('admin'),

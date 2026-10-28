@@ -153,7 +153,7 @@ pkgs.writeShellApplication {
     set -eu
 
     if ! id -u nix-builder >/dev/null 2>&1; then
-      sudo -A /usr/sbin/sysadminctl -addUser nix-builder -UID 502 -GID 20 -home /Users/nix-builder -shell /bin/bash >/dev/null 2>&1 || true
+      sudo -A /usr/sbin/sysadminctl -addUser nix-builder -UID 502 -GID 20 -home /Users/nix-builder -shell /bin/zsh >/dev/null 2>&1 || true
       if ! id -u nix-builder >/dev/null 2>&1; then
         echo "mac-builder-deploy: failed to create the nix-builder user" >&2
         exit 1
@@ -166,7 +166,8 @@ pkgs.writeShellApplication {
 
     sudo -A /usr/bin/dscl . -create /Users/nix-builder IsHidden 1
     sudo -A /usr/bin/dscl . -create /Users/nix-builder PrimaryGroupID 20
-    sudo -A /usr/bin/dscl . -create /Users/nix-builder UserShell /bin/bash
+    sudo -A /usr/bin/dscl . -create /Users/nix-builder UserShell /bin/zsh
+    sudo -A /usr/sbin/dseditgroup -o edit -a nix-builder -t user com.apple.access_ssh >/dev/null
 
     if [ ! -e /run/current-system ]; then
       for f in /etc/bashrc /etc/zshrc; do

@@ -54,7 +54,7 @@
     isHidden = true;
     home = "/Users/nix-builder";
     createHome = true;
-    shell = "/bin/bash";
+    shell = "/bin/zsh";
   };
 
   sops.age.keyFile = "/var/lib/sops-nix/key.txt";

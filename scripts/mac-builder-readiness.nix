@@ -18,7 +18,7 @@ pkgs.writeShellApplication {
     user="nix-builder"
     host="127.0.0.1"
     port="2222"
-    identity="''${HOME}/.ssh/id_ed25519"
+    identity=""
 
     require_value() {
       if [[ -z "''${2:-}" || "''${2:-}" == --* ]]; then
@@ -38,7 +38,7 @@ pkgs.writeShellApplication {
       --user USER        SSH user (default: nix-builder)
       --host HOST        Builder host/address (default: 127.0.0.1)
       --port PORT        SSH port (default: 2222)
-      --identity PATH    Operator SSH private key (default: $HOME/.ssh/id_ed25519)
+      --identity PATH    Operator SSH private key (default: SSH agent)
       --help, -h         Show this help
       --version          Show version
     USAGE
@@ -90,11 +90,19 @@ pkgs.writeShellApplication {
     done
 
     endpoint="ssh-ng://''${user}@''${host}:''${port}"
+    store_endpoint="ssh-ng://''${user}@''${host}"
+
+    ssh_args=(-p "''${port}")
+    nix_ssh_args=(-p "''${port}")
+    if [[ -n "''${identity}" ]]; then
+      ssh_args+=(-i "''${identity}")
+      nix_ssh_args+=(-i "''${identity}")
+    fi
 
     echo "mac-builder-readiness: endpoint ''${endpoint}"
 
     echo "check 1/3: ssh (''${user}@''${host}:''${port})"
-    if ssh -i "''${identity}" -p "''${port}" "''${user}@''${host}" true >/dev/null 2>&1; then
+    if ssh "''${ssh_args[@]}" "''${user}@''${host}" true >/dev/null 2>&1; then
       echo "  OK"
     else
       echo "  FAIL"
@@ -104,7 +112,7 @@ pkgs.writeShellApplication {
 
     echo "check 2/3: remote builtins.currentSystem == aarch64-darwin"
     remote_system=""
-    if ! remote_system="$(ssh -i "''${identity}" -p "''${port}" "''${user}@''${host}" 'nix eval --raw --expr builtins.currentSystem' 2>/dev/null)"; then
+    if ! remote_system="$(ssh "''${ssh_args[@]}" "''${user}@''${host}" 'nix eval --raw --impure --expr builtins.currentSystem' 2>/dev/null)"; then
       echo "  FAIL (ssh error)"
       echo "mac-builder-readiness: FAILED: currentSystem" >&2
       exit 1
@@ -116,8 +124,8 @@ pkgs.writeShellApplication {
     fi
     echo "  OK (''${remote_system})"
 
-    echo "check 3/3: nix store ping (''${endpoint})"
-    if nix store ping --store "''${endpoint}" >/dev/null 2>&1; then
+    echo "check 3/3: nix store ping (''${store_endpoint})"
+    if NIX_SSHOPTS="''${nix_ssh_args[*]}" nix store ping --store "''${store_endpoint}" >/dev/null 2>&1; then
       echo "  OK"
     else
       echo "  FAIL"

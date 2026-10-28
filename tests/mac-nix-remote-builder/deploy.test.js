@@ -129,9 +129,10 @@ test('deploy: prepares the Nix store volume without vifs', () => {
   assert.match(src, /\/usr\/local\/libexec\/mac-builder-mount-nix/);
   assert.match(src, /mount_apfs -o noatime,nosuid,owners/);
   assert.match(src, /org\.nixos\.darwin-store/);
-  assert.match(src, /sysadminctl -addUser nix-builder -UID 502 -GID 20 -home \/Users\/nix-builder -shell \/bin\/bash/);
+  assert.match(src, /sysadminctl -addUser nix-builder -UID 502 -GID 20 -home \/Users\/nix-builder -shell \/bin\/zsh/);
   assert.match(src, /createhomedir -c -u nix-builder/);
   assert.match(src, /dscl \. -create \/Users\/nix-builder IsHidden 1/);
+  assert.match(src, /dseditgroup -o edit -a nix-builder -t user com\.apple\.access_ssh/);
   assert.match(src, /\.before-nix-darwin/);
   assert.match(src, /\/run\/current-system/);
   assert.doesNotMatch(src, /vifs/);
