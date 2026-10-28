@@ -93,8 +93,8 @@ test('copyToRoot exposes the tools on /bin, the CA bundle, and /usr/bin/env', ()
   // container image must provide setsid and env`). `gh` is the GitHub CLI
   // sandbox runs use; `findutils` and `gnugrep` carry `find` and `grep`,
   // which Pebble (the agent harness) probes for in the execution scope before
-  // it builds a session; `python3` runs the DWSR/fabro workflow command
-  // nodes' scripts (dispatch, oneshot, kiro-*: without it command nodes fail
+  // it builds a session; `python3` runs the .fabro workflow command nodes'
+  // scripts (dispatch, oneshot, kiro-*: without it command nodes fail
   // with `env: 'python3': No such file or directory`). `gnused` carries the
   // `sed` workflow agents and shell snippets expect. `cacert` reports
   // `nss-cacert` as its pname and carries the
