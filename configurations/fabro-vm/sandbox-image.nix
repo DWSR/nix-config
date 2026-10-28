@@ -93,7 +93,7 @@ in
         with) probes for bash, find, and grep in the execution scope before
         building a session and fails with `Scope command failed: Pebble
         requires Bash, find, and grep in the execution scope` when findutils
-        or gnugrep are missing, so both must be present. The DWSR/fabro
+        or gnugrep are missing, so both must be present. The .fabro
         workflow packages (dispatch, oneshot, kiro-spec, kiro-task,
         dependabot) run their command nodes as Python scripts, so python3
         must be on the path or every such node fails with `env: 'python3':

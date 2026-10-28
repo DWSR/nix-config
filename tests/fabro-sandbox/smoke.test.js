@@ -59,7 +59,7 @@ test('smoke script runs the home, env, tools, certs, store, daemon, and registry
   // command node without it (exit 127 before the script starts). `gh` rides
   // along because sandbox runs shell out to the GitHub CLI; `find`/`grep` are
   // what Pebble (the agent harness) probes for before it builds a session;
-  // `python3` is what the DWSR/fabro workflow command nodes run their scripts
+  // `python3` is what the .fabro workflow command nodes run their scripts
   // with.
   assert.match(text, /bash --version; git --version; gh --version; python3 --version; command -v find; command -v grep; command -v nix; command -v setsid/);
   // Workflow agents expect the usual developer tools rather than burning
