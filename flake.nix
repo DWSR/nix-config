@@ -2899,6 +2899,15 @@
               };
 
               deadnix.enable = true;
+
+              gitleaks = {
+                enable = true;
+                name = "gitleaks";
+                entry = "${pkgs.gitleaks}/bin/gitleaks git --pre-commit --staged --redact --verbose";
+                language = "system";
+                pass_filenames = false;
+              };
+
               flake-checker = {
                 enable = true;
                 # flake-checker 0.2.11 (shipped by both nixpkgs 25.11 and

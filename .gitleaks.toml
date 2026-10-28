@@ -1,0 +1,89 @@
+title = "nix-config secret scanning"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "kagi-api-key"
+description = "Kagi API key"
+regex = '''(?i)\bKAGI_API_KEY\s*[:=]\s*["']([^"']{40,})["']'''
+secretGroup = 1
+tags = ["key", "kagi"]
+
+[[rules]]
+id = "nix-env-literal"
+description = "Literal secret-like assignment in Nix/TS/Lua"
+regex = '''(?i)\b[A-Z0-9_]*(?:API_KEY|ACCESS_KEY_ID|ACCESS_KEY|PROXY_KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIALS?)\s*=\s*"([^"$]{16,})"'''
+secretGroup = 1
+tags = ["key", "nix"]
+[rules.allowlist]
+description = "Secret references and placeholder names"
+regexTarget = "secret"
+regexes = [
+  '''(?i)^(op://|os\.environ/|readKeychainSecret|config\.|lib\.|\{env:|mkDefault|optionalString|toString).*''',
+  '''(?i)^(opencode-api-key|mcp-[a-z0-9-]+|fabro-[a-z0-9-]+|local-[a-z0-9-]+|nix-[a-z0-9-]+|agentmemory-[a-z0-9-]+|sqlite-backup-[a-z0-9-]+|restic-[a-z0-9-]+|rclone-[a-z0-9-]+|binks-[a-z0-9-]+|prompt-cache-key|cache-[a-z0-9-]+|shopify-pi-proxy)$''',
+  '''(?i)^\s*vm\.(services|sops\.templates).*''',
+]
+stopwords = ["example", "dummy", "fake", "placeholder", "sentinel", "stub", "redacted", "test"]
+
+[[rules]]
+id = "nix-password-literal"
+description = "Literal password assignment in Nix"
+regex = '''(?i)\b(password|passwd)\s*=\s*"([^"$]{12,})"'''
+secretGroup = 2
+tags = ["password", "nix"]
+[rules.allowlist]
+description = "Password references and placeholders"
+regexTarget = "secret"
+regexes = ['''^(op://|os\.environ/|readKeychainSecret|\{env:).*''']
+stopwords = ["example", "dummy", "fake", "placeholder", "sentinel", "stub", "redacted", "test"]
+
+[[rules]]
+id = "aws-access-key"
+description = "AWS access key ID"
+regex = '''\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'''
+tags = ["key", "aws"]
+
+[[rules]]
+id = "age-secret-key"
+description = "age private key"
+regex = '''AGE-SECRET-KEY-1[0-9A-Z]{58}'''
+tags = ["key", "age"]
+
+[[rules]]
+id = "tailscale-key"
+description = "Tailscale auth/client key"
+regex = '''tskey-(auth|client|api|scim|webhook)-[A-Za-z0-9]{10,}'''
+tags = ["key", "tailscale"]
+
+[[rules]]
+id = "onepassword-service-account"
+description = "1Password service account token"
+regex = '''ops_[A-Za-z0-9]{40,}'''
+tags = ["key", "1password"]
+
+[allowlist]
+description = "Known fixtures, public material, and placeholder values"
+paths = [
+  '''tests/git-mcp/fixtures/signing-tools\.nix''',
+  '''tests/git-mcp/admin-contract\.test\.js''',
+  '''tests/opencode-nono/integration/hm-render\.test\.js''',
+  '''tests/opencode-nono-audit/.*''',
+  '''tests/pi-agent/.*''',
+  '''tests/local-binary-cache/identity-artifacts\.test\.js''',
+  '''tests/binks-pr-review/hm-render\.test\.js''',
+  '''tests/shopify-remote-builder/proxy\.test\.js''',
+  '''scripts/gh-stack-mcp/internal/stackmcp/.*_test\.go''',
+  '''scripts/opencode-cost-report\.js''',
+  '''secrets/README\.md''',
+  '''certificates/local-binary-cache/.*\.pem''',
+  '''\.kiro/specs/local-binary-cache/tasks\.md''',
+  '''\.kiro/specs/caffeinate-hammerspoon-migration/design\.md''',
+  '''home-manager/common/hammerspoon-caffeinate/caffeinate\.lua''',
+]
+regexes = [
+  '''ghp_FAKE[A-Za-z0-9]+''',
+  '''AKIAFAKE[A-Z0-9]+''',
+  '''sk-abcdefghijklmnopqrstuvwxyz''',
+]
+stopwords = ["example", "dummy", "fake", "placeholder", "sentinel", "stub", "redacted"]
