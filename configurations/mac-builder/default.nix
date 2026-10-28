@@ -18,6 +18,8 @@
     "flakes"
   ];
 
+  security.pam.services.sudo_local.enable = false;
+
   nix.gc.automatic = true;
   nix.gc.interval = {
     Weekday = 0;
@@ -63,7 +65,7 @@
   sops.secrets."builder-authorized-keys" = {
     mode = "0644";
     owner = "root";
-    group = "root";
+    group = "wheel";
   };
 
   system.activationScripts.postActivation.text = lib.mkOrder 9999 ''

@@ -68,7 +68,7 @@ test('evaluated mac-builder host is an aarch64-darwin builder host', () => {
   );
   assert.equal(rendered.sopsSecret.mode, '0644');
   assert.equal(rendered.sopsSecret.owner, 'root');
-  assert.equal(rendered.sopsSecret.group, 'root');
+  assert.equal(rendered.sopsSecret.group, 'wheel');
   assert.match(rendered.defaultSopsFile, /remote-builder\.mac-builder\.yaml$/);
 
   assert.equal(rendered.hasLimaVM, false);

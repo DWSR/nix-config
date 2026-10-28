@@ -115,9 +115,25 @@ test('deploy: streams tree, installs age key, and runs switch with stubs', () =>
   assert.ok(keyDirSetup >= 0, 'expected privileged creation of the sops-nix directory');
   assert.ok(keyWrite > keyDirSetup, 'expected the key directory to exist before writing the key');
   assert.match(log, /tee \/var\/lib\/sops-nix\/key\.txt/);
-  assert.match(log, /curl -fsSL https:\/\/nixos\.org\/nix\/install \| SUDO_ASKPASS=\/tmp\/mac-builder-askpass sudo -A sh/);
+  assert.match(log, /curl -fsSL https:\/\/nixos\.org\/nix\/install \| SUDO_ASKPASS=\/tmp\/mac-builder-askpass sudo -A env NIX_VOLUME_CREATE=0 sh/);
   assert.match(log, /read op:\/\/Private\/mac-builder vm password\/password/);
   assert.match(log, /cat \/tmp\/mac-builder-password/);
+  assert.match(log, /NIX_CONFIG='experimental-features = nix-command flakes'/);
   assert.match(log, /darwin-rebuild switch|nix run .* switch/);
   assert.doesNotMatch(log, /mount/i);
+});
+
+test('deploy: prepares the Nix store volume without vifs', () => {
+  const src = fs.readFileSync(buildDeployBin(), 'utf8');
+  assert.match(src, /NIX_VOLUME_CREATE=0/);
+  assert.match(src, /\/usr\/local\/libexec\/mac-builder-mount-nix/);
+  assert.match(src, /mount_apfs -o noatime,nosuid,owners/);
+  assert.match(src, /org\.nixos\.darwin-store/);
+  assert.match(src, /sysadminctl -addUser nix-builder -UID 502 -GID 20 -home \/Users\/nix-builder -shell \/bin\/bash/);
+  assert.match(src, /createhomedir -c -u nix-builder/);
+  assert.match(src, /dscl \. -create \/Users\/nix-builder IsHidden 1/);
+  assert.match(src, /\.before-nix-darwin/);
+  assert.match(src, /\/run\/current-system/);
+  assert.doesNotMatch(src, /vifs/);
+  assert.doesNotMatch(src, /\/etc\/fstab/);
 });
