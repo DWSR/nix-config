@@ -13,8 +13,6 @@ updates:
       - /overlays/obsidian-importer-deps
       - /overlays/opencode-cost-diagnosis-deps
       - /overlays/storage-mcp
-      - /scripts/pi-lens
-      - /scripts/rpiv-ask-user-question
       - /scripts/rpiv-todo
     schedule:
       interval: weekly

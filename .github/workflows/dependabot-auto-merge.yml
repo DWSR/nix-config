@@ -15,7 +15,7 @@ jobs:
   auto-merge:
     name: Enable auto-merge
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 35
     # Key off the pull request author, not github.actor: the Fabro dependabot
     # workflow rewrites these branches, and the resulting synchronize event
     # must still re-enable auto-merge.
@@ -31,15 +31,74 @@ jobs:
           # fetch-metadata verifies is gone by the time this runs again.
           skip-verification: true
 
-      # main currently has no required status checks, so GitHub refuses to
-      # queue auto-merge on an already-mergeable PR ("Pull request is in clean
+      # main has no required status checks, so GitHub refuses to queue
+      # auto-merge on an already-mergeable PR ("Pull request is in clean
       # status"). Keep the auto-merge path for when a ruleset adds checks, and
-      # otherwise perform the rebase merge that auto-merge would have done.
+      # otherwise wait for the PR's other checks and for Fabro to release the
+      # branch before performing the rebase merge auto-merge would have done.
       - name: Enable auto-merge for non-major updates
         if: steps.metadata.outputs.update-type != 'version-update:semver-major'
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr merge --auto --rebase "$PR_URL" ||
-            gh pr merge --rebase "$PR_URL"
+          set -euo pipefail
+
+          labels() {
+            gh pr view "$PR_URL" --json labels --jq '.labels[].name' | tr '\n' ' '
+          }
+
+          # Never merge while Fabro owns the branch: it rebases and amends
+          # Dependabot commits to refresh pinned npmDepsHash values, and those
+          # changes must land before the PR merges.
+          deadline=$((SECONDS + 1800))
+          while :; do
+            current=$(labels || true)
+            case " $current " in
+              *" fabro-failed "*) echo "fabro-failed is set; leaving $PR_URL for a human" >&2; exit 1 ;;
+              *" fabro-ready "*|*" fabro-running "*) ;;
+              *) break ;;
+            esac
+            [ "$SECONDS" -lt "$deadline" ] || { echo "timed out waiting for Fabro to release $PR_URL" >&2; exit 1; }
+            sleep 30
+          done
+
+          if output=$(gh pr merge --auto --rebase "$PR_URL" 2>&1); then
+            exit 0
+          fi
+          # Only fall back when auto-merge itself is unavailable; surface every
+          # other failure instead of turning it into a merge attempt.
+          case "$output" in
+            *"clean status"*|*"not allowed"*|*"Not allowed"*) ;;
+            *)
+              printf '%s\n' "$output" >&2
+              exit 1
+              ;;
+          esac
+
+          # Auto-merge is unavailable (no required checks yet). Watch the PR's
+          # other checks instead of `gh pr checks --watch`, which would wait on
+          # this job's own check forever.
+          while :; do
+            current=$(labels || true)
+            case " $current " in
+              *" fabro-failed "*) echo "fabro-failed is set; leaving $PR_URL for a human" >&2; exit 1 ;;
+              *" fabro-ready "*|*" fabro-running "*) sleep 30; continue ;;
+            esac
+
+            checks=$(gh pr checks "$PR_URL" --json name,state 2>/dev/null || true)
+            if [ -n "$checks" ]; then
+              others=$(printf '%s' "$checks" | jq '[.[] | select(.name != "Enable auto-merge")] | length')
+              failed=$(printf '%s' "$checks" | jq '[.[] | select(.name != "Enable auto-merge" and (.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED"))] | length')
+              pending=$(printf '%s' "$checks" | jq '[.[] | select(.name != "Enable auto-merge" and .state != "SUCCESS" and .state != "SKIPPED" and .state != "NEUTRAL")] | length')
+              if [ "$others" -gt 0 ]; then
+                [ "$failed" -eq 0 ] || { echo "a pull request check is failing; not merging $PR_URL" >&2; exit 1; }
+                if [ "$pending" -eq 0 ]; then
+                  gh pr merge --rebase "$PR_URL"
+                  exit 0
+                fi
+              fi
+            fi
+            [ "$SECONDS" -lt "$deadline" ] || { echo "timed out waiting for checks on $PR_URL" >&2; exit 1; }
+            sleep 30
+          done
