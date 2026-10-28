@@ -1,0 +1,57 @@
+digraph FailureTriage {
+    graph [
+        goal="Inspect every failed Fabro run (archived or not) that completed in the last {{ inputs.window_hours }} hours, cluster the failures by root cause across {{ inputs.repos }}, and open a GitHub issue in each repository that has at least {{ inputs.min_occurrences }} failed runs sharing one failure mode, with evidence and suggested remediation.",
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    prepare [
+        label="Prepare window",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="test -f .git/failure-triage-scripts/tools.py || { echo 'failure-triage: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/failure-triage-scripts/tools.py prepare {{ inputs.window_hours }} {{ inputs.min_occurrences }} {{ inputs.repos }} {{ inputs.max_runs }} {{ inputs.fabro_web_base }} {{ inputs.dry_run }}"
+    ]
+
+    analyze [
+        label="Cluster failed runs",
+        prompt="@prompts/analyze.md",
+        output_schema="routing",
+        goal_gate=true,
+        timeout="2h",
+        max_visits=1,
+        max_retries=2,
+        retry_policy="patient"
+    ]
+
+    report [
+        label="File triage issues",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="python3 .git/failure-triage-scripts/tools.py report"
+    ]
+
+    fail [
+        label="Fail run",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a failure-triage stage failed; inspect the failing stage output in the run events and .git/failure-triage-window.json or .git/failure-triage-analysis.json\"\nfi\nprintf 'failure-triage: %s\\n' \"$MSG\" >&2\nexit 1"
+    ]
+
+    start -> prepare
+
+    prepare -> analyze [condition="outcome=succeeded"]
+    prepare -> fail
+
+    analyze -> report [condition="outcome=succeeded && context.has_patterns=true"]
+    analyze -> exit [condition="outcome=succeeded && context.has_patterns=false"]
+    analyze -> fail
+
+    report -> exit [condition="outcome=succeeded"]
+    report -> fail
+
+    fail -> exit
+}
