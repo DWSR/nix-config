@@ -329,7 +329,7 @@ def check(argv):
 
 
 def load_publish_meta(issue_number, state):
-    title = "oneshot(#%d): %s" % (issue_number, state.get("issue_title") or "implement issue")
+    title = "fix(oneshot): implement issue #%d" % issue_number
     summary = "Implements the change requested in issue #%d." % issue_number
     if os.path.exists(PUBLISH_PATH):
         try:
@@ -337,7 +337,8 @@ def load_publish_meta(issue_number, state):
                 data = json.load(f)
             if isinstance(data, dict):
                 proposed = " ".join(str(data.get("title") or "").split())
-                if proposed:
+                if (len(proposed) <= 72 and re.match(
+                        r"^[a-z][a-z0-9-]*(?:\([a-z0-9._/-]+\))?!?: .{1,}$", proposed)):
                     title = proposed
                 proposed_summary = str(data.get("summary") or "").strip()
                 if proposed_summary:
@@ -357,15 +358,23 @@ def publish(argv):
     title, summary = load_publish_meta(issue_number, state)
 
     run(["git", "add", "-A"])
-    if subprocess.run(["git", "diff", "--cached", "--quiet"]).returncode == 1:
-        ident = []
-        if not run(["git", "config", "user.email"], check=False):
-            ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
-        run(["git"] + ident + ["commit", "--no-gpg-sign", "-m", title])
+    run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
+    base = run(["git", "rev-parse", "FETCH_HEAD"])
+    tree = run(["git", "write-tree"])
+    diff_status = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
+    if diff_status == 0:
+        sys.exit("working tree has no changes relative to %s; refusing to publish an empty commit" % trunk)
+    if diff_status != 1:
+        sys.exit("failed to compare the working tree with %s" % trunk)
 
+    ident = []
+    if not run(["git", "config", "user.name"], check=False) or not run(["git", "config", "user.email"], check=False):
+        ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    commit = run(["git"] + ident + ["commit-tree", tree, "-p", base, "-m", title, "-m", summary])
     subprocess.run(["git", "fetch", "--quiet", "origin",
                     "refs/heads/%s:refs/remotes/origin/%s" % (branch, branch)], capture_output=True, text=True)
-    run(["git", "push", "--quiet", "--force-with-lease", "origin", "HEAD:refs/heads/%s" % branch])
+    run(["git", "push", "--quiet", "--force-with-lease", "origin",
+         "%s:refs/heads/%s" % (commit, branch)])
 
     def find_open_pr():
         query = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, branch), "per_page": 100})
