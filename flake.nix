@@ -2934,7 +2934,9 @@
               gitleaks = {
                 enable = true;
                 name = "gitleaks";
-                entry = "${pkgs.gitleaks}/bin/gitleaks git --pre-commit --staged --redact --verbose";
+                # git-hooks.nix already appends
+                # `git --pre-commit --redact --staged --verbose` as args.
+                entry = "${pkgs.gitleaks}/bin/gitleaks";
                 language = "system";
                 pass_filenames = false;
               };
