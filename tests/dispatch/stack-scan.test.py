@@ -17,6 +17,27 @@ def load_stack_scan() -> dict[str, Any]:
 
 
 class KiroSpecStackScanTests(unittest.TestCase):
+    def test_review_thread_query_has_balanced_selection_sets(self):
+        scan = load_stack_scan()
+        captured: dict[str, str] = {}
+
+        def capture_query(_token: str, query: str, _variables: dict[str, Any]) -> dict[str, Any]:
+            captured["query"] = query
+            return {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [],
+                            "pageInfo": {"hasNextPage": False},
+                        }
+                    }
+                }
+            }
+
+        scan["graphql"] = capture_query
+        self.assertFalse(scan["unresolved_threads"]("token", "owner", "repo", 17))
+        self.assertEqual(captured["query"].count("{"), captured["query"].count("}"))
+
     def test_only_native_stack_members_with_kiro_branch_and_issue_reference_match(self):
         scan = load_stack_scan()
         pr = {

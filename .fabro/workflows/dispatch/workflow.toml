@@ -75,7 +75,7 @@ def unresolved_threads(token, owner, repo, number):
           nodes{isResolved comments(first:100){nodes{body}}}
           pageInfo{hasNextPage endCursor}
         }
-      }}}
+      }}
     }
     """
     cursor = None
