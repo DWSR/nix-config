@@ -7,6 +7,7 @@ You are the **brief** stage of the `kiro-spec` Fabro workflow, running as an age
 - Workflow state: read `.git/kiro-spec-state.json` (JSON). The `spec` field is the feature name; the spec directory is `.kiro/specs/<spec>/`. Use that exact value — never invent a different directory name. The file also carries `issue`, `issue_title`, `issue_number`, `trunk`, `stack_base`, and `layers` (documents locked by earlier attempts, if this run is resuming). The state file is workflow-owned: read it, never modify it.
 - Issue content: `.git/kiro-spec-issue.md` (title, URL, labels, body). The issue is the origin of this spec; treat its body as the user's request.
 - If `.kiro/specs/<spec>/` already contains files, this run is resuming — read them before writing.
+- If `.git/kiro-spec-feedback.json` exists, the workflow selected this document or an upstream document for revision. Read the feedback and treat every listed comment as required input; the scripted workflow has already selected the earliest PR layer with unresolved review threads. Address all comments relevant to this document, and regenerate this document when an upstream revision invalidates it.
 
 ## Repository conventions (read these first)
 

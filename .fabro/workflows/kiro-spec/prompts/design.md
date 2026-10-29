@@ -8,6 +8,7 @@ You are the **design** stage of the `kiro-spec` Fabro workflow, running as an ag
 - Issue content: `.git/kiro-spec-issue.md`.
 - `.kiro/specs/<spec>/brief.md` — the source of the problem statement, approach, and scope.
 - `.kiro/specs/<spec>/requirements.md` — the behavioral contract the design must satisfy.
+- If `.git/kiro-spec-feedback.json` exists, read it and use the selected review comments when revising this document. If the selected layer is upstream, regenerate the design against revised upstream content; do not preserve stale downstream decisions that no longer fit.
 
 ## Repository conventions (read these first)
 

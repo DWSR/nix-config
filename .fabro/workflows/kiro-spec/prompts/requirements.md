@@ -7,6 +7,7 @@ You are the **requirements** stage of the `kiro-spec` Fabro workflow, running as
 - Workflow state: read `.git/kiro-spec-state.json` (JSON). The `spec` field names the directory `.kiro/specs/<spec>/` — use that exact value. The state file is workflow-owned: read it, never modify it.
 - Issue content: `.git/kiro-spec-issue.md`.
 - `.kiro/specs/<spec>/brief.md` — the authoritative problem statement, approach, and scope for this spec. Read it first; everything you write must stay inside its scope.
+- If `.git/kiro-spec-feedback.json` exists, read it and use the selected review comments when revising this document. If the selected layer is upstream, regenerate requirements against the revised upstream content; do not preserve stale downstream wording merely because it already exists.
 
 ## Repository conventions (read these first)
 

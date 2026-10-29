@@ -91,6 +91,94 @@ def gh(method, path, body=None, expect=(200, 201, 204)):
         sys.exit("GitHub API %s %s failed: HTTP %s\n%s" % (method, path, e.code, raw[:1000]))
 
 
+def graphql(query, variables=None):
+    status, result = gh("POST", "/graphql", {"query": query, "variables": variables or {}})
+    if result.get("errors"):
+        sys.exit("GitHub GraphQL failed: %s" % result["errors"])
+    return result.get("data") or {}
+
+
+def review_feedback(owner, repo, pr_number):
+    query = """
+    query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes { id isResolved comments(first: 100) { nodes { databaseId body path line originalLine url author { login } } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+    """
+    threads = []
+    cursor = None
+    while True:
+        data = graphql(query, {"owner": owner, "repo": repo, "number": pr_number, "cursor": cursor})
+        pr = ((data.get("repository") or {}).get("pullRequest") or {})
+        page = pr.get("reviewThreads") or {}
+        threads.extend(page.get("nodes") or [])
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            break
+        cursor = info.get("endCursor")
+    feedback = []
+    for thread in threads:
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        # Only unresolved, non-empty review threads are actionable. This scan is
+        # deliberately deterministic; the model receives only the selected thread data.
+        if thread.get("isResolved"):
+            continue
+        # A thread may include prior replies. Present the latest comment once,
+        # and reply to that comment rather than spamming every message in it.
+        comment = next((item for item in reversed(comments) if (item.get("body") or "").strip()), None)
+        if comment:
+            feedback.append({
+                "thread_id": thread["id"],
+                "comment_id": comment.get("databaseId"),
+                "body": (comment.get("body") or "").strip(),
+                "path": comment.get("path") or "",
+                "line": comment.get("line") or comment.get("originalLine"),
+                "url": comment.get("url") or "",
+                "author": ((comment.get("author") or {}).get("login") or "unknown"),
+            })
+    return feedback
+
+
+def resolve_feedback(owner, repo, pr_number, feedback, state):
+    replied = set(state.get("replied_comment_ids") or [])
+    for item in feedback:
+        comment_id = item.get("comment_id")
+        if not comment_id or not item.get("thread_id"):
+            sys.exit("cannot reply to review feedback without a comment id and thread id")
+        if comment_id not in replied:
+            reply_path = "/repos/%s/%s/pulls/%d/comments/%d/replies" % (owner, repo, pr_number, comment_id)
+            gh("POST", reply_path, {"body": "Addressed in the updated Kiro spec revision."})
+            replied.add(comment_id)
+            state["replied_comment_ids"] = sorted(replied)
+            save_state(state)
+        graphql("""mutation($threadId: ID!) {
+          resolveReviewThread(input: {threadId: $threadId}) { thread { isResolved } }
+        }""", {"threadId": item["thread_id"]})
+
+
+def scan_stack_feedback(owner, repo, spec, layers):
+    feedback_by_doc = {}
+    for layer in layers:
+        head = layer["branch"]
+        query = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, head), "per_page": 100})
+        prs = gh("GET", "/repos/%s/%s/pulls?%s" % (owner, repo, query))[1] or []
+        if len(prs) > 1:
+            sys.exit("multiple open pull requests for head %s: %s" % (head, [p["number"] for p in prs]))
+        if not prs:
+            continue
+        pr = prs[0]
+        comments = review_feedback(owner, repo, pr["number"])
+        if comments:
+            feedback_by_doc[layer["doc"]] = {"pr": pr["number"], "comments": comments}
+    return feedback_by_doc
+
+
 def origin_repo():
     url = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True, text=True).stdout.strip()
     m = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
@@ -270,6 +358,28 @@ def prepare(argv):
             sys.exit("stack branches for %s are not a contiguous 1..4 sequence: %s (delete the stray branches or pass -I spec=<new-name>)" % (
                 spec, [(l.get("layer"), l.get("doc")) for l in layers]))
 
+    feedback_by_doc = scan_stack_feedback(owner, repo, spec, layers) if layers else {}
+    rerun_doc = next((doc for doc in DOCS if doc in feedback_by_doc), None)
+    if rerun_doc:
+        feedback = feedback_by_doc[rerun_doc]
+        with open(".git/kiro-spec-feedback.json", "w") as f:
+            json.dump({"doc": rerun_doc, "pr": feedback["pr"], "comments": feedback["comments"]}, f, indent=2)
+            f.write("\n")
+        state["rerun_doc"] = rerun_doc
+        state["rerun_pr"] = feedback["pr"]
+        state["feedback"] = feedback["comments"]
+        next_doc = rerun_doc
+        print("kiro-spec prepare: unresolved review feedback selects %s PR #%s (%d comments)" % (
+            rerun_doc, feedback["pr"], len(feedback["comments"])), file=sys.stderr)
+    else:
+        state.pop("rerun_doc", None)
+        state.pop("rerun_pr", None)
+        state.pop("feedback", None)
+        try:
+            os.remove(".git/kiro-spec-feedback.json")
+        except FileNotFoundError:
+            pass
+
     if layers:
         if meta is None:
             sys.exit("stack branches exist for spec %s but no fingerprint is recorded at %s; cannot verify they match issue #%d (delete the stack branches to regenerate, or pass -I spec=<new-name>)" % (
@@ -289,11 +399,12 @@ def prepare(argv):
     else:
         if meta is None or meta.get("fingerprint") != fingerprint:
             record_fingerprint(spec, issue_number, fingerprint, meta_sha)
-        locked = set(l["doc"] for l in layers)
-        for doc in DOCS:
-            if doc not in locked:
-                next_doc = doc
-                break
+        if not rerun_doc:
+            locked = set(l["doc"] for l in layers)
+            for doc in DOCS:
+                if doc not in locked:
+                    next_doc = doc
+                    break
         os.makedirs(spec_dir, exist_ok=True)
 
     state["current"] = None
@@ -305,6 +416,8 @@ def prepare(argv):
         "spec_name": spec,
         "issue_number": str(issue_number),
         "stack_base": state["stack_base"],
+        "rerun_doc": rerun_doc or "",
+        "rerun_pr": str(state.get("rerun_pr") or ""),
     }}))
 
 
@@ -333,7 +446,8 @@ def lock(argv):
         sys.exit("%s has no '- [ ] N' task entries" % doc_path)
 
     layers = state.get("layers") or []
-    if any(l.get("doc") == doc for l in layers):
+    rerun = state.get("rerun_doc") == doc
+    if any(l.get("doc") == doc for l in layers) and not rerun:
         sys.exit("layer %d (%s) is already locked in the state file" % (layer, doc))
 
     if doc != "brief":
@@ -377,9 +491,26 @@ def lock(argv):
     if layer > 1 and len(layers) < layer - 1:
         sys.exit("cannot lock layer %d: earlier layers are missing from the state file" % layer)
     base_name = state["stack_base"] if layer == 1 else layers[layer - 2]["branch"]
-    base = run(["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/%s^{commit}" % base_name], check=False)
+    base = layers[layer - 2]["sha"] if layer > 1 else run(
+        ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/%s^{commit}" % base_name], check=False)
     if not base:
         sys.exit("base branch origin/%s is not available locally; fetch it and retry" % base_name)
+
+    if rerun:
+        # Rebuild downstream layers from the rewritten document rather than
+        # accidentally including their stale snapshots in this layer's commit.
+        for downstream in DOCS[layer:]:
+            stale_path = "%s/%s.md" % (spec_dir, downstream)
+            if os.path.exists(stale_path):
+                os.remove(stale_path)
+        if layer <= 2:
+            for stale_path in ("%s/spec.json" % spec_dir, "%s/research.md" % spec_dir):
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+        elif layer == 3:
+            research_path = "%s/research.md" % spec_dir
+            if os.path.exists(research_path):
+                os.remove(research_path)
 
     index = os.path.join(".git", "kiro-spec-lock-index")
     if os.path.exists(index):
@@ -396,14 +527,33 @@ def lock(argv):
     tip = run(["git"] + ident + ["commit-tree", tree, "-p", base, "-m", "docs(%s): add %s" % (spec, doc)])
 
     branch = "stack/%s/%d-%s" % (spec, layer, doc)
-    run(["git", "push", "--quiet", "--force-with-lease", "origin", "%s:refs/heads/%s" % (tip, branch)])
+    old = next((l for l in layers if l.get("doc") == doc), None)
+    lease = ["--force-with-lease=refs/heads/%s:%s" % (branch, old["sha"])] if old else ["--force-with-lease"]
 
+    run(["git", "push", "--quiet"] + lease + ["origin", "%s:refs/heads/%s" % (tip, branch)])
+
+    layers = [l for l in layers if l.get("layer", 0) < layer]
     layers.append({"layer": layer, "doc": doc, "branch": branch, "sha": tip})
     layers.sort(key=lambda l: l["layer"])
     state["layers"] = layers
     state["current"] = None
     save_state(state)
     print("kiro-spec lock: doc=%s layer=%d branch=%s sha=%s" % (doc, layer, branch, tip[:12]), file=sys.stderr)
+    if rerun:
+        feedback = state.get("feedback") or []
+        owner, repo = state["repo"].split("/", 1)
+        resolve_feedback(owner, repo, state["rerun_pr"], feedback, state)
+        print("kiro-spec lock: replied to and resolved %d review comments on PR #%s" % (
+            len(feedback), state["rerun_pr"]), file=sys.stderr)
+        state["feedback_resolved"] = True
+        save_state(state)
+    if doc == "tasks" and state.get("rerun_doc"):
+        state.pop("rerun_doc", None)
+        state.pop("rerun_pr", None)
+        state.pop("feedback", None)
+        state.pop("feedback_resolved", None)
+        state.pop("replied_comment_ids", None)
+        save_state(state)
 
 
 def publish(argv):
