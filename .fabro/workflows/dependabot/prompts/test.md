@@ -138,25 +138,67 @@ not assume `rg`/`awk` are installed; use `grep`, `find`, or Python when they are
 1. Discover the repository's canonical test command(s) from its manifests (`package.json`,
    `Cargo.toml`, `go.mod`, `Makefile`, `pyproject.toml`), lockfiles, task runners, CI
    config, and README. Prefer the exact commands CI runs, except for the staged live E2E
-   suites listed below, which are CI-only in this sandbox. A touched package with no test
+   suites listed below, which are CI-only in this sandbox. In `DWSR/nix-config` the
+   canonical set is exactly the sandbox gate below; do not translate its Darwin-only
+   `checks.<system>` commands into direct test invocations. A touched package with no test
    files in its checkout is
    dependency-only: follow the dependency-only rule below. In workspaces with multiple
    packages, cover every package the pull request touches, plus anything the repository's
    CI treats as required.
-2. Run the full test suite for the repository. If the canonical suite is several commands,
-   run them all, in CI order.
+2. Run the canonical suite for the repository (the sandbox gate below in
+   `DWSR/nix-config`). If the canonical suite is several commands, run them all, in CI
+   order.
 3. Apply the environment-unrunnable-suites rule below to suites that cannot pass in this
    sandbox for reasons no code change can fix; everything else must pass.
 4. Write the combined output to `.git/dependabot-test.log` (plain text; keep the tail if
    it is enormous).
+
+## DWSR/nix-config sandbox gate
+
+In this repository the flake declares only Darwin systems:
+`systems = [ "aarch64-darwin" "x86_64-darwin" ]`. The sandbox is
+`aarch64-linux`, so the complete gate that can actually run here is:
+
+1. `nix flake check --show-trace` — evaluates the flake, the Darwin host
+   configurations, and the `aarch64-linux` package derivations. Every
+   `checks.<system>` output is Darwin-only, so Nix prints
+   `warning: The check omitted these incompatible systems: aarch64-darwin, x86_64-darwin`
+   and builds no check. That warning and the empty check set are expected on
+   this platform; they mean the flake still evaluates, not that the test
+   suite ran.
+2. For every touched package, its own suite: a package whose checkout has test files
+   runs the command the flake or manifest defines for it (for example
+   `node --test tests/<dir>/`); a dependency-only package (no test files) gets its
+   lockfile validated with `npm ci --ignore-scripts` under a Nix-provided Node.
+   Classify by test files, never by an installed runner.
+
+Do not run anything else as the gate. These commands are environment-unrunnable
+in this sandbox and must be recorded as
+`excluded: <command> (<environment cause>)` instead of a test failure:
+
+- `nix flake check --all-systems` (Darwin-only outputs cannot build on Linux)
+- `nix develop --command ...` and `nix develop --command prek run --all-files`
+  (the flake exposes no Linux devShell; the repository's `prek` CI job runs on
+  macOS runners)
+- Direct invocations of checks that need a Darwin builder, for example
+  `node --test tests/lima-vm/`, `node --test tests/hammerspoon-*`, and any
+  `nix build` of a `checks.aarch64-darwin` output
+- Anything that fails with `platform mismatch`, `Required system:
+  'aarch64-darwin'`, or `does not provide attribute 'devShells.aarch64-linux.default'`
+
+A failure that names a missing Darwin builder, a missing Linux devShell, or a
+platform mismatch is environmental: exclude it and keep evaluating the
+remaining commands. Do not spend a fix round on it.
 
 ## Environment-unrunnable suites
 
 A failing suite that cannot possibly pass in this sandbox, and that no code change could
 fix, is excluded from the gate instead of failing the whole verification. Qualifying
 causes include privileged operations the sandbox cannot grant (`initdb` refuses to run
-as root, mounting devices, privileged ports) and live end-to-end tests that need real
-services, network peers, or runner-only credentials.
+as root, mounting devices, privileged ports), live end-to-end tests that need real
+services, network peers, or runner-only credentials, and Nix platform mismatches
+(`Required system: 'aarch64-darwin'` on the `aarch64-linux` sandbox, or a Linux
+devShell the flake does not define).
 
 The following live end-to-end suites are CI-only here because they need runner-staged
 artifacts and the CI runner architecture:
@@ -181,11 +223,18 @@ excluded; they must all pass for the verification to succeed. Record each exclus
 code-related, it is a test failure, not an exclusion. GitHub CI remains the gate for
 excluded suites.
 
+If every failure in the run is excluded, report `tests_passed=true` with the exclusions
+in `test_summary`. Never report `tests_passed=false` for a failure the fix stage cannot
+act on: repeating an identical environmental failure for three rounds only blocks the
+pull request.
+
 ## Hard constraints
 
 - Do NOT modify any tracked file and do NOT create commits. Build artifacts created by the
   test run are fine.
 - Never claim a test passed unless you ran the whole command yourself and observed exit 0.
+  Reporting `tests_passed=true` with `excluded:` entries is not such a claim: the excluded
+  suites stay unverified and GitHub CI is their gate.
 - Only report blocked for a missing toolchain after a Nix provisioning attempt fails. Name
   the exact Nix command and error. Report environmental defects (empty `HOME`, missing
   `/usr/bin/env`, full disk) the same way; do not treat them as test failures.

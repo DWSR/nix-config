@@ -101,6 +101,17 @@ If the failure is environmental (missing runtime after provisioning, no `/usr/bi
 full disk, Nix cache error), report blocked with the exact defect. Do not change the
 project to work around a broken sandbox.
 
+The test stage records these repository-specific failures as `excluded:`; they are not
+regressions and there is nothing to fix:
+
+- `platform mismatch` / `Required system: 'aarch64-darwin'` from a Darwin-only Nix check
+- a missing Linux devShell (`nix develop` fails because this flake declares only Darwin
+  systems), so the macOS-only `prek` job is not runnable here
+- "No test files found" from a dependency-only package
+
+Report `fix_status=READY` with the Linux gate evidence (`nix flake check` plus the
+lockfile validation) instead of editing the flake or adding test tooling.
+
 Respect the test stage's exclusions: when `test_summary` lists suites as excluded
 (`excluded: <command> (<environment cause>)`), do not rerun or debug them — the
 hermetic remainder of the suite is what you fix and what the re-run must pass. If a
