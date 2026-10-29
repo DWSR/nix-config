@@ -9,12 +9,7 @@ base = ""
 trunk = ""
 
 # DeepSeek V4.1 Flash saturates its OpenCode Go cell under dispatch fan-out;
-# fail over to the ChatGPT-backed Luna. DeepSeek's wire has no fabro effort
-# enum, so the xhigh control only takes effect on the fallback, which is the
-# level gpt-6-luna advertises.
-[run.model.controls]
-reasoning_effort = "xhigh"
-
+# fail over to the ChatGPT-backed Luna, whose deployment pins xhigh effort.
 [run.model.fallbacks]
 "deepseek-v4.1-flash" = ["litellm:gpt-6-luna"]
 
