@@ -179,7 +179,7 @@
     # The nix-darwin module also manages feature policy and performs model
     # cleanup during activation. Keep the CLI package available system-wide;
     # configure Apple Intelligence policy manually with `pared wizard`.
-    pared.url = "github:4evy/pared/2.1.0";
+    pared.url = "github:4evy/pared/2.2.0";
 
     # NixOS guest for the fabro Lima VM (configurations/fabro-vm): the
     # guest-side module provides lima-init (cidata boot-time setup) and the
