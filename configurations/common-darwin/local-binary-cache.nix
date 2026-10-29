@@ -138,13 +138,6 @@ let
     // {
       description = "absolute runtime path without Nix store context";
     };
-  safeRuntimePathType =
-    types.addCheck runtimePathType (
-      path: builtins.match "/[A-Za-z0-9._+,:=@%~-]+(/[A-Za-z0-9._+,:=@%~-]+)*" path != null
-    )
-    // {
-      description = "canonical context-free absolute runtime path using safe ASCII characters";
-    };
   safeExecutablePathType =
     types.addCheck absolutePathType (
       path:
@@ -195,10 +188,6 @@ let
   localSubstituter = "${cfg.endpoint}/${cfg.cacheName}";
   declarativeSubstituters = lib.unique (
     (config.nix.settings.substituters or [ ]) ++ (config.nix.settings.extra-substituters or [ ])
-  );
-  declarativeTrustedPublicKeys = lib.unique (
-    (config.nix.settings.trusted-public-keys or [ ])
-    ++ (config.nix.settings.extra-trusted-public-keys or [ ])
   );
 
   bootstrapInputsDeclared =
