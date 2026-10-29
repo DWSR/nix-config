@@ -29,7 +29,7 @@ digraph Dispatch {
         shape=parallelogram,
         language="python",
         output_schema="routing",
-        script="python3 .git/dispatch-stack-scan.py"
+        script="import runpy\nrunpy.run_path('.git/dispatch-stack-scan.py', run_name='__main__')"
     ]
 
     normalize [
@@ -60,6 +60,7 @@ digraph Dispatch {
         label="Fail run",
         shape=parallelogram,
         stdin_source="stage_failure",
+        goal_gate=true,
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a dispatch stage failed; inspect the failing stage output in the run events and .git/dispatch-queue.json, .git/dispatch-plan.json, .git/dispatch-result.json, .git/dispatch-archive.json\"\nfi\nprintf 'dispatch: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
