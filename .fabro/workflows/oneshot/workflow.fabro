@@ -19,7 +19,9 @@ digraph Oneshot {
         label="Implement issue",
         prompt="@prompts/implement.md",
         output_schema="routing",
-        max_visits=5
+        max_visits=8,
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     check [
@@ -34,14 +36,18 @@ digraph Oneshot {
         label="Simplify change",
         prompt="@prompts/simplify.md",
         output_schema="routing",
-        max_visits=2
+        max_visits=5,
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     review [
         label="Review change",
         prompt="@prompts/review.md",
         output_schema="routing",
-        max_visits=5
+        max_visits=8,
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     rework [
@@ -51,6 +57,33 @@ digraph Oneshot {
         max_visits=3,
         stdin_source="context.rework_round",
         script="set -eu\nROUND=$(cat 2>/dev/null | tr -d '[:space:]' || true)\ncase \"$ROUND\" in ''|*[!0-9]*) ROUND=0 ;; esac\nROUND=$((ROUND + 1))\nif [ \"$ROUND\" -gt 2 ]; then\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\",\"stage_failure\":\"Review rejected the change after 2 rework rounds; giving up.\"}}\\n' \"$ROUND\"\nelse\n  printf '{\"outcome\":\"succeeded\",\"context_updates\":{\"rework_round\":\"%s\"}}\\n' \"$ROUND\"\nfi"
+    ]
+
+    wait_implement_rate_limit [
+        label="Wait for rate limit (implement)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_simplify_rate_limit [
+        label="Wait for rate limit (simplify)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_review_rate_limit [
+        label="Wait for rate limit (review)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     publish [
@@ -73,18 +106,27 @@ digraph Oneshot {
     prepare -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
+    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     implement -> fail
+    wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
+    wait_implement_rate_limit -> fail
 
     check -> review [condition="outcome=succeeded && context.over_limit=false"]
     check -> simplify [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=true"]
     check -> fail
 
     simplify -> check [condition="outcome=succeeded"]
+    simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     simplify -> fail
+    wait_simplify_rate_limit -> simplify [condition="outcome=succeeded"]
+    wait_simplify_rate_limit -> fail
 
     review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
+    review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> fail
+    wait_review_rate_limit -> review [condition="outcome=succeeded"]
+    wait_review_rate_limit -> fail
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
     rework -> fail

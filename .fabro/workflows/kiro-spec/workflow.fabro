@@ -18,7 +18,9 @@ digraph KiroSpec {
     brief [
         label="Write brief",
         prompt="@prompts/brief.md",
-        output_schema="routing"
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     lock_brief [
@@ -30,7 +32,9 @@ digraph KiroSpec {
     requirements [
         label="Write requirements",
         prompt="@prompts/requirements.md",
-        output_schema="routing"
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     lock_requirements [
@@ -42,7 +46,9 @@ digraph KiroSpec {
     design [
         label="Write design",
         prompt="@prompts/design.md",
-        output_schema="routing"
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     lock_design [
@@ -54,13 +60,51 @@ digraph KiroSpec {
     tasks [
         label="Write tasks",
         prompt="@prompts/tasks.md",
-        output_schema="routing"
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     lock_tasks [
         label="Lock tasks layer",
         shape=parallelogram,
         script="python3 .git/kiro-spec-scripts/tools.py lock tasks 4"
+    ]
+
+    wait_brief_rate_limit [
+        label="Wait for rate limit (brief)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_requirements_rate_limit [
+        label="Wait for rate limit (requirements)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_design_rate_limit [
+        label="Wait for rate limit (design)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_tasks_rate_limit [
+        label="Wait for rate limit (tasks)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     publish [
@@ -87,22 +131,34 @@ digraph KiroSpec {
     prepare -> fail
 
     brief -> lock_brief [condition="outcome=succeeded"]
+    brief -> wait_brief_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     brief -> fail
+    wait_brief_rate_limit -> brief [condition="outcome=succeeded"]
+    wait_brief_rate_limit -> fail
     lock_brief -> requirements [condition="outcome=succeeded"]
     lock_brief -> fail
 
     requirements -> lock_requirements [condition="outcome=succeeded"]
+    requirements -> wait_requirements_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     requirements -> fail
+    wait_requirements_rate_limit -> requirements [condition="outcome=succeeded"]
+    wait_requirements_rate_limit -> fail
     lock_requirements -> design [condition="outcome=succeeded"]
     lock_requirements -> fail
 
     design -> lock_design [condition="outcome=succeeded"]
+    design -> wait_design_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     design -> fail
+    wait_design_rate_limit -> design [condition="outcome=succeeded"]
+    wait_design_rate_limit -> fail
     lock_design -> tasks [condition="outcome=succeeded"]
     lock_design -> fail
 
     tasks -> lock_tasks [condition="outcome=succeeded"]
+    tasks -> wait_tasks_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     tasks -> fail
+    wait_tasks_rate_limit -> tasks [condition="outcome=succeeded"]
+    wait_tasks_rate_limit -> fail
     lock_tasks -> publish [condition="outcome=succeeded"]
     lock_tasks -> fail
 

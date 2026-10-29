@@ -20,7 +20,9 @@ digraph KiroTask {
         prompt="@prompts/implement.md",
         output_schema="routing",
         goal_gate=true,
-        max_visits=5
+        max_visits=8,
+        max_retries=2,
+        retry_policy="patient"
     ]
 
     review [
@@ -28,7 +30,9 @@ digraph KiroTask {
         prompt="@prompts/review.md",
         output_schema="routing",
         goal_gate=true,
-        max_visits=5,
+        max_visits=8,
+        max_retries=2,
+        retry_policy="patient",
         model="gpt-6-luna",
         provider="litellm",
         reasoning_effort="xhigh"
@@ -53,7 +57,36 @@ digraph KiroTask {
     blocked [
         label="Record blocked",
         prompt="@prompts/blocked.md",
-        output_schema="routing"
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
+    ]
+
+    wait_implement_rate_limit [
+        label="Wait for rate limit (implement)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_review_rate_limit [
+        label="Wait for rate limit (review)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    wait_blocked_rate_limit [
+        label="Wait for rate limit (blocked)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     start -> guard
@@ -62,15 +95,24 @@ digraph KiroTask {
     guard -> exit
 
     implement -> review [condition="outcome=succeeded && context.impl_status=READY_FOR_REVIEW"]
+    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     implement -> blocked
+    wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
+    wait_implement_rate_limit -> blocked
 
     review -> complete [condition="outcome=succeeded && context.verdict=APPROVED"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
+    review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> blocked
+    wait_review_rate_limit -> review [condition="outcome=succeeded"]
+    wait_review_rate_limit -> blocked
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
     rework -> blocked
 
     complete -> exit
+    blocked -> wait_blocked_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     blocked -> exit
+    wait_blocked_rate_limit -> blocked [condition="outcome=succeeded"]
+    wait_blocked_rate_limit -> exit
 }
