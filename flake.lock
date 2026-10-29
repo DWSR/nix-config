@@ -923,16 +923,16 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1791454500,
-        "narHash": "sha256-reHwkDv9RvFCZyyx2D7l5rSrH3gLuIdJqp2eOZvSXlg=",
+        "lastModified": 1791570090,
+        "narHash": "sha256-BmhPtqSShGf3CdmUoT5ew0pTteSl2/74Cbau44kzalQ=",
         "owner": "4evy",
         "repo": "pared",
-        "rev": "bc9d5e0b196e014bad827405cba9be4060cb6ad2",
+        "rev": "d860e255d4f4141c02a1869b123f650623ea86d8",
         "type": "github"
       },
       "original": {
         "owner": "4evy",
-        "ref": "2.1.0",
+        "ref": "2.2.0",
         "repo": "pared",
         "type": "github"
       }
