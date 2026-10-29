@@ -540,11 +540,11 @@
     "homebrew-unf": {
       "flake": false,
       "locked": {
-        "lastModified": 1787794585,
-        "narHash": "sha256-bIcSBYB/rCO6mOcRIyA4IPsfa8EigEoxPb3+l4PeTCM=",
+        "lastModified": 1790480104,
+        "narHash": "sha256-ZcWC3cvejILBqdtm63w4V31/TRwBO0/ifwjm1ODZZ90=",
         "owner": "cyrusradfar",
         "repo": "homebrew-unf",
-        "rev": "9a3b22ed89d75e91ae44588b63c1e94ea0d37edb",
+        "rev": "b591190d9544c0e99d6198780a487c595a69f8e7",
         "type": "github"
       },
       "original": {
