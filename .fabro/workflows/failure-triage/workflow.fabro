@@ -21,9 +21,18 @@ digraph FailureTriage {
         output_schema="routing",
         goal_gate=true,
         timeout="2h",
-        max_visits=1,
+        max_visits=4,
         max_retries=2,
         retry_policy="patient"
+    ]
+
+    wait_analyze_rate_limit [
+        label="Wait for rate limit (analyze)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     report [
@@ -48,7 +57,11 @@ digraph FailureTriage {
 
     analyze -> report [condition="outcome=succeeded && context.has_patterns=true"]
     analyze -> exit [condition="outcome=succeeded && context.has_patterns=false"]
+    analyze -> wait_analyze_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     analyze -> fail
+
+    wait_analyze_rate_limit -> analyze [condition="outcome=succeeded"]
+    wait_analyze_rate_limit -> fail
 
     report -> exit [condition="outcome=succeeded"]
     report -> fail

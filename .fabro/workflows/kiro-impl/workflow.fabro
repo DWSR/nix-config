@@ -39,7 +39,18 @@ digraph KiroImpl {
         label="Await task run",
         prompt="@prompts/await.md",
         output_schema="routing",
-        max_visits=200
+        max_visits=200,
+        max_retries=2,
+        retry_policy="patient"
+    ]
+
+    wait_await_rate_limit [
+        label="Wait for rate limit (await)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
     integrate [
@@ -79,7 +90,10 @@ digraph KiroImpl {
     dispatch -> fail
 
     await -> integrate [condition="outcome=succeeded && context.dispatch_result=success"]
+    await -> wait_await_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     await -> fail
+    wait_await_rate_limit -> await [condition="outcome=succeeded"]
+    wait_await_rate_limit -> fail
 
     integrate -> pick [condition="outcome=succeeded && context.has_pending=true"]
     integrate -> publish [condition="outcome=succeeded && context.has_pending=false"]
