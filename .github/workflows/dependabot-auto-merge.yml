@@ -4,8 +4,13 @@ on:
   pull_request:
 
 permissions:
+  # gh pr checks reads the rollup of check runs, workflow runs, and commit
+  # statuses, so those read scopes must be explicit next to the write scopes.
+  actions: read
+  checks: read
   contents: write
   pull-requests: write
+  statuses: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -49,11 +54,11 @@ jobs:
           }
 
           # Never merge while Fabro owns the branch: it rebases and amends
-          # Dependabot commits to refresh pinned npmDepsHash values, and those
-          # changes must land before the PR merges.
+          # Dependabot commits (for example to refresh pinned npmDepsHash
+          # values), and those changes must land before the PR merges.
           deadline=$((SECONDS + 1800))
           while :; do
-            current=$(labels || true)
+            current=$(labels)
             case " $current " in
               *" fabro-failed "*) echo "fabro-failed is set; leaving $PR_URL for a human" >&2; exit 1 ;;
               *" fabro-ready "*|*" fabro-running "*) ;;
@@ -80,13 +85,32 @@ jobs:
           # other checks instead of `gh pr checks --watch`, which would wait on
           # this job's own check forever.
           while :; do
-            current=$(labels || true)
+            current=$(labels)
             case " $current " in
               *" fabro-failed "*) echo "fabro-failed is set; leaving $PR_URL for a human" >&2; exit 1 ;;
-              *" fabro-ready "*|*" fabro-running "*) sleep 30; continue ;;
+              *" fabro-ready "*|*" fabro-running "*)
+                [ "$SECONDS" -lt "$deadline" ] || { echo "timed out waiting for Fabro to release $PR_URL" >&2; exit 1; }
+                sleep 30
+                continue
+                ;;
             esac
 
-            checks=$(gh pr checks "$PR_URL" --json name,state 2>/dev/null || true)
+            # gh pr checks exits non-zero for pending (8) and failing (1)
+            # checks but still prints JSON. An empty result plus stderr means
+            # the query itself failed (typically a missing permission), which
+            # must fail the job instead of waiting out the deadline.
+            err_file=$(mktemp)
+            rc=0
+            checks=$(gh pr checks "$PR_URL" --json name,state 2>"$err_file") || rc=$?
+            if [ -z "$checks" ] && [ "$rc" -ne 0 ]; then
+              if ! grep -q "no checks reported on the" "$err_file"; then
+                cat "$err_file" >&2
+                rm -f "$err_file"
+                exit 1
+              fi
+            fi
+            rm -f "$err_file"
+
             if [ -n "$checks" ]; then
               others=$(printf '%s' "$checks" | jq '[.[] | select(.name != "Enable auto-merge")] | length')
               failed=$(printf '%s' "$checks" | jq '[.[] | select(.name != "Enable auto-merge" and (.state == "FAILURE" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED"))] | length')

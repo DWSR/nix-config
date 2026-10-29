@@ -1,11 +1,12 @@
 version: 2
 updates:
-  # npm dependencies are pinned per package-lock.json and consumed by the Nix
-  # builds through importNpmLock/npmDepsHash. The Fabro dependabot workflow
-  # repairs the hash bumps that these version updates require.
+  # These lockfiles feed the Nix builds through importNpmLock, which reads
+  # package-lock.json directly, so version updates here need no hash change.
+  # Packages whose builds pin npmDepsHash are intentionally excluded: their
+  # lockfile bumps would invalidate that hash and Fabro only repairs hashes for
+  # PRs it is dispatched for, not for passing PRs that auto-merge.
   - package-ecosystem: npm
     directories:
-      - /home-manager/common/extensions/pi-mcpproxy-go
       - /overlays/agentmemory-deps
       - /overlays/gcloud-mcp
       - /overlays/git-mcp-server
@@ -13,7 +14,6 @@ updates:
       - /overlays/obsidian-importer-deps
       - /overlays/opencode-cost-diagnosis-deps
       - /overlays/storage-mcp
-      - /scripts/rpiv-todo
     schedule:
       interval: weekly
     cooldown:
