@@ -146,6 +146,21 @@ def commit_ident():
     return []
 
 
+def failure_message(stage, detail):
+    stage = " ".join(str(stage or "").split())
+    detail = " ".join(str(detail or "").split())
+    if stage and detail:
+        return "%s failed: %s" % (stage, detail)
+    if stage:
+        return "%s failed; inspect the failing stage output in the run events and .git/dependabot-state.json" % stage
+    if detail:
+        return detail
+    return (
+        "the failing dependabot stage did not report itself (for example sandbox setup); "
+        "inspect the failing stage output in the run events and .git/dependabot-state.json"
+    )
+
+
 def write_pr_file(pr, owner, repo, labels):
     with open(PR_PATH, "w") as f:
         f.write("# GitHub pull request #%d: %s\n\n" % (pr["number"], (pr.get("title") or "").strip()))
@@ -363,6 +378,13 @@ def release(argv):
         print("dependabot release: pr=#%d removed %s and added %s" % (number, RUNNING_LABEL, FAILED_LABEL), file=sys.stderr)
 
 
+def fail(argv):
+    stage = argv[0] if argv else ""
+    detail = sys.stdin.read()
+    print("dependabot: %s" % failure_message(stage, detail), file=sys.stderr)
+    sys.exit(1)
+
+
 def success(argv):
     state = {}
     if os.path.exists(STATE_PATH):
@@ -411,7 +433,7 @@ def success(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|amend|success|release> [args]")
+        sys.exit("usage: tools.py <prepare|amend|success|release|fail> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
@@ -421,6 +443,8 @@ def main():
         success(rest)
     elif cmd == "release":
         release(rest)
+    elif cmd == "fail":
+        fail(rest)
     else:
         sys.exit("unknown command %r" % cmd)
 

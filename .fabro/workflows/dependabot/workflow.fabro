@@ -80,40 +80,83 @@ digraph Dependabot {
         script="python3 .git/dependabot-scripts/tools.py success {{ inputs.pr }}"
     ]
 
+    mark_prepare [
+        label="Record prepare failure",
+        shape=parallelogram,
+        script="printf '%s' 'prepare (validate PR and rebase)' > .git/dependabot-failed-stage"
+    ]
+
+    mark_test [
+        label="Record test failure",
+        shape=parallelogram,
+        script="printf '%s' 'test (verify tests)' > .git/dependabot-failed-stage"
+    ]
+
+    mark_fix [
+        label="Record fix failure",
+        shape=parallelogram,
+        script="printf '%s' 'fix (fix failures)' > .git/dependabot-failed-stage"
+    ]
+
+    mark_rework [
+        label="Record rework failure",
+        shape=parallelogram,
+        script="printf '%s' 'rework (queue rework)' > .git/dependabot-failed-stage"
+    ]
+
+    mark_amend [
+        label="Record amend failure",
+        shape=parallelogram,
+        script="printf '%s' 'amend (amend and push)' > .git/dependabot-failed-stage"
+    ]
+
+    mark_finish [
+        label="Record finish failure",
+        shape=parallelogram,
+        script="printf '%s' 'finish (clear dispatch labels)' > .git/dependabot-failed-stage"
+    ]
+
     fail [
         label="Fail run",
         shape=parallelogram,
         stdin_source="stage_failure",
-        script="set -eu\nMSG=$(cat || true)\nPR=\"{{ inputs.pr }}\"\nif [ -f .git/dependabot-scripts/tools.py ]; then\n  python3 .git/dependabot-scripts/tools.py release \"$PR\" || true\nelse\n  case \"$PR\" in\n    ''|*[!0-9]*) ;;\n    *)\n      gh api --method POST \"repos/{owner}/{repo}/labels\" -f name=fabro-failed -f color=d73a4a -f description=\"Fabro dependabot run failed; remove this label to retry\" >/dev/null 2>&1 || true\n      gh api --method POST \"repos/{owner}/{repo}/issues/$PR/labels\" -f \"labels[]=fabro-failed\" >/dev/null 2>&1 || true\n      gh api --method DELETE \"repos/{owner}/{repo}/issues/$PR/labels/fabro-running\" >/dev/null 2>&1 || true\n      ;;\n  esac\nfi\nif [ -z \"$MSG\" ]; then\n  MSG=\"a dependabot stage failed; inspect the failing stage output in the run events and .git/dependabot-state.json\"\nfi\nprintf 'dependabot: %s\\n' \"$MSG\" >&2\nexit 1"
+        script="set -eu\nMSG=$(cat || true)\nSTAGE=$(cat .git/dependabot-failed-stage 2>/dev/null || true)\nPR=\"{{ inputs.pr }}\"\nif [ -f .git/dependabot-scripts/tools.py ]; then\n  python3 .git/dependabot-scripts/tools.py release \"$PR\" || true\n  printf '%s' \"$MSG\" | python3 .git/dependabot-scripts/tools.py fail \"$STAGE\"\nelse\n  case \"$PR\" in\n    ''|*[!0-9]*) ;;\n    *)\n      gh api --method POST \"repos/{owner}/{repo}/labels\" -f name=fabro-failed -f color=d73a4a -f description=\"Fabro dependabot run failed; remove this label to retry\" >/dev/null 2>&1 || true\n      gh api --method POST \"repos/{owner}/{repo}/issues/$PR/labels\" -f \"labels[]=fabro-failed\" >/dev/null 2>&1 || true\n      gh api --method DELETE \"repos/{owner}/{repo}/issues/$PR/labels/fabro-running\" >/dev/null 2>&1 || true\n      ;;\n  esac\n  if [ -z \"$STAGE\" ]; then\n    if [ -n \"$MSG\" ]; then\n      MSG=\"the failing dependabot stage did not report itself (for example sandbox setup): $MSG\"\n    else\n      MSG=\"the failing dependabot stage did not report itself (for example sandbox setup); inspect the failing stage output in the run events and .git/dependabot-state.json\"\n    fi\n  elif [ -n \"$MSG\" ]; then\n    MSG=\"$STAGE failed: $MSG\"\n  else\n    MSG=\"$STAGE failed; inspect the failing stage output in the run events and .git/dependabot-state.json\"\n  fi\n  printf 'dependabot: %s\\n' \"$MSG\" >&2\n  exit 1\nfi"
     ]
 
     start -> prepare
 
     prepare -> test [condition="outcome=succeeded && context.rebase_conflict!=true"]
     prepare -> fix [condition="outcome=succeeded && context.rebase_conflict=true"]
-    prepare -> fail
+    prepare -> mark_prepare
+    mark_prepare -> fail
 
     test -> wait_test_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     wait_test_rate_limit -> test [condition="outcome=succeeded"]
-    wait_test_rate_limit -> fail
+    wait_test_rate_limit -> mark_test
 
     test -> amend [condition="outcome=succeeded && context.tests_passed=true"]
     test -> rework [condition="outcome=succeeded && context.tests_passed=false"]
-    test -> fail
+    test -> mark_test
 
     rework -> fix [condition="outcome=succeeded && context.fix_round <= 3"]
-    rework -> fail
+    rework -> mark_rework
 
     fix -> wait_fix_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     wait_fix_rate_limit -> fix [condition="outcome=succeeded"]
-    wait_fix_rate_limit -> fail
+    wait_fix_rate_limit -> mark_fix
 
     fix -> test [condition="outcome=succeeded"]
-    fix -> fail
+    fix -> mark_fix
 
     amend -> finish [condition="outcome=succeeded"]
-    amend -> fail
+    amend -> mark_amend
 
     finish -> exit [condition="outcome=succeeded"]
-    finish -> fail
+    finish -> mark_finish
+
+    mark_test -> fail
+    mark_fix -> fail
+    mark_rework -> fail
+    mark_amend -> fail
+    mark_finish -> fail
 }
