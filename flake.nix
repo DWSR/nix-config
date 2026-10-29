@@ -153,7 +153,7 @@
     # false so the overlay can `import` the tree like a checkout; the
     # branch tip is pinned by flake.lock.
     rsync34 = {
-      url = "github:NixOS/nixpkgs/nixos-25.05";
+      url = "github:NixOS/nixpkgs/nixos-26.05";
       flake = false;
     };
 
