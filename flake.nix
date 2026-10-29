@@ -2890,7 +2890,7 @@
 
             hooks = {
               # Formatting
-              nixfmt-rfc-style.enable = true;
+              nixfmt.enable = true;
 
               # Linters
               statix = {
@@ -2934,7 +2934,9 @@
               gitleaks = {
                 enable = true;
                 name = "gitleaks";
-                entry = "${pkgs.gitleaks}/bin/gitleaks git --pre-commit --staged --redact --verbose";
+                # git-hooks.nix already appends
+                # `git --pre-commit --redact --staged --verbose` as args.
+                entry = "${pkgs.gitleaks}/bin/gitleaks";
                 language = "system";
                 pass_filenames = false;
               };
@@ -3037,6 +3039,11 @@
                 pkgs.jq
                 pkgs.markdownlint-cli
                 pkgs.nodejs
+                # Run the git-hooks-generated config directly in this shell,
+                # e.g. `nix develop -c prek run --all-files`, which is what CI
+                # does. The shellHook above only symlinks the config for the
+                # globally installed hooks.
+                pkgs.prek
                 pkgs.shellcheck
                 pkgs.shfmt
                 # Available in-shell so operators can decrypt/edit secrets/*.yaml

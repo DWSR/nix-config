@@ -1,0 +1,38 @@
+name: prek
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prek:
+    name: prek run --all-files
+    # The flake only exposes darwin systems, so the Linux runners cannot
+    # evaluate the devShell that supplies prek and the hook tools.
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+
+      - name: Run prek hooks
+        # Run in the devShell rather than building the sandboxed
+        # `checks.<system>.pre-commit-check`: the Nix sandbox has no network
+        # access, and the flake-checker hook (flake age) needs it.
+        run: nix develop --command prek run --all-files
+
+      - name: Show hook changes
+        if: failure()
+        run: git --no-pager diff
