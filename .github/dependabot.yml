@@ -1,0 +1,61 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /configurations/fabro-vm/api-bridge
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: gomod
+    directories:
+      - /scripts/gh-stack-mcp
+      - /scripts/git-mcp-secure-enclave-signer
+      - /scripts/mcpproxy-purge-tool-calls
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directories:
+      - /home-manager/common/extensions/pi-mcpproxy-go
+      - /overlays/agentmemory-deps
+      - /overlays/gcloud-mcp
+      - /overlays/git-mcp-server
+      - /overlays/observability-mcp
+      - /overlays/obsidian-importer-deps
+      - /overlays/opencode-cost-diagnosis-deps
+      - /overlays/storage-mcp
+      - /scripts/rpiv-todo
+      - /tests/fabro-sandbox
+      - /tests/fabro-service
+      - /tests/git-clone-isolation
+      - /tests/lima-vm
+      - /tests/litellm-service
+      - /tests/mac-nix-remote-builder
+      - /tests/omlx-service
+      - /tests/opencode-cost-diagnosis
+      - /tests/opencode-cost-diagnosis/integration
+      - /tests/opencode-nono
+      - /tests/opencode-nono-audit
+      - /tests/personal-tailscale-service
+      - /tests/subagent-context-budget
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: nix
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
