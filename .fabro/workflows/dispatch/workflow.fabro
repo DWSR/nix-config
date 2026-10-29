@@ -1,6 +1,6 @@
 digraph Dispatch {
     graph [
-        goal="Scan {{ inputs.repo }} for open issues labeled {{ inputs.ready_label }} and open dependabot pull requests, match each item against the dispatch rules, and create one child run per matched item through the Fabro API bridge, then archive earlier successful runs of this dispatcher for the same repository.",
+        goal="Scan {{ inputs.repo }} for ready issues, failing Dependabot pull requests, and open Kiro spec stack pull requests with unresolved review feedback; match each item against the dispatch rules, create child runs through the Fabro API bridge, then archive earlier successful dispatcher runs for the same repository.",
     ]
     rankdir=LR
 
@@ -22,6 +22,22 @@ digraph Dispatch {
         language="python",
         output_schema="routing",
         script="import json, sys\n\nQUEUE_PATH = \".git/dispatch-queue.json\"\nPLAN_PATH = \".git/dispatch-plan.json\"\n\nRULES = [\n    {\"label\": \"type/kiro-spec\", \"workflow\": \"kiro-spec\", \"workflow_version_id\": {{ vars.kiro_spec_workflow_version }}, \"label_swap\": \"dispatcher\", \"input_key\": \"issue\"},\n    {\"label\": \"type/oneshot\", \"workflow\": \"oneshot\", \"workflow_version_id\": {{ vars.oneshot_workflow_version }}, \"label_swap\": \"child\", \"input_key\": \"issue\"},\n]\nDEPENDABOT_RULE = {\n    \"workflow\": \"dependabot\",\n    \"workflow_version_id\": {{ vars.dependabot_workflow_version }},\n    \"label_swap\": \"child\",\n    \"input_key\": \"pr\",\n}\n\nqueue = json.load(open(QUEUE_PATH))\nentries, ambiguous, skipped = [], [], []\nfor issue in queue[\"issues\"]:\n    labels = issue.get(\"labels\") or []\n    matched = [r for r in RULES if r[\"label\"] in labels]\n    if len(matched) == 1:\n        rule = matched[0]\n        entries.append({\n            \"kind\": \"issue\",\n            \"number\": issue[\"number\"],\n            \"title\": issue.get(\"title\", \"\"),\n            \"url\": issue.get(\"url\", \"\"),\n            \"workflow\": rule[\"workflow\"],\n            \"workflow_version_id\": rule[\"workflow_version_id\"],\n            \"input_key\": rule[\"input_key\"],\n            \"label_swap\": rule[\"label_swap\"],\n        })\n    elif len(matched) > 1:\n        ambiguous.append({\"number\": issue[\"number\"], \"labels\": sorted(r[\"label\"] for r in matched)})\n    else:\n        skipped.append({\"number\": issue[\"number\"], \"labels\": sorted(labels)})\n\npull_requests = queue.get(\"pull_requests\") or []\nfor pr in pull_requests:\n    entries.append({\n        \"kind\": \"pr\",\n        \"number\": pr[\"number\"],\n        \"title\": pr.get(\"title\", \"\"),\n        \"url\": pr.get(\"url\", \"\"),\n        \"workflow\": DEPENDABOT_RULE[\"workflow\"],\n        \"workflow_version_id\": DEPENDABOT_RULE[\"workflow_version_id\"],\n        \"input_key\": DEPENDABOT_RULE[\"input_key\"],\n        \"label_swap\": DEPENDABOT_RULE[\"label_swap\"],\n        \"ci_failures\": pr.get(\"ci_failures\", \"\"),\n        \"reason\": pr.get(\"reason\", \"\"),\n    })\n\nplan = {\n    \"repo\": queue[\"repo\"],\n    \"default_branch\": queue[\"default_branch\"],\n    \"entries\": entries,\n    \"ambiguous\": ambiguous,\n    \"skipped\": skipped,\n}\nwith open(PLAN_PATH, \"w\") as f:\n    json.dump(plan, f, indent=1, sort_keys=True)\n\nfor entry in skipped:\n    print(\"dispatch match: skipping %s#%s (labels %s match no rule)\" % (queue[\"repo\"], entry[\"number\"], entry[\"labels\"]), file=sys.stderr)\n\nif ambiguous:\n    details = \", \".join(\"#%s (%s)\" % (a[\"number\"], \"+\".join(a[\"labels\"])) for a in ambiguous)\n    sys.exit(\"dispatch match: ambiguous type labels on %s; refusing to dispatch the batch: %s\" % (queue[\"repo\"], details))\n\nprint(\"dispatch match: repo=%s matched=%d (issues=%d, prs=%d) skipped=%d\" % (\n    queue[\"repo\"], len(entries), len(entries) - len(pull_requests), len(pull_requests), len(skipped)), file=sys.stderr)\nprint(json.dumps({\"context_updates\": {\n    \"has_plan\": \"true\" if entries else \"false\",\n    \"matched_count\": str(len(entries)),\n    \"skipped_count\": str(len(skipped)),\n}}))"
+    ]
+
+    stack_scan [
+        label="Scan open Kiro spec stacks for review feedback",
+        shape=parallelogram,
+        language="python",
+        output_schema="routing",
+        script="python3 .git/dispatch-stack-scan.py"
+    ]
+
+    normalize [
+        label="Mark stack reruns as label-neutral",
+        shape=parallelogram,
+        language="python",
+        output_schema="routing",
+        script="import json\n\nqueue = json.load(open('.git/dispatch-queue.json'))\nplan = json.load(open('.git/dispatch-plan.json'))\nstack_issue_numbers = {item['issue'] for item in (queue.get('kiro_spec_issues') or [])}\nfor entry in plan.get('entries') or []:\n    if entry.get('kind') == 'issue' and entry.get('number') in stack_issue_numbers:\n        entry['label_swap'] = 'none'\n        entry['source'] = 'open_kiro_spec_stack'\njson.dump(plan, open('.git/dispatch-plan.json', 'w'), indent=1, sort_keys=True)\nprint(json.dumps({'context_updates': {'has_plan': 'true' if plan.get('entries') else 'false'}}))"
     ]
 
     dispatch [
@@ -49,13 +65,19 @@ digraph Dispatch {
 
     start -> scan
 
-    scan -> match [condition="outcome=succeeded && context.has_queue=true"]
-    scan -> prune [condition="outcome=succeeded && context.has_queue=false"]
+    scan -> stack_scan [condition="outcome=succeeded"]
     scan -> fail
 
-    match -> dispatch [condition="outcome=succeeded && context.has_plan=true"]
-    match -> prune [condition="outcome=succeeded && context.has_plan=false"]
+    stack_scan -> match [condition="outcome=succeeded && context.has_queue=true"]
+    stack_scan -> prune [condition="outcome=succeeded && context.has_queue=false"]
+    stack_scan -> fail
+
+    match -> normalize [condition="outcome=succeeded"]
     match -> fail
+
+    normalize -> dispatch [condition="outcome=succeeded && context.has_plan=true"]
+    normalize -> prune [condition="outcome=succeeded && context.has_plan=false"]
+    normalize -> fail
 
     dispatch -> prune [condition="outcome=succeeded"]
     dispatch -> fail

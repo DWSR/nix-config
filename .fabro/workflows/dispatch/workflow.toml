@@ -17,3 +17,206 @@ enabled = false
 
 [run.pull_request]
 enabled = false
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git
+cat > .git/dispatch-stack-scan.py <<'DISPATCH_STACK_SCAN_PY'
+import json, os, re, sys, urllib.error, urllib.parse, urllib.request
+
+QUEUE_PATH = ".git/dispatch-queue.json"
+API_BASE = os.environ.get("DISPATCH_API_BASE", "http://host.docker.internal:32276/api/v1").rstrip("/")
+GITHUB_BASE = os.environ.get("DISPATCH_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
+STACK_BRANCH = re.compile(r"^stack/([a-z0-9][a-z0-9-]*)/([1-4])-(brief|requirements|design|tasks)$")
+ISSUE_REF = re.compile(r"\bfor issue\s+#(\d+)\b", re.IGNORECASE)
+ACTIVE_STATUSES = ("pending", "runnable", "initializing", "running", "blocked")
+
+
+def request(base, method, path, token=None):
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "fabro-dispatch-workflow"}
+    if token:
+        headers.update({"Authorization": "Bearer " + token, "X-GitHub-Api-Version": "2026-03-10"})
+    req = urllib.request.Request(base + path, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            raw = response.read()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:1000]
+        sys.exit("dispatch stack scan: %s %s failed: HTTP %s\n%s" % (method, path, exc.code, detail))
+
+
+def graphql(token, query, variables):
+    body = json.dumps({"query": query, "variables": variables}).encode()
+    req = urllib.request.Request(GITHUB_BASE + "/graphql", method="POST", data=body, headers={
+        "Authorization": "Bearer " + token,
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "fabro-dispatch-workflow",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:1000]
+        sys.exit("dispatch stack scan: GraphQL failed: HTTP %s\n%s" % (exc.code, detail))
+    if result.get("errors"):
+        sys.exit("dispatch stack scan: GraphQL errors: %s" % json.dumps(result["errors"])[:1000])
+    return result.get("data") or {}
+
+
+def unresolved_threads(token, owner, repo, number):
+    query = """
+    query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+      repository(owner:$owner,name:$repo){pullRequest(number:$number){
+        reviewThreads(first:100,after:$cursor){
+          nodes{isResolved comments(first:100){nodes{body}}}
+          pageInfo{hasNextPage endCursor}
+        }
+      }}}
+    }
+    """
+    cursor = None
+    while True:
+        data = graphql(token, query, {"owner": owner, "repo": repo, "number": number, "cursor": cursor})
+        pr = (((data.get("repository") or {}).get("pullRequest")) or {})
+        page = pr.get("reviewThreads") or {}
+        for thread in page.get("nodes") or []:
+            if not thread.get("isResolved") and any(
+                (comment.get("body") or "").strip()
+                for comment in ((thread.get("comments") or {}).get("nodes") or [])
+            ):
+                return True
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return False
+        cursor = info.get("endCursor")
+
+
+def stack_source_issue(pr, stacked_numbers):
+    if pr.get("number") not in stacked_numbers:
+        return None
+    head = ((pr.get("head") or {}).get("ref") or "")
+    if not STACK_BRANCH.fullmatch(head):
+        return None
+    match = ISSUE_REF.search(pr.get("body") or "")
+    return int(match.group(1)) if match else None
+
+
+def active_kiro_issues(repo):
+    active = set()
+    query = urllib.parse.urlencode([("status", status) for status in ACTIVE_STATUSES] + [("page[limit]", "100")])
+    req = urllib.request.Request(API_BASE + "/runs?" + query, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:1000]
+        sys.exit("dispatch stack scan: could not list active Fabro runs: HTTP %s\n%s" % (exc.code, detail))
+    for run in (body or {}).get("data") or []:
+        if ((run.get("workflow") or {}).get("slug") or "") != "kiro-spec":
+            continue
+        if (((run.get("repository") or {}).get("name") or "").lower()) != repo.lower():
+            continue
+        labels = run.get("labels") or {}
+        value = labels.get("issue") if isinstance(labels, dict) else None
+        match = re.search(r"\d+", str(value or ""))
+        if match:
+            active.add(int(match.group(0)))
+    return active
+
+
+def main():
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    queue = json.load(open(QUEUE_PATH))
+    owner, repo = queue["repo"].split("/", 1)
+    slug = queue["repo"]
+    stacks = request(GITHUB_BASE, "GET", "/repos/%s/stacks?per_page=100" % slug, token) or []
+    stacked_numbers = {
+        pr.get("number")
+        for stack in stacks
+        for pr in (stack.get("pull_requests") or [])
+        if pr.get("number") is not None
+    }
+    if not stacked_numbers:
+        queue["kiro_spec_issues"] = []
+        json.dump(queue, open(QUEUE_PATH, "w"), indent=1, sort_keys=True)
+        print(json.dumps({"context_updates": {"has_queue": "true" if queue["issues"] or queue["pull_requests"] else "false"}}))
+        return
+
+    candidates = {}
+    page = 1
+    while page <= 10:
+        query = urllib.parse.urlencode({"state": "open", "per_page": 100, "page": page})
+        batch = request(GITHUB_BASE, "GET", "/repos/%s/pulls?%s" % (slug, query), token) or []
+        for pr in batch:
+            issue_number = stack_source_issue(pr, stacked_numbers)
+            if issue_number is None:
+                if pr.get("number") in stacked_numbers and STACK_BRANCH.fullmatch(
+                    ((pr.get("head") or {}).get("ref") or "")
+                ) and not ISSUE_REF.search(pr.get("body") or ""):
+                    print("dispatch stack scan: skipping PR #%s; no source issue reference" % pr.get("number"), file=sys.stderr)
+                continue
+            if not issue_number:
+                print("dispatch stack scan: skipping PR #%s; no source issue reference" % pr.get("number"), file=sys.stderr)
+                continue
+            candidates.setdefault(issue_number, []).append(pr)
+        if len(batch) < 100:
+            break
+        page += 1
+
+    active = active_kiro_issues(slug)
+    existing = {issue.get("number") for issue in queue.get("issues") or []}
+    dispatched = []
+    for issue_number, prs in sorted(candidates.items()):
+        if issue_number in active:
+            continue
+        feedback_prs = [
+            pr for pr in prs
+            if unresolved_threads(token, owner, repo, pr["number"])
+        ]
+        if not feedback_prs:
+            continue
+        issue = request(GITHUB_BASE, "GET", "/repos/%s/issues/%d" % (slug, issue_number), token)
+        if not issue or issue.get("state") != "open" or issue.get("pull_request"):
+            continue
+        existing_issue = next((item for item in queue["issues"] if item.get("number") == issue_number), None)
+        if existing_issue:
+            labels = existing_issue.setdefault("labels", [])
+            if "type/kiro-spec" not in labels:
+                labels.append("type/kiro-spec")
+        else:
+            queue["issues"].append({
+                "number": issue_number,
+                "title": (issue.get("title") or "").strip(),
+                "url": issue.get("html_url", ""),
+                "labels": ["type/kiro-spec"],
+                "source": "open_kiro_spec_stack",
+                "stack_prs": sorted(pr["number"] for pr in feedback_prs),
+            })
+            existing.add(issue_number)
+        dispatched.append({"issue": issue_number, "prs": sorted(pr["number"] for pr in feedback_prs)})
+    queue["kiro_spec_issues"] = dispatched
+    queue["issues"].sort(key=lambda issue: issue.get("number", 0))
+    json.dump(queue, open(QUEUE_PATH, "w"), indent=1, sort_keys=True)
+    has_queue = bool(queue["issues"] or queue["pull_requests"])
+    print("dispatch stack scan: open stacks with unresolved KiroSpec feedback=%d active_kiro_spec_runs=%d" % (
+        len(dispatched), len(active)), file=sys.stderr)
+    print(json.dumps({"context_updates": {
+        "has_queue": "true" if has_queue else "false",
+        "has_issues": "true" if queue["issues"] else "false",
+        "has_pull_requests": "true" if queue["pull_requests"] else "false",
+        "issue_count": str(len(queue["issues"])),
+        "pull_request_count": str(len(queue["pull_requests"])),
+    }}))
+
+
+if __name__ == "__main__":
+    main()
+DISPATCH_STACK_SCAN_PY
+python3 -c "import py_compile; py_compile.compile('.git/dispatch-stack-scan.py', doraise=True)"
+'''
