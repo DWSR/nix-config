@@ -367,11 +367,11 @@
     "git-issue-tracker": {
       "flake": false,
       "locked": {
-        "lastModified": 1787365740,
-        "narHash": "sha256-a6oy9halHLBOQ42Yr7weWAe8ZiiW87ENb4mx6OM2AvE=",
+        "lastModified": 1792332833,
+        "narHash": "sha256-OOgWo9CgcsHYJyvrGeq7bEnEbdkJLb7EKinhAmnAs38=",
         "owner": "nnunley",
         "repo": "git-issue-tracker",
-        "rev": "f3edf6f8821f3c4294e38124d496b25b389bf099",
+        "rev": "abdf8b497f76134abb5ea9a531907c2f7a7c57e4",
         "type": "github"
       },
       "original": {
