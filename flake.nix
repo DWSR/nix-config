@@ -2884,6 +2884,23 @@
               touch $out
             '';
 
+          # Agent workflows inherit the runner's deepseek-v4.1-flash default;
+          # ensure a saturated OpenCode Go cell fails over to the
+          # ChatGPT-backed gpt-6-luna target instead of ending the run.
+          fabro-workflows-model-fallbacks =
+            pkgs.runCommand "fabro-workflows-model-fallbacks"
+              {
+                nativeBuildInputs = [ pkgs.python3 ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                python3 tests/fabro-workflows/model-fallbacks.test.py
+                touch $out
+              '';
+
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             package = pkgs.prek;
