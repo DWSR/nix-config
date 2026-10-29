@@ -556,11 +556,11 @@
     "homebrew-whatcable": {
       "flake": false,
       "locked": {
-        "lastModified": 1786230021,
-        "narHash": "sha256-q58RvGfMFecckOUuiNQPOEDnzAIjBWZNBHs99/josGU=",
+        "lastModified": 1791893264,
+        "narHash": "sha256-uiOf+ogAJ7Nl9sZ5jKFxtv9m/ImW+nGkrtXta5gtYxM=",
         "owner": "darrylmorley",
         "repo": "homebrew-whatcable",
-        "rev": "3507280952d5119584284039e24b56299c771551",
+        "rev": "10992d2cfdfba6bfdb036665a47c800c08459347",
         "type": "github"
       },
       "original": {
