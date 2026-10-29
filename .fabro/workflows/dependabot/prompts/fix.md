@@ -177,4 +177,4 @@ Fixed:
 
 Blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"fix_status": "BLOCKED", "fix_blocker": "<the exact blocker and what would unblock it>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"fix_status": "BLOCKED", "stage_failure": "<one-line root cause>", "fix_blocker": "<the exact blocker and what would unblock it>"}}

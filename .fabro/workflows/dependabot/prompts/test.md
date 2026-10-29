@@ -260,4 +260,4 @@ Tests fail:
 
 Blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"test_blocker": "<the exact blocker and what would unblock it>"}}
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"stage_failure": "<one-line root cause>", "test_blocker": "<the exact blocker and what would unblock it>"}}
