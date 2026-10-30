@@ -20,7 +20,7 @@
   - Report `finding_count`, `finding_source`, `finding_number`, and `active_security_remediation_run`, and include findings in `has_queue`.
   - `.git/dispatch-queue.json` keeps its current keys and adds `findings` and `remediation`.
   - _Requirements: 1.2, 2.7, 3.1_
-- [ ] 1.4 Keep findings visible to `stack_scan`
+- [x] 1.4 Keep findings visible to `stack_scan`
   - Include `queue["findings"]` in both `has_queue` computations of the embedded `.git/dispatch-stack-scan.py`, on the native-stack and no-stack paths.
   - A findings-only queue no longer short-circuits `stack_scan -> prune`; an empty queue still does.
   - _Requirements: 1.2, 2.1_
