@@ -1,0 +1,22 @@
+{
+  "feature_name": "install-rex-in-fabro-vm",
+  "created_at": "2026-10-30T00:53:57Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "updated_at": "2026-10-30T01:13:11Z",
+  "phase": "tasks-generated",
+  "ready_for_implementation": true
+}
