@@ -292,6 +292,18 @@ class DispatchFindingGateTests(unittest.TestCase):
         self.assertIn("no run id", result["failed"][0]["error"])
         self.assertIn({"finding": "dependabot:7", "reason": "serialized"}, result["skipped"])
 
+    def test_selected_finding_is_reported_even_when_the_create_fails(self):
+        bridge = FakeBridge(create_payload={})
+        result, context, code = run_dispatch(plan_with(finding_entry("code-scanning", 4)), bridge)
+
+        self.assertEqual(code, 1)
+        self.assertEqual(context["dispatch_result"], "failed")
+        self.assertEqual(result["dispatched"], [])
+        # Selection is reported at reservation time so a failed create still
+        # leaves a truthful record of the finding this scan chose.
+        self.assertEqual(result["selected_finding"], "code-scanning:4")
+        self.assertEqual(result["failed"][0]["finding"], "code-scanning:4")
+
     def test_two_findings_with_start_failure_create_only_one_child(self):
         bridge = FakeBridge(start_status=500)
         result, context, code = run_dispatch(
