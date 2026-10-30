@@ -39,6 +39,7 @@ digraph FailureTriage {
         label="File triage issues",
         shape=parallelogram,
         output_schema="routing",
+        goal_gate=true,
         script="python3 .git/failure-triage-scripts/tools.py report"
     ]
 
@@ -64,4 +65,6 @@ digraph FailureTriage {
 
     report -> exit [condition="outcome=succeeded"]
     report -> fail
+
+    fail -> exit
 }
