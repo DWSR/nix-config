@@ -66,7 +66,7 @@ class DependabotDispatchTests(unittest.TestCase):
 
     def test_dispatch_marks_the_pull_request_running_without_touching_ready(self):
         script = next(
-            source for source in load_scripts() if "def active_dependabot_run" in source
+            source for source in load_scripts() if 'RESULT_PATH = ".git/dispatch-result.json"' in source
         )
         script = re.sub(r"\{\{.*?\}\}", '"fabro-running"', script)
         requests = []
