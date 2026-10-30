@@ -60,7 +60,6 @@ digraph Dispatch {
         label="Fail run",
         shape=parallelogram,
         stdin_source="stage_failure",
-        goal_gate=true,
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a dispatch stage failed; inspect the failing stage output in the run events and .git/dispatch-queue.json, .git/dispatch-plan.json, .git/dispatch-result.json, .git/dispatch-archive.json\"\nfi\nprintf 'dispatch: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
@@ -85,6 +84,4 @@ digraph Dispatch {
 
     prune -> exit [condition="outcome=succeeded"]
     prune -> fail
-
-    fail -> exit
 }
