@@ -21,6 +21,7 @@
   - Completed when the guest evaluation shows the secret declared, the template at mode `0400` outside the Nix store, and `netrc-file` equal to that template path
   - _Requirements: 2.1, 2.2, 2.4, 2.5_
   - _Boundary: configurations/fabro-vm/default.nix_
+  - _Blocked: Review rejected: Darwin guest-eval check needs an aarch64-darwin builder and canonical prek is unavailable here; unblock by building that check and running prek on such a host._
 
 - [ ] 1.2 Seed the encrypted store and document the credential
   - Create the Rex package token in 1Password, run `nix run '.#fabro-sync-from-1password'`, and commit the re-encrypted `secrets/fabro.fabro.yaml`
