@@ -37,6 +37,7 @@
   - Record `{"finding": "<source>:<n>", "run_id": ...}` items plus `selected_finding` and `active_security_remediation_run`; fail the stage when a create returns no run id.
   - Existing issue and Dependabot dispatch behaviour is unchanged, and a plan with two findings creates one child.
   - _Requirements: 2.7, 3.1, 3.2, 3.3_
+  - _Blocked: Review rejected: prek (nix dev shell) and pinned fabro validate cannot run on aarch64-linux; rerun both on the supported aarch64-darwin host and re-review._
 
 - [ ] 3. Build the `security-remediation` package
 - [ ] 3.1 Create the package TOML and embedded tools scaffold
