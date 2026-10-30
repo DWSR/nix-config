@@ -8,7 +8,7 @@
   - Add `vulnerability_alerts = "read"` and `security_events = "read"` to `[run.integrations.github] permissions` in the dispatch TOML.
   - The helper compiles and an injected fake request returns normalised findings for both sources.
   - _Requirements: 1.1, 1.4, 1.5, 1.6_
-- [ ] 1.2 Add exclusion, selection, and active-run logic to the helper
+- [x] 1.2 Add exclusion, selection, and active-run logic to the helper
   - Implement `remediation_branch`, `branch_finding`, `finding_id`, `package_mentioned`, `exclusions`, `select_finding`, `active_remediation_run`, and `scan`.
   - Drop findings whose remediation branch is open or whose Dependabot package appears as a whole token in an open `dependabot[bot]` PR; select the lowest-numbered Dependabot alert first, then the lowest-numbered code scanning alert, and `None` when nothing is eligible.
   - Return `{"findings": [...], "remediation": {active_run, excluded, eligible, selected}}` with `selected` either `null` or exactly one eligible finding, so an empty result creates no child.
