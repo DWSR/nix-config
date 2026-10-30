@@ -1,0 +1,105 @@
+# Implementation Plan
+
+- [ ] 1. Provide the gated-release credential path on every evaluating host
+- [ ] 1.1 Write `scripts/bootstrap-nix-rex-token.sh`
+  - Implement the CLI `[--check] [--file PATH] [--channel stable|preview|snapshot]` with the token from `REX_PACKAGE_TOKEN`, else `op read --no-newline "${REX_PACKAGE_TOKEN_URI:-op://Private/Rex/Package Token}"`, and the documented exit codes (0 ok, 1 misuse or refused root, 2 no `op` and no token, 3 empty/rejected token, 4 write or verification failure).
+  - Write exactly one `machine pkgs.superlogical.com login rex password <token>` line and re-emit unrelated `machine` lines unchanged; default target `/etc/nix/netrc` installed with `sudo install -m 0600 -o <login user>`, while `--file PATH` writes unprivileged.
+  - Keep the token on disk only through a `umask 077` temp file removed by a trap; never log it, sign the URL, write it under the repo, or place it in the Nix store, and add no sops dependency.
+  - Verify with `nix store prefetch-file --extra-experimental-features nix-command` against the channel URL, removing the written entry and naming `REX_PACKAGE_TOKEN`, the host, and the netrc path on failure; `--check` verifies without writing.
+  - Completed when `bash -n` passes, a run with a valid token seeds the target at `0600`, and a run without one exits non-zero naming the credential with the target untouched.
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6_
+- [ ] 1.2 Document the Rex netrc credential in `secrets/README.md` (P)
+  - Add a "Rex package token (netrc)" section: file path and owner/mode, the per-host seeding commands for the Mac and for the fabro guest (`REX_PACKAGE_TOKEN` piped over the existing Lima SSH session, since the guest has no `op`), rotation, `--check` usage, and the 401 failure mode.
+  - State why the token cannot live only in the guest's sops store (both hosts fetch the input) and that only nixos.org Nix honours `netrc-file`; determinate Nix is out of scope.
+  - Completed when the section names both hosts, the exact commands, and the message an operator sees on a missing or rejected token.
+  - _Requirements: 6.1, 6.2, 6.3, 6.4, 6.6_
+  - _Boundary: Token Bootstrap Script docs_
+- [ ] 1.3 Add `tests/rex-nix-netrc/bootstrap.test.sh` (P)
+  - Cover: token from `REX_PACKAGE_TOKEN` writes the machine line into a `--file` target and exits 0; a missing token exits non-zero naming `REX_PACKAGE_TOKEN` and writes nothing; a verification failure exits non-zero naming the credential and host and leaves no token in the target; `--check` never writes; unrelated `machine` lines are preserved.
+  - Stub `nix` and `op` on `PATH` so the test needs no network, root, or real Nix.
+  - Completed when `bash tests/rex-nix-netrc/bootstrap.test.sh` passes with the stubs and fails if any case above regresses.
+  - _Requirements: 6.4, 6.5_
+  - _Boundary: Script Test_
+- [ ] 1.4 Wire the `rex-nix-netrc` flake check
+  - Add a `rex-nix-netrc` `pkgs.runCommand` next to the existing script checks in `checks` (`flake.nix`), copying the source writable and running the test with `pkgs.bash` on `PATH` plus the stubs.
+  - Keep the check free of network, `sudo`, and Nix store writes.
+  - Completed when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).rex-nix-netrc` runs the suite green.
+  - _Depends: 1.3_
+  - _Requirements: 6.4, 6.5_
+- [ ] 1.5 Seed the credential on both evaluating hosts and prove the gated fetch
+  - On the Mac, run the script against the default netrc path and confirm `--check`; on the guest, pipe `REX_PACKAGE_TOKEN` over the existing Lima SSH session and run the script there.
+  - Prove the fetch from each host against `https://pkgs.superlogical.com/rex/nix/stable.tar.gz`.
+  - Completed when both hosts hold a `0600`, user-owned `/etc/nix/netrc` with the `pkgs.superlogical.com` entry and both can fetch the channel tarball.
+  - _Depends: 1.1_
+  - _Requirements: 6.1, 6.2, 6.3, 6.6_
+
+- [ ] 2. Pin the Rex flake input and hand it to the guest
+  - Declare `inputs.rex.url = "https://pkgs.superlogical.com/rex/nix/stable.tar.gz";` with no URL token and no `follows` override, then regenerate `flake.lock`.
+  - Add `rex = inputs.rex;` to the `nixosConfigurations.fabro-vm` `specialArgs` (`flake.nix:3109`) with a comment naming what the guest module reads from it.
+  - When the input is first locked, read the pinned module's option declarations to confirm the per-account principal attribute, the package option, the shared-server flag, the `rex-login-server.service` unit name, and the Serve port; record the confirmed names for the module and assertions to bind.
+  - Completed when the `rex` lock node records `locked.type = "tarball"` with a `narHash`, `nix flake metadata` resolves it, repeated evaluation resolves the same store path, and a throwaway module in the guest configuration can reference `rex.packages.aarch64-linux.default` without a missing-argument error.
+  - _Depends: 1.5_
+  - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 5.5_
+
+- [ ] 3. Declare the Rex login server on the guest
+- [ ] 3.1 Add `configurations/fabro-vm/rex.nix` and import it
+  - Bind `services.rex.loginServer` with `enable = true`, the account map built from a local `rexLoginAccounts` helper (`brandonmcnama` to the operator's `tailscale:<login>` principal read from `tailscale status`, never a password or key), `defaults = { }`, and `tailscaleServe.enable = true`; leave shared-server mode and `services.rex.tailscale.*` unset and declare no per-account override.
+  - Keep each unconfirmed upstream name in one place (the mapping helper, the package binding, the shared-server assertion) so an upstream rename is a one-line edit; add no `follows` or local packaging.
+  - Assert in the module that every mapped principal list is non-empty and every entry starts with `tailscale:`, that the map names no `root` or system account, and that no user is declared (`users.mutableUsers` stays true); modify no `svc:*` Serve command.
+  - Document in the file header: the connect endpoint `https://<node>.<tailnet>.ts.net` read from `tailscale status` on the guest, account selection by Tailscale principal, multiple accounts per principal rendering as a client-side choice, and that tagged devices are refused.
+  - Import `./rex.nix` from `configurations/fabro-vm/default.nix` after `./tailscale.nix` and extend that header to mention the Rex login server.
+  - Completed when `nixosConfigurations.fabro-vm` evaluates with `rex-login-server.service` wanted at boot, the rendered accounts file holds only the cidata entry with a `tailscale:` principal, and `vm.users.users` gains no account.
+  - _Requirements: 1.4, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 4.1, 4.2, 4.3, 4.4, 4.7, 4.8_
+- [ ] 3.2 Order the login server after node registration
+  - In `rex.nix`, set `systemd.services.rex-login-server.wants` and `.after` to `[ "tailscaled-autoconnect.service" ]`, relying on that unit's `Type=notify` registration barrier; add no restart policy or other lifecycle key.
+  - Completed when `vm.systemd.services.rex-login-server.after` contains `tailscaled-autoconnect.service` and the upstream unit's remaining keys are unchanged.
+  - _Depends: 3.1_
+  - _Requirements: 2.1, 4.1_
+
+- [ ] 4. Guard the guest configuration with evaluation checks
+- [ ] 4.1 Assert mode, account mapping, and Serve exposure in `fabro-vm-guest-eval`
+  - Append `pkgs.lib.assertMsg` entries to `guestReport`: login server enabled; `brandonmcnama` present in `vm.services.rex.loginServer.accounts`; that entry's `builtins.toJSON` containing `tailscale:`; `tailscaleServe.enable`; `!(vm.services.rex.tailscale.enable or false)` together with no `rex*` unit `ExecStart` containing `--tailscale`; and the shared-server flag evaluating false with a message naming shared-server mode.
+  - Read only the evaluated option tree, never module source or file paths, so a compatible upstream rename does not break the checks.
+  - Completed when dropping any one of those settings makes `fabro-vm-guest-eval` fail with a message naming the missing element, and the unsupported-mode message names shared-server mode or built-in Tailscale.
+  - _Depends: 3.1_
+  - _Requirements: 3.1, 4.1, 4.3, 5.1, 5.2, 5.3, 5.4, 5.6_
+- [ ] 4.2 Assert the pin and the package origin
+  - Assert the `rex` node in `flake.lock` carries `locked.type == "tarball"` and a non-empty `narHash`, with a message naming the missing lock fields.
+  - Assert the configured Rex package `outPath` equals `inputs.rex.packages.aarch64-linux.default`, so the guest cannot install a differently sourced Rex.
+  - Completed when deleting the lock entry or pointing the package at another source fails the check with the corresponding message.
+  - _Depends: 2_
+  - _Requirements: 1.2, 5.5_
+- [ ] 4.3 Assert isolation, ordering, and untouched `svc:*` advertisements
+  - Assert `!(vm.users.users ? brandonmcnama)`, `vm.users.mutableUsers`, and the absence of a `root` entry in `vm.services.rex.loginServer.accounts`.
+  - Assert `tailscaled-autoconnect.service` is in `vm.systemd.services.rex-login-server.after` and that the three existing `--service=` `tailscale-serve` ExecStart entries are unchanged.
+  - Completed when every pre-existing `fabro-vm-guest-eval` assertion still passes unchanged and each new assertion fails with a message naming the drifted element.
+  - _Depends: 3.2_
+  - _Requirements: 3.2, 3.4, 4.8, 5.1_
+
+- [ ] 5. Verify and roll out
+- [ ] 5.1 Run the repository checks
+  - Run `nix flake check` on the Mac and confirm `fabro-vm-guest-eval`, `rex-nix-netrc`, and every pre-existing check pass with no weakened assertion.
+  - Confirm the run needs no Linux builder and no network beyond the fetch of the already-seeded input.
+  - Completed when `nix flake check` is green with the Rex assertions and script check present in the run.
+  - _Depends: 4.3_
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
+- [ ] 5.2 Deploy to the guest and prove session and exposure behavior
+  - Run `lima-vm-deploy` so the guest's own `nixos-rebuild switch` installs Rex from the pin; confirm `systemctl status rex-login-server` and `tailscale serve status` show the login server on the node's own tailnet HTTPS name with the three `svc:*` advertisements unchanged.
+  - From Rex for Mac or the `rex` CLI, connect as the cidata account, disconnect, reconnect to resume the same session, then restart `rex-login-server` and confirm the session survives.
+  - Confirm the endpoint is unreachable from outside the tailnet, that a tagged device or unmapped principal is refused with no session started, and that another account's session is not reachable from the mapped connection.
+  - Completed when the boot, connect, resume, restart-survival, isolation, and tailnet-only observations are recorded for review.
+  - _Depends: 5.1_
+  - _Requirements: 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.3, 3.5, 3.6, 3.7, 3.8, 4.1, 4.2, 4.5, 4.6, 4.7, 4.8_
+- [ ] 5.3 Verify the fail-closed paths
+  - With `NIX_CONFIG='netrc-file=/nonexistent'`, confirm the fetch fails with 401, the check or rebuild stops, no substitute source is used, and the script names `REX_PACKAGE_TOKEN`, the host, and the netrc path.
+  - In a scratch evaluation, enable shared-server mode and then `services.rex.tailscale.enable = true`; confirm `fabro-vm-guest-eval` fails with the message naming the unsupported mode, then revert.
+  - Completed when both failure paths are demonstrated and the working tree is back to the pinned configuration.
+  - _Depends: 4.3_
+  - _Requirements: 1.6, 4.3, 5.6, 6.4_
+
+## Implementation Notes
+
+- The operator's `tailscale:<login>` principal and the guest's own tailnet DNS name are runtime values: read them from `tailscale status` (Mac and guest) when writing `rex.nix`; do not invent them from this plan.
+- The guest's netrc entry must exist before the first deploy that includes the `rex` input, or the guest's `nixos-rebuild` aborts with a 401.
+- Rollback: `nixos-rebuild --rollback` on the guest (the previous generation has no Rex unit) and drop the `rex` input on the Mac; the netrc entry may stay, inert without the input.
+- Monitoring after rollout: `journalctl -u rex-login-server`, `tailscale serve status`, and `loginctl list-sessions` on the guest; no new metrics or alerting.
