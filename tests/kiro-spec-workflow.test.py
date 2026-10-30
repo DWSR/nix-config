@@ -1,4 +1,9 @@
+import contextlib
+import io
+import json
+import os
 import pathlib
+import tempfile
 import unittest
 from typing import Any
 
@@ -83,6 +88,67 @@ class ReviewFeedbackTests(unittest.TestCase):
         self.assertEqual(result["brief"]["pr"], 20)
         self.assertNotIn("requirements", result)
         self.assertEqual(len(requests), 2)
+
+
+class PrepareRoutingTests(unittest.TestCase):
+    def run_prepare(self, feedback_by_doc):
+        tools = load_workflow_tools()
+        stack = "\n".join(
+            "%040d\trefs/heads/stack/example/%d-%s" % (index, index, doc)
+            for index, doc in enumerate(("brief", "requirements", "design", "tasks"), start=1)
+        )
+        issue = {
+            "title": "Install Rex",
+            "body": "Body",
+            "state": "open",
+            "html_url": "https://github.com/owner/repo/issues/130",
+            "labels": [{"name": "type/kiro-spec"}],
+        }
+
+        def fake_run(cmd, check=True, env=None):
+            if cmd[:3] == ["git", "ls-remote", "--heads"]:
+                return stack
+            return ""
+
+        tools["run"] = fake_run
+        tools["origin_repo"] = lambda: ("owner", "repo")
+        tools["detect_trunk"] = lambda: "main"
+        tools["gh"] = lambda method, path, body=None: (200, issue)
+        tools["scan_stack_feedback"] = lambda owner, repo, spec, layers: feedback_by_doc
+        fingerprint = tools["issue_fingerprint"]("Install Rex", "Body")
+        tools["load_meta"] = lambda spec: (
+            {"fingerprint": fingerprint, "recorded_at": "2026-10-30T00:00:00Z"},
+            "sha",
+        )
+        tools["save_state"] = lambda state: None
+
+        stdout = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, ".git"))
+            os.makedirs(os.path.join(tmp, ".kiro"))
+            previous = os.getcwd()
+            os.chdir(tmp)
+            try:
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+                    tools["prepare"](["130", "example"])
+            finally:
+                os.chdir(previous)
+
+        return json.loads(stdout.getvalue().strip().splitlines()[-1])["context_updates"]
+
+    def test_rerun_routes_to_document_with_feedback(self):
+        updates = self.run_prepare(
+            {"brief": {"pr": 166, "comments": [{"body": "Revise the scope."}]}}
+        )
+
+        self.assertEqual(updates["next_doc"], "brief")
+        self.assertEqual(updates["rerun_doc"], "brief")
+
+    def test_rerun_routes_to_publish_when_no_feedback(self):
+        updates = self.run_prepare({})
+
+        self.assertEqual(updates["next_doc"], "publish")
+        self.assertEqual(updates["rerun_doc"], "")
 
 
 if __name__ == "__main__":

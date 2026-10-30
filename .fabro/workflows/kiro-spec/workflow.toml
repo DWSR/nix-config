@@ -373,7 +373,6 @@ def prepare(argv):
         state["rerun_doc"] = rerun_doc
         state["rerun_pr"] = feedback["pr"]
         state["feedback"] = feedback["comments"]
-        next_doc = rerun_doc
         print("kiro-spec prepare: unresolved review feedback selects %s PR #%s (%d comments)" % (
             rerun_doc, feedback["pr"], len(feedback["comments"])), file=sys.stderr)
     else:
@@ -397,7 +396,7 @@ def prepare(argv):
         sys.exit("the repository has no .kiro directory; kiro-spec requires a Kiro-enabled repository")
 
     spec_dir = ".kiro/specs/%s" % spec
-    next_doc = "publish"
+    next_doc = rerun_doc or "publish"
     if not layers and os.path.isdir(spec_dir):
         print("kiro-spec prepare: %s already exists on %s; nothing to do (pass -I spec=<new-name> to force a different spec name)" % (
             spec_dir, state["stack_base"]), file=sys.stderr)
