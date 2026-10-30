@@ -2,13 +2,13 @@
 
 ## Introduction
 
-This feature installs Rex on the fabro Lima guest as a multi-user login service reachable over the tailnet. See `brief.md` for the problem statement, approach, and scope constraints.
+This feature installs Rex on the fabro Lima guest as a multi-user login service reachable over the tailnet, with the Rex package credential delivered to the guest through its sops-nix secret store. See `brief.md` for the problem statement, approach, and scope constraints.
 
 ## Boundary Context
 
-- **In scope**: the Rex flake dependency and its tester-credential path on every evaluating host; the fabro-vm Rex module with a login server, an accounts map over existing accounts, and defaults; the tailnet-address listener on port 7297 with tailnet reachability; import and argument wiring into the fabro-vm configuration; and `fabro-vm-guest-eval` assertions for the login server, listener, accounts, and the Serve/tsnet/anonymous exclusions.
-- **Out of scope**: the shared-server mode, Rex personal servers on any host, built-in Tailscale and Serve exposure for Rex, anonymous or plain listeners, and hand-packaged Rex binaries; removing or reconfiguring OpenCode and decommissioning tailnet services; tailnet ACL, Service, OAuth/tag, or admin-console changes and new accounts; PAM policy customization, account lifecycle, image rebuilds, automatic channel upgrades, Rex Lua customization, and resource-limit tuning.
-- **Adjacent expectations**: the guest is already registered as a tag-owned `tag:fabro` node with a resolvable `*.ts.net` name and a running open-source `tailscaled`; the operator's clients are user-owned tailnet devices; the Lima cidata account exists imperatively and stays undeclared with `users.mutableUsers` true; the existing `svc:*` Serve advertisement remains untouched; the Rex package token is present in each evaluating host's Nix netrc configuration.
+- **In scope**: the Rex flake dependency and the gated package credential, delivered to the Fabro VM through the guest's sops-nix store and consumed by guest-side fetches while the Mac keeps using its own local Nix credential configuration; the fabro-vm Rex module with a login server, an accounts map over existing accounts, and defaults; the tailnet-address listener on port 7297 with tailnet reachability; import and argument wiring into the fabro-vm configuration; and `fabro-vm-guest-eval` assertions for the login server, listener, accounts, credential wiring, and the Serve/tsnet/anonymous exclusions.
+- **Out of scope**: the shared-server mode, Rex personal servers on any host, built-in Tailscale and Serve exposure for Rex, anonymous or plain listeners, and hand-packaged Rex binaries; deploying or managing the Mac's Nix credential configuration as a secret; removing or reconfiguring OpenCode and decommissioning tailnet services; tailnet ACL, Service, OAuth/tag, or admin-console changes and new accounts; PAM policy customization, account lifecycle, image rebuilds, automatic channel upgrades, Rex Lua customization, and resource-limit tuning.
+- **Adjacent expectations**: the guest already has its sops-nix store, age key, and secret sync path working; the guest is already registered as a tag-owned `tag:fabro` node with a resolvable `*.ts.net` name and a running open-source `tailscaled`; the operator's clients are user-owned tailnet devices; the operator's Mac already carries the Rex package credential in its local Nix credential configuration; the Lima cidata account exists imperatively and stays undeclared with `users.mutableUsers` true; the existing `svc:*` Serve advertisement remains untouched.
 
 ## Requirements
 
@@ -22,10 +22,22 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 2. When the guest configuration is evaluated, the Rex NixOS module from that input shall be imported into the fabro-vm configuration.
 3. The guest configuration shall expose the Rex CLI to every local account after the switch.
 4. While the configured Rex input release is unchanged, the guest configuration shall install no other Rex derivation or hand-packaged Rex binary.
-5. When the Rex input is fetched, the fetch shall authenticate to the Rex package channel with the tester credential configured on the evaluating host.
-6. If the tester credential is unavailable on an evaluating host, then the Rex dependency shall fail evaluation instead of resolving Rex from an alternative source.
 
-### Requirement 2: Rex login service at boot
+### Requirement 2: Rex package credential
+
+**Objective:** As the repo maintainer, I want the Rex tester credential to come from the guest's encrypted secrets store, so that the gated flake fetches on the guest without hand-placed or committed secrets.
+
+#### Acceptance Criteria
+
+1. The Fabro VM shall take the Rex package credential from its sops-nix secret store rather than from a hand-placed file on the guest.
+2. When system activation decrypts the guest's secrets, the guest shall write the Rex package credential to a root-only-readable path outside the Nix store.
+3. When the guest fetches the Rex flake input, the fetch shall authenticate with the credential decrypted from the guest's sops-nix store.
+4. If the decrypted Rex package credential is missing or empty, then the guest's Rex flake fetch shall fail instead of resolving Rex from an alternative source.
+5. The repository, the Nix store, and the rendered guest configuration shall contain no plaintext Rex package credential.
+6. When the maintainer rotates the credential through the guest's existing secret sync path and switches the guest, subsequent Rex flake fetches on the guest shall use the rotated credential without manual file edits.
+7. While the configuration is evaluated on the Mac, the Rex flake fetch shall authenticate through the operator's local Nix credential configuration and shall not require the guest's decrypted credential.
+
+### Requirement 3: Rex login service at boot
 
 **Objective:** As a Rex user, I want the Rex login server to run whenever the guest is up, so that remote sessions work without manual service management.
 
@@ -36,7 +48,7 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 3. The Rex login server shall run as the privileged login service that identifies callers and starts a Rex server per account.
 4. The guest configuration shall not enable Rex's shared-server mode alongside the login service.
 
-### Requirement 3: Existing-account access
+### Requirement 4: Existing-account access
 
 **Objective:** As the guest operator, I want existing Linux accounts mapped to tailnet identities, so that each caller works as their own account.
 
@@ -51,7 +63,7 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 7. If a caller asks for an account its principal may not use, then the Rex login server shall refuse the connection.
 8. The guest configuration shall not create, declare, or modify any Linux account.
 
-### Requirement 4: Tailnet-address endpoint
+### Requirement 5: Tailnet-address endpoint
 
 **Objective:** As a Rex user, I want to reach the guest at its own tailnet address, so that clients connect without SSH or a web terminal.
 
@@ -65,7 +77,7 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 6. The guest configuration shall leave the existing `svc:fabro`, `svc:litellm`, and `svc:opencode` Serve advertisements unchanged and shall add no Serve configuration for Rex.
 7. If the Rex login server cannot bind its tailnet-address listener, then the guest shall report the service as failed and record the bind error in the unit journal.
 
-### Requirement 5: Session continuity and multiple accounts
+### Requirement 6: Session continuity and multiple accounts
 
 **Objective:** As a Rex user, I want persistent sessions and per-account servers, so that mobile connections can resume work across service restarts.
 
@@ -77,7 +89,7 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 4. When the accounts map changes and a caller's access is removed, the Rex login server shall close that caller's connection while leaving the affected account's server running.
 5. Where multiple accounts are mapped, each account shall have its own Rex server and its own sessions.
 
-### Requirement 6: Login-session integration
+### Requirement 7: Login-session integration
 
 **Objective:** As the guest operator, I want Rex sessions to behave like normal Linux logins, so that account permissions, environment, and limits follow the existing guest setup.
 
@@ -89,9 +101,9 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 4. While an account has no local interactive login, the guest shall keep that account's user manager available to the Rex login server.
 5. If the PAM login policy refuses an account, then the guest shall refuse the Rex connection for that account.
 
-### Requirement 7: Evaluated verification
+### Requirement 8: Evaluated verification
 
-**Objective:** As the repo maintainer, I want automated checks over the evaluated guest, so that future changes cannot silently alter Rex exposure or accounts.
+**Objective:** As the repo maintainer, I want automated checks over the evaluated guest, so that future changes cannot silently alter Rex exposure, accounts, or credentials.
 
 #### Acceptance Criteria
 
@@ -101,4 +113,5 @@ This feature installs Rex on the fabro Lima guest as a multi-user login service 
 4. When `nix flake check` evaluates the fabro-vm guest, the checks shall verify that root access is absent from the rendered accounts.
 5. When `nix flake check` evaluates the fabro-vm guest, the checks shall verify that Rex Serve exposure, built-in Tailscale, shared-server mode, and anonymous listeners are absent.
 6. When `nix flake check` evaluates the fabro-vm guest, the checks shall verify that the guest's package set exposes the Rex package from the Rex flake input and that the existing `svc:*` Serve advertisement is unchanged.
-7. While the checks run on a host without a Linux builder, the Rex checks shall complete through pure evaluation of the guest configuration.
+7. When `nix flake check` evaluates the fabro-vm guest, the checks shall verify that the Rex package credential is declared in the guest's sops-nix secret store and that the guest's Rex input fetch references its decrypted path rather than a literal credential.
+8. While the checks run on a host without a Linux builder, the Rex checks shall complete through pure evaluation of the guest configuration.
