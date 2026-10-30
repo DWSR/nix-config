@@ -109,6 +109,11 @@ in
       "opencode-github-token" = "op://Private/GitHub/Tokens/OpenCode";
       "opencode-server-password" = "op://Private/OpenCode/Server Password";
       "opencode-signing-key" = "op://Private/OpenCode Signing Key/private key";
+      # The Rex package credential (Rex install script's basic-auth token
+      # for pkgs.superlogical.com). Consumed only by the `rex-netrc` sops
+      # template below, which Nix reads as its netrc-file; see the
+      # rex-package-token secret comment.
+      "rex-package-token" = "op://Private/Rex/Package Token";
     };
 
     # nixpkgs' rsync bump to 3.5.0 broke the kernel build's post-install
@@ -209,6 +214,14 @@ in
         # systemd credential (opencode.nix: LoadCredential), never via
         # the environment.
         opencode-signing-key = { };
+
+        # The Rex package credential (source:
+        # op://Private/Rex/Package Token). The gated Rex flake input
+        # (pkgs.superlogical.com) authenticates with this token, so the
+        # guest's fetches read it from the rendered netrc below rather
+        # than from a hand-placed file. It is a package credential, not a
+        # runtime session secret; nothing outside Nix consumes it.
+        "rex-package-token" = { };
       };
 
       # systemd EnvironmentFiles the services consume (fabro.nix,
@@ -259,6 +272,24 @@ in
             GH_TOKEN=${config.sops.placeholder."opencode-github-token"}
             LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
             OPENCODE_SERVER_PASSWORD=${config.sops.placeholder."opencode-server-password"}
+          '';
+        };
+
+        # Nix's credential file for the gated Rex flake input
+        # (pkgs.superlogical.com/rex/nix). Rendered by activation at
+        # /run/secrets/rendered/rex-netrc, root-owned and 0400 — outside
+        # the Nix store, so the plaintext never becomes a store object or
+        # a repository file. One machine stanza only: the flake tarball
+        # host, the install script's basic-auth login (`rex`), and the
+        # decrypted package token. nix.settings."netrc-file" below points
+        # Nix at this path, and a rotated token restarts nix-daemon so
+        # later fetches (and the guest's own flake evaluation) read the
+        # new value without a manual file edit.
+        "rex-netrc" = {
+          mode = "0400";
+          restartUnits = [ "nix-daemon.service" ];
+          content = ''
+            machine pkgs.superlogical.com login rex password ${config.sops.placeholder."rex-package-token"}
           '';
         };
       };
@@ -370,6 +401,12 @@ in
         "flakes"
       ];
       trusted-users = [ "@wheel" ];
+      # Authenticate the gated Rex flake fetch with the sops-rendered
+      # netrc above. This is the only credential source for that host:
+      # no access-tokens entry, literal token, or hand-placed file
+      # exists, so a missing or empty secret makes the fetch fail (HTTP
+      # 401) instead of resolving Rex from a fallback.
+      "netrc-file" = config.sops.templates."rex-netrc".path;
     };
 
     # Store maintenance. GC reaps the generation-per-switch accretion on
