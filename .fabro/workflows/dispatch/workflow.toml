@@ -128,6 +128,10 @@ def active_kiro_issues(repo):
     return active
 
 
+def queue_has_items(queue):
+    return bool(queue["issues"] or queue["pull_requests"] or queue["findings"])
+
+
 def main():
     token = os.environ.get("GITHUB_TOKEN", "")
     if not token:
@@ -145,7 +149,7 @@ def main():
     if not stacked_numbers:
         queue["kiro_spec_issues"] = []
         json.dump(queue, open(QUEUE_PATH, "w"), indent=1, sort_keys=True)
-        print(json.dumps({"context_updates": {"has_queue": "true" if queue["issues"] or queue["pull_requests"] else "false"}}))
+        print(json.dumps({"context_updates": {"has_queue": "true" if queue_has_items(queue) else "false"}}))
         return
 
     candidates = {}
@@ -203,7 +207,7 @@ def main():
     queue["kiro_spec_issues"] = dispatched
     queue["issues"].sort(key=lambda issue: issue.get("number", 0))
     json.dump(queue, open(QUEUE_PATH, "w"), indent=1, sort_keys=True)
-    has_queue = bool(queue["issues"] or queue["pull_requests"])
+    has_queue = queue_has_items(queue)
     print("dispatch stack scan: open stacks with unresolved KiroSpec feedback=%d active_kiro_spec_runs=%d" % (
         len(dispatched), len(active)), file=sys.stderr)
     print(json.dumps({"context_updates": {
