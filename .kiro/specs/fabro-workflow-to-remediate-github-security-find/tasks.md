@@ -14,7 +14,7 @@
   - Return `{"findings": [...], "remediation": {active_run, excluded, eligible, selected}}` with `selected` either `null` or exactly one eligible finding, so an empty result creates no child.
   - Selection is a pure function: repeating `scan` over unchanged input selects the same finding, and only `state=open` alerts are ever listed.
   - _Requirements: 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.4, 3.5, 3.7_
-- [ ] 1.3 Merge findings into the scan queue and context
+- [x] 1.3 Merge findings into the scan queue and context
   - Load the helper with `runpy.run_path` after the existing issue/PR queue is built and merge `scan(repo_slug, github, runs)` before the single `json.dump`.
   - Reuse the existing `fabro_runs()` list for the security-remediation active-run check instead of adding an API call.
   - Report `finding_count`, `finding_source`, `finding_number`, and `active_security_remediation_run`, and include findings in `has_queue`.
