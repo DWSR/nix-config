@@ -26,7 +26,7 @@
   - _Requirements: 1.2, 2.1_
 
 - [ ] 2. Plan and create at most one remediation child
-- [ ] 2.1 Emit one finding plan entry with the pinned version
+- [x] 2.1 Emit one finding plan entry with the pinned version
   - Add `REMEDIATION_RULE` beside `DEPENDABOT_RULE`, reading `{{ vars.security_remediation_workflow_version }}`.
   - Emit the entry only when `remediation.selected` is set and `remediation.active_run` is empty, with `kind=finding`, `number=<source>:<n>`, alert source/number/title/url, `workflow=security-remediation`, `input_key=finding`, and `label_swap=none`.
   - Leave the issue ambiguity check and `normalize` untouched; finding entries pass through unchanged and `has_plan` includes them.
