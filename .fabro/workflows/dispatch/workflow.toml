@@ -226,6 +226,7 @@ script = '''
 set -eu
 mkdir -p .git
 cat > .git/dispatch-security-scan.py <<'DISPATCH_SECURITY_SCAN_PY'
+import re
 import sys
 import urllib.parse
 
@@ -272,6 +273,31 @@ def alert_fields(slug, source, payload):
     }
 
 
+def remediation_branch(source, number):
+    return "security/%s-%s" % (source, int(number))
+
+
+def branch_finding(ref):
+    match = re.match(r"^security/([a-z-]+)-(\d+)$", ref or "")
+    if not match:
+        return None
+    source = match.group(1)
+    if source not in SOURCE_ORDER:
+        return None
+    return (source, int(match.group(2)))
+
+
+def finding_id(source, number):
+    return "%s:%s" % (source, int(number))
+
+
+def package_mentioned(package, text):
+    if not package or not text:
+        return False
+    pattern = r"(?<![A-Za-z0-9._@/-])%s(?![A-Za-z0-9._@/-])" % re.escape(package)
+    return re.search(pattern, text) is not None
+
+
 def list_alerts(slug, source, request):
     if source not in ALERT_PATHS:
         sys.exit("dispatch scan: %s alerts could not be read: unsupported alert source" % source)
@@ -290,6 +316,101 @@ def list_alerts(slug, source, request):
             return findings
     sys.exit("dispatch scan: %s alerts could not be read: more than %d open alerts over %d pages; refusing to truncate" % (
         source, PAGE_SIZE * MAX_PAGES, MAX_PAGES))
+
+
+def open_pull_requests(slug, request):
+    pulls = []
+    for page in range(1, MAX_PAGES + 1):
+        query = urllib.parse.urlencode({"state": "open", "per_page": PAGE_SIZE, "page": page})
+        path = "/repos/%s/pulls?%s" % (slug, query)
+        try:
+            batch = request("GET", path) or []
+        except SystemExit as exc:
+            sys.exit("dispatch scan: open pull requests could not be read: %s" % (str(exc) or "no detail"))
+        except Exception as exc:
+            sys.exit("dispatch scan: open pull requests could not be read: %s" % (str(exc) or exc.__class__.__name__))
+        for payload in batch:
+            pulls.append({
+                "number": int(payload["number"]),
+                "head_ref": (payload.get("head") or {}).get("ref") or "",
+                "author": (payload.get("user") or {}).get("login") or "",
+                "title": payload.get("title") or "",
+                "body": payload.get("body") or "",
+            })
+        if len(batch) < PAGE_SIZE:
+            return pulls
+    sys.exit("dispatch scan: open pull requests could not be read: more than %d open pull requests over %d pages; refusing to truncate" % (
+        PAGE_SIZE * MAX_PAGES, MAX_PAGES))
+
+
+def exclusions(findings, pulls):
+    remediation_heads = set()
+    for pull in pulls:
+        parsed = branch_finding(pull.get("head_ref") or "")
+        if parsed is not None:
+            remediation_heads.add(parsed)
+    dependabot_prs = [
+        pull for pull in pulls
+        if (pull.get("author") or "").lower() == "dependabot[bot]"
+    ]
+    eligible, excluded = [], []
+    for finding in findings:
+        reason = None
+        if (finding["source"], int(finding["number"])) in remediation_heads:
+            reason = "remediation_pr_open"
+        elif finding["source"] == "dependabot" and finding.get("package"):
+            for pull in dependabot_prs:
+                text = "%s\n%s" % (pull.get("title") or "", pull.get("body") or "")
+                if package_mentioned(finding["package"], text):
+                    reason = "dependabot_pr_open"
+                    break
+        if reason:
+            excluded.append({
+                "source": finding["source"],
+                "number": int(finding["number"]),
+                "reason": reason,
+            })
+        else:
+            eligible.append(finding)
+    return eligible, excluded
+
+
+def finding_sort_key(finding):
+    return (SOURCE_ORDER.get(finding["source"], len(SOURCE_ORDER)), int(finding["number"]))
+
+
+def select_finding(eligible):
+    if not eligible:
+        return None
+    return sorted(eligible, key=finding_sort_key)[0]
+
+
+def active_remediation_run(runs, slug):
+    for run in runs or []:
+        if ((run.get("workflow") or {}).get("slug") or "") != "security-remediation":
+            continue
+        if ((run.get("repository") or {}).get("name") or "").lower() != slug.lower():
+            continue
+        return run.get("id")
+    return None
+
+
+def scan(slug, request, runs):
+    findings = []
+    for source in SOURCES:
+        findings.extend(list_alerts(slug, source, request))
+    findings.sort(key=finding_sort_key)
+    pulls = open_pull_requests(slug, request)
+    eligible, excluded = exclusions(findings, pulls)
+    return {
+        "findings": findings,
+        "remediation": {
+            "active_run": active_remediation_run(runs, slug),
+            "excluded": excluded,
+            "eligible": [finding_id(finding["source"], finding["number"]) for finding in eligible],
+            "selected": select_finding(eligible),
+        },
+    }
 DISPATCH_SECURITY_SCAN_PY
 python3 -c "import py_compile; py_compile.compile('.git/dispatch-security-scan.py', doraise=True)"
 '''
