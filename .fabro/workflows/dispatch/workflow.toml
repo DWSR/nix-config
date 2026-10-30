@@ -10,7 +10,7 @@ running_label = "fabro-running"
 failed_label = "fabro-failed"
 
 [run.integrations.github]
-permissions = { contents = "read", issues = "write", pull_requests = "read", checks = "read", statuses = "read" }
+permissions = { contents = "read", issues = "write", pull_requests = "read", checks = "read", statuses = "read", vulnerability_alerts = "read", security_events = "read" }
 
 [run.run_branch]
 enabled = false
@@ -219,4 +219,77 @@ if __name__ == "__main__":
     main()
 DISPATCH_STACK_SCAN_PY
 python3 -c "import py_compile; py_compile.compile('.git/dispatch-stack-scan.py', doraise=True)"
+'''
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git
+cat > .git/dispatch-security-scan.py <<'DISPATCH_SECURITY_SCAN_PY'
+import sys
+import urllib.parse
+
+SOURCES = ("dependabot", "code-scanning")  # secret scanning is never requested
+SOURCE_ORDER = {"dependabot": 0, "code-scanning": 1}
+PAGE_SIZE = 100
+MAX_PAGES = 10
+ALERT_PATHS = {
+    "dependabot": "/repos/%s/dependabot/alerts",
+    "code-scanning": "/repos/%s/code-scanning/alerts",
+}
+
+
+def alert_url(slug, source, number):
+    return "https://github.com/%s/security/%s/%s" % (slug, source, number)
+
+
+def alert_fields(slug, source, payload):
+    number = int(payload["number"])
+    url = payload.get("html_url") or alert_url(slug, source, number)
+    if source == "dependabot":
+        advisory = payload.get("security_advisory") or {}
+        dependency = payload.get("dependency") or {}
+        package = (dependency.get("package") or {}).get("name") or ""
+        title = advisory.get("summary") or package or "Dependabot alert #%d" % number
+        finding = {
+            "source": source,
+            "number": number,
+            "title": str(title).strip(),
+            "url": url,
+        }
+        if package:
+            finding["package"] = package
+        return finding
+    rule = payload.get("rule") or {}
+    instance = payload.get("most_recent_instance") or {}
+    message = (instance.get("message") or {}).get("text") or ""
+    title = rule.get("description") or rule.get("id") or message or "Code scanning alert #%d" % number
+    return {
+        "source": source,
+        "number": number,
+        "title": str(title).strip(),
+        "url": url,
+    }
+
+
+def list_alerts(slug, source, request):
+    if source not in ALERT_PATHS:
+        sys.exit("dispatch scan: %s alerts could not be read: unsupported alert source" % source)
+    findings = []
+    for page in range(1, MAX_PAGES + 1):
+        query = urllib.parse.urlencode({"state": "open", "per_page": PAGE_SIZE, "page": page})
+        path = "%s?%s" % (ALERT_PATHS[source] % slug, query)
+        try:
+            batch = request("GET", path) or []
+            findings.extend(alert_fields(slug, source, alert) for alert in batch)
+        except SystemExit as exc:
+            sys.exit("dispatch scan: %s alerts could not be read: %s" % (source, str(exc) or "no detail"))
+        except Exception as exc:
+            sys.exit("dispatch scan: %s alerts could not be read: %s" % (source, str(exc) or exc.__class__.__name__))
+        if len(batch) < PAGE_SIZE:
+            return findings
+    sys.exit("dispatch scan: %s alerts could not be read: more than %d open alerts over %d pages; refusing to truncate" % (
+        source, PAGE_SIZE * MAX_PAGES, MAX_PAGES))
+DISPATCH_SECURITY_SCAN_PY
+python3 -c "import py_compile; py_compile.compile('.git/dispatch-security-scan.py', doraise=True)"
 '''
