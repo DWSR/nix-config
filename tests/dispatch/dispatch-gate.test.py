@@ -6,6 +6,7 @@ import pathlib
 import re
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 
 
@@ -68,9 +69,10 @@ class FakeResponse:
 class FakeBridge:
     """Stand-in for the Fabro API bridge that records every request."""
 
-    def __init__(self, runs=None, create_payload=None):
+    def __init__(self, runs=None, create_payload=None, start_status=None):
         self.runs = runs or []
         self.create_payload = create_payload
+        self.start_status = start_status
         self.requests = []
         self.creates = []
 
@@ -87,6 +89,10 @@ class FakeBridge:
                 return FakeResponse(self.create_payload)
             return FakeResponse({"id": "run-%d" % len(self.creates)})
         if re.search(r"/runs/[^/]+/start$", url) and method == "POST":
+            if self.start_status is not None:
+                raise urllib.error.HTTPError(
+                    url, self.start_status, "start failed", {}, io.BytesIO(b"start failed")
+                )
             return FakeResponse({})
         raise AssertionError("unexpected request: %s %s" % (method, url))
 
@@ -269,6 +275,38 @@ class DispatchFindingGateTests(unittest.TestCase):
         self.assertEqual(len(result["failed"]), 1)
         self.assertEqual(result["failed"][0]["finding"], "dependabot:12")
         self.assertIn("no run id", result["failed"][0]["error"])
+
+    def test_two_findings_without_run_id_create_only_one_child(self):
+        bridge = FakeBridge(create_payload={})
+        result, context, code = run_dispatch(
+            plan_with(finding_entry("dependabot", 12), finding_entry("dependabot", 7)),
+            bridge,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(context["dispatch_result"], "failed")
+        self.assertEqual(len(bridge.creates), 1)
+        self.assertEqual(result["dispatched"], [])
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(result["failed"][0]["finding"], "dependabot:12")
+        self.assertIn("no run id", result["failed"][0]["error"])
+        self.assertIn({"finding": "dependabot:7", "reason": "serialized"}, result["skipped"])
+
+    def test_two_findings_with_start_failure_create_only_one_child(self):
+        bridge = FakeBridge(start_status=500)
+        result, context, code = run_dispatch(
+            plan_with(finding_entry("dependabot", 12), finding_entry("dependabot", 7)),
+            bridge,
+        )
+
+        self.assertEqual(code, 1)
+        self.assertEqual(context["dispatch_result"], "failed")
+        self.assertEqual(len(bridge.creates), 1)
+        self.assertEqual(result["dispatched"], [])
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(result["failed"][0]["finding"], "dependabot:12")
+        self.assertIn("HTTP 500", result["failed"][0]["error"])
+        self.assertIn({"finding": "dependabot:7", "reason": "serialized"}, result["skipped"])
 
 
 if __name__ == "__main__":
