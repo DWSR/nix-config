@@ -1,7 +1,7 @@
 # Implementation Plan
 
 - [ ] 1. Teach the dispatch scan to discover security findings
-- [ ] 1.1 Add the embedded security-scan helper and alert-read permissions
+- [x] 1.1 Add the embedded security-scan helper and alert-read permissions
   - Write `.git/dispatch-security-scan.py` from a new `[[run.prepare.steps]]` block in `.fabro/workflows/dispatch/workflow.toml` (marker `DISPATCH_SECURITY_SCAN_PY`) and `py_compile` it in the same step.
   - Paginate `GET /dependabot/alerts?state=open` and `/code-scanning/alerts?state=open` at 100 per page, capped at 10 pages, normalising each alert to `{source, number, title, url}`; never request secret scanning.
   - Re-exit any alert-list failure as `dispatch scan: <source> alerts could not be read: <detail>`, and keep every alert call GET-only.
