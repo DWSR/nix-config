@@ -257,7 +257,7 @@ def write_finding_file(alert, source, number, owner, repo):
         handle.write("\n".join(lines).rstrip() + "\n")
 
 
-def remote_branch_sha(branch):
+def remote_head(branch):
     ref = "refs/heads/%s" % branch
     out = run(["git", "ls-remote", "--heads", "origin", ref], check=False)
     for line in out.splitlines():
@@ -265,6 +265,36 @@ def remote_branch_sha(branch):
         if len(parts) == 2 and parts[1] == ref:
             return parts[0]
     return None
+
+
+def pr_body(summary, alert):
+    text = str(summary or "").strip()
+    line = "Alert: %s (%s alert #%d)" % (
+        alert.get("html_url") or "", alert.get("source") or "", int(alert.get("number") or 0))
+    return "%s\n\n%s\n" % (text, line)
+
+
+def find_open_pr(slug, owner, branch):
+    query = urllib.parse.urlencode({
+        "state": "open",
+        "head": "%s:%s" % (owner, branch),
+        "per_page": 100,
+    })
+    _, prs = gh("GET", "/repos/%s/pulls?%s" % (slug, query))
+    prs = prs or []
+    if len(prs) > 1:
+        sys.exit("multiple open pull requests for head %s: %s" % (
+            branch, [pr.get("number") for pr in prs]))
+    return prs[0] if prs else None
+
+
+def push_stale_message(branch, expected, current):
+    if expected is None:
+        return ("push_stale: remote branch %s appeared at %s after intake; refusing to overwrite it. "
+                "Start a fresh run to rebase the new head." % (branch, current[:12] if current else "?"))
+    return ("push_stale: remote branch %s moved from %s to %s while this run was working; refusing to "
+            "overwrite it. Start a fresh run to rebase the new head." % (
+                branch, expected[:12], current[:12] if current else "?"))
 
 
 def prepare(argv):
@@ -302,7 +332,7 @@ def prepare(argv):
         }
         if alert_open:
             run(["git", "fetch", "origin", trunk])
-            state["remote_branch_sha"] = remote_branch_sha(branch)
+            state["remote_branch_sha"] = remote_head(branch)
             run(["git", "checkout", "-B", branch, "origin/%s" % trunk])
             state["baseline_sha"] = run(["git", "rev-parse", "HEAD"])
         else:
@@ -493,9 +523,66 @@ def publish(argv):
     if count != 1:
         sys.exit("publish produced %d commits over %s; refusing to publish because the branch must keep exactly one commit" % (
             count, trunk))
+    expected_remote = state.get("remote_branch_sha")
+    current_remote = remote_head(branch)
+    if current_remote != expected_remote:
+        sys.exit(push_stale_message(branch, expected_remote, current_remote))
+    lease = "--force-with-lease=refs/heads/%s:%s" % (branch, expected_remote or "")
+    push = subprocess.run(
+        ["git", "push", "--quiet", lease, "origin", "%s:refs/heads/%s" % (head, branch)],
+        capture_output=True, text=True)
+    if push.returncode != 0:
+        latest = remote_head(branch)
+        if "stale info" in (push.stderr or push.stdout) or latest != expected_remote:
+            sys.exit(push_stale_message(branch, expected_remote, latest))
+        sys.exit("command failed: git push origin %s:refs/heads/%s\n%s" % (
+            head, branch, (push.stderr or push.stdout).strip()))
+    state["remote_branch_sha"] = head
+    save_state(state)
+
+    slug = state.get("repo") or "%s/%s" % origin_repo()
+    owner, repo = slug.split("/", 1)
+    pr = find_open_pr(slug, owner, branch)
+    if pr is None:
+        alert = {
+            "html_url": state.get("url") or alert_url(owner, repo, source, number),
+            "source": source,
+            "number": number,
+        }
+        status, created = gh("POST", "/repos/%s/pulls" % slug, {
+            "title": title,
+            "head": branch,
+            "base": trunk,
+            "draft": False,
+            "body": pr_body(summary, alert),
+        }, expect=(201, 422))
+        if status == 422:
+            pr = find_open_pr(slug, owner, branch)
+            if pr is None:
+                sys.exit("pull request create for head %s returned 422 and no open PR exists: %s" % (
+                    branch, json.dumps(created)))
+        else:
+            pr = created
+        print("security-remediation publish: created PR #%s for %s -> %s" % (
+            pr.get("number"), branch, trunk), file=sys.stderr)
+    else:
+        print("security-remediation publish: reusing PR #%s for %s" % (
+            pr.get("number"), branch), file=sys.stderr)
+
+    state["published"] = {
+        "commit": head,
+        "pr": pr.get("number"),
+        "pr_url": pr.get("html_url", ""),
+        "pushed_at": now_iso(),
+    }
+    save_state(state)
     print("security-remediation publish: branch=%s base=%s head=%s" % (
         branch, base[:12], head[:12]), file=sys.stderr)
-    print(json.dumps({"context_updates": {"commit_sha": head}}))
+    print(json.dumps({"context_updates": {
+        "commit_sha": head,
+        "pr_number": str(pr.get("number")),
+        "pr_url": pr.get("html_url", ""),
+    }}))
 
 
 def read_failed_stage():
