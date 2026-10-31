@@ -117,7 +117,7 @@
   - `python3 tests/security-remediation/publish.test.py` passes.
   - _Requirements: 9.4, 9.5_
   - _Boundary: `tests/security-remediation/publish.test.py`_
-- [ ]* 5.3 (P) Add intake helper tests
+- [x]* 5.3 (P) Add intake helper tests
   - Cover the accepted `finding` spellings, a closed alert setting `alert_open=false`, and a non-200 detail fetch naming the source and alert number.
   - Deferred coverage: requirements 4.3 and 4.4 are already implemented in 3.2.
   - _Requirements: 4.3, 4.4_
