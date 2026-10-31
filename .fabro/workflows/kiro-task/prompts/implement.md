@@ -37,7 +37,7 @@ validation set. Do not redo work that the review already approved.
    - REFACTOR: improve structure and remove duplication while keeping all tests passing.
    - Behavioral tasks: follow the Feature Flag Protocol. Add a flag defaulting OFF, prove the new tests fail with the flag OFF, enable the flag and implement until tests pass, then remove the flag and confirm tests still pass.
    - Non-behavioral tasks (refactors, configuration, documentation): a standard RED then GREEN then REFACTOR cycle is enough.
-4. Validate: run the task-relevant TEST / BUILD / SMOKE commands. Re-read the referenced requirement and design sections and compare them against the changed code and tests. If a validation command fails because of a pre-existing unrelated issue, report that precisely instead of masking it.
+4. Validate: run the task-relevant TEST / BUILD / SMOKE commands under the validation environment below. Re-read the referenced requirement and design sections and compare them against the changed code and tests. If a validation command fails because of a pre-existing unrelated issue, report that precisely instead of masking it; if it is environment-blocked, record it and continue.
 5. Self-review before reporting:
    - Every acceptance criterion is satisfied by concrete behavior.
    - The implementation is not a mock, stub, placeholder, fake, or TODO-only path.
@@ -46,6 +46,46 @@ validation set. Do not redo work that the review already approved.
    - Changes stay inside the task boundary.
    - Tests would fail if the implementation were removed or broken.
    - Newly introduced runtime-sensitive dependencies or packaging assumptions are reflected in validation or called out in the report.
+
+## Validation environment
+
+You implement on the `aarch64-linux` sandbox host. Before running Nix commands, export
+caches outside the repository:
+
+```bash
+export HOME=/tmp/fabro-home
+export XDG_CACHE_HOME=/tmp/fabro-nix-cache
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+```
+
+Allow ten minutes for a cold check. The repository gate that runs here is
+`nix flake check --show-trace`, `nix develop --command prek run --all-files`,
+`nix develop --command fabro validate .fabro/workflows/<name>/workflow.fabro` for changed
+workflow packages, and the task-relevant package tests, in that order.
+
+A check that needs a Darwin builder is environment-blocked on this host:
+`nix flake check --all-systems`, a direct `nix build .#checks.aarch64-darwin.<name>` for
+a Darwin-only output (such as the `aarch64-darwin` host's `fabro-vm-guest-eval` and the
+`aarch64-darwin`-gated `hammerspoonChecks`, including `hammerspoon-package`), and any
+command that fails with `platform mismatch` or `Required system: 'aarch64-darwin'`. Record
+each as
+`environment-blocked: <command> (<cause>)` in `impl_tests_run` and continue; do not report
+BLOCKED for that check and do not spend a rework round on it.
+
+The exemption covers only those genuinely Darwin-only outputs. `lima-vm-service` (runs
+`node --test tests/lima-vm/`) and `hammerspoon-keybindings` (runs
+`node --test tests/hammerspoon-keybindings/`) are real `aarch64-linux` checks that
+`nix flake check` builds; they must pass. The Darwin-gated `hammerspoonChecks` suites are
+`tests/hammerspoon-deskflow-watchdog/` and `tests/hammerspoon-timezone-menubar/`, not the
+keybindings suite.
+
+A missing `devShells.aarch64-linux.default`, a failing `aarch64-linux` check, or an
+`aarch64-linux` devShell without `prek` or `fabro` is a real failure, not
+environment-blocked. If the sandbox cannot run Nix at all (no `nix` binary or no daemon),
+record only the Nix-dependent commands (`nix flake check`, `nix develop --command prek`,
+and `nix develop --command fabro validate`) as environment-blocked and keep running the
+direct language-level tests (`python3 tests/<name>.test.py`, `node --test tests/<name>/`,
+and the like). If those direct tests cannot run either, report BLOCKED with the cause.
 
 ## Hard constraints
 

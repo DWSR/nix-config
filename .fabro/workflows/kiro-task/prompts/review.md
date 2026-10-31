@@ -20,16 +20,68 @@ the full changed files where the diff is not enough. If `baseline_sha` is missin
 the last commit in `git log --oneline` that is not a `fabro(` checkpoint and diff from
 it. This diff is your primary input.
 
+## Validation environment
+
+You review on the `aarch64-linux` sandbox host, not on a macOS host. Run Nix commands
+with `HOME` and `XDG_CACHE_HOME` outside the repository so the flake registry and caches
+do not resolve against the checkout, and allow ten minutes for a cold check:
+
+```bash
+export HOME=/tmp/fabro-home
+export XDG_CACHE_HOME=/tmp/fabro-nix-cache
+mkdir -p "$HOME" "$XDG_CACHE_HOME"
+```
+
+The repository gate that runs on this host is:
+
+1. `nix flake check --show-trace` — builds the `aarch64-linux` checks. The
+   `warning: The check omitted these incompatible systems: aarch64-darwin, x86_64-darwin`
+   line is expected.
+2. `nix develop --command prek run --all-files` — the `aarch64-linux` devShell supplies
+   `prek` and the pinned `fabro` CLI.
+3. `nix develop --command fabro validate .fabro/workflows/<name>/workflow.fabro` for every
+   workflow package the task changes.
+
+Do not run `nix flake check --all-systems` or build a Darwin-only
+`checks.aarch64-darwin` output directly. Those need a Darwin builder this host does not
+have. Record `nix flake check --all-systems`, a direct
+`nix build .#checks.aarch64-darwin.<name>` for a Darwin-only output (such as the
+`aarch64-darwin` host's `fabro-vm-guest-eval` and the `aarch64-darwin`-gated
+`hammerspoonChecks`, including `hammerspoon-package`), and any command that fails with
+`platform mismatch` or `Required system: 'aarch64-darwin'` as
+`environment-blocked: <command> (<cause>)` in `review_mechanical`.
+
+The exemption covers only those genuinely Darwin-only outputs. A `checks.aarch64-darwin`
+copy of a cross-system check is not evidence that its suite is macOS-only. `lima-vm-service`
+(runs `node --test tests/lima-vm/`) and `hammerspoon-keybindings` (runs
+`node --test tests/hammerspoon-keybindings/`) are real `aarch64-linux` checks that
+`nix flake check` above builds, and their failures reject the task. The Darwin-gated
+`hammerspoonChecks` suites are `tests/hammerspoon-deskflow-watchdog/` and
+`tests/hammerspoon-timezone-menubar/`, not the keybindings suite.
+
+An environment-blocked check is not a test failure: keep evaluating the remaining checks
+and do not reject the task or start a rework round because of it. The reviewer cannot
+produce that evidence here, and re-running the command will not change the result. A
+missing `devShells.aarch64-linux.default`, a failing `aarch64-linux` check, or an
+`aarch64-linux` devShell without `prek` or `fabro` is not environment-blocked; the flake
+defines all three, so report that as a real failure. If the sandbox cannot run Nix at all
+(no `nix` binary or no daemon), record only the Nix-dependent commands (`nix flake check`,
+`nix develop --command prek`, and `nix develop --command fabro validate`) as
+environment-blocked. Direct language-level tests that need no Nix (for example
+`python3 tests/<name>.test.py` and `node --test tests/<name>/`) remain evaluable and must
+still run; a failure there rejects the task, and if one cannot run either, say so
+explicitly and reject or escalate instead of assuming success.
+
 ## Mechanical checks
 
 Run the checks and use their results; do not rely on visual inspection where a command
 can decide.
 
-1. Regression safety: discover the repository's canonical test command(s) from its manifests, task runners, CI config, and README, and run them. Any test failure rejects the task.
+1. Regression safety: discover the repository's canonical test command(s) from its manifests, task runners, CI config, and README, and run them under the validation environment above. Any evaluable test failure rejects the task; record a check the host cannot run as `environment-blocked` instead.
 2. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`. New markers reject the task unless the task itself requires them.
 3. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret patterns reject the task.
 4. Boundary: compare `git diff --name-only <baseline_sha>` against the task's `_Boundary:_` when present. Files outside the boundary reject the task unless the task itself justifies them.
-5. RED evidence: for behavioral tasks, `impl_red_evidence` must show failing tests captured before the implementation. Missing or unrelated evidence rejects the task.
+5. RED evidence: for behavioral tasks, `impl_red_evidence` must show failing tests captured before the implementation. Missing or unrelated evidence rejects the task. When the test command itself is environment-blocked, record that instead of rejecting for missing RED evidence.
 6. Static checks: run the repository's linter or typechecker when one is configured for the touched stack. Otherwise spot-check the changed files for runtime-only breakage such as type-only imports used as values, unresolved globals, or newly introduced runtime dependencies.
 
 ## Judgment checks
@@ -46,8 +98,9 @@ Read the code and compare it against the spec.
 
 ## Verdict rules
 
-- APPROVED only when every mechanical check passes and no judgment check finds a real gap.
-- REJECTED otherwise. If a check cannot be evaluated, say so explicitly and reject or escalate; never assume success.
+- APPROVED when every evaluable mechanical check passes, any remaining check is recorded as environment-blocked for a host limitation, and no judgment check finds a real gap.
+- REJECTED only for an evaluable failure or a real judgment gap. An environment-blocked check never justifies a rejection or a rework round: the reviewer cannot produce that evidence on this host, and repeating the command cannot change the result.
+- If a check is neither evaluable nor environment-blocked, say so explicitly and reject or escalate; never assume success.
 - A rejection must include remediation: the exact file, the exact problem, and the exact fix, with spec section references where applicable.
 
 ## Hard constraints
@@ -65,7 +118,7 @@ quotes as \" and newlines as \n. Do not put anything after the JSON object.
 
 When the task is approved:
 
-{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; boundary: WITHIN; RED phase: VERIFIED", "review_findings": "", "review_remediation": ""}}
+{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: nix flake check PASS; prek: PASS; environment-blocked: nix build .#checks.aarch64-darwin.fabro-vm-guest-eval (Darwin-only check); TODO grep: CLEAN; secrets grep: CLEAN; boundary: WITHIN; RED phase: VERIFIED", "review_findings": "", "review_remediation": ""}}
 
 When the task is rejected:
 
