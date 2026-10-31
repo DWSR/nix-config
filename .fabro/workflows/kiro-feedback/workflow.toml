@@ -1,0 +1,399 @@
+_version = 1
+
+[workflow]
+graph = "workflow.fabro"
+
+[run.inputs]
+spec = ""
+pr = ""
+branch = ""
+base = ""
+
+# DeepSeek V4.1 Flash saturates its OpenCode Go cell under dispatch fan-out;
+# fail over to the ChatGPT-backed Luna, whose deployment pins xhigh effort.
+[run.model.fallbacks]
+"deepseek-v4.1-flash" = ["litellm:gpt-6-luna"]
+
+# contents: write - fetch, rebase, amend, and force-push the stack branch;
+# pull_requests: write - reply to and resolve review threads; checks/statuses:
+# read - wait for every CI check on the pushed commit.
+[run.integrations.github]
+permissions = { contents = "write", pull_requests = "write", checks = "read", statuses = "read" }
+
+# The child works on the stack branch that backs the pull request, not on a
+# Fabro run branch: pushing there is what makes GitHub run CI for the PR.
+[run.run_branch]
+enabled = false
+
+[run.pull_request]
+enabled = false
+
+# Full history: rebasing the layer onto the branch below it needs the real
+# merge base.
+[run.clone]
+depth = 0
+
+[run.checkpoint]
+exclude_globs = [
+    "**/node_modules/**",
+    "**/target/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.venv/**",
+    "**/__pycache__/**",
+    "**/.cache/**",
+    "**/.pytest_cache/**",
+]
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git/kiro-feedback-scripts
+cat > .git/kiro-feedback-scripts/tools.py <<'KIRO_FEEDBACK_TOOLS_PY'
+import datetime, json, os, re, subprocess, sys, time, urllib.error, urllib.parse, urllib.request
+
+STATE_PATH = ".git/kiro-feedback-state.json"
+FEEDBACK_PATH = ".git/kiro-feedback.json"
+FEEDBACK_MD = ".git/kiro-feedback.md"
+CI_MD = ".git/kiro-feedback-ci.md"
+API_BASE = os.environ.get("KIRO_FEEDBACK_GITHUB_API_BASE", "https://api.github.com").rstrip("/")
+MAX_CI_ATTEMPTS = int(os.environ.get("KIRO_FEEDBACK_CI_ATTEMPTS", "20"))
+CI_POLL_SECONDS = int(os.environ.get("KIRO_FEEDBACK_CI_POLL_SECONDS", "60"))
+MAX_FIX_ROUNDS = 2
+FAILED_STATES = {"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "CANCELED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
+GREEN_STATES = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+EDITOR_ENV = dict(os.environ, GIT_EDITOR="true")
+
+def run(cmd, check=True, env=None):
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if check and r.returncode != 0:
+        sys.exit("command failed: %s\n%s" % (" ".join(cmd), r.stderr.strip()))
+    return r.stdout.strip()
+
+def gh(method, path, body=None, expect=(200, 201, 204)):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    req = urllib.request.Request(API_BASE + path, method=method, data=json.dumps(body).encode() if body is not None else None, headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Content-Type": "application/json",
+        "User-Agent": "fabro-kiro-feedback-workflow",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        if e.code in expect:
+            try:
+                return e.code, json.loads(raw)
+            except ValueError:
+                return e.code, raw
+        sys.exit("GitHub API %s %s failed: HTTP %s\n%s" % (method, path, e.code, raw[:1000]))
+
+def graphql(query, variables):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    base = os.environ.get("KIRO_FEEDBACK_GITHUB_GRAPHQL_URL", "https://api.github.com/graphql")
+    req = urllib.request.Request(base, method="POST", data=json.dumps({"query": query, "variables": variables}).encode(), headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "User-Agent": "fabro-kiro-feedback-workflow",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            body = json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as e:
+        sys.exit("GitHub GraphQL failed: HTTP %s\n%s" % (e.code, e.read().decode("utf-8", "replace")[:1000]))
+    if body.get("errors"):
+        sys.exit("GitHub GraphQL errors: %s" % json.dumps(body["errors"])[:1000])
+    return body.get("data") or {}
+
+def origin_repo():
+    url = run(["git", "config", "--get", "remote.origin.url"])
+    m = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not m:
+        sys.exit("cannot derive owner/repo from origin url %r" % url)
+    return "%s/%s" % (m.group(1), m.group(2))
+
+def parse_pr_ref(value):
+    m = re.search(r"/pull/(\d+)", value or "")
+    if m:
+        return int(m.group(1))
+    if re.match(r"^#?\d+$", (value or "").strip()):
+        return int(value.strip().lstrip("#"))
+    sys.exit("input 'pr' must be a GitHub pull request number (123), #123, or a pull request URL; got %r" % value)
+
+def load_state():
+    if not os.path.exists(STATE_PATH):
+        sys.exit("state file %s is missing; the prepare stage must run first" % STATE_PATH)
+    with open(STATE_PATH) as f:
+        return json.load(f)
+
+def save_state(state):
+    with open(STATE_PATH, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+def fetch_branch(ref):
+    run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % ref])
+    return run(["git", "rev-parse", "FETCH_HEAD"])
+
+def resolve_conflicts_take_theirs():
+    paths = [line for line in run(["git", "diff", "--name-only", "--diff-filter=U"], check=False).splitlines() if line]
+    for path in paths:
+        if subprocess.run(["git", "checkout", "--theirs", "--", path], capture_output=True, text=True).returncode != 0:
+            run(["git", "rm", "-q", "--", path], check=False)
+        run(["git", "add", "--", path], check=False)
+    return bool(paths)
+
+def rebase_onto(sha):
+    ident = [] if run(["git", "config", "user.email"], check=False) else ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    r = subprocess.run(["git"] + ident + ["rebase", "-X", "theirs", sha], capture_output=True, text=True, env=EDITOR_ENV)
+    while r.returncode != 0:
+        if not resolve_conflicts_take_theirs():
+            subprocess.run(["git", "rebase", "--abort"], capture_output=True, text=True)
+            sys.exit("rebase onto %s failed: %s" % (sha[:12], r.stderr.strip() or r.stdout.strip()))
+        r = subprocess.run(["git"] + ident + ["rebase", "--continue"], capture_output=True, text=True, env=EDITOR_ENV)
+
+def unresolved_threads(slug, number):
+    owner, repo = slug.split("/", 1)
+    query = """
+    query($owner:String!,$repo:String!,$number:Int!,$cursor:String){
+      repository(owner:$owner,name:$repo){pullRequest(number:$number){
+        reviewThreads(first:100,after:$cursor){
+          nodes{id isResolved path line comments(first:20){nodes{author{login} body}}}
+          pageInfo{hasNextPage endCursor}
+        }
+      }}
+    }
+    """
+    threads = []
+    cursor = None
+    while True:
+        data = graphql(query, {"owner": owner, "repo": repo, "number": number, "cursor": cursor})
+        page = ((((data.get("repository") or {}).get("pullRequest")) or {}).get("reviewThreads")) or {}
+        for thread in page.get("nodes") or []:
+            if thread.get("isResolved"):
+                continue
+            comments = [{"author": (c.get("author") or {}).get("login") or "", "body": c.get("body") or ""}
+                        for c in ((thread.get("comments") or {}).get("nodes") or []) if (c.get("body") or "").strip()]
+            if comments:
+                threads.append({"id": thread.get("id") or "", "path": thread.get("path") or "",
+                                "line": thread.get("line"), "comments": comments})
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            return threads
+        cursor = info.get("endCursor")
+
+def write_feedback_md(state, threads):
+    lines = ["# Unresolved review feedback for pull request #%s" % state["pr"], ""]
+    for thread in threads:
+        location = thread.get("path") or "(file)"
+        if thread.get("line"):
+            location = "%s:%s" % (location, thread["line"])
+        lines.append("## %s" % location)
+        for comment in thread.get("comments") or []:
+            lines.append("- @%s: %s" % (comment.get("author") or "unknown", (comment.get("body") or "").strip()))
+        lines.append("")
+    with open(FEEDBACK_MD, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+def prepare(argv):
+    number = parse_pr_ref(argv[0] if argv else "")
+    branch_in = (argv[1] if len(argv) > 1 else "").strip()
+    base_in = (argv[2] if len(argv) > 2 else "").strip()
+    slug = origin_repo()
+    run(["git", "fetch", "--prune", "--quiet", "origin"])
+    if run(["git", "rev-parse", "--is-shallow-repository"], check=False) == "true":
+        run(["git", "fetch", "--quiet", "--unshallow", "origin"])
+    _, pr = gh("GET", "/repos/%s/pulls/%d" % (slug, number))
+    head, base = pr.get("head") or {}, pr.get("base") or {}
+    if pr.get("merged") or pr.get("state") != "open":
+        sys.exit("pull request #%d is %s; refusing to work on a non-open pull request" % (number, "merged" if pr.get("merged") else pr.get("state")))
+    if ((head.get("repo") or {}).get("full_name") or "") != slug:
+        sys.exit("pull request #%d head %r is not in %s; fork pull requests are unsupported" % (number, head.get("label") or head.get("ref") or "?", slug))
+    branch = head.get("ref") or ""
+    if not branch:
+        sys.exit("pull request #%d has no head branch" % number)
+    if branch_in and branch_in != branch:
+        sys.exit("pull request #%d head is %r but the stack records %r; refusing to act on a moved branch" % (number, branch, branch_in))
+    base_ref = base_in or base.get("ref") or ""
+    if not base_ref:
+        sys.exit("pull request #%d has no base branch and no base input was given" % number)
+    if base_in and (base.get("ref") or "") and base_in != base.get("ref"):
+        sys.exit("pull request #%d base is %r but the stack records %r; refusing to rebase on a mismatched base" % (
+            number, base.get("ref"), base_in))
+    run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % branch])
+    run(["git", "checkout", "--quiet", "-B", branch, "FETCH_HEAD"])
+    remote_sha = run(["git", "rev-parse", "HEAD"])
+    base_sha = fetch_branch(base_ref)
+    state = {"pr": number, "repo": slug, "branch": branch, "base": base_ref, "base_sha": base_sha,
+             "remote_sha": remote_sha, "head_sha": remote_sha, "rebased": False, "fix_round": 0,
+             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")}
+    save_state(state)
+    rebase_onto(base_sha)
+    state["head_sha"] = run(["git", "rev-parse", "HEAD"])
+    state["rebased"] = state["head_sha"] != remote_sha
+    save_state(state)
+    print("kiro-feedback prepare: pr=#%d branch=%s base=%s rebased=%s" % (number, branch, base_ref, state["rebased"]), file=sys.stderr)
+    print(json.dumps({"context_updates": {"pr_number": str(number), "pr_branch": branch,
+                                          "base_branch": base_ref, "rebased": "true" if state["rebased"] else "false"}}))
+
+def collect(argv):
+    state = load_state()
+    threads = unresolved_threads(state["repo"], state["pr"])
+    write_feedback_md(state, threads)
+    with open(FEEDBACK_PATH, "w") as f:
+        json.dump({"pr": state["pr"], "repo": state["repo"], "threads": threads}, f, indent=1, sort_keys=True)
+    print("kiro-feedback collect: pr=#%d unresolved_threads=%d" % (state["pr"], len(threads)), file=sys.stderr)
+    print(json.dumps({"context_updates": {"has_feedback": "true" if threads else "false", "feedback_threads": str(len(threads))}}))
+
+def remote_head(branch):
+    for line in run(["git", "ls-remote", "--heads", "origin", "refs/heads/%s" % branch], check=False).splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[1] == "refs/heads/%s" % branch:
+            return parts[0]
+    return None
+
+def amend(argv):
+    state = load_state()
+    branch, base_sha = state.get("branch"), state.get("base_sha")
+    if not branch or not base_sha:
+        sys.exit("state file %s is missing branch/base_sha; start a fresh run" % STATE_PATH)
+    if os.path.isdir(".git/rebase-merge") or os.path.isdir(".git/rebase-apply"):
+        sys.exit("a git rebase is still in progress; finish or abort it before pushing")
+    count = int(run(["git", "rev-list", "--count", "%s..HEAD" % base_sha]))
+    if count != 1:
+        sys.exit("branch %s carries %d commits over its base; the stack requires exactly one commit per layer" % (branch, count))
+    ident = [] if run(["git", "config", "user.email"], check=False) else ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    run(["git", "add", "-A"])
+    staged = subprocess.run(["git", "diff", "--cached", "--quiet"]).returncode == 1
+    if staged:
+        run(["git"] + ident + ["commit", "--amend", "--no-edit", "--no-gpg-sign", "--no-verify"])
+    head = run(["git", "rev-parse", "HEAD"])
+    pushed = False
+    remote = remote_head(branch)
+    if remote != head:
+        expected = state.get("remote_sha")
+        if remote is not None and expected and remote != expected:
+            sys.exit("push_stale: remote branch %s moved from %s to %s while this run was working; refusing to overwrite it" % (branch, expected[:12], remote[:12]))
+        cmd = ["git", "push", "--quiet"] + (["--force-with-lease=refs/heads/%s:%s" % (branch, remote)] if remote is not None else [])
+        cmd += ["origin", "HEAD:refs/heads/%s" % branch]
+        push = subprocess.run(cmd, capture_output=True, text=True)
+        if push.returncode != 0:
+            sys.exit("command failed: %s\n%s" % (" ".join(cmd), (push.stderr or push.stdout).strip()))
+        pushed = True
+    state["head_sha"] = head
+    state["remote_sha"] = head
+    state["pushed"] = pushed
+    save_state(state)
+    print("kiro-feedback amend: pr=#%d head=%s amended=%s pushed=%s" % (state["pr"], head[:12], staged, pushed), file=sys.stderr)
+    print(json.dumps({"context_updates": {"head_sha": head, "amended": "true" if staged else "false", "pushed": "true" if pushed else "false"}}))
+
+def ci_contexts(slug, sha):
+    contexts = []
+    _, runs = gh("GET", "/repos/%s/commits/%s/check-runs?filter=latest&per_page=100" % (slug, sha))
+    for check in (runs or {}).get("check_runs") or []:
+        state = (check.get("conclusion") or "").upper() if (check.get("status") or "") == "completed" else (check.get("status") or "").upper()
+        contexts.append({"name": check.get("name") or "", "state": state, "url": check.get("details_url") or ""})
+    _, status = gh("GET", "/repos/%s/commits/%s/status?per_page=100" % (slug, sha))
+    for item in (status or {}).get("statuses") or []:
+        contexts.append({"name": item.get("context") or "", "state": (item.get("state") or "").upper(), "url": item.get("target_url") or ""})
+    return contexts
+
+def ci_state(contexts):
+    if not contexts:
+        return "none"
+    if any(context["state"] in FAILED_STATES for context in contexts):
+        return "failed"
+    if any(context["state"] not in GREEN_STATES for context in contexts):
+        return "pending"
+    return "success"
+
+def write_ci_md(state, failures):
+    lines = ["# Failed CI checks for pull request #%s" % state["pr"], ""]
+    lines += ["- `%s` (%s): %s" % (f.get("name") or "check", f.get("state") or "FAILURE", f.get("url") or "") for f in failures]
+    with open(CI_MD, "w") as f:
+        f.write("\n".join(lines) + "\n")
+
+def await_ci(argv):
+    state = load_state()
+    sha = state.get("head_sha") or state.get("remote_sha")
+    if not sha:
+        sys.exit("state file %s has no head_sha; prepare must run first" % STATE_PATH)
+    for attempt in range(1, MAX_CI_ATTEMPTS + 1):
+        contexts = ci_contexts(state["repo"], sha)
+        result = ci_state(contexts)
+        print("kiro-feedback await-ci: attempt=%d state=%s checks=%d" % (attempt, result, len(contexts)), file=sys.stderr)
+        if result == "failed":
+            failures = [context for context in contexts if context["state"] in FAILED_STATES]
+            write_ci_md(state, failures)
+            print(json.dumps({"context_updates": {"ci_result": "failed", "ci_failures": str(len(failures))}}))
+            return
+        if result == "success":
+            print(json.dumps({"context_updates": {"ci_result": "success", "ci_checks": str(len(contexts))}}))
+            return
+        if result == "none" and attempt >= 3:
+            print("kiro-feedback await-ci: no checks registered for %s; treating CI as satisfied" % sha[:12], file=sys.stderr)
+            print(json.dumps({"context_updates": {"ci_result": "success", "ci_checks": "0"}}))
+            return
+        if attempt < MAX_CI_ATTEMPTS:
+            time.sleep(CI_POLL_SECONDS)
+    sys.exit("CI for %s did not finish within %d polls; refusing to mark the layer complete" % (sha[:12], MAX_CI_ATTEMPTS))
+
+def rework(argv):
+    raw = sys.stdin.read().strip() if not sys.stdin.isatty() else ""
+    try:
+        current = int(raw) if raw else 0
+    except ValueError:
+        current = 0
+    round_ = current + 1
+    state = load_state()
+    state["fix_round"] = round_
+    save_state(state)
+    updates = {"fix_round": str(round_)}
+    if round_ > MAX_FIX_ROUNDS:
+        updates["stage_failure"] = "CI still fails after %d fix rounds; inspect %s" % (MAX_FIX_ROUNDS, CI_MD)
+    print(json.dumps({"outcome": "succeeded", "context_updates": updates}))
+
+def reply_and_resolve(thread_id, body):
+    reply = """mutation($threadId:ID!,$body:String!){
+      addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$threadId,body:$body}){clientMutationId}}"""
+    resolve = """mutation($threadId:ID!){resolveReviewThread(input:{threadId:$threadId}){thread{isResolved}}}"""
+    try:
+        graphql(reply, {"threadId": thread_id, "body": body})
+    except SystemExit:
+        pass
+    try:
+        graphql(resolve, {"threadId": thread_id})
+        return True
+    except SystemExit:
+        return False
+
+def finish(argv):
+    state = load_state()
+    threads = []
+    if os.path.exists(FEEDBACK_PATH):
+        with open(FEEDBACK_PATH) as f:
+            threads = (json.load(f) or {}).get("threads") or []
+    resolved = sum(1 for thread in threads if thread.get("id") and
+                   reply_and_resolve(thread["id"], "Addressed in %s." % state.get("head_sha", "")[:12]))
+    print("kiro-feedback finish: pr=#%d threads=%d resolved=%d" % (state["pr"], len(threads), resolved), file=sys.stderr)
+    print(json.dumps({"context_updates": {"threads_resolved": str(resolved), "threads_seen": str(len(threads))}}))
+
+def main():
+    commands = {"prepare": prepare, "collect": collect, "amend": amend, "await-ci": await_ci, "rework": rework, "finish": finish}
+    if len(sys.argv) < 2 or sys.argv[1] not in commands:
+        sys.exit("usage: tools.py <prepare|collect|amend|await-ci|rework|finish> [args]")
+    commands[sys.argv[1]](sys.argv[2:])
+
+if __name__ == "__main__":
+    main()
+KIRO_FEEDBACK_TOOLS_PY
+python3 -c "import py_compile; py_compile.compile('.git/kiro-feedback-scripts/tools.py', doraise=True)"
+'''

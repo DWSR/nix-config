@@ -10,6 +10,7 @@ LITELLM_NIX = ROOT / "configurations" / "fabro-vm" / "litellm.nix"
 # deepseek-v4.1-flash model.
 AGENT_WORKFLOWS = (
     "failure-triage",
+    "kiro-feedback",
     "kiro-impl",
     "kiro-spec",
     "kiro-task",
