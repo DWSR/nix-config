@@ -56,7 +56,7 @@
   - `rework` increments `fix_round` and reports `stage_failure` above 3; `fail` prefixes `.git/security-remediation-failed-stage` and exits non-zero from `stage_failure` stdin.
   - A guard run on an unchanged tree reports `tree_unchanged=true`, and the fingerprint ignores untracked build output.
   - _Requirements: 5.4, 5.8_
-- [ ] 3.4 Build the single-commit publish payload
+- [x] 3.4 Build the single-commit publish payload
   - Stage the tree with `git add -A` and `git write-tree`, fetch `origin/<trunk>`, and use `FETCH_HEAD` as the parent; replay the fix onto a moved trunk only when `trunk_paths` and `fix_paths` are disjoint, else fail `base_moved` listing the overlap.
   - Fail on an empty diff and reject artifact paths under `.cache`, `node_modules`, `target`, `dist`, `build`, `.venv`, `__pycache__`, and `.pytest_cache`, listing the offenders.
   - Create `head = git commit-tree <tree> -p <base> -m <title> -m <summary>` from `.git/security-remediation-publish.json` or the fallback `fix(security): remediate <source> alert #<n>` / `Remediates <source> alert #<n>.`, then assert `git rev-list --count <head> ^<base>` equals 1.
