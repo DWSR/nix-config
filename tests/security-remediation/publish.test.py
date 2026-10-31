@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+import urllib.request
 from unittest import mock
 
 
@@ -87,12 +89,55 @@ def commit_onto_origin(tmp, origin, files, message="trunk moved"):
     return git(other, "rev-parse", "HEAD")
 
 
-def run_publish(work):
+class FakeResponse:
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = json.dumps(payload).encode("utf-8") if payload is not None else b""
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class FakeHTTP:
+    def __init__(self, open_prs=None, create_status=201, create_body=None, create_error=None):
+        self.open_prs = list(open_prs or [])
+        self.create_status = create_status
+        self.create_body = create_body or {
+            "number": 34,
+            "html_url": "https://github.com/DWSR/nix-config/pull/34",
+        }
+        self.create_error = create_error
+        self.requests = []
+
+    def __call__(self, request, data=None, timeout=None):
+        method = request.get_method()
+        self.requests.append({
+            "method": method,
+            "url": request.full_url,
+            "body": json.loads(data) if data else None,
+        })
+        if method == "GET":
+            return FakeResponse(200, self.open_prs)
+        if self.create_error is not None:
+            raise self.create_error
+        return FakeResponse(self.create_status, self.create_body)
+
+
+def run_publish(work, http=None):
+    http = http or FakeHTTP()
     output = io.StringIO()
     previous = os.getcwd()
     os.chdir(work)
     try:
-        with mock.patch.object(sys, "argv", ["tools.py", "publish"]), \
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "test-token"}), \
+                mock.patch.object(urllib.request, "urlopen", http), \
+                mock.patch.object(sys, "argv", ["tools.py", "publish"]), \
                 contextlib.redirect_stdout(output), \
                 contextlib.redirect_stderr(io.StringIO()):
             load_tools()["main"]()
@@ -101,9 +146,9 @@ def run_publish(work):
     return json.loads(output.getvalue().strip().splitlines()[-1])["context_updates"]
 
 
-def run_publish_error(testcase, work):
+def run_publish_error(testcase, work, http=None):
     with testcase.assertRaises(SystemExit) as caught:
-        run_publish(work)
+        run_publish(work, http)
     return str(caught.exception.code)
 
 
@@ -270,6 +315,197 @@ class RejectedPayloadTests(unittest.TestCase):
 
             self.assertIn("security/dependabot-12", message)
             self.assertIn("security/other-99", message)
+
+
+def push_branch(tmp, origin, branch, content):
+    other = pathlib.Path(tmp, "branch-work")
+    if not other.exists():
+        subprocess.run(["git", "clone", str(origin), str(other)], check=True, capture_output=True)
+        git(other, "config", "user.email", "test@example.test")
+        git(other, "config", "user.name", "Test")
+    git(other, "checkout", "-B", branch)
+    (other / "branch.txt").write_text(content)
+    git(other, "add", "-A")
+    git(other, "commit", "-m", "remote work on %s" % branch)
+    git(other, "push", "origin", branch)
+    return git(other, "rev-parse", "HEAD")
+
+
+def posts(http):
+    return [request for request in http.requests if request["method"] == "POST"]
+
+
+class PushTests(unittest.TestCase):
+    def test_pushes_the_commit_and_records_the_remote_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+
+            context = run_publish(work)
+
+            head = context["commit_sha"]
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), head)
+            state = read_state(work)
+            self.assertEqual(state["remote_branch_sha"], head)
+            self.assertEqual(state["published"]["commit"], head)
+            self.assertEqual(state["published"]["pr"], 34)
+
+    def test_updates_an_existing_remote_branch_with_force_with_lease(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            existing = push_branch(tmp, origin, BRANCH, "first attempt\n")
+            write_state(work, remote_branch_sha=existing)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+
+            context = run_publish(work)
+
+            head = context["commit_sha"]
+            self.assertNotEqual(head, existing)
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), head)
+            self.assertEqual(read_state(work)["remote_branch_sha"], head)
+
+    def test_fails_push_stale_when_the_remote_head_moved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            intake = push_branch(tmp, origin, BRANCH, "intake\n")
+            moved = push_branch(tmp, origin, BRANCH, "someone else\n")
+            write_state(work, remote_branch_sha=intake)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+
+            message = run_publish_error(self, work)
+
+            self.assertIn("push_stale", message)
+            self.assertIn(BRANCH, message)
+            self.assertNotIn("commit_sha", message)
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), moved)
+
+    def test_fails_push_stale_when_the_branch_appeared_after_intake(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            appeared = push_branch(tmp, origin, BRANCH, "created by another actor\n")
+            write_state(work, remote_branch_sha=None)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+
+            message = run_publish_error(self, work)
+
+            self.assertIn("push_stale", message)
+            self.assertIn(BRANCH, message)
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), appeared)
+
+
+class PullRequestTests(unittest.TestCase):
+    def test_opens_a_non_draft_pull_request_that_links_the_alert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP()
+
+            context = run_publish(work, http)
+
+            created = posts(http)
+            self.assertEqual(len(created), 1)
+            payload = created[0]["body"]
+            self.assertEqual(payload["head"], BRANCH)
+            self.assertEqual(payload["base"], TRUNK)
+            self.assertFalse(payload["draft"])
+            self.assertEqual(payload["title"], "fix(security): remediate dependabot alert #12")
+            self.assertIn(
+                "Alert: https://github.com/DWSR/nix-config/security/dependabot/12 "
+                "(dependabot alert #12)",
+                payload["body"],
+            )
+            self.assertEqual(context["commit_sha"], git(origin, "rev-parse", "refs/heads/%s" % BRANCH))
+            self.assertEqual(context["pr_number"], "34")
+            self.assertEqual(context["pr_url"], "https://github.com/DWSR/nix-config/pull/34")
+            self.assertNotIn("clos", json.dumps(context).lower())
+
+    def test_reuses_the_single_open_pull_request_on_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP()
+
+            first = run_publish(work, http)
+            http.open_prs.append(http.create_body)
+            second = run_publish(work, http)
+
+            self.assertEqual(len(posts(http)), 1)
+            self.assertEqual(second["pr_number"], first["pr_number"])
+            self.assertEqual(second["pr_url"], first["pr_url"])
+
+    def test_reuses_an_existing_open_pull_request_without_creating_another(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP(open_prs=[{
+                "number": 7,
+                "html_url": "https://github.com/DWSR/nix-config/pull/7",
+            }])
+
+            context = run_publish(work, http)
+
+            self.assertEqual(posts(http), [])
+            self.assertEqual(context["pr_number"], "7")
+            self.assertEqual(context["pr_url"], "https://github.com/DWSR/nix-config/pull/7")
+
+    def test_fails_when_several_open_pull_requests_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP(open_prs=[
+                {"number": 7, "html_url": "https://github.com/DWSR/nix-config/pull/7"},
+                {"number": 8, "html_url": "https://github.com/DWSR/nix-config/pull/8"},
+            ])
+
+            message = run_publish_error(self, work, http)
+
+            self.assertIn("multiple open pull requests", message)
+            self.assertEqual(posts(http), [])
+
+    def test_fails_with_the_api_error_on_422_when_no_open_pull_request_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            body = io.BytesIO(json.dumps({
+                "message": "Validation Failed",
+                "errors": [{"resource": "PullRequest", "code": "custom"}],
+            }).encode("utf-8"))
+            error = urllib.error.HTTPError(
+                "https://api.github.com/repos/DWSR/nix-config/pulls",
+                422,
+                "Unprocessable Entity",
+                {},
+                body,
+            )
+            http = FakeHTTP(create_error=error)
+
+            message = run_publish_error(self, work, http)
+
+            self.assertIn("422", message)
+            self.assertIn("Validation Failed", message)
+            self.assertEqual(len(posts(http)), 1)
+
+    def test_never_writes_to_alert_endpoints_or_merges(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP()
+
+            run_publish(work, http)
+
+            for request in http.requests:
+                self.assertIn("/pulls", request["url"])
+                self.assertNotIn("/alerts", request["url"])
+                self.assertNotIn("/merge", request["url"])
+                if request["body"]:
+                    self.assertNotIn("auto_merge", request["body"])
 
 
 if __name__ == "__main__":

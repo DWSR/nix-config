@@ -61,7 +61,7 @@
   - Fail on an empty diff and reject artifact paths under `.cache`, `node_modules`, `target`, `dist`, `build`, `.venv`, `__pycache__`, and `.pytest_cache`, listing the offenders.
   - Create `head = git commit-tree <tree> -p <base> -m <title> -m <summary>` from `.git/security-remediation-publish.json` or the fallback `fix(security): remediate <source> alert #<n>` / `Remediates <source> alert #<n>.`, then assert `git rev-list --count <head> ^<base>` equals 1.
   - _Requirements: 6.1, 6.2, 6.7, 6.8, 6.9_
-- [ ] 3.5 Push the branch and open or reuse the pull request
+- [x] 3.5 Push the branch and open or reuse the pull request
   - Read the remote head with `git ls-remote --heads`; fail `push_stale` when it differs from `remote_branch_sha` or appeared after intake, and push with `--force-with-lease`, updating `remote_branch_sha` and `published` on success.
   - Find open PRs with `head=<owner>:<branch>`; reuse exactly one (fail on several) or POST a non-draft PR into the default branch whose `pr_body` carries `Alert: <html_url> (<source> alert #<n>)`.
   - A 422 whose follow-up search finds no open PR fails the run with the API error; report `pr_number`, `pr_url`, and `commit_sha`, never alert closure.
