@@ -38,6 +38,10 @@ PUBLISH_PATH = ".git/security-remediation-publish.json"
 TEST_LOG_PATH = ".git/security-remediation-test.log"
 FAILED_STAGE_PATH = ".git/security-remediation-failed-stage"
 API_BASE = os.environ.get("SECURITY_REMEDIATION_API_BASE", "https://api.github.com").rstrip("/")
+ARTIFACT_SEGMENTS = {
+    ".cache", "node_modules", "target", "dist", "build",
+    ".venv", "__pycache__", ".pytest_cache",
+}
 
 
 def run(cmd, check=True, env=None):
@@ -389,6 +393,111 @@ def rework(argv):
     print(json.dumps({"context_updates": updates}))
 
 
+def artifact_paths(tree_paths):
+    offenders = []
+    for path in tree_paths:
+        segments = [segment for segment in str(path).split("/") if segment]
+        if any(segment in ARTIFACT_SEGMENTS for segment in segments):
+            offenders.append(path)
+    return offenders
+
+
+def commit_ident():
+    if (not run(["git", "config", "user.name"], check=False)
+            or not run(["git", "config", "user.email"], check=False)):
+        return ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    return []
+
+
+def load_publish_meta(state):
+    source = state.get("source") or "security"
+    number = int(state.get("alert_number") or 0)
+    title = "fix(security): remediate %s alert #%d" % (source, number)
+    summary = "Remediates %s alert #%d." % (source, number)
+    if os.path.exists(PUBLISH_PATH):
+        try:
+            with open(PUBLISH_PATH) as handle:
+                data = json.load(handle)
+        except (OSError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            proposed = " ".join(str(data.get("title") or "").split())
+            if (len(proposed) <= 72 and re.match(
+                    r"^[a-z][a-z0-9-]*(?:\([a-z0-9._/-]+\))?!?: .{1,}$", proposed)):
+                title = proposed
+            proposed_summary = str(data.get("summary") or "").strip()
+            if proposed_summary:
+                summary = proposed_summary
+    return title, summary
+
+
+def replay_onto_base(trunk, base, baseline, tree):
+    baseline = str(baseline)
+    trunk_paths = [p for p in run(["git", "diff", "--name-only", baseline, base]).splitlines() if p.strip()]
+    fix_paths = [p for p in run(["git", "diff", "--name-only", baseline, tree]).splitlines() if p.strip()]
+    overlap = sorted(set(trunk_paths) & set(fix_paths))
+    if overlap:
+        sys.exit("base_moved: %s advanced from %s to %s and changed files this fix also changes: %s; the verification ran against the old head, so publishing would claim a result nobody checked. Start a fresh run from the new head." % (
+            trunk, baseline[:12], base[:12], ", ".join(overlap)))
+    run(["git", "read-tree", base])
+    patch = subprocess.run(
+        ["git", "diff", "--binary", baseline, tree, "--"] + fix_paths,
+        capture_output=True)
+    if patch.returncode != 0:
+        sys.exit("base_moved: could not replay the fix from %s onto %s: %s" % (
+            baseline[:12], base[:12], patch.stderr.decode("utf-8", "replace").strip()))
+    applied = subprocess.run(["git", "apply", "--cached", "--3way"], input=patch.stdout, capture_output=True)
+    if applied.returncode != 0:
+        sys.exit("base_moved: could not replay the fix from %s onto %s: %s" % (
+            baseline[:12], base[:12], applied.stderr.decode("utf-8", "replace").strip()))
+    return run(["git", "write-tree"])
+
+
+def publish(argv):
+    state = load_state()
+    source = state.get("source")
+    number = state.get("alert_number")
+    if not source or number in (None, ""):
+        sys.exit("state file %s is missing the finding source/number; the prepare stage must run first" % STATE_PATH)
+    expected_branch = remediation_branch(source, number)
+    branch = state.get("branch") or expected_branch
+    if branch != expected_branch:
+        sys.exit("state file %s names branch %s but this finding must publish on %s" % (
+            STATE_PATH, branch, expected_branch))
+    trunk = state.get("trunk") or detect_trunk()
+    baseline = str(state.get("baseline_sha") or "")
+    if not baseline:
+        sys.exit("state file %s has no baseline_sha; the prepare stage must run first" % STATE_PATH)
+
+    run(["git", "add", "-A"])
+    tree = run(["git", "write-tree"])
+    run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
+    base = run(["git", "rev-parse", "FETCH_HEAD"])
+    if base != baseline:
+        tree = replay_onto_base(trunk, base, baseline, tree)
+
+    diff_status = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
+    if diff_status == 0:
+        sys.exit("the fix produces no change relative to %s; refusing to publish an empty commit" % trunk)
+    if diff_status != 1:
+        sys.exit("failed to compare the fix with %s" % trunk)
+
+    offenders = artifact_paths(run(["git", "ls-tree", "-r", "--name-only", tree]).splitlines())
+    if offenders:
+        sys.exit("artifact_paths: refusing to publish build artifacts or cache files:\n%s\n"
+                 "Delete them or add them to .gitignore before publishing." % "\n".join(offenders))
+
+    title, summary = load_publish_meta(state)
+    head = run(["git"] + commit_ident() + ["commit-tree", tree, "-p", base, "-m", title, "-m", summary])
+    count = int(run(["git", "rev-list", "--count", head, "^%s" % base]))
+    if count != 1:
+        sys.exit("publish produced %d commits over %s; refusing to publish because the branch must keep exactly one commit" % (
+            count, trunk))
+    print("security-remediation publish: branch=%s base=%s head=%s" % (
+        branch, base[:12], head[:12]), file=sys.stderr)
+    print(json.dumps({"context_updates": {"commit_sha": head}}))
+
+
 def read_failed_stage():
     if not os.path.exists(FAILED_STAGE_PATH):
         return ""
@@ -422,6 +531,7 @@ COMMANDS = {
     "snapshot": snapshot,
     "verify_guard": verify_guard,
     "rework": rework,
+    "publish": publish,
     "fail": fail,
 }
 
