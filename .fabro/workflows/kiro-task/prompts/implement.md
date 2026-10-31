@@ -64,16 +64,28 @@ Allow ten minutes for a cold check. The repository gate that runs here is
 workflow packages, and the task-relevant package tests, in that order.
 
 A check that needs a Darwin builder is environment-blocked on this host:
-`nix flake check --all-systems`, a direct `nix build` of a `checks.aarch64-darwin` output
-(for example `fabro-vm-guest-eval`), direct macOS-only suites such as
-`node --test tests/lima-vm/` or `node --test tests/hammerspoon-*`, and any command that
-fails with `platform mismatch` or `Required system: 'aarch64-darwin'`. Record each as
+`nix flake check --all-systems`, a direct `nix build .#checks.aarch64-darwin.<name>` for
+a Darwin-only output (such as the `aarch64-darwin` host's `fabro-vm-guest-eval` and the
+`aarch64-darwin`-gated `hammerspoonChecks`, including `hammerspoon-package`), and any
+command that fails with `platform mismatch` or `Required system: 'aarch64-darwin'`. Record
+each as
 `environment-blocked: <command> (<cause>)` in `impl_tests_run` and continue; do not report
-BLOCKED for that check and do not spend a rework round on it. A missing
-`devShells.aarch64-linux.default`, a failing `aarch64-linux` check, or an `aarch64-linux`
-devShell without `prek` or `fabro` is a real failure, not environment-blocked. If the
-sandbox cannot run Nix at all, record the whole gate as environment-blocked with that
-cause.
+BLOCKED for that check and do not spend a rework round on it.
+
+The exemption covers only those genuinely Darwin-only outputs. `lima-vm-service` (runs
+`node --test tests/lima-vm/`) and `hammerspoon-keybindings` (runs
+`node --test tests/hammerspoon-keybindings/`) are real `aarch64-linux` checks that
+`nix flake check` builds; they must pass. The Darwin-gated `hammerspoonChecks` suites are
+`tests/hammerspoon-deskflow-watchdog/` and `tests/hammerspoon-timezone-menubar/`, not the
+keybindings suite.
+
+A missing `devShells.aarch64-linux.default`, a failing `aarch64-linux` check, or an
+`aarch64-linux` devShell without `prek` or `fabro` is a real failure, not
+environment-blocked. If the sandbox cannot run Nix at all (no `nix` binary or no daemon),
+record only the Nix-dependent commands (`nix flake check`, `nix develop --command prek`,
+and `nix develop --command fabro validate`) as environment-blocked and keep running the
+direct language-level tests (`python3 tests/<name>.test.py`, `node --test tests/<name>/`,
+and the like). If those direct tests cannot run either, report BLOCKED with the cause.
 
 ## Hard constraints
 

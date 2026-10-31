@@ -42,12 +42,22 @@ The repository gate that runs on this host is:
 3. `nix develop --command fabro validate .fabro/workflows/<name>/workflow.fabro` for every
    workflow package the task changes.
 
-Do not run `nix flake check --all-systems` or build a `checks.aarch64-darwin` output
-directly. Those need a Darwin builder this host does not have, and a Darwin-only flake
-check must not be translated into its underlying package test. Record them, direct
-macOS-only suites such as `node --test tests/lima-vm/` or `node --test tests/hammerspoon-*`,
-and any command that fails with `platform mismatch` or `Required system: 'aarch64-darwin'`,
-as `environment-blocked: <command> (<cause>)` in `review_mechanical`.
+Do not run `nix flake check --all-systems` or build a Darwin-only
+`checks.aarch64-darwin` output directly. Those need a Darwin builder this host does not
+have. Record `nix flake check --all-systems`, a direct
+`nix build .#checks.aarch64-darwin.<name>` for a Darwin-only output (such as the
+`aarch64-darwin` host's `fabro-vm-guest-eval` and the `aarch64-darwin`-gated
+`hammerspoonChecks`, including `hammerspoon-package`), and any command that fails with
+`platform mismatch` or `Required system: 'aarch64-darwin'` as
+`environment-blocked: <command> (<cause>)` in `review_mechanical`.
+
+The exemption covers only those genuinely Darwin-only outputs. A `checks.aarch64-darwin`
+copy of a cross-system check is not evidence that its suite is macOS-only. `lima-vm-service`
+(runs `node --test tests/lima-vm/`) and `hammerspoon-keybindings` (runs
+`node --test tests/hammerspoon-keybindings/`) are real `aarch64-linux` checks that
+`nix flake check` above builds, and their failures reject the task. The Darwin-gated
+`hammerspoonChecks` suites are `tests/hammerspoon-deskflow-watchdog/` and
+`tests/hammerspoon-timezone-menubar/`, not the keybindings suite.
 
 An environment-blocked check is not a test failure: keep evaluating the remaining checks
 and do not reject the task or start a rework round because of it. The reviewer cannot
@@ -55,8 +65,12 @@ produce that evidence here, and re-running the command will not change the resul
 missing `devShells.aarch64-linux.default`, a failing `aarch64-linux` check, or an
 `aarch64-linux` devShell without `prek` or `fabro` is not environment-blocked; the flake
 defines all three, so report that as a real failure. If the sandbox cannot run Nix at all
-(no `nix` binary or no daemon), record the whole gate as environment-blocked with that
-cause.
+(no `nix` binary or no daemon), record only the Nix-dependent commands (`nix flake check`,
+`nix develop --command prek`, and `nix develop --command fabro validate`) as
+environment-blocked. Direct language-level tests that need no Nix (for example
+`python3 tests/<name>.test.py` and `node --test tests/<name>/`) remain evaluable and must
+still run; a failure there rejects the task, and if one cannot run either, say so
+explicitly and reject or escalate instead of assuming success.
 
 ## Mechanical checks
 

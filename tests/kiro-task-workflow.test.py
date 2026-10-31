@@ -27,9 +27,22 @@ class KiroTaskEnvironmentGateTests(unittest.TestCase):
             "environment-blocked: <command> (<cause>)",
             "nix flake check --all-systems",
             "checks.aarch64-darwin",
-            "tests/lima-vm/",
+            "hammerspoon-package",
+            "fabro-vm-guest-eval",
             "platform mismatch",
             "Required system: 'aarch64-darwin'",
+        ):
+            self.assertIn(needle, text)
+
+    def test_review_prompt_keeps_cross_system_checks_required(self):
+        text = REVIEW.read_text()
+        for needle in (
+            "lima-vm-service",
+            "node --test tests/lima-vm/",
+            "hammerspoon-keybindings",
+            "node --test tests/hammerspoon-keybindings/",
+            "are real `aarch64-linux` checks",
+            "their failures reject the task",
         ):
             self.assertIn(needle, text)
 
@@ -46,18 +59,42 @@ class KiroTaskEnvironmentGateTests(unittest.TestCase):
         self.assertIn("missing `devShells.aarch64-linux.default`", text)
         self.assertIn("is not environment-blocked", text)
 
+    def test_review_prompt_narrows_the_no_nix_fallback(self):
+        text = " ".join(REVIEW.read_text().split())
+        self.assertIn("record only the Nix-dependent commands", text)
+        self.assertIn("Direct language-level tests that need no Nix", text)
+        self.assertIn("remain evaluable and must still run", text)
+        self.assertIn("reject or escalate instead of assuming success", text)
+
     def test_implement_prompt_records_environment_blocked_checks(self):
         text = IMPLEMENT.read_text()
         for needle in (
             "environment-blocked: <command> (<cause>)",
-            "`checks.aarch64-darwin`",
+            "checks.aarch64-darwin",
             "do not report\nBLOCKED",
-            "is a real failure, not environment-blocked",
             "nix flake check --show-trace",
             "nix develop --command prek run --all-files",
             "nix develop --command fabro validate",
         ):
             self.assertIn(needle, text)
+        self.assertIn("is a real failure, not environment-blocked", " ".join(text.split()))
+
+    def test_implement_prompt_keeps_cross_system_checks_required(self):
+        text = IMPLEMENT.read_text()
+        for needle in (
+            "lima-vm-service",
+            "node --test tests/lima-vm/",
+            "hammerspoon-keybindings",
+            "node --test tests/hammerspoon-keybindings/",
+            "they must pass",
+        ):
+            self.assertIn(needle, text)
+
+    def test_implement_prompt_narrows_the_no_nix_fallback(self):
+        text = " ".join(IMPLEMENT.read_text().split())
+        self.assertIn("record only the Nix-dependent commands", text)
+        self.assertIn("keep running the direct language-level tests", text)
+        self.assertIn("report BLOCKED with the cause", text)
 
 
 if __name__ == "__main__":
