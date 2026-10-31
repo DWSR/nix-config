@@ -1745,7 +1745,7 @@ test('server renders an explicit pinned Caddy TLS proxy and pre-login daemon', (
     }`,
   );
 
-  assert.equal(rendered.proxyPackageVersion, '2.11.4');
+  assert.equal(rendered.proxyPackageVersion, '2.11.7');
   assert.match(rendered.proxyConfigFile, /-local-binary-cache-Caddyfile$/);
   assert.equal(path.isAbsolute(rendered.proxyConfigFile), true);
   assert.equal(path.isAbsolute(rendered.proxyWrapper), true);
