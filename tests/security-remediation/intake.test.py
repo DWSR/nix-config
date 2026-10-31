@@ -163,18 +163,27 @@ class ParseFindingRefTests(unittest.TestCase):
             "dependabot/12",
             "  dependabot:12  ",
             "https://github.com/DWSR/nix-config/security/dependabot/12",
+            "https://github.com/DWSR/nix-config/security/dependabot/12/",
         ):
             self.assertEqual(parse(value), ("dependabot", 12), value)
         for value in (
             "code-scanning:45",
             "code-scanning#45",
+            "code-scanning/45",
+            "https://github.com/DWSR/nix-config/security/code-scanning/45",
             "https://github.com/DWSR/nix-config/security/code-scanning/45/",
         ):
             self.assertEqual(parse(value), ("code-scanning", 45), value)
 
     def test_rejects_unsupported_sources_with_the_accepted_forms(self):
         tools = load_tools()
-        for value in ("", "secret-scanning:3", "dependabot", "dependabot:abc"):
+        for value in (
+            "",
+            "secret-scanning:3",
+            "dependabot",
+            "dependabot:abc",
+            "https://github.com/DWSR/nix-config/security/secret-scanning/7",
+        ):
             with self.assertRaises(SystemExit) as caught:
                 tools["parse_finding_ref"](value)
             message = str(caught.exception.code)
@@ -198,19 +207,41 @@ class FetchAlertTests(unittest.TestCase):
 
     def test_non_200_names_the_source_and_alert_number(self):
         tools = load_tools()
-        failure = urllib.error.HTTPError(
-            "https://api.github.com/repos/DWSR/nix-config/code-scanning/alerts/45",
-            404, "Not Found", {}, None,
-        )
-        _requests, urlopen = make_urlopen({("code-scanning", 45): failure})
+        for source, number in (("dependabot", 12), ("code-scanning", 45)):
+            for code in (403, 404, 410):
+                url = "https://api.github.com/repos/DWSR/nix-config/%s/alerts/%d" % (source, number)
+                failure = urllib.error.HTTPError(url, code, "error", {}, None)
+                _requests, urlopen = make_urlopen({(source, number): failure})
+                with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "token"}), \
+                        mock.patch("urllib.request.urlopen", urlopen):
+                    with self.assertRaises(SystemExit) as caught:
+                        tools["fetch_alert"](source, number)
+
+                self.assertEqual(
+                    str(caught.exception.code),
+                    "%s alert #%d could not be read: HTTP %d" % (source, number, code),
+                )
+
+    def test_a_returned_non_200_response_also_names_the_source_and_alert(self):
+        tools = load_tools()
+        requests = []
+
+        def urlopen(request, timeout=None):
+            requests.append((request.get_method(), request.full_url))
+            return FakeResponse({}, status=502)
+
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "token"}), \
                 mock.patch("urllib.request.urlopen", urlopen):
             with self.assertRaises(SystemExit) as caught:
-                tools["fetch_alert"]("code-scanning", 45)
+                tools["fetch_alert"]("dependabot", 12)
 
         self.assertEqual(
             str(caught.exception.code),
-            "code-scanning alert #45 could not be read: HTTP 404",
+            "dependabot alert #12 could not be read: HTTP 502",
+        )
+        self.assertEqual(
+            requests,
+            [("GET", "https://api.github.com/repos/DWSR/nix-config/dependabot/alerts/12")],
         )
 
 
@@ -343,6 +374,51 @@ class PrepareTests(unittest.TestCase):
             self.assertEqual(context["alert_number"], "45")
             self.assertEqual(context["finding_source"], "code-scanning")
             self.assertEqual(context["branch"], "security/code-scanning-45")
+
+    def test_closed_dependabot_alert_sets_alert_open_false_without_branch_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            trunk_sha = git(work, "rev-parse", "HEAD")
+            tools = load_tools()
+            requests, urlopen = make_urlopen(
+                {("dependabot", 12): dependabot_alert(state="dismissed")})
+
+            stdout = run_main(tools, work, ["prepare", "dependabot:12"], urlopen)
+
+            state = json.loads((work / ".git/security-remediation-state.json").read_text())
+            self.assertIs(state["alert_open"], False)
+            self.assertEqual(state["baseline_sha"], "")
+            self.assertIsNone(state["remote_branch_sha"])
+            self.assertEqual(git(work, "rev-parse", "--abbrev-ref", "HEAD"), "main")
+            self.assertEqual(git(work, "rev-parse", "HEAD"), trunk_sha)
+            self.assertEqual(git(work, "branch", "--list", "security/dependabot-12"), "")
+            context = context_from(stdout)
+            self.assertEqual(context["alert_open"], "false")
+            self.assertEqual(context["alert_number"], "12")
+            self.assertEqual(context["finding_source"], "dependabot")
+            self.assertEqual([method for method, _url in requests], ["GET"])
+
+    def test_unreadable_alert_fails_the_run_without_writing_state_or_a_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            tools = load_tools()
+            failure = urllib.error.HTTPError(
+                "https://api.github.com/repos/DWSR/nix-config/dependabot/alerts/12",
+                403, "Forbidden", {}, None,
+            )
+            _requests, urlopen = make_urlopen({("dependabot", 12): failure})
+
+            with self.assertRaises(SystemExit) as caught:
+                run_main(tools, work, ["prepare", "dependabot#12"], urlopen)
+
+            self.assertEqual(
+                str(caught.exception.code),
+                "dependabot alert #12 could not be read: HTTP 403",
+            )
+            self.assertFalse((work / ".git/security-remediation-state.json").exists())
+            self.assertFalse((work / ".git/security-remediation-finding.md").exists())
+            self.assertEqual(git(work, "branch", "--list", "security/dependabot-12"), "")
+            self.assertEqual(git(work, "rev-parse", "--abbrev-ref", "HEAD"), "main")
 
     def test_resumed_run_keeps_earlier_work(self):
         with tempfile.TemporaryDirectory() as tmp:
