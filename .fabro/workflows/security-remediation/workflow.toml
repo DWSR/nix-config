@@ -30,7 +30,7 @@ script = '''
 set -eu
 mkdir -p .git/security-remediation-scripts
 cat > .git/security-remediation-scripts/tools.py <<'SECURITY_REMEDIATION_TOOLS_PY'
-import datetime, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+import datetime, hashlib, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
 
 STATE_PATH = ".git/security-remediation-state.json"
 FINDING_PATH = ".git/security-remediation-finding.md"
@@ -330,12 +330,105 @@ def prepare(argv):
     }}))
 
 
-COMMANDS = {"prepare": prepare}
+def tree_fingerprint():
+    diff = subprocess.run(["git", "diff", "--binary", "HEAD"], capture_output=True)
+    if diff.returncode != 0:
+        sys.exit("git diff --binary HEAD failed: %s" % diff.stderr.decode("utf-8", "replace").strip())
+    return {
+        "head": run(["git", "rev-parse", "HEAD"]),
+        "diff_sha256": hashlib.sha256(diff.stdout).hexdigest(),
+    }
+
+
+def snapshot(argv):
+    state = load_state()
+    baseline = tree_fingerprint()
+    state["verify_baseline"] = baseline
+    save_state(state)
+    print("security-remediation snapshot: head=%s diff_sha256=%s" % (
+        baseline["head"][:12], baseline["diff_sha256"]), file=sys.stderr)
+    print(json.dumps({"context_updates": {}}))
+
+
+def verify_guard(argv):
+    state = load_state()
+    baseline = state.get("verify_baseline")
+    if not isinstance(baseline, dict) or not baseline.get("head") or not baseline.get("diff_sha256"):
+        sys.exit("state file %s has no verify_baseline; the snapshot stage must run first" % STATE_PATH)
+    current = tree_fingerprint()
+    unchanged = (current["head"] == baseline["head"]
+                 and current["diff_sha256"] == baseline["diff_sha256"])
+    updates = {"tree_unchanged": "true" if unchanged else "false"}
+    if not unchanged:
+        if current["head"] != baseline["head"]:
+            reason = "HEAD moved from %s to %s during verification" % (
+                baseline["head"][:12], current["head"][:12])
+        else:
+            reason = "tracked files changed during verification"
+        updates["stage_failure"] = (
+            "verify_guard: %s; the verification stage must not modify tracked files or create commits"
+            % reason)
+        print("security-remediation verify_guard: %s" % updates["stage_failure"], file=sys.stderr)
+    print(json.dumps({"context_updates": updates}))
+
+
+def rework(argv):
+    state = load_state()
+    try:
+        previous = int(state.get("fix_round") or 0)
+    except (TypeError, ValueError):
+        previous = 0
+    round_number = previous + 1
+    state["fix_round"] = round_number
+    save_state(state)
+    updates = {"fix_round": str(round_number)}
+    if round_number > 3:
+        updates["stage_failure"] = (
+            "Tests still fail after 3 fix rounds; inspect %s and the run context." % TEST_LOG_PATH)
+        print("security-remediation rework: %s" % updates["stage_failure"], file=sys.stderr)
+    print(json.dumps({"context_updates": updates}))
+
+
+def read_failed_stage():
+    if not os.path.exists(FAILED_STAGE_PATH):
+        return ""
+    with open(FAILED_STAGE_PATH) as handle:
+        return " ".join(handle.read().split())
+
+
+def failure_message(stage, detail):
+    stage = " ".join(str(stage or "").split())
+    detail = " ".join(str(detail or "").split())
+    if stage and detail:
+        return "%s failed: %s" % (stage, detail)
+    if stage:
+        return "%s failed; inspect %s and the run events" % (stage, TEST_LOG_PATH)
+    if detail:
+        return detail
+    return (
+        "the failing security-remediation stage did not report itself (for example sandbox setup); "
+        "inspect the failing stage output in the run events and %s" % STATE_PATH)
+
+
+def fail(argv):
+    stage = " ".join(" ".join(argv).split()) or read_failed_stage()
+    detail = sys.stdin.read()
+    print("security-remediation: %s" % failure_message(stage, detail), file=sys.stderr)
+    sys.exit(1)
+
+
+COMMANDS = {
+    "prepare": prepare,
+    "snapshot": snapshot,
+    "verify_guard": verify_guard,
+    "rework": rework,
+    "fail": fail,
+}
 
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <command> [args]")
+        sys.exit("usage: tools.py <%s> [args]" % "|".join(sorted(COMMANDS)))
     cmd = sys.argv[1]
     handler = COMMANDS.get(cmd)
     if handler is None:
