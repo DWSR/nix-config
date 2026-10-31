@@ -95,7 +95,7 @@
   - Extend the header's refresh list and comment with the new package so operators know to re-run the script after changing it.
   - The script's pin list and header name the new package and variable.
   - _Requirements: 8.1_
-- [ ] 4.2 Allowlist the variable in the API bridge
+- [x] 4.2 Allowlist the variable in the API bridge
   - Append `"security_remediation_workflow_version"` to `services.fabro-api-bridge.allowedVersionVariables` in `configurations/fabro-vm/default.nix`; the caller slug `dispatch` is already allowed.
   - The rendered list contains the new name alongside the four existing variables.
   - _Requirements: 8.3_
