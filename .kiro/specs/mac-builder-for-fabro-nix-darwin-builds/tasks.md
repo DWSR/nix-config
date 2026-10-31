@@ -2,7 +2,7 @@
 
 - [ ] 1. Make the Fabro Guest daemon the only Darwin dispatch client
 
-- [ ] 1.1 (P) Implement the runtime machines-file renderer
+- [x] 1.1 (P) Implement the runtime machines-file renderer
   - Create `scripts/fabro-darwin-machines.nix` as a `writeShellApplication` implementing the design CLI: `--output`, `--host-name`, `--ssh-user`, `--system`, `--max-jobs`, `--speed-factor`, `--client-key`, `--host-key`.
   - Emit exactly `ssh-ng://<ssh-user>@<host> <system> <client-key-path> <max-jobs> <speed-factor> - - <base64 host key>`, base64-encoding the host key file contents and never emitting `-` for the host key.
   - Read the client key only by path; write atomically (temp file + `mv`, mode `0600`, owner root) so no partial line can be read.
