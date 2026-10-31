@@ -74,7 +74,7 @@
   - Use the `dependabot` model settings (`gpt-6-luna`, `litellm`, `xhigh`, `patient`, `max_retries=2`) with `max_visits=5`; rate-limit failures surface as `failure_class` for the graph's wait node.
   - _Requirements: 4.5, 5.1, 5.7, 6.9, 7.3_
   - _Boundary: Fix stage prompt (`.fabro/workflows/security-remediation/prompts/fix.md`)_
-- [ ] 3.7 (P) Write the verify prompt
+- [x] 3.7 (P) Write the verify prompt
   - Derive changed packages from `git diff --name-only <baseline_sha>` and run `nix flake check --show-trace` plus each touched package's suite with `HOME` and `XDG_CACHE_HOME` outside the repository.
   - Copy the Darwin-only, dependency-only, and live-E2E exclusions from `dependabot/prompts/test.md`; record `excluded: <command> (<environment cause>)` without failing or consuming a rework round.
   - Report `outcome=failed` when no runnable check exists for a changed non-dependency package, write the full log to `.git/security-remediation-test.log`, and modify no tracked file or commit.
