@@ -155,18 +155,21 @@ not assume `rg`/`awk` are installed; use `grep`, `find`, or Python when they are
 
 ## DWSR/nix-config sandbox gate
 
-In this repository the flake declares only Darwin systems:
-`systems = [ "aarch64-darwin" "x86_64-darwin" ]`. The sandbox is
-`aarch64-linux`, so the complete gate that can actually run here is:
+In this repository the flake declares `aarch64-darwin`, `x86_64-darwin`, and
+`aarch64-linux`: `systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" ]`.
+The sandbox is `aarch64-linux`, so the complete gate that runs here is:
 
-1. `nix flake check --show-trace` — evaluates the flake, the Darwin host
-   configurations, and the `aarch64-linux` package derivations. Every
-   `checks.<system>` output is Darwin-only, so Nix prints
+1. `nix flake check --show-trace` — evaluates the flake and the Darwin host
+   configurations, then builds the `aarch64-linux` checks. Those checks are
+   platform-agnostic (for example `fabro-workflows-validate`, `formatting`,
+   `aarch64-linux-devshell`), so a build failure there is a real failure. Nix
+   still prints
    `warning: The check omitted these incompatible systems: aarch64-darwin, x86_64-darwin`
-   and builds no check. That warning and the empty check set are expected on
-   this platform; they mean the flake still evaluates, not that the test
-   suite ran.
-2. For every touched package, its own suite: a package whose checkout has test files
+   because the Darwin-host checks stay gated; that warning is expected.
+2. `nix develop --command prek run --all-files` — the `aarch64-linux` devShell
+   supplies `prek` and the pinned `fabro` CLI, so run the canonical hooks and
+   `fabro validate` here rather than excluding them.
+3. For every touched package, its own suite: a package whose checkout has test files
    runs the command the flake or manifest defines for it (for example
    `node --test tests/<dir>/`); a dependency-only package (no test files) gets its
    lockfile validated with `npm ci --ignore-scripts` under a Nix-provided Node.
@@ -176,19 +179,18 @@ Do not run anything else as the gate. These commands are environment-unrunnable
 in this sandbox and must be recorded as
 `excluded: <command> (<environment cause>)` instead of a test failure:
 
-- `nix flake check --all-systems` (Darwin-only outputs cannot build on Linux)
-- `nix develop --command ...` and `nix develop --command prek run --all-files`
-  (the flake exposes no Linux devShell; the repository's `prek` CI job runs on
-  macOS runners)
+- `nix flake check --all-systems` (Darwin-host outputs cannot build on Linux)
 - Direct invocations of checks that need a Darwin builder, for example
   `node --test tests/lima-vm/`, `node --test tests/hammerspoon-*`, and any
   `nix build` of a `checks.aarch64-darwin` output
-- Anything that fails with `platform mismatch`, `Required system:
-  'aarch64-darwin'`, or `does not provide attribute 'devShells.aarch64-linux.default'`
+- Anything that fails with `platform mismatch` or `Required system:
+  'aarch64-darwin'` for a Darwin-only check
 
-A failure that names a missing Darwin builder, a missing Linux devShell, or a
-platform mismatch is environmental: exclude it and keep evaluating the
-remaining commands. Do not spend a fix round on it.
+A failure that names a missing Darwin builder or a Darwin-only platform
+mismatch is environmental: exclude it and keep evaluating the remaining
+commands. Do not spend a fix round on it. A missing
+`devShells.aarch64-linux.default` or a failing `aarch64-linux` check is no
+longer environmental; the flake defines both, so report it as a real failure.
 
 ## Environment-unrunnable suites
 
@@ -197,8 +199,8 @@ fix, is excluded from the gate instead of failing the whole verification. Qualif
 causes include privileged operations the sandbox cannot grant (`initdb` refuses to run
 as root, mounting devices, privileged ports), live end-to-end tests that need real
 services, network peers, or runner-only credentials, and Nix platform mismatches
-(`Required system: 'aarch64-darwin'` on the `aarch64-linux` sandbox, or a Linux
-devShell the flake does not define).
+(`Required system: 'aarch64-darwin'` on the `aarch64-linux` sandbox for a
+Darwin-only check).
 
 The following live end-to-end suites are CI-only here because they need runner-staged
 artifacts and the CI runner architecture:

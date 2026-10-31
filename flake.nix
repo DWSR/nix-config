@@ -214,7 +214,27 @@
     let
       inherit (self) outputs;
 
+      # aarch64-linux is the fabro Lima guest/sandbox host. Its devShell
+      # supplies prek and the pinned fabro CLI (for `fabro validate`), and
+      # its check set is the platform-agnostic one; the Darwin-host checks
+      # are gated out below. The darwin systems remain first because every
+      # host configuration lives there.
       systems = [
+        "aarch64-darwin"
+        "x86_64-darwin"
+        "aarch64-linux"
+      ];
+
+      # Systems with a pinned upstream fabro release artifact
+      # (overlays/fabro.nix): the dev shell CLI and `fabro validate` check.
+      fabroSystems = [
+        "aarch64-darwin"
+        "aarch64-linux"
+      ];
+
+      # macOS systems: hosts, Home Manager modules, and checks that depend on
+      # Darwin-only packages or the personal host configuration.
+      darwinSystems = [
         "aarch64-darwin"
         "x86_64-darwin"
       ];
@@ -1956,28 +1976,6 @@
                 touch $out
               '';
 
-          # Schema-validate the personal host's rendered Lima YAML with the
-          # same limactl the launchd service uses (`limactl validate` is
-          # offline; no VM or Linux builder needed).
-          lima-vm-config-validate =
-            let
-              limaConfigYaml =
-                self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.virtualisation.limaVM._configYaml;
-            in
-            assert pkgs.lib.assertMsg (limaConfigYaml != null)
-              "lima-vm-config-validate: the personal host's virtualisation.limaVM._configYaml is null (module disabled?).";
-            pkgs.runCommand "lima-vm-config-validate"
-              {
-                configYaml = limaConfigYaml;
-                nativeBuildInputs = [ pkgs.unstable.lima ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export USER=nix
-                limactl validate "$configYaml"
-                touch $out
-              '';
-
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
@@ -1985,6 +1983,7 @@
           fabro-vm-guest-eval =
             let
               vm = self.nixosConfigurations.fabro-vm.config;
+              kernelConfig = builtins.readFile vm.boot.kernelPackages.kernel.configfile;
               guestReport =
                 assert pkgs.lib.assertMsg vm.services.lima.enable
                   "fabro-vm: services.lima must be enabled (lima-init + guestagent).";
@@ -2180,9 +2179,9 @@
                 assert pkgs.lib.assertMsg
                   (
                     !builtins.any (p: p.name or "" == "virtio-fs") vm.boot.kernelPatches
-                    && pkgs.lib.hasInfix "CONFIG_VIRTIO_FS=m" (
-                      builtins.readFile vm.boot.kernelPackages.kernel.configfile
-                    )
+                    # `lib.hasInfix` overflows the evaluator stack on the
+                    # multi-hundred-KB kernel config, so use split instead.
+                    && builtins.length (builtins.split "CONFIG_VIRTIO_FS=m" kernelConfig) > 1
                   )
                   "fabro-vm: the stock kernel config must set CONFIG_VIRTIO_FS=m (the state share needs virtiofs) and the guest must not override the kernel derivation (a patch/extraConfig forces an in-guest source compile instead of a cache substitution).";
                 assert pkgs.lib.assertMsg (
@@ -2435,6 +2434,24 @@
                 printf '%s\n' "$guestReport" > "$out"
               '';
 
+          # Regression gate for the aarch64-linux dev shell: `nix develop` on
+          # the fabro VM must expose prek (the canonical hooks) and the pinned
+          # fabro CLI (`fabro validate`), or Kiro/oneshot runs are blocked.
+          aarch64-linux-devshell =
+            let
+              inputNames = map (p: p.name or "") self.devShells.aarch64-linux.default.buildInputs;
+              hasPackage = prefix: pkgs.lib.any (name: pkgs.lib.hasPrefix prefix name) inputNames;
+              missing = builtins.filter (p: !(hasPackage p)) [
+                "prek-"
+                "fabro-"
+              ];
+            in
+            assert pkgs.lib.assertMsg (missing == [ ])
+              "aarch64-linux-devshell: `nix develop` is missing [ ${pkgs.lib.concatStringsSep ", " missing} ]; the fabro guest cannot run prek or fabro validate.";
+            pkgs.runCommand "aarch64-linux-devshell" { } ''
+              touch $out
+            '';
+
           # Pinned-input check for the sandbox image (nix-built-container-for-
           # default-fabro-environmen spec, task 7.1; design "Repository Checks
           # → Implementation Notes"; requirements 2.2, 2.3, 6.1, 6.2). The
@@ -2493,12 +2510,6 @@
                 node --test tests/litellm-service/
                 touch $out
               '';
-
-          sqlite-backup-tests = import ./tests/sqlite-backup {
-            inherit pkgs;
-            inherit (inputs) home-manager;
-            realLitestream = if system == "aarch64-darwin" then pkgs.litestream else null;
-          };
 
           local-binary-cache-render =
             let
@@ -2657,41 +2668,6 @@
                 touch $out
               '';
 
-          git-mcp =
-            pkgs.runCommand "git-mcp"
-              {
-                nativeBuildInputs = [
-                  pkgs.nix
-                  pkgs.nodejs
-                  pkgs.go
-                  pkgs.stdenv.cc
-                  pkgs.apple-sdk
-                  pkgs.git
-                  pkgs.openssh
-                  pkgs.mcpproxy-go
-                  pkgs.coreutils
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                export GIT_MCP_CHECK_RUNTIME=1
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                go -C scripts/git-mcp-secure-enclave-signer test ./...
-                go -C tests/git-mcp/fixtures test ./...
-                # The signer suite owns a fixed real-time worker deadline, so
-                # run each contract suite in a fresh Node process.
-                node --test tests/git-mcp/fixtures/signing-tools.test.js
-                node --test tests/git-mcp/signer-adapter.test.js
-                node --test tests/git-mcp/hm-render.test.js
-                node --test tests/git-mcp/admin-contract.test.js
-                node --test tests/git-mcp/upstream-isolation.test.js
-                node --test tests/git-mcp/acceptance-client.test.js
-                touch $out
-              '';
-
           # Renderer + syntax-gate verification for hammerspoon-keybindings
           # (Task 8.2). System-agnostic — pure `nix eval` of render.nix over
           # fixtures.nix plus `luac -p` (the exact gate checked-config.nix
@@ -2744,15 +2720,6 @@
             test -s version.txt
             touch $out
           '';
-
-          opencode-turn-timestamps-hosts =
-            pkgs.runCommand "opencode-turn-timestamps-hosts"
-              {
-                hostReport = opencodeTurnTimestampHostReport;
-              }
-              ''
-                printf '%s\n' "$hostReport" > $out
-              '';
 
           git-cache-clone-package = pkgs.runCommand "git-cache-clone-package" { } ''
             export HOME=$(mktemp -d)
@@ -3002,10 +2969,93 @@
             };
           };
         }
-        // pkgs.lib.optionalAttrs (system == "aarch64-darwin") {
+        // pkgs.lib.optionalAttrs (builtins.elem system darwinSystems) {
+          # Checks that cannot run on aarch64-linux: they need the macOS SDK,
+          # assert against the Darwin host's own package set, or exercise a
+          # Home Manager module whose implementation is Darwin-only. Their
+          # absence on Linux keeps `nix flake check` green on the fabro VM.
+          git-mcp =
+            pkgs.runCommand "git-mcp"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                  pkgs.go
+                  pkgs.stdenv.cc
+                  pkgs.apple-sdk
+                  pkgs.git
+                  pkgs.openssh
+                  pkgs.mcpproxy-go
+                  pkgs.coreutils
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                export GIT_MCP_CHECK_RUNTIME=1
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                go -C scripts/git-mcp-secure-enclave-signer test ./...
+                go -C tests/git-mcp/fixtures test ./...
+                # The signer suite owns a fixed real-time worker deadline, so
+                # run each contract suite in a fresh Node process.
+                node --test tests/git-mcp/fixtures/signing-tools.test.js
+                node --test tests/git-mcp/signer-adapter.test.js
+                node --test tests/git-mcp/hm-render.test.js
+                node --test tests/git-mcp/admin-contract.test.js
+                node --test tests/git-mcp/upstream-isolation.test.js
+                node --test tests/git-mcp/acceptance-client.test.js
+                touch $out
+              '';
+
+          # The host report resolves `pkgs.opencode-pinned` for the current
+          # system and compares it against the Darwin host config, so the
+          # store paths only line up on aarch64-darwin.
+          opencode-turn-timestamps-hosts =
+            pkgs.runCommand "opencode-turn-timestamps-hosts"
+              {
+                hostReport = opencodeTurnTimestampHostReport;
+              }
+              ''
+                printf '%s\n' "$hostReport" > $out
+              '';
+
+          # home.sqliteBackup only implements the Darwin platforms.
+          sqlite-backup-tests = import ./tests/sqlite-backup {
+            inherit pkgs;
+            inherit (inputs) home-manager;
+            realLitestream = if system == "aarch64-darwin" then pkgs.litestream else null;
+          };
+
+          # Schema-validate the personal host's rendered Lima YAML with the
+          # same limactl the launchd service uses (`limactl validate` is
+          # offline; no VM or Linux builder needed). The config comes from an
+          # aarch64-darwin host configuration, so the check stays Darwin-only.
+          lima-vm-config-validate =
+            let
+              limaConfigYaml =
+                self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.virtualisation.limaVM._configYaml;
+            in
+            assert pkgs.lib.assertMsg (limaConfigYaml != null)
+              "lima-vm-config-validate: the personal host's virtualisation.limaVM._configYaml is null (module disabled?).";
+            pkgs.runCommand "lima-vm-config-validate"
+              {
+                configYaml = limaConfigYaml;
+                nativeBuildInputs = [ pkgs.unstable.lima ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export USER=nix
+                limactl validate "$configYaml"
+                touch $out
+              '';
+        }
+        // pkgs.lib.optionalAttrs (builtins.elem system fabroSystems) {
           # Offline parse/validate of every committed workflow package. The
-          # fabro CLI only ships an aarch64-darwin artifact, so this check is
-          # absent on other systems rather than failing evaluation.
+          # pinned fabro overlay ships artifacts for aarch64-darwin and
+          # aarch64-linux; the x86_64 systems keep the check absent rather
+          # than failing evaluation.
           fabro-workflows-validate =
             let
               inherit ((pkgs.extend outputs.overlays.fabro)) fabro;
@@ -3035,11 +3085,12 @@
               exec /usr/bin/sudo SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt ${pkgs.sops}/bin/sops "$@"
             '';
           };
-          # The fabro package only ships an aarch64-darwin release artifact.
-          # Keep the shell evaluable on x86_64-darwin and gate the CLI to
-          # hosts that can run it.
+          # The upstream fabro release ships aarch64-darwin and aarch64-linux
+          # artifacts (overlays/fabro.nix). Provide it on both so the dev
+          # shell can run `fabro validate` on the fabro Lima guest; the
+          # x86_64 systems keep an evaluable shell without the CLI.
           fabroPackages =
-            if system == "aarch64-darwin" then
+            if builtins.elem system fabroSystems then
               [
                 (pkgs.extend self.overlays.fabro).fabro
               ]
