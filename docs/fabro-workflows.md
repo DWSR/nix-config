@@ -41,7 +41,8 @@ supplies both `prek` and the pinned `fabro` CLI.
 The dispatcher reads immutable workflow version ids from server-owned
 variables instead of re-emitting package contents through an agent.
 
-After changing `kiro-spec`, `kiro-task`, `oneshot`, or `dependabot`, run:
+After changing `kiro-spec`, `kiro-impl`, `kiro-task`, `oneshot`, or
+`dependabot`, run:
 
 ```sh
 scripts/pin-workflow-versions.sh

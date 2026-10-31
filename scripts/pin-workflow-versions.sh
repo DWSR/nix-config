@@ -12,10 +12,11 @@
 #   scripts/pin-workflow-versions.sh
 #
 # Re-run it after changing anything under .fabro/workflows/kiro-spec/,
-# .fabro/workflows/kiro-task/, .fabro/workflows/oneshot/, or
-# .fabro/workflows/dependabot/, then re-register the dispatcher packages
-# themselves (fabro run/whatever trigger) so the new scripts take effect.
-# Registration is content-addressed: unchanged packages pin the same id.
+# .fabro/workflows/kiro-impl/, .fabro/workflows/kiro-task/,
+# .fabro/workflows/oneshot/, or .fabro/workflows/dependabot/, then
+# re-register the dispatcher packages themselves (fabro run/whatever trigger)
+# so the new scripts take effect. Registration is content-addressed:
+# unchanged packages pin the same id.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -50,6 +51,7 @@ pin() {
 }
 
 pin .fabro/workflows/kiro-spec kiro_spec_workflow_version
+pin .fabro/workflows/kiro-impl kiro_impl_workflow_version
 pin .fabro/workflows/kiro-task kiro_task_workflow_version
 pin .fabro/workflows/oneshot oneshot_workflow_version
 pin .fabro/workflows/dependabot dependabot_workflow_version
