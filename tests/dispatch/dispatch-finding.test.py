@@ -6,6 +6,7 @@ import pathlib
 import re
 import tempfile
 import unittest
+import urllib.error
 from unittest import mock
 
 
@@ -123,7 +124,12 @@ def plan_with(entries: list[dict]) -> dict:
     }
 
 
-def run_dispatch(plan: dict, runs: list[dict] | None = None, create_responses: list[dict] | None = None):
+def run_dispatch(
+    plan: dict,
+    runs: list[dict] | None = None,
+    create_responses: list[dict] | None = None,
+    fail_start: bool = False,
+):
     with tempfile.TemporaryDirectory() as tmp:
         git_dir = pathlib.Path(tmp) / ".git"
         git_dir.mkdir()
@@ -132,6 +138,7 @@ def run_dispatch(plan: dict, runs: list[dict] | None = None, create_responses: l
         requests = []
         creates = []
         responses = list(create_responses or [])
+        start_failures = [1 if fail_start else 0]
 
         def urlopen(request, timeout=None):
             method = request.get_method()
@@ -144,6 +151,11 @@ def run_dispatch(plan: dict, runs: list[dict] | None = None, create_responses: l
                 creates.append(body)
                 return FakeResponse(responses.pop(0) if responses else {"id": "01CHILD%d" % len(creates)})
             if url.endswith("/start"):
+                if start_failures[0]:
+                    start_failures[0] -= 1
+                    raise urllib.error.HTTPError(
+                        url, 500, "Internal Server Error", {}, io.BytesIO(b'{"error":"start failed"}')
+                    )
                 return FakeResponse({})
             if "/labels" in url:
                 return FakeResponse({})
@@ -293,6 +305,19 @@ class DispatchFindingTests(unittest.TestCase):
         self.assertEqual(len(result["failed"]), 1)
         self.assertEqual(result["failed"][0]["finding"], "dependabot:12")
         self.assertIn("no run id", result["failed"][0]["error"])
+
+    def test_start_failure_after_create_does_not_create_a_second_child(self):
+        plan = plan_with([finding("dependabot:12", "dependabot", 12), finding("code-scanning:45", "code-scanning", 45)])
+
+        result, _requests, creates, exit_code, _output = run_dispatch(plan, fail_start=True)
+
+        self.assertEqual(len(creates), 1)
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(result["dispatched"], [])
+        self.assertEqual(len(result["failed"]), 1)
+        self.assertEqual(result["failed"][0]["finding"], "dependabot:12")
+        self.assertIn("start", result["failed"][0]["error"])
+        self.assertIn({"finding": "code-scanning:45", "reason": "serialized"}, result["skipped"])
 
 
 if __name__ == "__main__":
