@@ -138,8 +138,8 @@ Never put secrets or untrusted alert text in either field.
 ## Rate limits
 
 If the model provider rate-limits this stage, stop instead of retrying in a loop or
-changing the repository to work around it. The failure surfaces as `failure_class`
-containing `rate_limit`, and the graph's `wait_fix_rate_limit` node waits and retries this
+changing the repository to work around it. Report `failure_class` set to `rate_limit` in
+your context updates so the graph's `wait_fix_rate_limit` node can wait and retry this
 stage (the stage allows up to 5 visits). Report blocked only for a real fix blocker after
 the retries are exhausted.
 
@@ -159,4 +159,10 @@ Blocked:
 
 ```json
 {"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"fix_status": "BLOCKED", "stage_failure": "<one-line root cause>", "fix_blocker": "<the exact blocker and what would unblock it>"}}
+```
+
+Rate limit:
+
+```json
+{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"fix_status": "BLOCKED", "failure_class": "rate_limit", "stage_failure": "<one-line root cause>", "fix_blocker": "<what would unblock it after the retries>"}}
 ```
