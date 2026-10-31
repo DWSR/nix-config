@@ -98,6 +98,22 @@ class SandboxGateTests(unittest.TestCase):
         self.assertIn("--test live", text)
         self.assertIn("CI-only staged live E2E", text)
 
+    def test_reconciles_flake_check_failures_with_the_platform_exclusion_rule(self):
+        text = normalized(VERIFY_PROMPT.read_text())
+        self.assertIn("so a build failure there is usually a real failure", text)
+        self.assertNotIn("so a build failure there is a real failure", text)
+        self.assertIn("identify the root cause before classifying it", text)
+        self.assertIn("Darwin-only transitive dependency", text)
+        self.assertIn("opencode-nono-tests", text)
+        self.assertIn("excluded: nix flake check --show-trace", text)
+        self.assertIn("--keep-going", text)
+        self.assertIn(
+            "Every unaffected `aarch64-linux` check and each touched package's suite must still pass",
+            text,
+        )
+        self.assertIn("whose root cause is in the check itself is not environmental", text)
+        self.assertNotIn("a failing `aarch64-linux` check is not environmental", text)
+
     def test_records_exclusions_without_failing_or_consuming_a_rework_round(self):
         text = normalized(VERIFY_PROMPT.read_text())
         self.assertIn("excluded: <command> (<environment cause>)", text)

@@ -83,9 +83,22 @@ for the Nix commands:
 
 1. `nix flake check --show-trace` — evaluates the flake and builds the `aarch64-linux` checks.
    Those checks are platform-agnostic (for example `fabro-workflows-validate`, `formatting`,
-   `aarch64-linux-devshell`), so a build failure there is a real failure. Nix still prints
-   `warning: The check omitted these incompatible systems: aarch64-darwin, x86_64-darwin`;
-   that warning is expected. Do not pass `--all-systems` on Linux.
+   `aarch64-linux-devshell`), so a build failure there is usually a real failure. Nix still
+   prints `warning: The check omitted these incompatible systems: aarch64-darwin,
+   x86_64-darwin`; that warning is expected. Do not pass `--all-systems` on Linux.
+
+   An `aarch64-linux` check can still fail because of a Darwin-only transitive dependency it
+   pulls into its own evaluation or build — for example `opencode-nono-tests` selecting a
+   `nodejs-24.x` package for `aarch64-darwin`. Reproduce the failure, read the error, and
+   identify the root cause before classifying it. When the root cause is such a Darwin-only
+   transitive dependency and no change in the fix can alter it, record it as
+   `excluded: nix flake check --show-trace (<the Darwin-only transitive dependency>)` without
+   consuming a rework round. A failure whose root cause is in the `aarch64-linux` check itself,
+   or is a genuine evaluation or build error, stays a real failure. After classifying the root
+   cause, still run the remaining checks, for example with
+   `nix flake check --show-trace --keep-going` or by building each unaffected
+   `nix build .#checks.aarch64-linux.<name>`. Every unaffected `aarch64-linux` check and each
+   touched package's suite must still pass.
 2. Run each touched package's own suite: a package whose checkout has test files runs the
    command the flake or manifest defines for it (for example `node --test tests/<dir>/`,
    `cargo test`, or `go test ./...`). Run the exact command the repository's CI runs for that
@@ -179,8 +192,11 @@ and never consume a rework round. If a failure could be code-related, it is a te
 an exclusion. If every failure in the run is excluded but at least one runnable check still ran
 and passed for each changed non-dependency package, report `tests_passed=true` with the
 exclusions in `test_summary`; GitHub CI remains the gate for them. A missing
-`devShells.aarch64-linux.default` or a failing `aarch64-linux` check is not environmental: the
-flake defines both, so report it as a real failure.
+`devShells.aarch64-linux.default` or a failing `aarch64-linux` check whose root cause is in the
+check itself is not environmental: the flake defines both, so report it as a real failure. A
+Darwin-only dependency reached transitively from an `aarch64-linux` check is a platform
+mismatch: exclude that check only after reproducing it and naming the dependency in the
+environment cause.
 
 ## Fail closed when nothing can be run
 
