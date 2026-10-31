@@ -81,7 +81,7 @@
   - Use the same model settings as the fix prompt with `max_visits=6`; rate-limit failures surface as `failure_class` for the graph's wait node.
   - _Requirements: 4.5, 5.2, 5.5, 5.6, 5.7, 5.8, 7.3_
   - _Boundary: Verify stage prompt (`.fabro/workflows/security-remediation/prompts/verify.md`)_
-- [ ] 3.8 Assemble the `security-remediation` graph
+- [x] 3.8 Assemble the `security-remediation` graph
   - Create `.fabro/workflows/security-remediation/workflow.fabro` with the documented nodes and edges: prepare to fix/skip, fix to snapshot, snapshot to verify, verify to verify_guard, verify_guard to publish/rework/fail, rework to fix/fail, publish to exit.
   - Set `goal_gate=true` on `prepare` only, keep `fail` ungated with `on_failure="exit"`, and route rate-limit failures through `wait_fix_rate_limit` and `wait_verify_rate_limit` with `timeout="6m"` and `max_visits=3`.
   - Wire each stage's hard-failure edge through its `mark_*` node to `fail` (prepare, fix, verify, rework, publish); closed alerts reach `skip -> exit` without publishing.
