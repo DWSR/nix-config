@@ -1,0 +1,121 @@
+_version = 1
+
+[workflow]
+graph = "workflow.fabro"
+
+[run.inputs]
+finding = ""
+
+[run.model.fallbacks]
+"gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
+
+# contents: write - push the single remediation commit; pull_requests: write - open or
+# reuse the remediation pull request; vulnerability_alerts/security_events: read - read the
+# Dependabot or code scanning alert detail. No issues write: the run never labels.
+[run.integrations.github]
+permissions = { contents = "write", pull_requests = "write", vulnerability_alerts = "read", security_events = "read" }
+
+# Checkpoints MUST stay disabled: Fabro's checkpoint commits run `git add -A` + `git commit`
+# on the current HEAD, which here is the remediation branch, and would break the
+# single-commit publish invariant. `[run.clone]` is deliberately left unset because publish
+# compares trees and never rewrites history.
+[run.run_branch]
+enabled = false
+
+[run.pull_request]
+enabled = false
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git/security-remediation-scripts
+cat > .git/security-remediation-scripts/tools.py <<'SECURITY_REMEDIATION_TOOLS_PY'
+import datetime, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+
+STATE_PATH = ".git/security-remediation-state.json"
+FINDING_PATH = ".git/security-remediation-finding.md"
+PUBLISH_PATH = ".git/security-remediation-publish.json"
+TEST_LOG_PATH = ".git/security-remediation-test.log"
+FAILED_STAGE_PATH = ".git/security-remediation-failed-stage"
+API_BASE = os.environ.get("SECURITY_REMEDIATION_API_BASE", "https://api.github.com").rstrip("/")
+
+
+def run(cmd, check=True, env=None):
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if check and r.returncode != 0:
+        sys.exit("command failed: %s\n%s" % (" ".join(cmd), r.stderr.strip()))
+    return r.stdout.strip()
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_state():
+    if not os.path.exists(STATE_PATH):
+        sys.exit("state file %s is missing; the prepare stage must run first" % STATE_PATH)
+    with open(STATE_PATH) as f:
+        return json.load(f)
+
+
+def save_state(state):
+    with open(STATE_PATH, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+
+def gh(method, path, body=None, expect=(200, 201)):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    req = urllib.request.Request(API_BASE + path, method=method, headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Content-Type": "application/json",
+        "User-Agent": "fabro-security-remediation-workflow",
+    })
+    data = json.dumps(body).encode() if body is not None else None
+    try:
+        with urllib.request.urlopen(req, data=data, timeout=60) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        if e.code in expect:
+            try:
+                return e.code, json.loads(raw)
+            except ValueError:
+                return e.code, raw
+        sys.exit("GitHub API %s %s failed: HTTP %s\n%s" % (method, path, e.code, raw[:1000]))
+
+
+def origin_repo():
+    url = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True, text=True).stdout.strip()
+    m = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not m:
+        sys.exit("cannot derive owner/repo from origin url %r" % url)
+    return m.group(1), m.group(2)
+
+
+def detect_trunk():
+    head = run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], check=False)
+    if head.startswith("origin/"):
+        return head.split("/", 1)[1]
+    out = run(["git", "remote", "show", "origin"], check=False)
+    m = re.search(r"HEAD branch:\s*(\S+)", out)
+    return m.group(1) if m else "main"
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: tools.py <command> [args]")
+    cmd = sys.argv[1]
+    sys.exit("unknown command %r" % cmd)
+
+
+if __name__ == "__main__":
+    main()
+SECURITY_REMEDIATION_TOOLS_PY
+python3 -c "import py_compile; py_compile.compile('.git/security-remediation-scripts/tools.py', doraise=True)"
+echo "security-remediation: helper scripts ready" >&2
+'''
