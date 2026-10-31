@@ -1,0 +1,189 @@
+digraph SecurityRemediation {
+    graph [
+        goal="Remediate one GitHub security finding for {{ inputs.finding }}: read the alert, fix the reported vulnerability, run the repository's runnable checks for the changed packages, and publish exactly one commit on security/<source>-<number> with a non-draft pull request that links the alert. Leave merging to a human; GitHub closes the alert once the fix reaches the default branch.",
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    // `prepare` is the only goal gate: it runs on every path to exit, while
+    // `fail` must stay ungated (see the fail node) so a failed run is not
+    // masked by a goal check that never saw this node.
+    prepare [
+        label="Read the alert and create the remediation branch",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="test -f .git/security-remediation-scripts/tools.py || { echo 'security-remediation: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/security-remediation-scripts/tools.py prepare {{ inputs.finding }}"
+    ]
+
+    // A 200 detail read whose state is no longer open ends the run without a
+    // branch checkout, a commit, or a pull request (requirement 4.3).
+    skip [
+        label="Skip a closed alert",
+        shape=parallelogram,
+        output_schema="routing",
+        script="printf 'security-remediation: alert {{ inputs.finding }} is no longer open; skipping publish\n' >&2\nprintf '{\"outcome\":\"succeeded\"}\n'"
+    ]
+
+    fix [
+        label="Fix the reported vulnerability",
+        prompt="@prompts/fix.md",
+        output_schema="routing",
+        max_visits=5,
+        retry_policy="patient",
+        max_retries=2,
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    wait_fix_rate_limit [
+        label="Wait for rate limit (fix)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\n'"
+    ]
+
+    snapshot [
+        label="Fingerprint the tracked tree before verification",
+        shape=parallelogram,
+        output_schema="routing",
+        script="test -f .git/security-remediation-scripts/tools.py || { echo 'security-remediation: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/security-remediation-scripts/tools.py snapshot"
+    ]
+
+    verify [
+        label="Run the repository checks",
+        prompt="@prompts/verify.md",
+        output_schema="routing",
+        max_visits=6,
+        retry_policy="patient",
+        max_retries=2,
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    wait_verify_rate_limit [
+        label="Wait for rate limit (verify)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\n'"
+    ]
+
+    verify_guard [
+        label="Verify the tracked tree did not change",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/security-remediation-scripts/tools.py verify_guard"
+    ]
+
+    rework [
+        label="Queue another fix round",
+        shape=parallelogram,
+        output_schema="routing",
+        max_visits=4,
+        script="python3 .git/security-remediation-scripts/tools.py rework"
+    ]
+
+    publish [
+        label="Publish one commit and a pull request",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/security-remediation-scripts/tools.py publish"
+    ]
+
+    mark_prepare [
+        label="Record prepare failure",
+        shape=parallelogram,
+        script="printf '%s' 'prepare (read the alert and create the remediation branch)' > .git/security-remediation-failed-stage"
+    ]
+
+    mark_fix [
+        label="Record fix failure",
+        shape=parallelogram,
+        script="printf '%s' 'fix (fix the reported vulnerability)' > .git/security-remediation-failed-stage"
+    ]
+
+    mark_verify [
+        label="Record verify failure",
+        shape=parallelogram,
+        script="printf '%s' 'verify (run the repository checks and guard the tracked tree)' > .git/security-remediation-failed-stage"
+    ]
+
+    mark_rework [
+        label="Record rework failure",
+        shape=parallelogram,
+        script="printf '%s' 'rework (queue another fix round)' > .git/security-remediation-failed-stage"
+    ]
+
+    mark_publish [
+        label="Record publish failure",
+        shape=parallelogram,
+        script="printf '%s' 'publish (publish one commit and a pull request)' > .git/security-remediation-failed-stage"
+    ]
+
+    // No goal_gate here: Fabro checks every declared goal gate when a run
+    // reaches exit, and an unvisited gate fails the run. `fail` only runs on
+    // failure paths, so its nonzero exit has to end the run directly with
+    // on_failure="exit" instead of routing the failure through exit as a
+    // success.
+    fail [
+        label="Fail run",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        on_failure="exit",
+        script="set -eu\nMSG=$(cat || true)\nSTAGE=$(cat .git/security-remediation-failed-stage 2>/dev/null || true)\nif [ -f .git/security-remediation-scripts/tools.py ]; then\n  printf '%s' \"$MSG\" | python3 .git/security-remediation-scripts/tools.py fail \"$STAGE\"\nfi\nif [ -z \"$STAGE\" ]; then\n  if [ -n \"$MSG\" ]; then\n    MSG=\"the failing security-remediation stage did not report itself (for example sandbox setup): $MSG\"\n  else\n    MSG=\"the failing security-remediation stage did not report itself (for example sandbox setup); inspect the failing stage output in the run events and .git/security-remediation-state.json\"\n  fi\nelif [ -n \"$MSG\" ]; then\n  MSG=\"$STAGE failed: $MSG\"\nelse\n  MSG=\"$STAGE failed; inspect the failing stage output in the run events and .git/security-remediation-state.json\"\nfi\nprintf 'security-remediation: %s\n' \"$MSG\" >&2\nexit 1"
+    ]
+
+    start -> prepare
+
+    prepare -> skip [condition="outcome=succeeded && context.alert_open=false"]
+    prepare -> fix [condition="outcome=succeeded && context.alert_open=true"]
+    prepare -> mark_prepare
+
+    skip -> exit [condition="outcome=succeeded"]
+    skip -> fail
+
+    fix -> wait_fix_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    fix -> snapshot [condition="outcome=succeeded && context.fix_status=READY"]
+    fix -> mark_fix
+
+    wait_fix_rate_limit -> fix [condition="outcome=succeeded"]
+    wait_fix_rate_limit -> mark_fix
+
+    snapshot -> verify [condition="outcome=succeeded"]
+    snapshot -> mark_verify
+
+    verify -> wait_verify_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    verify -> verify_guard [condition="outcome=succeeded"]
+    verify -> mark_verify
+
+    wait_verify_rate_limit -> verify [condition="outcome=succeeded"]
+    wait_verify_rate_limit -> mark_verify
+
+    verify_guard -> publish [condition="outcome=succeeded && context.tree_unchanged=true && context.tests_passed=true"]
+    verify_guard -> rework [condition="outcome=succeeded && context.tree_unchanged=true && context.tests_passed=false"]
+    verify_guard -> fail [condition="outcome=succeeded && context.tree_unchanged=false"]
+    verify_guard -> mark_verify
+
+    rework -> fix [condition="outcome=succeeded && context.fix_round <= 3"]
+    rework -> fail [condition="outcome=succeeded && context.fix_round > 3"]
+    rework -> mark_rework
+
+    publish -> exit [condition="outcome=succeeded"]
+    publish -> mark_publish
+
+    mark_prepare -> fail
+    mark_fix -> fail
+    mark_verify -> fail
+    mark_rework -> fail
+    mark_publish -> fail
+
+    fail -> exit
+}
