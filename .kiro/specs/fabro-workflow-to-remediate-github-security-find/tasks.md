@@ -99,7 +99,7 @@
   - Append `"security_remediation_workflow_version"` to `services.fabro-api-bridge.allowedVersionVariables` in `configurations/fabro-vm/default.nix`; the caller slug `dispatch` is already allowed.
   - The rendered list contains the new name alongside the four existing variables.
   - _Requirements: 8.3_
-- [ ] 4.3 Document the package and pinned variable
+- [x] 4.3 Document the package and pinned variable
   - Add `security-remediation` to the package list, the pin-refresh sentence, and the pinned-variable note in `docs/fabro-workflows.md`.
   - The documented validation loop and pin instructions cover the new package without further edits.
   - _Requirements: 8.5_
