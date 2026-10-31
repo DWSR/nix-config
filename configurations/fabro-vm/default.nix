@@ -321,6 +321,7 @@ in
         "dependabot_workflow_version"
         "kiro_task_workflow_version"
         "kiro_feedback_workflow_version"
+        "security_remediation_workflow_version"
       ];
     };
 
