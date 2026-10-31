@@ -80,6 +80,7 @@ Private-vault note `sops-age-key-fabro`.
 | `opencode-github-token` | `op://Private/GitHub/Tokens/OpenCode` | OpenCode server's dedicated GitHub PAT — exported as `GITHUB_TOKEN` and `GH_TOKEN` via `sops.templates."opencode-env"`; git pushes authenticate through `gh auth git-credential` (`configurations/fabro-vm/opencode.nix`) |
 | `opencode-server-password` | `op://Private/OpenCode/Server Password` | OpenCode server basic-auth password (`OPENCODE_SERVER_PASSWORD`; username defaults to `opencode`) |
 | `opencode-signing-key` | `op://Private/OpenCode Signing Key/private key` | git SSH commit-signing key; handed to the opencode service as a systemd credential (`LoadCredential=`, `configurations/fabro-vm/opencode.nix`) |
+| `rex-package-token` | `op://Private/Rex/Package Token` | gated Rex flake fetch credential — rendered by `sops.templates."rex-netrc"` into the root-only `0400` file `/run/secrets/rendered/rex-netrc` (outside the Nix store) and wired into Nix through `nix.settings."netrc-file"`; authenticates the `https://pkgs.superlogical.com/rex/nix/preview.tar.gz` input (`machine pkgs.superlogical.com login rex`) |
 
 The `opencode-signing-key` row differs from the token rows: its 1Password
 source is an **SSH Key item** (not a note/text field), so the value is a
@@ -105,6 +106,35 @@ secret value. Registration tags the guest `tag:fabro`
 (`services.tailscale.extraUpFlags`), and rotation affects only future
 node registrations — an already-registered guest keeps its bond until
 `tailscale logout` runs in-guest.
+
+The `rex-package-token` row feeds the gated Rex flake input, not a service.
+The 1Password item is `Private/Rex` (field `Package Token`, a package
+credential for the upstream test channel). The guest renders it through
+`sops.templates."rex-netrc"` into a root-only `0400` file at
+`/run/secrets/rendered/rex-netrc` — outside the Nix store — and
+`nix.settings."netrc-file"` points Nix at that file. Only the root-run
+guest `nixos-rebuild` (and the `nix-daemon` it talks to) can read it; the
+value is never in the repository, the Nix store, or
+`nix.settings.access-tokens`. Rotating it rewrites the netrc on the next
+activation and restarts `nix-daemon.service` (`restartUnits`), so later
+fetches use the new value without a manual file edit.
+
+Failure symptom: a guest fetch of the Rex input returns **HTTP 401** when
+the decrypted token is missing, empty, or revoked. There is no mirror,
+fallback input, or anonymous download, so the switch fails instead of
+resolving Rex from another source. An empty store value renders an empty
+netrc password and fails the same way; a missing store key fails sops
+activation before the netrc is updated.
+
+Rotation ordering (rotate, then switch): update `Package Token` in
+1Password, run `nix run '.#fabro-sync-from-1password'`, commit the
+re-encrypted `secrets/fabro.fabro.yaml`, then switch the guest. The
+switch's evaluation uses the locked input already in the guest store, so
+it does not need the new value; activation then rewrites the netrc and
+restarts `nix-daemon`. Do not revoke the prior token until the new value
+is synced, committed, and the locked input is present in the guest store —
+a channel bump evaluated during the same switch fetches with the
+pre-activation netrc, i.e. still with the old token.
 
 ### Syncing the store from 1Password
 
