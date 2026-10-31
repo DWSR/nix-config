@@ -1976,28 +1976,6 @@
                 touch $out
               '';
 
-          # Schema-validate the personal host's rendered Lima YAML with the
-          # same limactl the launchd service uses (`limactl validate` is
-          # offline; no VM or Linux builder needed).
-          lima-vm-config-validate =
-            let
-              limaConfigYaml =
-                self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.virtualisation.limaVM._configYaml;
-            in
-            assert pkgs.lib.assertMsg (limaConfigYaml != null)
-              "lima-vm-config-validate: the personal host's virtualisation.limaVM._configYaml is null (module disabled?).";
-            pkgs.runCommand "lima-vm-config-validate"
-              {
-                configYaml = limaConfigYaml;
-                nativeBuildInputs = [ pkgs.unstable.lima ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export USER=nix
-                limactl validate "$configYaml"
-                touch $out
-              '';
-
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
@@ -3049,6 +3027,29 @@
             inherit (inputs) home-manager;
             realLitestream = if system == "aarch64-darwin" then pkgs.litestream else null;
           };
+
+          # Schema-validate the personal host's rendered Lima YAML with the
+          # same limactl the launchd service uses (`limactl validate` is
+          # offline; no VM or Linux builder needed). The config comes from an
+          # aarch64-darwin host configuration, so the check stays Darwin-only.
+          lima-vm-config-validate =
+            let
+              limaConfigYaml =
+                self.darwinConfigurations."Brandons-MacBook-Pro".config.home-manager.users.brandonmcnama.virtualisation.limaVM._configYaml;
+            in
+            assert pkgs.lib.assertMsg (limaConfigYaml != null)
+              "lima-vm-config-validate: the personal host's virtualisation.limaVM._configYaml is null (module disabled?).";
+            pkgs.runCommand "lima-vm-config-validate"
+              {
+                configYaml = limaConfigYaml;
+                nativeBuildInputs = [ pkgs.unstable.lima ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export USER=nix
+                limactl validate "$configYaml"
+                touch $out
+              '';
         }
         // pkgs.lib.optionalAttrs (builtins.elem system fabroSystems) {
           # Offline parse/validate of every committed workflow package. The
