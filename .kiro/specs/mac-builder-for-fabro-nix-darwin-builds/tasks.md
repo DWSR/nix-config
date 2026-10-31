@@ -20,6 +20,7 @@
   - Done when a standalone evaluation shows the option defaults, `distributedBuilds`, the `@` builders path, `builders-use-substitutes`, the unit ordering, and the tmpfiles rule, with no dispatch wrapper around Nix's own ssh-ng errors.
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 2.7, 3.1, 3.2, 3.3, 3.6, 6.11, 7.5, 7.6_
   - _Depends: 1.1_
+  - _Blocked: Review rejected after 2 rework rounds: no failing run of the task 1.2 dispatch tests before the module landed (TDD RED unproven). Unblock by capturing that failing test output, then implementing._
 
 - [ ] 1.3 Enable dispatch on `fabro-vm` and declare the build-session secrets
   - Add `./darwin-dispatch.nix` to `configurations/fabro-vm/default.nix` imports and set `fabro.darwinBuilder.enable = true;`.
