@@ -90,7 +90,7 @@
   - _Depends: 3.1, 3.6, 3.7_
 
 - [ ] 4. Register the package and document the variable
-- [ ] 4.1 Pin the package in the version script
+- [x] 4.1 Pin the package in the version script
   - Add `pin .fabro/workflows/security-remediation security_remediation_workflow_version` to `scripts/pin-workflow-versions.sh`.
   - Extend the header's refresh list and comment with the new package so operators know to re-run the script after changing it.
   - The script's pin list and header name the new package and variable.
