@@ -2,7 +2,7 @@
 # Pin child workflow versions for the dispatch workflows.
 #
 # The dispatch and kiro-impl dispatchers create children (kiro-spec,
-# kiro-task, oneshot, dependabot) whose packages used to be re-emitted inline
+# kiro-task, kiro-feedback, oneshot, dependabot) whose packages used to be re-emitted inline
 # by an agent through fabro_workflow_version_create (a ~40 KiB JSON-escaping
 # task that has caused multi-minute agent stalls). The dispatchers now read a
 # pre-registered, immutable version id from a server-owned variable instead.
@@ -13,7 +13,8 @@
 #
 # Re-run it after changing anything under .fabro/workflows/kiro-spec/,
 # .fabro/workflows/kiro-impl/, .fabro/workflows/kiro-task/,
-# .fabro/workflows/oneshot/, or .fabro/workflows/dependabot/, then
+# .fabro/workflows/kiro-feedback/, .fabro/workflows/oneshot/, or
+# .fabro/workflows/dependabot/, then
 # re-register the dispatcher packages themselves (fabro run/whatever trigger)
 # so the new scripts take effect. Registration is content-addressed:
 # unchanged packages pin the same id.
@@ -53,5 +54,6 @@ pin() {
 pin .fabro/workflows/kiro-spec kiro_spec_workflow_version
 pin .fabro/workflows/kiro-impl kiro_impl_workflow_version
 pin .fabro/workflows/kiro-task kiro_task_workflow_version
+pin .fabro/workflows/kiro-feedback kiro_feedback_workflow_version
 pin .fabro/workflows/oneshot oneshot_workflow_version
 pin .fabro/workflows/dependabot dependabot_workflow_version

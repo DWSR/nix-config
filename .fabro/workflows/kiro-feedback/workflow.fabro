@@ -1,0 +1,115 @@
+digraph KiroFeedback {
+    graph [
+        goal="Address review feedback on pull request {{ inputs.pr }} (Kiro spec {{ inputs.spec }}, stack layer branch {{ inputs.branch }}): resolve every unresolved review thread and failing CI check, keep the layer rebased on {{ inputs.base }}, force-push the updated layer, and only mark the layer complete once GitHub CI is green. Fix rounds and CI polling are both bounded.",
+    ]
+    rankdir=LR
+
+    start [shape=Mdiamond, label="Start"]
+    exit  [shape=Msquare, label="Exit"]
+
+    prepare [
+        label="Prepare layer branch",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="test -f .git/kiro-feedback-scripts/tools.py || { echo 'kiro-feedback: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/kiro-feedback-scripts/tools.py prepare {{ inputs.pr }} {{ inputs.branch }} {{ inputs.base }}"
+    ]
+
+    collect [
+        label="Collect review feedback",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/kiro-feedback-scripts/tools.py collect"
+    ]
+
+    fix [
+        label="Address feedback",
+        prompt="@prompts/fix.md",
+        output_schema="routing",
+        max_visits=6,
+        max_retries=2,
+        retry_policy="patient",
+        model="gpt-6-luna",
+        provider="litellm",
+        reasoning_effort="xhigh"
+    ]
+
+    wait_fix_rate_limit [
+        label="Wait for rate limit (fix)",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="6m",
+        max_visits=3,
+        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+    ]
+
+    amend [
+        label="Amend and push layer",
+        shape=parallelogram,
+        output_schema="routing",
+        script="python3 .git/kiro-feedback-scripts/tools.py amend"
+    ]
+
+    await_ci [
+        label="Await layer CI",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="30m",
+        script="python3 .git/kiro-feedback-scripts/tools.py await-ci"
+    ]
+
+    rework [
+        label="Queue CI rework",
+        shape=parallelogram,
+        output_schema="routing",
+        max_visits=4,
+        stdin_source="context.fix_round",
+        script="python3 .git/kiro-feedback-scripts/tools.py rework"
+    ]
+
+    finish [
+        label="Mark layer complete",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        script="python3 .git/kiro-feedback-scripts/tools.py finish"
+    ]
+
+    fail [
+        label="Fail run",
+        shape=parallelogram,
+        stdin_source="stage_failure",
+        on_failure="exit",
+        script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a kiro-feedback stage failed; inspect the failing stage output in the run events and .git/kiro-feedback-state.json\"\nfi\nprintf 'kiro-feedback: %s\\n' \"$MSG\" >&2\nexit 1"
+    ]
+
+    start -> prepare
+
+    prepare -> collect [condition="outcome=succeeded"]
+    prepare -> fail
+
+    collect -> fix [condition="outcome=succeeded && context.has_feedback=true"]
+    collect -> amend [condition="outcome=succeeded && context.has_feedback=false"]
+    collect -> fail
+
+    fix -> amend [condition="outcome=succeeded && context.impl_status=READY"]
+    fix -> wait_fix_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    fix -> fail
+    wait_fix_rate_limit -> fix [condition="outcome=succeeded"]
+    wait_fix_rate_limit -> fail
+
+    amend -> await_ci [condition="outcome=succeeded"]
+    amend -> fail
+
+    // Marking complete is gated on a green run, not merely on a successful
+    // push; a red check routes through the bounded rework counter instead.
+    await_ci -> finish [condition="outcome=succeeded && context.ci_result=success"]
+    await_ci -> rework [condition="outcome=succeeded && context.ci_result=failed"]
+    await_ci -> fail
+
+    rework -> fix [condition="outcome=succeeded && context.fix_round <= 2"]
+    rework -> fail
+
+    finish -> exit
+    fail -> exit
+}

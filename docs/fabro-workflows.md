@@ -13,8 +13,15 @@ itself is pinned by `overlays/fabro.nix`.
 - `scripts/pin-workflow-versions.sh` — registers content-addressed workflow
   versions in the Fabro server and pins their ids as server variables.
 
-The packages are `dependabot`, `dispatch`, `failure-triage`, `kiro-impl`,
-`kiro-spec`, `kiro-task`, and `oneshot`.
+The packages are `dependabot`, `dispatch`, `failure-triage`, `kiro-feedback`,
+`kiro-impl`, `kiro-spec`, `kiro-task`, and `oneshot`.
+
+A repeated `kiro-impl` invocation resumes an existing spec stack. After it
+publishes the stack, it dispatches one `kiro-feedback` child per layer from the
+bottom of the stack to the top. Each child rebases its layer onto the branch
+below it, fixes unresolved review threads and failing checks, force-pushes the
+layer, and only finishes after that layer's CI is green. CI-driven fix rounds
+are bounded, so a layer that cannot go green fails the run instead of looping.
 
 ## Local checks
 
@@ -41,8 +48,8 @@ supplies both `prek` and the pinned `fabro` CLI.
 The dispatcher reads immutable workflow version ids from server-owned
 variables instead of re-emitting package contents through an agent.
 
-After changing `kiro-spec`, `kiro-impl`, `kiro-task`, `oneshot`, or
-`dependabot`, run:
+After changing `kiro-spec`, `kiro-impl`, `kiro-task`, `kiro-feedback`, `oneshot`,
+or `dependabot`, run:
 
 ```sh
 scripts/pin-workflow-versions.sh

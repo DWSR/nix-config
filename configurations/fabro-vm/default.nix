@@ -320,6 +320,7 @@ in
         "oneshot_workflow_version"
         "dependabot_workflow_version"
         "kiro_task_workflow_version"
+        "kiro_feedback_workflow_version"
       ];
     };
 
