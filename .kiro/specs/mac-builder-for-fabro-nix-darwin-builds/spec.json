@@ -1,0 +1,22 @@
+{
+  "feature_name": "mac-builder-for-fabro-nix-darwin-builds",
+  "created_at": "2026-10-31T15:30:21Z",
+  "language": "en",
+  "approvals": {
+    "requirements": {
+      "generated": false,
+      "approved": false
+    },
+    "design": {
+      "generated": true,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "updated_at": "2026-10-31T15:41:41Z",
+  "phase": "design-generated",
+  "ready_for_implementation": false
+}
