@@ -122,7 +122,7 @@
   - Deferred coverage: requirements 4.3 and 4.4 are already implemented in 3.2.
   - _Requirements: 4.3, 4.4_
   - _Boundary: `tests/security-remediation/intake.test.py`_
-- [ ] 5.4 (P) Add package graph invariant tests
+- [x] 5.4 (P) Add package graph invariant tests
   - `tests/security-remediation/workflow.test.py` parses the new graph: `prepare` is the only goal gate and dominates `exit`, `fail` is ungated with `on_failure="exit"`, and `[run.run_branch]`/`[run.pull_request]` are disabled.
   - Assert the verify prompt still carries the Darwin exclusion and `excluded:` conventions.
   - `python3 tests/security-remediation/workflow.test.py` passes.
