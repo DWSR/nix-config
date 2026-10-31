@@ -2589,25 +2589,6 @@
                 touch $out
               '';
 
-          opencode-nono-tests =
-            pkgs.runCommand "opencode-nono-tests"
-              {
-                nativeBuildInputs = [
-                  pkgs.nix
-                  pkgs.nodejs
-                ];
-                OPENCODE_NONO_HOSTS = agentMemoryHostMatrix;
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                node --test tests/opencode-nono/
-                touch $out
-              '';
-
           opencode-nono-audit-tests =
             pkgs.runCommand "opencode-nono-audit-tests"
               {
@@ -3019,6 +3000,30 @@
               }
               ''
                 printf '%s\n' "$hostReport" > $out
+              '';
+
+          # The opencode-nono render assertions evaluate
+          # `darwinConfigurations."Brandons-MacBook-Pro"` (launchd, /Users
+          # paths, and a Darwin nodejs derivation), so this check only builds
+          # where that host does. Running it on aarch64-linux failed with
+          # "platform mismatch / Required system: 'aarch64-darwin'".
+          opencode-nono-tests =
+            pkgs.runCommand "opencode-nono-tests"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+                OPENCODE_NONO_HOSTS = agentMemoryHostMatrix;
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/opencode-nono/
+                touch $out
               '';
 
           # home.sqliteBackup only implements the Darwin platforms.
