@@ -199,6 +199,13 @@ pkgs.writeShellApplication {
 
     line="ssh-ng://''${ssh_user}@''${host_name} ''${system} ''${client_key_path} ''${max_jobs} ''${speed_factor} - - ''${host_key_base64}"
 
+    # `mv` would move the temp file *into* an existing directory and still exit
+    # zero, silently leaving the requested path unwritten. Reject that shape
+    # before creating any temporary file.
+    if [[ -d "$output_path" ]]; then
+      fail "output path is a directory: $output_path"
+    fi
+
     output_dir="$(dirname -- "$output_path")"
     if [[ ! -d "$output_dir" ]]; then
       fail "output directory does not exist: $output_dir"

@@ -190,6 +190,20 @@ test('failed render creates no output file when none existed', () => {
   assert.equal(fs.existsSync(workspace.outputPath), false);
 });
 
+test('renderer rejects an existing directory output path without writing inside it', () => {
+  const workspace = makeWorkspace();
+  const outputDir = fs.mkdtempSync(path.join(workspace.dir, 'output-dir-'));
+  const result = runRenderer(renderArgs(workspace, { '--output': outputDir }));
+
+  assert.notEqual(result.status, 0, 'a directory output path must not be accepted');
+  assert.match(
+    result.stderr,
+    new RegExp(outputDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    'the failure must name the offending output path',
+  );
+  assert.deepEqual(fs.readdirSync(outputDir), [], 'nothing may be created inside the directory');
+});
+
 test('renderer rejects a missing argument instead of emitting a partial line', () => {
   const workspace = makeWorkspace();
   const result = runRenderer(renderArgs(workspace, { '--host-name': undefined }));
