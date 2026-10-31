@@ -105,7 +105,7 @@
   - _Requirements: 8.5_
 
 - [ ] 5. Pin the new behaviour with local tests
-- [ ] 5.1 (P) Add dispatch selection and exclusion tests
+- [x] 5.1 (P) Add dispatch selection and exclusion tests
   - `tests/dispatch/security-scan.test.py` extracts the helper between the `DISPATCH_SECURITY_SCAN_PY` markers and injects a fake `request`, following `tests/dispatch/stack-scan.test.py`.
   - Cover Dependabot-first and lowest-number choice, repeat determinism, empty findings, active-run and open remediation PR and open Dependabot PR exclusions, a source failure naming that source with no selection, and secret scanning never being requested.
   - `python3 tests/dispatch/security-scan.test.py` passes.
