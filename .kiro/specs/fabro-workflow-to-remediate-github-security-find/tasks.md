@@ -39,7 +39,7 @@
   - _Requirements: 2.7, 3.1, 3.2, 3.3_
 
 - [ ] 3. Build the `security-remediation` package
-- [ ] 3.1 Create the package TOML and embedded tools scaffold
+- [x] 3.1 Create the package TOML and embedded tools scaffold
   - Add `.fabro/workflows/security-remediation/workflow.toml` with `[run.inputs] finding = ""`, model fallbacks, and alert-read plus `contents`/`pull_requests` write permissions, with no `issues` write.
   - Disable `[run.run_branch]` and `[run.pull_request]` and leave `[run.clone]` unset, so no checkpoint commit or history rewrite can break the single-commit invariant.
   - Add a `[[run.prepare.steps]]` block that writes `.git/security-remediation-scripts/tools.py` between `SECURITY_REMEDIATION_TOOLS_PY` markers and `py_compile`s it.
