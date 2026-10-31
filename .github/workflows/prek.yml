@@ -15,8 +15,8 @@ concurrency:
 jobs:
   prek:
     name: prek run --all-files
-    # The flake only exposes darwin systems, so the Linux runners cannot
-    # evaluate the devShell that supplies prek and the hook tools.
+    # The flake exposes an aarch64-linux devShell as well as the darwin ones,
+    # but this workflow still runs on the macOS runner.
     runs-on: macos-latest
     timeout-minutes: 30
 
