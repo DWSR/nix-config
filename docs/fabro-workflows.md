@@ -32,10 +32,29 @@ for workflow in .fabro/workflows/*/workflow.fabro; do
 done
 ```
 
-`fabro validate` parses the graph and TOML offline. Warnings about
-`[run.integrations]`, `[run.run_branch]`, and `[run.pull_request]` being
-ignored are expected: those settings only take effect when the package runs on
-the Fabro server.
+`fabro validate` parses the graph and TOML offline. The pinned Fabro CLI emits
+the following informational warnings for the packages here, so seeing them is
+expected and never means the graph is broken:
+
+- `ignored.workflow_toml.run.integrations`,
+  `ignored.workflow_toml.run.run_branch`, and
+  `ignored.workflow_toml.run.pull_request`: those settings only take effect
+  when the package runs on the Fabro server.
+- `attractor.goal_gate_without_target`: these packages declare goal gates
+  without a retry target on purpose, so a failing gate ends the run as failed
+  instead of retrying.
+- `attractor.unbound_input`: `{{ vars.* }}` reads server-owned variables, and
+  offline validation cannot reach the server's variable store.
+- `info.budget.default`: the looping packages have nodes without `max_visits`;
+  those loops are bounded by per-stage `max_visits` and graph conditions
+  instead.
+
+A package is clean when `fabro validate` reports no errors and prints
+`Validation: OK`; that is the bar the loop above and `nix flake check` apply.
+Which of these warnings a package emits depends only on the graph and TOML
+features it uses, not on a particular revision, so do not add no-op attributes
+to silence them. `fabro validate --json` lists the diagnostics with their rule
+names.
 
 `nix flake check` also runs `fabro-workflows-validate` on `aarch64-darwin` and
 `aarch64-linux` — the systems with a pinned upstream Fabro release artifact in
