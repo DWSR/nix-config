@@ -233,6 +233,50 @@ class PublishCommitTests(unittest.TestCase):
             )
 
 
+class DerivedBranchTests(unittest.TestCase):
+    def test_derives_the_remediation_branch_from_the_finding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work, branch=None)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            http = FakeHTTP()
+
+            context = run_publish(work, http)
+
+            expected = "security/dependabot-12"
+            head = context["commit_sha"]
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % expected), head)
+            self.assertEqual(posts(http)[0]["body"]["head"], expected)
+            self.assertEqual(read_state(work)["remote_branch_sha"], head)
+
+    def test_derives_a_code_scanning_branch_from_the_source_and_alert_number(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(
+                work,
+                finding="code-scanning:7",
+                source="code-scanning",
+                alert_number=7,
+                url="https://github.com/DWSR/nix-config/security/code-scanning/7",
+                branch=None,
+            )
+            (work / "flake.nix").write_text('{ fixed = true; }\n')
+            http = FakeHTTP()
+
+            context = run_publish(work, http)
+
+            expected = "security/code-scanning-7"
+            head = context["commit_sha"]
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % expected), head)
+            payload = posts(http)[0]["body"]
+            self.assertEqual(payload["head"], expected)
+            self.assertIn(
+                "Alert: https://github.com/DWSR/nix-config/security/code-scanning/7 "
+                "(code-scanning alert #7)",
+                payload["body"],
+            )
+
+
 class TrunkMovedTests(unittest.TestCase):
     def test_replays_a_disjoint_fix_onto_a_moved_trunk(self):
         with tempfile.TemporaryDirectory() as tmp:
