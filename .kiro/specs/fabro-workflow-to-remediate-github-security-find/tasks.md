@@ -51,7 +51,7 @@
   - A closed alert sets `alert_open=false` without branch work; a fresh run does `git fetch origin <trunk>` and `git checkout -B security/<source>-<n> origin/<trunk>`; a resumed run keeps earlier work and fails on a different finding.
   - Prepare reports `alert_open`, `alert_number`, `finding_source`, `alert_url`, `branch`, and `trunk`, and makes no alert write request.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 6.1, 6.2, 7.2_
-- [ ] 3.3 Implement snapshot, verify guard, rework, and fail commands
+- [x] 3.3 Implement snapshot, verify guard, rework, and fail commands
   - `snapshot` records `verify_baseline = {head, diff_sha256}` over `git diff --binary HEAD`; `verify_guard` recomputes it and reports `tree_unchanged=false` plus `stage_failure` on a moved head or changed tracked tree.
   - `rework` increments `fix_round` and reports `stage_failure` above 3; `fail` prefixes `.git/security-remediation-failed-stage` and exits non-zero from `stage_failure` stdin.
   - A guard run on an unchanged tree reports `tree_unchanged=true`, and the fingerprint ignores untracked build output.
