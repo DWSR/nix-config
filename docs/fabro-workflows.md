@@ -30,9 +30,11 @@ done
 ignored are expected: those settings only take effect when the package runs on
 the Fabro server.
 
-`nix flake check` also runs `fabro-workflows-validate` on `aarch64-darwin`. The
-check is absent on other systems because the upstream Fabro release only ships
-an `aarch64-darwin` artifact.
+`nix flake check` also runs `fabro-workflows-validate` on `aarch64-darwin` and
+`aarch64-linux` — the systems with a pinned upstream Fabro release artifact in
+`overlays/fabro.nix`. The check is absent on `x86_64-darwin` because upstream
+ships no artifact for it. On the `aarch64-linux` fabro VM guest, `nix develop`
+supplies both `prek` and the pinned `fabro` CLI.
 
 ## Pinning workflow versions
 
