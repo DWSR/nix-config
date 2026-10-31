@@ -54,6 +54,9 @@ function readyConsumerModule(hostRole, options = {}) {
   const configuredCachePublicKey = options.cachePublicKey ?? cachePublicKey;
   const configuredCaCertificate = options.caCertificate ?? tlsCertificate;
   const configuredTlsCertificate = options.tlsCertificate ?? tlsCertificate;
+  const chainedHooks = (options.chainedHooks ?? [])
+    .map(hook => JSON.stringify(hook))
+    .join(' ');
   const server = hostRole === 'personal'
     ? `server = {
         enable = true;
@@ -87,10 +90,15 @@ function readyConsumerModule(hostRole, options = {}) {
         package = pkgs.hello;
         tokenFile = "/run/secrets/local-binary-cache-token";
         stateDirectory = "/var/db/local-binary-cache/publisher";
+        chainedHooks = [ ${chainedHooks} ];
       };
       ${server}
     };
   }`;
+}
+
+function readyPersonalPublisherModule(options = {}) {
+  return readyConsumerModule('personal', options);
 }
 
 function renderCaddyFixture(tlsKeyFile) {
@@ -1037,9 +1045,7 @@ test('bootstrap renders only Attic, TLS, and operator commands without evaluatin
     rendered.bootstrapText,
     /generate_token Brandons-MacBook-Pro '?31557600s'? --push/,
   );
-  assert.match(
-    rendered.bootstrapText,
-  );
+  assert.ok(rendered.bootstrapText.includes(fixture.statePaths.personalTokenOutput));
   assert.equal(rendered.readinessCommand, `${rendered.readinessPackage}/bin/local-binary-cache-status`);
   assert.equal(
     rendered.diagnosticsCommand,
