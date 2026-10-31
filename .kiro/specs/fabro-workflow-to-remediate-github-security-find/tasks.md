@@ -137,7 +137,7 @@
   - The suites pass and both graphs validate with only the documented integration/run_branch/pull_request warnings.
   - _Requirements: 1.6, 7.2, 8.4, 9.1, 9.2, 9.3, 9.4, 9.5_
   - _Depends: 3.8, 4.3, 5.4_
-- [ ]* 6.2 Rehearse dispatch against one seeded alert
+- [x]* 6.2 Rehearse dispatch against one seeded alert
   - In a scratch repository with one seeded Dependabot or code scanning alert, a dispatch run prints `selected` and creates exactly one remediation child.
   - A second scan while that child is pending, runnable, initializing, running, or blocked creates none, and the resulting PR is left for a human to merge so GitHub closes the alert.
   - _Requirements: 2.7, 3.1, 3.2, 3.7, 7.1_
