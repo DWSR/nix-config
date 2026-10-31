@@ -172,7 +172,9 @@
     };
 
     agentmemory = {
-      url = "github:DWSR/agentmemory";
+      # DWSR/agentmemory was removed upstream; the same locked revision now
+      # lives at the public agentmemory repository (identical narHash).
+      url = "github:rohitg00/agentmemory";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
