@@ -2,10 +2,11 @@
 # Pin child workflow versions for the dispatch workflows.
 #
 # The dispatch and kiro-impl dispatchers create children (kiro-spec,
-# kiro-task, kiro-feedback, oneshot, dependabot) whose packages used to be re-emitted inline
-# by an agent through fabro_workflow_version_create (a ~40 KiB JSON-escaping
-# task that has caused multi-minute agent stalls). The dispatchers now read a
-# pre-registered, immutable version id from a server-owned variable instead.
+# kiro-task, kiro-feedback, oneshot, dependabot, security-remediation) whose
+# packages used to be re-emitted inline by an agent through
+# fabro_workflow_version_create (a ~40 KiB JSON-escaping task that has caused
+# multi-minute agent stalls). The dispatchers now read a pre-registered,
+# immutable version id from a server-owned variable instead.
 #
 # Run this from the nix-config checkout with the fabro CLI on PATH (the Mac
 # CLI targets the remote server):
@@ -13,8 +14,8 @@
 #
 # Re-run it after changing anything under .fabro/workflows/kiro-spec/,
 # .fabro/workflows/kiro-impl/, .fabro/workflows/kiro-task/,
-# .fabro/workflows/kiro-feedback/, .fabro/workflows/oneshot/, or
-# .fabro/workflows/dependabot/, then
+# .fabro/workflows/kiro-feedback/, .fabro/workflows/oneshot/,
+# .fabro/workflows/dependabot/, or .fabro/workflows/security-remediation/, then
 # re-register the dispatcher packages themselves (fabro run/whatever trigger)
 # so the new scripts take effect. Registration is content-addressed:
 # unchanged packages pin the same id.
@@ -57,3 +58,4 @@ pin .fabro/workflows/kiro-task kiro_task_workflow_version
 pin .fabro/workflows/kiro-feedback kiro_feedback_workflow_version
 pin .fabro/workflows/oneshot oneshot_workflow_version
 pin .fabro/workflows/dependabot dependabot_workflow_version
+pin .fabro/workflows/security-remediation security_remediation_workflow_version
