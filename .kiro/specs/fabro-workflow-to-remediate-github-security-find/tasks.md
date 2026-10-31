@@ -111,7 +111,7 @@
   - `python3 tests/dispatch/security-scan.test.py` passes.
   - _Requirements: 9.1, 9.2, 9.3_
   - _Boundary: `tests/dispatch/security-scan.test.py`_
-- [ ] 5.2 (P) Add publish contract tests
+- [x] 5.2 (P) Add publish contract tests
   - `tests/security-remediation/publish.test.py` extracts `tools.py`, builds a temporary repository with a bare `origin`, and patches `urllib.request.urlopen`.
   - Cover `security/<source>-<n>`, one commit parented on the fetched trunk head, disjoint replay onto a moved trunk, `base_moved` on overlap, the alert URL and number in the body, a stale remote head failing before push, PR reuse on rerun, empty diff failure, and artifact rejection.
   - `python3 tests/security-remediation/publish.test.py` passes.
