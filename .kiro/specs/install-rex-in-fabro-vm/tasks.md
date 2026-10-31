@@ -29,6 +29,7 @@
   - Completed when `sops -d secrets/fabro.fabro.yaml` lists `rex-package-token` and the README documents its source, rotation, and failure symptom
   - _Requirements: 2.1, 2.5, 2.6_
   - _Depends: 1.1_
+  - _Blocked: No 1Password access (no op binary/token, fabro age key only in 1Password) to seed rex-package-token; run op signin with Rex and fabro age key access, then rerun._
 
 - [ ] 1.3 (P) Run the guest `nixos-rebuild` as root in `lima-vm-deploy`
   - Change the deploy command in `home-manager/common/lima-vm.nix` from `nixos-rebuild switch --sudo --flake '$scratch#$system'` to `sudo /run/current-system/sw/bin/nixos-rebuild switch --flake '$scratch#$system'`
