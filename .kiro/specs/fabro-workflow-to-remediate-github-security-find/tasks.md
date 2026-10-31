@@ -130,7 +130,7 @@
   - _Boundary: `tests/security-remediation/workflow.test.py`_
 
 - [ ] 6. Verify the stack locally and rehearse dispatch
-- [ ] 6.1 Run the local suites and workflow validators
+- [x] 6.1 Run the local suites and workflow validators
   - Run `for f in tests/dispatch/*.test.py tests/security-remediation/*.test.py; do python3 "$f" || exit 1; done`.
   - Run `fabro validate .fabro/workflows/dispatch/workflow.fabro` and `fabro validate .fabro/workflows/security-remediation/workflow.fabro`, and `fabro preflight` on the new TOML on a machine with the Fabro CLI.
   - Confirm by inspection that no helper or prompt sends PATCH, POST, or DELETE to an alert endpoint and that the finding child version comes from the pinned variable.
