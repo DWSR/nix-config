@@ -457,7 +457,7 @@ assert lib.hasInfix "without Nix store context" runtimePathTypeDescription;
 assert lib.hasInfix "32-byte base64-encoded Ed25519" cachePublicKeyTypeDescription;
 assert readyPersonal.config.services.localBinaryCache.server.retentionDays == 30;
 assert readyPersonal.config.services.localBinaryCache.server.gcInterval == "12 hours";
-assert caddyPackage.version == "2.11.4";
+assert caddyPackage.version == "2.11.7";
 assert readyPersonal.config.services.localBinaryCache.server.proxyConfigFile != null;
 assert readyPersonal.config.services.localBinaryCache.server.proxyWrapper != null;
 assert

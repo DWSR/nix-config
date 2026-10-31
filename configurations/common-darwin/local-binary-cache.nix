@@ -56,7 +56,7 @@ let
     substitute ${atticConfigTemplate} "$out" \
       --replace-fail ${lib.escapeShellArg jwtPublicKeyPlaceholder} "$public_key_base64"
   '';
-  # Caddy 2.11.4 decodes escaped quotes but preserves JSON newline and
+  # Caddy 2.11.7 decodes escaped quotes but preserves JSON newline and
   # backslash escapes, so tlsKeyFile is restricted to proven round-trip input.
   caddyfileToken = value: builtins.toJSON value;
   proxyUpstream = "http://${cfg.server.listenAddress}";
