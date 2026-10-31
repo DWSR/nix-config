@@ -65,9 +65,7 @@ class DependabotDispatchTests(unittest.TestCase):
         self.assertIn(r"\"label_swap\": \"dispatcher\"", body)
 
     def test_dispatch_marks_the_pull_request_running_without_touching_ready(self):
-        script = next(
-            source for source in load_scripts() if "def active_dependabot_run" in source
-        )
+        script = next(source for source in load_scripts() if "def active_runs" in source)
         script = re.sub(r"\{\{.*?\}\}", '"fabro-running"', script)
         requests = []
 

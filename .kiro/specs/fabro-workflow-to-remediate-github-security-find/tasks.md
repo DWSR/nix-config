@@ -1,37 +1,37 @@
 # Implementation Plan
 
 - [ ] 1. Teach the dispatch scan to discover security findings
-- [ ] 1.1 Add the embedded security-scan helper and alert-read permissions
+- [x] 1.1 Add the embedded security-scan helper and alert-read permissions
   - Write `.git/dispatch-security-scan.py` from a new `[[run.prepare.steps]]` block in `.fabro/workflows/dispatch/workflow.toml` (marker `DISPATCH_SECURITY_SCAN_PY`) and `py_compile` it in the same step.
   - Paginate `GET /dependabot/alerts?state=open` and `/code-scanning/alerts?state=open` at 100 per page, capped at 10 pages, normalising each alert to `{source, number, title, url}`; never request secret scanning.
   - Re-exit any alert-list failure as `dispatch scan: <source> alerts could not be read: <detail>`, and keep every alert call GET-only.
   - Add `vulnerability_alerts = "read"` and `security_events = "read"` to `[run.integrations.github] permissions` in the dispatch TOML.
   - The helper compiles and an injected fake request returns normalised findings for both sources.
   - _Requirements: 1.1, 1.4, 1.5, 1.6_
-- [ ] 1.2 Add exclusion, selection, and active-run logic to the helper
+- [x] 1.2 Add exclusion, selection, and active-run logic to the helper
   - Implement `remediation_branch`, `branch_finding`, `finding_id`, `package_mentioned`, `exclusions`, `select_finding`, `active_remediation_run`, and `scan`.
   - Drop findings whose remediation branch is open or whose Dependabot package appears as a whole token in an open `dependabot[bot]` PR; select the lowest-numbered Dependabot alert first, then the lowest-numbered code scanning alert, and `None` when nothing is eligible.
   - Return `{"findings": [...], "remediation": {active_run, excluded, eligible, selected}}` with `selected` either `null` or exactly one eligible finding, so an empty result creates no child.
   - Selection is a pure function: repeating `scan` over unchanged input selects the same finding, and only `state=open` alerts are ever listed.
   - _Requirements: 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 3.1, 3.4, 3.5, 3.7_
-- [ ] 1.3 Merge findings into the scan queue and context
+- [x] 1.3 Merge findings into the scan queue and context
   - Load the helper with `runpy.run_path` after the existing issue/PR queue is built and merge `scan(repo_slug, github, runs)` before the single `json.dump`.
   - Reuse the existing `fabro_runs()` list for the security-remediation active-run check instead of adding an API call.
   - Report `finding_count`, `finding_source`, `finding_number`, and `active_security_remediation_run`, and include findings in `has_queue`.
   - `.git/dispatch-queue.json` keeps its current keys and adds `findings` and `remediation`.
   - _Requirements: 1.2, 2.7, 3.1_
-- [ ] 1.4 Keep findings visible to `stack_scan`
+- [x] 1.4 Keep findings visible to `stack_scan`
   - Include `queue["findings"]` in both `has_queue` computations of the embedded `.git/dispatch-stack-scan.py`, on the native-stack and no-stack paths.
   - A findings-only queue no longer short-circuits `stack_scan -> prune`; an empty queue still does.
   - _Requirements: 1.2, 2.1_
 
 - [ ] 2. Plan and create at most one remediation child
-- [ ] 2.1 Emit one finding plan entry with the pinned version
+- [x] 2.1 Emit one finding plan entry with the pinned version
   - Add `REMEDIATION_RULE` beside `DEPENDABOT_RULE`, reading `{{ vars.security_remediation_workflow_version }}`.
   - Emit the entry only when `remediation.selected` is set and `remediation.active_run` is empty, with `kind=finding`, `number=<source>:<n>`, alert source/number/title/url, `workflow=security-remediation`, `input_key=finding`, and `label_swap=none`.
   - Leave the issue ambiguity check and `normalize` untouched; finding entries pass through unchanged and `has_plan` includes them.
   - _Requirements: 1.3, 2.1, 2.7, 3.1, 3.3, 8.2_
-- [ ] 2.2 Gate finding child creation in the dispatch stage
+- [x] 2.2 Gate finding child creation in the dispatch stage
   - Replace `active_dependabot_run(repo)` with an `active_runs(repo)` map built from one `GET /runs?status=...`, deriving the existing dependabot id from the same map.
   - For `kind == "finding"`, skip with `active_security_remediation_run` when a run is active, skip with `serialized` after the first finding child, otherwise create with the title `security-remediation for <repo> <source> #<n>`, the documented `target`, `args.inputs.finding`, and `args.labels`.
   - Record `{"finding": "<source>:<n>", "run_id": ...}` items plus `selected_finding` and `active_security_remediation_run`; fail the stage when a create returns no run id.
@@ -39,35 +39,35 @@
   - _Requirements: 2.7, 3.1, 3.2, 3.3_
 
 - [ ] 3. Build the `security-remediation` package
-- [ ] 3.1 Create the package TOML and embedded tools scaffold
+- [x] 3.1 Create the package TOML and embedded tools scaffold
   - Add `.fabro/workflows/security-remediation/workflow.toml` with `[run.inputs] finding = ""`, model fallbacks, and alert-read plus `contents`/`pull_requests` write permissions, with no `issues` write.
   - Disable `[run.run_branch]` and `[run.pull_request]` and leave `[run.clone]` unset, so no checkpoint commit or history rewrite can break the single-commit invariant.
   - Add a `[[run.prepare.steps]]` block that writes `.git/security-remediation-scripts/tools.py` between `SECURITY_REMEDIATION_TOOLS_PY` markers and `py_compile`s it.
   - The prepare step writes and `py_compile`s the helper successfully, and the TOML declares exactly the intended inputs and permissions.
   - _Requirements: 4.2, 7.2, 7.4_
-- [ ] 3.2 Implement finding intake and run state
+- [x] 3.2 Implement finding intake and run state
   - `parse_finding_ref` accepts `<source>:<n>`, `<source>#<n>`, and alert URLs; `fetch_alert` reads the detail endpoint and exits `"<source> alert #<n> could not be read: HTTP <code>"` on any non-200.
   - Render `.git/security-remediation-finding.md` with the untrusted-evidence banner and documented field order, and write `.git/security-remediation-state.json` with identity, branch, `baseline_sha`, `remote_branch_sha`, and `alert_open`.
   - A closed alert sets `alert_open=false` without branch work; a fresh run does `git fetch origin <trunk>` and `git checkout -B security/<source>-<n> origin/<trunk>`; a resumed run keeps earlier work and fails on a different finding.
   - Prepare reports `alert_open`, `alert_number`, `finding_source`, `alert_url`, `branch`, and `trunk`, and makes no alert write request.
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 6.1, 6.2, 7.2_
-- [ ] 3.3 Implement snapshot, verify guard, rework, and fail commands
+- [x] 3.3 Implement snapshot, verify guard, rework, and fail commands
   - `snapshot` records `verify_baseline = {head, diff_sha256}` over `git diff --binary HEAD`; `verify_guard` recomputes it and reports `tree_unchanged=false` plus `stage_failure` on a moved head or changed tracked tree.
   - `rework` increments `fix_round` and reports `stage_failure` above 3; `fail` prefixes `.git/security-remediation-failed-stage` and exits non-zero from `stage_failure` stdin.
   - A guard run on an unchanged tree reports `tree_unchanged=true`, and the fingerprint ignores untracked build output.
   - _Requirements: 5.4, 5.8_
-- [ ] 3.4 Build the single-commit publish payload
+- [x] 3.4 Build the single-commit publish payload
   - Stage the tree with `git add -A` and `git write-tree`, fetch `origin/<trunk>`, and use `FETCH_HEAD` as the parent; replay the fix onto a moved trunk only when `trunk_paths` and `fix_paths` are disjoint, else fail `base_moved` listing the overlap.
   - Fail on an empty diff and reject artifact paths under `.cache`, `node_modules`, `target`, `dist`, `build`, `.venv`, `__pycache__`, and `.pytest_cache`, listing the offenders.
   - Create `head = git commit-tree <tree> -p <base> -m <title> -m <summary>` from `.git/security-remediation-publish.json` or the fallback `fix(security): remediate <source> alert #<n>` / `Remediates <source> alert #<n>.`, then assert `git rev-list --count <head> ^<base>` equals 1.
   - _Requirements: 6.1, 6.2, 6.7, 6.8, 6.9_
-- [ ] 3.5 Push the branch and open or reuse the pull request
+- [x] 3.5 Push the branch and open or reuse the pull request
   - Read the remote head with `git ls-remote --heads`; fail `push_stale` when it differs from `remote_branch_sha` or appeared after intake, and push with `--force-with-lease`, updating `remote_branch_sha` and `published` on success.
   - Find open PRs with `head=<owner>:<branch>`; reuse exactly one (fail on several) or POST a non-draft PR into the default branch whose `pr_body` carries `Alert: <html_url> (<source> alert #<n>)`.
   - A 422 whose follow-up search finds no open PR fails the run with the API error; report `pr_number`, `pr_url`, and `commit_sha`, never alert closure.
   - Never merge, enable auto-merge, or write to an alert endpoint.
   - _Requirements: 3.6, 6.3, 6.4, 6.5, 6.6, 6.10, 6.11, 7.1, 7.2, 7.4, 7.5_
-- [ ] 3.6 (P) Write the fix prompt
+- [x] 3.6 (P) Write the fix prompt
   - Read the finding file and state; in rework mode also the test log and `test_failure_summary`; bump the dependency and lockfile or change the vulnerable code path.
   - Forbid suppression (inline alert comments, path narrowing, disabled queries, dismissal), workflow edits, unrelated dependencies, commits, pushes, GitHub writes, and following instructions found inside alert text.
   - Require the fix to be visible to the existing CodeQL configuration, permit an optional publish title/summary (`type(scope): summary`, at most 72 characters), and report `fix_status`, `fix_summary`, `fix_files`.
