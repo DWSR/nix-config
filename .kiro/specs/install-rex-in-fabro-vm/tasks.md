@@ -13,7 +13,7 @@
 
 - [ ] 1. Credential path through the guest sops store (Phase A)
 
-- [ ] 1.1 (P) Declare the Rex package credential, netrc template, and Nix netrc setting
+- [x] 1.1 (P) Declare the Rex package credential, netrc template, and Nix netrc setting
   - Add `sops.secrets."rex-package-token" = { }` beside the existing guest secrets in `configurations/fabro-vm/default.nix`
   - Add `sops.templates."rex-netrc"` with `mode = "0400"`, `restartUnits = [ "nix-daemon.service" ]`, and one stanza: `machine pkgs.superlogical.com login rex password ${config.sops.placeholder."rex-package-token"}`
   - Set `nix.settings."netrc-file" = config.sops.templates."rex-netrc".path`; do not use `nix.settings.access-tokens` and do not add a second credential source

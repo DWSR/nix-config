@@ -109,6 +109,12 @@ in
       "opencode-github-token" = "op://Private/GitHub/Tokens/OpenCode";
       "opencode-server-password" = "op://Private/OpenCode/Server Password";
       "opencode-signing-key" = "op://Private/OpenCode Signing Key/private key";
+      # The gated Rex package credential, mirrored into the same encrypted
+      # store. Nothing reads it at runtime except the rex-netrc template
+      # below; the 1Password item (`Private/Rex`, field `Package Token`) is
+      # an operator prerequisite, and the sync helper seeds and rotates the
+      # store key from it.
+      "rex-package-token" = "op://Private/Rex/Package Token";
     };
 
     # nixpkgs' rsync bump to 3.5.0 broke the kernel build's post-install
@@ -209,6 +215,14 @@ in
         # systemd credential (opencode.nix: LoadCredential), never via
         # the environment.
         opencode-signing-key = { };
+
+        # The gated Rex flake credential (source:
+        # op://Private/Rex/Package Token). Consumed only through the
+        # rex-netrc template below, which renders it into a root-only
+        # netrc file for the guest's Nix fetches — never
+        # nix.settings.access-tokens, whose value is world-readable in
+        # /etc/nix/nix.conf and would enter the store.
+        rex-package-token = { };
       };
 
       # systemd EnvironmentFiles the services consume (fabro.nix,
@@ -229,6 +243,11 @@ in
       #     as both GITHUB_TOKEN and GH_TOKEN), the litellm master key for
       #     the provider's `{env:LITELLM_MASTER_KEY}` api key, and the
       #     server's basic-auth password.
+      #   * rex-netrc — the Rex package credential as a netrc stanza that
+      #     Nix reads for the gated curl of the Rex flake. It is not an
+      #     EnvironmentFile: it is root-only (mode 0400) at
+      #     /run/secrets/rendered/rex-netrc, outside the store, and is
+      #     wired into Nix through `nix.settings."netrc-file"` below.
       #
       # Each template restarts its consumer when the rendered value
       # changes: systemd does not track EnvironmentFile contents, so
@@ -259,6 +278,19 @@ in
             GH_TOKEN=${config.sops.placeholder."opencode-github-token"}
             LITELLM_MASTER_KEY=${config.sops.placeholder.litellm-master-key}
             OPENCODE_SERVER_PASSWORD=${config.sops.placeholder."opencode-server-password"}
+          '';
+        };
+
+        # The Rex package credential for the gated flake fetch. The netrc
+        # file must stay root-only (0400) and outside the Nix store, so the
+        # guest's flake evaluation has to run as root to read it while no
+        # other local account can. Rotating the secret rewrites this file
+        # and restarts the daemon, so later fetches use the new value.
+        "rex-netrc" = {
+          mode = "0400";
+          restartUnits = [ "nix-daemon.service" ];
+          content = ''
+            machine pkgs.superlogical.com login rex password ${config.sops.placeholder."rex-package-token"}
           '';
         };
       };
@@ -370,6 +402,11 @@ in
         "flakes"
       ];
       trusted-users = [ "@wheel" ];
+      # Authenticate the guest's fetch of the gated Rex flake input with the
+      # credential rendered by the rex-netrc sops template. This is the only
+      # Rex credential source on the guest: a root-run nixos-rebuild reads
+      # the root-only file during flake evaluation and fetch.
+      "netrc-file" = config.sops.templates."rex-netrc".path;
     };
 
     # Store maintenance. GC reaps the generation-per-switch accretion on
