@@ -342,6 +342,29 @@ final: prev: {
     };
   };
 
+  # kiro-spec: the in-repo Rust CLI that reports and updates one Kiro spec.
+  # Requirement 1.1/1.4/11.6 need one offline executable on both hosts and in
+  # the Fabro sandbox image, so build it from the checked-in crate and
+  # lockfile and run the crate's test suite inside the Nix sandbox. Bump
+  # `version` with `scripts/kiro-spec/Cargo.toml`; the build is pinned by the
+  # checked-in lockfile and the check phase runs offline in the Nix sandbox.
+  kiro-spec = final.rustPlatform.buildRustPackage {
+    pname = "kiro-spec";
+    version = "0.1.0";
+
+    src = final.lib.cleanSource ../scripts/kiro-spec;
+
+    cargoLock.lockFile = ../scripts/kiro-spec/Cargo.lock;
+
+    doCheck = true;
+
+    meta = {
+      description = "Read and update the state of one Kiro spec";
+      mainProgram = "kiro-spec";
+      platforms = final.lib.platforms.unix;
+    };
+  };
+
   # Pin zellij to a specific version. nixpkgs unstable drifts silently
   # (e.g. 0.44.1 → 0.44.2 between channel bumps); pinning gives
   # reproducibility and avoids surprise version changes during routine
