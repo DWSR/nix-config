@@ -14,7 +14,7 @@ itself is pinned by `overlays/fabro.nix`.
   versions in the Fabro server and pins their ids as server variables.
 
 The packages are `dependabot`, `dispatch`, `failure-triage`, `kiro-feedback`,
-`kiro-impl`, `kiro-spec`, `kiro-task`, and `oneshot`.
+`kiro-impl`, `kiro-spec`, `kiro-task`, `oneshot`, and `security-remediation`.
 
 A repeated `kiro-impl` invocation resumes an existing spec stack. After it
 publishes the stack, it dispatches one `kiro-feedback` child per layer from the
@@ -49,7 +49,7 @@ The dispatcher reads immutable workflow version ids from server-owned
 variables instead of re-emitting package contents through an agent.
 
 After changing `kiro-spec`, `kiro-impl`, `kiro-task`, `kiro-feedback`, `oneshot`,
-or `dependabot`, run:
+`dependabot`, or `security-remediation`, run:
 
 ```sh
 scripts/pin-workflow-versions.sh
@@ -60,7 +60,10 @@ content-addressed, so unchanged packages keep the same id. Changes to the
 dispatcher packages themselves take effect when the automation next loads them
 from `DWSR/nix-config@main`.
 
-The pinned variables are allowlisted for the API bridge in
+The pinned variables `kiro_spec_workflow_version`,
+`kiro_task_workflow_version`, `kiro_feedback_workflow_version`,
+`oneshot_workflow_version`, `dependabot_workflow_version`, and
+`security_remediation_workflow_version` are allowlisted for the API bridge in
 `configurations/fabro-vm/default.nix`. Add any new dispatch target there before
 deploying the guest, or the bridge rejects child creation with HTTP 403.
 
