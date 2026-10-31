@@ -1,0 +1,141 @@
+_version = 1
+
+[workflow]
+graph = "workflow.fabro"
+
+[run.inputs]
+finding = ""
+
+# The agent stages request the same primary model as `dependabot`; fail over to
+# the runner default when the ChatGPT-backed cell saturates.
+[run.model.fallbacks]
+"gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
+
+# contents, pull_requests: write - push the deterministic remediation branch and
+# open or reuse its pull request; vulnerability_alerts, security_events: read -
+# read the one selected Dependabot or code scanning alert. Deliberately no
+# issues write and no alert write scope: the run never comments on, dismisses,
+# or otherwise changes an alert (requirement 7.2).
+[run.integrations.github]
+permissions = { contents = "write", pull_requests = "write", vulnerability_alerts = "read", security_events = "read" }
+
+# Checkpoints MUST stay disabled: Fabro's checkpoint commits run `git add -A` +
+# `git commit` on the current HEAD, which here is the remediation branch, and
+# would both violate the single-commit invariant and corrupt the amend target.
+[run.run_branch]
+enabled = false
+
+[run.pull_request]
+enabled = false
+
+# No [run.clone] override: publish compares trees and parents one commit on the
+# fetched trunk head, so the package must never check out, rebase, or rewrite
+# history on its own.
+
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git/security-remediation-scripts
+cat > .git/security-remediation-scripts/tools.py <<'SECURITY_REMEDIATION_TOOLS_PY'
+"""Shared helpers for the security-remediation workflow.
+
+Every command runs as
+`python3 .git/security-remediation-scripts/tools.py <prepare|snapshot|verify_guard|rework|publish|fail>`
+and ends by printing a single `{"context_updates": {...}}` JSON object on stdout.
+"""
+
+import datetime, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+
+STATE_PATH = ".git/security-remediation-state.json"
+FINDING_PATH = ".git/security-remediation-finding.md"
+PUBLISH_PATH = ".git/security-remediation-publish.json"
+TEST_LOG_PATH = ".git/security-remediation-test.log"
+FAILED_STAGE_PATH = ".git/security-remediation-failed-stage"
+API_BASE = os.environ.get("SECURITY_REMEDIATION_API_BASE", "https://api.github.com").rstrip("/")
+ARTIFACT_SEGMENTS = (".cache", "node_modules", "target", "dist", "build", ".venv", "__pycache__", ".pytest_cache")
+COMMANDS = ("prepare", "snapshot", "verify_guard", "rework", "publish", "fail")
+
+
+def run(cmd, check=True, env=None):
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if check and result.returncode != 0:
+        sys.exit("command failed: %s\n%s" % (" ".join(cmd), result.stderr.strip()))
+    return result.stdout.strip()
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_state():
+    if not os.path.exists(STATE_PATH):
+        sys.exit("state file %s is missing; the prepare stage must run first" % STATE_PATH)
+    with open(STATE_PATH) as f:
+        return json.load(f)
+
+
+def save_state(state):
+    with open(STATE_PATH, "w") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+
+
+def api(method, path, body=None):
+    """Call the GitHub REST API and return (status, payload) for every status code."""
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(API_BASE + path, data=data, method=method, headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "fabro-security-remediation-workflow",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            raw = response.read()
+            return response.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        try:
+            payload = json.loads(raw) if raw else None
+        except ValueError:
+            payload = raw.decode("utf-8", "replace")
+        return exc.code, payload
+
+
+def gh(method, path, body=None, expect=(200, 201)):
+    status, payload = api(method, path, body)
+    if status not in expect:
+        sys.exit("GitHub API %s %s failed: HTTP %s\n%s" % (method, path, status, json.dumps(payload)[:1000]))
+    return status, payload
+
+
+def origin_repo():
+    url = run(["git", "config", "--get", "remote.origin.url"], check=False)
+    match = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not match:
+        sys.exit("cannot derive owner/repo from origin url %r; pass -I finding=<source>:<n>" % url)
+    return match.group(1), match.group(2)
+
+
+def emit(updates):
+    print(json.dumps({"context_updates": updates}))
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: tools.py <%s> [args]" % "|".join(COMMANDS))
+    command, rest = sys.argv[1], sys.argv[2:]
+    handler = globals().get(command) if command in COMMANDS else None
+    if not callable(handler):
+        sys.exit("unknown command %r" % command)
+    handler(rest)
+
+
+if __name__ == "__main__":
+    main()
+SECURITY_REMEDIATION_TOOLS_PY
+python3 -c "import py_compile; py_compile.compile('.git/security-remediation-scripts/tools.py', doraise=True)"
+echo "security-remediation: helper scripts ready" >&2
+'''
