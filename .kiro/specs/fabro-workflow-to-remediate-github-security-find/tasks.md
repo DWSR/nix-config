@@ -45,7 +45,7 @@
   - Add a `[[run.prepare.steps]]` block that writes `.git/security-remediation-scripts/tools.py` between `SECURITY_REMEDIATION_TOOLS_PY` markers and `py_compile`s it.
   - The prepare step writes and `py_compile`s the helper successfully, and the TOML declares exactly the intended inputs and permissions.
   - _Requirements: 4.2, 7.2, 7.4_
-- [ ] 3.2 Implement finding intake and run state
+- [x] 3.2 Implement finding intake and run state
   - `parse_finding_ref` accepts `<source>:<n>`, `<source>#<n>`, and alert URLs; `fetch_alert` reads the detail endpoint and exits `"<source> alert #<n> could not be read: HTTP <code>"` on any non-200.
   - Render `.git/security-remediation-finding.md` with the untrusted-evidence banner and documented field order, and write `.git/security-remediation-state.json` with identity, branch, `baseline_sha`, `remote_branch_sha`, and `alert_open`.
   - A closed alert sets `alert_open=false` without branch work; a fresh run does `git fetch origin <trunk>` and `git checkout -B security/<source>-<n> origin/<trunk>`; a resumed run keeps earlier work and fails on a different finding.
