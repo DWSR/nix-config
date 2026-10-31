@@ -31,7 +31,7 @@
   - Emit the entry only when `remediation.selected` is set and `remediation.active_run` is empty, with `kind=finding`, `number=<source>:<n>`, alert source/number/title/url, `workflow=security-remediation`, `input_key=finding`, and `label_swap=none`.
   - Leave the issue ambiguity check and `normalize` untouched; finding entries pass through unchanged and `has_plan` includes them.
   - _Requirements: 1.3, 2.1, 2.7, 3.1, 3.3, 8.2_
-- [ ] 2.2 Gate finding child creation in the dispatch stage
+- [x] 2.2 Gate finding child creation in the dispatch stage
   - Replace `active_dependabot_run(repo)` with an `active_runs(repo)` map built from one `GET /runs?status=...`, deriving the existing dependabot id from the same map.
   - For `kind == "finding"`, skip with `active_security_remediation_run` when a run is active, skip with `serialized` after the first finding child, otherwise create with the title `security-remediation for <repo> <source> #<n>`, the documented `target`, `args.inputs.finding`, and `args.labels`.
   - Record `{"finding": "<source>:<n>", "run_id": ...}` items plus `selected_finding` and `active_security_remediation_run`; fail the stage when a create returns no run id.
