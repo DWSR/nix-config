@@ -12,7 +12,7 @@ digraph KiroTask {
         shape=parallelogram,
         output_schema="routing",
         goal_gate=true,
-        script="set -eu\nSPEC={{ inputs.spec }}\nTASK={{ inputs.task }}\nfail() { printf 'kiro-task guard: %s\\n' \"$1\" >&2; exit 1; }\n[ -n \"$SPEC\" ] || fail 'input \"spec\" is empty'\n[ -n \"$TASK\" ] || fail 'input \"task\" is empty'\nSPEC_DIR=\".kiro/specs/$SPEC\"\nfor f in spec.json requirements.md design.md tasks.md; do\n  [ -f \"$SPEC_DIR/$f\" ] || fail \"missing $SPEC_DIR/$f\"\ndone\nESC_ID=$(printf '%s' \"$TASK\" | sed 's/\\./\\\\./g')\nPAT=\"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}(\\.?[[:space:]]|$)\"\nLINE=$(grep -nE \"$PAT\" \"$SPEC_DIR/tasks.md\" | head -n1 | cut -d: -f1)\nif [ -z \"$LINE\" ]; then\n  NEAR=$(grep -oE \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}[0-9]+([.][0-9]+)?\" \"$SPEC_DIR/tasks.md\" | head -n1 | sed -E 's/^-[[:space:]]+\\[[ x]*\\][*]?[[:space:]]+//')\n  if [ -n \"$NEAR\" ]; then\n    fail \"task $TASK not found; tasks.md contains task $NEAR (numeric task inputs lose trailing zeros; pass the task as a JSON string)\"\n  fi\n  fail \"task $TASK not found in $SPEC_DIR/tasks.md\"\nfi\nTASK_LINE=$(sed -n \"${LINE}p\" \"$SPEC_DIR/tasks.md\")\nTASK_STATE=$(printf '%s\\n' \"$TASK_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\nif [ \"$TASK_STATE\" = x ]; then\n  fail \"task $TASK is already checked\"\nfi\nBLOCK=$(awk -v s=\"$LINE\" 'NR>=s { if (NR>s && /^[[:space:]]*(```|~~~)/) { fence = !fence; next } if (fence) next; if (NR>s && /^- \\[[^]]*\\]/) exit; print }' \"$SPEC_DIR/tasks.md\")\nif printf '%s\\n' \"$BLOCK\" | grep -qE '^[[:space:]]+-[[:space:]]+_Blocked:[[:space:]]+[^[:space:]]'; then\n  fail \"task $TASK is marked blocked\"\nfi\nDEPS=$(printf '%s\\n' \"$BLOCK\" | sed -nE 's/^[[:space:]]+-[[:space:]]+_Depends:[[:space:]]*//p' | head -n1)\nfor dep in $(printf '%s' \"$DEPS\" | tr ',' ' '); do\n  DEP=$(printf '%s' \"$dep\" | tr -d '[:space:]_')\n  [ -n \"$DEP\" ] || continue\n  ESC_DEP=$(printf '%s' \"$DEP\" | sed 's/\\./\\\\./g')\n  DEP_LINE=$(grep -E \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_DEP}(\\.?[[:space:]]|$)\" \"$SPEC_DIR/tasks.md\" | head -n1)\n  [ -n \"$DEP_LINE\" ] || fail \"dependency $DEP not found in tasks.md\"\n  DEP_STATE=$(printf '%s\\n' \"$DEP_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\n  if [ \"$DEP_STATE\" != x ]; then\n    fail \"dependency $DEP is not complete\"\n  fi\ndone\nprintf '{\"context_updates\":{\"baseline_sha\":\"%s\"}}\\n' \"$(git rev-parse HEAD)\""
+        script="set -eu\nSPEC={{ inputs.spec }}\nTASK={{ inputs.task }}\nfail() { printf 'kiro-task guard: %s\\n' \"$1\" >&2; exit 1; }\n[ -f .git/kiro-task-scripts/tools.py ] || fail 'helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one'\npython3 .git/kiro-task-scripts/tools.py reset >/dev/null || fail 'shared-infrastructure reset failed'\n[ -n \"$SPEC\" ] || fail 'input \"spec\" is empty'\n[ -n \"$TASK\" ] || fail 'input \"task\" is empty'\nSPEC_DIR=\".kiro/specs/$SPEC\"\nfor f in spec.json requirements.md design.md tasks.md; do\n  [ -f \"$SPEC_DIR/$f\" ] || fail \"missing $SPEC_DIR/$f\"\ndone\nESC_ID=$(printf '%s' \"$TASK\" | sed 's/\\./\\\\./g')\nPAT=\"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}(\\.?[[:space:]]|$)\"\nLINE=$(grep -nE \"$PAT\" \"$SPEC_DIR/tasks.md\" | head -n1 | cut -d: -f1)\nif [ -z \"$LINE\" ]; then\n  NEAR=$(grep -oE \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_ID}[0-9]+([.][0-9]+)?\" \"$SPEC_DIR/tasks.md\" | head -n1 | sed -E 's/^-[[:space:]]+\\[[ x]*\\][*]?[[:space:]]+//')\n  if [ -n \"$NEAR\" ]; then\n    fail \"task $TASK not found; tasks.md contains task $NEAR (numeric task inputs lose trailing zeros; pass the task as a JSON string)\"\n  fi\n  fail \"task $TASK not found in $SPEC_DIR/tasks.md\"\nfi\nTASK_LINE=$(sed -n \"${LINE}p\" \"$SPEC_DIR/tasks.md\")\nTASK_STATE=$(printf '%s\\n' \"$TASK_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\nif [ \"$TASK_STATE\" = x ]; then\n  fail \"task $TASK is already checked\"\nfi\nBLOCK=$(awk -v s=\"$LINE\" 'NR>=s { if (NR>s && /^[[:space:]]*(```|~~~)/) { fence = !fence; next } if (fence) next; if (NR>s && /^- \\[[^]]*\\]/) exit; print }' \"$SPEC_DIR/tasks.md\")\nif printf '%s\\n' \"$BLOCK\" | grep -qE '^[[:space:]]+-[[:space:]]+_Blocked:[[:space:]]+[^[:space:]]'; then\n  fail \"task $TASK is marked blocked\"\nfi\nDEPS=$(printf '%s\\n' \"$BLOCK\" | sed -nE 's/^[[:space:]]+-[[:space:]]+_Depends:[[:space:]]*//p' | head -n1)\nfor dep in $(printf '%s' \"$DEPS\" | tr ',' ' '); do\n  DEP=$(printf '%s' \"$dep\" | tr -d '[:space:]_')\n  [ -n \"$DEP\" ] || continue\n  ESC_DEP=$(printf '%s' \"$DEP\" | sed 's/\\./\\\\./g')\n  DEP_LINE=$(grep -E \"^- \\\\[[ x]*\\\\][*]?[[:space:]]+${ESC_DEP}(\\.?[[:space:]]|$)\" \"$SPEC_DIR/tasks.md\" | head -n1)\n  [ -n \"$DEP_LINE\" ] || fail \"dependency $DEP not found in tasks.md\"\n  DEP_STATE=$(printf '%s\\n' \"$DEP_LINE\" | sed -nE 's/^- \\[([^]]*)\\].*/\\1/p')\n  if [ \"$DEP_STATE\" != x ]; then\n    fail \"dependency $DEP is not complete\"\n  fi\ndone\nprintf '{\"context_updates\":{\"baseline_sha\":\"%s\"}}\\n' \"$(git rev-parse HEAD)\""
     ]
 
     implement [
@@ -23,6 +23,16 @@ digraph KiroTask {
         max_visits=8,
         max_retries=2,
         retry_policy="patient"
+    ]
+
+    boundary [
+        label="Boundary gate",
+        shape=parallelogram,
+        output_schema="routing",
+        goal_gate=true,
+        max_visits=8,
+        stdin_source="context.baseline_sha",
+        script="test -f .git/kiro-task-scripts/tools.py || { echo 'kiro-task boundary: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/kiro-task-scripts/tools.py boundary {{ inputs.spec }} {{ inputs.task }}"
     ]
 
     review [
@@ -94,11 +104,14 @@ digraph KiroTask {
     guard -> implement [condition="outcome=succeeded"]
     guard -> exit
 
-    implement -> review [condition="outcome=succeeded && context.impl_status=READY_FOR_REVIEW"]
+    implement -> boundary [condition="outcome=succeeded && context.impl_status=READY_FOR_REVIEW"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     implement -> blocked
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> blocked
+
+    boundary -> review [condition="outcome=succeeded"]
+    boundary -> blocked
 
     review -> complete [condition="outcome=succeeded && context.verdict=APPROVED"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]

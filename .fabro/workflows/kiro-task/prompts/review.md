@@ -12,6 +12,9 @@ context report; treat every `impl_*` value as a claim to check.
 - The referenced sections of `.kiro/specs/{{ inputs.spec }}/requirements.md` and `.kiro/specs/{{ inputs.spec }}/design.md`.
 - The implementer's report in the run context: `impl_status`, `impl_summary`, `impl_files_changed`, `impl_red_evidence`, `impl_tests_run`, `impl_concerns`.
 - The run context value `baseline_sha`; it is the commit the run started from.
+- The run context values `boundary_status`, `boundary_reverted`, and
+  `boundary_protected` from the `Boundary gate` stage that runs between
+  implementation and this review.
 
 ## First action
 
@@ -80,7 +83,7 @@ can decide.
 1. Regression safety: discover the repository's canonical test command(s) from its manifests, task runners, CI config, and README, and run them under the validation environment above. Any evaluable test failure rejects the task; record a check the host cannot run as `environment-blocked` instead.
 2. Placeholder markers: grep the changed files for `TBD`, `TODO`, `FIXME`, `HACK`, `XXX`. New markers reject the task unless the task itself requires them.
 3. Secrets: grep the changed files for hardcoded secrets or credentials. Concrete secret patterns reject the task.
-4. Boundary: compare `git diff --name-only <baseline_sha>` against the task's `_Boundary:_` when present. Files outside the boundary reject the task unless the task itself justifies them.
+4. Boundary: compare `git diff --name-only <baseline_sha>` against the task's `_Boundary:_` when present. Files outside the boundary reject the task unless the task itself justifies them. These shared-infrastructure paths belong to the repository, not to one task: `flake.nix`, `flake.lock`, `configurations/common-darwin/local-binary-cache.nix`, `configurations/personal/default.nix`, `tests/local-binary-cache/`. The `Boundary gate` stage reverts any change to them that the task entry does not claim, so `boundary_status` must be `clean`, `reverted`, or `claimed`; a missing value means the gate did not run. A path still listed in `boundary_protected` is claimed by the task: confirm the task entry names that concern (for example the task adds a flake check, the spec is `local-binary-cache`, or the task changes the personal host), otherwise reject with the exact path and state that the change is out of boundary. Paths listed in `boundary_reverted` were already removed from the patch; do not reject the task merely because `impl_files_changed` names them.
 5. RED evidence: for behavioral tasks, `impl_red_evidence` must show failing tests captured before the implementation. Missing or unrelated evidence rejects the task. When the test command itself is environment-blocked, record that instead of rejecting for missing RED evidence.
 6. Static checks: run the repository's linter or typechecker when one is configured for the touched stack. Otherwise spot-check the changed files for runtime-only breakage such as type-only imports used as values, unresolved globals, or newly introduced runtime dependencies.
 
@@ -100,6 +103,7 @@ Read the code and compare it against the spec.
 
 - APPROVED when every evaluable mechanical check passes, any remaining check is recorded as environment-blocked for a host limitation, and no judgment check finds a real gap.
 - REJECTED only for an evaluable failure or a real judgment gap. An environment-blocked check never justifies a rejection or a rework round: the reviewer cannot produce that evidence on this host, and repeating the command cannot change the result.
+- REJECTED for a boundary violation: a changed shared-infrastructure path the task entry does not name is out of scope regardless of test results, and the remediation names the exact path and why the task must not touch it.
 - If a check is neither evaluable nor environment-blocked, say so explicitly and reject or escalate; never assume success.
 - A rejection must include remediation: the exact file, the exact problem, and the exact fix, with spec section references where applicable.
 
@@ -118,7 +122,7 @@ quotes as \" and newlines as \n. Do not put anything after the JSON object.
 
 When the task is approved:
 
-{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: nix flake check PASS; prek: PASS; environment-blocked: nix build .#checks.aarch64-darwin.fabro-vm-guest-eval (Darwin-only check); TODO grep: CLEAN; secrets grep: CLEAN; boundary: WITHIN; RED phase: VERIFIED", "review_findings": "", "review_remediation": ""}}
+{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: nix flake check PASS; prek: PASS; environment-blocked: nix build .#checks.aarch64-darwin.fabro-vm-guest-eval (Darwin-only check); TODO grep: CLEAN; secrets grep: CLEAN; boundary: WITHIN (gate clean); RED phase: VERIFIED", "review_findings": "", "review_remediation": ""}}
 
 When the task is rejected:
 
