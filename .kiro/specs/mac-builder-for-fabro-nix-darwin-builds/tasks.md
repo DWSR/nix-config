@@ -74,6 +74,7 @@
   - Done when `sops -d secrets/remote-builder.mac-builder.yaml` lists `builder-authorized-keys` and `builder-tailscale-oauth-secret` only, and no plaintext credential appears in the working tree.
   - _Requirements: 4.3, 4.4, 4.6, 4.7_
   - _Boundary: Builder Secret Store_
+  - _Blocked: Sandbox has no Tailscale OAuth client secret or 1Password access; needs an operator with 1Password + Tailscale console to create the auth_keys client and run sops encrypt._
 
 - [ ] 4.2 Provision build-session key material on both sides
   - Generate the build key pair out of band, then add `build-client-key` (private half) and `build-host-key` (the builder's SSH host public key) to the encrypted `secrets/fabro.fabro.yaml` store, plus the public half to the builder's `builder-authorized-keys` entry.
