@@ -7,6 +7,17 @@ const { nixEvalJson, nixEvalFailure, repoRoot } = require('./helpers');
 
 const limaModulePath = `${repoRoot}/home-manager/common/lima-vm.nix`;
 
+// The cases below realise aarch64-darwin derivations (the rendered Lima YAML,
+// supervisor, and deploy wrapper) or read a Darwin host configuration, so they
+// need a Darwin evaluator. `nix flake check` also builds this suite on
+// aarch64-linux, where those outputs cannot be realised ("platform mismatch");
+// skip exactly those cases there. The evaluation-only cases (disabled module,
+// invalid name/hostname/arch failures) still run on both systems.
+const darwinOnly =
+  process.platform === 'darwin'
+    ? {}
+    : { skip: 'requires an aarch64-darwin evaluator (Darwin-only outputs)' };
+
 function standaloneLimaExpr(extraModule, name = 'fabro') {
   return `
     let
@@ -89,7 +100,7 @@ test('disabled configuration registers no launchd agent', () => {
   assert.equal(rendered.supervisorText, null);
 });
 
-test('enabled configuration registers the launchd agent on lima defaults', () => {
+test('enabled configuration registers the launchd agent on lima defaults', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   assert.equal(rendered.hasAgent, true);
@@ -141,7 +152,7 @@ test('enabled configuration registers the launchd agent on lima defaults', () =>
   );
 });
 
-test('rendered Lima YAML matches the module defaults', () => {
+test('rendered Lima YAML matches the module defaults', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   const yaml = rendered.configYaml;
@@ -170,7 +181,7 @@ test('rendered Lima YAML matches the module defaults', () => {
   assert.match(yaml, /\s*ignore: ?true/);
 });
 
-test('mounts entries render into the Lima YAML', () => {
+test('mounts entries render into the Lima YAML', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.mounts = [
@@ -196,7 +207,7 @@ test('mounts entries render into the Lima YAML', () => {
   assert.match(dirsData, /\/Users\/fabro-test\/\.local\/state\/fabro/);
 });
 
-test('supervisor creates the instance on first run and supervises in the foreground', () => {
+test('supervisor creates the instance on first run and supervises in the foreground', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   const wrapper = rendered.supervisorText;
@@ -228,7 +239,7 @@ test('supervisor creates the instance on first run and supervises in the foregro
   );
 });
 
-test('custom instance name propagates to the agent and plist label', () => {
+test('custom instance name propagates to the agent and plist label', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.name = "other-vm";
@@ -255,7 +266,7 @@ test('invalid instance names fail the eval loudly', () => {
   );
 });
 
-test('default configuration renders only the podman-group provision', () => {
+test('default configuration renders only the podman-group provision', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   const yaml = rendered.configYaml;
@@ -272,7 +283,7 @@ test('default configuration renders only the podman-group provision', () => {
   assert.doesNotMatch(yaml, /\/proc\/sys\/kernel\/hostname/); // hostname unset
 });
 
-test('setting hostname adds a booted-every-boot provisioning script', () => {
+test('setting hostname adds a booted-every-boot provisioning script', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.hostname = "fabro";
@@ -286,7 +297,7 @@ test('setting hostname adds a booted-every-boot provisioning script', () => {
   );
 });
 
-test('guestSystem unset ships no deploy script', () => {
+test('guestSystem unset ships no deploy script', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: { virtualisation.limaVM.enable = true; }`));
 
   assert.equal(rendered.deployText, null);
@@ -296,7 +307,7 @@ test('guestSystem unset ships no deploy script', () => {
   );
 });
 
-test('guestSystem ships a deploy script with tar-over-ssh and no repo clone', () => {
+test('guestSystem ships a deploy script with tar-over-ssh and no repo clone', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.guestSystem = "fabro-vm";
@@ -327,7 +338,7 @@ test('invalid hostnames fail the eval loudly', () => {
   );
 });
 
-test('extraLimaConfig merges over the rendered keys', () => {
+test('extraLimaConfig merges over the rendered keys', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.extraLimaConfig.memory = "16GiB";
@@ -337,7 +348,7 @@ test('extraLimaConfig merges over the rendered keys', () => {
   assert.doesNotMatch(rendered.configYaml, /memory: ?['"]?12GiB['"]?/);
 });
 
-test('a custom image can point at a store path without a digest', () => {
+test('a custom image can point at a store path without a digest', darwinOnly, () => {
   const rendered = nixEvalJson(standaloneLimaExpr(`{ ... }: {
     virtualisation.limaVM.enable = true;
     virtualisation.limaVM.image.location = "/nix/store/fabro-vm-image/nixos.qcow2";
@@ -364,7 +375,7 @@ test('non-native image arch under the VZ driver fails the eval', () => {
   );
 });
 
-test('the personal host enables the managed lima VM', { timeout: 600_000 }, () => {
+test('the personal host enables the managed lima VM', { ...darwinOnly, timeout: 600_000 }, () => {
   const rendered = nixEvalJson(
     `
     let
