@@ -35,9 +35,10 @@ infrastructure paths belong to the repository, not to one task:
 - `tests/local-binary-cache/`
 
 Change a path in that list only when this task's entry names the concern as its
-own deliverable (for example the task adds or registers a flake check, the spec
-is `local-binary-cache`, or the task changes the personal host). Merely running
-`nix flake check` as validation does not claim the flake files.
+own deliverable (for example the task adds or registers a flake check, adds or
+updates a flake input or flake output, the spec is `local-binary-cache`, or the
+task changes the personal host). Merely running `nix flake check` as validation
+does not claim the flake files.
 Before you report, run `git diff --name-only` against the `baseline_sha` value in
 the run context and revert your own collateral edits (`git checkout <baseline_sha>
 -- <path>` for a tracked file, `rm` for one you added). A `Boundary gate` stage

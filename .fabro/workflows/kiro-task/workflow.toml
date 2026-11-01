@@ -25,10 +25,34 @@ PROTECTED = (
     {
         "name": "flake",
         "paths": ("flake.nix", "flake.lock"),
-        # Only ownership phrases claim the flake files. Merely running
-        # `nix flake check` for validation must still revert collateral edits.
-        "claims": ("flake.nix", "flake.lock", "flake check entry", "to the flake"),
-        "claim_patterns": (r"(?:add|register|wire|expose)\s+.{0,80}?flake check",),
+        # Only ownership phrases claim the flake files: the paths themselves, a
+        # flake input/output/app/package/wiring, a new `checks.*` attribute, a
+        # change that makes the flake check fail with a named message, or the
+        # plural "flake checks" a task delivers. A task entry that only runs the
+        # `nix flake check` validation command must still revert collateral edits,
+        # so that command mention alone does not claim the group.
+        "claims": (
+            "flake.nix", "flake.lock", "flake input", "flake inputs",
+            "flake output", "flake outputs", "flake entry", "flake app",
+            "flake apps", "flake package", "flake packages", "flake wiring",
+            "to the flake", "in the flake", "checks.<system>.",
+        ),
+        "claim_patterns": (
+            r"(?:add|adds|adding|register|registers|registering|wire|wires|wiring|"
+            r"bind|binds|binding|expose|exposes|exposing|declare|declares|declaring|"
+            r"pin|pins|pinning|update|updates|updating|extend|extends|extending|"
+            r"thread|threads|threading)\s+[^\n]{0,60}?"
+            r"flake\s+(?:inputs?|outputs?|entries?|entry|lock|apps?|packages?)",
+            r"(?:add|adds|register|registers|wire|wires|bind|binds|expose|exposes)"
+            r"\s+[^\n]{0,40}?flake\s+checks?",
+            r"(?:add|adds|register|registers|wire|wires|bind|binds|expose|exposes)"
+            r"\s+[^\n]{0,60}?checks[.`]",
+            # Assertions added to an existing flake check make it fail by name.
+            r"fails?\s+[^\n]{0,80}?flake\s+checks?\b",
+            # A task that delivers flake checks writes "flake checks"; the
+            # validation command is the "nix flake check" invocation.
+            r"(?<!nix )flake checks\b",
+        ),
     },
     {
         "name": "local-binary-cache",

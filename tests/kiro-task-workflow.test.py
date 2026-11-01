@@ -166,7 +166,15 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             "- [ ] 5. Enable the guest on the personal host\n"
             "  - Done when the personal host evaluates.\n"
             "- [ ] 6. Run the validation suite\n"
-            "  - Done when `nix flake check` passes.\n",
+            "  - Done when `nix flake check` passes.\n"
+            "- [ ] 7. Rex flake input\n"
+            "  - Add the Rex flake input and lock it in `flake.lock`.\n"
+            "- [ ] 8. Add package, corpus, and Linux flake outputs\n"
+            "  - Add `checks.<system>.widget` bound to the overlay package.\n"
+            "- [ ] 9. Assert host and image wiring in a flake check\n"
+            "  - Add `checks.<system>.widget-wiring` asserting every host carries it.\n"
+            "- [ ] 10. Guard the widget against a silent downgrade\n"
+            "  - Completed when a dropped widget fails `nix flake check` with a named message.\n",
         )
         self.write(
             ".kiro/specs/local-binary-cache/tasks.md",
@@ -242,6 +250,22 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             self.read("configurations/common-darwin/local-binary-cache.nix"),
             "original module\n",
         )
+
+    def test_keeps_flake_input_output_and_check_edits_the_task_delivers(self):
+        for task, content in (
+            ("7", "task input\n"),
+            ("8", "task outputs\n"),
+            ("9", "task wiring check\n"),
+            ("10", "task named failure\n"),
+        ):
+            self.write("flake.nix", content)
+
+            updates = self.boundary(task=task)
+
+            self.assertEqual(updates["boundary_status"], "claimed", task)
+            self.assertEqual(updates["boundary_protected"], "flake.nix", task)
+            self.assertEqual(updates["boundary_reverted"], "", task)
+            self.assertEqual(self.read("flake.nix"), content, task)
 
     def test_reverts_flake_edits_when_the_task_only_runs_a_flake_check(self):
         self.write("flake.nix", "stale flake\n")
@@ -376,6 +400,14 @@ class KiroTaskBoundaryWiringTests(unittest.TestCase):
         self.assertIn("Boundary gate", implement)
         self.assertIn("boundary_status", review)
         self.assertIn("boundary_protected", review)
+
+    def test_review_prompt_rejects_a_reverted_path_the_task_delivers(self):
+        text = " ".join(REVIEW.read_text().split())
+        self.assertIn(
+            "do reject when a path listed in `boundary_reverted` is part of the "
+            "task's own deliverable",
+            text,
+        )
 
 
 if __name__ == "__main__":
