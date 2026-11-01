@@ -386,8 +386,9 @@ def scan(slug: str, request, runs: list[dict]) -> dict
   excluded findings.
 
 **Implementation Notes**
-- `list_alerts` paginates with `state=open&per_page=100&page=N` until a short page, capped at
-  `MAX_PAGES`; a cap hit fails loudly rather than truncating silently.
+- `list_alerts` paginates code scanning with `state=open&per_page=100&page=N` until a short page
+  and Dependabot by following the `Link` header's `rel="next"` cursor (the endpoint rejects
+  `page`), capped at `MAX_PAGES`; a cap hit fails loudly rather than truncating silently.
 - The injected `request` (the scan node's `github()`) calls `sys.exit` on a non-2xx response, so
   `list_alerts` catches `SystemExit` and re-exits with
   `dispatch scan: <source> alerts could not be read: <detail>`; the source is never lost.

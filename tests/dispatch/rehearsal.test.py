@@ -172,6 +172,7 @@ def make_scratch(tmp):
 class FakeResponse:
     def __init__(self, status, payload):
         self.status = status
+        self.headers = {}
         self._payload = json.dumps(payload).encode("utf-8") if payload is not None else b""
 
     def read(self):

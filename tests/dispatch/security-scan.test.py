@@ -62,26 +62,40 @@ class FakeRequest:
         code_scanning: list[dict[str, Any]] | None = None,
         pulls: list[dict[str, Any]] | None = None,
         failures: set[str] | None = None,
+        dependabot_after: list[dict[str, Any]] | None = None,
+        dependabot_next: str | None = None,
     ) -> None:
         self.dependabot = list(dependabot or [])
         self.code_scanning = list(code_scanning or [])
         self.pulls = list(pulls or [])
         self.failures = set(failures or ())
+        self.dependabot_after = dependabot_after
+        self.dependabot_next = dependabot_next
         self.calls: list[tuple[str, str]] = []
 
-    def __call__(self, method: str, path: str) -> list[dict[str, Any]]:
+    def __call__(
+        self, method: str, path: str, with_headers: bool = False
+    ) -> list[dict[str, Any]] | tuple[list[dict[str, Any]], dict[str, str]]:
         self.calls.append((method, path))
+        headers: dict[str, str] = {}
         if "/dependabot/alerts" in path:
             if "dependabot" in self.failures:
                 raise SystemExit("GitHub API GET %s failed: HTTP 500" % path)
-            return self.dependabot
-        if "/code-scanning/alerts" in path:
+            if "after=" in path and self.dependabot_after is not None:
+                body = self.dependabot_after
+            else:
+                body = self.dependabot
+                if self.dependabot_next:
+                    headers["link"] = '<%s>; rel="next"' % self.dependabot_next
+        elif "/code-scanning/alerts" in path:
             if "code-scanning" in self.failures:
                 raise SystemExit("GitHub API GET %s failed: HTTP 500" % path)
-            return self.code_scanning
-        if "/pulls?" in path:
-            return self.pulls
-        raise AssertionError("unexpected request: %s %s" % (method, path))
+            body = self.code_scanning
+        elif "/pulls?" in path:
+            body = self.pulls
+        else:
+            raise AssertionError("unexpected request: %s %s" % (method, path))
+        return (body, headers) if with_headers else body
 
 
 class SecurityScanSelectionTests(unittest.TestCase):
@@ -95,8 +109,9 @@ class SecurityScanSelectionTests(unittest.TestCase):
         pulls: list[dict[str, Any]] | None = None,
         runs: list[dict[str, Any]] | None = None,
         failures: set[str] | None = None,
+        **kwargs: Any,
     ) -> tuple[dict[str, Any], FakeRequest]:
-        request = FakeRequest(dependabot, code_scanning, pulls, failures)
+        request = FakeRequest(dependabot, code_scanning, pulls, failures, **kwargs)
         return self.scan["scan"](REPO, request, runs or []), request
 
     def test_dependabot_wins_even_with_a_higher_alert_number(self):
@@ -121,6 +136,26 @@ class SecurityScanSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["remediation"]["selected"]["number"], 7)
+
+    def test_dependabot_alerts_follow_cursor_pagination(self):
+        next_url = (
+            "https://api.github.com/repos/%s/dependabot/alerts"
+            "?state=open&per_page=100&after=CURSOR" % REPO
+        )
+
+        result, request = self.run_scan(
+            dependabot=[dependabot_alert(9)],
+            dependabot_after=[dependabot_alert(3)],
+            dependabot_next=next_url,
+        )
+
+        dependabot_paths = [
+            path for _method, path in request.calls if "/dependabot/alerts" in path
+        ]
+        self.assertEqual(len(dependabot_paths), 2)
+        self.assertNotRegex(dependabot_paths[0], r"[?&]page=")
+        self.assertIn("after=CURSOR", dependabot_paths[1])
+        self.assertEqual([finding["number"] for finding in result["findings"]], [3, 9])
 
     def test_repeated_scan_over_unchanged_input_selects_the_same_finding(self):
         alerts = [dependabot_alert(9), dependabot_alert(3)]
