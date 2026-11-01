@@ -164,7 +164,9 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             "- [ ] 4. Adjust the personal host defaults\n"
             "  - _Boundary: configurations/personal/default.nix_\n"
             "- [ ] 5. Enable the guest on the personal host\n"
-            "  - Done when the personal host evaluates.\n",
+            "  - Done when the personal host evaluates.\n"
+            "- [ ] 6. Run the validation suite\n"
+            "  - Done when `nix flake check` passes.\n",
         )
         self.write(
             ".kiro/specs/local-binary-cache/tasks.md",
@@ -240,6 +242,17 @@ class KiroTaskBoundaryGateTests(unittest.TestCase):
             self.read("configurations/common-darwin/local-binary-cache.nix"),
             "original module\n",
         )
+
+    def test_reverts_flake_edits_when_the_task_only_runs_a_flake_check(self):
+        self.write("flake.nix", "stale flake\n")
+        self.write("flake.lock", "stale lock\n")
+
+        updates = self.boundary(task="6")
+
+        self.assertEqual(updates["boundary_status"], "reverted")
+        self.assertEqual(updates["boundary_protected"], "")
+        self.assertEqual(self.read("flake.nix"), "original flake\n")
+        self.assertEqual(self.read("flake.lock"), "original lock\n")
 
     def test_keeps_local_binary_cache_edits_the_task_claims(self):
         self.write("configurations/personal/default.nix", "task caddy\n")

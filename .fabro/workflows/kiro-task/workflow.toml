@@ -25,7 +25,10 @@ PROTECTED = (
     {
         "name": "flake",
         "paths": ("flake.nix", "flake.lock"),
-        "claims": ("flake.nix", "flake.lock", "flake check", "flake checks", "the flake"),
+        # Only ownership phrases claim the flake files. Merely running
+        # `nix flake check` for validation must still revert collateral edits.
+        "claims": ("flake.nix", "flake.lock", "flake check entry", "to the flake"),
+        "claim_patterns": (r"(?:add|register|wire|expose)\s+.{0,80}?flake check",),
     },
     {
         "name": "local-binary-cache",
@@ -103,11 +106,15 @@ def protected_group(path):
 
 
 def claimed_groups(spec, task_block):
-    # A task claims a group when the spec or the task entry names the concern.
+    # A task claims a group when the spec or the task entry names the concern as
+    # its deliverable; a validation-only mention (for example running
+    # `nix flake check`) does not claim the files that hold the concern.
     text = (spec + "\n" + task_block).lower()
     claimed = set()
     for group in PROTECTED:
         if any(claim in text for claim in group["claims"]):
+            claimed.add(group["name"])
+        elif any(re.search(pattern, text) for pattern in group.get("claim_patterns", ())):
             claimed.add(group["name"])
         elif any(path.rstrip("/") in text for path in group["paths"]):
             claimed.add(group["name"])
