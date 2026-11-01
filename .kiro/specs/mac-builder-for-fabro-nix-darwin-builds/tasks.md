@@ -40,7 +40,7 @@
   - _Requirements: 4.1, 4.3, 4.8, 4.9, 4.10, 4.11_
   - _Boundary: Tailnet Auth Wrapper_
 
-- [ ] 2.2 Declare builder tailnet membership, credential, and auth daemon
+- [x] 2.2 Declare builder tailnet membership, credential, and auth daemon
   - Create `configurations/mac-builder/tailscale.nix` with `services.tailscale.enable = true` on the default open-source `pkgs.tailscale`; add no macOS app, `tailscale serve`, or `--ssh`.
   - Declare `sops.secrets."builder-tailscale-oauth-secret"` at mode `0400`, owner `root`, group `wheel`, at the design's default runtime path; declare no other tailnet credential and read nothing from the fabro store.
   - Register `launchd.daemons.mac-builder-tailscale-auth` running the wrapper with the credential path, `--hostname mac-builder`, and `--tag tag:mac-builder`, with `RunAtLoad`, `KeepAlive`, `ThrottleInterval = 30`, `ProcessType = "Background"`, and logs under `/var/log/`.
