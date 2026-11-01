@@ -664,14 +664,17 @@ client secret belongs to a different OAuth client from the guest's
 ### Builder store
 
 Encrypt the OAuth client secret with the builder age key, passing the value by
-file so it never reaches shell history. `sops set` rewrites only the named key,
-so the existing `builder-authorized-keys` value is preserved:
+file so it never reaches shell history. `sops --value-file` JSON-decodes the
+file, so write the token as a JSON string (`jq -Rs` after dropping the trailing
+newline). `sops set` rewrites only the named key, so the existing
+`builder-authorized-keys` value is preserved:
 
 ```sh
 T=$(mktemp -d); chmod 0700 "$T"
-op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' > "$T/secret"
+op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' \
+  | tr -d '\n' | jq -Rs . > "$T/secret"
 SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
-  nix run --inputs-from . nixpkgs#sops -c \
+  nix shell --inputs-from . nixpkgs#sops -c \
   sops set --value-file secrets/remote-builder.mac-builder.yaml \
   '["builder-tailscale-oauth-secret"]' "$T/secret"
 rm -rf "$T"
@@ -696,11 +699,12 @@ generation, the authorized-key append, and rotation.
 ### Verification
 
 Decrypt one value with the store's own host key and inspect its shape without
-printing it:
+printing it. The secret must contain no embedded newline, and
+`builder-authorized-keys` must still hold every authorized client key:
 
 ```sh
 SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
-  nix run --inputs-from . nixpkgs#sops -c \
+  nix shell --inputs-from . nixpkgs#sops -c \
   sops -d --extract '["builder-tailscale-oauth-secret"]' \
   secrets/remote-builder.mac-builder.yaml | wc -c
 ```

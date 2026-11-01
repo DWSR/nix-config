@@ -151,7 +151,7 @@ of the edit, then destroy the staging copy:
 T=$(mktemp -d)
 op read 'op://Private/sops-age-key-fabro/notesPlain' > "$T/key.txt"
 SOPS_AGE_KEY_FILE="$T/key.txt" \
-  nix run --inputs-from . nixpkgs#sops -c \
+  nix shell --inputs-from . nixpkgs#sops -c \
   sops --config .sops.yaml edit secrets/fabro.fabro.yaml
 rm -rf "$T"
 ```
@@ -209,14 +209,16 @@ the client ID is embedded in the value. The console owns the OAuth client's
 1. Store the client secret in 1Password at
    `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`.
 2. Encrypt it with the builder age key, passing the value by file so it never
-   reaches shell history. `sops set` rewrites only the named key and preserves
-   `builder-authorized-keys`:
+   reaches shell history. `sops --value-file` JSON-decodes the file, so write
+   the token as a JSON string. `sops set` rewrites only the named key and
+   preserves `builder-authorized-keys`:
 
    ```sh
    T=$(mktemp -d); chmod 0700 "$T"
-   op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' > "$T/secret"
+   op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' \
+     | tr -d '\n' | jq -Rs . > "$T/secret"
    SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
-     nix run --inputs-from . nixpkgs#sops -c \
+     nix shell --inputs-from . nixpkgs#sops -c \
      sops set --value-file secrets/remote-builder.mac-builder.yaml \
      '["builder-tailscale-oauth-secret"]' "$T/secret"
    rm -rf "$T"
@@ -224,11 +226,13 @@ the client ID is embedded in the value. The console owns the OAuth client's
 
    `sops edit` with the same `SOPS_AGE_KEY_FILE` is the alternative when the
    store needs several structural edits.
-3. Verify the key decrypts without printing the value:
+3. Verify the key decrypts without printing the value. The output must contain
+   no embedded newline, and `builder-authorized-keys` must still hold every
+   authorized client key:
 
    ```sh
    SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
-     nix run --inputs-from . nixpkgs#sops -c \
+     nix shell --inputs-from . nixpkgs#sops -c \
      sops -d --extract '["builder-tailscale-oauth-secret"]' \
      secrets/remote-builder.mac-builder.yaml | wc -c
    ```
