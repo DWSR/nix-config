@@ -57,7 +57,7 @@
   - _Requirements: 4.12, 5.1, 5.2, 5.5, 5.6, 5.7_
   - _Depends: 2.2_
 
-- [ ] 3. (P) Restrict the Builder Host to public caches and Darwin only
+- [x] 3. (P) Restrict the Builder Host to public caches and Darwin only
   - Create `configurations/mac-builder/substituters.nix` setting `nix.settings.substituters` to exactly `https://cache.nixos.org/` and `https://nix-community.cachix.org` with `trusted-public-keys` for exactly those two caches, and import it from `configurations/mac-builder/default.nix`.
   - Add no `extra-substituters`, no Attic or private-cache URL, no cache credential file, and no `post-build-hook`, so the builder never publishes outputs.
   - Assert `extra-platforms` stays unset, `nixpkgs.hostPlatform == "aarch64-darwin"`, and no private-cache host appears in the evaluated substituter or key sets.
