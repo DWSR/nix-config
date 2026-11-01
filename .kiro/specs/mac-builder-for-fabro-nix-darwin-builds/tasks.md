@@ -11,7 +11,7 @@
   - _Requirements: 3.2, 6.1, 6.2, 6.6, 6.7, 6.12_
   - _Boundary: Machines Renderer_
 
-- [ ] 1.2 Add the `fabro.darwinBuilder` option surface and unit wiring
+- [x] 1.2 Add the `fabro.darwinBuilder` option surface and unit wiring
   - Create `configurations/fabro-vm/darwin-dispatch.nix` with the option contract from the design: `enable` (default false), `machine.{hostName,sshUser,system,maxJobs,speedFactor}`, `clientKeyPath`, `hostKeyPath`, `machinesFile`.
   - Default `machine.hostName` to the builder tailnet FQDN and `machine.system` to `aarch64-darwin`; keep a single machine entry so `aarch64-linux` requests never match it.
   - Set `nix.distributedBuilds = true`, `nix.settings.builders = "@${cfg.machinesFile}"`, and `nix.settings.builders-use-substitutes = true`; leave `nix.buildMachines` empty so no eval-time `/etc/nix/machines` appears.
