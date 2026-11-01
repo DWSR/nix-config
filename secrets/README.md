@@ -202,9 +202,21 @@ The builder age key must be installed before the first
 
 The builder joins the tailnet with its own OAuth client secret,
 `builder-tailscale-oauth-secret`, distinct from the guest's
-`tailscale-oauth-secret`. Only the client secret is mirrored into the store;
-the client ID is embedded in the value. The console owns the OAuth client's
-`auth_keys` scope and its `tag:mac-builder` tag.
+`tailscale-oauth-secret` (a different OAuth client, in a different host
+store). Only the client secret is mirrored into the store; the client ID is
+embedded in the value.
+
+| Property | Value |
+| --- | --- |
+| SOPS key | `builder-tailscale-oauth-secret` |
+| Runtime path | `/run/secrets/builder-tailscale-oauth-secret` (sops-nix default path) |
+| Mode / owner | `0400` `root:wheel` |
+| Consumer | `launchd.daemons.mac-builder-tailscale-auth` (`--auth-key-file`) |
+
+In the Tailscale console, create a dedicated OAuth client for the builder with
+the `auth_keys` scope and the `tag:mac-builder` tag. The tag must match the
+auth daemon's `--tag tag:mac-builder`, because the node registers under it.
+Then, on the builder host (whose age key is at `/var/lib/sops-nix/key.txt`):
 
 1. Store the client secret in 1Password at
    `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`.
@@ -226,9 +238,9 @@ the client ID is embedded in the value. The console owns the OAuth client's
 
    `sops edit` with the same `SOPS_AGE_KEY_FILE` is the alternative when the
    store needs several structural edits.
-3. Verify the key decrypts without printing the value. The output must contain
-   no embedded newline, and `builder-authorized-keys` must still hold every
-   authorized client key:
+3. Verify the key decrypts without printing the value. `wc -c` must report the
+   client secret's byte length (the stored value carries no embedded newline),
+   and `builder-authorized-keys` must still hold every authorized client key:
 
    ```sh
    SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
