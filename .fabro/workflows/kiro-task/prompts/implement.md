@@ -20,7 +20,31 @@ for this task only.
 If the run context shows `verdict` = `REJECTED`, this is a rework round. Treat
 `review_findings` and `review_remediation` from the run context as authoritative
 feedback on top of the task contract: fix every finding, then re-run the full
-validation set. Do not redo work that the review already approved.
+validation set. Do not redo work that the review already approved. A rework round
+also starts by reverting every change this task does not own to the shared
+infrastructure paths in the next section.
+
+## File boundary
+
+A task owns only the files needed for its own deliverable. These shared
+infrastructure paths belong to the repository, not to one task:
+
+- `flake.nix`, `flake.lock`
+- `configurations/common-darwin/local-binary-cache.nix`
+- `configurations/personal/default.nix`
+- `tests/local-binary-cache/`
+
+Change a path in that list only when this task's entry names the concern as its
+own deliverable (for example the task adds or registers a flake check, adds or
+updates a flake input or flake output, the spec is `local-binary-cache`, or the
+task changes the personal host). Merely running `nix flake check` as validation
+does not claim the flake files.
+Before you report, run `git diff --name-only` against the `baseline_sha` value in
+the run context and revert your own collateral edits (`git checkout <baseline_sha>
+-- <path>` for a tracked file, `rm` for one you added). A `Boundary gate` stage
+runs between you and review and reverts any remaining change to those paths that
+the task entry does not claim; the report you write must match the patch that is
+reviewed.
 
 ## Execution protocol
 
@@ -43,7 +67,8 @@ validation set. Do not redo work that the review already approved.
    - The implementation is not a mock, stub, placeholder, fake, or TODO-only path.
    - There are no new TBD, TODO, FIXME, HACK, or XXX markers in changed files.
    - There are no hardcoded secrets or credentials.
-   - Changes stay inside the task boundary.
+   - Changes stay inside the task boundary and touch none of the shared
+     infrastructure paths the task entry does not name.
    - Tests would fail if the implementation were removed or broken.
    - Newly introduced runtime-sensitive dependencies or packaging assumptions are reflected in validation or called out in the report.
 
