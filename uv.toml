@@ -1,0 +1,7 @@
+# Refuse Python distributions uploaded less than seven days ago so that a
+# freshly compromised release cannot be locked before the ecosystem has had
+# time to notice it (issue #241). uv reads the nearest `uv.toml` or
+# `pyproject.toml` starting at the current directory, so every uv command run
+# inside this checkout inherits the window, including a regeneration of the
+# vendored `overlays/omlx/uv.lock`.
+exclude-newer = "7 days"
