@@ -21,7 +21,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 2.7, 3.1, 3.2, 3.3, 3.6, 6.11, 7.5, 7.6_
   - _Depends: 1.1_
 
-- [ ] 1.3 Enable dispatch on `fabro-vm` and declare the build-session secrets
+- [x] 1.3 Enable dispatch on `fabro-vm` and declare the build-session secrets
   - Add `./darwin-dispatch.nix` to `configurations/fabro-vm/default.nix` imports and set `fabro.darwinBuilder.enable = true;`.
   - Declare `sops.secrets."build-client-key"` and `sops.secrets."build-host-key"` at mode `0400`, owner/group `root`, at the design's runtime paths, with `restartUnits` for `fabro-darwin-builders.service` and `nix-daemon.service`.
   - Add both names to `fabro.onePasswordSecrets` with the design's 1Password URIs so `fabro-sync-from-1password` refreshes them.
