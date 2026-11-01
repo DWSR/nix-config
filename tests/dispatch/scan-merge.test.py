@@ -79,6 +79,7 @@ def helper_script() -> str:
 class FakeResponse:
     def __init__(self, payload):
         self.status = 200
+        self.headers = {}
         self._raw = json.dumps(payload).encode()
 
     def read(self):

@@ -302,22 +302,46 @@ def package_mentioned(package, text):
     return re.search(pattern, text) is not None
 
 
+def next_page_path(headers):
+    # Dependabot alerts use cursor pagination; the endpoint rejects `page`.
+    link = (headers or {}).get("link") or (headers or {}).get("Link") or ""
+    for part in link.split(","):
+        if 'rel="next"' not in part:
+            continue
+        match = re.search(r"<([^>]+)>", part)
+        if not match:
+            continue
+        parsed = urllib.parse.urlsplit(match.group(1))
+        return parsed.path + ("?" + parsed.query if parsed.query else "")
+    return None
+
+
 def list_alerts(slug, source, request):
     if source not in ALERT_PATHS:
         sys.exit("dispatch scan: %s alerts could not be read: unsupported alert source" % source)
     findings = []
+    path = None
     for page in range(1, MAX_PAGES + 1):
-        query = urllib.parse.urlencode({"state": "open", "per_page": PAGE_SIZE, "page": page})
-        path = "%s?%s" % (ALERT_PATHS[source] % slug, query)
+        if path is None:
+            params = {"state": "open", "per_page": PAGE_SIZE}
+            if source != "dependabot":
+                params["page"] = page
+            path = "%s?%s" % (ALERT_PATHS[source] % slug, urllib.parse.urlencode(params))
         try:
-            batch = request("GET", path) or []
+            batch, headers = request("GET", path, with_headers=True)
             findings.extend(alert_fields(slug, source, alert) for alert in batch)
         except SystemExit as exc:
             sys.exit("dispatch scan: %s alerts could not be read: %s" % (source, str(exc) or "no detail"))
         except Exception as exc:
             sys.exit("dispatch scan: %s alerts could not be read: %s" % (source, str(exc) or exc.__class__.__name__))
-        if len(batch) < PAGE_SIZE:
+        if source == "dependabot":
+            path = next_page_path(headers)
+            if not path:
+                return findings
+        elif len(batch) < PAGE_SIZE:
             return findings
+        else:
+            path = None
     sys.exit("dispatch scan: %s alerts could not be read: more than %d open alerts over %d pages; refusing to truncate" % (
         source, PAGE_SIZE * MAX_PAGES, MAX_PAGES))
 
