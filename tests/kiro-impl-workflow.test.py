@@ -10,13 +10,15 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".fabro/workflows/kiro-impl/workflow.fabro"
-GIT_ENV = dict(
-    os.environ,
-    GIT_AUTHOR_NAME="Test",
-    GIT_AUTHOR_EMAIL="test@example.com",
-    GIT_COMMITTER_NAME="Test",
-    GIT_COMMITTER_EMAIL="test@example.com",
-)
+GIT_ENV_OVERRIDES = {
+    "GIT_AUTHOR_NAME": "Test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "Test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+    "GIT_CONFIG_GLOBAL": os.devnull,
+    "GIT_CONFIG_NOSYSTEM": "1",
+}
+GIT_ENV = dict(os.environ, **GIT_ENV_OVERRIDES)
 
 
 def read_script(label):
@@ -45,12 +47,19 @@ def run_stage(label, cwd, **inputs):
     stdout = io.StringIO()
     stderr = io.StringIO()
     previous = os.getcwd()
+    saved_env = {key: os.environ.get(key) for key in GIT_ENV_OVERRIDES}
+    os.environ.update(GIT_ENV_OVERRIDES)
     os.chdir(cwd)
     try:
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             exec(compile(source, str(WORKFLOW) + ":" + label, "exec"), {"__name__": "__main__"})
     finally:
         os.chdir(previous)
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
     return stdout.getvalue(), stderr.getvalue()
 
 
