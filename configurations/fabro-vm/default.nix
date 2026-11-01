@@ -54,6 +54,11 @@ in
     # the loader unit that publishes it into the local Podman store.
     ./sandbox-image.nix
     ./sandbox.nix
+    # Darwin build dispatch (fabro.darwinBuilder): the guest's nix-daemon is
+    # the only client that sends `aarch64-darwin` requests to the Builder Host
+    # over the tailnet, while `aarch64-linux` requests stay local. Enabled in
+    # config below; the sandbox mounts and image stay untouched.
+    ./darwin-dispatch.nix
     ./litellm.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
@@ -92,6 +97,12 @@ in
     # systemd service.
     services.lima.enable = true;
 
+    # Darwin builds from a sandbox leave the guest only through its nix-daemon
+    # (./darwin-dispatch.nix): the machines file is rendered at boot from the
+    # two build-session secrets declared below, so no workflow, sandbox image,
+    # or per-environment configuration changes.
+    fabro.darwinBuilder.enable = true;
+
     fabro.onePasswordSecrets = {
       "fabro-session-secret" = "op://Private/Fabro/Session Secret";
       "fabro-dev-token" = "op://Private/Fabro/Dev Token";
@@ -102,6 +113,12 @@ in
       # sops.secrets below.
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
+      # Build-session trust material for Darwin dispatch (see the
+      # build-client-key / build-host-key entries in sops.secrets below and
+      # ./darwin-dispatch.nix): the dedicated build key pair, provisioned out
+      # of band and mirrored from the mac-builder build-credentials item.
+      "build-client-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key";
+      "build-host-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key";
       # The OpenCode v1 server's secrets (opencode.nix): a dedicated
       # GitHub PAT, its basic-auth server password, and the SSH
       # commit-signing key (a 1Password SSH Key item — multi-line value;
@@ -172,6 +189,36 @@ in
         # op://Infrastructure/Fabro Host Tailscale Credentials/Client
         # Secret.
         tailscale-oauth-secret = { };
+
+        # Build-session trust material for Darwin dispatch
+        # (./darwin-dispatch.nix): the private Build Client Key the daemon
+        # presents over ssh-ng, and the pinned Builder Host public key the
+        # machines renderer base64-encodes. Both are consumed by path only —
+        # neither value enters the Nix store, the rendered machines line, or
+        # the sandbox image — and both are root-readable at 0400. A rotation
+        # re-renders the machines file and restarts the daemon. Sources:
+        # op://Infrastructure/Fabro mac-builder Build Credentials/{Client
+        # Private Key,Host Public Key}.
+        build-client-key = {
+          path = "/run/secrets/build-client-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
+        build-host-key = {
+          path = "/run/secrets/build-host-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
 
         # The fabro host's GitHub PAT (source: op://Private/GitHub/Tokens/
         # Fabro, mirrored by fabro-sync-from-1password). Consumed through
