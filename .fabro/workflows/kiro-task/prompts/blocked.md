@@ -4,6 +4,14 @@ The implementation or review stage for spec `{{ inputs.spec }}`, task
 `{{ inputs.task }}` did not complete successfully, so this run is recording the
 blocker in the task plan and failing the run.
 
+## Missing secret material
+
+Never append `_Blocked:` because a secret value is unavailable. Read
+`.kiro/settings/rules/secret-material-handling.md`: the implementation stage
+records `environment-blocked: secret-material-blocked <name> (<source>)` in
+`impl_tests_run` and continues with the secret-independent work. If this stage
+runs only for that reason, report the routing error without editing `tasks.md`.
+
 ## Steps
 
 1. Determine the blocking reason from the run context. Prefer, in order: `impl_blocker`, then `impl_summary` when `impl_status` is `BLOCKED` or `NEEDS_CONTEXT`, then `review_findings` together with `review_remediation`. If none of those are usable, report that the stage failed without a status report.

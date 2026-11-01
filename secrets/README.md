@@ -165,15 +165,17 @@ updatekeys secrets/fabro.fabro.yaml`.
 
 `secrets/remote-builder.mac-builder.yaml` is the builder host's store: one
 file for the `builder-authorized-keys` secret (newline-separated client
-public keys) consumed by sops-nix on the builder host. It is encrypted
-to the `&host_mac_builder` recipient only.
+public keys) and the `builder-tailscale-oauth-secret` credential consumed
+by sops-nix on the builder host. It is encrypted to the
+`&host_mac_builder` recipient only.
 
 | Item | Value |
 | --- | --- |
 | Encrypted file | `secrets/remote-builder.mac-builder.yaml` |
-| SOPS key | `builder-authorized-keys` |
+| SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
 | Recipient anchor | `&host_mac_builder` |
-| 1Password item | `op://Private/sops-age-key-mac-builder` (Secure Note, `notesPlain`) |
+| 1Password item (age key) | `op://Private/sops-age-key-mac-builder` (Secure Note, `notesPlain`) |
+| 1Password source (OAuth) | `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret` |
 | Private key on host | `/var/lib/sops-nix/key.txt` (mode `0600`, root) |
 
 The builder age private key is generated once with `age-keygen` and
@@ -196,13 +198,87 @@ The builder age key must be installed before the first
 4. Only then run the first switch; sops-nix decrypts
    `secrets/remote-builder.mac-builder.yaml` using that key.
 
+### Builder OAuth credential
+
+The builder joins the tailnet with its own OAuth client secret,
+`builder-tailscale-oauth-secret`, distinct from the guest's
+`tailscale-oauth-secret`. Only the client secret is mirrored into the store;
+the client ID is embedded in the value. The console owns the OAuth client's
+`auth_keys` scope and its `tag:mac-builder` tag.
+
+1. Store the client secret in 1Password at
+   `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`.
+2. Encrypt it with the builder age key, passing the value by file so it never
+   reaches shell history. `sops set` rewrites only the named key and preserves
+   `builder-authorized-keys`:
+
+   ```sh
+   T=$(mktemp -d); chmod 0700 "$T"
+   op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' > "$T/secret"
+   SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+     nix run --inputs-from . nixpkgs#sops -c \
+     sops set --value-file secrets/remote-builder.mac-builder.yaml \
+     '["builder-tailscale-oauth-secret"]' "$T/secret"
+   rm -rf "$T"
+   ```
+
+   `sops edit` with the same `SOPS_AGE_KEY_FILE` is the alternative when the
+   store needs several structural edits.
+3. Verify the key decrypts without printing the value:
+
+   ```sh
+   SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+     nix run --inputs-from . nixpkgs#sops -c \
+     sops -d --extract '["builder-tailscale-oauth-secret"]' \
+     secrets/remote-builder.mac-builder.yaml | wc -c
+   ```
+
+### Fabro build-session keys
+
+The guest presents `build-client-key` for build sessions and pins the builder
+host key in `build-host-key`. Both live in `secrets/fabro.fabro.yaml` and are
+declared in `fabro.onePasswordSecrets`, so the 1Password items are the source
+of truth.
+
+1. Generate the pair out of band, outside the checkout:
+
+   ```sh
+   ssh-keygen -t ed25519 -N '' -C 'fabro-mac-builder' -f /tmp/build-client-key
+   ```
+
+   This writes `/tmp/build-client-key` (private) and
+   `/tmp/build-client-key.pub` (public).
+2. Store the private half at
+   `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key`
+   and the builder's `ssh_host_ed25519_key.pub` at
+   `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key`.
+3. Refresh the fabro store from 1Password:
+
+   ```sh
+   nix run '.#fabro-sync-from-1password'
+   ```
+
+   The sync aborts instead of dropping a declared key, so the store always
+   ends with both entries.
+4. Append the public half of the client key to `builder-authorized-keys`
+   (one key per line) and re-encrypt the builder store while preserving the
+   existing keys.
+5. Verify with `sops -d --extract` for each key using the store's own host key;
+   never print a value. The `build-host-key` value must match the builder's
+   host public key, and the client public half must appear in
+   `builder-authorized-keys`.
+
 ### Authorized-key rotation
 
-Rotate the authorized client keys by editing the 1Password-backed
-`builder-authorized-keys` value, re-encrypting
-`secrets/remote-builder.mac-builder.yaml` against `&host_mac_builder`,
-and re-running deploy/switch. The store stays scoped to the builder
-recipient; no personal-host secret is added.
+`builder-authorized-keys` holds every client public key the builder accepts,
+including the public half of the fabro `build-client-key`. Rotate one client
+key by generating the new pair, updating the fabro store's 1Password item and
+re-running `nix run '.#fabro-sync-from-1password'`, then replacing only that
+key's public half in `builder-authorized-keys` and re-encrypting
+`secrets/remote-builder.mac-builder.yaml` against `&host_mac_builder`.
+Preserve the other authorized keys, and never drop a recipient or weaken the
+builder store encryption. Re-run deploy/switch and confirm the new key is
+accepted while the old one is refused.
 
 ## Prerequisites — read this first
 

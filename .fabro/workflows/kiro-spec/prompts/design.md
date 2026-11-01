@@ -27,6 +27,13 @@ Rules:
 - Keep the flow Summary then Scope then Decisions then Impacts/Risks inside each section. State decisions, not hedges: one decision gets one sentence plus the constraint that forced it.
 - Include a Requirements Traceability section mapping every requirement area to the design section(s) that satisfy it.
 - Verify every component, module, type, and file name against the actual codebase. Do not invent names that do not exist.
+- When the feature needs secret material, read
+  `.kiro/settings/rules/secret-material-handling.md`. Add an
+  `## Operator Provisioning` section after `## Data Models`; each entry names
+  the secret, its source, the exact provisioning command, the verification
+  command, and the owner.
+- Never design a Kiro task that mints, generates, rotates, or writes a secret
+  value; the operator owns provisioning.
 - If the design depends on external facts you researched (library versions, protocol behavior, benchmarks), record them factually with sources in `.kiro/specs/<spec>/research.md` (under 400 lines) and reference that file from the design. Skip `research.md` entirely when there was no real external research.
 
 Keep the document under 1200 lines. Approaching the cap means the feature should be split — ask the human instead of overflowing.

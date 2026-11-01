@@ -643,6 +643,72 @@ credential.
 | Builder node tag | `tag:mac-builder` | This spec |
 | Grant | `tag:fabro` → `tag:mac-builder`, `tcp:22` | Console, documented in `README.md` |
 
+## Operator Provisioning
+
+Secret provisioning is operator-owned: no Kiro task mints, generates, rotates,
+or writes a value, and no task blocks on a missing value. The declarations and
+consumers above are secret-independent wiring; this section is their
+provisioning contract.
+
+| Item | 1Password source | Store | Owner |
+|---|---|---|---|
+| `builder-tailscale-oauth-secret` | `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret` | `secrets/remote-builder.mac-builder.yaml` | Builder operator |
+| `build-client-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key` | `secrets/fabro.fabro.yaml` | Fabro operator |
+| `build-host-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key` | `secrets/fabro.fabro.yaml` | Fabro operator |
+| `builder-authorized-keys` | Public half of `build-client-key`, appended to the existing value | `secrets/remote-builder.mac-builder.yaml` | Builder operator |
+
+The OAuth client uses the `auth_keys` scope and the `tag:mac-builder` tag. Its
+client secret belongs to a different OAuth client from the guest's
+`tailscale-oauth-secret`.
+
+### Builder store
+
+Encrypt the OAuth client secret with the builder age key, passing the value by
+file so it never reaches shell history. `sops set` rewrites only the named key,
+so the existing `builder-authorized-keys` value is preserved:
+
+```sh
+T=$(mktemp -d); chmod 0700 "$T"
+op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' > "$T/secret"
+SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+  nix run --inputs-from . nixpkgs#sops -c \
+  sops set --value-file secrets/remote-builder.mac-builder.yaml \
+  '["builder-tailscale-oauth-secret"]' "$T/secret"
+rm -rf "$T"
+```
+
+`sops edit` with the same `SOPS_AGE_KEY_FILE` is the alternative when the store
+needs several structural edits.
+
+### Fabro store
+
+Store both key values in their 1Password fields first, then refresh the whole
+store through the declared manifest:
+
+```sh
+nix run '.#fabro-sync-from-1password'
+```
+
+The sync aborts rather than drop a declared key, so the store always ends with
+`build-client-key` and `build-host-key`. `secrets/README.md` covers key
+generation, the authorized-key append, and rotation.
+
+### Verification
+
+Decrypt one value with the store's own host key and inspect its shape without
+printing it:
+
+```sh
+SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+  nix run --inputs-from . nixpkgs#sops -c \
+  sops -d --extract '["builder-tailscale-oauth-secret"]' \
+  secrets/remote-builder.mac-builder.yaml | wc -c
+```
+
+For the fabro store, stage the `op://Private/sops-age-key-fabro` private key to
+a temporary file and use it as `SOPS_AGE_KEY_FILE`. Never print a decrypted
+value and never weaken a recipient, key, or the encryption.
+
 ## Error Handling
 
 ### Error Strategy
@@ -745,10 +811,9 @@ path; the renderer refuses to emit a machines line without a pinned host key.
 ## Migration Strategy
 
 1. **Console and secrets** — create the builder OAuth client (`auth_keys` scope,
-   `tag:mac-builder`), record the grant and `tagOwners`; generate the build key
-   pair; add `build-client-key`/`build-host-key` to the fabro store and the
-   builder's public key to `builder-authorized-keys`; add
-   `builder-tailscale-oauth-secret` to the builder store.
+   `tag:mac-builder`) and record the grant and `tagOwners`; then follow
+   `## Operator Provisioning` for every secret, key, and the
+   `builder-authorized-keys` addition.
 2. **Builder** — deploy and switch the builder; confirm the node joins with the
    tag and that `nix-builder` still accepts the operator's key.
 3. **Guest** — switch the guest; confirm the renderer unit, the machines file,
@@ -764,3 +829,5 @@ path; the renderer refuses to emit a machines line without a pinned host key.
   behaviour, and the public cache keys.
 - `configurations/mac-builder/README.md` (added by this spec): the grant
   snippet, tag/OAuth setup, key provisioning, and smoke invocation.
+- `secrets/README.md`: the operator runbook for the builder store, the builder
+  OAuth credential, and the fabro build-session keys.

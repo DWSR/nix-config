@@ -75,6 +75,20 @@ environment-blocked. Direct language-level tests that need no Nix (for example
 still run; a failure there rejects the task, and if one cannot run either, say so
 explicitly and reject or escalate instead of assuming success.
 
+## Secret material
+
+Read `.kiro/settings/rules/secret-material-handling.md` when the diff touches
+secret material, its declarations, paths, modes, or SOPS configuration.
+
+- Treat `environment-blocked: secret-material-blocked <name> (<source>)` in
+  `impl_tests_run` as an environment-blocked check, not a rejection, and do
+  not start a rework round for it.
+- Do not decrypt stores or read secret values. Verify declarations, runtime
+  paths, modes, owners, consumers, and fixture-based tests instead.
+- Reject fabricated or guessed values, placeholders written into a real
+  store, dropped SOPS recipients or weakened keys, disabled encryption, and a
+  `BLOCKED` report while secret-independent work remains.
+
 ## Mechanical checks
 
 Run the checks and use their results; do not rely on visual inspection where a command
