@@ -49,7 +49,7 @@
   - _Requirements: 3.5, 3.7, 3.8, 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.12, 4.13, 4.14, 6.5_
   - _Depends: 2.1_
 
-- [ ] 2.3 Import builder membership while preserving the stock remote-builder endpoint
+- [x] 2.3 Import builder membership while preserving the stock remote-builder endpoint
   - Add `./tailscale.nix` to `configurations/mac-builder/default.nix` imports and change nothing in the `nix-builder` user, `services.openssh`, GC/optimise, `trusted-users`, or the `builder-authorized-keys` activation.
   - Confirm the endpoint stays Nix's own sshd plus daemon path: no custom API, queue, scheduler, or extra service, and the daemon still starts under launchd without an interactive login.
   - Confirm the new module does not disturb the existing sops darwin activation ordering or the LAN-forward scripts `mac-builder-deploy` and `mac-builder-readiness`.
