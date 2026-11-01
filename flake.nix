@@ -2849,6 +2849,25 @@
                 touch $out
               '';
 
+          # Dependency-release cooldown policy (issue #241): every package
+          # manager in use here must refuse versions published less than seven
+          # days ago. The test is offline and reads the manifests, the
+          # per-project npm configs, `uv.toml`, and `.github/dependabot.yml`
+          # (the only release-age control Cargo, Go, Nix, and Actions have).
+          dependency-cooldown =
+            pkgs.runCommand "dependency-cooldown"
+              {
+                nativeBuildInputs = [ pkgs.python3 ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                python3 tests/dependency-cooldown/cooldown.test.py
+                touch $out
+              '';
+
           pre-commit-check = inputs.git-hooks.lib.${system}.run {
             src = ./.;
             package = pkgs.prek;
