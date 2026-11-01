@@ -21,9 +21,12 @@
 //
 // `nix.extraOptions` is appended verbatim after the generated settings in
 // `/etc/nix/nix.conf`, so a later module could restate `substituters` there and
-// silently override the public list while the system still evaluates. The tests
-// therefore pin both the declared option (empty apart from comments) and the
-// generated `nix.conf` text that Nix actually reads.
+// silently override the public list while the system still evaluates. The same
+// applies to Nix's pre-2.0 aliases: `binary-caches` is `substituters`,
+// `extra-binary-caches` is appended after the modern key, and
+// `binary-cache-public-keys` is `trusted-public-keys`. The tests therefore pin
+// both the declared settings (modern keys only, no alias) and the generated
+// `nix.conf` text that Nix actually reads.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -52,10 +55,22 @@ const privateTrustedPublicKey = 'private-cache.example-1:AQEBAQEBAQEBAQEBAQEBAQE
 
 const cachePolicyMarker = 'mac-builder cache policy';
 
+// Nix still honours these pre-2.0 names for the cache settings, so any of them
+// in `nix.settings` is written to `nix.conf` and can add or override a cache
+// without touching the modern keys.
+const legacyCacheAliases = [
+  'binary-caches',
+  'extra-binary-caches',
+  'binary-cache-public-keys',
+  'trusted-binary-caches',
+  'extra-trusted-binary-caches',
+];
+
 const SELECTION = `{
   hostPlatform = config.nixpkgs.hostPlatform.system;
   substituters = config.nix.settings.substituters;
   trustedPublicKeys = config.nix.settings.trusted-public-keys;
+  legacyAliasSettings = builtins.filter (name: builtins.hasAttr name config.nix.settings) [ ${legacyCacheAliases.map((alias) => JSON.stringify(alias)).join(' ')} ];
   hasExtraSubstituters = config.nix.settings ? extra-substituters;
   extraSubstituters = config.nix.settings.extra-substituters or [ ];
   hasExtraTrustedPublicKeys = config.nix.settings ? extra-trusted-public-keys;
@@ -87,6 +102,10 @@ function nixConfEntries(text) {
     .map((raw) => raw.trim())
     .filter((line) => line !== '' && !line.startsWith('#'))
     .map((line) => {
+      // `include` and `!include` are bare directives, not `key = value` lines.
+      if (line.startsWith('include ') || line.startsWith('!include ')) {
+        return { key: 'include', value: line };
+      }
       const eq = line.indexOf('=');
       const key = (eq === -1 ? line : line.slice(0, eq)).trim().replace(/^!/, '');
       const value = eq === -1 ? '' : line.slice(eq + 1).trim();
@@ -241,6 +260,16 @@ test('the builder host declares no cache directive in nix.extraOptions', () => {
   );
 });
 
+test('the builder host sets no legacy cache alias', () => {
+  const report = hostReport();
+
+  assert.deepStrictEqual(
+    report.legacyAliasSettings,
+    [],
+    `nix.settings must use the modern cache keys only, got: ${JSON.stringify(report.legacyAliasSettings)}`,
+  );
+});
+
 test('the generated nix.conf carries only the public cache policy', () => {
   const report = hostReport();
   const entries = nixConfEntries(report.nixConfText);
@@ -251,6 +280,7 @@ test('the generated nix.conf carries only the public cache policy', () => {
   const trustedKeyEntries = entries.filter(
     (entry) => entry.key === 'trusted-public-keys' || entry.key === 'extra-trusted-public-keys',
   );
+  const aliasEntries = entries.filter((entry) => legacyCacheAliases.includes(entry.key));
 
   assert.equal(
     substituterEntries.length,
@@ -273,11 +303,18 @@ test('the generated nix.conf carries only the public cache policy', () => {
     `nix.conf must trust the public cache keys only, got: ${JSON.stringify(trustedKeyEntries[0].value)}`,
   );
 
-  for (const { key } of entries) {
+  // Nix reads the alias directives too, so a clean modern key must not hide a
+  // second cache source written under a legacy name.
+  assert.deepStrictEqual(
+    aliasEntries,
+    [],
+    `nix.conf must not restate the cache policy through a legacy alias, got: ${JSON.stringify(aliasEntries)}`,
+  );
+  for (const { key, value } of entries) {
     assert.equal(
       ['netrc-file', 'secret-key-files', 'post-build-hook', 'include', 'extra-platforms'].includes(key),
       false,
-      `nix.conf must not carry a cache credential, publication hook, include, or extra platform, got: ${key}`,
+      `nix.conf must not carry a cache credential, publication hook, include, or extra platform, got: ${key} = ${value}`,
     );
   }
 });
@@ -453,6 +490,30 @@ test('a fixture that adds a post-build-hook through nix.extraOptions fails the e
     stderr.includes('/usr/local/bin/publish-darwin-output'),
     `the failure must name the publication hook, got: ${stderr}`,
   );
+});
+
+test('a fixture that sets a private cache through a legacy alias fails the alias assertion', () => {
+  for (const alias of legacyCacheAliases) {
+    const value = alias === 'binary-cache-public-keys'
+      ? `[ ${JSON.stringify(privateTrustedPublicKey)} ]`
+      : `[ ${JSON.stringify(privateSubstituter)} ]`;
+    // `extra-binary-caches` is the sharpest case: nix-darwin writes it after
+    // the modern `substituters`, so Nix appends it to the effective cache list
+    // even though `substituters` and `trusted-public-keys` stay exact.
+    const stderr = fixtureAssertionFailure(`{
+      nix.settings.${JSON.stringify(alias)} = ${value};
+    }`);
+
+    assert.match(
+      stderr,
+      new RegExp(`${cachePolicyMarker}: nix.settings must not use legacy cache aliases`),
+      `the ${alias} alias must fail the policy assertion, got: ${stderr}`,
+    );
+    assert.ok(
+      stderr.includes(alias),
+      `the failure must name the ${alias} alias, got: ${stderr}`,
+    );
+  }
 });
 
 test('a fixture whose nix.extraOptions only holds comments and blank lines still passes', () => {
