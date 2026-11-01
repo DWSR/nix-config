@@ -11,6 +11,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PROMPTS = ROOT / ".fabro/workflows/kiro-task/prompts"
 REVIEW = PROMPTS / "review.md"
 IMPLEMENT = PROMPTS / "implement.md"
+BLOCKED = PROMPTS / "blocked.md"
+RULE = ROOT / ".kiro/settings/rules/secret-material-handling.md"
 WORKFLOW = ROOT / ".fabro/workflows/kiro-task/workflow.fabro"
 WORKFLOW_TOML = ROOT / ".fabro/workflows/kiro-task/workflow.toml"
 BOUNDARY_MARKER = "cat > .git/kiro-task-scripts/tools.py <<'KIRO_TASK_TOOLS_PY'\n"
@@ -408,6 +410,78 @@ class KiroTaskBoundaryWiringTests(unittest.TestCase):
             "task's own deliverable",
             text,
         )
+
+
+class KiroTaskSecretMaterialTests(unittest.TestCase):
+    def rule(self):
+        return " ".join(RULE.read_text().split())
+
+    def test_rule_defines_wiring_verification_and_provisioning(self):
+        text = RULE.read_text()
+        for needle in ("**Wiring**", "**Verification**", "**Provisioning**"):
+            self.assertIn(needle, text)
+        self.assertIn("secret-independent", self.rule())
+
+    def test_rule_separates_operator_provisioning_from_tasks(self):
+        text = self.rule()
+        self.assertIn("`## Operator Provisioning`", text)
+        self.assertIn("must not contain provisioning-only tasks", text)
+        self.assertIn("Every task must have a secret-independent deliverable", text)
+
+    def test_rule_forbids_blocking_on_missing_secret_material(self):
+        text = self.rule()
+        self.assertIn("must not produce `BLOCKED` or `_Blocked:`", text)
+        self.assertIn(
+            "environment-blocked: secret-material-blocked <name> (<source>)", text
+        )
+        self.assertIn("`READY_FOR_REVIEW`", text)
+        self.assertIn("`NEEDS_CONTEXT`", text)
+
+    def test_rule_forbids_fabrication_and_weakened_encryption(self):
+        text = self.rule()
+        for needle in (
+            "Never invent, guess, commit, or log a secret",
+            "Never weaken SOPS recipients",
+            "Placeholders only in test fixtures",
+        ):
+            self.assertIn(needle, text)
+
+    def test_implement_prompt_reads_the_rule_and_does_not_block(self):
+        text = IMPLEMENT.read_text()
+        self.assertIn("## Secret material", text)
+        self.assertIn(".kiro/settings/rules/secret-material-handling.md", text)
+        flattened = " ".join(text.split())
+        for needle in (
+            "not an underdetermined spec",
+            "Do not report `BLOCKED` or `NEEDS_CONTEXT`",
+            "environment-blocked: secret-material-blocked <name> (<source>)",
+            "`READY_FOR_REVIEW`",
+            "`NEEDS_CONTEXT`",
+            "Never invent, guess, commit, or log a secret",
+        ):
+            self.assertIn(needle, flattened)
+
+    def test_review_prompt_treats_missing_secret_material_as_environment_blocked(self):
+        flattened = " ".join(REVIEW.read_text().split())
+        for needle in (
+            ".kiro/settings/rules/secret-material-handling.md",
+            "environment-blocked: secret-material-blocked <name> (<source>)",
+            "environment-blocked check, not a rejection",
+            "Do not decrypt stores or read secret values",
+            "Reject fabricated or guessed values",
+            "disabled encryption",
+        ):
+            self.assertIn(needle, flattened)
+
+    def test_blocked_prompt_never_marks_missing_secret_material(self):
+        text = BLOCKED.read_text()
+        self.assertIn("## Missing secret material", text)
+        flattened = " ".join(text.split())
+        self.assertIn("Never append `_Blocked:`", flattened)
+        self.assertIn(
+            "environment-blocked: secret-material-blocked <name> (<source>)", flattened
+        )
+        self.assertIn("report the routing error without editing `tasks.md`", flattened)
 
 
 if __name__ == "__main__":

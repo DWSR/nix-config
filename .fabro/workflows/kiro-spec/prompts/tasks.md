@@ -32,6 +32,12 @@ Detail under each executable unit:
 - Mark genuinely parallelizable tasks with `(P)`.
 - Mark strictly optional, deferred-coverage sub-tasks with `- [ ]*` — only when the core implementation already satisfies the acceptance criteria.
 - Keep each task entry at roughly 12 lines or less; prefer tighter.
+- When the feature needs secret material, read
+  `.kiro/settings/rules/secret-material-handling.md`.
+- Never write a provisioning-only task; point at the design's
+  `## Operator Provisioning` section instead.
+- Every task must have a secret-independent deliverable whose completion is
+  satisfiable without a secret value.
 
 Quality bar:
 

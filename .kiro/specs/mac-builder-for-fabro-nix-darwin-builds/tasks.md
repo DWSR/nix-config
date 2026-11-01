@@ -65,29 +65,30 @@
   - _Requirements: 5.3, 5.4, 7.1, 7.2, 7.3, 7.4, 7.7_
   - _Boundary: Builder Cache Policy_
 
-- [ ] 4. Provision operator material and document the tailnet contract
+- [ ] 4. Document operator material and the tailnet contract
 
-- [ ] 4.1 (P) Add the builder OAuth credential to the builder secret store
-  - Create a Tailscale OAuth client with the `auth_keys` scope and the `tag:mac-builder` tag, storing the client secret in the design's 1Password item.
-  - Add the encrypted `builder-tailscale-oauth-secret` entry to `secrets/remote-builder.mac-builder.yaml`, encrypted for the builder's existing recipient only.
-  - Confirm the credential is distinct from the guest's `tailscale-oauth-secret` and that no other tailnet credential is added to the builder store.
-  - Done when `sops -d secrets/remote-builder.mac-builder.yaml` lists `builder-authorized-keys` and `builder-tailscale-oauth-secret` only, and no plaintext credential appears in the working tree.
+- [ ] 4.1 Document the builder OAuth credential provisioning
+  - Add the 1Password source `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`, the `auth_keys` scope with the `tag:mac-builder` tag, the builder-key edit command, and the `sops -d --extract` verification to `secrets/README.md`.
+  - Confirm the design's `## Operator Provisioning` entry and the evaluated `builder-tailscale-oauth-secret` declaration agree on name, runtime path, and consumer.
+  - Do not mint, decrypt, or print the credential; the operator creates it in the Tailscale console and 1Password.
+  - Done when `secrets/README.md` documents the source, scope/tag, edit flow, and verification, and the design and declaration agree with no plaintext credential in the working tree.
   - _Requirements: 4.3, 4.4, 4.6, 4.7_
-  - _Boundary: Builder Secret Store_
 
-- [ ] 4.2 Provision build-session key material on both sides
-  - Generate the build key pair out of band, then add `build-client-key` (private half) and `build-host-key` (the builder's SSH host public key) to the encrypted `secrets/fabro.fabro.yaml` store, plus the public half to the builder's `builder-authorized-keys` entry.
-  - Keep only encrypted values in the repository; place neither key in a Nix store path, the machines file, or the sandbox image.
-  - Done when the fabro store decrypts to both key names, the builder store's authorized keys contain the matching public key, and `build-host-key` matches the builder's generated `ssh_host_ed25519_key.pub`.
+- [ ] 4.2 Document build-session key provisioning and rotation
+  - Add key generation (`ssh-keygen -t ed25519`), the two 1Password fields, `nix run '.#fabro-sync-from-1password'`, the `builder-authorized-keys` append, rotation, and `sops -d --extract` verification to `secrets/README.md`.
+  - Confirm the design's `## Operator Provisioning` entries and the guest `sops.secrets` plus builder authorized-key declarations agree.
+  - Do not generate, read, or write a secret value; the operator owns the key pair.
+  - Done when `secrets/README.md` covers generation, both 1Password fields, sync, authorized-key append, rotation, and verification, with no secret value in the working tree.
   - _Requirements: 6.1, 6.2, 6.8, 6.9, 6.10_
   - _Depends: 1.3, 4.1_
 
 - [ ] 4.3 Document the tailnet grant, builder identity, and operation steps
   - Create `configurations/mac-builder/README.md` with the required console-side `tagOwners` and grant snippet for `tag:fabro` to `tag:mac-builder` on `tcp:22`, and state that the ACL governs reachability only while SSH keys authenticate the session.
   - Record the builder machine name `mac-builder` and its MagicDNS name, the dedicated OAuth client with its scope and tag, the runtime credential path, and that the guest is never addressed through the LAN forward or a DHCP address.
-  - Document build-key provisioning and rotation in both stores, and the `fabro-darwin-build-smoke` invocation.
-  - Done when the README contains the grant, tag ownership, credential setup, key rotation, and smoke steps, and a reader can apply the console change without reading the spec.
+  - Link to `secrets/README.md` for build-key provisioning and rotation instead of duplicating it, and document the `fabro-darwin-build-smoke` invocation.
+  - Done when the README contains the grant, tag ownership, credential setup, and smoke steps, and a reader can apply the console change without reading the spec.
   - _Requirements: 3.4, 3.7, 3.8, 6.4, 6.5_
+  - _Depends: 4.1, 4.2_
 
 - [ ] 5. Verify dispatch, trust, and cache behaviour
 
@@ -153,6 +154,6 @@
 
 - Task 1.1 and 1.2 share only the CLI contract, so the renderer can be implemented and reviewed before the module lands; the module must not re-implement key validation.
 - Task 2.1's credential read happens every poll so a rotation or re-registration needs no operator; Task 2.2 only declares the wrapper's arguments.
-- Tasks 4.1 and 4.2 provision external material; no task may read a secret value at evaluation time.
+- The operator provisions all external material in the design's `## Operator Provisioning` section; tasks 4.1 and 4.2 document it, and no task may read a secret value at evaluation time.
 - Task 5.5 is the only change that turns the new suites into a required check; it must not pass by skipping absent files.
 - Tasks 5.6 and 5.7 own the runtime evidence the offline checks cannot produce: tailnet reachability, the OAuth join, and sandbox store resolution.
