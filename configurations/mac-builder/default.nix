@@ -6,7 +6,17 @@
 }:
 
 {
-  imports = [ inputs.sops-nix.darwinModules.default ];
+  imports = [
+    inputs.sops-nix.darwinModules.default
+    # Builder tailnet membership, the root-only OAuth credential, and the
+    # launchd re-authentication daemon. The remote-builder endpoint stays Nix's
+    # own sshd plus daemon path; nothing below the import changes.
+    ./tailscale.nix
+    # Public-cache-only substitution and the `aarch64-darwin`-only assertions.
+    # The host keeps no private cache reference, key, credential, or
+    # publication hook.
+    ./substituters.nix
+  ];
 
   nixpkgs.hostPlatform = "aarch64-darwin";
   nixpkgs.config.allowUnfree = true;
