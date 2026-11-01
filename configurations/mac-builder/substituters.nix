@@ -16,8 +16,17 @@
 #
 # `assertions` keep the policy honest for any later module: an `extra-platforms`
 # entry, a second host platform, a private-cache URL or key, a cache credential,
-# or a publication hook all fail evaluation with a message naming the offending
-# value. nix-darwin forces `assertions` when it builds `system.build.toplevel`.
+# a publication hook, or any directive in `nix.extraOptions` all fail evaluation
+# with a message naming the offending value. nix-darwin forces `assertions` when
+# it builds `system.build.toplevel`.
+#
+# `nix.extraOptions` needs its own guard: nix-darwin appends it verbatim after
+# the generated settings in `/etc/nix/nix.conf`, so a later module could restate
+# `substituters` or `trusted-public-keys` there (or `!include` a file that does)
+# and silently win while every `nix.settings` assertion still passes. Nix also
+# exposes legacy aliases such as `binary-caches`, so a directive blocklist
+# would be a moving target. The builder therefore declares no directive at all;
+# blank lines and `#` comments remain allowed.
 {
   config,
   lib,
@@ -65,6 +74,12 @@ let
     else
       null;
 
+  # Every line of `nix.extraOptions` that is neither blank nor a `#` comment is
+  # a directive appended after the generated settings.
+  extraOptionDirectives = lib.filter (line: builtins.match "[[:space:]]*(#.*)?" line == null) (
+    lib.splitString "\n" config.nix.extraOptions
+  );
+
   marker = "mac-builder cache policy";
 in
 {
@@ -97,6 +112,10 @@ in
     {
       assertion = postBuildHook == null;
       message = "${marker}: the builder must not publish build outputs to any cache, got post-build-hook = ${builtins.toJSON postBuildHook}";
+    }
+    {
+      assertion = extraOptionDirectives == [ ];
+      message = "${marker}: nix.extraOptions must stay empty because nix-darwin appends it after the generated settings, where it could override the public cache policy, got: ${builtins.toJSON extraOptionDirectives}";
     }
   ];
 }

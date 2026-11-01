@@ -14,9 +14,16 @@
 // - A standalone nix-darwin fixture imports the cache policy module plus one
 //   deliberate violation per case, so every assertion is proven to fail for a
 //   fixture that adds a private cache host, a private cache key, a cache
-//   credential, an extra platform, a foreign host platform, or a
-//   `post-build-hook`. Assertions are forced through
-//   `system.build.toplevel.drvPath`, which is where nix-darwin evaluates them.
+//   credential, an extra platform, a foreign host platform, a
+//   `post-build-hook`, or a cache directive smuggled through `nix.extraOptions`.
+//   Assertions are forced through `system.build.toplevel.drvPath`, which is
+//   where nix-darwin evaluates them.
+//
+// `nix.extraOptions` is appended verbatim after the generated settings in
+// `/etc/nix/nix.conf`, so a later module could restate `substituters` there and
+// silently override the public list while the system still evaluates. The tests
+// therefore pin both the declared option (empty apart from comments) and the
+// generated `nix.conf` text that Nix actually reads.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -59,7 +66,37 @@ const SELECTION = `{
   secretKeyFiles = config.nix.settings.secret-key-files or [ ];
   hasPostBuildHook = config.nix.settings ? post-build-hook;
   postBuildHook = config.nix.settings.post-build-hook or null;
+  extraOptions = config.nix.extraOptions;
+  nixConfText = config.environment.etc."nix/nix.conf".source.text;
 }`;
+
+// `nix.extraOptions` is free-form `nix.conf` text: lines that are blank or only
+// a `#` comment change nothing, every other line is a directive that lands
+// after the generated settings.
+function extraOptionDirectives(text) {
+  return text
+    .split('\n')
+    .filter((line) => !/^\s*(#.*)?$/.test(line));
+}
+
+// Parse the generated `nix.conf` into `key = value` entries so the effective
+// cache configuration can be inspected the way Nix reads it.
+function nixConfEntries(text) {
+  return text
+    .split('\n')
+    .map((raw) => raw.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'))
+    .map((line) => {
+      const eq = line.indexOf('=');
+      const key = (eq === -1 ? line : line.slice(0, eq)).trim().replace(/^!/, '');
+      const value = eq === -1 ? '' : line.slice(eq + 1).trim();
+      return { key, value };
+    });
+}
+
+function tokens(value) {
+  return value.split(/\s+/).filter((token) => token !== '');
+}
 
 function nixEvalJson(expr) {
   return JSON.parse(childProcess.execFileSync(
@@ -194,6 +231,57 @@ test('the builder host stays aarch64-darwin with no extra platforms', () => {
   );
 });
 
+test('the builder host declares no cache directive in nix.extraOptions', () => {
+  const report = hostReport();
+
+  assert.deepStrictEqual(
+    extraOptionDirectives(report.extraOptions),
+    [],
+    `nix.extraOptions is appended after the generated settings, so it must stay empty, got: ${JSON.stringify(report.extraOptions)}`,
+  );
+});
+
+test('the generated nix.conf carries only the public cache policy', () => {
+  const report = hostReport();
+  const entries = nixConfEntries(report.nixConfText);
+
+  const substituterEntries = entries.filter(
+    (entry) => entry.key === 'substituters' || entry.key === 'extra-substituters',
+  );
+  const trustedKeyEntries = entries.filter(
+    (entry) => entry.key === 'trusted-public-keys' || entry.key === 'extra-trusted-public-keys',
+  );
+
+  assert.equal(
+    substituterEntries.length,
+    1,
+    `nix.conf must state the substituters once, got: ${JSON.stringify(substituterEntries)}`,
+  );
+  assert.equal(
+    trustedKeyEntries.length,
+    1,
+    `nix.conf must state the trusted keys once, got: ${JSON.stringify(trustedKeyEntries)}`,
+  );
+  assert.deepStrictEqual(
+    uniqueSorted(tokens(substituterEntries[0].value)),
+    uniqueSorted(publicSubstituters),
+    `nix.conf must substitute from the public caches only, got: ${JSON.stringify(substituterEntries[0].value)}`,
+  );
+  assert.deepStrictEqual(
+    uniqueSorted(tokens(trustedKeyEntries[0].value)),
+    uniqueSorted(publicTrustedPublicKeys),
+    `nix.conf must trust the public cache keys only, got: ${JSON.stringify(trustedKeyEntries[0].value)}`,
+  );
+
+  for (const { key } of entries) {
+    assert.equal(
+      ['netrc-file', 'secret-key-files', 'post-build-hook', 'include', 'extra-platforms'].includes(key),
+      false,
+      `nix.conf must not carry a cache credential, publication hook, include, or extra platform, got: ${key}`,
+    );
+  }
+});
+
 test('the evaluated builder host passes the cache policy assertions', () => {
   const drvPath = childProcess.execFileSync(
     'nix',
@@ -317,4 +405,64 @@ test('a fixture that adds a cache credential file fails the no-credential assert
     stderr.includes('/run/secrets/attic-client-token'),
     `the failure must name the credential file, got: ${stderr}`,
   );
+});
+
+test('a fixture that restates substituters in nix.extraOptions fails the extraOptions assertion', () => {
+  const stderr = fixtureAssertionFailure(`{
+    nix.extraOptions = "substituters = ${privateSubstituter}";
+  }`);
+
+  assert.match(stderr, new RegExp(`${cachePolicyMarker}: nix.extraOptions must stay empty`));
+  assert.ok(
+    stderr.includes(privateSubstituter),
+    `the failure must name the extra cache host, got: ${stderr}`,
+  );
+});
+
+test('a fixture that adds a trusted key in nix.extraOptions fails the extraOptions assertion', () => {
+  const stderr = fixtureAssertionFailure(`{
+    nix.extraOptions = "trusted-public-keys = ${privateTrustedPublicKey}";
+  }`);
+
+  assert.match(stderr, new RegExp(`${cachePolicyMarker}: nix.extraOptions must stay empty`));
+  assert.ok(
+    stderr.includes(privateTrustedPublicKey),
+    `the failure must name the extra cache key, got: ${stderr}`,
+  );
+});
+
+test('a fixture that includes another nix.conf through nix.extraOptions fails the extraOptions assertion', () => {
+  const stderr = fixtureAssertionFailure(`{
+    nix.extraOptions = "!include /etc/nix/private-cache.conf";
+  }`);
+
+  assert.match(stderr, new RegExp(`${cachePolicyMarker}: nix.extraOptions must stay empty`));
+  assert.ok(
+    stderr.includes('!include /etc/nix/private-cache.conf'),
+    `the failure must name the include directive, got: ${stderr}`,
+  );
+});
+
+test('a fixture that adds a post-build-hook through nix.extraOptions fails the extraOptions assertion', () => {
+  const stderr = fixtureAssertionFailure(`{
+    nix.extraOptions = "post-build-hook = /usr/local/bin/publish-darwin-output";
+  }`);
+
+  assert.match(stderr, new RegExp(`${cachePolicyMarker}: nix.extraOptions must stay empty`));
+  assert.ok(
+    stderr.includes('/usr/local/bin/publish-darwin-output'),
+    `the failure must name the publication hook, got: ${stderr}`,
+  );
+});
+
+test('a fixture whose nix.extraOptions only holds comments and blank lines still passes', () => {
+  const report = fixtureReport(`{
+    nix.extraOptions = ''
+      # the public cache policy is fixed
+
+    '';
+  }`);
+
+  assert.deepStrictEqual(uniqueSorted(report.substituters), uniqueSorted(publicSubstituters));
+  assert.deepStrictEqual(uniqueSorted(report.trustedPublicKeys), uniqueSorted(publicTrustedPublicKeys));
 });
