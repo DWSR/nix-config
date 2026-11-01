@@ -53,6 +53,11 @@ Rules:
 - Keep terminology identical to the brief — the same name for the same thing across all documents.
 - No implementation details, no rationalizing tails ("so that boot is not blocked"), no hedged language.
 - Boundary Context is a delta from the brief's Out of Boundary, not a repetition of it.
+- When the feature needs secret material, read
+  `.kiro/settings/rules/secret-material-handling.md` and classify every
+  secret surface as wiring, verification, or provisioning.
+- Acceptance criteria state observable outcomes; do not require the
+  implementer to mint, generate, rotate, or read a secret value.
 
 Keep the document under 500 lines. If it does not fit, the feature is too large — narrow it with the human instead of padding.
 

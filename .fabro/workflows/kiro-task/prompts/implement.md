@@ -112,6 +112,27 @@ and `nix develop --command fabro validate`) as environment-blocked and keep runn
 direct language-level tests (`python3 tests/<name>.test.py`, `node --test tests/<name>/`,
 and the like). If those direct tests cannot run either, report BLOCKED with the cause.
 
+## Secret material
+
+Read `.kiro/settings/rules/secret-material-handling.md` before implementing a
+task that touches secret material. A missing secret value is an operator
+provisioning gap, not an underdetermined spec.
+
+- Do not report `BLOCKED` or `NEEDS_CONTEXT` for a missing secret, and never
+  write `_Blocked:`.
+- Do the secret-independent work: declarations, runtime paths, modes, owners,
+  consumers, and fixture-based tests. Never mint, generate, rotate, or write a
+  real secret.
+- Record the gap in `impl_tests_run` as
+  `environment-blocked: secret-material-blocked <name> (<source>)` and
+  continue with the rest of the validation set.
+- Report `impl_status` = `READY_FOR_REVIEW` when only operator provisioning
+  remains, and name the operator action in `impl_concerns`.
+- Report `impl_status` = `NEEDS_CONTEXT` only when the task has no
+  secret-independent work at all.
+- Never invent, guess, commit, or log a secret; never weaken SOPS recipients,
+  keys, or encryption; placeholders belong only in test fixtures.
+
 ## Hard constraints
 
 - Do NOT edit `.kiro/specs/{{ inputs.spec }}/tasks.md` and do NOT create git commits; the workflow's completion stage owns task-state updates and commits.

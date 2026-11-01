@@ -10,6 +10,8 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".fabro/workflows/kiro-spec/workflow.toml"
+PROMPTS = ROOT / ".fabro/workflows/kiro-spec/prompts"
+RULE = ROOT / ".kiro/settings/rules/secret-material-handling.md"
 MARKER = "cat > .git/kiro-spec-scripts/tools.py <<'KIRO_SPEC_TOOLS_PY'\n"
 
 
@@ -149,6 +151,41 @@ class PrepareRoutingTests(unittest.TestCase):
 
         self.assertEqual(updates["next_doc"], "publish")
         self.assertEqual(updates["rerun_doc"], "")
+
+
+class KiroSpecSecretMaterialTests(unittest.TestCase):
+    def prompt(self, name):
+        return " ".join((PROMPTS / name).read_text().split())
+
+    def test_requirements_prompt_reads_the_rule(self):
+        text = self.prompt("requirements.md")
+        self.assertIn(".kiro/settings/rules/secret-material-handling.md", text)
+        self.assertIn("classify every secret surface as wiring, verification", text)
+        self.assertIn("Acceptance criteria state observable outcomes", text)
+        self.assertIn(
+            "do not require the implementer to mint, generate, rotate, or read a secret",
+            text,
+        )
+
+    def test_design_prompt_requires_operator_provisioning(self):
+        text = self.prompt("design.md")
+        self.assertIn(".kiro/settings/rules/secret-material-handling.md", text)
+        self.assertIn("`## Operator Provisioning`", text)
+        self.assertIn("exact provisioning command", text)
+        self.assertIn("the verification command, and the owner", text)
+        self.assertIn("operator owns provisioning", text)
+
+    def test_tasks_prompt_forbids_provisioning_only_tasks(self):
+        text = self.prompt("tasks.md")
+        self.assertIn(".kiro/settings/rules/secret-material-handling.md", text)
+        self.assertIn("Never write a provisioning-only task", text)
+        self.assertIn("`## Operator Provisioning`", text)
+        self.assertIn("secret-independent deliverable", text)
+        self.assertIn("satisfiable without a secret value", text)
+
+    def test_rule_exists_for_the_spec_prompts_to_reference(self):
+        self.assertTrue(RULE.is_file())
+        self.assertIn("## Operator Provisioning", RULE.read_text())
 
 
 if __name__ == "__main__":
