@@ -1,0 +1,22 @@
+{
+  "feature_name": "total-recall-cutover",
+  "created_at": "2026-10-09T14:49:06-04:00",
+  "updated_at": "2026-11-01T22:43:24Z",
+  "language": "en",
+  "phase": "requirements-generated",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": false
+    },
+    "design": {
+      "generated": false,
+      "approved": false
+    },
+    "tasks": {
+      "generated": false,
+      "approved": false
+    }
+  },
+  "ready_for_implementation": false
+}
