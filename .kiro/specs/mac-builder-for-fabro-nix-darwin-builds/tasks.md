@@ -67,7 +67,7 @@
 
 - [ ] 4. Document operator material and the tailnet contract
 
-- [ ] 4.1 Document the builder OAuth credential provisioning
+- [x] 4.1 Document the builder OAuth credential provisioning
   - Add the 1Password source `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`, the `auth_keys` scope with the `tag:mac-builder` tag, the builder-key edit command, and the `sops -d --extract` verification to `secrets/README.md`.
   - Confirm the design's `## Operator Provisioning` entry and the evaluated `builder-tailscale-oauth-secret` declaration agree on name, runtime path, and consumer.
   - Do not mint, decrypt, or print the credential; the operator creates it in the Tailscale console and 1Password.
