@@ -2,7 +2,7 @@
 
 - [ ] 1. Make the Fabro Guest daemon the only Darwin dispatch client
 
-- [ ] 1.1 (P) Implement the runtime machines-file renderer
+- [x] 1.1 (P) Implement the runtime machines-file renderer
   - Create `scripts/fabro-darwin-machines.nix` as a `writeShellApplication` implementing the design CLI: `--output`, `--host-name`, `--ssh-user`, `--system`, `--max-jobs`, `--speed-factor`, `--client-key`, `--host-key`.
   - Emit exactly `ssh-ng://<ssh-user>@<host> <system> <client-key-path> <max-jobs> <speed-factor> - - <base64 host key>`, base64-encoding the host key file contents and never emitting `-` for the host key.
   - Read the client key only by path; write atomically (temp file + `mv`, mode `0600`, owner root) so no partial line can be read.
@@ -11,7 +11,7 @@
   - _Requirements: 3.2, 6.1, 6.2, 6.6, 6.7, 6.12_
   - _Boundary: Machines Renderer_
 
-- [ ] 1.2 Add the `fabro.darwinBuilder` option surface and unit wiring
+- [x] 1.2 Add the `fabro.darwinBuilder` option surface and unit wiring
   - Create `configurations/fabro-vm/darwin-dispatch.nix` with the option contract from the design: `enable` (default false), `machine.{hostName,sshUser,system,maxJobs,speedFactor}`, `clientKeyPath`, `hostKeyPath`, `machinesFile`.
   - Default `machine.hostName` to the builder tailnet FQDN and `machine.system` to `aarch64-darwin`; keep a single machine entry so `aarch64-linux` requests never match it.
   - Set `nix.distributedBuilds = true`, `nix.settings.builders = "@${cfg.machinesFile}"`, and `nix.settings.builders-use-substitutes = true`; leave `nix.buildMachines` empty so no eval-time `/etc/nix/machines` appears.
@@ -21,7 +21,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 2.7, 3.1, 3.2, 3.3, 3.6, 6.11, 7.5, 7.6_
   - _Depends: 1.1_
 
-- [ ] 1.3 Enable dispatch on `fabro-vm` and declare the build-session secrets
+- [x] 1.3 Enable dispatch on `fabro-vm` and declare the build-session secrets
   - Add `./darwin-dispatch.nix` to `configurations/fabro-vm/default.nix` imports and set `fabro.darwinBuilder.enable = true;`.
   - Declare `sops.secrets."build-client-key"` and `sops.secrets."build-host-key"` at mode `0400`, owner/group `root`, at the design's runtime paths, with `restartUnits` for `fabro-darwin-builders.service` and `nix-daemon.service`.
   - Add both names to `fabro.onePasswordSecrets` with the design's 1Password URIs so `fabro-sync-from-1password` refreshes them.
@@ -31,7 +31,7 @@
 
 - [ ] 2. Put the Builder Host on the tailnet under its own tag
 
-- [ ] 2.1 (P) Implement the launchd tailnet authentication wrapper
+- [x] 2.1 (P) Implement the launchd tailnet authentication wrapper
   - Create `scripts/mac-builder-tailscale-auth.nix` as a `writeShellApplication` with the CLI contract: `--auth-key-file`, `--hostname`, `--tag`, `--tailscale`, optional `--interval`, `--once`.
   - Each iteration verify the credential file is non-empty, read `tailscale status --json`, and branch on `BackendState`: `Running` does nothing; `NeedsLogin`/`NeedsMachineAuth`/`Stopped` run `tailscale up` with `--auth-key=<secret>?ephemeral=false&preauthorized=true`, `--advertise-tags`, `--hostname`, and `--accept-dns=false`.
   - On a missing or empty credential, log the runtime path and fail the iteration without ever invoking `tailscale up`.
@@ -40,7 +40,7 @@
   - _Requirements: 4.1, 4.3, 4.8, 4.9, 4.10, 4.11_
   - _Boundary: Tailnet Auth Wrapper_
 
-- [ ] 2.2 Declare builder tailnet membership, credential, and auth daemon
+- [x] 2.2 Declare builder tailnet membership, credential, and auth daemon
   - Create `configurations/mac-builder/tailscale.nix` with `services.tailscale.enable = true` on the default open-source `pkgs.tailscale`; add no macOS app, `tailscale serve`, or `--ssh`.
   - Declare `sops.secrets."builder-tailscale-oauth-secret"` at mode `0400`, owner `root`, group `wheel`, at the design's default runtime path; declare no other tailnet credential and read nothing from the fabro store.
   - Register `launchd.daemons.mac-builder-tailscale-auth` running the wrapper with the credential path, `--hostname mac-builder`, and `--tag tag:mac-builder`, with `RunAtLoad`, `KeepAlive`, `ThrottleInterval = 30`, `ProcessType = "Background"`, and logs under `/var/log/`.
@@ -49,7 +49,7 @@
   - _Requirements: 3.5, 3.7, 3.8, 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.12, 4.13, 4.14, 6.5_
   - _Depends: 2.1_
 
-- [ ] 2.3 Import builder membership while preserving the stock remote-builder endpoint
+- [x] 2.3 Import builder membership while preserving the stock remote-builder endpoint
   - Add `./tailscale.nix` to `configurations/mac-builder/default.nix` imports and change nothing in the `nix-builder` user, `services.openssh`, GC/optimise, `trusted-users`, or the `builder-authorized-keys` activation.
   - Confirm the endpoint stays Nix's own sshd plus daemon path: no custom API, queue, scheduler, or extra service, and the daemon still starts under launchd without an interactive login.
   - Confirm the new module does not disturb the existing sops darwin activation ordering or the LAN-forward scripts `mac-builder-deploy` and `mac-builder-readiness`.
@@ -57,7 +57,7 @@
   - _Requirements: 4.12, 5.1, 5.2, 5.5, 5.6, 5.7_
   - _Depends: 2.2_
 
-- [ ] 3. (P) Restrict the Builder Host to public caches and Darwin only
+- [x] 3. (P) Restrict the Builder Host to public caches and Darwin only
   - Create `configurations/mac-builder/substituters.nix` setting `nix.settings.substituters` to exactly `https://cache.nixos.org/` and `https://nix-community.cachix.org` with `trusted-public-keys` for exactly those two caches, and import it from `configurations/mac-builder/default.nix`.
   - Add no `extra-substituters`, no Attic or private-cache URL, no cache credential file, and no `post-build-hook`, so the builder never publishes outputs.
   - Assert `extra-platforms` stays unset, `nixpkgs.hostPlatform == "aarch64-darwin"`, and no private-cache host appears in the evaluated substituter or key sets.
