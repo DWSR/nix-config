@@ -9,6 +9,11 @@ finding = ""
 [run.model.fallbacks]
 "gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
 
+# Full history: rebasing an existing remediation branch onto the default branch needs
+# the real merge base across both histories.
+[run.clone]
+depth = 0
+
 # contents: write - push the single remediation commit; pull_requests: write - open or
 # reuse the remediation pull request; vulnerability_alerts/security_events: read - read the
 # Dependabot or code scanning alert detail. No issues write: the run never labels.
@@ -267,6 +272,43 @@ def remote_head(branch):
     return None
 
 
+def rebase_in_progress():
+    return (os.path.isdir(".git/rebase-merge") or os.path.isdir(".git/rebase-apply"))
+
+
+def unmerged_paths():
+    out = run(["git", "ls-files", "-u"], check=False)
+    return sorted({line.split("\t", 1)[1] for line in out.splitlines() if "\t" in line})
+
+
+def rebase_branch(trunk):
+    """Rebase the checked-out branch onto origin/<trunk>.
+
+    Returns True when the rebase stopped on a conflict and is left in progress for the
+    fix stage, False when it completed. A failure that is not a conflict is fatal.
+    """
+    result = subprocess.run(["git", "rebase", "origin/%s" % trunk], capture_output=True, text=True)
+    if result.returncode == 0:
+        return False
+    if rebase_in_progress():
+        return True
+    sys.exit("git rebase origin/%s failed: %s" % (
+        trunk, (result.stderr or result.stdout).strip()[:1000]))
+
+
+def route_conflict(state, conflicts):
+    state["rebase_conflict"] = True
+    save_state(state)
+    listed = ", ".join(conflicts)
+    print("security-remediation publish: leaving the merge conflict for the fix stage: %s" % (
+        listed or "(rebase in progress)"), file=sys.stderr)
+    print(json.dumps({"context_updates": {
+        "rebase_conflict": "true",
+        "rebase_replayed": "false",
+        "conflict_files": listed,
+    }}))
+
+
 def pr_body(summary, alert):
     text = str(summary or "").strip()
     line = "Alert: %s (%s alert #%d)" % (
@@ -328,13 +370,26 @@ def prepare(argv):
             "verify_baseline": None,
             "fix_round": 0,
             "published": None,
+            "rebase_conflict": False,
             "created_at": now_iso(),
         }
         if alert_open:
             run(["git", "fetch", "origin", trunk])
-            state["remote_branch_sha"] = remote_head(branch)
-            run(["git", "checkout", "-B", branch, "origin/%s" % trunk])
-            state["baseline_sha"] = run(["git", "rev-parse", "HEAD"])
+            existing = remote_head(branch)
+            state["remote_branch_sha"] = existing
+            if existing:
+                # An open pull request already publishes this branch: rebase it onto
+                # the latest trunk instead of discarding it and rebuilding from trunk.
+                run(["git", "fetch", "--quiet", "origin",
+                     "refs/heads/%s:refs/remotes/origin/%s" % (branch, branch)])
+                run(["git", "checkout", "-q", "-B", branch, "origin/%s" % branch])
+                state["rebase_conflict"] = rebase_branch(trunk)
+                if state["rebase_conflict"]:
+                    print("security-remediation prepare: rebase of %s onto %s hit conflicts; "
+                          "leaving them for the fix stage" % (branch, trunk), file=sys.stderr)
+            else:
+                run(["git", "checkout", "-B", branch, "origin/%s" % trunk])
+            state["baseline_sha"] = run(["git", "rev-parse", "origin/%s" % trunk])
         else:
             state["remote_branch_sha"] = None
             state["baseline_sha"] = ""
@@ -361,6 +416,8 @@ def prepare(argv):
         "alert_url": state["url"],
         "branch": branch,
         "trunk": trunk,
+        "rebase_conflict": "true" if state.get("rebase_conflict") else "false",
+        "conflict_files": ", ".join(unmerged_paths()),
     }}))
 
 
@@ -461,26 +518,34 @@ def load_publish_meta(state):
     return title, summary
 
 
-def replay_onto_base(trunk, base, baseline, tree):
+def replay_onto_base(base, baseline, tree):
+    """Replay the fix from baseline onto a moved base.
+
+    Returns (tree, conflict_paths). When the three-way merge conflicts, conflict_paths is
+    non-empty and the index and working tree keep the conflict markers so the fix stage can
+    resolve them; the caller must not publish in that state.
+    """
     baseline = str(baseline)
-    trunk_paths = [p for p in run(["git", "diff", "--name-only", baseline, base]).splitlines() if p.strip()]
     fix_paths = [p for p in run(["git", "diff", "--name-only", baseline, tree]).splitlines() if p.strip()]
-    overlap = sorted(set(trunk_paths) & set(fix_paths))
-    if overlap:
-        sys.exit("base_moved: %s advanced from %s to %s and changed files this fix also changes: %s; the verification ran against the old head, so publishing would claim a result nobody checked. Start a fresh run from the new head." % (
-            trunk, baseline[:12], base[:12], ", ".join(overlap)))
-    run(["git", "read-tree", base])
     patch = subprocess.run(
         ["git", "diff", "--binary", baseline, tree, "--"] + fix_paths,
         capture_output=True)
     if patch.returncode != 0:
         sys.exit("base_moved: could not replay the fix from %s onto %s: %s" % (
             baseline[:12], base[:12], patch.stderr.decode("utf-8", "replace").strip()))
-    applied = subprocess.run(["git", "apply", "--cached", "--3way"], input=patch.stdout, capture_output=True)
+    # Move the index and working tree to the new base, then re-apply the fix as a
+    # three-way merge. `git apply --3way` writes conflict markers to the working tree and
+    # leaves unmerged index entries when the two sides touch the same lines.
+    run(["git", "read-tree", "--reset", "-u", base])
+    run(["git", "reset", "--soft", base])
+    applied = subprocess.run(["git", "apply", "--3way"], input=patch.stdout, capture_output=True)
+    conflicts = unmerged_paths()
+    if conflicts:
+        return None, conflicts
     if applied.returncode != 0:
         sys.exit("base_moved: could not replay the fix from %s onto %s: %s" % (
             baseline[:12], base[:12], applied.stderr.decode("utf-8", "replace").strip()))
-    return run(["git", "write-tree"])
+    return run(["git", "write-tree"]), []
 
 
 def publish(argv):
@@ -499,18 +564,45 @@ def publish(argv):
     if not baseline:
         sys.exit("state file %s has no baseline_sha; the prepare stage must run first" % STATE_PATH)
 
+    # A conflict left by prepare's rebase, or by an earlier publish replay, still needs
+    # the fix stage: never stage conflict markers into the published commit.
+    conflicts = unmerged_paths()
+    if rebase_in_progress() or conflicts:
+        route_conflict(state, conflicts)
+        return
+
     run(["git", "add", "-A"])
     tree = run(["git", "write-tree"])
     run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
     base = run(["git", "rev-parse", "FETCH_HEAD"])
-    if base != baseline:
-        tree = replay_onto_base(trunk, base, baseline, tree)
+    replayed = base != baseline
+    if replayed:
+        tree, conflicts = replay_onto_base(base, baseline, tree)
+        state["baseline_sha"] = base
+        if conflicts:
+            route_conflict(state, conflicts)
+            return
+    state["rebase_conflict"] = False
 
     diff_status = subprocess.run(["git", "diff", "--quiet", base, tree]).returncode
     if diff_status == 0:
         sys.exit("the fix produces no change relative to %s; refusing to publish an empty commit" % trunk)
     if diff_status != 1:
         sys.exit("failed to compare the fix with %s" % trunk)
+
+    if replayed:
+        # The verified tree was rewritten onto a newer default-branch head. Never
+        # publish a tree the verify stage has not seen: hand back to snapshot so the
+        # checks run again on the replayed tree.
+        save_state(state)
+        print("security-remediation publish: replayed the fix onto %s; re-running verification" % (
+            base[:12]), file=sys.stderr)
+        print(json.dumps({"context_updates": {
+            "rebase_replayed": "true",
+            "rebase_conflict": "false",
+            "conflict_files": "",
+        }}))
+        return
 
     offenders = artifact_paths(run(["git", "ls-tree", "-r", "--name-only", tree]).splitlines())
     if offenders:
@@ -582,6 +674,8 @@ def publish(argv):
         "commit_sha": head,
         "pr_number": str(pr.get("number")),
         "pr_url": pr.get("html_url", ""),
+        "rebase_conflict": "false",
+        "rebase_replayed": "false",
     }}))
 
 

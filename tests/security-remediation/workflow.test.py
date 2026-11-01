@@ -122,6 +122,31 @@ class SecurityRemediationGraphTests(unittest.TestCase):
         self.assertNotIn("fail", dom["exit"])
 
 
+class PublishConflictRoutingTests(unittest.TestCase):
+    def test_publish_routes_a_conflict_back_to_the_fix_stage(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertIn(("publish", "fix"), EDGE.findall(text))
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*fix\s*\[condition="[^"]*rebase_conflict=true"',
+        )
+
+    def test_publish_re_verifies_a_clean_replay_before_publishing(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertIn(("publish", "snapshot"), EDGE.findall(text))
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*snapshot\s*\[condition="[^"]*rebase_replayed=true"',
+        )
+
+    def test_publish_exits_only_without_a_conflict_or_replay(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*exit\s*\[condition="[^"]*rebase_conflict!=true[^"]*rebase_replayed!=true"',
+        )
+
+
 class CheckpointAndPullRequestConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         with WORKFLOW_TOML.open("rb") as handle:
