@@ -7,6 +7,233 @@ graph = "workflow.fabro"
 spec = ""
 task = ""
 
+# The boundary gate reverts shared-infrastructure edits a task does not claim
+# before review, so stale or collateral changes cannot fail an otherwise
+# correct task (see prompts/implement.md and prompts/review.md).
+[[run.prepare.steps]]
+script = '''
+set -eu
+mkdir -p .git/kiro-task-scripts
+cat > .git/kiro-task-scripts/tools.py <<'KIRO_TASK_TOOLS_PY'
+import json, os, re, subprocess, sys
+
+# Shared infrastructure belongs to the repository, not to one Kiro task. Each
+# group lists paths a task may change only when its own entry names the
+# concern; everything else is reverted before review so stale or collateral
+# edits cannot fail an otherwise correct task.
+PROTECTED = (
+    {
+        "name": "flake",
+        "paths": ("flake.nix", "flake.lock"),
+        # Only ownership phrases claim the flake files: the paths themselves, a
+        # flake input/output/app/package/wiring, a new `checks.*` attribute, a
+        # change that makes the flake check fail with a named message, or the
+        # plural "flake checks" a task delivers. A task entry that only runs the
+        # `nix flake check` validation command must still revert collateral edits,
+        # so that command mention alone does not claim the group.
+        "claims": (
+            "flake.nix", "flake.lock", "flake input", "flake inputs",
+            "flake output", "flake outputs", "flake entry", "flake app",
+            "flake apps", "flake package", "flake packages", "flake wiring",
+            "to the flake", "in the flake", "checks.<system>.",
+        ),
+        "claim_patterns": (
+            r"(?:add|adds|adding|register|registers|registering|wire|wires|wiring|"
+            r"bind|binds|binding|expose|exposes|exposing|declare|declares|declaring|"
+            r"pin|pins|pinning|update|updates|updating|extend|extends|extending|"
+            r"thread|threads|threading)\s+[^\n]{0,60}?"
+            r"flake\s+(?:inputs?|outputs?|entries?|entry|lock|apps?|packages?)",
+            r"(?:add|adds|register|registers|wire|wires|bind|binds|expose|exposes)"
+            r"\s+[^\n]{0,40}?flake\s+checks?",
+            r"(?:add|adds|register|registers|wire|wires|bind|binds|expose|exposes)"
+            r"\s+[^\n]{0,60}?checks[.`]",
+            # Assertions added to an existing flake check make it fail by name.
+            r"fails?\s+[^\n]{0,80}?flake\s+checks?\b",
+            # A task that delivers flake checks writes "flake checks"; the
+            # validation command is the "nix flake check" invocation.
+            r"(?<!nix )flake checks\b",
+        ),
+    },
+    {
+        "name": "local-binary-cache",
+        "paths": (
+            "configurations/common-darwin/local-binary-cache.nix",
+            "tests/local-binary-cache/",
+        ),
+        "claims": ("local-binary-cache", "local binary cache", "caddy"),
+    },
+    {
+        "name": "personal-host",
+        "paths": ("configurations/personal/default.nix",),
+        "claims": ("personal host", "personal/default.nix", "local-binary-cache", "caddy"),
+    },
+)
+
+TASK_RE = re.compile(r"^- \[([ x])\]\*? (\d+(?:\.\d+)?)\.? (.*)$")
+
+
+def run(cmd, check=True):
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if check and result.returncode != 0:
+        sys.exit("kiro-task boundary: command failed: %s\n%s" % (" ".join(cmd), result.stderr.strip()))
+    return result.stdout.strip()
+
+
+def task_text(spec, task, baseline):
+    path = ".kiro/specs/%s/tasks.md" % spec
+    probe = subprocess.run(["git", "show", "%s:%s" % (baseline, path)], capture_output=True, text=True)
+    if probe.returncode != 0:
+        sys.exit("kiro-task boundary: %s is not readable at %s; is the spec name correct?" % (
+            path, baseline[:12]))
+    lines = probe.stdout.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        match = TASK_RE.match(line)
+        if match and match.group(2) == task:
+            start = index
+            break
+    if start is None:
+        sys.exit("kiro-task boundary: task %s not found in %s" % (task, path))
+    block = [lines[start]]
+    fenced = False
+    for line in lines[start + 1:]:
+        if TASK_RE.match(line):
+            break
+        if line.strip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if not fenced:
+            block.append(line)
+    return "\n".join(block)
+
+
+def changed_paths(baseline):
+    paths = set()
+    for line in run(["git", "diff", "--name-only", "--no-renames", baseline]).splitlines():
+        if line:
+            paths.add(line)
+    for line in run(["git", "ls-files", "--others", "--exclude-standard"]).splitlines():
+        if line:
+            paths.add(line)
+    return paths
+
+
+def protected_group(path):
+    for group in PROTECTED:
+        for candidate in group["paths"]:
+            if candidate.endswith("/"):
+                if path.startswith(candidate):
+                    return group
+            elif path == candidate:
+                return group
+    return None
+
+
+def claimed_groups(spec, task_block):
+    # A task claims a group when the spec or the task entry names the concern as
+    # its deliverable; a validation-only mention (for example running
+    # `nix flake check`) does not claim the files that hold the concern.
+    text = (spec + "\n" + task_block).lower()
+    claimed = set()
+    for group in PROTECTED:
+        if any(claim in text for claim in group["claims"]):
+            claimed.add(group["name"])
+        elif any(re.search(pattern, text) for pattern in group.get("claim_patterns", ())):
+            claimed.add(group["name"])
+        elif any(path.rstrip("/") in text for path in group["paths"]):
+            claimed.add(group["name"])
+    return claimed
+
+
+def tracked_at(baseline, path):
+    probe = subprocess.run(["git", "cat-file", "-e", "%s:%s" % (baseline, path)], capture_output=True)
+    return probe.returncode == 0
+
+
+def revert(baseline, path):
+    if tracked_at(baseline, path):
+        run(["git", "checkout", baseline, "--", path])
+        return
+    if os.path.lexists(path) and not os.path.isdir(path):
+        os.remove(path)
+    run(["git", "rm", "--cached", "--ignore-unmatch", "-q", "--", path], check=False)
+
+
+def boundary(spec, task, baseline):
+    baseline = (baseline or "").strip()
+    if not spec or not task:
+        sys.exit("kiro-task boundary: inputs spec=%r task=%r must both be set" % (spec, task))
+    if not re.fullmatch(r"[0-9a-f]{7,40}", baseline):
+        sys.exit("kiro-task boundary: baseline_sha %r is not a commit id; the guard stage must run first" % baseline)
+    run(["git", "rev-parse", "--verify", "%s^{commit}" % baseline])
+
+    claimed = claimed_groups(spec, task_text(spec, task, baseline))
+    reverted, kept = [], []
+    for path in sorted(changed_paths(baseline)):
+        group = protected_group(path)
+        if group is None:
+            continue
+        if group["name"] in claimed:
+            kept.append(path)
+            continue
+        revert(baseline, path)
+        reverted.append(path)
+
+    remaining = []
+    for path in sorted(changed_paths(baseline)):
+        group = protected_group(path)
+        if group is not None and group["name"] not in claimed and path not in reverted:
+            remaining.append(path)
+    if remaining:
+        sys.exit("kiro-task boundary: shared-infrastructure paths still differ from %s: %s" % (
+            baseline[:12], ", ".join(remaining)))
+
+    if reverted:
+        status = "reverted"
+    elif kept:
+        status = "claimed"
+    else:
+        status = "clean"
+
+    updates = {
+        "boundary_status": status,
+        "boundary_reverted": ",".join(reverted),
+        "boundary_protected": ",".join(kept),
+    }
+    print("kiro-task boundary: status=%s reverted=%d claimed=%d" % (
+        status, len(reverted), len(kept)), file=sys.stderr)
+    print(json.dumps({"outcome": "succeeded", "context_updates": updates}))
+    return updates
+
+
+def reset():
+    reverted = []
+    for path in sorted(changed_paths("HEAD")):
+        if protected_group(path) is not None:
+            revert("HEAD", path)
+            reverted.append(path)
+    print("kiro-task boundary: reset %d shared-infrastructure path(s) at run start" % len(reverted),
+          file=sys.stderr)
+    print(json.dumps({"outcome": "succeeded", "context_updates": {
+        "boundary_reset": ",".join(reverted),
+    }}))
+    return reverted
+
+
+def main(argv):
+    if len(argv) == 2 and argv[1] == "reset":
+        reset()
+        return
+    if len(argv) != 4 or argv[1] != "boundary":
+        sys.exit("usage: tools.py reset | tools.py boundary <spec> <task> (baseline_sha on stdin)")
+    boundary(argv[2], argv[3], sys.stdin.read())
+
+
+if __name__ == "__main__":
+    main(sys.argv)
+KIRO_TASK_TOOLS_PY
+'''
+
 # DeepSeek V4.1 Flash saturates its OpenCode Go cell under dispatch fan-out;
 # fail over to the ChatGPT-backed Luna, whose deployment pins xhigh effort.
 [run.model.fallbacks]
