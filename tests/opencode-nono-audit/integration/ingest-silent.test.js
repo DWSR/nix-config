@@ -39,7 +39,7 @@ function writeFakeNono(dir) {
   const json =
     '{"name":"opencode-managed","filesystem":{"allow":["/srv/app"],"read":[],"write":[],"deny":[]},"network":{"block":false,"allow_domain":[],"open_port":[]},"groups":{"include":["node_runtime"],"exclude":[]}}';
   const script = [
-    '#!/usr/bin/env bash',
+    '#!/bin/sh',
     'for a in "$@"; do',
     '  if [ "$a" = "--silent" ]; then',
     `    printf '%s' '${json}'`,

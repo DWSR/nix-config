@@ -35,6 +35,7 @@ updates:
       - /overlays/opencode-cost-diagnosis-deps
       - /overlays/storage-mcp
       - /scripts/rpiv-todo
+      - /tests/fabro-darwin-builds
       - /tests/fabro-sandbox
       - /tests/fabro-service
       - /tests/git-clone-isolation

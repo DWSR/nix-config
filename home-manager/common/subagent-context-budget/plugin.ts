@@ -110,6 +110,21 @@ const INSTRUCTION_FRAGMENTS: Readonly<Record<string, InstructionFragment>> = Obj
     category: "role-fragment",
     text: "# Security read-only role\nAudit fixture and repository paths for security concerns without mutation.",
   }),
+  "shopify-host": Object.freeze({
+    name: "shopify-host",
+    category: "host",
+    text: "# Shopify host instructions\n\nApply Shopify host constraints only for host-scoped agents and keep personal-host profiles free of Shopify-only workflow text.",
+  }),
+  "shopify-stack": Object.freeze({
+    name: "shopify-stack",
+    category: "role-fragment",
+    text: "# Shopify stack role\n\nDrive Shopify GitHub-native Stack workflows after preflight. Call typed local Stack MCP tools without human authorization; ask before unrelated bypass flags.",
+  }),
+  "shopify-yugabyte-readonly": Object.freeze({
+    name: "shopify-yugabyte-readonly",
+    category: "role-fragment",
+    text: "# Shopify Yugabyte read-only role\n\nTrace Yugabyte source context on Shopify hosts without repository mutation.",
+  }),
 })
 
 const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -119,6 +134,19 @@ const INSTRUCTION_PROFILES: Readonly<Record<string, readonly string[]>> = Object
   "kiro-spec-orchestration": Object.freeze(["universal", "memory-mcpproxy", "cc-sdd-minimal", "kiro-spec-orchestration"]),
   "nvim-config": Object.freeze(["universal", "memory-mcpproxy", "nvim-config"]),
   "security-readonly": Object.freeze(["universal", "memory-mcpproxy", "security-readonly"]),
+  "shopify-stack": Object.freeze([
+    "universal",
+    "memory-mcpproxy",
+    "github-native-stacks-minimal",
+    "shopify-host",
+    "shopify-stack",
+  ]),
+  "shopify-yugabyte-readonly": Object.freeze([
+    "universal",
+    "memory-mcpproxy",
+    "shopify-host",
+    "shopify-yugabyte-readonly",
+  ]),
 })
 
 /**

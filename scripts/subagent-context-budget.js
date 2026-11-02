@@ -19,12 +19,13 @@ const path = require('node:path');
 
 const COMMANDS = Object.freeze(['audit', 'validate', 'smoke-plan']);
 const SOURCES = Object.freeze(['builtin', 'common-markdown', 'host-markdown']);
-const HOST_SCOPES = Object.freeze(['all', 'personal']);
+const HOST_SCOPES = Object.freeze(['all', 'personal', 'shopify']);
 const BASELINE_TOKEN_STATUSES = Object.freeze(['placeholder', 'measured']);
 const FORBIDDEN_BASELINE_INSTRUCTION_CATEGORIES = Object.freeze(new Set([
   'host-specific',
   'project-specific',
   'personal',
+  'shopify',
   'nix-config',
 ]));
 const FORBIDDEN_BASELINE_TOOL_CATEGORIES = Object.freeze(new Set([
@@ -301,7 +302,7 @@ function validateAgentBudget(catalogName, agent) {
     errors.push(validationError(catalogName, 'source', 'agent source must be builtin, common-markdown, or host-markdown'));
   }
   if (!HOST_SCOPES.includes(agent.hostScope)) {
-    errors.push(validationError(catalogName, 'hostScope', 'agent host scope must be all or personal'));
+    errors.push(validationError(catalogName, 'hostScope', 'agent host scope must be all, personal, or shopify'));
   }
   if (!isValidBudgetState(agent.state)) {
     errors.push(validationError(catalogName, 'state', 'agent state must be enforced/default, enforced/host-override, or unbudgeted/operator-escape-hatch'));
