@@ -1576,7 +1576,7 @@ test('the importer dependency package contains only js-yaml and its pure-JS tran
   const manifest = JSON.parse(fs.readFileSync(path.join(repoRoot, 'overlays/obsidian-importer-deps/package.json'), 'utf8'));
   const lock = JSON.parse(fs.readFileSync(path.join(repoRoot, 'overlays/obsidian-importer-deps/package-lock.json'), 'utf8'));
 
-  assert.deepEqual(manifest.dependencies, { 'js-yaml': '4.1.1' });
+  assert.deepEqual(manifest.dependencies, { 'js-yaml': '4.3.2' });
   assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies);
   assert.deepEqual(Object.keys(lock.packages).sort(), [
     '', 'node_modules/argparse', 'node_modules/js-yaml',
