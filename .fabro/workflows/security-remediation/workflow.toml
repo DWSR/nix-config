@@ -22,8 +22,9 @@ permissions = { contents = "write", pull_requests = "write", vulnerability_alert
 
 # Checkpoints MUST stay disabled: Fabro's checkpoint commits run `git add -A` + `git commit`
 # on the current HEAD, which here is the remediation branch, and would break the
-# single-commit publish invariant. `[run.clone]` is deliberately left unset because publish
-# compares trees and never rewrites history.
+# single-commit publish invariant. `[run.clone] depth = 0` is required: the prepare rebase
+# and the publish replay use `git apply --3way`, which needs the baseline blobs from the
+# full history.
 [run.run_branch]
 enabled = false
 
@@ -533,6 +534,12 @@ def replay_onto_base(base, baseline, tree):
     if patch.returncode != 0:
         sys.exit("base_moved: could not replay the fix from %s onto %s: %s" % (
             baseline[:12], base[:12], patch.stderr.decode("utf-8", "replace").strip()))
+    if not patch.stdout:
+        # The fix already matches the baseline tree, so there is nothing to replay.
+        # Move to the new base and let the caller's empty-diff check report it.
+        run(["git", "read-tree", "--reset", "-u", base])
+        run(["git", "reset", "--soft", base])
+        return run(["git", "write-tree"]), []
     # Move the index and working tree to the new base, then re-apply the fix as a
     # three-way merge. `git apply --3way` writes conflict markers to the working tree and
     # leaves unmerged index entries when the two sides touch the same lines.

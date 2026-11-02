@@ -315,6 +315,21 @@ class TrunkMovedTests(unittest.TestCase):
             self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
             self.assertEqual(git(work, "show", "%s:tests/lodash.test.js" % head), "test('patched')")
 
+    def test_reports_no_change_when_the_replay_has_no_patch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            # An existing branch whose fix already matches the baseline tree: the replay
+            # has nothing to apply, which is not a replay failure.
+            write_state(work)
+            commit_onto_origin(tmp, origin, {"flake.nix": "{ moved = true; }\n"})
+
+            message = run_publish_error(self, work)
+
+            self.assertIn("no change", message)
+            self.assertIn("empty commit", message)
+            self.assertEqual(git(origin, "branch", "--list", BRANCH, check=False), "")
+            self.assertEqual((work / "flake.nix").read_text(), "{ moved = true; }\n")
+
     def test_merges_a_trunk_change_to_another_line_of_the_fix_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             work, origin = make_repo(tmp)

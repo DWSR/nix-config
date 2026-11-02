@@ -167,6 +167,19 @@ class CheckpointAndPullRequestConfigTests(unittest.TestCase):
         # Fabro must not open a second pull request of its own.
         self.assertIs(self.config["run"]["pull_request"]["enabled"], False)
 
+    def test_keeps_full_history_for_the_three_way_replay(self) -> None:
+        # The prepare rebase and the publish replay need the baseline blobs that
+        # `git apply --3way` reads, so the clone must not be shallow.
+        self.assertEqual(self.config["run"]["clone"]["depth"], 0)
+
+
+class VerifyPromptRebaseTests(unittest.TestCase):
+    def test_names_both_the_prepare_rebase_and_the_publish_replay(self) -> None:
+        text = normalized(VERIFY_PROMPT.read_text())
+        self.assertIn("prepare does this for an existing pull request", text)
+        self.assertIn("publish replays the fix onto a moved head", text)
+        self.assertIn("fix stage resolved any conflict", text)
+
 
 class VerifyPromptExclusionTests(unittest.TestCase):
     def test_keeps_the_darwin_only_exclusions(self) -> None:
