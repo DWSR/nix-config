@@ -12,11 +12,10 @@
 # `fabro version` reports the tag.
 final: _prev:
 let
-  # v0.386.0-nightly.0, tagged 2026-10-14 from
-  # f2f9388e9c831ceda55b9b31f664d5ba01a2f1e4 (the `fabro version` Git SHA).
+  # v0.403.0-nightly.0, the latest upstream nightly release.
   # This is the same build channel `brew install fabro-sh/tap/fabro-nightly`
   # ships; the stable channel publishes far less frequently.
-  version = "0.386.0-nightly.0";
+  version = "0.403.0-nightly.0";
 
   # Upstream release tarballs per system. There is no x86_64-darwin
   # artifact; Linux uses the fully static musl binaries so no
@@ -26,15 +25,15 @@ let
   targets = {
     "aarch64-darwin" = {
       triple = "aarch64-apple-darwin";
-      hash = "sha256-0a2Bx0vvQ2Y4x3kna0IJQn3scN5RaeOK4wyP5ipm2Q0=";
+      hash = "sha256-+eumliGCf1BD03BseEfKy654pXk7tV+u4Qlpvs73Uig=";
     };
     "aarch64-linux" = {
       triple = "aarch64-unknown-linux-musl";
-      hash = "sha256-quK1W6KyLVCycuvQAy3fwFjtQx8jW685+futij5JLuM=";
+      hash = "sha256-9t7nlda16ITQPoooXy21OYWOtWWzaqEVSwPqUKnCu2A=";
     };
     "x86_64-linux" = {
       triple = "x86_64-unknown-linux-musl";
-      hash = "sha256-NGTXeCBpTs+LhsAkwZnY2IlJqhLv5ovcrHCZdQ0r0kY=";
+      hash = "sha256-7j0G7Sxl41n4osE5gzRE9Rk7lZLla1ZDkQdqpltrokg=";
     };
   };
 in
