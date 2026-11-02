@@ -338,13 +338,13 @@ ssh-ng, and the machines renderer base64-encodes
    SOPS_AGE_KEY_FILE="$T/key.txt" \
      nix shell --inputs-from . nixpkgs#sops -c \
      sops -d --extract '["build-host-key"]' secrets/fabro.fabro.yaml | wc -c
-   rm -rf "$T"
    ```
 
    `wc -c` must report a non-zero byte count for each entry. Compare the
    pinned host key by fingerprint rather than by value — the decrypted
    `build-host-key` must print the same fingerprint as the builder's own
-   `/etc/ssh/ssh_host_ed25519_key.pub`:
+   `/etc/ssh/ssh_host_ed25519_key.pub`. Keep `$T` until this last command has
+   read the staged age key, then remove it:
 
    ```sh
    SOPS_AGE_KEY_FILE="$T/key.txt" \
@@ -352,6 +352,7 @@ ssh-ng, and the machines renderer base64-encodes
      sops -d --extract '["build-host-key"]' secrets/fabro.fabro.yaml \
      | ssh-keygen -l -f /dev/stdin
    ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub   # on the builder
+   rm -rf "$T"
    ```
 
    The decrypted authorized list must contain the client key's public half:

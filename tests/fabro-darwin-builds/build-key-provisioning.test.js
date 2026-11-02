@@ -232,6 +232,32 @@ test('the runbook documents the sops -d --extract verification for both stores',
   assert.match(text, /never print|without printing|not print/i);
 });
 
+test('the runbook keeps the verification temp dir until after the fingerprint check', () => {
+  const text = buildKeysSection();
+  const start = text.indexOf('Verify both stores without printing a value');
+  assert.notEqual(start, -1, 'missing the verification step');
+
+  const verification = text.slice(start);
+  const cleanup = verification.indexOf('rm -rf "$T"');
+  assert.notEqual(cleanup, -1, 'the verification step must clean up its temp dir');
+  assert.equal(
+    verification.indexOf('rm -rf "$T"', cleanup + 1),
+    -1,
+    'the verification step must clean up exactly once',
+  );
+
+  const lastStagedKeyUse = verification.lastIndexOf('"$T/');
+  assert.notEqual(lastStagedKeyUse, -1, 'the verification step must stage the age key in $T');
+  assert.ok(
+    lastStagedKeyUse < cleanup,
+    'the staged age key must stay readable until the last sops/ssh-keygen use completes',
+  );
+  assert.ok(
+    verification.indexOf('ssh-keygen -l -f /dev/stdin') < cleanup,
+    'the host-key fingerprint check must precede the temp-dir cleanup',
+  );
+});
+
 test('the runbook documents rotation end to end', () => {
   const text = rotationSection();
 
