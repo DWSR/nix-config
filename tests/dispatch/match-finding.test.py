@@ -57,6 +57,10 @@ def normalize_script() -> str:
     return next(source for source in load_scripts() if "stack_issue_numbers" in source)
 
 
+def remediation_filter_script() -> str:
+    return next(source for source in load_scripts() if "security_remediation_disabled" in source)
+
+
 def run_script(script: str, queue: dict) -> tuple[dict, dict]:
     """Run a plan stage script against a temporary queue file and return plan + context."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -73,6 +77,23 @@ def run_script(script: str, queue: dict) -> tuple[dict, dict]:
         finally:
             os.chdir(previous)
         return plan, json.loads(output.getvalue())["context_updates"]
+
+
+def run_plan_script(script: str, plan: dict) -> tuple[dict, dict]:
+    with tempfile.TemporaryDirectory() as tmp:
+        git_dir = pathlib.Path(tmp) / ".git"
+        git_dir.mkdir()
+        (git_dir / "dispatch-plan.json").write_text(json.dumps(plan))
+        output = io.StringIO()
+        previous = os.getcwd()
+        os.chdir(tmp)
+        try:
+            with contextlib.redirect_stdout(output):
+                exec(compile(script, str(GRAPH), "exec"), {"__name__": "__main__"})
+            written = json.loads((git_dir / "dispatch-plan.json").read_text())
+        finally:
+            os.chdir(previous)
+        return written, json.loads(output.getvalue())["context_updates"]
 
 
 def queue_with(remediation: dict, **fields) -> dict:
@@ -116,6 +137,45 @@ class MatchFindingRuleTests(unittest.TestCase):
         self.assertEqual(entry["input_key"], "finding")
         self.assertEqual(entry["label_swap"], "none")
         self.assertEqual(context["has_plan"], "true")
+
+    def test_security_remediation_filter_blocks_findings_and_keeps_other_entries(self):
+        plan, _context = run_script(
+            match_script(),
+            queue_with(
+                {"selected": SELECTED, "active_run": None},
+                issues=[{
+                    "number": 7,
+                    "title": "spec issue",
+                    "url": "",
+                    "labels": ["type/kiro-spec"],
+                }],
+            ),
+        )
+
+        filtered, context = run_plan_script(remediation_filter_script(), plan)
+
+        self.assertEqual([entry["number"] for entry in filtered["entries"]], [7])
+        self.assertEqual(filtered["entries"][0]["workflow"], "kiro-spec")
+        self.assertEqual(filtered["skipped"], [{
+            "finding": "dependabot:12",
+            "reason": "security_remediation_disabled",
+        }])
+        self.assertEqual(context["has_plan"], "true")
+
+    def test_security_remediation_only_plan_routes_without_dispatch(self):
+        plan, _context = run_script(
+            match_script(),
+            queue_with({"selected": SELECTED, "active_run": None}),
+        )
+
+        filtered, context = run_plan_script(remediation_filter_script(), plan)
+
+        self.assertEqual(filtered["entries"], [])
+        self.assertEqual(context["has_plan"], "false")
+        self.assertEqual(filtered["skipped"], [{
+            "finding": "dependabot:12",
+            "reason": "security_remediation_disabled",
+        }])
 
     def test_active_remediation_run_emits_no_finding_entry(self):
         plan, context = run_script(
