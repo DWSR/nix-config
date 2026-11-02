@@ -1,12 +1,9 @@
-"""Rehearse a dispatch cycle against one seeded alert.
+"""Rehearse dispatch stages against one seeded security alert.
 
-A scratch repository with one seeded alert, the real
-`scan -> stack_scan -> match -> normalize -> dispatch` stages extracted from the
-package, and a stateful fake for the GitHub and Fabro APIs. A first cycle must print
-`selected` and create exactly one remediation child; a second cycle while that child
-is pending, runnable, initializing, running, or blocked must create none. The final
-publish leg shows the child's pull request stays open for a human to merge and that
-the alert is never written.
+A scratch repository runs the real scan, matching, remediation filter, normalization,
+and dispatch stages against stateful GitHub and Fabro API fakes. A selected finding
+must be filtered before dispatch, while the independent remediation publish leg keeps
+its pull request open for a human to merge and never writes the alert.
 """
 
 import contextlib
@@ -108,6 +105,10 @@ def stack_scan_script() -> str:
 
 def match_script() -> str:
     return graph_script("DEPENDABOT_RULE")
+
+
+def remediation_filter_script() -> str:
+    return graph_script("security_remediation_disabled")
 
 
 def normalize_script() -> str:
@@ -304,16 +305,16 @@ class Rehearsal:
         return json.loads((self.work / ".git" / name).read_text())
 
     def cycle(self):
-        """scan -> stack_scan -> match -> normalize and return the queue, context, plan."""
+        """Run scan -> stack_scan -> match -> filter -> normalize."""
         scan_context, scan_error = self.stage(scan_script())
         queue = self.read("dispatch-queue.json")
         self.stage(stack_scan_script())
         queue = self.read("dispatch-queue.json")
-        match_context, _ = self.stage(match_script())
-        plan = self.read("dispatch-plan.json")
+        self.stage(match_script())
+        filter_context, _ = self.stage(remediation_filter_script())
         self.stage(normalize_script())
         plan = self.read("dispatch-plan.json")
-        return queue, scan_context, scan_error, match_context, plan
+        return queue, scan_context, scan_error, filter_context, plan
 
     def dispatch(self):
         context, error = self.stage(dispatch_script())
@@ -321,16 +322,15 @@ class Rehearsal:
 
 
 class SeededAlertRehearsalTests(unittest.TestCase):
-    def test_first_cycle_prints_selected_and_creates_exactly_one_child(self):
+    def test_selected_finding_is_filtered_before_dispatch(self):
         with tempfile.TemporaryDirectory() as tmp:
             services = RehearsalServices()
             work, _origin = make_scratch(tmp)
             rehearsal = Rehearsal(work, services)
 
             queue, scan_context, scan_error, match_context, plan = rehearsal.cycle()
-            result, dispatch_context, _dispatch_error = rehearsal.dispatch()
 
-        # The seeded alert is discovered and selected, and the run prints it.
+        # The seeded alert remains visible in scan diagnostics but is not dispatchable.
         self.assertEqual(queue["findings"], [{
             "source": "dependabot",
             "number": 12,
@@ -342,73 +342,30 @@ class SeededAlertRehearsalTests(unittest.TestCase):
         self.assertIn("selected=dependabot:12", scan_error)
         self.assertEqual(scan_context["finding_source"], "dependabot")
         self.assertEqual(scan_context["finding_number"], "12")
-
-        # A findings-only queue survives stack_scan and reaches match.
         self.assertEqual(scan_context["has_queue"], "true")
-        self.assertEqual(match_context["has_plan"], "true")
-        self.assertEqual(len(plan["entries"]), 1)
-        self.assertEqual(plan["entries"][0]["number"], FINDING)
-        self.assertEqual(plan["entries"][0]["workflow"], "security-remediation")
+        self.assertIn("selected=dependabot:12", scan_error)
+        self.assertEqual(plan["entries"], [])
+        self.assertEqual(plan["skipped"], [{
+            "finding": FINDING,
+            "reason": "security_remediation_disabled",
+        }])
+        self.assertEqual(match_context["has_plan"], "false")
+        self.assertEqual(services.creates, [])
+        self.assertEqual(services.starts, [])
+        self.assertEqual(services.runs, [])
 
-        # Exactly one remediation child is created and started.
-        self.assertEqual(len(services.creates), 1)
-        self.assertEqual(len(services.starts), 1)
-        self.assertEqual(services.creates[0]["workflow_version_id"], "version-security-remediation")
-        self.assertEqual(services.creates[0]["title"], "security-remediation for %s dependabot #12" % REPO)
-        self.assertEqual(services.creates[0]["args"]["inputs"], {"finding": FINDING})
-        self.assertEqual(services.creates[0]["args"]["labels"]["finding"], FINDING)
-        self.assertEqual(services.runs[0]["workflow"]["slug"], "security-remediation")
-        self.assertEqual(services.runs[0]["repository"]["name"], REPO)
-        runs_query = next(
-            urllib.parse.parse_qs(urllib.parse.urlparse(request["url"]).query)
-            for request in services.requests
-            if request["url"].startswith(API_BASE + "/runs?")
-        )
-        self.assertEqual(set(runs_query["status"]), set(ACTIVE_STATUSES))
-        self.assertEqual(result["dispatched"], [
-            {"finding": FINDING, "workflow": "security-remediation", "run_id": "01CHILD1"},
-        ])
-        self.assertEqual(result["selected_finding"], FINDING)
-        self.assertEqual(dispatch_context["dispatch_result"], "success")
-        self.assertEqual(services.runs[0]["status"], "runnable")
+    def test_repeated_scans_never_dispatch_selected_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            services = RehearsalServices()
+            work, _origin = make_scratch(tmp)
+            rehearsal = Rehearsal(work, services)
 
-    def test_second_scan_while_the_child_is_active_creates_none(self):
-        for status in ACTIVE_STATUSES:
-            with self.subTest(status=status):
-                with tempfile.TemporaryDirectory() as tmp:
-                    services = RehearsalServices()
-                    work, _origin = make_scratch(tmp)
-                    rehearsal = Rehearsal(work, services)
-
-                    rehearsal.cycle()
-                    rehearsal.dispatch()
-                    self.assertEqual(len(services.creates), 1)
-                    self.assertEqual(len(rehearsal.read("dispatch-plan.json")["entries"]), 1)
-                    services.runs[0]["status"] = status
-
-                    # The create gate re-checks the runs list, so a plan built before the
-                    # child became active must not create a second child.
-                    raced, _race_context, _race_error = rehearsal.dispatch()
-                    self.assertEqual(raced["dispatched"], [])
-                    self.assertEqual(raced["skipped"], [
-                        {"finding": FINDING, "reason": "active_security_remediation_run"},
-                    ])
-                    self.assertEqual(raced["active_security_remediation_run"], CHILD_ID)
-                    self.assertEqual(len(services.creates), 1)
-                    self.assertEqual(len(services.starts), 1)
-
-                    # A fresh cycle sees the active child, still selects the open alert,
-                    # and emits no finding entry (the graph routes straight to prune).
-                    queue, scan_context, scan_error, match_context, plan = rehearsal.cycle()
-
-                self.assertEqual(queue["remediation"]["active_run"], CHILD_ID)
+            for _ in range(2):
+                queue, _scan_context, _scan_error, filter_context, plan = rehearsal.cycle()
                 self.assertEqual(queue["remediation"]["selected"]["number"], 12)
-                self.assertEqual(scan_context["active_security_remediation_run"], CHILD_ID)
-                self.assertIn("selected=dependabot:12", scan_error)
                 self.assertEqual(plan["entries"], [])
-                self.assertEqual(match_context["has_plan"], "false")
-                self.assertEqual(len(services.creates), 1)
-                self.assertEqual(len(services.starts), 1)
+                self.assertEqual(filter_context["has_plan"], "false")
+                self.assertEqual(services.creates, [])
 
     def test_closed_alert_leaves_the_scan_without_a_child(self):
         with tempfile.TemporaryDirectory() as tmp:
