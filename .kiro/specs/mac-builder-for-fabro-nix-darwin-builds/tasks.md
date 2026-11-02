@@ -81,6 +81,7 @@
   - Done when `secrets/README.md` covers generation, both 1Password fields, sync, authorized-key append, rotation, and verification, with no secret value in the working tree.
   - _Requirements: 6.1, 6.2, 6.8, 6.9, 6.10_
   - _Depends: 1.3, 4.1_
+  - _Blocked: The secrets/README.md authorized-key append concatenates onto a final key line lacking a trailing newline; add a conditional newline delimiter plus an append regression test, then re-review._
 
 - [ ] 4.3 Document the tailnet grant, builder identity, and operation steps
   - Create `configurations/mac-builder/README.md` with the required console-side `tagOwners` and grant snippet for `tag:fabro` to `tag:mac-builder` on `tcp:22`, and state that the ACL governs reachability only while SSH keys authenticate the session.
