@@ -114,6 +114,35 @@ class CodeQLVisibilityTests(unittest.TestCase):
         self.assertIn("Do not create a one-off scan", text)
 
 
+class MergeConflictTests(unittest.TestCase):
+    def test_reads_the_conflict_state_and_paths(self):
+        text = normalized(FIX_PROMPT.read_text())
+        self.assertIn("rebase_conflict", text)
+        self.assertIn("conflict_files", text)
+        self.assertIn("`.git/rebase-merge`", text)
+        self.assertIn("`.git/rebase-apply`", text)
+        self.assertIn("takes precedence over a rework round", text)
+
+    def test_resolves_both_sides_and_regenerates_conflicted_lockfiles(self):
+        text = normalized(FIX_PROMPT.read_text())
+        self.assertIn("both the default branch's changes and the fix are preserved", text)
+        self.assertIn("take the default branch's lockfile and re-apply the upgrade", text)
+        self.assertIn("apply the fix at its current path", text)
+
+    def test_finishes_a_rebase_but_does_not_commit_a_replay_by_hand(self):
+        text = normalized(FIX_PROMPT.read_text())
+        self.assertIn("GIT_EDITOR=true git rebase --continue", text)
+        self.assertIn("no rebase in progress", text)
+        self.assertIn("do not commit", text)
+        self.assertIn("only commit exception", text)
+        self.assertIn("publish stage re-checks the branch", text)
+
+    def test_never_drops_the_default_branch_side(self):
+        text = normalized(FIX_PROMPT.read_text())
+        self.assertIn("git rebase --abort", text)
+        self.assertIn("Never drop the default branch's side", text)
+
+
 class PublishMetadataTests(unittest.TestCase):
     def test_optional_publish_metadata_uses_a_bounded_conventional_title(self):
         text = normalized(FIX_PROMPT.read_text())

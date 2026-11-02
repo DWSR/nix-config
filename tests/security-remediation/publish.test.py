@@ -45,6 +45,8 @@ def make_repo(tmp):
     git(work, "config", "user.name", "Test")
     (work / "flake.nix").write_text("{}\n")
     (work / "package-lock.json").write_text('{"lodash": "4.17.20"}\n')
+    (work / "deps.txt").write_text(
+        "left-pad 1.0.0\nlodash 4.17.20\nchalk 5.0.0\ndebug 4.0.0\n")
     (work / "README.md").write_text("readme\n")
     git(work, "add", "-A")
     git(work, "commit", "-m", "init")
@@ -285,9 +287,14 @@ class TrunkMovedTests(unittest.TestCase):
             (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
             new_base = commit_onto_origin(tmp, origin, {"flake.nix": "{ moved = true; }\n"})
 
-            context = run_publish(work)
+            first = run_publish(work)
 
-            head = context["commit_sha"]
+            self.assertEqual(first["rebase_replayed"], "true")
+            self.assertNotIn("commit_sha", first)
+            self.assertEqual(read_state(work)["baseline_sha"], new_base)
+            self.assertEqual(git(origin, "branch", "--list", BRANCH, check=False), "")
+
+            head = run_publish(work)["commit_sha"]
             self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
             self.assertEqual(git(work, "rev-list", "--count", head, "^%s" % new_base), "1")
             self.assertIn("4.17.21", git(work, "show", "%s:package-lock.json" % head))
@@ -302,24 +309,179 @@ class TrunkMovedTests(unittest.TestCase):
             (work / "tests/lodash.test.js").write_text("test('patched')\n")
             new_base = commit_onto_origin(tmp, origin, {"flake.nix": "{ moved = true; }\n"})
 
-            context = run_publish(work)
+            run_publish(work)
+            head = run_publish(work)["commit_sha"]
 
-            head = context["commit_sha"]
             self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
             self.assertEqual(git(work, "show", "%s:tests/lodash.test.js" % head), "test('patched')")
 
-    def test_fails_base_moved_when_the_trunk_touched_the_fix_file(self):
+    def test_reports_no_change_when_the_replay_has_no_patch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            # An existing branch whose fix already matches the baseline tree: the replay
+            # has nothing to apply, which is not a replay failure.
+            write_state(work)
+            commit_onto_origin(tmp, origin, {"flake.nix": "{ moved = true; }\n"})
+
+            message = run_publish_error(self, work)
+
+            self.assertIn("no change", message)
+            self.assertIn("empty commit", message)
+            self.assertEqual(git(origin, "branch", "--list", BRANCH, check=False), "")
+            self.assertEqual((work / "flake.nix").read_text(), "{ moved = true; }\n")
+
+    def test_merges_a_trunk_change_to_another_line_of_the_fix_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work)
+            (work / "deps.txt").write_text(
+                "left-pad 1.0.0\nlodash 4.17.21\nchalk 5.0.0\ndebug 4.0.0\n")
+            new_base = commit_onto_origin(
+                tmp, origin,
+                {"deps.txt": "left-pad 1.0.0\nlodash 4.17.20\nchalk 5.0.0\ndebug 4.1.0\n"})
+
+            first = run_publish(work)
+
+            self.assertEqual(first["rebase_replayed"], "true")
+            self.assertEqual(first["rebase_conflict"], "false")
+            self.assertNotIn("commit_sha", first)
+
+            context = run_publish(work)
+
+            head = context["commit_sha"]
+            self.assertEqual(context["rebase_conflict"], "false")
+            self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
+            self.assertEqual(
+                git(work, "show", "%s:deps.txt" % head),
+                "left-pad 1.0.0\nlodash 4.17.21\nchalk 5.0.0\ndebug 4.1.0",
+            )
+
+    def test_routes_an_overlapping_trunk_change_to_the_fix_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            new_base = commit_onto_origin(
+                tmp, origin, {"package-lock.json": '{"lodash": "4.17.22"}\n'})
+            http = FakeHTTP()
+
+            context = run_publish(work, http)
+
+            self.assertEqual(context["rebase_conflict"], "true")
+            self.assertIn("package-lock.json", context["conflict_files"])
+            self.assertNotIn("commit_sha", context)
+            self.assertIn("<<<<<<<", (work / "package-lock.json").read_text())
+            self.assertEqual(
+                git(work, "diff", "--name-only", "--diff-filter=U"),
+                "package-lock.json",
+            )
+            state = read_state(work)
+            self.assertIs(state["rebase_conflict"], True)
+            self.assertEqual(state["baseline_sha"], new_base)
+            self.assertEqual(posts(http), [])
+            self.assertEqual(git(origin, "branch", "--list", BRANCH, check=False), "")
+
+    def test_republishes_after_the_fix_stage_resolves_the_conflict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            (work / "README.md").write_text("readme\nremediation notes\n")
+            new_base = commit_onto_origin(
+                tmp, origin, {"package-lock.json": '{"lodash": "4.17.22"}\n'})
+            run_publish(work)
+
+            # What the fix stage does: resolve the conflict and git add the result.
+            (work / "package-lock.json").write_text('{"lodash": "4.17.22"}\n')
+            git(work, "add", "package-lock.json")
+
+            context = run_publish(work)
+
+            head = context["commit_sha"]
+            self.assertEqual(context["rebase_conflict"], "false")
+            self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
+            self.assertEqual(git(work, "rev-list", "--count", head, "^%s" % new_base), "1")
+            self.assertEqual(git(work, "show", "%s:package-lock.json" % head),
+                             '{"lodash": "4.17.22"}')
+            self.assertEqual(git(work, "show", "%s:README.md" % head),
+                             "readme\nremediation notes")
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), head)
+
+    def test_routes_an_unresolved_conflict_in_the_index_back_to_fix(self):
         with tempfile.TemporaryDirectory() as tmp:
             work, origin = make_repo(tmp)
             write_state(work)
             (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
             commit_onto_origin(tmp, origin, {"package-lock.json": '{"lodash": "4.17.22"}\n'})
+            run_publish(work)
+            http = FakeHTTP()
 
-            message = run_publish_error(self, work)
+            # The fix stage has not run yet: the index still holds conflict stages.
+            context = run_publish(work, http)
 
-            self.assertIn("base_moved", message)
-            self.assertIn("package-lock.json", message)
-            self.assertNotIn("commit_sha", message)
+            self.assertEqual(context["rebase_conflict"], "true")
+            self.assertIn("package-lock.json", context["conflict_files"])
+            self.assertNotIn("commit_sha", context)
+            self.assertEqual(posts(http), [])
+            self.assertEqual(git(origin, "branch", "--list", BRANCH, check=False), "")
+
+    def test_routes_an_unfinished_rebase_back_to_fix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, _origin = make_repo(tmp)
+            write_state(work)
+            (work / "package-lock.json").write_text('{"lodash": "4.17.21"}\n')
+            (work / ".git/rebase-merge").mkdir()
+            http = FakeHTTP()
+
+            context = run_publish(work, http)
+
+            self.assertEqual(context["rebase_conflict"], "true")
+            self.assertNotIn("commit_sha", context)
+            self.assertEqual(posts(http), [])
+
+
+class PrepareConflictLoopTests(unittest.TestCase):
+    def test_routes_a_prepare_rebase_conflict_then_publishes_after_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            existing = push_branch(tmp, origin, BRANCH, "branch fix\n")
+            new_base = commit_onto_origin(tmp, origin, {"branch.txt": "trunk change\n"})
+            write_state(work, baseline_sha=new_base, remote_branch_sha=existing)
+            git(work, "fetch", "origin")
+            git(work, "checkout", "-B", BRANCH, "origin/%s" % BRANCH)
+            rebase = subprocess.run(
+                ["git", "rebase", "origin/%s" % TRUNK],
+                cwd=work, capture_output=True, text=True,
+            )
+            self.assertNotEqual(rebase.returncode, 0, "the test needs a real conflict")
+            state = read_state(work)
+            state["rebase_conflict"] = True
+            (work / STATE_PATH).write_text(json.dumps(state, indent=1, sort_keys=True))
+
+            first = run_publish(work)
+
+            self.assertEqual(first["rebase_conflict"], "true")
+            self.assertIn("branch.txt", first["conflict_files"])
+            self.assertNotIn("commit_sha", first)
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), existing)
+
+            # What the fix stage does: resolve the conflict and continue the rebase.
+            (work / "branch.txt").write_text("resolved fix\n")
+            git(work, "add", "branch.txt")
+            env = dict(os.environ, GIT_EDITOR="true")
+            subprocess.run(
+                ["git", "rebase", "--continue"],
+                cwd=work, env=env, check=True, capture_output=True,
+            )
+
+            context = run_publish(work)
+
+            head = context["commit_sha"]
+            self.assertEqual(context["rebase_conflict"], "false")
+            self.assertEqual(git(work, "rev-parse", "%s^" % head), new_base)
+            self.assertEqual(git(work, "rev-list", "--count", head, "^%s" % new_base), "1")
+            self.assertEqual(git(work, "show", "%s:branch.txt" % head), "resolved fix")
+            self.assertEqual(git(origin, "rev-parse", "refs/heads/%s" % BRANCH), head)
 
 
 class RejectedPayloadTests(unittest.TestCase):
