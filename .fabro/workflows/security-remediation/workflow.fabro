@@ -176,7 +176,11 @@ digraph SecurityRemediation {
     rework -> fail [condition="outcome=succeeded && context.fix_round > 3"]
     rework -> mark_rework
 
-    publish -> exit [condition="outcome=succeeded"]
+    // A replay onto a newer default-branch head that conflicts is left in the working
+    // tree for the fix stage; a clean replay is re-verified before publish retries.
+    publish -> fix [condition="outcome=succeeded && context.rebase_conflict=true"]
+    publish -> snapshot [condition="outcome=succeeded && context.rebase_replayed=true"]
+    publish -> exit [condition="outcome=succeeded && context.rebase_conflict!=true && context.rebase_replayed!=true"]
     publish -> mark_publish
 
     mark_prepare -> fail

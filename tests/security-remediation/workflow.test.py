@@ -122,6 +122,31 @@ class SecurityRemediationGraphTests(unittest.TestCase):
         self.assertNotIn("fail", dom["exit"])
 
 
+class PublishConflictRoutingTests(unittest.TestCase):
+    def test_publish_routes_a_conflict_back_to_the_fix_stage(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertIn(("publish", "fix"), EDGE.findall(text))
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*fix\s*\[condition="[^"]*rebase_conflict=true"',
+        )
+
+    def test_publish_re_verifies_a_clean_replay_before_publishing(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertIn(("publish", "snapshot"), EDGE.findall(text))
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*snapshot\s*\[condition="[^"]*rebase_replayed=true"',
+        )
+
+    def test_publish_exits_only_without_a_conflict_or_replay(self):
+        text = WORKFLOW_FABRO.read_text()
+        self.assertRegex(
+            text,
+            r'publish\s*->\s*exit\s*\[condition="[^"]*rebase_conflict!=true[^"]*rebase_replayed!=true"',
+        )
+
+
 class CheckpointAndPullRequestConfigTests(unittest.TestCase):
     def setUp(self) -> None:
         with WORKFLOW_TOML.open("rb") as handle:
@@ -141,6 +166,19 @@ class CheckpointAndPullRequestConfigTests(unittest.TestCase):
         # The publish stage owns branch naming and pull-request creation, so
         # Fabro must not open a second pull request of its own.
         self.assertIs(self.config["run"]["pull_request"]["enabled"], False)
+
+    def test_keeps_full_history_for_the_three_way_replay(self) -> None:
+        # The prepare rebase and the publish replay need the baseline blobs that
+        # `git apply --3way` reads, so the clone must not be shallow.
+        self.assertEqual(self.config["run"]["clone"]["depth"], 0)
+
+
+class VerifyPromptRebaseTests(unittest.TestCase):
+    def test_names_both_the_prepare_rebase_and_the_publish_replay(self) -> None:
+        text = normalized(VERIFY_PROMPT.read_text())
+        self.assertIn("prepare does this for an existing pull request", text)
+        self.assertIn("publish replays the fix onto a moved head", text)
+        self.assertIn("fix stage resolved any conflict", text)
 
 
 class VerifyPromptExclusionTests(unittest.TestCase):

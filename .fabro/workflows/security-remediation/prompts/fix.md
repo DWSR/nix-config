@@ -3,9 +3,15 @@
 You are the fix stage of the `security-remediation` workflow for finding
 `{{ inputs.finding }}`. The prepare stage has read exactly one GitHub alert, written the
 finding file and run state, and checked out the deterministic branch
-`security/<source>-<alert-number>` at the repository's default-branch head. Your job is to
-change the working tree so the reported vulnerability is gone. The workflow's verify stage
-proves the change, and its publish stage owns the commit, push, and pull request.
+`security/<source>-<alert-number>` at the repository's default-branch head. When that
+branch already existed on origin (an existing pull request), prepare checked it out and
+rebased it onto the latest default-branch head instead. Your job is to change the working
+tree so the reported vulnerability is gone.
+The workflow's verify stage proves the change, and its publish stage owns the commit, push,
+and pull request.
+
+This stage also runs when a rebase or a publish-time replay hit a merge conflict; see
+[Resolve a merge conflict](#resolve-a-merge-conflict).
 
 ## Inputs
 
@@ -16,10 +22,11 @@ proves the change, and its publish stage owns the commit, push, and pull request
   `## Detail` carries the advisory or rule text.
 - `.git/security-remediation-state.json` — `finding`, `source`, `alert_number`, `title`,
   `url`, `repo`, `trunk`, `branch`, `baseline_sha`, `remote_branch_sha`, `alert_open`,
-  `verify_baseline`, `fix_round`, `published`, `created_at`. The state names the only
-  finding you may work on.
-- Run context — `fix_round`, `test_failure_summary`, `test_command`, and `failure_class`
-  when a previous round or a rate limit produced them.
+  `verify_baseline`, `fix_round`, `published`, `rebase_conflict`, `created_at`. The state
+  names the only finding you may work on and tells you whether a conflict is pending.
+- Run context — `fix_round`, `test_failure_summary`, `test_command`, `failure_class`,
+  `rebase_conflict`, and `conflict_files` when a previous round, a rate limit, or a
+  conflicting replay produced them.
 - Rework context — when `fix_round` is greater than zero, `test_failure_summary` is
   non-empty, or `.git/security-remediation-test.log` exists, this is a rework round. Read
   the full `.git/security-remediation-test.log` and the run context's
@@ -72,6 +79,35 @@ The finding is the contract. Fix exactly the reported vulnerability and nothing 
    default-branch analysis can clear the alert. Do not create a one-off scan that only
    your change can see.
 
+## Resolve a merge conflict
+
+The prepare stage rebases an existing pull request's branch onto the latest default-branch
+head, and the publish stage replays the fix onto a default-branch head that moved during
+the run. Either replay can conflict. When it does, the workflow leaves the conflict in the
+working tree and sets `rebase_conflict` to `true`; the run context also carries the
+conflicting paths as `conflict_files`. This mode takes precedence over a rework round:
+resolve the conflict even when `.git/security-remediation-test.log` exists from the
+verification that ran before the publish-time replay. Resolve the conflict before
+anything else:
+
+1. Inspect it: `git status`, `git diff`, and read every conflicted file. A rebase in
+   progress is visible as `.git/rebase-merge` or `.git/rebase-apply`.
+2. Resolve each conflict so both the default branch's changes and the fix are preserved.
+   For a lockfile, normally take the default branch's lockfile and re-apply the upgrade
+   (regenerate it from the upgraded manifest) instead of hand-merging it. If the default
+   branch renamed or moved an affected file, apply the fix at its current path rather than
+   recreating the removed one.
+3. `git add` every resolved file.
+4. When a rebase is in progress, finish it with `GIT_EDITOR=true git rebase --continue`
+   and repeat until it completes; the rewritten branch must keep its fix. When the conflict
+   came from a publish-time replay (no rebase in progress), stop after `git add`: do not
+   commit. The publish stage builds the single commit from the working tree.
+5. Once the conflict is fully resolved, continue with the fix as usual. The publish stage
+   re-checks the branch, so it is the authority on whether the conflict is gone.
+6. If the conflict cannot be resolved without losing the default branch's work or the
+   intent of the fix, run `git rebase --abort` when a rebase is in progress and report
+   blocked. Never drop the default branch's side just to make the merge finish.
+
 ## Forbidden shortcuts
 
 Suppression is not a fix. Do not:
@@ -88,8 +124,10 @@ Suppression is not a fix. Do not:
 - create commits (`git commit`) or tags, push (`git push`), or make any GitHub API write,
 - merge the pull request or enable auto-merge.
 
-The workflow's publish stage owns the branch push and pull request. All of your changes
-stay in the working tree on the branch the prepare stage checked out.
+The only commit exception is `git rebase --continue` while resolving a rebase conflict: it
+re-applies the existing fix commit, it never adds a new one. The workflow's publish stage
+owns the branch push and pull request. All other changes stay in the working tree on the
+branch the prepare stage checked out.
 
 ## Toolchain provisioning (Nix-first)
 

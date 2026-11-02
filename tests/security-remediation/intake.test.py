@@ -149,6 +149,39 @@ def context_from(stdout):
     return json.loads(stdout.strip().splitlines()[-1])["context_updates"]
 
 
+def clone_repo(tmp, origin, name):
+    other = pathlib.Path(tmp, name)
+    subprocess.run(["git", "clone", str(origin), str(other)], check=True, capture_output=True)
+    git(other, "config", "user.email", "test@example.test")
+    git(other, "config", "user.name", "Test")
+    return other
+
+
+def commit_files(work, files, message):
+    for path, text in files.items():
+        target = work / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    git(work, "add", "-A")
+    git(work, "commit", "-m", message)
+    return git(work, "rev-parse", "HEAD")
+
+
+def commit_trunk(tmp, origin, files, message="trunk moved", name="trunk-work"):
+    other = clone_repo(tmp, origin, name)
+    sha = commit_files(other, files, message)
+    git(other, "push", "origin", "main")
+    return sha
+
+
+def push_branch(tmp, origin, branch, files, message="fix on the branch", name="branch-work"):
+    other = clone_repo(tmp, origin, name)
+    git(other, "checkout", "-B", branch, "origin/main")
+    sha = commit_files(other, files, message)
+    git(other, "push", "origin", branch)
+    return sha
+
+
 def indexes(text, labels):
     return [text.index(label) for label in labels]
 
@@ -352,9 +385,67 @@ class PrepareTests(unittest.TestCase):
                 "alert_url": dependabot_alert()["html_url"],
                 "branch": "security/dependabot-12",
                 "trunk": "main",
+                "rebase_conflict": "false",
+                "conflict_files": "",
             })
             self.assertTrue(requests)
             self.assertEqual([method for method, _url in requests], ["GET"])
+
+    def test_rebases_an_existing_pull_request_branch_onto_trunk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            branch_sha = push_branch(
+                tmp, origin, "security/dependabot-12",
+                {"package-lock.json": '{"lodash": "4.17.21"}\n'},
+            )
+            trunk_sha = commit_trunk(tmp, origin, {"flake.nix": "{ moved = true; }\n"})
+            tools = load_tools()
+            _requests, urlopen = make_urlopen({("dependabot", 12): dependabot_alert()})
+
+            stdout = run_main(tools, work, ["prepare", "dependabot:12"], urlopen)
+
+            state = json.loads((work / ".git/security-remediation-state.json").read_text())
+            self.assertEqual(state["remote_branch_sha"], branch_sha)
+            self.assertEqual(state["baseline_sha"], trunk_sha)
+            self.assertIs(state["rebase_conflict"], False)
+            self.assertEqual(git(work, "rev-parse", "--abbrev-ref", "HEAD"), "security/dependabot-12")
+            self.assertEqual(git(work, "rev-parse", "HEAD^"), trunk_sha)
+            self.assertEqual(git(work, "rev-list", "--count", "HEAD", "^%s" % trunk_sha), "1")
+            self.assertIn("4.17.21", (work / "package-lock.json").read_text())
+            self.assertEqual((work / "flake.nix").read_text(), "{ moved = true; }\n")
+            context = context_from(stdout)
+            self.assertEqual(context["rebase_conflict"], "false")
+            self.assertEqual(context["conflict_files"], "")
+
+    def test_leaves_a_conflicting_rebase_for_the_fix_stage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            work, origin = make_repo(tmp)
+            push_branch(
+                tmp, origin, "security/dependabot-12",
+                {"package-lock.json": '{"lodash": "4.17.21"}\n'},
+            )
+            trunk_sha = commit_trunk(tmp, origin, {"package-lock.json": '{"lodash": "4.17.22"}\n'})
+            tools = load_tools()
+            _requests, urlopen = make_urlopen({("dependabot", 12): dependabot_alert()})
+
+            stdout = run_main(tools, work, ["prepare", "dependabot:12"], urlopen)
+
+            state = json.loads((work / ".git/security-remediation-state.json").read_text())
+            self.assertIs(state["rebase_conflict"], True)
+            self.assertEqual(state["baseline_sha"], trunk_sha)
+            self.assertTrue(
+                os.path.isdir(work / ".git/rebase-merge")
+                or os.path.isdir(work / ".git/rebase-apply"),
+                "prepare must leave the conflicting rebase in progress",
+            )
+            self.assertEqual(
+                git(work, "diff", "--name-only", "--diff-filter=U"),
+                "package-lock.json",
+            )
+            self.assertIn("<<<<<<<", (work / "package-lock.json").read_text())
+            context = context_from(stdout)
+            self.assertEqual(context["rebase_conflict"], "true")
+            self.assertIn("package-lock.json", context["conflict_files"])
 
     def test_closed_alert_sets_alert_open_false_without_branch_work(self):
         with tempfile.TemporaryDirectory() as tmp:
