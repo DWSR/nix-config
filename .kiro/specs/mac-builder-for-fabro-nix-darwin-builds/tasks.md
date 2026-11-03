@@ -134,7 +134,7 @@
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - _Depends: 5.2, 5.3, 5.4_
 
-- [ ] 5.6 Validate the live dispatch path and store resolution
+- [x] 5.6 Validate the live dispatch path and store resolution
   - Deploy and switch the builder; confirm it registers with `tag:mac-builder`, comes up from the OAuth credential without login, and that `mac-builder-readiness` over the LAN forward still passes.
   - Switch the guest; confirm `fabro-darwin-builders.service` rendered exactly one `0600` machines line, the daemon restarted, and `aarch64-linux` builds still run locally.
   - Run `fabro-darwin-build-smoke` from a sandbox; confirm the reported store path exists in the guest store and resolves inside the sandbox without any workflow change.
