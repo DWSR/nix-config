@@ -176,6 +176,15 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # total-recall: the pinned memory workers, harness adapters, and
+    # migrations installed on the fabro guest and wired into the hosts.
+    # Deliberately no `nixpkgs.follows`: upstream's workspace needs Rust
+    # 1.98.1 and edition 2024, which the repository's 26.05 nixpkgs does
+    # not provide, so it keeps its own locked nixpkgs (see flake.lock's
+    # `total-recall` node). Bumps: change nothing here and run
+    # `nix flake update total-recall`, then review the recorded rev.
+    total-recall.url = "github:DWSR/total-recall";
+
     # The nix-darwin module also manages feature policy and performs model
     # cleanup during activation. Keep the CLI package available system-wide;
     # configure Apple Intelligence policy manually with `pared wizard`.
@@ -3401,6 +3410,10 @@
           # without re-deriving them from nixpkgs (configurations/fabro-vm
           # imports its overlay above).
           nixSnapshotter = inputs.nix-snapshotter;
+          # The pinned total-recall flake (workers, harness adapters, and
+          # migration sources). Threaded through so the guest modules read
+          # one locked revision instead of resolving an unpinned URL.
+          totalRecall = inputs.total-recall;
           # Stationary kernel: imported (overlays-free) from the nixpkgs rev
           # the booted release image was built from, so the eval's kernel drv
           # hash equals the one baked into the image. See the boot comment in
