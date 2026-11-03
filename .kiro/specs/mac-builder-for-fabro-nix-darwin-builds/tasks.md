@@ -74,7 +74,7 @@
   - Done when `secrets/README.md` documents the source, scope/tag, edit flow, and verification, and the design and declaration agree with no plaintext credential in the working tree.
   - _Requirements: 4.3, 4.4, 4.6, 4.7_
 
-- [ ] 4.2 Document build-session key provisioning and rotation
+- [x] 4.2 Document build-session key provisioning and rotation
   - Add key generation (`ssh-keygen -t ed25519`), the two 1Password fields, `nix run '.#fabro-sync-from-1password'`, the `builder-authorized-keys` append, rotation, and `sops -d --extract` verification to `secrets/README.md`.
   - Confirm the design's `## Operator Provisioning` entries and the guest `sops.secrets` plus builder authorized-key declarations agree.
   - Do not generate, read, or write a secret value; the operator owns the key pair.
