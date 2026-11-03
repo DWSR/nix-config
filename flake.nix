@@ -1976,6 +1976,29 @@
                 touch $out
               '';
 
+          # Offline eval/behaviour checks for the Darwin dispatch path
+          # (mac-builder-for-fabro-nix-darwin-builds, requirements 8.1-8.4).
+          # The suite runs unconditionally here (not gated per system), so a
+          # missing test directory fails the check instead of yielding an
+          # empty pass.
+          fabro-darwin-builds =
+            pkgs.runCommand "fabro-darwin-builds"
+              {
+                nativeBuildInputs = [
+                  pkgs.nix
+                  pkgs.nodejs
+                ];
+              }
+              ''
+                export HOME=$(mktemp -d)
+                export NIX_CONFIG="experimental-features = nix-command flakes"
+                cp -R ${./.} source
+                chmod -R u+w source
+                cd source
+                node --test tests/fabro-darwin-builds/
+                touch $out
+              '';
+
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux
           # builder needed — building packages.aarch64-linux.fabro-vm-image
