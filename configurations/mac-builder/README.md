@@ -189,6 +189,54 @@ section of the secrets runbook.
    `localhost/fabro-sandbox@$(cat /run/fabro-sandbox/digest)` when a specific
    sandbox image should be exercised.
 
+## Live dispatch validation
+
+After both switches, one command per host captures the live observations the
+repository checks cannot produce. Run them in this order; each prints a
+`[<step>]` line per observation and fails with
+`[verify-failure: <label>] <detail>` naming the layer that owns the problem.
+
+1. **Builder** – on the Builder Host, from the repository tree that
+   `mac-builder-deploy` streamed:
+
+   ```sh
+   nix build --impure --expr 'let f = builtins.getFlake (toString ./.); in
+     f.inputs.nixpkgs.legacyPackages.aarch64-darwin.callPackage
+       ./scripts/fabro-darwin-dispatch-verify.nix { }' -o result-verify
+   sudo ./result-verify/bin/fabro-darwin-dispatch-verify builder
+   ```
+
+   It requires `tailscale status --json` to report `BackendState = Running`
+   with `tag:mac-builder` and the `mac-builder-tailscale-auth` LaunchDaemon to
+   be loaded. A node that joined from the OAuth credential without an
+   interactive login is therefore the only passing state.
+
+2. **Endpoint** – from the host that drives the Lima VM, confirm the LAN
+   forward still serves the stock remote-builder protocol:
+
+   ```sh
+   nix run '.#mac-builder-readiness'
+   ```
+
+3. **Guest** – on the Fabro Guest:
+
+   ```sh
+   sudo fabro-darwin-dispatch-verify all
+   ```
+
+   `guest` requires the renderer unit active, `/run/fabro-darwin-builders/machines`
+   at `600 root root` with exactly one `aarch64-darwin` line that names
+   `mac-builder.tuxedo-musical.ts.net`, `nix-daemon` to have entered the active
+   state after the renderer finished, and a trivial `aarch64-linux` derivation
+   to build locally. `smoke` then runs `fabro-darwin-build-smoke`, takes the
+   store path it reports, confirms that path is in the guest store, and confirms
+   a fresh sandbox resolves it with no per-run mount: the global host-store
+   sharing is what makes the output visible, so no workflow change is involved.
+
+   `fabro-darwin-dispatch-verify guest` and `... smoke` run the halves
+   separately, and every tool and path is overridable so the same command can be
+   pointed at fixtures (`fabro-darwin-dispatch-verify --help`).
+
 ## Darwin Build Smoke
 
 `fabro-darwin-build-smoke [IMAGE_REF]` is installed on the Fabro Guest by the
@@ -234,5 +282,7 @@ Each failure names its owning layer:
   caches only, `aarch64-darwin` only.
 - [`configurations/fabro-vm/darwin-dispatch.nix`](../fabro-vm/darwin-dispatch.nix)
   – guest dispatch options, renderer unit, machines file.
+- [`scripts/fabro-darwin-dispatch-verify.nix`](../../scripts/fabro-darwin-dispatch-verify.nix)
+  – the live validation harness installed on the guest.
 - [`secrets/README.md`](../../secrets/README.md) – OAuth credential and
   build-session key provisioning and rotation.

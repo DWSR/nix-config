@@ -70,6 +70,18 @@ let
     name = sandboxImageName;
     inherit (cfg) clientKeyPath hostKeyPath machinesFile;
   };
+
+  # The live-validation harness (task 5.6) packages the dispatch observations as
+  # one command on the guest: the machines line, the daemon restart, the local
+  # `aarch64-linux` build, and the smoke store path resolving inside a sandbox.
+  # It defaults to the same option values as the renderer and the smoke, so the
+  # operator checks exactly the wiring this module declares.
+  dispatchVerify = pkgs.callPackage ../../scripts/fabro-darwin-dispatch-verify.nix {
+    imageName = sandboxImageName;
+    hostName = cfg.machine.hostName;
+    inherit (cfg) machinesFile;
+    smoke = lib.getExe darwinBuildSmoke;
+  };
 in
 {
   options.fabro.darwinBuilder = {
@@ -214,7 +226,11 @@ in
     ];
 
     # Install the sandbox-side Darwin Build Smoke next to the renderer wiring
-    # it verifies (requirement 8.5).
-    environment.systemPackages = [ darwinBuildSmoke ];
+    # it verifies (requirement 8.5), and the live dispatch validation harness
+    # the operator runs after the switch (task 5.6).
+    environment.systemPackages = [
+      darwinBuildSmoke
+      dispatchVerify
+    ];
   };
 }
