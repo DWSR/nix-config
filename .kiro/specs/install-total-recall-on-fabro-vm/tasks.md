@@ -30,6 +30,7 @@
   - Completed when `nix eval --raw .#nixosConfigurations.fabro-vm.pkgs.total-recall-iii.version` reports 0.24.0, every `total-recall-*` attribute evaluates, and the overlay contains only fixed-hash URLs
   - _Requirements: 1.2, 1.4, 1.5, 1.6_
   - _Depends: 1.1_
+  - _Blocked: The patch includes out-of-scope Shopify changes, iii lacks a narrow unfree allowance, and task-specific RED proof is missing; isolate the package changes, allow iii narrowly, and capture baseline failure._
 
 - [ ] 1.3 Add the repo-owned harness-events CLI derivation
   - Build workspace package `harness-events-cli` from the pinned input's `Cargo.toml`/`Cargo.lock` as `total-recall-harness-events`, following the repository's existing Rust overlay derivation style
