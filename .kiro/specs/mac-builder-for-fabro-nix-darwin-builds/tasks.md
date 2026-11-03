@@ -110,7 +110,7 @@
   - _Boundary: Guest Dispatch Tests_
   - _Depends: 1.3_
 
-- [ ] 5.3 (P) Add builder tailnet, endpoint, and cache checks
+- [x] 5.3 (P) Add builder tailnet, endpoint, and cache checks
   - `builder-tailnet.test.js`: assert `services.tailscale` enabled with the open-source package, the `com.tailscale.tailscaled` LaunchDaemon, the auth LaunchDaemon arguments (`--hostname mac-builder`, `--tag tag:mac-builder`, `--accept-dns=false`), and the secret name/path/mode.
   - Assert the endpoint contract holds: `trusted-users = [ "nix-builder" ]`, `nix-builder` non-admin, `PermitRootLogin no`, no `extra-platforms`, and no custom build service.
   - Assert the evaluated `nix.settings.substituters`/`trusted-public-keys` are exactly the two public caches with no private-cache host, and drive `mac-builder-tailscale-auth --once` against a stub for the `Running`, `NeedsLogin`, missing-credential, and unresponsive cases.
