@@ -47,7 +47,10 @@ let
     llm.providers.litellm = {
       enabled = true;
       base_url = "http://127.0.0.1:4000/v1";
-      default_model = "deepseek-v4.1-flash";
+      # GPT-6 Luna is the primary model with its xhigh effort pinned by the
+      # litellm deployment below; workflows fall back to DeepSeek V4.1 Flash
+      # when that ChatGPT quota is exhausted.
+      default_model = "gpt-6-luna";
 
       # OpenCode's Go gateway rejects requests without a stable
       # x-opencode-session id; fabro never sends one itself (its lithos
@@ -246,7 +249,7 @@ let
     cli = {
       exec.model = {
         provider = "litellm";
-        name = "deepseek-v4.1-flash";
+        name = "gpt-6-luna";
       };
 
       target = {
@@ -257,7 +260,7 @@ let
 
     run = {
       environment.id = "default";
-      model.name = "deepseek-v4.1-flash";
+      model.name = "gpt-6-luna";
 
       # Push every checkpoint: after each node commits to fabro/run/<id>,
       # publish the branch to origin so checkpoint timeline, fork, and

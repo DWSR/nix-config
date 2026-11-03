@@ -7,10 +7,10 @@ graph = "workflow.fabro"
 spec = ""
 task = ""
 
-# DeepSeek V4.1 Flash saturates its OpenCode Go cell under dispatch fan-out;
-# fail over to the ChatGPT-backed Luna, whose deployment pins xhigh effort.
+# GPT-6 Luna is the default model with its deployment pinning xhigh effort;
+# fail over to the OpenCode Go DeepSeek cell when ChatGPT quota is exhausted.
 [run.model.fallbacks]
-"deepseek-v4.1-flash" = ["litellm:gpt-6-luna"]
+"gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
 
 [run.run_branch]
 enabled = true
