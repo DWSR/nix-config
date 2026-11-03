@@ -86,6 +86,28 @@ in
         a2a-sdk = pyprev.a2a-sdk.overridePythonAttrs (old: {
           disabledTests = (old.disabledTests or [ ]) ++ [ "test_notification_triggering" ];
         });
+        # This integration test runs many subprocesses after tagging, then
+        # asserts the tag timestamp is less than a minute old. Under parallel
+        # builds, the test can outlast that wall-clock window.
+        dunamai = pyprev.dunamai.overridePythonAttrs (old: {
+          patches = (old.patches or [ ]) ++ [
+            (final.writeText "dunamai-tag-timestamp-window.patch" ''
+              diff --git a/tests/integration/test_dunamai.py b/tests/integration/test_dunamai.py
+              --- a/tests/integration/test_dunamai.py
+              +++ b/tests/integration/test_dunamai.py
+              @@ -90,6 +90,9 @@
+               @pytest.mark.skipif(shutil.which("git") is None, reason="Requires Git")
+               def test__version__from_git__with_annotated_tags(tmp_path) -> None:
+                   run = make_run_callback(tmp_path)
+                   from_vcs = make_from_callback(Version.from_git)
+              +    # This test performs many subprocess checks after creating its first tag.
+              +    # Keep the VCS assertions without imposing a one-minute wall-clock limit.
+              +    from_explicit_vcs = make_from_callback(Version.from_vcs, chronological=False)
+                   b = "master"
+                   legacy = is_git_legacy()
+            '')
+          ];
+        });
       })
     ];
   };
