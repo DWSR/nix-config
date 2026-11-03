@@ -97,6 +97,17 @@ test('validateBudgetMetadata accepts complete built-in, common, and host catalog
   assert.equal(result.value.minimalBaseline.measuredTokens.firstTurnInput, null);
 });
 
+test('validateBudgetMetadata accepts Shopify for the metadata host and agent host scope', () => {
+  const metadata = completeMetadata();
+  metadata.host = 'shopify';
+  metadata.agents.general.hostScope = 'shopify';
+
+  const result = validateBudgetMetadata(metadata);
+
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+  assert.deepEqual(result.value.agentNames, ['general', 'nix-pkg', 'yb-sleuth']);
+});
+
 test('validateBudgetMetadata rejects minimal baseline without measured-token placeholders', () => {
   const metadata = completeMetadata();
   delete metadata.minimalBaseline.measuredTokens.firstTurnInput;

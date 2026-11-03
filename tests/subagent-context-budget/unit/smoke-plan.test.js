@@ -29,6 +29,7 @@ const REPO_SMOKE_CATALOG = path.join(
 
 const {
   buildSmokePlan,
+  validateSmokeCatalog,
   main,
   parseSmokePlanFlags,
   renderSmokePlanJson,
@@ -121,6 +122,15 @@ test('buildSmokePlan: matches smoke-plan-golden.json for the committed fixtures'
 // -----------------------------------------------------------------
 // R6.1 — provide a smoke entry for every enforced agent.
 // -----------------------------------------------------------------
+
+test('validateSmokeCatalog accepts Shopify host-scoped smoke definitions', () => {
+  const catalog = loadRepoCatalog();
+  catalog.smokeDefinitions[0].hostScope = 'shopify';
+
+  const result = validateSmokeCatalog(catalog);
+
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});
 
 test('buildSmokePlan: returns a plan entry per enforced agent matching the catalog (R6.1)', () => {
   const metadata = loadFixture('budget-metadata.json');

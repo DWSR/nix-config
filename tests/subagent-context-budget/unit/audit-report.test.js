@@ -228,6 +228,7 @@ test('buildAuditReport: non-"all" host scope surfaces host-specific agents separ
   assert.equal(result.ok, true);
   assert.equal(result.value.host, 'shopify');
   assert.deepEqual(result.value.summary.hostSpecificAgents, ['shopify_helper']);
+  assert.deepEqual(result.value.hostSpecificSurfaces.agents.map((agent) => agent.hostScope), ['shopify']);
   // Common agents are NOT in the host-specific list.
   for (const name of ['explore', 'general']) {
     assert.equal(result.value.summary.hostSpecificAgents.includes(name), false);
