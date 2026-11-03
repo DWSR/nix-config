@@ -141,6 +141,7 @@
   - Done when each observation above is captured.
   - _Requirements: 1.4, 1.5, 3.1, 3.2, 6.6, 8.6_
   - _Depends: 1.3, 2.3, 3, 4.2, 5.1, 5.5_
+  - _Blocked: Live verifier accepts an unrelated daemon rejoin, a truncated machines line, and a wrong store path; fix those validations with tests, then re-run review and the live 5.6 checks._
 
 - [ ] 5.7 Validate the live failure modes and recovery
   - Remove the guest's `build-client-key` and confirm a Darwin build fails naming that runtime path; restore it and confirm recovery.
