@@ -21,6 +21,10 @@
 # requests never match it and build locally. The daemon keeps Nix's own
 # ssh-ng client and error reporting: nothing here wraps `nix`.
 #
+# The module also installs `fabro-darwin-build-smoke` (scripts/
+# fabro-darwin-build-smoke.nix), the sandbox-side check that requests a
+# trivial Darwin build and confirms the output lands in the guest store.
+#
 # The sandbox mounts and image environment (./sandbox.nix, ./sandbox-image.nix)
 # and the guest's tailnet registration (./tailscale.nix) are deliberately
 # untouched, so every sandbox keeps using this daemon without per-environment
@@ -45,6 +49,27 @@ let
   sopsSecrets = config.sops.secrets or { };
   secretPath =
     name: if sopsSecrets ? ${name} then sopsSecrets.${name}.path else "/run/secrets/${name}";
+
+  # The smoke embeds the sandbox image name so its default reference stays
+  # `<name>@$(cat /run/fabro-sandbox/digest)`. The image module may be absent
+  # when this module is evaluated standalone, so fall back to the option's
+  # documented default.
+  sandboxImageName =
+    if config.fabro ? sandboxImage && config.fabro.sandboxImage ? name then
+      config.fabro.sandboxImage.name
+    else
+      "localhost/fabro-sandbox";
+
+  # The Darwin Build Smoke runs on the guest as root and drives the sandbox →
+  # daemon → builder path. Its material paths are the same option values the
+  # renderer unit uses, so the preflight checks exactly what the daemon reads.
+  # The smoke always targets `aarch64-darwin` and is not given
+  # `cfg.machine.system`: if that option is misconfigured, the smoke must fail
+  # preflight instead of building locally and reporting a false success.
+  darwinBuildSmoke = pkgs.callPackage ../../scripts/fabro-darwin-build-smoke.nix {
+    name = sandboxImageName;
+    inherit (cfg) clientKeyPath hostKeyPath machinesFile;
+  };
 in
 {
   options.fabro.darwinBuilder = {
@@ -187,5 +212,9 @@ in
     systemd.tmpfiles.rules = [
       "f ${cfg.machinesFile} 0600 root root -"
     ];
+
+    # Install the sandbox-side Darwin Build Smoke next to the renderer wiring
+    # it verifies (requirement 8.5).
+    environment.systemPackages = [ darwinBuildSmoke ];
   };
 }
