@@ -2,6 +2,6 @@
   "name": "fabro-darwin-builds-tests",
   "version": "0.0.0",
   "private": true,
-  "main": "machines-renderer.test.js",
+  "main": "index.js",
   "description": "Test suite for the fabro-darwin-builds renderer, guest dispatch, builder tailnet, and secret material checks."
 }
