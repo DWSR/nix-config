@@ -1405,6 +1405,7 @@ mod tests {
                 json!({
                     "id": "01CHILD",
                     "parent_id": "01CALLER",
+                    "labels": {"kiro-impl-parent": "01CALLER"},
                     "workflow": {"slug": "kiro-task"},
                     "lifecycle": {"status": {"kind": "submitted"}}
                 }),
@@ -1470,6 +1471,7 @@ mod tests {
                 json!({
                     "id": "01CHILD",
                     "parent_id": "01CALLER",
+                    "labels": {"kiro-impl-parent": "01CALLER"},
                     "workflow": {"slug": "kiro-task"},
                     "lifecycle": {"status": {"kind": "submitted"}}
                 }),
