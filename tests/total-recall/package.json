@@ -1,0 +1,7 @@
+{
+  "name": "total-recall-tests",
+  "version": "0.0.0",
+  "private": true,
+  "main": "packages.test.js",
+  "description": "Package contract tests for the pinned total-recall overlay."
+}
