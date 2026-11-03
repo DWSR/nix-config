@@ -202,9 +202,21 @@ The builder age key must be installed before the first
 
 The builder joins the tailnet with its own OAuth client secret,
 `builder-tailscale-oauth-secret`, distinct from the guest's
-`tailscale-oauth-secret`. Only the client secret is mirrored into the store;
-the client ID is embedded in the value. The console owns the OAuth client's
-`auth_keys` scope and its `tag:mac-builder` tag.
+`tailscale-oauth-secret` (a different OAuth client, in a different host
+store). Only the client secret is mirrored into the store; the client ID is
+embedded in the value.
+
+| Property | Value |
+| --- | --- |
+| SOPS key | `builder-tailscale-oauth-secret` |
+| Runtime path | `/run/secrets/builder-tailscale-oauth-secret` (sops-nix default path) |
+| Mode / owner | `0400` `root:wheel` |
+| Consumer | `launchd.daemons.mac-builder-tailscale-auth` (`--auth-key-file`) |
+
+In the Tailscale console, create a dedicated OAuth client for the builder with
+the `auth_keys` scope and the `tag:mac-builder` tag. The tag must match the
+auth daemon's `--tag tag:mac-builder`, because the node registers under it.
+Then, on the builder host (whose age key is at `/var/lib/sops-nix/key.txt`):
 
 1. Store the client secret in 1Password at
    `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`.
@@ -226,9 +238,9 @@ the client ID is embedded in the value. The console owns the OAuth client's
 
    `sops edit` with the same `SOPS_AGE_KEY_FILE` is the alternative when the
    store needs several structural edits.
-3. Verify the key decrypts without printing the value. The output must contain
-   no embedded newline, and `builder-authorized-keys` must still hold every
-   authorized client key:
+3. Verify the key decrypts without printing the value. `wc -c` must report the
+   client secret's byte length (the stored value carries no embedded newline),
+   and `builder-authorized-keys` must still hold every authorized client key:
 
    ```sh
    SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
@@ -244,18 +256,31 @@ host key in `build-host-key`. Both live in `secrets/fabro.fabro.yaml` and are
 declared in `fabro.onePasswordSecrets`, so the 1Password items are the source
 of truth.
 
-1. Generate the pair out of band, outside the checkout:
+| Property | `build-client-key` | `build-host-key` |
+| --- | --- | --- |
+| Runtime path | `/run/secrets/build-client-key` | `/run/secrets/build-host-key` |
+| Mode / owner | `0400` `root:root` | `0400` `root:root` |
+| Consumer | Nix ssh-ng dispatch (`nix-daemon`) | `fabro-darwin-machines` renderer |
+| 1Password field | `Client Private Key` | `Host Public Key` |
+
+1. Generate the client pair out of band, outside the checkout:
 
    ```sh
    ssh-keygen -t ed25519 -N '' -C 'fabro-mac-builder' -f /tmp/build-client-key
    ```
 
-   This writes `/tmp/build-client-key` (private) and
-   `/tmp/build-client-key.pub` (public).
-2. Store the private half at
-   `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key`
-   and the builder's `ssh_host_ed25519_key.pub` at
-   `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key`.
+   This writes `/tmp/build-client-key` (the generated private key) and
+   `/tmp/build-client-key.pub` (its public half). Remove both after
+   provisioning.
+2. Store the two fields in the
+   `op://Infrastructure/Fabro mac-builder Build Credentials` item:
+   - `Client Private Key` —
+     `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key`:
+     the whole private key file, including its `BEGIN`/`END` lines.
+   - `Host Public Key` —
+     `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key`:
+     the builder's `ssh_host_ed25519_key.pub` line
+     (`/etc/ssh/ssh_host_ed25519_key.pub` on the builder).
 3. Refresh the fabro store from 1Password:
 
    ```sh
@@ -264,25 +289,85 @@ of truth.
 
    The sync aborts instead of dropping a declared key, so the store always
    ends with both entries.
-4. Append the public half of the client key to `builder-authorized-keys`
-   (one key per line) and re-encrypt the builder store while preserving the
-   existing keys.
-5. Verify with `sops -d --extract` for each key using the store's own host key;
-   never print a value. The `build-host-key` value must match the builder's
-   host public key, and the client public half must appear in
-   `builder-authorized-keys`.
+4. Append the public half of the client key to the builder's
+   `builder-authorized-keys` (one key per line). Read the current value to a
+   private temp file, append the new public key, and write the combined value
+   back. `sops set` rewrites only that key and preserves every client already
+   authorized:
+
+   ```sh
+   T=$(mktemp -d); chmod 0700 "$T"
+   SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+     nix shell --inputs-from . nixpkgs#sops -c \
+     sops -d --extract '["builder-authorized-keys"]' \
+     secrets/remote-builder.mac-builder.yaml > "$T/authorized_keys"
+   cat /tmp/build-client-key.pub >> "$T/authorized_keys"
+   jq -Rs . < "$T/authorized_keys" > "$T/authorized_keys.json"
+   SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+     nix shell --inputs-from . nixpkgs#sops -c \
+     sops set --value-file secrets/remote-builder.mac-builder.yaml \
+     '["builder-authorized-keys"]' "$T/authorized_keys.json"
+   rm -rf "$T"
+   ```
+5. Verify each value with `sops -d --extract`; never print a value. Use the
+   fabro store's own age key (staged from `op://Private/sops-age-key-fabro`)
+   for `secrets/fabro.fabro.yaml`, and the builder's
+   `/var/lib/sops-nix/key.txt` for `secrets/remote-builder.mac-builder.yaml`:
+
+   ```sh
+   T=$(mktemp -d); chmod 0700 "$T"
+   op read 'op://Private/sops-age-key-fabro' > "$T/age-key"
+   SOPS_AGE_KEY_FILE="$T/age-key" \
+     nix shell --inputs-from . nixpkgs#sops -c \
+     sops -d --extract '["build-client-key"]' secrets/fabro.fabro.yaml \
+     > "$T/build-client-key"
+   chmod 0600 "$T/build-client-key"
+   ssh-keygen -y -f "$T/build-client-key" > "$T/build-client-key.pub"
+   SOPS_AGE_KEY_FILE="$T/age-key" \
+     nix shell --inputs-from . nixpkgs#sops -c \
+     sops -d --extract '["build-host-key"]' secrets/fabro.fabro.yaml \
+     > "$T/build-host-key"
+   ssh-keygen -l -f "$T/build-host-key"
+   SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
+     nix shell --inputs-from . nixpkgs#sops -c \
+     sops -d --extract '["builder-authorized-keys"]' \
+     secrets/remote-builder.mac-builder.yaml > "$T/authorized_keys"
+   grep -Fx -f "$T/build-client-key.pub" "$T/authorized_keys"
+   rm -rf "$T"
+   ```
+
+   `grep` must report the stored client public key and `ssh-keygen -l` must
+   show the same fingerprint as the builder's `ssh_host_ed25519_key.pub`.
+   Never print a decrypted value.
 
 ### Authorized-key rotation
 
 `builder-authorized-keys` holds every client public key the builder accepts,
 including the public half of the fabro `build-client-key`. Rotate one client
-key by generating the new pair, updating the fabro store's 1Password item and
-re-running `nix run '.#fabro-sync-from-1password'`, then replacing only that
-key's public half in `builder-authorized-keys` and re-encrypting
-`secrets/remote-builder.mac-builder.yaml` against `&host_mac_builder`.
-Preserve the other authorized keys, and never drop a recipient or weaken the
-builder store encryption. Re-run deploy/switch and confirm the new key is
-accepted while the old one is refused.
+key without invalidating the others:
+
+1. Generate a replacement pair with `ssh-keygen -t ed25519` as in the
+   provisioning steps:
+
+   ```sh
+   ssh-keygen -t ed25519 -N '' -C 'fabro-mac-builder' -f /tmp/build-client-key
+   ```
+2. Replace `build-client-key` in the fabro store's 1Password
+   `Client Private Key` field and refresh the store with
+   `nix run '.#fabro-sync-from-1password'`.
+3. Replace only that key's public half in `builder-authorized-keys`, following
+   the read/append/write flow above with the old public key removed, and
+   re-encrypt `secrets/remote-builder.mac-builder.yaml` against
+   `&host_mac_builder`.
+4. Preserve every other authorized key, and never drop a recipient or weaken
+   the builder store encryption.
+5. Re-run deploy/switch on both hosts and confirm the new key is accepted
+   while the old one is refused (`Permission denied (publickey)`). The
+   `sops -d --extract` verification above must show the new public half.
+
+If the builder host key changes (for example after re-imaging), store the new
+`ssh_host_ed25519_key.pub` in the `Host Public Key` field, re-run the sync, and
+restart `nix-daemon` so the renderer pins the new value.
 
 ## Prerequisites — read this first
 
