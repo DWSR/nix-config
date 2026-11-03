@@ -20,7 +20,9 @@
 # time. Without a positional IMAGE_REF the reference is
 # `<name>@$(cat /run/fabro-sandbox/digest)`, so the smoke exercises the image
 # the guest just loaded. The material paths are the module's evaluated option
-# values, passed at build time; the CLI contract stays `[IMAGE_REF]`.
+# values, passed at build time; the CLI contract stays `[IMAGE_REF]`. The
+# target system is not an input: it is always `aarch64-darwin`, so the smoke
+# cannot be reconfigured into a local build.
 {
   pkgs,
   name,
@@ -28,10 +30,17 @@
   hostKeyPath ? "/run/secrets/build-host-key",
   machinesFile ? "/run/fabro-darwin-builders/machines",
   digestFile ? "/run/fabro-sandbox/digest",
-  targetSystem ? "aarch64-darwin",
   podman ? pkgs.podman,
   coreutils ? pkgs.coreutils,
 }:
+let
+  # The smoke exists to prove the Darwin dispatch, so its target is fixed at
+  # `aarch64-darwin` here and is deliberately not derived from the guest's
+  # `fabro.darwinBuilder.machine.system` option: a misconfigured option must
+  # fail this preflight, not let the smoke build a local `aarch64-linux`
+  # derivation and report success without ever reaching the builder.
+  targetSystem = "aarch64-darwin";
+in
 pkgs.writeShellApplication {
   name = "fabro-darwin-build-smoke";
   runtimeInputs = [
@@ -84,17 +93,23 @@ pkgs.writeShellApplication {
     require_material "pinned Builder Host Key" "${hostKeyPath}"
     require_material "machines file" "${machinesFile}"
 
-    # The machines file is read by the daemon, not by this script, so look for
-    # the system as a whole field: a substring match would accept a comment or
-    # a differently named system.
+    # The machines file is one entry per line and the daemon parses the
+    # system from the second whitespace-separated field (design "machines CLI
+    # contract": `<host> <system> <client-key-path> …`; task 1.1). Check only
+    # that column: scanning every field would accept the system token in the
+    # host, the key path, or any other field while the real entry targets a
+    # different system.
     found_system=0
     while IFS= read -r line || [ -n "$line" ]; do
-      read -r -a fields <<< "$line"
-      for field in "''${fields[@]}"; do
-        if [ "$field" = "${targetSystem}" ]; then
-          found_system=1
-        fi
-      done
+      read -r -a fields <<< "$line" || continue
+      [ "''${#fields[@]}" -ge 2 ] || continue
+      case "''${fields[0]}" in
+        '#'*) continue ;;
+      esac
+      if [ "''${fields[1]}" = "${targetSystem}" ]; then
+        found_system=1
+        break
+      fi
     done < "${machinesFile}"
     if [ "$found_system" -ne 1 ]; then
       fail "machines file has no ${targetSystem} entry: ${machinesFile}"

@@ -61,7 +61,6 @@ pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-build-smoke.nix {
   hostKeyPath = ${JSON.stringify(paths.hostKey)};
   machinesFile = ${JSON.stringify(paths.machines)};
   digestFile = ${JSON.stringify(paths.digest)};
-  targetSystem = "aarch64-darwin";
   podman = stubPodman;
 }
 `;
@@ -80,6 +79,39 @@ pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-build-smoke.nix {
 
   cachedSmokeBin = path.join(out, 'bin', 'fabro-darwin-build-smoke');
   return cachedSmokeBin;
+}
+
+// Build the smoke exactly as the Fabro Guest installs it, with the guest's
+// `fabro.darwinBuilder.machine.system` overridden. The smoke must keep
+// requesting `aarch64-darwin`; a build that follows `machine.system` would let
+// the check build locally instead of exercising the Darwin dispatch.
+function buildGuestSmoke(system) {
+  const expr = `
+    let
+      flake = builtins.getFlake (toString ${repoRoot});
+      cfg = flake.nixosConfigurations."fabro-vm".extendModules {
+        modules = [ ({ lib, ... }: {
+          fabro.darwinBuilder.machine.system = lib.mkForce ${JSON.stringify(system)};
+        }) ];
+      };
+      smoke = builtins.head (builtins.filter
+        (package: package.name == "fabro-darwin-build-smoke")
+        cfg.config.environment.systemPackages);
+    in
+    smoke
+  `;
+
+  return childProcess.execFileSync(
+    'nix',
+    ['build', '--no-link', '--print-out-paths', '--impure', '--expr', expr],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: NIX_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  ).trim().split('\n').pop();
 }
 
 function resetWorkspace() {
@@ -173,6 +205,32 @@ test('a machines file without an aarch64-darwin entry fails preflight', () => {
   assert.match(output(result), /\[preflight\]/);
   assert.match(output(result), new RegExp(escapeRegExp(paths.machines)));
   assert.deepEqual(podmanCalls(), [], 'a wrong-system machines file must not reach the build step');
+});
+
+test('a machines file with the aarch64-darwin token outside the system column fails preflight', () => {
+  // The system token is a whitespace field of its own but not the parsed
+  // system column: the entry still targets aarch64-linux, so no Darwin entry
+  // exists and preflight must fail before any sandbox runs.
+  fs.writeFileSync(
+    paths.machines,
+    'ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-linux ' +
+      'aarch64-darwin 4 2 - - AAAAHOSTKEY\n',
+  );
+  const result = runSmoke();
+
+  assert.notEqual(result.status, 0);
+  assert.match(output(result), /\[preflight\]/);
+  assert.match(output(result), new RegExp(escapeRegExp(paths.machines)));
+  assert.deepEqual(podmanCalls(), [], 'a wrong-system machines file must not reach the build step');
+});
+
+test('the installed smoke keeps targeting aarch64-darwin when machine.system changes', () => {
+  const out = buildGuestSmoke('aarch64-linux');
+  const script = fs.readFileSync(path.join(out, 'bin', 'fabro-darwin-build-smoke'), 'utf8');
+
+  assert.match(script, /system = "aarch64-darwin"/, 'the build must still request aarch64-darwin');
+  assert.match(script, /no aarch64-darwin entry/, 'preflight must still require an aarch64-darwin entry');
+  assert.doesNotMatch(script, /aarch64-linux/, 'the smoke must not follow machine.system');
 });
 
 test('a successful run prints every step banner and the store path', () => {

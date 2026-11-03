@@ -63,10 +63,12 @@ let
   # The Darwin Build Smoke runs on the guest as root and drives the sandbox →
   # daemon → builder path. Its material paths are the same option values the
   # renderer unit uses, so the preflight checks exactly what the daemon reads.
+  # The smoke always targets `aarch64-darwin` and is not given
+  # `cfg.machine.system`: if that option is misconfigured, the smoke must fail
+  # preflight instead of building locally and reporting a false success.
   darwinBuildSmoke = pkgs.callPackage ../../scripts/fabro-darwin-build-smoke.nix {
     name = sandboxImageName;
     inherit (cfg) clientKeyPath hostKeyPath machinesFile;
-    targetSystem = cfg.machine.system;
   };
 in
 {
