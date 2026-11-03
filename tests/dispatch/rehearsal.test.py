@@ -23,8 +23,9 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GRAPH = ROOT / ".fabro/workflows/dispatch/workflow.fabro"
-WORKFLOW_TOML = ROOT / ".fabro/workflows/dispatch/workflow.toml"
-REMEDIATION_TOML = ROOT / ".fabro/workflows/security-remediation/workflow.toml"
+STACK_SCAN_HELPER = ROOT / ".fabro/workflows/dispatch/scripts/dispatch-stack-scan.py"
+SECURITY_SCAN_HELPER = ROOT / ".fabro/workflows/dispatch/scripts/dispatch-security-scan.py"
+REMEDIATION_TOOLS = ROOT / ".fabro/workflows/security-remediation/scripts/tools.py"
 
 REPO = "DWSR/nix-config"
 CHILD_ID = "01CHILD1"
@@ -99,7 +100,6 @@ def scan_script() -> str:
 
 
 def stack_scan_script() -> str:
-    # The graph node is a runpy shim; the real helper is written by `prepare`.
     return stack_scan_helper()
 
 
@@ -120,26 +120,17 @@ def dispatch_script() -> str:
 
 
 def security_scan_helper() -> str:
-    text = WORKFLOW_TOML.read_text()
-    return text.split("cat > .git/dispatch-security-scan.py <<'DISPATCH_SECURITY_SCAN_PY'\n", 1)[1].split(
-        "\nDISPATCH_SECURITY_SCAN_PY", 1,
-    )[0]
+    return SECURITY_SCAN_HELPER.read_text()
 
 
 def stack_scan_helper() -> str:
-    text = WORKFLOW_TOML.read_text()
-    return text.split("cat > .git/dispatch-stack-scan.py <<'DISPATCH_STACK_SCAN_PY'\n", 1)[1].split(
-        "\nDISPATCH_STACK_SCAN_PY", 1,
-    )[0]
+    return STACK_SCAN_HELPER.read_text()
 
 
 def load_tools():
-    text = REMEDIATION_TOML.read_text()
-    script = text.split(
-        "cat > .git/security-remediation-scripts/tools.py <<'SECURITY_REMEDIATION_TOOLS_PY'\n", 1,
-    )[1].split("\nSECURITY_REMEDIATION_TOOLS_PY", 1)[0]
+    script = REMEDIATION_TOOLS.read_text()
     namespace = {"__name__": "security_remediation_rehearsal_test"}
-    exec(compile(script, str(REMEDIATION_TOML), "exec"), namespace)
+    exec(compile(script, str(REMEDIATION_TOOLS), "exec"), namespace)
     return namespace
 
 

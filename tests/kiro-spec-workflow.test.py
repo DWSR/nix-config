@@ -9,17 +9,15 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".fabro/workflows/kiro-spec/workflow.toml"
+WORKFLOW_TOOLS = ROOT / ".fabro/workflows/kiro-spec/scripts/tools.py"
 PROMPTS = ROOT / ".fabro/workflows/kiro-spec/prompts"
 RULE = ROOT / ".kiro/settings/rules/secret-material-handling.md"
-MARKER = "cat > .git/kiro-spec-scripts/tools.py <<'KIRO_SPEC_TOOLS_PY'\n"
 
 
 def load_workflow_tools():
-    text = WORKFLOW.read_text()
-    source = text.split(MARKER, 1)[1].split("\nKIRO_SPEC_TOOLS_PY", 1)[0]
+    source = WORKFLOW_TOOLS.read_text()
     namespace: dict[str, Any] = {"__name__": "kiro_spec_workflow_test"}
-    exec(compile(source, str(WORKFLOW), "exec"), namespace)
+    exec(compile(source, str(WORKFLOW_TOOLS), "exec"), namespace)
     return namespace
 
 

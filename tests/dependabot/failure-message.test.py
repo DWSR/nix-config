@@ -8,18 +8,16 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW_TOML = ROOT / ".fabro/workflows/dependabot/workflow.toml"
+TOOLS = ROOT / ".fabro/workflows/dependabot/scripts/tools.py"
 WORKFLOW_DOT = ROOT / ".fabro/workflows/dependabot/workflow.fabro"
-MARKER = "cat > .git/dependabot-scripts/tools.py <<'DEPENDABOT_TOOLS_PY'\n"
 EDGE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)")
 MARKER_NODE = re.compile(r"(?m)^\s*(mark_[A-Za-z0-9_]+)\s*\[")
 
 
 def load_tools() -> dict[str, Any]:
-    text = WORKFLOW_TOML.read_text()
-    script = text.split(MARKER, 1)[1].split("\nDEPENDABOT_TOOLS_PY", 1)[0]
+    script = TOOLS.read_text()
     namespace: dict[str, Any] = {"__name__": "dependabot_tools_test"}
-    exec(compile(script, str(WORKFLOW_TOML), "exec"), namespace)
+    exec(compile(script, str(TOOLS), "exec"), namespace)
     return namespace
 
 
@@ -55,8 +53,7 @@ class DependabotFailureMessageTests(unittest.TestCase):
         )
 
     def test_fail_command_exits_one_with_the_stage_and_detail(self):
-        text = WORKFLOW_TOML.read_text()
-        script = text.split(MARKER, 1)[1].split("\nDEPENDABOT_TOOLS_PY", 1)[0]
+        script = TOOLS.read_text()
         with tempfile.TemporaryDirectory() as workdir:
             tools_path = pathlib.Path(workdir) / "tools.py"
             tools_path.write_text(script)

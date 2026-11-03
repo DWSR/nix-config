@@ -7,6 +7,15 @@ digraph KiroTask {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/kiro-task-scripts\ncp .fabro/workflows/kiro-task/scripts/tools.py .git/kiro-task-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/kiro-task-scripts/tools.py', doraise=True)\""
+    ]
+
     guard [
         label="Validate task",
         shape=parallelogram,
@@ -99,7 +108,7 @@ digraph KiroTask {
         script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
     ]
 
-    start -> guard
+    start -> setup_helpers -> guard
 
     guard -> implement [condition="outcome=succeeded"]
     guard -> exit

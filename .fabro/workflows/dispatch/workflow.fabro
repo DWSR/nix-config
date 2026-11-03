@@ -7,6 +7,24 @@ digraph Dispatch {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    prepare_stack_scan [
+        label="Prepare Kiro stack scan",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git\ncp .fabro/workflows/dispatch/scripts/dispatch-stack-scan.py .git/dispatch-stack-scan.py\npython3 -c \"import py_compile; py_compile.compile('.git/dispatch-stack-scan.py', doraise=True)\""
+    ]
+
+    prepare_security_scan [
+        label="Prepare security alert scan",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git\ncp .fabro/workflows/dispatch/scripts/dispatch-security-scan.py .git/dispatch-security-scan.py\npython3 -c \"import py_compile; py_compile.compile('.git/dispatch-security-scan.py', doraise=True)\""
+    ]
+
     scan [
         label="Scan ready issues and dependabot PRs",
         shape=parallelogram,
@@ -77,7 +95,7 @@ digraph Dispatch {
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a dispatch stage failed; inspect the failing stage output in the run events and .git/dispatch-queue.json, .git/dispatch-plan.json, .git/dispatch-result.json, .git/dispatch-archive.json\"\nfi\nprintf 'dispatch: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
-    start -> scan
+    start -> prepare_stack_scan -> prepare_security_scan -> scan
 
     scan -> stack_scan [condition="outcome=succeeded"]
     scan -> fail

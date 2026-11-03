@@ -7,6 +7,15 @@ digraph Dependabot {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/dependabot-scripts\ncp .fabro/workflows/dependabot/scripts/tools.py .git/dependabot-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/dependabot-scripts/tools.py', doraise=True)\""
+    ]
+
     prepare [
         label="Validate PR and rebase",
         shape=parallelogram,
@@ -123,7 +132,7 @@ digraph Dependabot {
         script="set -eu\nMSG=$(cat || true)\nSTAGE=$(cat .git/dependabot-failed-stage 2>/dev/null || true)\nPR=\"{{ inputs.pr }}\"\nif [ -f .git/dependabot-scripts/tools.py ]; then\n  python3 .git/dependabot-scripts/tools.py release \"$PR\" || true\n  printf '%s' \"$MSG\" | python3 .git/dependabot-scripts/tools.py fail \"$STAGE\"\nelse\n  case \"$PR\" in\n    ''|*[!0-9]*) ;;\n    *)\n      gh api --method POST \"repos/{owner}/{repo}/labels\" -f name=fabro-failed -f color=d73a4a -f description=\"Fabro dependabot run failed; remove this label to retry\" >/dev/null 2>&1 || true\n      gh api --method POST \"repos/{owner}/{repo}/issues/$PR/labels\" -f \"labels[]=fabro-failed\" >/dev/null 2>&1 || true\n      gh api --method DELETE \"repos/{owner}/{repo}/issues/$PR/labels/fabro-running\" >/dev/null 2>&1 || true\n      ;;\n  esac\n  if [ -z \"$STAGE\" ]; then\n    if [ -n \"$MSG\" ]; then\n      MSG=\"the failing dependabot stage did not report itself (for example sandbox setup): $MSG\"\n    else\n      MSG=\"the failing dependabot stage did not report itself (for example sandbox setup); inspect the failing stage output in the run events and .git/dependabot-state.json\"\n    fi\n  elif [ -n \"$MSG\" ]; then\n    MSG=\"$STAGE failed: $MSG\"\n  else\n    MSG=\"$STAGE failed; inspect the failing stage output in the run events and .git/dependabot-state.json\"\n  fi\n  printf 'dependabot: %s\\n' \"$MSG\" >&2\n  exit 1\nfi"
     ]
 
-    start -> prepare
+    start -> setup_helpers -> prepare
 
     prepare -> test [condition="outcome=succeeded && context.rebase_conflict!=true"]
     prepare -> fix [condition="outcome=succeeded && context.rebase_conflict=true"]

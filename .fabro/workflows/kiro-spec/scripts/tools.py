@@ -1,0 +1,642 @@
+import datetime, hashlib, json, os, re, subprocess, sys, urllib.error, urllib.parse, urllib.request
+
+DOCS = ["brief", "requirements", "design", "tasks"]
+STATE_PATH = ".git/kiro-spec-state.json"
+ISSUE_PATH = ".git/kiro-spec-issue.md"
+
+
+def run(cmd, check=True, env=None):
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if check and r.returncode != 0:
+        sys.exit("command failed: %s\n%s" % (" ".join(cmd), r.stderr.strip()))
+    return r.stdout.strip()
+
+
+def now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def load_state():
+    if not os.path.exists(STATE_PATH):
+        sys.exit("state file %s is missing; the prepare stage must run first" % STATE_PATH)
+    return json.load(open(STATE_PATH))
+
+
+def save_state(state):
+    json.dump(state, open(STATE_PATH, "w"), indent=1, sort_keys=True)
+
+
+def gh(method, path, body=None, expect=(200, 201, 204)):
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        sys.exit("GITHUB_TOKEN is not set; declare [run.integrations.github.permissions] on this workflow")
+    base = os.environ.get("KIRO_SPEC_API_BASE", "https://api.github.com").rstrip("/")
+    req = urllib.request.Request(base + path, method=method, headers={
+        "Authorization": "Bearer %s" % token,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "Content-Type": "application/json",
+        "User-Agent": "fabro-kiro-spec-workflow",
+    })
+    data = json.dumps(body).encode() if body is not None else None
+    try:
+        with urllib.request.urlopen(req, data=data, timeout=60) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", "replace")
+        if e.code in expect:
+            try:
+                return e.code, json.loads(raw)
+            except ValueError:
+                return e.code, raw
+        sys.exit("GitHub API %s %s failed: HTTP %s\n%s" % (method, path, e.code, raw[:1000]))
+
+
+def graphql(query, variables=None):
+    status, result = gh("POST", "/graphql", {"query": query, "variables": variables or {}})
+    if result.get("errors"):
+        sys.exit("GitHub GraphQL failed: %s" % result["errors"])
+    return result.get("data") or {}
+
+
+def review_feedback(owner, repo, pr_number):
+    query = """
+    query($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
+      repository(owner: $owner, name: $repo) {
+        pullRequest(number: $number) {
+          reviewThreads(first: 100, after: $cursor) {
+            nodes { id isResolved comments(first: 100) { nodes { databaseId body path line originalLine url author { login } } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }
+    """
+    threads = []
+    cursor = None
+    while True:
+        data = graphql(query, {"owner": owner, "repo": repo, "number": pr_number, "cursor": cursor})
+        pr = ((data.get("repository") or {}).get("pullRequest") or {})
+        page = pr.get("reviewThreads") or {}
+        threads.extend(page.get("nodes") or [])
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            break
+        cursor = info.get("endCursor")
+    feedback = []
+    for thread in threads:
+        comments = (thread.get("comments") or {}).get("nodes") or []
+        # Only unresolved, non-empty review threads are actionable. This scan is
+        # deliberately deterministic; the model receives only the selected thread data.
+        if thread.get("isResolved"):
+            continue
+        # A thread may include prior replies. Present the latest comment once,
+        # and reply to that comment rather than spamming every message in it.
+        comment = next((item for item in reversed(comments) if (item.get("body") or "").strip()), None)
+        if comment:
+            feedback.append({
+                "thread_id": thread["id"],
+                "comment_id": comment.get("databaseId"),
+                "body": (comment.get("body") or "").strip(),
+                "path": comment.get("path") or "",
+                "line": comment.get("line") or comment.get("originalLine"),
+                "url": comment.get("url") or "",
+                "author": ((comment.get("author") or {}).get("login") or "unknown"),
+            })
+    return feedback
+
+
+def resolve_feedback(owner, repo, pr_number, feedback, state):
+    replied = set(state.get("replied_comment_ids") or [])
+    for item in feedback:
+        comment_id = item.get("comment_id")
+        if not comment_id or not item.get("thread_id"):
+            sys.exit("cannot reply to review feedback without a comment id and thread id")
+        if comment_id not in replied:
+            reply_path = "/repos/%s/%s/pulls/%d/comments/%d/replies" % (owner, repo, pr_number, comment_id)
+            gh("POST", reply_path, {"body": "Addressed in the updated Kiro spec revision."})
+            replied.add(comment_id)
+            state["replied_comment_ids"] = sorted(replied)
+            save_state(state)
+        graphql("""mutation($threadId: ID!) {
+          resolveReviewThread(input: {threadId: $threadId}) { thread { isResolved } }
+        }""", {"threadId": item["thread_id"]})
+
+
+def scan_stack_feedback(owner, repo, spec, layers):
+    feedback_by_doc = {}
+    for layer in layers:
+        head = layer["branch"]
+        query = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, head), "per_page": 100})
+        prs = gh("GET", "/repos/%s/%s/pulls?%s" % (owner, repo, query))[1] or []
+        if len(prs) > 1:
+            sys.exit("multiple open pull requests for head %s: %s" % (head, [p["number"] for p in prs]))
+        if not prs:
+            continue
+        pr = prs[0]
+        comments = review_feedback(owner, repo, pr["number"])
+        if comments:
+            feedback_by_doc[layer["doc"]] = {"pr": pr["number"], "comments": comments}
+    return feedback_by_doc
+
+
+def origin_repo():
+    url = subprocess.run(["git", "config", "--get", "remote.origin.url"], capture_output=True, text=True).stdout.strip()
+    m = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+    if not m:
+        sys.exit("cannot derive owner/repo from origin url %r" % url)
+    return m.group(1), m.group(2)
+
+
+def detect_trunk():
+    head = run(["git", "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], check=False)
+    if head.startswith("origin/"):
+        return head.split("/", 1)[1]
+    out = run(["git", "remote", "show", "origin"], check=False)
+    m = re.search(r"HEAD branch:\s*(\S+)", out)
+    return m.group(1) if m else "main"
+
+
+def slugify(text):
+    s = re.sub(r"[^a-z0-9]+", "-", text.lower())
+    s = re.sub(r"-{2,}", "-", s)
+    return s.strip("-")[:48].strip("-")
+
+
+def issue_fingerprint(title, body):
+    canonical = json.dumps({"title": title, "body": body or ""}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def meta_branch(spec):
+    return "kiro-spec-meta/%s" % spec
+
+
+def load_meta(spec):
+    ref = "refs/heads/%s" % meta_branch(spec)
+    out = run(["git", "ls-remote", "--heads", "origin", ref], check=False)
+    sha = None
+    for line in out.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[1] == ref:
+            sha = parts[0]
+    if sha is None:
+        return None, None
+    run(["git", "fetch", "--quiet", "origin", ref])
+    raw = run(["git", "show", "FETCH_HEAD:fingerprint.json"], check=False)
+    try:
+        meta = json.loads(raw)
+    except ValueError:
+        meta = None
+    if not isinstance(meta, dict) or not isinstance(meta.get("fingerprint"), str) or not meta["fingerprint"]:
+        sys.exit("fingerprint branch %s is unreadable; delete it and the stack branches (or pass -I spec=<new-name>) and re-dispatch" % meta_branch(spec))
+    return meta, sha
+
+
+def record_fingerprint(spec, issue_number, fingerprint, meta_sha):
+    ref = "refs/heads/%s" % meta_branch(spec)
+    path = os.path.join(".git", "kiro-spec-fingerprint.json")
+    with open(path, "w") as f:
+        json.dump({
+            "fingerprint": fingerprint,
+            "issue": issue_number,
+            "spec": spec,
+            "recorded_at": now_iso(),
+        }, f, indent=2, sort_keys=True)
+        f.write("\n")
+    blob = run(["git", "hash-object", "-w", path])
+    os.remove(path)
+
+    index = os.path.join(".git", "kiro-spec-meta-index")
+    if os.path.exists(index):
+        os.remove(index)
+    env = dict(os.environ, GIT_INDEX_FILE=index)
+    run(["git", "update-index", "--add", "--cacheinfo", "100644", blob, "fingerprint.json"], env=env)
+    tree = run(["git", "write-tree"], env=env)
+    os.remove(index)
+
+    ident = []
+    if not run(["git", "config", "user.email"], check=False):
+        ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    tip = run(["git"] + ident + ["commit-tree", tree, "-m", "kiro-spec(%s): record issue fingerprint" % spec])
+    run(["git", "push", "--quiet", "--force-with-lease=%s:%s" % (ref, meta_sha or ""), "origin", "%s:%s" % (tip, ref)])
+    print("kiro-spec prepare: recorded issue fingerprint %s at %s (%s)" % (fingerprint[:12], ref, tip[:12]), file=sys.stderr)
+
+
+def prepare(argv):
+    args = list(argv) + [""] * (4 - len(argv))
+    issue_in, spec_in, base_in, trunk_in = args[0], args[1], args[2], args[3]
+
+    m = re.search(r"/issues/(\d+)", issue_in or "")
+    if m:
+        issue_number = int(m.group(1))
+    elif re.match(r"^#?\d+$", (issue_in or "").strip()):
+        issue_number = int(issue_in.strip().lstrip("#"))
+    else:
+        sys.exit("input 'issue' must be a GitHub issue number (123), #123, or an issue URL; got %r" % issue_in)
+
+    owner, repo = origin_repo()
+    run(["git", "fetch", "--prune", "--quiet", "origin"])
+    issue = gh("GET", "/repos/%s/%s/issues/%d" % (owner, repo, issue_number))[1]
+    if issue.get("pull_request"):
+        sys.exit("#%d is a pull request, not an issue" % issue_number)
+    if issue.get("state") != "open":
+        sys.exit("issue #%d is %s; refusing to generate a spec for a non-open issue" % (issue_number, issue.get("state")))
+    title = (issue.get("title") or "").strip()
+    if not title:
+        sys.exit("issue #%d has an empty title" % issue_number)
+
+    spec = spec_in.strip() or slugify(title)
+    if not spec:
+        sys.exit("cannot derive a spec name from the issue title; pass -I spec=<name>")
+    if not re.match(r"^[a-z0-9][a-z0-9-]*$", spec):
+        sys.exit("spec name %r must contain lowercase letters, digits, and hyphens only" % spec)
+
+    labels = ", ".join(l.get("name", "") for l in (issue.get("labels") or [])) or "(none)"
+    with open(ISSUE_PATH, "w") as f:
+        f.write("# GitHub issue #%d: %s\n\n" % (issue_number, title))
+        f.write("- URL: %s\n" % issue.get("html_url", ""))
+        f.write("- State: %s\n" % issue.get("state"))
+        f.write("- Labels: %s\n" % labels)
+        f.write("- Repository: %s/%s\n\n" % (owner, repo))
+        f.write("## Body\n\n%s\n" % (issue.get("body") or "(empty)"))
+
+    fingerprint = issue_fingerprint(title, issue.get("body"))
+    meta, meta_sha = load_meta(spec)
+
+    state = None
+    if os.path.exists(STATE_PATH):
+        try:
+            state = json.load(open(STATE_PATH))
+        except ValueError:
+            state = None
+    if state is not None and (state.get("issue") != issue_number or state.get("spec") != spec):
+        sys.exit("state file %s describes issue %s / spec %s, not #%d / %s; start a fresh run" % (
+            STATE_PATH, state.get("issue"), state.get("spec"), issue_number, spec))
+
+    if state is None:
+        trunk = trunk_in.strip() or detect_trunk()
+        state = {
+            "issue": issue_number,
+            "issue_title": title,
+            "issue_url": issue.get("html_url", ""),
+            "repo": "%s/%s" % (owner, repo),
+            "spec": spec,
+            "trunk": trunk,
+            "stack_base": base_in.strip() or trunk,
+            "created_at": now_iso(),
+            "layers": [],
+            "current": None,
+        }
+        remote = run(["git", "ls-remote", "--heads", "origin", "refs/heads/stack/%s/*" % spec], check=False)
+        for line in remote.splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) != 2:
+                continue
+            sha, ref = parts
+            lm = re.match(r"refs/heads/stack/%s/(\d+)-(.+)$" % re.escape(spec), ref)
+            if not lm:
+                continue
+            state["layers"].append({
+                "layer": int(lm.group(1)),
+                "doc": lm.group(2),
+                "branch": ref[len("refs/heads/"):],
+                "sha": sha,
+            })
+        state["layers"].sort(key=lambda l: l["layer"])
+        resume_ref = base_in.strip() or (state["layers"][-1]["branch"] if state["layers"] else "")
+        if resume_ref and resume_ref != state["trunk"]:
+            run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % resume_ref])
+            run(["git", "merge", "--no-edit", "FETCH_HEAD"])
+    else:
+        state["issue_title"] = title
+        state["issue_url"] = issue.get("html_url", "")
+        state.setdefault("created_at", now_iso())
+
+    layers = state.get("layers") or []
+    for i, layer in enumerate(layers):
+        if layer.get("layer") != i + 1 or layer.get("doc") != DOCS[i]:
+            sys.exit("stack branches for %s are not a contiguous 1..4 sequence: %s (delete the stray branches or pass -I spec=<new-name>)" % (
+                spec, [(l.get("layer"), l.get("doc")) for l in layers]))
+
+    feedback_by_doc = scan_stack_feedback(owner, repo, spec, layers) if layers else {}
+    rerun_doc = next((doc for doc in DOCS if doc in feedback_by_doc), None)
+    if rerun_doc:
+        feedback = feedback_by_doc[rerun_doc]
+        with open(".git/kiro-spec-feedback.json", "w") as f:
+            json.dump({"doc": rerun_doc, "pr": feedback["pr"], "comments": feedback["comments"]}, f, indent=2)
+            f.write("\n")
+        state["rerun_doc"] = rerun_doc
+        state["rerun_pr"] = feedback["pr"]
+        state["feedback"] = feedback["comments"]
+        print("kiro-spec prepare: unresolved review feedback selects %s PR #%s (%d comments)" % (
+            rerun_doc, feedback["pr"], len(feedback["comments"])), file=sys.stderr)
+    else:
+        state.pop("rerun_doc", None)
+        state.pop("rerun_pr", None)
+        state.pop("feedback", None)
+        try:
+            os.remove(".git/kiro-spec-feedback.json")
+        except FileNotFoundError:
+            pass
+
+    if layers:
+        if meta is None:
+            sys.exit("stack branches exist for spec %s but no fingerprint is recorded at %s; cannot verify they match issue #%d (delete the stack branches to regenerate, or pass -I spec=<new-name>)" % (
+                spec, meta_branch(spec), issue_number))
+        if meta.get("fingerprint") != fingerprint:
+            sys.exit("issue #%d changed after the spec was generated (fingerprint %s recorded %s, current %s); delete the stack branches to regenerate, or pass -I spec=<new-name>" % (
+                issue_number, str(meta.get("fingerprint", ""))[:12], meta.get("recorded_at", "unknown"), fingerprint[:12]))
+
+    if not os.path.isdir(".kiro"):
+        sys.exit("the repository has no .kiro directory; kiro-spec requires a Kiro-enabled repository")
+
+    spec_dir = ".kiro/specs/%s" % spec
+    next_doc = rerun_doc or "publish"
+    if not layers and os.path.isdir(spec_dir):
+        print("kiro-spec prepare: %s already exists on %s; nothing to do (pass -I spec=<new-name> to force a different spec name)" % (
+            spec_dir, state["stack_base"]), file=sys.stderr)
+    else:
+        if meta is None or meta.get("fingerprint") != fingerprint:
+            record_fingerprint(spec, issue_number, fingerprint, meta_sha)
+        if not rerun_doc:
+            locked = set(l["doc"] for l in layers)
+            for doc in DOCS:
+                if doc not in locked:
+                    next_doc = doc
+                    break
+        os.makedirs(spec_dir, exist_ok=True)
+
+    state["current"] = None
+    save_state(state)
+    print("kiro-spec prepare: issue=#%d spec=%s trunk=%s stack_base=%s locked=%d next=%s fingerprint=%s" % (
+        issue_number, spec, state["trunk"], state["stack_base"], len(layers), next_doc, fingerprint[:12]), file=sys.stderr)
+    print(json.dumps({"context_updates": {
+        "next_doc": next_doc,
+        "spec_name": spec,
+        "issue_number": str(issue_number),
+        "stack_base": state["stack_base"],
+        "rerun_doc": rerun_doc or "",
+        "rerun_pr": str(state.get("rerun_pr") or ""),
+    }}))
+
+
+def lock(argv):
+    if len(argv) < 2:
+        sys.exit("usage: tools.py lock <doc> <layer>")
+    doc, layer = argv[0], int(argv[1])
+    if doc not in DOCS or layer != DOCS.index(doc) + 1:
+        sys.exit("unknown doc/layer: %s %s" % (doc, layer))
+
+    state = load_state()
+    spec = state["spec"]
+    spec_dir = ".kiro/specs/%s" % spec
+    doc_path = "%s/%s.md" % (spec_dir, doc)
+
+    if not os.path.isfile(doc_path):
+        sys.exit("%s does not exist; the %s stage did not write it" % (doc_path, doc))
+    text = open(doc_path, encoding="utf-8", errors="replace").read()
+    if len(text.strip()) < 200:
+        sys.exit("%s is empty or trivial (%d bytes); refusing to lock it" % (doc_path, len(text.strip())))
+    if re.search(r"\{\{[A-Z0-9_]+\}\}", text):
+        sys.exit("%s still contains unfilled template placeholders" % doc_path)
+    if not text.lstrip().startswith("#"):
+        sys.exit("%s does not start with a Markdown heading" % doc_path)
+    if doc == "tasks" and not re.search(r"(?m)^- \[ \]\*? \d+(?:\.\d+)?\.? \S", text):
+        sys.exit("%s has no '- [ ] N' task entries" % doc_path)
+
+    layers = state.get("layers") or []
+    rerun = state.get("rerun_doc") == doc
+    if any(l.get("doc") == doc for l in layers) and not rerun:
+        sys.exit("layer %d (%s) is already locked in the state file" % (layer, doc))
+
+    if doc != "brief":
+        meta_path = "%s/spec.json" % spec_dir
+        meta = {}
+        if os.path.exists(meta_path):
+            try:
+                meta = json.load(open(meta_path))
+            except ValueError:
+                meta = {}
+        meta.setdefault("feature_name", spec)
+        meta.setdefault("created_at", state.get("created_at", now_iso()))
+        meta.setdefault("language", "en")
+        approvals = meta.get("approvals")
+        if not isinstance(approvals, dict):
+            approvals = {}
+            meta["approvals"] = approvals
+        for k in DOCS[1:]:
+            entry = approvals.setdefault(k, {})
+            entry.setdefault("generated", False)
+            entry.setdefault("approved", False)
+        meta["updated_at"] = now_iso()
+        if doc == "requirements":
+            meta["phase"] = "requirements-generated"
+            approvals["requirements"]["generated"] = True
+        elif doc == "design":
+            meta["phase"] = "design-generated"
+            approvals["design"]["generated"] = True
+        else:
+            meta["phase"] = "tasks-generated"
+            approvals["tasks"]["generated"] = True
+            approvals["requirements"]["approved"] = True
+            approvals["design"]["approved"] = True
+            approvals["tasks"]["approved"] = True
+            meta["ready_for_implementation"] = True
+        meta.setdefault("ready_for_implementation", False)
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+            f.write("\n")
+
+    if layer > 1 and len(layers) < layer - 1:
+        sys.exit("cannot lock layer %d: earlier layers are missing from the state file" % layer)
+    base_name = state["stack_base"] if layer == 1 else layers[layer - 2]["branch"]
+    base = layers[layer - 2]["sha"] if layer > 1 else run(
+        ["git", "rev-parse", "--verify", "--quiet", "refs/remotes/origin/%s^{commit}" % base_name], check=False)
+    if not base:
+        sys.exit("base branch origin/%s is not available locally; fetch it and retry" % base_name)
+
+    if rerun:
+        # Rebuild downstream layers from the rewritten document rather than
+        # accidentally including their stale snapshots in this layer's commit.
+        for downstream in DOCS[layer:]:
+            stale_path = "%s/%s.md" % (spec_dir, downstream)
+            if os.path.exists(stale_path):
+                os.remove(stale_path)
+        if layer <= 2:
+            for stale_path in ("%s/spec.json" % spec_dir, "%s/research.md" % spec_dir):
+                if os.path.exists(stale_path):
+                    os.remove(stale_path)
+        elif layer == 3:
+            research_path = "%s/research.md" % spec_dir
+            if os.path.exists(research_path):
+                os.remove(research_path)
+
+    index = os.path.join(".git", "kiro-spec-lock-index")
+    if os.path.exists(index):
+        os.remove(index)
+    env = dict(os.environ, GIT_INDEX_FILE=index)
+    run(["git", "read-tree", base], env=env)
+    run(["git", "add", "-A", "--", spec_dir], env=env)
+    tree = run(["git", "write-tree"], env=env)
+    os.remove(index)
+
+    ident = []
+    if not run(["git", "config", "user.email"], check=False):
+        ident = ["-c", "user.name=Fabro", "-c", "user.email=noreply@fabro.sh"]
+    tip = run(["git"] + ident + ["commit-tree", tree, "-p", base, "-m", "docs(%s): add %s" % (spec, doc)])
+
+    branch = "stack/%s/%d-%s" % (spec, layer, doc)
+    old = next((l for l in layers if l.get("doc") == doc), None)
+    lease = ["--force-with-lease=refs/heads/%s:%s" % (branch, old["sha"])] if old else ["--force-with-lease"]
+
+    run(["git", "push", "--quiet"] + lease + ["origin", "%s:refs/heads/%s" % (tip, branch)])
+
+    layers = [l for l in layers if l.get("layer", 0) < layer]
+    layers.append({"layer": layer, "doc": doc, "branch": branch, "sha": tip})
+    layers.sort(key=lambda l: l["layer"])
+    state["layers"] = layers
+    state["current"] = None
+    save_state(state)
+    print("kiro-spec lock: doc=%s layer=%d branch=%s sha=%s" % (doc, layer, branch, tip[:12]), file=sys.stderr)
+    if rerun:
+        feedback = state.get("feedback") or []
+        owner, repo = state["repo"].split("/", 1)
+        resolve_feedback(owner, repo, state["rerun_pr"], feedback, state)
+        print("kiro-spec lock: replied to and resolved %d review comments on PR #%s" % (
+            len(feedback), state["rerun_pr"]), file=sys.stderr)
+        state["feedback_resolved"] = True
+        save_state(state)
+    if doc == "tasks" and state.get("rerun_doc"):
+        state.pop("rerun_doc", None)
+        state.pop("rerun_pr", None)
+        state.pop("feedback", None)
+        state.pop("feedback_resolved", None)
+        state.pop("replied_comment_ids", None)
+        save_state(state)
+
+
+def publish(argv):
+    state = load_state()
+    layers = state.get("layers") or []
+    if not layers:
+        print("kiro-spec publish: no stack layers exist; nothing to do", file=sys.stderr)
+        return
+    if [l.get("doc") for l in layers] != DOCS:
+        sys.exit("expected four stack layers %s but found %s; refusing to publish" % (DOCS, [l.get("doc") for l in layers]))
+
+    owner, repo = origin_repo()
+    slug = "%s/%s" % (owner, repo)
+    spec = state["spec"]
+    issue_number = state["issue"]
+    issue_url = state.get("issue_url", "")
+    stack_base = state.get("stack_base") or state["trunk"]
+
+    blurbs = {
+        "brief": "Problem statement, current state, chosen approach, and scope.",
+        "requirements": "EARS-formatted requirements with acceptance criteria and boundary context.",
+        "design": "Technical design, interfaces, and requirements traceability.",
+        "tasks": "Ready-to-implement task breakdown with requirement mappings.",
+    }
+
+    def find_open_pr(head):
+        q = urllib.parse.urlencode({"state": "open", "head": "%s:%s" % (owner, head), "per_page": 100})
+        st, prs = gh("GET", "/repos/%s/pulls?%s" % (slug, q))
+        prs = prs or []
+        if len(prs) > 1:
+            sys.exit("multiple open pull requests for head %s: %s" % (head, [p["number"] for p in prs]))
+        return prs[0] if prs else None
+
+    base = stack_base
+    pr_numbers = []
+    for layer in layers:
+        head = layer["branch"]
+        doc = layer["doc"]
+        pr = find_open_pr(head)
+        if pr is None:
+            body = (
+                "Part %d/4 of the Kiro spec `%s` for issue #%d.\n\n%s\n\n"
+                "Refs #%d - %s\n\n"
+                "Spec directory: `.kiro/specs/%s/`. Generated by the kiro-spec workflow; the stack delivers the ready-to-implement spec."
+            ) % (layer["layer"], spec, issue_number, blurbs[doc], issue_number, issue_url, spec)
+            if doc == "tasks":
+                body += "\n\nCloses #%d" % issue_number
+            st, created = gh("POST", "/repos/%s/pulls" % slug, {
+                "title": "docs(%s): add %s" % (spec, doc),
+                "head": head,
+                "base": base,
+                "draft": False,
+                "body": body,
+            }, expect=(201, 422))
+            if st == 422:
+                pr = find_open_pr(head)
+                if pr is None:
+                    sys.exit("pull request create for head %s returned 422 and no open PR exists" % head)
+            else:
+                pr = created
+            print("kiro-spec publish: created PR #%s %s -> %s" % (pr.get("number"), head, base), file=sys.stderr)
+        else:
+            print("kiro-spec publish: reusing PR #%s for %s" % (pr.get("number"), head), file=sys.stderr)
+        pr_base = (pr.get("base") or {}).get("ref")
+        if pr_base != base:
+            sys.exit("PR #%s base is %r but expected %r; refusing to continue" % (pr.get("number"), pr_base, base))
+        pr_numbers.append(pr["number"])
+        base = head
+
+    stack_number = None
+    stack_members = []
+    st, stacks = gh("GET", "/repos/%s/stacks?per_page=100" % slug)
+    for s in stacks or []:
+        if any(p.get("number") in pr_numbers for p in s.get("pull_requests", [])):
+            stack_number = s.get("number")
+            stack_members = [p.get("number") for p in s.get("pull_requests", [])]
+            break
+
+    if len(pr_numbers) < 2:
+        print("kiro-spec publish: single PR #%s; GitHub native stacks require at least two PRs, skipping stack creation" % pr_numbers[0], file=sys.stderr)
+        return
+
+    if stack_number is None:
+        st, created = gh("POST", "/repos/%s/stacks" % slug, {"pull_requests": pr_numbers})
+        stack_number = created.get("number")
+        stack_members = [p.get("number") for p in created.get("pull_requests", [])]
+        print("kiro-spec publish: created stack #%s %s" % (stack_number, pr_numbers), file=sys.stderr)
+    else:
+        missing = [n for n in pr_numbers if n not in stack_members]
+        if missing:
+            if stack_members:
+                st, top_pr = gh("GET", "/repos/%s/pulls/%s" % (slug, stack_members[-1]))
+                st, first_new = gh("GET", "/repos/%s/pulls/%s" % (slug, missing[0]))
+                if (first_new.get("base") or {}).get("ref") != (top_pr.get("head") or {}).get("ref"):
+                    sys.exit("stack #%s append precondition failed: PR #%s base %r != current top PR #%s head %r" % (
+                        stack_number, missing[0], (first_new.get("base") or {}).get("ref"),
+                        stack_members[-1], (top_pr.get("head") or {}).get("ref")))
+            st, updated = gh("POST", "/repos/%s/stacks/%s/add" % (slug, stack_number), {"pull_requests": missing})
+            stack_members = [p.get("number") for p in updated.get("pull_requests", [])]
+            print("kiro-spec publish: appended %s to stack #%s" % (missing, stack_number), file=sys.stderr)
+        else:
+            print("kiro-spec publish: stack #%s already contains all %d PRs" % (stack_number, len(pr_numbers)), file=sys.stderr)
+
+    st, final = gh("GET", "/repos/%s/stacks/%s" % (slug, stack_number))
+    order = [p.get("number") for p in final.get("pull_requests", [])]
+    print("kiro-spec publish: stack #%s bottom-to-top: %s (base %s)" % (
+        stack_number, order, (final.get("base") or {}).get("ref")), file=sys.stderr)
+
+
+def main():
+    if len(sys.argv) < 2:
+        sys.exit("usage: tools.py <prepare|lock|publish> [args]")
+    cmd, rest = sys.argv[1], sys.argv[2:]
+    if cmd == "prepare":
+        prepare(rest)
+    elif cmd == "lock":
+        lock(rest)
+    elif cmd == "publish":
+        publish(rest)
+    else:
+        sys.exit("unknown command %r" % cmd)
+
+
+if __name__ == "__main__":
+    main()

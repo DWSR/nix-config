@@ -7,6 +7,15 @@ digraph Oneshot {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/oneshot-scripts\ncp .fabro/workflows/oneshot/scripts/tools.py .git/oneshot-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/oneshot-scripts/tools.py', doraise=True)\""
+    ]
+
     prepare [
         label="Validate labels and prepare",
         shape=parallelogram,
@@ -100,7 +109,7 @@ digraph Oneshot {
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a oneshot stage failed; inspect the failing stage output in the run events and .git/oneshot-state.json\"\nfi\nprintf 'oneshot: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
-    start -> prepare
+    start -> setup_helpers -> prepare
 
     prepare -> implement [condition="outcome=succeeded"]
     prepare -> fail

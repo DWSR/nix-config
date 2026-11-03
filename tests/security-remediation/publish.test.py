@@ -13,8 +13,7 @@ from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW_TOML = ROOT / ".fabro/workflows/security-remediation/workflow.toml"
-MARKER = "cat > .git/security-remediation-scripts/tools.py <<'SECURITY_REMEDIATION_TOOLS_PY'\n"
+WORKFLOW_TOOLS = ROOT / ".fabro/workflows/security-remediation/scripts/tools.py"
 STATE_PATH = ".git/security-remediation-state.json"
 PUBLISH_PATH = ".git/security-remediation-publish.json"
 TRUNK = "main"
@@ -22,10 +21,9 @@ BRANCH = "security/dependabot-12"
 
 
 def load_tools():
-    text = WORKFLOW_TOML.read_text()
-    script = text.split(MARKER, 1)[1].split("\nSECURITY_REMEDIATION_TOOLS_PY", 1)[0]
+    script = WORKFLOW_TOOLS.read_text()
     namespace = {"__name__": "security_remediation_publish_test"}
-    exec(compile(script, str(WORKFLOW_TOML), "exec"), namespace)
+    exec(compile(script, str(WORKFLOW_TOOLS), "exec"), namespace)
     return namespace
 
 

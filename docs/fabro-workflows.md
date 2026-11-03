@@ -10,6 +10,8 @@ itself is pinned by `overlays/fabro.nix`.
 - `.fabro/workflows/<name>/workflow.toml` — run inputs, agent settings,
   integrations, and branch/PR behavior.
 - `.fabro/workflows/<name>/prompts/*.md` — node prompts.
+- `.fabro/workflows/<name>/scripts/*.py` — helper scripts installed by startup
+  command nodes into the target repository's `.git` directory.
 - `scripts/pin-workflow-versions.sh` — registers content-addressed workflow
   versions in the Fabro server and pins their ids as server variables.
 
