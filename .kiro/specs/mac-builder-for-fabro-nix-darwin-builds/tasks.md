@@ -101,7 +101,7 @@
   - _Requirements: 6.12, 8.5, 8.6, 8.7_
   - _Depends: 1.2, 1.3_
 
-- [ ] 5.2 (P) Add the shared harness and guest dispatch checks
+- [x] 5.2 (P) Add the shared harness and guest dispatch checks
   - Create `tests/fabro-darwin-builds/helpers.js` reusing the `nixEvalJson`/`nixEvalFailure` pattern from `tests/mac-nix-remote-builder/helpers.js`, plus the `package.json` that `node --test` needs.
   - `guest-dispatch.test.js`: assert the `fabro.darwinBuilder` option values, `nix.distributedBuilds`, `builders = "@<path>"` outside the store, `builders-use-substitutes`, the renderer unit and its ordering, the tmpfiles rule, and both `sops.secrets` entries.
   - Assert the sandbox invariants unchanged: exactly the store, daemon-socket, and tmpfs `[containers]` mounts; image `Env` with `NIX_REMOTE=daemon`; no key path, builder key, or tailscale membership in the image or sandbox wiring.
