@@ -4,18 +4,16 @@ from typing import Any
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW_TOML = ROOT / ".fabro/workflows/dispatch/workflow.toml"
-MARKER = "cat > .git/dispatch-security-scan.py <<'DISPATCH_SECURITY_SCAN_PY'\n"
+SECURITY_SCAN_HELPER = ROOT / ".fabro/workflows/dispatch/scripts/dispatch-security-scan.py"
 
 REPO = "DWSR/nix-config"
 
 
 def load_scan() -> dict[str, Any]:
-    """Extract the embedded helper between its markers and execute it."""
-    text = WORKFLOW_TOML.read_text()
-    script = text.split(MARKER, 1)[1].split("\nDISPATCH_SECURITY_SCAN_PY", 1)[0]
+    """Load the workflow's security scan helper."""
+    script = SECURITY_SCAN_HELPER.read_text()
     namespace: dict[str, Any] = {"__name__": "dispatch_security_scan_test"}
-    exec(compile(script, str(WORKFLOW_TOML), "exec"), namespace)
+    exec(compile(script, str(SECURITY_SCAN_HELPER), "exec"), namespace)
     return namespace
 
 

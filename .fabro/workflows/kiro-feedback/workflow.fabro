@@ -7,6 +7,15 @@ digraph KiroFeedback {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/kiro-feedback-scripts\ncp .fabro/workflows/kiro-feedback/scripts/tools.py .git/kiro-feedback-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/kiro-feedback-scripts/tools.py', doraise=True)\""
+    ]
+
     prepare [
         label="Prepare layer branch",
         shape=parallelogram,
@@ -83,7 +92,7 @@ digraph KiroFeedback {
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a kiro-feedback stage failed; inspect the failing stage output in the run events and .git/kiro-feedback-state.json\"\nfi\nprintf 'kiro-feedback: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
-    start -> prepare
+    start -> setup_helpers -> prepare
 
     prepare -> collect [condition="outcome=succeeded"]
     prepare -> fail

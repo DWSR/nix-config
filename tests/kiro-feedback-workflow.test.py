@@ -3,21 +3,20 @@ from typing import Any
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CHILD_WORKFLOW = ROOT / ".fabro/workflows/kiro-feedback/workflow.fabro"
-CHILD_TOML = ROOT / ".fabro/workflows/kiro-feedback/workflow.toml"
+CHILD_TOOLS = ROOT / ".fabro/workflows/kiro-feedback/scripts/tools.py"
 IMPL_WORKFLOW = ROOT / ".fabro/workflows/kiro-impl/workflow.fabro"
 GIT_ENV = dict(os.environ, GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.com",
                GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.com")
 
 
 def load_feedback_tools(api_base: str | None = None) -> dict[str, Any]:
-    marker = "cat > .git/kiro-feedback-scripts/tools.py <<'KIRO_FEEDBACK_TOOLS_PY'\n"
-    text = CHILD_TOML.read_text().split(marker, 1)[1].split("\nKIRO_FEEDBACK_TOOLS_PY", 1)[0]
+    text = CHILD_TOOLS.read_text()
     previous = os.environ.get("KIRO_FEEDBACK_GITHUB_API_BASE")
     if api_base:
         os.environ["KIRO_FEEDBACK_GITHUB_API_BASE"] = api_base
     try:
         namespace: dict[str, Any] = {"__name__": "kiro_feedback_tools_test"}
-        exec(compile(text, str(CHILD_TOML), "exec"), namespace)
+        exec(compile(text, str(CHILD_TOOLS), "exec"), namespace)
         return namespace
     finally:
         if previous is None:

@@ -7,6 +7,15 @@ digraph KiroSpec {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/kiro-spec-scripts\ncp .fabro/workflows/kiro-spec/scripts/tools.py .git/kiro-spec-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/kiro-spec-scripts/tools.py', doraise=True)\""
+    ]
+
     prepare [
         label="Prepare",
         shape=parallelogram,
@@ -121,7 +130,7 @@ digraph KiroSpec {
         script="set -eu\nMSG=$(cat || true)\nif [ -z \"$MSG\" ]; then\n  MSG=\"a kiro-spec stage failed; inspect the failing stage output in the run events and .git/kiro-spec-state.json\"\nfi\nprintf 'kiro-spec: %s\\n' \"$MSG\" >&2\nexit 1"
     ]
 
-    start -> prepare
+    start -> setup_helpers -> prepare
 
     prepare -> brief [condition="outcome=succeeded && context.next_doc=brief"]
     prepare -> requirements [condition="outcome=succeeded && context.next_doc=requirements"]

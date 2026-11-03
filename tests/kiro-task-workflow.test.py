@@ -15,7 +15,7 @@ BLOCKED = PROMPTS / "blocked.md"
 RULE = ROOT / ".kiro/settings/rules/secret-material-handling.md"
 WORKFLOW = ROOT / ".fabro/workflows/kiro-task/workflow.fabro"
 WORKFLOW_TOML = ROOT / ".fabro/workflows/kiro-task/workflow.toml"
-BOUNDARY_MARKER = "cat > .git/kiro-task-scripts/tools.py <<'KIRO_TASK_TOOLS_PY'\n"
+WORKFLOW_TOOLS = ROOT / ".fabro/workflows/kiro-task/scripts/tools.py"
 SHARED_PATHS = (
     "flake.nix",
     "flake.lock",
@@ -33,11 +33,10 @@ GIT_ENV = dict(
 
 
 def load_boundary_tools():
-    """Extract the embedded helper between its markers and execute it."""
-    text = WORKFLOW_TOML.read_text()
-    script = text.split(BOUNDARY_MARKER, 1)[1].split("\nKIRO_TASK_TOOLS_PY", 1)[0]
+    """Load and execute the workflow's boundary helper."""
+    script = WORKFLOW_TOOLS.read_text()
     namespace = {"__name__": "kiro_task_tools_test"}
-    exec(compile(script, str(WORKFLOW_TOML), "exec"), namespace)
+    exec(compile(script, str(WORKFLOW_TOOLS), "exec"), namespace)
     return namespace
 
 
@@ -387,10 +386,14 @@ class KiroTaskBoundaryWiringTests(unittest.TestCase):
         self.assertIn("tools.py reset", text)
         self.assertIn("shared-infrastructure reset failed", text)
 
-    def test_workflow_toml_installs_the_boundary_helper(self):
-        text = WORKFLOW_TOML.read_text()
-        self.assertIn("[[run.prepare.steps]]", text)
-        self.assertIn("KIRO_TASK_TOOLS_PY", text)
+    def test_startup_node_installs_and_compiles_the_boundary_helper(self):
+        text = WORKFLOW.read_text()
+        config = WORKFLOW_TOML.read_text()
+        self.assertNotIn("run.prepare", config)
+        self.assertIn("start -> setup_helpers -> guard", text)
+        self.assertIn('timeout="5m"', text)
+        self.assertIn('on_failure="exit"', text)
+        self.assertIn("scripts/tools.py", text)
         self.assertIn("boundary", load_boundary_tools())
 
     def test_prompts_share_the_shared_infrastructure_list(self):

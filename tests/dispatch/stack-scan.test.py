@@ -10,15 +10,13 @@ from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-WORKFLOW_TOML = ROOT / ".fabro/workflows/dispatch/workflow.toml"
-MARKER = "cat > .git/dispatch-stack-scan.py <<'DISPATCH_STACK_SCAN_PY'\n"
+STACK_SCAN_HELPER = ROOT / ".fabro/workflows/dispatch/scripts/dispatch-stack-scan.py"
 
 
 def load_stack_scan() -> dict[str, Any]:
-    text = WORKFLOW_TOML.read_text()
-    script = text.split(MARKER, 1)[1].split("\nDISPATCH_STACK_SCAN_PY", 1)[0]
+    script = STACK_SCAN_HELPER.read_text()
     namespace: dict[str, Any] = {"__name__": "dispatch_stack_scan_test"}
-    exec(compile(script, str(WORKFLOW_TOML), "exec"), namespace)
+    exec(compile(script, str(STACK_SCAN_HELPER), "exec"), namespace)
     return namespace
 
 

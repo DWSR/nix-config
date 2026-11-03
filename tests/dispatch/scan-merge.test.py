@@ -12,8 +12,7 @@ from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GRAPH = ROOT / ".fabro/workflows/dispatch/workflow.fabro"
-WORKFLOW_TOML = ROOT / ".fabro/workflows/dispatch/workflow.toml"
-HELPER_MARKER = "cat > .git/dispatch-security-scan.py <<'DISPATCH_SECURITY_SCAN_PY'\n"
+SECURITY_SCAN_HELPER = ROOT / ".fabro/workflows/dispatch/scripts/dispatch-security-scan.py"
 
 QUEUE_KEYS = {
     "repo",
@@ -72,8 +71,7 @@ def template(script: str) -> str:
 
 
 def helper_script() -> str:
-    text = WORKFLOW_TOML.read_text()
-    return text.split(HELPER_MARKER, 1)[1].split("\nDISPATCH_SECURITY_SCAN_PY", 1)[0]
+    return SECURITY_SCAN_HELPER.read_text()
 
 
 class FakeResponse:

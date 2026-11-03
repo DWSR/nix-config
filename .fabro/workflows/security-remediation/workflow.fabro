@@ -7,6 +7,15 @@ digraph SecurityRemediation {
     start [shape=Mdiamond, label="Start"]
     exit  [shape=Msquare, label="Exit"]
 
+    setup_helpers [
+        label="Prepare workflow helpers",
+        shape=parallelogram,
+        timeout="5m",
+        on_failure="exit",
+        max_retries=0,
+        script="set -eu\nmkdir -p .git/security-remediation-scripts\ncp .fabro/workflows/security-remediation/scripts/tools.py .git/security-remediation-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/security-remediation-scripts/tools.py', doraise=True)\""
+    ]
+
     // `prepare` is the only goal gate: it runs on every path to exit, while
     // `fail` must stay ungated (see the fail node) so a failed run is not
     // masked by a goal check that never saw this node.
@@ -141,7 +150,7 @@ digraph SecurityRemediation {
         script="set -eu\nMSG=$(cat || true)\nSTAGE=$(cat .git/security-remediation-failed-stage 2>/dev/null || true)\nif [ -f .git/security-remediation-scripts/tools.py ]; then\n  printf '%s' \"$MSG\" | python3 .git/security-remediation-scripts/tools.py fail \"$STAGE\"\nfi\nif [ -z \"$STAGE\" ]; then\n  if [ -n \"$MSG\" ]; then\n    MSG=\"the failing security-remediation stage did not report itself (for example sandbox setup): $MSG\"\n  else\n    MSG=\"the failing security-remediation stage did not report itself (for example sandbox setup); inspect the failing stage output in the run events and .git/security-remediation-state.json\"\n  fi\nelif [ -n \"$MSG\" ]; then\n  MSG=\"$STAGE failed: $MSG\"\nelse\n  MSG=\"$STAGE failed; inspect the failing stage output in the run events and .git/security-remediation-state.json\"\nfi\nprintf 'security-remediation: %s\n' \"$MSG\" >&2\nexit 1"
     ]
 
-    start -> prepare
+    start -> setup_helpers -> prepare
 
     prepare -> skip [condition="outcome=succeeded && context.alert_open=false"]
     prepare -> fix [condition="outcome=succeeded && context.alert_open=true"]
