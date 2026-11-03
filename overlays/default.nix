@@ -4,6 +4,7 @@ let
   zellijPlugins = import ./zellij-plugins.nix { inherit inputs; };
   misc = import ./misc.nix { inherit inputs; };
   litestream = import ./litestream.nix;
+  totalRecall = import ./total-recall.nix { inherit inputs; };
   iiiEngine = import ./agentmemory.nix { };
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
@@ -165,6 +166,7 @@ in
     // (zellijPlugins final prev)
     // (misc final prev)
     // (litestream final prev)
+    // (totalRecall final prev)
     // (iiiEngine final prev)
     // (omlx final prev)
     // (fabro final prev)

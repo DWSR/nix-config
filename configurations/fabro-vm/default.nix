@@ -133,6 +133,12 @@ in
       )
     ];
 
+    # The pinned iii 0.24.0 runtime (overlays/total-recall.nix) is licensed
+    # under the Elastic License 2.0, which nixpkgs classifies as unfree.
+    # Allow exactly that package so the guest can build the memory runtime
+    # without widening the default policy for the rest of the system.
+    nixpkgs.config.allowUnfreePackages = [ "total-recall-iii" ];
+
     # Keep the sync manifest honest: every URI-mapped key must be
     # declared (an undeclared entry would sync a value the guest never
     # deploys).
