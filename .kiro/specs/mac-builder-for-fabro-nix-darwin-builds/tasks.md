@@ -128,7 +128,7 @@
   - _Boundary: Secret Material Checks_
   - _Depends: 1.2, 2.3_
 
-- [ ] 5.5 Register the `fabro-darwin-builds` flake check
+- [x] 5.5 Register the `fabro-darwin-builds` flake check
   - Add `checks.<system>.fabro-darwin-builds` to `flake.nix` beside `mac-nix-remote-builder`, using the same `node --test tests/fabro-darwin-builds/` `runCommand` shape with Nix and Node native inputs and a writable source copy.
   - Done when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).fabro-darwin-builds` runs the complete suite.
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
