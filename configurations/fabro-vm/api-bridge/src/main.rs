@@ -12,16 +12,17 @@
 //!
 //!   * the caller run's workflow slug must be in `ALLOWED_WORKFLOW_SLUGS`
 //!     and the run must be `running`;
-//!   * only four routes are forwarded; everything else is refused:
+//!   * only five routes are forwarded; everything else is refused:
 //!     `POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
-//!     `POST /api/v1/runs/{id}/archive`, and `GET /api/v1/runs`;
+//!     `POST /api/v1/runs/{id}/archive`, `GET /api/v1/runs`, and the narrowly
+//!     scoped Kiro-child unlink `DELETE /api/v1/runs/{id}/parent`;
 //!   * on create, a missing `parent_id` is filled in with the calling run
 //!     (a conflicting parent is refused), the target repository must match
 //!     the calling run's repository, and the workflow version must be one
 //!     of the pinned dispatch targets (`ALLOWED_VERSION_VARIABLES`);
-//!   * on start, only children of the calling run may be started, and a
-//!     child that lands in pre-execution approval is approved transparently
-//!     before the response is returned;
+//!   * on start, only children of the calling run may be started; kiro-impl
+//!     task and feedback children are unlinked before start to survive parent
+//!     cancellation; any child in pre-execution approval is approved transparently;
 //!   * on archive, only previous runs of the calling workflow for the
 //!     calling run's repository that ended `succeeded` may be archived
 //!     (never the calling run itself), which is how a dispatcher prunes
@@ -588,6 +589,7 @@ enum Route {
     Create,
     Start(String),
     Archive(String),
+    DetachParent(String),
     ListRuns,
 }
 
@@ -597,6 +599,15 @@ fn route(method: &str, path: &str) -> Option<Route> {
             return Some(Route::ListRuns);
         }
         return None;
+    }
+    if method == "DELETE" {
+        let rest = path.strip_prefix("/api/v1/runs/")?;
+        let id = rest.strip_suffix("/parent")?;
+        return if id.is_empty() || id.contains('/') || id.contains("..") {
+            None
+        } else {
+            Some(Route::DetachParent(id.to_string()))
+        };
     }
     if method != "POST" {
         return None;
@@ -680,7 +691,31 @@ fn prepare_create(
     body.as_object_mut()
         .ok_or("request body must be a JSON object")?
         .insert("parent_id".to_string(), Value::String(caller_id.to_string()));
+    if caller.pointer("/workflow/slug").and_then(|v| v.as_str()) == Some("kiro-impl") {
+        let args = body
+            .pointer_mut("/args")
+            .and_then(Value::as_object_mut)
+            .ok_or("args must be a JSON object")?;
+        let labels = args
+            .entry("labels")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or("args.labels must be a JSON object")?;
+        labels.insert("kiro-impl-parent".to_string(), Value::String(caller_id.to_string()));
+    }
     Ok(())
+}
+
+fn is_kiro_impl_child(caller: &Value, child: &Value) -> bool {
+    caller.pointer("/workflow/slug").and_then(|v| v.as_str()) == Some("kiro-impl")
+        && matches!(
+            child.pointer("/workflow/slug").and_then(|v| v.as_str()),
+            Some("kiro-task" | "kiro-feedback")
+        )
+        && child
+            .pointer("/labels/kiro-impl-parent")
+            .and_then(|v| v.as_str())
+            == caller.get("id").and_then(|v| v.as_str())
 }
 
 fn handle_start(
@@ -704,11 +739,17 @@ fn handle_start(
     let child: Value = serde_json::from_slice(&child_response.body)
         .map_err(|e| (502, format!("run {child_id} metadata is not JSON: {e}")))?;
     let parent = child.get("parent_id").and_then(|v| v.as_str()).unwrap_or("");
-    if parent != caller_id {
+    let detach_from_parent = parent == caller_id && is_kiro_impl_child(caller, &child);
+    let already_detached = parent.is_empty() && is_kiro_impl_child(caller, &child);
+    if parent != caller_id && !already_detached {
         return Err((
             403,
             format!("run {child_id} is not a child of the calling run {caller_id}"),
         ));
+    }
+
+    if detach_from_parent {
+        detach_parent(cfg, caller, child_id)?;
     }
 
     let started = api_request(
@@ -748,6 +789,54 @@ fn handle_start(
         content_type: "application/json".to_string(),
         body,
     })
+}
+
+fn detach_parent(
+    cfg: &Config,
+    caller: &Value,
+    child_id: &str,
+) -> Result<(), (u16, String)> {
+    let caller_id = caller.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let caller_slug = caller
+        .pointer("/workflow/slug")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if caller_slug != "kiro-impl" {
+        return Err((
+            403,
+            "only kiro-impl may detach a child run".to_string(),
+        ));
+    }
+    let child_response = api_request(cfg, "GET", &format!("/runs/{child_id}"), None)
+        .map_err(|e| (502, format!("cannot inspect run {child_id}: {e}")))?;
+    if child_response.status == 404 {
+        return Err((404, format!("run {child_id} does not exist")));
+    }
+    if !(200..300).contains(&child_response.status) {
+        return Err((
+            502,
+            format!("inspecting run {child_id} failed: HTTP {}", child_response.status),
+        ));
+    }
+    let child: Value = serde_json::from_slice(&child_response.body)
+        .map_err(|e| (502, format!("run {child_id} metadata is not JSON: {e}")))?;
+    let valid_child = child.get("parent_id").and_then(|v| v.as_str()) == Some(caller_id)
+        && is_kiro_impl_child(caller, &child);
+    if !valid_child {
+        return Err((
+            403,
+            format!("run {child_id} is not a Kiro implementation child"),
+        ));
+    }
+    let response = api_request(cfg, "DELETE", &format!("/runs/{child_id}/parent"), None)
+        .map_err(|e| (502, format!("detaching run {child_id} from its parent failed: {e}")))?;
+    if !(200..300).contains(&response.status) {
+        return Err((
+            502,
+            format!("detaching run {child_id} from its parent failed: HTTP {}", response.status),
+        ));
+    }
+    Ok(())
 }
 
 /// Archive a previous run of the calling workflow for the caller's own
@@ -937,6 +1026,14 @@ fn handle_connection(cfg: Arc<Config>, cache: Arc<Mutex<VersionCache>>, mut stre
             }
             Err((status, message)) => fail(&mut stream, status, &message),
         },
+        Some(Route::DetachParent(child_id)) => match detach_parent(&cfg, &caller, &child_id) {
+            Ok(()) => respond_json(
+                &mut stream,
+                200,
+                &json!({"id": child_id, "parent_id": null}),
+            ),
+            Err((status, message)) => fail(&mut stream, status, &message),
+        },
         Some(Route::Archive(target_id)) => match handle_archive(&cfg, &caller, &target_id) {
             Ok(response) => {
                 eprintln!(
@@ -1076,6 +1173,10 @@ mod tests {
         ));
         assert!(matches!(route("GET", "/api/v1/runs"), Some(Route::ListRuns)));
         assert!(route("GET", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV").is_none());
+        assert!(matches!(
+            route("DELETE", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV/parent"),
+            Some(Route::DetachParent(id)) if id == "01M507E860H2VN80HQBC0W18ZV"
+        ));
         assert!(route("GET", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV/archive").is_none());
         assert!(route("DELETE", "/api/v1/runs/01M507E860H2VN80HQBC0W18ZV").is_none());
         assert!(route("POST", "/api/v1/runs/foo/approve").is_none());
@@ -1125,6 +1226,20 @@ mod tests {
         });
         assert!(prepare_create(&caller_run(), &versions(), &mut body).is_ok());
         assert_eq!(body["parent_id"], json!("01M507E860H2VN80HQBC0W18ZV"));
+        assert!(body["args"]["labels"].get("kiro-impl-parent").is_none());
+
+        let mut kiro_caller = caller_run();
+        kiro_caller["workflow"]["slug"] = json!("kiro-impl");
+        let mut kiro_child = json!({
+            "workflow_version_id": "7f2f",
+            "target": {"kind": "git", "repo": "DWSR/nix-config", "branch": "main"},
+            "args": {"inputs": {"spec": "example", "task": "1"}}
+        });
+        assert!(prepare_create(&kiro_caller, &versions(), &mut kiro_child).is_ok());
+        assert_eq!(
+            kiro_child["args"]["labels"]["kiro-impl-parent"],
+            json!("01M507E860H2VN80HQBC0W18ZV")
+        );
 
         let mut conflicting = json!({
             "workflow_version_id": "7f2f",
@@ -1280,6 +1395,102 @@ mod tests {
         assert!(paths.contains(&"GET /api/v1/runs/01CHILD".to_string()));
         assert!(paths.contains(&"POST /api/v1/runs/01CHILD/start".to_string()));
         assert!(paths.contains(&"POST /api/v1/runs/01CHILD/approve".to_string()));
+    }
+
+    #[test]
+    fn start_flow_detaches_kiro_impl_children_before_starting() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs/01CHILD") => (
+                200,
+                json!({
+                    "id": "01CHILD",
+                    "parent_id": "01CALLER",
+                    "workflow": {"slug": "kiro-task"},
+                    "lifecycle": {"status": {"kind": "submitted"}}
+                }),
+            ),
+            ("DELETE", "/api/v1/runs/01CHILD/parent") => (200, json!({})),
+            ("POST", "/api/v1/runs/01CHILD/start") => (200, json!({})),
+            _ => (404, json!({"error": "unexpected"})),
+        });
+        let cfg = test_config(api.addr.clone());
+        let caller = json!({"id": "01CALLER", "workflow": {"slug": "kiro-impl"}});
+
+        let response = handle_start(&cfg, &caller, "01CHILD").unwrap();
+        assert_eq!(response.status, 200);
+        let requests = api.requests.lock().unwrap().clone();
+        let paths: Vec<String> = requests.iter().map(|(path, _)| path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "GET /api/v1/runs/01CHILD",
+                "DELETE /api/v1/runs/01CHILD/parent",
+                "POST /api/v1/runs/01CHILD/start",
+                "GET /api/v1/runs/01CHILD",
+            ]
+        );
+    }
+
+    #[test]
+    fn start_flow_keeps_other_workflow_children_attached() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs/01CHILD") => (
+                200,
+                json!({
+                    "id": "01CHILD",
+                    "parent_id": "01CALLER",
+                    "workflow": {"slug": "oneshot"},
+                    "lifecycle": {"status": {"kind": "submitted"}}
+                }),
+            ),
+            ("POST", "/api/v1/runs/01CHILD/start") => (200, json!({})),
+            _ => (404, json!({"error": "unexpected"})),
+        });
+        let cfg = test_config(api.addr.clone());
+        let caller = json!({"id": "01CALLER", "workflow": {"slug": "dispatch"}});
+
+        assert_eq!(handle_start(&cfg, &caller, "01CHILD").unwrap().status, 200);
+        let requests = api.requests.lock().unwrap().clone();
+        let paths: Vec<String> = requests.iter().map(|(path, _)| path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "GET /api/v1/runs/01CHILD",
+                "POST /api/v1/runs/01CHILD/start",
+                "GET /api/v1/runs/01CHILD",
+            ]
+        );
+    }
+
+    #[test]
+    fn start_flow_does_not_start_child_if_detach_fails() {
+        let api = MockApi::start(|method, path, _| match (method, path) {
+            ("GET", "/api/v1/runs/01CHILD") => (
+                200,
+                json!({
+                    "id": "01CHILD",
+                    "parent_id": "01CALLER",
+                    "workflow": {"slug": "kiro-task"},
+                    "lifecycle": {"status": {"kind": "submitted"}}
+                }),
+            ),
+            ("DELETE", "/api/v1/runs/01CHILD/parent") => (403, json!({"error": "denied"})),
+            ("POST", "/api/v1/runs/01CHILD/start") => (200, json!({})),
+            _ => (404, json!({"error": "unexpected"})),
+        });
+        let cfg = test_config(api.addr.clone());
+        let caller = json!({"id": "01CALLER", "workflow": {"slug": "kiro-impl"}});
+
+        assert_eq!(handle_start(&cfg, &caller, "01CHILD").unwrap_err().0, 502);
+        let requests = api.requests.lock().unwrap().clone();
+        let paths: Vec<String> = requests.iter().map(|(path, _)| path.clone()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "GET /api/v1/runs/01CHILD",
+                "DELETE /api/v1/runs/01CHILD/parent",
+            ]
+        );
     }
 
     #[test]

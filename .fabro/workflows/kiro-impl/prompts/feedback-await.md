@@ -34,7 +34,13 @@ start, approve, or implement anything yourself.
      anything else), and never try to start, cancel, or modify the child
      yourself. Just keep waiting while it is live.
 3. On failure, read the child's final events with `fabro_run_events` and derive
-   a one-line reason (which stage failed and why).
+   a one-line reason from the latest substantive stage result. Preserve any
+   review verdict (`APPROVED` or `REJECTED`), implementation status
+   (`READY_FOR_REVIEW`, `BLOCKED`, or `NEEDS_CONTEXT`), `failure_reason`,
+   `review_findings`, and `review_remediation` actually present in the
+   event/context payload; name the stage and do not infer a verdict from a
+   generic cancellation event. If cancelled before any verdict is recorded,
+   report that no stage verdict was persisted.
 4. Update the state file with python3, preserving all other keys:
    - success: `feedback.current.status = "succeeded"`
    - failure: `feedback.current.status = "failed"`,

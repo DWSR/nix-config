@@ -13,10 +13,12 @@
 #     fallback);
 #   * the run's workflow slug must be in `allowedWorkflowSlugs` and the run
 #     must be `running`;
-#   * only four routes are forwarded — a dispatching run may create and
-#     start children, list runs, and archive its own earlier successful
-#     runs (`POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
-#     `POST /api/v1/runs/{id}/archive`, `GET /api/v1/runs`); nothing else;
+#   * only five routes are forwarded — a dispatching run may create and
+#     start children, list runs, archive its own earlier successful runs,
+#     and unlink Kiro task and feedback children from the parent lifecycle
+#     (`POST /api/v1/runs`, `POST /api/v1/runs/{id}/start`,
+#     `POST /api/v1/runs/{id}/archive`, `GET /api/v1/runs`, and
+#     `DELETE /api/v1/runs/{id}/parent`); nothing else;
 #   * on create the bridge fills in `parent_id` with the calling run, and
 #     refuses a conflicting parent, a target repository other than the
 #     calling run's repository, or a workflow version that is not one of

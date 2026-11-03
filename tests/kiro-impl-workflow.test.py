@@ -87,6 +87,14 @@ def write_tasks(root, prefix="- [ ]"):
 
 
 class KiroImplWorkflowTests(unittest.TestCase):
+    def test_await_prompts_preserve_verdicts_and_report_missing_cancel_verdict(self):
+        for name in ("await.md", "feedback-await.md"):
+            prompt = (WORKFLOW.parent / "prompts" / name).read_text()
+            self.assertIn("REJECTED", prompt)
+            self.assertIn("review_findings", prompt)
+            self.assertIn("do not infer a verdict from a", " ".join(prompt.split()))
+            self.assertIn("no stage verdict was persisted", prompt)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.tmp.name)
