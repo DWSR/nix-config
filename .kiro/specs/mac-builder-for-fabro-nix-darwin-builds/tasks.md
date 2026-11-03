@@ -92,7 +92,7 @@
 
 - [ ] 5. Verify dispatch, trust, and cache behaviour
 
-- [ ] 5.1 Implement and install the Darwin Build Smoke command
+- [x] 5.1 Implement and install the Darwin Build Smoke command
   - Create `scripts/fabro-darwin-build-smoke.nix` and install it through the `fabro.darwinBuilder` module's `environment.systemPackages` as `fabro-darwin-build-smoke`; accept an optional `IMAGE_REF` defaulting to `<name>@$(cat /run/fabro-sandbox/digest)`.
   - Step 1 preflight: both secret paths readable and non-empty and the machines file contains an `aarch64-darwin` entry, naming any missing path.
   - Step 2: `podman run --rm <ref> /bin/bash -c '<nix build …>'` requesting the design's trivial `aarch64-darwin` derivation whose builder is `/bin/sh` and whose output is one file.
