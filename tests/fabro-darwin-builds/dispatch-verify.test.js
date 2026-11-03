@@ -52,9 +52,16 @@ const BUILDER_NAME = 'mac-builder';
 const TAG = 'tag:mac-builder';
 // The line `mac-builder-tailscale-auth` writes immediately before its
 // credential-driven `tailscale up` (scripts/mac-builder-tailscale-auth.nix).
-const JOIN_MARKER =
-  `mac-builder-tailscale-auth: BackendState='NeedsLogin'; ` +
+// It marks an attempt, not a success: a failed `tailscale up` still logs it.
+const IN_FLIGHT_MARKER =
+  'mac-builder-tailscale-auth: BackendState=NeedsLogin; ' +
   `joining the tailnet as ${BUILDER_NAME} (${TAG})`;
+// The line the wrapper writes only after `tailscale up` succeeds. The verifier
+// must require this line, so a stale Running session or a failed attempt can
+// never pass the builder observation.
+const JOIN_MARKER =
+  `mac-builder-tailscale-auth: joined the tailnet as ${BUILDER_NAME} (${TAG}) ` +
+  'from the OAuth credential';
 const MACHINES_LINE =
   `ssh-ng://nix-builder@${HOST} aarch64-darwin ` +
   '/run/secrets/build-client-key 4 2 - - AAAAHOSTKEY';
@@ -63,6 +70,7 @@ const DEFAULT_REF = `${IMAGE}@sha256:defaultdigest`;
 const EXPLICIT_REF = 'localhost/fabro-sandbox@sha256:explicit';
 
 let cachedVerifyBin = null;
+let cachedAuthBin = null;
 
 function buildVerifyBin() {
   if (cachedVerifyBin) return cachedVerifyBin;
@@ -81,12 +89,31 @@ let
           echo "logout failed" >&2
           exit 1
         fi
-        # A successful logout drives the fake daemon: append the join line the
-        # real wrapper writes and move the node to its post-rejoin state.
-        if [ -n "''\${STUB_TAILSCALE_AFTER_JSON:-}" ]; then
-          printf '%s\\n' "$STUB_TAILSCALE_JOIN_MARKER" >> "$STUB_TAILSCALE_AUTH_LOG"
+        if [ -n "''\${STUB_TAILSCALE_SKIP_REJOIN:-}" ]; then
+          exit 0
+        fi
+        # Model the real LaunchDaemon: withdrawing the session leaves the node
+        # needing a login, then one credential-driven iteration runs against
+        # this same fake. The success marker therefore only appears when the
+        # fake tailscale up succeeds.
+        printf '%s\\n' '{"BackendState":"NeedsLogin","Self":{"Tags":[]}}' > "$STUB_TAILSCALE_JSON"
+        if ! "$STUB_TAILSCALE_AUTH_BIN" --once \
+          --auth-key-file "$STUB_TAILSCALE_CREDENTIAL" \
+          --hostname "$STUB_TAILSCALE_BUILDER_NAME" \
+          --tag "$STUB_TAILSCALE_TAG" \
+          --tailscale "$0" 2>>"$STUB_TAILSCALE_AUTH_LOG"; then
+          # A failed tailscale up can still leave a stale Running fixture in
+          # place; the verifier must reject it for lack of success evidence.
           cp "$STUB_TAILSCALE_AFTER_JSON" "$STUB_TAILSCALE_JSON"
         fi
+        exit 0
+        ;;
+      up)
+        if [ -n "''\${STUB_TAILSCALE_UP_FAIL:-}" ]; then
+          echo "tailscale up failed" >&2
+          exit 1
+        fi
+        cp "$STUB_TAILSCALE_AFTER_JSON" "$STUB_TAILSCALE_JSON"
         exit 0
         ;;
       status)
@@ -165,24 +192,34 @@ let
     echo "fabro-darwin-build-smoke: all steps passed (ref=$STUB_SMOKE_REF)"
   '';
 in
-pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-dispatch-verify.nix {
-  tailscale = "\${fakeTailscale}/bin/tailscale";
-  launchctl = "\${fakeLaunchctl}/bin/launchctl";
-  systemctl = "\${fakeSystemctl}/bin/systemctl";
-  stat = "\${fakeStat}/bin/stat";
-  nix = "\${fakeNix}/bin/nix";
-  podman = "\${fakePodman}/bin/podman";
-  smoke = "\${fakeSmoke}/bin/fabro-darwin-build-smoke";
-  machinesFile = ${JSON.stringify(paths.machines)};
-  digestFile = ${JSON.stringify(paths.digest)};
-  hostName = ${JSON.stringify(HOST)};
-  builderName = ${JSON.stringify(BUILDER_NAME)};
-  credentialFile = ${JSON.stringify(paths.credential)};
-  authLog = ${JSON.stringify(paths.authLog)};
-  reauthTimeout = 0;
-  imageName = ${JSON.stringify(IMAGE)};
-  localSystem = "aarch64-linux";
-}
+let
+  verify = pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-dispatch-verify.nix {
+    tailscale = "\${fakeTailscale}/bin/tailscale";
+    launchctl = "\${fakeLaunchctl}/bin/launchctl";
+    systemctl = "\${fakeSystemctl}/bin/systemctl";
+    stat = "\${fakeStat}/bin/stat";
+    nix = "\${fakeNix}/bin/nix";
+    podman = "\${fakePodman}/bin/podman";
+    smoke = "\${fakeSmoke}/bin/fabro-darwin-build-smoke";
+    machinesFile = ${JSON.stringify(paths.machines)};
+    digestFile = ${JSON.stringify(paths.digest)};
+    hostName = ${JSON.stringify(HOST)};
+    builderName = ${JSON.stringify(BUILDER_NAME)};
+    credentialFile = ${JSON.stringify(paths.credential)};
+    authLog = ${JSON.stringify(paths.authLog)};
+    reauthTimeout = 0;
+    imageName = ${JSON.stringify(IMAGE)};
+    localSystem = "aarch64-linux";
+  };
+  # The real LaunchDaemon the fake logout drives, so the success marker is
+  # only logged after the real wrapper's tailscale up returns successfully.
+  authWrapper = pkgs.callPackage ${repoRoot}/scripts/mac-builder-tailscale-auth.nix { };
+in
+pkgs.runCommand "fabro-darwin-dispatch-verify-test" { } ''
+  mkdir -p $out/bin
+  ln -s \${verify}/bin/fabro-darwin-dispatch-verify $out/bin/fabro-darwin-dispatch-verify
+  ln -s \${authWrapper}/bin/mac-builder-tailscale-auth $out/bin/mac-builder-tailscale-auth
+''
 `;
 
   const out = childProcess.execFileSync(
@@ -198,6 +235,7 @@ pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-dispatch-verify.nix {
   ).trim().split('\n').pop();
 
   cachedVerifyBin = path.join(out, 'bin', 'fabro-darwin-dispatch-verify');
+  cachedAuthBin = path.join(out, 'bin', 'mac-builder-tailscale-auth');
   return cachedVerifyBin;
 }
 
@@ -234,7 +272,10 @@ function baseEnv() {
     STUB_TAILSCALE_JSON: paths.tailscaleJson,
     STUB_TAILSCALE_AFTER_JSON: paths.tailscaleAfter,
     STUB_TAILSCALE_AUTH_LOG: paths.authLog,
-    STUB_TAILSCALE_JOIN_MARKER: JOIN_MARKER,
+    STUB_TAILSCALE_AUTH_BIN: cachedAuthBin,
+    STUB_TAILSCALE_CREDENTIAL: paths.credential,
+    STUB_TAILSCALE_BUILDER_NAME: BUILDER_NAME,
+    STUB_TAILSCALE_TAG: TAG,
     STUB_RENDERER_ACTIVE: paths.rendererActive,
     STUB_DAEMON_ACTIVE: paths.daemonActive,
     STUB_DAEMON_MONO: paths.daemonMono,
@@ -337,10 +378,10 @@ test('builder passes on a fresh credential-driven join logged by the daemon', ()
   assert.ok(result.stdout.includes(TAG), 'the report must name the builder tag');
   assert.match(result.stdout, /auth daemon/);
   assert.match(result.stdout, /OAuth credential present \(value not read\)/);
-  assert.match(result.stdout, /credential-driven join logged/);
+  assert.match(result.stdout, /credential-driven join succeeded/);
   assert.ok(
     fs.readFileSync(paths.authLog, 'utf8').includes(JOIN_MARKER),
-    'the fake daemon must have logged the join the verifier requires',
+    'the real wrapper must have logged the success marker after tailscale up',
   );
 });
 
@@ -351,18 +392,31 @@ test('builder fails with tailnet_status when tailscale status fails', () => {
 });
 
 test('builder fails with fresh_join_missing for a pre-existing Running node', () => {
-  // No daemon join is logged after the controlled logout: the node is Running
-  // and tagged, but nothing proves the credential produced that session.
-  const result = runVerify(['builder'], { STUB_TAILSCALE_AFTER_JSON: '' });
+  // The daemon never rejoins: the node is Running and tagged, but nothing
+  // proves the credential produced that session.
+  const result = runVerify(['builder'], { STUB_TAILSCALE_SKIP_REJOIN: '1' });
 
   expectFailure(result, 'fresh_join_missing');
   assert.match(output(result), /already Running/);
   assert.ok(output(result).includes(paths.authLog), 'the failure must name the daemon log');
 });
 
-test('builder ignores a join line written before the controlled logout', () => {
+test('builder rejects a Running node when tailscale up fails', () => {
+  // The in-flight "joining" line is logged before `tailscale up`, so a failed
+  // up can leave that line plus a stale Running state. Only the post-up success
+  // line proves the OAuth join.
+  const result = runVerify(['builder'], { STUB_TAILSCALE_UP_FAIL: '1' });
+
+  expectFailure(result, 'fresh_join_missing');
+  const log = fs.readFileSync(paths.authLog, 'utf8');
+  assert.ok(log.includes(IN_FLIGHT_MARKER), 'the failed attempt must have logged its in-flight line');
+  assert.ok(!log.includes(JOIN_MARKER), 'a failed tailscale up must not log success');
+  assert.match(output(result), /no new 'joined the tailnet/);
+});
+
+test('builder ignores a success line written before the controlled logout', () => {
   fs.appendFileSync(paths.authLog, `${JOIN_MARKER}\n`);
-  const result = runVerify(['builder'], { STUB_TAILSCALE_AFTER_JSON: '' });
+  const result = runVerify(['builder'], { STUB_TAILSCALE_SKIP_REJOIN: '1' });
 
   expectFailure(result, 'fresh_join_missing');
 });
@@ -697,7 +751,7 @@ test('the guest installs fabro-darwin-dispatch-verify with its configured paths'
 });
 // --- join-marker compatibility -------------------------------------------
 
-test('the verifier waits for the join line the auth daemon still writes', () => {
+test('the verifier waits for the success line the auth daemon writes after tailscale up', () => {
   // The builder observation is only meaningful while the daemon logs the line
   // the verifier greps for. Build the wrapper from source so a wording change
   // fails this suite instead of silently making `builder` unpassable.
@@ -724,12 +778,24 @@ test('the verifier waits for the join line the auth daemon still writes', () => 
   ).trim().split('\n').pop();
 
   const script = fs.readFileSync(path.join(out, 'bin', 'mac-builder-tailscale-auth'), 'utf8');
-  const marker = 'joining the tailnet as ${hostname} (${tag})';
+  const marker = 'joined the tailnet as ${hostname} (${tag}) from the OAuth credential';
+  const upIndex = script.indexOf('"$tailscale_bin" up');
   const markerIndex = script.indexOf(marker);
-  assert.ok(markerIndex >= 0, `the daemon must log the verifier's join marker: ${marker}`);
+  assert.ok(upIndex >= 0, 'the wrapper must run the credential-driven tailscale up');
+  assert.ok(markerIndex >= 0, `the daemon must log the verifier's success marker: ${marker}`);
   assert.ok(
-    script.indexOf('"$tailscale_bin" up', markerIndex) > markerIndex,
-    'the join marker must immediately precede the credential-driven tailscale up',
+    markerIndex > upIndex,
+    'the success marker must be written after the credential-driven tailscale up returns',
+  );
+  const failureBranchEnd = script.indexOf('fi', upIndex);
+  assert.ok(failureBranchEnd > upIndex, 'the up invocation must be wrapped in a failure branch');
+  assert.ok(
+    markerIndex > failureBranchEnd,
+    'the success marker must only be reachable after the failure branch returns',
+  );
+  assert.ok(
+    script.slice(upIndex, failureBranchEnd).includes('return 1'),
+    'a failed tailscale up must return before the success marker',
   );
   assert.ok(
     script.includes('--auth-key=') && script.includes('--advertise-tags='),

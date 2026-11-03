@@ -110,7 +110,10 @@ tailscale up \
 that `tailscale up`. A missing or empty credential logs the runtime path and
 retries without ever running `tailscale up`, so a provisioning gap is visible
 in `/var/log/mac-builder-tailscale-auth.err.log` rather than silently joining
-as an untagged node.
+as an untagged node. A successful `tailscale up` logs
+`joined the tailnet as mac-builder (tag:mac-builder) from the OAuth credential`;
+the pre-up `joining the tailnet ...` line is only an attempt marker, and a
+failed `tailscale up` never produces the success line.
 
 Provisioning the OAuth credential (1Password item, `sops set`, and the
 `sops -d --extract` verification) is documented in
@@ -210,14 +213,17 @@ repository checks cannot produce. Run them in this order; each prints a
    loaded and its root-only OAuth credential
    (`/run/secrets/builder-tailscale-oauth-secret`) to be present without ever
    reading the value. It then records `/var/log/mac-builder-tailscale-auth.err.log`,
-   logs the node out, and waits for a **new** daemon line
-   (`joining the tailnet as mac-builder (tag:mac-builder)`) followed by
-   `BackendState = Running` with `tag:mac-builder`. That line is written
-   immediately before the daemon's credential-driven `tailscale up`, so the
-   command passes only on a fresh join the daemon performed from the OAuth
-   credential without an interactive login. A node that was already `Running`
-   (for example from an earlier login) does not pass: only a join line logged
-   after the controlled logout counts, so a withdrawn session fails with
+   logs the node out, and waits for a **new** post-`tailscale up` success line
+   (`joined the tailnet as mac-builder (tag:mac-builder) from the OAuth
+   credential`) followed by `BackendState = Running` with `tag:mac-builder`.
+   That line is written only after the daemon's credential-driven `tailscale up`
+   returns successfully; the earlier `joining the tailnet ...` line marks an
+   attempt and is deliberately not accepted. The command therefore passes only
+   on a fresh join the daemon performed from the OAuth credential without an
+   interactive login. A node that was already `Running` (for example from an
+   earlier login), or a node whose `tailscale up` failed while a stale session
+   still reported `Running`, does not pass: only a success line logged after the
+   controlled logout counts, so a withdrawn session fails with
    `tailnet_not_running` and a still-Running node with no such line fails with
    `fresh_join_missing`.
 

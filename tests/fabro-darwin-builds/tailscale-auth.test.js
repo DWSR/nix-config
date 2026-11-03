@@ -159,6 +159,28 @@ test('a failed re-authentication makes --once exit nonzero', () => {
   assert.equal(upCalls.length, 1);
 });
 
+test('a successful re-authentication logs the post-up success marker', () => {
+  const workspace = makeWorkspace({ state: 'NeedsLogin' });
+  const result = runWrapper(workspace, runArgs(workspace));
+
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(
+    result.stderr,
+    /joined the tailnet as mac-builder \(tag:mac-builder\) from the OAuth credential/,
+  );
+});
+
+test('a failed re-authentication never logs the post-up success marker', () => {
+  // The in-flight "joining" line may appear, but a failed `tailscale up` must
+  // not produce the success evidence the live verifier requires.
+  const workspace = makeWorkspace({ state: 'NeedsLogin' });
+  const result = runWrapper(workspace, runArgs(workspace), { STUB_UP_EXIT: '1' });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /joining the tailnet as mac-builder/);
+  assert.doesNotMatch(result.stderr, /joined the tailnet as/);
+});
+
 test('a missing credential is reported even when the node already reports Running', () => {
   const workspace = makeWorkspace({ credential: null, state: 'Running' });
   const result = runWrapper(workspace, runArgs(workspace));

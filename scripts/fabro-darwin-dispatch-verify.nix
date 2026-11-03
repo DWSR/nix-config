@@ -16,13 +16,15 @@
 #     `mac-builder-tailscale-auth` LaunchDaemon to be loaded and its root-only
 #     OAuth credential to be present without reading its value. It then records
 #     the daemon's error-log offset, logs the node out, and waits for a *new*
-#     join line in that log (`joining the tailnet as <name> (tag:mac-builder)`)
-#     followed by `BackendState == "Running"` with the builder tag. The log line
-#     is emitted by the wrapper immediately before its credential-driven
-#     `tailscale up`, so a node that happened to be Running already — or that
-#     joined through some other path — does not pass. Credential values never
-#     appear in the status output or the log (the wrapper logs the hostname and
-#     tag only).
+#     success line in that log
+#     (`joined the tailnet as <name> (tag:mac-builder) from the OAuth
+#     credential`) followed by `BackendState == "Running"` with the builder tag.
+#     The success line is written only after the wrapper's credential-driven
+#     `tailscale up` returns successfully; the earlier "joining the tailnet"
+#     line marks an attempt and is not accepted, so a node that happened to be
+#     Running already — or whose `tailscale up` failed — does not pass.
+#     Credential values never appear in the status output or the log (the
+#     wrapper logs the hostname and tag only).
 #   - `guest` (run on the Fabro Guest) requires the renderer unit active, the
 #     machines file at mode `0600` owned by `root:root` with exactly one line,
 #     that line addressing the tailnet name for `aarch64-darwin`, the daemon to
@@ -126,10 +128,10 @@ pkgs.writeShellApplication {
     SUBCOMMANDS:
       builder  Run on the Builder Host: require the `mac-builder-tailscale-auth`
                LaunchDaemon and its root-only OAuth credential, then log the
-               node out and wait for a *new* credential-driven join line in the
-               daemon log plus `Running` with the builder tag. A node that was
-               already Running without that fresh join does not pass
-               (Requirements 4.3, 4.9, 4.10, 4.11).
+               node out and wait for a *new* post-`tailscale up` success line in
+               the daemon log plus `Running` with the builder tag. A node that
+               was already Running, or whose `tailscale up` failed, does not
+               pass (Requirements 4.3, 4.9, 4.10, 4.11).
       guest    Run on the Fabro Guest: require the machines renderer active, one
                `0600 root root` machines line that addresses the builder's tailnet
                name for `aarch64-darwin`, `nix-daemon` to have (re)started after
@@ -214,7 +216,10 @@ pkgs.writeShellApplication {
       # Controlled re-authentication: withdraw the current session and require
       # the installed daemon to restore it from the OAuth credential. A node
       # that is already Running was not necessarily joined this way, so only a
-      # join line written after this offset counts as evidence.
+      # success line written after this offset counts as evidence. The offset
+      # is captured before the logout is issued, and the daemon writes its
+      # success line only after `tailscale up` returns, so the accepted evidence
+      # was necessarily produced by the post-logout re-authentication.
       if ! "$tailscale_bin" logout; then
         if [ "$backend" = "Running" ]; then
           fail reauth_logout_failed "cannot log the node out to force a fresh credential-driven join (BackendState=$backend)"
@@ -224,7 +229,7 @@ pkgs.writeShellApplication {
         report builder "logged the node out; waiting for the daemon to rejoin with the OAuth credential"
       fi
 
-      marker="joining the tailnet as ''${builder_name} (''${tag})"
+      marker="joined the tailnet as ''${builder_name} (''${tag}) from the OAuth credential"
       deadline=$(( $(date +%s) + reauth_timeout ))
       joined=0
       backend=""
@@ -249,7 +254,7 @@ pkgs.writeShellApplication {
         if [ "$(date +%s)" -ge "$deadline" ]; then
           if [ "$joined" -eq 0 ]; then
             if [ "$backend" = "Running" ]; then
-              fail fresh_join_missing "node is already Running with a tag, but $auth_log holds no new '$marker' line since the logout: a pre-existing session is not evidence of a credential-driven join"
+              fail fresh_join_missing "node is already Running with a tag, but $auth_log holds no new '$marker' line since the logout: a pre-existing session or a failed 'tailscale up' is not evidence of a credential-driven join"
             fi
             fail tailnet_not_running "BackendState=''${backend:-unknown} after ''${reauth_timeout}s; the OAuth credential did not restore membership (see $auth_log)"
           fi
@@ -261,7 +266,7 @@ pkgs.writeShellApplication {
         sleep 2
       done
 
-      report builder "credential-driven join logged: $marker"
+      report builder "credential-driven join succeeded: $marker"
       report builder "node is Running with $tag (joined from the OAuth credential without an interactive login)"
       report builder "all checks passed"
     }

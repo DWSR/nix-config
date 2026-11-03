@@ -9,7 +9,10 @@
 #   2. reads `tailscale status --json` and inspects `BackendState`;
 #   3. does nothing when Running, or runs `tailscale up` with the credential,
 #      the dedicated tag, the hostname, and DNS disabled for
-#      NeedsLogin | NeedsMachineAuth | Stopped.
+#      NeedsLogin | NeedsMachineAuth | Stopped. The pre-up "joining" line marks
+#      the attempt; a "joined ... from the OAuth credential" line is written
+#      only after `tailscale up` succeeds, which is the evidence task 5.6's
+#      live verifier requires.
 #
 # The credential is read on every poll, so rotating the secret or logging the
 # node out re-authenticates without an operator. A missing credential always
@@ -189,6 +192,10 @@ pkgs.writeShellApplication {
         log "tailscale up failed while re-authenticating as ''${hostname}"
         return 1
       fi
+      # Only a completed `tailscale up` proves the OAuth credential was
+      # accepted. The live verifier requires this line so a stale Running
+      # session or an in-flight attempt that later failed cannot pass task 5.6.
+      log "joined the tailnet as ''${hostname} (''${tag}) from the OAuth credential"
     }
 
     run_iteration() {
