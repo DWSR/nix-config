@@ -37,6 +37,7 @@ test('instruction fragment files exist for universal, memory, SDD, host, and rol
     'cc-sdd-minimal.md',
     'github-native-stacks-minimal.md',
     'host-specific/shopify.md',
+    'role-fragments/shopify-yugabyte-readonly.md',
     'role-fragments/general-research.md',
     'role-fragments/kiro-spec-orchestration.md',
     'role-fragments/readonly-codebase.md',
@@ -105,9 +106,19 @@ test('GitHub-native Stack compact guidance matches runtime and preserves local, 
     path.join(instructionsDir, 'role-fragments/shopify-stack.md'),
     'utf8',
   ).trim();
+  const shopifyHost = fs.readFileSync(
+    path.join(instructionsDir, 'host-specific/shopify.md'),
+    'utf8',
+  ).trim();
+  const yugabyteRole = fs.readFileSync(
+    path.join(instructionsDir, 'role-fragments/shopify-yugabyte-readonly.md'),
+    'utf8',
+  ).trim();
 
   assert.equal(runtime, source);
+  assert.equal(mod.SubagentContextBudgetPlugin.instructionFragments['shopify-host'].text, shopifyHost);
   assert.equal(mod.SubagentContextBudgetPlugin.instructionFragments['shopify-stack'].text, role);
+  assert.equal(mod.SubagentContextBudgetPlugin.instructionFragments['shopify-yugabyte-readonly'].text, yugabyteRole);
   assert.match(role, /Call typed local Stack MCP tools without human authorization/);
   assert.match(source, /Use GitHub MCP for remote-only Stack work\./);
   assert.match(
@@ -175,10 +186,24 @@ test('composeInstructionProfile omits unrelated workflow fragments', async () =>
   assert.doesNotMatch(readonly.systemText, /Shopify host/);
 
   assert.equal(shopify.kind, 'composed');
-  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'github-native-stacks-minimal'));
-  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'shopify-host'));
+  assert.deepEqual(
+    shopify.fragments.map((fragment) => fragment.name),
+    ['universal', 'memory-mcpproxy', 'github-native-stacks-minimal', 'shopify-host', 'shopify-stack'],
+  );
   assert.match(shopify.systemText, /GitHub-native Stack/);
+  assert.match(shopify.systemText, /Shopify host instructions/);
+  assert.match(shopify.systemText, /Shopify stack role/);
   assert.doesNotMatch(shopify.systemText, /Neovim/);
+
+  const yugabyte = mod.SubagentContextBudgetPlugin.composeInstructionProfile('shopify-yugabyte-readonly');
+  assert.equal(yugabyte.kind, 'composed');
+  assert.deepEqual(
+    yugabyte.fragments.map((fragment) => fragment.name),
+    ['universal', 'memory-mcpproxy', 'shopify-host', 'shopify-yugabyte-readonly'],
+  );
+  assert.match(yugabyte.systemText, /Shopify host instructions/);
+  assert.match(yugabyte.systemText, /Yugabyte read-only role/);
+  assert.doesNotMatch(yugabyte.systemText, /GitHub-native Stack|Shopify stack role/);
 });
 
 test('composeInstructionProfile supports widening one profile without mutating others', async () => {
