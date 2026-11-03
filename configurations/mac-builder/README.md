@@ -206,10 +206,27 @@ repository checks cannot produce. Run them in this order; each prints a
    sudo ./result-verify/bin/fabro-darwin-dispatch-verify builder
    ```
 
-   It requires `tailscale status --json` to report `BackendState = Running`
-   with `tag:mac-builder` and the `mac-builder-tailscale-auth` LaunchDaemon to
-   be loaded. A node that joined from the OAuth credential without an
-   interactive login is therefore the only passing state.
+   It first requires the `mac-builder-tailscale-auth` LaunchDaemon to be
+   loaded and its root-only OAuth credential
+   (`/run/secrets/builder-tailscale-oauth-secret`) to be present without ever
+   reading the value. It then records `/var/log/mac-builder-tailscale-auth.err.log`,
+   logs the node out, and waits for a **new** daemon line
+   (`joining the tailnet as mac-builder (tag:mac-builder)`) followed by
+   `BackendState = Running` with `tag:mac-builder`. That line is written
+   immediately before the daemon's credential-driven `tailscale up`, so the
+   command passes only on a fresh join the daemon performed from the OAuth
+   credential without an interactive login. A node that was already `Running`
+   (for example from an earlier login) does not pass: only a join line logged
+   after the controlled logout counts, so a withdrawn session fails with
+   `tailnet_not_running` and a still-Running node with no such line fails with
+   `fresh_join_missing`.
+
+   The controlled logout briefly withdraws the builder's tailnet membership
+   while the daemon rejoins (up to `FABRO_DARWIN_VERIFY_REAUTH_TIMEOUT`
+   seconds, default 180). Run it from the console or over the LAN, not over a
+   tailnet session, and do not run it while an unrelated build is in flight.
+   The credential value never appears in the status output or the log; the
+   daemon logs only the hostname and tag.
 
 2. **Endpoint** – from the host that drives the Lima VM, confirm the LAN
    forward still serves the stock remote-builder protocol:

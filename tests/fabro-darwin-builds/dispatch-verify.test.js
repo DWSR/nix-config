@@ -37,6 +37,9 @@ const paths = {
   localBuild: path.join(workspace, 'local-build-output'),
   podmanLog: path.join(workspace, 'podman.log'),
   tailscaleJson: path.join(workspace, 'tailscale.json'),
+  tailscaleAfter: path.join(workspace, 'tailscale-after.json'),
+  authLog: path.join(workspace, 'tailscale-auth.err.log'),
+  credential: path.join(workspace, 'builder-tailscale-oauth-secret'),
   statOutput: path.join(workspace, 'stat-output'),
   rendererActive: path.join(workspace, 'renderer-active'),
   daemonActive: path.join(workspace, 'daemon-active'),
@@ -45,7 +48,13 @@ const paths = {
 };
 
 const HOST = 'mac-builder.tuxedo-musical.ts.net';
+const BUILDER_NAME = 'mac-builder';
 const TAG = 'tag:mac-builder';
+// The line `mac-builder-tailscale-auth` writes immediately before its
+// credential-driven `tailscale up` (scripts/mac-builder-tailscale-auth.nix).
+const JOIN_MARKER =
+  `mac-builder-tailscale-auth: BackendState='NeedsLogin'; ` +
+  `joining the tailnet as ${BUILDER_NAME} (${TAG})`;
 const MACHINES_LINE =
   `ssh-ng://nix-builder@${HOST} aarch64-darwin ` +
   '/run/secrets/build-client-key 4 2 - - AAAAHOSTKEY';
@@ -66,10 +75,31 @@ let
   pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
 
   fakeTailscale = pkgs.writeShellScriptBin "tailscale" ''
-    if [ -n "$STUB_TAILSCALE_FAIL" ]; then
-      exit 1
-    fi
-    cat "$STUB_TAILSCALE_JSON"
+    case "''\${1:-}" in
+      logout)
+        if [ -n "''\${STUB_TAILSCALE_LOGOUT_FAIL:-}" ]; then
+          echo "logout failed" >&2
+          exit 1
+        fi
+        # A successful logout drives the fake daemon: append the join line the
+        # real wrapper writes and move the node to its post-rejoin state.
+        if [ -n "''\${STUB_TAILSCALE_AFTER_JSON:-}" ]; then
+          printf '%s\\n' "$STUB_TAILSCALE_JOIN_MARKER" >> "$STUB_TAILSCALE_AUTH_LOG"
+          cp "$STUB_TAILSCALE_AFTER_JSON" "$STUB_TAILSCALE_JSON"
+        fi
+        exit 0
+        ;;
+      status)
+        if [ -n "''\${STUB_TAILSCALE_FAIL:-}" ]; then
+          exit 1
+        fi
+        cat "$STUB_TAILSCALE_JSON"
+        ;;
+      *)
+        echo "unsupported tailscale invocation: $*" >&2
+        exit 2
+        ;;
+    esac
   '';
 
   fakeLaunchctl = pkgs.writeShellScriptBin "launchctl" ''
@@ -146,6 +176,10 @@ pkgs.callPackage ${repoRoot}/scripts/fabro-darwin-dispatch-verify.nix {
   machinesFile = ${JSON.stringify(paths.machines)};
   digestFile = ${JSON.stringify(paths.digest)};
   hostName = ${JSON.stringify(HOST)};
+  builderName = ${JSON.stringify(BUILDER_NAME)};
+  credentialFile = ${JSON.stringify(paths.credential)};
+  authLog = ${JSON.stringify(paths.authLog)};
+  reauthTimeout = 0;
   imageName = ${JSON.stringify(IMAGE)};
   localSystem = "aarch64-linux";
 }
@@ -181,12 +215,26 @@ function resetWorkspace() {
     paths.tailscaleJson,
     `${JSON.stringify({ BackendState: 'Running', Self: { Tags: [TAG] } })}\n`,
   );
+  fs.writeFileSync(
+    paths.tailscaleAfter,
+    `${JSON.stringify({ BackendState: 'Running', Self: { Tags: [TAG] } })}\n`,
+  );
+  // Existing log content, plus the root-only credential fixture. The value is a
+  // fixture, never a real credential, and the verifier must not read it.
+  fs.writeFileSync(
+    paths.authLog,
+    'mac-builder-tailscale-auth: tailnet is running as mac-builder\n',
+  );
+  fs.writeFileSync(paths.credential, 'stub-oauth-credential\n');
   fs.rmSync(paths.podmanLog, { force: true });
 }
 
 function baseEnv() {
   return {
     STUB_TAILSCALE_JSON: paths.tailscaleJson,
+    STUB_TAILSCALE_AFTER_JSON: paths.tailscaleAfter,
+    STUB_TAILSCALE_AUTH_LOG: paths.authLog,
+    STUB_TAILSCALE_JOIN_MARKER: JOIN_MARKER,
     STUB_RENDERER_ACTIVE: paths.rendererActive,
     STUB_DAEMON_ACTIVE: paths.daemonActive,
     STUB_DAEMON_MONO: paths.daemonMono,
@@ -250,6 +298,10 @@ test('--help documents every subcommand and override', () => {
     'FABRO_DARWIN_VERIFY_MACHINES',
     'FABRO_DARWIN_VERIFY_DIGEST',
     'FABRO_DARWIN_VERIFY_IMAGE',
+    'FABRO_DARWIN_VERIFY_CREDENTIAL',
+    'FABRO_DARWIN_VERIFY_AUTH_LOG',
+    'FABRO_DARWIN_VERIFY_BUILDER_NAME',
+    'FABRO_DARWIN_VERIFY_REAUTH_TIMEOUT',
   ]) {
     assert.ok(result.stdout.includes(override), `the help must document ${override}`);
   }
@@ -277,13 +329,19 @@ test('no subcommand fails with invalid_arguments', () => {
 
 // --- builder observations (requirement 4.9, 4.10, 4.11) -------------------
 
-test('builder passes when the node is Running with its tag and the auth daemon is loaded', () => {
+test('builder passes on a fresh credential-driven join logged by the daemon', () => {
   const result = runVerify(['builder']);
 
   assert.equal(result.status, 0, output(result));
   assert.match(result.stdout, /\[builder\]/);
   assert.ok(result.stdout.includes(TAG), 'the report must name the builder tag');
   assert.match(result.stdout, /auth daemon/);
+  assert.match(result.stdout, /OAuth credential present \(value not read\)/);
+  assert.match(result.stdout, /credential-driven join logged/);
+  assert.ok(
+    fs.readFileSync(paths.authLog, 'utf8').includes(JOIN_MARKER),
+    'the fake daemon must have logged the join the verifier requires',
+  );
 });
 
 test('builder fails with tailnet_status when tailscale status fails', () => {
@@ -292,9 +350,60 @@ test('builder fails with tailnet_status when tailscale status fails', () => {
   expectFailure(result, 'tailnet_status');
 });
 
-test('builder fails with tailnet_not_running when the node needs a login', () => {
+test('builder fails with fresh_join_missing for a pre-existing Running node', () => {
+  // No daemon join is logged after the controlled logout: the node is Running
+  // and tagged, but nothing proves the credential produced that session.
+  const result = runVerify(['builder'], { STUB_TAILSCALE_AFTER_JSON: '' });
+
+  expectFailure(result, 'fresh_join_missing');
+  assert.match(output(result), /already Running/);
+  assert.ok(output(result).includes(paths.authLog), 'the failure must name the daemon log');
+});
+
+test('builder ignores a join line written before the controlled logout', () => {
+  fs.appendFileSync(paths.authLog, `${JOIN_MARKER}\n`);
+  const result = runVerify(['builder'], { STUB_TAILSCALE_AFTER_JSON: '' });
+
+  expectFailure(result, 'fresh_join_missing');
+});
+
+test('builder fails with reauth_logout_failed when logout cannot withdraw the session', () => {
+  const result = runVerify(['builder'], { STUB_TAILSCALE_LOGOUT_FAIL: '1' });
+
+  expectFailure(result, 'reauth_logout_failed');
+});
+
+test('builder fails with credential_missing when the OAuth credential is absent', () => {
+  fs.rmSync(paths.credential);
+  const result = runVerify(['builder']);
+
+  expectFailure(result, 'credential_missing');
+  assert.ok(output(result).includes(paths.credential));
+});
+
+test('builder fails with credential_missing when the OAuth credential is empty', () => {
+  fs.writeFileSync(paths.credential, '');
+  const result = runVerify(['builder']);
+
+  expectFailure(result, 'credential_missing');
+  assert.match(output(result), /empty/);
+});
+
+test('builder fails with auth_log_missing when the daemon log is absent', () => {
+  fs.rmSync(paths.authLog);
+  const result = runVerify(['builder']);
+
+  expectFailure(result, 'auth_log_missing');
+  assert.ok(output(result).includes(paths.authLog));
+});
+
+test('builder fails with tailnet_not_running when the credential does not restore membership', () => {
   fs.writeFileSync(
     paths.tailscaleJson,
+    `${JSON.stringify({ BackendState: 'NeedsLogin', Self: { Tags: [] } })}\n`,
+  );
+  fs.writeFileSync(
+    paths.tailscaleAfter,
     `${JSON.stringify({ BackendState: 'NeedsLogin', Self: { Tags: [] } })}\n`,
   );
   const result = runVerify(['builder']);
@@ -303,9 +412,9 @@ test('builder fails with tailnet_not_running when the node needs a login', () =>
   assert.match(output(result), /NeedsLogin/);
 });
 
-test('builder fails with tailnet_tag_missing when the node joined without the builder tag', () => {
+test('builder fails with tailnet_tag_missing when the fresh join lacks the builder tag', () => {
   fs.writeFileSync(
-    paths.tailscaleJson,
+    paths.tailscaleAfter,
     `${JSON.stringify({ BackendState: 'Running', Self: { Tags: ['tag:fabro'] } })}\n`,
   );
   const result = runVerify(['builder']);
@@ -584,5 +693,46 @@ test('the guest installs fabro-darwin-dispatch-verify with its configured paths'
   assert.ok(
     script.includes(report.hostName),
     'the installed verifier must default to the configured builder tailnet name',
+  );
+});
+// --- join-marker compatibility -------------------------------------------
+
+test('the verifier waits for the join line the auth daemon still writes', () => {
+  // The builder observation is only meaningful while the daemon logs the line
+  // the verifier greps for. Build the wrapper from source so a wording change
+  // fails this suite instead of silently making `builder` unpassable.
+  const out = childProcess.execFileSync(
+    'nix',
+    [
+      'build',
+      '--no-link',
+      '--print-out-paths',
+      '--impure',
+      '--expr',
+      `let
+         flake = builtins.getFlake (toString ${repoRoot});
+         pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; };
+       in pkgs.callPackage ${repoRoot}/scripts/mac-builder-tailscale-auth.nix { }`,
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: NIX_TIMEOUT_MS,
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  ).trim().split('\n').pop();
+
+  const script = fs.readFileSync(path.join(out, 'bin', 'mac-builder-tailscale-auth'), 'utf8');
+  const marker = 'joining the tailnet as ${hostname} (${tag})';
+  const markerIndex = script.indexOf(marker);
+  assert.ok(markerIndex >= 0, `the daemon must log the verifier's join marker: ${marker}`);
+  assert.ok(
+    script.indexOf('"$tailscale_bin" up', markerIndex) > markerIndex,
+    'the join marker must immediately precede the credential-driven tailscale up',
+  );
+  assert.ok(
+    script.includes('--auth-key=') && script.includes('--advertise-tags='),
+    'the join must be credential-driven and advertise the builder tag',
   );
 });
