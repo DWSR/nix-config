@@ -149,6 +149,7 @@
   - Done when each failure names its owning layer and each restoration returns the path to a successful Darwin build.
   - _Requirements: 1.6, 1.7, 3.5, 3.6, 3.7, 4.8, 6.7, 6.12_
   - _Depends: 5.6_
+  - _Blocked: Live Guest/Builder hosts and tailnet access are unavailable; unblock by running and recording all three task 5.7 failure-and-recovery checks on deployed hosts._
 
 ## Implementation Notes
 
