@@ -16,7 +16,7 @@ depend on the live sandbox observation recorded as environment-blocked in
 | --- | --- |
 | Implementation host | `aarch64-linux` sandbox container (Linux 7.2.9, Nix 2.34.9) |
 | Baseline commit | `ee99f955663ae973befbe85aee0c1320551c5244` |
-| Captured at | 2026-11-03T12:13Z |
+| Captured at | 2026-11-03T12:26Z |
 
 Absent on this host, and the reason the live observations below are
 environment-blocked:
@@ -59,21 +59,28 @@ Captured by evaluating the real host configuration
   observe a node. Operator command is `mac-builder-deploy` followed by
   `tailscale status --json` and `launchctl print system/…` (see
   [Operator completion](#operator-completion)).
-- **`mac-builder-readiness` over the LAN forward** — attempted and failed
-  before reaching the endpoint:
+- **`mac-builder-readiness` over the LAN forward** — attempted with the
+  command's own default endpoint, which is the LAN forward (`127.0.0.1:2222`),
+  and failed at the first check because nothing is listening there:
 
   ```text
-  $ nix run .#mac-builder-readiness -- --host mac-builder.tuxedo-musical.ts.net --port 22
-  mac-builder-readiness: endpoint ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net:22
-  check 1/3: ssh (nix-builder@mac-builder.tuxedo-musical.ts.net:22)
+  $ nix run .#mac-builder-readiness
+  mac-builder-readiness: endpoint ssh-ng://nix-builder@127.0.0.1:2222
+  check 1/3: ssh (nix-builder@127.0.0.1:2222)
     FAIL
   mac-builder-readiness: FAILED: ssh
   exit 1
   ```
 
-  `environment-blocked: nix run .#mac-builder-readiness (no tailnet route to mac-builder.tuxedo-musical.ts.net, and no local uid for the OpenSSH client)`.
-  Readiness still belongs to the LAN-forward endpoint check; the new path is
-  exercised by the smoke below.
+  A direct probe confirms the cause: `bash -c 'exec 3<>/dev/tcp/127.0.0.1/2222'`
+  prints `Connection refused`.
+
+  `environment-blocked: nix run .#mac-builder-readiness (default LAN forward 127.0.0.1:2222 is not listening: no Lima instance and no mac-builder guest on this sandbox host)`.
+
+  Naming the tailnet FQDN directly is a different endpoint, not the LAN-forward
+  observation, and also fails here. A successful LAN-forward run stays
+  operator-gated; see [Operator completion](#operator-completion). The new
+  dispatch path is exercised by the smoke below.
 
 ## Observation 2: guest machines file, daemon wiring, local Linux builds
 
@@ -170,6 +177,7 @@ local-aarch64-linux-build
 | --- | --- |
 | `node --test tests/fabro-darwin-builds/` | 141 tests, 141 pass |
 | `nix develop --command prek run --all-files` | all hooks passed |
+| `nix run .#mac-builder-readiness` (default LAN forward `127.0.0.1:2222`) | environment-blocked: connection refused at `check 1/3: ssh`; no Lima instance on this host |
 | `nix flake check --show-trace` | environment-blocked: `checks.aarch64-linux.ast-grep-mcp` fails inside the Nix build sandbox with `Could not resolve host: github.com` (no network in the build sandbox); unrelated to this task |
 | `nix build .#checks.aarch64-linux.fabro-darwin-builds` | environment-blocked: the same network isolation when `builtins.getFlake` refetches the locked nixpkgs inside the build sandbox |
 
