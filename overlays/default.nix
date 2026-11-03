@@ -7,6 +7,7 @@ let
   iiiEngine = import ./agentmemory.nix { };
   omlx = import ./omlx { inherit inputs; };
   fabro = import ./fabro.nix;
+  totalRecall = import ./total-recall.nix { inherit inputs; };
   agentmemoryFlake = final: _prev: {
     agentmemory =
       inputs.agentmemory.packages.${final.stdenv.hostPlatform.system}.agentmemory.overrideAttrs
@@ -168,6 +169,7 @@ in
     // (iiiEngine final prev)
     // (omlx final prev)
     // (fabro final prev)
+    // (totalRecall final prev)
     // (agentmemoryFlake final prev);
 
   inherit omlx fabro;
