@@ -27,93 +27,136 @@ const packagesExpr = `
     flake = builtins.getFlake (toString ${repoRoot});
     pkgs = flake.nixosConfigurations.fabro-vm.pkgs;
     upstream = flake.inputs.total-recall.packages.aarch64-linux;
-    pin = name: drv: {
-      name = drv.name or "";
-      pname = drv.pname or "";
-      version = drv.version or "";
-      mainProgram = drv.meta.mainProgram or "";
-      srcUrl = drv.src.url or "";
-      srcHash = drv.src.outputHash or "";
-    };
+    # Keep the evaluation total so a missing overlay surfaces as a failed
+    # assertion naming the missing attribute instead of an evaluation error.
+    get = name: if builtins.hasAttr name pkgs then builtins.getAttr name pkgs else null;
+    pin = drv:
+      if drv == null then null
+      else {
+        name = drv.name or "";
+        pname = drv.pname or "";
+        version = drv.version or "";
+        mainProgram = drv.meta.mainProgram or "";
+        srcUrl = drv.src.url or "";
+        srcHash = drv.src.outputHash or "";
+      };
+    aliasMatches = local: remote:
+      local != null
+      && builtins.hasAttr remote upstream
+      && local.drvPath == (builtins.getAttr remote upstream).drvPath;
   in
   {
-    iii = pin "iii" pkgs.total-recall-iii;
-    database = pin "database" pkgs.total-recall-database;
-    queue = pin "queue" pkgs.total-recall-queue;
-    cron = pin "cron" pkgs.total-recall-cron;
+    iii = pin (get "total-recall-iii");
+    database = pin (get "total-recall-database");
+    queue = pin (get "total-recall-queue");
+    cron = pin (get "total-recall-cron");
     aliases = {
       harness-ingestion =
-        pkgs.total-recall-harness-ingestion.drvPath
-        == upstream.harness-ingestion.drvPath;
+        aliasMatches (get "total-recall-harness-ingestion") "harness-ingestion";
       harness-event-persistence =
-        pkgs.total-recall-harness-event-persistence.drvPath
-        == upstream.harness-event-persistence.drvPath;
+        aliasMatches (get "total-recall-harness-event-persistence") "harness-event-persistence";
       session-post-processing =
-        pkgs.total-recall-session-post-processing.drvPath
-        == upstream.session-post-processing.drvPath;
+        aliasMatches (get "total-recall-session-post-processing") "session-post-processing";
       opencode-plugin =
-        pkgs.total-recall-opencode-plugin.drvPath
-        == upstream.opencode-harness-events.drvPath;
+        aliasMatches (get "total-recall-opencode-plugin") "opencode-harness-events";
       pi-extension =
-        pkgs.total-recall-pi-extension.drvPath
-        == upstream.pi-harness-events.drvPath;
+        aliasMatches (get "total-recall-pi-extension") "pi-harness-events";
       mcp-worker =
-        pkgs.total-recall-mcp-worker.drvPath
-        == upstream.mcp-worker.drvPath;
+        aliasMatches (get "total-recall-mcp-worker") "mcp-worker";
     };
   }
 `;
 
 const packages = nixEvalJson(packagesExpr);
 
+const expectedPackages = [
+  { key: 'iii', pname: 'total-recall-iii', version: '0.24.0', mainProgram: 'iii' },
+  { key: 'database', pname: 'total-recall-database', version: '0.5.26', mainProgram: 'database' },
+  { key: 'queue', pname: 'total-recall-queue', version: '0.21.26', mainProgram: 'queue' },
+  { key: 'cron', pname: 'total-recall-cron', version: '0.21.28', mainProgram: 'cron' },
+];
+
+const expectedSources = {
+  iii: {
+    url: 'https://github.com/iii-hq/iii/releases/download/iii%2Fv0.24.0/iii-aarch64-unknown-linux-gnu.tar.gz',
+    hash: 'sha256-YI8a0WM0jngYpV94ShHi7+KwPYE1MquWokMhHEJ57zA=',
+  },
+  database: {
+    url: 'https://cdn.iii.cloud/workers/database/0.5.26/database-aarch64-unknown-linux-gnu.tar.gz',
+    hashPattern: /^sha256-[A-Za-z0-9+/]+=*$/,
+  },
+  queue: {
+    url: 'https://cdn.iii.cloud/workers/queue/0.21.26/queue-aarch64-unknown-linux-gnu.tar.gz',
+    hashPattern: /^sha256-[A-Za-z0-9+/]+=*$/,
+  },
+  cron: {
+    url: 'https://cdn.iii.cloud/workers/cron/0.21.28/cron-aarch64-unknown-linux-gnu.tar.gz',
+    hashPattern: /^sha256-[A-Za-z0-9+/]+=*$/,
+  },
+};
+
 test('pins the iii runtime and registry worker versions from research.md', () => {
-  assert.equal(packages.iii.pname, 'total-recall-iii');
-  assert.equal(packages.iii.version, '0.24.0');
-  assert.equal(packages.iii.mainProgram, 'iii');
+  const mismatches = [];
 
-  assert.equal(packages.database.pname, 'total-recall-database');
-  assert.equal(packages.database.version, '0.5.26');
-  assert.equal(packages.database.mainProgram, 'database');
+  for (const { key, pname, version, mainProgram } of expectedPackages) {
+    const actual = packages[key];
+    if (!actual) {
+      mismatches.push(
+        `${key}: expected ${pname}@${version} (mainProgram ${mainProgram}), but the package is missing`,
+      );
+      continue;
+    }
+    if (actual.pname !== pname) {
+      mismatches.push(`${key}.pname: expected ${pname}, got ${actual.pname}`);
+    }
+    if (actual.version !== version) {
+      mismatches.push(`${key}.version: expected ${version}, got ${actual.version}`);
+    }
+    if (actual.mainProgram !== mainProgram) {
+      mismatches.push(`${key}.mainProgram: expected ${mainProgram}, got ${actual.mainProgram}`);
+    }
+  }
 
-  assert.equal(packages.queue.pname, 'total-recall-queue');
-  assert.equal(packages.queue.version, '0.21.26');
-  assert.equal(packages.queue.mainProgram, 'queue');
-
-  assert.equal(packages.cron.pname, 'total-recall-cron');
-  assert.equal(packages.cron.version, '0.21.28');
-  assert.equal(packages.cron.mainProgram, 'cron');
+  assert.deepEqual(mismatches, []);
 });
 
 test('fetches every prebuilt artifact from a fixed-hash archive URL', () => {
-  assert.equal(
-    packages.iii.srcUrl,
-    'https://github.com/iii-hq/iii/releases/download/iii%2Fv0.24.0/iii-aarch64-unknown-linux-gnu.tar.gz',
-  );
-  assert.equal(
-    packages.iii.srcHash,
-    'sha256-YI8a0WM0jngYpV94ShHi7+KwPYE1MquWokMhHEJ57zA=',
-  );
+  const mismatches = [];
 
-  for (const [name, version] of [
-    ['database', '0.5.26'],
-    ['queue', '0.21.26'],
-    ['cron', '0.21.28'],
-  ]) {
-    assert.equal(
-      packages[name].srcUrl,
-      `https://cdn.iii.cloud/workers/${name}/${version}/${name}-aarch64-unknown-linux-gnu.tar.gz`,
-    );
-    assert.match(packages[name].srcHash, /^sha256-[A-Za-z0-9+/]+=*$/);
+  for (const [key, expected] of Object.entries(expectedSources)) {
+    const actual = packages[key];
+    if (!actual) {
+      mismatches.push(`${key}: expected fixed-hash source ${expected.url}, but the package is missing`);
+      continue;
+    }
+    if (actual.srcUrl !== expected.url) {
+      mismatches.push(`${key}.srcUrl: expected ${expected.url}, got ${actual.srcUrl}`);
+    }
+    if (expected.hash) {
+      if (actual.srcHash !== expected.hash) {
+        mismatches.push(`${key}.srcHash: expected ${expected.hash}, got ${actual.srcHash}`);
+      }
+    } else if (!expected.hashPattern.test(actual.srcHash)) {
+      mismatches.push(`${key}.srcHash: ${actual.srcHash} is not a fixed sha256 hash`);
+    }
   }
+
+  assert.deepEqual(mismatches, []);
 });
 
 test('re-exports the upstream workers and adapters under the C1 names', () => {
-  for (const [name, matches] of Object.entries(packages.aliases)) {
-    assert.equal(matches, true, `total-recall-${name} must resolve to the upstream package`);
-  }
+  const mismatches = Object.entries(packages.aliases)
+    .filter(([, matches]) => matches !== true)
+    .map(([name]) => `total-recall-${name} must resolve to the upstream package`);
+
+  assert.deepEqual(mismatches, []);
 });
 
 test('uses fixed-hash fetchurl sources with no build-time registry or fallback lookup', () => {
+  assert.ok(
+    fs.existsSync(overlayPath),
+    'overlays/total-recall.nix must declare the pinned package overlay',
+  );
   const overlay = fs.readFileSync(overlayPath, 'utf8');
 
   assert.match(overlay, /final\.fetchurl/);
