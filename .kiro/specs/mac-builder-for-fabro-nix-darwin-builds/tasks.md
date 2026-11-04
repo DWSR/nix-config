@@ -31,7 +31,7 @@
 
 - [ ] 2. Put the Builder Host on the tailnet under its own tag
 
-- [ ] 2.1 (P) Implement the launchd tailnet authentication wrapper
+- [x] 2.1 (P) Implement the launchd tailnet authentication wrapper
   - Create `scripts/mac-builder-tailscale-auth.nix` as a `writeShellApplication` with the CLI contract: `--auth-key-file`, `--hostname`, `--tag`, `--tailscale`, optional `--interval`, `--once`.
   - Each iteration verify the credential file is non-empty, read `tailscale status --json`, and branch on `BackendState`: `Running` does nothing; `NeedsLogin`/`NeedsMachineAuth`/`Stopped` run `tailscale up` with `--auth-key=<secret>?ephemeral=false&preauthorized=true`, `--advertise-tags`, `--hostname`, and `--accept-dns=false`.
   - On a missing or empty credential, log the runtime path and fail the iteration without ever invoking `tailscale up`.
