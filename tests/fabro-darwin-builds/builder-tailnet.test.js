@@ -7,17 +7,33 @@ const test = require('node:test');
 
 const repoRoot = path.resolve(__dirname, '../..');
 
-function evaluateBuilder(modulePath) {
+function evaluateBuilder() {
   const expression = `let
     flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)});
-    extended = flake.darwinConfigurations.mac-builder.extendModules {
-      modules = [ ${JSON.stringify(modulePath)} ];
-    };
-    cfg = extended.config;
+    host = flake.darwinConfigurations.mac-builder;
+    cfg = host.config;
   in builtins.toJSON {
+    hostPlatform = cfg.nixpkgs.hostPlatform.system;
+    extraPlatforms = cfg.nix.settings."extra-platforms" or null;
+    trustedUsers = cfg.nix.settings.trusted-users;
+    opensshEnable = cfg.services.openssh.enable;
+    opensshExtraConfig = cfg.services.openssh.extraConfig;
+    nixBuilder = cfg.users.users.nix-builder;
+    gcAutomatic = cfg.nix.gc.automatic;
+    gcInterval = cfg.nix.gc.interval;
+    gcOptions = cfg.nix.gc.options;
+    optimiseAutomatic = cfg.nix.optimise.automatic;
+    authorizedKeysSecret = cfg.sops.secrets."builder-authorized-keys";
+    activation = cfg.system.activationScripts.postActivation.text;
+    sopsPostActivation = cfg.system.activationScripts.postActivation.text;
+    sopsDaemon = cfg.launchd.daemons.sops-install-secrets;
+    launchdDaemons = builtins.attrNames cfg.launchd.daemons;
+    nixDaemonNames = builtins.filter (name: builtins.match ".*nix-daemon.*" name != null) (builtins.attrNames cfg.launchd.daemons);
+    deploy = flake.apps.aarch64-darwin.mac-builder-deploy.program;
+    readiness = flake.apps.aarch64-darwin.mac-builder-readiness.program;
     tailscaleEnabled = cfg.services.tailscale.enable;
     tailscalePackagePath = builtins.unsafeDiscardStringContext (toString cfg.services.tailscale.package);
-    defaultTailscalePackagePath = builtins.unsafeDiscardStringContext (toString extended.pkgs.tailscale);
+    defaultTailscalePackagePath = builtins.unsafeDiscardStringContext (toString host.pkgs.tailscale);
     authDaemon = cfg.launchd.daemons.mac-builder-tailscale-auth;
     secret = cfg.sops.secrets."builder-tailscale-oauth-secret";
     tailscaled = cfg.launchd.daemons.tailscaled;
@@ -30,9 +46,30 @@ function evaluateBuilder(modulePath) {
 }
 
 test('mac-builder tailnet module declares the open-source service and root-only OAuth secret', () => {
-  const modulePath = path.join(repoRoot, 'configurations/mac-builder/tailscale.nix');
-  const config = evaluateBuilder(modulePath);
+  const config = evaluateBuilder();
 
+  assert.equal(config.hostPlatform, 'aarch64-darwin');
+  assert.equal(config.extraPlatforms, null);
+  assert.ok(config.trustedUsers.includes('nix-builder'));
+  assert.equal(config.opensshEnable, true);
+  assert.match(config.opensshExtraConfig, /PermitRootLogin no/);
+  assert.equal(config.nixBuilder.uid, 502);
+  assert.equal(config.gcAutomatic, true);
+  assert.equal(config.optimiseAutomatic, true);
+  assert.equal(config.authorizedKeysSecret.path, '/run/secrets/builder-authorized-keys');
+  assert.match(config.activation, /secret_file="\/run\/secrets\/builder-authorized-keys"/);
+  assert.match(config.activation, /install -m 0600 -o nix-builder -g staff/);
+  assert.match(config.sopsPostActivation, /sops-install-secrets/);
+  assert.match(config.sopsPostActivation, /\/run\/secrets\/builder-authorized-keys/);
+  assert.ok(config.sopsPostActivation.indexOf('sops-install-secrets') < config.sopsPostActivation.indexOf('secret_file="/run/secrets/builder-authorized-keys"'));
+  assert.equal(config.sopsDaemon.serviceConfig.RunAtLoad, true);
+  assert.equal(config.sopsDaemon.serviceConfig.KeepAlive, false);
+  assert.ok(config.launchdDaemons.some(name => name.includes('nix-daemon')));
+  assert.ok(config.nixDaemonNames.length > 0);
+  assert.equal(typeof config.deploy, 'string');
+  assert.equal(typeof config.readiness, 'string');
+  assert.ok(config.deploy.endsWith('/bin/mac-builder-deploy'));
+  assert.ok(config.readiness.endsWith('/bin/mac-builder-readiness'));
   assert.equal(config.tailscaleEnabled, true);
   assert.equal(config.tailscalePackagePath, config.defaultTailscalePackagePath);
   assert.equal(config.authDaemon.serviceConfig.ProgramArguments[config.authDaemon.serviceConfig.ProgramArguments.indexOf('--tailscale') + 1].split('/bin/')[0], config.defaultTailscalePackagePath);
@@ -45,8 +82,7 @@ test('mac-builder tailnet module declares the open-source service and root-only 
 });
 
 test('mac-builder auth daemon invokes the wrapper with the exact credential and node identity', () => {
-  const modulePath = path.join(repoRoot, 'configurations/mac-builder/tailscale.nix');
-  const config = evaluateBuilder(modulePath);
+  const config = evaluateBuilder();
   const daemon = config.authDaemon;
   const args = daemon.serviceConfig.ProgramArguments;
 
