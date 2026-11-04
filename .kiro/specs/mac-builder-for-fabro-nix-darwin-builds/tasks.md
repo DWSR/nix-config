@@ -146,6 +146,7 @@
   - _Depends: 1.3, 2.3, 3, 4.2, 5.1, 5.5_
 
 - [ ] 5.7 Validate the live failure modes and recovery
+  - _Blocked: depends on blocked task 5.6._
   - Remove the guest's `build-client-key` and confirm a Darwin build fails naming that runtime path; restore it and confirm recovery.
   - Remove the builder's OAuth credential, let the auth daemon iterate, and confirm the iteration logs the credential path without running `tailscale up`; restore it and confirm the node rejoins.
   - Remove the guest's ACL access and confirm the refused connection plus the guest error naming the builder's tailnet name; restore the grant and confirm the build succeeds.
