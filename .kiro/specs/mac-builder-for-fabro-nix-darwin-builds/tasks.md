@@ -120,7 +120,7 @@
   - _Boundary: Builder Tailnet Tests_
   - _Depends: 2.3, 3_
 
-- [ ] 5.4 (P) Add secret-material and trust checks
+- [x] 5.4 (P) Add secret-material and trust checks
   - `secret-material.test.js`: assert the machines file is rendered outside the store and `/etc`, `builders` references it by `@` path, the machines line carries the client key path rather than a key value, and no `environment.etc."nix/machines"` exists.
   - Render with poisoned secret values and assert only the runtime paths appear in the evaluated guest configuration and the builder activation text.
   - Assert the builder fails activation when `builder-authorized-keys` is missing or empty, that a client key outside that set is refused, and that the builder never treats tailnet node identity as session authentication.
