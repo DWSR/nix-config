@@ -77,6 +77,7 @@ let
         package: (package.name or "") == "agentmemory"
       ) hm.home.packages;
       skillNames = builtins.filter (name: builtins.match "opencode/skills/.+" name != null) configFiles;
+      flySkillSource = hm.xdg.configFile."opencode/skills/fly".source;
       skillFiles = pkgs.lib.filterAttrs (
         name: _:
         builtins.match "opencode/skills/(binks-pr-review|create-yb-fix-pr|fabro-workflow|github-native-stacks|validate-yb-issue)" name
@@ -196,6 +197,7 @@ let
         skills = builtins.mapAttrs (
           _: value: discard (builtins.readFile (value.source + "/SKILL.md"))
         ) skillFiles;
+        flySkillSource = discard (toString flySkillSource);
         wrapper = builtins.concatStringsSep "\n" (map discard hm.home.opencode.wrapperCommands);
         agentNames = builtins.attrNames hm.programs.opencode.agents;
         commandNames = builtins.attrNames (hm.programs.opencode.commands or { });
@@ -205,6 +207,7 @@ let
           inherit (pi) enable;
           agentMemoryUrl = pi.environment.AGENTMEMORY_URL.value;
           extensions = map (extension: discard (toString extension)) pi.extensions;
+          skills = map (skill: discard (toString skill)) pi.skills;
           instructionResources = [
             {
               path = discard (toString pi.rules);

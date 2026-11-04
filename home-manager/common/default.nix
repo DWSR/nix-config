@@ -14,6 +14,7 @@
     ./cc-sdd.nix
     ./deskflow
     ./fabro.nix
+    ./fly-skill.nix
     ./gh-cli.nix
     ./ghostty.nix
     ./git.nix

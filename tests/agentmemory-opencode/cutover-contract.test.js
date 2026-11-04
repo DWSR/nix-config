@@ -33,12 +33,12 @@ const REPO_OWNED_RENDERED_SKILLS = Object.freeze({
     'opencode/skills/github-native-stacks',
   ]),
 });
-// These skills are dependency-owned: cc-sdd is supplied by the pinned
-// package, while process-flow-diagram and architecture-diagram are fetched.
-// Check their rendered names without reading their imported content.
+// cc-sdd is supplied by the pinned package; these fetched skills are checked
+// by their rendered names without reading their imported content.
 const IMPORTED_RENDERED_SKILLS = Object.freeze({
   personal: Object.freeze([
     'opencode/skills/architecture-diagram',
+    'opencode/skills/fly',
     'opencode/skills/process-flow-diagram',
   ]),
 });
@@ -115,6 +115,7 @@ function renderActiveCutoverArtifacts() {
       skillNames = builtins.filter (
         name: builtins.match "opencode/skills/.+" name != null
       ) (builtins.attrNames hm.xdg.configFile);
+      flySkillSource = discard (toString hm.xdg.configFile."opencode/skills/fly".source);
       agents = builtins.mapAttrs (_: value: text value) hm.programs.opencode.agents;
       skills = builtins.mapAttrs (_: value: skillText value) skillFiles;
       packageNames = map (package: package.name or "") hm.home.packages;
@@ -128,10 +129,12 @@ function renderActiveCutoverArtifacts() {
       packageNames = packageNames;
       serverNames = map (server: server.name) mcpConfig.mcpServers;
       skillNames = skillNames;
+      flySkillSource = flySkillSource;
       pi = {
         enable = hm.programs.pi.coding-agent.enable;
         agentMemoryUrl = hm.programs.pi.coding-agent.environment.AGENTMEMORY_URL.value;
         extensions = map (extension: discard (toString extension)) hm.programs.pi.coding-agent.extensions;
+        skills = map (skill: discard (toString skill)) hm.programs.pi.coding-agent.skills;
         instructionResources = [
           {
             path = discard (toString hm.programs.pi.coding-agent.rules);
@@ -343,6 +346,21 @@ test('OpenCode and Pi rendered startup contracts keep the shortened preflight an
     assert.equal(config.serverNames.includes('agentmemory'), true, `${host} retains AgentMemory MCP`);
 
     assert.equal(config.pi.enable, true, `${host} enables Pi`);
+    assert.equal(
+      config.skillNames.includes('opencode/skills/fly'),
+      true,
+      `${host} renders the Fly skill in OpenCode`,
+    );
+    assert.equal(
+      config.pi.skills.includes(config.flySkillSource),
+      true,
+      `${host} installs the same Fly skill in Pi`,
+    );
+    assert.match(
+      config.flySkillSource,
+      /\/plugins\/fly\/skills\/fly$/,
+      `${host} uses the upstream operations skill directory`,
+    );
     assert.equal(config.pi.agentMemoryUrl, 'http://127.0.0.1:3111', `${host} wires Pi to AgentMemory`);
     assert.equal(config.pi.extensions.some((extension) => /\/integrations\/pi\/index\.ts$/.test(extension)), true, `${host} keeps Pi AgentMemory extension`);
     assert.equal(config.pi.extensions.some((extension) => /pi-mcpproxy-go[^/]*\/index\.ts$/.test(extension)), true, `${host} keeps Pi mcpproxy extension`);
