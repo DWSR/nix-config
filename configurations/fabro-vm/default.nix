@@ -54,6 +54,7 @@ in
     # the loader unit that publishes it into the local Podman store.
     ./sandbox-image.nix
     ./sandbox.nix
+    ./darwin-dispatch.nix
     ./litellm.nix
     # The podman-bridge API bridge that lets dispatch workflow sandboxes
     # create and start (and the bridge transparently approves) child runs
@@ -87,6 +88,7 @@ in
   };
 
   config = {
+    fabro.darwinBuilder.enable = true;
     # lima-init reconfigures the system from Lima's cidata userdata at boot
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.
@@ -102,6 +104,8 @@ in
       # sops.secrets below.
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
+      "build-client-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key";
+      "build-host-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key";
       # The OpenCode v1 server's secrets (opencode.nix): a dedicated
       # GitHub PAT, its basic-auth server password, and the SSH
       # commit-signing key (a 1Password SSH Key item — multi-line value;
@@ -172,6 +176,27 @@ in
         # op://Infrastructure/Fabro Host Tailscale Credentials/Client
         # Secret.
         tailscale-oauth-secret = { };
+
+        "build-client-key" = {
+          path = "/run/secrets/build-client-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
+        "build-host-key" = {
+          path = "/run/secrets/build-host-key";
+          mode = "0400";
+          owner = "root";
+          group = "root";
+          restartUnits = [
+            "fabro-darwin-builders.service"
+            "nix-daemon.service"
+          ];
+        };
 
         # The fabro host's GitHub PAT (source: op://Private/GitHub/Tokens/
         # Fabro, mirrored by fabro-sync-from-1password). Consumed through
