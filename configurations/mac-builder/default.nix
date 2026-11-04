@@ -9,6 +9,7 @@
   imports = [
     inputs.sops-nix.darwinModules.default
     ./tailscale.nix
+    ./substituters.nix
   ];
 
   nixpkgs.hostPlatform = "aarch64-darwin";
