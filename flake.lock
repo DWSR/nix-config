@@ -982,17 +982,17 @@
         "nixpkgs": "nixpkgs_3"
       },
       "locked": {
-        "lastModified": 1791570090,
-        "narHash": "sha256-BmhPtqSShGf3CdmUoT5ew0pTteSl2/74Cbau44kzalQ=",
+        "lastModified": 1791666975,
+        "narHash": "sha256-0wBzJXs0gNb1NKujAWFZMwdsHu/fr6bv6ZG6YoLqv8Q=",
         "owner": "4evy",
         "repo": "pared",
-        "rev": "d860e255d4f4141c02a1869b123f650623ea86d8",
+        "rev": "d135233e5855fe850546e038cb67ad6439458a61",
         "type": "github"
       },
       "original": {
         "owner": "4evy",
-        "ref": "2.2.0",
         "repo": "pared",
+        "rev": "d135233e5855fe850546e038cb67ad6439458a61",
         "type": "github"
       }
     },
