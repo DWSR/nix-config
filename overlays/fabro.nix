@@ -12,28 +12,28 @@
 # `fabro version` reports the tag.
 final: _prev:
 let
-  # v0.403.0-nightly.0, the latest upstream nightly release.
+  # v0.408.0-nightly.0, the latest upstream nightly release.
   # This is the same build channel `brew install fabro-sh/tap/fabro-nightly`
   # ships; the stable channel publishes far less frequently.
-  version = "0.403.0-nightly.0";
+  version = "0.408.0-nightly.0";
 
   # Upstream release tarballs per system. There is no x86_64-darwin
-  # artifact; Linux uses the fully static musl binaries so no
-  # autoPatchelf pass is needed under nixpkgs' glibc. Hashes are the
-  # sha256 sums published as `fabro-<triple>.tar.gz.sha256` alongside the
+  # artifact; Linux uses the musl binaries so no autoPatchelf pass is
+  # needed. Hashes are the published `fabro-<triple>.tar.gz.sha256` sums
+  # alongside the
   # tarball (SLSA Build Provenance attestations cover both).
   targets = {
     "aarch64-darwin" = {
       triple = "aarch64-apple-darwin";
-      hash = "sha256-+eumliGCf1BD03BseEfKy654pXk7tV+u4Qlpvs73Uig=";
+      hash = "sha256-tYQnSyRYto3sckuOn53ItUwq7h1EiTADrA8iGp5W6pI=";
     };
     "aarch64-linux" = {
       triple = "aarch64-unknown-linux-musl";
-      hash = "sha256-9t7nlda16ITQPoooXy21OYWOtWWzaqEVSwPqUKnCu2A=";
+      hash = "sha256-qcPU778sByIVsNxR8ZCZYo52jVuj/U542vs1mzh4WcQ=";
     };
     "x86_64-linux" = {
       triple = "x86_64-unknown-linux-musl";
-      hash = "sha256-7j0G7Sxl41n4osE5gzRE9Rk7lZLla1ZDkQdqpltrokg=";
+      hash = "sha256-T+WSxrGgcHnVa+LTgS2VUxGpI+scmQj3LkV7zjtElC4=";
     };
   };
 in
