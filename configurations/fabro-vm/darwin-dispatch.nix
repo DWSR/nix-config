@@ -7,6 +7,13 @@
 let
   cfg = config.fabro.darwinBuilder;
   renderer = import ../../scripts/fabro-darwin-machines.nix { inherit pkgs; };
+  buildSmoke = import ../../scripts/fabro-darwin-build-smoke.nix {
+    inherit pkgs;
+    inherit (cfg) clientKeyPath hostKeyPath machinesFile;
+    imageName = config.fabro.sandboxImage.name;
+    digestFile = "/run/fabro-sandbox/digest";
+    podman = "${pkgs.podman}/bin/podman";
+  };
 in
 {
   options.fabro.darwinBuilder = {
@@ -48,6 +55,7 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    environment.systemPackages = [ buildSmoke ];
     nix.distributedBuilds = true;
     nix.settings = {
       builders = "@${cfg.machinesFile}";
