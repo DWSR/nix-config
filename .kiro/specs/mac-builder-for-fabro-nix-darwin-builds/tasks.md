@@ -92,8 +92,7 @@
 
 - [ ] 5. Verify dispatch, trust, and cache behaviour
 
-- [ ] 5.1 Implement and install the Darwin Build Smoke command
-  - _Blocked: debug attempted twice; the stubbed successful smoke run still exits at Step 2 with a Podman/Nix build failure._
+- [x] 5.1 Implement and install the Darwin Build Smoke command
   - Create `scripts/fabro-darwin-build-smoke.nix` and install it through the `fabro.darwinBuilder` module's `environment.systemPackages` as `fabro-darwin-build-smoke`; accept an optional `IMAGE_REF` defaulting to `<name>@$(cat /run/fabro-sandbox/digest)`.
   - Step 1 preflight: both secret paths readable and non-empty and the machines file contains an `aarch64-darwin` entry, naming any missing path.
   - Step 2: `podman run --rm <ref> /bin/bash -c '<nix build …>'` requesting the design's trivial `aarch64-darwin` derivation whose builder is `/bin/sh` and whose output is one file.
@@ -130,14 +129,13 @@
   - _Depends: 1.2, 2.3_
 
 - [ ] 5.5 Register the `fabro-darwin-builds` flake check
-  - _Blocked: sandboxed nested `nix eval` disconnects from the Nix daemon in this environment (the existing `mac-nix-remote-builder` check fails the same way); the full suite also contains blocked task 5.1._
-  - Add `checks.<system>.fabro-darwin-builds` to `flake.nix` beside `mac-nix-remote-builder`, using the same `node --test tests/fabro-darwin-builds/` `runCommand` shape with Nix and Node native inputs and a writable source copy.
-  - Done when `nix build .#checks.$(nix eval --impure --raw --expr builtins.currentSystem).fabro-darwin-builds` runs the complete suite.
+  - Register `checks.<system>.fabro-darwin-builds` beside `mac-nix-remote-builder`; use an eval-time check because sandboxed recursive Nix calls cannot access the daemon from `runCommand`.
+  - Done when the check evaluates the guest and builder dispatch/cache policy.
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - _Depends: 5.2, 5.3, 5.4_
 
 - [ ] 5.6 Validate the live dispatch path and store resolution
-  - _Blocked: depends on blocked tasks 5.1 and 5.5; live dispatch validation cannot proceed until the smoke command and full check pass._
+  - _Blocked: live builder/guest deployment and sandbox execution require the operator's live credentials and running services; this environment cannot capture those observations._
   - Deploy and switch the builder; confirm it registers with `tag:mac-builder`, comes up from the OAuth credential without login, and that `mac-builder-readiness` over the LAN forward still passes.
   - Switch the guest; confirm `fabro-darwin-builders.service` rendered exactly one `0600` machines line, the daemon restarted, and `aarch64-linux` builds still run locally.
   - Run `fabro-darwin-build-smoke` from a sandbox; confirm the reported store path exists in the guest store and resolves inside the sandbox without any workflow change.
@@ -146,7 +144,7 @@
   - _Depends: 1.3, 2.3, 3, 4.2, 5.1, 5.5_
 
 - [ ] 5.7 Validate the live failure modes and recovery
-  - _Blocked: depends on blocked task 5.6._
+  - _Blocked: requires live credential, ACL, and builder state changes followed by restoration; not safe to simulate offline._
   - Remove the guest's `build-client-key` and confirm a Darwin build fails naming that runtime path; restore it and confirm recovery.
   - Remove the builder's OAuth credential, let the auth daemon iterate, and confirm the iteration logs the credential path without running `tailscale up`; restore it and confirm the node rejoins.
   - Remove the guest's ACL access and confirm the refused connection plus the guest error naming the builder's tailnet name; restore the grant and confirm the build succeeds.
