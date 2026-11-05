@@ -163,7 +163,6 @@ in
       "ungoogled-chromium"
       "orbstack"
       "oversight"
-      "orion"
       "balenaetcher"
       "homerow"
       "obs"
