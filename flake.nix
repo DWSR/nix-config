@@ -179,7 +179,11 @@
     # The nix-darwin module also manages feature policy and performs model
     # cleanup during activation. Keep the CLI package available system-wide;
     # configure Apple Intelligence policy manually with `pared wizard`.
-    pared.url = "github:4evy/pared/2.2.0";
+    # Pinned to the 2.2.0 release plus the follow-up GUI runner commit: Swift
+    # 6.2.4's type checker (the version in nixpkgs) cannot type-check the
+    # single chained Subprocess.run argument expression at the tag, so the Nix
+    # build fails. Drop the commit pin once upstream tags a release with it.
+    pared.url = "github:4evy/pared/d135233e5855fe850546e038cb67ad6439458a61";
 
     # NixOS guest for the fabro Lima VM (configurations/fabro-vm): the
     # guest-side module provides lima-init (cidata boot-time setup) and the
