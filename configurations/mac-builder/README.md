@@ -4,17 +4,17 @@
 
 In the Tailscale admin console, add the following scoped policy entries. They
 allow the Fabro guest tagged `tag:fabro` to reach the builder tagged
-`tag:mac-builder` on SSH only; `autogroup:admin` owns the builder tag:
+`tag:nix-remote-builder` on SSH only; `autogroup:admin` owns the builder tag:
 
 ```json
 {
   "tagOwners": {
-    "tag:mac-builder": ["autogroup:admin"]
+    "tag:nix-remote-builder": ["autogroup:admin"]
   },
   "grants": [
     {
       "src": ["tag:fabro"],
-      "dst": ["tag:mac-builder"],
+      "dst": ["tag:nix-remote-builder"],
       "ip": ["tcp:22"]
     }
   ]
@@ -30,12 +30,12 @@ SSH host key. Builder Host Tailscale SSH is not used.
 ## Builder identity and credential
 
 The builder joins the tailnet as machine `mac-builder`, with MagicDNS name
-`mac-builder.tuxedo-musical.ts.net` and tag `tag:mac-builder`. The Fabro guest
+`mac-builder.tuxedo-musical.ts.net` and tag `tag:nix-remote-builder`. The Fabro guest
 uses that MagicDNS name for dispatch. Do not address the guest through the LAN
 forward or a DHCP address.
 
 Create a dedicated Tailscale OAuth client for the builder in the admin
-console. Give it the `auth_keys` scope and authorize the `tag:mac-builder`
+console. Give it the `auth_keys` scope and authorize the `tag:nix-remote-builder`
 tag. This client is separate from the Fabro guest's OAuth client. The builder
 reads its OAuth client secret at runtime from
 `/run/secrets/builder-tailscale-oauth-secret`; provision it through the

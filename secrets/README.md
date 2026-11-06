@@ -172,10 +172,10 @@ by sops-nix on the builder host. It is encrypted to the
 | Item | Value |
 | --- | --- |
 | Encrypted file | `secrets/remote-builder.mac-builder.yaml` |
-| SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-secret` |
+| SOPS keys | `builder-authorized-keys`, `builder-tailscale-oauth-client-id`, `builder-tailscale-oauth-secret` |
 | Recipient anchor | `&host_mac_builder` |
 | 1Password item (age key) | `op://Private/sops-age-key-mac-builder` (Secure Note, `notesPlain`) |
-| 1Password source (OAuth) | `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret` |
+| 1Password sources | `op://Infrastructure/mac-builder authorized keys/notesPlain`; `op://Infrastructure/mac-builder Tailscale OAuth/Client ID`; `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` |
 | Private key on host | `/var/lib/sops-nix/key.txt` (mode `0600`, root) |
 
 The builder age private key is generated once with `age-keygen` and
@@ -202,20 +202,37 @@ The builder age key must be installed before the first
 
 The builder joins the tailnet with its own OAuth client secret,
 `builder-tailscale-oauth-secret`, distinct from the guest's
-`tailscale-oauth-secret`. Only the client secret is mirrored into the store;
-the client ID is embedded in the value. The console owns the OAuth client's
-`auth_keys` scope and its `tag:mac-builder` tag.
+`tailscale-oauth-secret`. The sync command also stores the separate client ID
+as `builder-tailscale-oauth-client-id`. The console owns the OAuth client's
+`auth_keys` scope and its `tag:nix-remote-builder` tag.
+
+Refresh the builder's OAuth values from 1Password with:
+
+```sh
+nix run '.#mac-builder-sync-from-1password'
+```
+
+The command reads the mac-builder age key from its 1Password Secure Note,
+fetches `op://Infrastructure/mac-builder authorized keys/notesPlain`,
+`op://Infrastructure/mac-builder Tailscale OAuth/Client ID`, and
+`op://Infrastructure/mac-builder Tailscale OAuth/Client Secret`, then updates
+`secrets/remote-builder.mac-builder.yaml` encrypted to the builder recipient.
+The authorized-keys note must contain newline-separated public keys and may not
+be empty. Sign in to `op` first; this command does not deploy or switch the
+builder.
 
 1. Store the client secret in 1Password at
-   `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`.
-2. Encrypt it with the builder age key, passing the value by file so it never
-   reaches shell history. `sops --value-file` JSON-decodes the file, so write
+   `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` and the
+   client ID at `op://Infrastructure/mac-builder Tailscale OAuth/Client ID`.
+2. Alternatively, update the encrypted store manually with the builder age key,
+   passing the value by file so it never reaches shell history.
+   `sops --value-file` JSON-decodes the file, so write
    the token as a JSON string. `sops set` rewrites only the named key and
    preserves `builder-authorized-keys`:
 
    ```sh
    T=$(mktemp -d); chmod 0700 "$T"
-   op read 'op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret' \
+   op read 'op://Infrastructure/mac-builder Tailscale OAuth/Client Secret' \
      | tr -d '\n' | jq -Rs . > "$T/secret"
    SOPS_AGE_KEY_FILE=/var/lib/sops-nix/key.txt \
      nix shell --inputs-from . nixpkgs#sops -c \
@@ -253,7 +270,7 @@ of truth.
    This writes `/tmp/build-client-key` (private) and
    `/tmp/build-client-key.pub` (public).
 2. Store the private half at
-   `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key`
+   `op://Infrastructure/Fabro nix remote builder key/private key`
    and the builder's `ssh_host_ed25519_key.pub` at
    `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key`.
 3. Refresh the fabro store from 1Password:
@@ -264,9 +281,13 @@ of truth.
 
    The sync aborts instead of dropping a declared key, so the store always
    ends with both entries.
-4. Append the public half of the client key to `builder-authorized-keys`
-   (one key per line) and re-encrypt the builder store while preserving the
-   existing keys.
+4. Append the public half of the client key to the 1Password item
+   `op://Infrastructure/mac-builder authorized keys/notesPlain` (one key per
+   line), then refresh the builder store:
+
+   ```sh
+   nix run '.#mac-builder-sync-from-1password'
+   ```
 5. Verify with `sops -d --extract` for each key using the store's own host key;
    never print a value. The `build-host-key` value must match the builder's
    host public key, and the client public half must appear in

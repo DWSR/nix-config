@@ -8,7 +8,7 @@ const path = require('node:path');
 const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
 const { test } = require('node:test');
-const { repoRoot } = require('../mac-nix-remote-builder/helpers');
+const { repoRoot } = require('./helpers');
 
 const wrapperSource = path.join(repoRoot, 'scripts/mac-builder-tailscale-auth.nix');
 const dummyCredential = 'dummy-test-credential';
@@ -22,8 +22,8 @@ function fixture(backendState, options = {}) {
   if (options.credential !== false) fs.writeFileSync(credential, options.empty ? '' : dummyCredential);
   fs.writeFileSync(tailscale, `#!/bin/sh\nif [ "$1" = status ]; then\n  printf 'status\\n' >> "$STATUS_LOG"\n  ${options.unresponsive ? 'exit 1' : `printf '%s\\n' '${JSON.stringify({ BackendState: backendState })}'`}\nelse\n  printf '%s\\n' "$@" > "$CALL_LOG"\nfi\n`);
   fs.chmodSync(tailscale, 0o755);
-  const expression = `let pkgs = import <nixpkgs> {}; in pkgs.callPackage ${JSON.stringify(wrapperSource)} {}`;
-  const executable = childProcess.execFileSync('nix', ['build', '--impure', '--no-link', '--print-out-paths', '--expr', expression], { cwd: repoRoot, encoding: 'utf8' }).trim() + '/bin/mac-builder-tailscale-auth';
+  const expression = `let flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)}); pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; }; in pkgs.callPackage ${JSON.stringify(wrapperSource)} {}`;
+  const executable = childProcess.execFileSync('nix', ['build', '--impure', '--no-link', '--print-out-paths', '--expr', expression], { cwd: repoRoot, encoding: 'utf8', env: { ...process.env, NIX_CONFIG: 'experimental-features = nix-command flakes' } }).trim() + '/bin/mac-builder-tailscale-auth';
   const args = ['--auth-key-file', credential, '--hostname', 'builder-test', '--tag', 'tag:builder', '--tailscale', tailscale];
   const run = () => childProcess.spawnSync(executable, [...args, '--once'], { encoding: 'utf8', env: { ...process.env, CALL_LOG: log, STATUS_LOG: statusLog } });
   return { directory, credential, executable, log, statusLog, args, run };

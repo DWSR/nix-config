@@ -11,7 +11,33 @@ pkgs.writeShellApplication {
   text = ''
     set -euo pipefail
 
-    repo=''${1:-$PWD}
+    repo="$PWD"
+    op_cmd=''${OP_BIN:-op}
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --op-bin)
+          if [[ -z "''${2:-}" || "$2" == --* ]]; then
+            echo "mac-builder-deploy: --op-bin requires a path" >&2
+            exit 2
+          fi
+          op_cmd="$2"
+          shift 2
+          ;;
+        --)
+          shift
+          if [[ $# -gt 0 ]]; then repo="$1"; shift; fi
+          [[ $# -eq 0 ]] || { echo "mac-builder-deploy: unexpected arguments" >&2; exit 2; }
+          ;;
+        *)
+          if [[ "$repo" != "$PWD" ]]; then
+            echo "mac-builder-deploy: unexpected argument: $1" >&2
+            exit 2
+          fi
+          repo="$1"
+          shift
+          ;;
+      esac
+    done
 
     if [ ! -f "$repo/flake.nix" ] || [ ! -f "$repo/flake.lock" ]; then
       echo "mac-builder-deploy: $repo is not a locked flake (usage: mac-builder-deploy [REPO])" >&2
@@ -26,7 +52,6 @@ pkgs.writeShellApplication {
 
     AGE_KEY_REF=''${MAC_BUILDER_AGE_KEY_REF:-op://Private/sops-age-key-mac-builder/notesPlain}
     VM_PASSWORD_REF=''${MAC_BUILDER_VM_PASSWORD_REF:-op://Private/mac-builder vm password/password}
-
     remote() {
       ssh -F "$sshConfig" "$remoteHost" "$@"
     }
@@ -36,7 +61,7 @@ pkgs.writeShellApplication {
       exit 1
     fi
 
-    vm_password="$(op read "$VM_PASSWORD_REF")"
+    vm_password="$("$op_cmd" read "$VM_PASSWORD_REF")"
     printf '%s' "$vm_password" | remote -- "umask 077 && cat > /tmp/mac-builder-password && printf '%s\\n' '#!/bin/sh' 'cat /tmp/mac-builder-password' > /tmp/mac-builder-askpass && chmod 700 /tmp/mac-builder-askpass"
 
     remote -- "rm -rf '$scratch' && mkdir -p '$scratch'"
@@ -47,7 +72,7 @@ pkgs.writeShellApplication {
       | gzip \
       | remote -- "tar -xzf - -C '$scratch'"
 
-    age_key="$(op read "$AGE_KEY_REF")"
+    age_key="$("$op_cmd" read "$AGE_KEY_REF")"
     remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A /usr/bin/install -d -m 0755 -o root -g wheel /var/lib/sops-nix"
     printf '%s' "$age_key" | remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A tee /var/lib/sops-nix/key.txt >/dev/null"
     remote -- "SUDO_ASKPASS=/tmp/mac-builder-askpass sudo -A chmod 600 /var/lib/sops-nix/key.txt"

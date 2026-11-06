@@ -104,7 +104,7 @@ in
       # sops.secrets below.
       "github-token" = "op://Private/GitHub/Tokens/Fabro";
       "tailscale-oauth-secret" = "op://Infrastructure/Fabro Host Tailscale Credentials/Client Secret";
-      "build-client-key" = "op://Private/mac-builder build client key/password";
+      "build-client-key" = "op://Infrastructure/Fabro nix remote builder key/private key";
       "build-host-key" = "op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key";
       # The OpenCode v1 server's secrets (opencode.nix): a dedicated
       # GitHub PAT, its basic-auth server password, and the SSH
