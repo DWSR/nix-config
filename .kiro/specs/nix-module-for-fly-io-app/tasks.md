@@ -1,0 +1,69 @@
+# Implementation Plan
+
+- [ ] 1. Implement the reusable Fly app NixOS module
+- [ ] 1.1 Define app options and serialize Fly and Machines API configuration
+  - Create `modules/nixos/fly-app.nix` with global enable and runtime-string `tokenFile` options plus `services.fly-app.apps` entries for enable, app identity/settings, an open app-config attrset, freeform `machineConfig`, image options, and `primaryContainer`.
+  - Serialize app settings to store-resident `fly.toml`; serialize the complete Machine API attrset, including container arrays and unknown fields, as JSON referenced by `experimental.machine_config`.
+  - Done when a declared single- or multi-container app renders both artifacts without dropping API fields.
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.3_
+- [ ] 1.2 Validate image selection and keep credentials out of generated artifacts
+  - Add app-specific assertions for conflicting or missing image sources; require `primaryContainer` when an image source replaces a container image in a multi-container config.
+  - Keep `tokenFile` a runtime string path; never evaluate or interpolate token contents into derivations or configuration artifacts.
+  - Done when invalid image selections and missing primary-container selection fail with app-specific diagnostics, and generated app config contains neither token contents nor the runtime token-file path.
+  - _Depends: 1.1_
+  - _Requirements: 2.1, 2.2, 3.4, 3.5, 6.1, 6.2, 6.3_
+
+- [ ] 2. Implement the activation-time Fly deployment adapter
+- [ ] 2.1 Implement existing-image and remote Nixpacks deployment paths
+  - Create `scripts/fly-app-deploy.nix` as a noninteractive `flyctl deploy` wrapper taking the app/config paths and exactly one image source.
+  - Use `pkgs.flyctl` from the flake's locked nixpkgs; pass `--image` for an existing reference, or use a Nix derivation output directory as the build context with `--remote-only --nixpacks` (no local image build).
+  - Pass the generated config and `--yes`, and preserve the configured app when deployment runs again after configuration changes.
+  - Done when stubbed invocations select the correct source path and every derivation-source command includes both remote-builder flags.
+  - _Requirements: 3.1, 3.2, 3.3, 4.3_
+- [ ] 2.2 Add runtime token authentication and failure propagation
+  - Read the non-empty token file only at invocation and expose its value only as `FLY_API_TOKEN` to the child `flyctl` process; never pass or log it as an argument or output.
+  - Do not invoke `flyctl auth login` or rely on another credential; fail preflight for an absent/empty token and propagate Fly CLI status unchanged.
+  - Done when missing-token, remote-build, authentication, and API failures all exit nonzero without exposing the token.
+  - _Requirements: 3.6, 4.4, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
+  - _Depends: 2.1_
+
+- [ ] 3. Export the module and connect it to NixOS activation
+- [ ] 3.1 Wire enabled apps into activation and export the reusable module
+  - Add a `system.activationScripts` entry that deploys enabled apps sequentially through the adapter; retain the first failure and make activation fail before reporting successful completion.
+  - Export the module as `nixosModules.fly-app` from `flake.nix`; do not add Fly-specific integrations to deploy-rs or Colmena.
+  - Done when a NixOS evaluation through the flake exposes the module and activation includes only enabled apps while propagating adapter failure.
+  - _Depends: 1.2, 2.2_
+  - _Requirements: 1.4, 2.2, 3.6, 4.1, 4.2, 4.4_
+
+- [ ] 4. Add deterministic evaluation and deployment tests
+- [ ] 4.1 (P) Test module evaluation, serialization, and secret separation
+  - Create `tests/fly-app/helpers.js` and `module.test.js` to evaluate the exported module for single- and multi-container apps.
+  - Assert app settings, primary-container behavior, container details and unknown Machine API fields survive TOML/JSON generation; assert both invalid image-source cases fail with app-specific diagnostics.
+  - Inspect generated artifacts and derivation inputs using synthetic fixtures to verify token values and the runtime token path are absent.
+  - Done when `node --test tests/fly-app/module.test.js` passes without Fly credentials or network access.
+  - _Boundary: Module Evaluation Tests_
+  - _Depends: 1.1, 1.2, 3.1_
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 2.3, 3.4, 3.5, 6.1, 6.2, 6.3_
+- [ ] 4.2 (P) Test adapter command, authentication, and failure contracts
+  - Add `tests/fly-app/deploy.test.js` with a fake `flyctl` to check existing-image and derivation-source arguments, including `--remote-only`, `--nixpacks`, `--config`, and noninteractive execution.
+  - Verify the fake receives the token only in its child environment; test missing/empty token and remote-build, auth, and deployment failures, ensuring nonzero status and no token in argv, config, stdout, or stderr.
+  - Check the invocation flags against the `pkgs.flyctl` version pinned by `flake.lock`.
+  - Done when the adapter contract suite runs without a live token or Fly account.
+  - _Boundary: Deployment Adapter Tests_
+  - _Depends: 2.1, 2.2_
+  - _Requirements: 3.1, 3.2, 3.3, 3.6, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
+- [ ] 4.3 Register and run the Fly app flake check
+  - Add `tests/fly-app/package.json` and register a `checks.<system>.fly-app` Node test check in `flake.nix`, following the repository's existing test-check pattern.
+  - Include module export and activation-presence checks for enabled/disabled apps; keep the complete check deterministic and free of Fly credentials and network access.
+  - Done when the new flake check builds and runs both module and adapter suites.
+  - _Depends: 3.1, 4.1, 4.2_
+  - _Requirements: 4.1, 4.2_
+
+- [ ] 5. Add optional live deployment verification
+- [ ]* 5.1 Provide an opt-in smoke runner for a pre-created test app
+  - Add a runner or concise test instructions for applying existing-image and Nixpacks-source configurations to an operator-created disposable Fly app using an operator-provided runtime token file.
+  - Cover the resulting Machine config and verify a rejected config or failed remote build returns activation failure; never create, provision, or log a token or Fly app.
+  - Keep the runner independently checkable with a help/dry-run path and synthetic fixtures; live execution remains optional and refers operators to `design.md`'s `## Operator Provisioning` section.
+  - Done when the opt-in path is documented and its secret-independent help/dry-run check passes.
+  - _Depends: 4.3_
+  - _Requirements: 1.4, 2.2, 3.3, 3.6, 4.3, 4.4, 5.1, 5.4_
