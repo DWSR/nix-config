@@ -34,8 +34,10 @@ This document specifies the user-observable requirements for the reusable Fly.io
 #### Acceptance Criteria
 1. Where the user selects an existing container image, the Fly app configuration used for deployment shall identify that image as the app's image source.
 2. Where the user selects a Nix derivation, the deployment shall use an image produced by building that derivation remotely.
-3. If the user selects both an existing container image and a Nix derivation for the same app, then the Fly App Module shall report a configuration error identifying the conflicting image sources.
-4. If the user selects neither an existing container image nor a Nix derivation for an app that requires an image, then the Fly App Module shall report a configuration error identifying the missing image source.
+3. When the user selects a Nix derivation, the deployment shall build the image using Fly.io remote builders only, using Nixpacks for the build, and shall use the resulting image for the app.
+4. If the user selects both an existing container image and a Nix derivation for the same app, then the Fly App Module shall report a configuration error identifying the conflicting image sources.
+5. If the user selects neither an existing container image nor a Nix derivation for an app that requires an image, then the Fly App Module shall report a configuration error identifying the missing image source.
+6. If a Fly.io remote builder cannot build the image from the selected Nix derivation, then the deployment shall report failure and shall not report the app as successfully deployed.
 
 ### Requirement 4: Deployment-tool compatibility
 **Objective:** As a Nix user, I want to deploy my Fly app configuration through Nix deployment tooling, so that it fits into my existing deployment workflow.
