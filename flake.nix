@@ -310,6 +310,12 @@
               import ./scripts/fabro-sync-from-1password.nix { inherit pkgs; }
             }/bin/fabro-sync-from-1password";
           };
+          mac-builder-sync-from-1password = {
+            type = "app";
+            program = "${
+              import ./scripts/mac-builder-sync-from-1password.nix { inherit pkgs; }
+            }/bin/mac-builder-sync-from-1password";
+          };
           git-mcp-secure-enclave-acceptance = {
             type = "app";
             program = "${gitMcpAcceptance}/bin/git-mcp-secure-enclave-acceptance";
@@ -1981,22 +1987,159 @@
               '';
 
           fabro-darwin-builds =
-            pkgs.runCommand "fabro-darwin-builds"
-              {
-                nativeBuildInputs = [
-                  pkgs.nix
-                  pkgs.nodejs
-                ];
-              }
-              ''
-                export HOME=$(mktemp -d)
-                export NIX_CONFIG="experimental-features = nix-command flakes"
-                cp -R ${./.} source
-                chmod -R u+w source
-                cd source
-                node --test tests/fabro-darwin-builds/
-                touch $out
-              '';
+            let
+              guest = self.nixosConfigurations.fabro-vm.config;
+              builderHost = self.darwinConfigurations.mac-builder;
+              builder = builderHost.config;
+              dispatch = guest.systemd.services.fabro-darwin-builders;
+              daemon = guest.systemd.services.nix-daemon;
+              builderMachine = guest.fabro.darwinBuilder.machine;
+              clientSecret = guest.sops.secrets."build-client-key";
+              hostSecret = guest.sops.secrets."build-host-key";
+              tailscaleSecret = builder.sops.secrets."builder-tailscale-oauth-secret";
+              authDaemon = builder.launchd.daemons.mac-builder-tailscale-auth.serviceConfig;
+              authArgs = authDaemon.ProgramArguments;
+              tailscaled = builder.launchd.daemons.tailscaled;
+              authorizedKeys = builder.sops.secrets."builder-authorized-keys";
+              sandboxWiring = builtins.toJSON {
+                mounts = guest.virtualisation.containers.containersConf.settings.containers.mounts;
+                image = guest.fabro.sandboxImage.imageConfig;
+                container = guest.virtualisation.containers.containersConf.settings.containers;
+              };
+              mounts = guest.virtualisation.containers.containersConf.settings.containers.mounts;
+              imageEnv = guest.fabro.sandboxImage.imageConfig.Env;
+              expectedSubstituters = [
+                "https://cache.nixos.org/"
+                "https://nix-community.cachix.org"
+              ];
+              expectedPublicKeys = [
+                "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+                "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+              ];
+              assertMsg = condition: message: pkgs.lib.assertMsg condition message;
+              assertions = [
+                (assertMsg guest.fabro.darwinBuilder.enable "fabro-darwin-builds: Darwin dispatch must be enabled on fabro-vm.")
+                (assertMsg
+                  (
+                    builderMachine.hostName == "mac-builder.tuxedo-musical.ts.net"
+                    && builderMachine.sshUser == "nix-builder"
+                    && builderMachine.system == "aarch64-darwin"
+                    && builderMachine.maxJobs == 4
+                    && builderMachine.speedFactor == 2
+                  )
+                  "fabro-darwin-builds: the guest builder entry must target the tagged Darwin builder as nix-builder."
+                )
+                (assertMsg guest.nix.distributedBuilds "fabro-darwin-builds: Nix distributed builds must be enabled on fabro-vm.")
+                (assertMsg (
+                  guest.nix.settings.builders == "@/run/fabro-darwin-builders/machines"
+                ) "fabro-darwin-builds: builders must reference the runtime machines file.")
+                (assertMsg (
+                  guest.nix.buildMachines == [ ]
+                ) "fabro-darwin-builds: dispatch must use the runtime machines file, not eval-time buildMachines.")
+                (assertMsg guest.nix.settings.builders-use-substitutes "fabro-darwin-builds: dispatched builds must use builder substituters.")
+                (assertMsg (
+                  guest.fabro.darwinBuilder.clientKeyPath == "/run/secrets/build-client-key"
+                ) "fabro-darwin-builds: the client key must be referenced by runtime path.")
+                (assertMsg (
+                  guest.fabro.darwinBuilder.hostKeyPath == "/run/secrets/build-host-key"
+                ) "fabro-darwin-builds: the pinned host key must be referenced by runtime path.")
+                (assertMsg (
+                  clientSecret.path == "/run/secrets/build-client-key"
+                  && clientSecret.mode == "0400"
+                  && clientSecret.owner == "root"
+                  && clientSecret.group == "root"
+                  && hostSecret.path == "/run/secrets/build-host-key"
+                  && hostSecret.mode == "0400"
+                  && hostSecret.owner == "root"
+                  && hostSecret.group == "root"
+                ) "fabro-darwin-builds: build-session secrets must be root-only runtime files.")
+                (assertMsg (
+                  dispatch.serviceConfig.Type == "oneshot"
+                  && dispatch.serviceConfig.RuntimeDirectory == "fabro-darwin-builders"
+                  && builtins.elem "sops-install-secrets.service" dispatch.after
+                  && builtins.elem "nix-daemon.service" dispatch.before
+                ) "fabro-darwin-builds: the machines renderer unit must follow secrets and precede nix-daemon.")
+                (assertMsg (builtins.elem "fabro-darwin-builders.service" daemon.wants) "fabro-darwin-builds: nix-daemon must want the machines renderer.")
+                (assertMsg (
+                  builtins.elem "fabro-darwin-builders.service" daemon.after
+                  && !(builtins.elem "fabro-darwin-builders.service" daemon.requires)
+                ) "fabro-darwin-builds: nix-daemon must order after, but not require, the renderer.")
+                (assertMsg (builtins.elem "f /run/fabro-darwin-builders/machines 0600 root root - -" guest.systemd.tmpfiles.rules) "fabro-darwin-builds: tmpfiles must create the private runtime machines file.")
+                (assertMsg
+                  (
+                    mounts == [
+                      "type=bind,source=/nix/store,destination=/nix/store,ro"
+                      "type=bind,source=/nix/var/nix/daemon-socket,destination=/nix/var/nix/daemon-socket"
+                      "type=tmpfs,destination=/tmp"
+                    ]
+                  )
+                  "fabro-darwin-builds: sandbox mounts must preserve the shared store, daemon socket, and tmpfs boundary."
+                )
+                (assertMsg (builtins.elem "NIX_REMOTE=daemon" imageEnv) "fabro-darwin-builds: sandbox image must use the guest Nix daemon.")
+                (assertMsg (
+                  builtins.match ".*build-client-key.*" sandboxWiring == null
+                  && builtins.match ".*build-host-key.*" sandboxWiring == null
+                  && builtins.match ".*tailscale.*" sandboxWiring == null
+                  && builtins.match ".*tailnet.*" sandboxWiring == null
+                ) "fabro-darwin-builds: sandbox wiring must not contain build keys or tailnet membership.")
+                (assertMsg (
+                  builder.nixpkgs.hostPlatform.system == "aarch64-darwin"
+                ) "fabro-darwin-builds: builder host platform must be aarch64-darwin.")
+                (assertMsg (
+                  (builder.nix.settings."extra-platforms" or null) == null
+                ) "fabro-darwin-builds: builder must not advertise extra platforms.")
+                (assertMsg (
+                  builder.nix.settings.substituters == expectedSubstituters
+                ) "fabro-darwin-builds: builder substituters must be exactly the approved public caches.")
+                (assertMsg (
+                  builder.nix.settings.trusted-public-keys == expectedPublicKeys
+                ) "fabro-darwin-builds: builder trusted keys must be exactly the approved public cache keys.")
+                (assertMsg (
+                  (builder.nix.settings."extra-substituters" or [ ]) == [ ]
+                ) "fabro-darwin-builds: builder must not configure extra substituters.")
+                (assertMsg (
+                  (builder.nix.settings."post-build-hook" or null) == null
+                ) "fabro-darwin-builds: builder must not publish outputs with a post-build hook.")
+                (assertMsg (
+                  builder.services.tailscale.enable
+                  && toString builder.services.tailscale.package == toString builderHost.pkgs.tailscale
+                  && tailscaled.serviceConfig.Label == "com.tailscale.tailscaled"
+                ) "fabro-darwin-builds: builder must use the open-source Tailscale LaunchDaemon.")
+                (assertMsg (
+                  tailscaleSecret.path == "/run/secrets/builder-tailscale-oauth-secret"
+                  && tailscaleSecret.mode == "0400"
+                  && tailscaleSecret.owner == "root"
+                  && tailscaleSecret.group == "wheel"
+                ) "fabro-darwin-builds: builder OAuth secret must be root-only at its runtime path.")
+                (assertMsg (
+                  builtins.elem "--auth-key-file" authArgs
+                  && builtins.elem "/run/secrets/builder-tailscale-oauth-secret" authArgs
+                  && builtins.elem "--hostname" authArgs
+                  && builtins.elem "mac-builder" authArgs
+                  && builtins.elem "--tag" authArgs
+                  && builtins.elem "tag:mac-builder" authArgs
+                  && authDaemon.RunAtLoad
+                  && authDaemon.KeepAlive
+                ) "fabro-darwin-builds: builder auth daemon must use its OAuth file and dedicated tagged identity.")
+                (assertMsg
+                  (
+                    builtins.elem "nix-builder" builder.nix.settings.trusted-users
+                    && builtins.filter (user: user != "root") builder.nix.settings.trusted-users == [ "nix-builder" ]
+                    && !(builtins.elem "--ssh" tailscaled.serviceConfig.ProgramArguments)
+                    && builtins.match ".*PermitRootLogin no.*" builder.services.openssh.extraConfig != null
+                    &&
+                      builtins.match ".*builder-authorized-keys.*" builder.system.activationScripts.postActivation.text
+                      != null
+                    && authorizedKeys.path == "/run/secrets/builder-authorized-keys"
+                  )
+                  "fabro-darwin-builds: stock SSH builds must remain restricted to the authorized nix-builder account."
+                )
+              ];
+            in
+            assert builtins.all (value: value) assertions;
+            pkgs.runCommand "fabro-darwin-builds" { } ''
+              touch "$out"
+            '';
 
           # Eval assertions for the fabro NixOS guest (pure eval over
           # nixosConfigurations.fabro-vm + trivial runCommand; no Linux

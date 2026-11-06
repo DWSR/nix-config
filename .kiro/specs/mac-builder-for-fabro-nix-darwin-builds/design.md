@@ -577,8 +577,11 @@ mac-builder-tailscale-auth --auth-key-file PATH --hostname NAME --tag TAG \
 
 **Responsibilities & Constraints**
 
-- New flake check `fabro-darwin-builds` follows the `mac-nix-remote-builder`
-  pattern (copy the source, run `node --test tests/fabro-darwin-builds/`).
+- New flake check `fabro-darwin-builds` evaluates both host configurations
+  and asserts the declarative dispatch, trust, cache, and sandbox policies.
+  It must not invoke recursive Nix evaluations from a sandboxed `runCommand`;
+  run `node --test tests/fabro-darwin-builds/` directly as the suite-level
+  validation command.
 - `guest-dispatch.test.js`: option values, `distributedBuilds`,
   `builders = "@<path>"`, `builders-use-substitutes`, the renderer unit and its
   ordering, the tmpfiles entry, and the sandbox invariants (exact
