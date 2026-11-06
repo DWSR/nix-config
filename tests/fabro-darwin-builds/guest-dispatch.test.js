@@ -24,6 +24,7 @@ function evaluateGuest() {
       dispatchUnit = {
         type = dispatch.serviceConfig.Type;
         runtimeDirectory = dispatch.serviceConfig.RuntimeDirectory;
+        runtimeDirectoryPreserve = dispatch.serviceConfig.RuntimeDirectoryPreserve or null;
         after = dispatch.after;
         wants = dispatch.wants;
         before = dispatch.before;
@@ -91,12 +92,12 @@ function evaluateGuestWithDispatchDisabled() {
 }
 
 function assertBuilderSecretMappings(secrets) {
-  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key');
+  assert.equal(secrets['build-client-key'], 'op://Infrastructure/Fabro nix remote builder key/private key');
   assert.equal(secrets['build-host-key'], 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key');
 }
 
 function assertSandboxBoundary({ wiringText, sandboxSource, imageSource }) {
-  const forbidden = /build-client-key|build-host-key|\/run\/secrets\/|tailscale|tailnet|tag:fabro|tag:mac-builder/i;
+  const forbidden = /build-client-key|build-host-key|\/run\/secrets\/|tailscale|tailnet|tag:fabro|tag:nix-remote-builder/i;
   assert.doesNotMatch(wiringText, forbidden);
   assert.doesNotMatch(sandboxSource, forbidden);
   assert.doesNotMatch(imageSource, forbidden);
@@ -141,6 +142,7 @@ test('renderer unit ordering, daemon ordering, and tmpfiles provision the machin
 
   assert.equal(config.dispatchUnit.type, 'oneshot');
   assert.equal(config.dispatchUnit.runtimeDirectory, 'fabro-darwin-builders');
+  assert.equal(config.dispatchUnit.runtimeDirectoryPreserve, 'yes');
   assert.ok(config.dispatchUnit.after.includes('sops-install-secrets.service'));
   assert.ok(config.dispatchUnit.wants.includes('sops-install-secrets.service'));
   assert.ok(config.dispatchUnit.before.includes('nix-daemon.service'));
@@ -150,6 +152,13 @@ test('renderer unit ordering, daemon ordering, and tmpfiles provision the machin
   assert.ok(
     config.tmpfiles.includes('f /run/fabro-darwin-builders/machines 0600 root root - -'),
   );
+});
+
+test('live validator restarts the guest daemon and allows its temporary local Nix expression import', () => {
+  const validator = fs.readFileSync(path.join(repoRoot, 'scripts/fabro-darwin-live-validate.nix'), 'utf8');
+  assert.match(validator, /lima_sudo "\$guest" systemctl restart nix-daemon\.service/);
+  assert.match(validator, /Guest machines file is missing/);
+  assert.match(validator, /nix build --no-link --impure --expr/);
 });
 
 test('both build secrets are declared at root-only runtime paths with unit restarts', () => {
@@ -193,7 +202,7 @@ test('sandbox image uses the host Nix daemon and contains no builder trust or ta
 
 test('boundary assertions reject a missing 1Password mapping and leaked sandbox materials', () => {
   const mappings = {
-    'build-client-key': 'op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key',
+    'build-client-key': 'op://Infrastructure/Fabro nix remote builder key/private key',
     'build-host-key': 'op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key',
   };
   const sandbox = { wiringText: '{}', sandboxSource: '', imageSource: '' };

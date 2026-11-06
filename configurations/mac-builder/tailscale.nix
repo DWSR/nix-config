@@ -31,7 +31,7 @@ in
         "--hostname"
         "mac-builder"
         "--tag"
-        "tag:mac-builder"
+        "tag:nix-remote-builder"
         "--tailscale"
         (lib.getExe config.services.tailscale.package)
       ];
