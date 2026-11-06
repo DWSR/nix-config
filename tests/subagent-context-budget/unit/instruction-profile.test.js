@@ -26,8 +26,6 @@ const budgetProfileNames = [
   'kiro-spec-orchestration',
   'nvim-config',
   'security-readonly',
-  'shopify-stack',
-  'shopify-yugabyte-readonly',
 ];
 
 test('instruction fragment files exist for universal, memory, SDD, host, and roles', () => {
@@ -36,11 +34,9 @@ test('instruction fragment files exist for universal, memory, SDD, host, and rol
     'memory-mcpproxy.md',
     'cc-sdd-minimal.md',
     'github-native-stacks-minimal.md',
-    'host-specific/shopify.md',
     'role-fragments/general-research.md',
     'role-fragments/kiro-spec-orchestration.md',
     'role-fragments/readonly-codebase.md',
-    'role-fragments/shopify-stack.md',
   ]) {
     const absolutePath = path.join(instructionsDir, relativePath);
     assert.ok(fs.existsSync(absolutePath), `${relativePath} must exist`);
@@ -101,14 +97,7 @@ test('GitHub-native Stack compact guidance matches runtime and preserves local, 
     'utf8',
   ).trim();
   const runtime = mod.SubagentContextBudgetPlugin.instructionFragments['github-native-stacks-minimal'].text;
-  const role = fs.readFileSync(
-    path.join(instructionsDir, 'role-fragments/shopify-stack.md'),
-    'utf8',
-  ).trim();
-
   assert.equal(runtime, source);
-  assert.equal(mod.SubagentContextBudgetPlugin.instructionFragments['shopify-stack'].text, role);
-  assert.match(role, /Call typed local Stack MCP tools without human authorization/);
   assert.match(source, /Use GitHub MCP for remote-only Stack work\./);
   assert.match(
     source,
@@ -163,7 +152,6 @@ test('composeInstructionProfile omits unrelated workflow fragments', async () =>
   const mod = await loadPlugin();
 
   const readonly = mod.SubagentContextBudgetPlugin.composeInstructionProfile('readonly-codebase');
-  const shopify = mod.SubagentContextBudgetPlugin.composeInstructionProfile('shopify-stack');
 
   assert.equal(readonly.kind, 'composed');
   assert.deepEqual(
@@ -174,11 +162,6 @@ test('composeInstructionProfile omits unrelated workflow fragments', async () =>
   assert.doesNotMatch(readonly.systemText, /Spec-Driven Development/);
   assert.doesNotMatch(readonly.systemText, /Shopify host/);
 
-  assert.equal(shopify.kind, 'composed');
-  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'github-native-stacks-minimal'));
-  assert.ok(shopify.fragments.some((fragment) => fragment.name === 'shopify-host'));
-  assert.match(shopify.systemText, /GitHub-native Stack/);
-  assert.doesNotMatch(shopify.systemText, /Neovim/);
 });
 
 test('composeInstructionProfile supports widening one profile without mutating others', async () => {
