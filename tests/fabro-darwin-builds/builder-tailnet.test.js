@@ -18,9 +18,9 @@ function authFixture(backendState, options = {}) {
   if (options.credential !== false) fs.writeFileSync(credential, options.empty ? '' : dummyCredential);
   fs.writeFileSync(tailscale, `#!/bin/sh\nif [ "$1" = status ]; then\n  ${options.unresponsive ? 'exit 1' : `printf '%s\\n' '${JSON.stringify({ BackendState: backendState })}'`}\nelse\n  printf '%s\\n' "$@" > "$CALLS"\nfi\n`);
   fs.chmodSync(tailscale, 0o755);
-  const expression = `let pkgs = import <nixpkgs> {}; in pkgs.callPackage ${JSON.stringify(path.join(repoRoot, 'scripts/mac-builder-tailscale-auth.nix'))} {}`;
-  const executable = childProcess.execFileSync('nix', ['build', '--impure', '--no-link', '--print-out-paths', '--expr', expression], { cwd: repoRoot, encoding: 'utf8', timeout: 120_000 }).trim() + '/bin/mac-builder-tailscale-auth';
-  const args = ['--auth-key-file', credential, '--hostname', 'mac-builder', '--tag', 'tag:mac-builder', '--tailscale', tailscale, '--once'];
+  const expression = `let flake = builtins.getFlake (toString ${JSON.stringify(repoRoot)}); pkgs = import flake.inputs.nixpkgs { system = builtins.currentSystem; }; in pkgs.callPackage ${JSON.stringify(path.join(repoRoot, 'scripts/mac-builder-tailscale-auth.nix'))} {}`;
+  const executable = childProcess.execFileSync('nix', ['build', '--impure', '--no-link', '--print-out-paths', '--expr', expression], { cwd: repoRoot, encoding: 'utf8', timeout: 120_000, env: { ...process.env, NIX_CONFIG: 'experimental-features = nix-command flakes' } }).trim() + '/bin/mac-builder-tailscale-auth';
+  const args = ['--auth-key-file', credential, '--hostname', 'mac-builder', '--tag', 'tag:nix-remote-builder', '--tailscale', tailscale, '--once'];
   const run = () => childProcess.spawnSync(executable, args, { encoding: 'utf8', env: { ...process.env, CALLS: calls } });
   return { calls, credential, run };
 }
@@ -124,7 +124,7 @@ test('mac-builder auth daemon invokes the wrapper with the exact credential and 
   assert.deepEqual(args.slice(1), [
     '--auth-key-file', '/run/secrets/builder-tailscale-oauth-secret',
     '--hostname', 'mac-builder',
-    '--tag', 'tag:mac-builder',
+    '--tag', 'tag:nix-remote-builder',
     '--tailscale', args[args.indexOf('--tailscale') + 1],
   ]);
   assert.equal(args.some(arg => arg.startsWith('--auth-key=')), false);
@@ -180,7 +180,7 @@ test('mac-builder Tailscale auth --once joins NeedsLogin with exact node argumen
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(fs.readFileSync(fixture.calls, 'utf8').trim().split('\n'), [
     'up', `--auth-key=${dummyCredential}?ephemeral=false&preauthorized=true`,
-    '--advertise-tags=tag:mac-builder', '--hostname=mac-builder', '--accept-dns=false',
+    '--advertise-tags=tag:nix-remote-builder', '--hostname=mac-builder', '--accept-dns=false',
   ]);
 });
 

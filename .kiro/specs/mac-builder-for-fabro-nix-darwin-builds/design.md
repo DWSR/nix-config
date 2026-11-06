@@ -91,7 +91,7 @@ recorded with sources in `research.md`.
   auth-key option) or to the `com.tailscale.tailscaled` LaunchDaemon label.
 - A change to the builder's SSH host key, `nix-builder` UID/shell, or the
   `builder-authorized-keys` mechanism.
-- A change to the tailnet DNS name, the builder machine name, the `tag:mac-builder`
+- A change to the tailnet DNS name, the builder machine name, the `tag:nix-remote-builder`
   tag, or the ACL grant.
 - A change to the sandbox image reference or the loader's digest file.
 - A change to `secrets/fabro.fabro.yaml` recipient keys or sops-nix's activation
@@ -144,9 +144,9 @@ graph TB
     TSD["tailscaled"]
   end
   subgraph Network["Tailnet policy (console)"]
-    GRANT{{"grant tag:fabro -> tag:mac-builder tcp:22"}}
+    GRANT{{"grant tag:fabro -> tag:nix-remote-builder tcp:22"}}
   end
-  subgraph Builder["mac-builder (aarch64-darwin, tag:mac-builder)"]
+  subgraph Builder["mac-builder (aarch64-darwin, tag:nix-remote-builder)"]
     BTSD["tailscaled + auth wrapper"]
     SSHD["sshd (Apple)<br/>authorized_keys = nix-builder"]
     BDAEMON["nix-daemon<br/>trusted-users = nix-builder"]
@@ -365,9 +365,10 @@ without ever calling `tailscale up`.
 ##### Unit Contract
 
 - `systemd.services.fabro-darwin-builders`: oneshot, `RuntimeDirectory =
-  "fabro-darwin-builders"`, `after`/`wants` `sops-install-secrets.service`,
-  `before` `nix-daemon.service`; `ExecStart` is the renderer with the option
-  values as arguments.
+  "fabro-darwin-builders"`, `RuntimeDirectoryPreserve = "yes"`,
+  `after`/`wants` `sops-install-secrets.service`, `before` `nix-daemon.service`;
+  `ExecStart` is the renderer with the option values as arguments. Preservation
+  keeps the generated machines file after systemd completes the oneshot.
 - `systemd.services.nix-daemon`: `wants`/`after`
   `fabro-darwin-builders.service` (a failed renderer must not block local
   builds).
@@ -437,7 +438,7 @@ fabro-darwin-machines --output PATH --host-name HOST --ssh-user USER \
   group `wheel`, default path `/run/secrets/builder-tailscale-oauth-secret`.
 - `launchd.daemons.mac-builder-tailscale-auth`: `command` runs the wrapper with
   the credential path, `--hostname mac-builder`, and
-  `--tag tag:mac-builder`; `KeepAlive = true`, `RunAtLoad = true`,
+  `--tag tag:nix-remote-builder`; `KeepAlive = true`, `RunAtLoad = true`,
   `ThrottleInterval = 30`, `ProcessType = "Background"`, stdout/stderr under
   `/var/log/`.
 - Declares no other tailnet credential and never reads the fabro store.
@@ -589,7 +590,7 @@ mac-builder-tailscale-auth --auth-key-file PATH --hostname NAME --tag TAG \
   the image environment).
 - `builder-tailnet.test.js`: `services.tailscale` enabled with the open-source
   package, the `com.tailscale.tailscaled` LaunchDaemon, the auth LaunchDaemon
-  arguments, the secret name/path/mode, the sops store file, `tag:mac-builder`,
+  arguments, the secret name/path/mode, the sops store file, `tag:nix-remote-builder`,
   `--accept-dns=false`, and unchanged `trusted-users`/authorized-key mechanism.
 - `secret-material.test.js`: the machines file is not rendered into the store or
   `/etc`, the client key is referenced only by path, and the evaluated
@@ -617,7 +618,7 @@ never `-`; no secret value appears in the line; file mode `0600`, owner root.
 
 | Secret | 1Password source | Runtime path | Mode / owner | Consumer |
 |---|---|---|---|---|
-| `build-client-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key` | `/run/secrets/build-client-key` | `0400` root:root | `nix-daemon` ssh-ng |
+| `build-client-key` | `op://Infrastructure/Fabro nix remote builder key/private key` | `/run/secrets/build-client-key` | `0400` root:root | `nix-daemon` ssh-ng |
 | `build-host-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key` | `/run/secrets/build-host-key` | `0400` root:root | `fabro-darwin-machines` |
 
 Both are also listed in `fabro.onePasswordSecrets` so
@@ -643,8 +644,8 @@ credential.
 | Builder machine name | `mac-builder` (`--hostname`) | This spec |
 | Builder DNS name | `mac-builder.tuxedo-musical.ts.net` | MagicDNS |
 | Guest node tag | `tag:fabro` | `fabro-vm` tailscale module |
-| Builder node tag | `tag:mac-builder` | This spec |
-| Grant | `tag:fabro` → `tag:mac-builder`, `tcp:22` | Console, documented in `README.md` |
+| Builder node tag | `tag:nix-remote-builder` | This spec |
+| Grant | `tag:fabro` → `tag:nix-remote-builder`, `tcp:22` | Console, documented in `README.md` |
 
 ## Operator Provisioning
 
@@ -656,11 +657,11 @@ provisioning contract.
 | Item | 1Password source | Store | Owner |
 |---|---|---|---|
 | `builder-tailscale-oauth-secret` | `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret` | `secrets/remote-builder.mac-builder.yaml` | Builder operator |
-| `build-client-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Client Private Key` | `secrets/fabro.fabro.yaml` | Fabro operator |
+| `build-client-key` | `op://Infrastructure/Fabro nix remote builder key/private key` | `secrets/fabro.fabro.yaml` | Fabro operator |
 | `build-host-key` | `op://Infrastructure/Fabro mac-builder Build Credentials/Host Public Key` | `secrets/fabro.fabro.yaml` | Fabro operator |
 | `builder-authorized-keys` | Public half of `build-client-key`, appended to the existing value | `secrets/remote-builder.mac-builder.yaml` | Builder operator |
 
-The OAuth client uses the `auth_keys` scope and the `tag:mac-builder` tag. Its
+The OAuth client uses the `auth_keys` scope and the `tag:nix-remote-builder` tag. Its
 client secret belongs to a different OAuth client from the guest's
 `tailscale-oauth-secret`.
 
@@ -775,7 +776,7 @@ path; the renderer refuses to emit a machines line without a pinned host key.
   the message and writes nothing.
 - `mac-builder-tailscale-auth --once` with a stub `--tailscale`: `Running`
   performs no `up`; `NeedsLogin` runs `up` with the credential parameters,
-  `--advertise-tags=tag:mac-builder`, `--hostname=mac-builder`,
+  `--advertise-tags=tag:nix-remote-builder`, `--hostname=mac-builder`,
   `--accept-dns=false`; a missing credential fails without any `up` call and
   names the path; an unresponsive daemon fails the iteration.
 - `fabro-darwin-build-smoke` step localisation is unit-tested by running it with
@@ -783,7 +784,7 @@ path; the renderer refuses to emit a machines line without a pinned host key.
 
 ### Integration and manual verification
 
-- Deploy the builder, confirm the node appears with `tag:mac-builder`, then
+- Deploy the builder, confirm the node appears with `tag:nix-remote-builder`, then
   apply the guest switch and confirm the machines file exists with mode `0600`
   and one line.
 - From a sandbox, run `fabro-darwin-build-smoke`; confirm the reported store path
@@ -818,7 +819,7 @@ path; the renderer refuses to emit a machines line without a pinned host key.
 ## Migration Strategy
 
 1. **Console and secrets** — create the builder OAuth client (`auth_keys` scope,
-   `tag:mac-builder`) and record the grant and `tagOwners`; then follow
+   `tag:nix-remote-builder`) and record the grant and `tagOwners`; then follow
    `## Operator Provisioning` for every secret, key, and the
    `builder-authorized-keys` addition.
 2. **Builder** — deploy and switch the builder; confirm the node joins with the

@@ -70,6 +70,7 @@ in
       serviceConfig = {
         Type = "oneshot";
         RuntimeDirectory = "fabro-darwin-builders";
+        RuntimeDirectoryPreserve = "yes";
         ExecStart = ''
           ${renderer}/bin/fabro-darwin-machines \
             --output ${lib.escapeShellArg cfg.machinesFile} \

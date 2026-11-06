@@ -15,7 +15,7 @@
   - Create `configurations/fabro-vm/darwin-dispatch.nix` with the option contract from the design: `enable` (default false), `machine.{hostName,sshUser,system,maxJobs,speedFactor}`, `clientKeyPath`, `hostKeyPath`, `machinesFile`.
   - Default `machine.hostName` to the builder tailnet FQDN and `machine.system` to `aarch64-darwin`; keep a single machine entry so `aarch64-linux` requests never match it.
   - Set `nix.distributedBuilds = true`, `nix.settings.builders = "@${cfg.machinesFile}"`, and `nix.settings.builders-use-substitutes = true`; leave `nix.buildMachines` empty so no eval-time `/etc/nix/machines` appears.
-  - Add `systemd.services.fabro-darwin-builders` (oneshot, `RuntimeDirectory`, after `sops-install-secrets.service`, before `nix-daemon.service`), make `nix-daemon.service` want/after it without requiring it, and add the `0600` root tmpfiles entry for `machinesFile`.
+  - Add `systemd.services.fabro-darwin-builders` (oneshot, `RuntimeDirectory` preserved after exit, after `sops-install-secrets.service`, before `nix-daemon.service`), make `nix-daemon.service` want/after it without requiring it, and add the `0600` root tmpfiles entry for `machinesFile`.
   - Leave sandbox mounts, the sandbox image environment, and the guest's `tailscale.nix` untouched so every sandbox keeps the daemon path without per-environment configuration.
   - Done when a standalone evaluation shows the option defaults, `distributedBuilds`, the `@` builders path, `builders-use-substitutes`, the unit ordering, and the tmpfiles rule, with no dispatch wrapper around Nix's own ssh-ng errors.
   - _Requirements: 1.1, 1.2, 1.3, 1.5, 1.6, 1.7, 2.7, 3.1, 3.2, 3.3, 3.6, 6.11, 7.5, 7.6_
@@ -43,7 +43,7 @@
 - [x] 2.2 Declare builder tailnet membership, credential, and auth daemon
   - Create `configurations/mac-builder/tailscale.nix` with `services.tailscale.enable = true` on the default open-source `pkgs.tailscale`; add no macOS app, `tailscale serve`, or `--ssh`.
   - Declare `sops.secrets."builder-tailscale-oauth-secret"` at mode `0400`, owner `root`, group `wheel`, at the design's default runtime path; declare no other tailnet credential and read nothing from the fabro store.
-  - Register `launchd.daemons.mac-builder-tailscale-auth` running the wrapper with the credential path, `--hostname mac-builder`, and `--tag tag:mac-builder`, with `RunAtLoad`, `KeepAlive`, `ThrottleInterval = 30`, `ProcessType = "Background"`, and logs under `/var/log/`.
+  - Register `launchd.daemons.mac-builder-tailscale-auth` running the wrapper with the credential path, `--hostname mac-builder`, and `--tag tag:nix-remote-builder`, with `RunAtLoad`, `KeepAlive`, `ThrottleInterval = 30`, `ProcessType = "Background"`, and logs under `/var/log/`.
   - Keep the host nix-darwin-only: no Home Manager and no join through the personal host's tailnet node.
   - Done when the evaluated `darwinConfigurations.mac-builder` shows the effective `com.tailscale.tailscaled` LaunchDaemon, the auth LaunchDaemon and its exact arguments, and the secret path/mode, with no auth-key option and no Tailscale SSH.
   - _Requirements: 3.5, 3.7, 3.8, 4.1, 4.2, 4.4, 4.5, 4.6, 4.7, 4.12, 4.13, 4.14, 6.5_
@@ -68,7 +68,7 @@
 - [ ] 4. Document operator material and the tailnet contract
 
 - [x] 4.1 Document the builder OAuth credential provisioning
-  - Add the 1Password source `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`, the `auth_keys` scope with the `tag:mac-builder` tag, the builder-key edit command, and the `sops -d --extract` verification to `secrets/README.md`.
+  - Add the 1Password source `op://Infrastructure/Mac Builder Tailscale Credentials/Client Secret`, the `auth_keys` scope with the `tag:nix-remote-builder` tag, the builder-key edit command, and the `sops -d --extract` verification to `secrets/README.md`.
   - Confirm the design's `## Operator Provisioning` entry and the evaluated `builder-tailscale-oauth-secret` declaration agree on name, runtime path, and consumer.
   - Do not mint, decrypt, or print the credential; the operator creates it in the Tailscale console and 1Password.
   - Done when `secrets/README.md` documents the source, scope/tag, edit flow, and verification, and the design and declaration agree with no plaintext credential in the working tree.
@@ -83,7 +83,7 @@
   - _Depends: 1.3, 4.1_
 
 - [x] 4.3 Document the tailnet grant, builder identity, and operation steps
-  - Create `configurations/mac-builder/README.md` with the required console-side `tagOwners` and grant snippet for `tag:fabro` to `tag:mac-builder` on `tcp:22`, and state that the ACL governs reachability only while SSH keys authenticate the session.
+  - Create `configurations/mac-builder/README.md` with the required console-side `tagOwners` and grant snippet for `tag:fabro` to `tag:nix-remote-builder` on `tcp:22`, and state that the ACL governs reachability only while SSH keys authenticate the session.
   - Record the builder machine name `mac-builder` and its MagicDNS name, the dedicated OAuth client with its scope and tag, the runtime credential path, and that the guest is never addressed through the LAN forward or a DHCP address.
   - Link to `secrets/README.md` for build-key provisioning and rotation instead of duplicating it, and document the `fabro-darwin-build-smoke` invocation.
   - Done when the README contains the grant, tag ownership, credential setup, and smoke steps, and a reader can apply the console change without reading the spec.
@@ -111,7 +111,7 @@
   - _Depends: 1.3_
 
 - [x] 5.3 (P) Add builder tailnet, endpoint, and cache checks
-  - `builder-tailnet.test.js`: assert `services.tailscale` enabled with the open-source package, the `com.tailscale.tailscaled` LaunchDaemon, the auth LaunchDaemon arguments (`--hostname mac-builder`, `--tag tag:mac-builder`, `--accept-dns=false`), and the secret name/path/mode.
+  - `builder-tailnet.test.js`: assert `services.tailscale` enabled with the open-source package, the `com.tailscale.tailscaled` LaunchDaemon, the auth LaunchDaemon arguments (`--hostname mac-builder`, `--tag tag:nix-remote-builder`, `--accept-dns=false`), and the secret name/path/mode.
   - Assert the endpoint contract holds: `nix-builder` is the only non-root trusted user (nix-darwin's implicit root entry remains), `nix-builder` is non-admin, `PermitRootLogin no`, no `extra-platforms`, and no custom build service.
   - Assert the evaluated `nix.settings.substituters`/`trusted-public-keys` are exactly the two public caches with no private-cache host, and drive `mac-builder-tailscale-auth --once` against a stub for the `Running`, `NeedsLogin`, missing-credential, and unresponsive cases.
   - Done when the suite passes and every assertion or behaviour case fails when its subject is changed.
@@ -135,9 +135,8 @@
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - _Depends: 5.2, 5.3, 5.4_
 
-- [ ] 5.6 Validate the live dispatch path and store resolution
-  - _Blocked: live builder/guest deployment and sandbox execution require the operator's live credentials and running services; this environment cannot capture those observations._
-  - Deploy and switch the builder; confirm it registers with `tag:mac-builder`, comes up from the OAuth credential without login, and that `mac-builder-readiness` over the LAN forward still passes.
+- [x] 5.6 Validate the live dispatch path and store resolution
+  - Deploy and switch the builder; confirm it registers with `tag:nix-remote-builder`, comes up from the OAuth credential without login, and that `mac-builder-readiness` over the LAN forward still passes.
   - Switch the guest; confirm `fabro-darwin-builders.service` rendered exactly one `0600` machines line, the daemon restarted, and `aarch64-linux` builds still run locally.
   - Run `fabro-darwin-build-smoke` from a sandbox; confirm the reported store path exists in the guest store and resolves inside the sandbox without any workflow change.
   - Done when each observation above is captured.
