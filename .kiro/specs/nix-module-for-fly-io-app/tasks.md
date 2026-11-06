@@ -1,0 +1,92 @@
+# Implementation Plan
+
+- [ ] 1. Export the reusable NixOS module and define its configuration contract
+- [ ] 1.1 (P) Export `nixosModules.fly-apps` and define typed app and Machine options
+  - Create `modules/nixos/fly-apps.nix` with `services.flyApps.enable`, `tokenFile`, named apps, app identity/create-time fields, named Machines, regions, Machine create controls, and Machine configuration options.
+  - Preserve complete Fly Machine config as freeform attributes, including nested `containers`, and expose the module as `nixosModules.fly-apps` from `flake.nix` without importing it into repository hosts.
+  - Completed when a minimal NixOS consumer imports the flake output and evaluates a representative app and multi-container Machine declaration.
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.3_
+  - _Boundary: NixOS module interface and flake export_
+- [ ] 1.2 Render declared app settings and Machine configs as store-safe JSON
+  - Serialize app identity, organization, create-time settings, named Machine metadata, and the complete raw Machine config without flattening or dropping unknown API fields.
+  - Keep the generated config non-secret and encode values through JSON serialization rather than shell interpolation.
+  - Completed when evaluation fixtures show app settings and arbitrary nested/snake_case Machine fields preserved in generated JSON with no token value or token contents.
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.3, 6.1, 6.2, 6.3_
+
+- [ ] 2. Implement the Fly deployment helper and API reconciliation
+- [ ] 2.1 (P) Package the helper CLI and implement token-only API transport
+  - Create the Nix-built `fly-apps-deploy` helper with the `--config <store-json>` interface and runtime `FLY_API_TOKEN` environment contract; package its required `curl`, `jq`, `flyctl`, and `skopeo` tools from the evaluated NixOS package set.
+  - Reject a missing or empty token before network operations; use Bearer authentication without interactive `flyctl auth login`, CLI token arguments, or token-bearing config.
+  - Completed when a fake endpoint receives an authenticated request from a noninteractive helper invocation and absent-token failure is actionable and sanitized.
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
+  - _Boundary: Deployment helper CLI and API transport_
+- [ ] 2.2 Reconcile app existence and immutable create-time settings
+  - Read the app by name; create a missing app with declared name, organization, network, and supported create-time fields.
+  - For an existing app, compare name, organization, and network and fail with migration guidance on mismatch; treat `enableSubdomains` as creation-only because Fly does not expose it for drift checks.
+  - Completed when fixtures cover create, matching existing app, and immutable-field mismatch without delete/recreate behavior.
+  - _Requirements: 1.1, 1.2, 1.4, 4.3_
+- [ ] 2.3 Reconcile named Machines with complete API configurations
+  - List Machines through all Fly pagination cursors and match by stable declared name, not list order or generated IDs.
+  - Create missing Machines and update differing ones with complete configs, preserving multi-container payloads; skip matching configs and never delete undeclared resources.
+  - Completed when fixtures prove paginated create, update, and no-op behavior for single- and multi-container Machines.
+  - _Requirements: 1.4, 2.1, 2.2, 2.3, 4.3_
+- [ ] 2.4 Report Fly failures accurately and retry only transient errors
+  - Include app/Machine context, HTTP status, and sanitized response detail; distinguish auth, validation, immutable-config, and unexpected resource failures.
+  - Apply bounded backoff to transport, 408, rate-limit, and 5xx errors; fail non-retryable 4xx errors and exit nonzero unless all declared work succeeds.
+  - Completed when fixtures show bounded transient retries, sanitized 401/403 and validation failures, and no false-success result after API rejection.
+  - _Requirements: 1.4, 4.3, 4.4, 5.4_
+
+- [ ] 3. Support exclusive image sources and Fly registry publication
+- [ ] 3.1 Validate image declarations and resolve per-Machine and per-container sources
+  - Add `image`, `imageDerivation`, and `containerImageDerivations` options and enforce exactly one source per deployed image plus one source kind across all Machines and containers in an app.
+  - Reject missing/conflicting sources and unknown derivation container names with app and option paths; retain literal container images and resolve derivation images into the named container config.
+  - Completed when Nix evaluation rejects all invalid source combinations and emits source metadata for valid single- and multi-container declarations.
+  - _Requirements: 2.1, 2.2, 3.1, 3.2, 3.3, 3.4, 6.3_
+- [ ] 3.2 Publish Nix OCI archives and apply the resulting Fly image references
+  - Ensure the target-platform OCI archive path is available at activation, validate the archive before remote mutation, and publish to `registry.fly.io` using Fly registry auth and Skopeo.
+  - Use a private temporary auth directory with cleanup, supply `FLY_API_TOKEN` only through the runtime environment, and substitute the resulting reference into single- or named multi-container configs; leave public image references unchanged.
+  - Fail before Machine create/update on invalid archive or publication error.
+  - Completed when fake registry fixtures verify public-image and derivation-image flows without a live token or Fly account.
+  - _Requirements: 3.1, 3.2, 3.4, 5.1, 5.3, 6.1, 6.2, 6.3_
+  - _Depends: 2.1, 3.1_
+
+- [ ] 4. Wire reconciliation into ordinary NixOS activation and deployment tools
+- [ ] 4.1 Add the runtime-token systemd unit and activation failure propagation
+  - Generate the non-secret config closure and declare a network-ordered oneshot using the helper and `EnvironmentFile` at `services.flyApps.tokenFile`.
+  - Run the unit at boot and explicitly with `systemctl start --wait` on each activation; keep `RemainAfterExit = false` so changed deployments rerun and failures fail the NixOS switch.
+  - Use the runtime file contract in design's `## Operator Provisioning` section; do not create or provision token material in this task.
+  - Completed when evaluated unit and activation fixtures show only the token-file path, rerun behavior, and nonzero failure propagation.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
+  - _Depends: 1.2, 2.1, 3.1, 3.2_
+- [ ] 4.2 Verify deploy-rs and Colmena consume the same NixOS activation path
+  - Build minimal deploy-rs target and Colmena hive consumer fixtures importing the exported module, without adding Fly-specific options or plugins to either tool.
+  - Exercise their ordinary NixOS system activation wiring and assert deployment errors remain failures rather than success reports.
+  - Completed when both fixtures expose the same activation unit and require no tool-specific Fly integration.
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
+  - _Depends: 4.1_
+
+- [ ] 5. Add offline contract tests and flake validation
+- [ ] 5.1 Test module evaluation, option errors, JSON preservation, and confidentiality
+  - Add `tests/fly-apps/module.test.nix` for enabled/disabled evaluation, app and Machine settings, arbitrary API fields, multi-container config, and source-selection assertions.
+  - Check generated JSON, derivation inputs, command arguments, and unit text for token-value/content leakage using only non-secret fixtures.
+  - Completed when tests verify the exported module and exercise missing/conflicting source errors with full option paths.
+  - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.3, 3.3, 3.4, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.3_
+  - _Depends: 1.1, 1.2, 3.1, 4.1_
+- [ ] 5.2 Test app and Machine reconciliation against a fake Fly API
+  - Add `tests/fly-apps/deploy.test.js` fixtures for app lookup/create, immutable mismatch, paginated Machine lookup, create/update/no-op, multi-container payloads, API rejection, retry limits, and idempotent reruns after partial success.
+  - Assert failures include resource context and status, never disclose auth material, and never issue app or Machine deletion calls.
+  - Completed when the helper contract suite runs without Fly network access or operator credentials.
+  - _Requirements: 1.1, 1.2, 1.4, 2.1, 2.2, 2.3, 4.3, 4.4, 5.1, 5.4, 6.3_
+  - _Depends: 2.2, 2.3, 2.4_
+- [ ] 5.3 Test public image handling, OCI publication, and registry failures
+  - Extend helper fixtures with valid and invalid OCI archive metadata, public image references, registry auth, publication success/failure, and temporary auth-state cleanup.
+  - Verify failed build/publication does not mutate Machine config and no token value, auth file contents, or generated secret artifact appears in results.
+  - Completed when image contract tests use fixtures only and cover single-container and named multi-container derivation images.
+  - _Requirements: 2.1, 2.2, 3.1, 3.2, 3.3, 3.4, 5.1, 5.3, 5.4, 6.1, 6.2, 6.3_
+  - _Depends: 3.2_
+- [ ] 5.4 Register offline flake checks and validate the integration suite
+  - Register module evaluation, helper/API/image tests, and deploy-rs/Colmena consumer fixtures as flake checks, following repository check conventions.
+  - Run the targeted checks and confirm they do not contact Fly or require a real token; keep any live Fly smoke test operator-run and optional.
+  - Completed when the flake check set evaluates the exported module and all offline feature contracts pass.
+  - _Requirements: 1.1, 2.1, 3.1, 4.1, 4.2, 4.3, 4.4, 5.4, 6.1, 6.2, 6.3_
+  - _Depends: 4.2, 5.1, 5.2, 5.3_
