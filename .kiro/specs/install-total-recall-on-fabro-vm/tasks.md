@@ -14,7 +14,7 @@
 
 - [ ] 1. Pinned packages and flake input
 
-- [ ] 1.1 Add and lock the total-recall flake input
+- [x] 1.1 Add and lock the total-recall flake input
   - Declare `total-recall.url = "github:DWSR/total-recall"` beside the other inputs in `flake.nix` with no `nixpkgs.follows` (upstream needs Rust 1.98.1 from its own nixpkgs)
   - Run `nix flake lock` so `flake.lock` records the input's `rev` and `narHash` plus the upstream-owned `nixpkgs` node
   - Add `totalRecall = inputs.total-recall;` to the `nixosConfigurations.fabro-vm` `specialArgs` block and accept `totalRecall` in the guest module that reads it
