@@ -362,6 +362,12 @@
             type = "app";
             program = "${pkgs.callPackage ./scripts/mac-builder-readiness.nix { }}/bin/mac-builder-readiness";
           };
+          fabro-darwin-live-validate = {
+            type = "app";
+            program = "${
+              pkgs.callPackage ./scripts/fabro-darwin-live-validate.nix { }
+            }/bin/fabro-darwin-live-validate";
+          };
         }
       );
 
@@ -2113,7 +2119,7 @@
                   && builtins.elem "--hostname" authArgs
                   && builtins.elem "mac-builder" authArgs
                   && builtins.elem "--tag" authArgs
-                  && builtins.elem "tag:mac-builder" authArgs
+                  && builtins.elem "tag:nix-remote-builder" authArgs
                   && authDaemon.RunAtLoad
                   && authDaemon.KeepAlive
                 ) "fabro-darwin-builds: builder auth daemon must use its OAuth file and dedicated tagged identity.")
