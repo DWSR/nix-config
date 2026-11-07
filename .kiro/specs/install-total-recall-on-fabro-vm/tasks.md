@@ -86,7 +86,7 @@
 
 - [ ] 4. Guest memory runtime
 
-- [ ] 4.1 Render the iii engine configuration and worker files
+- [x] 4.1 Render the iii engine configuration and worker files
   - Render `config.yaml` with `pkgs.formats.yaml` declaring only `iii-worker-manager` (`127.0.0.1:49134`), `iii-stream` (`127.0.0.1:3112`, kv `file_based` at `/var/lib/total-recall/stream`), and `configuration` (fs adapter at `/var/lib/total-recall/config`)
   - Add `total-recall-config` as a `oneshot` with `RemainAfterExit`: copy the rendered config to `/var/lib/total-recall/iii/config.yaml` and write `database.yaml`, `queue.yaml`, and `cron.yaml` into the configuration directory
   - Use the design's structured database entry (`driver: postgres`, `host: 127.0.0.1`, `port: 5432`, `user: memory_application`, `database: memory`, `tls.mode: disable`, `pool.max: 10`, `history_max_entries: 0`), the builtin file-backed queue at `/var/lib/total-recall/queue`, and the `local` cron adapter
