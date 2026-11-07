@@ -69,6 +69,7 @@ let
             file_path = "/var/lib/total-recall/queue";
           };
         };
+        queue_configs.${cfg.queueTopic} = { };
       }
     );
     cron = yamlFormat.generate "cron.yaml" (
@@ -89,6 +90,63 @@ let
     ${installWorkerConfig "queue" workerConfigs.queue}
     ${installWorkerConfig "cron" workerConfigs.cron}
   '';
+  iiiRegistryReadinessGate = pkgs.writeShellApplication {
+    name = "iii-registry-readiness-gate";
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.jq
+      pkgs.total-recall-iii
+    ];
+    text = ''
+      engine_url=${lib.escapeShellArg "ws://${cfg.iiiHost}:${toString cfg.iiiPort}"}
+      queue_topic=${lib.escapeShellArg cfg.queueTopic}
+      iii_bin=${lib.getExe pkgs.total-recall-iii}
+      attempts=''${III_REGISTRY_READINESS_ATTEMPTS:-15}
+      retry_interval=''${III_REGISTRY_READINESS_INTERVAL:-1}
+      subscriber_gate=''${1:-}
+
+      for (( attempt = 1; attempt <= attempts; attempt++ )); do
+        workers=$(timeout 3 "$iii_bin" --no-update-check trigger --timeout-ms 1000 --engine "$engine_url" engine::workers::list --json '{}') || workers=
+        if ! printf '%s' "$workers" | jq -e \
+          --argjson names '["database","queue","cron"]' \
+          '. as $response | all($names[]; . as $name | any($response.workers[]; .name == $name and .status == "connected"))' >/dev/null; then
+          echo "iii-registry-readiness-gate: registry workers not connected (probe $attempt/$attempts); retrying" >&2
+          sleep "$retry_interval"
+          continue
+        fi
+
+        functions=$(timeout 3 "$iii_bin" --no-update-check trigger --timeout-ms 1000 --engine "$engine_url" engine::functions::info --json \
+          '{"function_ids":["database::execute","queue::define","iii::durable::publish","cron::on-tick"]}') || functions=
+        trigger_types=$(timeout 3 "$iii_bin" --no-update-check trigger --timeout-ms 1000 --engine "$engine_url" engine::triggers::list --json '{}') || trigger_types=
+        topics=$(timeout 3 "$iii_bin" --no-update-check trigger --timeout-ms 1000 --engine "$engine_url" engine::queue::list_topics --json '{}') || topics=
+
+        if printf '%s' "$functions" | jq -e \
+          --argjson expected '{"database::execute":"database","queue::define":"queue","iii::durable::publish":"queue","cron::on-tick":"cron"}' \
+          '. as $response | all($expected | to_entries[]; . as $entry | any($response.functions[]; .function_id == $entry.key and .worker_name == $entry.value))' >/dev/null \
+          && printf '%s' "$trigger_types" | jq -e \
+            'any(.triggers[]; .id == "durable:subscriber" and .worker_name == "queue") and any(.triggers[]; .id == "cron" and .worker_name == "cron")' >/dev/null \
+          && printf '%s' "$topics" | jq -e --arg topic "$queue_topic" \
+            'any(.[]; .name == $topic and .broker_type == "builtin")' >/dev/null; then
+          if [ "$subscriber_gate" != "persistence-subscriber" ]; then
+            exit 0
+          fi
+
+          subscribers=$(timeout 3 "$iii_bin" --no-update-check trigger --timeout-ms 1000 --engine "$engine_url" engine::registered-triggers::list --json \
+            '{"function_id":"harness::persist_event","trigger_type":"durable:subscriber","include_pending":true}') || subscribers=
+          if printf '%s' "$subscribers" | jq -e \
+            '.registered_triggers | any(.[]; .status == "active" and .trigger_type == "durable:subscriber" and .function_id == "harness::persist_event")' >/dev/null; then
+            exit 0
+          fi
+        fi
+
+        echo "iii-registry-readiness-gate: registry functions, observers, topic, or persistence subscriber not ready (probe $attempt/$attempts); retrying" >&2
+        sleep "$retry_interval"
+      done
+
+      echo "iii-registry-readiness-gate: registry workers, functions, trigger providers, topic '$queue_topic', or persistence subscriber not ready at $engine_url" >&2
+      exit 1
+    '';
+  };
   iiiHealthGate = pkgs.writeShellApplication {
     name = "iii-health-gate";
     runtimeInputs = [
@@ -306,6 +364,7 @@ in
         User = "total-recall";
         Group = "total-recall";
         StateDirectory = "total-recall";
+        ExecStartPre = lib.getExe iiiRegistryReadinessGate;
         ExecStart = lib.getExe pkgs.total-recall-harness-ingestion;
         Restart = "always";
         RestartSec = 2;
@@ -339,6 +398,7 @@ in
         Group = "total-recall";
         StateDirectory = "total-recall";
         ExecStart = lib.getExe pkgs.total-recall-harness-event-persistence;
+        ExecStartPost = "${lib.getExe iiiRegistryReadinessGate} persistence-subscriber";
         Restart = "always";
         RestartSec = 2;
       };

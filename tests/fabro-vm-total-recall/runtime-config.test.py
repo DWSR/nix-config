@@ -97,6 +97,8 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertIn("name: builtin", rendered["queue"])
         self.assertIn("store_method: file_based", rendered["queue"])
         self.assertIn("file_path: /var/lib/total-recall/queue", rendered["queue"])
+        self.assertIn("queue_configs:", rendered["queue"])
+        self.assertIn("harness-events: {}", rendered["queue"])
         self.assertIn("id: cron", rendered["cron"])
         self.assertIn("name: local", rendered["cron"])
         for content in rendered.values():
