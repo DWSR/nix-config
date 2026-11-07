@@ -128,9 +128,10 @@
   - _Boundary: Secret Material Checks_
   - _Depends: 1.2, 2.3_
 
-- [ ] 5.5 Register the `fabro-darwin-builds` flake check
+- [x] 5.5 Register the `fabro-darwin-builds` flake check
   - Register `checks.<system>.fabro-darwin-builds` beside `mac-nix-remote-builder`; use an eval-time check because sandboxed recursive Nix calls cannot access the daemon from `runCommand`.
-  - Done when the check evaluates the guest and builder dispatch/cache policy.
+  - Assert the guest builder entry, daemon and sandbox boundaries, secret runtime paths, builder tailnet/SSH trust, Darwin-only platform, and exact public-cache policy. Keep the Node test suite as a direct validation command rather than invoking recursive Nix from the check derivation.
+  - Done when the check evaluates the complete guest and builder dispatch/trust/cache policy and the direct test suite passes.
   - _Requirements: 8.1, 8.2, 8.3, 8.4_
   - _Depends: 5.2, 5.3, 5.4_
 
@@ -157,5 +158,5 @@
 - Task 1.1 and 1.2 share only the CLI contract, so the renderer can be implemented and reviewed before the module lands; the module must not re-implement key validation.
 - Task 2.1's credential read happens every poll so a rotation or re-registration needs no operator; Task 2.2 only declares the wrapper's arguments.
 - The operator provisions all external material in the design's `## Operator Provisioning` section; tasks 4.1 and 4.2 document it, and no task may read a secret value at evaluation time.
-- Task 5.5 is the only change that turns the new suites into a required check; it must not pass by skipping absent files.
+- Task 5.5's flake check is an eval-time policy gate; the test suite is run directly because its Nix-eval helpers cannot recursively reach the daemon from a sandboxed check derivation.
 - Tasks 5.6 and 5.7 own the runtime evidence the offline checks cannot produce: tailnet reachability, the OAuth join, and sandbox store resolution.
