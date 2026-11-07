@@ -269,14 +269,16 @@ darwinTest('default configuration renders only the podman-group provision', () =
   const yaml = rendered.configYaml;
   assert.match(yaml, /provision:\n/);
   assert.match(yaml, /mode: ?['"]?system['"]?/);
-  // The cidata user is created imperatively by lima-init, so it cannot be
-  // declared in users.users; this idempotent grant runs on every boot.
+  // lima-init creates the cidata user imperatively, so it cannot be declared
+  // in users.users; it owns /run/host-services, which the provision uses to
+  // identify it without referencing Lima's internal environment variables.
   // (Lima's YAML round-trip of the folded double-quoted scalar is
   // byte-exact — verified against a throwaway `limactl create --name rtt`
   // instance reading the provision script back.)
   assert.match(yaml, /grep -q '\^podman:' \/etc\/group/);
   assert.match(yaml, /usermod -aG podman/);
-  assert.match(yaml, /LIMA_CIDATA_USER/);
+  assert.match(yaml, /stat -c %U \/run\/host-services/);
+  assert.doesNotMatch(yaml, /LIMA_CIDATA/);
   assert.doesNotMatch(yaml, /\/proc\/sys\/kernel\/hostname/); // hostname unset
 });
 
