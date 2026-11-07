@@ -1,4 +1,9 @@
-{ config, lib, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   cfg = config.fabro.totalRecall;
 in
@@ -66,6 +71,33 @@ in
     users.users."total-recall" = {
       isSystemUser = true;
       group = "total-recall";
+    };
+
+    services.postgresql = {
+      enable = true;
+      package = pkgs.unstable.postgresql_17;
+      extensions = ps: [
+        ps.pg_textsearch
+        ps.pgvector
+        ps.pg_uuidv7
+      ];
+      ensureDatabases = [ "memory" ];
+      ensureUsers = map (name: { inherit name; }) [
+        "memory_migration"
+        "memory_application"
+        "session_post_processing_migrator"
+        "session_post_processing_application"
+      ];
+      settings = {
+        listen_addresses = lib.mkForce "127.0.0.1";
+        shared_preload_libraries = "pg_textsearch";
+      };
+      authentication = lib.mkForce ''
+        local all postgres peer map=postgres
+        local all all peer
+        host all memory_application 127.0.0.1/32 trust
+        host all all 127.0.0.1/32 reject
+      '';
     };
   };
 }
