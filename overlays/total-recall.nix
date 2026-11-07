@@ -3,6 +3,50 @@ final: _prev:
 let
   system = final.stdenv.hostPlatform.system;
   totalRecall = inputs.total-recall.packages.${system};
+  harnessEventsPkgs =
+    import
+      (
+        if final.stdenv.hostPlatform.isDarwin then
+          inputs.total-recall.inputs.nixpkgsDarwin
+        else
+          inputs.total-recall.inputs.nixpkgs
+      )
+      {
+        inherit system;
+        overlays = final.lib.optional final.stdenv.hostPlatform.isDarwin (
+          import inputs.total-recall.inputs.rust-overlay.outPath
+        );
+      };
+  harnessEventsRustPlatform =
+    if final.stdenv.hostPlatform.isDarwin then
+      let
+        rustToolchain = harnessEventsPkgs.rust-bin.stable."1.98.1".minimal;
+      in
+      harnessEventsPkgs.makeRustPlatform {
+        cargo = rustToolchain;
+        rustc = rustToolchain;
+      }
+    else
+      harnessEventsPkgs.rustPlatform;
+  inherit (harnessEventsPkgs) protobuf;
+  harnessEvents = harnessEventsRustPlatform.buildRustPackage {
+    pname = "total-recall-harness-events";
+    version = "0.1.0";
+    src = totalRecall.harness-ingestion.src;
+    cargoLock.lockFile = "${inputs.total-recall.outPath}/Cargo.lock";
+    cargoBuildFlags = [
+      "--package"
+      "harness-events-cli"
+    ];
+    doCheck = false;
+    nativeBuildInputs = [ protobuf ];
+
+    meta = {
+      description = "Harness event capture CLI from the pinned total-recall source";
+      mainProgram = "harness-events";
+      platforms = final.lib.platforms.unix;
+    };
+  };
   # iii uses Elastic License 2.0; allow only this package in its package set.
   iiiPkgs = import inputs.nixpkgs {
     inherit system;
@@ -112,6 +156,7 @@ let
   };
 in
 {
+  total-recall-harness-events = harnessEvents;
   total-recall-iii = iii;
   total-recall-database = database;
   total-recall-queue = queue;

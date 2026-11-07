@@ -31,7 +31,7 @@
   - _Requirements: 1.2, 1.4, 1.5, 1.6_
   - _Depends: 1.1_
 
-- [ ] 1.3 Add the repo-owned harness-events CLI derivation
+- [x] 1.3 Add the repo-owned harness-events CLI derivation
   - Build workspace package `harness-events-cli` from the pinned input's `Cargo.toml`/`Cargo.lock` as `total-recall-harness-events`, following the repository's existing Rust overlay derivation style
   - Set `nativeBuildInputs = [ protobuf ]`, `doCheck = false`, and `meta.mainProgram = "harness-events"` so unit `ExecStart` lines use `lib.getExe`
   - Use hashed cargo dependencies only: no `cargo install`, no build-time network fetch, and no copied upstream source tree
