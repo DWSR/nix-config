@@ -221,6 +221,66 @@ in
       };
     };
 
+    systemd.services.iii-database = {
+      description = "iii PostgreSQL database worker";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "iii.service"
+        "total-recall-migrate.service"
+      ];
+      requires = [
+        "iii.service"
+        "total-recall-migrate.service"
+      ];
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-database;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
+    systemd.services.iii-queue = {
+      description = "iii durable queue worker";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "iii.service" ];
+      requires = [ "iii.service" ];
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-queue;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
+    systemd.services.iii-cron = {
+      description = "iii scheduled task worker";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "iii.service" ];
+      requires = [ "iii.service" ];
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-cron;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
     systemd.services.total-recall-migrate = {
       description = "Apply the total-recall database migrations";
       wantedBy = [ "multi-user.target" ];
