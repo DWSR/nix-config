@@ -95,7 +95,7 @@
   - _Requirements: 3.1, 3.4, 3.5, 3.8_
   - _Depends: 2_
 
-- [ ] 4.2 Add the iii engine service
+- [x] 4.2 Add the iii engine service
   - Add `iii.service` running the pinned iii binary with `--config /var/lib/total-recall/iii/config.yaml`, `WorkingDirectory=/var/lib/total-recall/iii`, `User`/`Group` = `total-recall`, `Restart=always`, and `RestartSec=2`
   - Declare `StateDirectory` entries for `total-recall`, `total-recall/iii`, `total-recall/config`, `total-recall/queue`, and `total-recall/stream`, and `wantedBy = [ "multi-user.target" ]`
   - Order the unit `after` and `requires` `total-recall-config` and gate `ExecStartPost` on `127.0.0.1:49134` before the unit reports started
