@@ -174,12 +174,14 @@ test('mac-builder Tailscale auth --once handles Running without joining', () => 
   assert.equal(fs.existsSync(fixture.calls), false);
 });
 
-test('mac-builder Tailscale auth --once joins NeedsLogin with exact node arguments', () => {
+test('mac-builder Tailscale auth --once joins NeedsLogin as ephemeral with exact node arguments', () => {
   const fixture = authFixture('NeedsLogin');
   const result = fixture.run();
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /FABRO_TAILSCALE_UP_ATTEMPT/);
+  assert.equal(result.stderr.includes(dummyCredential), false);
   assert.deepEqual(fs.readFileSync(fixture.calls, 'utf8').trim().split('\n'), [
-    'up', `--auth-key=${dummyCredential}?ephemeral=false&preauthorized=true`,
+    'up', `--auth-key=${dummyCredential}?ephemeral=true&preauthorized=true`,
     '--advertise-tags=tag:nix-remote-builder', '--hostname=mac-builder', '--accept-dns=false',
   ]);
 });
@@ -189,6 +191,7 @@ test('mac-builder Tailscale auth --once rejects missing credential without joini
   const result = fixture.run();
   assert.notEqual(result.status, 0);
   assert.ok(result.stderr.includes(fixture.credential), result.stderr);
+  assert.doesNotMatch(result.stderr, /FABRO_TAILSCALE_UP_ATTEMPT/);
   assert.equal(fs.existsSync(fixture.calls), false);
 });
 
