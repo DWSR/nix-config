@@ -50,7 +50,7 @@
 
 - [ ] 3. Guest memory database
 
-- [ ] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
+- [x] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
   - Set `services.postgresql = { enable; package = pkgs.unstable.postgresql_17; extensions = ps: [ ps.pg_textsearch ps.pgvector ps.pg_uuidv7 ]; }` in `configurations/fabro-vm/total-recall.nix` (26.05 ships pgvector 0.8.2, below the 0.8.6 floor)
   - Set `settings.listen_addresses = lib.mkForce "127.0.0.1"` and `settings.shared_preload_libraries = "pg_textsearch"`
   - Declare `ensureDatabases = [ "memory" ]` and the four roles `memory_migration`, `memory_application`, `session_post_processing_migrator`, and `session_post_processing_application`
