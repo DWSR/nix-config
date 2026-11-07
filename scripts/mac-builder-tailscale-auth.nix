@@ -38,7 +38,8 @@ writeShellApplication {
           local key
           key=$(<"$auth_key_file") || return 1
           [[ -n "$key" ]] || { echo "Tailscale auth credential missing or empty: $auth_key_file" >&2; return 1; }
-          "$tailscale" up "--auth-key=''${key}?ephemeral=false&preauthorized=true" "--advertise-tags=$tag" "--hostname=$hostname" --accept-dns=false || { echo "tailscale up failed" >&2; return 1; }
+          printf '%s\n' 'FABRO_TAILSCALE_UP_ATTEMPT' >&2
+          "$tailscale" up "--auth-key=''${key}?ephemeral=true&preauthorized=true" "--advertise-tags=$tag" "--hostname=$hostname" --accept-dns=false || { echo "tailscale up failed" >&2; return 1; }
           ;;
         *) echo "unsupported tailscale BackendState: $state" >&2; return 1 ;;
       esac
