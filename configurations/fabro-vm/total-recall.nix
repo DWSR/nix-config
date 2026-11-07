@@ -89,6 +89,25 @@ let
     ${installWorkerConfig "queue" workerConfigs.queue}
     ${installWorkerConfig "cron" workerConfigs.cron}
   '';
+  iiiHealthGate = pkgs.writeShellApplication {
+    name = "iii-health-gate";
+    runtimeInputs = [
+      pkgs.bash
+      pkgs.coreutils
+    ];
+    text = ''
+      attempts=20
+      for (( attempt = 1; attempt <= attempts; attempt++ )); do
+        if timeout 1 bash -c ${lib.escapeShellArg "exec 3<>/dev/tcp/${cfg.iiiHost}/${toString cfg.iiiPort}"} 2>/dev/null; then
+          exit 0
+        fi
+        echo "iii-health-gate: probe $attempt/$attempts failed, retrying" >&2
+        sleep 2
+      done
+      echo "iii-health-gate: ${cfg.iiiHost}:${toString cfg.iiiPort} did not accept connections" >&2
+      exit 1
+    '';
+  };
 in
 {
   options.fabro.totalRecall = {
@@ -172,6 +191,33 @@ in
           "total-recall/stream"
         ];
         ExecStart = installConfig;
+      };
+    };
+
+    systemd.services.iii = {
+      description = "iii worker engine";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "total-recall-config.service" ];
+      requires = [ "total-recall-config.service" ];
+      serviceConfig = {
+        WorkingDirectory = "/var/lib/total-recall/iii";
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = [
+          "total-recall"
+          "total-recall/iii"
+          "total-recall/config"
+          "total-recall/queue"
+          "total-recall/stream"
+        ];
+        ExecStart = utils.escapeSystemdExecArgs [
+          (lib.getExe pkgs.total-recall-iii)
+          "--config"
+          "/var/lib/total-recall/iii/config.yaml"
+        ];
+        ExecStartPost = lib.getExe iiiHealthGate;
+        Restart = "always";
+        RestartSec = 2;
       };
     };
 
