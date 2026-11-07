@@ -1,4 +1,11 @@
-{ lib, stdenvNoCC, makeWrapper, coreutils, postgresql, totalRecall }:
+{
+  lib,
+  stdenvNoCC,
+  makeWrapper,
+  coreutils,
+  postgresql,
+  totalRecall,
+}:
 
 let
   source = totalRecall.harness-ingestion.src;
@@ -33,17 +40,22 @@ stdenvNoCC.mkDerivation {
     install -m 0555 ${./migrate.sh} "$out/bin/migrate.sh"
     install -m 0444 ${./bootstrap.sql} "$out/share/total-recall/bootstrap.sql"
     install -m 0444 ${./runtime-grants.sql} "$out/share/total-recall/runtime-grants.sql"
-''
-    + lib.concatMapStringsSep "\n" (migration: ''
-      install -m 0444 ${migration.source} "$out/share/total-recall/migrations/${migration.name}"
-    '') migrationFiles
-    + ''
+  ''
+  + lib.concatMapStringsSep "\n" (migration: ''
+    install -m 0444 ${migration.source} "$out/share/total-recall/migrations/${migration.name}"
+  '') migrationFiles
+  + ''
     runHook postInstall
   '';
 
   postFixup = ''
     wrapProgram "$out/bin/migrate.sh" \
-      --prefix PATH : ${lib.makeBinPath [ coreutils postgresql ]}
+      --prefix PATH : ${
+        lib.makeBinPath [
+          coreutils
+          postgresql
+        ]
+      }
   '';
 
   passthru.migrationFiles = map (migration: migration.source) migrationFiles;
