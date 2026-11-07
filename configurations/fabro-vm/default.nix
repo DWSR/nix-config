@@ -67,6 +67,7 @@ in
     # of the fabro, litellm, and opencode services (svc:fabro /
     # svc:litellm / svc:opencode).
     ./tailscale.nix
+    ./total-recall.nix
   ];
 
   # 1Password source manifest for the guest's sops store
@@ -94,6 +95,8 @@ in
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.
     services.lima.enable = true;
+
+    fabro.totalRecall.enable = true;
 
     fabro.onePasswordSecrets = {
       "fabro-session-secret" = "op://Private/Fabro/Session Secret";
