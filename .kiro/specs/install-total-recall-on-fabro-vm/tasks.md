@@ -67,7 +67,7 @@
   - _Requirements: 2.2, 2.3, 2.4_
   - _Boundary: configurations/fabro-vm/total-recall/*.sql_
 
-- [ ] 3.3 Build the idempotent migration runner and ledger
+- [x] 3.3 Build the idempotent migration runner and ledger
   - Add `total-recall/migrate.nix` and `migrate.sh`: connect as `postgres` over the local socket to the module's database name, apply `bootstrap.sql`, then each upstream file whose name is absent from `public.total_recall_schema_migrations`
   - Apply exactly the design's four files in order: memory-store `0001_memory_schema_search.sql`, harness-event-persistence `0001_harness_event_ledger.sql` and `0002_session_embeddings.sql`, session-post-processing `0001_session_post_processing.sql`
   - Record `(name, sha256, applied_at)` per file, fail non-zero naming the file when an applied name's hash changed, and stop at the first `psql` failure
