@@ -50,7 +50,10 @@ if sql_file:
     if event == "bootstrap":
         pass
     elif event == "runtime-grants":
-        pass
+        if os.environ.get("FAKE_PSQL_FAIL_ON") == "runtime-grants.sql":
+            state_path.write_text(json.dumps(state))
+            print("fake psql: forced failure applying runtime-grants.sql", file=sys.stderr)
+            sys.exit(9)
 elif command:
     sql = command
     if "to_regclass" in sql:
@@ -175,7 +178,7 @@ class MigrationRunnerTests(unittest.TestCase):
         events = state["events"]
         self.assertIn("bootstrap", events)
         self.assertLess(events.index("ledger-create"), events.index(f"migration:{MIGRATIONS[0]}"))
-        self.assertLess(events.index("runtime-grants"), events.index(f"migration:{MIGRATIONS[-1]}"))
+        self.assertGreater(events.index("runtime-grants"), events.index(f"migration:{MIGRATIONS[-1]}"))
         for filename in MIGRATIONS:
             expected = hashlib.sha256((self.migration_dir / filename).read_bytes()).hexdigest()
             self.assertEqual(state["ledger"][filename], expected)
@@ -188,7 +191,11 @@ class MigrationRunnerTests(unittest.TestCase):
             [f"migration:{name}" for name in MIGRATIONS],
         )
         self.assertEqual(state["events"].count("ledger-create"), 1)
-        self.assertEqual(state["events"].count("runtime-grants"), 1)
+        self.assertEqual(state["events"].count("runtime-grants"), 2)
+        self.assertGreater(
+            state["events"].index("runtime-grants", state["events"].index(f"migration:{MIGRATIONS[-1]}")),
+            state["events"].index(f"migration:{MIGRATIONS[-1]}"),
+        )
         self.assertEqual(len(state["ledger"]), 4)
         for args in state["calls"]:
             self.assertIn("--username=postgres", args)
@@ -209,6 +216,14 @@ class MigrationRunnerTests(unittest.TestCase):
             [event for event in self.read_state()["events"] if event.startswith("migration:")],
             [f"migration:{name}" for name in MIGRATIONS],
         )
+
+    def test_runtime_grant_failure_names_file_after_migrations_are_recorded(self):
+        result = self.run_runner({"FAKE_PSQL_FAIL_ON": "runtime-grants.sql"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runtime-grants.sql", result.stderr)
+        state = self.read_state()
+        self.assertEqual(set(state["ledger"]), set(MIGRATIONS))
+        self.assertEqual(state["events"][-1], "runtime-grants")
 
     def test_psql_failure_names_file_and_stops_before_later_migrations(self):
         result = self.run_runner({"FAKE_PSQL_FAIL_ON": MIGRATIONS[1]})

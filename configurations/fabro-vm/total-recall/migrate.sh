@@ -81,12 +81,10 @@ for index in "${!migration_names[@]}"; do
     printf 'BEGIN;\nSET ROLE %s;\n' "$role"
     cat -- "$file"
     printf '\nRESET ROLE;\n'
-    if [ "$index" -eq 3 ]; then
-      cat -- "$shared_dir/runtime-grants.sql"
-      printf '\n'
-    fi
     printf 'INSERT INTO public.total_recall_schema_migrations (name, sha256) VALUES (\047%s\047, \047%s\047);\nCOMMIT;\n' "$name" "${expected_hashes[index]}"
   } | "${psql[@]}"; then
     fail "failed applying $name"
   fi
 done
+
+run_file "$shared_dir/runtime-grants.sql" "runtime-grants.sql"
