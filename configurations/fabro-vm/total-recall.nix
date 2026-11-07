@@ -2,6 +2,8 @@
   config,
   lib,
   pkgs,
+  totalRecall,
+  utils,
   ...
 }:
 let
@@ -71,6 +73,26 @@ in
     users.users."total-recall" = {
       isSystemUser = true;
       group = "total-recall";
+    };
+
+    systemd.services.total-recall-migrate = {
+      description = "Apply the total-recall database migrations";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        User = "postgres";
+        ExecStart = utils.escapeSystemdExecArgs [
+          (lib.getExe (
+            pkgs.callPackage ./total-recall/migrate.nix {
+              totalRecall = totalRecall.packages.${pkgs.stdenv.hostPlatform.system};
+            }
+          ))
+          cfg.databaseName
+        ];
+        Restart = "on-failure";
+      };
     };
 
     services.postgresql = {
