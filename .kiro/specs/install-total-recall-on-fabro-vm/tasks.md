@@ -14,7 +14,7 @@
 
 - [ ] 1. Pinned packages and flake input
 
-- [ ] 1.1 Add and lock the total-recall flake input
+- [x] 1.1 Add and lock the total-recall flake input
   - Declare `total-recall.url = "github:DWSR/total-recall"` beside the other inputs in `flake.nix` with no `nixpkgs.follows` (upstream needs Rust 1.98.1 from its own nixpkgs)
   - Run `nix flake lock` so `flake.lock` records the input's `rev` and `narHash` plus the upstream-owned `nixpkgs` node
   - Add `totalRecall = inputs.total-recall;` to the `nixosConfigurations.fabro-vm` `specialArgs` block and accept `totalRecall` in the guest module that reads it
@@ -22,7 +22,7 @@
   - Completed when `nix flake metadata --json` shows a non-empty `locked.rev` for `total-recall` and the guest evaluation still succeeds
   - _Requirements: 1.1, 1.2_
 
-- [ ] 1.2 Build the pinned iii runtime and registry worker packages
+- [x] 1.2 Build the pinned iii runtime and registry worker packages
   - Create `overlays/total-recall.nix` with `fetchurl` derivations for iii 0.24.0 (`meta.mainProgram = "iii"`), `database` 0.5.26, `queue` 0.21.26, and `cron` 0.21.28 using the `aarch64-linux` hashes recorded in `research.md`
   - Re-export `harness-ingestion`, `harness-event-persistence`, `session-post-processing`, `opencode-harness-events`, `pi-harness-events`, and `mcp-worker` from `totalRecall.packages.${system}` under the `total-recall-*` names in the design's C1 contract
   - Add the overlay to `custom-packages` in `overlays/default.nix` and record each version and hash in a comment so a bump is a reviewable diff
@@ -31,7 +31,7 @@
   - _Requirements: 1.2, 1.4, 1.5, 1.6_
   - _Depends: 1.1_
 
-- [ ] 1.3 Add the repo-owned harness-events CLI derivation
+- [x] 1.3 Add the repo-owned harness-events CLI derivation
   - Build workspace package `harness-events-cli` from the pinned input's `Cargo.toml`/`Cargo.lock` as `total-recall-harness-events`, following the repository's existing Rust overlay derivation style
   - Set `nativeBuildInputs = [ protobuf ]`, `doCheck = false`, and `meta.mainProgram = "harness-events"` so unit `ExecStart` lines use `lib.getExe`
   - Use hashed cargo dependencies only: no `cargo install`, no build-time network fetch, and no copied upstream source tree
@@ -39,7 +39,7 @@
   - _Requirements: 1.3_
   - _Depends: 1.1, 1.2_
 
-- [ ] 2. Declare the guest totalRecall options, service account, and module enablement
+- [x] 2. Declare the guest totalRecall options, service account, and module enablement
   - Create `configurations/fabro-vm/total-recall.nix` with the design's `fabro.totalRecall` options: `enable` (default false), `iiiHost`/`iiiPort` (127.0.0.1/49134), `streamHost`/`streamPort` (127.0.0.1/3112), `databaseName`/`databaseConnection` (`memory`), `queueTopic` (`harness-events`), `postProcessingModel`, and `postProcessingBaseUrl` (`http://127.0.0.1:4000/v1/`)
   - Declare `users.groups.total-recall` and `users.users.total-recall` as a system user in that group; do not touch the Lima cidata account or `users.mutableUsers`
   - Import `./total-recall.nix` from `configurations/fabro-vm/default.nix` and set `fabro.totalRecall.enable = true` there
@@ -50,7 +50,7 @@
 
 - [ ] 3. Guest memory database
 
-- [ ] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
+- [x] 3.1 Enable PostgreSQL 17 with the three memory extensions on loopback
   - Set `services.postgresql = { enable; package = pkgs.unstable.postgresql_17; extensions = ps: [ ps.pg_textsearch ps.pgvector ps.pg_uuidv7 ]; }` in `configurations/fabro-vm/total-recall.nix` (26.05 ships pgvector 0.8.2, below the 0.8.6 floor)
   - Set `settings.listen_addresses = lib.mkForce "127.0.0.1"` and `settings.shared_preload_libraries = "pg_textsearch"`
   - Declare `ensureDatabases = [ "memory" ]` and the four roles `memory_migration`, `memory_application`, `session_post_processing_migrator`, and `session_post_processing_application`
@@ -59,7 +59,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6, 6.4, 6.7_
   - _Depends: 2_
 
-- [ ] 3.2 (P) Write the bootstrap and runtime-grant SQL
+- [x] 3.2 (P) Write the bootstrap and runtime-grant SQL
   - Add `configurations/fabro-vm/total-recall/bootstrap.sql`: `CREATE EXTENSION IF NOT EXISTS` for the three extensions, `memory` database ownership to `memory_migration`, and `ALTER SCHEMA public OWNER TO memory_migration` only when the catalog reports a different owner
   - Add `runtime-grants.sql` granting `memory_application` `SELECT, INSERT` on `memories`/`memory_embeddings`, `SELECT` on the ledger tables, and `SELECT, INSERT, UPDATE` on the three post-processing tables
   - Grant no `DELETE` anywhere and add no `DROP`, `TRUNCATE`, or non-conditional ownership change

@@ -25,6 +25,7 @@
   limaVirtiofsTags,
   modulesPath,
   pkgs,
+  totalRecall,
   ...
 }:
 let
@@ -65,6 +66,7 @@ in
     # of the fabro, litellm, and opencode services (svc:fabro /
     # svc:litellm / svc:opencode).
     ./tailscale.nix
+    ./total-recall.nix
   ];
 
   # 1Password source manifest for the guest's sops store
@@ -91,6 +93,8 @@ in
     # (user, SSH keys, mounts) and runs the lima-guestagent daemon as a
     # systemd service.
     services.lima.enable = true;
+
+    fabro.totalRecall.enable = true;
 
     fabro.onePasswordSecrets = {
       "fabro-session-secret" = "op://Private/Fabro/Session Secret";
@@ -141,6 +145,14 @@ in
         message =
           "fabro.onePasswordSecrets entries without a matching sops.secrets declaration: "
           + lib.concatStringsSep ", " onePasswordUndeclared;
+      }
+      # The total-recall flake is threaded through as a specialArg
+      # (flake.nix `totalRecall`); fail evaluation if the locked input no
+      # longer exports the worker/adapter package set the guest overlay
+      # and OpenCode plugin copy consume.
+      {
+        assertion = totalRecall ? packages;
+        message = "fabro-vm: the pinned total-recall input must export a `packages` output (workers and harness adapters).";
       }
     ];
 
