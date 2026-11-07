@@ -59,6 +59,8 @@
         # it explicitly here documents intent. Saves wall-time on fresh
         # `darwin-rebuild switch` when many derivations are pulled from
         max-substitution-jobs = 32;
+        builders = lib.mkForce "ssh-ng://nix-builder@mac-builder.tuxedo-musical.ts.net aarch64-darwin /Users/brandonmcnama/.ssh/id_ed25519 8 1 -";
+        builders-use-substitutes = true;
         # Append nix-community via extra-* so the nix-darwin defaults
         # (cache.nixos.org + its public key) aren't re-declared and duplicated
         # in the rendered /etc/nix/nix.conf.
