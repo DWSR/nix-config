@@ -137,6 +137,7 @@
   - _Depends: 5.2, 5.3, 5.4_
 
 - [ ] 5.6 Validate the live dispatch path and store resolution
+  - _Blocked: depends on blocked tasks 5.1 and 5.5; live dispatch validation cannot proceed until the smoke command and full check pass._
   - Deploy and switch the builder; confirm it registers with `tag:mac-builder`, comes up from the OAuth credential without login, and that `mac-builder-readiness` over the LAN forward still passes.
   - Switch the guest; confirm `fabro-darwin-builders.service` rendered exactly one `0600` machines line, the daemon restarted, and `aarch64-linux` builds still run locally.
   - Run `fabro-darwin-build-smoke` from a sandbox; confirm the reported store path exists in the guest store and resolves inside the sandbox without any workflow change.
