@@ -82,7 +82,7 @@
   - _Requirements: 6.1, 6.2, 6.8, 6.9, 6.10_
   - _Depends: 1.3, 4.1_
 
-- [ ] 4.3 Document the tailnet grant, builder identity, and operation steps
+- [x] 4.3 Document the tailnet grant, builder identity, and operation steps
   - Create `configurations/mac-builder/README.md` with the required console-side `tagOwners` and grant snippet for `tag:fabro` to `tag:mac-builder` on `tcp:22`, and state that the ACL governs reachability only while SSH keys authenticate the session.
   - Record the builder machine name `mac-builder` and its MagicDNS name, the dedicated OAuth client with its scope and tag, the runtime credential path, and that the guest is never addressed through the LAN forward or a DHCP address.
   - Link to `secrets/README.md` for build-key provisioning and rotation instead of duplicating it, and document the `fabro-darwin-build-smoke` invocation.
