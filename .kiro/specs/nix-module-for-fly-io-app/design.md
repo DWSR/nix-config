@@ -63,14 +63,14 @@ The module must serve NixOS configurations deployable by either deploy-rs or Col
 Pattern: a NixOS module renders a secret-free deployment specification and activation hook; a runtime deploy executable reads that specification and the token, then invokes Fly's deploy tooling. NixOS deployment tools activate the module as an ordinary profile and remain unaware of Fly options.
 
 ```mermaid
-graph LR
-  N[NixOS module evaluation] -->|store-safe spec| D[Fly deploy executable]
-  T[Operator runtime token] -->|environment only| D
-  A[deploy-rs or Colmena] -->|standard NixOS activation| H[Activation hook]
-  H --> D
-  D -->|flyctl deploy plus token| F[Fly apps and Machines]
-  B[Nix derivation output] -->|builder input, no token| X[Nixpacks / Fly remote builder]
-  X -->|image reference| F
+flowchart LR
+  Eval["NixOS module evaluation"] -->|store-safe specification| Deploy["Fly deployment executable"]
+  Token["Operator-supplied runtime token"] -->|environment only| Deploy
+  Tool["deploy-rs or Colmena"] -->|standard NixOS activation| Activate["NixOS activation hook"]
+  Activate --> Deploy
+  Deploy -->|flyctl deploy| Fly["Fly app and Machines API"]
+  Derivation["Nix derivation output"] -->|builder input only| Builder["Nixpacks on Fly remote builder"]
+  Builder -->|image reference| Fly
 ```
 
 Decisions:
