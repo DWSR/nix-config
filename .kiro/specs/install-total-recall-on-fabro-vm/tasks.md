@@ -76,7 +76,7 @@
   - _Requirements: 2.2, 2.3, 2.4, 2.5_
   - _Depends: 3.2_
 
-- [ ] 3.4 Wire the total-recall-migrate service
+- [x] 3.4 Wire the total-recall-migrate service
   - Add `systemd.services.total-recall-migrate` as a `oneshot` running as `postgres`, `wantedBy = [ "multi-user.target" ]`, with `after` and `requires` on `postgresql.service` and no `StateDirectory`
   - Point `ExecStart` at the runner with the module's database name, set `Restart = "on-failure"`, and let `psql` errors reach the journal with the failing element named
   - Leave `postgresql.service` otherwise unmodified and do not gate PostgreSQL on the migration unit
