@@ -2,56 +2,74 @@
 
 ## Introduction
 
-This document defines observable requirements for the Fly.io app capability described in `brief.md`. It specifies what operators can declare, deploy, and expect without prescribing the module's implementation.
+The Fly App Module declares and deploys Fly apps from Nix. Problem, chosen image-build approach, and scope are in `brief.md`.
 
 ## Boundary Context
 
-- **In scope**: Declaring and deploying Fly app and Machine settings; selecting an existing image or a locally built image; publishing changed local images only when needed; using the capability through deploy-rs and Colmena.
-- **Out of scope**: Fly account, organization, and user lifecycle; changes to deploy-rs or Colmena; unrelated Fly resources; general-purpose image publishing beyond deployment to Fly.
-- **Adjacent expectations**: Fly determines which app and Machine settings it accepts. Operators supply a Fly access token at deployment runtime. Token handling is **wiring**; live deployment checks that need a token are **verification**; obtaining or provisioning the token is operator-owned **provisioning** and is outside this feature.
+- **In scope**: Configuration and deployment of an existing Fly app; image references or locally built derivation-backed images; Machines API configuration, including multi-container Machines; token-only deployment authentication.
+- **Out of scope**: Creating or deleting Fly apps; provisioning application secrets, Fly accounts, or tokens; deploying to other providers.
+- **Adjacent expectations**: Fly authorizes deployment and supplies its registry/runtime; the operator supplies the token, an existing app, and a Nix build environment. External scripts and NixOps4 may invoke app commands; this spec does not integrate with their internals.
 
 ## Requirements
 
-### Requirement 1: Declarative app and Machine configuration
+### Requirement 1: Fly app declaration and settings
 
-**Objective:** As a Nix user, I want to declare my Fly app and Machine settings in one place, so that the deployed app reflects the configuration I maintain.
-
-#### Acceptance Criteria
-
-1. When an operator deploys an app declaration, the system shall apply the declared app and Machine settings to the target Fly app.
-2. Where an app or Machine setting supported by Fly is declared, the system shall preserve that setting in the deployed app state.
-3. Where a Machine declaration includes multiple containers, the deployed Machine shall include each declared container with its declared settings.
-4. If Fly rejects a declared setting, the system shall report deployment failure and identify the rejected setting.
-
-### Requirement 2: Image selection and publication
-
-**Objective:** As a Nix user, I want to use an existing image or a locally built image for my Fly app, so that I can deploy the image source I declare.
+**Objective:** As a Nix user, I want to declare an app and its settings in Nix, so that Fly configuration has one declarative source.
 
 #### Acceptance Criteria
+1. When a user declares an existing Fly app, the Fly App Module shall make its identity and declared settings available to deployment.
+2. Where a Fly app setting is supported by the deployment path, the Fly App Module shall allow the user to declare that setting.
+3. When a deployment is accepted, the Fly App Module shall apply the declared app settings to the target app.
+4. If the declared app does not exist or Fly rejects its settings, the Fly App Module shall report deployment failure.
 
-1. When an existing image reference is selected, the deployed app shall use that reference.
-2. When a local image derivation is selected, the system shall build the image locally and make it available to Fly before deploying the app with it.
-3. When a local image derivation changes after its image was successfully published, the system shall publish the changed image before deploying the app with it.
-4. When deployment is repeated with an unchanged local image derivation whose image was successfully published, the system shall not publish that image again.
-5. If building or publishing a local image fails, the system shall report deployment failure and shall not report the app as successfully deployed.
+### Requirement 2: Machines API and multi-container Machines
 
-### Requirement 3: Nix deployment tooling compatibility
-
-**Objective:** As an operator using Nix deployment tooling, I want to deploy the Fly app through my normal deployment workflow, so that Fly deployment fits the rest of my Nix-managed configuration.
+**Objective:** As a Nix user, I want to declare complete Machine configurations, so that I can use supported Fly features without losing configuration.
 
 #### Acceptance Criteria
+1. Where a Machine contains multiple containers, the Fly App Module shall allow the user to declare each container and its image and configuration.
+2. Where a supported Machines API field has no dedicated option, the Fly App Module shall allow the user to express that field.
+3. When a Machine is deployed, the Fly App Module shall preserve all declared supported Machine and container fields.
+4. When Fly accepts a Machine deployment, all Machines in the module-managed set shall reflect the declaration and no surplus Machine shall remain in that set.
 
-1. Where deploy-rs is used, the operator shall be able to deploy the Fly app through deploy-rs's normal deployment flow.
-2. Where Colmena is used, the operator shall be able to deploy the Fly app through Colmena's normal deployment flow.
-3. When deployment succeeds or fails, the invoking deployment tool shall report the corresponding result to the operator without requiring a separate interactive Fly deployment step.
+### Requirement 3: Image selection, local build, and publishing
 
-### Requirement 4: Token-only authentication
-
-**Objective:** As an operator, I want to authenticate Fly deployments with only a Fly access token, so that deployment does not depend on an interactive login or another credential service.
+**Objective:** As a Nix user, I want to deploy an existing image or a locally built derivation-backed image, so that image and app declarations stay together.
 
 #### Acceptance Criteria
+1. Where an existing image reference is selected, the Fly App Module shall deploy that image without rebuilding or republishing it.
+2. Where a Nix derivation is selected as an image source, the Fly App Module shall build a Fly-runnable container image locally with the pinned `nix-snapshotter` dependency and publish it to Fly before deploying it.
+3. When a derivation-backed image's realized identity has not changed and its published image remains available, the Fly App Module shall not republish it.
+4. When a derivation-backed image's realized identity changes, the Fly App Module shall publish the changed image before deploying it.
+5. If a previously published image is unavailable, its derivation identity has not changed, and local publication state is intact, the Fly App Module shall report failure without republishing it.
+6. If both image sources are declared for the same image-bearing declaration, the Fly App Module shall report the conflicting choices.
+7. If neither image source is declared for a required image, the Fly App Module shall report the missing source.
+8. If the local build, publication, or image-availability check fails, the Fly App Module shall report failure and shall not report deployment success.
 
-1. When a valid Fly access token is supplied at deployment runtime, the system shall authenticate the deployment without requiring an interactive Fly login.
-2. The system shall require no credential other than the Fly access token to authenticate with Fly.
-3. If the token is missing or rejected, the system shall report an authentication failure and shall not report deployment success.
-4. The system shall keep the Fly access token out of derivation inputs, Nix store paths, generated configuration artifacts, and published images.
+### Requirement 4: Independent flake-app deployment
+
+**Objective:** As a Nix user, I want one Nix command per Fly app, so that I can deploy apps independently or orchestrate them from a script.
+
+#### Acceptance Criteria
+1. When a Fly app is declared, the Fly App Module shall expose an independently invokable `nix run '.#deploy-<app>'` command for that app.
+2. When a caller invokes an app command, the Fly App Module shall target only the selected Fly app without requiring SSH access or a NixOS target.
+3. When the declared Fly configuration changes without an image change, the Fly App Module shall apply the configuration without republishing an unchanged derivation-backed image.
+4. If Fly rejects deployment, the Fly App Module shall return failure to the invoking command or script instead of success.
+
+### Requirement 5: Token-only deployment authentication
+
+**Objective:** As a Fly operator, I want one token to authorize image publication and deployment without interactive login.
+
+#### Acceptance Criteria
+1. When the operator supplies a Fly access token, the Fly App Module shall use it for Fly authentication during publication and deployment.
+2. The Fly App Module shall not require interactive `flyctl auth login` or a second credential.
+3. If the token is missing, empty, or rejected, the Fly App Module shall report authentication failure instead of success.
+
+### Requirement 6: Token confidentiality
+
+**Objective:** As a Fly operator, I want the access token kept out of build and configuration artifacts.
+
+#### Acceptance Criteria
+1. The Fly App Module shall not include the Fly token in Nix derivation inputs or store paths.
+2. The Fly App Module shall not write the Fly token into generated app or Machine configurations or persistent publication state.
+3. The Fly App Module shall not expose the Fly token in deployment command arguments or diagnostic output.
