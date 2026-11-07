@@ -104,7 +104,7 @@
   - _Requirements: 3.1, 3.2, 3.5, 6.4_
   - _Depends: 4.1_
 
-- [ ] 4.3 Add the iii database, queue, and cron worker units
+- [x] 4.3 Add the iii database, queue, and cron worker units
   - Add `iii-database`, `iii-queue`, and `iii-cron` units running the task 1.2 packages with the shared `User`, `Group`, `StateDirectory`, `Restart=always`, `RestartSec=2`, and `wantedBy = [ "multi-user.target" ]` settings
   - Order every unit `after` and `requires` `iii.service`; order `iii-database` additionally `after` and `requires` `total-recall-migrate.service`
   - Keep the database worker on the `memory` connection entry from task 4.1 (no URL, no password, no `secret://` reference) and let an unwritable `/var/lib/total-recall/queue` fail `iii-queue` instead of falling back to memory
