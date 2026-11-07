@@ -9,6 +9,7 @@ let
   lib = flake.inputs.nixpkgs.lib;
   defaultConfig = (lib.nixosSystem {
     system = "aarch64-linux";
+    specialArgs.totalRecall = flake.inputs.total-recall;
     modules = [ ./configurations/fabro-vm/total-recall.nix ];
   }).config;
   defaults = defaultConfig.fabro.totalRecall;
@@ -74,8 +75,9 @@ test("guest totalRecall options have the designed defaults and are enabled", () 
   });
 });
 
-test("guest module declares no service, firewall opening, or mutable-user policy", () => {
+test("guest module declares only the migration service without opening a firewall or adding mutable users", () => {
   const module = readFileSync("configurations/fabro-vm/total-recall.nix", "utf8");
 
-  assert.doesNotMatch(module, /systemd\.services|networking\.firewall|DynamicUser|users\.mutableUsers/);
+  assert.match(module, /systemd\.services\.total-recall-migrate/);
+  assert.doesNotMatch(module, /networking\.firewall|DynamicUser|users\.mutableUsers/);
 });
