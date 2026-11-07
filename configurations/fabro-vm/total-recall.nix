@@ -281,6 +281,69 @@ in
       };
     };
 
+    systemd.services.total-recall-harness-ingestion = {
+      description = "Validate and queue total-recall harness events";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "iii.service"
+        "total-recall-migrate.service"
+        "iii-database.service"
+        "iii-queue.service"
+        "iii-cron.service"
+      ];
+      requires = [
+        "iii.service"
+        "total-recall-migrate.service"
+        "iii-database.service"
+        "iii-queue.service"
+        "iii-cron.service"
+      ];
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+        TOTAL_RECALL_QUEUE_TOPIC = cfg.queueTopic;
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-harness-ingestion;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
+    systemd.services.total-recall-harness-event-persistence = {
+      description = "Persist queued total-recall harness events";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "iii.service"
+        "total-recall-migrate.service"
+        "iii-database.service"
+        "iii-queue.service"
+        "iii-cron.service"
+      ];
+      requires = [
+        "iii.service"
+        "total-recall-migrate.service"
+        "iii-database.service"
+        "iii-queue.service"
+        "iii-cron.service"
+      ];
+      environment = {
+        III_URL = "ws://${cfg.iiiHost}:${toString cfg.iiiPort}";
+        TOTAL_RECALL_QUEUE_TOPIC = cfg.queueTopic;
+        TOTAL_RECALL_DATABASE = cfg.databaseConnection;
+      };
+      serviceConfig = {
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = "total-recall";
+        ExecStart = lib.getExe pkgs.total-recall-harness-event-persistence;
+        Restart = "always";
+        RestartSec = 2;
+      };
+    };
+
     systemd.services.total-recall-migrate = {
       description = "Apply the total-recall database migrations";
       wantedBy = [ "multi-user.target" ];
