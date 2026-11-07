@@ -161,7 +161,6 @@ in
 
     casks = [
       "ungoogled-chromium"
-      "orbstack"
       "oversight"
       "balenaetcher"
       "homerow"
