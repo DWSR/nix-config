@@ -471,7 +471,7 @@ fabro-darwin-machines --output PATH --host-name HOST --ssh-user USER \
 - Every iteration: verify the credential file is non-empty, query
   `tailscale status --json`, and branch on `BackendState`.
 - `NeedsLogin`/`NeedsMachineAuth`/`Stopped` → run `tailscale up` with the
-  credential plus `?ephemeral=false&preauthorized=true`, `--advertise-tags`,
+  credential plus `?ephemeral=true&preauthorized=true`, `--advertise-tags`,
   `--hostname`, and `--accept-dns=false`.
 - Missing credential → log the runtime path and fail the iteration without
   running `tailscale up`.
@@ -491,7 +491,7 @@ mac-builder-tailscale-auth --auth-key-file PATH --hostname NAME --tag TAG \
 - Default mode: repeat iterations forever (launchd `KeepAlive`); a failed
   iteration logs and retries rather than exiting.
 - Preconditions: `tailscale` executable available; credential path readable.
-- Postconditions: a tagged, pre-authorized, non-ephemeral node when the
+- Postconditions: a tagged, pre-authorized, ephemeral node when the
   credential is valid.
 - Invariants: never calls `tailscale up` without a non-empty credential.
 
@@ -595,6 +595,31 @@ mac-builder-tailscale-auth --auth-key-file PATH --hostname NAME --tag TAG \
 - `secret-material.test.js`: the machines file is not rendered into the store or
   `/etc`, the client key is referenced only by path, and the evaluated
   `mac-builder` substituter/key sets exclude the private cache.
+
+#### Live Failure Validation
+
+- `fabro-darwin-live-failure-validate` runs only from an interactive terminal
+  after an explicit live-state acknowledgement. Each live mutation has a
+  separate operator prompt; ACL policy edits remain manual.
+- Dispatch probes use unique trivial `aarch64-darwin` derivations with
+  substitution disabled. The helper captures output privately and records only
+  result summaries.
+- Runtime secret paths and the guest machines file use same-directory backups.
+  Cleanup restores them without overwriting a reappeared path; `--restore-only`
+  recovers stale backups after an interrupted run.
+- The client-key rejection probe points the client-key field to `/dev/null`, so
+  no test credential is generated or copied. The host-key probe pins a valid,
+  test-only public key that differs from the builder's key.
+- The auth wrapper emits the non-secret marker `FABRO_TAILSCALE_UP_ATTEMPT`
+  immediately before invoking `tailscale up`. The live helper logs out while
+  the OAuth path is hidden, then checks fresh auth-log lines for the missing
+  path and absence of the marker. After restoring the credential, it verifies
+  the local builder's identity and `tag:nix-remote-builder` before continuing.
+- ACL denial passes only when the failed build names the builder and includes a
+  connection-level transport error; SSH authentication errors do not satisfy
+  the probe. The operator follows the README's “ACL-denial validation” procedure
+  to retain MagicDNS visibility while denying TCP/22, then restores the original
+  policy before the recovery build.
 
 ## Data Models
 

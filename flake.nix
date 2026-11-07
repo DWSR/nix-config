@@ -372,6 +372,12 @@
               pkgs.callPackage ./scripts/fabro-darwin-live-validate.nix { }
             }/bin/fabro-darwin-live-validate";
           };
+          fabro-darwin-live-failure-validate = {
+            type = "app";
+            program = "${
+              pkgs.callPackage ./scripts/fabro-darwin-live-failure-validate.nix { }
+            }/bin/fabro-darwin-live-failure-validate";
+          };
         }
       );
 

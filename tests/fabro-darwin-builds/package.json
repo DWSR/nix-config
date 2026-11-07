@@ -2,6 +2,6 @@
   "name": "fabro-darwin-builds-tests",
   "version": "0.0.0",
   "private": true,
-  "main": "guest-dispatch.test.js",
+  "main": "test-discovery.js",
   "description": "Test suite entry point for Fabro guest Darwin build dispatch."
 }
