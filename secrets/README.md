@@ -167,7 +167,10 @@ updatekeys secrets/fabro.fabro.yaml`.
 file for the `builder-authorized-keys` secret (newline-separated client
 public keys) and the `builder-tailscale-oauth-secret` credential consumed
 by sops-nix on the builder host. It is encrypted to the
-`&host_mac_builder` recipient only.
+`&host_mac_builder` recipient only. The personal host's
+`secrets/mac-builder-client.personal.yaml` separately holds the SSH client
+private key consumed by nix-daemon, encrypted only to `&host_personal` and
+decrypted to a root-owned mode-0400 path.
 
 | Item | Value |
 | --- | --- |
@@ -177,6 +180,12 @@ by sops-nix on the builder host. It is encrypted to the
 | 1Password item (age key) | `op://Private/sops-age-key-mac-builder` (Secure Note, `notesPlain`) |
 | 1Password sources | `op://Infrastructure/mac-builder authorized keys/notesPlain`; `op://Infrastructure/mac-builder Tailscale OAuth/Client ID`; `op://Infrastructure/mac-builder Tailscale OAuth/Client Secret` |
 | Private key on host | `/var/lib/sops-nix/key.txt` (mode `0600`, root) |
+
+The SSH client key is sourced from
+`op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key` and synced
+into the separate personal-host store by `nix run
+'.#mac-builder-sync-from-1password'`. The personal host age key is read from
+`op://Private/sops-age-key-personal/notesPlain` for that encryption.
 
 The builder age private key is generated once with `age-keygen` and
 stashed in 1Password under the item above, mirroring the per-host
