@@ -36,13 +36,13 @@ test('Running performs no up', () => {
   assert.equal(fs.existsSync(f.log), false);
 });
 
-test('NeedsLogin uses the exact tagged, non-ephemeral up arguments', () => {
+test('NeedsLogin uses the exact tagged, ephemeral up arguments', () => {
   const f = fixture('NeedsLogin');
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(fs.readFileSync(f.log, 'utf8').trim().split('\n'), [
     'up',
-    `--auth-key=${dummyCredential}?ephemeral=false&preauthorized=true`,
+    `--auth-key=${dummyCredential}?ephemeral=true&preauthorized=true`,
     '--advertise-tags=tag:builder', '--hostname=builder-test', '--accept-dns=false',
   ]);
 });

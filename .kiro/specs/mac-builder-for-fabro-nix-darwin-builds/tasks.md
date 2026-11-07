@@ -33,7 +33,7 @@
 
 - [x] 2.1 (P) Implement the launchd tailnet authentication wrapper
   - Create `scripts/mac-builder-tailscale-auth.nix` as a `writeShellApplication` with the CLI contract: `--auth-key-file`, `--hostname`, `--tag`, `--tailscale`, optional `--interval`, `--once`.
-  - Each iteration verify the credential file is non-empty, read `tailscale status --json`, and branch on `BackendState`: `Running` does nothing; `NeedsLogin`/`NeedsMachineAuth`/`Stopped` run `tailscale up` with `--auth-key=<secret>?ephemeral=false&preauthorized=true`, `--advertise-tags`, `--hostname`, and `--accept-dns=false`.
+  - Each iteration verify the credential file is non-empty, read `tailscale status --json`, and branch on `BackendState`: `Running` does nothing; `NeedsLogin`/`NeedsMachineAuth`/`Stopped` run `tailscale up` with `--auth-key=<secret>?ephemeral=true&preauthorized=true`, `--advertise-tags`, `--hostname`, and `--accept-dns=false`.
   - On a missing or empty credential, log the runtime path and fail the iteration without ever invoking `tailscale up`.
   - Default mode repeats iterations forever with retries (a failed iteration logs and continues); `--once` performs one iteration and exits nonzero unless the node is `Running` or re-authenticated.
   - Done when `--once` against a stub `--tailscale` shows no `up` for `Running`, the exact `up` arguments for `NeedsLogin`, no `up` plus the named path for a missing credential, and a nonzero result for an unresponsive daemon.
@@ -143,11 +143,12 @@
   - _Requirements: 1.4, 1.5, 3.1, 3.2, 6.6, 8.6_
   - _Depends: 1.3, 2.3, 3, 4.2, 5.1, 5.5_
 
-- [ ] 5.7 Validate the live failure modes and recovery
-  - _Blocked: requires live credential, ACL, and builder state changes followed by restoration; not safe to simulate offline._
-  - Remove the guest's `build-client-key` and confirm a Darwin build fails naming that runtime path; restore it and confirm recovery.
-  - Remove the builder's OAuth credential, let the auth daemon iterate, and confirm the iteration logs the credential path without running `tailscale up`; restore it and confirm the node rejoins.
-  - Remove the guest's ACL access and confirm the refused connection plus the guest error naming the builder's tailnet name; restore the grant and confirm the build succeeds.
+- [x] 5.7 Validate the live failure modes and recovery
+  - Hide the guest's `build-client-key` runtime path and confirm a Darwin build fails naming it; restore the path and confirm recovery.
+  - Temporarily point the guest machines line's client-key field to `/dev/null`; confirm the builder rejects the session with a public-key error naming its tailnet host, restore the file, and confirm recovery.
+  - Temporarily pin a valid test-only public host key in the guest machines file; confirm the guest rejects the builder's mismatched host key, restore the file, and confirm recovery.
+  - Hide the builder's OAuth runtime path, log the node out while it is hidden, and confirm a fresh auth-daemon log interval names the path without the `tailscale up` attempt marker; restore the path and confirm the local builder identity rejoins with `tag:nix-remote-builder`.
+  - Have the operator deny the guest's TCP/22 access while retaining MagicDNS visibility using the README's “ACL-denial validation” procedure; confirm a connection-level failure naming the builder's tailnet name, restore the original policy, and confirm the build succeeds.
   - Done when each failure names its owning layer and each restoration returns the path to a successful Darwin build.
   - _Requirements: 1.6, 1.7, 3.5, 3.6, 3.7, 4.8, 6.7, 6.12_
   - _Depends: 5.6_
