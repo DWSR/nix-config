@@ -59,7 +59,7 @@
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.6, 6.4, 6.7_
   - _Depends: 2_
 
-- [ ] 3.2 (P) Write the bootstrap and runtime-grant SQL
+- [x] 3.2 (P) Write the bootstrap and runtime-grant SQL
   - Add `configurations/fabro-vm/total-recall/bootstrap.sql`: `CREATE EXTENSION IF NOT EXISTS` for the three extensions, `memory` database ownership to `memory_migration`, and `ALTER SCHEMA public OWNER TO memory_migration` only when the catalog reports a different owner
   - Add `runtime-grants.sql` granting `memory_application` `SELECT, INSERT` on `memories`/`memory_embeddings`, `SELECT` on the ledger tables, and `SELECT, INSERT, UPDATE` on the three post-processing tables
   - Grant no `DELETE` anywhere and add no `DROP`, `TRUNCATE`, or non-conditional ownership change
