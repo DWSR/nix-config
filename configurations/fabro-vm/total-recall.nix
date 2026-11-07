@@ -89,6 +89,21 @@ let
     ${installWorkerConfig "queue" workerConfigs.queue}
     ${installWorkerConfig "cron" workerConfigs.cron}
   '';
+  iiiHealthGate = pkgs.writeShellScript "iii-worker-manager-health-gate" ''
+    set -eu
+    attempt=0
+    while [ "$attempt" -lt 30 ]; do
+      if ${lib.getExe pkgs.netcat-openbsd} -z -w 1 \
+        ${lib.escapeShellArg cfg.iiiHost} ${toString cfg.iiiPort}; then
+        exit 0
+      fi
+      attempt=$((attempt + 1))
+      sleep 1
+    done
+    echo "iii worker-manager did not become ready at ${cfg.iiiHost}:${toString cfg.iiiPort}" >&2
+    exit 1
+  '';
+
 in
 {
   options.fabro.totalRecall = {
@@ -154,6 +169,29 @@ in
     users.users."total-recall" = {
       isSystemUser = true;
       group = "total-recall";
+    };
+
+    systemd.services.iii = {
+      description = "iii worker runtime for total-recall";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "total-recall-config.service" ];
+      requires = [ "total-recall-config.service" ];
+      serviceConfig = {
+        ExecStart = "${lib.getExe pkgs.total-recall-iii} --config /var/lib/total-recall/iii/config.yaml";
+        ExecStartPost = iiiHealthGate;
+        WorkingDirectory = "/var/lib/total-recall/iii";
+        User = "total-recall";
+        Group = "total-recall";
+        StateDirectory = [
+          "total-recall"
+          "total-recall/iii"
+          "total-recall/config"
+          "total-recall/queue"
+          "total-recall/stream"
+        ];
+        Restart = "always";
+        RestartSec = 2;
+      };
     };
 
     systemd.services.total-recall-config = {
