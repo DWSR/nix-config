@@ -22,7 +22,7 @@
   - Completed when `nix flake metadata --json` shows a non-empty `locked.rev` for `total-recall` and the guest evaluation still succeeds
   - _Requirements: 1.1, 1.2_
 
-- [ ] 1.2 Build the pinned iii runtime and registry worker packages
+- [x] 1.2 Build the pinned iii runtime and registry worker packages
   - Create `overlays/total-recall.nix` with `fetchurl` derivations for iii 0.24.0 (`meta.mainProgram = "iii"`), `database` 0.5.26, `queue` 0.21.26, and `cron` 0.21.28 using the `aarch64-linux` hashes recorded in `research.md`
   - Re-export `harness-ingestion`, `harness-event-persistence`, `session-post-processing`, `opencode-harness-events`, `pi-harness-events`, and `mcp-worker` from `totalRecall.packages.${system}` under the `total-recall-*` names in the design's C1 contract
   - Add the overlay to `custom-packages` in `overlays/default.nix` and record each version and hash in a comment so a bump is a reviewable diff
