@@ -39,7 +39,7 @@
   - _Requirements: 1.3_
   - _Depends: 1.1, 1.2_
 
-- [ ] 2. Declare the guest totalRecall options, service account, and module enablement
+- [x] 2. Declare the guest totalRecall options, service account, and module enablement
   - Create `configurations/fabro-vm/total-recall.nix` with the design's `fabro.totalRecall` options: `enable` (default false), `iiiHost`/`iiiPort` (127.0.0.1/49134), `streamHost`/`streamPort` (127.0.0.1/3112), `databaseName`/`databaseConnection` (`memory`), `queueTopic` (`harness-events`), `postProcessingModel`, and `postProcessingBaseUrl` (`http://127.0.0.1:4000/v1/`)
   - Declare `users.groups.total-recall` and `users.users.total-recall` as a system user in that group; do not touch the Lima cidata account or `users.mutableUsers`
   - Import `./total-recall.nix` from `configurations/fabro-vm/default.nix` and set `fabro.totalRecall.enable = true` there
