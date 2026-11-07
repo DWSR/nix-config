@@ -24,6 +24,15 @@ in
   sops = {
     defaultSopsFile = ../../secrets/mcp.personal.yaml;
 
+    # The nix-daemon runs as root and needs this key for remote Darwin builds.
+    # Keep the decrypted SSH identity root-only and outside the Nix store.
+    secrets.mac-builder-ssh-private-key = {
+      sopsFile = ../../secrets/mac-builder-client.personal.yaml;
+      key = "mac-builder-ssh-private-key";
+      owner = "root";
+      mode = "0400";
+    };
+
     # Deskflow server TLS identity (cert + private key, PEM). Decrypted to an
     # owner-only path under /run/secrets and referenced by path from the
     # personal host's home.deskflow.tls.certificateFile -- the key never enters

@@ -49,7 +49,9 @@ pkgs.writeShellApplication {
     chmod 0700 "$tmpdir"
     trap 'rm -rf "$tmpdir"' EXIT
     age_key="$tmpdir/age.key"
+    personal_age_key="$tmpdir/personal-age.key"
     plaintext="$tmpdir/remote-builder.mac-builder.yaml"
+    personal_plaintext="$tmpdir/mac-builder-client.personal.yaml"
     KEY_URI=op://Private/sops-age-key-mac-builder/notesPlain
     if ! op read --no-newline "$KEY_URI" > "$age_key"; then
       echo "mac-builder-sync-from-1password: error: failed to read mac-builder age key from $KEY_URI" >&2
@@ -62,9 +64,21 @@ pkgs.writeShellApplication {
     fi
     export SOPS_AGE_KEY_FILE="$age_key"
 
+    PERSONAL_AGE_KEY_URI=op://Private/sops-age-key-personal/notesPlain
+    if ! op read --no-newline "$PERSONAL_AGE_KEY_URI" > "$personal_age_key"; then
+      echo "mac-builder-sync-from-1password: error: failed to read personal age key from $PERSONAL_AGE_KEY_URI" >&2
+      exit 3
+    fi
+    chmod 0600 "$personal_age_key"
+    if ! grep -q '^AGE-SECRET-KEY-' "$personal_age_key"; then
+      echo "mac-builder-sync-from-1password: error: invalid personal age key at $PERSONAL_AGE_KEY_URI" >&2
+      exit 3
+    fi
+
     CLIENT_ID_URI='op://Infrastructure/mac-builder Tailscale OAuth/Client ID'
     CLIENT_SECRET_URI='op://Infrastructure/mac-builder Tailscale OAuth/Client Secret'
     AUTHORIZED_KEYS_URI='op://Infrastructure/mac-builder authorized keys/notesPlain'
+    SSH_PRIVATE_KEY_URI='op://Infrastructure/mpbezzwylhzlupl7epao2mp5za/private key'
     if ! client_id="$(op read --no-newline "$CLIENT_ID_URI" 2>/dev/null)"; then
       echo "mac-builder-sync-from-1password: error: failed to resolve Tailscale OAuth Client ID" >&2
       echo "  URI: $CLIENT_ID_URI" >&2
@@ -80,8 +94,13 @@ pkgs.writeShellApplication {
       echo "  URI: $AUTHORIZED_KEYS_URI" >&2
       exit 3
     fi
-    if [ -z "$client_id" ] || [ -z "$client_secret" ] || [ -z "$authorized_keys" ]; then
-      echo "mac-builder-sync-from-1password: error: OAuth Client ID, Client Secret, and builder-authorized-keys must be non-empty" >&2
+    if ! ssh_private_key="$(op read --no-newline "$SSH_PRIVATE_KEY_URI" 2>/dev/null)"; then
+      echo "mac-builder-sync-from-1password: error: failed to resolve mac-builder SSH private key" >&2
+      echo "  URI: $SSH_PRIVATE_KEY_URI" >&2
+      exit 3
+    fi
+    if [ -z "$client_id" ] || [ -z "$client_secret" ] || [ -z "$authorized_keys" ] || [ -z "$ssh_private_key" ]; then
+      echo "mac-builder-sync-from-1password: error: OAuth credentials, authorized keys, and SSH private key must be non-empty" >&2
       exit 3
     fi
     if [[ ! "$authorized_keys" =~ [^[:space:]] ]]; then
@@ -94,6 +113,7 @@ pkgs.writeShellApplication {
     printf '%s' "$client_id" | jq -Rs . > "$tmpdir/client-id.json"
     printf '%s' "$client_secret" | jq -Rs . > "$tmpdir/client-secret.json"
     printf '%s' "$authorized_keys" | jq -Rs . > "$tmpdir/authorized-keys.json"
+    printf '%s' "$ssh_private_key" | jq -Rs . > "$tmpdir/ssh-private-key.json"
     {
       printf 'builder-tailscale-oauth-client-id: '
       tr -d '\n' < "$tmpdir/client-id.json"
@@ -103,7 +123,12 @@ pkgs.writeShellApplication {
       tr -d '\n' < "$tmpdir/authorized-keys.json"
       printf '\n'
     } > "$plaintext"
-    unset client_id client_secret authorized_keys
+    {
+      printf 'mac-builder-ssh-private-key: '
+      tr -d '\n' < "$tmpdir/ssh-private-key.json"
+      printf '\n'
+    } > "$personal_plaintext"
+    unset client_id client_secret authorized_keys ssh_private_key
 
     if ! sops --config "$REPO_ROOT/.sops.yaml" \
       --filename-override "$DEST_REL" \
@@ -112,6 +137,15 @@ pkgs.writeShellApplication {
       exit 4
     fi
     mv "$plaintext" "$DEST"
-    echo "mac-builder-sync-from-1password: refreshed OAuth credentials in $DEST_REL"
+    export SOPS_AGE_KEY_FILE="$personal_age_key"
+    PERSONAL_DEST_REL=secrets/mac-builder-client.personal.yaml
+    if ! sops --config "$REPO_ROOT/.sops.yaml" \
+      --filename-override "$PERSONAL_DEST_REL" \
+      --input-type yaml --output-type yaml --encrypt --in-place "$personal_plaintext"; then
+      echo "mac-builder-sync-from-1password: error: SOPS encryption failed for personal builder credential" >&2
+      exit 4
+    fi
+    mv "$personal_plaintext" "$REPO_ROOT/$PERSONAL_DEST_REL"
+    echo "mac-builder-sync-from-1password: refreshed builder credentials in $DEST_REL and $PERSONAL_DEST_REL"
   '';
 }

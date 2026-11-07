@@ -48,3 +48,7 @@ creation_rules:
     key_groups:
       - age:
           - *host_mac_builder
+  - path_regex: secrets/mac-builder-client\.personal\.yaml$
+    key_groups:
+      - age:
+          - *host_personal
