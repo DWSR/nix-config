@@ -26,7 +26,15 @@ changed files where the diff is not enough. This diff is your primary input.
 Run the checks and use their results; do not rely on visual inspection where a command
 can decide.
 
-1. Regression safety: discover the repository's canonical test command(s) from its
+1. Fabro preflight: run `fabro preflight .fabro/workflows/oneshot/workflow.toml` only when
+   the diff touches `.fabro/workflows/**` or any `workflow.toml` file. Otherwise skip it.
+   If preflight cannot start because of server configuration or authentication, mark
+   only this check `BLOCKED/environment` and record
+   `environment-blocked: fabro preflight (server configuration/authentication)` in
+   `review_mechanical`. Continue the remaining checks. This environment failure must not
+   trigger rejection or rework; if no independent rejection finding remains, return
+   overall verdict `BLOCKED` and set `stage_failure` to the concrete startup reason.
+2. Regression safety: discover the repository's canonical test command(s) from its
    manifests, task runners, CI config, and README, and run them. A failure rejects the
    change only when it is introduced by the diff or is an issue requirement left
    unverified. For every failing canonical check that could reflect a code defect, compare
@@ -59,16 +67,16 @@ can decide.
 
 Read the code and compare it against the issue.
 
-6. Reality: the implementation is real production code, not a mock, stub, placeholder,
+7. Reality: the implementation is real production code, not a mock, stub, placeholder,
    fake, or deferred-work shell.
-7. Acceptance criteria: every aspect of the issue is addressed, not just the happy path.
-8. Scope: the change does what the issue asks and no more; unrelated refactors, renames,
+8. Acceptance criteria: every aspect of the issue is addressed, not just the happy path.
+9. Scope: the change does what the issue asks and no more; unrelated refactors, renames,
    or formatting churn reject the change.
-9. Test quality: tests prove the required behavior and would fail if the implementation
-   were removed or broken. Missing tests reject the change when the touched area has a
-   test suite.
-10. Error handling: failure paths are handled and not silently swallowed.
-11. Conventions: the change follows the repository's existing patterns and style.
+10. Test quality: tests prove the required behavior and would fail if the implementation
+    were removed or broken. Missing tests reject the change when the touched area has a
+    test suite.
+11. Error handling: failure paths are handled and not silently swallowed.
+12. Conventions: the change follows the repository's existing patterns and style.
 
 ## Verdict rules
 

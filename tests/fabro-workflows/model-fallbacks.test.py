@@ -94,6 +94,27 @@ class ModelFallbackTests(unittest.TestCase):
         self.assertLess(graph.index(blocked_edge), graph.index(rework_edge))
         self.assertNotIn("Review rejected the change after 2 rework rounds", graph)
 
+    def test_oneshot_preflight_runs_only_for_workflow_changes(self):
+        review = " ".join(ONESHOT_REVIEW.read_text().split())
+
+        self.assertIn("fabro preflight .fabro/workflows/oneshot/workflow.toml", review)
+        self.assertIn("only when the diff touches `.fabro/workflows/**` or any `workflow.toml`", review)
+        self.assertIn("Otherwise skip it", review)
+
+    def test_oneshot_server_auth_preflight_failure_is_environment_blocked(self):
+        review = " ".join(ONESHOT_REVIEW.read_text().split())
+
+        self.assertIn("server configuration or authentication", review)
+        self.assertIn("record `environment-blocked: fabro preflight", review)
+        self.assertIn("must not trigger rejection or rework", review)
+        self.assertIn("overall verdict `BLOCKED`", review)
+        self.assertIn("set `stage_failure` to the concrete startup reason", review)
+        self.assertIn("Continue the remaining checks", review)
+
+    def test_fabro_server_auth_has_an_allowed_github_username(self):
+        text = FABRO_NIX.read_text()
+        self.assertIn('auth.github.allowed_usernames = [ "DWSR" ];', text)
+
     def test_oneshot_reviewer_distinguishes_environment_and_baseline_failures(self):
         review = ONESHOT_REVIEW.read_text()
 

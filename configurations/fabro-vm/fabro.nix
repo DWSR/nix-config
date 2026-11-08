@@ -285,6 +285,7 @@ let
       };
 
       auth.methods = [ "dev-token" ];
+      auth.github.allowed_usernames = [ "DWSR" ];
 
       integrations.github.strategy = "token";
 
