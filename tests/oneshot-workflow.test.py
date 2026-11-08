@@ -72,6 +72,29 @@ class ProbeTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_diagnose_cli_dispatches_to_handler(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = pathlib.Path(tmp, "tools.py")
+            script.write_text(TOOLS.read_text())
+            git_dir = pathlib.Path(tmp, ".git")
+            git_dir.mkdir()
+            pathlib.Path(git_dir, "oneshot-issue.md").write_text("A normal change\n")
+            fake_bin = pathlib.Path(tmp, "bin")
+            fake_bin.mkdir()
+            for command in ("git", "nix"):
+                executable = pathlib.Path(fake_bin, command)
+                executable.write_text("#!/bin/sh\nexit 0\n")
+                executable.chmod(0o755)
+            env = dict(os.environ, PATH=str(fake_bin) + os.pathsep + os.environ["PATH"])
+            output = subprocess.run(
+                [os.environ.get("PYTHON", "python3"), str(script), "diagnose", "381"],
+                cwd=tmp, env=env, capture_output=True, text=True,
+            )
+        self.assertEqual(output.returncode, 0, output.stderr)
+        report = json.loads(output.stdout)
+        self.assertEqual(report["context_updates"]["preflight_status"], "READY")
+        self.assertNotIn("unknown command 'diagnose'", output.stderr)
+
     def test_workflow_gates_implement_and_fails_blocked_preflight(self):
         graph = GRAPH.read_text()
         self.assertIn('prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]', graph)

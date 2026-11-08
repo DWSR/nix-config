@@ -483,10 +483,12 @@ def publish(argv):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: tools.py <prepare|check|publish> [args]")
+        sys.exit("usage: tools.py <prepare|diagnose|check|publish> [args]")
     cmd, rest = sys.argv[1], sys.argv[2:]
     if cmd == "prepare":
         prepare(rest)
+    elif cmd == "diagnose":
+        diagnose(rest)
     elif cmd == "check":
         check(rest)
     elif cmd == "publish":
