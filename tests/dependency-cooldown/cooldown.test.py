@@ -30,6 +30,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEPENDABOT = ROOT / ".github" / "dependabot.yml"
+ACTIONS_LOCK = ROOT / ".github" / "workflows" / "actions.lock"
 NPMRC_KEY = "min-release-age"
 COOLDOWN_DAYS = 7
 
@@ -240,10 +241,80 @@ class DependencyCooldownTests(unittest.TestCase):
     def test_github_actions_are_dependabot_covered(self):
         workflows = ROOT / ".github" / "workflows"
         self.assertTrue(
-            any(workflows.glob("*.yml")),
+            any(workflows.glob("*.yml")) or any(workflows.glob("*.yaml")),
             "%s has no workflow files" % workflows.relative_to(ROOT),
         )
         self.assert_covers("github-actions", ROOT)
+
+    def test_actions_lock_covers_every_workflow_action(self):
+        self.assertTrue(ACTIONS_LOCK.is_file(), "%s is missing" % posix(ACTIONS_LOCK))
+        lock = ACTIONS_LOCK.read_text()
+        sections = re.search(
+            r"(?ms)^workflows:\n(.*?)^dependencies:\n(.*)", lock
+        )
+        if sections is None:
+            self.fail("%s has invalid lockfile sections" % posix(ACTIONS_LOCK))
+        workflows_section, dependencies_section = sections.groups()
+        workflow_dir = ROOT / ".github" / "workflows"
+        workflows = sorted(
+            list(workflow_dir.glob("*.yml")) + list(workflow_dir.glob("*.yaml"))
+        )
+        lock_workflows = set(re.findall(r"(?m)^    '([^']+)':$", workflows_section))
+        self.assertEqual(
+            lock_workflows,
+            {posix(workflow)[1:] for workflow in workflows},
+            "%s workflow inventory does not match the checked-in workflows"
+            % posix(ACTIONS_LOCK),
+        )
+        for workflow in workflows:
+            with self.subTest(workflow=posix(workflow)):
+                workflow_lock = re.search(
+                    r"(?ms)^    '%s':\n((?:        - '[^']+'\n)+)"
+                    % re.escape(posix(workflow)[1:]),
+                    workflows_section,
+                )
+                if workflow_lock is None:
+                    self.fail("%s has no lockfile entry" % posix(workflow))
+                locked_refs = set(re.findall(r"'([^']+)'", workflow_lock.group(1)))
+                refs = re.findall(
+                    r"(?m)^[ \t]{6,}(?:-[ \t]+)?uses:[ \t]*([^\s#]+)",
+                    workflow.read_text(),
+                )
+                for ref in refs:
+                    if ref.startswith(("./", "$/", "docker://")):
+                        continue
+                    with self.subTest(workflow=posix(workflow), ref=ref):
+                        action, separator, version = ref.rpartition("@")
+                        self.assertTrue(separator, "invalid action ref %r" % ref)
+                        repo = "/".join(action.split("/")[:2])
+                        locked_ref = "%s@%s" % (repo, version)
+                        self.assertIn(
+                            locked_ref,
+                            locked_refs,
+                            "%s is not covered by %s" % (ref, posix(ACTIONS_LOCK)),
+                        )
+                        dependency = re.search(
+                            r"(?ms)^    '%s':\n((?:        [^\n]+\n)+)"
+                            % re.escape(locked_ref),
+                            dependencies_section,
+                        )
+                        if dependency is None:
+                            self.fail("%s has no lock entry" % locked_ref)
+                        self.assertRegex(
+                            dependency.group(1),
+                            r"(?m)^        commit: 'sha1-[0-9a-f]{40}'$",
+                            "%s is not locked to a full commit" % locked_ref,
+                        )
+                        self.assertRegex(
+                            dependency.group(1),
+                            r"(?m)^        owner_id: \d+$",
+                            "%s has no owner identity" % locked_ref,
+                        )
+                        self.assertRegex(
+                            dependency.group(1),
+                            r"(?m)^        repo_id: \d+$",
+                            "%s has no repository identity" % locked_ref,
+                        )
 
     def test_uv_uses_the_seven_day_exclude_newer(self):
         config = ROOT / "uv.toml"
