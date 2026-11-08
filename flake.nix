@@ -3015,7 +3015,10 @@
           fabro-workflows-model-fallbacks =
             pkgs.runCommand "fabro-workflows-model-fallbacks"
               {
-                nativeBuildInputs = [ pkgs.git pkgs.python3 ];
+                nativeBuildInputs = [
+                  pkgs.git
+                  pkgs.python3
+                ];
               }
               ''
                 export HOME=$(mktemp -d)
