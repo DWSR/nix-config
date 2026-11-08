@@ -1,0 +1,30 @@
+[
+  {
+    "name": "failure-triage label",
+    "title": "Investigate failed run",
+    "body": "Evidence follows.",
+    "labels": ["fabro-ready", "type/oneshot", "fabro-failure-triage"],
+    "mode": "triage"
+  },
+  {
+    "name": "failure-triage body marker",
+    "title": "Investigate failed run",
+    "body": "<!-- fabro-failure-triage:abc123 -->\nRun evidence.",
+    "labels": ["fabro-ready", "type/oneshot"],
+    "mode": "triage"
+  },
+  {
+    "name": "failure-triage title prefix",
+    "title": "[fabro-failure-triage] investigate failed run",
+    "body": "Run evidence.",
+    "labels": ["fabro-ready", "type/oneshot"],
+    "mode": "triage"
+  },
+  {
+    "name": "ordinary oneshot",
+    "title": "Implement a feature",
+    "body": "Normal issue body.",
+    "labels": ["fabro-ready", "type/oneshot"],
+    "mode": "standard"
+  }
+]

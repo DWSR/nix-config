@@ -3023,6 +3023,7 @@
                 chmod -R u+w source
                 cd source
                 python3 tests/fabro-workflows/model-fallbacks.test.py
+                python3 tests/fabro-workflows/oneshot-triage.test.py
                 touch $out
               '';
 

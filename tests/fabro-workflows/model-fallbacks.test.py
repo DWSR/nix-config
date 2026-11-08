@@ -84,12 +84,20 @@ class ModelFallbackTests(unittest.TestCase):
 
     def test_oneshot_routes_environmental_reviews_directly_to_failure(self):
         graph = ONESHOT_GRAPH.read_text()
-        network_edge = 'review -> fail [condition="outcome=failed && context.failure_class contains network"]'
-        blocked_edge = 'review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]'
+        network_edge = 'review -> fail [condition="outcome=failed && context.failure_class contains network && context.issue_mode!=triage"]'
+        blocked_edge = 'review -> fail [condition="outcome=failed && context.verdict=BLOCKED && context.issue_mode!=triage"]'
         rework_edge = 'review -> rework [condition="outcome=failed && context.verdict=REJECTED"]'
 
         self.assertIn(network_edge, graph)
         self.assertIn(blocked_edge, graph)
+        self.assertIn(
+            'review -> salvage [condition="outcome=failed && context.verdict=BLOCKED && context.issue_mode=triage"]',
+            graph,
+        )
+        self.assertIn(
+            'review -> fail [condition="outcome=failed && context.failure_class contains network && context.issue_mode!=triage"]',
+            graph,
+        )
         self.assertLess(graph.index(network_edge), graph.index(rework_edge))
         self.assertLess(graph.index(blocked_edge), graph.index(rework_edge))
         self.assertNotIn("Review rejected the change after 2 rework rounds", graph)

@@ -102,6 +102,30 @@ digraph Oneshot {
         script="python3 .git/oneshot-scripts/tools.py publish"
     ]
 
+    triage_recover [
+        label="Recover triage mitigation",
+        prompt="@prompts/triage-recover.md",
+        output_schema="routing",
+        max_visits=3,
+        max_retries=2,
+        retry_policy="patient"
+    ]
+
+    salvage [
+        label="Prepare triage findings for salvage",
+        prompt="@prompts/salvage.md",
+        output_schema="routing",
+        max_retries=2,
+        retry_policy="patient"
+    ]
+
+    salvage_publish [
+        label="Publish triage mitigation draft",
+        shape=parallelogram,
+        goal_gate=true,
+        script="python3 .git/oneshot-scripts/tools.py publish salvage"
+    ]
+
     fail [
         label="Fail run",
         shape=parallelogram,
@@ -115,6 +139,7 @@ digraph Oneshot {
     prepare -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
+    implement -> triage_recover [condition="outcome=failed && context.impl_status=BLOCKED && context.issue_mode=triage"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
     implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
@@ -131,8 +156,10 @@ digraph Oneshot {
     wait_simplify_rate_limit -> fail
 
     review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
-    review -> fail [condition="outcome=failed && context.failure_class contains network"]
-    review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]
+    review -> salvage [condition="outcome=failed && context.failure_class contains network && context.issue_mode=triage"]
+    review -> fail [condition="outcome=failed && context.failure_class contains network && context.issue_mode!=triage"]
+    review -> salvage [condition="outcome=failed && context.verdict=BLOCKED && context.issue_mode=triage"]
+    review -> fail [condition="outcome=failed && context.verdict=BLOCKED && context.issue_mode!=triage"]
     review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
     review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
     review -> fail
@@ -141,6 +168,13 @@ digraph Oneshot {
 
     rework -> implement [condition="outcome=succeeded && context.rework_round <= 2"]
     rework -> fail
+
+    triage_recover -> check [condition="outcome=succeeded && context.impl_status=READY"]
+    triage_recover -> salvage [condition="outcome=failed && context.impl_status=BLOCKED"]
+    triage_recover -> fail
+
+    salvage -> salvage_publish [condition="outcome=succeeded"]
+    salvage -> fail
 
     publish -> exit
     fail -> exit

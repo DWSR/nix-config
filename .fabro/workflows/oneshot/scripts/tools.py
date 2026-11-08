@@ -96,6 +96,17 @@ def write_issue_file(issue, owner, repo, labels):
         f.write("## Body\n\n%s\n" % (issue.get("body") or "(empty)"))
 
 
+def classify_issue(issue, labels):
+    title = (issue.get("title") or "").strip()
+    body = issue.get("body") or ""
+    triage = (
+        "fabro-failure-triage" in labels
+        or re.match(r"^\[fabro-failure-triage\]", title, re.IGNORECASE)
+        or re.search(r"<!--\s*fabro-failure-triage:", body, re.IGNORECASE)
+    )
+    return "triage" if triage else "standard"
+
+
 def issue_fingerprint(title, body):
     canonical = json.dumps({"title": title, "body": body or ""}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -180,6 +191,7 @@ def prepare(argv):
     if state is not None and state.get("issue") != issue_number:
         sys.exit("state file %s describes issue %s, not #%d; start a fresh run" % (STATE_PATH, state.get("issue"), issue_number))
 
+    issue_mode = classify_issue(issue, labels)
     fingerprint = issue_fingerprint(title, issue.get("body"))
     meta, meta_sha = load_meta(issue_number)
 
@@ -215,6 +227,7 @@ def prepare(argv):
             "trunk": detect_trunk(),
             "baseline_sha": run(["git", "rev-parse", "HEAD"]),
             "simplify_round": 0,
+            "issue_mode": issue_mode,
             "created_at": now_iso(),
         }
         gh("POST", "/repos/%s/%s/issues/%d/labels" % (owner, repo, issue_number), {"labels": [RUNNING_LABEL]})
@@ -224,6 +237,7 @@ def prepare(argv):
 
     state["issue_title"] = title
     state["issue_url"] = issue.get("html_url", "")
+    state["issue_mode"] = issue_mode
     write_issue_file(issue, owner, repo, labels)
     save_state(state)
 
@@ -234,6 +248,7 @@ def prepare(argv):
         "issue_title": title,
         "trunk": state["trunk"],
         "baseline_sha": state["baseline_sha"],
+        "issue_mode": state["issue_mode"],
     }}))
 
 
@@ -293,6 +308,12 @@ def check(argv):
     print(json.dumps({"context_updates": updates}))
 
 
+def triage_summary_complete(summary):
+    normalized = re.sub(r"(?im)^#{0,6}\s*", "", summary)
+    headings = {line.strip().lower() for line in normalized.splitlines()}
+    return {"findings", "remaining external work"}.issubset(headings)
+
+
 def load_publish_meta(issue_number, state):
     title = "fix(oneshot): implement issue #%d" % issue_number
     summary = "Implements the change requested in issue #%d." % issue_number
@@ -315,14 +336,35 @@ def load_publish_meta(issue_number, state):
 
 def publish(argv):
     state = load_state()
+    salvage = bool(argv and argv[0] == "salvage")
+    if argv and argv != ["salvage"]:
+        sys.exit("usage: tools.py publish [salvage]")
+    if salvage and state.get("issue_mode") != "triage":
+        sys.exit("salvage publishing is only available for triage issues")
+    if salvage and (not state.get("baseline_sha") or not re.fullmatch(r"[0-9a-f]{40,64}", state["baseline_sha"])):
+        sys.exit("triage salvage requires a valid baseline_sha")
     owner, repo = origin_repo()
     slug = "%s/%s" % (owner, repo)
     issue_number = state["issue"]
     trunk = state.get("trunk") or detect_trunk()
     branch = "oneshot/issue-%d" % issue_number
     title, summary = load_publish_meta(issue_number, state)
+    if state.get("issue_mode") == "triage" and not triage_summary_complete(summary):
+        sys.exit("triage summary must contain Findings and Remaining external work headings")
 
     run(["git", "add", "-A"])
+    if salvage:
+        baseline = state["baseline_sha"]
+        changes = run(["git", "diff", "--cached", "--numstat", baseline])
+        files = changes.splitlines()
+        lines = 0
+        for line in files:
+            parts = line.split("\t")
+            if len(parts) >= 3 and parts[0] != "-" and parts[1] != "-":
+                lines += int(parts[0]) + int(parts[1])
+        if not files or lines <= 0 or lines >= DIFF_LIMIT:
+            sys.exit("triage salvage requires an in-repo mitigation under %d changed lines; found %d lines across %d files" % (
+                DIFF_LIMIT, lines, len(files)))
     run(["git", "fetch", "--quiet", "origin", "refs/heads/%s" % trunk])
     base = run(["git", "rev-parse", "FETCH_HEAD"])
     tree = run(["git", "write-tree"])
@@ -356,7 +398,7 @@ def publish(argv):
             "title": title,
             "head": branch,
             "base": trunk,
-            "draft": False,
+            "draft": salvage,
             "body": body,
         }, expect=(201, 422))
         if status == 422:
@@ -368,6 +410,25 @@ def publish(argv):
         print("oneshot publish: created PR #%s %s -> %s" % (pr.get("number"), branch, trunk), file=sys.stderr)
     else:
         print("oneshot publish: reusing PR #%s for %s" % (pr.get("number"), branch), file=sys.stderr)
+
+    if salvage:
+        body = "%s\n\nCloses #%d\n" % (summary, issue_number)
+        _, updated_pr = gh("PATCH", "/repos/%s/pulls/%s" % (slug, pr["number"]), {
+            "title": title, "body": body,
+        })
+        if updated_pr.get("draft") is not True:
+            node_id = updated_pr.get("node_id")
+            if not node_id:
+                sys.exit("cannot convert triage pull request #%s to draft: GitHub response has no node_id" % pr.get("number"))
+            _, result = gh("POST", "/graphql", {
+                "query": "mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){pullRequest{isDraft}}}",
+                "variables": {"id": node_id},
+            })
+            draft_pr = (((result or {}).get("data") or {}).get("convertPullRequestToDraft") or {}).get("pullRequest") or {}
+            if (result or {}).get("errors") or draft_pr.get("isDraft") is not True:
+                sys.exit("failed to convert triage pull request #%s to draft: %s" % (
+                    updated_pr.get("number"), json.dumps((result or {}).get("errors") or result)[:1000]))
+            pr = updated_pr
 
     print(json.dumps({"context_updates": {
         "pr_number": str(pr.get("number")),

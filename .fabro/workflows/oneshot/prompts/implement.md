@@ -10,10 +10,18 @@ pull request; a separate reviewer will adversarially re-check your work.
 
 - Issue content: `.git/oneshot-issue.md` (title, URL, labels, body). The issue is the
   contract: implement what it asks, nothing more.
-- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, and `baseline_sha`. Your change
-  is measured with `git diff` against `baseline_sha` and must stay under 1000 changed
-  lines, where a modified line counts as one addition plus one deletion. Keep the diff
-  minimal: no drive-by refactors, formatting churn, or unrelated renames.
+- Run state: `.git/oneshot-state.json` — `repo`, `trunk`, `baseline_sha`, and `issue_mode`
+  (`triage` or `standard`). Your change is measured with `git diff` against `baseline_sha`
+  and must stay under 1000 changed lines, where a modified line counts as one addition plus
+  one deletion. Keep the diff minimal: no drive-by refactors, formatting churn, or unrelated renames.
+- When `issue_mode` is `triage`, this is an investigation/failure-triage issue: investigate
+  every cited run and evidence link in the issue before choosing a mitigation. Prefer the
+  narrowest safe change entirely in this repository; do not claim that it resolves external
+  causes you cannot change. Put concrete findings in the publish summary under `Findings`
+  and list remaining external work under `Remaining external work`. Return BLOCKED only if
+  no safe in-repo mitigation exists; state what evidence rules out all such mitigations.
+  Triage BLOCKED outcomes route through a recovery stage that investigates and implements a
+  safe mitigation before the normal diff gate and adversarial review, rather than failing bare.
 - Repository conventions: read `AGENTS.md` / `CLAUDE.md`, `README*`, and `CONTRIBUTING*`,
   then follow the existing code patterns inside the touched area.
 - Rework context: if the run context shows `verdict` = `REJECTED`, this is a rework round.
