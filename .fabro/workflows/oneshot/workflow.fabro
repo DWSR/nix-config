@@ -13,7 +13,7 @@ digraph Oneshot {
         timeout="5m",
         on_failure="exit",
         max_retries=0,
-        script="set -eu\nmkdir -p .git/oneshot-scripts\ncp .fabro/workflows/oneshot/scripts/tools.py .git/oneshot-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/oneshot-scripts/tools.py', doraise=True)\""
+        script="set -eu\nmkdir -p .git/oneshot-scripts\ncp .fabro/workflows/oneshot/scripts/tools.py .git/oneshot-scripts/tools.py\ncp .fabro/workflows/oneshot/scripts/normalize_review.py .git/oneshot-scripts/normalize_review.py\npython3 -c \"import py_compile; py_compile.compile('.git/oneshot-scripts/tools.py', doraise=True); py_compile.compile('.git/oneshot-scripts/normalize_review.py', doraise=True)\""
     ]
 
     prepare [
@@ -27,10 +27,19 @@ digraph Oneshot {
     implement [
         label="Implement issue",
         prompt="@prompts/implement.md",
-        output_schema="routing",
+        output_schema="@schemas/review-result.schema.json",
+        output_retries=2,
         max_visits=8,
         max_retries=2,
         retry_policy="patient"
+    ]
+
+    normalize_implement [
+        label="Normalize implementation result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.implement",
+        script="python3 .git/oneshot-scripts/normalize_review.py"
     ]
 
     check [
@@ -44,19 +53,37 @@ digraph Oneshot {
     simplify [
         label="Simplify change",
         prompt="@prompts/simplify.md",
-        output_schema="routing",
+        output_schema="@schemas/review-result.schema.json",
+        output_retries=2,
         max_visits=5,
         max_retries=2,
         retry_policy="patient"
     ]
 
+    normalize_simplify [
+        label="Normalize simplification result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.simplify",
+        script="python3 .git/oneshot-scripts/normalize_review.py"
+    ]
+
     review [
         label="Review change",
         prompt="@prompts/review.md",
-        output_schema="routing",
+        output_schema="@schemas/review-result.schema.json",
+        output_retries=2,
         max_visits=8,
         max_retries=2,
         retry_policy="patient"
+    ]
+
+    normalize_review [
+        label="Normalize review result",
+        shape=parallelogram,
+        output_schema="routing",
+        stdin_source="context.output.review",
+        script="python3 .git/oneshot-scripts/normalize_review.py"
     ]
 
     rework [
@@ -114,9 +141,12 @@ digraph Oneshot {
     prepare -> implement [condition="outcome=succeeded"]
     prepare -> fail
 
-    implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
-    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
+    implement -> normalize_implement [condition="outcome=succeeded"]
     implement -> fail
+    normalize_implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
+    normalize_implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
+    normalize_implement -> fail
     wait_implement_rate_limit -> implement [condition="outcome=succeeded"]
     wait_implement_rate_limit -> fail
 
@@ -124,18 +154,25 @@ digraph Oneshot {
     check -> simplify [condition="outcome=succeeded && context.over_limit=true && context.can_simplify=true"]
     check -> fail
 
-    simplify -> check [condition="outcome=succeeded"]
-    simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
+    simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
+    simplify -> normalize_simplify [condition="outcome=succeeded"]
     simplify -> fail
+    normalize_simplify -> check [condition="outcome=succeeded"]
+    normalize_simplify -> wait_simplify_rate_limit [condition="outcome=failed && context.failure_class=rate_limit"]
+    normalize_simplify -> fail
     wait_simplify_rate_limit -> simplify [condition="outcome=succeeded"]
     wait_simplify_rate_limit -> fail
 
-    review -> publish [condition="outcome=succeeded && context.verdict=APPROVED"]
-    review -> fail [condition="outcome=failed && context.failure_class contains network"]
-    review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]
-    review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
-    review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit", weight=10]
+    review -> normalize_review [condition="outcome=succeeded || outcome=failed"]
     review -> fail
+    normalize_review -> publish [condition="outcome=succeeded && context.verdict=APPROVED && context.failure_class=none"]
+    normalize_review -> rework [condition="outcome=failed && context.verdict=REJECTED"]
+    normalize_review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class=rate_limit", weight=10]
+    normalize_review -> fail [condition="outcome=failed && context.failure_class=network"]
+    normalize_review -> fail [condition="outcome=failed && context.failure_class=baseline"]
+    normalize_review -> fail [condition="outcome=failed && context.failure_class=environment"]
+    normalize_review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]
+    normalize_review -> fail
     wait_review_rate_limit -> review [condition="outcome=succeeded"]
     wait_review_rate_limit -> fail
 

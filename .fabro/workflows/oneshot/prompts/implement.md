@@ -20,6 +20,16 @@ pull request; a separate reviewer will adversarially re-check your work.
   Treat `review_findings` and `review_remediation` from the run context as authoritative
   feedback on top of the issue: fix every finding and re-run the full validation set.
   Do not redo work the review already approved.
+- Return one JSON object matching the oneshot result schema: `outcome` (`succeeded` or
+  `failed`), `verdict` (`APPROVED` or `BLOCKED`), `failure_class` (`none` or `environment`),
+  `check_results` (an object keyed by check name whose entries each contain `command`,
+  `status`, `baseline_status`, and `reason`), and `context_updates`. On success use
+  `outcome` `succeeded`, `verdict` `APPROVED`, and `failure_class` `none`; preserve the
+  `impl_*` report in `context_updates`. On failure return `outcome` `failed`, `verdict`
+  `BLOCKED`, `failure_class` `environment`, and a concrete `failure_reason` plus
+  `context_updates.stage_failure`. Put `verdict` and `failure_class` at the top level;
+  the workflow normalizes them into flat routing context. Include an `impl_status` field
+  in `context_updates` (`READY` on success, `BLOCKED` otherwise).
 
 ## Execution protocol
 
@@ -28,7 +38,7 @@ pull request; a separate reviewer will adversarially re-check your work.
    when no reasonable reading exists, and say exactly what context is missing.
 2. Implement the smallest complete change that resolves the issue:
    - real behavior only: no mocks, stubs, placeholders, or TODO-only paths,
-   - no new TBD, TODO, FIXME, HACK, or XXX markers in changed files,
+   - no new TBD, TODO, FIXME, HACK, XXX markers in changed files,
    - no hardcoded secrets or credentials,
    - no scratch, plan, or report files inside the repository (use `.git/` or `/tmp`),
    - do not modify `.kiro/` state and do not touch CI workflow files unless the issue
@@ -50,15 +60,15 @@ pull request; a separate reviewer will adversarially re-check your work.
 ## Reporting
 
 Before finishing, write `.git/oneshot-publish.json` with the proposed PR metadata as a
-single JSON object: `{"title": "<single-line Conventional Commits title: type(scope): summary>", "summary": "<short markdown summary for the PR body>"}`.
+single JSON object: `{"title": "<single-line Conventional Commits title: type(scope): summary>", "summary": "<short markdown summary>"}`.
 Then end your response with exactly one JSON object as the final content; nothing after
 it. Keep every value a single-line JSON string; escape embedded double quotes as `\"` and
 newlines as `\n`.
 
 On success:
 
-{"outcome": "succeeded", "context_updates": {"impl_status": "READY", "impl_summary": "<one line describing the delivered change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}}
+{"outcome": "succeeded", "verdict": "APPROVED", "failure_class": "none", "check_results": {"tests": {"command": "<test commands>", "status": "PASS", "baseline_status": "not run", "reason": ""}}, "context_updates": {"impl_status": "READY", "impl_summary": "<one line describing the delivered change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}}
 
 When blocked:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<the exact blocker and what would unblock it>"}}
+{"outcome": "failed", "verdict": "BLOCKED", "failure_class": "environment", "failure_reason": "<one line>", "check_results": {"blocked": {"command": "<blocked operation>", "status": "BLOCKED", "baseline_status": "not run", "reason": "<the exact blocker>"}}, "context_updates": {"impl_status": "BLOCKED", "stage_failure": "<the exact blocker>", "impl_blocker": "<the exact blocker and what would unblock it>"}}

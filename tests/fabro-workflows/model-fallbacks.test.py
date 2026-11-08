@@ -84,14 +84,14 @@ class ModelFallbackTests(unittest.TestCase):
 
     def test_oneshot_routes_environmental_reviews_directly_to_failure(self):
         graph = ONESHOT_GRAPH.read_text()
-        network_edge = 'review -> fail [condition="outcome=failed && context.failure_class contains network"]'
-        blocked_edge = 'review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]'
-        rework_edge = 'review -> rework [condition="outcome=failed && context.verdict=REJECTED"]'
-
-        self.assertIn(network_edge, graph)
-        self.assertIn(blocked_edge, graph)
-        self.assertLess(graph.index(network_edge), graph.index(rework_edge))
-        self.assertLess(graph.index(blocked_edge), graph.index(rework_edge))
+        self.assertIn('normalize_review -> publish [condition="outcome=succeeded && context.verdict=APPROVED && context.failure_class=none"]', graph)
+        self.assertIn('normalize_review -> fail [condition="outcome=failed && context.failure_class=network"]', graph)
+        self.assertIn('normalize_review -> fail [condition="outcome=failed && context.failure_class=baseline"]', graph)
+        self.assertIn('normalize_review -> fail [condition="outcome=failed && context.failure_class=environment"]', graph)
+        self.assertIn('normalize_review -> rework [condition="outcome=failed && context.verdict=REJECTED"]', graph)
+        self.assertIn('normalize_review -> wait_review_rate_limit [condition="outcome=failed && context.failure_class=rate_limit", weight=10]', graph)
+        self.assertIn('normalize_review -> fail [condition="outcome=failed && context.verdict=BLOCKED"]', graph)
+        self.assertNotIn("failure_class contains", graph)
         self.assertNotIn("Review rejected the change after 2 rework rounds", graph)
 
     def test_oneshot_reviewer_distinguishes_environment_and_baseline_failures(self):

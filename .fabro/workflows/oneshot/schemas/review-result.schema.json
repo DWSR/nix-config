@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Oneshot stage result",
+  "type": "object",
+  "properties": {
+    "outcome": {"type": "string", "enum": ["succeeded", "failed"]},
+    "verdict": {"type": "string", "enum": ["APPROVED", "REJECTED", "BLOCKED"]},
+    "failure_class": {
+      "type": "string",
+      "enum": ["none", "network", "rate_limit", "baseline", "code", "environment"]
+    },
+    "check_results": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string"},
+          "status": {"type": "string"},
+          "baseline_status": {"type": "string"},
+          "reason": {"type": "string"}
+        },
+        "required": ["command", "status", "baseline_status", "reason"],
+        "additionalProperties": false
+      }
+    },
+    "context_updates": {"type": "object"},
+    "failure_reason": {"type": "string"}
+  },
+  "required": ["outcome", "verdict", "failure_class", "check_results", "context_updates"],
+  "additionalProperties": true
+}

@@ -15,6 +15,19 @@ every `impl_*` value as a claim to check.
   `diff_lines`.
 - The diff-size check already passed: the change is under 1000 Git-changed lines (a
   modified line counts as one addition plus one deletion).
+- Your final response must contain a JSON object with `outcome`, `verdict`, `failure_class`,
+  `check_results`, and `context_updates`. Use only the schema enums: `verdict` is
+  `APPROVED`, `REJECTED`, or `BLOCKED`; `failure_class` is `none`, `network`, `rate_limit`,
+  `baseline`, `code`, or `environment`. Each keyed `check_results` entry must contain
+  string fields `command`, `status`, `baseline_status`, and `reason`. Put verdict and
+  failure class at the top level so the normalization step can pass them to routing
+  context. Successful output must pair `APPROVED` with `none`; failed output must pair
+  `REJECTED` with `code`, or `BLOCKED` with an environmental failure class. For any
+  failure include a non-empty `failure_reason` and `context_updates.stage_failure`; rejected
+  results also require `context_updates.review_findings` and `context_updates.review_remediation`.
+  Classify network failures as `network`, rate limiting as `rate_limit`, pre-existing
+  baseline failures as `baseline`, change-introduced findings as `code`, and other blockers
+  as `environment`.
 
 ## First action
 
@@ -95,16 +108,16 @@ single-line JSON string; escape embedded double quotes as `\"` and newlines as `
 
 When the change is approved:
 
-{"outcome": "succeeded", "context_updates": {"verdict": "APPROVED", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "<baseline failures and evidence, explicitly non-blocking, or empty>", "review_remediation": ""}}
+{"outcome": "succeeded", "verdict": "APPROVED", "failure_class": "none", "check_results": {"tests": {"command": "<command>", "status": "PASS", "baseline_status": "PASS", "reason": ""}}, "context_updates": {"verdict": "APPROVED", "failure_class": "none", "review_summary": "<one-sentence outcome>", "review_mechanical": "tests: <command> PASS; TODO grep: CLEAN; secrets grep: CLEAN; scratch files: NONE", "review_findings": "<baseline failures and evidence, explicitly non-blocking, or empty>", "review_remediation": ""}}
 
 When the change is rejected for a change-introduced defect or an unverified requirement:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"verdict": "REJECTED", "stage_failure": "<concrete reason>", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file, line range, and why it violates the issue>; 2. <finding>", "review_remediation": "1. <exact fix>; 2. <exact fix>"}}
+{"outcome": "failed", "verdict": "REJECTED", "failure_class": "code", "failure_reason": "<concrete reason>", "check_results": {"tests": {"command": "<command>", "status": "FAIL", "baseline_status": "PASS", "reason": "<concrete failure>"}}, "context_updates": {"verdict": "REJECTED", "failure_class": "code", "stage_failure": "<concrete reason>", "review_summary": "<one-sentence outcome>", "review_mechanical": "<concise mechanical results>", "review_findings": "1. <finding with exact file and why it violates the issue>", "review_remediation": "1. <exact fix>"}}
 
 When the review is blocked by a network failure:
 
-{"outcome": "failed", "failure_reason": "<concrete network error>", "context_updates": {"verdict": "BLOCKED", "failure_class": "network", "stage_failure": "<same concrete network error>", "review_summary": "Review blocked by a network failure.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
+{"outcome": "failed", "verdict": "BLOCKED", "failure_class": "network", "failure_reason": "<concrete network error>", "check_results": {"tests": {"command": "<command>", "status": "BLOCKED", "baseline_status": "not run", "reason": "<concrete network error>"}}, "context_updates": {"verdict": "BLOCKED", "failure_class": "network", "stage_failure": "<same concrete network error>", "review_summary": "Review blocked by a network failure.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
 
 When the review is blocked for another reason:
 
-{"outcome": "failed", "failure_reason": "<concrete blocker>", "context_updates": {"verdict": "BLOCKED", "stage_failure": "<same concrete blocker>", "review_summary": "Review blocked: <concrete blocker>.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}
+{"outcome": "failed", "verdict": "BLOCKED", "failure_class": "environment", "failure_reason": "<concrete blocker>", "check_results": {"tests": {"command": "<command>", "status": "BLOCKED", "baseline_status": "not run", "reason": "<concrete blocker>"}}, "context_updates": {"verdict": "BLOCKED", "failure_class": "environment", "stage_failure": "<same concrete blocker>", "review_summary": "Review blocked: <concrete blocker>.", "review_mechanical": "<checks completed and the blocked check>", "review_findings": "", "review_remediation": "<what would unblock the review>"}}

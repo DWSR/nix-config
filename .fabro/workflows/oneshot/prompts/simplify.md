@@ -12,7 +12,7 @@ the second round the run fails.
 - Issue content: `.git/oneshot-issue.md` — the behavior the change must preserve.
 - Run state: `.git/oneshot-state.json` — `baseline_sha` is the commit the change is measured against.
 - The current change: run `git diff <baseline_sha>` and `git status --short` to see
-  everything that will be counted, including untracked files.
+everything that will be counted, including untracked files.
 
 ## What to do
 
@@ -37,6 +37,16 @@ the second round the run fails.
 - Do NOT create git commits; the workflow's publish stage owns the commit and the branch push.
 - No scratch, plan, or report files inside the repository (use `.git/` or `/tmp`).
 - No new TBD, TODO, FIXME, HACK, or XXX markers in changed files.
+- Return one JSON object matching the oneshot result schema: `outcome` (`succeeded` or
+  `failed`), `verdict` (`APPROVED` or `BLOCKED`), `failure_class` (`none` or `environment`),
+  `check_results` (an object keyed by check name whose entries each contain `command`,
+  `status`, `baseline_status`, and `reason`), and `context_updates`. On success use
+  `outcome` `succeeded`, `verdict` `APPROVED`, and `failure_class` `none`; preserve the
+  `impl_*` report in `context_updates`. On failure return `outcome` `failed`, `verdict`
+  `BLOCKED`, `failure_class` `environment`, and a concrete `failure_reason` plus
+  `context_updates.stage_failure`. Put `verdict` and `failure_class` at the top level;
+  the workflow normalizes them into flat routing context. Include an `impl_status` field
+  in `context_updates` (`READY` on success, `BLOCKED` otherwise).
 
 ## Reporting
 
@@ -48,8 +58,8 @@ newlines as `\n`.
 
 On success:
 
-{"outcome": "succeeded", "context_updates": {"impl_status": "READY", "impl_summary": "<one line describing the simplified change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}}
+{"outcome": "succeeded", "verdict": "APPROVED", "failure_class": "none", "check_results": {"diff": {"command": "git diff <baseline_sha>", "status": "PASS", "baseline_status": "not run", "reason": "<diff remains under 1000 lines>"}}, "context_updates": {"impl_status": "READY", "impl_summary": "<one line describing the simplified change>", "impl_files_changed": "<comma-separated file paths>", "impl_tests_run": "<test commands and their final results>", "impl_concerns": "<non-blocking concerns for the reviewer, or empty>"}}
 
 When the change cannot be made smaller without breaking the issue's behavior:
 
-{"outcome": "failed", "failure_reason": "<one line>", "context_updates": {"impl_status": "BLOCKED", "impl_blocker": "<why it cannot be reduced and what a human should do>"}}
+{"outcome": "failed", "verdict": "BLOCKED", "failure_class": "environment", "failure_reason": "<one line>", "check_results": {"diff": {"command": "git diff <baseline_sha>", "status": "FAIL", "baseline_status": "not run", "reason": "<why it cannot be reduced>"}}, "context_updates": {"impl_status": "BLOCKED", "stage_failure": "<why it cannot be reduced>", "impl_blocker": "<why it cannot be reduced and what a human should do>"}}
