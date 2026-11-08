@@ -13,7 +13,7 @@ digraph Oneshot {
         timeout="5m",
         on_failure="exit",
         max_retries=0,
-        script="set -eu\nmkdir -p .git/oneshot-scripts\ncp .fabro/workflows/oneshot/scripts/tools.py .git/oneshot-scripts/tools.py\npython3 -c \"import py_compile; py_compile.compile('.git/oneshot-scripts/tools.py', doraise=True)\""
+        script="set -eu\nmkdir -p .git/oneshot-scripts\ncp .fabro/workflows/oneshot/scripts/tools.py .git/oneshot-scripts/tools.py\ncp .fabro/workflows/oneshot/scripts/wait_rate_limit.py .git/oneshot-scripts/wait_rate_limit.py\npython3 -c \"import py_compile; py_compile.compile('.git/oneshot-scripts/tools.py', doraise=True); py_compile.compile('.git/oneshot-scripts/wait_rate_limit.py', doraise=True)\""
     ]
 
     prepare [
@@ -28,7 +28,7 @@ digraph Oneshot {
         label="Implement issue",
         prompt="@prompts/implement.md",
         output_schema="routing",
-        max_visits=8,
+        max_visits=16,
         max_retries=2,
         retry_policy="patient"
     ]
@@ -45,7 +45,7 @@ digraph Oneshot {
         label="Simplify change",
         prompt="@prompts/simplify.md",
         output_schema="routing",
-        max_visits=5,
+        max_visits=16,
         max_retries=2,
         retry_policy="patient"
     ]
@@ -54,7 +54,7 @@ digraph Oneshot {
         label="Review change",
         prompt="@prompts/review.md",
         output_schema="routing",
-        max_visits=8,
+        max_visits=16,
         max_retries=2,
         retry_policy="patient"
     ]
@@ -73,8 +73,9 @@ digraph Oneshot {
         shape=parallelogram,
         output_schema="routing",
         timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        max_visits=13,
+        stdin_source="context.failure_reason",
+        script="python3 .git/oneshot-scripts/wait_rate_limit.py implement"
     ]
 
     wait_simplify_rate_limit [
@@ -82,8 +83,9 @@ digraph Oneshot {
         shape=parallelogram,
         output_schema="routing",
         timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        max_visits=13,
+        stdin_source="context.failure_reason",
+        script="python3 .git/oneshot-scripts/wait_rate_limit.py simplify"
     ]
 
     wait_review_rate_limit [
@@ -91,8 +93,9 @@ digraph Oneshot {
         shape=parallelogram,
         output_schema="routing",
         timeout="6m",
-        max_visits=3,
-        script="sleep 300\nprintf '{\"outcome\":\"succeeded\"}\\n'"
+        max_visits=13,
+        stdin_source="context.failure_reason",
+        script="python3 .git/oneshot-scripts/wait_rate_limit.py review"
     ]
 
     publish [
