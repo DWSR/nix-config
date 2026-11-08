@@ -90,10 +90,9 @@ let
       # The Lima cidata user is created imperatively by lima-init on every
       # boot after NixOS's activation and must NOT be declared in the
       # guest's users.users (mutableUsers stays true so rebuilds preserve
-      # it). This grants it the podman group whenever the guest actually
-      # runs podman, so its unprivileged shell can use the API socket
-      # (the members-only socket of the guest's podman.socket unit); the
-      # getent guard makes it a silent no-op otherwise.
+      # it). lima-init creates /run/host-services and chowns it to that
+      # account, providing a stable way to identify it without relying on
+      # Lima's internal provisioning environment variables.
       {
         mode = "system";
         # NOTE: provisioning scripts inherit lima-init's PATH, which does not
@@ -102,9 +101,10 @@ let
         # inside the `if`, so the script returned 0 without acting).
         script = ''
           #!/bin/sh
-          if grep -q '^podman:' /etc/group \
-            && ! id -nG "$LIMA_CIDATA_USER" | tr ' \t' '\n' | grep -qx podman; then
-            usermod -aG podman "$LIMA_CIDATA_USER"
+          user=$(stat -c %U /run/host-services)
+          if [ -n "$user" ] && grep -q '^podman:' /etc/group \
+            && ! id -nG "$user" | tr ' \t' '\n' | grep -qx podman; then
+            usermod -aG podman "$user"
           fi
         '';
       }

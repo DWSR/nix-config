@@ -1,0 +1,126 @@
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest machines client-key field temporarily pointed to /dev/null.
+- Guest unauthorized client-key probe: expected public-key rejection named mac-builder.tuxedo-musical.ts.net
+- Guest machines client-key field restored.
+- Guest unauthorized client-key recovery probe: PASS
+- Guest machines pinned host key temporarily replaced with a test-only public key.
+- Guest mismatched host-key probe: expected host-key mismatch named mac-builder.tuxedo-musical.ts.net
+- Guest machines pinned host key restored.
+- Guest mismatched host-key recovery probe: PASS
+- Builder OAuth runtime path was temporarily hidden.
+- Builder logged out while its OAuth runtime path was hidden.
+- Builder Tailscale backend was confirmed non-Running after logout.
+- Builder auth daemon logged the missing OAuth runtime path; no tailscale-up marker appeared in new log lines.
+- Builder OAuth runtime path restored.
+> **MANUAL RECOVERY REQUIRED:** verify that the local mac-builder identity rejoins with tag:nix-remote-builder.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest machines client-key field temporarily pointed to /dev/null.
+- Guest unauthorized client-key probe: expected public-key rejection named mac-builder.tuxedo-musical.ts.net
+- Guest machines client-key field restored.
+- Guest unauthorized client-key recovery probe: PASS
+- Guest machines pinned host key temporarily replaced with a test-only public key.
+- Guest mismatched host-key probe: expected host-key mismatch named mac-builder.tuxedo-musical.ts.net
+- Guest machines pinned host key restored.
+- Guest mismatched host-key recovery probe: PASS
+- Builder OAuth runtime path was temporarily hidden.
+- Builder logged out while its OAuth runtime path was hidden.
+- Builder Tailscale backend was confirmed non-Running after logout.
+- Builder auth daemon logged the missing OAuth runtime path; no tailscale-up marker appeared in new log lines.
+- Builder OAuth runtime path restored.
+- Builder auth daemon rejoined with tag:nix-remote-builder.
+- ACL denial probe started; operator must restore the grant if this process is interrupted.
+
+> **MANUAL RESTORATION REQUIRED: restore the fabro-vm ACL access to mac-builder.tuxedo-musical.ts.net before considering the live system recovered.**
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest machines client-key field temporarily pointed to /dev/null.
+- Guest unauthorized client-key probe: expected public-key rejection named mac-builder.tuxedo-musical.ts.net
+- Guest machines client-key field restored.
+- Guest unauthorized client-key recovery probe: PASS
+- Guest machines pinned host key temporarily replaced with a test-only public key.
+- Guest mismatched host-key probe: expected host-key mismatch named mac-builder.tuxedo-musical.ts.net
+- Guest machines pinned host key restored.
+- Guest mismatched host-key recovery probe: PASS
+- Builder OAuth runtime path was temporarily hidden.
+- Builder logged out while its OAuth runtime path was hidden.
+- Builder Tailscale backend was confirmed non-Running after logout.
+- Builder auth daemon logged the missing OAuth runtime path; no tailscale-up marker appeared in new log lines.
+- Builder OAuth runtime path restored.
+- Builder auth daemon rejoined with tag:nix-remote-builder.
+- ACL denial probe started; operator must restore the grant if this process is interrupted.
+
+> **MANUAL RESTORATION REQUIRED: restore the fabro-vm ACL access to mac-builder.tuxedo-musical.ts.net before considering the live system recovered.**
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest machines client-key field temporarily pointed to /dev/null.
+- Guest unauthorized client-key probe: expected public-key rejection named mac-builder.tuxedo-musical.ts.net
+- Guest machines client-key field restored.
+- Guest unauthorized client-key recovery probe: PASS
+- Guest machines pinned host key temporarily replaced with a test-only public key.
+- Guest mismatched host-key probe: expected host-key mismatch named mac-builder.tuxedo-musical.ts.net
+- Guest machines pinned host key restored.
+- Guest mismatched host-key recovery probe: PASS
+- Builder OAuth runtime path was temporarily hidden.
+- Builder logged out while its OAuth runtime path was hidden.
+- Builder Tailscale backend was confirmed non-Running after logout.
+- Builder auth daemon logged the missing OAuth runtime path; no tailscale-up marker appeared in new log lines.
+- Builder OAuth runtime path restored.
+- Builder auth daemon rejoined with tag:nix-remote-builder.
+- ACL denial probe started; operator must restore the grant if this process is interrupted.
+- Operator confirmed the guest ACL grant was restored.
+- Guest ACL recovery probe: PASS
+- Guest build-client-key runtime path was temporarily hidden.
+- Guest missing build-client-key probe: expected failure named /run/secrets/build-client-key
+- Guest build-client-key path restored.
+- Guest build-client-key recovery probe: PASS
+- Guest machines client-key field temporarily pointed to /dev/null.
+- Guest unauthorized client-key probe: expected public-key rejection named mac-builder.tuxedo-musical.ts.net
+- Guest machines client-key field restored.
+- Guest unauthorized client-key recovery probe: PASS
+- Guest machines pinned host key temporarily replaced with a test-only public key.
+- Guest mismatched host-key probe: expected host-key mismatch named mac-builder.tuxedo-musical.ts.net
+- Guest machines pinned host key restored.
+- Guest mismatched host-key recovery probe: PASS
+- Builder OAuth runtime path was temporarily hidden.
+- Builder logged out while its OAuth runtime path was hidden.
+- Builder Tailscale backend was confirmed non-Running after logout.
+- Builder auth daemon logged the missing OAuth runtime path; no tailscale-up marker appeared in new log lines.
+- Builder OAuth runtime path restored.
+- Builder auth daemon rejoined with tag:nix-remote-builder.
+- ACL denial probe started; operator must restore the grant if this process is interrupted.
+- Guest denied-ACL probe: expected connection-level transport failure named mac-builder.tuxedo-musical.ts.net
+- Operator confirmed the guest ACL grant was restored.
+- Guest ACL recovery probe: PASS
+- Task 5.7 helper probes completed; live observations remain operator evidence.
