@@ -24,6 +24,14 @@ digraph Oneshot {
         script="test -f .git/oneshot-scripts/tools.py || { echo 'oneshot: helper scripts are missing (fresh sandbox on resume?); start a new run instead of resuming this one' >&2; exit 1; }\npython3 .git/oneshot-scripts/tools.py prepare {{ inputs.issue }}"
     ]
 
+    diagnose [
+        label="Probe run environment",
+        shape=parallelogram,
+        output_schema="routing",
+        timeout="2m",
+        script="python3 .git/oneshot-scripts/tools.py diagnose {{ inputs.issue }}"
+    ]
+
     implement [
         label="Implement issue",
         prompt="@prompts/implement.md",
@@ -118,8 +126,12 @@ digraph Oneshot {
 
     start -> setup_helpers -> prepare
 
-    prepare -> implement [condition="outcome=succeeded"]
+    prepare -> diagnose [condition="outcome=succeeded && context.preflight_status!=BLOCKED"]
+    prepare -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED", weight=10]
     prepare -> fail
+    diagnose -> implement [condition="outcome=succeeded && context.preflight_status=READY"]
+    diagnose -> fail [condition="outcome=succeeded && context.preflight_status=BLOCKED"]
+    diagnose -> fail
 
     implement -> check [condition="outcome=succeeded && context.impl_status=READY"]
     implement -> wait_implement_rate_limit [condition="outcome=failed && context.failure_class contains rate_limit"]
