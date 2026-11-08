@@ -375,6 +375,7 @@ test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
       goBeam = deploymentStatus."opencode-go/beam-free";
       goOmen = deploymentStatus."opencode-go/omen-alpha";
       goLongcat = deploymentStatus."opencode-go/longcat-2.0";
+      goDeepseek = deploymentStatus."opencode-go/deepseek-v4.1-flash";
       goLuna = deploymentStatus."opencode-go/gpt-6-luna";
       goGlm = deploymentStatus."opencode-go/glm-5.3-flash";
       zenBigPickle = deploymentStatus."opencode-zen/big-pickle";
@@ -407,6 +408,8 @@ test('fabro-vm exposes Go free models with dynamic session forwarding', () => {
   assert.equal(rendered.chatgptAstra.defaultEffort, 'xhigh');
   assert.equal(rendered.chatgptSol.defaultEffort, 'xhigh');
   assert.equal(rendered.goLuna.mode, 'responses');
+  assert.equal(rendered.goDeepseek.mode, 'chat');
+  assert.equal(rendered.goDeepseek.defaultEffort, 'max');
   assert.equal(rendered.goGlm.mode, 'chat');
 
   for (const deployment of [rendered.goBeam, rendered.goOmen, rendered.goLongcat]) {

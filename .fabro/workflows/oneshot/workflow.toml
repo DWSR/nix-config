@@ -6,10 +6,11 @@ graph = "workflow.fabro"
 [run.inputs]
 issue = ""
 
-# GPT-6 Luna is the default model with its deployment pinning xhigh effort;
-# fail over to the OpenCode Go DeepSeek cell when ChatGPT quota is exhausted.
+# DeepSeek V4.1 Flash is the default model with max thinking pinned by its
+# deployment; fail over to the ChatGPT-backed Luna whose deployment pins
+# xhigh effort.
 [run.model.fallbacks]
-"gpt-6-luna" = ["litellm:deepseek-v4.1-flash"]
+"deepseek-v4.1-flash" = ["litellm:gpt-6-luna"]
 
 [run.integrations.github]
 permissions = { contents = "write", pull_requests = "write", issues = "write" }
