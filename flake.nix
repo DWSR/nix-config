@@ -3009,9 +3009,9 @@
               touch $out
             '';
 
-          # Agent workflows inherit the runner's gpt-6-luna default; ensure an
-          # exhausted ChatGPT quota falls over to the OpenCode Go
-          # deepseek-v4.1-flash target instead of ending the run.
+          # Agent workflows inherit the runner's deepseek-v4.1-flash default;
+          # ensure a saturated OpenCode Go cell fails over to the
+          # ChatGPT-backed gpt-6-luna target instead of ending the run.
           fabro-workflows-model-fallbacks =
             pkgs.runCommand "fabro-workflows-model-fallbacks"
               {

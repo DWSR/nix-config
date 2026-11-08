@@ -47,10 +47,11 @@ let
     llm.providers.litellm = {
       enabled = true;
       base_url = "http://127.0.0.1:4000/v1";
-      # GPT-6 Luna is the primary model with its xhigh effort pinned by the
-      # litellm deployment below; workflows fall back to DeepSeek V4.1 Flash
-      # when that ChatGPT quota is exhausted.
-      default_model = "gpt-6-luna";
+      # DeepSeek V4.1 Flash is the primary model with max thinking pinned by
+      # the litellm deployment below; workflows fall back to the
+      # ChatGPT-backed GPT-6 Luna (xhigh) when the OpenCode Go cell is
+      # saturated.
+      default_model = "deepseek-v4.1-flash";
 
       # OpenCode's Go gateway rejects requests without a stable
       # x-opencode-session id; fabro never sends one itself (its lithos
@@ -150,7 +151,7 @@ let
           };
         };
         "deepseek-v4.1-flash" = {
-          display_name = "DeepSeek V4.1 Flash (OpenCode Go)";
+          display_name = "DeepSeek V4.1 Flash (OpenCode Go, max)";
           api_model = "opencode-go/deepseek-v4.1-flash";
           # Same parity tier as the wire it shares with glm-5.3-flash, and
           # the cheap pick for fabro's small utility tasks (run titles and
@@ -164,10 +165,13 @@ let
           capabilities = {
             text = true;
             tools = true;
-            # Reasoning effort is unset (DeepSeek carries no fabro-mapped
-            # effort enum on this wire): fabro sends no effort and the
-            # gateway's own default thinking mode applies.
+            # The Go wire advertises low/high/max; the litellm deployment
+            # below pins max. Expose only the pinned level so fabro cannot
+            # send a conflicting effort.
             reasoning = true;
+            reasoning_effort = {
+              max = true;
+            };
           };
         };
         "glm-5.3-flash" = {
@@ -249,7 +253,7 @@ let
     cli = {
       exec.model = {
         provider = "litellm";
-        name = "gpt-6-luna";
+        name = "deepseek-v4.1-flash";
       };
 
       target = {
@@ -260,7 +264,7 @@ let
 
     run = {
       environment.id = "default";
-      model.name = "gpt-6-luna";
+      model.name = "deepseek-v4.1-flash";
 
       # Push every checkpoint: after each node commits to fabro/run/<id>,
       # publish the branch to origin so checkpoint timeline, fork, and
