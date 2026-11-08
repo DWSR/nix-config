@@ -42,19 +42,46 @@ def wait(stage, failure_reason, state_path=STATE_PATH, sleeper=time.sleep):
     if not isinstance(state, dict):
         raise ValueError("rate-limit wait state must be a JSON object")
 
-    waited = state.get(stage, 0)
+    entry = state.get(stage, {"waited": 0, "hinted_total": None})
+    legacy_entry = type(entry) is int
+    if legacy_entry:
+        entry = {"waited": entry, "hinted_total": None}
+    if not isinstance(entry, dict):
+        raise ValueError("rate-limit wait state for %s is invalid" % stage)
+    waited = entry.get("waited")
+    hinted_total = entry.get("hinted_total")
+    last_hint = entry.get("last_hint")
     if type(waited) is not int or waited < 0:
         raise ValueError("rate-limit wait state for %s is invalid" % stage)
+    if hinted_total is not None and (type(hinted_total) is not int or hinted_total <= 0):
+        raise ValueError("rate-limit wait hint for %s is invalid" % stage)
+    if last_hint is not None and (type(last_hint) is not int or last_hint <= 0):
+        raise ValueError("rate-limit last hint for %s is invalid" % stage)
+
+    hint = reset_hint_seconds(failure_reason)
+    if hint is not None:
+        if hinted_total is None:
+            hinted_total = hint if legacy_entry else waited + hint
+        elif hint != last_hint:
+            hinted_total = (
+                waited + hint if hinted_total <= waited else min(hinted_total, waited + hint)
+            )
+        last_hint = hint
+
     if waited >= MAX_WAIT_SECONDS:
         raise WaitCapExceeded(
             "provider limit exceeds wait cap of %d seconds for %s" % (MAX_WAIT_SECONDS, stage)
         )
 
-    hint = reset_hint_seconds(failure_reason)
-    requested = DEFAULT_WAIT_SECONDS if hint is None else hint
+    remaining_hint = None if hinted_total is None else hinted_total - waited
+    requested = remaining_hint if remaining_hint and remaining_hint > 0 else DEFAULT_WAIT_SECONDS
     delay = min(requested, MAX_VISIT_WAIT_SECONDS, MAX_WAIT_SECONDS - waited)
     sleeper(delay)
-    state[stage] = waited + delay
+    state[stage] = {
+        "waited": waited + delay,
+        "hinted_total": hinted_total,
+        "last_hint": last_hint,
+    }
     os.makedirs(os.path.dirname(state_path) or ".", exist_ok=True)
     with open(state_path, "w") as stream:
         json.dump(state, stream, sort_keys=True)

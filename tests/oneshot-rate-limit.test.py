@@ -18,17 +18,21 @@ SPEC.loader.exec_module(wait_rate_limit)
 
 
 class WaitRateLimitTests(unittest.TestCase):
-    def test_reset_hint_is_covered_in_bounded_visits(self):
+    def test_retry_with_same_reset_hint_is_covered_in_bounded_visits(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = pathlib.Path(directory) / "waits.json"
             sleeps = []
-            while sum(sleeps) < 2856:
+            while not sleeps or sum(sleeps) < 2856:
                 wait_rate_limit.wait(
                     "implement", '{"resets_in_seconds": 2856}', state_path, sleeps.append
                 )
-            self.assertGreaterEqual(sum(sleeps), 2856)
+            self.assertEqual(sum(sleeps), 2856)
+            self.assertEqual(sleeps, [300] * 9 + [156])
             self.assertLessEqual(max(sleeps), 300)
-            self.assertEqual(json.loads(state_path.read_text()), {"implement": sum(sleeps)})
+            self.assertEqual(
+                json.loads(state_path.read_text()),
+                {"implement": {"waited": 2856, "hinted_total": 2856, "last_hint": 2856}},
+            )
 
     def test_retry_after_and_default_backoff(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,6 +64,36 @@ class WaitRateLimitTests(unittest.TestCase):
                 )
             self.assertEqual(sum(sleeps), 3600)
             self.assertEqual(len(sleeps), 12)
+
+    def test_new_retry_hint_starts_after_elapsed_wait(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = pathlib.Path(directory) / "waits.json"
+            sleeps = []
+            wait_rate_limit.wait("implement", '"retry_after": 1200', state_path, sleeps.append)
+            self.assertEqual(
+                wait_rate_limit.wait("implement", '"retry_after": 900', state_path, sleeps.append),
+                300,
+            )
+            self.assertEqual(sleeps, [300, 300])
+            self.assertEqual(
+                json.loads(state_path.read_text()),
+                {"implement": {"waited": 600, "hinted_total": 1200, "last_hint": 900}},
+            )
+
+    def test_updated_retry_hint_replaces_an_expired_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = pathlib.Path(directory) / "waits.json"
+            sleeps = []
+            wait_rate_limit.wait("review", '"retry_after": 30', state_path, sleeps.append)
+            self.assertEqual(
+                wait_rate_limit.wait("review", '"retry_after": 600', state_path, sleeps.append),
+                300,
+            )
+            self.assertEqual(sleeps, [30, 300])
+            self.assertEqual(
+                json.loads(state_path.read_text()),
+                {"review": {"waited": 330, "hinted_total": 630, "last_hint": 600}},
+            )
 
     def test_command_reads_stdin_and_reports_wait_cap(self):
         with tempfile.TemporaryDirectory() as directory:
