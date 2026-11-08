@@ -6,6 +6,7 @@
   - Done when the fixture builds and verifies the closure and pinned publisher interface; stop and request a requirement decision if the pinned hybrid path cannot produce it.
   - _Boundary: `tests/fly-app/image.test.nix`_
   - _Requirements: 3.2, 3.8_
+  - _Blocked: Required flake gate fails because tests/fabro-darwin-builds/.npmrc is missing; add min-release-age=7 days, then rerun cooldown and flake checks._
 - [ ] 1.2 Create an executable Fly compatibility smoke harness
   - Set up an operator-token-only runner for an existing disposable Fly app, with redacted results and an initial image boot/registry check; later tasks add the full acceptance scenarios.
   - Done when the harness can probe Fly without storing or provisioning the token; live acceptance is required in Tasks 5.5 and 5.6.
